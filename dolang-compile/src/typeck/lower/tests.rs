@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::{
-    Config,
+    Config, Mode,
     typeck::{
         Builder,
         cfg::{BlockId, ExprKind, FuncId, Ir, Origin, Step, Terminal, VarFlags, VarId},
@@ -14,8 +14,12 @@ fn lower(source: &str) {
 }
 
 fn lower_with(source: &str, inspect: impl FnOnce(&Ir)) {
+    lower_mode_with(source, Mode::Script, inspect);
+}
+
+fn lower_mode_with(source: &str, mode: Mode<'_>, inspect: impl FnOnce(&Ir)) {
     let mut config = Config::new();
-    config.typecheck(true);
+    config.typecheck(true).mode(mode);
     let unit = config.unit(Path::new("test.dol"), source);
     let diags: Vec<_> = unit
         .diagnostics()
@@ -344,5 +348,189 @@ for j = [1, 2]
         };
         let cached: Vec<_> = cached.iter().filter_map(|&var| name(var)).collect();
         assert_eq!(cached, ["b"]);
+    });
+}
+
+/// The function created where a lambda named by its span's text is evaluated:
+/// a def's name
+fn named(ir: &Ir, source: &str, name: &str) -> FuncId {
+    let mut found = None;
+    for (_, block) in ir.blocks() {
+        for step in &block.steps {
+            let value = match step {
+                Step::Assign(target) => target.value(),
+                Step::Let { value, .. }
+                | Step::Default { value, .. }
+                | Step::Eval(value)
+                | Step::Push(value) => value,
+                _ => continue,
+            };
+            value.walk(&mut |expr| {
+                let text = source.get(expr.span.start as usize..expr.span.end as usize);
+                if let ExprKind::Lambda(func) = expr.kind
+                    && text == Some(name)
+                {
+                    found = Some(func);
+                }
+            });
+        }
+    }
+    found.unwrap_or_else(|| panic!("no function `{name}`"))
+}
+
+/// The module's top-level function
+fn module(ir: &Ir) -> FuncId {
+    (ir.funcs())
+        .find(|(_, func)| func.parent.is_none())
+        .map(|(id, _)| id)
+        .unwrap()
+}
+
+/// The names of variables, by their source spans
+fn names<'s>(ir: &Ir, source: &'s str, vars: &[VarId]) -> Vec<&'s str> {
+    let mut names: Vec<_> = (vars.iter())
+        .filter_map(|&var| match ir.var(var).origin {
+            Origin::Source(span) => Some(&source[span.start as usize..span.end as usize]),
+            _ => None,
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+/// Defs that only read a module variable run after the module's run, each in its
+/// own run; one that assigns it, and a `do` block, are included in it
+#[test]
+fn late_runs() {
+    let source = "
+let CONSTANT = \"lol\"
+let counter = 0
+def a()
+  CONSTANT
+def b()
+  (CONSTANT, 1)
+def bump()
+  counter = (counter + 1)
+let f = do
+  1
+";
+    lower_with(source, |ir| {
+        let runs = ir.runs();
+        let [top, a, b] = &runs[..] else {
+            panic!("three runs: {runs:?}");
+        };
+        let block = (ir.funcs())
+            .find(|(_, func)| func.signature.is_some())
+            .map(|(id, _)| id)
+            .unwrap();
+        let mut funcs = vec![module(ir), named(ir, source, "bump"), block];
+        funcs.sort();
+        assert_eq!(&*top.funcs, funcs);
+        assert!(top.early.is_empty());
+        assert_eq!(
+            top.late.iter().map(|run| run.index()).collect::<Vec<_>>(),
+            [1, 2]
+        );
+        assert_eq!(a.root, named(ir, source, "a"));
+        assert_eq!(b.root, named(ir, source, "b"));
+        for run in [a, b] {
+            assert_eq!(*run.funcs, [run.root]);
+            assert_eq!(names(ir, source, &run.inherited), ["CONSTANT"]);
+        }
+    });
+}
+
+/// A def nested in a def that captures nothing of it runs early, and inherits
+/// what it captures of the module
+#[test]
+fn early_runs() {
+    let source = "
+let CONSTANT = \"lol\"
+def outer x
+  def inner y
+    (y, CONSTANT)
+  inner x
+";
+    lower_with(source, |ir| {
+        let runs = ir.runs();
+        let [top, outer, inner] = &runs[..] else {
+            panic!("three runs: {runs:?}");
+        };
+        assert_eq!(
+            top.late.iter().map(|run| run.index()).collect::<Vec<_>>(),
+            [1]
+        );
+        assert_eq!(outer.root, named(ir, source, "outer"));
+        assert_eq!(
+            outer
+                .early
+                .iter()
+                .map(|run| run.index())
+                .collect::<Vec<_>>(),
+            [2]
+        );
+        assert!(outer.late.is_empty());
+        assert_eq!(inner.root, named(ir, source, "inner"));
+        assert_eq!(names(ir, source, &inner.inherited), ["CONSTANT"]);
+    });
+}
+
+/// Capturing or assigning an exported variable couples nothing
+#[test]
+fn exported_runs() {
+    let source = "
+pub let shared = 0
+def get()
+  shared
+def set()
+  shared = 1
+";
+    let mode = Mode::Module { name: "m".into() };
+    lower_mode_with(source, mode, |ir| {
+        let runs = ir.runs();
+        let [top, get, set] = &runs[..] else {
+            panic!("three runs: {runs:?}");
+        };
+        assert_eq!(*top.funcs, [module(ir)]);
+        assert_eq!(
+            top.early.iter().map(|run| run.index()).collect::<Vec<_>>(),
+            [1, 2]
+        );
+        for run in [get, set] {
+            assert!(run.inherited.is_empty());
+        }
+        assert_eq!(get.root, named(ir, source, "get"));
+        assert_eq!(set.root, named(ir, source, "set"));
+    });
+}
+
+/// A capture and an assignment are recorded on every function between the
+/// capturer and the variable's owner, but not on the owner
+#[test]
+fn uses_and_assigns() {
+    let source = "
+let v = 1
+let w = 1
+def outer()
+  let x = 1
+  def middle()
+    def inner()
+      w = (v, x)
+    inner
+  middle
+";
+    lower_with(source, |ir| {
+        let func = |name| ir.func(named(ir, source, name));
+        assert_eq!(names(ir, source, &func("inner").uses), ["v", "w", "x"]);
+        assert_eq!(names(ir, source, &func("inner").assigns), ["w"]);
+        assert_eq!(names(ir, source, &func("middle").uses), ["v", "w", "x"]);
+        assert_eq!(names(ir, source, &func("middle").assigns), ["w"]);
+        assert_eq!(names(ir, source, &func("outer").uses), ["v", "w"]);
+        assert_eq!(names(ir, source, &func("outer").assigns), ["w"]);
+        assert!(ir.func(module(ir)).uses.is_empty());
+        // `outer` assigns `w`, so the module's run includes all three
+        let runs = ir.runs();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].funcs.len(), 4);
     });
 }

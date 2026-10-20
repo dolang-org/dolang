@@ -71,6 +71,8 @@ mod dot;
 mod dump;
 mod escape;
 mod expr;
+#[cfg_attr(not(test), expect(dead_code, reason = "#1282 runs flow per run"))]
+mod split;
 #[cfg(test)]
 mod tests;
 mod validate;
@@ -86,10 +88,12 @@ use super::r#type::{DeclId, MemberKey, SymbolId, TypeId, UnitId};
 use crate::{RestKind, source::Span};
 
 macro_rules! id {
-    ($name:ident) => {
+    ($(#[$attr:meta])* $name:ident) => {
+        $(#[$attr])*
         #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub(crate) struct $name(u32);
 
+        $(#[$attr])*
         impl $name {
             fn from_index(index: usize) -> Self {
                 Self(u32::try_from(index).expect("graph too large"))
@@ -106,6 +110,10 @@ id!(FuncId);
 id!(BlockId);
 id!(VarId);
 id!(GroupId);
+id!(
+    #[cfg_attr(not(test), expect(dead_code, reason = "#1282 runs flow per run"))]
+    RunId
+);
 
 impl GroupId {
     /// A function's parameters'
@@ -157,6 +165,12 @@ pub(crate) struct Func {
     /// The variables its parent owns that it or a function nested in it captures,
     /// leaving out [`Signature`] variables, which are joined as they're assigned
     pub(crate) escapes: Vec<VarId>,
+    /// The variables of enclosing functions that it or a function nested in it
+    /// reads or writes
+    pub(crate) uses: Vec<VarId>,
+    /// The variables of enclosing functions that it or a function nested in it
+    /// assigns once they're bound
+    pub(crate) assigns: Vec<VarId>,
     /// In an `(init)`, the variables standing for the receiver's fields, which a
     /// [`Step::Escape`] checks
     pub(crate) fields: Vec<VarId>,
@@ -491,6 +505,8 @@ impl Graph {
             vars: Vec::new(),
             captures: Vec::new(),
             escapes: Vec::new(),
+            uses: Vec::new(),
+            assigns: Vec::new(),
             fields: Vec::new(),
             supers: Vec::new(),
             groups: 1,
