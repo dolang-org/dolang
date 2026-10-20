@@ -193,8 +193,8 @@ def unattend_driver_paths() -> xml.Element
 # `add:` writing `C:\Windows\Panther\unattend.xml`.
 pub def unattend_xml
   user @ Str
-  :edition @ Str = nil
-  :index @ Int = nil
+  :edition @ (Str | nil) = nil
+  :index @ (Int | nil) = nil
   :drivers @ Bool = false
 do -> Str
   let install_from @ (xml.Element | nil) = nil

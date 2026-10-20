@@ -1,33 +1,11 @@
+# dolang: strict
 # Creates, provisions, exports, and restores libvirt domains.
 #
 # ## Domain Options {: #libvirt.common-domain-options }
 #
 # [`create`](libvirt.create), [`with`](libvirt.with), and
-# [`build`](libvirt.build) take these options as keyword arguments. Those
-# marked `*` may repeat.
-#
-# | Option          | Type                                               | Description |
-# | --------------- | -------------------------------------------------- | ----------- |
-# | `image`         | [`ArtifactSpec`](libvirt.ArtifactSpec)             | Base disk image, optionally gzip-, xz-, or zstd-compressed |
-# | `bundle`        | [`ArtifactSpec`](libvirt.ArtifactSpec)             | Bundle written by [`Domain.export`](libvirt.Domain.export) |
-# | `installer`*    | [`InstallerSpec`](libvirt.InstallerSpec)           | Install media to boot |
-# | `drivers`*      | [`ArtifactSpec`](libvirt.ArtifactSpec)             | Driver media read by Setup |
-# | `name`          | `Str`                                              | Domain name; generated when omitted |
-# | `os`            | `Sym`                                              | Guest OS, using `sys`'s symbol vocabulary |
-# | `arch`          | `Sym`                                              | Guest CPU architecture; defaults to and must match the host |
-# | `app`           | `Str`                                              | Cache and data namespace; derived from `shell.program` by default |
-# | `user`          | `Str`                                              | Guest user to create |
-# | `dolang`        | [`DolangSpec`](libvirt.DolangSpec)                 | Do build to install |
-# | `memory`        | `Int`                                              | Guest memory in MiB; defaults to the bundle or OS value |
-# | `vcpus`         | `Int`                                              | Guest vCPU count; defaults to the bundle or OS value |
-# | `disk_size`     | `Str`                                              | Disk size; defaults to the OS value, while a bundle keeps its size |
-# | `cache`         | [`DiskCache`](libvirt.DiskCache)                   | Disk host cache mode |
-# | `io`            | [`DiskIo`](libvirt.DiskIo)                         | Disk I/O submission mode |
-# | `connect_uri`   | `Str`                                              | libvirt connection URI |
-# | `init`          | [`InitSpec`](libvirt.InitSpec)                     | Early boot provisioning |
-# | `wait_timeout`  | `(Int \| Float)`                                   | Seconds to wait for the guest; defaults to the OS timeout |
-# | `add`*          | [`AddSpec`](libvirt.AddSpec)                       | [Step](libvirt.create-steps): uploads a file |
-# | `run`*          | `() -> Value`                                      | [Step](libvirt.create-steps): runs a block in the guest VFS |
+# [`build`](libvirt.build) take the keyword arguments
+# [`DomainOptions`](libvirt.DomainOptions) lists.
 #
 # Exactly one of `image`, `bundle`, and `installer` is required.
 #
@@ -102,17 +80,17 @@
 # `reboot` is also the only place a lost connection is not an error; a guest
 # that vanishes during a `run` block propagates.
 
-import _shell _vfs base64 digest json proc progress rand shell shlex ssh std strand sys tar term time transfer xdg xml zip
+import _shell _vfs base64 digest json proc progress rand shell shlex ssh std strand sys tar term time transfer xdg xml @yaml zip
   fs:
     - Path
     - with_temp_dir
-  std:
-    - null
+    - @BinFile
   url:
     - Url
   _vm.cloud_init: cloud_init
   _vm.unattend: unattend
   _vm.common:
+    - capture
     - cli
   _vm.cloud_init:
     - READY_PATH
@@ -294,6 +272,11 @@ pub @let Compress = (Bool | :ZSTD: | :ZLIB:)
 # | `:SSH:`        | sshd accepts a connection                     |
 # | `:CLOUD_INIT:` | cloud-init has written its ready file         |
 @let Probe = (:VFS: | :SSH: | :CLOUD_INIT:)
+# A medium attached as a cdrom, and its UEFI boot order if it boots.
+@let Medium = (path: Path, boot: (Int | nil))
+# A firmware variable store and its format, as `dumpxml` reports them.
+@let NvramSource = (path: Path, format: (Str | nil))
+@let Attrs = BaseDict[Sym | Str, Str]
 
 # A domain's state.
 pub @let DomainState = $
@@ -305,6 +288,72 @@ pub @let DomainState = $
   | :CRASHED:
   | :PMSUSPENDED:
   | :BLOCKED:
+
+# A guest OS, in `sys`'s symbol vocabulary.
+@let GuestOs = (:LINUX: | :MACOS: | :FREEBSD: | :WINDOWS:)
+
+# A guest CPU architecture, likewise.
+@let GuestArch = (:X86_64: | :AARCH64:)
+
+# Guest firmware, as a profile selects it.
+@let Firmware = (:BIOS: | :EFI_SECURE:)
+
+# A guest vTPM model.
+@let TpmModel = :CRB_2_0:
+
+# Domain options and steps, as keyword arguments and positional items in
+# order. Those marked `*` may repeat.
+#
+# | Option          | Type                                               | Description |
+# | --------------- | -------------------------------------------------- | ----------- |
+# | `image`         | [`ArtifactSpec`](libvirt.ArtifactSpec)             | Base disk image, optionally gzip-, xz-, or zstd-compressed |
+# | `bundle`        | [`ArtifactSpec`](libvirt.ArtifactSpec)             | Bundle written by [`Domain.export`](libvirt.Domain.export) |
+# | `installer`*    | [`InstallerSpec`](libvirt.InstallerSpec)           | Install media to boot |
+# | `drivers`*      | [`ArtifactSpec`](libvirt.ArtifactSpec)             | Driver media read by Setup |
+# | `name`          | `Str`                                              | Domain name; generated when omitted |
+# | `os`            | `Sym`                                              | Guest OS, using `sys`'s symbol vocabulary |
+# | `arch`          | `Sym`                                              | Guest CPU architecture; defaults to and must match the host |
+# | `app`           | `Str`                                              | Cache and data namespace; derived from `shell.program` by default |
+# | `user`          | `Str`                                              | Guest user to create |
+# | `dolang`        | [`DolangSpec`](libvirt.DolangSpec)                 | Do build to install |
+# | `memory`        | `Int`                                              | Guest memory in MiB; defaults to the bundle or OS value |
+# | `vcpus`         | `Int`                                              | Guest vCPU count; defaults to the bundle or OS value |
+# | `disk_size`     | `Str`                                              | Disk size; defaults to the OS value, while a bundle keeps its size |
+# | `cache`         | [`DiskCache`](libvirt.DiskCache)                   | Disk host cache mode |
+# | `io`            | [`DiskIo`](libvirt.DiskIo)                         | Disk I/O submission mode |
+# | `connect_uri`   | `Str`                                              | libvirt connection URI |
+# | `init`          | [`InitSpec`](libvirt.InitSpec)                     | Early boot provisioning |
+# | `wait_timeout`  | `(Int \| Float)`                                   | Seconds to wait for the guest; defaults to the OS timeout |
+# | `add`*          | [`AddSpec`](libvirt.AddSpec)                       | [Step](libvirt.create-steps): uploads a file |
+# | `run`*          | `() -> Value`                                      | [Step](libvirt.create-steps): runs a block in the guest VFS |
+# | `reboot`*       | positional                                         | [Step](libvirt.create-steps): reboots the guest |
+#
+# A `run` block has the strand input and output of the caller.
+pub @let DomainOptions[I, O] = $
+  ?image: ArtifactSpec
+  ?bundle: ArtifactSpec
+  *installer: InstallerSpec
+  *drivers: ArtifactSpec
+  ?name: Str
+  ?os: (:LINUX: | :MACOS: | :FREEBSD: | :WINDOWS:)
+  ?arch: (:X86_64: | :AARCH64:)
+  ?app: Str
+  ?user: Str
+  ?dolang: DolangSpec
+  ?memory: Int
+  ?vcpus: Int
+  ?disk_size: Str
+  ?cache: DiskCache
+  ?io: DiskIo
+  ?connect_uri: Str
+  ?init: InitSpec
+  ?wait_timeout: (Int | Float)
+  *add: AddSpec
+  *run: ((<I, >O) -> Value)
+  *"reboot"
+
+# One step, in the order `create` runs them.
+@let Step[I, O] = (Add | :REBOOT: | ((<I, >O) -> Value))
 
 let VM_NAMESPACE = "https://github.com/dolang-org/dolang"
 let DEFAULT_CONNECT_URI = "qemu:///session"
@@ -385,7 +434,7 @@ let DISK_IO_MODES = Set $
 # 5.1+ kernel, which any currently supported host satisfies. An older host
 # fails at domain start rather than falling back, so `io:` can select a
 # different mode.
-let DEFAULT_DISK_IO = :IO_URING:
+let DEFAULT_DISK_IO @ DiskIo = :IO_URING:
 let PORT_START = 20000
 let PORT_END = 60000
 let PORT_ATTEMPTS = 10
@@ -424,7 +473,7 @@ let DOLANG_PLATFORMS = Set $
 # `virsh domstate` spells this state `shut off`, with the space, so the
 # unspelled `shutoff` never matches it — but it is what a caller would write,
 # and mapping both costs nothing.
-let DOMAIN_STATES = $
+let DOMAIN_STATES @ Dict[Str, DomainState] = $
   "running": :RUNNING:
   "idle": :IDLE:
   "paused": :PAUSED:
@@ -437,7 +486,7 @@ let DOMAIN_STATES = $
 
 # Normalizes a libvirt state word into a symbol, or returns it as reported when
 # it is not one this module knows.
-def normalized_state text
+def normalized_state text @ Str -> (DomainState | Str)
   let text = text.trim()
   DOMAIN_STATES.get $text.lower() default: $text
 
@@ -445,58 +494,42 @@ def normalized_state text
 #[final]
 pub class NoDomainError: std.RuntimeError
   # The domain name.
-  pub field name @ Str = nil
+  pub field name @ Str
 
-  def (init) self name
+  def (init) self name @ Str
     self.name = name
     std.RuntimeError.(init) $self "libvirt domain does not exist: $name"
 
-def virsh connect_uri ...args
+def virsh connect_uri @ Str *args @ Value -> Str
   cli virsh --quiet --connect $connect_uri ...args
 
-def capture_virsh connect_uri stderr ...args
-  sub do virsh $connect_uri ...args stderr: $stderr.prechomp()
+def capture_virsh connect_uri @ Str stderr @ Array[Str] *args @ Value -> Str
+  capture virsh $stderr --quiet --connect $connect_uri ...args
 
-def error_text lines
+def error_text lines @ Array[Str] -> Str
   "\n".join(lines).upper()
 
-def missing_domain_error lines
+def missing_domain_error lines @ Array[Str] -> Bool
   let text = error_text $lines
   (text.contains "DOMAIN NOT FOUND" ||
     text.contains "FAILED TO GET DOMAIN" ||
     text.contains "NO DOMAIN WITH MATCHING NAME")
 
-def address_in_use_error lines
+def address_in_use_error lines @ Array[Str] -> Bool
   let text = error_text $lines
   (text.contains "ADDRESS ALREADY IN USE" ||
     text.contains "FAILED TO BIND" && text.contains "PORT")
 
-def require_name name
-  name = str $name
+def require_name name @ Str -> Str
   if (name == "" || name == "." || name == ".." ||
       name.contains("/") || name.contains("\\"))
     throw std.ValueError "invalid libvirt domain name: $name"
   name
 
-def require_os os
+def require_os os @ (GuestOs | nil) -> GuestOs
   if (os == nil)
     throw std.ValueError "os: is required"
   os
-
-# Named fields for data this module passes between its own functions, read as
-# `s.name` and destructured like the record of keyword arguments it was built
-# from.
-class Struct
-  field fields
-
-  def (init) self **fields
-    self.#fields = fields
-
-  def (get) self key
-    self.#fields[key]
-
-  def (unpack) self
-    self.#fields
 
 # The machine shape and provisioning style a guest OS needs.
 #
@@ -515,31 +548,35 @@ class Struct
 class Profile
   # The machine shape: what the domain document has to say to make a guest of
   # this OS boot at all.
-  pub field machine firmware smm tpm hyperv clock_offset graphics serial
+  pub field machine @ (Str | nil) = nil
+  pub field firmware @ Firmware = :BIOS:
+  pub field tpm @ (TpmModel | nil) = nil
+  pub field smm hyperv graphics @ Bool = false
+  pub field serial @ Bool = true
+  pub field clock_offset @ Str = "utc"
   # How long the guest takes to come up, and whether its install media has a
   # prompt that has to be answered to get there.
-  pub field boot_key wait_timeout
+  pub field boot_key @ Bool = false
+  pub field wait_timeout @ Int = 900
   # The defaults `create` sizes the guest with, each overridable per domain.
-  pub field memory vcpus disk_size
+  pub field memory @ Int = 2048
+  pub field vcpus @ Int = 2
+  pub field disk_size @ Str = "20G"
 
-  def (init) self :machine = nil :firmware = nil :tpm = nil
+  def (init)
+    self
+    :machine @ (Str | nil) = nil
+    :firmware @ (Firmware | nil) = nil
+    :tpm @ (TpmModel | nil) = nil
+  do
     self.machine = machine
-    self.firmware = (firmware || :BIOS:)
-    self.smm = false
+    if (firmware != nil)
+      self.firmware = firmware
     self.tpm = tpm
-    self.hyperv = false
-    self.clock_offset = "utc"
-    self.graphics = false
-    self.serial = true
-    self.boot_key = false
-    self.memory = 2048
-    self.vcpus = 2
-    self.disk_size = "20G"
-    self.wait_timeout = 900
 
   # Whether a guest of this shape is installed from media rather than
   # provisioned by cloud-init on a disk somebody else built.
-  pub def unattended _self
+  pub def unattended _self -> Bool
     false
 
   # Rejects a host that cannot define a guest of this shape — or, with
@@ -550,7 +587,7 @@ class Profile
   # authoring and vTPM setup programs an install shells out to need not be
   # here. What it does still need is a libvirt that can be told where to keep
   # the vTPM state it is restoring.
-  pub def require_host self :installing = false
+  pub def require_host self :installing @ Bool = false
     if (self.tpm != nil)
       require_tpm_source()
     if (installing && self.unattended())
@@ -565,7 +602,12 @@ class Profile
 # that floor, not a recommendation: a build guest should raise them with
 # `memory:`/`vcpus:`/`disk_size:`, exactly as the FreeBSD guests already do.
 class WindowsProfile: Profile
-  def (init) self :machine = nil :firmware = nil :tpm = nil
+  def (init)
+    self
+    :machine @ (Str | nil) = nil
+    :firmware @ (Firmware | nil) = nil
+    :tpm @ (TpmModel | nil) = nil
+  do
     Profile.(init) $self
       machine: (machine || "q35")
       firmware: (firmware || :EFI_SECURE:)
@@ -590,12 +632,17 @@ class WindowsProfile: Profile
     # An unattended install is measured in tens of minutes, not minutes.
     self.wait_timeout = 3600
 
-  pub def unattended _self
+  pub def unattended _self -> Bool
     true
 
 # The profile `os` calls for, with any recorded overrides applied. The one
 # place an OS is mapped to a shape; everything downstream reads the profile.
-def os_profile os :machine = nil :firmware = nil :tpm = nil
+def os_profile
+  os @ GuestOs
+  :machine @ (Str | nil) = nil
+  :firmware @ (Firmware | nil) = nil
+  :tpm @ (TpmModel | nil) = nil
+do -> Profile
   if (os == :WINDOWS:)
     WindowsProfile :machine :firmware :tpm
   else
@@ -603,7 +650,7 @@ def os_profile os :machine = nil :firmware = nil :tpm = nil
 
 
 # Rejects a host program the requested configuration needs but cannot find.
-def require_programs programs
+def require_programs programs @ Array[Str]
   for program = programs
     if !run[program].which()
       throw std.RuntimeError "$program is required but was not found on PATH"
@@ -622,7 +669,7 @@ def require_programs programs
 # known-bad host, not a gate, and the export-time behavior is unchanged either
 # way.
 def require_tpm_source()
-  let text = sub do cli virsh --version
+  let text = cli virsh --version
   let version = try
     let value = 0
     for part = text.trim().split(".").take(3)
@@ -638,7 +685,7 @@ def require_tpm_source()
 # Picks the ISO authoring program to build the provisioning disc with, in
 # `ISO_PROGRAMS` order. Unlike `require_programs` any one of them will do, so
 # the report names the whole set.
-def require_iso_program()
+def require_iso_program -> Str
   for program = ISO_PROGRAMS
     if run[program].which()
       return program
@@ -651,7 +698,7 @@ def require_iso_program()
 # foreign one needs TCG emulation, plus a machine type and firmware chosen per
 # target. Rejecting it here reports the unsupported argument instead of letting
 # libvirt refuse the document with an error about KVM.
-def require_arch arch
+def require_arch arch @ (GuestArch | nil) -> GuestArch
   let host = sys.cpu_info().arch
   let arch = (arch || host)
   if (arch != host)
@@ -671,7 +718,7 @@ let DISK_COMPRESSION = Set $
   - zstd
   - zlib
 
-let DEFAULT_COMPRESSION = :ZSTD:
+let DEFAULT_COMPRESSION @ Compress = :ZSTD:
 
 # Converting with several coroutines and unordered writes is what makes
 # compression bearable: it cuts a compressed conversion to a ninth of the time
@@ -681,7 +728,7 @@ let CONVERT_PARALLEL = ["-m", "16", "-W"]
 
 # Normalizes a `compress:` option to a `qemu-img compression_type`, or `nil`
 # for an uncompressed conversion. `true` selects the default algorithm.
-def require_compression compress
+def require_compression compress @ Compress -> (Str | nil)
   if (compress == nil || compress == false)
     return nil
   if (compress == true)
@@ -698,7 +745,7 @@ def require_compression compress
 # written. Checking the value here reports a typo as a Do error naming the
 # argument, instead of letting libvirt reject the whole document over one
 # attribute.
-def require_disk_mode value allowed name
+def require_disk_mode value@(Sym | Str | nil) allowed@Set[Str] name@Str -> (Str | nil)
   if (value == nil)
     return nil
   let text = str(value).lower()
@@ -706,7 +753,7 @@ def require_disk_mode value allowed name
     throw std.ValueError "$name: unsupported value: $value"
   text
 
-def normalized_app app
+def normalized_app app @ (Str | nil) -> Str
   let candidate = (app || shell.program || "dolang-libvirt")
   let value = if (type candidate Path)
     (candidate.stem || candidate.name || "")
@@ -717,19 +764,19 @@ def normalized_app app
     throw std.ValueError "libvirt app name must not be empty"
   value
 
-def data_root app
+def data_root app @ Str -> Path
   let root = (xdg.data_home() / app / "libvirt")
   root.create_dir all: true
   root
 
-def file_digest path
+def file_digest path @ Path -> Str
   let state = digest.Blake3()
   path.open rb do |file|
     for chunk = file
       state.update $chunk
   "${state.digest():x}"
 
-def find_child node tag :namespace = nil
+def find_child node@xml.Element tag@Str :namespace@(Str | nil) = nil -> (xml.Element | nil)
   for child = node.children
     if (type child xml.Element &&
         child.tag == tag &&
@@ -737,27 +784,27 @@ def find_child node tag :namespace = nil
       return child
   nil
 
-def require_child node tag :namespace = nil
+def require_child node@xml.Element tag@Str :namespace@(Str | nil) = nil -> xml.Element
   let child = find_child $node $tag :namespace
   if !child
     throw std.ValueError "missing XML element: $tag"
   child
 
-def node_text node
+def node_text node @ xml.Element -> Str
   let text = ""
   for child = node.children
     if (type child Str)
       text = "$text$child"
   text
 
-def metadata_value metadata name
+def metadata_value metadata@xml.Element name@Str -> (Str | nil)
   let node = find_child $metadata $name
   if node
     node_text $node
   else
     nil
 
-def path_within path root
+def path_within path@(Path | nil) root@Path -> Bool
   while path
     if (path == root)
       return true
@@ -767,17 +814,22 @@ def path_within path root
 # `virsh undefine`, taking the NVRAM with it where this libvirt understands the
 # flag. In the `virsh` family rather than a `Domain` method because both the
 # public handle and the half-built domain `create` is still assembling need it,
-# and neither can reach the other's privates.
-def virsh_undefine connect_uri name ...options
+# and neither can reach the other's privates. `quiet:` discards what a failure
+# printed, for a caller that is cleaning up after an error already reported.
+def virsh_undefine connect_uri@Str name@Str :quiet@Bool = false
   try
-    virsh $connect_uri undefine $name --nvram ...options
+    capture_virsh $connect_uri [] undefine $name --nvram
   catch proc.Error: _
-    virsh $connect_uri undefine $name ...options
+    if quiet
+      capture_virsh $connect_uri [] undefine $name
+    else
+      virsh $connect_uri undefine $name
+  nil
 
 let CHUNK_SIZE = (512 * 1024)
 let PARALLEL = 8
 
-def copy_chunks total input output indicator
+def copy_chunks total@Int input@BinFile output@BinFile indicator@progress.Indicator
   strand.pipeline
     do strand.pool $PARALLEL (Range 0 total CHUNK_SIZE) do |offset|
       let chunk = input.read $CHUNK_SIZE :offset
@@ -788,7 +840,7 @@ def copy_chunks total input output indicator
       output.write $chunk :offset
       indicator.delta $chunk.len
 
-def payload_directory user
+def payload_directory user @ Str -> Str
   "/home/$(user)/.dolang-libvirt-guest"
 
 # How to reach a managed domain's guest over SSH.
@@ -801,43 +853,49 @@ def payload_directory user
 # `scp` binaries directly, which is what bootstrap has to do: `dolang-vfs`
 # does not exist in the guest until the payload is installed. Once it does,
 # `with` runs blocks through the VFS instead.
+#[final]
 class Guest
   # The forwarded SSH port. Public because `create` reassigns it while hunting
   # for a free one.
-  pub field port = nil
+  pub field port @ Int
   # What the most recent failed probe in `wait` wrote to the console, or `nil`
   # if the last attempt succeeded. Public so that whoever bounded the wait can
   # show it when the wait is what ran out.
-  pub field probe_output = nil
-  field user = nil
-  field identity = nil
-  field known_hosts = nil
-  field command = nil
+  pub field probe_output @ (Str | nil) = nil
+  field user @ Str
+  field identity known_hosts @ Path
+  field command @ Str
 
-  def (init) self :port :user :identity :known_hosts :command
-    self.port = int $port
-    self.#user = str $user
-    self.#identity = Path $identity
-    self.#known_hosts = Path $known_hosts
-    self.#command = str $command
+  def (init)
+    self
+    :port @ Int
+    :user @ Str
+    :identity @ Path
+    :known_hosts @ Path
+    :command @ Str
+  do
+    self.port = port
+    self.#user = user
+    self.#identity = identity
+    self.#known_hosts = known_hosts
+    self.#command = command
 
   # The `ssh`/`scp` options every direct connection to the guest shares.
   #
   # Host key checking is `accept-new` rather than `no` so that a key change
   # after first contact is still an error.
-  def options self
+  def options self -> Array[Str]
     $
       -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new
       -o UserKnownHostsFile=$self.#known_hosts
 
-  # Runs `command` in the guest over `ssh`. Trailing keyword arguments are
-  # passed through to `run`.
-  def exec self command ...options
+  # Runs `command` in the guest over `ssh` as `cli` runs a host program,
+  # returning its standard output.
+  def exec self command @ Str -> Str
     let flags = self.#options()
-    run ssh -T -e none -a ...flags
+    cli ssh -T -e none -a ...flags
       -l $self.#user -p $self.port -i $self.#identity
       -- 127.0.0.1 $command
-      ...options
 
   # Polls `probe` until it succeeds.
   #
@@ -849,7 +907,7 @@ class Guest
   # Windows install polled for an hour under a progress display would be
   # nothing but those. The last one is kept in `probe_output` instead, where a
   # wait that ran out of time can report it.
-  def wait self probe
+  def wait self probe @ (() -> Value)
     while true
       let output = StrBuf()
       # An SSH transport that is not up yet fails as a nonzero `ssh` exit; a
@@ -866,14 +924,9 @@ class Guest
         self.probe_output = output.freeze().trim()
         time.sleep $READY_SLEEP
 
-  # Runs `command` over `ssh`, discarding its standard output. The probe form
-  # of `exec`: only whether it succeeded is of interest. Standard error is
-  # left alone for `wait` to capture.
-  def probe_exec self command
-    self.#exec $command stdout: $null
-
   # The probe `probe` names, as the function the waits below poll. It raises if
-  # the guest does not answer; standard error is the caller's to capture.
+  # the guest does not answer, and prints why to the console for the caller to
+  # capture.
   #
   # | Value          | Answers when |
   # | -------------- | ------------------------------------------------------ |
@@ -887,22 +940,23 @@ class Guest
   # all under Windows OpenSSH's `cmd.exe`, so it is only usable on a guest
   # whose VFS does not exist yet — exactly the cloud-init path, where the
   # payload is installed over SSH after the wait returns.
-  def probe_for self probe
-    if (probe == :VFS:)
-      do self.with do
-        nil
-    else if (probe == :CLOUD_INIT:)
-      do self.#probe_exec "test -f $(shlex.quote READY_PATH)"
-    else
-      do self.#probe_exec "true"
+  def probe_for self probe @ Probe -> (() -> Value)
+    match probe
+      :VFS: do
+        do self.with do
+          nil
+      :CLOUD_INIT: do
+        do self.#exec "test -f $(shlex.quote READY_PATH)"
+      :SSH: do
+        do self.#exec "true"
 
   # Waits until the guest answers the probe `probe` names.
-  pub def wait_for self probe
+  pub def wait_for self probe @ Probe
     self.#wait $ self.#probe_for $probe
 
   # Waits until the guest stops answering it instead — the near side of a
   # reboot, whose far side is `wait_for` again.
-  pub def wait_gone self probe
+  pub def wait_gone self probe @ Probe
     let probe = self.#probe_for $probe
     while true
       let output = StrBuf()
@@ -916,29 +970,37 @@ class Guest
       time.sleep $READY_SLEEP
 
   # Copies one local file into the guest with `scp`.
-  pub def send self source destination
+  pub def send self source@Path destination@Str
     let flags = self.#options()
-    run scp -q ...flags
+    cli scp -q ...flags
       -P $self.port -i $self.#identity
       -- $source "$(self.#user)@127.0.0.1:$destination"
+    nil
 
   # Copies one file out of the guest with `scp`. The counterpart to `send`.
-  pub def fetch self source destination
+  pub def fetch self source@Str destination@Path
     let flags = self.#options()
-    run scp -q ...flags
+    cli scp -q ...flags
       -P $self.port -i $self.#identity
       -- "$(self.#user)@127.0.0.1:$source" $destination
+    nil
 
   # Copies `payload` into the guest and unpacks it.
-  pub def install_payload self payload
+  pub def install_payload self payload @ Path
     self.send $payload $PAYLOAD_PATH
     let dir = shlex.quote (payload_directory self.#user)
     let archive = shlex.quote $PAYLOAD_PATH
     self.#exec "mkdir -p $dir && tar -xzf $archive -C $dir && rm -f $archive"
+    nil
 
   # Runs `block` in the guest's VFS context, in `cd:` and with `env:` applied
   # to the environment.
-  pub def with self block :cd = nil :env = {}
+  pub def with[R]
+    self
+    block @ (() -> R)
+    :cd @ (Str | Path | nil) = nil
+    :env @ BaseDict[Str | Sym, Value] = {}
+  do -> R
     ssh.with 127.0.0.1 $block
       user: $self.#user
       port: $self.port
@@ -948,12 +1010,13 @@ class Guest
       host_key: :ACCEPT_NEW:
       batch: true
       identities_only: true
-      :cd
+      if (cd != nil)
+        cd: $cd
       :env
 
   # The `<dolang:vm>` elements recording how to reach this guest — the form
   # `guest_from_metadata` reads back.
-  pub def to_metadata self
+  pub def to_metadata self -> Array[xml.Element]
     $
       $ xml.Element ssh_port (str self.port)
       $ xml.Element ssh_user $self.#user
@@ -963,7 +1026,7 @@ class Guest
 
 # Reads a `Guest` out of a domain's `<dolang:vm>` metadata subtree, which is
 # where `create` recorded it.
-def guest_from_metadata metadata
+def guest_from_metadata metadata @ (xml.Element | nil) -> Guest
   if !metadata
     throw std.ValueError "domain has no dolang:vm metadata"
   let port = metadata_value $metadata ssh_port
@@ -974,7 +1037,12 @@ def guest_from_metadata metadata
   if (port == nil || user == nil || identity == nil ||
       known_hosts == nil || command == nil)
     throw std.ValueError "domain has incomplete dolang:vm metadata"
-  Guest :port :user :identity :known_hosts :command
+  Guest
+    port: $int(port)
+    :user
+    identity: $Path(identity)
+    known_hosts: $Path(known_hosts)
+    :command
 
 # Everything that describes a domain to be created, with the libvirt XML
 # document as its serialized form.
@@ -983,13 +1051,23 @@ def guest_from_metadata metadata
 # single value, instead of threading a dozen positional arguments through to
 # the emitter. It also makes the port-retry loop a mutate-and-re-emit rather
 # than a re-derivation of the whole document.
+#[final]
 class DomainConfig
-  pub field name
+  pub field name @ Str
   # The `Guest` this domain will be reachable as, whose `port` `create`
   # reassigns between definition attempts.
-  pub field guest
-  field profile memory vcpus overlay media nvram nvram_format tpm_state
-  field os arch disk_boot app workdir cache io
+  pub field guest @ Guest
+  field profile @ Profile
+  field memory vcpus @ Int
+  field overlay workdir @ Path
+  field media @ Array[Medium]
+  field nvram tpm_state @ (Path | nil)
+  field nvram_format @ (Str | nil)
+  field os @ GuestOs
+  field arch @ GuestArch
+  field disk_boot @ (Int | nil)
+  field app @ Str
+  field cache io @ (Str | nil)
 
   # `source` carries everything about the guest that is not a property of this
   # host or this run: what OS and architecture it is, what disk and media it
@@ -998,51 +1076,60 @@ class DomainConfig
   # overrides on top of that; everything else is where this domain's files go.
   def (init)
     self
-    :name :source :overlay :app :workdir :identity
-    :nvram = nil :tpm_state = nil :memory = nil
-    :vcpus = nil :cache = nil :io = DEFAULT_DISK_IO
+    :name @ Str
+    :source @ Source
+    :overlay @ Path
+    :app @ Str
+    :workdir @ Path
+    :identity @ Path
+    :nvram @ (Path | nil) = nil
+    :tpm_state @ (Path | nil) = nil
+    :memory @ (Int | nil) = nil
+    :vcpus @ (Int | nil) = nil
+    :cache @ (DiskCache | nil) = nil
+    :io @ (DiskIo | nil) = DEFAULT_DISK_IO
   do
     self.name = require_name $name
     self.#os = source.os
     self.#arch = source.arch
-    self.#profile = source.profile
+    let profile = source.profile
+    self.#profile = profile
     # The caller's override, then what a restored bundle was built with, then
     # what this OS calls for.
-    self.#memory = int (memory || source.memory || self.#profile.memory)
-    self.#vcpus = int (vcpus || source.vcpus || self.#profile.vcpus)
-    self.#app = str $app
-    self.#workdir = Path $workdir
+    self.#memory = (memory || source.memory || profile.memory)
+    self.#vcpus = (vcpus || source.vcpus || profile.vcpus)
+    self.#app = app
+    self.#workdir = workdir
     # Built here rather than handed in: everything it needs is either on the
     # source or derived from the work directory, and the port is this class's
     # to reassign when libvirt refuses the one it picked.
     self.guest = Guest
       port: (rand.int PORT_START PORT_END)
       user: $source.user
-      identity: $(Path(identity).absolute())
-      known_hosts: $((self.#workdir / "known_hosts").absolute())
+      identity: $identity.absolute()
+      known_hosts: $((workdir / "known_hosts").absolute())
       command: $source.command
     # Every path this document names is made absolute here rather than trusted
     # as given. QEMU resolves a disk source in its own working directory, not
     # in the caller's, so a relative one — an `installer:` named as
     # `./win11.iso`, say — is reported at domain start as a storage file that
     # does not exist, naming a path that plainly does.
-    self.#overlay = Path(overlay).absolute()
+    self.#overlay = overlay.absolute()
     # A domain reconstituted from a bundle has no media: it was provisioned
     # once, before it was exported, so there is no seed for cloud-init to read
     # and no installer left to boot.
-    self.#media = []
-    for entry = source.media
-      let path = Path(entry.path).absolute()
-      let attached = Struct :path boot: $entry.boot
-      self.#media.push $attached
-    if (self.#media.len > MEDIA_TARGETS.len)
+    let media @ Array[Medium] = []
+    for :path :boot = source.media
+      media.push (path: path.absolute(), :boot)
+    if (media.len > MEDIA_TARGETS.len)
       throw std.ValueError "at most $(MEDIA_TARGETS.len) media may be attached"
-    self.#nvram = (nvram != nil && Path(nvram).absolute() || nil)
+    self.#media = media
+    self.#nvram = (nvram != nil && nvram.absolute() || nil)
     self.#nvram_format = source.nvram_format
-    self.#tpm_state = (tpm_state != nil && Path(tpm_state).absolute() || nil)
-    if (self.#profile.firmware == :EFI_SECURE: && self.#nvram == nil)
+    self.#tpm_state = (tpm_state != nil && tpm_state.absolute() || nil)
+    if (profile.firmware == :EFI_SECURE: && nvram == nil)
       throw std.ValueError "nvram: is required for os: $(self.#os)"
-    if (self.#profile.tpm != nil && self.#tpm_state == nil)
+    if (profile.tpm != nil && tpm_state == nil)
       throw std.ValueError "tpm_state: is required for os: $(self.#os)"
     # UEFI boot ordering is per device: the media that installs the guest boots
     # first, and the disk it writes boots after it, so that the same domain
@@ -1050,18 +1137,18 @@ class DomainConfig
     # profile keeps `<boot dev="hd">` instead, which libvirt will not accept
     # alongside per-device orders.
     self.#disk_boot = nil
-    if (self.#profile.firmware == :EFI_SECURE:)
+    if (profile.firmware == :EFI_SECURE:)
       let last = 0
-      for entry = self.#media
-        if (entry.boot != nil && entry.boot > last)
-          last = entry.boot
+      for path: _ :boot = media
+        if (boot != nil && boot > last)
+          last = boot
       self.#disk_boot = (last + 1)
     self.#cache = require_disk_mode $cache $DISK_CACHE_MODES cache
     self.#io = require_disk_mode $io $DISK_IO_MODES io
 
   # The `<os>` element: firmware selection, and on a BIOS profile the boot
   # device.
-  def os_node self
+  def os_node self -> xml.Element
     let Element = xml.Element
     let profile = self.#profile
     let secure = (profile.firmware == :EFI_SECURE:)
@@ -1069,23 +1156,23 @@ class DomainConfig
     # features rather than naming one, so the document does not encode this
     # host's OVMF paths. libvirt fills in the loader, the NVRAM template and
     # both formats on define; `dumpxml` is what reports which it chose.
-    let os_attrs = if secure
-      {firmware: "efi"}
-    else
-      {}
-    let type_attrs = $
+    let os_attrs @ Attrs = $
+      if secure
+        firmware: efi
+    let machine = profile.machine
+    let type_attrs @ Attrs = $
       arch: $str(self.#arch).lower()
-      if (profile.machine != nil)
-        machine: $profile.machine
+      if (machine != nil)
+        machine: $machine
     # `format` is written only when restoring a variable store this module
     # exported, where the file already exists and libvirt has no template to
     # infer its format from. On a fresh define it is left out, so libvirt picks
     # the template and reports both formats in `dumpxml` — which is where the
     # exported format came from in the first place.
-    let nvram_attrs = if (self.#nvram_format != nil)
-      {format: self.#nvram_format}
-    else
-      {}
+    let format = self.#nvram_format
+    let nvram_attrs @ Attrs = $
+      if (format != nil)
+        :format
     Element os attrs: $os_attrs
       $ Element type hvm attrs: $type_attrs
       if secure
@@ -1097,7 +1184,7 @@ class DomainConfig
         $ Element boot attrs: {dev: "hd"}
 
   # The domain's disks: the overlay, then each attached medium as a cdrom.
-  def disk_nodes self overlay_driver
+  def disk_nodes self overlay_driver @ Attrs -> Array[xml.Element]
     let Element = xml.Element
     let overlay = Element disk attrs: {type: "file", device: "disk"}
       $ Element driver attrs: $overlay_driver
@@ -1105,29 +1192,33 @@ class DomainConfig
       $ Element target attrs: {dev: "vda", bus: "virtio"}
       if (self.#disk_boot != nil)
         $ Element boot attrs: {order: str(self.#disk_boot)}
-    let nodes = [overlay]
+    let nodes @ Array[xml.Element] = [overlay]
     let index = 0
-    for entry = self.#media
+    for :path :boot = self.#media
       let cdrom = Element disk attrs: {type: "file", device: "cdrom"}
         $ Element driver attrs: {name: "qemu", type: "raw"}
-        $ Element source attrs: {file: str(entry.path)}
+        $ Element source attrs: {file: str(path)}
         $ Element target attrs: {dev: MEDIA_TARGETS[index], bus: "sata"}
         $ Element readonly
-        if (entry.boot != nil)
-          $ Element boot attrs: {order: str(entry.boot)}
+        if (boot != nil)
+          $ Element boot attrs: {order: str(boot)}
       nodes.push $cdrom
       index = (index + 1)
     nodes
 
   # The libvirt domain document for this configuration.
-  pub def to_xml self
+  pub def to_xml self -> xml.Element
     # Locally aliased so the tree below reads like the XML it emits.
     let Element = xml.Element
     let profile = self.#profile
+    let machine = profile.machine
+    let tpm = profile.tpm
+    let cache = self.#cache
+    let io = self.#io
 
     # Only the overlay carries the tuning options: media is a read-only ISO
     # read once at boot, so its driver has nothing to gain from them.
-    let overlay_driver = $
+    let overlay_driver @ Attrs = $
       name: "qemu"
       type: "qcow2"
       # Without `discard`, qemu advertises no discard feature to the guest at
@@ -1142,10 +1233,10 @@ class DomainConfig
       # the guest still reads zeros and `export` still flattens correctly.
       discard: "unmap"
       detect_zeroes: "unmap"
-      if (self.#cache != nil)
-        cache: $self.#cache
-      if (self.#io != nil)
-        io: $self.#io
+      if (cache != nil)
+        :cache
+      if (io != nil)
+        :io
 
     Element domain attrs: {type: "kvm"}
       $ Element name $self.name
@@ -1203,7 +1294,7 @@ class DomainConfig
           $ Element video
             $ Element model attrs: {type: "vga"}
           $ Element input attrs: {type: "tablet", bus: "usb"}
-        if (profile.tpm != nil)
+        if (tpm != nil)
           $ Element tpm attrs: {model: "tpm-crb"}
             $ Element backend attrs: {type: "emulator", version: "2.0"}
               # libvirt launches swtpm as the session user and lets it keep its
@@ -1224,11 +1315,11 @@ class DomainConfig
           $ Element vcpus (str self.#vcpus)
           # Recorded so a restored bundle takes its machine shape from what it
           # was built as, rather than from whatever `Profile` says today.
-          if (profile.machine != nil)
-            $ Element machine $profile.machine
+          if (machine != nil)
+            $ Element machine $machine
           $ Element firmware (str(profile.firmware).lower())
-          if (profile.tpm != nil)
-            $ Element tpm (str(profile.tpm).lower())
+          if (tpm != nil)
+            $ Element tpm (str(tpm).lower())
           ...self.guest.to_metadata()
 
 # A read-only view over a libvirt domain document.
@@ -1240,13 +1331,13 @@ class DomainConfig
 # faithful parse of an expanded document back into a configuration, so none is
 # offered.
 class DomainXml
-  field document = nil
+  field document @ xml.Element
 
-  def (init) self document
+  def (init) self document @ xml.Element
     self.#document = document
 
   # The `<name>` text, validated as a usable domain name.
-  pub def name self
+  pub def name self -> Str
     if (self.#document.tag != "domain")
       throw std.ValueError "expected a libvirt <domain> document"
     let node = require_child $self.#document name
@@ -1255,7 +1346,7 @@ class DomainXml
 
   # The `<dolang:vm>` subtree `create` writes, or `nil` for a domain this
   # module did not create.
-  def vm self
+  def vm self -> (xml.Element | nil)
     for node = self.#document.traverse()
       if (type node xml.Element &&
           node.tag == "vm" &&
@@ -1265,22 +1356,11 @@ class DomainXml
 
   # The guest's SSH connection facts. Throws if the domain is not one of ours
   # or its metadata is incomplete.
-  pub def guest self
+  pub def guest self -> Guest
     guest_from_metadata $self.#vm()
 
-  # The guest OS this module recorded for the domain, or `nil` for a domain it
-  # did not create.
-  pub def os self
-    let metadata = self.#vm()
-    if !metadata
-      return nil
-    let os = metadata_value $metadata os
-    if (os == nil)
-      return nil
-    sym $os.upper()
-
   # The `<source file=...>` of the first disk with the given `device`.
-  def disk_source self device
+  def disk_source self device @ Str -> (Str | nil)
     let devices = find_child $self.#document devices
     if !devices
       return nil
@@ -1300,7 +1380,7 @@ class DomainXml
   # The format matters because it is not guessable: this host's secure-boot
   # template is a qcow2, but a raw one is equally legal, and a restored
   # varstore attached without saying which is read wrong.
-  pub def nvram_source self
+  pub def nvram_source self -> (NvramSource | nil)
     let os = find_child $self.#document os
     if !os
       return nil
@@ -1310,11 +1390,10 @@ class DomainXml
     let path = node_text(node).trim()
     if (path == "")
       return nil
-    Struct path: $(Path(path).absolute()) format: $(node.attrs.get "format")
+    (path: Path(path).absolute(), format: node.attrs.get("format"))
 
-  # The vTPM's state directory and the device it belongs to, or `nil` for a
-  # domain with no TPM.
-  pub def tpm_state self
+  # The vTPM's state directory, or `nil` for a domain with no TPM.
+  pub def tpm_state self -> (Path | nil)
     let devices = find_child $self.#document devices
     if !devices
       return nil
@@ -1330,14 +1409,11 @@ class DomainXml
     let path = source.attrs.get "path"
     if (path == nil)
       return nil
-    Struct
-      path: $(Path(path).absolute())
-      model: $(tpm.attrs.get "model")
-      version: $(backend.attrs.get "version")
+    Path(path).absolute()
 
   # Every file-backed disk source, in document order.
-  pub def disk_sources self
-    let sources = []
+  pub def disk_sources self -> Array[Str]
+    let sources @ Array[Str] = []
     let devices = find_child $self.#document devices
     if !devices
       return sources
@@ -1359,7 +1435,7 @@ class DomainXml
   # this module that grew `Domain.export`, so a domain defined by an older one
   # is reported as unexportable rather than silently exported with holes in its
   # manifest.
-  pub def bundle_info self
+  pub def bundle_info self -> BundleInfo
     let metadata = self.#vm()
     if !metadata
       throw std.ValueError "domain has no dolang:vm metadata"
@@ -1378,21 +1454,23 @@ class DomainXml
     # it was built as. Absent from a domain defined before the module emitted
     # them, which restores under whatever its OS profile says today — the same
     # behavior that domain was created with.
-    Struct :app :os :arch :user :command
-      machine: $(metadata_value metadata "machine")
-      firmware: $(metadata_value metadata "firmware")
-      tpm: $(metadata_value metadata "tpm")
-      memory: (int memory)
-      vcpus: (int vcpus)
+    (
+      :app, :os, :arch, :user, :command,
+      machine: metadata_value(metadata, "machine"),
+      firmware: metadata_value(metadata, "firmware"),
+      tpm: metadata_value(metadata, "tpm"),
+      memory: int(memory),
+      vcpus: int(vcpus),
+    )
 
-  # The work directory and overlay of a domain this module manages, or `nil`
-  # if the domain is not ours or its recorded paths fail validation.
+  # The work directory of a domain this module manages, or `nil` if the domain
+  # is not ours or its recorded paths fail validation.
   #
   # Every condition here is a guard against removing something we did not
   # create: the domain must claim to be managed, its overlay must sit directly
   # in the recorded work directory, and that directory must live under the XDG
   # data home.
-  pub def cleanup_info self
+  pub def managed_workdir self -> (Path | nil)
     let metadata = self.#vm()
     if !metadata
       return nil
@@ -1407,10 +1485,10 @@ class DomainXml
       return nil
     if !path_within(workdir, xdg.data_home().absolute())
       return nil
-    Struct :workdir :source
+    workdir
 
   # The domain's single file-backed disk, which is what any export flattens.
-  pub def export_source self
+  pub def export_source self -> Path
     let sources = self.disk_sources()
     if (sources.len != 1)
       throw std.ValueError "expected exactly one file-backed domain disk; found $(sources.len)"
@@ -1419,12 +1497,12 @@ class DomainXml
   # Validates an export destination against the domain's own files: it must not
   # be the disk being exported, must not sit inside the managed work directory
   # (which `undefine` removes wholesale), and must not already exist.
-  pub def export_destination self destination source
+  pub def export_destination self destination@(Str | Path) source@Path -> Path
     let destination = Path(destination).absolute()
     if (source == destination)
       throw std.ValueError "export destination is the domain disk"
-    let cleanup = self.cleanup_info()
-    if (cleanup && path_within(destination, cleanup.workdir))
+    let workdir = self.managed_workdir()
+    if (workdir && path_within(destination, workdir))
       throw std.ValueError "export destination is inside the managed domain work directory"
     if destination.exists()
       throw std.ValueError "export destination already exists: $destination"
@@ -1439,49 +1517,51 @@ class DomainXml
   # do not model yet. `virsh dumpxml` output is deliberately not used in its
   # place: that is libvirt's expansion of the definition — a generated uuid,
   # filled-in defaults, rewritten devices — rather than what this module wrote.
-  pub def generated_xml self
-    let cleanup = self.cleanup_info()
-    if !cleanup
+  pub def generated_xml self -> (Str | nil)
+    let workdir = self.managed_workdir()
+    if !workdir
       return nil
-    let path = (cleanup.workdir / "domain.xml")
+    let path = (workdir / "domain.xml")
     if !path.exists()
       return nil
     path.read()
 
-# Everything a domain can be asked to do, including the parts `create` needs
-# and a caller has no business calling.
+# Everything a domain can be asked to do, including the parts `create_domain`
+# needs and a caller has no business calling.
 #
 # Do has no module-private class members: `pub` is the only visibility that
-# module-level code like `create` can reach, so a single class would have to
-# publish its own scaffolding — `send_key`, the port hunt, the teardown of a
-# half-built domain — as API. The public `Domain` below is a facade over this
-# one, and forwards exactly what is meant to be API. Nothing here is
-# documented, because this class is not `pub`.
+# module-level code like `create_domain` can reach, so a single class would
+# have to publish its own scaffolding — `send_key`, `add`, the waits — as API.
+# The public `Domain` below is a facade over this one, and forwards exactly
+# what is meant to be API. Nothing here is documented, because this class is
+# not `pub`.
+#[final]
 class DomainImpl
-  pub field name = nil
-  pub field connect_uri = nil
+  pub field name @ Str
+  pub field connect_uri @ Str
   # The `Guest` read out of `<dolang:vm>`, cached — see `guest`.
-  field guest_handle = nil
+  field guest_handle @ (Guest | nil) = nil
 
-  # `name` may be `nil`, for the impl `create` builds before it has derived
-  # one; `create` fills both fields in as soon as it has them.
-  def (init) self name connect_uri
-    self.name = (name == nil && nil || require_name(name))
-    self.connect_uri = str $connect_uri
-    self.#guest_handle = nil
+  def (init) self name@Str connect_uri@Str
+    self.name = require_name $name
+    self.connect_uri = connect_uri
 
-  # How to reach this domain's guest, out of the metadata `create` recorded.
+  # How to reach this domain's guest, out of the metadata `create_domain`
+  # recorded.
   #
   # Read once and kept: none of it changes after the domain is defined, and a
   # `dumpxml` per attempt would make polling for the guest expensive.
-  def guest self
-    if (self.#guest_handle == nil)
-      self.#guest_handle = self.#xml().guest()
-    self.#guest_handle
+  def guest self -> Guest
+    let cached = self.#guest_handle
+    if (cached != nil)
+      return cached
+    let guest = self.#xml().guest()
+    self.#guest_handle = guest
+    guest
 
   # Parses the domain's current libvirt XML.
-  pub def dumpxml self
-    let stderr = []
+  pub def dumpxml self -> xml.Element
+    let stderr @ Array[Str] = []
     let source = try
       capture_virsh $self.connect_uri $stderr dumpxml $self.name
     catch proc.Error: e
@@ -1492,12 +1572,12 @@ class DomainImpl
     (xml.decode source).root
 
   # A view over the domain's current libvirt XML.
-  def xml self
+  def xml self -> DomainXml
     DomainXml $self.dumpxml()
 
   # Runs `virsh domstate`, mapping a missing domain onto `NoDomainError`.
-  def domstate self ...options
-    let stderr = []
+  def domstate self *options @ Str -> Str
+    let stderr @ Array[Str] = []
     try
       capture_virsh $self.connect_uri $stderr domstate ...options $self.name
     catch proc.Error: e
@@ -1506,7 +1586,7 @@ class DomainImpl
       throw e
 
   # Returns the normalized libvirt state.
-  pub def state self
+  pub def state self -> (DomainState | Str)
     normalized_state $self.#domstate()
 
   # The domain's state together with libvirt's reason for it, as
@@ -1515,7 +1595,7 @@ class DomainImpl
   #
   # The reason is runtime state rather than a property of the definition, so it
   # reads back as `"unknown"` after libvirtd restarts.
-  def state_reason self
+  def state_reason self -> (state: (DomainState | Str), reason: Str)
     let text = self.#domstate("--reason").trim()
     let parts = [...text.split "(" limit: 1]
     let state = normalized_state $parts[0]
@@ -1523,15 +1603,17 @@ class DomainImpl
       parts[1].replace(")", "").trim()
     else
       "unknown"
-    Struct :state :reason
+    (:state, :reason)
 
   # Starts the domain.
   pub def start self
     virsh $self.connect_uri start $self.name
+    nil
 
   # Force-stops the domain without undefining it.
   pub def destroy self
     virsh $self.connect_uri destroy $self.name
+    nil
 
   # Requests a graceful shutdown and waits until the domain is shut off.
   pub def shutdown self
@@ -1548,6 +1630,7 @@ class DomainImpl
   # Asks the guest to shut down, through libvirt and nothing else.
   def request_shutdown self
     virsh $self.connect_uri shutdown $self.name
+    nil
 
   # Asks the guest to reboot, without waiting for it to come back: what "back"
   # means is the caller's probe, not the domain's state, which never leaves
@@ -1557,10 +1640,11 @@ class DomainImpl
     if !(state == :RUNNING: || state == :BLOCKED: || state == :IDLE:)
       throw std.StateError "cannot reboot domain in state $state"
     virsh $self.connect_uri reboot $self.name
+    nil
 
   # Writes a screenshot of the domain's graphical console to `destination`,
   # which is created along with any missing parent directories.
-  pub def screenshot self destination -> Path
+  pub def screenshot self destination @ (Str | Path) -> Path
     let destination = Path(destination).absolute()
     let parent = destination.parent
     if parent
@@ -1588,9 +1672,7 @@ class DomainImpl
       if (press > 0 && interval != nil)
         time.sleep $interval
       try
-        virsh $self.connect_uri send-key $self.name --codeset linux $key
-          stdout: $null
-          stderr: $null
+        capture_virsh $self.connect_uri [] send-key $self.name --codeset linux $key
       catch proc.Error: _
         nil
 
@@ -1618,7 +1700,7 @@ class DomainImpl
     :probe @ Probe = :VFS:
     # Seconds to wait; unbounded when
     # omitted.
-    :timeout @ (Int | Float) = nil
+    :timeout @ (Int | Float | nil) = nil
     # Directory for a console dump when
     # the wait expires.
     #
@@ -1626,7 +1708,7 @@ class DomainImpl
     # successive runs do not overwrite each other's evidence. Capture is best
     # effort: a guest with no graphics has no console to dump, and a capture
     # failure does not replace the timeout.
-    :screenshot_dir @ (Str | Path) = nil
+    :screenshot_dir @ (Str | Path | nil) = nil
   do
     let guest = self.#guest()
     try
@@ -1667,7 +1749,12 @@ class DomainImpl
   # stops answering has not started rebooting, and the reason for that is worth
   # reporting as a timeout of its own rather than folding into the wait for it
   # to return.
-  pub def reboot_ready self :probe@Probe = :VFS: :timeout = nil :screenshot_dir = nil
+  pub def reboot_ready
+    self
+    :probe @ Probe = :VFS:
+    :timeout @ (Int | Float | nil) = nil
+    :screenshot_dir @ (Str | Path | nil) = nil
+  do
     progress.show message: "reboot guest" icon: 🔁 do |_|
       self.reboot()
       try
@@ -1687,15 +1774,15 @@ class DomainImpl
   # taken from one is not a gold image but a corrupted one. `force` exists
   # because libvirt forgets the reason when it restarts, reporting `"unknown"`
   # for a domain that did shut down cleanly.
-  def require_clean_shutoff self force
-    let info = self.#state_reason()
-    if (info.state != :SHUTOFF:)
+  def require_clean_shutoff self force @ Bool
+    let :state :reason = self.#state_reason()
+    if (state != :SHUTOFF:)
       throw std.StateError "domain must be shut off before exporting its disk"
-    if (!force && info.reason != "shutdown")
-      let message = "domain did not shut down cleanly (reason: $(info.reason)); pass force: true to export anyway"
+    if (!force && reason != "shutdown")
+      let message = "domain did not shut down cleanly (reason: $reason); pass force: true to export anyway"
       throw std.StateError $message
   # Flattens the shut-off domain's file-backed disk into a standalone qcow2.
-  pub def export_disk self destination :compress = false
+  pub def export_disk self destination@(Str | Path) :compress@Compress = false -> Path
     let compression = require_compression $compress
     if (self.state() != :SHUTOFF:)
       throw std.StateError "domain must be shut off before exporting its disk"
@@ -1703,7 +1790,7 @@ class DomainImpl
     let source = document.export_source()
     let destination = document.export_destination $destination $source
     progress.show message: "export disk" icon: 💾 do |_|
-      with_temp_dir parent: $destination.parent do |staging|
+      with_temp_dir parent: (destination.parent || Path(".")) do |staging|
         let temporary = (staging / "disk.qcow2")
         if compression
           cli qemu-img convert -q -c -o compression_type=$compression
@@ -1715,32 +1802,38 @@ class DomainImpl
         temporary.rename $destination
     destination
   # Writes the bundle. See `Domain.export` for what one holds and why.
-  pub def export self destination :compress = true :force = false
+  pub def export
+    self
+    destination @ (Str | Path)
+    :compress @ Compress = true
+    :force @ Bool = false
+  do -> Path
     self.#require_clean_shutoff $force
     let document = self.#xml()
     let info = document.bundle_info()
     let source = document.export_source()
     let destination = document.export_destination $destination $source
     progress.show message: "export $(self.name)" icon: 📦 do |_|
-      with_temp_dir parent: $destination.parent do |staging|
+      with_temp_dir parent: (destination.parent || Path(".")) do |staging|
         let disk = (staging / DISK_MEMBER)
         self.export_disk $disk :compress
-        let members = []
-        members.push $ bundle_member :disk: $disk $DISK_MEMBER format: (image_format disk)
+        let members @ Array[PackedMember] = []
+        members.push (kind: "disk", path: disk, name: DISK_MEMBER, format: image_format(disk))
         # The firmware variable store and the vTPM state go in beside the disk.
         # Both are quiescent — `require_clean_shutoff` ran — and without them a
         # restored guest loses what it sealed into them: its boot entries, its
         # enrolled secure boot keys, and anything the TPM was holding.
         let nvram = document.nvram_source()
-        if nvram
-          members.push $ bundle_member :nvram: $nvram.path $NVRAM_MEMBER format: $nvram.format
+        if (nvram != nil)
+          let :path :format = nvram
+          members.push (kind: "nvram", :path, name: NVRAM_MEMBER, :format)
         let tpm = document.tpm_state()
-        if tpm
+        if (tpm != nil)
           # A directory of several files, so it travels as a tar: one member,
           # one digest, and the modes swtpm gave it preserved.
           let archive = (staging / TPM_MEMBER)
-          transfer.pack $tpm.path $archive format: :TAR:
-          members.push $ bundle_member :tpm: $archive $TPM_MEMBER
+          transfer.pack $tpm $archive format: :TAR:
+          members.push (kind: "tpm", path: archive, name: TPM_MEMBER, format: nil)
         let bundle = (staging / "bundle")
         write_bundle $bundle $members $info document.generated_xml()
         if destination.exists()
@@ -1754,7 +1847,7 @@ class DomainImpl
   # brings up sshd itself, so the VFS every other transfer runs over does not
   # exist yet. An installed or restored guest arrives with the payload already
   # on its disk.
-  pub def install_payload self archive
+  pub def install_payload self archive @ Path
     self.#guest().install_payload $archive
 
   # Performs one `add:` step, on the host VFS: uploads what `source:` resolved
@@ -1762,7 +1855,7 @@ class DomainImpl
   #
   # The artifact was resolved before the domain existed, by `prefetch_artifacts`,
   # so the resolve here is the memo.
-  def add self step app
+  pub def add self step@Add app@Str
     let resolved = step.resolve $app
     if (type resolved Path)
       return self.upload $resolved $step.target chmod: $step.chmod
@@ -1773,12 +1866,13 @@ class DomainImpl
       # `upload`.
       let target = Path $step.target
       target.write $resolved
-      if (step.chmod != nil)
-        target.update_metadata mode: $step.chmod
+      let chmod = step.chmod
+      if (chmod != nil)
+        target.update_metadata mode: $chmod
 
   # Copies one local file into the domain.
   # `chmod:` sets `dest`s mode if given
-  pub def upload self source dest :chmod = nil
+  pub def upload self source@(Str | Path) dest@(Str | Path) :chmod@(Int | Mode | nil) = nil
     let source = Path $source
     let message = (source.name || str source)
     source.open rb do |input|
@@ -1796,7 +1890,7 @@ class DomainImpl
             target.update_metadata mode: $chmod
 
   # Copies one file from the domain to the local VFS.
-  pub def download self source dest
+  pub def download self source@(Str | Path) dest@(Str | Path)
     let dest = Path $dest
     dest.open wb do |output|
       self.with do
@@ -1810,273 +1904,288 @@ class DomainImpl
 
   # Undefines the domain and removes a validated managed overlay.
   pub def undefine self
-    let cleanup = self.#xml().cleanup_info()
+    let workdir = self.#xml().managed_workdir()
     virsh_undefine $self.connect_uri $self.name
-    if cleanup
-      cleanup.workdir.remove all: true ignore: true
-
-  # `create` is the only caller. Defaults live here so its public wrapper can
-  # preserve every option in the variadic argument stream.
-  pub def create
-    self
-    :image = nil :bundle = nil :name = nil :os = nil :arch = nil
-    :app = nil :user = nil :dolang = nil :memory = nil :vcpus = nil
-    :disk_size = nil :cache = nil :init = nil :wait_timeout = nil
-    :io = DEFAULT_DISK_IO :connect_uri = DEFAULT_CONNECT_URI ...options
-  do
-    let extra = parse_extra_options $options
-    let post = extra.post
-    let installers = extra.installers
-    let drivers = extra.drivers
-    # Three provisioning sources, one at a time: an `image:` to lay an overlay
-    # over, a `bundle:` to restore, or `installer:` media to install from.
-    let given = []
-    if (image != nil)
-      given.push "image:"
-    if (bundle != nil)
-      given.push "bundle:"
-    if (installers.len > 0)
-      given.push "installer:"
-    if (given.len == 0)
-      throw std.ValueError "image:, bundle:, or installer: is required"
-    if (given.len > 1)
-      throw std.ValueError "$(", ".join(given)) are mutually exclusive"
-    if (drivers.len > 0 && installers.len == 0)
-      throw std.ValueError "drivers: is not valid without installer:"
-    if (wait_timeout != nil)
-      if !(type wait_timeout Int || type wait_timeout Float)
-        throw std.TypeError "wait_timeout: expected Int or Float"
-      if (wait_timeout <= 0)
-        throw std.ValueError "wait_timeout: expected a positive number of seconds"
-    app = normalized_app $app
-    self.name = require_name(name || "$app-$(rand.string 8)")
-    self.connect_uri = str $connect_uri
-    let name = self.name
-    let root = data_root $app
-
-    # Validated up front, before anything is defined or written, so a bad
-    # argument is reported without leaving a domain behind.
-    let staged = nil
-    if (bundle != nil)
-      for k v = {:os, :arch, :user, :dolang, :init}
-        if (v != nil)
-          throw std.ValueError "$k is not valid together with bundle"
-      bundle = parse_artifact $bundle bundle
-    else
-      os = require_os $os
-      arch = require_arch $arch
-      let requested = os_profile $os
-      requested.require_host installing: true
-      let unattended = requested.unattended()
-      if (installers.len > 0 && !unattended)
-        throw std.ValueError "installer: is not valid for os: $os"
-      user = require_name (user || "ci")
-      dolang = dolang_artifact $dolang $os $arch
-      if unattended
-        # `init:` names cloud-init provisioning semantics, and there is no
-        # cloud-init here. The equivalent is the ordered
-        # `add:`/`run:`/`reboot` step list, which runs against a guest that is
-        # already up rather than against one that is still booting.
-        if (init != nil)
-          throw std.ValueError "init: is cloud-init provisioning; use add:/run:/reboot steps for os: $os"
-        # `Domain.upload`'s `chmod:` is a Unix file mode, and there is nothing
-        # for one to mean on an NTFS destination. Rejected here rather than at
-        # the upload itself, which happens with the domain already up and the
-        # install already paid for.
-        for action = post
-          if (action.kind == :add: && action.add.chmod != nil)
-            throw std.ValueError "add: chmod: is not supported for os: $os"
-      else
-        staged = parse_init $init
-      if (image != nil)
-        image = parse_artifact $image image
-      # A bundle's disk is already sized for the guest built around it, so an
-      # overlay over one inherits that size unless `disk_size:` says otherwise.
-      if (disk_size == nil)
-        disk_size = requested.disk_size
-
-    let workdir = (root / "domains" / name).absolute()
-    try
-      attach $name :connect_uri
-      throw std.ValueError "libvirt domain already exists: $name"
-    catch NoDomainError: _
-      nil
-
-    # Everything this run has to fetch, fetched now: after the checks that cost
-    # nothing, and before the first thing that would have to be cleaned up.
-    let artifacts = []
-    if (bundle != nil)
-      artifacts.push $bundle
-    else
-      if (image != nil)
-        artifacts.push $image
-      artifacts.push $dolang
-      artifacts.push ...installers
-      artifacts.push ...drivers
-      if (staged != nil)
-        artifacts.push ...staged.write
-    for action = post
-      if (action.kind == :add:)
-        artifacts.push $action.add
-    prefetch_artifacts $artifacts $app
-
-    workdir.remove all: true ignore: true
-    workdir.create_dir all: true
-    # Where a wait that runs out dumps the guest console. Under the data root
-    # rather than the work directory, which the failure path removes wholesale: a
-    # screenshot deleted along with the domain it was taken of is no help in
-    # working out what the boot stopped at.
-    #
-    # Only a guest with a graphical console has one to dump; the rest pass `nil`
-    # and the wait skips it.
-    let shots = (root / "screenshots").absolute()
-
-    progress.show message: "create $name" icon: 🖥️ do |_|
-      let succeeded = false
-      try
-        let keys = ensure_key $root $app
-        let source = if (bundle != nil)
-          BundleSource :bundle :app :root :workdir
-        else if (installers.len > 0)
-          InstallerSource :installers :drivers :os :arch :user :dolang :keys :root :workdir :app
-        else
-          ImageSource :image :os :arch :app :user :staged :dolang :keys :root
-        # The source's, not `os:`'s: a bundle does not supply `os:` at all, and
-        # the shape it was built as is the one it has to be redefined with.
-        let profile = source.profile
-        let wait_seconds = (wait_timeout || profile.wait_timeout)
-
-        let overlay = progress.show message: "create disk" icon: 💾 do |_|
-          let overlay = (workdir / "disk.qcow2").absolute()
-          if (source.image == nil)
-            # An unattended install has nothing to lay an overlay over: Setup
-            # partitions and writes the disk itself, from blank.
-            cli qemu-img create -q -f qcow2 $overlay $disk_size
-          else if (disk_size != nil)
-            cli qemu-img create -q -f qcow2 -F $source.format -b $source.image $overlay $disk_size
-          else
-            cli qemu-img create -q -f qcow2 -F $source.format -b $source.image $overlay
-          overlay
-
-        # Both live in the workdir, which `undefine --nvram` and the failure path
-        # remove wholesale, so neither outlives the domain it belongs to and two
-        # domains never share one variable store. A restored bundle has already
-        # written its own copies to these paths; libvirt fills in a fresh
-        # variable store from its template for anything else.
-        let nvram = nil
-        if (profile.firmware == :EFI_SECURE:)
-          nvram = (workdir / "nvram.bin").absolute()
-        let tpm_state = nil
-        if (profile.tpm != nil)
-          tpm_state = (workdir / "tpm").absolute()
-          tpm_state.create_dir all: true
-
-        let config = DomainConfig
-          :name :source :overlay :app :workdir :cache :io :nvram :tpm_state
-          :memory :vcpus
-          identity: $keys.key.absolute()
-
-        progress.show message: "start domain" do |_|
-          # A forwarded port is only known to be free once libvirt has bound it,
-          # so a collision means re-emitting the document with a fresh one.
-          let started = false
-          for attempt = 0..PORT_ATTEMPTS
-            if (attempt > 0)
-              config.guest.port = rand.int $PORT_START $PORT_END
-            # Left in the work directory, which is where `DomainXml.generated_xml`
-            # reads it back at export time.
-            let path = (workdir / "domain.xml")
-            path.write $ xml.encode(xml.Document(config.to_xml()))
-            virsh $connect_uri define $path
-            let stderr = []
-            try
-              virsh $connect_uri start $name stderr: $stderr.prechomp()
-              started = true
-            catch proc.Error: e
-              try
-                virsh_undefine $connect_uri $name
-              catch _
-                nil
-              if (!address_in_use_error(stderr) || attempt == PORT_ATTEMPTS - 1)
-                echo $"\n".join(stderr)
-                throw e
-            if started
-              break
-          if !started
-            throw std.RuntimeError "could not allocate a forwarded SSH port"
-
-        # Only an install has a "press any key" prompt to answer. A restored
-        # bundle boots the disk it was exported from, with no media attached at
-        # all.
-        if (profile.boot_key && source.media.len > 0)
-          progress.show message: "boot install media" icon: ⌨️ do |_|
-            self.send_key $BOOT_KEY
-              repeat: $BOOT_KEY_PRESSES
-              interval: $BOOT_KEY_INTERVAL
-
-        # The first wait is also what proves libvirt recorded the `<dolang:vm>`
-        # metadata: the guest is read back out of the defined domain rather than
-        # reused from the local one, so a domain that lost it fails here instead
-        # of at the first `with`.
-        let screenshot_dir = (profile.graphics && shots || nil)
-        progress.show message: "wait for guest" icon: ☕ do |_|
-          self.wait_ready probe: $source.probe timeout: $wait_seconds :screenshot_dir
-        # Whatever this source still owes the guest — copying the payload in and
-        # waiting cloud-init out, finishing an unattended install, or nothing at
-        # all for a bundle whose guest was provisioned before it was exported. It
-        # runs before the caller's own steps, which may depend on any of it.
-        source.provision $self
-        for action = post
-          if (action.kind == :add:)
-            self.#add $action.add $app
-          else if (action.kind == :reboot:)
-            self.reboot_ready probe: $source.probe timeout: $wait_seconds :screenshot_dir
-          else
-            self.with do
-              action.block()
-          # Power state belongs to this module. A step that took the guest down
-          # is an error, not a case to tolerate — `reboot` exists precisely so
-          # that no step has to — and it is said here, where the step that did it
-          # is still named, rather than left to surface as the next step or the
-          # export failing for a reason that looks unrelated.
-          if (action.kind != :reboot:)
-            let state = self.state()
-            if !(state == :RUNNING: || state == :BLOCKED: || state == :IDLE:)
-              let kind = str(action.kind).lower()
-              throw std.StateError "$kind: step left the domain in state $state; use the reboot step"
-        succeeded = true
-        self
-      finally
-        if !succeeded
-          if keep_failed()
-            echo "$KEEP_FAILED_VAR is set: leaving domain $name and $workdir behind"
-          else
-            progress.show message: "clean up" icon: 🧹 do |_|
-              # Every step is best effort and silent: the error that got us here
-              # is the one worth reporting, and half of these are expected to
-              # fail on a domain that never got as far as being defined.
-              try
-                if (self.state() != :SHUTOFF:)
-                  virsh $connect_uri destroy $name
-                    stdout: $null
-                    stderr: $null
-              catch _
-                nil
-              try
-                virsh_undefine $connect_uri $name
-                  stdout: $null
-                  stderr: $null
-              catch _
-                nil
-              workdir.remove all: true ignore: true
-
+    if workdir
+      workdir.remove all: true ignore: true
 
   # Runs `block` in the domain's VFS context.
-  pub def with self block :cd = nil :env = {}
+  pub def with[R]
+    self
+    block @ (() -> R)
+    :cd @ (Str | Path | nil) = nil
+    :env @ BaseDict[Str | Sym, Value] = {}
+  do -> R
     let guest = self.#guest()
     if (self.state() != :RUNNING:)
       throw std.ValueError "libvirt domain is not running: $(self.name)"
     guest.with $block :cd :env
+
+# Creates, starts and provisions a domain, for `create`.
+#
+# Defaults live here so the public wrapper can preserve every option in the
+# variadic argument stream.
+def create_domain[I, O]
+  :image @ ArtifactSpec = nil
+  :bundle @ ArtifactSpec = nil
+  :name @ Str = nil
+  :os @ GuestOs = nil
+  :arch @ GuestArch = nil
+  :app @ Str = nil
+  :user @ Str = nil
+  :dolang @ DolangSpec = nil
+  :memory @ Int = nil
+  :vcpus @ Int = nil
+  :disk_size @ Str = nil
+  :cache @ DiskCache = nil
+  :init @ InitSpec = nil
+  :wait_timeout @ (Int | Float) = nil
+  :io @ DiskIo = DEFAULT_DISK_IO
+  :connect_uri @ Str = DEFAULT_CONNECT_URI
+  ...options @ DomainOptions[I, O]
+  <I
+  >O
+do -> DomainImpl
+  let :steps :installers :drivers = parse_options $options
+  # Three provisioning sources, one at a time: an `image:` to lay an overlay
+  # over, a `bundle:` to restore, or `installer:` media to install from.
+  let given @ Array[Str] = []
+  if (image != nil)
+    given.push "image:"
+  if (bundle != nil)
+    given.push "bundle:"
+  if (installers.len > 0)
+    given.push "installer:"
+  if (given.len == 0)
+    throw std.ValueError "image:, bundle:, or installer: is required"
+  if (given.len > 1)
+    throw std.ValueError "$(", ".join(given)) are mutually exclusive"
+  if (drivers.len > 0 && installers.len == 0)
+    throw std.ValueError "drivers: is not valid without installer:"
+  if (wait_timeout != nil && wait_timeout <= 0)
+    throw std.ValueError "wait_timeout: expected a positive number of seconds"
+  let app = normalized_app $app
+  let name = require_name(name || "$app-$(rand.string 8)")
+  let root = data_root $app
+  let workdir = (root / "domains" / name).absolute()
+
+  # Validated up front, before anything is defined or written, so a bad
+  # argument is reported without leaving a domain behind. Each source also
+  # names the artifacts it will consume, and is built from them in `prepare`
+  # once they are fetched.
+  let artifacts @ Array[Artifact | Add] = []
+  let prepare @ ((KeyPair) -> Source) = if (bundle != nil)
+    for k v = {:os, :arch, :user, :dolang, :init}
+      if (v != nil)
+        throw std.ValueError "$k is not valid together with bundle"
+    let restored = parse_artifact $bundle
+    artifacts.push $restored
+    do |_keys @ KeyPair| BundleSource bundle: $restored :app :root :workdir
+  else
+    let os = require_os $os
+    let arch = require_arch $arch
+    let requested = os_profile $os
+    requested.require_host installing: true
+    let unattended = requested.unattended()
+    if (installers.len > 0 && !unattended)
+      throw std.ValueError "installer: is not valid for os: $os"
+    let user = require_name (user || "ci")
+    let payload = dolang_artifact $dolang $os $arch
+    if unattended
+      # An unattended guest installs itself from media; there is no image for
+      # cloud-init to provision.
+      if (image != nil)
+        throw std.ValueError "image: is not valid for os: $os; use installer:"
+      # `init:` names cloud-init provisioning semantics, and there is no
+      # cloud-init here. The equivalent is the ordered
+      # `add:`/`run:`/`reboot` step list, which runs against a guest that is
+      # already up rather than against one that is still booting.
+      if (init != nil)
+        throw std.ValueError "init: is cloud-init provisioning; use add:/run:/reboot steps for os: $os"
+      # `Domain.upload`'s `chmod:` is a Unix file mode, and there is nothing
+      # for one to mean on an NTFS destination. Rejected here rather than at
+      # the upload itself, which happens with the domain already up and the
+      # install already paid for.
+      for step = steps
+        if (type step Add && step.chmod != nil)
+          throw std.ValueError "add: chmod: is not supported for os: $os"
+    # A bundle's disk is already sized for the guest built around it, so an
+    # overlay over one inherits that size unless `disk_size:` says otherwise.
+    if (disk_size == nil)
+      disk_size = requested.disk_size
+    if (image != nil)
+      let base = parse_artifact $image
+      let staged = parse_init $init
+      let boot: _ :write packages: _ = staged
+      artifacts.push $base
+      artifacts.push $payload
+      artifacts.push ...write
+      do |keys @ KeyPair|
+        ImageSource image: $base dolang: $payload
+          :os :arch :app :user :staged :keys :root
+    else
+      artifacts.push $payload
+      artifacts.push ...installers
+      artifacts.push ...drivers
+      do |keys @ KeyPair|
+        InstallerSource dolang: $payload
+          :installers :drivers :os :arch :user :keys :root :workdir :app
+
+  try
+    attach $name :connect_uri
+    throw std.ValueError "libvirt domain already exists: $name"
+  catch NoDomainError: _
+    nil
+
+  # Everything this run has to fetch, fetched now: after the checks that cost
+  # nothing, and before the first thing that would have to be cleaned up.
+  for step = steps
+    if (type step Add)
+      artifacts.push $step
+  prefetch_artifacts $artifacts $app
+
+  workdir.remove all: true ignore: true
+  workdir.create_dir all: true
+  # Where a wait that runs out dumps the guest console. Under the data root
+  # rather than the work directory, which the failure path removes wholesale: a
+  # screenshot deleted along with the domain it was taken of is no help in
+  # working out what the boot stopped at.
+  #
+  # Only a guest with a graphical console has one to dump; the rest pass `nil`
+  # and the wait skips it.
+  let shots = (root / "screenshots").absolute()
+  let domain = DomainImpl $name $connect_uri
+
+  progress.show message: "create $name" icon: 🖥️ do |_|
+    let succeeded = false
+    try
+      let keys = ensure_key $root $app
+      let source = prepare $keys
+      # The source's, not `os:`'s: a bundle does not supply `os:` at all, and
+      # the shape it was built as is the one it has to be redefined with.
+      let profile = source.profile
+      let wait_seconds = (wait_timeout || profile.wait_timeout)
+
+      let overlay = progress.show message: "create disk" icon: 💾 do |_|
+        let overlay = (workdir / "disk.qcow2").absolute()
+        let base = source.image
+        if (base == nil)
+          # An unattended install has nothing to lay an overlay over: Setup
+          # partitions and writes the disk itself, from blank.
+          cli qemu-img create -q -f qcow2 $overlay $disk_size
+        else if (disk_size != nil)
+          cli qemu-img create -q -f qcow2 -F $source.format -b $base $overlay $disk_size
+        else
+          cli qemu-img create -q -f qcow2 -F $source.format -b $base $overlay
+        overlay
+
+      # Both live in the workdir, which `undefine --nvram` and the failure path
+      # remove wholesale, so neither outlives the domain it belongs to and two
+      # domains never share one variable store. A restored bundle has already
+      # written its own copies to these paths; libvirt fills in a fresh
+      # variable store from its template for anything else.
+      let nvram @ (Path | nil) = nil
+      if (profile.firmware == :EFI_SECURE:)
+        nvram = (workdir / "nvram.bin").absolute()
+      let tpm_state @ (Path | nil) = nil
+      if (profile.tpm != nil)
+        let directory = (workdir / "tpm").absolute()
+        directory.create_dir all: true
+        tpm_state = directory
+
+      let :key public: _ = keys
+      let config = DomainConfig
+        :name :source :overlay :app :workdir :cache :io :nvram :tpm_state
+        :memory :vcpus
+        identity: $key.absolute()
+
+      progress.show message: "start domain" do |_|
+        # A forwarded port is only known to be free once libvirt has bound it,
+        # so a collision means re-emitting the document with a fresh one.
+        let started = false
+        for attempt = 0..PORT_ATTEMPTS
+          if (attempt > 0)
+            config.guest.port = rand.int $PORT_START $PORT_END
+          # Left in the work directory, which is where `DomainXml.generated_xml`
+          # reads it back at export time.
+          let path = (workdir / "domain.xml")
+          path.write $ xml.encode(xml.Document(config.to_xml()))
+          virsh $connect_uri define $path
+          let stderr @ Array[Str] = []
+          try
+            capture_virsh $connect_uri $stderr start $name
+            started = true
+          catch proc.Error: e
+            try
+              virsh_undefine $connect_uri $name quiet: true
+            catch _
+              nil
+            if (!address_in_use_error(stderr) || attempt == PORT_ATTEMPTS - 1)
+              echo $"\n".join(stderr)
+              throw e
+          if started
+            break
+        if !started
+          throw std.RuntimeError "could not allocate a forwarded SSH port"
+
+      # Only an install has a "press any key" prompt to answer. A restored
+      # bundle boots the disk it was exported from, with no media attached at
+      # all.
+      if (profile.boot_key && source.media.len > 0)
+        progress.show message: "boot install media" icon: ⌨️ do |_|
+          domain.send_key $BOOT_KEY
+            repeat: $BOOT_KEY_PRESSES
+            interval: $BOOT_KEY_INTERVAL
+
+      # The first wait is also what proves libvirt recorded the `<dolang:vm>`
+      # metadata: the guest is read back out of the defined domain rather than
+      # reused from the local one, so a domain that lost it fails here instead
+      # of at the first `with`.
+      let screenshot_dir = (profile.graphics && shots || nil)
+      progress.show message: "wait for guest" icon: ☕ do |_|
+        domain.wait_ready probe: $source.probe timeout: $wait_seconds :screenshot_dir
+      # Whatever this source still owes the guest — copying the payload in and
+      # waiting cloud-init out, finishing an unattended install, or nothing at
+      # all for a bundle whose guest was provisioned before it was exported. It
+      # runs before the caller's own steps, which may depend on any of it.
+      source.provision $domain
+      for step = steps
+        match step
+          Add(add) do domain.add $add $app
+          :REBOOT: do
+            domain.reboot_ready probe: $source.probe timeout: $wait_seconds :screenshot_dir
+            continue
+          block do domain.with $block
+        # Power state belongs to this module. A step that took the guest down
+        # is an error, not a case to tolerate — `reboot` exists precisely so
+        # that no step has to — and it is said here, where the step that did it
+        # is still named, rather than left to surface as the next step or the
+        # export failing for a reason that looks unrelated.
+        let state = domain.state()
+        if !(state == :RUNNING: || state == :BLOCKED: || state == :IDLE:)
+          let kind = (type step Add && "add" || "run")
+          throw std.StateError "$kind: step left the domain in state $state; use the reboot step"
+      succeeded = true
+      domain
+    finally
+      if !succeeded
+        if keep_failed()
+          echo "$KEEP_FAILED_VAR is set: leaving domain $name and $workdir behind"
+        else
+          progress.show message: "clean up" icon: 🧹 do |_|
+            # Every step is best effort and silent: the error that got us here
+            # is the one worth reporting, and half of these are expected to
+            # fail on a domain that never got as far as being defined.
+            try
+              if (domain.state() != :SHUTOFF:)
+                capture_virsh $connect_uri [] destroy $name
+            catch _
+              nil
+            try
+              virsh_undefine $connect_uri $name quiet: true
+            catch _
+              nil
+            workdir.remove all: true ignore: true
 
 # References a libvirt domain by name and connection URI.
 #
@@ -2084,11 +2193,11 @@ class DomainImpl
 pub class Domain
   # Everything the domain can actually be asked to do. The members below are
   # the ones that are API; the rest of `DomainImpl` is `create`'s scaffolding.
-  field impl
+  field impl @ DomainImpl
 
   # `DomainImpl` is module-private, so nothing outside this module can produce
   # one to pass: checking it here is what makes this constructor private.
-  def (init) self impl
+  def (init) self impl @ Value
     if !(type impl DomainImpl)
       let message = "libvirt.Domain is not constructible; use create or attach"
       throw std.TypeError $message
@@ -2239,12 +2348,6 @@ do -> Domain
   impl.dumpxml()
   Domain $impl
 
-# The source of an artifact spec written without metadata.
-def bare_source spec name
-  if !(type spec Str || type spec Path || type spec Url)
-    throw std.TypeError "$name: expected Str, Path, Url, or Dict"
-  spec
-
 # One input this module has to get hold of before it can be used.
 #
 # Every provisioning artifact — `image:`, `bundle:`, `installer:`, `drivers:`,
@@ -2261,10 +2364,6 @@ def bare_source spec name
 # One shape for all of them is why there is no `image_digest:` beside `image:`
 # and no `bundle_digest:` beside `bundle:`.
 #
-# An `add:` may also carry its payload inline as `content:` instead of naming a
-# `source:`, which is why `resolve` answers with either a `Path` to fetched
-# bytes or the bytes themselves.
-#
 # Resolution is memoized on the instance. That is what lets `create` resolve
 # every artifact in a spec up front and in parallel — see `prefetch_artifacts` —
 # while the call sites that actually consume them stay written as if each
@@ -2272,40 +2371,30 @@ def bare_source spec name
 # was never prefetched still resolves on demand, so no call site has to know
 # which of the two happened.
 class Artifact
-  # Exactly one of these is set.
-  pub field source = nil
-  pub field content = nil
+  pub field source @ (Str | Path | Url)
   # `algorithm:hex`, verified against whatever `source` resolved to.
-  pub field digest = nil
-  # `:UNSET:` rather than `nil`: `content: ""` is a legal payload and a falsy
-  # one, so there is no in-band value that can mean "not resolved yet".
-  field resolved = :UNSET:
+  pub field digest @ (Str | nil)
+  field resolved @ (Path | nil) = nil
 
-  def (init) self :source = nil :content = nil :digest = nil
+  def (init) self :source@(Str | Path | Url) :digest@(Str | nil) = nil
     self.source = source
-    self.content = content
     self.digest = digest
 
-  # A `Path` for a `source:`, the payload itself for inline `content:`.
+  # The fetched file.
   #
   # `app` scopes the download cache. It is a parameter rather than a field
   # because artifacts are parsed where no `app` is in scope yet; an artifact
   # belongs to one `create`, so the memo does not key on it.
-  pub def resolve self app
-    if (self.#resolved == :UNSET:)
-      self.#resolved = if (self.content != nil)
-        self.content
-      else
-        transfer.get :app $self.source digest: $self.digest
-    self.#resolved
-
-  # The artifact's bytes, however it is spelled.
-  pub def read self app
-    let resolved = self.resolve $app
-    if (type resolved Path)
-      resolved.read b
-    else
-      resolved
+  pub def resolve self app @ Str -> Path
+    let resolved = self.#resolved
+    if (resolved != nil)
+      return resolved
+    let digest = self.digest
+    let path = transfer.get :app $self.source
+      if (digest != nil)
+        :digest
+    self.#resolved = path
+    path
 
 # An `installer:`, which carries two metadata keys beyond a plain artifact's.
 #
@@ -2314,95 +2403,121 @@ class Artifact
 # `edition:` names one (`Windows 11 Pro`) and `index:` selects one by position;
 # they are alternatives, not a pair.
 class Installer: Artifact
-  pub field edition = nil
-  pub field index = nil
+  pub field edition @ (Str | nil)
+  pub field index @ (Int | nil)
 
-  def (init) self :source :digest = nil :edition = nil :index = nil
+  def (init)
+    self
+    :source @ (Str | Path | Url)
+    :digest @ (Str | nil) = nil
+    :edition @ (Str | nil) = nil
+    :index @ (Int | nil) = nil
+  do
     Artifact.(init) $self :source :digest
     self.edition = edition
     self.index = index
 
-# One `add:` step: an artifact plus where it lands in the guest.
+# One `add:` step: what to write, and where it lands in the guest.
 #
-# `extra` carries the cloud-init-only `owner:`/`append:`/`defer:` keys, which
-# are meaningful in an `init:` `add:` and rejected in a top-level one.
-class Add: Artifact
-  pub field target = nil
-  pub field chmod = nil
-  pub field extra = {}
+# `payload` is the artifact a `source:` names, or the `content:` itself, which
+# is why `resolve` answers with either a `Path` to fetched bytes or the bytes
+# themselves. `extra` carries the cloud-init-only `owner:`/`append:`/`defer:`
+# keys, which only an `init:` `add:` has.
+#[final]
+class Add
+  pub field target @ Str
+  pub field payload @ (Artifact | Str | Bin)
+  pub field chmod @ (Int | nil)
+  pub field extra @ Dict[Sym, (Str | Bool)]
 
-  def (init) self :target :source = nil :content = nil :digest = nil :chmod = nil :extra = {}
-    Artifact.(init) $self :source :content :digest
+  def (init)
+    self
+    :target @ Str
+    :payload @ (Artifact | Str | Bin)
+    :chmod @ (Int | nil)
+    :extra @ Dict[Sym, (Str | Bool)]
+  do
     self.target = target
+    self.payload = payload
     self.chmod = chmod
     self.extra = extra
+
+  # A `Path` for a `source:`, the payload itself for inline `content:`.
+  pub def resolve self app @ Str -> (Path | Str | Bin)
+    let payload = self.payload
+    if (type payload Artifact)
+      payload.resolve $app
+    else
+      payload
+
+  # The payload's bytes, however it is spelled.
+  pub def read self app @ Str -> (Str | Bin)
+    let resolved = self.resolve $app
+    if (type resolved Path)
+      resolved.read b
+    else
+      resolved
 
 # Parses an artifact spec. Inline `content:` is not accepted: it is an `add:`
 # spelling, and nothing else here would know what to do with a disk image or an
 # install ISO handed over as a literal.
-def parse_artifact spec name
-  if !(type spec Dict)
-    return Artifact source: (bare_source spec name)
-  bind spec
-    :source
-    :digest = nil
-  Artifact :source :digest
+def parse_artifact spec @ ArtifactSpec -> Artifact
+  if (type spec Str || type spec Path || type spec Url)
+    return Artifact source: $spec
+  Artifact source: $spec[:source:] digest: $(spec.get :digest:)
 
-def parse_installer spec
-  if !(type spec Dict)
-    return Installer source: (bare_source spec "installer")
-  bind spec
-    :source
-    :digest = nil
-    :edition = nil
-    :index = nil
-  if (edition != nil && index != nil)
+def parse_installer spec @ InstallerSpec -> Installer
+  if (type spec Str || type spec Path || type spec Url)
+    return Installer source: $spec
+  match spec
+    | :source
+      :digest = nil
+      :edition
+    do Installer :source :digest :edition
+    | :source
+      :digest = nil
+      :index
+    do Installer :source :digest :index
+    | :source
+      :digest = nil
+    do Installer :source :digest
+  else
     throw std.ValueError "installer: edition: and index: are alternatives"
-  Installer :source :digest :edition :index
 
 # Parses an `add:` step, mirroring `dockman`'s own `add:` build step. No VFS
 # access and no fetching — just shape checking, so it is safe to call eagerly at
 # parse time.
 #
-# `cloud_init` admits the three `write_files` keys that only mean something in
-# an `init:` `add:`, where the entry is rendered into the seed rather than
+# Only an `init:` `add:` admits the three `write_files` keys, which mean
+# something only where the entry is rendered into the seed rather than
 # uploaded over a VFS.
-def parse_add spec name :cloud_init = false
-  if !(type spec Dict)
-    throw std.TypeError "$name: expected Dict"
-  let extra_keys = (cloud_init && [:owner:, :append:, :defer:] || [])
-  let allowed = [:target:, :source:, :content:, :chmod:, ...extra_keys]
-  for key _ = spec
-    if !allowed.contains(key)
-      throw std.UnexpectedKeyError $key
-
+def parse_add spec @ InitAddSpec name @ Str -> Add
   let target = spec.get :target: else: do
     throw std.ValueError "$name: missing target"
-  if !(type target Str)
-    throw std.TypeError "$name target: expected Str"
-
-  let source = spec.get :source:
-  let content = spec.get :content:
-  if ((source == nil) == (content == nil))
+  # A call the checker never saw can still give both.
+  let raw = (spec @ BaseDict[Sym, Value])
+  if (raw.contains(:source:) && raw.contains(:content:))
     throw std.ValueError "$name: expected exactly one of source or content"
-  if (content != nil && !(type content Str || type content Bin))
-    throw std.TypeError "$name content: expected Str or Bin"
-
-  let digest = nil
-  if (source != nil)
+  let payload @ (Artifact | Str | Bin) = match spec
     # Pinned the same way as every other artifact, rather than with an
     # `add:`-specific spelling.
-    let artifact = parse_artifact $source "$name source"
-    source = artifact.source
-    digest = artifact.digest
+    (:source ...) do parse_artifact $source
+    (:content ...) do content
+  else
+    throw std.ValueError "$name: expected exactly one of source or content"
 
-  let extra = {}
-  for key = extra_keys
-    let value = spec.get $key
-    if (value != nil)
-      extra[key] = value
+  let extra @ Dict[Sym, (Str | Bool)] = {}
+  let owner = spec.get :owner:
+  if (owner != nil)
+    extra[:owner:] = owner
+  let append = spec.get :append:
+  if (append != nil)
+    extra[:append:] = append
+  let defer = spec.get :defer:
+  if (defer != nil)
+    extra[:defer:] = defer
 
-  Add :target :source :content :digest chmod: (require_chmod (spec.get :chmod:)) :extra
+  Add :target :payload :extra chmod: $(require_chmod (spec.get :chmod:))
 
 # How many artifacts are fetched at once. Matches `dockman`, which prefetches
 # its own `add:` URLs the same way.
@@ -2420,12 +2535,14 @@ let FETCH_JOBS = 4
 # the lock is both keyed on the open file description — so two strands really do
 # contend rather than both proceeding — and awaited, so the waiter yields to the
 # strand holding it instead of stalling the pool.
-def prefetch_artifacts artifacts app
-  strand.pool $FETCH_JOBS $artifacts do |artifact| artifact.resolve $app
+def prefetch_artifacts artifacts@Array[Artifact | Add] app@Str
+  strand.pool $FETCH_JOBS $artifacts do |artifact|
+    artifact.resolve $app
+    nil
 
 let COMPRESSED_IMAGE_EXTS = Set ["gz", "xz", "zst"]
 
-def prepared_image source root
+def prepared_image source@Path root@Path -> Path
   let ext = source.ext
   let compressed = (ext != nil && COMPRESSED_IMAGE_EXTS.contains(ext.lower()))
   let key = file_digest $source
@@ -2444,24 +2561,36 @@ def prepared_image source root
         temporary.rename $destination
   destination.absolute()
 
-def image_format image
-  let output = sub do cli qemu-img info --output json -- $image
-  let info = json.decode $output
-  let format = if (type info Dict)
-    info.get "format"
-  if (format == nil)
+def image_format image @ Path -> Str
+  let output = cli qemu-img info --output json -- $image
+  match json.decode(output)
+    Dict("format": Str(format) ...) do format
+  else
     throw std.ValueError "qemu-img did not report an image format"
-  str $format
 
-# Describes one state member for the manifest: what it is called in the ZIP,
-# how big it is, and its digest.
+# One state member to pack into a bundle: its kind, the file holding it, what
+# it is called in the ZIP, and its format.
 #
 # Every member carries its own blake3 digest: a ZIP entry's CRC32 is a
 # corruption check rather than an integrity property, and a member is extracted
 # on its own — the disk into a shared image store — where the bundle's own
 # digest no longer covers it.
-def bundle_member kind path name :format = nil
-  Struct :kind :path :name :format
+@let PackedMember = (kind: Str, path: Path, name: Str, format: (Str | nil))
+
+# The `<dolang:vm>` facts a bundle manifest records: everything about the guest
+# that the disk image itself does not carry. See `DomainXml.bundle_info`.
+@let BundleInfo = (
+  app: Str,
+  os: Str,
+  arch: Str,
+  user: Str,
+  command: Str,
+  machine: (Str | nil),
+  firmware: (Str | nil),
+  tpm: (Str | nil),
+  memory: Int,
+  vcpus: Int,
+)
 
 # Builds the manifest for a bundle, with `version` first because this format
 # will change.
@@ -2473,13 +2602,18 @@ def bundle_member kind path name :format = nil
 # `digests` maps each member's kind to its hex digest. They are taken while the
 # member is packed rather than in a pass of their own here, which is why this
 # runs after the members are written rather than before — see `write_bundle`.
-def bundle_manifest info members domain_xml digests
+def bundle_manifest
+  info @ BundleInfo
+  members @ Array[PackedMember]
+  domain_xml @ (Str | nil)
+  digests @ Dict[Str, Str]
+do -> Str
   let :app :os :arch :user :command :memory :vcpus :machine :firmware :tpm = info
   json.encode $
     :app :user :memory :vcpus
     version: $BUNDLE_VERSION
-    os: $str(os).lower()
-    arch: $str(arch).lower()
+    os: $os.lower()
+    arch: $arch.lower()
     vfs_command: $command
     if (machine != nil)
       :machine
@@ -2520,22 +2654,27 @@ def bundle_manifest info members domain_xml digests
 # flight at once and runs blake3 in the gap the write yields, which on an 8 GiB
 # disk is worth about 1.6x over reading, digesting, and writing in turn — the
 # packed rate stops being bounded by the sum of the three.
-def write_bundle path members info domain_xml
-  let digests = {}
+def write_bundle
+  path @ Path
+  members @ Array[PackedMember]
+  info @ BundleInfo
+  domain_xml @ (Str | nil)
+do
+  let digests @ Dict[Str, Str] = {}
   zip.open $path w do |archive|
-    for member = members
-      let total = member.path.metadata().size
+    for :kind :path :name format: _ = members
+      let total = path.metadata().size
       let state = digest.Blake3()
-      archive.open $member.name 
+      archive.open $name
         mode: 0o644
         compression: :STORED:
         size: $total
         do |entry| progress.show
-          message: "pack $(str(member.kind).lower())"
+          message: "pack $kind"
           icon: 🗜️
           total: $total
           units: :BYTES:
-          do |ind| member.path.open rb do |file| strand.pipeline
+          do |ind| path.open rb do |file| strand.pipeline
             do while let chunk = file.read $BUNDLE_CHUNK
               strand.put $chunk
             do for chunk
@@ -2544,12 +2683,12 @@ def write_bundle path members info domain_xml
                 do entry.write $bytes
                 do state.update $bytes
               ind.delta $bytes.len
-      digests[member.kind] = "${state.digest():x}"
+      digests[kind] = "${state.digest():x}"
     archive.open $MANIFEST_MEMBER mode: 0o644 do |entry|
       entry.write $ bundle_manifest $info $members $domain_xml $digests
 
 # Finds a bundle member by name, or `nil`.
-def find_member archive name
+def find_member archive@zip.Archive name@Str -> (zip.Entry | nil)
   for entry = archive.entries
     if (str(entry.name) == name)
       return entry
@@ -2557,8 +2696,8 @@ def find_member archive name
 
 # Reads a whole bundle member, refusing one that is implausibly large. Only the
 # manifest is read this way; the disk is streamed.
-def read_member entry
-  let chunks = []
+def read_member entry @ zip.Entry -> Bin
+  let chunks @ Array[Bin] = []
   let total = 0
   entry.open do |file|
     while true
@@ -2571,22 +2710,6 @@ def read_member entry
       chunks.push $chunk
   b"".join $chunks
 
-# A manifest field, checked against the JSON type the format says it has.
-#
-# A bundle may come from a URL, so its manifest is an untrusted input. Checking
-# the type here is what turns a wrong one into a single error naming the field,
-# instead of `int()` failing much later on a value that came out of a JSON file.
-#
-# `optional:` is for a field a bundle written by an older version may not carry,
-# which arrives as `nil` from its default in the pattern below. Presence is not
-# otherwise checked: that pattern is what says which fields a manifest has.
-def manifest_typed value kind key bundle :optional = false
-  if (optional && value == nil)
-    return nil
-  if !(type value kind)
-    throw std.ValueError "bundle manifest has a malformed $key: $bundle"
-  value
-
 # The values a manifest may record for each of its symbolic fields, and the
 # symbols they stand for.
 #
@@ -2597,21 +2720,21 @@ def manifest_typed value kind key bundle :optional = false
 # artifact for, which is already the set a domain can be created as: `create`
 # installs Do into every guest, so an OS with no artifact fails long before it
 # could be exported.
-let MANIFEST_OS = $
+let MANIFEST_OS @ Dict[Str, GuestOs] = $
   "linux": :LINUX:
   "macos": :MACOS:
   "windows": :WINDOWS:
   "freebsd": :FREEBSD:
 
-let MANIFEST_ARCH = $
+let MANIFEST_ARCH @ Dict[Str, GuestArch] = $
   "x86_64": :X86_64:
   "aarch64": :AARCH64:
 
-let MANIFEST_FIRMWARE = $
+let MANIFEST_FIRMWARE @ Dict[Str, Firmware] = $
   "bios": :BIOS:
   "efi_secure": :EFI_SECURE:
 
-let MANIFEST_TPM = $
+let MANIFEST_TPM @ Dict[Str, TpmModel] = $
   "crb_2_0": :CRB_2_0:
 
 # The symbol a manifest's recorded text stands for, looked up in `table`.
@@ -2621,19 +2744,23 @@ let MANIFEST_TPM = $
 # module has never heard of — which does not fail, it falls through every
 # comparison against the ones it has. A bundle recording a firmware nobody
 # recognizes would restore as a BIOS guest, quietly, rather than being refused.
-def manifest_enum value table key bundle :optional = false
-  let text = manifest_typed $value $Str $key $bundle :optional
-  if (text == nil)
-    return nil
+def manifest_enum[T] text@Str table@Dict[Str, T] key@Str bundle@Path -> T
   table.get $text else: do
     let known = ", ".join(table.keys())
     let message = "bundle manifest has an unknown $key: $text (expected one of $known): $bundle"
     throw std.ValueError $message
 
+# `manifest_enum` for a field a bundle written by an older version may not
+# carry.
+def manifest_optional_enum[T] text@(Str | nil) table@Dict[Str, T] key@Str bundle@Path -> (T | nil)
+  if (text == nil)
+    return nil
+  manifest_enum $text $table $key $bundle
+
 # Splits a manifest digest into its algorithm and hex digits. Only blake3 is
 # written, and only blake3 is accepted: the field is spelled `algorithm:hex` so
 # that a later format version can add one, not so that a bundle can choose.
-def manifest_hex value source
+def manifest_hex value@Str source@Path -> Str
   let parts = [...value.split ":" limit: 1]
   let algorithm = (parts.len == 2 && parts[0] || nil)
   let hex = (parts.len == 2 && parts[1].lower() || nil)
@@ -2641,41 +2768,62 @@ def manifest_hex value source
     throw std.ValueError "unsupported bundle disk digest: $value ($source)"
   hex
 
-# Reads one member's description out of a manifest's `members` map.
+# One state member as a manifest describes it, for extracting and verifying it.
+class ManifestMember: Struct[{kind: Str, name: Str, format: (Str | nil), size: Int, hex: Str}]
+
+@let ManifestFields = $
+  app: Str
+  os: GuestOs
+  arch: GuestArch
+  user: Str
+  command: Str
+  memory: Int
+  vcpus: Int
+  machine: (Str | nil)
+  firmware: (Firmware | nil)
+  tpm: (TpmModel | nil)
+  # The state members. A BIOS guest has no variable store and no vTPM, and its
+  # bundle carries neither.
+  disk: ManifestMember
+  nvram: (ManifestMember | nil)
+  tpm_state: (ManifestMember | nil)
+
+# A bundle's manifest, validated: the record the rest of the import path
+# consumes.
+class Manifest: Struct[ManifestFields]
+
+# Reads one member's description out of a manifest's `members` map, or `nil`
+# for state the bundle does not carry.
 #
-# `required` distinguishes the disk, which every bundle has, from state a guest
-# only has if its machine shape gave it any: a BIOS guest has no variable store
-# and no vTPM, and its bundle carries neither.
-def manifest_member members key bundle :required = false
+# A member's `format` is optional because only a member whose bytes have a
+# format worth recording carries one: the disk and the variable store do, the
+# vTPM tar does not.
+def manifest_member
+  members @ Dict[Str, json.DecodeValue]
+  key @ Str
+  bundle @ Path
+do -> (ManifestMember | nil)
   let member = members.get $key
   if (member == nil)
-    if required
-      throw std.ValueError "bundle manifest is missing member $key: $bundle"
     return nil
   if !(type member Dict)
     throw std.ValueError "bundle manifest member $key is not an object: $bundle"
-  try
-    bind member
-      "name": name
-      "size": size
-      "digest": spec
-      # Only a member whose bytes have a format worth recording carries one:
-      # the disk and the variable store do, the vTPM tar does not.
-      "format": format = nil
-    Struct
-      kind: $key
-      name: (manifest_typed name Str "member name" bundle)
-      format: (manifest_typed format Str "member format" bundle optional: true)
-      size: (manifest_typed size Int "member size" bundle)
-      hex: (manifest_hex (manifest_typed spec Str "member digest" bundle) bundle)
-  catch std.MissingKeyError: e
-    throw std.ValueError "bundle manifest member $key is malformed ($e): $bundle"
-  catch std.UnexpectedKeyError: e
-    throw std.ValueError "bundle manifest member $key is malformed ($e): $bundle"
+  match member
+    | "name": Str(name)
+      "size": Int(size)
+      "digest": Str(spec)
+      ?"format": Str(format = nil)
+    do
+      ManifestMember (kind: key, :name, :format, :size, hex: manifest_hex(spec, bundle))
+  else
+    throw std.ValueError "bundle manifest member $key is malformed: $bundle"
 
-# Reads and validates a bundle's manifest, as the record the rest of the import
-# path consumes.
-def read_manifest bundle
+# Reads and validates a bundle's manifest.
+#
+# A bundle may come from a URL, so its manifest is an untrusted input. Checking
+# each field's JSON type here is what turns a wrong one into a single error,
+# instead of a failure much later on a value that came out of a JSON file.
+def read_manifest bundle @ Path -> Manifest
   let manifest = zip.open $bundle do |archive|
     let entry = find_member $archive $MANIFEST_MEMBER
     if !entry
@@ -2685,7 +2833,7 @@ def read_manifest bundle
     throw std.ValueError "bundle manifest is not an object: $bundle"
   # Read before the shape is checked, so that a bundle written by a version
   # that knows keys this one does not is reported as the wrong version rather
-  # than as a pile of unexpected keys.
+  # than as a malformed manifest.
   let version = manifest.get "version"
   if (version != BUNDLE_VERSION)
     let message = "unsupported bundle version $version, expected $BUNDLE_VERSION: $bundle"
@@ -2693,60 +2841,53 @@ def read_manifest bundle
   # The whole of the format, in one place. Exhaustive on purpose: with the
   # version already pinned, a key this does not name is a writer and a reader
   # disagreeing about what version 1 means, which is worth an error rather than
-  # a field silently dropped.
-  try
-    bind manifest
-      # Read above, and listed here so that this pattern is the whole format.
-      "version": _
-      "app": app
-      "os": os
-      "arch": arch
-      "user": user
-      "vfs_command": command
-      "memory": memory
-      "vcpus": vcpus
-      "members": members
-      "machine": machine = nil
-      "firmware": firmware = nil
-      "tpm": tpm = nil
-      # Stored for debugging purposes, but presently unused. Optional: written
-      # only for a domain whose generated document was still on disk.
+  # a field silently dropped. `version` was read above, and is listed so that
+  # this pattern is the whole format; `machine`, `firmware` and `tpm` are absent
+  # from a bundle written before they were recorded, and `domain_xml`, stored
+  # for debugging purposes but presently unused, from a domain whose generated
+  # document was gone.
+  match manifest
+    | "version": _
+      "app": Str(app)
+      "os": Str(os)
+      "arch": Str(arch)
+      "user": Str(user)
+      "vfs_command": Str(command)
+      "memory": Int(memory)
+      "vcpus": Int(vcpus)
+      "members": Dict(members)
+      ?"machine": Str(machine = nil)
+      ?"firmware": Str(firmware = nil)
+      ?"tpm": Str(tpm = nil)
       "domain_xml": _ = nil
-    if !(type members Dict)
-      throw std.ValueError "bundle manifest members is not an object: $bundle"
-    Struct
-      app: (manifest_typed app Str "app" bundle)
-      os: (manifest_enum os MANIFEST_OS "os" bundle)
-      arch: (manifest_enum arch MANIFEST_ARCH "arch" bundle)
-      user: (manifest_typed user Str "user" bundle)
-      command: (manifest_typed command Str "vfs_command" bundle)
-      memory: (manifest_typed memory Int "memory" bundle)
-      vcpus: (manifest_typed vcpus Int "vcpus" bundle)
-      machine: (manifest_typed machine Str "machine" bundle optional: true)
-      firmware: (manifest_enum firmware MANIFEST_FIRMWARE "firmware" bundle optional: true)
-      tpm: (manifest_enum tpm MANIFEST_TPM "tpm" bundle optional: true)
-      members: $ Struct
-        disk: (manifest_member members "disk" bundle required: true)
-        nvram: (manifest_member members "nvram" bundle)
-        tpm: (manifest_member members "tpm" bundle)
-  catch std.MissingKeyError: e
-    throw std.ValueError "bundle manifest is malformed ($e): $bundle"
-  catch std.UnexpectedKeyError: e
-    throw std.ValueError "bundle manifest is malformed ($e): $bundle"
+    do
+      let disk = manifest_member $members disk $bundle
+      if (disk == nil)
+        throw std.ValueError "bundle manifest is missing member disk: $bundle"
+      Manifest $
+        :app :user :command :memory :vcpus :machine :disk
+        os: $ manifest_enum $os $MANIFEST_OS os $bundle
+        arch: $ manifest_enum $arch $MANIFEST_ARCH arch $bundle
+        firmware: $ manifest_optional_enum $firmware $MANIFEST_FIRMWARE firmware $bundle
+        tpm: $ manifest_optional_enum $tpm $MANIFEST_TPM tpm $bundle
+        nvram: $ manifest_member $members nvram $bundle
+        tpm_state: $ manifest_member $members tpm $bundle
+  else
+    throw std.ValueError "bundle manifest is malformed: $bundle"
 
 # Extracts one bundle member, verifying it against the manifest digest as it
 # streams.
 #
 # Shaped like `write_bundle`'s packing loop and for the same reason: a strand
 # reading out of the archive, a strand forking the write against the digest.
-def extract_member bundle member dest
+def extract_member bundle@Path member@ManifestMember dest@Path
   zip.open $bundle do |archive|
     let entry = find_member $archive $member.name
     if !entry
       throw std.ValueError "bundle is missing $(member.name): $bundle"
     let state = digest.Blake3()
     progress.show
-      message: "extract $(str(member.kind).lower())"
+      message: "extract $(member.kind)"
       icon: 📤
       total: $member.size
       units: :BYTES:
@@ -2762,16 +2903,15 @@ def extract_member bundle member dest
     let actual = "${state.digest():x}"
     if (actual != member.hex)
       let expected = member.hex
-      let kind = str(member.kind).lower()
-      let message = "bundle $kind digest mismatch: expected $expected, got $actual"
+      let message = "bundle $(member.kind) digest mismatch: expected $expected, got $actual"
       throw std.ValueError $message
 
 # Extracts a bundle's disk into the shared image store, the same durable store
 # `prepared_image` fills. Keyed on the manifest digest rather than a digest of
 # the bundle, so two bundles minted from one disk share an entry — and so the
 # key is known before anything is extracted.
-def bundle_image bundle manifest root
-  let disk = manifest.members.disk
+def bundle_image bundle@Path manifest@Manifest root@Path -> Path
+  let disk = manifest.disk
   let entry = (root / "images" / disk.hex)
   entry.create_dir all: true
   let destination = (entry / "image")
@@ -2784,7 +2924,10 @@ def bundle_image bundle manifest root
         temporary.rename $destination
   destination.absolute()
 
-def ensure_key root app
+# The SSH key pair this module's guests trust, for one `app`.
+@let KeyPair = (key: Path, public: Path)
+
+def ensure_key root@Path app@Str -> KeyPair
   let directory = (root / "ssh")
   directory.create_dir all: true
   let key = (directory / "id_ed25519")
@@ -2795,7 +2938,7 @@ def ensure_key root app
       key.remove ignore: true
       public.remove ignore: true
       cli ssh-keygen -q -t ed25519 -N "" -C $app -f $key
-  Struct :key :public
+  (:key, :public)
 
 # `chmod:` accepts an `Int` mode or a `fs.unix.Mode`, normalized to a
 # plain `Int` here, whichever `add:` it appears in.
@@ -2803,7 +2946,7 @@ def ensure_key root app
 # cloud-init's `write_files` wants `permissions` as an octal string, but that is
 # its serialization detail, not a second calling convention: `write_files_entry`
 # formats the int as octal instead.
-def require_chmod chmod
+def require_chmod chmod @ (Int | Mode | nil) -> (Int | nil)
   _vfs.parse_mode $chmod
 
 # Renders one parsed `init:` `add:` step as a cloud-init `write_files` entry.
@@ -2811,70 +2954,62 @@ def require_chmod chmod
 # Separate from `parse_add` so that the parse — which every `add:` in the spec
 # goes through before anything is fetched — stays free of I/O, leaving the read
 # until after `prefetch_artifacts` has the payload in hand.
-def write_files_entry add app
+def write_files_entry add@Add app@Str -> Dict[Sym, (Str | Bool)]
   let content = add.read $app
-  let file = {path: add.target}
+  let file @ Dict[Sym, (Str | Bool)] = {path: add.target}
   if (type content Str)
     file[:content:] = content
   else
     file[:content:] = base64.encode $content
     file[:encoding:] = "b64"
 
-  if (add.chmod != nil)
-    file[:permissions:] = "${add.chmod:o}"
+  let chmod = add.chmod
+  if (chmod != nil)
+    file[:permissions:] = "${chmod:o}"
   for key value = add.extra
     file[key] = value
   file
+
+# Boot-time cloud-init state, parsed from `init:`: the commands to run, the
+# files to write, and the packages to install.
+@let InitState = (boot: Array[Array[Str]], write: Array[Add], packages: Array[Str])
 
 # Parses the `init:` sub-dict into boot-time cloud-init state. Like the
 # top-level keyword arguments, `add:`, `run:` and `packages:` may repeat (dicts
 # are multimaps). `run:` entries here must be a raw string or Array of strings —
 # anything needing a live VFS connection belongs in the top-level repeated
 # `run:` keyword argument instead.
-def parse_init init
-  if (init == nil)
-    return Struct boot: [] write: [] packages: []
-  if !(type init Dict)
-    throw std.TypeError "init: expected Dict"
+def parse_init init @ (InitSpec | nil) -> InitState
+  let boot @ Array[Array[Str]] = []
+  let write @ Array[Add] = []
+  let packages @ Array[Str] = []
+  if (init != nil)
+    for entry = init
+      match entry
+        (:add: spec) do write.push $ parse_add $spec init.add
+        (:run: command) do
+          if (type command Str)
+            boot.push [...shlex.split(command)]
+          else
+            boot.push [...command]
+        (:packages: names) do
+          if (type names Str)
+            packages.push $names
+          else
+            packages.push ...names
+  (:boot, :write, :packages)
 
-  let write = []
-  let boot = []
-  let packages = []
-  for key value = init
-    if (key == :add:)
-      write.push (parse_add value "init.add" cloud_init: true)
-    else if (key == :run:)
-      if (type value Str)
-        boot.push [...(shlex.split value)]
-      else if (type value Array)
-        boot.push [...value]
-      else
-        throw std.TypeError "init.run: expected Str or Array"
-    else if (key == :packages:)
-      if (type value Str)
-        packages.push $value
-      else if (type value Array)
-        packages.push ...value
-      else
-        throw std.TypeError "init.packages: expected Str or Array"
-    else if (type key Int)
-      throw std.UnexpectedPosError $key
-    else
-      throw std.UnexpectedKeyError $key
+# The top-level repeated options, parsed: the steps `add:`, `run:` and
+# `reboot`, in order, and the `installer:`/`drivers:` media.
+@let ParsedOptions[I, O] = (
+  steps: Array[Step[I, O]],
+  installers: Array[Installer],
+  drivers: Array[Artifact],
+)
 
-  Struct :boot :write :packages
-
-# Steps spelled as a bare positional item rather than as a `key: value` pair,
-# because they take no argument. A vertical block interleaves positional items
-# with keyword ones in source order, so `reboot` sits in the step list exactly
-# where it was written.
-let POSITIONAL_STEPS = Set $
-  - reboot
-
-# Parses the top-level repeated keyword arguments: `add:` and `run:`, both run
-# post-SSH, and `installer:`/`drivers:`, the media an unattended install boots
-# from. `run:` only accepts `func` values here — boot-time commands belong in
-# `init: {run: ...}`.
+# Parses the top-level repeated options: the steps `add:`, `run:` and `reboot`,
+# all run post-SSH, and `installer:`/`drivers:`, the media an unattended install
+# boots from. Boot-time commands belong in `init: {run: ...}` instead.
 #
 # These are repeatable, which a declared keyword parameter cannot be, so they
 # arrive through `...options` and are sorted out here instead. The order they
@@ -2882,29 +3017,19 @@ let POSITIONAL_STEPS = Set $
 #
 # This is also where a registered step macro would resolve, so that a builtin
 # and a macro are looked up the same way.
-def parse_extra_options options
-  let post = []
-  let installers = []
-  let drivers = []
-  for key value = options
-    if (key == :add:)
-      post.push (Struct kind: :add: add: (parse_add value "add"))
-    else if (key == :run:)
-      if (type value Str || type value Array)
-        throw std.TypeError "run: expected a func; use init: {run: ...} for boot-time commands"
-      post.push (Struct kind: :run: block: value)
-    else if (key == :installer:)
-      installers.push (parse_installer value)
-    else if (key == :drivers:)
-      drivers.push (parse_artifact value "drivers")
-    else if (type key Int)
-      if !(type value Str && POSITIONAL_STEPS.contains value)
-        let known = ", ".join(POSITIONAL_STEPS)
-        throw std.ValueError "unknown step $value; the positional steps are: $known"
-      post.push (Struct kind: :reboot:)
-    else
-      throw std.UnexpectedKeyError $key
-  Struct :post :installers :drivers
+def parse_options[I, O] options @ Record[...DomainOptions[I, O]] -> ParsedOptions[I, O]
+  let steps @ Array[Step[I, O]] = []
+  let installers @ Array[Installer] = []
+  let drivers @ Array[Artifact] = []
+  for entry = options
+    match entry
+      # The positional `reboot`.
+      (Int(_) _) do steps.push :REBOOT:
+      (:add: spec) do steps.push $ parse_add $spec add
+      (:run: block) do steps.push $block
+      (:installer: spec) do installers.push $ parse_installer $spec
+      (:drivers: spec) do drivers.push $ parse_artifact $spec
+  (:steps, :installers, :drivers)
 
 # Unpacks the guest payload archive into the image store, cached under a
 # digest of the archive so it is unpacked once per release rather than once
@@ -2913,7 +3038,7 @@ def parse_extra_options options
 # The cloud-init path copies this archive over SSH after the guest is up. An
 # unattended install cannot: SSH is what the payload brings, so the binaries
 # have to ride in on the provisioning disc, which needs them as files.
-def unpack_payload root archive
+def unpack_payload root@Path archive@Path -> Path
   let key = file_digest $archive
   let entry = (root / "payloads" / key)
   entry.create_dir all: true
@@ -2946,12 +3071,12 @@ def unpack_payload root archive
 # `files` maps a path on the disc to either a `Path` to copy there or text to
 # write there. The key is taken over each member's digest rather than over the
 # bytes of the disc, so it can be computed without building the disc first.
-def build_provision_iso root files
-  let names = []
+def build_provision_iso root@Path files@Dict[Str, (Path | Str)] -> Path
+  let names @ Array[Str] = []
   for name _ = files
     names.push $name
   names.sort()
-  let manifest = {}
+  let manifest @ Dict[Str, Str] = {}
   for name = names
     let value = files[name]
     manifest[name] = if (type value Path)
@@ -2967,7 +3092,7 @@ def build_provision_iso root files
   lock_path.open a+ do |lock| lock.lock (..) do |_|
     if !destination.exists()
       let program = require_iso_program()
-      with_temp_dir parent: $destination.parent do |dir|
+      with_temp_dir parent: $entry do |dir|
         let staging = (dir / "root")
         staging.create_dir all: true
         for name = names
@@ -2988,44 +3113,39 @@ def build_provision_iso root files
         temporary.rename $destination
   destination.absolute()
 
-# Normalizes `dolang:` into `{version, artifact}`, exactly one of which is set
-# unless both are `nil`, which selects the default release.
-#
-# A bare `Str` is a version tag rather than a source, which is why this is not
-# just `parse_artifact`: everything else is an artifact spec and goes through
-# it.
-def normalize_dolang_spec spec
-  if (spec == nil)
-    return Struct version: nil artifact: nil
-  if (type spec Str)
-    return Struct version: $spec artifact: nil
-  if (type spec Dict && spec.get(:version:) != nil)
-    if (spec.get(:digest:) != nil)
-      throw std.ValueError "dolang: digest is not yet supported together with version"
-    for key _ = spec
-      if (key != :version:)
-        throw std.UnexpectedKeyError $key
-    return Struct version: (spec.get :version:) artifact: nil
-  if !(type spec Path || type spec Url || type spec Dict)
-    throw std.TypeError "dolang: expected Str, Path, Url, or Dict"
-  Struct version: nil artifact: (parse_artifact spec "dolang")
-
-def dolang_platform_key os arch
+def dolang_platform_key os@GuestOs arch@GuestArch -> Str
   "$(str(arch).lower())-$(str(os).lower())"
 
-def dolang_artifact_name os arch
+def dolang_artifact_name os@GuestOs arch@GuestArch -> (Str | nil)
   let key = (dolang_platform_key os arch)
   (DOLANG_PLATFORMS.contains(key) && "dolang-$key.tar.gz" || nil)
 
-def dolang_current_tag()
+def dolang_current_tag -> Str
   let major minor patch = shell.VERSION
   "v$major.$minor.$patch"
 
 # GitHub serves public release assets at a predictable, unauthenticated URL,
 # so fetching one is just another `transfer.get`-cached download — no `gh`
 # CLI (and no token) required.
-def dolang_release_url tag artifact
+def dolang_release_url tag@Str artifact@Str -> Str
   "https://github.com/$DOLANG_REPO/releases/download/$tag/$artifact"
+
+# Normalizes `dolang:` into the release tag it names, or the archive it names
+# as an `Artifact`. `nil` selects the release matching this interpreter.
+#
+# A bare `Str` is a version tag rather than a source, which is why this is not
+# just `parse_artifact`: everything else is an artifact spec and goes through
+# it.
+def dolang_release spec @ (DolangSpec | nil) -> (Str | Artifact)
+  if (spec == nil)
+    return dolang_current_tag()
+  if (type spec Str)
+    return spec
+  if (type spec Path || type spec Url)
+    return Artifact source: $spec
+  match spec
+    (:version) do version
+    artifact do parse_artifact $artifact
 
 # The archive `dolang:` names, as an `Artifact`.
 #
@@ -3039,19 +3159,17 @@ def dolang_release_url tag artifact
 # The version form resolves to a release URL rather than to an artifact spec the
 # caller wrote, which is why this needs `os`/`arch` and so cannot be built at
 # the same point as the rest of them.
-def dolang_artifact spec os arch
-  spec = normalize_dolang_spec $spec
-  if (spec.artifact != nil)
-    return spec.artifact
-
-  let tag = (spec.version || dolang_current_tag())
+def dolang_artifact spec@(DolangSpec | nil) os@GuestOs arch@GuestArch -> Artifact
+  let release = dolang_release $spec
+  if (type release Artifact)
+    return release
   let artifact = dolang_artifact_name $os $arch
   if (artifact == nil)
     throw std.ValueError "dolang: no known release artifact for $(dolang_platform_key os arch)"
-  Artifact source: (Url (dolang_release_url tag artifact))
+  Artifact source: (Url (dolang_release_url release artifact))
 
 # Whether a failed `create` should leave what it built behind for inspection.
-def keep_failed()
+def keep_failed -> Bool
   let value = env.get $KEEP_FAILED_VAR
   (value != nil && value != "" && value != "0")
 
@@ -3068,73 +3186,123 @@ class Source
   # "reachable" means for it: a bundle and an unattended install both bring
   # their own VFS, where a cloud-init guest has only sshd until the payload
   # lands.
-  pub field os arch user command probe
+  #
+  # Those that are never `nil` are private behind getters, and written first:
+  # a write to a pub field could reach a subclass, so it lets `self` escape.
+  field os @ GuestOs
+  field arch @ GuestArch
+  field user command @ Str
+  field probe @ Probe
   # The disk to lay the domain's overlay over, its format, and the media to
   # attach. `image` is `nil` for a source that installs onto a blank disk.
-  pub field image format media
+  pub field image @ (Path | nil)
+  pub field format @ (Str | nil)
+  field media @ Array[Medium]
   # The machine shape to define the domain as: the one a restored bundle was
   # built as, or the one this OS calls for today. Resolved here so that nothing
   # downstream has to know which of the two it got.
-  pub field profile
+  field profile @ Profile
   # What a source that was a domain once brings back with it. Everything else
   # leaves these `nil` and lets the profile decide.
-  pub field memory vcpus nvram_format
+  pub field memory vcpus @ (Int | nil)
+  pub field nvram_format @ (Str | nil)
 
   def (init)
     self
-    :os
-    :arch
-    :user
-    :command
-    :probe
-    :image = nil
-    :format = nil
-    :media = []
-    :profile = nil
-    :memory = nil
-    :vcpus = nil
-    :nvram_format = nil
+    :os @ GuestOs
+    :arch @ GuestArch
+    :user @ Str
+    :command @ Str
+    :probe @ Probe
+    :image @ (Path | nil) = nil
+    :format @ (Str | nil) = nil
+    :media @ Array[Medium] = []
+    :profile @ (Profile | nil) = nil
+    :memory @ (Int | nil) = nil
+    :vcpus @ (Int | nil) = nil
+    :nvram_format @ (Str | nil) = nil
   do
-    self.os = os
-    self.arch = arch
-    self.user = user
-    self.command = command
-    self.probe = probe
+    self.#os = os
+    self.#arch = arch
+    self.#user = user
+    self.#command = command
+    self.#probe = probe
+    self.#media = media
+    self.#profile = (profile || os_profile os)
     self.image = image
     self.format = format
-    self.media = media
-    self.profile = (profile || os_profile os)
     self.memory = memory
     self.vcpus = vcpus
     self.nvram_format = nvram_format
+
+  #[getter]
+  pub def os self -> GuestOs
+    self.#os
+
+  #[getter]
+  pub def arch self -> GuestArch
+    self.#arch
+
+  #[getter]
+  pub def user self -> Str
+    self.#user
+
+  #[getter]
+  pub def command self -> Str
+    self.#command
+
+  #[getter]
+  pub def probe self -> Probe
+    self.#probe
+
+  #[getter]
+  pub def media self -> Array[Medium]
+    self.#media
+
+  #[getter]
+  pub def profile self -> Profile
+    self.#profile
 
   # Whatever the guest still needs once it answers its probe, before the
   # caller's own `add:`/`run:`/`reboot` steps run.
   #
   # Nothing, for a source whose guest was provisioned before it ever became a
   # bundle. The other two override this.
-  pub def provision _self _domain
+  pub def provision _self _domain @ DomainImpl
     nil
 
 # The `image:` source: a base image to lay an overlay over, plus the cloud-init
 # seed that provisions the guest on first boot.
 class ImageSource: Source
-  field payload
+  field payload @ Path
 
-  def (init) self :image :os :arch :app :user :staged :dolang :keys :root
+  def (init)
+    self
+    :image @ Artifact
+    :os @ GuestOs
+    :arch @ GuestArch
+    :app @ Str
+    :user @ Str
+    :staged @ InitState
+    :dolang @ Artifact
+    :keys @ KeyPair
+    :root @ Path
+  do
     let resolved = image.resolve $app
     let payload = dolang.resolve $app
     let stored = prepared_image $resolved $root
     let seed = progress.show message: "prepare cloud-init" icon: ☁️ do |_|
-      let public_key = keys.public.read().trim()
+      let key: _ :public = keys
+      let public_key = public.read().trim()
+      let :boot :write :packages = staged
       # Rendered here rather than at parse time: an `init:` `add:` naming a
       # `source:` is fetched with everything else, and its bytes are only in
       # hand once that has happened.
-      let write = $
-        for add = staged.write
+      let write_files @ Array[yaml.EncodeValue] = $
+        for add = write
           - (write_files_entry add app)
       let user_data = cloud_init.cloud_config $user $public_key
-        $staged.packages $staged.boot $write
+        $packages $boot $write_files
       cloud_init.build_seed $root $user_data
     self.#payload = payload
     Source.(init) $self
@@ -3143,13 +3311,13 @@ class ImageSource: Source
       probe: :SSH:
       image: $stored
       format: $(image_format stored)
-      media: [Struct(path: seed, boot: nil)]
+      media: [(path: seed, boot: nil)]
 
   # The payload is copied in over SSH — this is the one path where the guest
   # brings up sshd itself and the VFS arrives afterwards — and then cloud-init
   # is waited out, since the seed's `runcmd` is still running when sshd starts
   # answering.
-  pub def provision self domain
+  pub def provision self domain @ DomainImpl
     progress.show message: "copy payload" icon: 📦 do |_|
       domain.install_payload $self.#payload
     progress.show message: "wait for provisioning" do |_|
@@ -3162,31 +3330,43 @@ class ImageSource: Source
 # somebody else built; this one starts from nothing and lets Setup write it, so
 # `image` is `nil` and `create` sizes the overlay instead of backing it.
 class InstallerSource: Source
-  def (init) self :installers :drivers :os :arch :app :user :dolang :keys :root :workdir
+  def (init)
+    self
+    :installers @ Array[Installer]
+    :drivers @ Array[Artifact]
+    :os @ GuestOs
+    :arch @ GuestArch
+    :app @ Str
+    :user @ Str
+    :dolang @ Artifact
+    :keys @ KeyPair
+    :root @ Path
+    :workdir @ Path
+  do
     # The guest runs a released interpreter, so deliver source rather than
     # host bytecode or a module that would need to exist in that release.
     let provision_source = _shell.resource dolang-shell-modules provision.dol
     if !type(provision_source, Str)
       throw std.RuntimeError "libvirt: missing or non-text resource dolang-shell-modules/provision.dol"
-    let media = []
+    let media @ Array[Medium] = []
     # The installer boots first and the disk it writes boots after it; driver
     # media is read by Setup and never booted, so it takes no order.
     let boot = 1
     # Which edition to install is a property of the media it is on, so it is
     # spelled on `installer:` — and taken from the disc that boots first, which
     # is the one Setup runs from.
-    let edition = nil
-    let index = nil
+    let edition @ (Str | nil) = nil
+    let index @ (Int | nil) = nil
     for spec = installers
       if (boot == 1)
         edition = spec.edition
         index = spec.index
       let resolved = spec.resolve $app
-      media.push (Struct path: resolved boot: boot)
+      media.push (path: resolved, :boot)
       boot = (boot + 1)
     for spec = drivers
       let resolved = spec.resolve $app
-      media.push (Struct path: resolved boot: nil)
+      media.push (path: resolved, boot: nil)
 
     let archive = dolang.resolve $app
     let payload = unpack_payload $root $archive
@@ -3197,6 +3377,7 @@ class InstallerSource: Source
     let password = rand.string 20
     (workdir / "password").write "$password\n"
 
+    let key: _ :public = keys
     let provision = progress.show message: "prepare unattend" icon: 💿 do |_|
       build_provision_iso $root $
         "autounattend.xml": $ unattend.unattend_xml $user :edition :index
@@ -3209,10 +3390,10 @@ class InstallerSource: Source
         "provision.json": $ json.encode $
           :user :password
           root: $WINDOWS_ROOT
-          authorized_key: $(keys.public.read().trim())
+          authorized_key: $(public.read().trim())
         for file = payload.entries()
           "payload/$(file.name)": (payload / file)
-    media.push (Struct path: provision boot: nil)
+    media.push (path: provision, boot: nil)
 
     Source.(init) $self
       :os :arch :user :media
@@ -3233,23 +3414,23 @@ class InstallerSource: Source
   # Removing our answer file also frees `C:\Windows\Panther\unattend.xml` for a
   # caller's own post-generalize one; leaving ours there would silently pre-empt
   # it.
-  pub def provision _self domain
+  pub def provision _self domain @ DomainImpl
     progress.show message: "provision guest" icon: 🪟 do |_|
       domain.with do
         # Hibernating a guest that is ephemeral, snapshottable and exportable
         # buys nothing and costs plenty: with Fast Startup on, a shutdown is a
         # partial hibernation, and a disk captured mid-hibernation restores
         # kernel state for hardware that may no longer be there.
-        run powercfg /h off
+        cli powercfg /h off
         # The power button defaults to sleep, which is not what `shutdown`
         # asking through ACPI means: bind it to an orderly shutdown so a
         # `Domain.shutdown` reaches `:SHUTOFF:` rather than suspending the
         # guest. Both values are set — the guest has no battery to put it on
         # the DC one, but a scheme that agrees with itself cannot be read the
         # wrong way.
-        run powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3
-        run powercfg /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3
-        run powercfg /setactive SCHEME_CURRENT
+        cli powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3
+        cli powercfg /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3
+        cli powercfg /setactive SCHEME_CURRENT
 
         let windows = Path $ env.get windir default: C:\Windows
         # Logs each removal rather than removing quietly: `ignore: true` cannot
@@ -3268,7 +3449,7 @@ class InstallerSource: Source
 # restored — so the domain is ready as soon as its VFS answers, and `provision`
 # is inherited as the no-op.
 class BundleSource: Source
-  def (init) self :bundle :app :root :workdir
+  def (init) self :bundle@Artifact :app@Str :root@Path :workdir@Path
     let resolved = progress.show message: "resolve bundle" do |_|
       bundle.resolve $app
     let manifest = read_manifest $resolved
@@ -3292,17 +3473,19 @@ class BundleSource: Source
     # go straight into this domain's work directory: a variable store records
     # one machine's boot entries and a vTPM holds one machine's secrets, so two
     # domains must never be pointed at the same copy.
-    let nvram_format = nil
-    if (manifest.members.nvram != nil)
-      extract_member $resolved $manifest.members.nvram (workdir / "nvram.bin")
-      nvram_format = manifest.members.nvram.format
+    let nvram_format @ (Str | nil) = nil
+    let nvram = manifest.nvram
+    if (nvram != nil)
+      extract_member $resolved $nvram (workdir / "nvram.bin")
+      nvram_format = nvram.format
     else if (profile.firmware == :EFI_SECURE:)
       let message = "bundle has no firmware variable store, which os: $(manifest.os) requires"
       throw std.ValueError $message
-    if (manifest.members.tpm != nil)
+    let tpm_state = manifest.tpm_state
+    if (tpm_state != nil)
       with_temp_dir parent: $workdir do |staging|
         let archive = (staging / TPM_MEMBER)
-        extract_member $resolved $manifest.members.tpm $archive
+        extract_member $resolved $tpm_state $archive
         transfer.unpack $archive (workdir / "tpm")
     else if (profile.tpm != nil)
       throw std.ValueError "bundle has no vTPM state, which os: $(manifest.os) requires"
@@ -3313,7 +3496,7 @@ class BundleSource: Source
       user: $(require_name manifest.user)
       command: $manifest.command
       probe: :VFS:
-      format: $manifest.members.disk.format
+      format: $manifest.disk.format
       memory: $manifest.memory
       vcpus: $manifest.vcpus
 
@@ -3323,12 +3506,11 @@ class BundleSource: Source
 #
 # ## Errors
 #
-# | Error          | Condition                                                            |
+# | Exception      | Condition                                                            |
 # | -------------- | ----------------------------------------------------------------------- |
 # | `ValueError`   | None or more than one of `image`, `bundle`, and `installer` are given, `os` is omitted with `image`, an argument is given that `bundle` already answers or that the guest's provisioning method cannot act on, `arch` is not the host's, the bundle was exported from another `app`, or a domain named `name` already exists |
 # | `RuntimeError` | No forwarded SSH port could be allocated, or a host program the requested configuration needs is not on `PATH` |
 # | `TimedOutError` | The guest was not reachable within `wait_timeout` |
-# | `TypeError`    | Invalid argument type |
 #
 # ## Example
 #
@@ -3360,14 +3542,14 @@ class BundleSource: Source
 #   run: do
 #     run uname -a
 # ```
-pub def create
+pub def create[I, O]
   # [Domain options](libvirt.common-domain-options) and
   # [steps](libvirt.create-steps).
-  ...options
+  ...options @ DomainOptions[I, O]
+  <I
+  >O
 do -> Domain
-  let impl = DomainImpl nil $DEFAULT_CONNECT_URI
-  impl.create ...options
-  Domain $impl
+  Domain $(create_domain ...options)
 
 # Creates a domain from an `image:` or a `bundle:`, runs `block` through its
 # VFS, and tears it down — even if `block` throws.
@@ -3381,12 +3563,14 @@ do -> Domain
 #   do
 #     run uname -a
 # ```
-pub def with[R]
+pub def with[R, I, O]
   # Block to run in the guest VFS.
   block @ (() -> R)
   # [Domain options](libvirt.common-domain-options) and
   # [steps](libvirt.create-steps).
-  ...options
+  ...options @ DomainOptions[I, O]
+  <I
+  >O
 do -> R
   let domain = create ...options
   try
@@ -3421,7 +3605,7 @@ do -> R
 #     packages:
 #       - git
 # ```
-pub def build
+pub def build[I, O]
   # Bundle to write; `.dolvm` is the
   # conventional extension.
   destination @ (Str | Path)
@@ -3429,15 +3613,15 @@ pub def build
   :compress @ Compress = true
   # [Domain options](libvirt.common-domain-options) and
   # [steps](libvirt.create-steps).
-  ...options
+  ...options @ DomainOptions[I, O]
+  <I
+  >O
 do -> Path
   let domain = create ...options
-  let result = nil
   try
     domain.shutdown()
-    result = domain.export $destination :compress
+    domain.export $destination :compress
   finally
     if (domain.state() != :SHUTOFF:)
       domain.destroy()
     domain.undefine()
-  result

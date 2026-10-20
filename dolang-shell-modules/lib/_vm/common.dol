@@ -1,32 +1,30 @@
 # dolang: strict
 # Helpers shared by more than one of the `_vm` modules.
 
-import fs:
-  - @Path
+import proc
+  fs:
+    - @Path
+  std:
+    - null
 
-# Runs a host program in a locale-independent environment, so that output this
+# Runs a host program with no input and its output captured, returning its
+# standard output. Standard error is collected in `stderr`, for the caller to
+# classify a failure by.
+#
+# The program runs in a locale-independent environment, so that output this
 # module parses back is not translated.
-pub def cli
-  program @ (Str | Path)
-  :stdout @ (Path | Str | Sinkable[Str]) = nil
-  :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
-  *args @ Value
-  <Iter[Value]
-  >Sink[Str]
-do -> nil
+pub def capture program@(Str | Path) stderr@Array[Str] *args@Value -> Str
   env LC_ALL: C LANG: C do
-    # FIXME: it would be nice if this capture narrowing were permitted directly
-    let out = stdout
-    let err = stderr
-    # A local, since a test of what a block captures doesn't narrow it
-    # FIXME(#1283): a conditional `stdout:` selects the overload, so each
-    # case is a call of its own
-    if (out != nil)
-      run $program ...args
-        stdout: $out
-        if (err != nil)
-          stderr: $err
-    else
-      run $program ...args
-        if (err != nil)
-          stderr: $err
+    sub do run $program ...args stdin: $null stderr: $stderr.prechomp()
+
+# Runs a host program as `capture` does, for a caller with no failure to
+# classify. A failure prints what the program wrote to standard error before
+# it is rethrown, since the exit status alone says nothing about the cause.
+pub def cli program@(Str | Path) *args@Value -> Str
+  let stderr @ Array[Str] = []
+  try
+    capture $program $stderr ...args
+  catch proc.Error: e
+    if stderr.len
+      echo $"\n".join(stderr)
+    throw e
