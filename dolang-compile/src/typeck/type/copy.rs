@@ -4,7 +4,10 @@
 //! up holding only what was copied into it: the types, and the symbols and
 //! declarations they refer to, with what those declarations refer to in turn.
 //! Spans keep their units, which the destination allocates to match. Between
-//! forks of one base, what the base holds keeps its IDs.
+//! forks of one base, what the base holds keeps its IDs, and between forks of
+//! layers over one base, what their deepest common layer holds. What copies from
+//! forks into another database copied of their root is remembered across copiers
+//! by [`Copies`].
 
 use std::{convert::Infallible, sync::Arc};
 
@@ -12,8 +15,30 @@ use rustc_hash::FxHashMap;
 
 use super::{
     Argument, BinderSource, Binding, Database, DeclId, DeclSource, Declaration, Intrinsic, Literal,
-    Member, MemberKey, Phase, Supertype, SymbolId, Type, TypeId,
+    Member, MemberKey, Phase, Shared, Supertype, SymbolId, Type, TypeId,
 };
+
+/// What copies into one database copied of the root base their sources are forks
+/// of: its types, symbols and declarations, which every fork of it shares. A new
+/// one for a single copy.
+#[derive(Default)]
+pub(crate) struct Copies {
+    /// The root the memo is keyed to, once a fork was copied from
+    root: Option<Arc<Shared>>,
+    types: FxHashMap<TypeId, TypeId>,
+    symbols: FxHashMap<SymbolId, SymbolId>,
+    decls: FxHashMap<DeclId, DeclId>,
+    /// Each copied declaration's original
+    origins: FxHashMap<DeclId, DeclId>,
+}
+
+impl Copies {
+    /// The declaration a copy was copied from
+    #[cfg_attr(not(test), expect(dead_code, reason = "#1282 names copied facts"))]
+    pub(crate) fn origin(&self, copy: DeclId) -> Option<DeclId> {
+        self.origins.get(&copy).copied()
+    }
+}
 
 /// Copies types from one database into another, with the symbols and
 /// declarations they refer to. What it copied is memoized, so roots that share
@@ -22,10 +47,15 @@ use super::{
 pub(crate) struct Copier<'a> {
     from: &'a Database,
     into: &'a mut Database,
-    /// The counts of types and symbols of the base both are forks of
+    copies: &'a mut Copies,
+    /// The counts of types and symbols of the deepest base both are forks of
     shared: Option<(usize, usize)>,
+    /// The counts of types and symbols of `from`'s root, whose copies are kept in
+    /// `copies`, if `from` is a fork
+    rooted: Option<(usize, usize)>,
     /// The intrinsics `from` designates, by declaration
     intrinsics: FxHashMap<DeclId, Intrinsic>,
+    /// What it copied of what `from`'s root doesn't hold
     types: FxHashMap<TypeId, TypeId>,
     symbols: FxHashMap<SymbolId, SymbolId>,
     decls: FxHashMap<DeclId, DeclId>,
@@ -36,12 +66,31 @@ pub(crate) struct Copier<'a> {
 impl Database {
     /// A copier from `from` into this database, whose units it allocates to match
     /// `from`'s, unless both are forks of one base. A copy that takes a new
-    /// declaration needs this database not to be sealed.
+    /// declaration needs this database not to be sealed. What it copies of
+    /// `from`'s root is kept in `copies`, which may only have been used with forks
+    /// of the same root.
     #[cfg_attr(not(test), expect(dead_code, reason = "#1282 copies flow results"))]
-    pub(crate) fn copier<'a>(&'a mut self, from: &'a Database) -> Copier<'a> {
+    pub(crate) fn copier<'a>(
+        &'a mut self,
+        from: &'a Database,
+        copies: &'a mut Copies,
+    ) -> Copier<'a> {
         let shared = match (&from.phase, &self.phase) {
-            (Phase::Fork(base), Phase::Fork(other)) if Arc::ptr_eq(base, other) => {
-                Some((base.types.len(), base.symbols.len()))
+            (Phase::Fork(base), Phase::Fork(other)) => {
+                common(base, other).map(|common| (common.type_count, common.symbol_count))
+            }
+            _ => None,
+        };
+        let rooted = match &from.phase {
+            Phase::Fork(base) if shared.is_none() => {
+                let root = base.root();
+                match &copies.root {
+                    Some(keyed) => {
+                        assert!(Arc::ptr_eq(keyed, root), "copies are kept for one root")
+                    }
+                    None => copies.root = Some(root.clone()),
+                }
+                Some((root.type_count, root.symbol_count))
             }
             _ => None,
         };
@@ -59,7 +108,9 @@ impl Database {
         Copier {
             from,
             into: self,
+            copies,
             shared,
+            rooted,
             intrinsics,
             types: FxHashMap::default(),
             symbols: FxHashMap::default(),
@@ -84,7 +135,12 @@ impl Copier<'_> {
         if self.shared.is_some_and(|(types, _)| ty.index() < types) {
             return ty;
         }
-        if let Some(&copy) = self.types.get(&ty) {
+        let rooted = self.rooted.is_some_and(|(types, _)| ty.index() < types);
+        let memo = match rooted {
+            true => &self.copies.types,
+            false => &self.types,
+        };
+        if let Some(&copy) = memo.get(&ty) {
             return copy;
         }
         let from = self.from;
@@ -120,7 +176,10 @@ impl Copier<'_> {
             _ => {}
         }
         let copy = self.into.intern(node);
-        self.types.insert(ty, copy);
+        match rooted {
+            true => self.copies.types.insert(ty, copy),
+            false => self.types.insert(ty, copy),
+        };
         copy
     }
 
@@ -131,7 +190,14 @@ impl Copier<'_> {
         {
             return name;
         }
-        if let Some(&copy) = self.symbols.get(&name) {
+        let rooted = self
+            .rooted
+            .is_some_and(|(_, symbols)| name.index() < symbols);
+        let memo = match rooted {
+            true => &self.copies.symbols,
+            false => &self.symbols,
+        };
+        if let Some(&copy) = memo.get(&name) {
             return copy;
         }
         let text = self.from.symbol(name);
@@ -139,7 +205,10 @@ impl Copier<'_> {
             true => self.into.fresh_symbol(text),
             false => self.into.intern_symbol(text),
         };
-        self.symbols.insert(name, copy);
+        match rooted {
+            true => self.copies.symbols.insert(name, copy),
+            false => self.symbols.insert(name, copy),
+        };
         copy
     }
 
@@ -150,11 +219,22 @@ impl Copier<'_> {
         if self.shared.is_some() {
             return decl;
         }
-        if let Some(&copy) = self.decls.get(&decl) {
+        // A fork's declarations are its root's
+        let rooted = self.rooted.is_some();
+        let memo = match rooted {
+            true => &self.copies.decls,
+            false => &self.decls,
+        };
+        if let Some(&copy) = memo.get(&decl) {
             return copy;
         }
         let copy = self.into.allocate();
-        self.decls.insert(decl, copy);
+        if rooted {
+            self.copies.decls.insert(decl, copy);
+            self.copies.origins.insert(copy, decl);
+        } else {
+            self.decls.insert(decl, copy);
+        }
         if let Some(&intrinsic) = self.intrinsics.get(&decl) {
             let ty = self.into.intern(Type::Decl(copy));
             self.into.set_intrinsic(intrinsic, ty);
@@ -244,4 +324,20 @@ impl Copier<'_> {
             self.into.set_overloads(copy, overloads);
         }
     }
+}
+
+/// The deepest shared database both chains have in common
+fn common<'a>(a: &'a Arc<Shared>, b: &Arc<Shared>) -> Option<&'a Arc<Shared>> {
+    let mut outer = Some(b);
+    while let Some(layer) = outer {
+        let mut inner = Some(a);
+        while let Some(candidate) = inner {
+            if Arc::ptr_eq(candidate, layer) {
+                return Some(candidate);
+            }
+            inner = candidate.parent.as_ref();
+        }
+        outer = layer.parent.as_ref();
+    }
+    None
 }
