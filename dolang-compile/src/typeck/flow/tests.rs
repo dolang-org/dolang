@@ -3,7 +3,11 @@ use std::path::Path;
 use super::Flow;
 use crate::{
     Config,
-    typeck::{Builder, Check, r#type::UnitId},
+    typeck::{
+        Builder, Check,
+        cfg::{BlockId, FuncKind, Origin, Terminal},
+        r#type::UnitId,
+    },
 };
 
 /// Analyze a script both in queue order and in reverse, which must agree
@@ -330,4 +334,137 @@ pub def run n @ Int width @ Int text @ Str
             == "std.Fmt[Never, {Unknown, Unknown, earlier_hole: Unknown, later_hole: Unknown}]"),
         "{types:?}",
     );
+}
+
+/// The names of `func`'s source variables live at each of its blocks that `select`
+/// picks
+fn live_at(
+    source: &str,
+    func: &str,
+    select: impl Fn(&Flow<'_, '_>, BlockId) -> bool,
+) -> Vec<Vec<String>> {
+    let mut config = Config::new();
+    config.typecheck(true);
+    let unit = config.unit(Path::new("test.dol"), source);
+    assert!(!unit.failed, "the fixture doesn't compile");
+    let mut builder = Builder::new();
+    builder.unit(&unit).unwrap();
+    let check = builder.check();
+    let ir = check.cfgs[0]
+        .as_ref()
+        .expect("a unit with source is lowered");
+    let flow = Flow::new(ir, &check.forks[0], &check.tables, false);
+    let (id, _) = (ir.funcs())
+        .find(|(_, data)| match data.kind {
+            FuncKind::Decl(decl) => check.tables.qualified(decl).ends_with(&format!(".{func}")),
+            _ => false,
+        })
+        .expect("the function is lowered");
+    let vars = &flow.funcs[id.index()].vars;
+    let blocks: Vec<Vec<String>> = (ir.blocks())
+        .filter(|&(block, data)| data.func == id && select(&flow, block))
+        .map(|(block, _)| {
+            (flow.live[block.index()].iter_ones())
+                .filter_map(|slot| match ir.var(vars[slot]).origin {
+                    Origin::Source(span) => Some(check.tables.text(flow.unit, span).to_owned()),
+                    _ => None,
+                })
+                .collect()
+        })
+        .collect();
+    assert!(!blocks.is_empty(), "no block is selected");
+    blocks
+}
+
+/// A loop's head, where a back edge joins
+fn head(flow: &Flow<'_, '_>, block: BlockId) -> bool {
+    flow.blocks.widens[block.index()]
+}
+
+/// Only what an iteration reads from an earlier one is live at a loop's head
+#[test]
+fn per_iteration_bindings_are_dead_at_heads() {
+    let heads = live_at(
+        "
+def f r @ Array[Int | Str]
+  let total = 0
+  for e = r
+    let k = do e
+    match e
+      Int(n) do total = (total + n)
+      s do k()
+  total
+",
+        "f",
+        head,
+    );
+    for live in heads {
+        assert!(live.contains(&"total".to_owned()), "{live:?}");
+        for dead in ["e", "k", "n", "s"] {
+            assert!(!live.contains(&dead.to_owned()), "{live:?}");
+        }
+    }
+}
+
+/// Assigning a variable that may have escaped reads whether it has, so it's live
+/// before the assignment though nothing reads its value
+#[test]
+fn escaped_assignments_read() {
+    let heads = live_at(
+        "
+def f r
+  let c = 0
+  let k = do c
+  for e = r
+    c = e
+    k()
+",
+        "f",
+        head,
+    );
+    for live in heads {
+        assert!(live.contains(&"c".to_owned()), "{live:?}");
+    }
+}
+
+/// A `finally` body continues to where it was entered for
+#[test]
+fn live_through_finally() {
+    let ends = live_at(
+        "
+def f g
+  let x = 1
+  try
+    g()
+  finally
+    g()
+  x
+",
+        "f",
+        |flow, block| matches!(flow.ir.block(block).terminal, Terminal::EndFinally),
+    );
+    for live in ends {
+        assert!(live.contains(&"x".to_owned()), "{live:?}");
+    }
+}
+
+/// A step that throws continues at its handler
+#[test]
+fn live_into_handlers() {
+    let bodies = live_at(
+        "
+def f g
+  let x = 1
+  try
+    g()
+  catch _
+    return x
+  nil
+",
+        "f",
+        |flow, block| flow.ir.block(block).handler.is_some(),
+    );
+    for live in bodies {
+        assert!(live.contains(&"x".to_owned()), "{live:?}");
+    }
 }
