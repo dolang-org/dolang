@@ -477,6 +477,9 @@ struct Variable {
     /// Whether it's an empty literal's open part, which only what the literal
     /// is in decides (see [`Solver::infer_fresh`])
     fresh: bool,
+    /// Whether it's a call's result, which what the call reaches gives (see
+    /// [`Solver::infer_result`])
+    result: bool,
 }
 
 /// A variable's resolution, independent of accumulated bounds
@@ -1124,6 +1127,19 @@ impl<'db> Solver<'db> {
         self.fresh(Kind::Type, Rest::All, ScopeId(0))
     }
 
+    /// A fresh variable for a call's result. What the signatures the call reaches
+    /// give decides it once they're closed, whatever is expected of it: widening
+    /// is for what consumes it (see [`Self::assign_results`]).
+    pub(crate) fn infer_result(&mut self) -> Term {
+        Term::Infer(self.push_variable(Variable {
+            kind: Kind::Type,
+            lanes: Rest::All,
+            scope: ScopeId(0),
+            fresh: false,
+            result: true,
+        }))
+    }
+
     /// A fresh variable of `kind`. A schema variable's items occupy `lanes`.
     pub(crate) fn infer_kind(&mut self, kind: Kind, lanes: Rest) -> Term {
         self.fresh(kind, lanes, ScopeId(0))
@@ -1140,6 +1156,7 @@ impl<'db> Solver<'db> {
             lanes,
             scope,
             fresh: true,
+            result: false,
         }))
     }
 
@@ -1150,6 +1167,7 @@ impl<'db> Solver<'db> {
             lanes,
             scope,
             fresh,
+            result: false,
         }))
     }
 
@@ -3294,10 +3312,37 @@ impl<'db> Solver<'db> {
             if self.gas.is_exhausted() {
                 break;
             }
-            if !self.try_alternatives() && !self.settle() {
+            if !self.try_alternatives() && !self.assign_results() && !self.settle() {
                 break;
             }
         }
+    }
+
+    /// Assign each call result what the signatures its call reached give, once
+    /// trials have chosen among them and they're closed. Whether one was assigned.
+    fn assign_results(&self) -> bool {
+        let mut assigned = false;
+        for id in self.variable_ids() {
+            if !self.variable(id).result || self.assignment(id).is_some() {
+                continue;
+            }
+            let lower: Result<Vec<TypeId>, _> = self
+                .bounds(id)
+                .lower()
+                .map(|term| self.reify(term))
+                .collect();
+            let Ok(lower) = lower else {
+                continue;
+            };
+            if lower.is_empty() {
+                continue;
+            }
+            if let Some(ty) = self.join(Kind::Type, &lower) {
+                self.assign(id, self.closed(ty));
+                assigned = true;
+            }
+        }
+        assigned
     }
 
     /// Commit a choice for one variable of a skolem scope, which nothing outside

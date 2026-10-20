@@ -326,7 +326,8 @@ impl<'db> Solver<'db> {
     }
 
     /// Try each of a judgment's alternatives. One proven without adding a bound
-    /// holds outright and is chosen even beside other possible ones. Returns the
+    /// holds outright and is chosen even beside other possible ones, unless
+    /// they're overloads. Returns the
     /// verdict, the alternatives left possible, and what trials found of every
     /// alternative, if they rejected each.
     fn judge(&self, id: ObligationId) -> Result<(Verdict, Vec<usize>, Vec<Rejection>), Residual> {
@@ -373,7 +374,11 @@ impl<'db> Solver<'db> {
                         contradictions: fork.explain(&outcome),
                     })
                 }
-                Status::Proven if free => return Ok((Verdict::Chosen(index), vec![], vec![])),
+                // Overloads give different results, so another that also takes the
+                // call leaves it ambiguous
+                Status::Proven if free && !owned => {
+                    return Ok((Verdict::Chosen(index), vec![], vec![]));
+                }
                 _ => possible.push(index),
             }
         }
