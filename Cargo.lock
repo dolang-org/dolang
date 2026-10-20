@@ -854,6 +854,7 @@ dependencies = [
  "dot-writer",
  "phf",
  "postcard",
+ "rayon",
  "rustc-hash",
  "serde",
 ]
