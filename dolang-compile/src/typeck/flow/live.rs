@@ -4,10 +4,7 @@
 //! [`Flow::merge`](super::Flow) forgets it there rather than joining it, and a
 //! block isn't queued again just because a dead value grew. A read is any step
 //! that consults a slot: a variable reference, a narrowing, a default, a capture
-//! or an `(init)` escape. A write kills, except that assigning an ivar that isn't
-//! volatile depends on whether it may have escaped, which the slot records, so it
-//! reads the slot too. A fresh binding starts a cell that hasn't escaped, so it
-//! doesn't; a hoisted binding isn't fresh, so it does.
+//! or an `(init)` escape. A write kills.
 //!
 //! Edges are those of [`Terminal::successors`], and a block's handler, which a
 //! step may raise to from anywhere in it, so everything live there is live at the
@@ -24,7 +21,7 @@ use rustc_hash::FxHashMap;
 use super::Frame;
 use crate::typeck::cfg::{
     Against, BlockId, Expr, ExprKind, FuncId, FuncKind, Ir, Pattern, Step, Tag, Target, Terminal,
-    VarFlags, VarId,
+    VarId,
 };
 
 /// What a block or edge does to its function's slots, in order
@@ -62,23 +59,6 @@ impl Collect<'_> {
         }
     }
 
-    /// An assignment, which reads whether an ivar may have escaped
-    fn assign(&mut self, var: VarId) {
-        let flags = self.ir.var(var).flags;
-        if flags.contains(VarFlags::INTERPROCEDURAL) && !flags.contains(VarFlags::VOLATILE) {
-            self.read(var);
-        }
-        self.write(var);
-    }
-
-    /// A binding, a fresh cell unless it's hoisted
-    fn bind(&mut self, var: VarId) {
-        match self.ir.var(var).flags.contains(VarFlags::HOISTED) {
-            true => self.assign(var),
-            false => self.write(var),
-        }
-    }
-
     fn expr(&mut self, expr: &Expr) {
         expr.walk(&mut |expr| match expr.kind {
             ExprKind::Var(var) | ExprKind::Copy(var) => self.read(var),
@@ -90,7 +70,7 @@ impl Collect<'_> {
     fn pattern(&mut self, pattern: &Pattern) {
         pattern.walk(&mut |expr| self.expr(expr));
         for var in pattern.vars() {
-            self.bind(var);
+            self.write(var);
         }
     }
 
@@ -103,7 +83,7 @@ impl Collect<'_> {
             Step::Assign(target) => match target {
                 Target::Var { var, value } => {
                     self.expr(value);
-                    self.assign(*var);
+                    self.write(*var);
                 }
                 Target::Field { object, value, .. } => {
                     self.expr(object);
@@ -203,7 +183,7 @@ pub(super) fn live(
             items
                 .iter()
                 .filter_map(|item| item.var)
-                .for_each(|var| block.bind(var));
+                .for_each(|var| block.write(var));
         }
         if id == func.exit {
             block.read(func.result);

@@ -2,7 +2,7 @@
 
 use super::{
     Flow, State,
-    state::{CtxId, Link, May},
+    state::{CtxId, Link},
 };
 use crate::typeck::{
     cfg::{BlockId, FuncKind, Tag, VarId},
@@ -47,21 +47,25 @@ impl Flow<'_, '_> {
     }
 
     /// A block's state: what each variable may hold, as a judgment shows it, marked
-    /// `^` once it may have escaped, with its
-    /// link as `@g<group>.<row>`, then the stack and each group's columns
+    /// `^` if it may have escaped at the block's entry, with its link as
+    /// `@g<group>.<row>`, then the stack and each group's columns
     pub(super) fn render_state(&self, block: BlockId, state: &State) -> String {
-        let func = self.ir.block(block).func;
+        let data = self.ir.block(block);
         let bottom = self.db.bottom();
-        let mut parts: Vec<String> = (self.funcs[func.index()].vars.iter().zip(&state.vars))
-            .map(|(&var, slot)| (var, slot.fact(), slot.may, slot.link))
+        let mut parts: Vec<String> = (self.funcs[data.func.index()].vars.iter().zip(&state.vars))
+            .enumerate()
+            .map(|(index, (&var, slot))| {
+                let escaped = data.escaped.get(index).is_some_and(|bit| *bit);
+                (var, slot.fact(), escaped, slot.link)
+            })
             .filter(|(_, fact, _, _)| fact.ty != bottom || fact.unassigned)
-            .map(|(var, fact, may, link)| {
+            .map(|(var, fact, escaped, link)| {
                 let ty = match (fact.unassigned, fact.ty == bottom) {
                     (false, _) => self.show(fact.ty),
                     (true, true) => "unassigned".to_owned(),
                     (true, false) => format!("{} | unassigned", self.show(fact.ty)),
                 };
-                let mark = if may.contains(May::ESCAPED) { "^" } else { "" };
+                let mark = if escaped { "^" } else { "" };
                 format!("{}{mark}{}: {ty}", self.var_name(var), show_link(link))
             })
             .collect();

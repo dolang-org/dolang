@@ -406,10 +406,10 @@ def f r @ Array[Int | Str]
     }
 }
 
-/// Assigning a variable that may have escaped reads whether it has, so it's live
-/// before the assignment though nothing reads its value
+/// Where a variable may have escaped is decided before flow, so assigning it
+/// kills it even once it may have
 #[test]
-fn escaped_assignments_read() {
+fn escaped_assignments_kill() {
     let heads = live_at(
         "
 def f r
@@ -423,7 +423,7 @@ def f r
         head,
     );
     for live in heads {
-        assert!(live.contains(&"c".to_owned()), "{live:?}");
+        assert!(!live.contains(&"c".to_owned()), "{live:?}");
     }
 }
 
