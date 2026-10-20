@@ -883,16 +883,16 @@ step's.
 
 ## Type flow
 
-`typeck/flow.rs` runs over each unit's graph once it is lowered, iterating to a
-fixed point with one work queue for the region, ordered by reverse postorder so
-the result is deterministic. A block's state holds a fact for each variable its
-function owns (the join of the types it may hold, and whether it may be
-unassigned) and the operand stack's types. It is stored per context, the stack
-of `finally` tags the block was entered with, so a `finally`'s normal and
-rethrow entries are never joined. States only grow: they join where control
-merges, and at the target of an edge that retreats in the queue's order the
-join widens (`solver::Widening`) once it has grown too often, or goes to the
-local's annotation.
+`typeck/flow.rs` runs over each unit's graph once it is lowered, in runs
+(`cfg/split.rs`), each iterating to a fixed point with one work queue, ordered
+by reverse postorder so the result is deterministic. A block's state holds a
+fact for each variable its function owns (the join of the types it may hold, and
+whether it may be unassigned) and the operand stack's types. It is stored per
+context, the stack of `finally` tags the block was entered with, so a
+`finally`'s normal and rethrow entries are never joined. States only grow: they
+join where control merges, and at the target of an edge that retreats in the
+queue's order the join widens (`solver::Widening`) once it has grown too often,
+or goes to the local's annotation.
 
 An assignment is a strong update, and a fresh literal assigned to a declared
 local decays to its class when that fits the annotation. A parameter's or
@@ -964,6 +964,26 @@ anywhere else gets `Unknown` joined into its parameter and channel variables,
 and its value is its declared type with the joined result. A block's omitted
 channels aren't quantified as a def's are: calls in the block pass its channel
 variables' joined types, and depend on them.
+
+A run is a function and the functions nested in it that flow can't analyze
+apart from it, decided before flow from what each function captures and
+assigns of its ancestors' variables (`Func::uses`, `Func::assigns`). A `do`
+block, whose signature couples it to its caller, or a function that assigns a
+variable a function of the run owns, is included in the run. Any other is
+detached: late if it captures such a variable, early otherwise. Every function
+that assigns a variable is in its owner's run, so what a run reads from the runs
+above it (`Run::inherited`) is fixed before it starts: a late run inherits the
+final accumulators of the run it's detached from, and an early run what that
+run inherited. Exported variables don't count, since an importer may change
+them at any time.
+
+Lowering interns in a fork of its own, which is shared as the unit's layer, and
+each run is a rayon task with a fork of the layer. A run's inherited types are
+copied from its parent's fork. Once every unit is checked, each run's facts are
+copied, in unit and run order, into a standalone results database that the
+`Check` keeps, through one `Copies` memo, which keeps each copied declaration's
+original for rendering. Problems and undecided checks are gathered in run order
+and stably sorted by span, so nothing depends on which run finishes first.
 
 Checking rules (`flow/rule.rs`) are solved by a fresh solver on each run, and
 only reified types leave it:

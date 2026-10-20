@@ -384,6 +384,11 @@ const _: () = {
     const fn sync<T: Sync>() {}
     send::<UnitOutput>();
     sync::<elab::Tables<'_>>();
+    // A unit's runs are analyzed on other threads than the one that lowered it
+    send::<r#type::Database>();
+    send::<flow::Results>();
+    sync::<cfg::Ir>();
+    sync::<flow::Layout>();
     sync::<elab::Bounds<'_>>();
 };
 

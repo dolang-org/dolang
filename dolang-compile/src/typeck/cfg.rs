@@ -1,8 +1,9 @@
 //! The semantic typing CFG.
 //!
-//! Type flow analyzes one module at a time, as a single region: the module's
-//! top-level code is its entry function, and every def, method, lambda and field
-//! initializer in it is a function nested in that one. A block holds statement
+//! A module is lowered to one graph: the module's top-level code is its entry
+//! function, and every def, method, lambda and field initializer in it is a
+//! function nested in that one. Type flow analyzes the graph in runs, each a
+//! function and the nested functions coupled to it ([`Ir::runs`]). A block holds statement
 //! steps whose expressions stay tree-shaped, and ends in a terminal. Only
 //! short-circuit operators, comprehensions, statements and exceptions introduce
 //! control flow.

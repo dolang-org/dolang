@@ -30,7 +30,7 @@ fn rendered(
         .map(move |(span, fact)| ((span.start, span.end), render(fact.ty), fact.unassigned))
 }
 
-/// Analyze a unit's runs serially, each in queue order or in reverse, gathering
+/// Analyze a unit's runs, each in queue order or in reverse, gathering
 /// their results as a check does
 fn analyze(check: &Check<'_>, unit: usize, reversed: bool) -> Rendered {
     let ir = check.cfgs[unit]
@@ -38,18 +38,10 @@ fn analyze(check: &Check<'_>, unit: usize, reversed: bool) -> Rendered {
         .expect("a unit with source is lowered");
     let layout = Layout::new(ir);
     let runs = ir.runs();
-    let outputs = Tree {
-        ir,
-        layout: &layout,
-        runs: &runs,
-        layer: check.layers[unit]
-            .as_ref()
-            .expect("a lowered unit has a layer"),
-        tables: &check.tables,
-        reversed,
-        outputs: (0..runs.len()).map(|_| None).collect(),
-    }
-    .finish();
+    let layer = check.layers[unit]
+        .as_ref()
+        .expect("a lowered unit has a layer");
+    let outputs = Tree::new(ir, &layout, &runs, layer, &check.tables, reversed).finish();
     let mut facts = Vec::new();
     let mut problems = Vec::new();
     let mut unresolved = Vec::new();

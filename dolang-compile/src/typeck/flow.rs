@@ -2,11 +2,13 @@
 //!
 //! The analysis finds, at each point of the graph, the type each variable may hold
 //! and whether it may still be unassigned, iterating to a fixed point over one work
-//! queue for the whole region. A block's state is stored per context: the stack of
-//! `finally` tags it was entered with, so a `finally` entered normally and one
-//! entered to rethrow are never joined. States only grow. They join where control
-//! merges, and where an edge retreats in the queue's order the join widens once it
-//! has grown too often; an annotated local widens to its annotation instead.
+//! queue per run: a function and the functions nested in it that can't be
+//! analyzed apart from it ([`Ir::runs`]). A block's state is stored per context:
+//! the stack of `finally` tags it was entered with, so a `finally` entered
+//! normally and one entered to rethrow are never joined. States only grow. They
+//! join where control merges, and where an edge retreats in the queue's order the
+//! join widens once it has grown too often; an annotated local widens to its
+//! annotation instead.
 //!
 //! An assignment is a strong update along its path, and a literal assigned to a
 //! declared local decays to its class when the class fits the local's annotation.
@@ -40,6 +42,14 @@
 //! only a variable that doesn't change once it escapes keeps what a test showed:
 //! one its owner assigns where it may have escaped is read from the accumulator
 //! by every function that captures it.
+//!
+//! A run's accumulators for the variables it captures from runs above it
+//! ([`Run::inherited`]) start from what those runs concluded, and nothing in it
+//! changes them. A run detached late starts once the run it's detached from
+//! finishes, with that run's final accumulators, and one detached early starts
+//! before it does, with what it inherited. Each run is a rayon task with a fork
+//! of its own of the unit's layer, the database lowering interned in, so what it
+//! concludes doesn't depend on which run finishes first.
 //!
 //! A step that can throw joins its state before it into its handler, with the
 //! exception alone on the stack. A step or terminal with a call that gives bottom
@@ -90,7 +100,7 @@ mod trace;
 use std::{
     collections::{BTreeSet, VecDeque},
     mem,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use bitvec::{bitbox, boxed::BitBox};
@@ -186,20 +196,11 @@ pub(crate) fn analyze(
     layer: &Arc<Shared>,
     tables: &Tables<'_>,
 ) -> Vec<(Database, Results)> {
-    Tree {
-        ir,
-        layout,
-        runs,
-        layer,
-        tables,
-        reversed: false,
-        outputs: (0..runs.len()).map(|_| None).collect(),
-    }
-    .finish()
+    Tree::new(ir, layout, runs, layer, tables, false).finish()
 }
 
-/// Analyzes a unit's runs, each once the run it's detached from is forked, if
-/// early, or finished, if late
+/// Analyzes a unit's runs, each as a rayon task spawned once the run it's
+/// detached from is forked, if early, or finished, if late
 struct Tree<'a, 'u> {
     ir: &'a Ir,
     layout: &'a Layout,
@@ -208,35 +209,66 @@ struct Tree<'a, 'u> {
     tables: &'a Tables<'u>,
     /// Whether each run takes its queue's last entry rather than its first
     reversed: bool,
-    /// Each run's fork and results, by run ID
-    outputs: Vec<Option<(Database, Results)>>,
+    /// Each run's fork and results, by run ID, set by the task that analyzed it
+    #[expect(clippy::type_complexity, reason = "one slot per run")]
+    outputs: Box<[Mutex<Option<(Database, Results)>>]>,
 }
 
-impl Tree<'_, '_> {
-    fn finish(mut self) -> Vec<(Database, Results)> {
+impl<'a, 'u> Tree<'a, 'u> {
+    fn new(
+        ir: &'a Ir,
+        layout: &'a Layout,
+        runs: &'a [Run],
+        layer: &'a Arc<Shared>,
+        tables: &'a Tables<'u>,
+        reversed: bool,
+    ) -> Self {
+        Self {
+            ir,
+            layout,
+            runs,
+            layer,
+            tables,
+            reversed,
+            outputs: runs.iter().map(|_| Mutex::new(None)).collect(),
+        }
+    }
+
+    /// Analyze every run, gathering their outputs by run ID, whichever thread
+    /// finished first
+    fn finish(self) -> Vec<(Database, Results)> {
         let root = Database::fork(self.layer);
-        self.run(RunId::module(), root, FxHashMap::default());
+        rayon::scope(|scope| self.run(scope, RunId::module(), root, FxHashMap::default()));
         (self.outputs.into_iter())
-            .map(|output| output.expect("every run is analyzed"))
+            .map(|output| {
+                (output.into_inner())
+                    .expect("no run panicked")
+                    .expect("every run is analyzed")
+            })
             .collect()
     }
 
-    /// Analyze a run in `db` from what it `inherited`, then the runs detached from
-    /// it
-    fn run(&mut self, id: RunId, db: Database, inherited: FxHashMap<VarId, TypeId>) {
+    /// Analyze a run in `db` from what it `inherited`, spawning the runs detached
+    /// from it
+    fn run<'s>(
+        &'s self,
+        scope: &rayon::Scope<'s>,
+        id: RunId,
+        db: Database,
+        inherited: FxHashMap<VarId, TypeId>,
+    ) {
         let run = &self.runs[id.index()];
-        let early: Vec<_> = (run.early.iter())
-            .map(|&child| (child, self.fork(&db, &inherited, child)))
-            .collect();
+        for &child in &run.early {
+            let (db, inherited) = self.fork(&db, &inherited, child);
+            scope.spawn(move |scope| self.run(scope, child, db, inherited));
+        }
         let flow = Flow::new(self.ir, self.layout, run, &db, self.tables, self.reversed);
         let (results, accumulators) = flow.analyze(inherited);
-        let late: Vec<_> = (run.late.iter())
-            .map(|&child| (child, self.fork(&db, &accumulators, child)))
-            .collect();
-        self.outputs[id.index()] = Some((db, results));
-        for (child, (db, inherited)) in early.into_iter().chain(late) {
-            self.run(child, db, inherited);
+        for &child in &run.late {
+            let (db, inherited) = self.fork(&db, &accumulators, child);
+            scope.spawn(move |scope| self.run(scope, child, db, inherited));
         }
+        *self.outputs[id.index()].lock().expect("no run panicked") = Some((db, results));
     }
 
     /// A fork for a run detached from one analyzed in `parent`, with what it
@@ -536,7 +568,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         self.db.unknown()
     }
 
-    /// A solver that holds the region's rigids as its assumptions, its work
+    /// A solver that holds the run's rigids as its assumptions, its work
     /// charged to `gas`
     fn solver<'g>(&self, gas: &'g Gas) -> Solver<'g>
     where
