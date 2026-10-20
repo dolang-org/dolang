@@ -155,9 +155,12 @@ fn results_do_not_depend_on_threads() {
             "import user:\n  - Crate\n  - Bounded\nlet c = (Crate())\nlet x @ Bounded[Crate[Crate[Int]]] = nil\n",
         ),
     ];
-    let check = |threads: usize| {
+    // A pool of `threads` threads, else the global pool
+    let check = |threads: Option<usize>| {
         let mut checker = typeck::Builder::new();
-        checker.threads(threads.try_into().unwrap());
+        if let Some(threads) = threads {
+            checker.threads(threads.try_into().unwrap());
+        }
         let ids = units.each_ref().map(|unit| checker.unit(unit).unwrap());
         let check = checker.check();
         check.smoke();
@@ -195,12 +198,13 @@ fn results_do_not_depend_on_threads() {
             judgments,
         )
     };
-    let sequential = check(1);
+    let sequential = check(Some(1));
     // The fixture exercises errors, undecided checks and judgments in every unit
     assert!(!sequential.0.is_empty());
     assert!(!sequential.1);
     assert!(sequential.3.iter().all(|judgments| !judgments.is_empty()));
-    assert_eq!(sequential, check(4));
+    assert_eq!(sequential, check(Some(4)));
+    assert_eq!(sequential, check(None));
 }
 
 #[test]

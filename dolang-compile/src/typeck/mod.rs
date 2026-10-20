@@ -14,16 +14,7 @@ pub(crate) mod r#type;
 pub(crate) mod typelib;
 mod undecided;
 
-use std::{
-    num::NonZeroUsize,
-    panic,
-    path::Path,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-    thread,
-};
+use std::{num::NonZeroUsize, path::Path, sync::Arc};
 
 use rustc_hash::FxHashSet;
 
@@ -127,7 +118,7 @@ pub struct Builder<'u, 's> {
     /// The types `strand.PipeSender` and `strand.PipeReceiver` stand for, by module
     /// and item
     pipes: [(&'u str, &'u str); 2],
-    /// The most threads to check units on, if not the available parallelism
+    /// The threads to check units on, if not rayon's global pool
     threads: Option<NonZeroUsize>,
 }
 
@@ -147,7 +138,8 @@ impl<'u, 's> Builder<'u, 's> {
         }
     }
 
-    /// Check units on up to `threads` threads. Defaults to the available
+    /// Check units on a pool of `threads` threads of their own. Defaults to rayon's
+    /// global pool, which `RAYON_NUM_THREADS` sizes, else the available
     /// parallelism. The results don't depend on it.
     pub fn threads(&mut self, threads: NonZeroUsize) -> &mut Self {
         self.threads = Some(threads);
@@ -329,8 +321,8 @@ const _: () = {
     sync::<elab::Bounds<'_>>();
 };
 
-/// Check every unit with [`check_unit`], on up to `threads` threads, giving their
-/// outputs by [`UnitId`]
+/// Check every unit with [`check_unit`], on a pool of `threads` threads, else the
+/// global pool, giving their outputs by [`UnitId`]
 fn check_units(
     shared: &Arc<r#type::Shared>,
     tables: &elab::Tables<'_>,
@@ -338,52 +330,40 @@ fn check_units(
     threads: Option<NonZeroUsize>,
 ) -> Vec<UnitOutput> {
     let count = tables.units.len();
-    let mut threads = threads
-        .or_else(|| thread::available_parallelism().ok())
-        .map_or(1, NonZeroUsize::get)
-        .min(count);
-    // Without threads to spawn, or with traces that would interleave
-    if cfg!(target_family = "wasm")
-        || cfg!(feature = "debug") && std::env::var_os("DOLANG_DEBUG").is_some()
-    {
-        threads = 1;
-    }
-    if threads <= 1 {
-        return (0..count)
-            .map(|index| check_unit(shared, tables, bounds, UnitId::from_index(index)))
-            .collect();
-    }
+    let mut slots: Vec<Option<UnitOutput>> = (0..count).map(|_| None).collect();
+    let mut work: Vec<_> = (slots.iter_mut().enumerate())
+        .map(|(index, slot)| (UnitId::from_index(index), slot))
+        .collect();
     // Largest first, so that no large unit starts last; typelibs only check
     // declarations
-    let mut order: Vec<UnitId> = (0..count).map(UnitId::from_index).collect();
-    order.sort_by_key(|unit| {
+    work.sort_by_key(|(unit, _)| {
         let info = &tables.units[unit.index()];
         std::cmp::Reverse(info.source.map_or(0, |_| info.newlines.len()))
     });
-    let next = AtomicUsize::new(0);
-    let work = || {
-        let mut done = Vec::new();
-        while let Some(&unit) = order.get(next.fetch_add(1, Ordering::Relaxed)) {
-            done.push((unit, check_unit(shared, tables, bounds, unit)));
-        }
-        done
+    // FIFO, so that the worker spawning the units takes them largest first too
+    let run = || {
+        rayon::scope_fifo(|scope| {
+            for (unit, slot) in work {
+                scope.spawn_fifo(move |_| *slot = Some(check_unit(shared, tables, bounds, unit)));
+            }
+        })
     };
-    let mut slots: Vec<Option<UnitOutput>> = (0..count).map(|_| None).collect();
-    thread::scope(|scope| {
-        let workers: Vec<_> = (1..threads).map(|_| scope.spawn(work)).collect();
-        let mut done = work();
-        for worker in workers {
-            // Keep a worker's own panic, which the scope would otherwise replace
-            done.extend(
-                worker
-                    .join()
-                    .unwrap_or_else(|payload| panic::resume_unwind(payload)),
-            );
-        }
-        for (unit, output) in done {
-            slots[unit.index()] = Some(output);
-        }
-    });
+    // With traces, one thread, so that they don't interleave
+    let threads = if cfg!(feature = "debug") && std::env::var_os("DOLANG_DEBUG").is_some() {
+        NonZeroUsize::new(1)
+    } else {
+        threads
+    };
+    match threads {
+        Some(threads) if !cfg!(target_family = "wasm") => rayon::ThreadPoolBuilder::new()
+            .num_threads(threads.get().min(count).max(1))
+            .build()
+            .expect("the pool's threads start")
+            .install(run),
+        // The global pool, which runs everything on this thread without threads to
+        // spawn
+        _ => run(),
+    }
     (slots.into_iter())
         .map(|output| output.expect("every unit is checked"))
         .collect()

@@ -404,6 +404,10 @@ default-features = false
 version = "0.10"
 
 
+[workspace.dependencies.rayon]
+version = "1.12"
+
+
 [workspace.dependencies.regex]
 version = "1.11"
 

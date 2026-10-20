@@ -33,6 +33,10 @@ workspace = true
 features = ["use-std"]
 
 
+[dependencies.rayon]
+workspace = true
+
+
 [dependencies.rustc-hash]
 workspace = true
 
