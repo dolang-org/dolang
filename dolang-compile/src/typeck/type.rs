@@ -33,10 +33,11 @@
 use std::{
     cell::{Cell, RefCell},
     num::NonZeroU32,
+    ops::ControlFlow,
     sync::Arc,
 };
 
-use dolang_util::{alias, frozen::Frozen, intern};
+use dolang_util::{alias, frozen::Frozen, intern, mono::MonoVec};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::source::Span;
@@ -1062,6 +1063,8 @@ struct Local {
 pub(crate) struct Shared {
     parent: Option<Arc<Shared>>,
     types: Frozen<intern::Table<Type, TypeTag>>,
+    /// Whether each of its types contains `Unknown`
+    gradual: Frozen<MonoVec<bool>>,
     symbols: Frozen<intern::Table<String, SymbolTag>>,
     /// Its types and symbols, its parent's included
     type_count: usize,
@@ -1110,6 +1113,13 @@ impl Shared {
         match &self.parent {
             Some(parent) if id.index() < parent.type_count => parent.ty(id),
             _ => &self.types[TypeId::new(id.index() - self.type_offset())],
+        }
+    }
+
+    fn contains_unknown(&self, id: TypeId) -> bool {
+        match &self.parent {
+            Some(parent) if id.index() < parent.type_count => parent.contains_unknown(id),
+            _ => self.gradual[id.index() - self.type_offset()],
         }
     }
 
@@ -1165,6 +1175,8 @@ pub(crate) struct Database {
     phase: Phase,
     /// Every type, or in a fork, those its base lacks, numbered after the base's
     types: intern::Table<Type, TypeTag>,
+    /// Whether each of its types contains `Unknown`, by its own index
+    gradual: MonoVec<bool>,
     /// Every symbol, or in a fork, those its base lacks, as for types
     symbols: intern::Table<String, SymbolTag>,
     fixed: Fixed,
@@ -1182,12 +1194,17 @@ const _: () = {
 impl Default for Database {
     fn default() -> Self {
         let types = intern::Table::new();
+        let gradual = MonoVec::new();
+        let leaf = |ty: Type| {
+            gradual.push(matches!(ty, Type::Unknown(_)));
+            types.id_owned(ty)
+        };
         Self {
             fixed: Fixed {
-                top: types.id_owned(Type::Top),
-                bottom: types.id_owned(Type::Union(alias::Box::default())),
-                unknown: types.id_owned(Type::Unknown(Kind::Type)),
-                unknown_schema: types.id_owned(Type::Unknown(Kind::Schema)),
+                top: leaf(Type::Top),
+                bottom: leaf(Type::Union(alias::Box::default())),
+                unknown: leaf(Type::Unknown(Kind::Type)),
+                unknown_schema: leaf(Type::Unknown(Kind::Schema)),
                 unit_count: 0,
             },
             phase: Phase::Local(Local {
@@ -1197,6 +1214,7 @@ impl Default for Database {
                 pending_kinds: RefCell::new(Vec::new()),
             }),
             types,
+            gradual,
             symbols: intern::Table::new(),
             unsupported: Cell::new(0),
         }
@@ -1247,6 +1265,7 @@ impl Database {
             symbol_count: symbols + self.symbols.len(),
             parent,
             types: Frozen::new(self.types),
+            gradual: Frozen::new(self.gradual),
             symbols: Frozen::new(self.symbols),
             declared,
             fixed: self.fixed,
@@ -1261,6 +1280,7 @@ impl Database {
         Self {
             phase: Phase::Fork(base.clone()),
             types: intern::Table::new(),
+            gradual: MonoVec::new(),
             symbols: intern::Table::new(),
             fixed: base.fixed,
             unsupported: Cell::new(base.unsupported),
@@ -1466,6 +1486,15 @@ impl Database {
         }
     }
 
+    /// Whether a type contains the dynamic type or schema anywhere, not counting
+    /// what its declarations expose
+    pub(crate) fn contains_unknown(&self, id: TypeId) -> bool {
+        match self.base() {
+            Some(base) if id.index() < base.type_count => base.contains_unknown(id),
+            base => self.gradual[id.index() - base.map_or(0, |base| base.type_count)],
+        }
+    }
+
     /// The literal a literal type is, fresh or regular
     pub(crate) fn literal(&self, id: TypeId) -> Option<&Literal> {
         match self.ty(id) {
@@ -1655,12 +1684,11 @@ impl Database {
             .chain(declaration.supertypes.iter().map(|supertype| supertype.ty))
             .chain(fields)
         {
-            self.walk(root, |id, _| {
-                assert!(
-                    !matches!(self.ty(id), Type::Rigid { .. }),
-                    "rigid in a declaration"
-                );
+            let rigid = self.walk(root, |id, _| match self.ty(id) {
+                Type::Rigid { .. } => ControlFlow::Break(()),
+                _ => ControlFlow::Continue(()),
             });
+            assert!(rigid.is_continue(), "rigid in a declaration");
         }
     }
 
@@ -1769,11 +1797,23 @@ impl Database {
         self.validate(&ty);
         let ty = self.normalize(ty);
         match self.base() {
-            None => self.types.id_owned(ty),
+            None => self.insert(ty),
             Some(base) => base
                 .type_id(&ty)
-                .unwrap_or_else(|| TypeId::new(base.type_count + self.types.id_owned(ty).index())),
+                .unwrap_or_else(|| TypeId::new(base.type_count + self.insert(ty).index())),
         }
+    }
+
+    /// Intern into its own table, noting whether a new type contains `Unknown`
+    fn insert(&self, ty: Type) -> TypeId {
+        let id = self.types.id_owned(ty);
+        if id.index() == self.gradual.len() {
+            let ty = &self.types[id];
+            let mut gradual = matches!(ty, Type::Unknown(_));
+            ty.visit_children(|child, _| gradual = gradual || self.contains_unknown(child));
+            self.gradual.push(gradual);
+        }
+        id
     }
 
     /// A type's canonical outer form, which interning gives it: a quantifier
@@ -2376,15 +2416,20 @@ impl Database {
         Ok(Exposure { ty, declarations })
     }
 
-    /// Visit each `(node, enclosing-group count)` once, without exposing declarations.
-    pub(crate) fn walk(&self, root: TypeId, mut visit: impl FnMut(TypeId, u32)) {
+    /// Visit each `(node, enclosing-group count)` once, without exposing
+    /// declarations, until a visit breaks with a value.
+    pub(crate) fn walk<B>(
+        &self,
+        root: TypeId,
+        mut visit: impl FnMut(TypeId, u32) -> ControlFlow<B>,
+    ) -> ControlFlow<B> {
         let mut pending = vec![(root, 0u32)];
         let mut seen = FxHashSet::default();
         while let Some((id, depth)) = pending.pop() {
             if !seen.insert((id, depth)) {
                 continue;
             }
-            visit(id, depth);
+            visit(id, depth)?;
             self.ty(id).visit_children(|child, groups| {
                 pending.push((
                     child,
@@ -2392,6 +2437,7 @@ impl Database {
                 ));
             });
         }
+        ControlFlow::Continue(())
     }
 
     /// Insert groups at `cutoff` (positive amount), or remove groups beginning

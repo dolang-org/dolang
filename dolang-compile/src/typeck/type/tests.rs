@@ -8,6 +8,14 @@ fn intern(db: &mut Database, ty: Type) -> TypeId {
     db.intern(ty)
 }
 
+fn walk_all(db: &Database, root: TypeId, mut visit: impl FnMut(TypeId, u32)) {
+    let walked = db.walk(root, |id, depth| -> ControlFlow<()> {
+        visit(id, depth);
+        ControlFlow::Continue(())
+    });
+    assert!(walked.is_continue());
+}
+
 fn reference(db: &mut Database, depth: usize, slot: usize, kind: Kind) -> TypeId {
     intern(
         db,
@@ -406,7 +414,7 @@ fn generic_definitions_remain_quantified_and_metadata_is_parallel() {
     let rank_two = function(&mut db, &[poly], a);
     let outer = quantify(&mut db, vec![binder(Kind::Type)], rank_two);
     let mut occurrences = FxHashSet::default();
-    db.walk(outer, |id, depth| {
+    walk_all(&db, outer, |id, depth| {
         if id == a {
             occurrences.insert(depth);
         }
@@ -467,7 +475,7 @@ fn nominal_supertypes_use_the_structural_binder_scope() {
     assert_eq!(db.expose(cr).unwrap().ty, cr);
     // A structural walk must not follow declarations into recursive definitions.
     let mut seen = Vec::new();
-    db.walk(cr, |id, _| seen.push(id));
+    walk_all(&db, cr, |id, _| seen.push(id));
     assert_eq!(seen, [cr]);
     db.seal();
 }
@@ -782,6 +790,60 @@ fn unknown_is_a_type_that_unions_do_not_absorb() {
     assert_eq!(union(&mut db, &[unknown, unknown]), unknown);
     let top = db.top();
     assert_eq!(union(&mut db, &[unknown, top]), top);
+}
+
+#[test]
+fn types_record_whether_they_contain_unknown() {
+    let mut db = Database::new();
+    db.allocate_unit();
+    let unknown = db.unknown();
+    let top = db.top();
+    let one = int(&mut db, 1);
+    let open = function(&mut db, &[one, unknown], top);
+    let closed = function(&mut db, &[one], top);
+    // A declaration's definition isn't part of the type naming it
+    let (id, decl, source) = declare(&mut db, DeclKind::Alias, "Open");
+    db.populate(id, definition(source, open));
+    for (ty, expected) in [
+        (unknown, true),
+        (open, true),
+        (closed, false),
+        (decl, false),
+    ] {
+        assert_eq!(db.contains_unknown(ty), expected);
+    }
+    db.seal();
+    // Layers and forks read the bits of what they're over
+    let mut layer = Database::fork(&db.share());
+    let wrapped = function(&mut layer, &[closed], open);
+    let layer = Database::fork(&layer.share());
+    assert!(layer.contains_unknown(open) && layer.contains_unknown(wrapped));
+    let mut fork = Database::fork(&Database::share(layer));
+    let unknown = fork.unknown();
+    let rest = function(&mut fork, &[closed], unknown);
+    assert!(fork.contains_unknown(rest) && !fork.contains_unknown(closed));
+    let nested = union(&mut fork, &[rest, one]);
+    assert!(fork.contains_unknown(nested) && fork.contains_unknown(wrapped));
+}
+
+#[test]
+fn walks_stop_at_the_first_break() {
+    let mut db = Database::new();
+    let top = db.top();
+    let one = int(&mut db, 1);
+    let two = int(&mut db, 2);
+    let root = function(&mut db, &[one, two], top);
+    let mut visited = 0;
+    let found = db.walk(root, |id, _| {
+        visited += 1;
+        match db.ty(id) {
+            Type::Literal(_) => ControlFlow::Break(id),
+            _ => ControlFlow::Continue(()),
+        }
+    });
+    assert!(matches!(found, ControlFlow::Break(id) if id == one || id == two));
+    // Of the function, its parameters, both literals and its result
+    assert!(visited < 5);
 }
 
 #[test]
@@ -1187,7 +1249,7 @@ fn shifting_respects_groups_slots_and_cutoffs() {
     let shifted = db.shift(root, 0, 2).unwrap();
     let expected_outer = reference(&mut db, 3, 3, Kind::Type);
     let mut nodes = FxHashSet::default();
-    db.walk(shifted, |id, _| {
+    walk_all(&db, shifted, |id, _| {
         nodes.insert(id);
     });
     assert!(nodes.contains(&local));
@@ -1217,7 +1279,7 @@ fn scope_sensitive_memoization_distinguishes_shared_occurrences() {
     let shifted = db.shift(mixed, 0, 1).unwrap();
     let free_shifted = reference(&mut db, 1, 0, Kind::Type);
     let mut seen = FxHashSet::default();
-    db.walk(shifted, |id, depth| {
+    walk_all(&db, shifted, |id, depth| {
         seen.insert((id, depth));
     });
     assert!(seen.contains(&(same, 1)));
@@ -1323,7 +1385,7 @@ fn all_structural_edges_are_walked_and_rebuilt() {
         f,
     );
     let mut seen = FxHashSet::default();
-    db.walk(q, |id, depth| {
+    walk_all(&db, q, |id, depth| {
         seen.insert((id, depth));
     });
     for leaf in leaves.iter().copied().chain([pack]) {
@@ -1331,7 +1393,7 @@ fn all_structural_edges_are_walked_and_rebuilt() {
     }
     let shifted = db.shift(q, 0, 1).unwrap();
     let mut after = FxHashSet::default();
-    db.walk(shifted, |id, depth| {
+    walk_all(&db, shifted, |id, depth| {
         after.insert((id, depth));
     });
     for leaf in leaves.into_iter().chain([pack]) {
@@ -1857,7 +1919,7 @@ fn a_mapping_is_its_own_group() {
     let pack = reference(&mut db, 0, 1, Kind::Schema);
     let mapped = map(&mut db, &[pack], pattern);
     let mut seen = FxHashSet::default();
-    db.walk(mapped, |id, depth| {
+    walk_all(&db, mapped, |id, depth| {
         seen.insert((id, depth));
     });
     assert!(seen.contains(&(pack, 0)));
@@ -2169,7 +2231,7 @@ fn copies_remap_symbols_and_declarations() {
         db.render(root, &Named(&db), Style::Full),
     );
     // Every copied node is canonical in its new database
-    into.walk(copy, |ty, _| {
+    walk_all(&into, copy, |ty, _| {
         assert_eq!(into.intern(into.ty(ty).clone()), ty)
     });
     // `A`'s field names `B`, whose field names `A` back

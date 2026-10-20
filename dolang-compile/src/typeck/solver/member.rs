@@ -478,8 +478,8 @@ impl Solver<'_> {
                 let field = db.substitute(abstracted, &unknowns);
                 // Only a gradual unit's solver reads binders it can't name as `Unknown`
                 if !self.gradual
-                    && self.contains_unknown(field)
-                    && !self.contains_unknown(abstracted)
+                    && self.db.contains_unknown(field)
+                    && !self.db.contains_unknown(abstracted)
                 {
                     return Err(Residual::Unsupported("a generic class object's field").into());
                 }

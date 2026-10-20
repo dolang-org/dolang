@@ -934,8 +934,11 @@ impl Solver<'_> {
         };
         let mut exposed = true;
         for pack in (xs.iter().map(|&x| a.child(x))).chain(ys.iter().map(|&y| b.child(y))) {
-            exposed &= matches!(self.head(pack)?,
+            exposed = matches!(self.head(pack)?,
                 Head::Structural(view) if matches!(self.db.ty(view.ty), Type::Schema(_)));
+            if !exposed {
+                break;
+            }
         }
         // A pack whose items the pattern doesn't use relates only by its count
         let variances: Option<Vec<_>> = (0..xs.len())
@@ -1734,10 +1737,13 @@ impl Solver<'_> {
             // own it.
             let mut narrowed = false;
             for &(e, whole) in &overlapping {
-                narrowed |= whole
+                narrowed = whole
                     && keys[e] != keys[d]
                     && self.probe(keys[e], keys[d])? == Status::Proven
                     && self.probe(keys[d], keys[e])? != Status::Proven;
+                if narrowed {
+                    break;
+                }
             }
             if !narrowed {
                 owning.push((d, whole));

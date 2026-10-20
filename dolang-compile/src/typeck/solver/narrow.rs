@@ -394,7 +394,7 @@ impl Solver<'_> {
                     (None, Kind::Type) => return Some(self.db.top()),
                     (None, Kind::Schema) => self.db.rest_shape(Rest::All),
                 };
-                (!self.contains_unknown(bound)).then_some(bound)
+                (!self.db.contains_unknown(bound)).then_some(bound)
             }
             (Variance::Contravariant, Kind::Type) => Some(self.db.bottom()),
             (Variance::Contravariant, Kind::Schema) | (Variance::Invariant, _) => None,

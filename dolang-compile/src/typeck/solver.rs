@@ -1869,7 +1869,7 @@ impl<'db> Solver<'db> {
         }
         // Consistency with the dynamic type is not antisymmetric, so a bound containing
         // it never builds a candidate or forces one. It must still admit the candidate.
-        lower.retain(|&ty| !self.contains_unknown(ty));
+        lower.retain(|&ty| !self.db.contains_unknown(ty));
         if lower.is_empty() || upper.is_empty() {
             return Ok(false);
         }
@@ -1881,7 +1881,8 @@ impl<'db> Solver<'db> {
             if self.probe(candidate, ty)? != Status::Proven {
                 return Ok(false);
             }
-            forced |= !self.contains_unknown(ty) && self.probe(ty, candidate)? == Status::Proven;
+            forced = forced
+                || (!self.db.contains_unknown(ty) && self.probe(ty, candidate)? == Status::Proven);
         }
         if !forced {
             return Ok(false);
@@ -2663,15 +2664,6 @@ impl<'db> Solver<'db> {
     /// Whether an exposed head is the dynamic type or schema
     fn is_unknown(&self, head: &Head) -> bool {
         matches!(head, Head::Structural(view) if matches!(self.db.ty(view.ty), Type::Unknown(_)))
-    }
-
-    /// Whether a closed type contains the dynamic type or schema anywhere
-    fn contains_unknown(&self, ty: TypeId) -> bool {
-        let mut found = false;
-        self.db.walk(ty, |node, _| {
-            found |= matches!(self.db.ty(node), Type::Unknown(_));
-        });
-        found
     }
 
     /// Compare structure without substituting into the canonical database. Local
