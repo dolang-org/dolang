@@ -64,7 +64,9 @@ impl Solver<'_> {
                     call.output,
                 ];
                 let others: Vec<Term> = others.into_iter().flatten().collect();
-                let environment = self.instantiate_binders(view, binders, &others, obligation)?;
+                let fixed = self.call_channels(binders, *body, call);
+                let environment =
+                    self.instantiate_binders(view, binders, &fixed, &others, obligation)?;
                 through(self.view(*body, environment), Step::Instantiation)
             }
             Type::Overloaded { overloads, .. } => {
@@ -127,6 +129,29 @@ impl Solver<'_> {
             }
             _ => Err(Residual::Unsupported("these structural types").into()),
         }
+    }
+
+    /// The implicit binders a call's own channels fill, by slot: the caller
+    /// supplies its channels, so they're never inferred. An omitted one is
+    /// gradual.
+    fn call_channels(&self, binders: &[Binder], body: TypeId, call: Call) -> Vec<(usize, Term)> {
+        let Type::Function(function) = self.db.ty(body) else {
+            return Vec::new();
+        };
+        let channel = |term: Option<Term>| term.unwrap_or_else(|| self.closed(self.db.unknown()));
+        [(function.input, call.input), (function.output, call.output)]
+            .into_iter()
+            .filter_map(|(own, given)| match self.db.ty(own?) {
+                &Type::Bound { reference, .. }
+                    if reference.depth == 0
+                        && (binders.get(usize::from(reference.slot)))
+                            .is_some_and(|binder| binder.binding == Binding::Implicit) =>
+                {
+                    Some((usize::from(reference.slot), channel(given)))
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     /// Derive a call's arguments below a function's parameters and its result

@@ -3808,7 +3808,7 @@ fn call_constraint<'p>(
     output: Option<TypeId>,
 ) -> Term {
     let (arguments, spans) = rule.arguments(values, spread, span);
-    let result = rule.solver.infer();
+    let result = rule.solver.infer_result();
     let (input, output) = (
         input.map(|ty| rule.closed(ty)),
         output.map(|ty| rule.closed(ty)),

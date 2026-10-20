@@ -50,7 +50,9 @@ impl Widening {
 
 impl Solver<'_> {
     /// The join of two closed types: their union, without members that are below
-    /// another member
+    /// another member. `a`'s members are taken as a join leaves them, none below
+    /// another, so only `b`'s are compared, and joining one more member into a
+    /// join compares it with each of the join's once.
     pub(crate) fn lub(&self, a: TypeId, b: TypeId) -> TypeId {
         let unknown = self.db.unknown();
         let below = |x: TypeId, y: TypeId| self.probe(x, y) == Ok(Status::Proven);
@@ -58,12 +60,11 @@ impl Solver<'_> {
             UnionMember::Type(ty) => (!self.contains_unknown(ty)).then_some(ty),
             _ => None,
         };
-        let mut kept: Vec<UnionMember> = Vec::new();
-        for member in self
-            .union_members(a)
-            .into_iter()
-            .chain(self.union_members(b))
-        {
+        let mut kept: Vec<UnionMember> = self.union_members(a);
+        if kept.contains(&UnionMember::Type(unknown)) {
+            return unknown;
+        }
+        for member in self.union_members(b) {
             if member == UnionMember::Type(unknown) {
                 return unknown;
             }

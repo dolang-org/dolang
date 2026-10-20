@@ -19,8 +19,14 @@ do -> nil
     let out = stdout
     let err = stderr
     # A local, since a test of what a block captures doesn't narrow it
-    run $program ...args
-      if (out != nil)
+    # FIXME(#1283): a conditional `stdout:` selects the overload, so each
+    # case is a call of its own
+    if (out != nil)
+      run $program ...args
         stdout: $out
-      if (err != nil)
-        stderr: $err
+        if (err != nil)
+          stderr: $err
+    else
+      run $program ...args
+        if (err != nil)
+          stderr: $err

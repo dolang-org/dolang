@@ -1130,7 +1130,7 @@ impl Solver<'_> {
         expected: Term,
         obligation: ObligationId,
     ) -> Result<(), Issue> {
-        let environment = self.instantiate_binders(view, binders, &[expected], obligation)?;
+        let environment = self.instantiate_binders(view, binders, &[], &[expected], obligation)?;
         self.derive(
             obligation,
             self.view(body, environment),
@@ -1146,6 +1146,7 @@ impl Solver<'_> {
         &self,
         view: TypeView,
         binders: &[Binder],
+        fixed: &[(usize, Term)],
         others: &[Term],
         obligation: ObligationId,
     ) -> Result<EnvironmentId, Issue> {
@@ -1156,21 +1157,29 @@ impl Solver<'_> {
                 let mut terms = vec![Term::View(view)];
                 terms.extend_from_slice(others);
                 let scope = self.scope(&terms)?;
-                let group: Vec<Term> = binders
-                    .iter()
-                    .map(|binder| match binder.binding {
-                        Binding::Rest(rest) => self.fresh(binder.kind, rest, scope),
-                        _ => self.fresh(binder.kind, Rest::All, scope),
+                let group: Vec<Term> = (binders.iter().enumerate())
+                    .map(|(slot, binder)| {
+                        let fixed = fixed.iter().find(|&&(at, _)| at == slot);
+                        match (fixed, binder.binding) {
+                            (Some(&(_, term)), _) => term,
+                            (None, Binding::Rest(rest)) => self.fresh(binder.kind, rest, scope),
+                            (None, _) => self.fresh(binder.kind, Rest::All, scope),
+                        }
                     })
                     .collect();
+                let own = |slot: usize| !fixed.iter().any(|&(at, _)| at == slot);
                 for slot in self.db.item_keys(view.ty) {
-                    if let Some(&Term::Infer(id)) = group.get(usize::from(slot)) {
+                    if let Some(&Term::Infer(id)) = group.get(usize::from(slot))
+                        && own(usize::from(slot))
+                    {
                         self.state_mut(id).exact.set(true);
                     }
                 }
                 let environment = self.intern_environment(view.environment, group.clone());
-                for (binder, term) in binders.iter().zip(&group) {
-                    if let (Some(default), &Term::Infer(id)) = (binder.default, term) {
+                for (slot, (binder, term)) in binders.iter().zip(&group).enumerate() {
+                    if let (Some(default), &Term::Infer(id), true) =
+                        (binder.default, term, own(slot))
+                    {
                         let default = self.view(default, environment);
                         self.state_mut(id).fallback.set(Some(default));
                     }
