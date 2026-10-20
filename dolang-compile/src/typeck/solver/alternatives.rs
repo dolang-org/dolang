@@ -342,51 +342,131 @@ impl<'db> Solver<'db> {
             .expect("a judgment with alternatives");
         let mut possible = Vec::new();
         let mut rejections = Vec::new();
-        for (index, &judgment) in judgments.iter().enumerate() {
-            // Only the arguments choose an overload, under the least choice of
-            // its own binders, as a call of it alone is solved
-            let owned = selections.is_some();
-            let relation =
-                match (selections.as_ref()).map_or(judgment, |selections| selections[index]) {
-                    Relation::Subtype {
-                        actual,
-                        expected,
-                        fill,
-                    } => {
-                        let resolved = self.resolve(actual)?;
-                        let actual = self.blinded(resolved).unwrap_or(actual);
+        // Only the arguments choose an overload, under the least choice of its
+        // own binders, as a call of it alone is solved
+        let owned = selections.is_some();
+        // An overload whose parameters can't take the call's keys or count is
+        // tried only to say why, if none takes it
+        let (shaped, misshapen): (Vec<usize>, Vec<usize>) =
+            (0..judgments.len()).partition(|&index| !owned || self.admits_shape(judgments[index]));
+        let passes = [shaped, misshapen];
+        for (pass, indexes) in passes.iter().enumerate() {
+            if pass > 0 && !possible.is_empty() {
+                break;
+            }
+            for &index in indexes {
+                let judgment = judgments[index];
+                let relation =
+                    match (selections.as_ref()).map_or(judgment, |selections| selections[index]) {
                         Relation::Subtype {
                             actual,
                             expected,
                             fill,
+                        } => {
+                            let resolved = self.resolve(actual)?;
+                            let actual = self.blinded(resolved).unwrap_or(actual);
+                            Relation::Subtype {
+                                actual,
+                                expected,
+                                fill,
+                            }
                         }
+                        call => call,
+                    };
+                let (status, free, fork, outcome) = self.trial(relation, owned)?;
+                match status {
+                    Status::Contradicted => {
+                        let root = fork.roots[outcome.constraint.0].obligation;
+                        let overload = fork.reify(fork.relation(root).checked());
+                        rejections.push(Rejection {
+                            index,
+                            overload: overload.ok(),
+                            contradictions: fork.explain(&outcome),
+                        })
                     }
-                    call => call,
-                };
-            let (status, free, fork, outcome) = self.trial(relation, owned)?;
-            match status {
-                Status::Contradicted => {
-                    let root = fork.roots[outcome.constraint.0].obligation;
-                    let overload = fork.reify(fork.relation(root).checked());
-                    rejections.push(Rejection {
-                        index,
-                        overload: overload.ok(),
-                        contradictions: fork.explain(&outcome),
-                    })
+                    // Overloads give different results, so another that also takes the
+                    // call leaves it ambiguous
+                    Status::Proven if free && !owned => {
+                        return Ok((Verdict::Chosen(index), vec![], vec![]));
+                    }
+                    _ => possible.push(index),
                 }
-                // Overloads give different results, so another that also takes the
-                // call leaves it ambiguous
-                Status::Proven if free && !owned => {
-                    return Ok((Verdict::Chosen(index), vec![], vec![]));
-                }
-                _ => possible.push(index),
             }
         }
+        rejections.sort_by_key(|rejection| rejection.index);
         Ok(match possible[..] {
             [index] => (Verdict::Chosen(index), vec![], vec![]),
             [] => (Verdict::Failed(none), vec![], rejections),
             _ => (Verdict::Ambiguous, possible, vec![]),
         })
+    }
+
+    /// Whether a call's arguments may fit its callee's parameters by their
+    /// shape alone: the keys passed and required, and how many are positional.
+    /// Anything it can't read, such as a spread or a key domain passed, may fit.
+    fn admits_shape(&self, relation: Relation) -> bool {
+        let Relation::Call(call) = relation else {
+            return true;
+        };
+        let (Term::View(arguments), Term::View(callee)) = (call.arguments, call.callee) else {
+            return true;
+        };
+        let Type::Schema(arguments) = self.db.ty(arguments.ty) else {
+            return true;
+        };
+        let mut function = callee.ty;
+        if let Type::Quantified { body, .. } = self.db.ty(function) {
+            function = *body;
+        }
+        let Type::Function(function) = self.db.ty(function) else {
+            return true;
+        };
+        let Type::Schema(params) = self.db.ty(function.params) else {
+            return true;
+        };
+        let sym = |key: TypeId| match self.db.ty(key) {
+            &Type::Literal(Literal::Sym(name)) => Some(name),
+            _ => None,
+        };
+        let mut positional = 0;
+        let mut keys = Vec::new();
+        for item in arguments.iter() {
+            match (item.multiplicity, &item.element) {
+                (Multiplicity::Required, Element::Positional(_)) => positional += 1,
+                (Multiplicity::Required, &Element::Keyed { key, .. }) => match sym(key) {
+                    Some(name) => keys.push(name),
+                    None => return true,
+                },
+                _ => return true,
+            }
+        }
+        let (mut required, mut most) = (0, Some(0));
+        let mut domain = false;
+        for item in params.iter() {
+            match &item.element {
+                Element::Positional(_) => {
+                    required += usize::from(item.multiplicity == Multiplicity::Required);
+                    most = match item.multiplicity {
+                        Multiplicity::Repeated => None,
+                        _ => most.map(|most| most + 1),
+                    };
+                }
+                &Element::Keyed { key, .. } => match sym(key) {
+                    Some(name) => {
+                        let passed = keys.contains(&name);
+                        if item.multiplicity == Multiplicity::Required && !passed {
+                            return false;
+                        }
+                        keys.retain(|&key| key != name);
+                    }
+                    None => domain = true,
+                },
+                Element::Include(_) => return true,
+            }
+        }
+        (domain || keys.is_empty())
+            && positional >= required
+            && most.is_none_or(|most| positional <= most)
     }
 
     /// Solve `relation` on a solver nested in this one, whose work is charged to
