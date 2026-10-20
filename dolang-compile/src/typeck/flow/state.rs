@@ -41,12 +41,6 @@ bitflags::bitflags! {
     pub(super) struct May: u8 {
         /// Reached it without assigning it
         const UNASSIGNED = 1 << 0;
-        /// Created a function it escapes through, so that assigning it joins its
-        /// accumulator
-        const ESCAPED = 1 << 1;
-        /// Found a capture its function caches thawed: its owner assigned it after
-        /// it escaped, so it's read from its accumulator, and not narrowed
-        const THAWED = 1 << 2;
     }
 }
 

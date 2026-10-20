@@ -27,7 +27,7 @@ use scope::{DeclKey, Frame};
 use super::{
     cfg::{
         BlockId, EscapeKind, Expr, ExprKind, FuncId, FuncKind, Graph, Ir, Origin, Step, Terminal,
-        VarFlags, VarId,
+        VarId,
     },
     elab::{DeclAst, ModuleRef, Tables},
     r#type::{Database, DeclId, Literal, MemberKey, SymbolId, UnitId},
@@ -166,10 +166,9 @@ impl<'t, 'u> Lower<'t, 'u> {
         }
     }
 
-    /// Fill in the guards' targets, keep in each function's escapes only the
-    /// variables joined where they escape, load the captures it may cache at its
-    /// entry, and freeze the graph. Whether a variable is volatile is known only
-    /// now.
+    /// Fill in the guards' targets, drop the [`Signature`](super::cfg::Signature) variables from each
+    /// function's escapes, and freeze the graph, deciding where variables escape
+    /// and which captures each function caches.
     fn finish(self) -> Ir {
         // An `(init)`'s receiver escapes before a function capturing it is created,
         // once for the functions a statement creates. Their escapes are complete
@@ -209,22 +208,8 @@ impl<'t, 'u> Lower<'t, 'u> {
         }
         for id in self.graph.func_ids() {
             let mut func = self.graph.func_mut(id);
-            func.escapes.retain(|&var| {
-                let var = self.graph.var(var);
-                !var.flags.contains(VarFlags::VOLATILE) && var.origin != Origin::Signature
-            });
-            let cached: Vec<VarId> = (func.captures.iter().copied())
-                .filter(|&var| {
-                    let var = self.graph.var(var);
-                    !var.flags.contains(VarFlags::VOLATILE)
-                        && !matches!(var.origin, Origin::Signature | Origin::Result)
-                })
-                .collect();
-            let entry = func.entry;
-            drop(func);
-            if !cached.is_empty() {
-                (self.graph.block_mut(entry).steps).insert(0, Step::Cache(cached));
-            }
+            func.escapes
+                .retain(|&var| self.graph.var(var).origin != Origin::Signature);
         }
         for (guard, targets) in self.guards.take() {
             let mut seen = FxHashSet::default();
@@ -234,7 +219,9 @@ impl<'t, 'u> Lower<'t, 'u> {
                 *slot = targets;
             }
         }
-        self.graph.freeze()
+        let mut ir = self.graph.freeze();
+        ir.settle_escapes();
+        ir
     }
 
     fn decl(&self, key: DeclKey) -> DeclId {

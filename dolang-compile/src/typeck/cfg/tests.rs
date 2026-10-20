@@ -659,10 +659,7 @@ fn captures() {
         escaping(false, source, false),
         Err(Invalid::Escape { .. })
     ));
-    assert!(matches!(
-        escaping(true, source, true),
-        Err(Invalid::Escape { .. })
-    ));
+    assert_eq!(escaping(true, source, true), Ok(()));
     assert!(matches!(
         escaping(true, Origin::Signature, false),
         Err(Invalid::Escape { .. })
@@ -671,15 +668,19 @@ fn captures() {
 
 #[test]
 fn caches() {
-    /// A closure caching a variable of the module's with the given origin,
-    /// volatile or not, captured or not, in its entry block's first step or else a
-    /// later one
-    fn caching(origin: Origin, volatile: bool, captured: bool, first: bool) -> Result<(), Invalid> {
+    /// A closure caching a variable of the module's with the given origin and
+    /// flags, captured or not, in its entry block's first step or else a later one
+    fn caching(
+        origin: Origin,
+        flags: VarFlags,
+        captured: bool,
+        first: bool,
+    ) -> Result<(), Invalid> {
         let graph = Graph::new();
         let top = returning(&graph);
         let lambda = closure(&graph, top);
         let var = graph.alloc_var(top, origin, None);
-        graph.var_mut(var).flags.set(VarFlags::VOLATILE, volatile);
+        graph.var_mut(var).flags = flags;
         let (entry, exit) = {
             let mut func = graph.func_mut(lambda);
             if captured {
@@ -703,22 +704,25 @@ fn caches() {
     }
 
     let source = Origin::Source(Span::INVALID);
-    assert_eq!(caching(source, false, true, true), Ok(()));
+    let none = VarFlags::empty();
+    assert_eq!(caching(source, none, true, true), Ok(()));
+    for flags in [VarFlags::VOLATILE, VarFlags::EXPORTED, VarFlags::UNCACHED] {
+        assert!(matches!(
+            caching(source, flags, true, true),
+            Err(Invalid::Cache(_))
+        ));
+    }
     assert!(matches!(
-        caching(source, true, true, true),
+        caching(source, none, false, true),
         Err(Invalid::Cache(_))
     ));
     assert!(matches!(
-        caching(source, false, false, true),
-        Err(Invalid::Cache(_))
-    ));
-    assert!(matches!(
-        caching(source, false, true, false),
+        caching(source, none, true, false),
         Err(Invalid::Cache(_))
     ));
     for origin in [Origin::Signature, Origin::Result] {
         assert!(matches!(
-            caching(origin, false, true, true),
+            caching(origin, none, true, true),
             Err(Invalid::Cache(_))
         ));
     }

@@ -4,7 +4,7 @@ use crate::{
     Config,
     typeck::{
         Builder,
-        cfg::{BlockId, ExprKind, FuncId, Ir, Origin, Step, Terminal, VarFlags},
+        cfg::{BlockId, ExprKind, FuncId, Ir, Origin, Step, Terminal, VarFlags, VarId},
     },
 };
 
@@ -193,7 +193,7 @@ class A
 }
 
 /// A variable escapes through the function its owner creates, however deeply
-/// it's captured, unless another function assigns it
+/// it's captured, even one another function assigns
 #[test]
 fn escapes() {
     lower_with(
@@ -215,10 +215,11 @@ let outer = do
                 .map(|(_, func)| func)
                 .unwrap();
             let outer = ir.func(outer);
-            assert_eq!(outer.escapes.len(), 1);
-            assert!(!ir.var(outer.escapes[0]).flags.contains(VarFlags::VOLATILE));
+            assert_eq!(outer.escapes.len(), 2);
+            let volatile = |var: &&VarId| ir.var(**var).flags.contains(VarFlags::VOLATILE);
+            assert_eq!(outer.escapes.iter().filter(volatile).count(), 1);
             assert!(inner.escapes.is_empty());
-            assert!(inner.captures.contains(&outer.escapes[0]));
+            assert!(outer.escapes.iter().all(|var| inner.captures.contains(var)));
         },
     );
 }
@@ -249,8 +250,13 @@ let outer = do
                 .find(|(_, func)| func.parent == Some(outer))
                 .map(|(id, _)| id)
                 .unwrap();
+            let volatile = |var: &VarId| ir.var(*var).flags.contains(VarFlags::VOLATILE);
+            let stable: Vec<_> = (ir.func(outer).escapes.iter().copied())
+                .filter(|var| !volatile(var))
+                .collect();
             assert!(cached(outer).is_empty());
-            assert_eq!(cached(inner), ir.func(outer).escapes);
+            assert_eq!(stable.len(), 1);
+            assert_eq!(cached(inner), stable);
         },
     );
 }
@@ -292,5 +298,51 @@ for i = [1]
                 ("w", false)
             ]
         );
+    });
+}
+
+/// A variable its owner assigns where it may have escaped isn't cached: a
+/// reassignment after a capture counts, an assignment before one doesn't, and
+/// rebinding a `for` variable makes a fresh cell
+#[test]
+fn uncached() {
+    let source = "
+let a = 1
+let b = 1
+b = 2
+let f = do
+  (a, b)
+a = 2
+for i = [1, 2]
+  let g = (do i)
+for j = [1, 2]
+  let h = (do j)
+  j = 3
+";
+    lower_with(source, |ir| {
+        let (_, top) = (ir.funcs())
+            .find(|(_, func)| func.parent.is_none())
+            .unwrap();
+        let name = |var: VarId| match ir.var(var).origin {
+            Origin::Source(span) => Some(&source[span.start as usize..span.end as usize]),
+            _ => None,
+        };
+        let mut uncached: Vec<_> = (top.vars.iter())
+            .filter(|&&var| ir.var(var).flags.contains(VarFlags::INTERPROCEDURAL))
+            .filter_map(|&var| Some((name(var)?, ir.var(var).flags.contains(VarFlags::UNCACHED))))
+            .collect();
+        uncached.sort();
+        assert_eq!(
+            uncached,
+            [("a", true), ("b", false), ("i", false), ("j", true)]
+        );
+        let (_, f) = (ir.funcs())
+            .find(|(_, func)| func.captures.iter().any(|&var| name(var) == Some("a")))
+            .unwrap();
+        let Some(Step::Cache(cached)) = ir.block(f.entry).steps.first() else {
+            panic!("`f` caches `b`");
+        };
+        let cached: Vec<_> = cached.iter().filter_map(|&var| name(var)).collect();
+        assert_eq!(cached, ["b"]);
     });
 }
