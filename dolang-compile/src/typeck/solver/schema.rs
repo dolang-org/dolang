@@ -1268,20 +1268,25 @@ impl Solver<'_> {
             let counted = self.count(xs, &counts, ys, required, optional, repeated);
             // The items a value holds fit when any filling of the expected side
             // fits them, which counting may miss: it suffices that its types
-            // prove a path when counting is refuted
-            let refuted = match &counted {
-                Err(Issue::Contradiction(_)) => true,
-                Err(_) => false,
-                Ok(found) => {
-                    let mut refuted = false;
-                    for &(i, j) in found {
-                        refuted |= self.decide(&mut decided, xs, ys, i, j)? == Status::Contradicted;
-                    }
-                    refuted
-                }
-            };
+            // prove a path when counting is refuted, as one contradicted pair
+            // refutes it
             let contents = fill == Fill::Contents;
-            if !(contents && refuted && self.filled(&mut decided, xs, &counts, ys)?) {
+            let refuted = contents
+                && match &counted {
+                    Err(Issue::Contradiction(_)) => true,
+                    Err(_) => false,
+                    Ok(found) => {
+                        let mut refuted = false;
+                        for &(i, j) in found {
+                            if self.decide(&mut decided, xs, ys, i, j)? == Status::Contradicted {
+                                refuted = true;
+                                break;
+                            }
+                        }
+                        refuted
+                    }
+                };
+            if !(refuted && self.filled(&mut decided, xs, &counts, ys)?) {
                 pairs.extend(counted?);
             }
             if !advance(&mut digits) {
