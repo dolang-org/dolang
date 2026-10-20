@@ -408,7 +408,7 @@ pub class Program: Func
     # [`Bin`](std.Bin) chunks with `:CHUNK:`.
     :mode @ :LINE: = nil
     # Command-line arguments.
-    ...args @ Value
+    *args @ Value
     < Iter[Value]
     > Sink[Str]
   do -> nil
@@ -420,7 +420,7 @@ pub class Program: Func
     :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
     :mode @ :CHUNK:
-    ...args @ Value
+    *args @ Value
     < Iter[Value]
     > Sink[Bin]
   do -> nil
@@ -434,7 +434,7 @@ pub class Program: Func
     :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
     :mode @ :LINE: = nil
-    ...args @ Value
+    *args @ Value
     < Iter[Value]
   do -> nil
 
@@ -446,7 +446,7 @@ pub class Program: Func
     :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
     :mode @ :CHUNK:
-    ...args @ Value
+    *args @ Value
     < Iter[Value]
   do -> nil
 
@@ -459,7 +459,7 @@ pub class Program: Func
     :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
     :mode @ :LINE: = nil
-    ...args @ Value
+    *args @ Value
     > Sink[Str]
   do -> nil
 
@@ -471,7 +471,7 @@ pub class Program: Func
     :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
     :mode @ :CHUNK:
-    ...args @ Value
+    *args @ Value
     > Sink[Bin]
   do -> nil
 
@@ -483,7 +483,7 @@ pub class Program: Func
     :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
     :mode @ :LINE: = nil
-    ...args @ Value
+    *args @ Value
   do -> nil
 
   # Runs the program, reading `stdin:` and writing `stdout:` as chunks.
@@ -494,7 +494,7 @@ pub class Program: Func
     :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
     :mode @ :CHUNK:
-    ...args @ Value
+    *args @ Value
   do -> nil
 
   pub def (call) self ...args @ Value -> nil
@@ -724,7 +724,7 @@ pub @class Run: Func
     # [`Bin`](std.Bin) chunks with `:CHUNK:`.
     :mode @ :LINE: = nil
     # Command-line arguments.
-    ...args @ Value
+    *args @ Value
     < Iter[Value]
     > Sink[Str]
   do -> nil
@@ -737,7 +737,7 @@ pub @class Run: Func
     :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
     :mode @ :CHUNK:
-    ...args @ Value
+    *args @ Value
     < Iter[Value]
     > Sink[Bin]
   do -> nil
@@ -752,7 +752,7 @@ pub @class Run: Func
     :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
     :mode @ :LINE: = nil
-    ...args @ Value
+    *args @ Value
     < Iter[Value]
   do -> nil
 
@@ -765,7 +765,7 @@ pub @class Run: Func
     :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
     :mode @ :CHUNK:
-    ...args @ Value
+    *args @ Value
     < Iter[Value]
   do -> nil
 
@@ -779,7 +779,7 @@ pub @class Run: Func
     :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
     :mode @ :LINE: = nil
-    ...args @ Value
+    *args @ Value
     > Sink[Str]
   do -> nil
 
@@ -792,7 +792,7 @@ pub @class Run: Func
     :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
     :mode @ :CHUNK:
-    ...args @ Value
+    *args @ Value
     > Sink[Bin]
   do -> nil
 
@@ -805,7 +805,7 @@ pub @class Run: Func
     :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
     :mode @ :LINE: = nil
-    ...args @ Value
+    *args @ Value
   do -> nil
 
   # Runs the program, reading `stdin:` and writing `stdout:` as chunks.
@@ -817,7 +817,7 @@ pub @class Run: Func
     :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
     :mode @ :CHUNK:
-    ...args @ Value
+    *args @ Value
   do -> nil
 
   pub def (call) self ...args @ Value -> nil
