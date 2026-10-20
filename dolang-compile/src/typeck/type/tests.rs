@@ -2001,3 +2001,303 @@ fn restrictions_lower_and_imply_key_bounds() {
     assert_eq!(db.item_keys(f), [0]);
     assert_eq!(db.implied_bounds(f), [(0, keys)]);
 }
+
+/// Names a declaration by its source name
+struct Named<'a>(&'a Database);
+
+impl Names for Named<'_> {
+    fn declaration(&self, id: DeclId) -> std::borrow::Cow<'_, str> {
+        let name = self
+            .0
+            .declaration(id)
+            .source
+            .name
+            .expect("a named declaration");
+        self.0.symbol(name).into()
+    }
+
+    fn collection(&self, _id: DeclId) -> Option<Collection> {
+        None
+    }
+}
+
+fn field(db: &mut Database, name: &str, ty: TypeId) -> (MemberKey, Member) {
+    let key = MemberKey {
+        name: db.intern_symbol(name),
+        special: false,
+        private: false,
+    };
+    let member = Member::Field {
+        ty,
+        scope: Scope::Instance,
+        public: true,
+    };
+    (key, member)
+}
+
+#[test]
+fn copies_remap_symbols_and_declarations() {
+    let mut db = Database::new();
+    // `A` and `B` refer to each other through their fields, and `A` has a method
+    let (a, a_ty, a_source) = declare(&mut db, DeclKind::Class, "A");
+    let (b, b_ty, b_source) = declare(&mut db, DeclKind::Class, "B");
+    let (m, _, m_source) = declare(&mut db, DeclKind::Function, "m");
+    let m_sig = function(&mut db, &[a_ty], b_ty);
+    db.populate(m, definition(m_source, m_sig));
+    let a_field = field(&mut db, "b", b_ty);
+    let method = MemberKey {
+        name: db.intern_symbol("m"),
+        special: false,
+        private: false,
+    };
+    let method = (
+        method,
+        Member::Method {
+            decl: m,
+            scope: Scope::Instance,
+            public: true,
+        },
+    );
+    let a_definition = Declaration {
+        members: vec![a_field, method].into(),
+        ..definition(a_source, a_ty)
+    };
+    db.populate(a, a_definition);
+    let b_field = field(&mut db, "a", a_ty);
+    let b_definition = Declaration {
+        members: vec![b_field].into(),
+        ..definition(b_source, b_ty)
+    };
+    db.populate(b, b_definition);
+    // `f`, overloaded by `g` and `h`
+    let [f, g, h] = ["f", "g", "h"].map(|name| {
+        let (id, _, source) = declare(&mut db, DeclKind::Function, name);
+        let one = int(&mut db, 1);
+        let sig = function(&mut db, &[one], a_ty);
+        db.populate(id, definition(source, sig));
+        id
+    });
+    db.set_overloads(f, vec![g, h]);
+    let f_ty = intern(&mut db, Type::Decl(f));
+    let [f_sig, g_sig, h_sig] = [f, g, h].map(|id| db.declaration(id).ty);
+    let overloaded = intern(
+        &mut db,
+        Type::Overloaded {
+            overloads: vec![g_sig, h_sig].into(),
+            implementation: Some(f_sig),
+            function: Some(f),
+        },
+    );
+    let k = db.intern_symbol("k");
+    let sym = intern(&mut db, Type::Literal(Literal::Sym(k)));
+    let fresh = db.fresh_symbol("k");
+    let fresh = intern(&mut db, Type::Fresh(Literal::Sym(fresh)));
+    let one = int(&mut db, 1);
+    let applied = intern(
+        &mut db,
+        Type::Apply {
+            base: b_ty,
+            args: vec![Argument::Keyword(k, one)].into(),
+            kind: Kind::Type,
+        },
+    );
+    let bound = reference(&mut db, 0, 0, Kind::Type);
+    let body = function(&mut db, &[bound], bound);
+    let quantified = intern(
+        &mut db,
+        Type::Quantified {
+            binders: vec![Binder {
+                binding: Binding::Keyword(k),
+                ..binder(Kind::Type)
+            }]
+            .into(),
+            body,
+        },
+    );
+    let params = intern(
+        &mut db,
+        Type::Schema(
+            vec![
+                SchemaItem {
+                    multiplicity: Multiplicity::Required,
+                    element: Element::Keyed {
+                        key: sym,
+                        value: a_ty,
+                    },
+                },
+                SchemaItem {
+                    multiplicity: Multiplicity::Optional,
+                    element: Element::Positional(fresh),
+                },
+            ]
+            .into(),
+        ),
+    );
+    let meta = intern(&mut db, Type::Meta(a));
+    let result = union(&mut db, &[applied, quantified, overloaded, meta, sym]);
+    let root = intern(
+        &mut db,
+        Type::Function(Function {
+            params,
+            result,
+            input: None,
+            output: None,
+        }),
+    );
+    let rigid = intern(
+        &mut db,
+        Type::Rigid {
+            decl: b,
+            slot: 0,
+            kind: Kind::Type,
+        },
+    );
+    db.seal();
+
+    // Seeded so that the copies' IDs differ from the originals'
+    let mut into = Database::new();
+    into.intern_symbol("seed");
+    int(&mut into, 7);
+    let mut copier = into.copier(&db);
+    let [copy, rigid_copy, a_copy, f_copy] = [root, rigid, a_ty, f_ty].map(|ty| copier.ty(ty));
+    drop(copier);
+    assert_ne!(copy, root);
+    assert_eq!(into.fixed.unit_count, db.fixed.unit_count);
+    assert_eq!(
+        into.render(copy, &Named(&into), Style::Full),
+        db.render(root, &Named(&db), Style::Full),
+    );
+    // Every copied node is canonical in its new database
+    into.walk(copy, |ty, _| {
+        assert_eq!(into.intern(into.ty(ty).clone()), ty)
+    });
+    // `A`'s field names `B`, whose field names `A` back
+    let [Type::Decl(a_copy), Type::Decl(f_copy)] = [a_copy, f_copy].map(|ty| into.ty(ty).clone())
+    else {
+        panic!("declarations");
+    };
+    let b_copy = match into.declaration(a_copy).members[0].1 {
+        Member::Field { ty, .. } => ty,
+        _ => panic!("a field"),
+    };
+    let Type::Decl(b_copy) = *into.ty(b_copy) else {
+        panic!("a declaration");
+    };
+    assert!(matches!(
+        into.declaration(b_copy).members[0].1,
+        Member::Field { ty, .. } if ty == into.intern(Type::Decl(a_copy))
+    ));
+    assert_eq!(
+        into.ty(rigid_copy),
+        &Type::Rigid {
+            decl: b_copy,
+            slot: 0,
+            kind: Kind::Type,
+        }
+    );
+    let names: Vec<_> = (into.overloads(f_copy).iter())
+        .map(|&id| Named(&into).declaration(id).into_owned())
+        .collect();
+    assert_eq!(names, ["g", "h"]);
+    // A fresh symbol stays apart from its text's
+    let k_copy = into.intern_symbol("k");
+    assert_ne!(k_copy, k);
+    let Type::Function(Function { params, .. }) = into.ty(copy) else {
+        panic!("a function");
+    };
+    let Type::Schema(items) = into.ty(*params) else {
+        panic!("a schema");
+    };
+    let Element::Positional(fresh_copy) = items[1].element else {
+        panic!("a position");
+    };
+    assert!(matches!(
+        into.ty(fresh_copy),
+        Type::Fresh(Literal::Sym(name)) if *name != k_copy && into.symbol(*name) == "k"
+    ));
+    into.seal();
+}
+
+#[test]
+fn copies_designate_intrinsics() {
+    let mut db = Database::new();
+    let (keys, keys_ty, source) = declare(&mut db, DeclKind::OpaqueAlias, "Keys");
+    db.set_intrinsic(Intrinsic::Keys, keys_ty);
+    db.populate(keys, definition(source, keys_ty));
+    let (int_id, int_ty, source) = declare(&mut db, DeclKind::Class, "Int");
+    db.set_intrinsic(Intrinsic::Int, int_ty);
+    db.populate(int_id, definition(source, int_ty));
+    let one = int(&mut db, 1);
+    // `Keys[(1,)]`
+    let schema = schema(&mut db, &[one]);
+    let apply = |db: &mut Database, base, schema| {
+        intern(
+            db,
+            Type::Apply {
+                base,
+                args: vec![Argument::Positional(schema)].into(),
+                kind: Kind::Type,
+            },
+        )
+    };
+    assert_eq!(apply(&mut db, keys_ty, schema), int_ty);
+    db.seal();
+
+    let mut into = Database::new();
+    let mut copier = into.copier(&db);
+    let [keys_copy, int_copy, schema_copy] = [keys_ty, int_ty, schema].map(|ty| copier.ty(ty));
+    drop(copier);
+    assert_eq!(into.intrinsic(Intrinsic::Keys), Some(keys_copy));
+    assert_eq!(into.intrinsic(Intrinsic::Int), Some(int_copy));
+    assert_eq!(apply(&mut into, keys_copy, schema_copy), int_copy);
+}
+
+#[test]
+fn copies_share_what_they_copied() {
+    let mut db = Database::new();
+    let (a, a_ty, source) = declare(&mut db, DeclKind::Class, "A");
+    db.populate(a, definition(source, a_ty));
+    let [one, two] = [1, 2].map(|i| int(&mut db, i));
+    let both = union(&mut db, &[a_ty, one, two]);
+    db.seal();
+
+    // Seeded so that the copies sort in another order
+    let mut into = Database::new();
+    int(&mut into, 2);
+    let mut copier = into.copier(&db);
+    let a_copy = copier.ty(a_ty);
+    let both_copy = copier.ty(both);
+    drop(copier);
+    let members = [a_copy, int(&mut into, 1), int(&mut into, 2)];
+    assert_eq!(union(&mut into, &members), both_copy);
+    let Type::Union(sorted) = into.ty(both_copy) else {
+        panic!("a union");
+    };
+    assert!(sorted.is_sorted());
+}
+
+#[test]
+fn copies_between_forks_keep_their_base() {
+    let (base, one, id, a) = shared();
+    let mut from = Database::fork(&base);
+    let decl = intern(&mut from, Type::Decl(id));
+    let a_sym = intern(&mut from, Type::Literal(Literal::Sym(a)));
+    let b = from.intern_symbol("b");
+    let b_sym = intern(&mut from, Type::Literal(Literal::Sym(b)));
+    let two = int(&mut from, 2);
+    let local = union(&mut from, &[one, two, a_sym, b_sym, decl]);
+    // Seeded so that its own IDs differ from `from`'s
+    let mut into = Database::fork(&base);
+    int(&mut into, 3);
+    let mut copier = into.copier(&from);
+    assert_eq!(copier.ty(one), one);
+    assert_eq!(copier.ty(decl), decl);
+    let copy = copier.ty(local);
+    drop(copier);
+    assert_ne!(copy, local);
+    let a_sym = intern(&mut into, Type::Literal(Literal::Sym(a)));
+    let b = into.intern_symbol("b");
+    let b_sym = intern(&mut into, Type::Literal(Literal::Sym(b)));
+    let two = int(&mut into, 2);
+    assert_eq!(union(&mut into, &[one, two, a_sym, b_sym, decl]), copy);
+}

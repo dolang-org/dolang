@@ -2,7 +2,8 @@
 //!
 //! IDs belong to one database; they must not be mixed between databases. A fork
 //! of a shared database (see [`Database::fork`]) reads its base's IDs as its
-//! own, but the IDs it issues are its alone. Equality
+//! own, but the IDs it issues are its alone. [`Database::copier`] copies types
+//! between databases. Equality
 //! is structural, not a subtype judgment. In particular, equal open types can
 //! mean different things in different environments. Declaration references retain
 //! source identity and are leaves of structural traversal.
@@ -952,6 +953,29 @@ pub(crate) enum Intrinsic {
     Value,
 }
 
+impl Intrinsic {
+    const ALL: [Self; 18] = [
+        Self::Union,
+        Self::Keys,
+        Self::Values,
+        Self::Entries,
+        Self::IndexItem,
+        Self::AssignItem,
+        Self::InsertItem,
+        Self::Deletable,
+        Self::Clearable,
+        Self::Tuple,
+        Self::Func,
+        Self::Int,
+        Self::Bool,
+        Self::Sym,
+        Self::Nil,
+        Self::Str,
+        Self::Type,
+        Self::Value,
+    ];
+}
+
 /// Optional associations to elaborated stub types, populated before sealing.
 #[derive(Default)]
 struct Intrinsics {
@@ -1443,6 +1467,17 @@ impl Database {
     pub(crate) fn fresh_symbol(&self, text: &str) -> SymbolId {
         let id = self.symbols.fresh(text.into());
         SymbolId::new(self.base().map_or(0, |base| base.symbols.len()) + id.index())
+    }
+
+    /// Whether a symbol was interned apart from its text's (see
+    /// [`Self::fresh_symbol`])
+    fn is_fresh_symbol(&self, id: SymbolId) -> bool {
+        match self.base() {
+            Some(base) if id.index() < base.symbols.len() => base.symbols.is_fresh(id),
+            base => self.symbols.is_fresh(SymbolId::new(
+                id.index() - base.map_or(0, |base| base.symbols.len()),
+            )),
+        }
     }
 
     pub(crate) fn allocate_unit(&mut self) -> UnitId {
@@ -2843,6 +2878,7 @@ impl Database {
     }
 }
 
+mod copy;
 mod disjoint;
 mod render;
 #[cfg(test)]
