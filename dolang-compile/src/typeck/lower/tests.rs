@@ -193,7 +193,7 @@ class A
 }
 
 /// A variable escapes through the function its owner creates, however deeply
-/// it's captured, unless another function assigns it
+/// it's captured, even one another function assigns
 #[test]
 fn escapes() {
     lower_with(
@@ -215,10 +215,11 @@ let outer = do
                 .map(|(_, func)| func)
                 .unwrap();
             let outer = ir.func(outer);
-            assert_eq!(outer.escapes.len(), 1);
-            assert!(!ir.var(outer.escapes[0]).flags.contains(VarFlags::VOLATILE));
+            assert_eq!(outer.escapes.len(), 2);
+            let volatile = |var: &&VarId| ir.var(**var).flags.contains(VarFlags::VOLATILE);
+            assert_eq!(outer.escapes.iter().filter(volatile).count(), 1);
             assert!(inner.escapes.is_empty());
-            assert!(inner.captures.contains(&outer.escapes[0]));
+            assert!(outer.escapes.iter().all(|var| inner.captures.contains(var)));
         },
     );
 }
@@ -249,8 +250,13 @@ let outer = do
                 .find(|(_, func)| func.parent == Some(outer))
                 .map(|(id, _)| id)
                 .unwrap();
+            let volatile = |var: &VarId| ir.var(*var).flags.contains(VarFlags::VOLATILE);
+            let stable: Vec<_> = (ir.func(outer).escapes.iter().copied())
+                .filter(|var| !volatile(var))
+                .collect();
             assert!(cached(outer).is_empty());
-            assert_eq!(cached(inner), ir.func(outer).escapes);
+            assert_eq!(stable.len(), 1);
+            assert_eq!(cached(inner), stable);
         },
     );
 }

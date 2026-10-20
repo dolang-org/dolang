@@ -89,6 +89,21 @@ pub def volatile()
     #       ^: flow std.Str
   set()
 
+# Until a block that assigns it is created, its owner holds what it assigned, and
+# a test narrows it
+pub def volatile_before_escape v @ (Str | nil)
+  let w = v
+  if w
+    let _ = w
+    #       ^: flow std.Str
+  w = 1
+  let _ = w
+  #       ^: flow std.Int
+  let set = do w = nil
+  let _ = w
+  #       ^: flow std.Int | std.Nil
+  set()
+
 # A variable only its owner assigns stays narrowed across a call, even once a
 # block captures it
 pub def cached v @ (Str | nil)

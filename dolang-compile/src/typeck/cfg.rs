@@ -21,9 +21,9 @@
 //!
 //! Creating a function is preceded by a [`Step::Capture`] naming it, in the block
 //! that creates it. Each function lists in [`Func::escapes`] the variables of its
-//! parent that it or a function nested in it captures, and that only their owner
-//! assigns. Such a function can't run before the step, so the first value of each
-//! it can see is the one its owner holds there. Before flow, a pass over each
+//! parent that it or a function nested in it captures. Such a function can't run
+//! before the step, so the first value of each it can see is the one its owner
+//! holds there. Before flow, a pass over each
 //! function finds where its variables may have escaped (`Block::escaped`). A
 //! function that captures such a variable loads it at its entry, a
 //! [`Step::Cache`], and reads and narrows that copy, unless its owner assigns it
@@ -155,8 +155,7 @@ pub(crate) struct Func {
     /// The variables of enclosing functions it reads or writes
     pub(crate) captures: Vec<VarId>,
     /// The variables its parent owns that it or a function nested in it captures,
-    /// leaving out volatile variables and [`Signature`] variables, which are
-    /// joined as they're assigned
+    /// leaving out [`Signature`] variables, which are joined as they're assigned
     pub(crate) escapes: Vec<VarId>,
     /// In an `(init)`, the variables standing for the receiver's fields, which a
     /// [`Step::Escape`] checks
@@ -224,16 +223,17 @@ bitflags::bitflags! {
         /// reads it as an accumulator. Its value when a function that captures it
         /// is created, and every assignment after, joins the accumulator.
         const INTERPROCEDURAL = 1 << 0;
-        /// Assigned by a function other than its owner, so that its owner caches
-        /// no type for it either and reads the accumulator too
+        /// Assigned by a function other than its owner in the unit, so that where
+        /// it may have escaped, its owner reads the accumulator too
         const VOLATILE = 1 << 1;
         /// Starts as bottom rather than unassigned: a comprehension's bindings and
         /// item values, which are assigned only on the paths its structure
         /// accounts for
         const BOTTOM = 1 << 2;
         /// Exported from a module, so an importer may assign it anything that fits
-        /// its annotation, or anything at all without one. Such a variable is also
-        /// interprocedural and volatile.
+        /// its annotation, or anything at all without one, at any time. Such a
+        /// variable is also interprocedural; its owner always reads and writes its
+        /// accumulator, and no function caches it.
         const EXPORTED = 1 << 3;
         /// Bound by a `def` or `class`, whose name is in scope before its binding
         /// runs, so a function may capture it first. Its binding isn't a fresh

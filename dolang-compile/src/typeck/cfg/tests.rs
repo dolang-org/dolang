@@ -659,10 +659,7 @@ fn captures() {
         escaping(false, source, false),
         Err(Invalid::Escape { .. })
     ));
-    assert!(matches!(
-        escaping(true, source, true),
-        Err(Invalid::Escape { .. })
-    ));
+    assert_eq!(escaping(true, source, true), Ok(()));
     assert!(matches!(
         escaping(true, Origin::Signature, false),
         Err(Invalid::Escape { .. })
@@ -709,7 +706,7 @@ fn caches() {
     let source = Origin::Source(Span::INVALID);
     let none = VarFlags::empty();
     assert_eq!(caching(source, none, true, true), Ok(()));
-    for flags in [VarFlags::VOLATILE, VarFlags::UNCACHED] {
+    for flags in [VarFlags::VOLATILE, VarFlags::EXPORTED, VarFlags::UNCACHED] {
         assert!(matches!(
             caching(source, flags, true, true),
             Err(Invalid::Cache(_))

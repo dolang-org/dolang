@@ -226,11 +226,11 @@ fn analyze(ir: &Ir) -> (Vec<BitBox>, Vec<VarId>) {
 }
 
 /// Whether a function that captures a variable may keep a copy of it: only its
-/// owner assigns it, never after it may have escaped, and it isn't a `do` block's
-/// [`Signature`](super::Signature) or a result, which are joined as they're
-/// assigned
+/// owner assigns it, never after it may have escaped, it isn't exported, and it
+/// isn't a `do` block's [`Signature`](super::Signature) or a result, which are
+/// joined as they're assigned
 pub(super) fn cacheable(var: &super::Var) -> bool {
     !var.flags
-        .intersects(VarFlags::VOLATILE | VarFlags::UNCACHED)
+        .intersects(VarFlags::VOLATILE | VarFlags::EXPORTED | VarFlags::UNCACHED)
         && !matches!(var.origin, Origin::Signature | Origin::Result)
 }

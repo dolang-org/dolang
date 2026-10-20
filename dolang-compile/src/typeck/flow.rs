@@ -17,20 +17,21 @@
 //! also narrows the entry it copied, which a short circuit leaves as its result.
 //!
 //! State shared between functions isn't flow-sensitive. An ivar joins into an
-//! accumulator, which every function but its owner reads it as. Its owner caches
-//! its type in its state, and narrows it there, unless it's volatile: assigned by
-//! another function, whose calls could change it at any time. A volatile
-//! variable's owner reads the accumulator too, and keeps only whether it may be
-//! unassigned. Every assignment to a volatile variable joins its accumulator. Any
-//! other ivar joins what its owner holds when a function it escapes through is
-//! created, at a [`Step::Capture`], and each assignment where it may have escaped
-//! after: no function that reads it can run before. Where that is was decided
-//! before flow, by paths alone ([`Block::escaped`](super::cfg::Block::escaped)):
-//! a binding other than a `def`'s or `class`'s, which are hoisted, makes a fresh
-//! cell that no function has captured yet. A non-local return joins its
-//! value into its def's result the same way, as does a `do` block's signature:
-//! what the calls it's passed to give its parameters and channels, and its
-//! result. A block that reads a joined type depends on it, and is queued again
+//! accumulator, which every function but its owner reads it as. Its owner holds
+//! its type in its state, and narrows it there. It joins what its owner holds when
+//! a function it escapes through is created, at a [`Step::Capture`], and each
+//! assignment where it may have escaped after, as does every other function's
+//! assignment: no function that reads or assigns it can run before. Where that is
+//! was decided before flow, by paths alone
+//! ([`Block::escaped`](super::cfg::Block::escaped)): a binding other than a
+//! `def`'s or `class`'s, which are hoisted, makes a fresh cell that no function
+//! has captured yet. Where a volatile variable, one another function assigns, may
+//! have escaped, any call could change it, so its owner reads the accumulator
+//! there too, keeping only whether it may be unassigned, and doesn't narrow it. An
+//! importer may change an exported variable at any time, so its owner always
+//! does. A non-local return joins its value into its def's result the same way,
+//! as does a `do` block's signature: what the calls it's passed to give its
+//! parameters and channels, and its result. A block that reads a joined type depends on it, and is queued again
 //! when it grows.
 //!
 //! A function also caches each ivar it captures that lowering found cacheable,
@@ -1097,7 +1098,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let ty = self.default(*var, ty, value.span);
                 trace!("default {}: {}", self.var_name(*var), self.show(ty));
                 let data = self.ir.var(*var);
-                if data.owner == at.func && !data.flags.contains(VarFlags::VOLATILE) {
+                if data.owner == at.func {
                     let slot = self.slot(*var);
                     state.vars[slot].ty = self.lub(state.vars[slot].ty, ty);
                     // Where the item is absent, each column has bottom for it
@@ -1237,14 +1238,20 @@ impl<'a, 'u> Flow<'a, 'u> {
     }
 
     /// Whether assigning a variable joins its accumulator: an ivar's assignment by
-    /// another function, or by its owner once it may have escaped or if it's
-    /// volatile
+    /// another function, or by its owner where it may have escaped
     fn publishes(&self, at: At, var: VarId) -> bool {
         let data = self.ir.var(var);
         data.flags.contains(VarFlags::INTERPROCEDURAL)
-            && (data.flags.contains(VarFlags::VOLATILE)
-                || data.owner != at.func
-                || self.escaped(var))
+            && (data.owner != at.func || self.escaped(var))
+    }
+
+    /// Whether the running function, which owns a variable, reads it from its
+    /// accumulator: it's exported, or volatile and may have escaped, so another
+    /// function may have assigned it
+    fn reads_through(&self, var: VarId) -> bool {
+        let flags = self.ir.var(var).flags;
+        flags.contains(VarFlags::EXPORTED)
+            || (flags.contains(VarFlags::VOLATILE) && self.escaped(var))
     }
 
     /// Whether a variable the running function owns may have escaped at the
@@ -1309,19 +1316,15 @@ impl<'a, 'u> Flow<'a, 'u> {
         annotation
     }
 
-    /// Assign a variable, strongly where its owner caches its type, checking the
-    /// value at `span` against its annotation. Returns the type stored.
+    /// Assign a variable, strongly where its owner holds it, checking the value at
+    /// `span` against its annotation. Returns the type stored.
     fn assign(&mut self, at: At, state: &mut State, var: VarId, ty: TypeId, span: Span) -> TypeId {
         self.check(var, ty, span);
         let ty = self.settle(var, ty);
         let data = self.ir.var(var);
         if data.owner == at.func {
             let slot = &mut state.vars[self.slot(var)];
-            slot.ty = if data.flags.contains(VarFlags::VOLATILE) {
-                self.db.bottom()
-            } else {
-                ty
-            };
+            slot.ty = ty;
             slot.may.remove(May::UNASSIGNED);
             slot.link = None;
         }
@@ -1434,11 +1437,10 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
     }
 
-    /// Link a variable the running function caches the type of to a group row,
-    /// once it's assigned
+    /// Link a variable the running function owns to a group row, once it's
+    /// assigned
     fn relink(&self, at: At, state: &mut State, var: VarId, link: Option<Link>) {
-        let data = self.ir.var(var);
-        if data.owner == at.func && !data.flags.contains(VarFlags::VOLATILE) {
+        if self.ir.var(var).owner == at.func {
             state.vars[self.slot(var)].link = link;
         }
     }
@@ -1543,8 +1545,8 @@ impl<'a, 'u> Flow<'a, 'u> {
     }
 
     /// What a variable holds: its fact where its owner or the running function
-    /// caches its type, and its joined type elsewhere. Its owner still knows
-    /// whether it may be unassigned.
+    /// caches its type, and its joined type elsewhere. An owner reading through
+    /// still knows whether it may be unassigned.
     fn read(&mut self, at: At, state: &State, var: VarId) -> Fact {
         let data = self.ir.var(var);
         if let Some(slot) = self.cached(at, var) {
@@ -1560,7 +1562,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             };
         }
         let fact = state.vars[self.slot(var)].fact();
-        if !data.flags.contains(VarFlags::VOLATILE) {
+        if !self.reads_through(var) {
             return fact;
         }
         Fact {
@@ -1574,7 +1576,7 @@ impl<'a, 'u> Flow<'a, 'u> {
     fn assume(&mut self, at: At, state: &mut State, assume: &Assume) -> bool {
         let data = self.ir.var(assume.var);
         let slot = if data.owner == at.func {
-            if data.flags.contains(VarFlags::VOLATILE) {
+            if self.reads_through(assume.var) {
                 // An accumulator isn't narrowed
                 return true;
             }
