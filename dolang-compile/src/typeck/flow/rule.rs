@@ -32,7 +32,7 @@
 //! result that isn't known yet to be bottom. A union's alternatives end it only
 //! if they all do.
 
-use std::collections::VecDeque;
+use std::{collections::VecDeque, ops::ControlFlow};
 
 use dolang_util::mono::MonoVec;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -1319,16 +1319,8 @@ impl<'a> Flow<'a, '_> {
         };
         // What chooses: the arguments' twin and the ambient channels
         let selection = [Some(solver.twin(call.arguments)), call.input, call.output];
-        let gradual = (selection.into_iter().flatten()).any(|term| {
-            let Ok(selection) = solver.reify(term) else {
-                return true;
-            };
-            let mut unknown = false;
-            self.db.walk(selection, |node, _| {
-                unknown |= matches!(self.db.ty(node), Type::Unknown(_));
-            });
-            unknown
-        });
+        let gradual = (selection.into_iter().flatten())
+            .any(|term| (solver.reify(term)).map_or(true, |ty| self.db.contains_unknown(ty)));
         if gradual {
             return Some(None);
         }
@@ -2203,13 +2195,13 @@ impl<'a> Flow<'a, '_> {
             return None;
         };
         let fixed = |ty: TypeId| {
-            let mut free = true;
-            self.db.walk(ty, |node, depth| {
-                if let Type::Bound { reference, .. } = *self.db.ty(node) {
-                    free &= u32::from(reference.depth) < depth;
+            let bound = self.db.walk(ty, |node, depth| match *self.db.ty(node) {
+                Type::Bound { reference, .. } if u32::from(reference.depth) >= depth => {
+                    ControlFlow::Break(())
                 }
+                _ => ControlFlow::Continue(()),
             });
-            free.then_some(ty)
+            bound.is_continue().then_some(ty)
         };
         let mut params = Params::default();
         let mut open = true;

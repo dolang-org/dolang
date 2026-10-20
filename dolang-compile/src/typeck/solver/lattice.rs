@@ -57,7 +57,7 @@ impl Solver<'_> {
         let unknown = self.db.unknown();
         let below = |x: TypeId, y: TypeId| self.probe(x, y) == Ok(Status::Proven);
         let comparable = |member: &UnionMember| match *member {
-            UnionMember::Type(ty) => (!self.contains_unknown(ty)).then_some(ty),
+            UnionMember::Type(ty) => (!self.db.contains_unknown(ty)).then_some(ty),
             _ => None,
         };
         let mut kept: Vec<UnionMember> = self.union_members(a);

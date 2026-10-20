@@ -15,6 +15,8 @@
 //! That a subclass may reach `Func`, or widen its `(call)`'s parameters and
 //! narrow its result, matters only to narrowing (see [`narrow`]).
 
+use std::ops::ControlFlow;
+
 use super::*;
 use crate::typeck::r#type::{MemberKey, Scope};
 
@@ -446,13 +448,13 @@ pub(crate) fn bound_method(db: &Database, signature: TypeId) -> Option<TypeId> {
     let Some(binders) = binders else {
         return Some(function);
     };
-    let mut own = false;
-    db.walk(receiver, |node, depth| {
-        if let Type::Bound { reference, .. } = *db.ty(node) {
-            own |= u32::from(reference.depth) == depth;
+    let own = db.walk(receiver, |node, depth| match *db.ty(node) {
+        Type::Bound { reference, .. } if u32::from(reference.depth) == depth => {
+            ControlFlow::Break(())
         }
+        _ => ControlFlow::Continue(()),
     });
-    (!own).then(|| {
+    own.is_continue().then(|| {
         db.intern(Type::Quantified {
             binders,
             body: function,
