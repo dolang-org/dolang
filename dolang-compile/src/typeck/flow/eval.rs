@@ -157,9 +157,10 @@ impl Flow<'_, '_> {
     /// those still bottom are dynamic (see [`Flow::analyze`]). Its value is
     /// its declared type under its rigids, with the result its variable joins, if
     /// that's left to it, and in a strict unit, so are its parameters and
-    /// channels. A nested def's value is its declared type, unless it's
-    /// nested in a generic declaration, whose binders it would need applied, or
-    /// it's overloaded. What it can't type is a gap at `span`.
+    /// channels, which it waits on while any is still bottom. A nested def's
+    /// value is its declared type, unless it's nested in a generic declaration,
+    /// whose binders it would need applied, or it's overloaded. What it can't
+    /// type is a gap at `span`.
     pub(super) fn lambda(&mut self, at: At, func: FuncId, span: Span) -> TypeId {
         let unknown = self.db.unknown();
         let data = self.ir.func(func);
@@ -167,12 +168,23 @@ impl Flow<'_, '_> {
             let Some(mut declared) = self.funcs[func.index()].declared.clone() else {
                 return self.gap(span, "a `do` block without a declared type");
             };
-            // In a strict unit, what it's passed is what its body was checked with
-            if self.strict()
-                && let Some(passed) =
-                    passed_signature(self.db, data, &declared, |var| self.joined(var, at))
-            {
-                declared = passed;
+            // In a strict unit, what it's passed is what its body was checked with.
+            // Until each is passed something, its type would only shrink, so it's
+            // not known yet.
+            if self.strict() {
+                let bottom = self.db.bottom();
+                let mut pending = false;
+                let passed = passed_signature(self.db, data, &declared, |var| {
+                    let ty = self.joined(var, at);
+                    pending |= ty == bottom;
+                    ty
+                });
+                if pending {
+                    return bottom;
+                }
+                if let Some(passed) = passed {
+                    declared = passed;
+                }
             }
             if let Some(var) = signature.result {
                 declared.result = self.joined(var, at);
