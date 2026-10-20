@@ -75,6 +75,7 @@ macro_rules! trace {
 }
 
 mod eval;
+mod live;
 mod member;
 mod problem;
 mod rule;
@@ -190,6 +191,8 @@ struct Flow<'a, 'u> {
     /// By function
     funcs: Box<[Frame]>,
     blocks: Blocks,
+    /// By block, the slots of its function live at its entry
+    live: Box<[BitBox]>,
     /// Each variable's slot in a function's states
     slots: FxHashMap<(FuncId, VarId), usize>,
     /// The accumulator of each ivar, and of each result a non-local return gives
@@ -265,6 +268,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 FuncKind::Decl(_) | FuncKind::DefaultInit(_) => None,
             })
             .expect("a unit's graph has its module function");
+        let live = live::live(ir, &funcs, &slots, &blocks.rank);
         let modules = (tables.units.iter().enumerate())
             .filter_map(|(index, unit)| Some((unit.module?, UnitId::from_index(index))))
             .collect();
@@ -275,6 +279,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             unit,
             funcs: funcs.into(),
             blocks,
+            live,
             slots,
             accumulators: FxHashMap::default(),
             current: None,
@@ -588,11 +593,13 @@ impl<'a, 'u> Flow<'a, 'u> {
         self.merge(target, ctx, state);
     }
 
-    /// Join a state into a block's, queueing the block if it grew
-    fn merge(&mut self, block: BlockId, ctx: CtxId, state: State) {
+    /// Join a state into a block's, queueing the block if it grew. What's dead at
+    /// its entry is forgotten first, so it doesn't grow with values nothing reads.
+    fn merge(&mut self, block: BlockId, ctx: CtxId, mut state: State) {
         if self.observing() {
             return;
         }
+        self.mask(block, &mut state);
         let key = (block, ctx);
         let Some(entry) = self.states.get_mut(&key) else {
             trace!(
@@ -642,12 +649,14 @@ impl<'a, 'u> Flow<'a, 'u> {
         let groups = (old.groups.iter().zip(&state.groups))
             .map(|(old, new)| self.join_groups(old, new))
             .collect();
-        let joined = State {
+        let mut joined = State {
             vars,
             stack,
             dup: old.dup && state.dup,
             groups,
         };
+        // A join can drop the links that kept a group
+        Self::unlinked_groups(&mut joined);
         let grew = joined != old;
         if grew {
             trace!(
@@ -661,6 +670,39 @@ impl<'a, 'u> Flow<'a, 'u> {
         if grew {
             entry.state = joined;
             self.enqueue(block, ctx);
+        }
+    }
+
+    /// Reset each slot dead at a block's entry, and each group nothing left links to
+    fn mask(&self, block: BlockId, state: &mut State) {
+        let live = &self.live[block.index()];
+        let bottom = self.db.bottom();
+        for (slot, var) in state.vars.iter_mut().enumerate() {
+            if !live[slot] {
+                *var = VarState {
+                    ty: bottom,
+                    may: May::empty(),
+                    link: None,
+                };
+            }
+        }
+        Self::unlinked_groups(state);
+    }
+
+    /// Reset each group that no slot or operand links to, which nothing can
+    /// correlate through until an unpack replaces it
+    fn unlinked_groups(state: &mut State) {
+        let mut linked = vec![false; state.groups.len()];
+        let links = (state.vars.iter().map(|var| var.link))
+            .chain(state.stack.iter().map(|operand| operand.link))
+            .flatten();
+        for link in links {
+            linked[link.group.index()] = true;
+        }
+        for (group, linked) in state.groups.iter_mut().zip(linked) {
+            if !linked {
+                *group = Group::default();
+            }
         }
     }
 
