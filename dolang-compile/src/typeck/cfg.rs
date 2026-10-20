@@ -71,7 +71,6 @@ mod dot;
 mod dump;
 mod escape;
 mod expr;
-#[cfg_attr(not(test), expect(dead_code, reason = "#1282 runs flow per run"))]
 mod split;
 #[cfg(test)]
 mod tests;
@@ -83,6 +82,7 @@ use bitvec::boxed::BitBox;
 use dolang_util::{alias, mono::MonoVec};
 
 pub(crate) use expr::{Collection, Expr, ExprKind, FmtSpec, Item, Member, Target};
+pub(crate) use split::Run;
 
 use super::r#type::{DeclId, MemberKey, SymbolId, TypeId, UnitId};
 use crate::{RestKind, source::Span};
@@ -110,10 +110,7 @@ id!(FuncId);
 id!(BlockId);
 id!(VarId);
 id!(GroupId);
-id!(
-    #[cfg_attr(not(test), expect(dead_code, reason = "#1282 runs flow per run"))]
-    RunId
-);
+id!(RunId);
 
 impl GroupId {
     /// A function's parameters'

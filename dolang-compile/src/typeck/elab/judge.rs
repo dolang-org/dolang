@@ -543,6 +543,10 @@ impl Tables<'_> {
     }
 
     /// A closed type
+    #[cfg_attr(
+        not(any(test, feature = "debug")),
+        expect(dead_code, reason = "used by tests and traces")
+    )]
     pub(crate) fn render_type(&self, db: &Database, ty: TypeId) -> String {
         db.render(ty, self, Style::Full)
     }

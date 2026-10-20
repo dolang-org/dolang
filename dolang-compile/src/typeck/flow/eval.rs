@@ -165,7 +165,7 @@ impl Flow<'_, '_> {
         let unknown = self.db.unknown();
         let data = self.ir.func(func);
         if let Some(signature) = &data.signature {
-            let Some(mut declared) = self.funcs[func.index()].declared.clone() else {
+            let Some(mut declared) = self.declared[func.index()].clone() else {
                 return self.gap(span, "a `do` block without a declared type");
             };
             // In a strict unit, what it's passed is what its body was checked with.

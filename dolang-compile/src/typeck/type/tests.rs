@@ -1,4 +1,4 @@
-use super::{copy::Copies, *};
+use super::*;
 
 fn assert_panics(f: impl FnOnce()) {
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err());

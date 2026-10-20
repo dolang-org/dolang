@@ -52,7 +52,7 @@ impl Flow<'_, '_> {
     pub(super) fn render_state(&self, block: BlockId, state: &State) -> String {
         let data = self.ir.block(block);
         let bottom = self.db.bottom();
-        let mut parts: Vec<String> = (self.funcs[data.func.index()].vars.iter().zip(&state.vars))
+        let mut parts: Vec<String> = (self.layout.vars[data.func.index()].iter().zip(&state.vars))
             .enumerate()
             .map(|(index, (&var, slot))| {
                 let escaped = data.escaped.get(index).is_some_and(|bit| *bit);

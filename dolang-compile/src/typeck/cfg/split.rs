@@ -39,6 +39,13 @@ pub(crate) struct Run {
     pub(crate) inherited: Box<[VarId]>,
 }
 
+impl RunId {
+    /// The run rooted at the module function, which every other is detached from
+    pub(crate) fn module() -> Self {
+        Self::from_index(0)
+    }
+}
+
 impl Ir {
     /// The runs its flow divides into, by ID, in preorder: the module function's
     /// first, and each run's detached runs after it, in order of their roots

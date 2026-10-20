@@ -34,7 +34,6 @@ pub(crate) struct Copies {
 
 impl Copies {
     /// The declaration a copy was copied from
-    #[cfg_attr(not(test), expect(dead_code, reason = "#1282 names copied facts"))]
     pub(crate) fn origin(&self, copy: DeclId) -> Option<DeclId> {
         self.origins.get(&copy).copied()
     }
@@ -43,7 +42,6 @@ impl Copies {
 /// Copies types from one database into another, with the symbols and
 /// declarations they refer to. What it copied is memoized, so roots that share
 /// a subterm copy it once.
-#[cfg_attr(not(test), expect(dead_code, reason = "#1282 copies flow results"))]
 pub(crate) struct Copier<'a> {
     from: &'a Database,
     into: &'a mut Database,
@@ -69,7 +67,6 @@ impl Database {
     /// declaration needs this database not to be sealed. What it copies of
     /// `from`'s root is kept in `copies`, which may only have been used with forks
     /// of the same root.
-    #[cfg_attr(not(test), expect(dead_code, reason = "#1282 copies flow results"))]
     pub(crate) fn copier<'a>(
         &'a mut self,
         from: &'a Database,
@@ -122,7 +119,6 @@ impl Database {
 
 impl Copier<'_> {
     /// A type's copy, with every declaration it reaches populated
-    #[cfg_attr(not(test), expect(dead_code, reason = "#1282 copies flow results"))]
     pub(crate) fn ty(&mut self, ty: TypeId) -> TypeId {
         let copy = self.copy(ty);
         while let Some((decl, copy)) = self.pending.pop() {

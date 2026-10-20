@@ -90,6 +90,7 @@ mod trace;
 use std::{
     collections::{BTreeSet, VecDeque},
     mem,
+    sync::Arc,
 };
 
 use bitvec::{bitbox, boxed::BitBox};
@@ -103,13 +104,13 @@ use state::{Contexts, CtxId, Group, Link, May, Operand, State, VarState};
 use super::{
     cfg::{
         Against, Assume, BlockId, EscapeKind, Expr, ExprKind, FuncId, FuncKind, Ir, Origin,
-        Pattern, PatternItem, PatternKey, Step, Tag, Target, Terminal, VarFlags, VarId,
+        Pattern, PatternItem, PatternKey, Run, RunId, Step, Tag, Target, Terminal, VarFlags, VarId,
     },
     elab::{Designated, Tables},
     solver::{Gas, NarrowTarget, Outcome, Provenance, Residual, Solver, Status, Widening},
     r#type::{
-        Argument, Database, DeclId, Element, Function, Intrinsic, Kind, Literal, Multiplicity,
-        SchemaItem, Type, TypeId, UnitId,
+        Argument, Copies, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
+        Multiplicity, SchemaItem, Shared, Type, TypeId, UnitId,
     },
 };
 use crate::{RestKind, source::Span};
@@ -126,9 +127,148 @@ pub(crate) struct Results {
     pub(crate) unresolved: Vec<(Span, Residual)>,
 }
 
-/// Analyze a unit's graph
-pub(crate) fn analyze(ir: &Ir, db: &Database, tables: &Tables<'_>) -> Results {
-    Flow::new(ir, db, tables, false).analyze()
+/// What flow needs of a unit's graph before it sees any type, which each of its
+/// runs reads
+pub(crate) struct Layout {
+    unit: UnitId,
+    blocks: Blocks,
+    /// By function, the variable in each slot of its states: those it owns, then
+    /// those it caches
+    vars: Box<[Box<[VarId]>]>,
+    /// Each variable's slot in a function's states
+    slots: FxHashMap<(FuncId, VarId), usize>,
+    /// By block, the slots of its function live at its entry
+    live: Box<[BitBox]>,
+}
+
+impl Layout {
+    pub(crate) fn new(ir: &Ir) -> Self {
+        let blocks = order(ir);
+        let mut slots = FxHashMap::default();
+        let mut vars = Vec::new();
+        for (id, func) in ir.funcs() {
+            let cached = (ir.block(func.entry).steps.first()).and_then(|step| match step {
+                Step::Cache(vars) => Some(&vars[..]),
+                _ => None,
+            });
+            let func_vars: Box<[VarId]> = (func.vars.iter())
+                .chain(cached.into_iter().flatten())
+                .copied()
+                .collect();
+            for (slot, &var) in func_vars.iter().enumerate() {
+                slots.insert((id, var), slot);
+            }
+            vars.push(func_vars);
+        }
+        let unit = (ir.funcs())
+            .find_map(|(_, func)| match func.kind {
+                FuncKind::Module(unit) => Some(unit),
+                FuncKind::Decl(_) | FuncKind::DefaultInit(_) => None,
+            })
+            .expect("a unit's graph has its module function");
+        let live = live::live(ir, &vars, &slots, &blocks.rank);
+        Self {
+            unit,
+            blocks,
+            vars: vars.into(),
+            slots,
+            live,
+        }
+    }
+}
+
+/// Analyze each of a unit's `runs` in a fork of its own of the unit's `layer`,
+/// giving each run's fork and what it concluded, by run ID
+pub(crate) fn analyze(
+    ir: &Ir,
+    layout: &Layout,
+    runs: &[Run],
+    layer: &Arc<Shared>,
+    tables: &Tables<'_>,
+) -> Vec<(Database, Results)> {
+    Tree {
+        ir,
+        layout,
+        runs,
+        layer,
+        tables,
+        reversed: false,
+        outputs: (0..runs.len()).map(|_| None).collect(),
+    }
+    .finish()
+}
+
+/// Analyzes a unit's runs, each once the run it's detached from is forked, if
+/// early, or finished, if late
+struct Tree<'a, 'u> {
+    ir: &'a Ir,
+    layout: &'a Layout,
+    runs: &'a [Run],
+    layer: &'a Arc<Shared>,
+    tables: &'a Tables<'u>,
+    /// Whether each run takes its queue's last entry rather than its first
+    reversed: bool,
+    /// Each run's fork and results, by run ID
+    outputs: Vec<Option<(Database, Results)>>,
+}
+
+impl Tree<'_, '_> {
+    fn finish(mut self) -> Vec<(Database, Results)> {
+        let root = Database::fork(self.layer);
+        self.run(RunId::module(), root, FxHashMap::default());
+        (self.outputs.into_iter())
+            .map(|output| output.expect("every run is analyzed"))
+            .collect()
+    }
+
+    /// Analyze a run in `db` from what it `inherited`, then the runs detached from
+    /// it
+    fn run(&mut self, id: RunId, db: Database, inherited: FxHashMap<VarId, TypeId>) {
+        let run = &self.runs[id.index()];
+        let early: Vec<_> = (run.early.iter())
+            .map(|&child| (child, self.fork(&db, &inherited, child)))
+            .collect();
+        let flow = Flow::new(self.ir, self.layout, run, &db, self.tables, self.reversed);
+        let (results, accumulators) = flow.analyze(inherited);
+        let late: Vec<_> = (run.late.iter())
+            .map(|&child| (child, self.fork(&db, &accumulators, child)))
+            .collect();
+        self.outputs[id.index()] = Some((db, results));
+        for (child, (db, inherited)) in early.into_iter().chain(late) {
+            self.run(child, db, inherited);
+        }
+    }
+
+    /// A fork for a run detached from one analyzed in `parent`, with what it
+    /// inherits copied from `types`: the parent's inherited types for an early
+    /// run, and its final accumulators for a late one, bottom where it has none
+    fn fork(
+        &self,
+        parent: &Database,
+        types: &FxHashMap<VarId, TypeId>,
+        child: RunId,
+    ) -> (Database, FxHashMap<VarId, TypeId>) {
+        let mut db = Database::fork(self.layer);
+        let mut copies = Copies::default();
+        let mut copier = db.copier(parent, &mut copies);
+        let inherited = (self.runs[child.index()].inherited.iter())
+            .map(|&var| {
+                let ty = types.get(&var).copied().unwrap_or(parent.bottom());
+                (var, copier.ty(ty))
+            })
+            .collect();
+        (db, inherited)
+    }
+}
+
+/// Put the problems and undecided checks a unit's runs gave, each run's in turn,
+/// in source order. Those at one span keep their order.
+pub(crate) fn sort(problems: &mut [Problem], unresolved: &mut [(Span, Residual)]) {
+    problems.sort_by_key(|problem| {
+        let span = crate::typeck::report::Report::span(problem);
+        (span.start, span.end)
+    });
+    unresolved.sort_by_key(|&(span, _)| (span.start, span.end));
 }
 
 /// The type a variable is read as by functions that don't cache it, which every
@@ -138,15 +278,6 @@ struct Accumulator {
     widening: Widening,
     /// The blocks that read it, queued again when it grows
     readers: FxHashSet<(BlockId, CtxId)>,
-}
-
-/// What flow knows of a function
-struct Frame {
-    /// Its declared type, under its rigids, if it's a function type
-    declared: Option<Function>,
-    /// The variable in each slot of its states: those it owns, then those it
-    /// caches
-    vars: Box<[VarId]>,
 }
 
 /// Where each block falls in the queue
@@ -183,16 +314,14 @@ struct At {
 
 struct Flow<'a, 'u> {
     ir: &'a Ir,
+    layout: &'a Layout,
+    run: &'a Run,
     db: &'a Database,
     tables: &'a Tables<'u>,
     unit: UnitId,
-    /// By function
-    funcs: Box<[Frame]>,
-    blocks: Blocks,
-    /// By block, the slots of its function live at its entry
-    live: Box<[BitBox]>,
-    /// Each variable's slot in a function's states
-    slots: FxHashMap<(FuncId, VarId), usize>,
+    /// By function, its declared type under its rigids, if it's a function type;
+    /// known only for the run's functions
+    declared: Box<[Option<Function>]>,
     /// The accumulator of each ivar, and of each result a non-local return gives
     /// a value, once a value joins it or a block reads it
     accumulators: FxHashMap<VarId, Accumulator>,
@@ -228,31 +357,26 @@ struct Flow<'a, 'u> {
 }
 
 impl<'a, 'u> Flow<'a, 'u> {
-    fn new(ir: &'a Ir, db: &'a Database, tables: &'a Tables<'u>, reversed: bool) -> Self {
-        let blocks = order(ir);
-        let mut scope = Vec::new();
-        let mut slots = FxHashMap::default();
-        let mut funcs = Vec::new();
-        for (id, func) in ir.funcs() {
-            let cached = (ir.block(func.entry).steps.first()).and_then(|step| match step {
-                Step::Cache(vars) => Some(&vars[..]),
-                _ => None,
-            });
-            let vars: Box<[VarId]> = (func.vars.iter())
-                .chain(cached.into_iter().flatten())
-                .copied()
-                .collect();
-            for (slot, &var) in vars.iter().enumerate() {
-                slots.insert((id, var), slot);
+    fn new(
+        ir: &'a Ir,
+        layout: &'a Layout,
+        run: &'a Run,
+        db: &'a Database,
+        tables: &'a Tables<'u>,
+        reversed: bool,
+    ) -> Self {
+        let mut declared = vec![None; layout.vars.len()];
+        for &id in &run.funcs {
+            if let FuncKind::Decl(decl) = ir.func(id).kind {
+                declared[id.index()] = declared_function(db, tables, decl);
             }
-            funcs.push(Frame {
-                declared: match func.kind {
-                    FuncKind::Decl(decl) => declared_function(db, tables, decl),
-                    FuncKind::Module(_) | FuncKind::DefaultInit(_) => None,
-                },
-                vars,
-            });
-            if let Some(decl) = func.kind.scope() {
+        }
+        // What it inherits may hold the rigids of the functions its root is
+        // nested in
+        let ancestors = std::iter::successors(ir.func(run.root).parent, |&id| ir.func(id).parent);
+        let mut scope = Vec::new();
+        for id in run.funcs.iter().copied().chain(ancestors) {
+            if let Some(decl) = ir.func(id).kind.scope() {
                 let key = (decl, tables.primary_sig(decl));
                 for binder in tables.groups.get(&key).into_iter().flatten() {
                     let key = (binder.decl, binder.sig);
@@ -263,25 +387,17 @@ impl<'a, 'u> Flow<'a, 'u> {
                 }
             }
         }
-        let unit = (ir.funcs())
-            .find_map(|(_, func)| match func.kind {
-                FuncKind::Module(unit) => Some(unit),
-                FuncKind::Decl(_) | FuncKind::DefaultInit(_) => None,
-            })
-            .expect("a unit's graph has its module function");
-        let live = live::live(ir, &funcs, &slots, &blocks.rank);
         let modules = (tables.units.iter().enumerate())
             .filter_map(|(index, unit)| Some((unit.module?, UnitId::from_index(index))))
             .collect();
         Self {
             ir,
+            layout,
+            run,
             db,
             tables,
-            unit,
-            funcs: funcs.into(),
-            blocks,
-            live,
-            slots,
+            unit: layout.unit,
+            declared: declared.into(),
             accumulators: FxHashMap::default(),
             current: None,
             scope,
@@ -299,9 +415,13 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
     }
 
-    /// Iterate to a fixed point in rounds, then record what each reference and
-    /// binding saw, and report
-    fn analyze(mut self) -> Results {
+    /// Iterate to a fixed point in rounds from what the run inherits, then record
+    /// what each reference and binding saw, and report. Gives the final
+    /// accumulators too.
+    fn analyze(
+        mut self,
+        inherited: FxHashMap<VarId, TypeId>,
+    ) -> (Results, FxHashMap<VarId, TypeId>) {
         let bottom = self.db.bottom();
         // What an importer may assign an exported variable is already joined
         for (_, func) in self.ir.funcs() {
@@ -313,9 +433,14 @@ impl<'a, 'u> Flow<'a, 'u> {
                 }
             }
         }
-        for (id, func) in self.ir.funcs() {
+        // The runs above it finished, and nothing in it joins these
+        for (var, ty) in inherited {
+            self.accumulator(var).ty = ty;
+        }
+        for &id in &self.run.funcs {
+            let func = self.ir.func(id);
             // A cached capture is loaded before it's read
-            let vars = (self.funcs[id.index()].vars.iter())
+            let vars = (self.layout.vars[id.index()].iter())
                 .map(|&var| {
                     let data = self.ir.var(var);
                     VarState {
@@ -353,7 +478,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             // rule. A later rule in that block runs after its inputs.
             let mut earliest: FxHashMap<FuncId, u32> = FxHashMap::default();
             for &(block, _) in &self.unsettled {
-                let rank = self.blocks.rank[block.index()];
+                let rank = self.layout.blocks.rank[block.index()];
                 let entry = earliest.entry(self.ir.block(block).func).or_insert(rank);
                 *entry = (*entry).min(rank);
             }
@@ -367,7 +492,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             let marked: Vec<_> = (self.unsettled.iter().copied())
                 .filter(|&(block, _)| {
                     earliest.get(&self.ir.block(block).func)
-                        == Some(&self.blocks.rank[block.index()])
+                        == Some(&self.layout.blocks.rank[block.index()])
                 })
                 .collect();
             trace!(
@@ -385,19 +510,16 @@ impl<'a, 'u> Flow<'a, 'u> {
         trace!("final pass");
         self.results = Some(Results::default());
         let mut keys: Vec<_> = self.states.keys().copied().collect();
-        keys.sort_by_key(|&(block, ctx)| (self.blocks.rank[block.index()], block, ctx));
+        keys.sort_by_key(|&(block, ctx)| (self.layout.blocks.rank[block.index()], block, ctx));
         for (block, ctx) in keys {
             self.run(block, ctx);
         }
         let mut results = self.results.take().expect("recorded by the final pass");
-        results.problems.sort_by_key(|problem| {
-            let span = crate::typeck::report::Report::span(problem);
-            (span.start, span.end)
-        });
-        results
-            .unresolved
-            .sort_by_key(|&(span, _)| (span.start, span.end));
-        results
+        sort(&mut results.problems, &mut results.unresolved);
+        let accumulators = (self.accumulators.into_iter())
+            .map(|(var, accumulator)| (var, accumulator.ty))
+            .collect();
+        (results, accumulators)
     }
 
     /// Whether the unit is strict, so the checker doesn't make up `Unknown` in it
@@ -533,7 +655,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         {
             return None;
         }
-        let result = self.funcs[data.owner.index()].declared.as_ref()?.result;
+        let result = self.declared[data.owner.index()].as_ref()?.result;
         (result != self.db.unknown()).then_some(result)
     }
 
@@ -541,7 +663,7 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// block's omitted channels are inferred like its parameters, as what the
     /// calls it's passed to give them, which its block then depends on.
     fn channels(&mut self, at: At) -> (Option<TypeId>, Option<TypeId>) {
-        let Some(declared) = self.funcs[at.func.index()].declared.clone() else {
+        let Some(declared) = self.declared[at.func.index()].clone() else {
             return (None, None);
         };
         let signature = self.ir.func(at.func).signature.as_ref();
@@ -563,7 +685,7 @@ impl<'a, 'u> Flow<'a, 'u> {
     fn enqueue(&mut self, block: BlockId, ctx: CtxId) {
         if !self.observing() {
             self.queue
-                .insert((self.blocks.rank[block.index()], block, ctx));
+                .insert((self.layout.blocks.rank[block.index()], block, ctx));
         }
     }
 
@@ -609,7 +731,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 self.place(block, ctx),
                 self.render_state(block, &state)
             );
-            let widenings = match self.blocks.widens[block.index()] {
+            let widenings = match self.layout.blocks.widens[block.index()] {
                 true => vec![Widening::default(); state.vars.len()].into(),
                 false => Box::default(),
             };
@@ -631,7 +753,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             let ty = if old.ty == new.ty {
                 old.ty
             } else if let Some(widening) = widenings.get_mut(slot) {
-                let var = self.funcs[func.index()].vars[slot];
+                let var = self.layout.vars[func.index()][slot];
                 self.widen(key, var, widening, old.ty, new.ty)
             } else {
                 self.lub(old.ty, new.ty)
@@ -677,7 +799,7 @@ impl<'a, 'u> Flow<'a, 'u> {
 
     /// Reset each slot dead at a block's entry, and each group nothing left links to
     fn mask(&self, block: BlockId, state: &mut State) {
-        let live = &self.live[block.index()];
+        let live = &self.layout.live[block.index()];
         let bottom = self.db.bottom();
         for (slot, var) in state.vars.iter_mut().enumerate() {
             if !live[slot] {
@@ -802,7 +924,7 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// A variable's slot in its owner's states
     fn slot(&self, var: VarId) -> usize {
         let owner = self.ir.var(var).owner;
-        self.slots[&(owner, var)]
+        self.layout.slots[&(owner, var)]
     }
 
     /// The slot of a capture the running function caches
@@ -810,7 +932,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         if self.ir.var(var).owner == at.func {
             return None;
         }
-        self.slots.get(&(at.func, var)).copied()
+        self.layout.slots.get(&(at.func, var)).copied()
     }
 
     /// A variable's accumulator, made bottom if it has none yet
@@ -833,8 +955,9 @@ impl<'a, 'u> Flow<'a, 'u> {
             false => self.db.unknown(),
         };
         let [input, output] = [unknown; 2];
-        let vars: Vec<(VarId, TypeId)> = (self.ir.funcs())
-            .filter_map(|(_, func)| func.signature.as_ref())
+        let ir = self.ir;
+        let vars: Vec<(VarId, TypeId)> = (self.run.funcs.iter())
+            .filter_map(|&id| ir.func(id).signature.as_ref())
             .flat_map(|signature| {
                 (signature.params.iter().map(|&var| (var, unknown)))
                     .chain([(signature.input, input), (signature.output, output)])
@@ -1162,7 +1285,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             Step::Cache(vars) => {
                 for &var in vars {
                     let ty = self.joined(var, at);
-                    state.vars[self.slots[&(at.func, var)]].ty = ty;
+                    state.vars[self.layout.slots[&(at.func, var)]].ty = ty;
                 }
             }
         }
@@ -1497,7 +1620,7 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// items, as the runtime binds it. `None` without a declared type. If they
     /// don't line up, each parameter is a gap.
     fn declared_params(&mut self, func: FuncId, params: &[PatternItem]) -> Option<Vec<TypeId>> {
-        let schema = self.funcs[func.index()].declared.as_ref()?.params;
+        let schema = self.declared[func.index()].as_ref()?.params;
         let shares = match self.db.ty(schema) {
             Type::Schema(items) => shares(params, items),
             _ => None,

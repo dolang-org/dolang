@@ -2140,7 +2140,7 @@ impl<'a> Flow<'a, '_> {
         let (db, ir) = (self.db, self.ir);
         let data = ir.func(func);
         let signature = data.signature.as_ref()?;
-        let declared = self.funcs[func.index()].declared.clone()?;
+        let declared = self.declared[func.index()].clone()?;
         let mut holes = Vec::new();
         let hole = |holes: &mut Vec<Hole>, filled| {
             holes.push(filled);

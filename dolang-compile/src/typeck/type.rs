@@ -1555,7 +1555,6 @@ impl Database {
         }
     }
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
     pub(crate) fn fresh_symbol(&self, text: &str) -> SymbolId {
         let id = self.symbols.fresh(text.into());
         SymbolId::new(self.base().map_or(0, |base| base.symbol_count) + id.index())
@@ -2975,5 +2974,6 @@ mod render;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use copy::Copies;
 pub(crate) use disjoint::NoAncestor;
 pub(crate) use render::{Collection, Names, Shown, Style};
