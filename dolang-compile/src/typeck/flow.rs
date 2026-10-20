@@ -611,9 +611,15 @@ impl<'a, 'u> Flow<'a, 'u> {
         solver.solve().remove(0)
     }
 
+    /// Whether one closed type is a subtype of another, where only the status
+    /// is wanted (see [`Solver::holds`])
+    fn holds(&self, actual: TypeId, expected: TypeId) -> Status {
+        self.solver(&Gas::default()).holds(actual, expected)
+    }
+
     /// Whether `actual` can be shown to be a subtype of `expected`
     fn below(&self, actual: TypeId, expected: TypeId) -> bool {
-        self.relate(actual, expected).status == Status::Proven
+        self.holds(actual, expected) == Status::Proven
     }
 
     /// Report a problem, once
@@ -1325,7 +1331,7 @@ impl<'a, 'u> Flow<'a, 'u> {
     fn escape(&mut self, state: &State, var: VarId) {
         let ty = state.vars[self.slot(var)].ty;
         let ty = match self.ir.var(var).annotation {
-            Some(annotation) if self.relate(ty, annotation).status == Status::Contradicted => {
+            Some(annotation) if self.holds(ty, annotation) == Status::Contradicted => {
                 self.lub(annotation, ty)
             }
             _ => ty,
@@ -1375,7 +1381,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         let initialized = self.db.intern(Type::Literal(Literal::Bool(true)));
         if self.observing()
             && ty != self.db.bottom()
-            && self.relate(ty, initialized).status != Status::Proven
+            && self.holds(ty, initialized) != Status::Proven
         {
             let Origin::Super(class) = self.ir.var(var).origin else {
                 unreachable!("an `(init)` tracks superclasses")
@@ -1419,7 +1425,7 @@ impl<'a, 'u> Flow<'a, 'u> {
     fn settle(&mut self, var: VarId, ty: TypeId) -> TypeId {
         let var = self.ir.var(var);
         if let (Origin::Field(_), Some(annotation)) = (var.origin, var.annotation)
-            && self.relate(ty, annotation).status == Status::Contradicted
+            && self.holds(ty, annotation) == Status::Contradicted
         {
             return annotation;
         }
@@ -1481,7 +1487,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             // A value that doesn't fit the annotation is reported where it's
             // written, and every read elsewhere sees the annotation instead
             let joined = match data.annotation {
-                Some(annotation) if self.relate(ty, annotation).status == Status::Contradicted => {
+                Some(annotation) if self.holds(ty, annotation) == Status::Contradicted => {
                     annotation
                 }
                 _ => ty,

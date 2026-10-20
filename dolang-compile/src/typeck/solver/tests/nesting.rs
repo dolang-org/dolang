@@ -296,6 +296,22 @@ fn only_a_fork_commits() {
 }
 
 #[test]
+fn holds_reports_a_probes_status() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let (one, two) = (literal(&db, 1), literal(&db, 2));
+    db.seal();
+    let gas = Gas::default();
+    let s = Solver::new(&db, &gas);
+    assert_eq!(s.holds(one, int), Status::Proven);
+    assert_eq!(s.holds(one, two), Status::Contradicted);
+    // Running out of budget leaves it unresolved rather than failing
+    let gas = Gas::new(0);
+    let s = Solver::new(&db, &gas);
+    assert_eq!(s.holds(one, int), Status::Unresolved);
+}
+
+#[test]
 fn probes_stop_at_the_first_contradiction() {
     let mut db = Database::new();
     let (one, two, three, four) = (
