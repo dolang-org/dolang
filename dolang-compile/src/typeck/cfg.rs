@@ -23,9 +23,11 @@
 //! that creates it. Each function lists in [`Func::escapes`] the variables of its
 //! parent that it or a function nested in it captures, and that only their owner
 //! assigns. Such a function can't run before the step, so the first value of each
-//! it can see is the one its owner holds there. A function that captures such a
-//! variable loads it at its entry, a [`Step::Cache`], and reads and narrows that
-//! copy for as long as its owner doesn't assign it after it escapes.
+//! it can see is the one its owner holds there. Before flow, a pass over each
+//! function finds where its variables may have escaped (`Block::escaped`). A
+//! function that captures such a variable loads it at its entry, a
+//! [`Step::Cache`], and reads and narrows that copy, unless its owner assigns it
+//! anywhere it may have escaped ([`VarFlags::UNCACHED`]).
 //!
 //! A `do` block's unannotated parameters, omitted channels and omitted return type
 //! are its [`Signature`]: variables its parent owns and it captures, which start
@@ -67,6 +69,7 @@
 mod dot;
 #[cfg(feature = "debug")]
 mod dump;
+mod escape;
 mod expr;
 #[cfg(test)]
 mod tests;
@@ -74,6 +77,7 @@ mod validate;
 
 use std::cell::{Ref, RefCell, RefMut};
 
+use bitvec::boxed::BitBox;
 use dolang_util::{alias, mono::MonoVec};
 
 pub(crate) use expr::{Collection, Expr, ExprKind, FmtSpec, Item, Member, Target};
@@ -235,6 +239,9 @@ bitflags::bitflags! {
         /// runs, so a function may capture it first. Its binding isn't a fresh
         /// cell.
         const HOISTED = 1 << 4;
+        /// Assigned by its owner where it may have escaped, so that the functions
+        /// that capture it don't cache it
+        const UNCACHED = 1 << 5;
     }
 }
 
@@ -246,6 +253,9 @@ pub(crate) struct Block {
     pub(crate) handler: Option<BlockId>,
     /// How many `finally` bodies of its function enclose it
     pub(crate) depth: u32,
+    /// Its function's variables that may have escaped at its entry, indexed as
+    /// [`Func::vars`]; empty until lowering settles escapes
+    pub(crate) escaped: BitBox,
 }
 
 /// How a `finally` continues once it ends
@@ -284,10 +294,10 @@ pub(crate) enum Step {
     /// though it stays in the collection's tree.
     Capture(Vec<FuncId>),
     /// Load captures from their accumulators into the function's own state, where
-    /// it narrows them, until their owner assigns one after it escapes. It's the
-    /// first step of a function's entry block, which nothing branches to, and
-    /// names the captures that only their owner assigns, other than
-    /// [`Signature`] and result variables.
+    /// it narrows them. It's the first step of a function's entry block, which
+    /// nothing branches to, and names the captures that only their owner assigns,
+    /// never where they may have escaped, other than [`Signature`] and result
+    /// variables.
     Cache(Vec<VarId>),
     /// In an `(init)`, the receiver becomes observable: each of [`Func::fields`]
     /// but `except` must fit its annotation, and has it from here on. Unless the
@@ -504,6 +514,7 @@ impl Graph {
             terminal: Terminal::Unreachable,
             handler,
             depth,
+            escaped: BitBox::default(),
         }));
         id
     }

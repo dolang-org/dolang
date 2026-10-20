@@ -32,13 +32,12 @@
 //! result. A block that reads a joined type depends on it, and is queued again
 //! when it grows.
 //!
-//! A function also caches each ivar it captures that isn't volatile, loading it
-//! from the accumulator at its entry ([`Step::Cache`]), and narrows it there,
-//! until the owner assigns it on a path where it may have escaped. A spawned
-//! function may run between any two of its owner's steps, so only a variable
-//! that doesn't change once it escapes keeps what a test showed. That assignment
-//! thaws the variable: the entries that loaded it run again and mark their
-//! copies, and every read after goes to the accumulator.
+//! A function also caches each ivar it captures that lowering found cacheable,
+//! loading it from the accumulator at its entry ([`Step::Cache`]), and narrows it
+//! there. A spawned function may run between any two of its owner's steps, so
+//! only a variable that doesn't change once it escapes keeps what a test showed:
+//! one its owner assigns where it may have escaped is read from the accumulator
+//! by every function that captures it.
 //!
 //! A step that can throw joins its state before it into its handler, with the
 //! exception alone on the stack. A step or terminal with a call that gives bottom
@@ -135,11 +134,8 @@ pub(crate) fn analyze(ir: &Ir, db: &Database, tables: &Tables<'_>) -> Results {
 struct Accumulator {
     ty: TypeId,
     widening: Widening,
-    /// The blocks that read it, queued again when it grows or thaws
+    /// The blocks that read it, queued again when it grows
     readers: FxHashSet<(BlockId, CtxId)>,
-    /// Whether its owner assigned it after it escaped, so that the functions that
-    /// cache it read it here instead
-    thawed: bool,
 }
 
 /// What flow knows of a function
@@ -803,36 +799,12 @@ impl<'a, 'u> Flow<'a, 'u> {
         self.slots[&(owner, var)]
     }
 
-    /// The slot of a capture the running function caches, unless it's thawed
-    fn cached(&self, at: At, state: &State, var: VarId) -> Option<usize> {
+    /// The slot of a capture the running function caches
+    fn cached(&self, at: At, var: VarId) -> Option<usize> {
         if self.ir.var(var).owner == at.func {
             return None;
         }
-        let slot = *self.slots.get(&(at.func, var))?;
-        (!state.vars[slot].may.contains(May::THAWED)).then_some(slot)
-    }
-
-    /// Thaw a variable its owner assigns after it may have escaped: the functions
-    /// that cache it read its accumulator from then on. Its readers include their
-    /// entries, which load it, and run again to say so.
-    fn thaw(&mut self, at: At, state: &State, var: VarId) {
-        let data = self.ir.var(var);
-        if self.observing()
-            || data.owner != at.func
-            || data.flags.contains(VarFlags::VOLATILE)
-            || !state.vars[self.slot(var)].may.contains(May::ESCAPED)
-        {
-            return;
-        }
-        let accumulator = self.accumulator(var);
-        if mem::replace(&mut accumulator.thawed, true) {
-            return;
-        }
-        let readers = accumulator.readers.clone();
-        trace!("thaw {}", self.var_name(var));
-        for (block, ctx) in readers {
-            self.enqueue(block, ctx);
-        }
+        self.slots.get(&(at.func, var)).copied()
     }
 
     /// A variable's accumulator, made bottom if it has none yet
@@ -842,7 +814,6 @@ impl<'a, 'u> Flow<'a, 'u> {
             ty: bottom,
             widening: Widening::default(),
             readers: FxHashSet::default(),
-            thawed: false,
         })
     }
 
@@ -1132,7 +1103,6 @@ impl<'a, 'u> Flow<'a, 'u> {
                         }
                     }
                 }
-                self.thaw(at, state, *var);
                 if self.publishes(at, state, *var) {
                     self.join(*var, ty);
                 }
@@ -1183,11 +1153,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             Step::Cache(vars) => {
                 for &var in vars {
                     let ty = self.joined(var, at);
-                    let slot = &mut state.vars[self.slots[&(at.func, var)]];
-                    slot.ty = ty;
-                    if self.accumulators[&var].thawed {
-                        slot.may.insert(May::THAWED);
-                    }
+                    state.vars[self.slots[&(at.func, var)]].ty = ty;
                 }
             }
         }
@@ -1334,7 +1300,6 @@ impl<'a, 'u> Flow<'a, 'u> {
         self.check(var, ty, span);
         let ty = self.settle(var, ty);
         let data = self.ir.var(var);
-        self.thaw(at, state, var);
         if data.owner == at.func {
             let slot = &mut state.vars[self.slot(var)];
             slot.ty = if data.flags.contains(VarFlags::VOLATILE) {
@@ -1566,7 +1531,7 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// whether it may be unassigned.
     fn read(&mut self, at: At, state: &State, var: VarId) -> Fact {
         let data = self.ir.var(var);
-        if let Some(slot) = self.cached(at, state, var) {
+        if let Some(slot) = self.cached(at, var) {
             return Fact {
                 ty: state.vars[slot].ty,
                 unassigned: false,
@@ -1599,7 +1564,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             }
             self.slot(assume.var)
         } else {
-            match self.cached(at, state, assume.var) {
+            match self.cached(at, assume.var) {
                 Some(slot) => slot,
                 None => return true,
             }

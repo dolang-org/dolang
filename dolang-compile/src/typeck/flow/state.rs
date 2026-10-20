@@ -44,9 +44,6 @@ bitflags::bitflags! {
         /// Created a function it escapes through, so that assigning it joins its
         /// accumulator
         const ESCAPED = 1 << 1;
-        /// Found a capture its function caches thawed: its owner assigned it after
-        /// it escaped, so it's read from its accumulator, and not narrowed
-        const THAWED = 1 << 2;
     }
 }
 

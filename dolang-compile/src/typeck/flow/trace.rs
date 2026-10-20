@@ -47,7 +47,7 @@ impl Flow<'_, '_> {
     }
 
     /// A block's state: what each variable may hold, as a judgment shows it, marked
-    /// `^` once it may have escaped and `~` once a cached capture thaws, with its
+    /// `^` once it may have escaped, with its
     /// link as `@g<group>.<row>`, then the stack and each group's columns
     pub(super) fn render_state(&self, block: BlockId, state: &State) -> String {
         let func = self.ir.block(block).func;
@@ -61,11 +61,7 @@ impl Flow<'_, '_> {
                     (true, true) => "unassigned".to_owned(),
                     (true, false) => format!("{} | unassigned", self.show(fact.ty)),
                 };
-                let mark = match (may.contains(May::ESCAPED), may.contains(May::THAWED)) {
-                    (true, _) => "^",
-                    (false, true) => "~",
-                    (false, false) => "",
-                };
+                let mark = if may.contains(May::ESCAPED) { "^" } else { "" };
                 format!("{}{mark}{}: {ty}", self.var_name(var), show_link(link))
             })
             .collect();

@@ -118,6 +118,8 @@ impl Dump<'_, '_> {
                 self.var(out, var)?;
                 if self.ir.var(var).flags.contains(VarFlags::VOLATILE) {
                     write!(out, "!")?;
+                } else if self.ir.var(var).flags.contains(VarFlags::UNCACHED) {
+                    write!(out, "~")?;
                 }
             }
         }

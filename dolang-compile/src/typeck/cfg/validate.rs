@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 
 use super::{
     Against, BlockId, Expr, ExprKind, FuncId, FuncKind, Ir, Origin, Pattern, Step, Tag, Target,
-    Terminal, VarFlags, VarId,
+    Terminal, VarFlags, VarId, escape,
 };
 
 /// Why a graph is malformed
@@ -102,10 +102,7 @@ impl Ir {
                     let valid = index == 0
                         && func.entry == id
                         && vars.iter().all(|&var| {
-                            let data = self.var(var);
-                            func.captures.contains(&var)
-                                && !data.flags.contains(VarFlags::VOLATILE)
-                                && !matches!(data.origin, Origin::Signature | Origin::Result)
+                            func.captures.contains(&var) && escape::cacheable(self.var(var))
                         });
                     if !valid {
                         return Err(Invalid::Cache(id));

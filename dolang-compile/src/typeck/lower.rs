@@ -167,9 +167,9 @@ impl<'t, 'u> Lower<'t, 'u> {
     }
 
     /// Fill in the guards' targets, keep in each function's escapes only the
-    /// variables joined where they escape, load the captures it may cache at its
-    /// entry, and freeze the graph. Whether a variable is volatile is known only
-    /// now.
+    /// variables joined where they escape, and freeze the graph, deciding where
+    /// variables escape and which captures each function caches. Whether a
+    /// variable is volatile is known only now.
     fn finish(self) -> Ir {
         // An `(init)`'s receiver escapes before a function capturing it is created,
         // once for the functions a statement creates. Their escapes are complete
@@ -213,18 +213,6 @@ impl<'t, 'u> Lower<'t, 'u> {
                 let var = self.graph.var(var);
                 !var.flags.contains(VarFlags::VOLATILE) && var.origin != Origin::Signature
             });
-            let cached: Vec<VarId> = (func.captures.iter().copied())
-                .filter(|&var| {
-                    let var = self.graph.var(var);
-                    !var.flags.contains(VarFlags::VOLATILE)
-                        && !matches!(var.origin, Origin::Signature | Origin::Result)
-                })
-                .collect();
-            let entry = func.entry;
-            drop(func);
-            if !cached.is_empty() {
-                (self.graph.block_mut(entry).steps).insert(0, Step::Cache(cached));
-            }
         }
         for (guard, targets) in self.guards.take() {
             let mut seen = FxHashSet::default();
@@ -234,7 +222,9 @@ impl<'t, 'u> Lower<'t, 'u> {
                 *slot = targets;
             }
         }
-        self.graph.freeze()
+        let mut ir = self.graph.freeze();
+        ir.settle_escapes();
+        ir
     }
 
     fn decl(&self, key: DeclKey) -> DeclId {
