@@ -266,29 +266,44 @@ impl<'u, 's> Builder<'u, 's> {
         }
         #[cfg(feature = "debug")]
         trace::elab(&r#type::Database::fork(&shared), &tables, &unresolved);
-        let mut forks = Vec::with_capacity(outputs.len());
+        // Each run's facts are copied into a database of the check's own, which
+        // copies what the check's base holds once
+        let mut results = r#type::Database::new();
+        let mut copies = r#type::Copies::default();
         let mut cfgs = Vec::with_capacity(outputs.len());
-        let mut flows = Vec::with_capacity(outputs.len());
+        let mut layers = Vec::with_capacity(outputs.len());
+        let mut gathered = Vec::with_capacity(outputs.len());
         for (index, output) in outputs.into_iter().enumerate() {
             let unit = UnitId::from_index(index);
-            if let Some(results) = &output.flow {
-                for problem in &results.problems {
+            let flow = output.cfg.is_some().then(|| {
+                let (facts, problems, undecided) = gather(output.runs, &mut results, &mut copies);
+                for problem in &problems {
                     diags.push((unit, report::Diag::new(problem.clone())));
                 }
-                unresolved.extend(results.unresolved.iter().map(|&(span, residual)| {
-                    elab::Unresolved {
-                        span: r#type::UnitSpan { unit, span },
-                        residual,
-                    }
+                unresolved.extend(undecided.iter().map(|&(span, residual)| elab::Unresolved {
+                    span: r#type::UnitSpan { unit, span },
+                    residual,
                 }));
-            }
-            forks.push(output.db);
+                (facts, problems, undecided)
+            });
             cfgs.push(output.cfg);
-            flows.push(output.flow);
+            layers.push(output.layer);
+            gathered.push(flow);
         }
+        results.seal();
+        let flows = (gathered.into_iter())
+            .map(|flow| {
+                flow.map(|(facts, problems, unresolved)| flow::Results {
+                    facts: merge(&results, facts),
+                    problems,
+                    unresolved,
+                })
+            })
+            .collect();
         undecided::report(&tables.units, &unresolved, &mut diags);
         Check {
             cfgs,
+            layers,
             flows,
             diagnostics: diags
                 .iter()
@@ -296,20 +311,71 @@ impl<'u, 's> Builder<'u, 's> {
                 .collect(),
             tables,
             shared,
-            forks,
+            results,
+            copies,
             unresolved,
         }
     }
 }
 
-/// What checking a unit in a fork of its own concludes
+/// What checking a unit in forks of its own concludes
 struct UnitOutput {
-    /// The fork, which the unit's results are interned in
-    db: r#type::Database,
     wellformed: (Vec<elab::UnitDiag>, Vec<elab::Unresolved>),
     overrides: (Vec<elab::UnitDiag>, Vec<elab::Unresolved>),
     cfg: Option<cfg::Ir>,
-    flow: Option<flow::Results>,
+    /// The layer lowering interned in, which each flow run's fork is of
+    layer: Option<Arc<r#type::Shared>>,
+    /// Each flow run's fork, which its results are interned in, and its results,
+    /// by run ID
+    runs: Vec<(r#type::Database, flow::Results)>,
+}
+
+/// A unit's flow runs' facts, copied into `results` through `copies`, then their
+/// problems and undecided checks, each run's in turn, in source order
+#[expect(clippy::type_complexity, reason = "taken apart by the caller")]
+fn gather(
+    runs: Vec<(r#type::Database, flow::Results)>,
+    results: &mut r#type::Database,
+    copies: &mut r#type::Copies,
+) -> (
+    Vec<(crate::source::Span, flow::Fact)>,
+    Vec<flow::Problem>,
+    Vec<(crate::source::Span, solver::Residual)>,
+) {
+    let mut facts = Vec::new();
+    let mut problems = Vec::new();
+    let mut unresolved = Vec::new();
+    for (db, mut run) in runs {
+        let mut copier = results.copier(&db, copies);
+        facts.extend((run.facts.into_iter()).map(|(span, fact)| {
+            let ty = copier.ty(fact.ty);
+            (span, flow::Fact { ty, ..fact })
+        }));
+        problems.append(&mut run.problems);
+        unresolved.append(&mut run.unresolved);
+    }
+    flow::sort(&mut problems, &mut unresolved);
+    (facts, problems, unresolved)
+}
+
+/// Facts by span, joined where runs recorded facts at one span
+fn merge(
+    db: &r#type::Database,
+    facts: Vec<(crate::source::Span, flow::Fact)>,
+) -> rustc_hash::FxHashMap<crate::source::Span, flow::Fact> {
+    let gas = solver::Gas::default();
+    let solver = solver::Solver::new(db, &gas);
+    let mut merged = rustc_hash::FxHashMap::default();
+    for (span, fact) in facts {
+        merged
+            .entry(span)
+            .and_modify(|old: &mut flow::Fact| {
+                old.ty = solver.lub(old.ty, fact.ty);
+                old.unassigned |= fact.unassigned;
+            })
+            .or_insert(fact);
+    }
+    merged
 }
 
 // Units are checked on other threads than the one that shares them
@@ -318,6 +384,11 @@ const _: () = {
     const fn sync<T: Sync>() {}
     send::<UnitOutput>();
     sync::<elab::Tables<'_>>();
+    // A unit's runs are analyzed on other threads than the one that lowered it
+    send::<r#type::Database>();
+    send::<flow::Results>();
+    sync::<cfg::Ir>();
+    sync::<flow::Layout>();
     sync::<elab::Bounds<'_>>();
 };
 
@@ -377,6 +448,7 @@ fn check_unit(
     bounds: &elab::Bounds<'_>,
     unit: UnitId,
 ) -> UnitOutput {
+    // A fork of its own, so that what it interns isn't in the layer
     let db = r#type::Database::fork(shared);
     let mut wellformed = Vec::new();
     let wellformed_unresolved = elab::wellformed(&db, tables, bounds, unit, &mut wellformed);
@@ -388,25 +460,32 @@ fn check_unit(
         Some(_) => elab::overrides(&db, tables, unit, &mut overrides),
         None => Vec::new(),
     };
-    // A unit's bodies are checked only from its source
-    let cfg = source.map(|_| {
-        let ir = lower::lower(tables, &db, unit);
-        debug_assert_eq!(ir.validate(), Ok(()), "lowering builds a valid graph");
-        #[cfg(debug_assertions)]
-        ir.check_stack_depths();
-        #[cfg(feature = "debug")]
-        if let Err(e) = export_dot(&ir, &db, &tables.units[unit.index()]) {
-            dolang_util::debug_eprintln!(topic: "dot", "Typing CFG DOT export failed: {e}");
+    // A unit's bodies are checked only from its source, in runs that each have a
+    // fork of the layer lowering interned in
+    let (cfg, layer, runs) = match source {
+        Some(_) => {
+            let db = r#type::Database::fork(shared);
+            let ir = lower::lower(tables, &db, unit);
+            debug_assert_eq!(ir.validate(), Ok(()), "lowering builds a valid graph");
+            #[cfg(debug_assertions)]
+            ir.check_stack_depths();
+            #[cfg(feature = "debug")]
+            if let Err(e) = export_dot(&ir, &db, &tables.units[unit.index()]) {
+                dolang_util::debug_eprintln!(topic: "dot", "Typing CFG DOT export failed: {e}");
+            }
+            let layer = db.share();
+            let layout = flow::Layout::new(&ir);
+            let runs = flow::analyze(&ir, &layout, &ir.runs(), &layer, tables);
+            (Some(ir), Some(layer), runs)
         }
-        ir
-    });
-    let flow = cfg.as_ref().map(|ir| flow::analyze(ir, &db, tables));
+        None => (None, None, Vec::new()),
+    };
     UnitOutput {
-        db,
         wellformed: (wellformed, wellformed_unresolved),
         overrides: (overrides, overrides_unresolved),
         cfg,
-        flow,
+        layer,
+        runs,
     }
 }
 
@@ -435,16 +514,45 @@ pub struct Check<'u> {
     tables: elab::Tables<'u>,
     /// The database every unit's fork is of
     shared: Arc<r#type::Shared>,
-    /// Each unit's fork, by [`UnitId`], which its results are interned in
-    forks: Vec<r#type::Database>,
+    /// A database of the check's own, which flow's facts are copied into
+    results: r#type::Database,
+    /// What was copied into `results`, which knows each copied declaration's
+    /// original
+    copies: r#type::Copies,
     /// Well-formedness checks the checker could not decide
     unresolved: Vec<elab::Unresolved>,
     /// Each unit's typing CFG, by [`UnitId`], for a unit checked from source
     #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     cfgs: Vec<Option<cfg::Ir>>,
-    /// What flow analysis concluded about each unit, by [`UnitId`], for a unit checked
+    /// The layer each unit's flow runs forked, by [`UnitId`], for a unit checked
     /// from source
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
+    layers: Vec<Option<Arc<r#type::Shared>>>,
+    /// What flow analysis concluded about each unit, by [`UnitId`], for a unit checked
+    /// from source, its facts' types interned in `results`
     flows: Vec<Option<flow::Results>>,
+}
+
+/// Names the declarations copied into a check's results by their originals
+struct Copied<'a, 'u> {
+    tables: &'a elab::Tables<'u>,
+    copies: &'a r#type::Copies,
+}
+
+impl Copied<'_, '_> {
+    fn original(&self, copy: r#type::DeclId) -> r#type::DeclId {
+        (self.copies.origin(copy)).expect("every declaration in the results is a copy")
+    }
+}
+
+impl r#type::Names for Copied<'_, '_> {
+    fn declaration(&self, id: r#type::DeclId) -> std::borrow::Cow<'_, str> {
+        r#type::Names::declaration(self.tables, self.original(id))
+    }
+
+    fn collection(&self, id: r#type::DeclId) -> Option<r#type::Collection> {
+        r#type::Names::collection(self.tables, self.original(id))
+    }
 }
 
 /// The names of the judgments [`Check::judgments`] reports.
@@ -500,12 +608,12 @@ impl Check<'_> {
     #[doc(hidden)]
     pub fn judgments(&self, unit: UnitId) -> Vec<Judgment> {
         let info = &self.tables.units[unit.index()];
-        let db = &self.forks[unit.index()];
+        let db = &r#type::Database::fork(&self.shared);
         let mut judgments = self.tables.judgments(db, unit, &self.unresolved);
         let facts = self.flows[unit.index()].iter().flat_map(|flow| &flow.facts);
         judgments.extend(facts.map(|(&span, fact)| {
-            let ty = self.tables.render_type(db, fact.ty);
-            let value = match (fact.unassigned, fact.ty == db.bottom()) {
+            let ty = self.render_fact(fact.ty);
+            let value = match (fact.unassigned, fact.ty == self.results.bottom()) {
                 (false, _) => ty,
                 (true, true) => "unassigned".to_owned(),
                 (true, false) => format!("{ty} | unassigned"),
@@ -521,6 +629,15 @@ impl Check<'_> {
                 value,
             })
             .collect()
+    }
+
+    /// A fact's type, interned in the results
+    fn render_fact(&self, ty: r#type::TypeId) -> String {
+        let names = Copied {
+            tables: &self.tables,
+            copies: &self.copies,
+        };
+        self.results.render(ty, &names, r#type::Style::Full)
     }
 
     /// Relate every type the database holds to itself and to top, interpreting each

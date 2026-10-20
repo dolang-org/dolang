@@ -18,7 +18,6 @@ use std::cmp::Reverse;
 use bitvec::{bitbox, boxed::BitBox};
 use rustc_hash::FxHashMap;
 
-use super::Frame;
 use crate::typeck::cfg::{
     Against, BlockId, Expr, ExprKind, FuncId, FuncKind, Ir, Pattern, Step, Tag, Target, Terminal,
     VarId,
@@ -153,18 +152,18 @@ impl Collect<'_> {
 /// slots. `rank` orders the sweeps, which converge faster backward.
 pub(super) fn live(
     ir: &Ir,
-    funcs: &[Frame],
+    vars: &[Box<[VarId]>],
     slots: &FxHashMap<(FuncId, VarId), usize>,
     rank: &[u32],
 ) -> Box<[BitBox]> {
-    let width = |block: BlockId| funcs[ir.block(block).func.index()].vars.len();
+    let width = |block: BlockId| vars[ir.block(block).func.index()].len();
     let collect = |func: FuncId| Collect {
         ir,
         slots,
         func,
         transfer: Transfer {
-            uses: bitbox![0; funcs[func.index()].vars.len()],
-            defs: bitbox![0; funcs[func.index()].vars.len()],
+            uses: bitbox![0; vars[func.index()].len()],
+            defs: bitbox![0; vars[func.index()].len()],
         },
     };
     // Each block's own transfer, and by block, the target and bindings of the edge

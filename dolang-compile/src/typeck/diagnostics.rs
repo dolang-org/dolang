@@ -154,6 +154,11 @@ fn results_do_not_depend_on_threads() {
             "second.dol",
             "import user:\n  - Crate\n  - Bounded\nlet c = (Crate())\nlet x @ Bounded[Crate[Crate[Int]]] = nil\n",
         ),
+        // Runs of its own: early, late, and nested in another
+        script(
+            "runs.dol",
+            "let greeting = :hi:\ngreeting = :hello:\ndef show() -> Int\n  greeting\ndef outer[T] x @ T\n  def inner() -> Int\n    x\n  inner\ndef early a @ Int -> Str\n  a\n",
+        ),
     ];
     // A pool of `threads` threads, else the global pool
     let check = |threads: Option<usize>| {

@@ -1,8 +1,9 @@
 //! The semantic typing CFG.
 //!
-//! Type flow analyzes one module at a time, as a single region: the module's
-//! top-level code is its entry function, and every def, method, lambda and field
-//! initializer in it is a function nested in that one. A block holds statement
+//! A module is lowered to one graph: the module's top-level code is its entry
+//! function, and every def, method, lambda and field initializer in it is a
+//! function nested in that one. Type flow analyzes the graph in runs, each a
+//! function and the nested functions coupled to it ([`Ir::runs`]). A block holds statement
 //! steps whose expressions stay tree-shaped, and ends in a terminal. Only
 //! short-circuit operators, comprehensions, statements and exceptions introduce
 //! control flow.
@@ -71,6 +72,7 @@ mod dot;
 mod dump;
 mod escape;
 mod expr;
+mod split;
 #[cfg(test)]
 mod tests;
 mod validate;
@@ -81,15 +83,18 @@ use bitvec::boxed::BitBox;
 use dolang_util::{alias, mono::MonoVec};
 
 pub(crate) use expr::{Collection, Expr, ExprKind, FmtSpec, Item, Member, Target};
+pub(crate) use split::Run;
 
 use super::r#type::{DeclId, MemberKey, SymbolId, TypeId, UnitId};
 use crate::{RestKind, source::Span};
 
 macro_rules! id {
-    ($name:ident) => {
+    ($(#[$attr:meta])* $name:ident) => {
+        $(#[$attr])*
         #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub(crate) struct $name(u32);
 
+        $(#[$attr])*
         impl $name {
             fn from_index(index: usize) -> Self {
                 Self(u32::try_from(index).expect("graph too large"))
@@ -106,6 +111,7 @@ id!(FuncId);
 id!(BlockId);
 id!(VarId);
 id!(GroupId);
+id!(RunId);
 
 impl GroupId {
     /// A function's parameters'
@@ -157,6 +163,12 @@ pub(crate) struct Func {
     /// The variables its parent owns that it or a function nested in it captures,
     /// leaving out [`Signature`] variables, which are joined as they're assigned
     pub(crate) escapes: Vec<VarId>,
+    /// The variables of enclosing functions that it or a function nested in it
+    /// reads or writes
+    pub(crate) uses: Vec<VarId>,
+    /// The variables of enclosing functions that it or a function nested in it
+    /// assigns once they're bound
+    pub(crate) assigns: Vec<VarId>,
     /// In an `(init)`, the variables standing for the receiver's fields, which a
     /// [`Step::Escape`] checks
     pub(crate) fields: Vec<VarId>,
@@ -491,6 +503,8 @@ impl Graph {
             vars: Vec::new(),
             captures: Vec::new(),
             escapes: Vec::new(),
+            uses: Vec::new(),
+            assigns: Vec::new(),
             fields: Vec::new(),
             supers: Vec::new(),
             groups: 1,

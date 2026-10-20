@@ -2158,7 +2158,8 @@ fn copies_remap_symbols_and_declarations() {
     let mut into = Database::new();
     into.intern_symbol("seed");
     int(&mut into, 7);
-    let mut copier = into.copier(&db);
+    let mut copies = Copies::default();
+    let mut copier = into.copier(&db, &mut copies);
     let [copy, rigid_copy, a_copy, f_copy] = [root, rigid, a_ty, f_ty].map(|ty| copier.ty(ty));
     drop(copier);
     assert_ne!(copy, root);
@@ -2244,7 +2245,8 @@ fn copies_designate_intrinsics() {
     db.seal();
 
     let mut into = Database::new();
-    let mut copier = into.copier(&db);
+    let mut copies = Copies::default();
+    let mut copier = into.copier(&db, &mut copies);
     let [keys_copy, int_copy, schema_copy] = [keys_ty, int_ty, schema].map(|ty| copier.ty(ty));
     drop(copier);
     assert_eq!(into.intrinsic(Intrinsic::Keys), Some(keys_copy));
@@ -2264,7 +2266,8 @@ fn copies_share_what_they_copied() {
     // Seeded so that the copies sort in another order
     let mut into = Database::new();
     int(&mut into, 2);
-    let mut copier = into.copier(&db);
+    let mut copies = Copies::default();
+    let mut copier = into.copier(&db, &mut copies);
     let a_copy = copier.ty(a_ty);
     let both_copy = copier.ty(both);
     drop(copier);
@@ -2289,7 +2292,8 @@ fn copies_between_forks_keep_their_base() {
     // Seeded so that its own IDs differ from `from`'s
     let mut into = Database::fork(&base);
     int(&mut into, 3);
-    let mut copier = into.copier(&from);
+    let mut copies = Copies::default();
+    let mut copier = into.copier(&from, &mut copies);
     assert_eq!(copier.ty(one), one);
     assert_eq!(copier.ty(decl), decl);
     let copy = copier.ty(local);
@@ -2300,4 +2304,102 @@ fn copies_between_forks_keep_their_base() {
     let b_sym = intern(&mut into, Type::Literal(Literal::Sym(b)));
     let two = int(&mut into, 2);
     assert_eq!(union(&mut into, &[one, two, a_sym, b_sym, decl]), copy);
+}
+
+#[test]
+fn layers_read_through_their_base() {
+    let (base, one, id, a) = shared();
+    let mut fork = Database::fork(&base);
+    let two = int(&mut fork, 2);
+    let b = fork.intern_symbol("b");
+    let c = fork.fresh_symbol("c");
+    let layer = fork.share();
+    assert_eq!(layer.type_count, base.type_count + 1);
+    let mut fork = Database::fork(&layer);
+    assert_eq!(int(&mut fork, 1), one);
+    assert_eq!(int(&mut fork, 2), two);
+    assert_eq!(fork.ty(two), &Type::Literal(Literal::Int(2)));
+    assert_eq!(fork.intern_symbol("a"), a);
+    assert_eq!(fork.intern_symbol("b"), b);
+    assert_eq!(fork.symbol(b), "b");
+    assert!(fork.is_fresh_symbol(c));
+    assert_ne!(fork.intern_symbol("c"), c);
+    assert_eq!(fork.declaration(id).ty, one);
+    let three = int(&mut fork, 3);
+    assert_eq!(three.index(), layer.type_count);
+    assert_eq!(fork.top(), base.fixed.top);
+}
+
+#[test]
+fn copies_between_layers_keep_what_they_share() {
+    let (base, one, id, _) = shared();
+    let layered = |local| {
+        let mut fork = Database::fork(&base);
+        let local = int(&mut fork, local);
+        (fork.share(), local)
+    };
+    let (layer, two) = layered(2);
+    let mut from = Database::fork(&layer);
+    let three = int(&mut from, 3);
+    let decl = intern(&mut from, Type::Decl(id));
+    let local = union(&mut from, &[one, two, three, decl]);
+    // Forks of one layer keep its IDs
+    let mut into = Database::fork(&layer);
+    int(&mut into, 4);
+    let mut copies = Copies::default();
+    let mut copier = into.copier(&from, &mut copies);
+    assert_eq!(copier.ty(two), two);
+    let copy = copier.ty(local);
+    drop(copier);
+    let three_copy = int(&mut into, 3);
+    assert_ne!(three_copy, three);
+    assert_eq!(union(&mut into, &[one, two, three_copy, decl]), copy);
+    // Forks of layers over one base keep the base's
+    let (other, _) = layered(5);
+    let mut into = Database::fork(&other);
+    let mut copies = Copies::default();
+    let mut copier = into.copier(&from, &mut copies);
+    assert_eq!(copier.ty(one), one);
+    assert_eq!(copier.ty(decl), decl);
+    let two_copy = copier.ty(two);
+    let copy = copier.ty(local);
+    drop(copier);
+    assert_ne!(two_copy, two);
+    let three_copy = int(&mut into, 3);
+    assert_eq!(union(&mut into, &[one, two_copy, three_copy, decl]), copy);
+}
+
+#[test]
+fn copies_remember_their_root() {
+    let mut db = Database::new();
+    let (int_id, int_ty, source) = declare(&mut db, DeclKind::Class, "Int");
+    db.set_intrinsic(Intrinsic::Int, int_ty);
+    db.populate(int_id, definition(source, int_ty));
+    let one = int(&mut db, 1);
+    db.seal();
+    let base = db.share();
+    let forks = [2, 3].map(|local| {
+        let mut fork = Database::fork(&base);
+        let local = int(&mut fork, local);
+        let both = union(&mut fork, &[int_ty, one, local]);
+        (fork, both)
+    });
+    let mut into = Database::new();
+    int(&mut into, 3);
+    let mut copies = Copies::default();
+    let copied = forks.each_ref().map(|(fork, both)| {
+        let mut copier = into.copier(fork, &mut copies);
+        (copier.ty(int_ty), copier.ty(one), copier.ty(*both))
+    });
+    let [(int_a, one_a, _), (int_b, one_b, both_b)] = copied;
+    // Declared once, and named by the original
+    assert_eq!((int_a, one_a), (int_b, one_b));
+    let Type::Decl(int_copy) = *into.ty(int_a) else {
+        panic!("a declaration");
+    };
+    assert_eq!(copies.origin(int_copy), Some(int_id));
+    assert_eq!(into.intrinsic(Intrinsic::Int), Some(int_a));
+    let three = int(&mut into, 3);
+    assert_eq!(union(&mut into, &[int_a, one_a, three]), both_b);
+    into.seal();
 }

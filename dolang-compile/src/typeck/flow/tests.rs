@@ -1,14 +1,94 @@
 use std::path::Path;
 
-use super::Flow;
+use super::{Layout, Problem, Results, Tree};
 use crate::{
     Config,
+    source::Span,
     typeck::{
         Builder, Check,
-        cfg::{BlockId, FuncKind, Origin, Terminal},
-        r#type::UnitId,
+        cfg::{BlockId, FuncKind, Ir, Origin, Terminal},
+        solver::Residual,
+        r#type::{TypeId, UnitId},
     },
 };
+
+/// A unit's flow results with each fact's type rendered, its facts in source
+/// order
+#[derive(Debug, PartialEq)]
+struct Rendered {
+    facts: Vec<((u32, u32), String, bool)>,
+    problems: Vec<Problem>,
+    unresolved: Vec<(Span, Residual)>,
+}
+
+/// Each fact of `results` by span, its type rendered by `render`
+fn rendered(
+    results: &Results,
+    render: impl Fn(TypeId) -> String,
+) -> impl Iterator<Item = ((u32, u32), String, bool)> {
+    (results.facts.iter())
+        .map(move |(span, fact)| ((span.start, span.end), render(fact.ty), fact.unassigned))
+}
+
+/// Analyze a unit's runs, each in queue order or in reverse, gathering
+/// their results as a check does
+fn analyze(check: &Check<'_>, unit: usize, reversed: bool) -> Rendered {
+    let ir = check.cfgs[unit]
+        .as_ref()
+        .expect("a unit with source is lowered");
+    let layout = Layout::new(ir);
+    let runs = ir.runs();
+    let layer = check.layers[unit]
+        .as_ref()
+        .expect("a lowered unit has a layer");
+    let outputs = Tree::new(ir, &layout, &runs, layer, &check.tables, reversed).finish();
+    let mut facts = Vec::new();
+    let mut problems = Vec::new();
+    let mut unresolved = Vec::new();
+    for (db, results) in &outputs {
+        facts.extend(rendered(results, |ty| check.tables.render_type(db, ty)));
+        problems.extend(results.problems.iter().cloned());
+        unresolved.extend(results.unresolved.iter().copied());
+    }
+    facts.sort();
+    super::sort(&mut problems, &mut unresolved);
+    Rendered {
+        facts,
+        problems,
+        unresolved,
+    }
+}
+
+/// Analyze a unit both in queue order and in reverse, which must agree with
+/// each other and with the check
+fn agreed(check: &Check<'_>, unit: usize) -> Rendered {
+    let forward = analyze(check, unit, false);
+    let reversed = analyze(check, unit, true);
+    assert_eq!(forward, reversed);
+    let flow = check.flows[unit]
+        .as_ref()
+        .expect("a unit with source is analyzed");
+    let mut facts: Vec<_> = rendered(flow, |ty| check.render_fact(ty)).collect();
+    facts.sort();
+    let checked = Rendered {
+        facts,
+        problems: flow.problems.clone(),
+        unresolved: flow.unresolved.clone(),
+    };
+    assert_eq!(forward, checked);
+    forward
+}
+
+/// The rendered types of the facts at spans of `unit` whose text is `name`
+fn facts_named(check: &Check<'_>, unit: usize, name: &str) -> Vec<String> {
+    let flow = check.flows[unit]
+        .as_ref()
+        .expect("a unit with source is analyzed");
+    (flow.facts.iter())
+        .filter(|(span, _)| check.tables.text(UnitId::from_index(unit), **span) == name)
+        .map(|(_, fact)| check.render_fact(fact.ty))
+        .collect()
+}
 
 /// Analyze a script both in queue order and in reverse, which must agree
 fn agree(source: &str) {
@@ -27,13 +107,7 @@ fn agree_with(source: &str, inspect: impl FnOnce(&Check<'_>)) {
     let mut builder = Builder::new();
     builder.unit(&unit).unwrap();
     let check = builder.check();
-    let ir = check.cfgs[UnitId::from_index(0).index()]
-        .as_ref()
-        .expect("a unit with source is lowered");
-    let forward = Flow::new(ir, &check.forks[0], &check.tables, false).analyze();
-    let reversed = Flow::new(ir, &check.forks[0], &check.tables, true).analyze();
-    assert_eq!(forward, reversed);
-    assert_eq!(Some(forward), check.flows[0]);
+    agreed(&check, 0);
     inspect(&check);
 }
 
@@ -87,10 +161,7 @@ def dynamic x e @ Empty
                 ("callback_union", ".A"),
                 ("unknown", "Unknown"),
             ] {
-                let types: Vec<_> = flow.facts.iter()
-                    .filter(|(span, _)| check.tables.text(UnitId::from_index(0), **span) == name)
-                    .map(|(_, fact)| check.tables.render_type(&check.forks[0], fact.ty))
-                    .collect();
+                let types = facts_named(check, 0, name);
                 assert!(!types.is_empty(), "no facts for {name}");
                 assert!(
                     types.iter().all(|ty| ty.ends_with(expected)),
@@ -105,6 +176,35 @@ def dynamic x e @ Empty
                 matches!(problem, super::Problem::MissingMember { name, .. } if name == "(call)")
             }));
             assert!(flow.unresolved.is_empty(), "{:?}", flow.unresolved);
+        },
+    );
+}
+
+/// A run detached late reads what the run it's detached from finished with,
+/// including its rigids
+#[test]
+fn late_runs_inherit() {
+    agree_with(
+        "
+let greeting = :hi:
+greeting = :hello:
+def show()
+  let seen = greeting
+  seen
+def outer[T] x @ T
+  let y = x
+  def inner()
+    let z = y
+    z
+  inner
+",
+        |check| {
+            assert_eq!(check.cfgs[0].as_ref().unwrap().runs().len(), 4);
+            for (name, expected) in [("seen", ":hello:"), ("z", "test.outer.#0")] {
+                let types = facts_named(check, 0, name);
+                assert!(!types.is_empty(), "no facts for {name}");
+                assert!(types.iter().all(|ty| ty == expected), "{name}: {types:?}");
+            }
         },
     );
 }
@@ -297,11 +397,7 @@ pub def run n @ Int width @ Int text @ Str
     builder.unit(&std).unwrap();
     builder.unit(&script).unwrap();
     let check = builder.check();
-    let ir = check.cfgs[1].as_ref().unwrap();
-    let forward = Flow::new(ir, &check.forks[1], &check.tables, false).analyze();
-    let reversed = Flow::new(ir, &check.forks[1], &check.tables, true).analyze();
-    assert_eq!(forward, reversed);
-    assert_eq!(Some(&forward), check.flows[1].as_ref());
+    let forward = agreed(&check, 1);
     assert!(forward.unresolved.is_empty(), "{:?}", forward.unresolved);
     assert_eq!(forward.problems.len(), 3, "{:?}", forward.problems);
     assert!(forward.problems.iter().any(|p| matches!(
@@ -312,20 +408,10 @@ pub def run n @ Int width @ Int text @ Str
             ..
         }
     )));
-    let types: Vec<_> = forward
-        .facts
-        .iter()
-        .filter(|(span, _)| check.tables.text(UnitId::from_index(1), **span) == "chosen")
-        .map(|(_, fact)| check.tables.render_type(&check.forks[0], fact.ty))
-        .collect();
+    let types = facts_named(&check, 1, "chosen");
     assert!(!types.is_empty());
     assert!(types.iter().all(|ty| ty == "std.Int"), "{types:?}");
-    let types: Vec<_> = forward
-        .facts
-        .iter()
-        .filter(|(span, _)| check.tables.text(UnitId::from_index(1), **span) == "ordered")
-        .map(|(_, fact)| check.tables.render_type(&check.forks[1], fact.ty))
-        .collect();
+    let types = facts_named(&check, 1, "ordered");
     assert!(!types.is_empty());
     // The earlier template interns its keys first; preserve TypeId order, not the
     // second template's source order, while sorting positional holes numerically.
@@ -341,7 +427,7 @@ pub def run n @ Int width @ Int text @ Str
 fn live_at(
     source: &str,
     func: &str,
-    select: impl Fn(&Flow<'_, '_>, BlockId) -> bool,
+    select: impl Fn(&Ir, &Layout, BlockId) -> bool,
 ) -> Vec<Vec<String>> {
     let mut config = Config::new();
     config.typecheck(true);
@@ -353,20 +439,20 @@ fn live_at(
     let ir = check.cfgs[0]
         .as_ref()
         .expect("a unit with source is lowered");
-    let flow = Flow::new(ir, &check.forks[0], &check.tables, false);
+    let layout = Layout::new(ir);
     let (id, _) = (ir.funcs())
         .find(|(_, data)| match data.kind {
             FuncKind::Decl(decl) => check.tables.qualified(decl).ends_with(&format!(".{func}")),
             _ => false,
         })
         .expect("the function is lowered");
-    let vars = &flow.funcs[id.index()].vars;
+    let vars = &layout.vars[id.index()];
     let blocks: Vec<Vec<String>> = (ir.blocks())
-        .filter(|&(block, data)| data.func == id && select(&flow, block))
+        .filter(|&(block, data)| data.func == id && select(ir, &layout, block))
         .map(|(block, _)| {
-            (flow.live[block.index()].iter_ones())
+            (layout.live[block.index()].iter_ones())
                 .filter_map(|slot| match ir.var(vars[slot]).origin {
-                    Origin::Source(span) => Some(check.tables.text(flow.unit, span).to_owned()),
+                    Origin::Source(span) => Some(check.tables.text(layout.unit, span).to_owned()),
                     _ => None,
                 })
                 .collect()
@@ -377,8 +463,8 @@ fn live_at(
 }
 
 /// A loop's head, where a back edge joins
-fn head(flow: &Flow<'_, '_>, block: BlockId) -> bool {
-    flow.blocks.widens[block.index()]
+fn head(_ir: &Ir, layout: &Layout, block: BlockId) -> bool {
+    layout.blocks.widens[block.index()]
 }
 
 /// Only what an iteration reads from an earlier one is live at a loop's head
@@ -441,7 +527,7 @@ def f g
   x
 ",
         "f",
-        |flow, block| matches!(flow.ir.block(block).terminal, Terminal::EndFinally),
+        |ir, _, block| matches!(ir.block(block).terminal, Terminal::EndFinally),
     );
     for live in ends {
         assert!(live.contains(&"x".to_owned()), "{live:?}");
@@ -462,7 +548,7 @@ def f g
   nil
 ",
         "f",
-        |flow, block| flow.ir.block(block).handler.is_some(),
+        |ir, _, block| ir.block(block).handler.is_some(),
     );
     for live in bodies {
         assert!(live.contains(&"x".to_owned()), "{live:?}");

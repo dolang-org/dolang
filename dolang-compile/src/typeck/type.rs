@@ -1056,15 +1056,94 @@ struct Local {
     pending_kinds: RefCell<Vec<(TypeId, Kind)>>,
 }
 
-/// A sealed database, frozen to be the base of forks on any thread
+/// A sealed database, frozen to be the base of forks on any thread. A shared fork
+/// is a layer over its base: its tables hold what its base lacks, numbered after
+/// its base's.
 pub(crate) struct Shared {
+    parent: Option<Arc<Shared>>,
     types: Frozen<intern::Table<Type, TypeTag>>,
     symbols: Frozen<intern::Table<String, SymbolTag>>,
+    /// Its types and symbols, its parent's included
+    type_count: usize,
+    symbol_count: usize,
+    /// The root's alone, which its layers read
+    declared: Option<Declared>,
+    fixed: Fixed,
+    unsupported: u32,
+}
+
+/// What the root of a chain of shared databases holds besides its types and symbols
+struct Declared {
     declarations: alias::Box<[Declaration]>,
     overloads: FxHashMap<DeclId, alias::Box<[DeclId]>>,
     intrinsics: Intrinsics,
-    fixed: Fixed,
-    unsupported: u32,
+}
+
+impl Shared {
+    /// The root's declarations, overloads and intrinsics
+    fn declared(&self) -> &Declared {
+        match (&self.declared, &self.parent) {
+            (Some(declared), _) => declared,
+            (None, Some(parent)) => parent.declared(),
+            (None, None) => unreachable!("a root holds declarations"),
+        }
+    }
+
+    /// The root it's a layer over, or itself
+    fn root(self: &Arc<Self>) -> &Arc<Self> {
+        match &self.parent {
+            Some(parent) => parent.root(),
+            None => self,
+        }
+    }
+
+    /// Where its own types start
+    fn type_offset(&self) -> usize {
+        self.type_count - self.types.len()
+    }
+
+    fn symbol_offset(&self) -> usize {
+        self.symbol_count - self.symbols.len()
+    }
+
+    fn ty(&self, id: TypeId) -> &Type {
+        match &self.parent {
+            Some(parent) if id.index() < parent.type_count => parent.ty(id),
+            _ => &self.types[TypeId::new(id.index() - self.type_offset())],
+        }
+    }
+
+    fn type_id(&self, ty: &Type) -> Option<TypeId> {
+        (self.parent.as_ref())
+            .and_then(|parent| parent.type_id(ty))
+            .or_else(|| {
+                let id = self.types.get(ty)?;
+                Some(TypeId::new(self.type_offset() + id.index()))
+            })
+    }
+
+    fn symbol(&self, id: SymbolId) -> &str {
+        match &self.parent {
+            Some(parent) if id.index() < parent.symbol_count => parent.symbol(id),
+            _ => &self.symbols[SymbolId::new(id.index() - self.symbol_offset())],
+        }
+    }
+
+    fn symbol_id(&self, text: &str) -> Option<SymbolId> {
+        (self.parent.as_ref())
+            .and_then(|parent| parent.symbol_id(text))
+            .or_else(|| {
+                let id = self.symbols.get(text)?;
+                Some(SymbolId::new(self.symbol_offset() + id.index()))
+            })
+    }
+
+    fn is_fresh_symbol(&self, id: SymbolId) -> bool {
+        match &self.parent {
+            Some(parent) if id.index() < parent.symbol_count => parent.is_fresh_symbol(id),
+            _ => (self.symbols).is_fresh(SymbolId::new(id.index() - self.symbol_offset())),
+        }
+    }
 }
 
 /// What every database has from its creation, which its forks share
@@ -1136,27 +1215,40 @@ impl Database {
         Self::default()
     }
 
-    /// Freeze a sealed database to be shared by forks.
+    /// Freeze a sealed database to be shared by forks. A fork becomes a layer over
+    /// its base, which its own forks read through.
     pub(crate) fn share(self) -> Arc<Shared> {
-        let Phase::Local(Local {
-            declarations: Declarations::Frozen(declarations),
-            overloads,
-            intrinsics,
-            pending_kinds,
-        }) = self.phase
-        else {
-            panic!("only a sealed database that isn't a fork can be shared");
+        let (parent, declared) = match self.phase {
+            Phase::Local(Local {
+                declarations: Declarations::Frozen(declarations),
+                overloads,
+                intrinsics,
+                pending_kinds,
+            }) => {
+                assert!(
+                    pending_kinds.into_inner().is_empty(),
+                    "every kind is known once sealed"
+                );
+                let declared = Declared {
+                    declarations,
+                    overloads,
+                    intrinsics,
+                };
+                (None, Some(declared))
+            }
+            Phase::Local(_) => panic!("only a sealed database can be shared"),
+            Phase::Fork(base) => (Some(base), None),
         };
-        assert!(
-            pending_kinds.into_inner().is_empty(),
-            "every kind is known once sealed"
-        );
+        let (types, symbols) = parent
+            .as_ref()
+            .map_or((0, 0), |parent| (parent.type_count, parent.symbol_count));
         Arc::new(Shared {
+            type_count: types + self.types.len(),
+            symbol_count: symbols + self.symbols.len(),
+            parent,
             types: Frozen::new(self.types),
             symbols: Frozen::new(self.symbols),
-            declarations,
-            overloads,
-            intrinsics,
+            declared,
             fixed: self.fixed,
             unsupported: self.unsupported.get(),
         })
@@ -1199,14 +1291,14 @@ impl Database {
     fn try_declaration(&self, id: DeclId) -> Option<&Declaration> {
         match &self.phase {
             Phase::Local(local) => local.declarations.get(id),
-            Phase::Fork(base) => Some(&base.declarations[id.index()]),
+            Phase::Fork(base) => Some(&base.declared().declarations[id.index()]),
         }
     }
 
     fn intrinsics(&self) -> &Intrinsics {
         match &self.phase {
             Phase::Local(local) => &local.intrinsics,
-            Phase::Fork(base) => &base.intrinsics,
+            Phase::Fork(base) => &base.declared().intrinsics,
         }
     }
 
@@ -1252,7 +1344,7 @@ impl Database {
     pub(crate) fn overloads(&self, id: DeclId) -> &[DeclId] {
         let overloads = match &self.phase {
             Phase::Local(local) => &local.overloads,
-            Phase::Fork(base) => &base.overloads,
+            Phase::Fork(base) => &base.declared().overloads,
         };
         overloads.get(&id).map_or(&[], |overloads| overloads)
     }
@@ -1369,8 +1461,8 @@ impl Database {
 
     pub(crate) fn ty(&self, id: TypeId) -> &Type {
         match self.base() {
-            Some(base) if id.index() < base.types.len() => &base.types[id],
-            base => &self.types[TypeId::new(id.index() - base.map_or(0, |base| base.types.len()))],
+            Some(base) if id.index() < base.type_count => base.ty(id),
+            base => &self.types[TypeId::new(id.index() - base.map_or(0, |base| base.type_count))],
         }
     }
 
@@ -1397,7 +1489,7 @@ impl Database {
                 declarations: Declarations::Frozen(declarations),
                 ..
             }) => declarations,
-            Phase::Fork(base) => &base.declarations,
+            Phase::Fork(base) => &base.declared().declarations,
             Phase::Local(_) => panic!("declaration database is not sealed"),
         };
         declarations
@@ -1447,9 +1539,9 @@ impl Database {
 
     pub(crate) fn symbol(&self, id: SymbolId) -> &str {
         match self.base() {
-            Some(base) if id.index() < base.symbols.len() => &base.symbols[id],
+            Some(base) if id.index() < base.symbol_count => base.symbol(id),
             base => {
-                &self.symbols[SymbolId::new(id.index() - base.map_or(0, |base| base.symbols.len()))]
+                &self.symbols[SymbolId::new(id.index() - base.map_or(0, |base| base.symbol_count))]
             }
         }
     }
@@ -1457,25 +1549,24 @@ impl Database {
     pub(crate) fn intern_symbol(&self, text: &str) -> SymbolId {
         match self.base() {
             None => self.symbols.id(text),
-            Some(base) => base.symbols.get(text).unwrap_or_else(|| {
-                SymbolId::new(base.symbols.len() + self.symbols.id(text).index())
+            Some(base) => base.symbol_id(text).unwrap_or_else(|| {
+                SymbolId::new(base.symbol_count + self.symbols.id(text).index())
             }),
         }
     }
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
     pub(crate) fn fresh_symbol(&self, text: &str) -> SymbolId {
         let id = self.symbols.fresh(text.into());
-        SymbolId::new(self.base().map_or(0, |base| base.symbols.len()) + id.index())
+        SymbolId::new(self.base().map_or(0, |base| base.symbol_count) + id.index())
     }
 
     /// Whether a symbol was interned apart from its text's (see
     /// [`Self::fresh_symbol`])
     fn is_fresh_symbol(&self, id: SymbolId) -> bool {
         match self.base() {
-            Some(base) if id.index() < base.symbols.len() => base.symbols.is_fresh(id),
+            Some(base) if id.index() < base.symbol_count => base.is_fresh_symbol(id),
             base => self.symbols.is_fresh(SymbolId::new(
-                id.index() - base.map_or(0, |base| base.symbols.len()),
+                id.index() - base.map_or(0, |base| base.symbol_count),
             )),
         }
     }
@@ -1680,9 +1771,8 @@ impl Database {
         match self.base() {
             None => self.types.id_owned(ty),
             Some(base) => base
-                .types
-                .get(&ty)
-                .unwrap_or_else(|| TypeId::new(base.types.len() + self.types.id_owned(ty).index())),
+                .type_id(&ty)
+                .unwrap_or_else(|| TypeId::new(base.type_count + self.types.id_owned(ty).index())),
         }
     }
 
@@ -2884,5 +2974,6 @@ mod render;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use copy::Copies;
 pub(crate) use disjoint::NoAncestor;
 pub(crate) use render::{Collection, Names, Shown, Style};

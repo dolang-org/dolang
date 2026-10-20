@@ -293,8 +293,8 @@ impl<'u> Scope<'_, '_, 'u> {
         }
     }
 
-    /// Record a variable as captured, and as escaping through the function its
-    /// owner creates that this one is in
+    /// Record a variable as captured, by every function from this one to the one
+    /// its owner creates, and as escaping through the latter
     pub(super) fn capture(&self, var: VarId) {
         let graph = self.graph();
         let owner = graph.var(var).owner;
@@ -308,10 +308,18 @@ impl<'u> Scope<'_, '_, 'u> {
         }
         drop(func);
         let mut outer = self.ctx.func;
-        while let Some(parent) = graph.func(outer).parent
-            && parent != owner
-        {
-            outer = parent;
+        loop {
+            let mut func = graph.func_mut(outer);
+            if !func.uses.contains(&var) {
+                func.uses.push(var);
+            }
+            match func
+                .parent
+                .expect("a variable's owner encloses its capturers")
+            {
+                parent if parent == owner => break,
+                parent => outer = parent,
+            }
         }
         let mut func = graph.func_mut(outer);
         if !func.escapes.contains(&var) {
@@ -320,11 +328,22 @@ impl<'u> Scope<'_, '_, 'u> {
     }
 
     /// Record an assignment to a variable after it was bound. One by a function
-    /// other than its owner makes it volatile.
+    /// other than its owner makes it volatile, and is recorded by every function
+    /// from this one to the one its owner creates.
     pub(super) fn assigned(&self, var: VarId) {
         let graph = self.graph();
-        if graph.var(var).owner != self.ctx.func {
-            graph.var_mut(var).flags.insert(CfgFlags::VOLATILE);
+        let owner = graph.var(var).owner;
+        if owner == self.ctx.func {
+            return;
+        }
+        graph.var_mut(var).flags.insert(CfgFlags::VOLATILE);
+        let mut func = self.ctx.func;
+        while func != owner {
+            let mut data = graph.func_mut(func);
+            if !data.assigns.contains(&var) {
+                data.assigns.push(var);
+            }
+            func = (data.parent).expect("a variable's owner encloses its assigners");
         }
     }
 
