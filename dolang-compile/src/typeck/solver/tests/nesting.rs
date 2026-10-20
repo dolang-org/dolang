@@ -294,3 +294,29 @@ fn only_a_fork_commits() {
     let trial = s.child(Nesting::Trial, &gas);
     trial.commit();
 }
+
+#[test]
+fn probes_stop_at_the_first_contradiction() {
+    let mut db = Database::new();
+    let (one, two, three, four) = (
+        literal(&db, 1),
+        literal(&db, 2),
+        literal(&db, 3),
+        literal(&db, 4),
+    );
+    // Relating these contradicts each of their many parameters
+    let wide = |param| function(&db, &[param; 50], param);
+    let (left, right) = (wide(three), wide(four));
+    let (actual, expected) = (schema(&db, &[one, left]), schema(&db, &[two, right]));
+    db.seal();
+    let gas = Gas::default();
+    let s = Solver::new(&db, &gas);
+    assert_eq!(s.probe(actual, expected), Ok(Status::Contradicted));
+    let probed = gas.used();
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    s.constrain(s.closed(actual), s.closed(expected), Provenance::default());
+    assert_eq!(s.solve()[0].status, Status::Contradicted);
+    // The first item decides, so the second's parameters aren't related
+    assert!(probed * 3 < gas.used());
+}

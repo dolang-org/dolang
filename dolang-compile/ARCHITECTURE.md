@@ -386,7 +386,9 @@ the rigids its body is checked under instead (`assume_group`): a lifted binder
 is the enclosing declaration's rigid, so a method's own binder bounded by its
 class's schema is bounded by the schema the body's `self` has. Exposure and
 instantiation never assume the bounds of anything else. Probes inherit the
-assumed declarations.
+assumed declarations. A probe answers only with a status, so it stops at the
+first contradiction: its own derivations are conjunctive, and alternatives are
+rejected on solvers nested in it.
 
 A rigid is a subtype of itself, top and `Unknown`, and bottom and `Unknown` are
 subtypes of it. Otherwise, an assumed rigid on the left reduces to its bound. An

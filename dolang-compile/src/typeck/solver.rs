@@ -1454,7 +1454,9 @@ impl<'db> Solver<'db> {
     }
 
     /// Closed proof queries cannot create inference bounds or leak alternative
-    /// edges. The answer is a query's (see [`Nesting::Probe`]).
+    /// edges. The answer is a query's (see [`Nesting::Probe`]). Only its status
+    /// is wanted, so a probe stops at the first contradiction (see
+    /// [`Self::quiesce_until`]).
     fn probe(&self, actual: TypeId, expected: TypeId) -> Result<Status, Residual> {
         Ok(self.probe_cycle(actual, expected, None)?.0)
     }
@@ -1492,7 +1494,10 @@ impl<'db> Solver<'db> {
             proof.closed(expected),
             Provenance::default(),
         );
-        let result = proof.solve().remove(0);
+        if proof.quiesce_until(true).is_some() && !self.gas.is_exhausted() {
+            return Ok((Status::Contradicted, false));
+        }
+        let result = proof.report().remove(0);
         if self.gas.is_exhausted()
             || result
                 .diagnostics
@@ -3240,6 +3245,11 @@ impl<'db> Solver<'db> {
     /// Process queued obligations to quiescence or exhaustion and report each submitted root.
     pub(crate) fn solve(&mut self) -> Vec<Outcome> {
         self.quiesce();
+        self.report()
+    }
+
+    /// Report each submitted root, once solving is quiescent
+    fn report(&self) -> Vec<Outcome> {
         let outcomes: Vec<Outcome> = (0..self.roots.len())
             .map(|index| self.outcome(ConstraintId(index)))
             .collect();
@@ -3267,6 +3277,16 @@ impl<'db> Solver<'db> {
     /// alternatives, and settling a scope's variables commits choices, so solving
     /// resumes after each one that changes something.
     fn quiesce(&mut self) {
+        self.quiesce_until(false);
+    }
+
+    /// [`Self::quiesce`], stopping at the first contradiction if `contradicted`.
+    /// A solver's own derivations are conjunctive and contradictions are final,
+    /// since bounds only grow, so in a closed solver with one root that
+    /// contradiction decides the root. Alternatives are rejected on forks and
+    /// contradict the judgment only once none is left. The contradiction
+    /// stopped at, if any.
+    fn quiesce_until(&mut self, contradicted: bool) -> Option<Contradiction> {
         loop {
             loop {
                 while !self.gas.is_exhausted() && !self.queue.is_empty() {
@@ -3284,6 +3304,10 @@ impl<'db> Solver<'db> {
                             Ok(()) => State::Reduced,
                             Err(issue) => State::Issue(issue),
                         });
+                        if contradicted && let Err(Issue::Contradiction(found)) = result {
+                            trace!(self, "#0: Contradicted ({found:?}), stopping");
+                            return Some(found);
+                        }
                         if self.gas.is_exhausted() {
                             break;
                         }
@@ -3316,6 +3340,7 @@ impl<'db> Solver<'db> {
                 break;
             }
         }
+        None
     }
 
     /// Assign each call result what the signatures its call reached give, once
