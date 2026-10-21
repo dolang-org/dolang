@@ -61,6 +61,24 @@ A type test drops a union member that is a
 [final](./classes.md#final-classes) class not inheriting from the tested class,
 and a member [disjoint](./classes.md#disjoint-classes) from it.
 
+A pattern that unpacks a union value links the value to the items it binds.
+A later test on any of them narrows the others to the union's members that
+remain. Dict entries and keyed rests unpack this way, key with value.
+
+```
+def size p @ ((:text:, Str) | (:count:, Int)) -> Int
+  let kind v = p
+  if (kind == :text:)
+    # v is Str, p is (:text:, Str)
+    v.len
+  else
+    v
+```
+
+A copy of a linked variable shares its link. Reassigning a variable, or
+unpacking it with another pattern, ends its link; so does unpacking the same
+value again.
+
 Reassignment replaces the local's current type, and branches join it again. A
 variable assigned by a closure is never narrowed; copy such a variable to a
 local before testing and using that value.
