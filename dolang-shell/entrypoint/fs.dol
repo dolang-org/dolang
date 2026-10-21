@@ -177,10 +177,11 @@ def uuid_node principal
         security.unix.user_name $id
       else
         security.unix.group_name $id
+    let label = str(kind).lower()
     if resolved
-      "$(kind.lower) $id ($resolved)"
+      "$label $id ($resolved)"
     else
-      "$(kind.lower) $id"
+      "$label $id"
   display.text $principal $name
 
 # --- Access control entries -------------------------------------------------
@@ -411,7 +412,9 @@ def xattr_section path resolve
     let size = display.opt do attr.size
     let value = if (size == nil)
       let raw = display.opt do
-        fs.xattr $path $attr.name namespace: $namespace resolve: $resolve
+        fs.xattr $path $attr.name resolve: $resolve
+          if (namespace != nil)
+            namespace: $namespace
       (raw != nil && raw.len || nil)
     else
       size
