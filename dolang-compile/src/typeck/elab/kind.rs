@@ -49,7 +49,12 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
             DeclKind::OpaqueAlias => {
                 let kind = match sig::designation(tables, decl) {
                     Some((
-                        Designated::Intrinsic(Intrinsic::Deletable | Intrinsic::Clearable),
+                        Designated::Intrinsic(
+                            Intrinsic::Deletable
+                            | Intrinsic::Clearable
+                            | Intrinsic::Fields
+                            | Intrinsic::MutFields,
+                        ),
                         _,
                     )) => Kind::Schema,
                     _ => Kind::Type,

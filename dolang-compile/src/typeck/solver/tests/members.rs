@@ -41,7 +41,7 @@ impl Class {
         apply(db, self.ty, &args)
     }
 
-    fn field(&mut self, key: MemberKey, ty: TypeId, scope: Scope) {
+    pub(super) fn field(&mut self, key: MemberKey, ty: TypeId, scope: Scope) {
         self.members.push((
             key,
             Member::Field {
@@ -118,6 +118,40 @@ impl Class {
         ));
     }
 
+    pub(super) fn property(
+        &mut self,
+        key: MemberKey,
+        getter: Option<DeclId>,
+        setter: Option<DeclId>,
+    ) {
+        self.members.push((
+            key,
+            Member::Property {
+                getter,
+                setter,
+                scope: Scope::Instance,
+                public: !key.private,
+            },
+        ));
+    }
+
+    pub(super) fn decorated(&mut self, key: MemberKey, decl: DeclId) {
+        self.members.push((
+            key,
+            Member::Decorated {
+                decl,
+                scope: Scope::Instance,
+                public: !key.private,
+            },
+        ));
+    }
+
+    /// Make it a class the runtime forbids subclassing
+    pub(super) fn final_class(mut self) -> Self {
+        self.source.is_final = true;
+        self
+    }
+
     pub(super) fn finish(self, db: &mut Database, supers: Vec<TypeId>) -> TypeId {
         self.finish_with(db, inherited(supers).to_vec())
     }
@@ -156,7 +190,7 @@ pub(super) fn key(db: &Database, name: &str) -> MemberKey {
     }
 }
 
-fn private(db: &Database, name: &str) -> MemberKey {
+pub(super) fn private(db: &Database, name: &str) -> MemberKey {
     MemberKey {
         private: true,
         ..key(db, name)

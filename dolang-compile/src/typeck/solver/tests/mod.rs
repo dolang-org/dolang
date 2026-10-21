@@ -8,6 +8,7 @@ use dolang_util::alias;
 mod alternatives;
 mod basics;
 mod callable;
+mod fields;
 mod functions;
 mod inference;
 mod instantiation;

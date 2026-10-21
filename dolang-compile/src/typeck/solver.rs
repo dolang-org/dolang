@@ -28,9 +28,9 @@ use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use crate::typeck::r#type::UnitSpan;
 
 use super::r#type::{
-    Argument, Binder, Binding, BoundRef, Database, DeclId, DeclKind, Element, Function, Intrinsic,
-    Kind, Literal, MemberKey, Multiplicity, Promotion, Rest, Restriction, SchemaItem, SymbolId,
-    Type, TypeId, UnionMember, Variance,
+    Argument, Binder, Binding, BoundRef, Database, DeclId, DeclKind, Element, FieldAccess,
+    Function, Intrinsic, Kind, Literal, MemberKey, Multiplicity, Promotion, Rest, Restriction,
+    SchemaItem, SymbolId, Type, TypeId, UnionMember, Variance,
 };
 
 /// A member of a generic class's object: its class, the class a private one is
@@ -684,6 +684,8 @@ pub(crate) struct Solver<'db> {
     default_constructions: RefCell<FxHashMap<DeclId, Option<Option<Signature>>>>,
     /// Each member of a generic class's object, once found
     generic_members: RefCell<FxHashMap<GenericMember, Result<Lookup, Issue>>>,
+    /// The member schemas being found, whose members' types may mention them
+    fields_active: RefCell<Vec<(TypeId, FieldAccess)>>,
     /// Whether it makes the assumptions its parent does, so their caches
     /// hold for it too
     inherits: bool,
@@ -786,6 +788,7 @@ impl<'db> Solver<'db> {
             constructors: RefCell::new(FxHashMap::default()),
             default_constructions: RefCell::new(FxHashMap::default()),
             generic_members: RefCell::new(FxHashMap::default()),
+            fields_active: RefCell::default(),
             inherits: true,
             tracks: false,
             generation: Cell::new(0),
@@ -1380,6 +1383,12 @@ impl<'db> Solver<'db> {
                 {
                     return Ok(schema);
                 }
+                if local == 0
+                    && let Type::Fields { target, access } = *self.db.ty(reified)
+                    && let Ok(schema) = self.fields(target, access)
+                {
+                    return Ok(schema);
+                }
                 Ok(reified)
             }
         }
@@ -1846,6 +1855,14 @@ impl<'db> Solver<'db> {
                     walk(key, variance.compose(Variance::Contravariant), 0)?;
                 }
                 Ok(())
+            }
+            // A subclass reads more members, and sets the same ones
+            Type::Fields { target, access } => {
+                let used = match access {
+                    FieldAccess::Read => Variance::Covariant,
+                    FieldAccess::Write => Variance::Contravariant,
+                };
+                walk(target, variance.compose(used), 0)
             }
             Type::Quantified { .. } => {
                 let mut children = Vec::new();
@@ -3002,6 +3019,20 @@ impl<'db> Solver<'db> {
                     Err(Issue::Residual(_)) => return Ok(Head::Structural(view)),
                     Err(issue) => return Err(issue),
                 },
+                // A member schema is evaluated once its target is substituted. A
+                // rigid or skolem target's relates only as itself.
+                Type::Fields { .. } if view.environment != self.empty_environment() => {
+                    match self.reify(term) {
+                        Ok(reified) => term = self.closed(reified),
+                        Err(Residual::Escape) => return Ok(Head::Structural(view)),
+                        Err(residual) => return Err(residual.into()),
+                    }
+                }
+                Type::Fields { target, access } => match self.fields(target, access) {
+                    Ok(schema) => term = self.closed(schema),
+                    Err(Issue::Residual(_)) => return Ok(Head::Structural(view)),
+                    Err(issue) => return Err(issue),
+                },
                 Type::Union(ref members)
                     if members.iter().any(|member| member.projected().is_some()) =>
                 {
@@ -3076,6 +3107,10 @@ impl<'db> Solver<'db> {
             let exposed = self.expose_schema(held, path);
             path.pop();
             return Ok(Some(exposed?.unwrap_or(held)));
+        }
+        // A member schema is the schema it lists
+        if let Type::Fields { target, access } = *self.db.ty(schema) {
+            return self.fields(target, access).map(Some);
         }
         let mut exposed = None;
         let mut current = schema;
@@ -3604,6 +3639,7 @@ mod alternatives;
 mod call;
 mod callable;
 mod conform;
+mod fields;
 mod item;
 mod lattice;
 mod member;

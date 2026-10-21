@@ -17,11 +17,13 @@
 //! A rest is `Unpack`'s `Rest` with the tail in place of `S`. The supertype edge
 //! that reaches `Unpack` is open over its declaring class's binders: matching
 //! its `S` against the tail solves them again, and its `Rest` is instantiated
-//! with the solution. A rest that this doesn't give, or that isn't within
-//! `Rest`'s bound for the tail, is `Rest`'s default for the tail, which only
-//! spreads. Without binders to solve again, as for a value of an `Unpack` type
+//! with the solution; a binder `S` doesn't mention keeps its argument. A rest
+//! that this doesn't give, or that isn't within `Rest`'s bound for the tail, is
+//! `Rest`'s default for the tail, which only spreads. Without binders to solve again, as for a value of an `Unpack` type
 //! itself, `Rest` carries over only where `S` is its own tail. So a class whose
 //! `Rest` depends on `S` has its `(unpack)` return its own type, not `Unpack`.
+
+use std::ops::ControlFlow;
 
 use bitvec::{bitbox, boxed::BitBox};
 
@@ -412,15 +414,35 @@ impl Solver<'_> {
             Type::Quantified { binders, .. } => binders,
             _ => &[],
         };
+        // Matching `S` solves only the binders it mentions
+        let mut matched = FxHashSet::default();
+        match self.db.ty(supertype) {
+            Type::Apply { args, .. } if let Some(&Argument::Positional(schema)) = args.first() => {
+                let _ = self.db.walk(schema, |node, depth| {
+                    if let Type::Bound { reference, .. } = *self.db.ty(node)
+                        && u32::from(reference.depth) == depth
+                    {
+                        matched.insert(usize::from(reference.slot));
+                    }
+                    ControlFlow::<()>::Continue(())
+                });
+            }
+            _ => matched.extend(0..binders.len()),
+        }
         // Reified before the nested solver, which this one can't probe under
         let mut kept = Vec::new();
         for slot in 0..binders.len() {
             let lifted = (declaration.binders.get(slot))
                 .is_some_and(|source| source.origin == BinderOrigin::Lifted);
-            kept.push(match (lifted, owner.arguments.get(slot)) {
-                (true, Some(&argument)) => Some(self.reify(argument)?),
-                _ => None,
-            });
+            kept.push(
+                match (
+                    lifted || !matched.contains(&slot),
+                    owner.arguments.get(slot),
+                ) {
+                    (true, Some(&argument)) => Some(self.reify(argument)?),
+                    _ => None,
+                },
+            );
         }
         let mut nested = self.nested(Nesting::Side)?;
         let mut group = Vec::new();

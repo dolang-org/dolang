@@ -206,6 +206,7 @@ impl<'db> Solver<'db> {
             constructors: RefCell::default(),
             default_constructions: RefCell::default(),
             generic_members: RefCell::default(),
+            fields_active: RefCell::default(),
             inherits: true,
             generation: Cell::new(self.generation.get()),
             trials_from: match open {
