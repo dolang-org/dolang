@@ -7,7 +7,6 @@ mod error;
 mod error_code;
 mod extension;
 mod fs;
-mod geometry;
 mod global;
 mod io_mode;
 mod local;

@@ -135,11 +135,10 @@ extension such as `progress` has taken the terminal over, during which
 `geometry()` still reports the real terminal's size.
 
 [`term.console.geometry()`](term.Console.geometry) returns the
-terminal's `rows` and `cols`, but is only advisory. It never answers `nil`
-itself for the host console; instead `rows` and `cols` are each
-independently `nil` when that dimension cannot be determined — a real
-terminal that declines to report its size still yields a `Geometry`, just one
-with both fields `nil`, so their absence does not imply `is_tty` is `false`.
+terminal's `rows` and `cols`, but is only advisory: each is independently `nil`
+when that dimension cannot be determined. A real terminal that declines to
+report its size has both `nil`, so their absence does not imply `is_tty` is
+`false`.
 
 ```
 if term.console.is_tty

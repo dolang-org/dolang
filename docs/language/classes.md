@@ -470,7 +470,7 @@ class Cat: Animal
 
 A class may also inherit from a built-in type such as
 [`Str`](std.Str), [`RuntimeError`](std.RuntimeError), or
-[`term.Geometry`](term.Geometry). Such a supertype brings a
+[`term.Console`](term.Console). Such a supertype brings a
 representation of its own, which `(init)` must initialize by chaining:
 
 ```

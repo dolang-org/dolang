@@ -161,8 +161,9 @@ impl<'v> Object<'v> for PlaygroundConsole {
                 Output::set(strand, out, false);
                 Ok(())
             })
-            .method("geometry", async move |_this, strand, args, _out| {
+            .method("geometry", async move |_this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
+                dolang_ext_term::create_geometry(strand, None, None, out);
                 Ok(())
             })
     }

@@ -38,6 +38,8 @@ pub(crate) struct Syms<'v> {
     pub(crate) can_style: Sym<'v, 'v>,
     pub(crate) is_tty: Sym<'v, 'v>,
     pub(crate) geometry: Sym<'v, 'v>,
+    pub(crate) rows: Sym<'v, 'v>,
+    pub(crate) cols: Sym<'v, 'v>,
 }
 
 /// The host console, as installed by [`crate::install_console`].
@@ -115,6 +117,8 @@ impl<'v> Global<'v> {
                 can_style: builder.sym("can_style"),
                 is_tty: builder.sym("is_tty"),
                 geometry: builder.sym("geometry"),
+                rows: builder.sym("rows"),
+                cols: builder.sym("cols"),
             },
             local: builder.local(),
             capture: builder.local_root(),

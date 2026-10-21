@@ -44,7 +44,6 @@ use crate::{
         stream::{StreamEntry, StreamIter},
         xattr::{XattrEntry, XattrIter},
     },
-    geometry::HostGeometry,
     local::Local,
     pipe_channel::{PipeReceiver, PipeSender},
     proc::{Capture, Info as ProcInfo, Proc, Procs, Status as ProcStatus},
@@ -88,7 +87,6 @@ pub(crate) struct Global<'v> {
 
 pub(crate) struct Types<'v> {
     pub(crate) host_console: Type<'v, HostConsole>,
-    pub(crate) host_geometry: Type<'v, HostGeometry>,
 }
 
 pub(crate) struct Syms<'v> {
@@ -219,12 +217,6 @@ impl<'v> Global<'v> {
             .nominal_supertype(console)
             .build();
 
-        let geometry = dolang_ext_term::geometry_type(builder);
-        let host_geometry = builder
-            .build_type::<HostGeometry>((), ())
-            .nominal_supertype(geometry)
-            .build();
-
         let console_override =
             ConsoleOverride::parse(std::env::var("DOLANG_CONSOLE").ok().as_deref());
         let stderr_is_terminal = console_override
@@ -252,10 +244,7 @@ impl<'v> Global<'v> {
                 ansi,
                 console_override,
             },
-            types: Types {
-                host_console,
-                host_geometry,
-            },
+            types: Types { host_console },
             syms: Syms {
                 chunk: builder.sym("CHUNK"),
                 line: builder.sym("LINE"),

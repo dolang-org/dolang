@@ -261,7 +261,7 @@ let warning = term.text warning bold: true
 echo $warning
 print a b
 term.console.write c b"d\n"
-[term.console.can_style, term.console.is_tty, term.console.geometry(), term.output() == term.console]"#,
+[term.console.can_style, term.console.is_tty, term.console.geometry().cols, term.output() == term.console]"#,
         )
         .await;
         assert!(result.error.is_none(), "{:?}", result.error);

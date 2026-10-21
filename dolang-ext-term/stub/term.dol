@@ -64,11 +64,11 @@ pub @let StyleOptions = $
 # `flush`; `put`, the sink protocol, and the capability members come from the
 # base:
 #
-# | Console                            | `can_style`    | `is_tty`          | `geometry()`  |
-# | ---------------------------------- | -------------- | ----------------- | ------------- |
-# | `Console` (the base)               | `false`        | `false`           | `nil`         |
-# | Host (`term.console`)              | styling policy | usable terminal   | never `nil`   |
-# | [`SinkConsole`](term.SinkConsole) | as constructed | `false`           | `nil`         |
+# | Console                            | `can_style`    | `is_tty`          | `geometry()`        |
+# | ---------------------------------- | -------------- | ----------------- | ------------------- |
+# | `Console` (the base)               | `false`        | `false`           | no dimensions       |
+# | Host (`term.console`)              | styling policy | usable terminal   | the terminal's size |
+# | [`SinkConsole`](term.SinkConsole) | as constructed | `false`           | no dimensions       |
 #
 # ```
 # class Recorder: term.Console
@@ -111,8 +111,8 @@ pub class Console: std.Sink[Value]
   # Whether the console is usable as a terminal.
   #
   # This is the determinative test, unlike
-  # [`geometry()`](term.Console.geometry), which may answer `nil` for a real
-  # terminal that simply cannot report its size.
+  # [`geometry()`](term.Console.geometry), whose dimensions may be unknown for
+  # a real terminal that cannot report its size.
   #
   # The host console reports `false` while an extension such as `progress` has
   # taken the terminal over, even though `geometry()` still reports the
@@ -146,25 +146,18 @@ pub class Console: std.Sink[Value]
   pub def flush self
     ...
 
-  # Returns the console's dimensions, or `nil` if it is just a stream.
+  # Returns the console's dimensions.
   #
-  # `nil` is advisory: it also covers a real terminal whose size could not be
-  # determined. Use [`is_tty`](term.Console.is_tty) to test for a real terminal
-  # regardless of whether a size is available.
-  #
-  # The host console never returns `nil` here -- see
-  # [`Geometry`](term.Geometry) for how `rows` and `cols` are each
-  # independently `nil` when unknown, rather than the whole result being
-  # absent.
+  # A stream has neither dimension, and a real terminal may not report one or
+  # both, so each is advisory. Use [`is_tty`](term.Console.is_tty) to test for
+  # a real terminal.
   #
   # ## Example
   #
   # ```
-  # let g = term.console.geometry()
-  # if g
-  #   echo "terminal is $(g.cols)x$(g.rows)"
+  # let width = (term.console.geometry().cols || 80)
   # ```
-  pub def geometry self -> (Geometry | nil)
+  pub def geometry self -> Geometry
     ...
 
   # Writes bytes verbatim.
@@ -202,33 +195,25 @@ pub class Console: std.Sink[Value]
   pub def (sink) self -> Console
     ...
 
-# The dimensions of a terminal-backed [`Console`](term.Console).
-#
-# Returned by [`geometry()`](term.Console.geometry).
+# The dimensions of a [`Console`](term.Console), as
+# [`geometry()`](term.Console.geometry) reports them.
 #
 # `rows` and `cols` are independently `nil`: a console may know one dimension
-# without the other. The host console (`term.console`) always returns a
-# `Geometry`, never `nil` itself.
-#
-# ## Subclassing
-#
-# `Geometry` is the interface; reading `rows` or `cols` on a bare instance
-# raises [`UnsupportedError`](std.UnsupportedError). A Do console that
-# implements `geometry()` subclasses this to describe itself:
+# without the other.
 #
 # ```
-# class FixedGeometry: term.Geometry
-#   pub field rows
-#   pub field cols
-#
-#   def (init) self rows cols
-#     term.Geometry.(init) $self
-#     self.rows = rows
-#     self.cols = cols
+# let g = Geometry rows: 24 cols: 80
+# assert_eq $g.cols 80
 # ```
+#[final]
 pub class Geometry
-  # Initializes the base. A subclass calls this from its own `(init)`.
-  pub def (init) self
+  pub def (init)
+    self
+    # Height in character cells, or `nil` if unknown.
+    :rows @ (Int | nil) = nil
+    # Width in character cells, or `nil` if unknown.
+    :cols @ (Int | nil) = nil
+  do
     ...
 
   # Width in character cells, or `nil` if unknown.
@@ -260,8 +245,8 @@ pub class Geometry
 # [`line_ending`](term.Console.line_ending) is the interpreter host's, chosen
 # arbitrarily -- a sink has no platform of its own.
 # [`is_tty`](term.Console.is_tty) is always `false` and
-# [`geometry()`](term.Console.geometry) is `nil`, since a sink is never a
-# terminal.
+# [`geometry()`](term.Console.geometry) has no dimensions, since a sink is
+# never a terminal.
 #
 # ## Output mode {: #term.SinkConsole.output-mode }
 #
