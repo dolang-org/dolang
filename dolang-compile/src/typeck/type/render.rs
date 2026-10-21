@@ -10,8 +10,9 @@ use std::{
 };
 
 use super::{
-    Argument, Binder, BinderOrigin, Binding, BoundRef, Database, DeclId, Element, Intrinsic, Kind,
-    Literal, Multiplicity, Rest, Restriction, SchemaItem, Type, TypeId, UnionMember,
+    Argument, Binder, BinderOrigin, Binding, BoundRef, Database, DeclId, Element, FieldAccess,
+    Intrinsic, Kind, Literal, Multiplicity, Rest, Restriction, SchemaItem, Type, TypeId,
+    UnionMember,
 };
 
 /// What the environment a type is rendered in knows about it
@@ -537,6 +538,16 @@ impl Renderer<'_> {
                     out.push_str(", ");
                     self.render_into(key, naming, out);
                 }
+                out.push(']');
+            }
+            Type::Fields { target, access } => {
+                let head = match access {
+                    FieldAccess::Read => Intrinsic::Fields,
+                    FieldAccess::Write => Intrinsic::MutFields,
+                };
+                self.head(head, naming, out);
+                out.push('[');
+                self.render_into(*target, naming, out);
                 out.push(']');
             }
         }

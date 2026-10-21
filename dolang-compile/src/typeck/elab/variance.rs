@@ -311,6 +311,8 @@ impl<'t> Collect<'t, '_> {
         // the meet but more items lower it. `Deletable` and `Clearable` are their
         // schema where every item they remove admits zero, which neither a wider
         // nor a narrower schema keeps, and a wider key removes more items.
+        // `MutFields` takes its target contravariantly: a subclass sets the same
+        // members at the same types, and its own only optionally.
         if let Some(
             designated @ (Designated::Phantom
             | Designated::Intrinsic(
@@ -322,7 +324,9 @@ impl<'t> Collect<'t, '_> {
                 | Intrinsic::AssignItem
                 | Intrinsic::InsertItem
                 | Intrinsic::Deletable
-                | Intrinsic::Clearable,
+                | Intrinsic::Clearable
+                | Intrinsic::Fields
+                | Intrinsic::MutFields,
             )),
         ) = tables.designated.get(&id)
         {
@@ -343,6 +347,7 @@ impl<'t> Collect<'t, '_> {
                 };
                 let used = match slot {
                     0 if antitone => Use::BOTH,
+                    0 if *designated == Designated::Intrinsic(Intrinsic::MutFields) => Use::CONTRA,
                     1 if antitone => Use::CONTRA,
                     _ => Use::CO,
                 };

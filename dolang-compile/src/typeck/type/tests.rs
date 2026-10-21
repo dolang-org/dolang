@@ -1986,6 +1986,42 @@ fn a_mapping_has_packs_of_schemas_and_a_type_pattern() {
 }
 
 #[test]
+fn fields_lower_to_member_schemas() {
+    let mut db = Database::new();
+    let designate = |db: &mut Database, intrinsic, name| {
+        let (id, alias, mut source) = declare(db, DeclKind::OpaqueAlias, name);
+        source.result_kind = Kind::Schema;
+        db.set_intrinsic(intrinsic, alias);
+        db.populate(id, definition(source, alias));
+        alias
+    };
+    let fields = designate(&mut db, Intrinsic::Fields, "Fields");
+    let mut_fields = designate(&mut db, Intrinsic::MutFields, "MutFields");
+    let t = reference(&mut db, 0, 0, Kind::Type);
+    let apply = |db: &mut Database, base, target| {
+        intern(
+            db,
+            Type::Apply {
+                base,
+                args: vec![Argument::Positional(target)].into(),
+                kind: Kind::Schema,
+            },
+        )
+    };
+    for (base, access) in [
+        (fields, FieldAccess::Read),
+        (mut_fields, FieldAccess::Write),
+    ] {
+        let projected = apply(&mut db, base, t);
+        assert_eq!(*db.ty(projected), Type::Fields { target: t, access });
+        assert_eq!(db.kind(projected), Kind::Schema);
+        // The dynamic type's members are the dynamic schema
+        let unknown = db.unknown();
+        assert_eq!(apply(&mut db, base, unknown), db.unknown_schema());
+    }
+}
+
+#[test]
 fn restrictions_lower_and_imply_key_bounds() {
     let mut db = Database::new();
     let designate = |db: &mut Database, intrinsic, name| {

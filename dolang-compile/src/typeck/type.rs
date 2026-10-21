@@ -333,6 +333,15 @@ impl Restriction {
     }
 }
 
+/// Which of a type's public instance members a [`Type::Fields`] schema lists
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum FieldAccess {
+    /// `Fields[T]`: the members it can read
+    Read,
+    /// `MutFields[T]`: the members it can set
+    Write,
+}
+
 /// What a projection member of a union stands for (see [`Database::project`])
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Projected {
@@ -434,6 +443,14 @@ pub(crate) enum Type {
         schema: TypeId,
         restriction: Restriction,
     },
+    /// The keyed schema of a type's public instance members: `Fields[T]`, the
+    /// members it can read, or `MutFields[T]`, those it can set. Members aren't
+    /// known while the database is populated, so the solver reduces it once the
+    /// target is known.
+    Fields {
+        target: TypeId,
+        access: FieldAccess,
+    },
     /// An overloaded function's value: its `@def` signatures, one of which a call
     /// or a function type it's passed as chooses, and its implementation's
     /// signature, which it relates as anywhere else. Never written; a solver
@@ -521,6 +538,7 @@ impl Type {
                     visit(key, 0);
                 }
             }
+            Self::Fields { target, .. } => visit(*target, 0),
             Self::Overloaded {
                 overloads,
                 implementation,
@@ -603,6 +621,7 @@ impl Type {
             (Self::Restricted { restriction: a, .. }, Self::Restricted { restriction: b, .. }) => {
                 discriminant(a) == discriminant(b)
             }
+            (Self::Fields { access: a, .. }, Self::Fields { access: b, .. }) => a == b,
             (
                 Self::Overloaded {
                     overloads: a,
@@ -698,6 +717,7 @@ impl Type {
                     *restriction = restriction.with_key(f(key, 0)?);
                 }
             }
+            Self::Fields { target, .. } => *target = f(*target, 0)?,
             Self::Overloaded {
                 overloads,
                 implementation,
@@ -937,6 +957,10 @@ pub(crate) enum Intrinsic {
     Deletable,
     /// `Clearable[S]`, `S` where each of its items admits zero
     Clearable,
+    /// `Fields[T]`, the keyed schema of a type's readable public members
+    Fields,
+    /// `MutFields[T]`, the keyed schema of a type's settable public members
+    MutFields,
     /// The class of a tuple, which `Entries` builds
     Tuple,
     /// The class of function values, and of every function type (see
@@ -955,7 +979,7 @@ pub(crate) enum Intrinsic {
 }
 
 impl Intrinsic {
-    const ALL: [Self; 18] = [
+    const ALL: [Self; 20] = [
         Self::Union,
         Self::Keys,
         Self::Values,
@@ -965,6 +989,8 @@ impl Intrinsic {
         Self::InsertItem,
         Self::Deletable,
         Self::Clearable,
+        Self::Fields,
+        Self::MutFields,
         Self::Tuple,
         Self::Func,
         Self::Int,
@@ -989,6 +1015,8 @@ struct Intrinsics {
     insert_item: Option<TypeId>,
     deletable: Option<TypeId>,
     clearable: Option<TypeId>,
+    fields: Option<TypeId>,
+    mut_fields: Option<TypeId>,
     tuple: Option<TypeId>,
     func: Option<TypeId>,
     int: Option<TypeId>,
@@ -1012,6 +1040,8 @@ impl Intrinsics {
             Intrinsic::InsertItem => self.insert_item,
             Intrinsic::Deletable => self.deletable,
             Intrinsic::Clearable => self.clearable,
+            Intrinsic::Fields => self.fields,
+            Intrinsic::MutFields => self.mut_fields,
             Intrinsic::Tuple => self.tuple,
             Intrinsic::Func => self.func,
             Intrinsic::Int => self.int,
@@ -1035,6 +1065,8 @@ impl Intrinsics {
             Intrinsic::InsertItem => &mut self.insert_item,
             Intrinsic::Deletable => &mut self.deletable,
             Intrinsic::Clearable => &mut self.clearable,
+            Intrinsic::Fields => &mut self.fields,
+            Intrinsic::MutFields => &mut self.mut_fields,
             Intrinsic::Tuple => &mut self.tuple,
             Intrinsic::Func => &mut self.func,
             Intrinsic::Int => &mut self.int,
@@ -1472,7 +1504,10 @@ impl Database {
             "intrinsic already set: {intrinsic:?}"
         );
         let kind = match intrinsic {
-            Intrinsic::Deletable | Intrinsic::Clearable => Kind::Schema,
+            Intrinsic::Deletable
+            | Intrinsic::Clearable
+            | Intrinsic::Fields
+            | Intrinsic::MutFields => Kind::Schema,
             _ => Kind::Type,
         };
         self.expect_kind(ty, kind);
@@ -1771,7 +1806,9 @@ impl Database {
 
     fn known_kind(&self, id: TypeId) -> Option<Kind> {
         match self.ty(id) {
-            Type::Schema(_) | Type::Map { .. } | Type::Restricted { .. } => Some(Kind::Schema),
+            Type::Schema(_) | Type::Map { .. } | Type::Restricted { .. } | Type::Fields { .. } => {
+                Some(Kind::Schema)
+            }
             Type::Bound { kind, .. } | Type::Rigid { kind, .. } | Type::Apply { kind, .. } => {
                 Some(*kind)
             }
@@ -1820,7 +1857,8 @@ impl Database {
     /// without binders is its body, and an application of the `Union`, `Keys`,
     /// `Values` or `Entries` intrinsic is a union of its projection, and one of
     /// `Deletable` or `Clearable` a restricted schema, which leaves the dynamic
-    /// schema as it is. A union is
+    /// schema as it is. One of `Fields` or `MutFields` is a member schema, which
+    /// is the dynamic schema for the dynamic type. A union is
     /// flattened, with its members sorted and deduplicated, and each projection of
     /// a schema among them is evaluated as far as the schema is known (see
     /// [`Self::project`]), a projection of `{...S}` being one of `S`. A union
@@ -1838,6 +1876,9 @@ impl Database {
                 if let Some(restricted) = self.restriction(base, &args) {
                     return self.normalize(restricted);
                 }
+                if let Some(fields) = self.fields(base, &args) {
+                    return self.normalize(fields);
+                }
                 match self.projection(base, &args) {
                     Some(members) => self.normalize(Type::Union(members.into())),
                     None => Type::Apply { base, args, kind },
@@ -1846,6 +1887,10 @@ impl Database {
             // Removing items of the dynamic schema leaves it
             Type::Restricted { schema, .. } if matches!(self.ty(schema), Type::Unknown(_)) => {
                 self.ty(schema).clone()
+            }
+            // The dynamic type's members are the dynamic schema
+            Type::Fields { target, .. } if matches!(self.ty(target), Type::Unknown(_)) => {
+                Type::Unknown(Kind::Schema)
             }
             Type::Union(members) => {
                 let mut normalized = Vec::new();
@@ -1927,6 +1972,21 @@ impl Database {
             schema,
             restriction,
         })
+    }
+
+    /// The member schema an application of `Fields` or `MutFields` stands for
+    fn fields(&self, base: TypeId, args: &[Argument]) -> Option<Type> {
+        let access = if self.intrinsic(Intrinsic::Fields) == Some(base) {
+            FieldAccess::Read
+        } else if self.intrinsic(Intrinsic::MutFields) == Some(base) {
+            FieldAccess::Write
+        } else {
+            return None;
+        };
+        let [Argument::Positional(target)] = *args else {
+            return None;
+        };
+        Some(Type::Fields { target, access })
     }
 
     /// The union members an application of a projecting intrinsic stands for, one
@@ -2383,6 +2443,7 @@ impl Database {
                     self.expect_kind(key, Kind::Type);
                 }
             }
+            Type::Fields { target, .. } => self.expect_kind(*target, Kind::Type),
         }
     }
 

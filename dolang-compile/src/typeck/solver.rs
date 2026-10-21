@@ -28,9 +28,9 @@ use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use crate::typeck::r#type::UnitSpan;
 
 use super::r#type::{
-    Argument, Binder, Binding, BoundRef, Database, DeclId, DeclKind, Element, Function, Intrinsic,
-    Kind, Literal, MemberKey, Multiplicity, Promotion, Rest, Restriction, SchemaItem, SymbolId,
-    Type, TypeId, UnionMember, Variance,
+    Argument, Binder, Binding, BoundRef, Database, DeclId, DeclKind, Element, FieldAccess,
+    Function, Intrinsic, Kind, Literal, MemberKey, Multiplicity, Promotion, Rest, Restriction,
+    SchemaItem, SymbolId, Type, TypeId, UnionMember, Variance,
 };
 
 /// A member of a generic class's object: its class, the class a private one is
@@ -1846,6 +1846,14 @@ impl<'db> Solver<'db> {
                     walk(key, variance.compose(Variance::Contravariant), 0)?;
                 }
                 Ok(())
+            }
+            // A subclass reads more members, and sets the same ones
+            Type::Fields { target, access } => {
+                let used = match access {
+                    FieldAccess::Read => Variance::Covariant,
+                    FieldAccess::Write => Variance::Contravariant,
+                };
+                walk(target, variance.compose(used), 0)
             }
             Type::Quantified { .. } => {
                 let mut children = Vec::new();
