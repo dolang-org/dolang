@@ -744,6 +744,10 @@ def geometry_dimensions()
   let unknown = term.Geometry()
   assert_eq $unknown.rows nil
   assert_eq $unknown.cols nil
+  assert_throws $std.UnsupportedError do let ..._ = unknown
+  let :rows :cols = fields(unknown)
+  assert_eq $rows nil
+  assert_eq $cols nil
   let partial = term.Geometry cols: 120
   assert_eq $partial.rows nil
   assert_eq $partial.cols 120

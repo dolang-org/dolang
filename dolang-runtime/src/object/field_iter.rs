@@ -5,7 +5,7 @@ use crate::value::fmt::Format;
 use bitvec::{bitbox, boxed::BitBox};
 
 use crate::{
-    error::{Error, ErrorKind, Result},
+    error::{Error, Result},
     gc::{Collect, arena::Visit},
     object::{sym::SymObj, tuple},
     sig::{self, UnpackKeyKind},
@@ -15,17 +15,22 @@ use crate::{
 };
 use dolang_bytecode::{Rest, Variadic};
 
-use super::protocol::{GcObj, Protocol, Recv, Spread, SpreadContext};
+use super::protocol::{GcObj, MemberKind, Protocol, Recv, Spread, SpreadContext};
 
-/// Read-only rest over the unmatched readable fields of an object.
+/// A live field proxy, or a read-only rest over its unmatched readable fields.
 pub(crate) struct FieldIter<'v> {
     receiver: Value<'v>,
     symbols: VecDeque<GcObj<'v, SymObj>>,
+    writable: Vec<GcObj<'v, SymObj>>,
 }
 
 impl<'v> FieldIter<'v> {
     pub(crate) fn new(receiver: Value<'v>, symbols: VecDeque<GcObj<'v, SymObj>>) -> Self {
-        Self { receiver, symbols }
+        Self {
+            receiver,
+            symbols,
+            writable: Vec::new(),
+        }
     }
 }
 
@@ -39,12 +44,16 @@ unsafe impl<'v> Collect for FieldIter<'v> {
         for symbol in &self.symbols {
             symbol.accept(visit)?;
         }
+        for symbol in &self.writable {
+            symbol.accept(visit)?;
+        }
         ControlFlow::Continue(())
     }
 
     fn clear(&mut self) {
         self.receiver = Value::NIL;
         self.symbols.clear();
+        self.writable.clear();
     }
 }
 
@@ -53,13 +62,8 @@ fn resolve<'v, 's>(
     receiver: &Value<'v>,
     symbol: &GcObj<'v, SymObj>,
     out: Slot<'v, '_>,
-) -> Result<'v, 's, bool> {
-    let sym = unsafe { Sym::from_obj(symbol) };
-    match receiver.op_get(strand, sym, out) {
-        Ok(()) => Ok(true),
-        Err(error) if error.kind() == ErrorKind::Field => Ok(false),
-        Err(error) => Err(error),
-    }
+) -> Result<'v, 's, ()> {
+    receiver.op_get(strand, unsafe { Sym::from_obj(symbol) }, out)
 }
 
 fn find_symbol<'v>(symbols: &[GcObj<'v, SymObj>], wanted: Sym<'v, '_>) -> Option<usize> {
@@ -69,12 +73,76 @@ fn find_symbol<'v>(symbols: &[GcObj<'v, SymObj>], wanted: Sym<'v, '_>) -> Option
 }
 
 impl<'v> Protocol<'v> for FieldIter<'v> {
+    fn op_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::iterable_get(strand, &this, field, out)
+    }
+
+    async fn op_mcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: Sym<'v, 'a>,
+        args: crate::arg::Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::iterable_mcall(strand, &this, method, args, out).await
+    }
+
+    fn op_index<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        index: &Value<'v>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let symbol = index.as_sym(strand).ok_or_else(|| Error::index(strand))?;
+        let fields = this.borrow(strand)?;
+        if !fields.symbols.iter().any(|key| key.tag == symbol.tag()) {
+            return Err(Error::index(strand));
+        }
+        fields.receiver.op_get(strand, symbol, out)
+    }
+
+    fn op_assign<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        index: Slot<'v, 'a>,
+        value: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let symbol = index.as_sym(strand).ok_or_else(|| Error::index(strand))?;
+        let fields = this.borrow(strand)?;
+        if !fields.writable.iter().any(|key| key.tag == symbol.tag()) {
+            return Err(Error::index(strand));
+        }
+        fields.receiver.op_set(strand, symbol, value)
+    }
+
+    async fn op_iter<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let fields = this.borrow(strand)?;
+        strand.builtin_types().field_pairs.create(
+            strand,
+            FieldPairs {
+                fields: FieldIter::new(fields.receiver.dup(), fields.symbols.clone()),
+                index: 0,
+            },
+            out,
+        );
+        Ok(())
+    }
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, TypeObject::Value)
+        Output::set(strand, out, TypeObject::Iterable)
     }
 
     fn op_debug<'a, 's>(
@@ -82,7 +150,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
         strand: &mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<field rest>")
+        crate::fmt!(strand, w, "<fields>")
     }
 
     async fn op_unpack<'a, 's>(
@@ -114,20 +182,15 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
                         UnpackKeyKind::Sym(wanted) => find_symbol(&symbols, *wanted),
                         UnpackKeyKind::Const(_) => None,
                     };
-                    let present = if let Some(index) = found {
-                        resolve(strand, &receiver, &symbols[index], staged.at(dest))?
+                    if let Some(index) = found {
+                        resolve(strand, &receiver, &symbols[index], staged.at(dest))?;
+                    } else if let Some(default) = &key.default {
+                        staged.at(dest).store(default.dup());
                     } else {
-                        false
-                    };
-                    if !present {
-                        if let Some(default) = &key.default {
-                            staged.at(dest).store(default.dup());
-                        } else {
-                            return Err(match &key.kind {
-                                UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
-                                UnpackKeyKind::Const(value) => Error::missing_key(strand, value),
-                            });
-                        }
+                        return Err(match &key.kind {
+                            UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
+                            UnpackKeyKind::Const(value) => Error::missing_key(strand, value),
+                        });
                     }
                     if let (Some(index), Some(consumed)) = (found, &mut consumed) {
                         consumed.set(index, true);
@@ -140,15 +203,9 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
                         if consumed[index] {
                             continue;
                         }
-                        let present = strand.with_slots_sync(|strand, [tmp]| {
-                            resolve(strand, &receiver, symbol, tmp)
-                        })?;
-                        if present {
-                            return Err(Error::unexpected_key(strand, unsafe {
-                                Sym::from_obj(symbol)
-                            }));
-                        }
-                        consumed.set(index, true);
+                        return Err(Error::unexpected_key(strand, unsafe {
+                            Sym::from_obj(symbol)
+                        }));
                     }
                 }
 
@@ -196,14 +253,10 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
         let iter = this.borrow(strand)?;
         for symbol in iter.symbols.iter().cloned() {
             let receiver = iter.receiver.dup();
-            let (present, mut value) = strand.with_slots_sync(|strand, [mut value]| {
-                let present = resolve(strand, &receiver, &symbol, Slot::reborrow(&mut value))?;
-                Ok((present, value.take()))
+            let mut value = strand.with_slots_sync(|strand, [mut value]| {
+                resolve(strand, &receiver, &symbol, Slot::reborrow(&mut value))?;
+                Ok(value.take())
             })?;
-
-            if !present {
-                continue;
-            }
             if context != SpreadContext::Sequence {
                 sink.symbol(
                     strand,
@@ -219,5 +272,133 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
             }
         }
         Ok(())
+    }
+}
+
+/// Inspect the receiver's type once; the proxy roots its receiver and member names.
+pub(crate) fn create<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    receiver: &Value<'v>,
+    out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    strand.with_slots_sync(|strand, [mut ty]| {
+        receiver.op_type(strand, Slot::reborrow(&mut ty));
+        let inspect = ty
+            .op_inspect(strand)
+            .ok_or_else(|| Error::not_supported(strand))?;
+        let mut fields = FieldIter::new(receiver.dup(), VecDeque::new());
+        for member in inspect.members {
+            if strand.sym_obj(member.sym).private {
+                continue;
+            }
+            if matches!(member.kind, MemberKind::Getter | MemberKind::Property) {
+                fields.symbols.push_back(strand.sym_obj(member.sym));
+            }
+            if matches!(member.kind, MemberKind::Setter | MemberKind::Property) {
+                fields.writable.push(strand.sym_obj(member.sym));
+            }
+        }
+        fields.symbols.make_contiguous().sort_by_key(|key| key.tag);
+        strand
+            .builtin_types()
+            .field_iter
+            .create(strand, fields, out);
+        Ok(())
+    })
+}
+
+pub(crate) struct FieldPairs<'v> {
+    fields: FieldIter<'v>,
+    index: usize,
+}
+
+unsafe impl<'v> Collect for FieldPairs<'v> {
+    const CYCLIC: bool = true;
+    const IMMUTABLE: bool = false;
+    type Annex = ();
+
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        self.fields.accept(visit)
+    }
+
+    fn clear(&mut self) {
+        self.fields.clear();
+    }
+}
+
+impl<'v> Protocol<'v> for FieldPairs<'v> {
+    fn op_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::iter_get(strand, &this, field, out)
+    }
+
+    async fn op_mcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: Sym<'v, 'a>,
+        args: crate::arg::Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::iter_mcall(strand, &this, method, args, out).await
+    }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::spread_iter(strand, &this, sink).await
+    }
+
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) {
+        Output::set(strand, out, TypeObject::Iter)
+    }
+
+    fn op_debug<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        crate::fmt!(strand, w, "<field iterator>")
+    }
+
+    async fn op_iter<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Output::set(strand, out, &this);
+        Ok(())
+    }
+
+    async fn op_next<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        let mut iter = this.borrow_mut(strand)?;
+        let Some(symbol) = iter.fields.symbols.get(iter.index).cloned() else {
+            return Ok(false);
+        };
+        let receiver = iter.fields.receiver.dup();
+        strand.with_slots_sync(|strand, [mut value]| {
+            resolve(strand, &receiver, &symbol, Slot::reborrow(&mut value))?;
+            out.store(Value::from_object(tuple::tuple(
+                strand,
+                [Value::from_object(symbol), value.take()],
+            )));
+            Ok(())
+        })?;
+        iter.index += 1;
+        Ok(true)
     }
 }

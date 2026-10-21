@@ -30,8 +30,8 @@ class Counter: Iter
 
 # Test basic iteration with (next)
 let counter = Counter 0 5
-# Unpacking reads public fields, not items
-let current: start :stop = counter
+# Fields expose public members independently from iteration
+let current: start :stop = fields(counter)
 assert_eq $start 0
 assert_eq $stop 5
 assert_eq $counter.current 0

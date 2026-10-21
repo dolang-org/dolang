@@ -955,7 +955,7 @@ def rest_annotation_expansion_is_indexed()
   let rest = unit.nodes().find(do |pair| type(pair[1], compile.RestParam))[1]
   assert_eq (span_text source rest.type_ellipsis) "..."
   assert_eq $rest.type_ellipsis.start.byte_offset 23
-  bind rest
+  bind fields(rest)
     :type_ellipsis
     ...
   assert_eq $type_ellipsis.start.byte_offset $rest.type_ellipsis.start.byte_offset

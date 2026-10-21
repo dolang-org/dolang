@@ -261,6 +261,10 @@ def functionally_updates_security_descriptors()
   assert_eq $updated.dacl.to_bin() $acl.to_bin()
   assert_eq $updated.rm_control 90
   assert_eq $empty.owner nil
+  bind fields(updated)
+    :owner
+    ..._
+  assert_eq $owner $sid
 
   let null = updated.with(dacl: nil, rm_control: nil)
   assert_eq $null.dacl nil
@@ -554,6 +558,17 @@ def ace_runtime_classes()
     assert_type $cls $entry
     assert_type $Ace $entry
     assert_eq $entry.type_code $code
+    let members = {...fields(entry)}
+    assert_eq (members.contains :object_type:) (type entry ObjectAce)
+    assert_eq (members.contains :sid:) (type entry KnownAce)
+    bind fields(entry)
+      :object_type = nil
+      ..._
+    if (type entry ObjectAce)
+      assert_eq $object_type $entry.object_type
+    else
+      assert_eq $object_type nil
+    assert_throws $UnsupportedError do let ..._ = entry
     assert_eq (Acl([entry]).aces[0].to_bin()) $entry.to_bin()
     if (type entry CustomAce)
       assert_throws $FieldError do entry.sid

@@ -918,7 +918,7 @@ pub class Status
 #
 # ```
 # for info = manager.enumerate_services()
-#   let :name :status = info
+#   let :name :status = fields(info)
 #   echo "$name: $(status.current_state)"
 # ```
 pub class ServiceInfo

@@ -101,12 +101,12 @@ class Point
   pub field x = 1
   pub field y = 2
 
-let :x *fp **fk = (Point())
+let :x *fp **fk = fields(Point())
 assert_eq $x 1
 assert_eq $fp ()
 assert_eq (pairs fk) [(Tuple [:y:, 2])]
 assert_throws $error.UnexpectedKeyError do
-  let x: _x *_ = (Point())
+  let x: _x *_ = fields(Point())
 
 # Key defaults and positional defaults fill separate slots
 bind {0: 1, k: 5}

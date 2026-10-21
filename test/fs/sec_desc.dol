@@ -33,6 +33,11 @@ def query_security_descriptors()
     assert_throws $std.FieldError do shallow.owner
     assert_throws $std.FieldError do shallow.group
     assert_throws $std.FieldError do shallow.dacl
+    # An unloaded component is still a declared key; its getter error propagates.
+    assert_throws $std.FieldError do
+      bind fields(shallow)
+        owner: _owner = nil
+        ..._
     assert_throws $std.FieldError do shallow.owner_defaulted
     assert_throws $std.FieldError do shallow.dacl_present
     assert_type $SecDesc (sec_desc "test_sec_desc.txt")
