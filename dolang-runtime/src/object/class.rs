@@ -1,6 +1,6 @@
 use std::{
     cell::{Cell, OnceCell},
-    collections::{HashMap, VecDeque, hash_map::Entry},
+    collections::{HashMap, hash_map::Entry},
     hash::DefaultHasher,
     marker::PhantomData,
     mem,
@@ -9,8 +9,6 @@ use std::{
 
 use crate::value::fmt::{Format, Spec};
 
-use bitvec::{bitbox, boxed::BitBox};
-use dolang_bytecode::{Rest, Variadic};
 use dolang_util::alias;
 
 use crate::{
@@ -19,17 +17,14 @@ use crate::{
     error::{Error, ErrorKind, Result},
     gc::{Annex, Collect, arena::Visit},
     object::{
-        BoundMethod,
-        field_iter::FieldIter,
-        native,
+        BoundMethod, native,
         protocol::{
-            Delegated, Dispatch, MemberKind, Recv, Spread, SpreadContext, instance_mcall_fallback,
-            is_special_mcall,
+            Delegated, Dispatch, Inspect, Member, MemberKind, Recv, Spread, SpreadContext,
+            instance_mcall_fallback, is_special_mcall,
         },
         sym::SymObj,
-        tuple,
     },
-    sig::{self, Unpack},
+    sig::Unpack,
     strand::Strand,
     sym::{self, Sym},
     unpack,
@@ -595,7 +590,44 @@ pub(crate) async fn create<'v, 's>(
     let mut type_entries: Vec<_> = type_entry_map.into_iter().collect();
     type_entries.sort_by_key(|(s, _)| *s);
 
+    let members = entries
+        .iter()
+        .filter(|(sym, _)| !strand.sym_obj(*sym).private)
+        .map(|(sym, entry)| {
+            Member::new(
+                *sym,
+                match entry {
+                    ClassEntry::Field(_) => MemberKind::Property,
+                    ClassEntry::Method(_) => MemberKind::Method,
+                    ClassEntry::Property(property) => property.kind(),
+                    ClassEntry::Delegate(_, kind) | ClassEntry::Abstract(_, kind) => *kind,
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    let type_members = type_entries
+        .iter()
+        .filter(|(sym, _)| !strand.sym_obj(*sym).private)
+        .map(|(sym, entry)| {
+            Member::new(
+                *sym,
+                match entry {
+                    ClassTypeEntry::Field { .. } => MemberKind::Property,
+                    ClassTypeEntry::Method { .. } => MemberKind::Method,
+                    ClassTypeEntry::Property { property, .. } => property.kind(),
+                    ClassTypeEntry::Delegate(_, kind) => *kind,
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    // SAFETY: the member symbols are rooted by the same roots as the entry tables.
+    let members =
+        unsafe { mem::transmute::<Vec<Member<'_, '_>>, Vec<Member<'v, 'static>>>(members) };
+    let type_members =
+        unsafe { mem::transmute::<Vec<Member<'_, '_>>, Vec<Member<'v, 'static>>>(type_members) };
     let class_annex = ClassObjectAnnex {
+        members: members.into(),
+        type_members: type_members.into(),
         name,
         module_name,
         symbols: symbols.into(),
@@ -892,6 +924,17 @@ pub(crate) struct Property<'v> {
     pub(crate) setter: Option<Value<'v>>,
 }
 
+impl Property<'_> {
+    fn kind(&self) -> MemberKind {
+        match (self.getter.is_some(), self.setter.is_some()) {
+            (true, true) => MemberKind::Property,
+            (true, false) => MemberKind::Getter,
+            (false, true) => MemberKind::Setter,
+            (false, false) => unreachable!("property must have an accessor"),
+        }
+    }
+}
+
 pub(crate) enum FieldDefault<'v> {
     Value(Value<'v>),
     Thunk(Value<'v>),
@@ -975,6 +1018,8 @@ impl<'v> ClassTypeEntry<'v> {
 /// Living in the annex keeps member lookup and dispatch free of the runtime
 /// borrow check; only class-level field storage needs one.
 pub(crate) struct ClassObjectAnnex<'v> {
+    members: alias::Box<[Member<'v, 'static>]>,
+    type_members: alias::Box<[Member<'v, 'static>]>,
     // Class name (for debug formatting)
     pub(crate) name: alias::Box<str>,
     // Optional module name for debug formatting.
@@ -1162,6 +1207,16 @@ impl<'v> ClassObject<'v> {
 }
 
 impl<'v> Protocol<'v> for ClassObject<'v> {
+    fn op_inspect<'a>(this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
+        let annex = this.annex();
+        Some(Inspect {
+            is_abstract: false,
+            is_final: annex.is_final.get(),
+            members: &annex.members,
+            type_members: &annex.type_members,
+        })
+    }
+
     fn op_type<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1870,166 +1925,6 @@ pub(crate) fn iter_natives<'v, 'a>(
     borrow.annex().natives.iter().filter_map(|s| s.get())
 }
 
-fn readable_class_entry(entry: &ClassEntry<'_>) -> bool {
-    matches!(
-        entry,
-        ClassEntry::Field(_)
-            | ClassEntry::Property(Property {
-                getter: Some(_),
-                ..
-            })
-            | ClassEntry::Delegate(_, MemberKind::Getter | MemberKind::Property)
-    )
-}
-
-fn read_class_entry<'v, 'a, 's>(
-    this: Recv<'v, 'a, ClassInstance<'v>>,
-    strand: &mut Strand<'v, 's>,
-    sym: Sym<'v, '_>,
-    entry: &ClassEntry<'v>,
-    mut out: Slot<'v, '_>,
-) -> Result<'v, 's, bool> {
-    let result = match entry {
-        ClassEntry::Field(slot_index) => {
-            let borrow = this.borrow(strand)?;
-            out.store(borrow.fields[*slot_index].dup());
-            Ok(())
-        }
-        ClassEntry::Property(Property {
-            getter: Some(getter),
-            ..
-        }) => strand.sync(async |strand| call!(strand, getter, out, &this).await),
-        ClassEntry::Delegate(slot, MemberKind::Getter | MemberKind::Property) => {
-            let native = this.annex().natives[*slot]
-                .get()
-                .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
-            strand.with_slots_sync(|strand, [mut delegator]| {
-                Output::set(strand, Slot::reborrow(&mut delegator), &this);
-                Delegated::new(native, &delegator).op_get(strand, sym, out)
-            })
-        }
-        _ => unreachable!(),
-    };
-    match result {
-        Ok(()) => Ok(true),
-        Err(error) if error.kind() == ErrorKind::Field => Ok(false),
-        Err(error) => Err(error),
-    }
-}
-
-async fn default_class_unpack<'v, 'a, 's>(
-    this: Recv<'v, 'a, ClassInstance<'v>>,
-    strand: &'a mut Strand<'v, 's>,
-    sig: &'a Unpack<'v, 'a>,
-    mut out: Slots<'v, 'a>,
-) -> Result<'v, 's, ()> {
-    let pos_count = sig.required + sig.optional.len();
-    if sig.required != 0 {
-        return Err(Error::missing_positional(strand, 0));
-    }
-
-    strand
-        .with_slots_dynamic(sig.len(), async |strand, mut staged| {
-            for (index, default) in sig.optional.iter().enumerate() {
-                staged.at(index).store(default.dup());
-            }
-
-            let class = this.annex().class.annex();
-            let entries = &class.entries;
-            let track = sig.key_rest() != Rest::Discard;
-            let mut matched: Option<BitBox> = track.then(|| bitbox![0; entries.len()]);
-
-            for (key_index, key) in sig.keys.iter().enumerate() {
-                let dest = pos_count + key_index;
-                let found = match &key.kind {
-                    sig::UnpackKeyKind::Sym(sym) => entries
-                        .binary_search_by_key(sym, |(candidate, _)| *candidate)
-                        .ok()
-                        .filter(|index| {
-                            let (sym, entry) = &entries[*index];
-                            !strand.sym_obj(*sym).private && readable_class_entry(entry)
-                        }),
-                    sig::UnpackKeyKind::Const(_) => None,
-                };
-                let present = if let Some(index) = found {
-                    let (sym, entry) = &entries[index];
-                    read_class_entry(this.clone(), strand, *sym, entry, staged.at(dest))?
-                } else {
-                    false
-                };
-                if !present {
-                    if let Some(default) = &key.default {
-                        staged.at(dest).store(default.dup());
-                    } else {
-                        return Err(match &key.kind {
-                            sig::UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
-                            sig::UnpackKeyKind::Const(value) => Error::missing_key(strand, value),
-                        });
-                    }
-                }
-                if let (Some(index), Some(matched)) = (found, &mut matched) {
-                    matched.set(index, true);
-                }
-            }
-
-            if sig.key_rest() == Rest::None {
-                let matched = matched.as_mut().unwrap();
-                for (index, (sym, entry)) in entries.iter().enumerate() {
-                    if matched[index]
-                        || strand.sym_obj(*sym).private
-                        || !readable_class_entry(entry)
-                    {
-                        continue;
-                    }
-                    let present = strand.with_slots_sync(|strand, [tmp]| {
-                        read_class_entry(this.clone(), strand, *sym, entry, tmp)
-                    })?;
-                    if present {
-                        return Err(Error::unexpected_key(strand, *sym));
-                    }
-                    matched.set(index, true);
-                }
-            }
-
-            // Fields are keyed items: a `...` or `**` rest gets the unmatched
-            // ones, and a `*` rest gets nothing
-            let rest_slot = if sig.variadic == Variadic::Capture {
-                sig.pos_rest_slot()
-            } else {
-                if let Some(i) = sig.pos_rest_slot() {
-                    staged
-                        .at(i)
-                        .store(Value::from_object(tuple::tuple(strand, [])));
-                }
-                sig.key_rest_slot()
-            };
-            if let Some(rest_slot) = rest_slot {
-                let matched = matched.as_ref().unwrap();
-                let symbols = entries
-                    .iter()
-                    .enumerate()
-                    .filter(|(index, (sym, entry))| {
-                        !matched[*index]
-                            && !strand.sym_obj(*sym).private
-                            && readable_class_entry(entry)
-                    })
-                    .map(|(_, (sym, _))| strand.sym_obj(*sym))
-                    .collect::<VecDeque<_>>();
-                strand.builtin_types().field_iter.create(
-                    strand,
-                    FieldIter::new(Value::from_object(this.to_strong()), symbols),
-                    staged.at(rest_slot),
-                );
-            }
-
-            for index in 0..sig.len() {
-                out.at(index).store(staged.at(index).take());
-            }
-            Ok(())
-        })
-        .await
-}
-
 fn class_sync_binary_op<'v, 'a, 's>(
     this: Recv<'v, 'a, ClassInstance<'v>>,
     strand: &mut Strand<'v, 's>,
@@ -2659,7 +2554,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     })
                     .await
             }
-            _ => default_class_unpack(this, strand, sig, out).await,
+            _ => Err(Error::not_supported(strand)),
         }
     }
 

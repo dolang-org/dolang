@@ -194,11 +194,11 @@ def field_json id_to_index value
 
 # One `nodes` entry. Fields a node's concrete kind doesn't expose (see the
 # conditional getter registration in `NodeObject::build`, dolang-ext-compile)
-# are absent from unpacking, so each is bound with a `nil` default here rather
+# are absent from its fields, so each is bound with a `nil` default here rather
 # than tracked separately per kind. A field holding a node gives its `nodes`
 # index.
 def node_json id_to_index node
-  bind node
+  bind fields(node)
     :name = nil
     :is_pub = nil
     :default = nil

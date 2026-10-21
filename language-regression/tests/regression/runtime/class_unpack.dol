@@ -25,39 +25,39 @@ class Example: Base
 let example = Example()
 
 # Direct, inherited, and getter-backed fields unpack by key.
-let :direct :inherited :property :backing = example
+let :direct :inherited :property :backing = fields(example)
 assert_eq $direct 1
 assert_eq $inherited 2
 assert_eq $property 3
 assert_eq $backing 3
 
 # Fields are keyed only. Optional positionals use defaults; required ones fail.
-bind example
+bind fields(example)
   - positional = 7
   ..._
 assert_eq $positional 7
 assert_throws $std.RuntimeError str: "missing positional item: 0" do
-  let _positional ..._ = example
+  let _positional ..._ = fields(example)
 
 # Missing keys use defaults, and missing required keys fail.
-bind example
+bind fields(example)
   :missing = 8
   ..._
 assert_eq $missing 8
 assert_throws $std.RuntimeError str: "missing key item: missing" do
-  let missing: _missing ..._ = example
+  let missing: _missing ..._ = fields(example)
 
 # Methods, setter-only properties, and private fields are not fields for unpack.
 assert_throws $std.RuntimeError str: "missing key item: method" do
-  let method: _method ..._ = example
+  let method: _method ..._ = fields(example)
 assert_throws $std.RuntimeError str: "missing key item: write_only" do
-  let write_only: _write_only ..._ = example
+  let write_only: _write_only ..._ = fields(example)
 assert_throws $std.RuntimeError str: "missing key item: private" do
-  let private: _private ..._ = example
+  let private: _private ..._ = fields(example)
 
 # A captured tail contains unmatched names, reads values lazily, and supports
 # iteration, recursive unpack, and keyed spreading.
-let direct: captured_direct ...tail = example
+let direct: captured_direct ...tail = fields(example)
 assert_eq $captured_direct 1
 example.backing = 30
 let property: later_property ...tail2 = tail
@@ -69,14 +69,13 @@ def take_backing :backing
   backing
 assert_eq (take_backing ...tail3) 30
 
-let ...pair_tail = example
+let ...pair_tail = fields(example)
 example.direct = 10
 let pairs = [...pair_tail]
 assert (pairs.contains (Tuple [:direct:, 10]))
 assert (pairs.contains (Tuple [:property:, 30]))
 
-# Discard and capture do not evaluate unmatched getters. Exhaustive matching
-# evaluates them, treating FieldError as absence and propagating other errors.
+# Declared keys stay present even if their getters raise FieldError.
 let absent_hits = 0
 class Absent
   pub field anchor = 0
@@ -87,15 +86,20 @@ class Absent
     throw FieldError :absent:
 
 let absent = Absent()
-bind absent
+bind fields(absent)
   ..._
 assert_eq $absent_hits 0
-let ...absent_tail = absent
+let ...absent_tail = fields(absent)
 assert_eq $absent_hits 0
-assert_eq [...absent_tail] [(Tuple [:anchor:, 0])]
+assert_throws $FieldError do [...absent_tail]
 assert_eq $absent_hits 1
-let :anchor = absent
-assert_eq $anchor 0
+assert_throws $FieldError do
+  bind fields(absent)
+    absent: _absent = 42
+    ..._
+assert_eq $absent_hits 2
+assert_throws $std.UnexpectedKeyError do
+  let anchor: _anchor = fields(absent)
 assert_eq $absent_hits 2
 
 let present_hits = 0
@@ -108,8 +112,8 @@ class Present
     1
 
 assert_throws $std.RuntimeError str: "unexpected key item: present" do
-  let anchor: _anchor = Present()
-assert_eq $present_hits 1
+  let anchor: _anchor = fields(Present())
+assert_eq $present_hits 0
 
 class Failure
   pub field anchor = 0
@@ -119,9 +123,9 @@ class Failure
     throw "boom"
 
 assert_throws $Str str: boom do
-  let anchor: _anchor = Failure()
+  let bad: _bad ..._ = fields(Failure())
 
-# Explicit (unpack) still takes precedence over default field unpack.
+# Explicit (unpack) remains independent from the fields proxy.
 class Explicit
   pub field actual = 1
 
@@ -130,3 +134,120 @@ class Explicit
 
 let :proxy = Explicit()
 assert_eq $proxy 9
+
+let :actual = fields(Explicit())
+assert_eq $actual 1
+
+# Instances without (unpack) reject even empty patterns.
+assert_throws $std.UnsupportedError do let ..._ = example
+class Empty
+  pub def method _self
+    nil
+assert_throws $std.UnsupportedError do let ..._ = Empty()
+assert_throws $std.UnsupportedError do let direct: _direct = example
+
+# Proxy reads and writes are live, and only declared capabilities are exposed.
+let proxy_fields = fields(example)
+proxy_fields[:direct:] = 11
+assert_eq $example.direct 11
+example.direct = 12
+assert_eq $proxy_fields[:direct:] 12
+proxy_fields[:write_only:] = 42
+assert_throws $std.IndexError do proxy_fields[:property:] = 1
+assert_throws $std.IndexError do proxy_fields[:method:]
+assert_throws $std.IndexError do proxy_fields[:private:]
+assert_throws $std.IndexError do proxy_fields[:write_only:]
+assert_throws $std.IndexError do proxy_fields[:missing:] = 1
+assert_throws $std.IndexError do proxy_fields["direct"]
+
+# Fresh iterators permit repeated and nested traversal.
+let first_pairs = []
+for key value = proxy_fields
+  first_pairs.push (key, value)
+let second_pairs = []
+for key value = proxy_fields
+  second_pairs.push (key, value)
+assert_eq $first_pairs $second_pairs
+assert_eq [...proxy_fields] $first_pairs
+assert_eq { ...proxy_fields } {direct: 12, inherited: 2, property: 30, backing: 30}
+
+# Primitive and built-in values use the same type-inspection path.
+assert_eq [...fields(1)] []
+assert_eq $fields([1, 2])[:len:] 2
+
+assert_eq [...proxy_fields.iter()] $first_pairs
+let nested_count = 0
+for _key _value = proxy_fields
+  for _other_key _other_value = proxy_fields
+    nested_count = (nested_count + 1)
+assert_eq $nested_count 16
+
+# Native unpack overrides are inherited, while fields use the merged inventory.
+class NativeFields: Array
+  pub field extra = 7
+  def (init) self
+    Array.(init) $self [10, 20]
+class NativeChild: NativeFields
+let native_fields = NativeChild()
+let a b = native_fields
+assert_eq [a, b] [10, 20]
+let :len :extra = fields(native_fields)
+assert_eq [len, extra] [2, 7]
+assert_eq { ...fields(native_fields) } {len: 2, extra: 7}
+
+# Local members shadow inherited native getters in the inspection table too.
+class Shadowed: NativeFields
+  pub field len = 99
+let :len :extra = fields(Shadowed())
+assert_eq [len, extra] [99, 7]
+
+# Dynamic field hooks do not add keys to a field proxy.
+class Dynamic
+  def (get) _self name
+    name
+let dynamic = Dynamic()
+assert_eq $dynamic.undeclared :undeclared:
+assert_eq [...fields(dynamic)] []
+assert_throws $std.IndexError do fields(dynamic)[:undeclared:]
+
+# Setters receive the original receiver, and getter reads are not cached.
+let getter_hits = 0
+class ReadWrite
+  field stored = 0
+  #[getter]
+  pub def value self
+    getter_hits = (getter_hits + 1)
+    self.#stored
+  #[setter]
+  pub def value self value
+    self.#stored = value
+let writable = fields(ReadWrite())
+assert_eq $getter_hits 0
+writable[:value:] = 5
+assert_eq $getter_hits 0
+assert_eq $writable[:value:] 5
+assert_eq $writable[:value:] 5
+assert_eq $getter_hits 2
+
+# Split rests remain keyed, lazy, and read-only.
+let direct: _direct *positions **members = proxy_fields
+assert_eq $positions ()
+let :backing :property :inherited = members
+assert_eq [backing, property, inherited] [30, 30, 2]
+assert_throws $std.IndexError do members[:backing:] = 0
+
+class SetterFailure
+  #[setter]
+  pub def bad _self _value
+    throw "setter boom"
+let setter_failure = fields(SetterFailure())
+assert_throws $Str str: "setter boom" do setter_failure[:bad:] = 1
+
+# A proxy and its rest keep the receiver alive after its original binding is gone.
+let retained = ReadWrite()
+let retained_fields = fields(retained)
+let ...retained_rest = retained_fields
+retained = nil
+retained_fields = nil
+let :value = retained_rest
+assert_eq $value 0

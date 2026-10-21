@@ -1,7 +1,6 @@
 use std::{
     borrow::Cow,
     cell::UnsafeCell,
-    collections::VecDeque,
     future,
     hash::Hasher,
     marker::PhantomData,
@@ -11,8 +10,6 @@ use std::{
 };
 
 use crate::value::fmt::{Format, Spec};
-
-use bitvec::{bitbox, boxed::BitBox};
 
 use crate::{
     arg::Args,
@@ -32,7 +29,6 @@ use crate::{
 
 use super::{
     BoundMethod,
-    field_iter::FieldIter,
     protocol::{
         self, Inspect, Member, MemberKind, Protocol, TypeHandle, instance_mcall_fallback,
         is_special_mcall, type_mcall_fallback,
@@ -1555,18 +1551,18 @@ pub trait Object<'v>: Sized + 'v {
     ///
     /// # Default Implementation
     ///
-    /// Unpacks registered readable fields. Iterators must opt in explicitly.
+    /// Raises an unsupported-operation error. Use `fields` to unpack public members.
     ///
     /// # Read-only contract
     ///
     /// Implementations must leave the receiver unchanged on success and failure.
     /// See [`Unpack`] documentation for patterns and examples.
     fn unpack<'a, 's>(
-        this: Instance<'v, 'a, Self>,
+        _this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        unpack: Unpack<'v, 'a>,
+        _unpack: Unpack<'v, 'a>,
     ) -> impl Future<Output = Result<'v, 's, ()>> {
-        default_object_unpack(this, strand, unpack)
+        async move { Err(Error::not_supported(strand)) }
     }
 
     /// Performs any object-specific finalization before the main object state is dropped.
@@ -1581,15 +1577,6 @@ pub trait Object<'v>: Sized + 'v {
     /// Does nothing.
     #[allow(unused_variables)]
     fn finalize<'a>(this: Instance<'v, 'a, Self>) {}
-}
-
-fn readable_entry(entry: &Entry<'_>) -> bool {
-    matches!(
-        entry,
-        Entry::Getter(_)
-            | Entry::Property(_, _)
-            | Entry::Delegate(_, MemberKind::Getter | MemberKind::Property)
-    )
 }
 
 async fn default_object_spread<'v, 'a, 's, T: Object<'v>>(
@@ -1611,161 +1598,6 @@ async fn default_object_spread<'v, 'a, 's, T: Object<'v>>(
             Delegated::new(supertype, &delegator)
                 .op_spread(strand, context, sink)
                 .await
-        })
-        .await
-}
-
-async fn default_object_unpack<'v, 'a, 's, T: Object<'v>>(
-    this: Instance<'v, 'a, T>,
-    strand: &'a mut Strand<'v, 's>,
-    unpack: Unpack<'v, 'a>,
-) -> Result<'v, 's, ()> {
-    let sig = unpack.inner;
-    let mut out = unpack.slots;
-    let pos_count = sig.required + sig.optional.len();
-    if sig.required != 0 {
-        return Err(Error::missing_positional(strand, 0));
-    }
-
-    strand
-        .with_slots_dynamic(sig.len(), async |strand, mut staged| {
-            for (index, default) in sig.optional.iter().enumerate() {
-                staged.at(index).store(default.dup());
-            }
-
-            let recv = match this.delegator {
-                Some(delegator) => {
-                    Recv::<ObjectWrap<'v, T>>::new(this.receiver).with_delegator(delegator)
-                }
-                None => Recv::<ObjectWrap<'v, T>>::new(this.receiver),
-            };
-            let entries = &recv.vtbl().entries;
-            let track = sig.key_rest() != Rest::Discard;
-            let mut matched: Option<BitBox> = track.then(|| bitbox![0; entries.len()]);
-
-            for (key_index, key) in sig.keys.iter().enumerate() {
-                let dest = pos_count + key_index;
-                let found = match &key.kind {
-                    sig::UnpackKeyKind::Sym(sym) => entries
-                        .binary_search_by_key(sym, |(candidate, _)| *candidate)
-                        .ok()
-                        .filter(|index| readable_entry(&entries[*index].1)),
-                    sig::UnpackKeyKind::Const(_) => None,
-                };
-                let present = if let Some(index) = found {
-                    let (sym, entry) = &entries[index];
-                    let result = match entry {
-                        Entry::Getter(handler) | Entry::Property(handler, _) => unsafe {
-                            handler.call(
-                                recv.as_header(),
-                                recv.delegator(),
-                                strand,
-                                staged.at(dest),
-                            )
-                        },
-                        Entry::Delegate(supertype_index, _) => {
-                            let supertype =
-                                instance_supertype::<T>(recv.clone(), strand, *supertype_index);
-                            strand.with_slots_sync(|strand, [mut delegator]| {
-                                Output::set(strand, Slot::reborrow(&mut delegator), &recv);
-                                Delegated::new(supertype, &delegator).op_get(
-                                    strand,
-                                    *sym,
-                                    staged.at(dest),
-                                )
-                            })
-                        }
-                        _ => unreachable!(),
-                    };
-                    match result {
-                        Ok(()) => true,
-                        Err(error) if error.kind() == ErrorKind::Field => false,
-                        Err(error) => return Err(error),
-                    }
-                } else {
-                    false
-                };
-                if !present {
-                    if let Some(default) = &key.default {
-                        staged.at(dest).store(default.dup());
-                    } else {
-                        return Err(match &key.kind {
-                            sig::UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
-                            sig::UnpackKeyKind::Const(value) => Error::missing_key(strand, value),
-                        });
-                    }
-                }
-                if let (Some(index), Some(matched)) = (found, &mut matched) {
-                    matched.set(index, true);
-                }
-            }
-
-            if sig.key_rest() == Rest::None {
-                let matched = matched.as_mut().unwrap();
-                for (index, (sym, entry)) in entries.iter().enumerate() {
-                    if matched[index] || !readable_entry(entry) {
-                        continue;
-                    }
-                    let present = strand.with_slots_sync(|strand, [tmp]| {
-                        let result = match entry {
-                            Entry::Getter(handler) | Entry::Property(handler, _) => unsafe {
-                                handler.call(recv.as_header(), recv.delegator(), strand, tmp)
-                            },
-                            Entry::Delegate(supertype_index, _) => {
-                                let supertype =
-                                    instance_supertype::<T>(recv.clone(), strand, *supertype_index);
-                                strand.with_slots_sync(|strand, [mut delegator]| {
-                                    Output::set(strand, Slot::reborrow(&mut delegator), &recv);
-                                    Delegated::new(supertype, &delegator).op_get(strand, *sym, tmp)
-                                })
-                            }
-                            _ => unreachable!(),
-                        };
-                        match result {
-                            Ok(()) => Ok(true),
-                            Err(error) if error.kind() == ErrorKind::Field => Ok(false),
-                            Err(error) => Err(error),
-                        }
-                    })?;
-                    if present {
-                        return Err(Error::unexpected_key(strand, *sym));
-                    }
-                    matched.set(index, true);
-                }
-            }
-
-            // Fields are keyed items: a `...` or `**` rest gets the unmatched
-            // ones, and a `*` rest gets nothing
-            let rest_slot = if sig.variadic == Variadic::Capture {
-                sig.pos_rest_slot()
-            } else {
-                if let Some(i) = sig.pos_rest_slot() {
-                    staged
-                        .at(i)
-                        .store(Value::from_object(tuple::tuple(strand, [])));
-                }
-                sig.key_rest_slot()
-            };
-            if let Some(rest_slot) = rest_slot {
-                let matched = matched.as_ref().unwrap();
-                let symbols = entries
-                    .iter()
-                    .enumerate()
-                    .filter(|(index, (_, entry))| !matched[*index] && readable_entry(entry))
-                    .map(|(_, (sym, _))| strand.sym_obj(*sym))
-                    .collect::<VecDeque<_>>();
-                let receiver = Value::from_object(Base::upcast(this.receiver.to_strong()));
-                strand.builtin_types().field_iter.create(
-                    strand,
-                    FieldIter::new(receiver, symbols),
-                    staged.at(rest_slot),
-                );
-            }
-
-            for index in 0..sig.len() {
-                out.at(index).store(staged.at(index).take());
-            }
-            Ok(())
         })
         .await
 }
@@ -3308,8 +3140,7 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
             Member::method(Sym::well_known(sym::RSHR_METHOD)),
             // Their defaults raise or, for `(spread)`, use an entry, so a Do
             // subclass delegating to a type that does not implement one fails
-            // as the class itself would. `(unpack)` is left out: its default
-            // reads only native getters, and would hide a Do subclass's fields.
+            // as the class itself would.
             Member::method(Sym::well_known(sym::CALL_METHOD)),
             Member::method(Sym::well_known(sym::INDEX_METHOD)),
             Member::method(Sym::well_known(sym::ASSIGN_METHOD)),
@@ -3318,6 +3149,7 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
             Member::method(Sym::well_known(sym::SINK_METHOD)),
             Member::method(Sym::well_known(sym::PUT_METHOD)),
             Member::method(Sym::well_known(sym::SPREAD_METHOD)),
+            Member::method(Sym::well_known(sym::UNPACK_METHOD)),
             Member::method(Sym::well_known(sym::HASH_METHOD)),
         ];
         // Entries resolve local handlers and abstract supertypes by MRO,
@@ -5026,9 +4858,11 @@ mod tests {
                 .enter(strand, async |strand, recv| {
                     strand
                         .with_slots_dynamic(0, async |strand, slots| {
-                            ObjectWrap::<Fixture>::op_unpack(recv.clone(), strand, &sig, slots)
-                                .await
-                                .unwrap();
+                            let error =
+                                ObjectWrap::<Fixture>::op_unpack(recv.clone(), strand, &sig, slots)
+                                    .await
+                                    .unwrap_err();
+                            assert_eq!(error.kind(), ErrorKind::Unsupported);
                         })
                         .await;
 
@@ -5076,9 +4910,10 @@ mod tests {
     }
 
     #[test]
-    fn default_native_unpack_reads_registered_fields_and_captures_lazy_tail() {
-        with_fixture_vm(async |strand, [mut owner, mut tail, mut tmp]| {
+    fn fields_native_reads_registered_fields_and_captures_lazy_tail() {
+        with_fixture_vm(async |strand, [mut owner, mut proxy, mut tail, mut tmp]| {
             make_slot_fixture(strand, 4, "unpack", Slot::reborrow(&mut owner));
+            crate::object::field_iter::create(strand, &owner, Slot::reborrow(&mut proxy)).unwrap();
             let state = strand.vm().state::<FixtureStateTag>();
             let sig = sig::Unpack::new(
                 0,
@@ -5091,7 +4926,7 @@ mod tests {
             );
             strand
                 .with_slots_dynamic(2, async |strand, mut out| {
-                    owner
+                    proxy
                         .op_unpack(strand, &sig, unsafe { Slots::new(out.as_inner()) })
                         .await
                         .unwrap();
@@ -5115,13 +4950,12 @@ mod tests {
                 Variadic::Capture,
             );
             strand
-                .with_slots_dynamic(2, async |strand, mut out| {
-                    tail.op_unpack(strand, &absent_sig, unsafe { Slots::new(out.as_inner()) })
+                .with_slots_dynamic(2, async |strand, out| {
+                    let error = tail
+                        .op_unpack(strand, &absent_sig, unsafe { Slots::new(out.as_inner()) })
                         .await
-                        .unwrap();
-                    assert_eq!(out.at(0).to_i64(strand).unwrap(), 17);
-                    // Recursive capture creates an independent read-only view.
-                    assert!(!out.at(1).repr_eq(strand, &tail));
+                        .unwrap_err();
+                    assert_eq!(error.kind(), ErrorKind::Field);
                 })
                 .await;
             owner
@@ -5153,9 +4987,10 @@ mod tests {
     }
 
     #[test]
-    fn default_native_exhaustive_unpack_evaluates_unmatched_getters_atomically() {
-        with_fixture_vm(async |strand, [mut owner]| {
+    fn fields_native_exhaustive_unpack_checks_metadata_atomically() {
+        with_fixture_vm(async |strand, [mut owner, mut proxy]| {
             make_slot_fixture(strand, 4, "unpack", Slot::reborrow(&mut owner));
+            crate::object::field_iter::create(strand, &owner, Slot::reborrow(&mut proxy)).unwrap();
             let state = strand.vm().state::<FixtureStateTag>();
             let sig = sig::Unpack::new(
                 0,
@@ -5176,22 +5011,22 @@ mod tests {
                 .with_slots_dynamic(2, async |strand, mut out| {
                     out.at(0).store(Value::from_i64(strand, 90));
                     out.at(1).store(Value::from_i64(strand, 91));
-                    let err = owner
+                    let err = proxy
                         .op_unpack(strand, &sig, unsafe { Slots::new(out.as_inner()) })
                         .await
                         .unwrap_err();
-                    assert_eq!(err.kind(), ErrorKind::Value);
+                    assert_eq!(err.kind(), ErrorKind::UnexpectedKey);
                     assert_eq!(out.at(0).to_i64(strand).unwrap(), 90);
                     assert_eq!(out.at(1).to_i64(strand).unwrap(), 91);
                 })
                 .await;
 
-            // The absent getter was checked before the failing getter.
+            // Exhaustive matching did not call unmatched getters.
             strand.with_slots_sync(|strand, [mut tmp]| {
                 owner
                     .op_get(strand, state.counter_sym, Slot::reborrow(&mut tmp))
                     .unwrap();
-                assert_eq!(tmp.to_i64(strand).unwrap(), 5);
+                assert_eq!(tmp.to_i64(strand).unwrap(), 4);
             });
         });
     }

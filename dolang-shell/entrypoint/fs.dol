@@ -85,10 +85,10 @@ def all_syms items
   items.all(do |i| type i Sym)
 
 # Destructures an object into its fields. Answers `nil` for a value that
-# doesn't unpack into key/value pairs at all.
+# doesn't expose inspectable fields.
 def unpack_fields value depth
   try
-    let ...rest = value
+    let ...rest = fields(value)
     $
       for key value = Dict(rest)
         (str key): (node value (depth + 1))
@@ -239,7 +239,15 @@ def macos_ace_node ace
 
 def windows_ace_node ace
   let kind = ace.type
-  let sid = display.opt do ace.sid
+  bind fields(ace)
+    :sid = nil
+    :mask = nil
+    :flags = nil
+    :object_type = nil
+    :inherited_object_type = nil
+    application_data: data = nil
+    ..._
+  flags = (flags != nil && collect(flags) || nil)
   let key = if WINDOWS_ALLOW.contains(kind)
     "allow"
   else if WINDOWS_DENY.contains(kind)
@@ -248,18 +256,17 @@ def windows_ace_node ace
     "audit"
   else
     nil
-  let mask = display.opt do ace.mask
-  let flags = display.opt do collect(ace.flags)
-  let object_type = display.opt do ace.object_type
-  let inherited_object_type = display.opt do ace.inherited_object_type
   # Only an audit entry is asked about the accesses it audits, so that the
   # question is never put to an ACE that has no answer to it.
   let successful = nil
   let failed = nil
   if (key == "audit")
-    successful = display.opt do ace.successful_access
-    failed = display.opt do ace.failed_access
-  let data = display.opt do ace.application_data
+    bind fields(ace)
+      successful_access: successful_value = nil
+      failed_access: failed_value = nil
+      ..._
+    successful = successful_value
+    failed = failed_value
   $
     if (key != nil && sid != nil)
       "$key": $ display.sid $sid
@@ -298,13 +305,18 @@ def acl_node acl kind
 # --- Windows security descriptors -------------------------------------------
 
 def sec_desc_node desc
-  let revision = display.opt do desc.revision
-  let control = display.opt do desc.control
-  let owner = display.opt do desc.owner
-  let group = display.opt do desc.group
-  let dacl = display.opt do desc.dacl
-  let sacl = display.opt do desc.sacl
-  let rm_control = display.opt do desc.rm_control
+  let view = fields(desc)
+  bind view
+    :revision
+    :control
+    :rm_control
+    :mask
+    ..._
+  # Declared component getters raise when that component was not queried.
+  let owner = (mask.contains(:OWNER:) && view[:owner:] || nil)
+  let group = (mask.contains(:GROUP:) && view[:group:] || nil)
+  let dacl = (mask.contains(:DACL:) && view[:dacl:] || nil)
+  let sacl = (mask.contains(:SACL:) && view[:sacl:] || nil)
   $
     if (revision != nil)
       revision: $ node $revision
@@ -344,7 +356,7 @@ def metadata_sections meta all raw
   let unix = {}
   let attributes = {}
   let other = {}
-  bind meta
+  bind fields(meta)
     ...rest
   for name value = Dict(rest)
     let key = (str name)
@@ -464,7 +476,7 @@ def filesystem_section path raw
   if (fs_meta == nil)
     return nil
   let entries = {}
-  bind fs_meta
+  bind fields(fs_meta)
     ...rest
   for name value = Dict(rest)
     let key = (str name)
