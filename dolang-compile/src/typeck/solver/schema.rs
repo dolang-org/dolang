@@ -22,6 +22,9 @@
 //! the actual side's multiplicities fits the expected side; each actual atom
 //! must then fit every expected atom its items can land on.
 //!
+//! A keyed item that may be absent and whose value is the bottom type admits
+//! no items, so on the actual side it has nothing to fit.
+//!
 //! Where the expected side has several keyed domains, as a lookup's
 //! `{*(K): V, ...}` does, an item belongs to the narrowest domain that admits
 //! its key, as a literal key owns its items, rather than to any domain that
@@ -1437,6 +1440,17 @@ impl Solver<'_> {
         mut overflow: Option<&mut Vec<KeyedAtom>>,
         obligation: ObligationId,
     ) -> Result<(), Issue> {
+        // An actual atom that may be absent and fits no value admits no items
+        let bottom = self.db.bottom();
+        let mut admitting = Vec::with_capacity(xs.len());
+        for x in xs {
+            let vacuous = x.multiplicity != Multiplicity::Required
+                && matches!(self.head(x.value)?, Head::Structural(view) if view.ty == bottom);
+            if !vacuous {
+                admitting.push(*x);
+            }
+        }
+        let xs = &admitting[..];
         let (literals, domains): (Vec<_>, Vec<_>) = ys
             .iter()
             .map(|y| Ok((self.literal(y.key)?, y)))

@@ -76,7 +76,7 @@ pub(crate) struct Signatures {
 }
 
 /// Where a receiver's members are looked up
-enum Receiver {
+pub(super) enum Receiver {
     Instance(Nominal),
     /// A class object, with its class, and whether it's exactly the class's own:
     /// its metatype, rather than a `Type[C]` that may hold a subclass's
@@ -273,7 +273,7 @@ impl Solver<'_> {
     /// Where a receiver's members are looked up, walking a rigid or skolem through
     /// its bound, top or an unbounded one to `Value`, and a literal or function to
     /// its intrinsic class
-    fn receiver(&self, mut term: Term) -> Result<Receiver, Issue> {
+    pub(super) fn receiver(&self, mut term: Term) -> Result<Receiver, Issue> {
         for depth in 0.. {
             self.depth(depth)?;
             self.spend()?;
@@ -634,7 +634,7 @@ impl Solver<'_> {
             }))
     }
 
-    fn members(&self, nominal: &Nominal) -> impl Iterator<Item = (MemberKey, &Member)> {
+    pub(super) fn members(&self, nominal: &Nominal) -> impl Iterator<Item = (MemberKey, &Member)> {
         self.db
             .declaration(nominal.declaration)
             .members
@@ -643,7 +643,7 @@ impl Solver<'_> {
     }
 
     /// A member of `nominal`'s class, interpreted with its arguments
-    fn found(&self, nominal: &Nominal, member: &Member) -> Found {
+    pub(super) fn found(&self, nominal: &Nominal, member: &Member) -> Found {
         let signatures = |decl| self.signatures(nominal, decl);
         let kind = match *member {
             Member::Field { ty, .. } => FoundKind::Field(self.view(ty, nominal.environment)),
