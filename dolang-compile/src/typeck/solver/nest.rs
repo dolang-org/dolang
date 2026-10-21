@@ -15,8 +15,8 @@ use rustc_hash::{FxBuildHasher, FxHashMap};
 use super::{
     Alternatives, Bases, Bounds, Constructor, DeclId, Dependency, Environment, EnvironmentId,
     GenericMember, InferVarId, Issue, Lookup, ObligationId, ObligationLayer, Relation, Residual,
-    Root, Scope, ScopeId, Signature, Skolem, SkolemId, Solver, State, Step, Term, TypeId, Variable,
-    VariableLayer, VariableState,
+    Root, Scope, ScopeId, Signature, Skolem, SkolemId, Solver, State, Status, Step, Term, TypeId,
+    Variable, VariableLayer, VariableState,
 };
 
 /// A work budget, shared by a solver and the solvers nested in it. Each unit of
@@ -76,6 +76,21 @@ impl Gas {
 impl Default for Gas {
     fn default() -> Self {
         Self::new(Self::WORK)
+    }
+}
+
+/// The verdicts of the probes a flow run's solvers made with no probe around
+/// them, which hold for any solver making the run's assumptions (#1280)
+#[derive(Default)]
+pub(crate) struct Verdicts(RefCell<FxHashMap<(TypeId, TypeId), Status>>);
+
+impl Verdicts {
+    pub(super) fn get(&self, actual: TypeId, expected: TypeId) -> Option<Status> {
+        self.0.borrow().get(&(actual, expected)).copied()
+    }
+
+    pub(super) fn insert(&self, actual: TypeId, expected: TypeId, status: Status) {
+        self.0.borrow_mut().insert((actual, expected), status);
     }
 }
 
@@ -180,6 +195,7 @@ impl<'db> Solver<'db> {
             queue,
             roots: Vec::new(),
             gas,
+            verdicts: self.verdicts,
             depth: self.depth,
             scope: self.scope.clone(),
             groups: self.groups.clone(),

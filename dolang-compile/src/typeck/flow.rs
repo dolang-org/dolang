@@ -117,7 +117,9 @@ use super::{
         Pattern, PatternItem, PatternKey, Run, RunId, Step, Tag, Target, Terminal, VarFlags, VarId,
     },
     elab::{Designated, Tables},
-    solver::{Gas, NarrowTarget, Outcome, Provenance, Residual, Solver, Status, Widening},
+    solver::{
+        Gas, NarrowTarget, Outcome, Provenance, Residual, Solver, Status, Verdicts, Widening,
+    },
     r#type::{
         Argument, Copies, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
         Multiplicity, SchemaItem, Shared, Type, TypeId, UnitId,
@@ -262,7 +264,18 @@ impl<'a, 'u> Tree<'a, 'u> {
             let (db, inherited) = self.fork(&db, &inherited, child);
             scope.spawn(move |scope| self.run(scope, child, db, inherited));
         }
-        let flow = Flow::new(self.ir, self.layout, run, &db, self.tables, self.reversed);
+        // Its solvers share their probes' verdicts, which hold only for its
+        // database and assumptions
+        let verdicts = Verdicts::default();
+        let flow = Flow::new(
+            self.ir,
+            self.layout,
+            run,
+            &db,
+            &verdicts,
+            self.tables,
+            self.reversed,
+        );
         let (results, accumulators) = flow.analyze(inherited);
         for &child in &run.late {
             let (db, inherited) = self.fork(&db, &accumulators, child);
@@ -349,6 +362,9 @@ struct Flow<'a, 'u> {
     layout: &'a Layout,
     run: &'a Run,
     db: &'a Database,
+    /// The verdicts of probes every solver for the run shares (see
+    /// [`Solver::share`])
+    verdicts: &'a Verdicts,
     tables: &'a Tables<'u>,
     unit: UnitId,
     /// By function, its declared type under its rigids, if it's a function type;
@@ -394,6 +410,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         layout: &'a Layout,
         run: &'a Run,
         db: &'a Database,
+        verdicts: &'a Verdicts,
         tables: &'a Tables<'u>,
         reversed: bool,
     ) -> Self {
@@ -427,6 +444,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             layout,
             run,
             db,
+            verdicts,
             tables,
             unit: layout.unit,
             declared: declared.into(),
@@ -581,6 +599,8 @@ impl<'a, 'u> Flow<'a, 'u> {
         if !self.strict() {
             solver.gradual();
         }
+        // Last, since assuming more stops a solver sharing them
+        solver.share(self.verdicts);
         #[cfg(feature = "debug")]
         {
             solver.named(self.tables, crate::typeck::r#type::Style::Full);
