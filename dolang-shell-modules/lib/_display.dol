@@ -1,3 +1,4 @@
+# dolang: strict
 # Shared rendering for the YAML-shaped dumps the shell's inspection
 # entrypoints print.
 #
@@ -6,15 +7,27 @@
 # dropped entirely, and a block can align its keys against the widest one it
 # holds.
 #
-# The shape of the value is the shape of the output. A dict is a block of
-# `key: value` lines, an array or tuple a block of `- item` lines, and anything
-# else is one line, so most of a dump is written as vertical layout. A value
-# that needs presenting some other way than its own string conversion is
-# rendered ahead of time into a `term.Text` -- by one of the leaves here, or by
-# the caller -- and the renderer prints that as the finished line it is.
+# The shape of the value is the shape of the output, and `Node` names the
+# shapes there are: a dict is a block of `key: value` lines, an array or tuple
+# a block of `- item` lines, and a `Leaf` one line, so most of a dump is
+# written as vertical layout. Any other value is rendered ahead of time into a
+# `term.Text` -- by one of the leaves here, or by the caller -- and the
+# renderer prints that as the finished line it is. Nothing is taken apart or
+# guessed at here: a value the caller left as it is either has a shape the
+# renderer knows or is one line.
 
 import std sys term
-import security.unix
+import security.unix security.windows
+import @fs @time @uuid
+
+# A value printed on one line as itself.
+pub @let Leaf = (nil | Bool | Int | Float | Str | Sym | term.Text | fs.Path | time.DateTime | uuid.Uuid)
+
+# A dump: a block of keyed entries, a list of items, or one line.
+pub @let Node = (Leaf | BaseDict[Str | Sym, Node] | BaseArray[Node] | Tuple[...Node])
+
+# A rendered line: the column it starts at, and what it shows there.
+@let Row = (Int, term.Text)
 
 # A dump reads as the spec that would recreate what it describes, so it is
 # colored as that source would be: the shell's own syntax highlighting, with
@@ -35,11 +48,10 @@ let constant_style = term.Style fg: :MAGENTA:
 let note_style = term.Style fg: :WHITE: dim: true
 let absent_style = term.Style dim: true
 
-def spaces n
-  " ".repeat(n)
+let bullet = delim_style "- "
 
-def bullet indent
-  delim_style "$(spaces indent)- "
+def spaces n @ Int -> Str
+  " ".repeat(n)
 
 let SIZE_UNITS = ["KiB", "MiB", "GiB", "TiB", "PiB", "EiB"]
 # A unit only takes over from the one below it once the count is half again
@@ -49,20 +61,18 @@ let SIZE_STEP = 1536.0
 
 # --- Renderer ---------------------------------------------------------------
 
-# True when `value` is a sequence of items rather than a keyed block. A tuple
-# is one as much as an array is: an object that reports a fixed-shape field as
-# a tuple is reporting a sequence, not a value that prints on one line.
-def is_sequence value
-  (type value Array || type value Tuple)
-
-# True when `value` opens a block beneath the line that introduces it. An empty
+# True when `node` opens a block beneath the line that introduces it. An empty
 # block has nothing to open, so it reads as `{}` or `[]` in place.
-def is_block value
-  ((type value Dict || is_sequence value) && value.len > 0)
+def opens node @ Node -> Bool
+  if (type node std.BaseDict)
+    return (node.len > 0)
+  if (type node std.BaseArray || type node Tuple)
+    return (node.len > 0)
+  false
 
-# Renders a value that occupies a single line, colored as the token it would
-# be in source. A `Text` has already decided how it looks and is left alone.
-def scalar value
+# Renders a leaf colored as the token it would be in source. A `Text` has
+# already decided how it looks and is left alone.
+def scalar value @ Leaf -> term.Text
   if (value == nil)
     absent_style "~"
   else if (type value term.Text)
@@ -76,143 +86,152 @@ def scalar value
   else
     term.text $value
 
-# Prints the one-line form of `value`, which for an empty block is the marker
+# Renders the one-line form of `node`, which for an empty block is the marker
 # it reads as in place.
-def print_inline value
-  if (type value Dict)
-    print (absent_style "{}")
-  else if is_sequence(value)
-    print (absent_style "[]")
+def inline node @ Node -> term.Text
+  if (type node std.BaseDict)
+    absent_style "{}"
+  else if (type node std.BaseArray || type node Tuple)
+    absent_style "[]"
   else
-    print $ scalar $value
+    scalar $node
 
-# Emits `value` as the body of `key`. `start` is what precedes the line --
-# indentation, or a bullet leading into a block -- and `column` is the
-# `FmtSpec` that lays the key out against the block it appears in.
-def print_entry key value indent start column
-  if !is_block(value)
-    print $start (key_style(column("$key:"))) " "
-    print_inline $value
-    print "\n"
-    return nil
+# Renders the block `node` opens, its lines starting at `indent`.
+def rows node @ Node indent @ Int -> Array[Row]
+  if (type node std.BaseDict)
+    entry_rows $node $indent
+  else if (type node std.BaseArray || type node Tuple)
+    item_rows $node $indent
+  else
+    [(indent, scalar(node))]
+
+def entry_rows entries @ BaseDict[Str | Sym, Node] indent @ Int -> Array[Row]
   # A key that leads into a block is on a line of its own, so it takes no part
   # in the alignment of the keys that share a column with their values.
-  print $start (key_style "$key:") "\n"
-  print_block $value (indent + 2) (spaces (indent + 2))
-
-# Emits `value` as an item of an enclosing list.
-def print_item value indent
-  if !is_block(value)
-    print $ bullet $indent
-    print_inline $value
-    print "\n"
-    return nil
-  if is_sequence(value)
-    # Every item of the nested list carries its own bullet, so this one has
-    # nothing to lead into and the block opens on the line below.
-    print (bullet indent) "\n"
-    print_block $value (indent + 2) nil
-    return nil
-  print_block $value (indent + 2) (bullet indent)
-
-# Emits the children of `value`, one line each. `lead` precedes the first line
-# in place of the indentation, so a caller can lead into the block with a key
-# or a bullet. A sequence ignores it: every item carries its own bullet.
-def print_block value indent lead
-  if is_sequence(value)
-    for item = value
-      print_item $item $indent
-    return nil
   let width = 0
-  for key item = value
-    if !is_block(item)
-      let key_width = (key_style (str key)).width()
+  for key value = entries
+    if !opens(value)
+      let key_width = (term.text "$key:").width()
       if (key_width > width)
         width = key_width
-  # The `:` is part of what gets laid out, hence the extra column.
-  let column = std.FmtSpec width: (width + 1)
-  let first = true
-  for key item = value
-    let start = if first
-      lead
+  let result @ Array[Row] = []
+  for key value = entries
+    let label = key_style "$key:"
+    if opens(value)
+      result.push (indent, label)
+      result.push ...(rows value (indent + 2))
     else
-      spaces $indent
-    first = false
-    print_entry $key $item $indent $start $column
+      let pad = spaces (width - label.width() + 1)
+      result.push (indent, term.text(label, pad, inline(value)))
+  result
+
+def item_rows items @ Iterable[Node] indent @ Int -> Array[Row]
+  let result @ Array[Row] = []
+  for item = items
+    if !opens(item)
+      result.push (indent, term.text(bullet, inline(item)))
+    else if (type item std.BaseDict)
+      # The first entry shares the bullet's line. The bullet is as wide as the
+      # step a nested block is indented by, so it takes the place of the end
+      # of that entry's indentation and every key stays in one column.
+      let nested = entry_rows $item (indent + 2)
+      let _ first = nested[0]
+      nested[0] = (indent, term.text(bullet, first))
+      result.push ...nested
+    else
+      # Every item of a nested list carries its own bullet, so this one has
+      # nothing to lead into, and the list opens on the line below.
+      result.push (indent, delim_style("-"))
+      result.push ...(rows item (indent + 2))
+  result
 
 # --- Leaves -----------------------------------------------------------------
 
 # Renders `value` on one line, with a dim parenthetical aside naming what it
 # resolves to.
 #
-# Ordinary values need no help from this -- the renderer handles them where
-# they sit -- so this is for a caller that wants the aside, or that wants a
-# structured value flattened to the single line it would otherwise open a
-# block on.
-pub def text value note = nil
+# A leaf needs no help from this -- the renderer handles one where it sits --
+# so this is for a caller that wants the aside.
+pub def text
+  value @ Leaf
+  note @ (Str | nil) = nil
+do -> term.Text
+  let line = scalar $value
   if (note == nil)
-    return scalar $value
-  term.text (scalar value) " " (note_style "($note)")
+    return line
+  term.text $line " " (note_style "($note)")
 
 # Renders any iterable of symbols -- every flag type, and every mask a
 # security descriptor reports -- as the set of names it holds.
 #
 # The names are separated the way a mask is usually written rather than the way
 # a Do array is: each is an enumerated value in its own right, and reads as one.
-pub def flags value
+pub def flags value @ (Iterable[Sym] | nil) -> term.Text
   if (value == nil)
     return scalar nil
-  let names = [...value.map(constant_style)]
+  let names = [...value.map(do |name| constant_style(str name))]
   if (names.len == 0)
     return absent_style "[]"
   delim_style(" | ").join(names)
 
 # Renders a value that answers to none of the colors: a description this module
-# composed, or a string standing in for something that is not one.
-pub def plain value note = nil
+# composed, a string standing in for something that is not one, or a value
+# that is not a `Leaf`, flattened to its string conversion.
+pub def plain
+  value @ Value
+  note @ (Str | nil) = nil
+do -> term.Text
   text (term.text value) $note
 
 # A number the caller has already written out -- in hex or octal, say -- so
 # that it is colored as the number it is rather than the string it arrives as.
-pub def number value note = nil
+pub def number
+  value @ (Str | Int)
+  note @ (Str | nil) = nil
+do -> term.Text
   text (number_style (str value)) $note
 
 # A byte count, scaled to the largest binary unit it fills, with the exact
 # number kept as the aside so the size is still readable off the line it is
 # scaled on. A count small enough that a unit would only cost it precision is
 # left as it is, as is one the caller asked for `raw`.
-pub def size value raw = false
+pub def size
+  value @ (Int | nil)
+  raw @ Bool = false
+do -> term.Text
   if (value == nil)
     return scalar nil
   let count = term.text (number_style "$value") " bytes"
   if (raw || value < SIZE_STEP)
     return count
-  let scaled = float $value
-  let unit = nil
-  for candidate = SIZE_UNITS
+  let scaled = (float(value) / 1024.0)
+  let unit = 0
+  while (scaled >= SIZE_STEP && unit + 1 < SIZE_UNITS.len)
     scaled = (scaled / 1024.0)
-    unit = candidate
-    if (scaled < SIZE_STEP)
-      break
-  text $count "${scaled:.2f} $unit"
+    unit = (unit + 1)
+  text $count "${scaled:.2f} $(SIZE_UNITS[unit])"
 
 # --- Sections ---------------------------------------------------------------
 
 # Prints one `▸ name` block, or nothing at all when the section has no content
 # to show. A section that could not be read at all arrives as `nil` and reads
 # the same way as one that came back empty.
-pub def section name node
-  if !is_block(node)
+pub def section
+  name @ Str
+  node @ Node
+do
+  if !opens(node)
     return nil
   print "  " (section_style "▸ $name") "\n"
-  print_block $node 6 (spaces 6)
+  for indent body = rows $node 6
+    print (spaces indent) $body "\n"
 
 # --- System values ----------------------------------------------------------
 
 # Evaluates `func`, answering `nil` when the value simply isn't there: a field
 # that doesn't apply to this platform, an operation the target VFS doesn't
 # support, or a query the OS refused.
-pub def opt func
+pub def opt[T] func @ (() -> T) -> (T | nil)
   try
     func()
   catch std.FieldError: _
@@ -223,7 +242,10 @@ pub def opt func
     nil
 
 # A uid or gid, annotated with the name it resolves to.
-pub def id value kind
+pub def id
+  value @ (Int | nil)
+  kind @ (:USER: | :GROUP:)
+do -> term.Text
   if (value == nil)
     return scalar nil
   let name = opt do
@@ -234,10 +256,10 @@ pub def id value kind
   text $value $name
 
 # A Windows SID, annotated with the account it names.
-pub def sid value
+pub def sid value @ (security.windows.Sid | nil) -> term.Text
   if (value == nil)
     return scalar nil
   let name = opt do
-    let :kind :qualified_name ... = value.lookup()
-    "$kind: $qualified_name"
-  text $value $name
+    let account = value.lookup()
+    "$(account.kind): $(account.qualified_name)"
+  plain $value $name

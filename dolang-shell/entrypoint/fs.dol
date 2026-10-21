@@ -108,7 +108,7 @@ def structure_node value depth
     return fields
   let raw = collect $value
   if (raw == nil)
-    return display.text $value
+    return display.plain $value
   if all_syms(raw)
     return display.flags $raw
   $
@@ -118,15 +118,15 @@ def structure_node value depth
 # Converts an arbitrary value into the shape it is printed as, special-casing
 # the types that read better as a single line than as their component fields.
 #
-# A value the renderer already prints correctly is answered as it is; only a
-# value that would print as something else has to be rendered here.
+# A `display.Leaf` is answered as it is; any other value becomes a
+# `display.Node` here, so the renderer is never handed one it doesn't know.
 def node value depth = 0
   if (value == nil)
     return nil
   # Past the depth limit, a structured value is flattened onto the one line it
   # would otherwise open a block on.
   if (depth > MAX_DEPTH)
-    return display.text $value
+    return display.plain $value
   if (type value Sym || type value Bool || type value Int || type value Float)
     return value
   # These print as themselves, but they are iterable or unpackable, so each has
