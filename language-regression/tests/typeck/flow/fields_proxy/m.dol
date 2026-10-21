@@ -1,0 +1,167 @@
+# `fields` proxies a value's public members: indexing reads `Fields[T]` and
+# assigns `MutFields[T]`, and unpacking, spreading and iteration read
+# `Fields[T]`. A class that isn't final may have subclasses with more members.
+
+import std:
+  - @FieldProxy
+
+#[final]
+pub class Point
+  pub field x @ Int = 0
+  pub field y @ Str = ""
+  field secret @ Int = 0
+
+  #[getter]
+  pub def label _self -> Str
+    ""
+
+  pub def norm _self -> Int
+    0
+
+pub class Open
+  pub field x @ Int = 0
+
+pub def reads p @ Point
+  let view = fields(p)
+  let _ = view[:x:]
+  #   ^: flow std.Int
+  let _ = view[:label:]
+  #   ^: flow std.Str
+  let _ = view[:norm:]
+  # error: expected `:label: | :x: | :y:`, found `:norm:`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = view[:norm:]
+  #    |                ^^^^^^
+  #    |
+  #    = note: `:norm:` does not fit `:label: | :x: | :y:`
+  let _ = view[:secret:]
+# error: expected `:label: | :x: | :y:`, found `:secret:`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ = view[:secret:]
+#    |                ^^^^^^^^
+#    |
+#    = note: `:secret:` does not fit `:label: | :x: | :y:`
+
+pub def writes p @ Point
+  let view = fields(p)
+  view[:x:] = 1
+  view[:x:] = "x"
+  # error: expected `std.Int`, found `"x"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   view[:x:] = "x"
+  #    |               ^^^
+  view[:label:] = ""
+# error: expected `:x: | :y:`, found `:label:`
+#   --> m.dol:LL:LL
+#    |
+# LL |   view[:label:] = ""
+#    |        ^^^^^^^
+#    |
+#    = note: `:label:` does not fit `:x: | :y:`
+
+# Another key may be a subclass's member, of any type, that can't be set
+pub def open_keys o @ Open
+  let view = fields(o)
+  let _ = view[:x:]
+  #   ^: flow std.Int
+  let _ = view[:other:]
+  #   ^: flow Value
+  view[:other:] = 1
+# error: expected `Never`, found `1`
+#   --> m.dol:LL:LL
+#    |
+# LL |   view[:other:] = 1
+#    |                   ^
+
+# A rest reads the members left over, and sets none
+pub def unpacks p @ Point
+  let :x :y :label = fields(p)
+  let _ = [x, y, label]
+  #   ^: flow [std.Int | std.Str]
+  let x: _ ...rest = fields(p)
+  let :y ..._ = rest
+  let _ = y
+  #   ^: flow std.Str
+  let _ = rest[:label:]
+  #   ^: flow std.Str
+  rest[:y:] = ""
+  # error: expected `Never`, found `:y:`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   rest[:y:] = ""
+  #    |        ^^^
+  #    |
+  #    = note: `:y:` does not fit `Never`
+  let :x = fields(p)
+  # error: `std.FieldProxy[{x: std.Int, y: std.Str, label: std.Str}, {?x: std.Int, ?y: std.Str}]` can never unpack as this pattern
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let :x = fields(p)
+  #    |            ^^^^^^^^^
+  let _ = x
+
+# An open class's subclass may have another member, which a pattern without a
+# rest refuses only at runtime
+pub def open_unpacks o @ Open
+  let :x ..._ = fields(o)
+  let _ = x
+  #   ^: flow std.Int
+  let x: _ = fields(o)
+
+pub def spreads p @ Point
+  let _ = { ...fields(p) }
+  #   ^: flow std.Dict[:label: | :x: | :y:, std.Int | std.Str]
+  for key value = fields(p)
+    let _ = key
+    #   ^: flow :label: | :x: | :y:
+    let _ = value
+    #   ^: flow std.Int | std.Str
+
+# Reads join the members' schemas, and writes meet them
+pub def unions v @ (Point | Open)
+  let view = fields(v)
+  let _ = view[:x:]
+  #   ^: flow std.Int
+  view[:x:] = 1
+  view[:y:] = ""
+# error: expected `Never`, found `""`
+#   --> m.dol:LL:LL
+#    |
+# LL |   view[:y:] = ""
+#    |               ^^
+
+# A generic target's members aren't known, so its schemas are left as they are
+pub def generic[T] v @ T
+  let view = fields(v)
+  let ..._ = view
+  let _ = { ...view }
+  for _key _value = view
+    nil
+
+# A built-in value's members are its class's
+pub def literal()
+  let :len ..._ = fields([1, 2])
+  let _ = len
+  #   ^: flow std.Int
+
+# A proxy is covariant in what it reads and invariant in what it sets
+pub def covariant_reads _p @ FieldProxy[{x: (Int | Str), **Value}, {?x: Int, ?y: Str}]
+  ...
+
+pub def invariant_writes _p @ FieldProxy[{**Value}, {?x: (Int | Str), ?y: Str}]
+  ...
+
+pub def variance p @ Point
+  covariant_reads $ fields(p)
+  invariant_writes $ fields(p)
+# error: expected `std.FieldProxy[{*(std.Sym): Value}, {?x: std.Int | std.Str, ?y: std.Str}]`, found `std.FieldProxy[{x: std.Int, y: std.Str, label: std.Str}, {?x: std.Int, ?y: std.Str}]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   invariant_writes $ fields(p)
+#    |                      ^^^^^^^^^
+#    |
+#    = note: `std.Int` doesn't accept `std.Str`
+#    = note: in `{?x: std.Int, ?y: std.Str}`

@@ -124,6 +124,34 @@ pub def dict[...Ts] ...pairs @ Ts -> Dict[Ts]
   ...
 
 #
+# Makes a proxy for a value's public fields and properties.
+#
+# Indexing the proxy with a member's symbol reads or sets the member, and
+# unpacking or spreading it reads members by key, so a value without its own
+# [`(unpack)`](../../language/classes.md#unpack-destructuring) can be
+# destructured through `fields`. Iterating it gives `(key, value)` pairs. A
+# member is read when the proxy is indexed, unpacked, spread or iterated, not
+# when it is made.
+#
+# ```
+# #[final]
+# class Point
+#   pub field x y = 0
+#
+# let p = Point()
+# fields(p)[:x:] = 3
+# let :x :y = fields(p)
+# assert_eq [x, y] [3, 0]
+# ```
+#
+# ## Errors
+#
+# Indexing the proxy raises [`IndexError`](std.IndexError) for a key that isn't a
+# member it can read, or set when assigning.
+pub def fields[T] value @ T -> FieldProxy[Fields[T], MutFields[T]]
+  ...
+
+#
 # Decorator forbidding subclasses of a class.
 #
 # A class that inherits from a final class fails to be created. The type checker
@@ -566,6 +594,15 @@ do
 
   # Destructures by key, leaving a rest that can also be destructured.
   pub def (unpack) self -> Map[S]
+
+
+# A [`fields`](std.fields) proxy, which reads the members in `S` and sets those
+# in `M`. A captured rest reads the members left over and sets none.
+pub @class FieldProxy[S @ {...}, M @ {...}]:
+  Iterable[Entries[S]] Index[S] Assign[M] Unpack[S, Rest: FieldProxy[S, {}]]
+do
+  # Returns this proxy, which destructures by key.
+  pub def (unpack) self -> FieldProxy[S, M]
 
 
 # A [`Map`](std.Map) supporting assignment, which replaces every value of a key.

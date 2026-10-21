@@ -18,6 +18,8 @@
 //! set schema is their meet: the keys all of them set, at the meet of their
 //! values, admitting any other key with no value fitting it.
 
+use std::ops::ControlFlow;
+
 use super::{
     callable::drop_receiver,
     member::{FoundKind, Receiver, Signatures},
@@ -62,17 +64,31 @@ impl Solver<'_> {
                     value,
                 },
             });
-        let rest = members.open.then(|| SchemaItem {
+        let rest = members.open.then(|| {
+            self.further_keys(match access {
+                FieldAccess::Read => self.db.top(),
+                FieldAccess::Write => self.db.bottom(),
+            })
+        });
+        Ok(self.db.intern(Type::Schema(items.chain(rest).collect())))
+    }
+
+    /// What every member schema is below, whatever its target: any number of
+    /// symbol keys, at any value
+    pub(super) fn fields_bound(&self) -> TypeId {
+        self.db
+            .intern(Type::Schema(vec![self.further_keys(self.db.top())].into()))
+    }
+
+    /// An item admitting any further symbol key at `value`
+    fn further_keys(&self, value: TypeId) -> SchemaItem {
+        SchemaItem {
             multiplicity: Multiplicity::Repeated,
             element: Element::Keyed {
                 key: (self.db.intrinsic(Intrinsic::Sym)).unwrap_or(self.db.unknown()),
-                value: match access {
-                    FieldAccess::Read => self.db.top(),
-                    FieldAccess::Write => self.db.bottom(),
-                },
+                value,
             },
-        });
-        Ok(self.db.intern(Type::Schema(items.chain(rest).collect())))
+        }
     }
 
     /// The members a closed target's schema lists, or `None` if they're dynamic
@@ -226,8 +242,14 @@ impl Solver<'_> {
         let mut accessed = None;
         for &signature in signatures {
             let signature = self.reify(signature)?;
-            let unsupported = Residual::Unsupported("a generic or receiverless accessor");
-            let (function, _) = drop_receiver(self.db, signature).ok_or(unsupported)?;
+            // An accessor may be generic, as in its ambient channels, in what it
+            // neither reads nor sets
+            let (binders, body) = match self.db.ty(signature) {
+                Type::Quantified { binders, body } => (Some(binders), *body),
+                _ => (None, signature),
+            };
+            let unsupported = Residual::Unsupported("an accessor without a receiver");
+            let (function, _) = drop_receiver(self.db, body).ok_or(unsupported)?;
             let Type::Function(function) = self.db.ty(function) else {
                 unreachable!("a receiver is a function's parameter")
             };
@@ -243,6 +265,25 @@ impl Solver<'_> {
                     },
                     _ => return Err(Residual::Unsupported("a setter without a value").into()),
                 },
+            };
+            let value = match binders {
+                Some(binders) => {
+                    let own = self.db.walk(value, |node, depth| match *self.db.ty(node) {
+                        Type::Bound { reference, .. } if u32::from(reference.depth) == depth => {
+                            ControlFlow::Break(())
+                        }
+                        _ => ControlFlow::Continue(()),
+                    });
+                    if own.is_break() {
+                        let generic = "an accessor generic in what it reads or sets";
+                        return Err(Residual::Unsupported(generic).into());
+                    }
+                    let unknowns: Vec<_> = (binders.iter())
+                        .map(|binder| self.db.unknown_of(binder.kind))
+                        .collect();
+                    self.db.instantiate(value, &unknowns)
+                }
+                None => value,
             };
             accessed = Some(match accessed {
                 Some(previous) => self.lub(previous, value),

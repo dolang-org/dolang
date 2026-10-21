@@ -475,15 +475,19 @@ def filesystem_section path raw
   let fs_meta = display.opt do fs.fs_metadata $path
   if (fs_meta == nil)
     return nil
-  let entries = {}
   bind fields(fs_meta)
+    :capacity
+    :free
+    :available
     ...rest
+  let entries = $
+    "capacity": $ display.size $capacity $raw
+    "free": $ display.size $free $raw
+    "available": $ display.size $available $raw
   for name value = Dict(rest)
     let key = (str name)
     if RAW_MASK_FIELDS.contains(key)
       entries[key] = (hex_node value)
-    else if SIZE_FIELDS.contains(key)
-      entries[key] = (display.size value raw)
     else
       entries[key] = (node value)
   order_entries $FS_FIELDS $entries

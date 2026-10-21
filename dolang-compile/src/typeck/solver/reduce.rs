@@ -761,6 +761,20 @@ impl Solver<'_> {
                 self.derive(obligation, schema, expected, Step::Restricted);
                 Ok(())
             }
+            // A member schema left as itself is below what every member schema
+            // is below, but may be below more, so only that bound's proof counts
+            (Type::Fields { .. }, _) => {
+                let unreduced = match *self.db.ty(self.reify(Term::View(a))?) {
+                    Type::Fields { target, access } => self.fields(target, access).err(),
+                    _ => None,
+                };
+                let unreduced =
+                    unreduced.unwrap_or(Residual::Unsupported("these structural types").into());
+                match self.probe(self.fields_bound(), self.reify(expected)?)? {
+                    Status::Proven => Ok(()),
+                    _ => Err(unreduced),
+                }
+            }
             _ => Err(Residual::Unsupported("these structural types").into()),
         }
     }
