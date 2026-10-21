@@ -654,6 +654,9 @@ pub(crate) struct Solver<'db> {
     roots: Vec<Root>,
     /// The work budget, shared with the solvers nested in this one
     gas: &'db Gas,
+    /// The verdicts of probes shared by the solvers of a flow run, while this one
+    /// makes the run's assumptions (see [`Solver::share`])
+    verdicts: Option<&'db Verdicts>,
     /// How deeply traversals may recurse
     depth: usize,
     /// The declarations being checked, whose rigids' bounds are assumptions
@@ -772,6 +775,7 @@ impl<'db> Solver<'db> {
             queue: MonoVec::new(),
             roots: Vec::new(),
             gas,
+            verdicts: None,
             depth,
             scope: FxHashSet::default(),
             groups: FxHashMap::default(),
@@ -874,6 +878,7 @@ impl<'db> Solver<'db> {
     pub(crate) fn assume(&mut self, decl: DeclId) {
         self.scope.insert(decl);
         self.inherits = false;
+        self.verdicts = None;
         self.constructors.get_mut().clear();
         self.default_constructions.get_mut().clear();
         self.generic_members.get_mut().clear();
@@ -893,12 +898,21 @@ impl<'db> Solver<'db> {
     pub(crate) fn gradual(&mut self) {
         self.gradual = true;
         self.inherits = false;
+        self.verdicts = None;
         self.rigid_bounds.get_mut().clear();
     }
 
     /// Whether it checks a gradual unit's declarations (see [`Self::gradual`])
     pub(crate) fn is_gradual(&self) -> bool {
         self.gradual
+    }
+
+    /// Share the verdicts of the probes it and the solvers nested in it make
+    /// with no probe around them, through `verdicts`, and use those already
+    /// there. They hold only while it makes its current assumptions, so
+    /// assuming more stops it sharing them.
+    pub(crate) fn share(&mut self, verdicts: &'db Verdicts) {
+        self.verdicts = Some(verdicts);
     }
 
     /// A solver nested in this one, whose work is charged to `gas`. Nothing
@@ -1491,6 +1505,31 @@ impl<'db> Solver<'db> {
                 return Ok((Status::Proven, false));
             }
         }
+        if let Some(status) = self.verdicts.and_then(|v| v.get(actual, expected)) {
+            trace!(self, "probe answered from the cache");
+            return Ok((status, false));
+        }
+        let (status, cycle) = self.prove(actual, expected, premise)?;
+        // A probe nested in another may assume or revisit the judgments of
+        // those around it (see [`Self::revisit`]), so only an outermost one's
+        // verdict holds elsewhere
+        if let Some(verdicts) = self.verdicts
+            && !self.tracks
+            && status != Status::Unresolved
+        {
+            verdicts.insert(actual, expected, status);
+        }
+        Ok((status, cycle))
+    }
+
+    /// Solve a probe of `actual <: expected` on a nested solver (see
+    /// [`Self::probe_cycle`])
+    fn prove(
+        &self,
+        actual: TypeId,
+        expected: TypeId,
+        premise: Option<bool>,
+    ) -> Result<(Status, bool), Residual> {
         let mut proof = self.nested(Nesting::Probe {
             actual,
             expected,
@@ -3580,7 +3619,7 @@ pub(crate) use conform::{Inheritance, Masked, Requirement, RequirementKind};
 pub(crate) use lattice::Widening;
 pub(crate) use member::{Access, Found, FoundKind, Lookup, Signatures};
 pub(crate) use narrow::Target as NarrowTarget;
-pub(crate) use nest::Gas;
+pub(crate) use nest::{Gas, Verdicts};
 use nest::{Nesting, Parent, Revisit};
 pub(crate) use unpack::{PatternShape, Reason, Unpacked};
 

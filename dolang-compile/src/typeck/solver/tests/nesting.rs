@@ -312,6 +312,64 @@ fn holds_reports_a_probes_status() {
 }
 
 #[test]
+fn a_probes_verdict_is_shared() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let (one, two) = (literal(&db, 1), literal(&db, 2));
+    db.seal();
+    let verdicts = Verdicts::default();
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    s.share(&verdicts);
+    assert_eq!(s.holds(one, int), Status::Proven);
+    assert_eq!(s.holds(one, two), Status::Contradicted);
+    // Another solver sharing them answers both without spending anything
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    s.share(&verdicts);
+    assert_eq!(s.holds(one, int), Status::Proven);
+    assert_eq!(s.holds(one, two), Status::Contradicted);
+    assert_eq!(gas.used(), 0);
+}
+
+#[test]
+fn only_verdicts_are_shared() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let one = literal(&db, 1);
+    db.seal();
+    let verdicts = Verdicts::default();
+    let gas = Gas::new(0);
+    let mut s = Solver::new(&db, &gas);
+    s.share(&verdicts);
+    assert_eq!(s.holds(one, int), Status::Unresolved);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    s.share(&verdicts);
+    assert_eq!(s.holds(one, int), Status::Proven);
+}
+
+#[test]
+fn assuming_stops_sharing_verdicts() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let one = literal(&db, 1);
+    let decl = generic(&mut db, vec![binder(Variance::Covariant)], int);
+    db.seal();
+    let verdicts = Verdicts::default();
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    s.share(&verdicts);
+    assert_eq!(s.holds(one, int), Status::Proven);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    s.share(&verdicts);
+    s.assume(decl);
+    assert_eq!(s.holds(one, int), Status::Proven);
+    assert!(gas.used() > 0);
+}
+
+#[test]
 fn probes_stop_at_the_first_contradiction() {
     let mut db = Database::new();
     let (one, two, three, four) = (
