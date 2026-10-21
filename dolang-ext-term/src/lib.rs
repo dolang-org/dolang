@@ -15,7 +15,11 @@ use dolang::runtime::{
     vm::{Builder, Vm},
 };
 
-pub use crate::{console::Console, extension::TermExt, geometry::Geometry};
+pub use crate::{
+    console::Console,
+    extension::TermExt,
+    geometry::{Geometry, create_geometry},
+};
 
 /// Installs the host console: the console `term.console` names, and the one
 /// output goes to when nothing is captured.
@@ -48,14 +52,6 @@ pub fn install_console<'v>(
 /// may not exist yet.
 pub fn console_type<'v>(vm: &Vm<'v>) -> Type<'v, Console> {
     vm.state::<Tag>().types.console
-}
-
-/// The `term.Geometry` type object.
-///
-/// A native geometry type registers this as a nominal supertype, subject to
-/// the same `DEPENDS` requirement as [`console_type`].
-pub fn geometry_type<'v>(vm: &Vm<'v>) -> Type<'v, Geometry> {
-    vm.state::<Tag>().types.geometry
 }
 
 /// Collects the arguments of a `Console.write` call — any number of `Str` or

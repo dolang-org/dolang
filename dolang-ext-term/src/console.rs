@@ -10,6 +10,7 @@ use dolang::runtime::{
     value::{TypeObject, View},
 };
 
+use crate::geometry::create_geometry;
 use crate::util::{Framing, data_bytes, encode_value, write_data};
 
 /// The console interface: where human-readable output goes.
@@ -78,10 +79,9 @@ impl<'v> Object<'v> for Console {
                 Output::set(strand, out, false);
                 Ok(())
             })
-            .method("geometry", async move |_this, strand, args, _out| {
+            .method("geometry", async move |_this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                // Nil: a bare console is just a stream, which is a real answer
-                // rather than a missing one.
+                create_geometry(strand, None, None, out);
                 Ok(())
             })
     }
@@ -298,8 +298,9 @@ impl<'v> Object<'v> for SinkConsole {
                 Output::set(strand, out, false);
                 Ok(())
             })
-            .method("geometry", async move |_this, strand, args, _out| {
+            .method("geometry", async move |_this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
+                create_geometry(strand, None, None, out);
                 Ok(())
             })
             .get("line_ending", |_this, strand, out| {
@@ -492,8 +493,9 @@ impl<'v> Object<'v> for SubConsole {
                 Output::set(strand, out, false);
                 Ok(())
             })
-            .method("geometry", async move |_this, strand, args, _out| {
+            .method("geometry", async move |_this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
+                create_geometry(strand, None, None, out);
                 Ok(())
             })
     }

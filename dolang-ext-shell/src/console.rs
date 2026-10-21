@@ -9,12 +9,7 @@ use dolang::runtime::{
 };
 use tokio::io::AsyncWriteExt;
 
-use crate::{
-    error::ErrorExt as _,
-    geometry::{HostGeometry, HostGeometryAnnex},
-    global::Global,
-    io_mode::encode_value,
-};
+use crate::{error::ErrorExt as _, global::Global, io_mode::encode_value};
 
 /// The host console's line ending: LF on every platform, since this is a
 /// terminal, not a file, and `echo` has always written LF on Windows too.
@@ -91,19 +86,7 @@ impl<'v> Object<'v> for HostConsole {
                 };
                 let rows = ov.rows.map(u32::from).or(real.map(|(r, _)| r.into()));
                 let cols = ov.cols.map(u32::from).or(real.map(|(_, c)| c.into()));
-                // Always a `Geometry`, never nil: the host console is the
-                // terminal-shaped one, so "I don't know either dimension" is
-                // itself expressed as a `Geometry` with both fields nil,
-                // rather than as a second, redundant way to say "unknown"
-                // alongside the per-field nils. `is_tty` is the determinative
-                // terminal test — a guessed 24x80 is never invented here,
-                // each dimension is independently advisory.
-                global.types.host_geometry.create_with_annex(
-                    strand,
-                    HostGeometry,
-                    HostGeometryAnnex { rows, cols },
-                    out,
-                );
+                dolang_ext_term::create_geometry(strand, rows, cols, out);
                 Ok(())
             })
     }

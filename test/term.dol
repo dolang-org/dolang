@@ -10,7 +10,6 @@ import shell term strand json
   std:
     - FmtValue
     - TypeError
-    - UnsupportedError
     - ValueError
 
 let ESC = str b"\x1b"
@@ -33,15 +32,6 @@ class Recorder: term.Console
   pub def flush _self
     nil
 
-class MyGeometry: term.Geometry
-  pub field rows
-  pub field cols
-
-  def (init) self rows cols
-    term.Geometry.(init) $self
-    self.rows = rows
-    self.cols = cols
-
 class Fancy: term.Console
   pub field lines
   pub field can_style = true
@@ -61,7 +51,7 @@ class Fancy: term.Console
     nil
 
   pub def geometry _self
-    MyGeometry 24 80
+    term.Geometry rows: 24 cols: 80
 
 class Crlf: term.Console
   pub field lines
@@ -109,9 +99,7 @@ def console_geometry()
   assert_eq (type term.console.can_style) $Bool
   assert_eq (type term.console.is_tty) $Bool
 
-  # `geometry()` is only advisory, and never nil for the host console: each
-  # dimension is independently nil when it cannot be determined, even when
-  # `is_tty` is true, rather than the whole result being absent.
+  # Each dimension is independently nil when it cannot be determined.
   let g = term.console.geometry()
   assert (type g term.Geometry)
   assert (g.rows == nil || type g.rows == Int)
@@ -492,7 +480,9 @@ def capture_reports_no_geometry()
   let out = []
   term.capture $out do
     assert_eq (term.output().is_tty) false
-    assert_eq (term.output().geometry()) nil
+    let captured = term.output().geometry()
+    assert_eq $captured.rows nil
+    assert_eq $captured.cols nil
     let pinned = term.console.geometry()
     assert_eq $pinned.rows $host.rows
     assert_eq $pinned.cols $host.cols
@@ -702,11 +692,11 @@ def do_subclass_console()
   # includes `line_ending`, which is what `echo` above terminated with.
   assert_eq $recorder.can_style false
   assert_eq $recorder.is_tty false
-  assert_eq (recorder.geometry()) nil
+  assert_eq (recorder.geometry().cols) nil
 
 #[test]
 def do_console_declares_capabilities()
-  # A Do field shadows the base's getter, and a Do method its `geometry()`.
+  # A Do method shadows the base's `geometry()`.
   let fancy = Fancy()
   term.capture $fancy do echo (term.text "warn" fg: :YELLOW:)
   assert_eq $fancy.lines ["$ESC[33mwarn$ESC[0m\n"]
@@ -750,13 +740,14 @@ def console_write_takes_pieces()
   assert_eq (term.sub do term.output().write "a" "b") ab
 
 #[test]
-def bare_geometry_refuses()
-  # `term.Geometry` is the interface, so an instance of it has no dimensions to
-  # report — the same refusal `term.Console`'s write methods make.
-  let base = term.Geometry()
-  assert (type base term.Geometry)
-  assert_throws $UnsupportedError do base.rows
-  assert_throws $UnsupportedError do base.cols
+def geometry_dimensions()
+  let unknown = term.Geometry()
+  assert_eq $unknown.rows nil
+  assert_eq $unknown.cols nil
+  let partial = term.Geometry cols: 120
+  assert_eq $partial.rows nil
+  assert_eq $partial.cols 120
+  assert_throws $ValueError do term.Geometry rows: -1
 
 #[test]
 def reentrant_console_does_not_recurse()
