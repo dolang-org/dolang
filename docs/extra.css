@@ -37,6 +37,14 @@
     overflow-wrap: normal;
 }
 
+/* An overload's position among its siblings, set apart from its signature */
+.md-typeset sup.do-overload {
+    font-size: 0.6em;
+    font-weight: normal;
+    color: var(--md-default-fg-color--light);
+    white-space: nowrap;
+}
+
 .playground-link {
     font-size: .7rem;
     font-weight: 600;

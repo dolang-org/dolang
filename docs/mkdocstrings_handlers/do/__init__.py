@@ -19,6 +19,8 @@ ALIAS_SCHEMA_ITEMS = 4
 
 from mkdocstrings._internal.handlers.base import BaseHandler, CollectionError
 
+_SUPERSCRIPT_DIGITS = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
+
 # Characters Markdown reads as syntax, escaped in the text of a type
 _MARKDOWN_SPECIAL = re.compile(r"([\\`*_\[\]])")
 
@@ -203,6 +205,7 @@ class DoHandler(BaseHandler):
         doc_data = copy.deepcopy(cached)
         entities = self._resolve_entities(Path(cache_dir), module_name, doc_data.get("entities", []))
         _sort_entities(entities)
+        _fold_overloads(entities)
 
         show_undocumented = options.get("show_undocumented", False)
         if not show_undocumented:
@@ -275,6 +278,44 @@ def _assign_anchors(entities: list[dict]) -> None:
         count = counts.get(identifier, 0) + 1
         counts[identifier] = count
         entity["_anchor"] = identifier if count == 1 else f"{identifier}--overload-{count}"
+
+
+def _fold_overloads(entities: list[dict]) -> None:
+    """Document overloaded functions and methods by their overloads alone.
+
+    The implementation behind `@def` overloads only stands in for them where
+    checking a call fails, so it is dropped; its doc comment is kept for any
+    overload that has none of its own. Each overload is labeled with its
+    position among them, in source order.
+    """
+    groups: dict[tuple, list[dict]] = {}
+    for entity in entities:
+        if entity.get("kind") in ("function", "method"):
+            key = (entity["kind"], entity.get("name"), entity.get("scope"))
+            groups.setdefault(key, []).append(entity)
+    dropped: set[int] = set()
+    for group in groups.values():
+        overloads = [e for e in group if e.get("type_only")]
+        if not overloads:
+            continue
+        impls = [e for e in group if not e.get("type_only")]
+        fallback = next((e["doc"] for e in impls if e.get("doc")), None)
+        dropped.update(id(e) for e in impls)
+        for index, overload in enumerate(overloads, 1):
+            if not overload.get("doc") and fallback:
+                overload["doc"] = fallback
+            if len(overloads) > 1:
+                overload["overload"] = {
+                    "label": f"overload {index} of {len(overloads)}",
+                    # The table of contents takes plain text, so its mark is
+                    # written with superscript digits
+                    "mark": str(index).translate(_SUPERSCRIPT_DIGITS),
+                }
+    entities[:] = [e for e in entities if id(e) not in dropped]
+    for entity in entities:
+        members = entity.get("members")
+        if members:
+            _fold_overloads(members)
 
 
 def _sort_entities(entities: list[dict]) -> None:
