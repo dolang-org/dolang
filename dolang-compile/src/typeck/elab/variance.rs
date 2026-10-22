@@ -30,7 +30,7 @@ use rustc_hash::FxHashMap;
 
 use super::{
     Ambient, BinderRef, DeclNode, Designated, Head, ParamTy, Referent, RestSlot, Slot, Tables, sig,
-    surface::{Member, TypeArg, TypeExpr, TypeKey, TypeParam, TypeParamKind},
+    surface::{Member, SiteId, TypeArg, TypeExpr, TypeKey, TypeParam, TypeParamKind},
 };
 use crate::{
     ast::SpecialMethod,
@@ -49,6 +49,7 @@ pub(crate) fn variances(tables: &mut Tables<'_>) {
         unit: UnitId::from_index(0),
         decl: DeclId::from_index(0),
         bound: None,
+        ambient: None,
         path: Vec::new(),
         expanding: Vec::new(),
         saturated: false,
@@ -197,6 +198,9 @@ struct Collect<'t, 'u> {
     /// Within a bound of the binders of a signature, which is a covariant position
     /// for them
     bound: Option<(DeclId, usize)>,
+    /// The signature whose channels function types in the site being walked take
+    /// when they omit their own
+    ambient: Option<(DeclId, usize)>,
     /// The keys whose variance composes a use at the current position
     path: Vec<Key>,
     /// The written ambient channels being walked in place of a function type's own
@@ -216,7 +220,7 @@ impl<'t> Collect<'t, '_> {
             self.bound = Some((id, sig));
             for binder in tables.binders(id, sig) {
                 if let Some(bound) = binder.bound {
-                    self.ty(tables.site_ty(bound), Use::CONTRA);
+                    self.site(bound, Use::CONTRA);
                 }
             }
             self.bound = None;
@@ -239,15 +243,14 @@ impl<'t> Collect<'t, '_> {
                     if let Member::Field(field) = member
                         && let Some(annot) = field.annot
                     {
-                        let annot = tables.site_ty(annot);
-                        let u = match (self.phantom(annot), field.public) {
+                        let u = match (self.phantom(tables.site_ty(annot)), field.public) {
                             (true, _) => Use::CO,
                             (false, true) => Use::BOTH,
                             // Only a method's parameters or results store into a
                             // private field, and they count
                             (false, false) => continue,
                         };
-                        self.ty(annot, u);
+                        self.site(annot, u);
                     }
                 }
             }
@@ -256,7 +259,7 @@ impl<'t> Collect<'t, '_> {
                 if let Some(body) = alias.body
                     && tables.aliases.get(&id) != Some(&Head::Error)
                 {
-                    self.ty(tables.site_ty(body), Use::CO);
+                    self.site(body, Use::CO);
                 }
             }
             DeclNode::Defs(_) | DeclNode::Methods(_) => {
@@ -376,7 +379,7 @@ impl<'t> Collect<'t, '_> {
                     self.slot(slot, Use::CONTRA);
                 }
                 ParamTy::Rest(RestSlot::Pack(ty) | RestSlot::Pattern(ty)) => {
-                    self.ty(tables.site_ty(*ty), Use::CONTRA);
+                    self.site(*ty, Use::CONTRA);
                 }
             }
         }
@@ -386,9 +389,7 @@ impl<'t> Collect<'t, '_> {
             (completed.output, func.output),
         ] {
             match (ambient, written) {
-                (Ambient::Written, Some(implicit)) => {
-                    self.ty(tables.site_ty(implicit), Use::CONTRA)
-                }
+                (Ambient::Written, Some(implicit)) => self.site(implicit, Use::CONTRA),
                 (Ambient::Implicit(binder), _) => self.uses(binder, Use::CONTRA),
                 _ => {}
             }
@@ -398,8 +399,17 @@ impl<'t> Collect<'t, '_> {
 
     fn slot(&mut self, slot: &Slot, u: Use) {
         if let Slot::Annot(ty) = *slot {
-            self.ty(self.tables.site_ty(ty), u);
+            self.site(ty, u);
         }
+    }
+
+    /// Walk a site, whose function types take its signature's channels.
+    fn site(&mut self, site: SiteId, u: Use) {
+        let tables = self.tables;
+        let site = &tables.sites[site.index()];
+        let outer = std::mem::replace(&mut self.ambient, site.ambient);
+        self.ty(&site.ty, u);
+        self.ambient = outer;
     }
 
     fn referent(&self, head: Span) -> Option<&'t Referent> {
@@ -526,16 +536,12 @@ impl<'t> Collect<'t, '_> {
                     self.ty(arg.ty(), Use::BOTH);
                 }
             }
-            TypeExpr::Schema { params, span, .. } => {
-                let brace = UnitSpan {
-                    unit: self.unit,
-                    span: *span,
-                };
-                match self.tables.braces.get(&brace) {
-                    Some(&class) => self.designated(class, u, |this, u| this.items(params, u)),
-                    None => self.items(params, u),
-                }
-            }
+            TypeExpr::Schema {
+                params, collection, ..
+            } => match collection.get() {
+                Some(class) => self.designated(class, u, |this, u| this.items(params, u)),
+                None => self.items(params, u),
+            },
             TypeExpr::Tuple { params, .. } => {
                 let role = Designated::Intrinsic(Intrinsic::Tuple);
                 self.designated(role, u, |this, u| this.items(params, u));
@@ -555,7 +561,6 @@ impl<'t> Collect<'t, '_> {
                 params,
                 input,
                 output,
-                arrow_span,
                 ret,
                 ..
             } => {
@@ -564,13 +569,10 @@ impl<'t> Collect<'t, '_> {
                     self.ty(ty, u.flip());
                 }
                 self.ty(ret, u);
-                let tables = self.tables;
-                let ambients = tables.func_ambients.get(&UnitSpan {
-                    unit: self.unit,
-                    span: *arrow_span,
-                });
-                for (index, ambient) in ambients.into_iter().flatten().enumerate() {
-                    self.ambient(*ambient, index, u.flip());
+                let written = [input.is_some(), output.is_some()];
+                let ambients = sig::func_channels(self.tables, self.ambient, written);
+                for (index, ambient) in ambients.into_iter().enumerate() {
+                    self.ambient(ambient, index, u.flip());
                 }
             }
             TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
@@ -586,19 +588,18 @@ impl<'t> Collect<'t, '_> {
                 let Some(implicit) = [func.input, func.output][index] else {
                     return;
                 };
-                let implicit = self.tables.site_ty(implicit);
                 // A channel that contains a function type taking that channel is used
                 // in every direction its nesting reaches
                 if self.expanding.contains(&(decl, sig, index)) {
                     if !self.saturated {
                         self.saturated = true;
-                        self.ty(implicit, u);
+                        self.site(implicit, u);
                         self.saturated = false;
                     }
                     return;
                 }
                 self.expanding.push((decl, sig, index));
-                self.ty(implicit, u);
+                self.site(implicit, u);
                 self.expanding.pop();
             }
             Ambient::Written | Ambient::Value => {}

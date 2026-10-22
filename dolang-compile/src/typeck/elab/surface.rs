@@ -2,12 +2,20 @@
 //! of their syntax trees by collection.
 //!
 //! Nothing here refers to a syntax tree or to source text. Spans are kept, as the
-//! keys the tables are indexed by and for diagnostics, and names are spelled through
-//! each unit's string table, so a unit's surface means the same thing whether or not
-//! its source is at hand.
+//! keys name resolution's tables are indexed by and for diagnostics, and names are
+//! spelled through each unit's string table, so a unit's surface means the same thing
+//! whether or not its source is at hand.
+//!
+//! What a later pass finds of a written form, such as the type it is interned as,
+//! is kept in a slot on the form. Slots are relaxed atomics, filled before the
+//! tables are shared, and are not serialized.
 
-use std::fmt::{self, Write};
+use std::{
+    fmt::{self, Write},
+    sync::atomic::{AtomicU8, Ordering},
+};
 
+use dolang_util::intern::AtomicId;
 use serde::{Deserialize, Serialize};
 
 use super::{Designated, Tables};
@@ -16,7 +24,7 @@ use crate::{
     ast::SpecialMethod,
     source::Span,
     typeck::{
-        r#type::{DeclId, Intrinsic, UnitId, UnitSpan},
+        r#type::{DeclId, Intrinsic, TypeTag, UnitId},
         typelib::wire,
     },
 };
@@ -46,6 +54,41 @@ impl SiteId {
 
     pub(crate) fn index(self) -> usize {
         self.0 as usize
+    }
+}
+
+/// The type a written form was interned as, filled by population
+pub(crate) type Interned = AtomicId<TypeTag>;
+
+/// The collection a schema is where a type is required, filled by kind checking
+#[derive(Default)]
+pub(crate) struct Collection(AtomicU8);
+
+impl Collection {
+    const DICT: u8 = 1;
+    const TUPLE: u8 = 2;
+
+    /// `std.Dict`, or `std.Tuple`, or `None` where a schema is one
+    pub(crate) fn get(&self) -> Option<Designated> {
+        match self.0.load(Ordering::Relaxed) {
+            Self::DICT => Some(Designated::Dict),
+            Self::TUPLE => Some(Designated::Intrinsic(Intrinsic::Tuple)),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn set(&self, tuple: bool) {
+        let class = match tuple {
+            true => Self::TUPLE,
+            false => Self::DICT,
+        };
+        self.0.store(class, Ordering::Relaxed);
+    }
+}
+
+impl Clone for Collection {
+    fn clone(&self) -> Self {
+        Self(AtomicU8::new(self.0.load(Ordering::Relaxed)))
     }
 }
 
@@ -79,6 +122,9 @@ pub(crate) enum TypeExpr {
         span: Span,
         base: Box<TypeExpr>,
         args: Vec<TypeArg>,
+        /// Its type, interned in the group it is written in
+        #[serde(skip)]
+        interned: Interned,
     },
     /// A schema, e.g. `{name: Str, ?port: Int}`. Where a type is required, it is
     /// `std.Dict` of itself, or `std.Tuple` of its items when it is `tuple`.
@@ -89,6 +135,9 @@ pub(crate) enum TypeExpr {
         /// Whether it is written vertically without an explicitly keyed item, as an
         /// array's data is
         tuple: bool,
+        /// Its collection, where kind checking found a type required
+        #[serde(skip)]
+        collection: Collection,
     },
     /// A parenthesized type
     Group {
@@ -133,6 +182,9 @@ pub(crate) enum TypeExpr {
         #[serde(with = "wire::span")]
         arrow_span: Span,
         ret: Box<TypeExpr>,
+        /// Its type, interned in the group it is written in
+        #[serde(skip)]
+        interned: Interned,
     },
     /// A type that could not be interpreted
     Error {
@@ -226,26 +278,35 @@ impl TypeExpr {
 
     /// Visit each name within the type: its head, then the fields dotted onto it.
     pub(crate) fn names<'a>(&'a self, f: &mut impl FnMut(&'a Name, &'a [Name])) {
+        self.each_node(&mut |ty| {
+            if let TypeExpr::Name { head, fields, .. } = ty {
+                f(head, fields);
+            }
+        });
+    }
+
+    /// Visit the type and each type within it, outermost first.
+    pub(crate) fn each_node<'a>(&'a self, f: &mut impl FnMut(&'a TypeExpr)) {
+        f(self);
         match self {
-            TypeExpr::Name { head, fields, .. } => f(head, fields),
-            TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
+            TypeExpr::Name { .. } | TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
             TypeExpr::App { base, args, .. } => {
-                base.names(f);
+                base.each_node(f);
                 for arg in args {
-                    arg.ty().names(f);
+                    arg.ty().each_node(f);
                 }
             }
             TypeExpr::Schema { params, .. }
             | TypeExpr::Tuple { params, .. }
             | TypeExpr::Record { params, .. } => {
                 for ty in params.iter().flat_map(TypeParam::tys) {
-                    ty.names(f);
+                    ty.each_node(f);
                 }
             }
-            TypeExpr::Group { ty, .. } | TypeExpr::Array { elem: ty, .. } => ty.names(f),
+            TypeExpr::Group { ty, .. } | TypeExpr::Array { elem: ty, .. } => ty.each_node(f),
             TypeExpr::Union { members, .. } => {
                 for member in members {
-                    member.names(f);
+                    member.each_node(f);
                 }
             }
             TypeExpr::Func {
@@ -256,12 +317,12 @@ impl TypeExpr {
                 ..
             } => {
                 for ty in params.iter().flat_map(TypeParam::tys) {
-                    ty.names(f);
+                    ty.each_node(f);
                 }
                 for ty in [input, output].into_iter().flatten() {
-                    ty.names(f);
+                    ty.each_node(f);
                 }
-                ret.names(f);
+                ret.each_node(f);
             }
         }
     }
@@ -433,6 +494,9 @@ pub(crate) struct Super {
     pub(crate) bracket_span: Option<Span>,
     /// Whether it exists only in types
     pub(crate) type_only: bool,
+    /// The supertype it names, interned in its class's group
+    #[serde(skip)]
+    pub(crate) interned: Interned,
 }
 
 impl Super {
@@ -556,12 +620,9 @@ impl Printer<'_, '_> {
                 out.write_char(']')
             }
             // A vertical schema that is a tuple prints as one
-            TypeExpr::Schema { params, span, .. }
-                if self.tables.braces.get(&UnitSpan {
-                    unit: self.unit,
-                    span: *span,
-                }) != Some(&Designated::Intrinsic(Intrinsic::Tuple)) =>
-            {
+            TypeExpr::Schema {
+                params, collection, ..
+            } if collection.get() != Some(Designated::Intrinsic(Intrinsic::Tuple)) => {
                 out.write_char('{')?;
                 self.params(params, None, None, out)?;
                 out.write_char('}')

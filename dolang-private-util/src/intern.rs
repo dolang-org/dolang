@@ -9,6 +9,7 @@ use std::{
     ops::{Index, Range},
     ptr::NonNull,
     slice,
+    sync::atomic::{AtomicU32, Ordering},
 };
 
 use rustc_hash::FxBuildHasher;
@@ -84,6 +85,45 @@ impl<Tag> Id<Tag> {
 
     pub fn index(&self) -> usize {
         self.0.get() as usize - 1
+    }
+}
+
+/// A slot for an `Id`, read and written with relaxed atomics, empty until set.
+pub struct AtomicId<Tag>(AtomicU32, PhantomData<*const Tag>);
+
+unsafe impl<Tag> Sync for AtomicId<Tag> {}
+unsafe impl<Tag> Send for AtomicId<Tag> {}
+
+impl<Tag> AtomicId<Tag> {
+    pub const fn new() -> Self {
+        Self(AtomicU32::new(0), PhantomData)
+    }
+
+    /// The `Id` last set, if any
+    pub fn get(&self) -> Option<Id<Tag>> {
+        NonZeroU32::new(self.0.load(Ordering::Relaxed)).map(|raw| Id(raw, PhantomData))
+    }
+
+    pub fn set(&self, id: Id<Tag>) {
+        self.0.store(id.0.get(), Ordering::Relaxed);
+    }
+}
+
+impl<Tag> Default for AtomicId<Tag> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<Tag> Clone for AtomicId<Tag> {
+    fn clone(&self) -> Self {
+        Self(AtomicU32::new(self.0.load(Ordering::Relaxed)), PhantomData)
+    }
+}
+
+impl<Tag> Debug for AtomicId<Tag> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.get().fmt(f)
     }
 }
 

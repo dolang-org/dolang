@@ -327,10 +327,7 @@ impl Flow<'_, '_> {
         match self.tables.values.get(value) {
             Some(&Some(site)) => {
                 let site = &self.tables.sites[site.index()];
-                self.tables.site_types[&UnitSpan {
-                    unit: site.unit,
-                    span: site.ty.span(),
-                }]
+                site.interned.get().expect("population interns each site")
             }
             _ => self.db.unknown(),
         }

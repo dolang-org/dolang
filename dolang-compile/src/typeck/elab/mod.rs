@@ -36,7 +36,9 @@ use crate::{
     diag::{AnnotationKind, NoteKind, Severity},
     source::Span,
 };
-use surface::{Alias, Binder, Class, Closure, Def, Method, Name, Signature, SiteId, TypeExpr};
+use surface::{
+    Alias, Binder, Class, Closure, Def, Interned, Method, Name, Signature, SiteId, TypeExpr,
+};
 
 pub(crate) use super::report::{Diag, UnitDiag};
 pub(crate) use capture::captures;
@@ -86,13 +88,6 @@ pub(crate) struct Tables<'u> {
     pub(crate) sigs: FxHashMap<(DeclId, usize), Sig>,
     /// The type of each field, by its class and the span of its name
     pub(crate) fields: FxHashMap<(DeclId, Span), Slot>,
-    /// The ambient channels of each function type written without them, by its
-    /// `->`, and of each use of `Func` in a type that doesn't give them, by its
-    /// span
-    pub(crate) func_ambients: FxHashMap<UnitSpan, [Ambient; 2]>,
-    /// The class each schema written where a type is required stands for, by its
-    /// span: `std.Dict` of the schema, or `std.Tuple` of its items
-    pub(crate) braces: FxHashMap<UnitSpan, Designated>,
     /// The declarations of `std` and `strand` the checker treats specially
     pub(crate) designated: FxHashMap<DeclId, Designated>,
     /// What each of `strand`'s pipe placeholders nominates, by name, resolved where
@@ -116,11 +111,6 @@ pub(crate) struct Tables<'u> {
     /// The binder group of each declaration signature: the binders it is lifted
     /// over, its written binders, then its implicit binders
     pub(crate) groups: FxHashMap<(DeclId, usize), Vec<BinderRef>>,
-    /// Each type expression written in source, interned in its group, by its span
-    pub(crate) site_types: FxHashMap<UnitSpan, TypeId>,
-    /// Each application, collection form and function type written in source,
-    /// nested or not, interned in its group, by its span
-    pub(crate) expr_types: FxHashMap<UnitSpan, TypeId>,
 }
 
 impl<'u> Tables<'u> {
@@ -163,10 +153,7 @@ impl<'u> Tables<'u> {
     /// is interpreted in
     pub(crate) fn site_kinds(&self) -> impl Iterator<Item = (TypeId, Vec<Kind>)> + '_ {
         self.sites.iter().map(|site| {
-            let ty = self.site_types[&UnitSpan {
-                unit: site.unit,
-                span: site.ty.span(),
-            }];
+            let ty = site.interned.get().expect("population interns each site");
             let kinds = site.group().map_or_else(Vec::new, |key| {
                 self.groups[&key]
                     .iter()
@@ -278,6 +265,9 @@ pub(crate) struct Site {
     /// The declaration signature whose body or signature the type is written in,
     /// absent at a unit's top level
     pub(crate) owner: Option<(DeclId, usize)>,
+    /// The type as interned in its group
+    #[serde(skip)]
+    pub(crate) interned: Interned,
 }
 
 impl Site {

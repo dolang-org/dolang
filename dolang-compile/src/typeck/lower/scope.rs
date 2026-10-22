@@ -10,7 +10,6 @@ use crate::{
     typeck::{
         cfg::{FuncId, Origin, VarFlags as CfgFlags, VarId},
         r#type::TypeId,
-        r#type::UnitSpan,
     },
 };
 
@@ -361,15 +360,13 @@ impl<'u> Scope<'_, '_, 'u> {
 
         let span = annot.ty.span();
         let lower = self.lower;
-        let ty = *lower.tables.site_types.get(&UnitSpan {
-            unit: lower.unit,
-            span,
-        })?;
-        Some(match lower.site_groups.get(&span) {
-            Some(&Some(group)) => lower
+        let site = &lower.tables.sites[lower.sites.get(&span)?.index()];
+        let ty = site.interned.get()?;
+        Some(match site.group() {
+            Some(group) => lower
                 .db
                 .substitute(ty, &lower.tables.group_rigids(lower.db, group)),
-            _ => ty,
+            None => ty,
         })
     }
 }

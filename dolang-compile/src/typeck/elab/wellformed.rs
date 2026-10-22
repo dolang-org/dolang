@@ -22,7 +22,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::{
     BadRecursion, BoundViolation, DeclNode, Designated, Diag, Fill, Head, ParameterKeys, Referent,
     Role, Tables, UnitDiag,
-    surface::{Class, Name, TypeArg, TypeExpr, TypeParam, TypeParamKind},
+    surface::{Class, Interned, Name, TypeArg, TypeExpr, TypeParam, TypeParamKind},
 };
 use crate::{
     source::Span,
@@ -228,8 +228,8 @@ impl Check<'_, '_> {
                     self.ty(unit, scope, ty, phantom);
                 }
             }
-            TypeExpr::App { args, .. } => {
-                let phantom = self.application(unit, scope, ty.span(), args) || phantom;
+            TypeExpr::App { args, interned, .. } => {
+                let phantom = self.application(unit, scope, ty.span(), interned, args) || phantom;
                 for arg in args {
                     self.ty(unit, scope, arg.ty(), phantom);
                 }
@@ -253,18 +253,19 @@ impl Check<'_, '_> {
         }
     }
 
-    /// Check each argument of the application written at `span` against its
-    /// binder's bound. Whether the base is `Phantom`, whose arguments only mark
-    /// variance.
+    /// Check each argument of the application written at `span`, interned as
+    /// `interned`, against its binder's bound. Whether the base is `Phantom`, whose
+    /// arguments only mark variance.
     fn application(
         &mut self,
         unit: UnitId,
         scope: Option<DeclId>,
         span: Span,
+        interned: &Interned,
         written: &[TypeArg],
     ) -> bool {
         let span = UnitSpan { unit, span };
-        let Some(&id) = self.tables.expr_types.get(&span) else {
+        let Some(id) = interned.get() else {
             return false;
         };
         let Type::Apply { base, args, .. } = self.db.ty(id) else {
@@ -355,7 +356,10 @@ impl Check<'_, '_> {
             unit,
             span: ty.span(),
         };
-        let Some(&id) = self.tables.expr_types.get(&span) else {
+        let TypeExpr::Func { interned, .. } = ty else {
+            return;
+        };
+        let Some(id) = interned.get() else {
             return;
         };
         let Type::Function(function) = self.db.ty(id) else {
@@ -410,7 +414,8 @@ impl Check<'_, '_> {
         let unit = self.tables.decls[id.index()].unit;
         for super_ref in &class.supers {
             let span = super_ref.span();
-            let phantom = self.application(unit, Some(decl), span, &super_ref.args);
+            let phantom =
+                self.application(unit, Some(decl), span, &super_ref.interned, &super_ref.args);
             for arg in &super_ref.args {
                 self.ty(unit, Some(decl), arg.ty(), phantom);
             }
@@ -561,12 +566,11 @@ impl Check<'_, '_> {
                     self.guarded(unit, alias, members, arg.ty(), guarded || nominal, found);
                 }
             }
-            TypeExpr::Schema { params, span, .. } => {
+            TypeExpr::Schema {
+                params, collection, ..
+            } => {
                 // A schema that is a collection applies a class, which guards its items
-                let collection = self
-                    .tables
-                    .braces
-                    .contains_key(&UnitSpan { unit, span: *span });
+                let collection = collection.get().is_some();
                 for param in params {
                     // An inclusion's items are the schema's own
                     let guarded = guarded
@@ -630,7 +634,7 @@ impl Check<'_, '_> {
                 span,
                 name: self.tables.name(unit, *head).to_owned(),
                 guarded,
-                regular: self.regular(unit, alias, target, app),
+                regular: self.regular(alias, target, app),
             });
         }
         Some(target)
@@ -638,14 +642,14 @@ impl Check<'_, '_> {
 
     /// Whether a reference to `target` passes the referring alias's binders
     /// unchanged
-    fn regular(&self, unit: UnitId, alias: DeclId, target: DeclId, app: Option<&TypeExpr>) -> bool {
+    fn regular(&self, alias: DeclId, target: DeclId, app: Option<&TypeExpr>) -> bool {
         let own = self.tables.groups[&(alias, 0)].len();
         let args: Vec<TypeId> = match app {
             Some(app) => {
-                let Some(&id) = self.tables.expr_types.get(&UnitSpan {
-                    unit,
-                    span: app.span(),
-                }) else {
+                let TypeExpr::App { interned, .. } = app else {
+                    return true;
+                };
+                let Some(id) = interned.get() else {
                     return true;
                 };
                 match self.db.ty(id) {

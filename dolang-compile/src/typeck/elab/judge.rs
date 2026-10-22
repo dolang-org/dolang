@@ -9,15 +9,15 @@ use rustc_hash::FxHashMap;
 
 use super::{
     Ambient, BinderRef, DeclNode, Designated, Head, KindOf, ModuleRef, ParamTy, Referent, RestSlot,
-    Slot, Tables, Unresolved,
-    surface::{Member as SourceMember, MemberScope, ParamKind},
+    Slot, Tables, Unresolved, sig,
+    surface::{Member as SourceMember, MemberScope, ParamKind, TypeExpr},
 };
 use crate::{
     RestKind,
     source::Span,
     typeck::r#type::{
         BinderOrigin, Collection, Database, DeclId, Declaration, Intrinsic, Kind, Member, Names,
-        Scope, Style, Type, TypeId, UnitId, UnitSpan, Variance,
+        Scope, Style, Type, TypeId, UnitId, Variance,
     },
 };
 
@@ -143,11 +143,35 @@ impl Tables<'_> {
                 .join(", ");
             judgments.push(("captured", name, value));
         }
-        for (arrow, ambients) in &self.func_ambients {
-            if arrow.unit == unit {
-                let [input, output] = ambients.map(|ambient| self.ambient(ambient));
-                judgments.push(("ambient", arrow.span, format!("<{input} >{output}")));
-            }
+        // A supertype's arguments are written outside any signature
+        let sites = (self.sites.iter())
+            .filter(|site| site.unit == unit)
+            .map(|site| (site.ambient, &site.ty));
+        let supers = (self.decls.iter())
+            .filter(|decl| decl.unit == unit)
+            .filter_map(|decl| match &decl.node {
+                DeclNode::Class(class) => Some(&class.supers),
+                _ => None,
+            })
+            .flatten()
+            .flat_map(|super_ref| &super_ref.args)
+            .map(|arg| (None, arg.ty()));
+        for (ambient, ty) in sites.chain(supers) {
+            ty.each_node(&mut |ty| {
+                if let TypeExpr::Func {
+                    input,
+                    output,
+                    arrow_span,
+                    ..
+                } = ty
+                    && (input.is_none() || output.is_none())
+                {
+                    let written = [input.is_some(), output.is_some()];
+                    let [input, output] = sig::func_channels(self, ambient, written)
+                        .map(|ambient| self.ambient(ambient));
+                    judgments.push(("ambient", *arrow_span, format!("<{input} >{output}")));
+                }
+            });
         }
         for (id, designated) in &self.designated {
             let decl = &self.decls[id.index()];
@@ -424,7 +448,7 @@ impl Tables<'_> {
                 continue;
             }
             let span = site.ty.span();
-            let ty = self.site_types[&UnitSpan { unit, span }];
+            let ty = site.interned.get().expect("population interns each site");
             let names = match site.group() {
                 Some(key) => self.groups[&key]
                     .iter()

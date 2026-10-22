@@ -11,8 +11,8 @@
 use rustc_hash::FxHashMap;
 
 use super::{
-    Ambient, BinderRef, Designated, Head, KindMismatch, KindOf, NotAType, NotGeneric,
-    PatternWithoutPack, Referent, Role, Site, Tables, TooManyTypeArgs, UnknownTypeKeyword,
+    BinderRef, Designated, Head, KindMismatch, KindOf, NotAType, NotGeneric, PatternWithoutPack,
+    Referent, Role, Site, Tables, TooManyTypeArgs, UnknownTypeKeyword,
     surface::{
         Binder, BinderKind, Name, Super, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam,
         TypeParamKind,
@@ -110,11 +110,8 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
     let mut check = Check {
         tables: &*tables,
         unit: UnitId::from_index(0),
-        ambient: None,
         packs: None,
         diags,
-        func_ambients: FxHashMap::default(),
-        braces: FxHashMap::default(),
     };
     for site in &check.tables.sites {
         check.site(site);
@@ -123,15 +120,11 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
         let decl = &check.tables.decls[index];
         if let DeclNode::Class(class) = &decl.node {
             check.unit = decl.unit;
-            check.ambient = None;
             for super_ref in &class.supers {
                 check.supertype(super_ref);
             }
         }
     }
-    let (func_ambients, braces) = (check.func_ambients, check.braces);
-    tables.func_ambients = func_ambients;
-    tables.braces = braces;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -278,13 +271,9 @@ enum Named<'t> {
 struct Check<'a, 't, 'u> {
     tables: &'t Tables<'u>,
     unit: UnitId,
-    /// The signature whose channels function types without their own take
-    ambient: Option<(DeclId, usize)>,
     /// Within a rest binding's `@...` pattern, the packs it names so far
     packs: Option<usize>,
     diags: &'a mut Vec<UnitDiag>,
-    func_ambients: FxHashMap<UnitSpan, [Ambient; 2]>,
-    braces: FxHashMap<UnitSpan, Designated>,
 }
 
 impl<'t> Check<'_, 't, '_> {
@@ -294,7 +283,6 @@ impl<'t> Check<'_, 't, '_> {
 
     fn site(&mut self, site: &'t Site) {
         self.unit = site.unit;
-        self.ambient = site.ambient;
         match site.role {
             Role::Type => self.check(&site.ty, Some(Kind::Type)),
             Role::Rest | Role::Alias(_) => self.check(&site.ty, None),
@@ -471,19 +459,16 @@ impl<'t> Check<'_, 't, '_> {
                     self.expect(ty.span(), expected, found, None);
                 }
             }
-            TypeExpr::Schema { params, tuple, .. } => {
+            TypeExpr::Schema {
+                params,
+                tuple,
+                collection,
+                ..
+            } => {
                 self.items(params);
                 // Where a type is required, a schema is a collection, as data is
                 if expected == Some(Kind::Type) {
-                    let class = match tuple {
-                        true => Designated::Intrinsic(Intrinsic::Tuple),
-                        false => Designated::Dict,
-                    };
-                    let span = UnitSpan {
-                        unit: self.unit,
-                        span: ty.span(),
-                    };
-                    self.braces.insert(span, class);
+                    collection.set(*tuple);
                 }
             }
             TypeExpr::Tuple { params, .. } | TypeExpr::Record { params, .. } => {
@@ -504,7 +489,6 @@ impl<'t> Check<'_, 't, '_> {
                 params,
                 input,
                 output,
-                arrow_span,
                 ret,
                 ..
             } => {
@@ -513,24 +497,6 @@ impl<'t> Check<'_, 't, '_> {
                     self.check(ty, Some(Kind::Type));
                 }
                 self.check(ret, Some(Kind::Type));
-                if input.is_none() || output.is_none() {
-                    let channels = match self.ambient {
-                        Some((decl, sig)) => sig::channels(self.tables, decl, sig),
-                        None => [Ambient::Value; 2],
-                    };
-                    let written = [input.is_some(), output.is_some()];
-                    let ambients = [0, 1].map(|index| match written[index] {
-                        true => Ambient::Written,
-                        false => channels[index],
-                    });
-                    self.func_ambients.insert(
-                        UnitSpan {
-                            unit: self.unit,
-                            span: *arrow_span,
-                        },
-                        ambients,
-                    );
-                }
                 self.expect(ty.span(), expected, Kind::Type, None);
             }
             TypeExpr::Const { .. } => self.expect(ty.span(), expected, Kind::Type, None),
