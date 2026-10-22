@@ -1198,14 +1198,19 @@ initializers are closure declarations, and each declaration records the one
 enclosing it.
 
 A module's exports are its root block's `pub` declarations and bindings, and the
-names its `pub` imports re-export. Once every unit is collected, each type name
-that goes through an import follows the exports of the units checked, and the
-referent of every type name is recorded by the span of its head. Imports and
-renames are chased away but aliases are not, so `Pair[Int]` refers to the
-`Pair` alias. Each transparent alias then has its underlying head found by
-following alias chains, in declaration order. Imports of modules no unit
-provides, import cycles, alias cycles and imports of names a checked module does
-not export are diagnosed, and their names are erroneous.
+names its `pub` imports re-export. A unit has a link table, of what its type
+names refer to as far as the unit can tell, each once, and a module table of
+the modules it imports. A name on the surface holds its link, and lowering,
+which reads syntax, finds a name's link by the span of its head. Once every unit
+is collected, each module table is resolved, and each link that goes through an
+import follows the exports of the units checked. Imports and renames are chased
+away but aliases are not, so `Pair[Int]` refers to the `Pair` alias. Each
+transparent alias then has its underlying head found by following alias chains,
+in declaration order. Imports of modules no unit provides, import cycles, alias
+cycles and imports of names a checked module does not export are diagnosed, and
+their names are erroneous. A missing module is reported at its import, and an
+import that fails otherwise once per link, at its first name, or in a typelib,
+which keeps no reference's span, at the import of its module.
 
 `Check` keeps the tables. Its hidden `judgments` method reports what they
 concluded about each span of a unit, such as a type name's referent or an

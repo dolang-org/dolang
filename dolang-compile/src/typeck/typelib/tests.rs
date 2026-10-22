@@ -385,15 +385,19 @@ fn missing_module() {
 #[test]
 fn missing_export_of_dependency() {
     let lib = compile(
-        "import dep\npub @let G = dep.Thing\n",
+        "import dep\npub @let G = dep.Thing\npub @let H = dep.Thing\n",
         Mode::Module { name: "lib".into() },
     );
     let bytes = typeck::typelib(&lib).unwrap();
     // The dependency no longer exports what the typelib was written against
     let dep = compile("pub @class Other\n", Mode::Module { name: "dep".into() });
     let script = compile(RECOVERING, Mode::Script);
+    // Once for the names sharing a link: from source at the first, and from the
+    // typelib, which keeps no reference's span, at the import. The script recovers.
+    let message = "module `dep` has no export `Thing`".to_owned();
     assert_eq!(
-        located(&[&dep, &script], &[&bytes]),
-        [(0, 2, 14, "module `dep` has no export `Thing`".to_owned())]
+        located(&[&dep, &lib, &script], &[]),
+        [(1, 2, 14, message.clone())]
     );
+    assert_eq!(located(&[&dep, &script], &[&bytes]), [(0, 1, 8, message)]);
 }

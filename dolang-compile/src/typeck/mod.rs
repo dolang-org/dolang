@@ -88,23 +88,14 @@ impl<'a> Typelib<'a> {
         self.0.info.path
     }
 
-    /// The modules the module imports or its declarations name, each once, in
-    /// order. A check finds them among its units, and reports a module it doesn't
-    /// have as not found.
+    /// The modules the module imports, each once, in order. A check finds them
+    /// among its units, and reports a module it doesn't have as not found.
     pub fn imports(&self) -> Vec<&'a str> {
-        use elab::Target;
-
-        let targets = (self.0.pending.iter().map(|pending| &pending.base))
-            .chain(self.0.exports.values().map(|(_, target)| target));
-        let mut imports: Vec<&'a str> = targets
-            .filter_map(|target| match *target {
-                Target::Import { module, .. } | Target::Module(module) => Some(module),
-                Target::Local(_) => None,
-            })
-            .chain(self.0.imports.keys().copied())
+        let strings = &self.0.strings;
+        let mut imports: Vec<&'a str> = (self.0.modules.iter())
+            .map(|module| strings[module.name.index()])
             .collect();
         imports.sort_unstable();
-        imports.dedup();
         imports
     }
 }

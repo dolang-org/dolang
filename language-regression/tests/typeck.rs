@@ -485,18 +485,29 @@ fn from_typelibs(
         let index = ids.iter().position(|id| *id == Some(unit)).unwrap();
         sources[index].module.is_none()
     };
-    // What is reported in the script, then in the modules
+    // What is reported in the script, then in the modules. A typelib keeps no
+    // reference's span, so what is reported in a module is compared without spans.
     let diagnostics = |check: &typeck::Check| -> [Vec<String>; 2] {
         let mut split = [Vec::new(), Vec::new()];
         for diag in check.diagnostics() {
-            let mut out = format!("{:?} {:?} {}", diag.severity(), diag.span(), diag.message());
+            let module = !script(diag.span().unit());
+            let span = |span| match module {
+                true => String::new(),
+                false => format!("{span:?} "),
+            };
+            let mut out = format!(
+                "{:?} {}{}",
+                diag.severity(),
+                span(diag.span()),
+                diag.message()
+            );
             for annotation in diag.annotations() {
-                let _ = write!(out, "; {:?} {}", annotation.span(), annotation.message());
+                let _ = write!(out, "; {}{}", span(annotation.span()), annotation.message());
             }
             for note in diag.notes() {
                 let _ = write!(out, "; note: {}", note.message());
             }
-            split[usize::from(!script(diag.span().unit()))].push(out);
+            split[usize::from(module)].push(out);
         }
         split
     };

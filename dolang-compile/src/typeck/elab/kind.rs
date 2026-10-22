@@ -14,7 +14,7 @@ use super::{
     BinderRef, Designated, Head, KindMismatch, KindOf, NotAType, NotGeneric, PatternWithoutPack,
     Referent, Role, Site, Tables, TooManyTypeArgs, UnknownTypeKeyword,
     surface::{
-        Binder, BinderKind, Name, Super, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam,
+        Binder, BinderKind, Name, Ref, Super, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam,
         TypeParamKind,
     },
 };
@@ -24,7 +24,7 @@ use crate::{
     typeck::{
         elab::{DeclNode, Diag, UnitDiag, sig},
         report::Report,
-        r#type::{DeclId, DeclKind, Intrinsic, Kind, UnitId, UnitSpan},
+        r#type::{DeclId, DeclKind, Intrinsic, Kind, UnitId},
     },
 };
 
@@ -69,11 +69,10 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
     // binder's bound is either kind, bounding each item or the whole pack.
     for index in 0..tables.decls.len() {
         let decl = DeclId::from_index(index);
-        let unit = tables.decls[index].unit;
         for sig in 0..tables.sig_count(decl) {
             for (slot, binder) in tables.binders(decl, sig).iter().enumerate() {
                 if let (BinderKind::Pos, Some(bound)) = (binder.kind, binder.bound) {
-                    let term = infer.synth(tables, unit, tables.site_ty(bound));
+                    let term = infer.synth(tables, tables.site_ty(bound));
                     infer.equate(Var::Binder(BinderRef { decl, sig, slot }), term);
                 }
             }
@@ -84,7 +83,7 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
             // An alias on a cycle has an erroneous head, already diagnosed
             let term = match tables.aliases.get(&decl) {
                 Some(Head::Error) => Term::Flexible,
-                _ => infer.synth(tables, unit, tables.site_ty(body)),
+                _ => infer.synth(tables, tables.site_ty(body)),
             };
             infer.equate(Var::Alias(decl), term);
         }
@@ -201,42 +200,35 @@ impl Infer {
         }
     }
 
-    fn synth(&self, tables: &Tables<'_>, unit: UnitId, ty: &TypeExpr) -> Term {
+    fn synth(&self, tables: &Tables<'_>, ty: &TypeExpr) -> Term {
         match ty {
-            TypeExpr::Group { ty, .. } => self.synth(tables, unit, ty),
-            TypeExpr::Name { head, .. } => {
-                match tables.referents.get(&UnitSpan {
-                    unit,
-                    span: head.span,
-                }) {
-                    Some(Referent::Decl(decl)) => match tables.decls[decl.index()].kind {
-                        DeclKind::Class | DeclKind::Protocol => Term::Known(Kind::Type),
-                        DeclKind::Alias | DeclKind::OpaqueAlias => {
-                            Term::Var(self.vars[&Var::Alias(*decl)])
-                        }
-                        DeclKind::Function | DeclKind::Closure | DeclKind::Annotation => {
-                            Term::Flexible
-                        }
-                    },
-                    Some(Referent::Binder(binder)) => Term::Var(self.vars[&Var::Binder(*binder)]),
-                    Some(Referent::Module(_) | Referent::Value(_) | Referent::Error) | None => {
-                        Term::Flexible
+            TypeExpr::Group { ty, .. } => self.synth(tables, ty),
+            TypeExpr::Name { head, .. } => match tables.linked(head.link) {
+                Some(Referent::Decl(decl)) => match tables.decls[decl.index()].kind {
+                    DeclKind::Class | DeclKind::Protocol => Term::Known(Kind::Type),
+                    DeclKind::Alias | DeclKind::OpaqueAlias => {
+                        Term::Var(self.vars[&Var::Alias(*decl)])
                     }
+                    DeclKind::Function | DeclKind::Closure | DeclKind::Annotation => Term::Flexible,
+                },
+                Some(Referent::Binder(binder)) => Term::Var(self.vars[&Var::Binder(*binder)]),
+                Some(Referent::Module(_) | Referent::Value(_) | Referent::Error) | None => {
+                    Term::Flexible
                 }
-            }
+            },
             // An application of an alias has its kind. Applying anything else
             // that isn't a class is an error, reported where it is checked.
             TypeExpr::App { base, .. } => match base.ungrouped() {
                 TypeExpr::Name { head, .. }
                     if matches!(
-                        tables.referents.get(&UnitSpan { unit, span: head.span }),
+                        tables.linked(head.link),
                         Some(Referent::Decl(decl)) if matches!(
                             tables.decls[decl.index()].kind,
                             DeclKind::Alias | DeclKind::OpaqueAlias
                         )
                     ) =>
                 {
-                    self.synth(tables, unit, base)
+                    self.synth(tables, base)
                 }
                 _ => Term::Known(Kind::Type),
             },
@@ -304,7 +296,7 @@ impl<'t> Check<'_, 't, '_> {
     /// Check a supertype of a class, which is a type, and the arguments it takes.
     fn supertype(&mut self, super_ref: &'t Super) {
         let span = super_ref.span();
-        let named = self.named(super_ref.head.span);
+        let named = self.named(&super_ref.head);
         self.name(
             span,
             &super_ref.head,
@@ -318,12 +310,9 @@ impl<'t> Check<'_, 't, '_> {
         }
     }
 
-    fn named(&self, head: Span) -> Named<'t> {
+    fn named(&self, head: &Ref) -> Named<'t> {
         let tables = self.tables;
-        let Some(referent) = tables.referents.get(&UnitSpan {
-            unit: self.unit,
-            span: head,
-        }) else {
+        let Some(referent) = tables.linked(head.link) else {
             return Named::Unknown;
         };
         match referent {
@@ -356,7 +345,7 @@ impl<'t> Check<'_, 't, '_> {
     fn name(
         &mut self,
         span: Span,
-        head: &Name,
+        head: &Ref,
         fields: &[Name],
         named: &Named<'t>,
         expected: Option<Kind>,
@@ -419,14 +408,14 @@ impl<'t> Check<'_, 't, '_> {
                 let span = fields
                     .last()
                     .map_or(head.span, |field| head.span | field.span);
-                let named = self.named(head.span);
+                let named = self.named(head);
                 self.name(span, head, fields, &named, expected);
             }
             TypeExpr::App { base, args, .. } => {
                 let base = base.ungrouped();
                 let found = match base {
                     TypeExpr::Name { head, fields, .. } => {
-                        let named = self.named(head.span);
+                        let named = self.named(head);
                         if let Named::NotAType = named {
                             self.name(base.span(), head, fields, &named, None);
                         }
@@ -635,7 +624,7 @@ impl Tables<'_> {
                 }),
                 None,
             ) = (written.next(), written.next())
-                && self.kind_of(unit, ty) == Some(Kind::Schema)
+                && self.kind_of(ty) == Some(Kind::Schema)
             {
                 return args
                     .iter()
@@ -705,36 +694,31 @@ impl Tables<'_> {
 
     /// The kind of a type expression of `unit`, once kinds are inferred. `None` when
     /// no declaration determines it, as for an external name.
-    pub(crate) fn kind_of(&self, unit: UnitId, ty: &TypeExpr) -> Option<Kind> {
+    pub(crate) fn kind_of(&self, ty: &TypeExpr) -> Option<Kind> {
         let known = |kind: &KindOf| (!kind.flexible).then_some(kind.kind);
         match ty {
-            TypeExpr::Group { ty, .. } => self.kind_of(unit, ty),
-            TypeExpr::Name { head, .. } => {
-                match self.referents.get(&UnitSpan {
-                    unit,
-                    span: head.span,
-                })? {
-                    Referent::Decl(decl) => match self.decls[decl.index()].kind {
-                        DeclKind::Class | DeclKind::Protocol => Some(Kind::Type),
-                        DeclKind::Alias | DeclKind::OpaqueAlias => known(&self.alias_kinds[decl]),
-                        DeclKind::Function | DeclKind::Closure | DeclKind::Annotation => None,
-                    },
-                    Referent::Binder(binder) => known(&self.binder_kinds[binder]),
-                    _ => None,
-                }
-            }
+            TypeExpr::Group { ty, .. } => self.kind_of(ty),
+            TypeExpr::Name { head, .. } => match self.linked(head.link)? {
+                Referent::Decl(decl) => match self.decls[decl.index()].kind {
+                    DeclKind::Class | DeclKind::Protocol => Some(Kind::Type),
+                    DeclKind::Alias | DeclKind::OpaqueAlias => known(&self.alias_kinds[decl]),
+                    DeclKind::Function | DeclKind::Closure | DeclKind::Annotation => None,
+                },
+                Referent::Binder(binder) => known(&self.binder_kinds[binder]),
+                _ => None,
+            },
             // An application of an alias has its kind
             TypeExpr::App { base, .. } => match base.ungrouped() {
                 name @ TypeExpr::Name { head, .. }
                     if matches!(
-                        self.referents.get(&UnitSpan { unit, span: head.span }),
+                        self.linked(head.link),
                         Some(Referent::Decl(decl)) if matches!(
                             self.decls[decl.index()].kind,
                             DeclKind::Alias | DeclKind::OpaqueAlias
                         )
                     ) =>
                 {
-                    self.kind_of(unit, name)
+                    self.kind_of(name)
                 }
                 _ => Some(Kind::Type),
             },

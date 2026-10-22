@@ -27,7 +27,7 @@ use crate::{
         },
         elab::{Designated, Referent},
         flow::{class_object, function_value},
-        r#type::{DeclId, DeclKind, Literal, TypeId, UnitSpan},
+        r#type::{DeclId, DeclKind, Literal, TypeId},
     },
 };
 
@@ -216,11 +216,7 @@ impl<'u> Scope<'_, '_, 'u> {
     /// The class a name refers to, as elaboration resolved it: a superclass, or
     /// what a superclass's `(init)` is called on
     pub(super) fn super_decl(&self, head: Span) -> Option<DeclId> {
-        let head = UnitSpan {
-            unit: self.lower.unit,
-            span: head,
-        };
-        match self.lower.tables.referents.get(&head) {
+        match self.lower.tables.written(self.lower.unit, head) {
             Some(&Referent::Decl(decl)) => Some(decl),
             _ => None,
         }
@@ -246,11 +242,7 @@ impl<'u> Scope<'_, '_, 'u> {
             return false;
         };
         let tables = self.lower.tables;
-        let head = UnitSpan {
-            unit: self.lower.unit,
-            span: *head,
-        };
-        matches!(tables.referents.get(&head), Some(Referent::Decl(decl))
+        matches!(tables.written(self.lower.unit, *head), Some(Referent::Decl(decl))
             if tables.designated.get(decl) == Some(&Designated::Phantom))
     }
 
@@ -694,11 +686,7 @@ impl<'u> Scope<'_, '_, 'u> {
     }
 
     fn pattern_class(&self, test: &ast::TypePattern) -> Option<DeclId> {
-        let head = UnitSpan {
-            unit: self.lower.unit,
-            span: test.class.ident.span,
-        };
-        match self.lower.tables.referents.get(&head) {
+        match (self.lower.tables).written(self.lower.unit, test.class.ident.span) {
             Some(Referent::Decl(decl))
                 if self.lower.tables.decls[decl.index()].kind == DeclKind::Class =>
             {

@@ -24,7 +24,7 @@ use super::{
     Tables, UnitDiag,
     sig::{self, Form},
     surface::{
-        BinderKind, Class, ConstLit, Member as SourceMember, MemberScope, Name, ParamKind,
+        BinderKind, Class, ConstLit, Member as SourceMember, MemberScope, Name, ParamKind, Ref,
         Signature, SiteId, Super, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam,
         TypeParamKind, TypeQuant,
     },
@@ -143,7 +143,7 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
         let ty = match site.role {
             Role::Type => populate.site(scope, id, Kind::Type, 0),
             Role::Rest => {
-                let kind = tables.kind_of(site.unit, &site.ty).unwrap_or(Kind::Type);
+                let kind = tables.kind_of(&site.ty).unwrap_or(Kind::Type);
                 populate.site(scope, id, kind, 0)
             }
             Role::Pattern => populate.pattern(scope, id),
@@ -356,17 +356,14 @@ impl<'t, 'u> Populate<'t, 'u> {
     fn pack(
         &mut self,
         group: Group<'_>,
-        head: &Name,
+        head: &Ref,
         fields: &[Name],
         span: Span,
         depth: usize,
     ) -> Option<TypeId> {
         let tables = self.tables;
         self.pattern.as_ref()?;
-        let kind = match tables.referents.get(&UnitSpan {
-            unit: group.unit,
-            span: head.span,
-        })? {
+        let kind = match tables.linked(head.link)? {
             Referent::Binder(binder) => tables.binder_kinds[binder],
             Referent::Decl(decl) => match tables.decls[decl.index()].kind {
                 DeclKind::Alias | DeclKind::OpaqueAlias => tables.alias_kinds[decl],
@@ -537,7 +534,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                         },
                     );
                 }
-                Some(TypeParamKind::Include { ty }) if self.may_key(unit, ty, &mut Vec::new()) => {
+                Some(TypeParamKind::Include { ty }) if self.may_key(ty, &mut Vec::new()) => {
                     self.report(
                         unit,
                         KeyedInclusion {
@@ -554,26 +551,23 @@ impl<'t, 'u> Populate<'t, 'u> {
 
     /// Whether a schema of `unit` may admit keyed items. What it is when no
     /// declaration says, as for an external name, constrains nothing, so it may not.
-    fn may_key(&self, unit: UnitId, ty: &TypeExpr, aliases: &mut Vec<DeclId>) -> bool {
+    fn may_key(&self, ty: &TypeExpr, aliases: &mut Vec<DeclId>) -> bool {
         let tables = self.tables;
         match ty {
-            TypeExpr::Group { ty, .. } => self.may_key(unit, ty, aliases),
+            TypeExpr::Group { ty, .. } => self.may_key(ty, aliases),
             // An application's arguments only fill the alias's binders
-            TypeExpr::App { base, .. } => self.may_key(unit, base, aliases),
+            TypeExpr::App { base, .. } => self.may_key(base, aliases),
             TypeExpr::Schema { params, .. } => {
                 params
                     .iter()
                     .any(|param| match (&param.quant, &param.kind) {
                         (Some(TypeQuant::StarStar), _)
                         | (_, Some(TypeParamKind::Key { .. } | TypeParamKind::Open(_))) => true,
-                        (_, Some(TypeParamKind::Include { ty })) => self.may_key(unit, ty, aliases),
+                        (_, Some(TypeParamKind::Include { ty })) => self.may_key(ty, aliases),
                         _ => false,
                     })
             }
-            TypeExpr::Name { head, .. } => match tables.referents.get(&UnitSpan {
-                unit,
-                span: head.span,
-            }) {
+            TypeExpr::Name { head, .. } => match tables.linked(head.link) {
                 Some(&Referent::Decl(decl)) => {
                     let DeclNode::Alias(alias) = &tables.decls[decl.index()].node else {
                         return false;
@@ -582,23 +576,21 @@ impl<'t, 'u> Populate<'t, 'u> {
                         return false;
                     };
                     aliases.push(decl);
-                    let owner = tables.decls[decl.index()].unit;
-                    let may = self.may_key(owner, tables.site_ty(body), aliases);
+                    let may = self.may_key(tables.site_ty(body), aliases);
                     aliases.pop();
                     may
                 }
                 Some(&Referent::Binder(binder)) => {
                     let written = &tables.binders(binder.decl, binder.sig)[binder.slot];
-                    let owner = tables.decls[binder.decl.index()].unit;
                     // A bound of a variadic binder may bound each item instead
                     let bound = written
                         .bound
                         .map(|bound| tables.site_ty(bound))
-                        .filter(|bound| tables.kind_of(owner, bound) == Some(Kind::Schema));
+                        .filter(|bound| tables.kind_of(bound) == Some(Kind::Schema));
                     match (written.kind, bound) {
                         (BinderKind::Key | BinderKind::Rest(RestKind::Pos), _) => false,
                         (BinderKind::Rest(RestKind::Key), _) => true,
-                        (_, Some(bound)) => self.may_key(owner, bound, aliases),
+                        (_, Some(bound)) => self.may_key(bound, aliases),
                         (_, None) => true,
                     }
                 }
@@ -715,7 +707,7 @@ impl<'t, 'u> Populate<'t, 'u> {
     fn reference(
         &mut self,
         group: Group<'_>,
-        head: &Name,
+        head: &Ref,
         fields: &[Name],
         span: Span,
         args: Option<&[TypeArg]>,
@@ -730,10 +722,7 @@ impl<'t, 'u> Populate<'t, 'u> {
             return item;
         }
         let tables = self.tables;
-        let referent = tables.referents.get(&UnitSpan {
-            unit: group.unit,
-            span: head.span,
-        });
+        let referent = tables.linked(head.link);
         match referent {
             // A binder takes no arguments, which is already diagnosed
             Some(&Referent::Binder(binder)) if args.is_none() && self.kind(binder) == expected => {
@@ -776,7 +765,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         group: Group<'_>,
         decl: DeclId,
         args: Option<&[TypeArg]>,
-        (head, fields, span): (&Name, &[Name], Span),
+        (head, fields, span): (&Ref, &[Name], Span),
         depth: usize,
     ) -> TypeId {
         let tables = self.tables;
@@ -831,7 +820,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         {
             let mut out = positional(full);
             for arg in args {
-                let kind_of = |ty: &TypeExpr| tables.kind_of(group.unit, ty).unwrap_or(Kind::Type);
+                let kind_of = |ty: &TypeExpr| tables.kind_of(ty).unwrap_or(Kind::Type);
                 out.push(match &arg.kind {
                     TypeArgKind::Pos(ty) => {
                         Argument::Positional(self.intern(group, ty, kind_of(ty), depth))
@@ -1008,7 +997,7 @@ impl<'t, 'u> Populate<'t, 'u> {
     /// An expansion `...X` among type arguments: the items of a schema, or any
     /// number of a type
     fn expansion(&mut self, group: Group<'_>, ty: &TypeExpr, depth: usize) -> SchemaItem {
-        if self.tables.kind_of(group.unit, ty) == Some(Kind::Schema) {
+        if self.tables.kind_of(ty) == Some(Kind::Schema) {
             let ty = self.intern(group, ty, Kind::Schema, depth);
             Self::item(Multiplicity::Required, Element::Include(ty))
         } else {
@@ -1047,7 +1036,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         let unit = self.tables.decls[binder.decl.index()].unit;
         let group = Group { unit, ..group };
         match written.kind {
-            BinderKind::Rest(rest) if self.tables.kind_of(unit, ty) != Some(Kind::Schema) => {
+            BinderKind::Rest(rest) if self.tables.kind_of(ty) != Some(Kind::Schema) => {
                 let item = self.intern(group, ty, Kind::Type, 0);
                 let items = rest_items(rest, item, self.sym());
                 self.schema(items)
@@ -1196,19 +1185,13 @@ impl<'t, 'u> Populate<'t, 'u> {
             DeclNode::Class(class) => {
                 let body = self.db.intern(Type::Decl(id));
                 let mut declaration = self.declaration((id, 0), decl.kind, Kind::Type, body);
-                declaration.source.is_final =
-                    sig::decorated(tables, decl.unit, class, Designated::Final);
-                declaration.source.is_mixable =
-                    sig::decorated(tables, decl.unit, class, Designated::Mixable);
+                declaration.source.is_final = sig::decorated(tables, class, Designated::Final);
+                declaration.source.is_mixable = sig::decorated(tables, class, Designated::Mixable);
                 let mut supertypes = Vec::new();
                 for super_ref in &class.supers {
-                    let head = super_ref.head.span;
                     let span = super_ref.span();
                     let args = (!super_ref.args.is_empty()).then_some(&super_ref.args[..]);
-                    let ty = match tables.referents.get(&UnitSpan {
-                        unit: decl.unit,
-                        span: head,
-                    }) {
+                    let ty = match tables.linked(super_ref.head.link) {
                         Some(Referent::Decl(_)) => {
                             self.supertype = true;
                             self.reference(
@@ -1293,7 +1276,7 @@ impl<'t, 'u> Populate<'t, 'u> {
             }
             DeclNode::Closure(closure) => {
                 let func = &closure.sig;
-                let params = sig::params(tables, decl.unit, func, None);
+                let params = sig::params(tables, func, None);
                 let params = self.params(id, group, func, &params);
                 let [input, output, result] =
                     [func.input, func.output, func.ret].map(|written| match written {
@@ -1576,11 +1559,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                 continue;
             };
             for super_ref in &class.supers {
-                let head = super_ref.head.span;
-                let target = match tables.referents.get(&UnitSpan {
-                    unit: decl.unit,
-                    span: head,
-                }) {
+                let target = match tables.linked(super_ref.head.link) {
                     Some(Referent::Decl(target)) => match tables.decls[target.index()].kind {
                         DeclKind::Class | DeclKind::Protocol => Some(*target),
                         DeclKind::Alias => match tables.aliases.get(target) {

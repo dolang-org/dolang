@@ -15,12 +15,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
     Ambient, BinderRef, DeclNode, Referent, Role, Tables, sig,
-    surface::{TypeExpr, TypeParam},
+    surface::{Ref, TypeExpr, TypeParam},
 };
-use crate::{
-    source::Span,
-    typeck::r#type::{DeclId, DeclKind, UnitId, UnitSpan},
-};
+use crate::typeck::r#type::{DeclId, DeclKind, UnitId};
 
 /// Find the binders every declaration is lifted over.
 pub(crate) fn captures(tables: &mut Tables<'_>) {
@@ -152,9 +149,9 @@ struct Needs<'t, 'u> {
 }
 
 impl Needs<'_, '_> {
-    fn name(&mut self, node: usize, unit: UnitId, head: Span) {
+    fn name(&mut self, node: usize, head: &Ref) {
         let tables = self.tables;
-        match tables.referents.get(&UnitSpan { unit, span: head }) {
+        match tables.linked(head.link) {
             Some(&Referent::Binder(binder)) => {
                 self.binders[node].insert(binder);
             }
@@ -173,7 +170,7 @@ impl Needs<'_, '_> {
     fn ty(&mut self, node: usize, unit: UnitId, ty: &TypeExpr) {
         match ty {
             TypeExpr::Name { head, .. } => {
-                self.name(node, unit, head.span);
+                self.name(node, head);
             }
             TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
             TypeExpr::App { base, args, .. } => {

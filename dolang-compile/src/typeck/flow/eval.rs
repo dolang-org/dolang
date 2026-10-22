@@ -297,17 +297,17 @@ impl Flow<'_, '_> {
     }
 
     /// The export a module's item names, following re-exports of items
-    fn export(&self, mut unit: UnitId, item: SymbolId) -> Option<&Target<'_>> {
+    fn export(&self, mut unit: UnitId, item: SymbolId) -> Option<&Target> {
         let mut name: &str = self.db.symbol(item);
         // Re-exports are followed, up to a limit that only a cycle reaches
         for _ in 0..64 {
             let (_, target) = self.tables.exports[unit.index()].get(name)?;
-            match target {
+            match *target {
                 Target::Import { module, item } => {
-                    unit = *self.modules.get(module)?;
-                    name = item;
+                    name = self.tables.str(unit, item);
+                    unit = self.tables.modules[unit.index()][module.index()]?;
                 }
-                target => return Some(target),
+                _ => return Some(target),
             }
         }
         None

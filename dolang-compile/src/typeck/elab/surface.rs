@@ -1,10 +1,10 @@
 //! The declaration surface: what elaboration reads of the checked units, copied out
 //! of their syntax trees by collection.
 //!
-//! Nothing here refers to a syntax tree or to source text. Spans are kept, as the
-//! keys name resolution's tables are indexed by and for diagnostics, and names are
-//! spelled through each unit's string table, so a unit's surface means the same thing
-//! whether or not its source is at hand.
+//! Nothing here refers to a syntax tree or to source text. Spans are kept for
+//! diagnostics, a name refers through its link to what linking resolved it to, and
+//! names are spelled through each unit's string table, so a unit's surface means the
+//! same thing whether or not its source is at hand.
 //!
 //! What a later pass finds of a written form, such as the type it is interned as,
 //! is kept in a slot on the form. Slots are relaxed atomics, filled before the
@@ -57,6 +57,35 @@ impl SiteId {
     }
 }
 
+/// An entry of [`Tables::referents`]: something a unit's names refer to, as
+/// collection resolved it
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub(crate) struct LinkId(u32);
+
+impl LinkId {
+    pub(crate) fn from_index(index: usize) -> Self {
+        Self(u32::try_from(index).expect("the links fit in a u32"))
+    }
+
+    pub(crate) fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// A module of a unit's module table
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub(crate) struct ModuleId(u32);
+
+impl ModuleId {
+    pub(crate) fn from_index(index: usize) -> Self {
+        Self(u32::try_from(index).expect("a unit's module table fits in a u32"))
+    }
+
+    pub(crate) fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
 /// The type a written form was interned as, filled by population
 pub(crate) type Interned = AtomicId<TypeTag>;
 
@@ -100,6 +129,26 @@ pub(crate) struct Name {
     pub(crate) text: StrId,
 }
 
+/// A name written to refer to something, and where
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Ref {
+    #[serde(with = "wire::span")]
+    pub(crate) span: Span,
+    pub(crate) text: StrId,
+    /// What it refers to, with any fields dotted onto it; absent where collection
+    /// resolved nothing
+    pub(crate) link: Option<LinkId>,
+}
+
+impl Ref {
+    pub(crate) fn name(self) -> Name {
+        Name {
+            span: self.span,
+            text: self.text,
+        }
+    }
+}
+
 /// A type expression
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) enum TypeExpr {
@@ -107,7 +156,7 @@ pub(crate) enum TypeExpr {
     Name {
         #[serde(with = "wire::span")]
         span: Span,
-        head: Name,
+        head: Ref,
         fields: Vec<Name>,
     },
     /// A constant, or `None` for an expression that isn't one a type can be
@@ -277,7 +326,7 @@ impl TypeExpr {
     }
 
     /// Visit each name within the type: its head, then the fields dotted onto it.
-    pub(crate) fn names<'a>(&'a self, f: &mut impl FnMut(&'a Name, &'a [Name])) {
+    pub(crate) fn names<'a>(&'a self, f: &mut impl FnMut(&'a Ref, &'a [Name])) {
         self.each_node(&mut |ty| {
             if let TypeExpr::Name { head, fields, .. } = ty {
                 f(head, fields);
@@ -451,7 +500,7 @@ pub(crate) struct Method {
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) enum Decorator {
     /// A bare name
-    Ident(Name),
+    Ident(Ref),
     /// Anything else
     Other,
 }
@@ -486,7 +535,7 @@ pub(crate) enum Member {
 /// A supertype a class names
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Super {
-    pub(crate) head: Name,
+    pub(crate) head: Ref,
     pub(crate) fields: Vec<Name>,
     pub(crate) args: Vec<TypeArg>,
     /// The `[]` of the arguments, if written
@@ -546,8 +595,8 @@ impl<'u> Tables<'u> {
     }
 
     /// A possibly dotted name as written in `unit`
-    pub(crate) fn dotted(&self, unit: UnitId, head: Name, fields: &[Name]) -> String {
-        let mut out = self.name(unit, head).to_owned();
+    pub(crate) fn dotted(&self, unit: UnitId, head: Ref, fields: &[Name]) -> String {
+        let mut out = self.name(unit, head.name()).to_owned();
         for field in fields {
             out.push('.');
             out.push_str(self.name(unit, *field));

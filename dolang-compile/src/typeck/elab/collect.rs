@@ -7,7 +7,7 @@
 
 use std::{collections::hash_map::Entry as MapEntry, iter};
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -16,7 +16,9 @@ use super::{
     ids::Rebase,
     interface::PrivateInInterface,
     local,
-    surface::{self, Collection, ConstLit, Interned, Name, SiteId, StrId, TypeExpr},
+    surface::{
+        self, Collection, ConstLit, Interned, LinkId, ModuleId, Name, Ref, SiteId, StrId, TypeExpr,
+    },
 };
 use crate::{
     Mode, PreludeImport, Unit,
@@ -45,35 +47,65 @@ pub(crate) struct Harvest<'u> {
     pub(crate) strings: Vec<&'u str>,
     pub(crate) decls: Vec<Decl<'u>>,
     pub(crate) sites: Vec<Site>,
-    /// The type names, by head, with what each refers to within the unit
-    pub(crate) pending: Vec<Pending<'u>>,
+    /// What the unit's names refer to as far as the unit can tell, each once, by
+    /// [`LinkId`]
+    pub(crate) links: Vec<Link>,
+    /// The link of each name the unit writes, by the span of its head. Empty for a
+    /// typelib, which has no syntax to look a name up in.
+    pub(crate) refs: FxHashMap<Span, LinkId>,
     /// The unit's exports by name, with the name each is bound by. Empty for a unit
     /// that is not a module.
-    pub(crate) exports: FxHashMap<&'u str, (Span, Target<'u>)>,
+    pub(crate) exports: FxHashMap<&'u str, (Span, Target)>,
     /// Each exported variable, by the span of its name, with its annotation if it
     /// has one
     pub(crate) values: FxHashMap<Span, Option<SiteId>>,
-    /// The modules the unit imports, each at the module name in the first import
-    /// statement naming it, and the prelude modules it uses at the start of the unit
-    pub(crate) imports: FxHashMap<&'u str, Span>,
+    /// The modules the unit imports, and the prelude modules it uses, by
+    /// [`ModuleId`]
+    pub(crate) modules: Vec<Module>,
+}
+
+/// Something a unit's names refer to, as far as the unit can tell, shared by every
+/// name that resolves to it
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct Link {
+    /// A harvest's own unit, which a typelib leaves implicit
+    #[serde(skip, default = "local")]
+    pub(crate) unit: UnitId,
+    pub(crate) base: Target,
+    /// The item a dotted name takes from the module `base` names
+    pub(crate) item: Option<StrId>,
+    /// The head of the first name referring to it
+    #[serde(with = "wire::span")]
+    pub(crate) span: Span,
+}
+
+/// A module a unit imports
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct Module {
+    pub(crate) name: StrId,
+    /// The module's name in the first import statement naming it, or the start of
+    /// the unit for a module only the prelude imports
+    #[serde(with = "wire::span")]
+    pub(crate) span: Span,
 }
 
 /// Collect the surface of a unit, and resolve its type names as far as it can.
 pub(crate) fn harvest<'u>(unit: &'u Unit<'u>) -> Harvest<'u> {
     let mut decls = Vec::new();
-    let mut pending = Vec::new();
     let mut sites = Vec::new();
     let mut walk = Walk {
         unit: local(),
         file: &unit.file,
         prelude: &unit.prelude,
         decls: &mut decls,
-        pending: &mut pending,
         sites: &mut sites,
         strings: Vec::new(),
         interned: FxHashMap::default(),
-        imports: FxHashMap::default(),
-        prelude_used: FxHashSet::default(),
+        links: Vec::new(),
+        linked: FxHashMap::default(),
+        refs: FxHashMap::default(),
+        modules: Vec::new(),
+        module_ids: FxHashMap::default(),
         owner: None,
         sig: None,
         declared: FxHashMap::default(),
@@ -84,11 +116,9 @@ pub(crate) fn harvest<'u>(unit: &'u Unit<'u>) -> Harvest<'u> {
         Mode::Module { .. } => walk.exports(&root.body.stmts),
         Mode::Script | Mode::Repl => (FxHashMap::default(), FxHashMap::default()),
     };
-    let strings = walk.strings;
-    let mut imports = walk.imports;
-    // The prelude imports no statement writes, so a module it names is reported at
-    // the start of the unit, and only when the unit uses it
-    let mut prelude_used = walk.prelude_used;
+    // The prelude imports no statement writes, so a module it names is in the table
+    // only when the unit uses it, and is reported at the start of the unit. A type
+    // name using it already put it there.
     for import in unit.prelude.iter() {
         let (module, used) = match import {
             PreludeImport::Items { module, items } => (
@@ -99,12 +129,22 @@ pub(crate) fn harvest<'u>(unit: &'u Unit<'u>) -> Harvest<'u> {
             | PreludeImport::ModuleRenamed { module, unused, .. } => (module, !unused),
         };
         if used {
-            prelude_used.insert(module.as_str());
+            walk.module(module, None);
         }
     }
-    for module in prelude_used {
-        imports.entry(module).or_default();
-    }
+    let Walk {
+        strings,
+        links,
+        refs,
+        modules,
+        ..
+    } = walk;
+    let modules = (modules.into_iter())
+        .map(|(name, span)| Module {
+            name,
+            span: span.unwrap_or_default(),
+        })
+        .collect();
     Harvest {
         info: UnitInfo {
             module: match &unit.mode {
@@ -119,10 +159,11 @@ pub(crate) fn harvest<'u>(unit: &'u Unit<'u>) -> Harvest<'u> {
         strings,
         decls,
         sites,
-        pending,
+        links,
+        refs,
         exports,
         values,
-        imports,
+        modules,
     }
 }
 
@@ -144,10 +185,11 @@ pub(crate) fn link<'u>(
     let mut exports = vec![FxHashMap::default(); count];
     let mut values = FxHashMap::default();
     let mut decls = Vec::new();
-    let mut pending = Vec::new();
+    let mut links = Vec::new();
+    let mut refs = vec![FxHashMap::default(); count];
+    let mut modules = vec![Vec::new(); count];
     let mut sites = Vec::new();
     let mut leaks = Vec::new();
-    let mut imports = Vec::new();
     for &id in order {
         let mut harvest = harvests[id.index()]
             .take()
@@ -164,19 +206,21 @@ pub(crate) fn link<'u>(
             unit: id,
             decls: decls.len(),
             sites: sites.len(),
+            links: links.len(),
         });
         for _ in 0..harvest.decls.len() {
             db.allocate();
         }
         decls.extend(harvest.decls);
         sites.extend(harvest.sites);
-        pending.extend(harvest.pending);
+        links.extend(harvest.links);
+        refs[id.index()] = harvest.refs;
         exports[id.index()] = harvest.exports;
         values.extend(
             (harvest.values.into_iter()).map(|(span, site)| (UnitSpan { unit: id, span }, site)),
         );
         strings[id.index()] = harvest.strings;
-        imports.push((id, harvest.imports));
+        modules[id.index()] = harvest.modules;
         units[id.index()] = Some(harvest.info);
     }
     let units: Vec<UnitInfo<'u>> = units
@@ -184,43 +228,52 @@ pub(crate) fn link<'u>(
         .map(|info| info.expect("every unit is linked"))
         .collect();
 
+    let provided: FxHashMap<&str, UnitId> = (units.iter().enumerate())
+        .filter_map(|(index, unit)| Some((unit.module?, UnitId::from_index(index))))
+        .collect();
+    let mut diags = Vec::new();
+    // A module a unit imports is reported at its import, whether or not anything
+    // names it
+    let resolved = (modules.iter().enumerate())
+        .map(|(index, modules)| {
+            let unit = UnitId::from_index(index);
+            let mut order: Vec<_> = (0..modules.len()).collect();
+            order.sort_by_key(|&id| (modules[id].span.start, modules[id].span.end, id));
+            let mut resolved = vec![None; modules.len()];
+            for id in order {
+                let Module { name, span } = modules[id];
+                let name = strings[index][name.index()];
+                resolved[id] = provided.get(name).copied();
+                if resolved[id].is_none() {
+                    let module = name.into();
+                    diags.push((unit, Diag::new(MissingModule { span, module })));
+                }
+            }
+            resolved
+        })
+        .collect();
     let mut fixup = Fixup {
         units: &units,
-        modules: units
-            .iter()
-            .enumerate()
-            .filter_map(|(index, unit)| Some((unit.module?, UnitId::from_index(index))))
-            .collect(),
+        strings: &strings,
+        modules: &modules,
+        resolved,
         exports: &exports,
         memo: FxHashMap::default(),
         stack: Vec::new(),
-        missing: FxHashSet::default(),
-        diags: Vec::new(),
+        diags,
     };
-    // A module a unit imports is reported at its import, whether or not anything
-    // names it
-    for (unit, imports) in imports {
-        let mut imports: Vec<_> = imports.into_iter().collect();
-        imports.sort_by_key(|&(module, span)| (span.start, span.end, module));
-        for (module, span) in imports {
-            fixup.module(module, UnitSpan { unit, span });
-        }
-    }
-    let referents: FxHashMap<_, _> = pending
-        .into_iter()
-        .map(|pending| (pending.head, fixup.pending(&pending)))
-        .collect();
+    let referents: Vec<_> = links.iter().map(|link| fixup.link(link)).collect();
     // Each nominee is resolved as if its placeholder imported it. A placeholder
     // that isn't an opaque alias is diagnosed when designated.
     let mut nominees = FxHashMap::default();
-    if let Some(&strand) = fixup.modules.get("strand") {
+    if let Some(&strand) = provided.get("strand") {
         for (placeholder, (module, item)) in PIPES.into_iter().zip(pipes) {
             if let Some(&(span, Target::Local(Referent::Decl(decl)))) =
                 exports[strand.index()].get(placeholder)
                 && decls[decl.index()].kind == DeclKind::OpaqueAlias
                 // A nominee whose module isn't checked leaves its placeholder
                 // dynamic; no unit imports it
-                && let Some(&unit) = fixup.modules.get(module)
+                && let Some(&unit) = provided.get(module)
             {
                 let site = UnitSpan { unit: strand, span };
                 let nominee = fixup.export(unit, item, site);
@@ -228,6 +281,7 @@ pub(crate) fn link<'u>(
             }
         }
     }
+    let modules = fixup.resolved;
     let mut diags = fixup.diags;
     diags.extend(leaks);
 
@@ -256,6 +310,8 @@ pub(crate) fn link<'u>(
         strings,
         decls,
         referents,
+        refs,
+        modules,
         aliases,
         exports,
         values,
@@ -279,7 +335,13 @@ pub(crate) fn link<'u>(
 /// A name a lexical scope binds
 #[derive(Clone)]
 enum Entry<'u> {
-    Target(Target<'u>),
+    Target(Target),
+    /// An item the prelude imports, whose module is in the module table only once a
+    /// name refers to it
+    Prelude {
+        module: &'u str,
+        item: &'u str,
+    },
     /// Modules imported under one name. Modules are not nested, so `security.unix`
     /// and `security.nfs4` share the head they bind, and a dotted type name picks
     /// one by its whole path.
@@ -292,8 +354,6 @@ struct ModuleImport<'u> {
     /// a renamed import binds
     spelled: &'u str,
     module: &'u str,
-    /// Whether the prelude imports the module, rather than a statement
-    prelude: bool,
 }
 
 /// A frame as type resolution pushed one
@@ -384,18 +444,6 @@ impl<'u> Frame<'_, 'u> {
     }
 }
 
-/// A type name whose referent is found once every unit is collected
-#[derive(Clone, Serialize, Deserialize)]
-pub(crate) struct Pending<'u> {
-    #[serde(with = "wire::local_span")]
-    pub(crate) head: UnitSpan,
-    #[serde(borrow)]
-    pub(crate) base: Target<'u>,
-    /// The item a dotted name takes from the module `base` names
-    #[serde(borrow)]
-    pub(crate) item: Option<&'u str>,
-}
-
 /// What a block's statements declare, gathered as its scope is entered
 struct BlockDecls<'u> {
     entries: Vec<Entry<'u>>,
@@ -405,17 +453,17 @@ struct BlockDecls<'u> {
 }
 
 impl<'u> BlockDecls<'u> {
-    fn var(&mut self, ident: &Ident, target: Target<'u>) {
+    fn var(&mut self, ident: &Ident, target: Target) {
         if let Some(res) = ident.res {
-            self.var_res(res, target);
+            self.var_res(res, Entry::Target(target));
         }
     }
 
-    fn var_res(&mut self, res: Res, target: Target<'u>) {
+    fn var_res(&mut self, res: Res, bound: Entry<'u>) {
         if res.depth == 0
             && let Some(entry) = self.entries.get_mut(res.index)
         {
-            *entry = Entry::Target(target);
+            *entry = bound;
         }
     }
 
@@ -431,7 +479,7 @@ impl<'u> BlockDecls<'u> {
         };
         match entry {
             Entry::Modules(modules) => modules.push(import),
-            Entry::Target(_) => *entry = Entry::Modules(vec![import]),
+            Entry::Target(_) | Entry::Prelude { .. } => *entry = Entry::Modules(vec![import]),
         }
     }
 }
@@ -441,16 +489,21 @@ struct Walk<'c, 'u> {
     file: &'u File<'u>,
     prelude: &'u [PreludeImport],
     decls: &'c mut Vec<Decl<'u>>,
-    pending: &'c mut Vec<Pending<'u>>,
     sites: &'c mut Vec<Site>,
     /// The unit's string table
     strings: Vec<&'u str>,
     /// Each string of the unit's string table, by its text
     interned: FxHashMap<&'u str, StrId>,
-    /// The modules import statements name, each at the first that does
-    imports: FxHashMap<&'u str, Span>,
-    /// The prelude modules dotted type names reach
-    prelude_used: FxHashSet<&'u str>,
+    links: Vec<Link>,
+    /// Each link, by its target
+    linked: FxHashMap<(Target, Option<StrId>), LinkId>,
+    /// The link of each name, by its head
+    refs: FxHashMap<Span, LinkId>,
+    /// The module table: each module's name, at the first import statement naming
+    /// it, if one does
+    modules: Vec<(StrId, Option<Span>)>,
+    /// Each module of the module table, by its name
+    module_ids: FxHashMap<&'u str, ModuleId>,
     /// The declaration being walked, and which of its signatures, which encloses any
     /// found within it
     owner: Option<(DeclId, usize)>,
@@ -503,13 +556,48 @@ impl<'u> Walk<'_, 'u> {
         }
     }
 
+    /// A name referring to something, which [`Self::refer`] has linked if it can
+    fn reference(&mut self, span: Span) -> Ref {
+        Ref {
+            span,
+            text: self.intern(self.file.str(span)),
+            link: self.refs.get(&span).copied(),
+        }
+    }
+
+    /// The module table's entry for a module, written at `span` by an import
+    /// statement
+    fn module(&mut self, module: &'u str, span: Option<Span>) -> ModuleId {
+        let id = match self.module_ids.get(module) {
+            Some(&id) => id,
+            None => {
+                let name = self.intern(module);
+                self.modules.push((name, None));
+                let id = ModuleId::from_index(self.modules.len() - 1);
+                self.module_ids.insert(module, id);
+                id
+            }
+        };
+        let written = &mut self.modules[id.index()].1;
+        *written = written.or(span);
+        id
+    }
+
+    /// An item of a module, imported at `span` by an import statement
+    fn import(&mut self, module: &'u str, item: &'u str, span: Option<Span>) -> Target {
+        Target::Import {
+            module: self.module(module, span),
+            item: self.intern(item),
+        }
+    }
+
     /// A type expression's surface
     fn surface(&mut self, ty: &'u ast::TypeExpr) -> TypeExpr {
         let span = ty.span();
         match ty {
             ast::TypeExpr::Name { head, fields, .. } => TypeExpr::Name {
                 span,
-                head: self.name(*head),
+                head: self.reference(*head),
                 fields: fields.iter().map(|&field| self.name(field)).collect(),
             },
             ast::TypeExpr::Const { expr } => TypeExpr::Const {
@@ -674,11 +762,9 @@ impl<'u> Walk<'_, 'u> {
                 types: block.types,
                 prelude: if outer.is_none() {
                     crate::prelude_items(self.prelude)
-                        .map(|(module, item)| {
-                            Entry::Target(Target::Import {
-                                module,
-                                item: &item.item,
-                            })
+                        .map(|(module, item)| Entry::Prelude {
+                            module,
+                            item: &item.item,
                         })
                         .collect()
                 } else {
@@ -696,7 +782,7 @@ impl<'u> Walk<'_, 'u> {
                         if let Some(res) = item.res {
                             block.var_res(
                                 res,
-                                Target::Import {
+                                Entry::Prelude {
                                     module,
                                     item: &item.item,
                                 },
@@ -709,7 +795,6 @@ impl<'u> Walk<'_, 'u> {
                     ModuleImport {
                         spelled: module,
                         module,
-                        prelude: true,
                     },
                 ),
                 PreludeImport::ModuleRenamed {
@@ -719,7 +804,6 @@ impl<'u> Walk<'_, 'u> {
                     ModuleImport {
                         spelled: bind,
                         module,
-                        prelude: true,
                     },
                 ),
             }
@@ -792,7 +876,7 @@ impl<'u> Walk<'_, 'u> {
                     let (ImportElement::ModuleAsIs { module, .. }
                     | ImportElement::ModuleRenamed { module, .. }
                     | ImportElement::Items { module, .. }) = element;
-                    self.imports.entry(file.str(*module)).or_insert(*module);
+                    self.module(file.str(*module), Some(*module));
                     match element {
                         ImportElement::ModuleAsIs {
                             module,
@@ -804,7 +888,6 @@ impl<'u> Walk<'_, 'u> {
                             ModuleImport {
                                 spelled: file.str(*module),
                                 module: file.str(*module),
-                                prelude: false,
                             },
                         ),
                         ImportElement::ModuleRenamed {
@@ -817,18 +900,13 @@ impl<'u> Walk<'_, 'u> {
                             ModuleImport {
                                 spelled: file.str(bind.span),
                                 module: file.str(*module),
-                                prelude: false,
                             },
                         ),
                         ImportElement::Items { module, items } => {
                             for item in items.iter().filter(|item| !item.is_type_only()) {
-                                block.var(
-                                    item.bind(),
-                                    Target::Import {
-                                        module: file.str(*module),
-                                        item: file.str(item.item()),
-                                    },
-                                );
+                                let target =
+                                    self.import(file.str(*module), file.str(item.item()), None);
+                                block.var(item.bind(), target);
                             }
                         }
                         ImportElement::ModuleAsIs { .. } | ImportElement::ModuleRenamed { .. } => {}
@@ -837,35 +915,32 @@ impl<'u> Walk<'_, 'u> {
             }
             _ => {}
         }
-        let declared = &self.declared;
-        stmt.type_decls(&mut |decl| {
+        let mut decls = Vec::new();
+        stmt.type_decls(&mut |decl| decls.push(decl));
+        for decl in decls {
             let entry = match decl {
                 TypeDecl::ModuleAsIs { module, .. } => Entry::Modules(vec![ModuleImport {
                     spelled: file.str(module),
                     module: file.str(module),
-                    prelude: false,
                 }]),
                 TypeDecl::ModuleRenamed { module, bind, .. } => {
                     Entry::Modules(vec![ModuleImport {
                         spelled: file.str(bind.span),
                         module: file.str(module),
-                        prelude: false,
                     }])
                 }
-                TypeDecl::ItemAsIs { module, bind, .. } => Entry::Target(Target::Import {
-                    module: file.str(module),
-                    item: file.str(bind.span),
-                }),
-                TypeDecl::ItemRenamed { module, item, .. } => Entry::Target(Target::Import {
-                    module: file.str(module),
-                    item: file.str(item),
-                }),
+                TypeDecl::ItemAsIs { module, bind, .. } => {
+                    Entry::Target(self.import(file.str(module), file.str(bind.span), None))
+                }
+                TypeDecl::ItemRenamed { module, item, .. } => {
+                    Entry::Target(self.import(file.str(module), file.str(item), None))
+                }
                 TypeDecl::Alias(_) | TypeDecl::Protocol(_) => {
-                    Entry::Target(Target::Local(Referent::Decl(declared[&decl.name()].0)))
+                    Entry::Target(Target::Local(Referent::Decl(self.declared(decl.name()))))
                 }
             };
             block.types.push((decl.name(), entry));
-        });
+        }
     }
 
     /// Record what a type name refers to, given the entry its head resolved to.
@@ -874,6 +949,7 @@ impl<'u> Walk<'_, 'u> {
         let item = fields.last().map(|field| file.str(*field));
         let base = match entry {
             Entry::Target(target) => target,
+            Entry::Prelude { module, item } => self.import(module, item, None),
             Entry::Modules(modules) => {
                 let path: Vec<_> = iter::once(head)
                     .chain(fields.iter().copied())
@@ -886,26 +962,27 @@ impl<'u> Walk<'_, 'u> {
                         .find(|module| names_type_in(module.spelled, &path)),
                 };
                 match module {
-                    Some(module) => {
-                        if module.prelude {
-                            self.prelude_used.insert(module.module);
-                        }
-                        Target::Module(module.module)
-                    }
+                    Some(module) => Target::Module(self.module(module.module, None)),
                     // A prelude module constrains no dotted path, so a path may name
                     // a module that does not exist
                     None => Target::Local(Referent::Error),
                 }
             }
         };
-        self.pending.push(Pending {
-            head: UnitSpan {
-                unit: self.unit,
-                span: head,
-            },
-            base,
-            item,
-        });
+        let item = item.map(|item| self.intern(item));
+        let link = match self.linked.entry((base, item)) {
+            MapEntry::Occupied(entry) => *entry.get(),
+            MapEntry::Vacant(entry) => {
+                self.links.push(Link {
+                    unit: self.unit,
+                    base,
+                    item,
+                    span: head,
+                });
+                *entry.insert(LinkId::from_index(self.links.len() - 1))
+            }
+        };
+        self.refs.insert(head, link);
     }
 
     fn name_ref(
@@ -924,6 +1001,8 @@ impl<'u> Walk<'_, 'u> {
 
     /// Record a site, resolving the names in its type.
     fn ty(&mut self, frame: &Frame<'_, 'u>, ty: &'u ast::TypeExpr, role: Role) -> SiteId {
+        // The names are linked before the surface reads their links
+        ty.names(&mut |head, res, fields| self.name_ref(frame, head, res, fields));
         let id = SiteId::from_index(self.sites.len());
         let surface = self.surface(ty);
         self.sites.push(Site {
@@ -934,7 +1013,6 @@ impl<'u> Walk<'_, 'u> {
             owner: self.owner,
             interned: Interned::default(),
         });
-        ty.names(&mut |head, res, fields| self.name_ref(frame, head, res, fields));
         id
     }
 
@@ -1280,7 +1358,7 @@ impl<'u> Walk<'_, 'u> {
                 self.refer(ident.span, entry, &[]);
             }
             decorators.push(match &decorator.expr {
-                Expr::Ident(ident) => surface::Decorator::Ident(self.name(ident.span)),
+                Expr::Ident(ident) => surface::Decorator::Ident(self.reference(ident.span)),
                 _ => surface::Decorator::Other,
             });
         }
@@ -1311,7 +1389,7 @@ impl<'u> Walk<'_, 'u> {
                 args.push(self.surface_arg(arg));
             }
             supers.push(surface::Super {
-                head: self.name(super_ref.ident.span),
+                head: self.reference(super_ref.ident.span),
                 fields: super_ref
                     .fields
                     .iter()
@@ -1383,7 +1461,9 @@ impl<'u> Walk<'_, 'u> {
                             self.refer(ident.span, entry, &[]);
                         }
                         decorators.push(match &decorator.expr {
-                            Expr::Ident(ident) => surface::Decorator::Ident(self.name(ident.span)),
+                            Expr::Ident(ident) => {
+                                surface::Decorator::Ident(self.reference(ident.span))
+                            }
                             _ => surface::Decorator::Other,
                         });
                     }
@@ -1631,10 +1711,10 @@ impl<'u> Walk<'_, 'u> {
     /// the exported variables, with the site of each one's annotation.
     #[expect(clippy::type_complexity)]
     fn exports(
-        &self,
+        &mut self,
         stmts: &'u [Stmt],
     ) -> (
-        FxHashMap<&'u str, (Span, Target<'u>)>,
+        FxHashMap<&'u str, (Span, Target)>,
         FxHashMap<Span, Option<SiteId>>,
     ) {
         let mut exports = FxHashMap::default();
@@ -1663,25 +1743,27 @@ impl<'u> Walk<'_, 'u> {
     /// Add a statement's exports. `annots` collects the span of each exported
     /// variable's annotation, by the span of its name.
     fn export(
-        &self,
+        &mut self,
         stmt: &'u Stmt,
-        exports: &mut FxHashMap<&'u str, (Span, Target<'u>)>,
+        exports: &mut FxHashMap<&'u str, (Span, Target)>,
         annots: &mut FxHashMap<Span, Span>,
     ) {
         let file = self.file;
         let mut add = |span: Span, target| {
             exports.insert(file.str(span), (span, target));
         };
-        let decl = |span| Target::Local(Referent::Decl(self.declared(span)));
+        let decl = |walk: &Self, span| Target::Local(Referent::Decl(walk.declared(span)));
         match stmt {
             Stmt::NlGuard(guard) => self.export(&guard.body, exports, annots),
             // Overloads are exported with their implementation, whose function they are
-            Stmt::Def(def) if def.pub_span.is_some() => add(def.ident.span, decl(def.ident.span)),
+            Stmt::Def(def) if def.pub_span.is_some() => {
+                add(def.ident.span, decl(self, def.ident.span))
+            }
             Stmt::Class(class) if class.pub_span.is_some() => {
-                add(class.ident.span, decl(class.ident.span))
+                add(class.ident.span, decl(self, class.ident.span))
             }
             Stmt::TypeAlias(alias) if alias.pub_span.is_some() => {
-                add(alias.ident.span, decl(alias.ident.span))
+                add(alias.ident.span, decl(self, alias.ident.span))
             }
             Stmt::Let(node) if node.pub_span.is_some() => {
                 let mut value = |ident: &Ident, annot: Option<&Annot>| {
@@ -1701,18 +1783,15 @@ impl<'u> Walk<'_, 'u> {
                 for element in &import.elements {
                     match element {
                         ImportElement::ModuleAsIs { module, bind, .. }
-                        | ImportElement::ModuleRenamed { module, bind, .. } => {
-                            add(bind.span, Target::Module(file.str(*module)))
-                        }
+                        | ImportElement::ModuleRenamed { module, bind, .. } => add(
+                            bind.span,
+                            Target::Module(self.module(file.str(*module), None)),
+                        ),
                         ImportElement::Items { module, items } => {
                             for item in items {
-                                add(
-                                    item.bind().span,
-                                    Target::Import {
-                                        module: file.str(*module),
-                                        item: file.str(item.item()),
-                                    },
-                                );
+                                let target =
+                                    self.import(file.str(*module), file.str(item.item()), None);
+                                add(item.bind().span, target);
                             }
                         }
                     }
@@ -1763,13 +1842,15 @@ fn pattern_names(pattern: &Pattern, f: &mut impl FnMut(&Ident, Option<&Annot>)) 
 /// Resolution of names that go through an import, once every unit is collected
 struct Fixup<'a, 'u> {
     units: &'a [UnitInfo<'u>],
-    modules: FxHashMap<&'u str, UnitId>,
-    exports: &'a [FxHashMap<&'u str, (Span, Target<'u>)>],
+    strings: &'a [Vec<&'u str>],
+    /// Each unit's module table
+    modules: &'a [Vec<Module>],
+    /// The unit providing each module of each unit's module table
+    resolved: Vec<Vec<Option<UnitId>>>,
+    exports: &'a [FxHashMap<&'u str, (Span, Target)>],
     memo: FxHashMap<(UnitId, &'u str), Referent>,
     /// The exports being resolved, outermost first
     stack: Vec<(UnitId, &'u str)>,
-    /// The modules each unit names that no unit provides, each reported once
-    missing: FxHashSet<(UnitId, &'u str)>,
     diags: Vec<UnitDiag>,
 }
 
@@ -1784,45 +1865,55 @@ impl<'u> Fixup<'_, 'u> {
             .expect("only modules export")
     }
 
-    fn pending(&mut self, pending: &Pending<'u>) -> Referent {
-        let base = self.target(&pending.base, pending.head);
-        let Some(item) = pending.item else {
+    fn str(&self, unit: UnitId, id: StrId) -> &'u str {
+        self.strings[unit.index()][id.index()]
+    }
+
+    fn link(&mut self, link: &Link) -> Referent {
+        let base = self.target(link.unit, link.base, link.span);
+        let Some(item) = link.item else {
             return base;
         };
         match base {
-            Referent::Module(unit) => self.export(unit, item, pending.head),
+            Referent::Module(unit) => {
+                let site = self.site(link.unit, link.base, link.span);
+                self.export(unit, self.str(link.unit, item), site)
+            }
             // Only a module has items, which resolving the name has warned about,
-            // and a missing module is reported once
+            // and a missing module is reported with its unit's module table
             _ => Referent::Error,
         }
     }
 
-    /// The unit providing `module`, named at `site`. A module no unit provides is
-    /// reported the first time its unit names it.
-    fn module(&mut self, module: &'u str, site: UnitSpan) -> Option<UnitId> {
-        let found = self.modules.get(module).copied();
-        if found.is_none() && self.missing.insert((site.unit, module)) {
-            self.diag(
-                site.unit,
-                MissingModule {
-                    span: site.span,
-                    module: module.into(),
-                },
-            );
-        }
-        found
+    /// Where a target of `unit`, named at `span`, is reported as unresolved: at
+    /// `span`, or in a unit without source, which keeps no reference's span, at the
+    /// import of the module the target goes through.
+    fn site(&self, unit: UnitId, target: Target, span: Span) -> UnitSpan {
+        let span = match target {
+            Target::Import { module, .. } | Target::Module(module)
+                if self.units[unit.index()].source.is_none() =>
+            {
+                self.modules[unit.index()][module.index()].span
+            }
+            _ => span,
+        };
+        UnitSpan { unit, span }
     }
 
-    /// Resolve a target, found at `site`.
-    fn target(&mut self, target: &Target<'u>, site: UnitSpan) -> Referent {
+    /// Resolve a target of `unit`, named at `span`. A module no unit provides is
+    /// reported with the unit's module table.
+    fn target(&mut self, unit: UnitId, target: Target, span: Span) -> Referent {
         match target {
-            Target::Local(referent) => referent.clone(),
-            Target::Module(module) => match self.module(module, site) {
-                Some(unit) => Referent::Module(unit),
+            Target::Local(referent) => referent,
+            Target::Module(module) => match self.resolved[unit.index()][module.index()] {
+                Some(found) => Referent::Module(found),
                 None => Referent::Error,
             },
-            Target::Import { module, item } => match self.module(module, site) {
-                Some(unit) => self.export(unit, item, site),
+            Target::Import { module, item } => match self.resolved[unit.index()][module.index()] {
+                Some(found) => {
+                    let site = self.site(unit, target, span);
+                    self.export(found, self.str(unit, item), site)
+                }
                 None => Referent::Error,
             },
         }
@@ -1830,8 +1921,8 @@ impl<'u> Fixup<'_, 'u> {
 
     /// Resolve the export `item` of `unit`, imported at `site`.
     fn export(&mut self, unit: UnitId, item: &'u str, site: UnitSpan) -> Referent {
-        if let Some(referent) = self.memo.get(&(unit, item)) {
-            return referent.clone();
+        if let Some(&referent) = self.memo.get(&(unit, item)) {
+            return referent;
         }
         if let Some(start) = self.stack.iter().position(|&key| key == (unit, item)) {
             let chain = self.stack[start..]
@@ -1860,11 +1951,11 @@ impl<'u> Fixup<'_, 'u> {
             );
             return Referent::Error;
         };
-        let (span, target) = (*span, target.clone());
+        let (span, target) = (*span, *target);
         self.stack.push((unit, item));
-        let referent = self.target(&target, UnitSpan { unit, span });
+        let referent = self.target(unit, target, span);
         self.stack.pop();
-        self.memo.insert((unit, item), referent.clone());
+        self.memo.insert((unit, item), referent);
         referent
     }
 }
@@ -1873,7 +1964,7 @@ impl<'u> Fixup<'_, 'u> {
 struct Aliases<'a, 'u> {
     decls: &'a [Decl<'u>],
     sites: &'a [Site],
-    referents: &'a FxHashMap<UnitSpan, Referent>,
+    referents: &'a [Referent],
     /// Each alias's head, or `None` while its chain is being followed
     heads: FxHashMap<DeclId, Option<Head>>,
     diags: &'a mut Vec<UnitDiag>,
@@ -1898,20 +1989,17 @@ impl Aliases<'_, '_> {
             unreachable!("only an alias has a head")
         };
         let body = alias.body.expect("an opaque alias is not transparent");
-        let head = self.ty(decl.unit, &self.sites[body.index()].ty);
+        let head = self.ty(&self.sites[body.index()].ty);
         self.heads.insert(id, Some(head.clone()));
         head
     }
 
-    fn ty(&mut self, unit: UnitId, ty: &TypeExpr) -> Head {
+    fn ty(&mut self, ty: &TypeExpr) -> Head {
         match ty {
-            TypeExpr::Group { ty, .. } => self.ty(unit, ty),
-            TypeExpr::App { base, .. } => self.ty(unit, base),
+            TypeExpr::Group { ty, .. } => self.ty(ty),
+            TypeExpr::App { base, .. } => self.ty(base),
             TypeExpr::Name { head, .. } => {
-                match self.referents.get(&UnitSpan {
-                    unit,
-                    span: head.span,
-                }) {
+                match head.link.map(|link| &self.referents[link.index()]) {
                     Some(Referent::Decl(decl))
                         if self.decls[decl.index()].kind == DeclKind::Alias =>
                     {

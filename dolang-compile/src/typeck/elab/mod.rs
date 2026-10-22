@@ -37,12 +37,13 @@ use crate::{
     source::Span,
 };
 use surface::{
-    Alias, Binder, Class, Closure, Def, Interned, Method, Name, Signature, SiteId, TypeExpr,
+    Alias, Binder, Class, Closure, Def, Interned, LinkId, Method, ModuleId, Name, Signature,
+    SiteId, StrId, TypeExpr,
 };
 
 pub(crate) use super::report::{Diag, UnitDiag};
 pub(crate) use capture::captures;
-pub(crate) use collect::{Harvest, Pending, harvest, link};
+pub(crate) use collect::{Harvest, Link, Module, harvest, link};
 pub(crate) use ids::Ids;
 pub(crate) use interface::Kept;
 pub(crate) use judge::{JUDGMENTS, Scoped};
@@ -65,14 +66,20 @@ pub(crate) struct Tables<'u> {
     pub(crate) strings: Vec<Vec<&'u str>>,
     /// Every declaration, by [`DeclId`]
     pub(crate) decls: Vec<Decl<'u>>,
-    /// What each type name refers to, keyed by its head. Imports and renames are
-    /// chased away; aliases are not, so `Pair[Int]` refers to the `Pair` alias.
-    pub(crate) referents: FxHashMap<UnitSpan, Referent>,
+    /// What each link refers to, by [`LinkId`]. Imports and renames are chased
+    /// away; aliases are not, so `Pair[Int]` refers to the `Pair` alias.
+    pub(crate) referents: Vec<Referent>,
+    /// The link of each name a unit with source writes, by the span of its head, by
+    /// [`UnitId`]. Only lowering and judgments, which read syntax, look a name up.
+    pub(crate) refs: Vec<FxHashMap<Span, LinkId>>,
+    /// The unit providing each module of a unit's module table, by [`UnitId`] and
+    /// [`ModuleId`], or `None` for a module no unit provides
+    pub(crate) modules: Vec<Vec<Option<UnitId>>>,
     /// The underlying head of each transparent alias
     pub(crate) aliases: FxHashMap<DeclId, Head>,
     /// Each unit's exports by name, with the name each is bound by. Empty for a unit
     /// that is not a module.
-    pub(crate) exports: Vec<FxHashMap<&'u str, (Span, Target<'u>)>>,
+    pub(crate) exports: Vec<FxHashMap<&'u str, (Span, Target)>>,
     /// Each exported variable, by its name, with the site of its annotation if it
     /// has one
     pub(crate) values: FxHashMap<UnitSpan, Option<SiteId>>,
@@ -114,6 +121,16 @@ pub(crate) struct Tables<'u> {
 }
 
 impl<'u> Tables<'u> {
+    /// What a name refers to, given its link
+    pub(crate) fn linked(&self, link: Option<LinkId>) -> Option<&Referent> {
+        link.map(|link| &self.referents[link.index()])
+    }
+
+    /// What a name written in a unit with source refers to, by the span of its head
+    pub(crate) fn written(&self, unit: UnitId, head: Span) -> Option<&Referent> {
+        self.linked(self.refs[unit.index()].get(&head).copied())
+    }
+
     /// The number of signatures of a declaration: its defs or methods, or 1
     pub(crate) fn sig_count(&self, decl: DeclId) -> usize {
         match &self.decls[decl.index()].node {
@@ -478,7 +495,7 @@ impl DeclNode {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) enum Referent {
     Decl(DeclId),
     Binder(BinderRef),
@@ -493,17 +510,17 @@ pub(crate) enum Referent {
     Module(UnitId),
 }
 
-/// What an unresolved name or export refers to
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) enum Target<'u> {
+/// What an unresolved name or export refers to. A module is one of its unit's
+/// module table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub(crate) enum Target {
     Local(Referent),
     /// An item of a module, by name
     Import {
-        module: &'u str,
-        item: &'u str,
+        module: ModuleId,
+        item: StrId,
     },
-    /// A module, by name
-    Module(&'u str),
+    Module(ModuleId),
 }
 
 /// The head of a transparent alias's underlying type

@@ -22,7 +22,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::{
     BadRecursion, BoundViolation, DeclNode, Designated, Diag, Fill, Head, ParameterKeys, Referent,
     Role, Tables, UnitDiag,
-    surface::{Class, Interned, Name, TypeArg, TypeExpr, TypeParam, TypeParamKind},
+    surface::{Class, Interned, Ref, TypeArg, TypeExpr, TypeParam, TypeParamKind},
 };
 use crate::{
     source::Span,
@@ -455,10 +455,8 @@ impl Check<'_, '_> {
             let targets = edges.entry(id).or_default();
             if let Some(body) = alias_body(self.tables, &decl.node) {
                 body.names(&mut |head, _| {
-                    if let Some(Referent::Decl(target)) = self.tables.referents.get(&UnitSpan {
-                        unit: decl.unit,
-                        span: head.span,
-                    }) && self.tables.aliases.contains_key(target)
+                    if let Some(Referent::Decl(target)) = self.tables.linked(head.link)
+                        && self.tables.aliases.contains_key(target)
                     {
                         targets.push(*target);
                     }
@@ -614,16 +612,13 @@ impl Check<'_, '_> {
         unit: UnitId,
         alias: DeclId,
         members: &FxHashSet<DeclId>,
-        head: &Name,
+        head: &Ref,
         span: Span,
         app: Option<&TypeExpr>,
         guarded: bool,
         found: &mut Vec<Recursive>,
     ) -> Option<DeclId> {
-        let Some(&Referent::Decl(target)) = self.tables.referents.get(&UnitSpan {
-            unit,
-            span: head.span,
-        }) else {
+        let Some(&Referent::Decl(target)) = self.tables.linked(head.link) else {
             return None;
         };
         if members.contains(&target) {
@@ -632,7 +627,7 @@ impl Check<'_, '_> {
                 alias,
                 target,
                 span,
-                name: self.tables.name(unit, *head).to_owned(),
+                name: self.tables.name(unit, head.name()).to_owned(),
                 guarded,
                 regular: self.regular(alias, target, app),
             });

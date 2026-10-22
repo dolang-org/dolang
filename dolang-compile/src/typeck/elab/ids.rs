@@ -1,16 +1,16 @@
-//! The IDs a harvest holds, of its unit, declarations, sites and strings. They are
+//! The IDs a harvest holds, of its unit, declarations, sites, strings, links and
+//! modules. They are
 //! visited in place: to move a harvest to where it is linked, to cut one down to its
 //! surface for a typelib, and to check one read from a typelib.
 
-use rustc_hash::FxHashSet;
-
 use super::{
-    BinderRef, Decl, DeclNode, Harvest, Referent, Role, Site, Target,
+    BinderRef, Decl, DeclNode, Harvest, Link, Module, Referent, Role, Site, Target,
     interface::Kept,
     local,
     surface::{
-        Binder, Class, ConstLit, Decorator, Member, Name, Param, ParamKind, Signature, SiteId,
-        StrId, Super, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam, TypeParamKind,
+        Binder, Class, ConstLit, Decorator, LinkId, Member, ModuleId, Name, Param, ParamKind, Ref,
+        Signature, SiteId, StrId, Super, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam,
+        TypeParamKind,
     },
 };
 use crate::typeck::r#type::{DeclId, DeclKind, UnitId};
@@ -21,6 +21,8 @@ pub(crate) trait Ids {
     fn decl(&mut self, decl: &mut DeclId);
     fn site(&mut self, site: &mut SiteId);
     fn str(&mut self, id: &mut StrId);
+    fn link(&mut self, link: &mut LinkId);
+    fn module(&mut self, module: &mut ModuleId);
 }
 
 impl Harvest<'_> {
@@ -28,9 +30,9 @@ impl Harvest<'_> {
     pub(crate) fn visit_ids(&mut self, ids: &mut impl Ids) {
         self.decls.visit(ids);
         self.sites.visit(ids);
-        for pending in &mut self.pending {
-            ids.unit(&mut pending.head.unit);
-            pending.base.visit(ids);
+        self.links.visit(ids);
+        for link in self.refs.values_mut() {
+            ids.link(link);
         }
         for (_, target) in self.exports.values_mut() {
             target.visit(ids);
@@ -38,14 +40,16 @@ impl Harvest<'_> {
         for site in self.values.values_mut() {
             site.visit(ids);
         }
+        self.modules.visit(ids);
     }
 
     /// The harvest cut down to its surface: what a unit that imports it can see.
     ///
     /// The surface keeps what [`Harvest::interface`] says it does. Closures are left
     /// out, along with everything declared within a def, method or closure, and the
-    /// sites, strings and type names only they hold. A decorator naming a declaration
-    /// left out names nothing.
+    /// sites, strings and links only they hold. A decorator naming a declaration left
+    /// out names nothing. The whole module table is kept, since a unit reports each
+    /// module it imports.
     pub(crate) fn surface(mut self, kept: &Kept) -> Self {
         let decls = &kept.decls;
         for (index, decl) in self.decls.iter_mut().enumerate() {
@@ -63,40 +67,36 @@ impl Harvest<'_> {
             });
         }
 
+        let dropped = |target: &Target| match target {
+            Target::Local(Referent::Decl(decl)) => !decls[decl.index()],
+            _ => false,
+        };
+        for (decl, _) in self.decls.iter_mut().zip(decls).filter(|(_, keep)| **keep) {
+            let decorators: Vec<_> = match &mut decl.node {
+                DeclNode::Class(class) => class.decorators.iter_mut().collect(),
+                DeclNode::Methods(methods) => (methods.iter_mut())
+                    .flat_map(|method| &mut method.decorators)
+                    .collect(),
+                DeclNode::Alias(_) | DeclNode::Defs(_) | DeclNode::Closure(_) => continue,
+            };
+            for decorator in decorators {
+                if let Decorator::Ident(name) = decorator
+                    && name
+                        .link
+                        .is_some_and(|link| dropped(&self.links[link.index()].base))
+                {
+                    name.link = None;
+                }
+            }
+        }
+
         let mut used = Used {
             sites: vec![false; self.sites.len()],
             strs: vec![false; self.strings.len()],
+            links: vec![false; self.links.len()],
         };
-        // The type names whose resolutions the surface reads, by head
-        let mut heads = FxHashSet::default();
-        let mut decorators = FxHashSet::default();
         for (decl, _) in self.decls.iter_mut().zip(decls).filter(|(_, keep)| **keep) {
             decl.visit(&mut used);
-            match &decl.node {
-                DeclNode::Class(class) => {
-                    for decorator in &class.decorators {
-                        if let Decorator::Ident(name) = decorator {
-                            decorators.insert(name.span);
-                        }
-                    }
-                    for supertype in &class.supers {
-                        heads.insert(supertype.head.span);
-                        for arg in &supertype.args {
-                            arg.ty().names(&mut |head, _| {
-                                heads.insert(head.span);
-                            });
-                        }
-                    }
-                }
-                DeclNode::Methods(methods) => {
-                    for decorator in methods.iter().flat_map(|method| &method.decorators) {
-                        if let Decorator::Ident(name) = decorator {
-                            decorators.insert(name.span);
-                        }
-                    }
-                }
-                DeclNode::Alias(_) | DeclNode::Defs(_) | DeclNode::Closure(_) => {}
-            }
         }
         // Exported variables are on the surface, whether annotated or not
         for site in self.values.values_mut() {
@@ -106,26 +106,28 @@ impl Harvest<'_> {
             .zip(used.sites.clone())
             .filter(|(_, keep)| *keep)
         {
-            site.ty.names(&mut |head, _| {
-                heads.insert(head.span);
-            });
             site.ty.visit(&mut used);
         }
+        for (link, _) in (self.links.iter_mut())
+            .zip(used.links.clone())
+            .filter(|(_, keep)| *keep)
+        {
+            link.visit(&mut used);
+        }
+        for (_, target) in self.exports.values_mut() {
+            target.visit(&mut used);
+        }
+        self.modules.visit(&mut used);
 
         let mut renumber = Renumber {
             decls: numbering(decls, DeclId::from_index),
             sites: numbering(&used.sites, SiteId::from_index),
             strs: numbering(&used.strs, StrId::from_index),
+            links: numbering(&used.links, LinkId::from_index),
         };
-        let dropped = |target: &Target<'_>| match target {
-            Target::Local(Referent::Decl(decl)) => !decls[decl.index()],
-            _ => false,
-        };
-        self.pending.retain(|pending| {
-            heads.contains(&pending.head.span)
-                || decorators.contains(&pending.head.span) && !dropped(&pending.base)
-        });
-        let targets = (self.pending.iter_mut().map(|pending| &mut pending.base))
+        let targets = (self.links.iter_mut().zip(&used.links))
+            .filter(|(_, keep)| **keep)
+            .map(|(link, _)| &mut link.base)
             .chain(self.exports.values_mut().map(|(_, target)| target));
         for target in targets {
             let Target::Local(referent) = target else {
@@ -151,6 +153,9 @@ impl Harvest<'_> {
         self.decls = retain(self.decls, decls);
         self.sites = retain(self.sites, &used.sites);
         self.strings = retain(self.strings, &used.strs);
+        self.links = retain(self.links, &used.links);
+        // A typelib has no syntax to look a name up in
+        self.refs.clear();
         self.visit_ids(&mut renumber);
         self
     }
@@ -177,10 +182,11 @@ fn retain<T>(items: Vec<T>, keep: &[bool]) -> Vec<T> {
         .collect()
 }
 
-/// Finds the sites and strings a harvest's surface uses
+/// Finds the sites, strings and links a harvest's surface uses
 struct Used {
     sites: Vec<bool>,
     strs: Vec<bool>,
+    links: Vec<bool>,
 }
 
 impl Ids for Used {
@@ -195,6 +201,12 @@ impl Ids for Used {
     fn str(&mut self, id: &mut StrId) {
         self.strs[id.index()] = true;
     }
+
+    fn link(&mut self, link: &mut LinkId) {
+        self.links[link.index()] = true;
+    }
+
+    fn module(&mut self, _: &mut ModuleId) {}
 }
 
 /// Renumbers the IDs of a harvest cut down to its surface
@@ -202,6 +214,7 @@ struct Renumber {
     decls: Vec<Option<DeclId>>,
     sites: Vec<Option<SiteId>>,
     strs: Vec<Option<StrId>>,
+    links: Vec<Option<LinkId>>,
 }
 
 impl Ids for Renumber {
@@ -218,15 +231,24 @@ impl Ids for Renumber {
     fn str(&mut self, id: &mut StrId) {
         *id = self.strs[id.index()].expect("the surface keeps what it refers to");
     }
+
+    fn link(&mut self, link: &mut LinkId) {
+        *link = self.links[link.index()].expect("the surface keeps what it refers to");
+    }
+
+    fn module(&mut self, _: &mut ModuleId) {}
 }
 
-/// Moves a harvest's local unit, declarations and sites to where it is linked
+/// Moves a harvest's local unit, declarations, sites and links to where it is
+/// linked. Strings and modules stay its own.
 pub(crate) struct Rebase {
     pub(crate) unit: UnitId,
     /// The first declaration of the unit
     pub(crate) decls: usize,
     /// The first site of the unit
     pub(crate) sites: usize,
+    /// The first link of the unit
+    pub(crate) links: usize,
 }
 
 impl Ids for Rebase {
@@ -244,6 +266,12 @@ impl Ids for Rebase {
     }
 
     fn str(&mut self, _: &mut StrId) {}
+
+    fn link(&mut self, link: &mut LinkId) {
+        *link = LinkId::from_index(self.links + link.index());
+    }
+
+    fn module(&mut self, _: &mut ModuleId) {}
 }
 
 /// Something that holds IDs
@@ -285,9 +313,22 @@ impl Visit for SiteId {
     }
 }
 
+impl Visit for LinkId {
+    fn visit(&mut self, ids: &mut impl Ids) {
+        ids.link(self);
+    }
+}
+
 impl Visit for Name {
     fn visit(&mut self, ids: &mut impl Ids) {
         ids.str(&mut self.text);
+    }
+}
+
+impl Visit for Ref {
+    fn visit(&mut self, ids: &mut impl Ids) {
+        ids.str(&mut self.text);
+        self.link.visit(ids);
     }
 }
 
@@ -493,12 +534,32 @@ impl Visit for TypeParam {
     }
 }
 
-impl Visit for Target<'_> {
+impl Visit for Target {
     fn visit(&mut self, ids: &mut impl Ids) {
         match self {
             Target::Local(referent) => referent.visit(ids),
-            Target::Import { .. } | Target::Module(_) => {}
+            Target::Import { module, item } => {
+                ids.module(module);
+                ids.str(item);
+            }
+            Target::Module(module) => ids.module(module),
         }
+    }
+}
+
+impl Visit for Link {
+    fn visit(&mut self, ids: &mut impl Ids) {
+        ids.unit(&mut self.unit);
+        self.base.visit(ids);
+        if let Some(item) = &mut self.item {
+            ids.str(item);
+        }
+    }
+}
+
+impl Visit for Module {
+    fn visit(&mut self, ids: &mut impl Ids) {
+        ids.str(&mut self.name);
     }
 }
 
