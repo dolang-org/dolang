@@ -948,6 +948,9 @@ def _annotate_params(entities: list[dict]) -> None:
         elif entity.get("kind") == "field":
             entity["type"] = entity.get("annotation", "")
             entity["doc"] = entity["doc"].strip()
+            # A setter declared first still reads as `[get, set]`
+            access = entity.get("access") or []
+            entity["access"] = [a for a in ("get", "set") if a in access]
         _annotate_params(entity.get("members", []))
 
 
