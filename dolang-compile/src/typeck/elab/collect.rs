@@ -731,53 +731,35 @@ impl<'u> Walk<'_, 'u> {
 
     fn surface_params(&mut self, params: &'u [ast::TypeParam]) -> Vec<surface::TypeParam> {
         use ast::{TypeKey as K, TypeParamKind as P, TypeQuant as Q};
-        use surface::{TypeKey, TypeParamKind, TypeQuant};
+        use surface::{TypeKey, TypeParam, TypeQuant};
 
-        let quant = |quant: &Option<Q>| match quant {
-            Some(Q::Opt(_)) => Some(TypeQuant::Opt),
-            Some(Q::Star(_)) => Some(TypeQuant::Star),
-            Some(Q::Include(_)) | None => None,
+        let quant = |quant: &Option<Q>| {
+            quant.as_ref().map(|quant| match quant {
+                Q::Opt(_) => TypeQuant::Opt,
+                Q::Star(_) => TypeQuant::Star,
+                Q::Include(_) => TypeQuant::Include,
+            })
         };
         params
             .iter()
             .map(|param| match &param.kind {
-                P::Pos {
-                    quant: Some(Q::Include(_)),
-                    ty,
-                } => surface::TypeParam {
-                    quant: None,
-                    kind: Some(TypeParamKind::Include {
-                        ty: self.surface(ty),
-                    }),
-                },
-                P::Pos { quant: q, ty } => surface::TypeParam {
+                P::Pos { quant: q, ty } => TypeParam::Pos {
                     quant: quant(q),
-                    kind: Some(TypeParamKind::Pos(self.surface(ty))),
+                    ty: self.surface(ty),
                 },
                 P::Key {
                     quant: q, key, ty, ..
-                } => surface::TypeParam {
+                } => TypeParam::Key {
                     quant: quant(q),
-                    kind: Some(TypeParamKind::Key {
-                        key: match key {
-                            K::Sym(span) => TypeKey::Sym(self.symbol(*span)),
-                            K::Type(ty) => TypeKey::Type(Box::new(self.surface(ty))),
-                        },
-                        ty: self.surface(ty),
-                    }),
+                    key: match key {
+                        K::Sym(span) => TypeKey::Sym(self.symbol(*span)),
+                        K::Type(ty) => TypeKey::Type(Box::new(self.surface(ty))),
+                    },
+                    ty: self.surface(ty),
                 },
-                P::AnyPos { .. } => surface::TypeParam {
-                    quant: Some(TypeQuant::Star),
-                    kind: None,
-                },
-                P::AnyKey { ty, .. } => surface::TypeParam {
-                    quant: Some(TypeQuant::StarStar),
-                    kind: ty.as_ref().map(|ty| TypeParamKind::Pos(self.surface(ty))),
-                },
-                P::Open { ellipsis_span } => surface::TypeParam {
-                    quant: None,
-                    kind: Some(TypeParamKind::Open(*ellipsis_span)),
-                },
+                P::AnyPos { .. } => TypeParam::AnyPos,
+                P::AnyKey { ty, .. } => TypeParam::AnyKey(ty.as_ref().map(|ty| self.surface(ty))),
+                P::Open { ellipsis_span } => TypeParam::Open(*ellipsis_span),
             })
             .collect()
     }

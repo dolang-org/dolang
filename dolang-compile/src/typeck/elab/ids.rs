@@ -10,7 +10,7 @@ use super::{
     surface::{
         Binder, Class, ConstLit, Decorator, LinkId, Member, ModuleId, Name, Param, ParamKind, Ref,
         Signature, SiteId, StrId, Super, Symbol, TypeArg, TypeArgKind, TypeExpr, TypeKey,
-        TypeParam, TypeParamKind,
+        TypeParam,
     },
 };
 use crate::typeck::r#type::{DeclId, DeclKind, UnitId};
@@ -514,16 +514,16 @@ impl Visit for TypeArg {
 
 impl Visit for TypeParam {
     fn visit(&mut self, ids: &mut impl Ids) {
-        match &mut self.kind {
-            Some(TypeParamKind::Pos(ty)) | Some(TypeParamKind::Include { ty }) => ty.visit(ids),
-            Some(TypeParamKind::Key { key, ty }) => {
+        match self {
+            TypeParam::Pos { ty, .. } | TypeParam::AnyKey(Some(ty)) => ty.visit(ids),
+            TypeParam::Key { key, ty, .. } => {
                 match key {
                     TypeKey::Sym(name) => name.visit(ids),
                     TypeKey::Type(key) => key.visit(ids),
                 }
                 ty.visit(ids);
             }
-            Some(TypeParamKind::Open(_)) | None => {}
+            TypeParam::AnyPos | TypeParam::AnyKey(None) | TypeParam::Open(_) => {}
         }
     }
 }

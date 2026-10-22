@@ -15,7 +15,7 @@ use super::{
     Referent, Role, Site, Tables, TooManyTypeArgs, UnknownTypeKeyword,
     surface::{
         Binder, BinderKind, Ref, Super, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam,
-        TypeParamKind,
+        TypeQuant,
     },
 };
 use crate::{
@@ -477,16 +477,21 @@ impl<'t> Check<'_, 't, '_> {
     /// Check the items of a schema or parameter list.
     fn items(&mut self, params: &'t [TypeParam]) {
         for param in params {
-            match &param.kind {
-                Some(TypeParamKind::Pos(ty)) => self.check(ty, Some(Kind::Type)),
-                Some(TypeParamKind::Key { key, ty, .. }) => {
+            match param {
+                TypeParam::Pos {
+                    quant: Some(TypeQuant::Include),
+                    ty,
+                } => self.check(ty, Some(Kind::Schema)),
+                TypeParam::Pos { ty, .. } | TypeParam::AnyKey(Some(ty)) => {
+                    self.check(ty, Some(Kind::Type))
+                }
+                TypeParam::Key { key, ty, .. } => {
                     if let TypeKey::Type(key) = key {
                         self.check(key, Some(Kind::Type));
                     }
                     self.check(ty, Some(Kind::Type));
                 }
-                Some(TypeParamKind::Include { ty }) => self.check(ty, Some(Kind::Schema)),
-                Some(TypeParamKind::Open(_)) | None => {}
+                TypeParam::AnyPos | TypeParam::AnyKey(None) | TypeParam::Open(_) => {}
             }
         }
     }

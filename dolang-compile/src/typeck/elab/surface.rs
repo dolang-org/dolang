@@ -275,11 +275,24 @@ pub(crate) enum TypeArgKind {
 
 /// An item a schema or a function type's parameters declare
 #[derive(Clone, Serialize, Deserialize)]
-pub(crate) struct TypeParam {
-    /// How many of the element the item admits
-    pub(crate) quant: Option<TypeQuant>,
-    /// The element the quantifier applies to, absent only for a bare `*` or `**`
-    pub(crate) kind: Option<TypeParamKind>,
+pub(crate) enum TypeParam {
+    /// `T`, `?T`, `*T`, or `...S`
+    Pos {
+        quant: Option<TypeQuant>,
+        ty: TypeExpr,
+    },
+    /// `key: T`, `?key: T`, or `*key: T`
+    Key {
+        quant: Option<TypeQuant>,
+        key: TypeKey,
+        ty: TypeExpr,
+    },
+    /// `*` alone, admitting any positional item
+    AnyPos,
+    /// `**V`, or `**` alone, admitting any keyed item
+    AnyKey(Option<TypeExpr>),
+    /// `...` alone, spanning it
+    Open(#[serde(skip, default = "wire::invalid")] Span),
 }
 
 /// How many of an element a schema item admits
@@ -289,20 +302,8 @@ pub(crate) enum TypeQuant {
     Opt,
     /// `*`
     Star,
-    /// `**`
-    StarStar,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub(crate) enum TypeParamKind {
-    /// `T`
-    Pos(TypeExpr),
-    /// `key: T`
-    Key { key: TypeKey, ty: TypeExpr },
-    /// `...S`
-    Include { ty: TypeExpr },
-    /// `...`, spanning it
-    Open(#[serde(skip, default = "wire::invalid")] Span),
+    /// `...`, including a schema's items
+    Include,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -403,16 +404,17 @@ impl TypeArg {
 impl TypeParam {
     /// The item's key type, if it has one, then its type.
     pub(crate) fn tys(&self) -> impl Iterator<Item = &TypeExpr> {
-        let (key_ty, ty) = match &self.kind {
-            Some(TypeParamKind::Pos(ty)) | Some(TypeParamKind::Include { ty }) => (None, Some(ty)),
-            Some(TypeParamKind::Key { key, ty }) => (
+        let (key_ty, ty) = match self {
+            TypeParam::Pos { ty, .. } => (None, Some(ty)),
+            TypeParam::Key { key, ty, .. } => (
                 match key {
                     TypeKey::Sym(_) => None,
                     TypeKey::Type(key_ty) => Some(&**key_ty),
                 },
                 Some(ty),
             ),
-            Some(TypeParamKind::Open(_)) | None => (None, None),
+            TypeParam::AnyKey(ty) => (None, ty.as_ref()),
+            TypeParam::AnyPos | TypeParam::Open(_) => (None, None),
         };
         key_ty.into_iter().chain(ty)
     }
@@ -699,13 +701,7 @@ impl Printer<'_, '_> {
                 out.write_char('(')?;
                 self.params(params, None, None, out)?;
                 // A lone item without a quantifier would only group without its comma
-                if let [
-                    TypeParam {
-                        quant: None,
-                        kind: Some(TypeParamKind::Pos(_)),
-                    },
-                ] = params[..]
-                {
+                if let [TypeParam::Pos { quant: None, .. }] = params[..] {
                     out.write_char(',')?;
                 }
                 out.write_char(')')
@@ -754,15 +750,19 @@ impl Printer<'_, '_> {
         };
         for param in params {
             sep(out)?;
-            match param.quant {
-                Some(TypeQuant::Opt) => out.write_char('?')?,
-                Some(TypeQuant::Star) => out.write_char('*')?,
-                Some(TypeQuant::StarStar) => out.write_str("**")?,
-                None => {}
-            }
-            match &param.kind {
-                Some(TypeParamKind::Pos(ty)) => self.ty(ty, out)?,
-                Some(TypeParamKind::Key { key, ty }) => {
+            let quant = |quant, out: &mut String| match quant {
+                Some(TypeQuant::Opt) => out.write_char('?'),
+                Some(TypeQuant::Star) => out.write_char('*'),
+                Some(TypeQuant::Include) => out.write_str("..."),
+                None => Ok(()),
+            };
+            match param {
+                TypeParam::Pos { quant: q, ty } => {
+                    quant(*q, out)?;
+                    self.ty(ty, out)?;
+                }
+                TypeParam::Key { quant: q, key, ty } => {
+                    quant(*q, out)?;
                     match key {
                         TypeKey::Sym(name) => self.name(name.text, out)?,
                         TypeKey::Type(key) => self.ty(key, out)?,
@@ -770,12 +770,14 @@ impl Printer<'_, '_> {
                     out.write_str(": ")?;
                     self.ty(ty, out)?;
                 }
-                Some(TypeParamKind::Include { ty }) => {
-                    out.write_str("...")?;
-                    self.ty(ty, out)?;
+                TypeParam::AnyPos => out.write_char('*')?,
+                TypeParam::AnyKey(ty) => {
+                    out.write_str("**")?;
+                    if let Some(ty) = ty {
+                        self.ty(ty, out)?;
+                    }
                 }
-                Some(TypeParamKind::Open(_)) => out.write_str("...")?,
-                None => {}
+                TypeParam::Open(_) => out.write_str("...")?,
             }
         }
         for (sigil, ty) in [('<', input), ('>', output)] {

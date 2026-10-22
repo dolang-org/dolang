@@ -30,7 +30,7 @@ use rustc_hash::FxHashMap;
 
 use super::{
     Ambient, BinderRef, DeclNode, Designated, Head, ParamTy, Referent, RestSlot, Slot, Tables, sig,
-    surface::{Member, Ref, SiteId, TypeArg, TypeExpr, TypeKey, TypeParam, TypeParamKind},
+    surface::{Member, Ref, SiteId, TypeArg, TypeExpr, TypeKey, TypeParam},
 };
 use crate::{
     ast::SpecialMethod,
@@ -605,17 +605,15 @@ impl<'t> Collect<'t, '_> {
     /// Walk the items of a schema or parameter list.
     fn items(&mut self, params: &'t [TypeParam], u: Use) {
         for param in params {
-            match &param.kind {
-                Some(TypeParamKind::Pos(ty) | TypeParamKind::Include { ty }) => {
-                    self.ty(ty, u);
-                }
-                Some(TypeParamKind::Key { key, ty, .. }) => {
+            match param {
+                TypeParam::Pos { ty, .. } | TypeParam::AnyKey(Some(ty)) => self.ty(ty, u),
+                TypeParam::Key { key, ty, .. } => {
                     if let TypeKey::Type(key) = key {
                         self.ty(key, u);
                     }
                     self.ty(ty, u);
                 }
-                Some(TypeParamKind::Open(_)) | None => {}
+                TypeParam::AnyPos | TypeParam::AnyKey(None) | TypeParam::Open(_) => {}
             }
         }
     }

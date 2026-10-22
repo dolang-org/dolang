@@ -22,7 +22,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::{
     BadRecursion, BoundViolation, DeclNode, Designated, Diag, Fill, Head, ParameterKeys, Referent,
     Role, Tables, UnitDiag,
-    surface::{Class, Interned, Ref, TypeArg, TypeExpr, TypeParam, TypeParamKind},
+    surface::{Class, Interned, Ref, TypeArg, TypeExpr, TypeParam, TypeQuant},
 };
 use crate::{
     source::Span,
@@ -560,7 +560,13 @@ impl Check<'_, '_> {
                     // An inclusion's items are the schema's own
                     let guarded = guarded
                         || collection
-                        || !matches!(param.kind, Some(TypeParamKind::Include { .. }));
+                        || !matches!(
+                            param,
+                            TypeParam::Pos {
+                                quant: Some(TypeQuant::Include),
+                                ..
+                            }
+                        );
                     for ty in param.tys() {
                         self.guarded(unit, alias, members, ty, guarded, found);
                     }
