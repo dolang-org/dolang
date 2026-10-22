@@ -61,7 +61,11 @@ pub fn typelib(unit: &Unit<'_>) -> Result<Vec<u8>, Error> {
 /// declarations as if the module were checked from source, but the module's bodies
 /// are not checked. A typelib is read only by the version of the checker that wrote
 /// it.
-pub struct Typelib<'a>(elab::Harvest<'a>);
+pub struct Typelib<'a> {
+    harvest: elab::Harvest<'a>,
+    /// The modules the module imports, each once, in order
+    imports: Vec<&'a str>,
+}
 
 impl<'a> Typelib<'a> {
     /// Read a typelib.
@@ -73,39 +77,25 @@ impl<'a> Typelib<'a> {
     /// | [`ErrorKind::Typelib`](crate::ErrorKind::Typelib) | The bytes are not a typelib this version of the checker reads |
     pub fn read(bytes: &'a [u8]) -> Result<Self, Error> {
         typelib::read(bytes)
-            .map(Self)
+            .map(|(harvest, imports)| Self { harvest, imports })
             .map_err(|invalid| Error(ErrorInfo::Typelib(invalid)))
     }
 
     /// The module's name.
     pub fn module(&self) -> &'a str {
-        self.0.info.module.expect("a typelib is a module's")
+        self.harvest.info.module.expect("a typelib is a module's")
     }
 
     /// The path of the module's source when the typelib was written, which locates
     /// its diagnostics.
     pub fn path(&self) -> &'a Path {
-        self.0.info.path
+        self.harvest.info.path
     }
 
-    /// The modules the module imports or its declarations name, each once, in
-    /// order. A check finds them among its units, and reports a module it doesn't
-    /// have as not found.
+    /// The modules the module imports, each once, in order. A check finds them
+    /// among its units, and reports a module it doesn't have as not found.
     pub fn imports(&self) -> Vec<&'a str> {
-        use elab::Target;
-
-        let targets = (self.0.pending.iter().map(|pending| &pending.base))
-            .chain(self.0.exports.values().map(|(_, target)| target));
-        let mut imports: Vec<&'a str> = targets
-            .filter_map(|target| match *target {
-                Target::Import { module, .. } | Target::Module(module) => Some(module),
-                Target::Local(_) => None,
-            })
-            .chain(self.0.imports.keys().copied())
-            .collect();
-        imports.sort_unstable();
-        imports.dedup();
-        imports
+        self.imports.clone()
     }
 }
 
@@ -206,7 +196,8 @@ impl<'u, 's> Builder<'u, 's> {
     /// | [`ErrorKind::DuplicateModule`](crate::ErrorKind::DuplicateModule) | A module of the same name was already added |
     pub fn typelib(&mut self, typelib: &Typelib<'u>) -> Result<UnitId, Error> {
         self.module(typelib.module())?;
-        self.units.push(Input::Typelib(Box::new(typelib.0.clone())));
+        self.units
+            .push(Input::Typelib(Box::new(typelib.harvest.clone())));
         Ok(UnitId::from_index(self.units.len() - 1))
     }
 
@@ -252,13 +243,12 @@ impl<'u, 's> Builder<'u, 's> {
         elab::populate(&mut db, &mut tables, &mut diags);
         db.seal();
         elab::specialize(&mut db, &tables, &mut diags);
-        let bounds = elab::bounds(&tables);
         let mut recursion = Vec::new();
-        let recursion_unresolved = elab::recursion(&mut db, &tables, &bounds, &mut recursion);
+        let recursion_unresolved = elab::recursion(&mut db, &tables, &mut recursion);
         // Every later pass runs in a fork per unit, so no unit's results depend on
         // what another interned
         let shared = db.share();
-        let mut outputs = check_units(&shared, &tables, &bounds, self.threads);
+        let mut outputs = check_units(&shared, &tables, self.threads);
         // Gather each kind of output across units, in the order the passes ran
         let mut unresolved = Vec::new();
         for output in &mut outputs {
@@ -396,7 +386,6 @@ const _: () = {
     send::<flow::Results>();
     sync::<cfg::Ir>();
     sync::<flow::Layout>();
-    sync::<elab::Bounds<'_>>();
 };
 
 /// Check every unit with [`check_unit`], on a pool of `threads` threads, else the
@@ -404,7 +393,6 @@ const _: () = {
 fn check_units(
     shared: &Arc<r#type::Shared>,
     tables: &elab::Tables<'_>,
-    bounds: &elab::Bounds<'_>,
     threads: Option<NonZeroUsize>,
 ) -> Vec<UnitOutput> {
     let count = tables.units.len();
@@ -416,13 +404,13 @@ fn check_units(
     // their own to check
     work.sort_by_key(|(unit, _)| {
         let info = &tables.units[unit.index()];
-        std::cmp::Reverse(info.source.map_or(0, |_| info.newlines.len()))
+        std::cmp::Reverse(info.source.map_or(0, |source| source.file.newlines().len()))
     });
     // FIFO, so that the worker spawning the units takes them largest first too
     let run = || {
         rayon::scope_fifo(|scope| {
             for (unit, slot) in work {
-                scope.spawn_fifo(move |_| *slot = Some(check_unit(shared, tables, bounds, unit)));
+                scope.spawn_fifo(move |_| *slot = Some(check_unit(shared, tables, unit)));
             }
         })
     };
@@ -449,12 +437,7 @@ fn check_units(
 
 /// Check a unit with source, its declarations and bodies, in a new fork of
 /// `shared`; a typelib's were checked with its source
-fn check_unit(
-    shared: &Arc<r#type::Shared>,
-    tables: &elab::Tables<'_>,
-    bounds: &elab::Bounds<'_>,
-    unit: UnitId,
-) -> UnitOutput {
+fn check_unit(shared: &Arc<r#type::Shared>, tables: &elab::Tables<'_>, unit: UnitId) -> UnitOutput {
     // A fork of its own, so that what it interns isn't in the layer
     let db = r#type::Database::fork(shared);
     let source = tables.units[unit.index()].source;
@@ -463,7 +446,7 @@ fn check_unit(
     // misleads checks against it
     let mut wellformed = Vec::new();
     let wellformed_unresolved = match source {
-        Some(_) => elab::wellformed(&db, tables, bounds, unit, &mut wellformed),
+        Some(_) => elab::wellformed(&db, tables, unit, &mut wellformed),
         None => Vec::new(),
     };
     let mut overrides = Vec::new();

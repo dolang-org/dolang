@@ -58,10 +58,9 @@ impl Tables<'_> {
     ) -> Vec<(&'static str, Span, String)> {
         let mut judgments = Vec::new();
         self.populated(db, unit, &mut judgments);
-        for (head, referent) in &self.referents {
-            if head.unit == unit {
-                judgments.push(("ref", head.span, self.referent(referent)));
-            }
+        for (&head, &link) in &self.refs[unit.index()] {
+            let referent = &self.referents[link.index()];
+            judgments.push(("ref", head, self.referent(referent)));
         }
         for (id, head) in &self.aliases {
             let decl = &self.decls[id.index()];

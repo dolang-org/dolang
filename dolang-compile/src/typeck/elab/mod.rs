@@ -19,6 +19,7 @@ mod variance;
 mod wellformed;
 
 use std::{
+    borrow::Cow,
     fmt::{self, Write},
     path::Path,
 };
@@ -34,15 +35,16 @@ use super::typelib::wire;
 use crate::{
     RestKind, Unit, ast,
     diag::{AnnotationKind, NoteKind, Severity},
-    source::Span,
+    source::{Coord, Span},
 };
 use surface::{
-    Alias, Binder, Class, Closure, Def, Interned, Method, Name, Signature, SiteId, TypeExpr,
+    Alias, Binder, Class, Closure, Def, Interned, LinkId, Method, ModuleId, Name, Signature,
+    SiteId, StrId, TypeExpr,
 };
 
 pub(crate) use super::report::{Diag, UnitDiag};
 pub(crate) use capture::captures;
-pub(crate) use collect::{Harvest, Pending, harvest, link};
+pub(crate) use collect::{Export, Harvest, Link, Module, Value, find_export, harvest, link};
 pub(crate) use ids::Ids;
 pub(crate) use interface::Kept;
 pub(crate) use judge::{JUDGMENTS, Scoped};
@@ -52,7 +54,7 @@ pub(crate) use populate::populate;
 pub(crate) use sig::signatures;
 pub(crate) use specialize::specialize;
 pub(crate) use variance::variances;
-pub(crate) use wellformed::{Bounds, Unresolved, bounds, recursion, wellformed};
+pub(crate) use wellformed::{Unresolved, recursion, wellformed};
 
 /// The names of `strand`'s pipe placeholders, sender first
 pub(crate) const PIPES: [&str; 2] = ["PipeSender", "PipeReceiver"];
@@ -62,17 +64,22 @@ pub(crate) struct Tables<'u> {
     /// The units, by [`UnitId`]
     pub(crate) units: Vec<UnitInfo<'u>>,
     /// Each unit's string table, by [`UnitId`]
-    pub(crate) strings: Vec<Vec<&'u str>>,
+    pub(crate) strings: Vec<Vec<Cow<'u, str>>>,
     /// Every declaration, by [`DeclId`]
     pub(crate) decls: Vec<Decl<'u>>,
-    /// What each type name refers to, keyed by its head. Imports and renames are
-    /// chased away; aliases are not, so `Pair[Int]` refers to the `Pair` alias.
-    pub(crate) referents: FxHashMap<UnitSpan, Referent>,
+    /// What each link refers to, by [`LinkId`]. Imports and renames are chased
+    /// away; aliases are not, so `Pair[Int]` refers to the `Pair` alias.
+    pub(crate) referents: Vec<Referent>,
+    /// The link of each name a unit with source writes, by the span of its head, by
+    /// [`UnitId`]. Only lowering and judgments, which read syntax, look a name up.
+    pub(crate) refs: Vec<FxHashMap<Span, LinkId>>,
+    /// The unit providing each module of a unit's module table, by [`UnitId`] and
+    /// [`ModuleId`], or `None` for a module no unit provides
+    pub(crate) modules: Vec<Vec<Option<UnitId>>>,
     /// The underlying head of each transparent alias
     pub(crate) aliases: FxHashMap<DeclId, Head>,
-    /// Each unit's exports by name, with the name each is bound by. Empty for a unit
-    /// that is not a module.
-    pub(crate) exports: Vec<FxHashMap<&'u str, (Span, Target<'u>)>>,
+    /// Each unit's exports, sorted by name. Empty for a unit that is not a module.
+    pub(crate) exports: Vec<Vec<Export>>,
     /// Each exported variable, by its name, with the site of its annotation if it
     /// has one
     pub(crate) values: FxHashMap<UnitSpan, Option<SiteId>>,
@@ -114,6 +121,16 @@ pub(crate) struct Tables<'u> {
 }
 
 impl<'u> Tables<'u> {
+    /// What a name refers to, given its link
+    pub(crate) fn linked(&self, link: Option<LinkId>) -> Option<&Referent> {
+        link.map(|link| &self.referents[link.index()])
+    }
+
+    /// What a name written in a unit with source refers to, by the span of its head
+    pub(crate) fn written(&self, unit: UnitId, head: Span) -> Option<&Referent> {
+        self.linked(self.refs[unit.index()].get(&head).copied())
+    }
+
     /// The number of signatures of a declaration: its defs or methods, or 1
     pub(crate) fn sig_count(&self, decl: DeclId) -> usize {
         match &self.decls[decl.index()].node {
@@ -197,6 +214,15 @@ impl<'u> Tables<'u> {
             .unwrap_or(0)
     }
 
+    /// The export of `unit` named `name`
+    pub(crate) fn export(&self, unit: UnitId, name: &str) -> Option<&Export> {
+        find_export(
+            &self.exports[unit.index()],
+            &self.strings[unit.index()],
+            name,
+        )
+    }
+
     /// The source text of a span of a unit, for lowering and flow analysis, which
     /// read only units with source
     pub(crate) fn text(&self, unit: UnitId, span: Span) -> &'u str {
@@ -219,8 +245,10 @@ pub(crate) struct UnitInfo<'u> {
     /// The module's name; absent for a script
     pub(crate) module: Option<&'u str>,
     pub(crate) path: &'u Path,
-    /// The offset of each newline of the unit's source, which locates its spans
-    pub(crate) newlines: Vec<u32>,
+    /// Where the lines of a unit without source start, which locates the spans it
+    /// keeps: the number and start of each line holding one, in order. A unit with
+    /// source is located by its file.
+    pub(crate) lines: Vec<(u32, u32)>,
     /// The unit, when it is checked from source
     pub(crate) source: Option<&'u Unit<'u>>,
     /// Whether the unit is checked strictly
@@ -228,6 +256,24 @@ pub(crate) struct UnitInfo<'u> {
 }
 
 impl UnitInfo<'_> {
+    /// The line and column of an offset of the unit
+    pub(crate) fn coord(&self, offset: u32) -> Coord {
+        if let Some(source) = self.source {
+            return source.file.coord(offset);
+        }
+        let index = self.lines.partition_point(|&(_, start)| start <= offset);
+        match index.checked_sub(1).map(|index| self.lines[index]) {
+            Some((line, start)) => Coord {
+                line,
+                column: offset - start,
+            },
+            None => Coord {
+                line: 0,
+                column: offset,
+            },
+        }
+    }
+
     /// A module's name, or a script's file stem
     pub(crate) fn name(&self) -> String {
         match self.module {
@@ -478,7 +524,7 @@ impl DeclNode {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) enum Referent {
     Decl(DeclId),
     Binder(BinderRef),
@@ -493,17 +539,17 @@ pub(crate) enum Referent {
     Module(UnitId),
 }
 
-/// What an unresolved name or export refers to
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) enum Target<'u> {
+/// What an unresolved name or export refers to. A module is one of its unit's
+/// module table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub(crate) enum Target {
     Local(Referent),
     /// An item of a module, by name
     Import {
-        module: &'u str,
-        item: &'u str,
+        module: ModuleId,
+        item: StrId,
     },
-    /// A module, by name
-    Module(&'u str),
+    Module(ModuleId),
 }
 
 /// The head of a transparent alias's underlying type

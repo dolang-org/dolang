@@ -3,11 +3,11 @@
 
 use std::fmt::{self, Write};
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 
 use super::{
-    Decl, DeclNode, Harvest, Pending, Referent, Target,
-    surface::{Binder, Member, Name, Signature, SiteId, TypeExpr},
+    Decl, DeclNode, Harvest, Link, Referent, Target,
+    surface::{Binder, Member, ModuleId, Name, Ref, Signature, SiteId, StrId, TypeExpr},
 };
 use crate::{
     diag::{NoteKind, Severity},
@@ -54,12 +54,9 @@ impl Harvest<'_> {
     /// supertypes and kept fields' types are its interface, as is an exported
     /// variable's annotation.
     pub(crate) fn interface(&self) -> (Kept, Vec<Leak>) {
-        let pending: FxHashMap<Span, &Pending<'_>> = (self.pending.iter())
-            .map(|pending| (pending.head.span, pending))
-            .collect();
-        let exported: FxHashSet<DeclId> = (self.exports.values())
-            .filter_map(|(_, target)| match target {
-                Target::Local(Referent::Decl(decl)) => Some(*decl),
+        let exported: FxHashSet<DeclId> = (self.exports.iter())
+            .filter_map(|export| match export.target {
+                Target::Local(Referent::Decl(decl)) => Some(decl),
                 _ => None,
             })
             .collect();
@@ -94,7 +91,6 @@ impl Harvest<'_> {
 
         let mut walk = Walk {
             harvest: self,
-            pending,
             kept: &kept.decls,
             leaks: Vec::new(),
         };
@@ -153,9 +149,9 @@ impl Harvest<'_> {
                 DeclNode::Closure(_) => unreachable!("a closure is left out"),
             }
         }
-        for (&span, annot) in &self.values {
-            if let Some(annot) = *annot {
-                walk.site(annot, &User::Value(span));
+        for value in &self.values {
+            if let Some(annot) = value.annot {
+                walk.site(annot, &User::Value(value.span));
             }
         }
         let leaks = walk.leaks;
@@ -167,8 +163,6 @@ impl Harvest<'_> {
 /// Finds the private declarations an interface names
 struct Walk<'h, 'u> {
     harvest: &'h Harvest<'u>,
-    /// The type names, by the span of their heads
-    pending: FxHashMap<Span, &'h Pending<'u>>,
     kept: &'h [bool],
     leaks: Vec<Leak>,
 }
@@ -194,21 +188,29 @@ impl Walk<'_, '_> {
     }
 
     fn ty(&mut self, ty: &TypeExpr, user: &User) {
-        ty.names(&mut |head, _| self.name(head, user));
+        ty.names(&mut |head| self.name(head, user));
     }
 
-    fn name(&mut self, head: &Name, user: &User) {
-        let Some(pending) = self.pending.get(&head.span) else {
+    fn link(&self, head: &Ref) -> Option<&Link> {
+        head.link.map(|link| &self.harvest.links[link.index()])
+    }
+
+    fn str(&self, id: StrId) -> &str {
+        &self.harvest.strings[id.index()]
+    }
+
+    fn name(&mut self, head: &Ref, user: &User) {
+        let Some(link) = self.link(head) else {
             return;
         };
         // A name that isn't a type is diagnosed as such, and the surface erases it
-        if let (Target::Local(Referent::Decl(decl)), None) = (&pending.base, pending.item)
+        if let (Target::Local(Referent::Decl(decl)), None) = (link.base, link.item)
             && !self.kept[decl.index()]
             && is_type(self.harvest.decls[decl.index()].kind)
         {
             self.leaks.push(Leak {
                 span: head.span,
-                private: *decl,
+                private: decl,
                 user: *user,
             });
         }
@@ -220,16 +222,18 @@ impl Walk<'_, '_> {
         let TypeExpr::App { base, .. } = ty.ungrouped() else {
             return false;
         };
-        let TypeExpr::Name { head, .. } = base.ungrouped() else {
+        let TypeExpr::Name(head) = base.ungrouped() else {
             return false;
         };
-        let Some(pending) = self.pending.get(&head.span) else {
+        let Some(link) = self.link(head) else {
             return false;
         };
         let harvest = self.harvest;
-        match (&pending.base, pending.item) {
-            (Target::Import { module, item }, None) => (*module, *item) == ("std", "Phantom"),
-            (Target::Module(module), Some(item)) => (*module, item) == ("std", "Phantom"),
+        let module = |module: ModuleId| self.str(harvest.modules[module.index()].name);
+        match (link.base, link.item) {
+            (Target::Import { module: id, item }, None) | (Target::Module(id), Some(item)) => {
+                (module(id), self.str(item)) == ("std", "Phantom")
+            }
             (Target::Local(Referent::Decl(decl)), None) => {
                 let decl = &harvest.decls[decl.index()];
                 harvest.info.module == Some("std")
@@ -272,7 +276,7 @@ impl PrivateInInterface {
         let name = |decl: DeclId| {
             let decl = &harvest.decls[decl.index()];
             decl.name
-                .map_or("", |name| harvest.strings[name.text.index()])
+                .map_or("", |name| &harvest.strings[name.text.index()])
         };
         let member = |class: DeclId, member: &str| format!("{}.{member}", name(class));
         let user = match leak.user {
@@ -294,14 +298,17 @@ impl PrivateInInterface {
                 }
             },
             User::Field(class, field) => {
-                let field = harvest.strings[field.text.index()];
+                let field = &harvest.strings[field.text.index()];
                 format!("field `{}`", member(class, field))
             }
             User::Value(span) => {
-                let (export, _) = (harvest.exports.iter())
-                    .find(|(_, (bound, _))| *bound == span)
+                let export = (harvest.exports.iter())
+                    .find(|export| export.span == span)
                     .expect("an exported variable is exported");
-                format!("exported variable `{export}`")
+                format!(
+                    "exported variable `{}`",
+                    harvest.strings[export.name.index()]
+                )
             }
         };
         PrivateInInterface {

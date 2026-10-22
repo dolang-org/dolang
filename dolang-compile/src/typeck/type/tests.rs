@@ -392,7 +392,6 @@ fn generic_definitions_remain_quantified_and_metadata_is_parallel() {
                 binders: vec![BinderSource {
                     name: binder_name,
                     span,
-                    bound: None,
                     default: None,
                     origin: BinderOrigin::Written,
                 }]
@@ -446,7 +445,6 @@ fn nominal_supertypes_use_the_structural_binder_scope() {
         let metadata = BinderSource {
             name: src.name.unwrap(),
             span: src.span,
-            bound: None,
             default: None,
             origin: BinderOrigin::Written,
         };
@@ -1645,7 +1643,6 @@ fn generic(db: &mut Database, name: &str, count: usize, body: TypeId) -> DeclId 
         .map(|_| BinderSource {
             name: source.name.unwrap(),
             span: source.span,
-            bound: None,
             default: None,
             origin: BinderOrigin::Written,
         })

@@ -22,7 +22,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::{
     BadRecursion, BoundViolation, DeclNode, Designated, Diag, Fill, Head, ParameterKeys, Referent,
     Role, Tables, UnitDiag,
-    surface::{Class, Interned, Name, TypeArg, TypeExpr, TypeParam, TypeParamKind},
+    surface::{Class, Interned, Ref, TypeArg, TypeExpr, TypeParam, TypeParamKind},
 };
 use crate::{
     source::Span,
@@ -42,28 +42,11 @@ pub(crate) struct Unresolved {
     pub(crate) residual: Residual,
 }
 
-/// The bound written on each binder, by its span, for diagnostics that quote one
-pub(crate) type Bounds<'t> = FxHashMap<UnitSpan, &'t TypeExpr>;
-
-pub(crate) fn bounds<'t>(tables: &'t Tables<'_>) -> Bounds<'t> {
-    (tables.sites.iter())
-        .filter(|site| matches!(site.role, Role::Bound(_)))
-        .map(|site| {
-            let span = UnitSpan {
-                unit: site.unit,
-                span: site.ty.span(),
-            };
-            (span, &site.ty)
-        })
-        .collect()
-}
-
 /// Check the well-formedness of `unit`'s declarations and written types.
 /// Violations are diagnosed; undecided checks are returned.
 pub(crate) fn wellformed(
     db: &Database,
     tables: &Tables<'_>,
-    bounds: &Bounds<'_>,
     unit: UnitId,
     diags: &mut Vec<UnitDiag>,
 ) -> Vec<Unresolved> {
@@ -72,7 +55,6 @@ pub(crate) fn wellformed(
         tables,
         diags,
         unresolved: Vec::new(),
-        bounds,
     };
     for site in tables.sites.iter().filter(|site| site.unit == unit) {
         if matches!(site.role, Role::Pattern) {
@@ -100,7 +82,6 @@ pub(crate) fn wellformed(
 pub(crate) fn recursion(
     db: &mut Database,
     tables: &Tables<'_>,
-    bounds: &Bounds<'_>,
     diags: &mut Vec<UnitDiag>,
 ) -> Vec<Unresolved> {
     let mut check = Check {
@@ -108,7 +89,6 @@ pub(crate) fn recursion(
         tables,
         diags,
         unresolved: Vec::new(),
-        bounds,
     };
     let rejected = check.recursion();
     let unresolved = check.unresolved;
@@ -139,7 +119,6 @@ struct Check<'a, 'u> {
     tables: &'a Tables<'u>,
     diags: &'a mut Vec<UnitDiag>,
     unresolved: Vec<Unresolved>,
-    bounds: &'a Bounds<'a>,
 }
 
 impl Check<'_, '_> {
@@ -334,6 +313,11 @@ impl Check<'_, '_> {
     /// A binder with its bound as written, such as `T @ Num` or `*Ts @ {*Value}`
     fn binder(&self, decl: DeclId, slot: usize, binder: &Binder) -> String {
         let source = &self.db.declaration(decl).binders[slot];
+        let written = self.tables.groups[&(decl, 0)][slot];
+        let written = self
+            .tables
+            .binders(written.decl, written.sig)
+            .get(written.slot);
         let sigil = match binder.binding {
             Binding::Positional | Binding::Implicit => "",
             Binding::Keyword(_) => ":",
@@ -341,8 +325,11 @@ impl Check<'_, '_> {
             Binding::Rest(Rest::Keyed) => "**",
             Binding::Rest(Rest::All) => "...",
         };
-        let bound = match (source.bound, binder.binding) {
-            (Some(bound), _) => self.tables.print(bound.unit, self.bounds[&bound]),
+        let bound = match (written.and_then(|written| written.bound), binder.binding) {
+            (Some(bound), _) => {
+                let site = &self.tables.sites[bound.index()];
+                self.tables.print(site.unit, &site.ty)
+            }
             (None, Binding::Rest(Rest::Positional)) => "{*Value}".to_owned(),
             (None, Binding::Rest(Rest::Keyed)) => "{**Value}".to_owned(),
             (None, _) => "{...}".to_owned(),
@@ -413,7 +400,7 @@ impl Check<'_, '_> {
     fn supertypes(&mut self, id: DeclId, decl: DeclId, class: &Class) {
         let unit = self.tables.decls[id.index()].unit;
         for super_ref in &class.supers {
-            let span = super_ref.span();
+            let span = super_ref.head.span;
             let phantom =
                 self.application(unit, Some(decl), span, &super_ref.interned, &super_ref.args);
             for arg in &super_ref.args {
@@ -454,11 +441,9 @@ impl Check<'_, '_> {
             let decl = &self.tables.decls[id.index()];
             let targets = edges.entry(id).or_default();
             if let Some(body) = alias_body(self.tables, &decl.node) {
-                body.names(&mut |head, _| {
-                    if let Some(Referent::Decl(target)) = self.tables.referents.get(&UnitSpan {
-                        unit: decl.unit,
-                        span: head.span,
-                    }) && self.tables.aliases.contains_key(target)
+                body.names(&mut |head| {
+                    if let Some(Referent::Decl(target)) = self.tables.linked(head.link)
+                        && self.tables.aliases.contains_key(target)
                     {
                         targets.push(*target);
                     }
@@ -541,11 +526,11 @@ impl Check<'_, '_> {
                     self.guarded(unit, alias, members, member, guarded, found);
                 }
             }
-            TypeExpr::Name { head, .. } => {
+            TypeExpr::Name(head) => {
                 self.reference(unit, alias, members, head, ty.span(), None, guarded, found);
             }
             TypeExpr::App { base, args, .. } => {
-                let TypeExpr::Name { head, .. } = base.ungrouped() else {
+                let TypeExpr::Name(head) = base.ungrouped() else {
                     return;
                 };
                 let target = self.reference(
@@ -614,16 +599,13 @@ impl Check<'_, '_> {
         unit: UnitId,
         alias: DeclId,
         members: &FxHashSet<DeclId>,
-        head: &Name,
+        head: &Ref,
         span: Span,
         app: Option<&TypeExpr>,
         guarded: bool,
         found: &mut Vec<Recursive>,
     ) -> Option<DeclId> {
-        let Some(&Referent::Decl(target)) = self.tables.referents.get(&UnitSpan {
-            unit,
-            span: head.span,
-        }) else {
+        let Some(&Referent::Decl(target)) = self.tables.linked(head.link) else {
             return None;
         };
         if members.contains(&target) {
@@ -632,7 +614,7 @@ impl Check<'_, '_> {
                 alias,
                 target,
                 span,
-                name: self.tables.name(unit, *head).to_owned(),
+                name: self.tables.quote(unit, *head),
                 guarded,
                 regular: self.regular(alias, target, app),
             });

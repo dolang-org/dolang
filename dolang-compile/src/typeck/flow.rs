@@ -378,8 +378,6 @@ struct Flow<'a, 'u> {
     /// The declarations whose rigids states may hold, which every solver assumes,
     /// each with the rigids its group is checked under
     scope: Vec<(DeclId, Vec<TypeId>)>,
-    /// Each checked module's unit, by name
-    modules: FxHashMap<&'u str, UnitId>,
     contexts: Contexts,
     states: FxHashMap<(BlockId, CtxId), Entry>,
     /// Deduplicating priority queue ordered by reverse-postorder rank; both
@@ -436,9 +434,6 @@ impl<'a, 'u> Flow<'a, 'u> {
                 }
             }
         }
-        let modules = (tables.units.iter().enumerate())
-            .filter_map(|(index, unit)| Some((unit.module?, UnitId::from_index(index))))
-            .collect();
         Self {
             ir,
             layout,
@@ -451,7 +446,6 @@ impl<'a, 'u> Flow<'a, 'u> {
             accumulators: FxHashMap::default(),
             current: None,
             scope,
-            modules,
             contexts: Contexts::new(),
             states: FxHashMap::default(),
             queue: BTreeSet::new(),

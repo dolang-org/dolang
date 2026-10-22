@@ -30,14 +30,13 @@ use rustc_hash::FxHashMap;
 
 use super::{
     Ambient, BinderRef, DeclNode, Designated, Head, ParamTy, Referent, RestSlot, Slot, Tables, sig,
-    surface::{Member, SiteId, TypeArg, TypeExpr, TypeKey, TypeParam, TypeParamKind},
+    surface::{Member, Ref, SiteId, TypeArg, TypeExpr, TypeKey, TypeParam, TypeParamKind},
 };
 use crate::{
     ast::SpecialMethod,
-    source::Span,
     typeck::{
         elab::Fill,
-        r#type::{DeclId, DeclKind, Intrinsic, Scope, UnitId, UnitSpan, Variance},
+        r#type::{DeclId, DeclKind, Intrinsic, Scope, UnitId, Variance},
     },
 };
 
@@ -228,7 +227,7 @@ impl<'t> Collect<'t, '_> {
         match &decl.node {
             DeclNode::Class(class) => {
                 for super_ref in &class.supers {
-                    match self.referent(super_ref.head.span) {
+                    match self.referent(&super_ref.head) {
                         Some(&Referent::Decl(super_decl)) if self.is_type(super_decl) => {
                             self.app(super_decl, &super_ref.args, Use::CO)
                         }
@@ -412,11 +411,8 @@ impl<'t> Collect<'t, '_> {
         self.ambient = outer;
     }
 
-    fn referent(&self, head: Span) -> Option<&'t Referent> {
-        self.tables.referents.get(&UnitSpan {
-            unit: self.unit,
-            span: head,
-        })
+    fn referent(&self, head: &Ref) -> Option<&'t Referent> {
+        self.tables.linked(head.link)
     }
 
     fn is_type(&self, decl: DeclId) -> bool {
@@ -438,8 +434,8 @@ impl<'t> Collect<'t, '_> {
         while let TypeExpr::Group { ty: inner, .. } = base {
             base = inner;
         }
-        matches!(base, TypeExpr::Name { head, .. }
-            if matches!(self.referent(head.span), Some(Referent::Decl(decl))
+        matches!(base, TypeExpr::Name(head)
+            if matches!(self.referent(head), Some(Referent::Decl(decl))
                 if self.tables.designated.get(decl) == Some(&Designated::Phantom)))
     }
 
@@ -514,7 +510,7 @@ impl<'t> Collect<'t, '_> {
     fn ty(&mut self, ty: &'t TypeExpr, u: Use) {
         match ty {
             TypeExpr::Group { ty, .. } => self.ty(ty, u),
-            TypeExpr::Name { head, .. } => match self.referent(head.span) {
+            TypeExpr::Name(head) => match self.referent(head) {
                 Some(&Referent::Binder(binder)) => self.uses(binder, u),
                 Some(&Referent::Decl(decl)) if self.is_type(decl) => self.captures(decl, u),
                 _ => {}
@@ -524,8 +520,8 @@ impl<'t> Collect<'t, '_> {
                 while let TypeExpr::Group { ty, .. } = head {
                     head = ty;
                 }
-                if let TypeExpr::Name { head, .. } = head
-                    && let Some(&Referent::Decl(decl)) = self.referent(head.span)
+                if let TypeExpr::Name(head) = head
+                    && let Some(&Referent::Decl(decl)) = self.referent(head)
                     && self.is_type(decl)
                 {
                     return self.app(decl, args, u);

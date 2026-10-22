@@ -485,18 +485,42 @@ fn from_typelibs(
         let index = ids.iter().position(|id| *id == Some(unit)).unwrap();
         sources[index].module.is_none()
     };
-    // What is reported in the script, then in the modules
+    // What is reported in the script, then in the modules. A typelib keeps neither
+    // a reference's span nor how it is written, so what is reported in a module is
+    // compared without spans or quoted names.
     let diagnostics = |check: &typeck::Check| -> [Vec<String>; 2] {
         let mut split = [Vec::new(), Vec::new()];
         for diag in check.diagnostics() {
-            let mut out = format!("{:?} {:?} {}", diag.severity(), diag.span(), diag.message());
+            let module = !script(diag.span().unit());
+            let span = |span| match module {
+                true => String::new(),
+                false => format!("{span:?} "),
+            };
+            let text = |message: &str| match module {
+                true => (message.split('`').enumerate())
+                    .map(|(index, part)| if index % 2 == 1 { "_" } else { part })
+                    .collect::<Vec<_>>()
+                    .join("`"),
+                false => message.to_owned(),
+            };
+            let mut out = format!(
+                "{:?} {}{}",
+                diag.severity(),
+                span(diag.span()),
+                text(&diag.message().to_string())
+            );
             for annotation in diag.annotations() {
-                let _ = write!(out, "; {:?} {}", annotation.span(), annotation.message());
+                let _ = write!(
+                    out,
+                    "; {}{}",
+                    span(annotation.span()),
+                    text(&annotation.message().to_string())
+                );
             }
             for note in diag.notes() {
-                let _ = write!(out, "; note: {}", note.message());
+                let _ = write!(out, "; note: {}", text(&note.message().to_string()));
             }
-            split[usize::from(!script(diag.span().unit()))].push(out);
+            split[usize::from(module)].push(out);
         }
         split
     };

@@ -1,10 +1,11 @@
 //! The declaration surface: what elaboration reads of the checked units, copied out
 //! of their syntax trees by collection.
 //!
-//! Nothing here refers to a syntax tree or to source text. Spans are kept, as the
-//! keys name resolution's tables are indexed by and for diagnostics, and names are
-//! spelled through each unit's string table, so a unit's surface means the same thing
-//! whether or not its source is at hand.
+//! Nothing here refers to a syntax tree or to source text. Spans are kept for
+//! diagnostics, a name refers through its link to what linking resolved it to, and
+//! what is declared is spelled through each unit's string table, so a unit's surface
+//! means the same thing whether or not its source is at hand. A typelib omits every
+//! span but those that locate a definition or an import.
 //!
 //! What a later pass finds of a written form, such as the type it is interned as,
 //! is kept in a slot on the form. Slots are relaxed atomics, filled before the
@@ -18,7 +19,7 @@ use std::{
 use dolang_util::intern::AtomicId;
 use serde::{Deserialize, Serialize};
 
-use super::{Designated, Tables};
+use super::{Designated, Referent, Tables};
 use crate::{
     RestKind,
     ast::SpecialMethod,
@@ -50,6 +51,35 @@ pub(crate) struct SiteId(u32);
 impl SiteId {
     pub(crate) fn from_index(index: usize) -> Self {
         Self(u32::try_from(index).expect("the sites fit in a u32"))
+    }
+
+    pub(crate) fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// An entry of [`Tables::referents`]: something a unit's names refer to, as
+/// collection resolved it
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub(crate) struct LinkId(u32);
+
+impl LinkId {
+    pub(crate) fn from_index(index: usize) -> Self {
+        Self(u32::try_from(index).expect("the links fit in a u32"))
+    }
+
+    pub(crate) fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// A module of a unit's module table
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub(crate) struct ModuleId(u32);
+
+impl ModuleId {
+    pub(crate) fn from_index(index: usize) -> Self {
+        Self(u32::try_from(index).expect("a unit's module table fits in a u32"))
     }
 
     pub(crate) fn index(self) -> usize {
@@ -100,25 +130,49 @@ pub(crate) struct Name {
     pub(crate) text: StrId,
 }
 
+/// A possibly dotted name written to refer to something. A typelib keeps only what
+/// it refers to, not how it is written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Ref {
+    /// The name with any fields dotted onto it
+    #[serde(skip, default = "wire::invalid")]
+    pub(crate) span: Span,
+    /// What it refers to, with its fields; absent where collection resolved nothing
+    pub(crate) link: Option<LinkId>,
+}
+
+/// A symbol a type is written with, such as a key or a symbol constant, and where.
+/// A typelib omits the span.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Symbol {
+    #[serde(skip, default = "wire::invalid")]
+    pub(crate) span: Span,
+    pub(crate) text: StrId,
+}
+
+impl From<Name> for Symbol {
+    fn from(name: Name) -> Self {
+        Self {
+            span: name.span,
+            text: name.text,
+        }
+    }
+}
+
 /// A type expression
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) enum TypeExpr {
     /// A possibly dotted name, e.g. `Str` or `time.Duration`
-    Name {
-        #[serde(with = "wire::span")]
-        span: Span,
-        head: Name,
-        fields: Vec<Name>,
-    },
+    Name(Ref),
     /// A constant, or `None` for an expression that isn't one a type can be
     Const {
-        #[serde(with = "wire::span")]
+        #[serde(skip, default = "wire::invalid")]
         span: Span,
         value: Option<ConstLit>,
     },
     /// Type arguments applied to a type, e.g. `Array[Int]`
     App {
-        #[serde(with = "wire::span")]
+        #[serde(skip, default = "wire::invalid")]
         span: Span,
         base: Box<TypeExpr>,
         args: Vec<TypeArg>,
@@ -129,7 +183,7 @@ pub(crate) enum TypeExpr {
     /// A schema, e.g. `{name: Str, ?port: Int}`. Where a type is required, it is
     /// `std.Dict` of itself, or `std.Tuple` of its items when it is `tuple`.
     Schema {
-        #[serde(with = "wire::span")]
+        #[serde(skip, default = "wire::invalid")]
         span: Span,
         params: Vec<TypeParam>,
         /// Whether it is written vertically without an explicitly keyed item, as an
@@ -141,45 +195,45 @@ pub(crate) enum TypeExpr {
     },
     /// A parenthesized type
     Group {
-        #[serde(with = "wire::span")]
+        #[serde(skip, default = "wire::invalid")]
         span: Span,
         ty: Box<TypeExpr>,
     },
     /// A tuple type, e.g. `(Int, Str)`: `std.Tuple` of the schema of its items
     Tuple {
-        #[serde(with = "wire::span")]
+        #[serde(skip, default = "wire::invalid")]
         span: Span,
         params: Vec<TypeParam>,
     },
     /// A record type, e.g. `(name: Str, Int)`: `std.Record` of the schema of its
     /// items
     Record {
-        #[serde(with = "wire::span")]
+        #[serde(skip, default = "wire::invalid")]
         span: Span,
         params: Vec<TypeParam>,
     },
     /// An array type, e.g. `[Int]`: `std.Array` of its element type
     Array {
-        #[serde(with = "wire::span")]
+        #[serde(skip, default = "wire::invalid")]
         span: Span,
         elem: Box<TypeExpr>,
     },
     /// A union, e.g. `Str | Path`
     Union {
-        #[serde(with = "wire::span")]
+        #[serde(skip, default = "wire::invalid")]
         span: Span,
         members: Vec<TypeExpr>,
     },
     /// A function type, e.g. `(Int, ?Int) -> Int`
     Func {
-        #[serde(with = "wire::span")]
+        #[serde(skip, default = "wire::invalid")]
         span: Span,
         params: Vec<TypeParam>,
         /// The type of the `<` implicit parameter, giving the ambient input
         input: Option<Box<TypeExpr>>,
         /// The type of the `>` implicit parameter, giving the ambient output
         output: Option<Box<TypeExpr>>,
-        #[serde(with = "wire::span")]
+        #[serde(skip, default = "wire::invalid")]
         arrow_span: Span,
         ret: Box<TypeExpr>,
         /// Its type, interned in the group it is written in
@@ -188,7 +242,7 @@ pub(crate) enum TypeExpr {
     },
     /// A type that could not be interpreted
     Error {
-        #[serde(with = "wire::span")]
+        #[serde(skip, default = "wire::invalid")]
         span: Span,
     },
 }
@@ -196,11 +250,11 @@ pub(crate) enum TypeExpr {
 /// A literal a constant type stands for
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum ConstLit {
-    Str(Box<str>),
+    Str(StrId),
     Int(i128),
     Bool(bool),
     Nil,
-    Sym(Name),
+    Sym(Symbol),
 }
 
 /// A type argument in the `[]` of an application
@@ -214,7 +268,7 @@ pub(crate) enum TypeArgKind {
     /// `T`
     Pos(TypeExpr),
     /// `name: T`
-    Key { name: Name, ty: TypeExpr },
+    Key { name: Symbol, ty: TypeExpr },
     /// `...T`, expanding a pack into further arguments
     Expand { ty: TypeExpr },
 }
@@ -248,13 +302,13 @@ pub(crate) enum TypeParamKind {
     /// `...S`
     Include { ty: TypeExpr },
     /// `...`, spanning it
-    Open(#[serde(with = "wire::span")] Span),
+    Open(#[serde(skip, default = "wire::invalid")] Span),
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) enum TypeKey {
     /// A bareword key, which is a symbol
-    Sym(Name),
+    Sym(Symbol),
     /// A key given by a type
     Type(Box<TypeExpr>),
 }
@@ -262,8 +316,8 @@ pub(crate) enum TypeKey {
 impl TypeExpr {
     pub(crate) fn span(&self) -> Span {
         match self {
-            TypeExpr::Name { span, .. }
-            | TypeExpr::Const { span, .. }
+            TypeExpr::Name(name) => name.span,
+            TypeExpr::Const { span, .. }
             | TypeExpr::App { span, .. }
             | TypeExpr::Schema { span, .. }
             | TypeExpr::Group { span, .. }
@@ -276,11 +330,11 @@ impl TypeExpr {
         }
     }
 
-    /// Visit each name within the type: its head, then the fields dotted onto it.
-    pub(crate) fn names<'a>(&'a self, f: &mut impl FnMut(&'a Name, &'a [Name])) {
+    /// Visit each name within the type.
+    pub(crate) fn names<'a>(&'a self, f: &mut impl FnMut(&'a Ref)) {
         self.each_node(&mut |ty| {
-            if let TypeExpr::Name { head, fields, .. } = ty {
-                f(head, fields);
+            if let TypeExpr::Name(name) = ty {
+                f(name);
             }
         });
     }
@@ -289,7 +343,7 @@ impl TypeExpr {
     pub(crate) fn each_node<'a>(&'a self, f: &mut impl FnMut(&'a TypeExpr)) {
         f(self);
         match self {
-            TypeExpr::Name { .. } | TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
+            TypeExpr::Name(_) | TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
             TypeExpr::App { base, args, .. } => {
                 base.each_node(f);
                 for arg in args {
@@ -444,6 +498,9 @@ pub(crate) struct Method {
     pub(crate) overload: bool,
     pub(crate) special: Option<SpecialMethod>,
     pub(crate) public: bool,
+    /// Its namespace, from a `class` or `static` decorator
+    pub(crate) scope: MemberScope,
+    /// Its decorators, besides `class` and `static`
     pub(crate) decorators: Vec<Decorator>,
 }
 
@@ -451,7 +508,7 @@ pub(crate) struct Method {
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) enum Decorator {
     /// A bare name
-    Ident(Name),
+    Ident(Ref),
     /// Anything else
     Other,
 }
@@ -486,26 +543,16 @@ pub(crate) enum Member {
 /// A supertype a class names
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Super {
-    pub(crate) head: Name,
-    pub(crate) fields: Vec<Name>,
+    pub(crate) head: Ref,
     pub(crate) args: Vec<TypeArg>,
     /// The `[]` of the arguments, if written
-    #[serde(with = "wire::opt_span")]
+    #[serde(skip)]
     pub(crate) bracket_span: Option<Span>,
     /// Whether it exists only in types
     pub(crate) type_only: bool,
     /// The supertype it names, interned in its class's group
     #[serde(skip)]
     pub(crate) interned: Interned,
-}
-
-impl Super {
-    /// The span of the supertype's name, with its fields
-    pub(crate) fn span(&self) -> Span {
-        self.fields
-            .last()
-            .map_or(self.head.span, |field| self.head.span | field.span)
-    }
 }
 
 /// A class or protocol
@@ -536,23 +583,37 @@ pub(crate) struct Closure {
 
 impl<'u> Tables<'u> {
     /// A string of a unit's string table
-    pub(crate) fn str(&self, unit: UnitId, id: StrId) -> &'u str {
-        self.strings[unit.index()][id.index()]
+    pub(crate) fn str(&self, unit: UnitId, id: StrId) -> &str {
+        &self.strings[unit.index()][id.index()]
     }
 
     /// A name as written in `unit`
-    pub(crate) fn name(&self, unit: UnitId, name: Name) -> &'u str {
-        self.str(unit, name.text)
+    pub(crate) fn name(&self, unit: UnitId, name: impl Into<Symbol>) -> &str {
+        self.str(unit, name.into().text)
     }
 
-    /// A possibly dotted name as written in `unit`
-    pub(crate) fn dotted(&self, unit: UnitId, head: Name, fields: &[Name]) -> String {
-        let mut out = self.name(unit, head).to_owned();
-        for field in fields {
-            out.push('.');
-            out.push_str(self.name(unit, *field));
+    /// A name of `unit` as diagnostics quote it: as written in a unit with source,
+    /// and otherwise by what it refers to
+    pub(crate) fn quote(&self, unit: UnitId, name: Ref) -> String {
+        if self.units[unit.index()].source.is_some() {
+            return self.text(unit, name.span).to_owned();
         }
-        out
+        match self.linked(name.link) {
+            Some(&Referent::Decl(decl)) => {
+                let decl_ref = &self.decls[decl.index()];
+                match decl_ref.name {
+                    Some(declared) => self.name(decl_ref.unit, declared).to_owned(),
+                    None => "?".to_owned(),
+                }
+            }
+            Some(&Referent::Binder(binder)) => {
+                let written = &self.binders(binder.decl, binder.sig)[binder.slot];
+                let unit = self.decls[binder.decl.index()].unit;
+                self.name(unit, written.name).to_owned()
+            }
+            Some(&Referent::Module(module)) => self.units[module.index()].name(),
+            Some(Referent::Value(_) | Referent::Error) | None => "?".to_owned(),
+        }
     }
 
     /// The type a site interns
@@ -576,23 +637,23 @@ struct Printer<'t, 'u> {
 }
 
 impl Printer<'_, '_> {
-    fn name(&self, name: Name, out: &mut String) -> fmt::Result {
-        out.write_str(self.tables.name(self.unit, name))
+    fn name(&self, text: StrId, out: &mut String) -> fmt::Result {
+        out.write_str(self.tables.str(self.unit, text))
     }
 
     fn ty(&self, ty: &TypeExpr, out: &mut String) -> fmt::Result {
         match ty {
-            TypeExpr::Name { head, fields, .. } => {
-                out.write_str(&self.tables.dotted(self.unit, *head, fields))
-            }
+            TypeExpr::Name(name) => out.write_str(&self.tables.quote(self.unit, *name)),
             TypeExpr::Const { value, .. } => match value {
-                Some(ConstLit::Str(value)) => write!(out, "{value:?}"),
+                Some(ConstLit::Str(value)) => {
+                    write!(out, "{:?}", self.tables.str(self.unit, *value))
+                }
                 Some(ConstLit::Int(value)) => write!(out, "{value}"),
                 Some(ConstLit::Bool(value)) => write!(out, "{value}"),
                 Some(ConstLit::Nil) => out.write_str("nil"),
                 Some(ConstLit::Sym(name)) => {
                     out.write_char(':')?;
-                    self.name(*name, out)?;
+                    self.name(name.text, out)?;
                     out.write_char(':')
                 }
                 None => out.write_char('?'),
@@ -607,7 +668,7 @@ impl Printer<'_, '_> {
                     match &arg.kind {
                         TypeArgKind::Pos(ty) => self.ty(ty, out)?,
                         TypeArgKind::Key { name, ty } => {
-                            self.name(*name, out)?;
+                            self.name(name.text, out)?;
                             out.write_str(": ")?;
                             self.ty(ty, out)?;
                         }
@@ -703,7 +764,7 @@ impl Printer<'_, '_> {
                 Some(TypeParamKind::Pos(ty)) => self.ty(ty, out)?,
                 Some(TypeParamKind::Key { key, ty }) => {
                     match key {
-                        TypeKey::Sym(name) => self.name(*name, out)?,
+                        TypeKey::Sym(name) => self.name(name.text, out)?,
                         TypeKey::Type(key) => self.ty(key, out)?,
                     }
                     out.write_str(": ")?;

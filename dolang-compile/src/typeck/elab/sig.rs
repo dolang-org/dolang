@@ -18,7 +18,7 @@ use super::{
     Ambient, BadNominee, BinderRef, DeclNode, Designated, Diag, KindOf, MisdeclaredIntrinsic,
     MissingAnnotation, MissingIntrinsic, PIPES, ParamTy, Referent, RestSlot, Sig, Slot, Tables,
     UnitDiag,
-    surface::{BinderKind, Class, Decorator, Member, Method, ParamKind, Signature},
+    surface::{BinderKind, Class, Decorator, Member, MemberScope, Method, ParamKind, Signature},
 };
 use crate::source::Span;
 use crate::typeck::r#type::{DeclId, DeclKind, Intrinsic, Kind, Scope, UnitId, UnitSpan};
@@ -143,10 +143,9 @@ fn is_strict(tables: &Tables<'_>, decl: DeclId) -> bool {
 }
 
 fn complete(tables: &Tables<'_>, decl: DeclId, sig: usize) -> Sig {
-    let unit = tables.decls[decl.index()].unit;
     let func = function(tables, decl, sig);
     let receiver = match &tables.decls[decl.index()].node {
-        DeclNode::Methods(methods) => match method_scope(tables, unit, &methods[sig]) {
+        DeclNode::Methods(methods) => match method_scope(&methods[sig]) {
             Scope::Static => None,
             scope => Some(scope),
         },
@@ -156,7 +155,7 @@ fn complete(tables: &Tables<'_>, decl: DeclId, sig: usize) -> Sig {
         false => Slot::Unknown,
         true => Slot::Nil,
     };
-    let params = params(tables, unit, func, receiver);
+    let params = params(tables, func, receiver);
     let [input, output] = channels(tables, decl, sig).map(|ambient| match ambient {
         Ambient::Of(..) => Ambient::Written,
         ambient => ambient,
@@ -181,7 +180,7 @@ fn missing_params(tables: &Tables<'_>, decl: DeclId, sig: usize, diags: &mut Vec
         DeclNode::Defs(defs) => (defs[sig].name, false),
         DeclNode::Methods(methods) => (
             methods[sig].name,
-            method_scope(tables, unit, &methods[sig]) != Scope::Static,
+            method_scope(&methods[sig]) != Scope::Static,
         ),
         _ => unreachable!("only a def or method has a signature"),
     };
@@ -231,7 +230,6 @@ fn missing_values(tables: &Tables<'_>, diags: &mut Vec<UnitDiag>) {
 /// is its class, or for a class method `Type` of it, unless annotated otherwise.
 pub(crate) fn params(
     tables: &Tables<'_>,
-    unit: UnitId,
     func: &Signature,
     receiver: Option<Scope>,
 ) -> Vec<ParamTy> {
@@ -252,7 +250,7 @@ pub(crate) fn params(
             ParamKind::Rest { kind, pattern } => ParamTy::Rest(match (param.annot, pattern) {
                 (None, _) => RestSlot::Items(kind, Slot::Unknown),
                 (Some(annot), true) => RestSlot::Pattern(annot),
-                (Some(annot), false) => match tables.kind_of(unit, tables.site_ty(annot)) {
+                (Some(annot), false) => match tables.kind_of(tables.site_ty(annot)) {
                     Some(Kind::Schema) => RestSlot::Pack(annot),
                     _ => RestSlot::Items(kind, Slot::Annot(annot)),
                 },
@@ -261,19 +259,13 @@ pub(crate) fn params(
         .collect()
 }
 
-/// The scope of a method, from its decorators
-pub(crate) fn method_scope(tables: &Tables<'_>, unit: UnitId, method: &Method) -> Scope {
-    let mut scope = Scope::Instance;
-    for decorator in &method.decorators {
-        if let Decorator::Ident(name) = decorator {
-            match tables.name(unit, *name) {
-                "class" => scope = Scope::Class,
-                "static" => scope = Scope::Static,
-                _ => {}
-            }
-        }
+/// The scope of a method
+pub(crate) fn method_scope(method: &Method) -> Scope {
+    match method.scope {
+        MemberScope::Instance => Scope::Instance,
+        MemberScope::Class => Scope::Class,
+        MemberScope::Static => Scope::Static,
     }
-    scope
 }
 
 /// What a method's decorators make of it
@@ -286,20 +278,15 @@ pub(crate) enum Form {
     Unknown,
 }
 
-/// The form of a method, from its decorators. Only `class` and `static` have a
-/// meaning fixed by syntax. Any other decorator may replace the method with any
+/// The form of a method, from its decorators besides `class` and `static`, whose
+/// meaning is fixed by syntax. Any other decorator may replace the method with any
 /// value; until decorator applications are evaluated, std's `getter` and `setter`
 /// are recognized by what their names resolve to, and anything else leaves a value
 /// of unknown type.
-pub(crate) fn method_form(tables: &Tables<'_>, unit: UnitId, method: &Method) -> Form {
+pub(crate) fn method_form(tables: &Tables<'_>, method: &Method) -> Form {
     let mut form = Form::Plain;
     for decorator in &method.decorators {
-        if let Decorator::Ident(name) = decorator
-            && let "class" | "static" = tables.name(unit, *name)
-        {
-            continue;
-        }
-        let designated = decorator_designation(tables, unit, decorator);
+        let designated = decorator_designation(tables, decorator);
         form = match (form, designated) {
             (Form::Plain, Some(Designated::Getter)) => Form::Getter,
             (Form::Plain, Some(Designated::Setter)) => Form::Setter,
@@ -310,18 +297,11 @@ pub(crate) fn method_form(tables: &Tables<'_>, unit: UnitId, method: &Method) ->
 }
 
 /// The designation of the declaration a decorator names, if any
-fn decorator_designation(
-    tables: &Tables<'_>,
-    unit: UnitId,
-    decorator: &Decorator,
-) -> Option<Designated> {
+fn decorator_designation(tables: &Tables<'_>, decorator: &Decorator) -> Option<Designated> {
     let Decorator::Ident(name) = decorator else {
         return None;
     };
-    match tables.referents.get(&UnitSpan {
-        unit,
-        span: name.span,
-    }) {
+    match tables.linked(name.link) {
         Some(Referent::Decl(decl)) => tables.designated.get(decl).copied(),
         _ => None,
     }
@@ -330,14 +310,9 @@ fn decorator_designation(
 /// Whether a class's decorators are all std's `final` and `mixable`, each of
 /// which returns the class it is given after marking it, and `mark` is one of
 /// them. Without decorators, a class has no mark.
-pub(crate) fn decorated(
-    tables: &Tables<'_>,
-    unit: UnitId,
-    class: &Class,
-    mark: Designated,
-) -> bool {
+pub(crate) fn decorated(tables: &Tables<'_>, class: &Class, mark: Designated) -> bool {
     let designations = (class.decorators.iter())
-        .map(|decorator| decorator_designation(tables, unit, decorator))
+        .map(|decorator| decorator_designation(tables, decorator))
         .collect::<Vec<_>>();
     designations.contains(&Some(mark))
         && (designations.iter())
