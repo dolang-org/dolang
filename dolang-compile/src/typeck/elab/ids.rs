@@ -9,8 +9,8 @@ use super::{
     local,
     surface::{
         Binder, Class, ConstLit, Decorator, LinkId, Member, ModuleId, Name, Param, ParamKind, Ref,
-        Signature, SiteId, StrId, Super, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam,
-        TypeParamKind,
+        Signature, SiteId, StrId, Super, Symbol, TypeArg, TypeArgKind, TypeExpr, TypeKey,
+        TypeParam, TypeParamKind,
     },
 };
 use crate::typeck::r#type::{DeclId, DeclKind, UnitId};
@@ -317,9 +317,14 @@ impl Visit for Name {
     }
 }
 
-impl Visit for Ref {
+impl Visit for Symbol {
     fn visit(&mut self, ids: &mut impl Ids) {
         ids.str(&mut self.text);
+    }
+}
+
+impl Visit for Ref {
+    fn visit(&mut self, ids: &mut impl Ids) {
         self.link.visit(ids);
     }
 }
@@ -434,7 +439,6 @@ impl Visit for ConstLit {
 impl Visit for Super {
     fn visit(&mut self, ids: &mut impl Ids) {
         self.head.visit(ids);
-        self.fields.visit(ids);
         self.args.visit(ids);
     }
 }
@@ -468,10 +472,7 @@ impl Visit for Site {
 impl Visit for TypeExpr {
     fn visit(&mut self, ids: &mut impl Ids) {
         match self {
-            TypeExpr::Name { head, fields, .. } => {
-                head.visit(ids);
-                fields.visit(ids);
-            }
+            TypeExpr::Name(head) => head.visit(ids),
             TypeExpr::Const { value, .. } => value.visit(ids),
             TypeExpr::App { base, args, .. } => {
                 base.visit(ids);

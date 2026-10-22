@@ -169,7 +169,7 @@ impl Needs<'_, '_> {
 
     fn ty(&mut self, node: usize, unit: UnitId, ty: &TypeExpr) {
         match ty {
-            TypeExpr::Name { head, .. } => {
+            TypeExpr::Name(head) => {
                 self.name(node, head);
             }
             TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}

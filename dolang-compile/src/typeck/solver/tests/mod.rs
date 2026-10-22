@@ -126,7 +126,6 @@ fn populate(
             .map(|_| BinderSource {
                 name: source.name.unwrap(),
                 span: source.span,
-                bound: None,
                 default: None,
                 origin: BinderOrigin::Written,
             })

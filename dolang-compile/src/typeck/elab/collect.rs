@@ -17,7 +17,8 @@ use super::{
     interface::PrivateInInterface,
     local,
     surface::{
-        self, Collection, ConstLit, Interned, LinkId, ModuleId, Name, Ref, SiteId, StrId, TypeExpr,
+        self, Collection, ConstLit, Interned, LinkId, ModuleId, Name, Ref, SiteId, StrId, Symbol,
+        TypeExpr,
     },
 };
 use crate::{
@@ -75,8 +76,8 @@ pub(crate) struct Link {
     pub(crate) base: Target,
     /// The item a dotted name takes from the module `base` names
     pub(crate) item: Option<StrId>,
-    /// The head of the first name referring to it
-    #[serde(with = "wire::span")]
+    /// The head of the first name referring to it, which a typelib omits
+    #[serde(skip, default = "wire::invalid")]
     pub(crate) span: Span,
 }
 
@@ -185,7 +186,7 @@ pub(crate) fn harvest<'u>(unit: &'u Unit<'u>) -> Harvest<'u> {
                 Mode::Script | Mode::Repl => None,
             },
             path: unit.file.path(),
-            newlines: unit.file.newlines().to_vec(),
+            lines: Vec::new(),
             source: Some(unit),
             strict: unit.strict,
         },
@@ -602,12 +603,16 @@ impl<'u> Walk<'_, 'u> {
         }
     }
 
-    /// A name referring to something, which [`Self::refer`] has linked if it can
-    fn reference(&mut self, span: Span) -> Ref {
+    fn symbol(&mut self, span: Span) -> Symbol {
+        self.name(span).into()
+    }
+
+    /// A name referring to something, which [`Self::refer`] has linked if it can,
+    /// by its head and the fields dotted onto it
+    fn reference(&mut self, head: Span, fields: &[Span]) -> Ref {
         Ref {
-            span,
-            text: self.intern(self.file.str(span)),
-            link: self.refs.get(&span).copied(),
+            span: fields.last().map_or(head, |field| head | field),
+            link: self.refs.get(&head).copied(),
         }
     }
 
@@ -641,11 +646,9 @@ impl<'u> Walk<'_, 'u> {
     fn surface(&mut self, ty: &'u ast::TypeExpr) -> TypeExpr {
         let span = ty.span();
         match ty {
-            ast::TypeExpr::Name { head, fields, .. } => TypeExpr::Name {
-                span,
-                head: self.reference(*head),
-                fields: fields.iter().map(|&field| self.name(field)).collect(),
-            },
+            ast::TypeExpr::Name { head, fields, .. } => {
+                TypeExpr::Name(self.reference(*head, fields))
+            }
             ast::TypeExpr::Const { expr } => TypeExpr::Const {
                 span,
                 value: expr.fold(self.file).and_then(|value| self.const_lit(value)),
@@ -716,7 +719,7 @@ impl<'u> Walk<'_, 'u> {
             kind: match &arg.kind {
                 A::Pos(ty) => TypeArgKind::Pos(self.surface(ty)),
                 A::Key { name, ty, .. } => TypeArgKind::Key {
-                    name: self.name(*name),
+                    name: self.symbol(*name),
                     ty: self.surface(ty),
                 },
                 A::Expand { ty, .. } => TypeArgKind::Expand {
@@ -742,7 +745,7 @@ impl<'u> Walk<'_, 'u> {
                     P::Pos(ty) => TypeParamKind::Pos(self.surface(ty)),
                     P::Key { key, ty, .. } => TypeParamKind::Key {
                         key: match key {
-                            K::Sym(span) => TypeKey::Sym(self.name(*span)),
+                            K::Sym(span) => TypeKey::Sym(self.symbol(*span)),
                             K::Type(ty) => TypeKey::Type(Box::new(self.surface(ty))),
                         },
                         ty: self.surface(ty),
@@ -763,7 +766,7 @@ impl<'u> Walk<'_, 'u> {
             Const::Int(value) => ConstLit::Int(value),
             Const::Bool(value) => ConstLit::Bool(value),
             Const::Nil => ConstLit::Nil,
-            Const::Sym(span) => ConstLit::Sym(self.name(span)),
+            Const::Sym(span) => ConstLit::Sym(self.symbol(span)),
             Const::Bin(_) | Const::F64(_) | Const::Error => return None,
         })
     }
@@ -1254,7 +1257,7 @@ impl<'u> Walk<'_, 'u> {
                     Const::Int(value) => Some(ConstLit::Int(*value)),
                     Const::Bool(value) => Some(ConstLit::Bool(*value)),
                     Const::Nil => Some(ConstLit::Nil),
-                    Const::Sym(span) => Some(ConstLit::Sym(self.name(*span))),
+                    Const::Sym(span) => Some(ConstLit::Sym(self.symbol(*span))),
                     Const::Bin(_) | Const::F64(_) | Const::Error => None,
                 };
                 surface::Param {
@@ -1404,7 +1407,7 @@ impl<'u> Walk<'_, 'u> {
                 self.refer(ident.span, entry, &[]);
             }
             decorators.push(match &decorator.expr {
-                Expr::Ident(ident) => surface::Decorator::Ident(self.reference(ident.span)),
+                Expr::Ident(ident) => surface::Decorator::Ident(self.reference(ident.span, &[])),
                 _ => surface::Decorator::Other,
             });
         }
@@ -1435,12 +1438,7 @@ impl<'u> Walk<'_, 'u> {
                 args.push(self.surface_arg(arg));
             }
             supers.push(surface::Super {
-                head: self.reference(super_ref.ident.span),
-                fields: super_ref
-                    .fields
-                    .iter()
-                    .map(|&field| self.name(field))
-                    .collect(),
+                head: self.reference(super_ref.ident.span, &super_ref.fields),
                 args,
                 bracket_span: super_ref.bracket_span,
                 type_only: super_ref.type_only,
@@ -1497,8 +1495,21 @@ impl<'u> Walk<'_, 'u> {
                 ClassMember::Method(method) => {
                     let (id, sig) = sigs[&method.name_span];
                     let mut decorators = Vec::new();
+                    let mut scope = surface::MemberScope::Instance;
                     for decorator in &method.decorators {
                         self.expr(&group, &decorator.expr);
+                        // `class` and `static` say the method's namespace, by syntax
+                        if let Expr::Ident(ident) = &decorator.expr {
+                            let namespace = match self.file.str(ident.span) {
+                                "class" => Some(surface::MemberScope::Class),
+                                "static" => Some(surface::MemberScope::Static),
+                                _ => None,
+                            };
+                            if let Some(namespace) = namespace {
+                                scope = namespace;
+                                continue;
+                            }
+                        }
                         // Only std's `getter` and `setter` are recognized so far
                         if let Expr::Ident(ident) = &decorator.expr
                             && let Some(res) = ident.res
@@ -1508,7 +1519,7 @@ impl<'u> Walk<'_, 'u> {
                         }
                         decorators.push(match &decorator.expr {
                             Expr::Ident(ident) => {
-                                surface::Decorator::Ident(self.reference(ident.span))
+                                surface::Decorator::Ident(self.reference(ident.span, &[]))
                             }
                             _ => surface::Decorator::Other,
                         });
@@ -1527,6 +1538,7 @@ impl<'u> Walk<'_, 'u> {
                         overload: method.at_span.is_some(),
                         special: method.special,
                         public: method.pub_span.is_some(),
+                        scope,
                         decorators,
                     });
                     members.push(surface::Member::Method { decl: id, sig });
@@ -2049,20 +2061,16 @@ impl Aliases<'_, '_> {
         match ty {
             TypeExpr::Group { ty, .. } => self.ty(ty),
             TypeExpr::App { base, .. } => self.ty(base),
-            TypeExpr::Name { head, .. } => {
-                match head.link.map(|link| &self.referents[link.index()]) {
-                    Some(Referent::Decl(decl))
-                        if self.decls[decl.index()].kind == DeclKind::Alias =>
-                    {
-                        self.head(*decl)
-                    }
-                    Some(Referent::Decl(decl)) => Head::Decl(*decl),
-                    Some(Referent::Binder(binder)) => Head::Binder(*binder),
-                    Some(Referent::Module(_) | Referent::Value(_) | Referent::Error) | None => {
-                        Head::Error
-                    }
+            TypeExpr::Name(head) => match head.link.map(|link| &self.referents[link.index()]) {
+                Some(Referent::Decl(decl)) if self.decls[decl.index()].kind == DeclKind::Alias => {
+                    self.head(*decl)
                 }
-            }
+                Some(Referent::Decl(decl)) => Head::Decl(*decl),
+                Some(Referent::Binder(binder)) => Head::Binder(*binder),
+                Some(Referent::Module(_) | Referent::Value(_) | Referent::Error) | None => {
+                    Head::Error
+                }
+            },
             TypeExpr::Const { .. }
             | TypeExpr::Union { .. }
             | TypeExpr::Func { .. }

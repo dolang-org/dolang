@@ -3,7 +3,7 @@ use std::{
     path::Path,
 };
 
-use super::{Invalid, encode};
+use super::{Invalid, encode, kept_spans};
 use crate::{
     Config, ErrorKind, Mode, Unit,
     source::Span,
@@ -11,7 +11,7 @@ use crate::{
         self, Builder, Typelib,
         elab::{
             DeclNode, Harvest, Referent, Target, Value,
-            surface::{Member, Name, StrId},
+            surface::{Member, Name, StrId, TypeExpr},
         },
     },
 };
@@ -448,4 +448,80 @@ fn missing_export_of_dependency() {
         [(1, 2, 14, message.clone())]
     );
     assert_eq!(located(&[&dep, &script], &[&bytes]), [(0, 1, 8, message)]);
+}
+
+#[test]
+fn omits_reference_spans_and_spellings() {
+    // `Alias` only spells a reference, and `Thing` is the item it imports
+    let source = "import dep:\n  @Thing: Alias\npub @let G = Alias\npub @let H = Array[G]\n";
+    let unit = compile(source, Mode::Module { name: "lib".into() });
+    let bytes = typeck::typelib(&unit).unwrap();
+    let harvest = read(&bytes).unwrap();
+    let strings: Vec<&str> = harvest.strings.iter().map(|text| &**text).collect();
+    assert!(strings.contains(&"Thing"));
+    assert!(
+        !strings.contains(&"Alias"),
+        "a spelling is kept: {strings:?}"
+    );
+    let mut names = 0;
+    for site in &harvest.sites {
+        site.ty.each_node(&mut |ty| {
+            assert_eq!(ty.span(), Span::INVALID);
+            if let TypeExpr::Name(head) = ty {
+                assert!(head.link.is_some());
+                names += 1;
+            }
+        });
+    }
+    assert_eq!(names, 3);
+    assert!(harvest.links.iter().all(|link| link.span == Span::INVALID));
+}
+
+#[test]
+fn locates_kept_spans() {
+    let unit = compile(MODULE, Mode::Module { name: "lib".into() });
+    let bytes = typeck::typelib(&unit).unwrap();
+    let harvest = read(&bytes).unwrap();
+    // Declarations, binders, members and parameters, among others
+    let spans = kept_spans(&harvest);
+    assert!(spans.len() > harvest.decls.len());
+    for span in spans {
+        for offset in [span.start, span.end] {
+            assert_eq!(
+                harvest.info.coord(offset),
+                unit.file.coord(offset),
+                "{span:?} is located"
+            );
+        }
+    }
+}
+
+#[test]
+fn import_on_later_line() {
+    let lib = compile(
+        "# A dependency\n\nimport dep\npub @let G = dep.Thing\n",
+        Mode::Module { name: "lib".into() },
+    );
+    let bytes = typeck::typelib(&lib).unwrap();
+    let dep = compile("pub @class Other\n", Mode::Module { name: "dep".into() });
+    let script = compile(RECOVERING, Mode::Script);
+    let message = "module `dep` has no export `Thing`".to_owned();
+    assert_eq!(located(&[&dep, &script], &[&bytes]), [(0, 3, 8, message)]);
+}
+
+#[test]
+fn omitted_span_at_first_line() {
+    let lib = compile(
+        "import dep\n\npub @let G = dep.Thing[Int]\n",
+        Mode::Module { name: "lib".into() },
+    );
+    let bytes = typeck::typelib(&lib).unwrap();
+    // The dependency's class no longer takes the argument the typelib applies
+    let dep = compile("pub @class Thing\n", Mode::Module { name: "dep".into() });
+    let script = compile(RECOVERING, Mode::Script);
+    let found = located(&[&dep, &script], &[&bytes]);
+    assert!(!found.is_empty());
+    for (unit, line, column, message) in found {
+        assert_eq!((unit, line, column), (0, 1, 1), "{message}");
+    }
 }

@@ -114,7 +114,7 @@ impl Check<'_, '_> {
         }
         let mut pending = Vec::new();
         for super_ref in &self.class.supers {
-            let span = super_ref.span();
+            let span = super_ref.head.span;
             let Some(ty) = super_ref.interned.get() else {
                 continue;
             };
@@ -140,9 +140,7 @@ impl Check<'_, '_> {
             }
             // A claim doesn't make the runtime inherit what it names
             if runtime && super_ref.type_only {
-                let name = &self
-                    .tables
-                    .dotted(self.unit, super_ref.head, &super_ref.fields);
+                let name = &self.tables.quote(self.unit, super_ref.head);
                 match solver.claimed_classes(solver.closed(instance), supertype) {
                     Ok(classes) => {
                         for (class, inheritance) in classes {
@@ -230,13 +228,13 @@ impl Check<'_, '_> {
     /// the checker won't pass its instances as functions. A subclass may reach
     /// it, so passing one is never an error.
     fn callable(&mut self, solver: &Solver<'_>, instance: TypeId) {
-        let (db, tables, unit) = (self.db, self.tables, self.unit);
+        let (db, tables) = (self.db, self.tables);
         let call = self.class.members.iter().find_map(|member| {
             let Member::Method { decl, sig } = *member else {
                 return None;
             };
             let method = tables.method(decl, sig);
-            let instance = sig::method_scope(tables, unit, method) == Scope::Instance;
+            let instance = sig::method_scope(method) == Scope::Instance;
             (instance && matches!(method.special, Some(SpecialMethod::Call)))
                 .then_some(method.name.span)
         });
@@ -478,11 +476,9 @@ impl Check<'_, '_> {
     fn supertype(&self, index: usize) -> Option<(Span, String)> {
         let ty = self.db.declaration(self.id).supertypes.get(index)?.ty;
         self.class.supers.iter().find_map(|super_ref| {
-            let span = super_ref.span();
+            let span = super_ref.head.span;
             (super_ref.interned.get() == Some(ty)).then(|| {
-                let name = self
-                    .tables
-                    .dotted(self.unit, super_ref.head, &super_ref.fields);
+                let name = self.tables.quote(self.unit, super_ref.head);
                 (span, name)
             })
         })
@@ -533,7 +529,7 @@ impl Check<'_, '_> {
                         special: method.special.is_some(),
                         private: !method.public && method.special.is_none(),
                     };
-                    let instance = sig::method_scope(tables, unit, method) == Scope::Instance;
+                    let instance = sig::method_scope(method) == Scope::Instance;
                     spans.entry((key, instance)).or_insert(method.name.span);
                 }
             }

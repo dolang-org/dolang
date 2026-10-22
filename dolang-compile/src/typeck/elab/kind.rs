@@ -14,7 +14,7 @@ use super::{
     BinderRef, Designated, Head, KindMismatch, KindOf, NotAType, NotGeneric, PatternWithoutPack,
     Referent, Role, Site, Tables, TooManyTypeArgs, UnknownTypeKeyword,
     surface::{
-        Binder, BinderKind, Name, Ref, Super, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam,
+        Binder, BinderKind, Ref, Super, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam,
         TypeParamKind,
     },
 };
@@ -203,7 +203,7 @@ impl Infer {
     fn synth(&self, tables: &Tables<'_>, ty: &TypeExpr) -> Term {
         match ty {
             TypeExpr::Group { ty, .. } => self.synth(tables, ty),
-            TypeExpr::Name { head, .. } => match tables.linked(head.link) {
+            TypeExpr::Name(head) => match tables.linked(head.link) {
                 Some(Referent::Decl(decl)) => match tables.decls[decl.index()].kind {
                     DeclKind::Class | DeclKind::Protocol => Term::Known(Kind::Type),
                     DeclKind::Alias | DeclKind::OpaqueAlias => {
@@ -219,7 +219,7 @@ impl Infer {
             // An application of an alias has its kind. Applying anything else
             // that isn't a class is an error, reported where it is checked.
             TypeExpr::App { base, .. } => match base.ungrouped() {
-                TypeExpr::Name { head, .. }
+                TypeExpr::Name(head)
                     if matches!(
                         tables.linked(head.link),
                         Some(Referent::Decl(decl)) if matches!(
@@ -295,15 +295,9 @@ impl<'t> Check<'_, 't, '_> {
 
     /// Check a supertype of a class, which is a type, and the arguments it takes.
     fn supertype(&mut self, super_ref: &'t Super) {
-        let span = super_ref.span();
+        let span = super_ref.head.span;
         let named = self.named(&super_ref.head);
-        self.name(
-            span,
-            &super_ref.head,
-            &super_ref.fields,
-            &named,
-            Some(Kind::Type),
-        );
+        self.name(&super_ref.head, &named, Some(Kind::Type));
         if !super_ref.args.is_empty() {
             let bracket = super_ref.bracket_span.unwrap_or(span);
             self.args(&named, &super_ref.args, span | bracket);
@@ -341,15 +335,9 @@ impl<'t> Check<'_, 't, '_> {
         }
     }
 
-    /// Check a name, spanning `span`, used where `expected` is required.
-    fn name(
-        &mut self,
-        span: Span,
-        head: &Ref,
-        fields: &[Name],
-        named: &Named<'t>,
-        expected: Option<Kind>,
-    ) {
+    /// Check a name used where `expected` is required.
+    fn name(&mut self, head: &Ref, named: &Named<'t>, expected: Option<Kind>) {
+        let span = head.span;
         match *named {
             Named::Kind(kind, unit, declared) | Named::Generic(kind, unit, declared, ..) => {
                 if kind.flexible {
@@ -369,7 +357,7 @@ impl<'t> Check<'_, 't, '_> {
                     && kind.kind == Kind::Schema
                     && let Named::Generic(..) = named
                 {
-                    let alias = Some(self.tables.dotted(self.unit, *head, fields));
+                    let alias = Some(self.tables.quote(self.unit, *head));
                     self.diag(KindMismatch {
                         span,
                         expected: Kind::Type,
@@ -381,7 +369,7 @@ impl<'t> Check<'_, 't, '_> {
                 self.expect(span, expected, kind.kind, declared);
             }
             Named::NotAType => {
-                let name = self.tables.dotted(self.unit, *head, fields);
+                let name = self.tables.quote(self.unit, *head);
                 self.diag(NotAType { span, name });
             }
             Named::Unknown => {}
@@ -404,20 +392,17 @@ impl<'t> Check<'_, 't, '_> {
     fn check(&mut self, ty: &'t TypeExpr, expected: Option<Kind>) {
         match ty {
             TypeExpr::Group { ty, .. } => self.check(ty, expected),
-            TypeExpr::Name { head, fields, .. } => {
-                let span = fields
-                    .last()
-                    .map_or(head.span, |field| head.span | field.span);
+            TypeExpr::Name(head) => {
                 let named = self.named(head);
-                self.name(span, head, fields, &named, expected);
+                self.name(head, &named, expected);
             }
             TypeExpr::App { base, args, .. } => {
                 let base = base.ungrouped();
                 let found = match base {
-                    TypeExpr::Name { head, fields, .. } => {
+                    TypeExpr::Name(head) => {
                         let named = self.named(head);
                         if let Named::NotAType = named {
-                            self.name(base.span(), head, fields, &named, None);
+                            self.name(head, &named, None);
                         }
                         self.args(&named, args, ty.span());
                         // An application of an alias has its kind. One of an
@@ -698,7 +683,7 @@ impl Tables<'_> {
         let known = |kind: &KindOf| (!kind.flexible).then_some(kind.kind);
         match ty {
             TypeExpr::Group { ty, .. } => self.kind_of(ty),
-            TypeExpr::Name { head, .. } => match self.linked(head.link)? {
+            TypeExpr::Name(head) => match self.linked(head.link)? {
                 Referent::Decl(decl) => match self.decls[decl.index()].kind {
                     DeclKind::Class | DeclKind::Protocol => Some(Kind::Type),
                     DeclKind::Alias | DeclKind::OpaqueAlias => known(&self.alias_kinds[decl]),
@@ -709,7 +694,7 @@ impl Tables<'_> {
             },
             // An application of an alias has its kind
             TypeExpr::App { base, .. } => match base.ungrouped() {
-                name @ TypeExpr::Name { head, .. }
+                name @ TypeExpr::Name(head)
                     if matches!(
                         self.linked(head.link),
                         Some(Referent::Decl(decl)) if matches!(

@@ -18,7 +18,7 @@ use super::{
     Ambient, BadNominee, BinderRef, DeclNode, Designated, Diag, KindOf, MisdeclaredIntrinsic,
     MissingAnnotation, MissingIntrinsic, PIPES, ParamTy, Referent, RestSlot, Sig, Slot, Tables,
     UnitDiag,
-    surface::{BinderKind, Class, Decorator, Member, Method, ParamKind, Signature},
+    surface::{BinderKind, Class, Decorator, Member, MemberScope, Method, ParamKind, Signature},
 };
 use crate::source::Span;
 use crate::typeck::r#type::{DeclId, DeclKind, Intrinsic, Kind, Scope, UnitId, UnitSpan};
@@ -143,10 +143,9 @@ fn is_strict(tables: &Tables<'_>, decl: DeclId) -> bool {
 }
 
 fn complete(tables: &Tables<'_>, decl: DeclId, sig: usize) -> Sig {
-    let unit = tables.decls[decl.index()].unit;
     let func = function(tables, decl, sig);
     let receiver = match &tables.decls[decl.index()].node {
-        DeclNode::Methods(methods) => match method_scope(tables, unit, &methods[sig]) {
+        DeclNode::Methods(methods) => match method_scope(&methods[sig]) {
             Scope::Static => None,
             scope => Some(scope),
         },
@@ -181,7 +180,7 @@ fn missing_params(tables: &Tables<'_>, decl: DeclId, sig: usize, diags: &mut Vec
         DeclNode::Defs(defs) => (defs[sig].name, false),
         DeclNode::Methods(methods) => (
             methods[sig].name,
-            method_scope(tables, unit, &methods[sig]) != Scope::Static,
+            method_scope(&methods[sig]) != Scope::Static,
         ),
         _ => unreachable!("only a def or method has a signature"),
     };
@@ -260,19 +259,13 @@ pub(crate) fn params(
         .collect()
 }
 
-/// The scope of a method, from its decorators
-pub(crate) fn method_scope(tables: &Tables<'_>, unit: UnitId, method: &Method) -> Scope {
-    let mut scope = Scope::Instance;
-    for decorator in &method.decorators {
-        if let Decorator::Ident(name) = decorator {
-            match tables.name(unit, name.name()) {
-                "class" => scope = Scope::Class,
-                "static" => scope = Scope::Static,
-                _ => {}
-            }
-        }
+/// The scope of a method
+pub(crate) fn method_scope(method: &Method) -> Scope {
+    match method.scope {
+        MemberScope::Instance => Scope::Instance,
+        MemberScope::Class => Scope::Class,
+        MemberScope::Static => Scope::Static,
     }
-    scope
 }
 
 /// What a method's decorators make of it
@@ -285,19 +278,14 @@ pub(crate) enum Form {
     Unknown,
 }
 
-/// The form of a method, from its decorators. Only `class` and `static` have a
-/// meaning fixed by syntax. Any other decorator may replace the method with any
+/// The form of a method, from its decorators besides `class` and `static`, whose
+/// meaning is fixed by syntax. Any other decorator may replace the method with any
 /// value; until decorator applications are evaluated, std's `getter` and `setter`
 /// are recognized by what their names resolve to, and anything else leaves a value
 /// of unknown type.
-pub(crate) fn method_form(tables: &Tables<'_>, unit: UnitId, method: &Method) -> Form {
+pub(crate) fn method_form(tables: &Tables<'_>, method: &Method) -> Form {
     let mut form = Form::Plain;
     for decorator in &method.decorators {
-        if let Decorator::Ident(name) = decorator
-            && let "class" | "static" = tables.name(unit, name.name())
-        {
-            continue;
-        }
         let designated = decorator_designation(tables, decorator);
         form = match (form, designated) {
             (Form::Plain, Some(Designated::Getter)) => Form::Getter,

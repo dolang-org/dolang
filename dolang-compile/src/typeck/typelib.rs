@@ -1,7 +1,10 @@
 //! Typelibs: a module's declarations as the checker reads them, without its source.
 //!
 //! A typelib holds the surface of a module's harvest, with the module's name, path
-//! and line table. It is what elaboration starts from, not what it concludes, so a
+//! and the lines its kept spans are on. It is a structural record of the module's
+//! interface: it keeps text that is part of the interface, not how a reference is
+//! spelled, and spans that locate definitions and imports, not those of written
+//! types. It is what elaboration starts from, not what it concludes, so a
 //! check that loads one elaborates the module's declarations again, as it would from
 //! source, but checks none of its bodies.
 //!
@@ -18,10 +21,13 @@ use super::{
     elab::{
         BinderRef, Decl, DeclNode, Export, Harvest, Kept, Link, Module, Referent, Role, Site,
         Target, UnitInfo, Value,
-        surface::{Binder, Decorator, LinkId, Member, ModuleId, ParamKind, Ref, SiteId, StrId},
+        surface::{
+            Binder, Decorator, LinkId, Member, ModuleId, ParamKind, Ref, Signature, SiteId, StrId,
+        },
     },
     r#type::{DeclId, DeclKind, UnitId},
 };
+use crate::source::Span;
 
 #[cfg(test)]
 mod tests;
@@ -29,7 +35,7 @@ mod tests;
 const MAGIC: [u8; 8] = *b"\xffdotypel";
 /// The format's version, which changes with any change to the format. It isn't 0,
 /// which the bytes after the magic of an older typelib would read as.
-const VERSION: u16 = 3;
+const VERSION: u16 = 4;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct Header {
@@ -47,7 +53,8 @@ struct Content<'a> {
     module: StrId,
     /// The module's path, which only locates its diagnostics
     path: StrId,
-    newlines: Vec<u32>,
+    /// The number and start of each line holding a span the typelib keeps
+    lines: Vec<(u32, u32)>,
     /// Whether the module was checked strictly, which its signatures depend on
     strict: bool,
     #[serde(borrow)]
@@ -106,10 +113,20 @@ fn encode(harvest: Harvest<'_>) -> Vec<u8> {
     };
     let module = intern((harvest.info.module).expect("only a module's typelib is written"));
     let path = intern(&*path);
+    let mut lines: Vec<(u32, u32)> = (kept_spans(&harvest).into_iter())
+        .filter(|&span| span != Span::INVALID)
+        .flat_map(|span| [span.start, span.end])
+        .map(|offset| {
+            let coord = harvest.info.coord(offset);
+            (coord.line, offset - coord.column)
+        })
+        .collect();
+    lines.sort_unstable();
+    lines.dedup();
     let content = Content {
         module,
         path,
-        newlines: harvest.info.newlines,
+        lines,
         strict: harvest.info.strict,
         strings,
         decls: harvest.decls,
@@ -154,7 +171,7 @@ pub(crate) fn read(bytes: &[u8]) -> Result<(Harvest<'_>, Vec<&str>), Invalid> {
         info: UnitInfo {
             module: Some(module),
             path: Path::new(path),
-            newlines: content.newlines,
+            lines: content.lines,
             source: None,
             strict: content.strict,
         },
@@ -173,7 +190,7 @@ pub(crate) fn read(bytes: &[u8]) -> Result<(Harvest<'_>, Vec<&str>), Invalid> {
 
 /// Check what elaboration assumes of a harvest that collection guarantees.
 fn validate(harvest: &mut Harvest<'_>) -> Result<(), &'static str> {
-    if !harvest.info.newlines.is_sorted_by(|a, b| a < b) {
+    if !(harvest.info.lines.windows(2)).all(|pair| pair[0].0 < pair[1].0 && pair[0].1 < pair[1].1) {
         return Err("the line table is out of order");
     }
     let mut ids = InRange {
@@ -346,8 +363,7 @@ fn validate(harvest: &mut Harvest<'_>) -> Result<(), &'static str> {
     // Each link is named on the surface, and a binder only within its declaration
     let mut heads: Vec<(&Ref, Option<(DeclId, usize)>)> = Vec::new();
     for site in sites {
-        site.ty
-            .names(&mut |head, _| heads.push((head, site.group())));
+        site.ty.names(&mut |head| heads.push((head, site.group())));
     }
     for (index, decl) in decls.iter().enumerate() {
         let group = Some((DeclId::from_index(index), 0));
@@ -357,7 +373,7 @@ fn validate(harvest: &mut Harvest<'_>) -> Result<(), &'static str> {
                 for supertype in &class.supers {
                     heads.push((&supertype.head, group));
                     for arg in &supertype.args {
-                        arg.ty().names(&mut |head, _| heads.push((head, group)));
+                        arg.ty().names(&mut |head| heads.push((head, group)));
                     }
                 }
                 class.decorators.iter().collect()
@@ -395,6 +411,61 @@ fn validate(harvest: &mut Harvest<'_>) -> Result<(), &'static str> {
         }
     }
     Ok(())
+}
+
+/// The spans a typelib keeps: those of what a source can refer to, which locate
+/// definitions, and of the imports its failures are reported at
+fn kept_spans(harvest: &Harvest<'_>) -> Vec<Span> {
+    let mut spans = Vec::new();
+    let signature = |spans: &mut Vec<Span>, binders: &[Binder], sig: &Signature| {
+        spans.extend(binders.iter().map(|binder| binder.name.span));
+        for param in &sig.params {
+            spans.extend(param.name.map(|name| name.span));
+            if let ParamKind::Key { key } = param.kind {
+                spans.push(key.span);
+            }
+        }
+    };
+    for decl in &harvest.decls {
+        spans.extend(decl.name_span());
+        match &decl.node {
+            DeclNode::Class(class) => {
+                spans.extend(class.binders.iter().map(|binder| binder.name.span));
+                for member in &class.members {
+                    if let Member::Field(field) = member {
+                        spans.extend(field.names.iter().map(|name| name.span));
+                    }
+                }
+            }
+            DeclNode::Alias(alias) => {
+                spans.extend(alias.binders.iter().map(|binder| binder.name.span));
+            }
+            DeclNode::Defs(defs) => {
+                for def in defs {
+                    spans.push(def.name.span);
+                    signature(&mut spans, &def.binders, &def.sig);
+                }
+            }
+            DeclNode::Methods(methods) => {
+                for method in methods {
+                    spans.push(method.name.span);
+                    signature(&mut spans, &method.binders, &method.sig);
+                }
+            }
+            DeclNode::Closure(closure) => signature(&mut spans, &[], &closure.sig),
+        }
+    }
+    let targets = (harvest.exports.iter().map(|export| export.target))
+        .chain(harvest.links.iter().map(|link| link.base));
+    for target in targets {
+        if let Target::Local(Referent::Value(value)) = target {
+            spans.push(value.span);
+        }
+    }
+    spans.extend(harvest.exports.iter().map(|export| export.span));
+    spans.extend(harvest.values.iter().map(|value| value.span));
+    spans.extend(harvest.modules.iter().map(|module| module.span));
+    spans
 }
 
 /// Whether `binder` is in scope in the binder group of a declaration signature
@@ -493,24 +564,9 @@ pub(crate) mod wire {
         }
     }
 
-    pub(crate) mod opt_span {
-        use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-        use crate::source::Span;
-
-        pub(crate) fn serialize<S: Serializer>(
-            span: &Option<Span>,
-            s: S,
-        ) -> Result<S::Ok, S::Error> {
-            span.map(|span| (span.start, span.end)).serialize(s)
-        }
-
-        pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
-            d: D,
-        ) -> Result<Option<Span>, D::Error> {
-            let span: Option<(u32, u32)> = Deserialize::deserialize(d)?;
-            Ok(span.map(|(start, end)| Span { start, end }))
-        }
+    /// A span a typelib omits, which reads as one that locates nothing
+    pub(crate) fn invalid() -> crate::source::Span {
+        crate::source::Span::INVALID
     }
 
     /// A span of a harvest's own unit, which is left implicit

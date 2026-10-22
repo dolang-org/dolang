@@ -35,7 +35,7 @@ use super::typelib::wire;
 use crate::{
     RestKind, Unit, ast,
     diag::{AnnotationKind, NoteKind, Severity},
-    source::Span,
+    source::{Coord, Span},
 };
 use surface::{
     Alias, Binder, Class, Closure, Def, Interned, LinkId, Method, ModuleId, Name, Signature,
@@ -54,7 +54,7 @@ pub(crate) use populate::populate;
 pub(crate) use sig::signatures;
 pub(crate) use specialize::specialize;
 pub(crate) use variance::variances;
-pub(crate) use wellformed::{Bounds, Unresolved, bounds, recursion, wellformed};
+pub(crate) use wellformed::{Unresolved, recursion, wellformed};
 
 /// The names of `strand`'s pipe placeholders, sender first
 pub(crate) const PIPES: [&str; 2] = ["PipeSender", "PipeReceiver"];
@@ -245,8 +245,10 @@ pub(crate) struct UnitInfo<'u> {
     /// The module's name; absent for a script
     pub(crate) module: Option<&'u str>,
     pub(crate) path: &'u Path,
-    /// The offset of each newline of the unit's source, which locates its spans
-    pub(crate) newlines: Vec<u32>,
+    /// Where the lines of a unit without source start, which locates the spans it
+    /// keeps: the number and start of each line holding one, in order. A unit with
+    /// source is located by its file.
+    pub(crate) lines: Vec<(u32, u32)>,
     /// The unit, when it is checked from source
     pub(crate) source: Option<&'u Unit<'u>>,
     /// Whether the unit is checked strictly
@@ -254,6 +256,24 @@ pub(crate) struct UnitInfo<'u> {
 }
 
 impl UnitInfo<'_> {
+    /// The line and column of an offset of the unit
+    pub(crate) fn coord(&self, offset: u32) -> Coord {
+        if let Some(source) = self.source {
+            return source.file.coord(offset);
+        }
+        let index = self.lines.partition_point(|&(_, start)| start <= offset);
+        match index.checked_sub(1).map(|index| self.lines[index]) {
+            Some((line, start)) => Coord {
+                line,
+                column: offset - start,
+            },
+            None => Coord {
+                line: 0,
+                column: offset,
+            },
+        }
+    }
+
     /// A module's name, or a script's file stem
     pub(crate) fn name(&self) -> String {
         match self.module {

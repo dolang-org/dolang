@@ -756,7 +756,6 @@ pub(crate) struct BinderSource {
         reason = "diagnostics don't cite a binder's declaration yet"
     )]
     pub(crate) span: UnitSpan,
-    pub(crate) bound: Option<UnitSpan>,
     pub(crate) default: Option<UnitSpan>,
     pub(crate) origin: BinderOrigin,
 }

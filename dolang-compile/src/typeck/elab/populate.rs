@@ -25,7 +25,7 @@ use super::{
     sig::{self, Form},
     surface::{
         BinderKind, Class, ConstLit, Member as SourceMember, MemberScope, Name, ParamKind, Ref,
-        Signature, SiteId, Super, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam,
+        Signature, SiteId, Super, Symbol, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam,
         TypeParamKind, TypeQuant,
     },
 };
@@ -280,7 +280,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         self.db.unknown_of(kind)
     }
 
-    fn symbol(&self, unit: UnitId, name: Name) -> TypeId {
+    fn symbol(&self, unit: UnitId, name: impl Into<Symbol>) -> TypeId {
         let sym = self.db.intern_symbol(self.tables.name(unit, name));
         self.db.intern(Type::Literal(Literal::Sym(sym)))
     }
@@ -353,14 +353,7 @@ impl<'t, 'u> Populate<'t, 'u> {
 
     /// In a pattern, a reference to the current item of the pack a schema name
     /// stands for where a type is expected, as kind checking counts it
-    fn pack(
-        &mut self,
-        group: Group<'_>,
-        head: &Ref,
-        fields: &[Name],
-        span: Span,
-        depth: usize,
-    ) -> Option<TypeId> {
+    fn pack(&mut self, group: Group<'_>, head: &Ref, span: Span, depth: usize) -> Option<TypeId> {
         let tables = self.tables;
         self.pattern.as_ref()?;
         let kind = match tables.linked(head.link)? {
@@ -376,7 +369,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         }
         // The pack itself is interpreted outside the pattern's group
         let outer = self.pattern.take();
-        let pack = self.reference(group, head, fields, span, None, Kind::Schema, depth);
+        let pack = self.reference(group, head, span, None, Kind::Schema, depth);
         self.pattern = outer;
         let packs = self.pattern.as_mut().expect("in a pattern");
         let slot = packs
@@ -422,15 +415,10 @@ impl<'t, 'u> Populate<'t, 'u> {
         let depth = depth + 1;
         match ty {
             TypeExpr::Group { ty, .. } => self.intern(group, ty, expected, depth),
-            TypeExpr::Name { head, fields, .. } => {
-                let span = fields
-                    .last()
-                    .map_or(head.span, |field| head.span | field.span);
-                self.reference(group, head, fields, span, None, expected, depth)
-            }
+            TypeExpr::Name(head) => self.reference(group, head, head.span, None, expected, depth),
             TypeExpr::App { base, args, .. } => match base.ungrouped() {
-                TypeExpr::Name { head, fields, .. } => {
-                    self.reference(group, head, fields, ty.span(), Some(args), expected, depth)
+                TypeExpr::Name(head) => {
+                    self.reference(group, head, ty.span(), Some(args), expected, depth)
                 }
                 _ => self.unknown(expected),
             },
@@ -567,7 +555,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                         _ => false,
                     })
             }
-            TypeExpr::Name { head, .. } => match tables.linked(head.link) {
+            TypeExpr::Name(head) => match tables.linked(head.link) {
                 Some(&Referent::Decl(decl)) => {
                     let DeclNode::Alias(alias) = &tables.decls[decl.index()].node else {
                         return false;
@@ -708,7 +696,6 @@ impl<'t, 'u> Populate<'t, 'u> {
         &mut self,
         group: Group<'_>,
         head: &Ref,
-        fields: &[Name],
         span: Span,
         args: Option<&[TypeArg]>,
         expected: Kind,
@@ -717,7 +704,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         let supertype = std::mem::take(&mut self.supertype);
         if expected == Kind::Type
             && args.is_none()
-            && let Some(item) = self.pack(group, head, fields, span, depth)
+            && let Some(item) = self.pack(group, head, span, depth)
         {
             return item;
         }
@@ -752,7 +739,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                 {
                     return self.db.gradual_function();
                 }
-                self.apply(group, decl, args, (head, fields, span), depth)
+                self.apply(group, decl, args, (head, span), depth)
             }
             _ => self.unknown(expected),
         }
@@ -765,7 +752,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         group: Group<'_>,
         decl: DeclId,
         args: Option<&[TypeArg]>,
-        (head, fields, span): (&Ref, &[Name], Span),
+        (head, span): (&Ref, Span),
         depth: usize,
     ) -> TypeId {
         let tables = self.tables;
@@ -803,7 +790,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                 if written.iter().any(|written| {
                     written.default.is_none() && !matches!(written.kind, BinderKind::Rest(_))
                 }) {
-                    let name = tables.dotted(group.unit, *head, fields);
+                    let name = tables.quote(group.unit, *head);
                     self.report(group.unit, BareGeneric { span, name });
                     return self.unknown(result);
                 }
@@ -1122,9 +1109,6 @@ impl<'t, 'u> Populate<'t, 'u> {
             sources.push(BinderSource {
                 name,
                 span: span(name_span),
-                bound: written
-                    .and_then(|written| written.bound)
-                    .map(|bound| span(tables.site_ty(bound).span())),
                 default: written
                     .and_then(|written| written.default)
                     .filter(|_| origin == BinderOrigin::Written)
@@ -1189,20 +1173,12 @@ impl<'t, 'u> Populate<'t, 'u> {
                 declaration.source.is_mixable = sig::decorated(tables, class, Designated::Mixable);
                 let mut supertypes = Vec::new();
                 for super_ref in &class.supers {
-                    let span = super_ref.span();
+                    let span = super_ref.head.span;
                     let args = (!super_ref.args.is_empty()).then_some(&super_ref.args[..]);
                     let ty = match tables.linked(super_ref.head.link) {
                         Some(Referent::Decl(_)) => {
                             self.supertype = true;
-                            self.reference(
-                                group,
-                                &super_ref.head,
-                                &super_ref.fields,
-                                span,
-                                args,
-                                Kind::Type,
-                                0,
-                            )
+                            self.reference(group, &super_ref.head, span, args, Kind::Type, 0)
                         }
                         // A supertype that failed to resolve, such as one from a
                         // missing module, recovers as unknown
@@ -1489,13 +1465,13 @@ impl<'t, 'u> Populate<'t, 'u> {
                         special: primary.special.is_some(),
                         private: !primary.public && primary.special.is_none(),
                     };
-                    let scope = sig::method_scope(tables, unit, primary);
+                    let scope = sig::method_scope(primary);
                     // A special method other than `(init)` is reached by the runtime
                     // from anywhere
                     let public = primary.public
                         || matches!(primary.special, Some(special)
                             if !matches!(special, SpecialMethod::Init));
-                    let form = sig::method_form(tables, unit, primary);
+                    let form = sig::method_form(tables, primary);
                     match index.entry((key, scope == Scope::Instance)) {
                         MapEntry::Occupied(entry) => {
                             let (_, found) = &mut members[*entry.get()];
@@ -1611,7 +1587,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                     }
                     Color::Gray => {
                         let unit = tables.decls[node].unit;
-                        self.report(unit, InheritanceCycle(super_ref.span()));
+                        self.report(unit, InheritanceCycle(super_ref.head.span));
                         let ty = (super_ref.interned.get())
                             .expect("population interns a supertype naming a class");
                         closing.push((DeclId::from_index(node), ty));

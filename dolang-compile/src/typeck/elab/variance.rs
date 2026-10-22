@@ -434,7 +434,7 @@ impl<'t> Collect<'t, '_> {
         while let TypeExpr::Group { ty: inner, .. } = base {
             base = inner;
         }
-        matches!(base, TypeExpr::Name { head, .. }
+        matches!(base, TypeExpr::Name(head)
             if matches!(self.referent(head), Some(Referent::Decl(decl))
                 if self.tables.designated.get(decl) == Some(&Designated::Phantom)))
     }
@@ -510,7 +510,7 @@ impl<'t> Collect<'t, '_> {
     fn ty(&mut self, ty: &'t TypeExpr, u: Use) {
         match ty {
             TypeExpr::Group { ty, .. } => self.ty(ty, u),
-            TypeExpr::Name { head, .. } => match self.referent(head) {
+            TypeExpr::Name(head) => match self.referent(head) {
                 Some(&Referent::Binder(binder)) => self.uses(binder, u),
                 Some(&Referent::Decl(decl)) if self.is_type(decl) => self.captures(decl, u),
                 _ => {}
@@ -520,7 +520,7 @@ impl<'t> Collect<'t, '_> {
                 while let TypeExpr::Group { ty, .. } = head {
                     head = ty;
                 }
-                if let TypeExpr::Name { head, .. } = head
+                if let TypeExpr::Name(head) = head
                     && let Some(&Referent::Decl(decl)) = self.referent(head)
                     && self.is_type(decl)
                 {

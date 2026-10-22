@@ -6,7 +6,7 @@ use std::fmt::{self, Write};
 use super::{elab::UnitInfo, r#type::UnitId};
 use crate::{
     diag::{self, AnnotationKind, NoteKind, Pos, Severity, SourceSpan},
-    source::{self, Span},
+    source::Span,
 };
 
 /// A problem the checker reports
@@ -74,8 +74,13 @@ impl Diag {
 /// A span of `unit`, resolved to lines and columns
 pub(crate) fn resolve_span(unit: UnitId, info: &UnitInfo<'_>, span: Span) -> SourceSpan {
     let pos = |offset| {
-        let coord = source::coord(&info.newlines, offset);
+        let coord = info.coord(offset);
         Pos::new(offset as usize, coord.line, coord.column)
+    };
+    // A span a typelib omits is at the start of its first line
+    let span = match span == Span::INVALID {
+        true => Span { start: 0, end: 0 },
+        false => span,
     };
     SourceSpan::new(Some(unit), diag::Span::new(pos(span.start), pos(span.end)))
 }

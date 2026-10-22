@@ -188,7 +188,7 @@ impl Walk<'_, '_> {
     }
 
     fn ty(&mut self, ty: &TypeExpr, user: &User) {
-        ty.names(&mut |head, _| self.name(head, user));
+        ty.names(&mut |head| self.name(head, user));
     }
 
     fn link(&self, head: &Ref) -> Option<&Link> {
@@ -222,7 +222,7 @@ impl Walk<'_, '_> {
         let TypeExpr::App { base, .. } = ty.ungrouped() else {
             return false;
         };
-        let TypeExpr::Name { head, .. } = base.ungrouped() else {
+        let TypeExpr::Name(head) = base.ungrouped() else {
             return false;
         };
         let Some(link) = self.link(head) else {

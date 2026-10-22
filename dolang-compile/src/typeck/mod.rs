@@ -243,13 +243,12 @@ impl<'u, 's> Builder<'u, 's> {
         elab::populate(&mut db, &mut tables, &mut diags);
         db.seal();
         elab::specialize(&mut db, &tables, &mut diags);
-        let bounds = elab::bounds(&tables);
         let mut recursion = Vec::new();
-        let recursion_unresolved = elab::recursion(&mut db, &tables, &bounds, &mut recursion);
+        let recursion_unresolved = elab::recursion(&mut db, &tables, &mut recursion);
         // Every later pass runs in a fork per unit, so no unit's results depend on
         // what another interned
         let shared = db.share();
-        let mut outputs = check_units(&shared, &tables, &bounds, self.threads);
+        let mut outputs = check_units(&shared, &tables, self.threads);
         // Gather each kind of output across units, in the order the passes ran
         let mut unresolved = Vec::new();
         for output in &mut outputs {
@@ -387,7 +386,6 @@ const _: () = {
     send::<flow::Results>();
     sync::<cfg::Ir>();
     sync::<flow::Layout>();
-    sync::<elab::Bounds<'_>>();
 };
 
 /// Check every unit with [`check_unit`], on a pool of `threads` threads, else the
@@ -395,7 +393,6 @@ const _: () = {
 fn check_units(
     shared: &Arc<r#type::Shared>,
     tables: &elab::Tables<'_>,
-    bounds: &elab::Bounds<'_>,
     threads: Option<NonZeroUsize>,
 ) -> Vec<UnitOutput> {
     let count = tables.units.len();
@@ -407,13 +404,13 @@ fn check_units(
     // their own to check
     work.sort_by_key(|(unit, _)| {
         let info = &tables.units[unit.index()];
-        std::cmp::Reverse(info.source.map_or(0, |_| info.newlines.len()))
+        std::cmp::Reverse(info.source.map_or(0, |source| source.file.newlines().len()))
     });
     // FIFO, so that the worker spawning the units takes them largest first too
     let run = || {
         rayon::scope_fifo(|scope| {
             for (unit, slot) in work {
-                scope.spawn_fifo(move |_| *slot = Some(check_unit(shared, tables, bounds, unit)));
+                scope.spawn_fifo(move |_| *slot = Some(check_unit(shared, tables, unit)));
             }
         })
     };
@@ -440,12 +437,7 @@ fn check_units(
 
 /// Check a unit with source, its declarations and bodies, in a new fork of
 /// `shared`; a typelib's were checked with its source
-fn check_unit(
-    shared: &Arc<r#type::Shared>,
-    tables: &elab::Tables<'_>,
-    bounds: &elab::Bounds<'_>,
-    unit: UnitId,
-) -> UnitOutput {
+fn check_unit(shared: &Arc<r#type::Shared>, tables: &elab::Tables<'_>, unit: UnitId) -> UnitOutput {
     // A fork of its own, so that what it interns isn't in the layer
     let db = r#type::Database::fork(shared);
     let source = tables.units[unit.index()].source;
@@ -454,7 +446,7 @@ fn check_unit(
     // misleads checks against it
     let mut wellformed = Vec::new();
     let wellformed_unresolved = match source {
-        Some(_) => elab::wellformed(&db, tables, bounds, unit, &mut wellformed),
+        Some(_) => elab::wellformed(&db, tables, unit, &mut wellformed),
         None => Vec::new(),
     };
     let mut overrides = Vec::new();

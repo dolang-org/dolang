@@ -162,7 +162,6 @@ impl Class {
             .map(|_| BinderSource {
                 name: self.source.name.unwrap(),
                 span: self.source.span,
-                bound: None,
                 default: None,
                 origin: BinderOrigin::Written,
             })
