@@ -840,7 +840,7 @@ def type_followups_are_exposed()
     - $compile.KeyTypeItem
     - $compile.KeyTypeItem
     - $compile.KeyTypeItem
-  assert_eq [...schema.items.map(do |param| param.quant)] [nil, :STAR:, :STAR:, nil, nil]
+  assert_eq [...[1, 2, 3, 4].map(do |i| schema.items[i].quant)] [:STAR:, :STAR:, nil, nil]
   assert_eq (span_text(source, schema.items[0].span)) "..."
   assert_eq (span_text(source, schema.items[1].key_ty.span)) "(K)"
   assert_eq (span_text(source, schema.items[2].key_ty.span)) "(Tuple[Int, Int])"
@@ -1026,7 +1026,7 @@ def rest_kinds_are_exposed()
       [a, rest, kw]
     def mixed[...R] ...rest @R
       rest
-    let schema @{*Int, **Str, ...{a: Bool}} = nil
+    let schema @{*Int, **Str, ...{a: Bool}, *} = nil
   let unit = compile.compile "rest_kinds.dol" $source document: true
   assert_no_errors $unit
   let nodes = [...unit.nodes()]
@@ -1052,11 +1052,13 @@ def rest_kinds_are_exposed()
   let schema_items = (types_of(nodes, schema[0])[0][1].expr.items)
   assert_eq [...schema_items.map(do |p| type p)] $
     - $compile.PosTypeItem
+    - $compile.AnyKeyTypeItem
     - $compile.PosTypeItem
-    - $compile.IncludeTypeItem
-  assert_eq [...schema_items.map(do |p| p.quant)] [:STAR:, :STAR_STAR:, nil]
+    - $compile.AnyPosTypeItem
+  assert_eq [schema_items[0].quant, schema_items[2].quant] [:STAR:, :INCLUDE:]
   assert $schema_items.all(do |p| type(p, compile.TypeItem))
   assert_eq (span_text(source, schema_items[1].span)) "**Str"
+  assert_eq (span_text(source, schema_items[1].ty.span)) "Str"
   unit.emit()
 
 #[test]

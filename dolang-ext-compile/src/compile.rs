@@ -58,7 +58,7 @@ pub(crate) struct Types<'v> {
 pub(crate) struct Syms<'v> {
     quant_opt: Sym<'v, 'v>,
     quant_star: Sym<'v, 'v>,
-    quant_star_star: Sym<'v, 'v>,
+    quant_include: Sym<'v, 'v>,
     token_annotation: Sym<'v, 'v>,
     token_binder: Sym<'v, 'v>,
     error: Sym<'v, 'v>,
@@ -149,9 +149,9 @@ pub(crate) struct ConcreteNodeTypes<'v> {
     expand_type_arg: Type<'v, NodeObject<ExpandTypeArgTag>>,
     pos_type_item: Type<'v, NodeObject<PosTypeItemTag>>,
     key_type_item: Type<'v, NodeObject<KeyTypeItemTag>>,
-    include_type_item: Type<'v, NodeObject<IncludeTypeItemTag>>,
+    any_pos_type_item: Type<'v, NodeObject<AnyPosTypeItemTag>>,
+    any_key_type_item: Type<'v, NodeObject<AnyKeyTypeItemTag>>,
     open_type_item: Type<'v, NodeObject<OpenTypeItemTag>>,
-    any_type_item: Type<'v, NodeObject<AnyTypeItemTag>>,
 }
 
 pub(crate) struct Tag;
@@ -286,9 +286,9 @@ impl<'v> Global<'v> {
                     expand_type_arg: subtype!(ExpandTypeArgTag, type_arg),
                     pos_type_item: subtype!(PosTypeItemTag, type_item),
                     key_type_item: subtype!(KeyTypeItemTag, type_item),
-                    include_type_item: subtype!(IncludeTypeItemTag, type_item),
+                    any_pos_type_item: subtype!(AnyPosTypeItemTag, type_item),
+                    any_key_type_item: subtype!(AnyKeyTypeItemTag, type_item),
                     open_type_item: subtype!(OpenTypeItemTag, type_item),
-                    any_type_item: subtype!(AnyTypeItemTag, type_item),
                 },
                 diagnostic: builder.register_type(),
                 span: builder.register_type(),
@@ -303,7 +303,7 @@ impl<'v> Global<'v> {
             syms: Syms {
                 quant_opt: builder.sym("OPT"),
                 quant_star: builder.sym("STAR"),
-                quant_star_star: builder.sym("STAR_STAR"),
+                quant_include: builder.sym("INCLUDE"),
                 token_annotation: builder.sym("ANNOTATION"),
                 token_binder: builder.sym("BINDER"),
                 error: builder.sym("ERROR"),
@@ -486,8 +486,8 @@ node_tags! {
     FuncTypeTag=>"FuncType", TypeArgTag=>"TypeArg", PosTypeArgTag=>"PosTypeArg",
     KeyTypeArgTag=>"KeyTypeArg", ExpandTypeArgTag=>"ExpandTypeArg", TypeItemTag=>"TypeItem",
     PosTypeItemTag=>"PosTypeItem", KeyTypeItemTag=>"KeyTypeItem",
-    IncludeTypeItemTag=>"IncludeTypeItem", OpenTypeItemTag=>"OpenTypeItem",
-    AnyTypeItemTag=>"AnyTypeItem"
+    AnyPosTypeItemTag=>"AnyPosTypeItem", AnyKeyTypeItemTag=>"AnyKeyTypeItem",
+    OpenTypeItemTag=>"OpenTypeItem"
 }
 pub(crate) struct Diagnostic;
 pub(crate) struct Span;
@@ -1716,9 +1716,9 @@ fn create_node<'v, 's>(
         ExpandTypeArg,
         PosTypeItem,
         KeyTypeItem,
-        IncludeTypeItem,
+        AnyPosTypeItem,
+        AnyKeyTypeItem,
         OpenTypeItem,
-        AnyTypeItem,
     }
     let (kind, unit) = {
         let b = owner.borrow(strand)?;
@@ -1795,11 +1795,11 @@ fn create_node<'v, 's>(
                 _ => return Err(Error::not_supported(strand)),
             },
             compile::Kind::TypeItem { kind, .. } => match kind {
-                None => Which::AnyTypeItem,
-                Some(compile::TypeItemKind::Pos) => Which::PosTypeItem,
-                Some(compile::TypeItemKind::Key { .. }) => Which::KeyTypeItem,
-                Some(compile::TypeItemKind::Include) => Which::IncludeTypeItem,
-                Some(compile::TypeItemKind::Open) => Which::OpenTypeItem,
+                compile::TypeItemKind::Pos { .. } => Which::PosTypeItem,
+                compile::TypeItemKind::Key { .. } => Which::KeyTypeItem,
+                compile::TypeItemKind::AnyPos => Which::AnyPosTypeItem,
+                compile::TypeItemKind::AnyKey => Which::AnyKeyTypeItem,
+                compile::TypeItemKind::Open => Which::OpenTypeItem,
                 _ => return Err(Error::not_supported(strand)),
             },
             _ => unreachable!(),
@@ -1868,9 +1868,9 @@ fn create_node<'v, 's>(
         Which::ExpandTypeArg => make!(t.expand_type_arg, ExpandTypeArgTag),
         Which::PosTypeItem => make!(t.pos_type_item, PosTypeItemTag),
         Which::KeyTypeItem => make!(t.key_type_item, KeyTypeItemTag),
-        Which::IncludeTypeItem => make!(t.include_type_item, IncludeTypeItemTag),
+        Which::AnyPosTypeItem => make!(t.any_pos_type_item, AnyPosTypeItemTag),
+        Which::AnyKeyTypeItem => make!(t.any_key_type_item, AnyKeyTypeItemTag),
         Which::OpenTypeItem => make!(t.open_type_item, OpenTypeItemTag),
-        Which::AnyTypeItem => make!(t.any_type_item, AnyTypeItemTag),
     }
     Ok(())
 }
@@ -2112,28 +2112,30 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                 node_field!(compile::Kind::TypeArg { ty, .. } => Some(ty)),
             );
         }
-        if matches!(
-            T::NAME,
-            "PosTypeItem" | "KeyTypeItem" | "IncludeTypeItem" | "OpenTypeItem" | "AnyTypeItem"
-        ) {
+        if matches!(T::NAME, "PosTypeItem" | "KeyTypeItem") {
             builder = builder.get("quant", |this, strand, out| {
                 let quant = with_node(this, strand, |n, _| match n.kind() {
-                    compile::Kind::TypeItem { quant, .. } => quant,
+                    compile::Kind::TypeItem {
+                        kind:
+                            compile::TypeItemKind::Pos { quant }
+                            | compile::TypeItemKind::Key { quant, .. },
+                        ..
+                    } => quant,
                     _ => unreachable!(),
                 })?;
                 let syms = &strand.state::<Tag>().syms;
                 match quant {
                     Some(compile::TypeQuant::Opt) => Output::set(strand, out, syms.quant_opt),
                     Some(compile::TypeQuant::Star) => Output::set(strand, out, syms.quant_star),
-                    Some(compile::TypeQuant::StarStar) => {
-                        Output::set(strand, out, syms.quant_star_star)
+                    Some(compile::TypeQuant::Include) => {
+                        Output::set(strand, out, syms.quant_include)
                     }
                     _ => Output::set(strand, out, Nil),
                 }
                 Ok(())
             });
         }
-        if matches!(T::NAME, "PosTypeItem" | "KeyTypeItem" | "IncludeTypeItem") {
+        if matches!(T::NAME, "PosTypeItem" | "KeyTypeItem" | "AnyKeyTypeItem") {
             builder = builder.get("ty", node_field!(compile::Kind::TypeItem { ty, .. } => ty));
         }
         match T::NAME {
@@ -2246,7 +2248,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                 .get("key", |this, strand, out| {
                     let key = with_node(this, strand, |n, _| match n.kind() {
                         compile::Kind::TypeItem {
-                            kind: Some(compile::TypeItemKind::Key { key, .. }),
+                            kind: compile::TypeItemKind::Key { key, .. },
                             ..
                         } => span_data(key),
                         _ => unreachable!(),
@@ -2257,7 +2259,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                 .get(
                     "key_ty",
                     node_field!(compile::Kind::TypeItem {
-                        kind: Some(compile::TypeItemKind::Key { key_ty, .. }),
+                        kind: compile::TypeItemKind::Key { key_ty, .. },
                         ..
                     } => key_ty),
                 ),
@@ -2980,11 +2982,14 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("PosTypeItem", global.types.concrete_nodes.pos_type_item)
         .value("KeyTypeItem", global.types.concrete_nodes.key_type_item)
         .value(
-            "IncludeTypeItem",
-            global.types.concrete_nodes.include_type_item,
+            "AnyPosTypeItem",
+            global.types.concrete_nodes.any_pos_type_item,
+        )
+        .value(
+            "AnyKeyTypeItem",
+            global.types.concrete_nodes.any_key_type_item,
         )
         .value("OpenTypeItem", global.types.concrete_nodes.open_type_item)
-        .value("AnyTypeItem", global.types.concrete_nodes.any_type_item)
         .value("Diagnostic", global.types.diagnostic)
         .value("Span", global.types.span)
         .value("SourceSpan", global.types.source_span)

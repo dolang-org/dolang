@@ -729,27 +729,26 @@ dotted type names without loading it at runtime. `@let Name = Type` declares a
 type-only alias visible throughout its block, so it may refer to itself or a
 later alias.
 
-An annotation or return type is a compact type, so the first whitespace after
-it begins ends it, even inside `()`. Parenthesize unions and function types:
+An annotation or return type is a compact type, so the first whitespace after it
+begins ends it, even inside `()`. Parenthesize unions and function types:
 `@Str|Path` is not a union, but `@(Str | Path)` is. Other forms:
 `@Dict[Str, Array[Int]]`, `@{name: Str, ?port: Int}`, `@((Int, ?Int) -> Int)`,
 `@(:a: | :b:)`. Collection forms mirror the literals and always mean the class
 itself: `(Int, Str)` is `Tuple[Int, Str]`, `(Int,)` a one-item tuple, `()` the
 empty tuple, `(Int)` just grouping; a form with an explicitly keyed item
-(`key: T`, `(K): T`, `**`) is a record, `(name: Str, Int)`; `[T]` is
-`Array[T]` (exactly one element type). A brace is `Dict[{...}]` only where a
-type is required (annotation, return type, cast, union member, argument for a
-type binder as in `Array[{a: Int}]`); it stays a schema as an alias body, a
-bound, or an argument for a schema binder (`Dict[{a: Int}]`), so a brace alias
-used as a type needs `Dict[Alias]`. A vertical `$` schema where a type is
-required is a dict if it has a keyed item, else a tuple of its items. A schema
-item is an element -- `T` positional, `key: T` or
-`(K): T` keyed, `...S` including a schema's items -- optionally preceded by a
-quantifier saying how many it admits: `?` zero or one, `*` zero or more, `**`
-zero or more keyed (`**V` is `*(Sym): V`). An item takes at most one
-quantifier. `...` alone admits any item and is shorthand for `*, **`; `*` and
-`**` alone admit any positional or keyed item. So `*key: V` is a repeatable
-literal key and `*...S` repeats a whole subschema. Schemas are closed unless an
+(`key: T`, `(K): T`, `**`) is a record, `(name: Str, Int)`; `[T]` is `Array[T]`
+(exactly one element type). A brace is `Dict[{...}]` only where a type is
+required (annotation, return type, cast, union member, argument for a type
+binder as in `Array[{a: Int}]`); it stays a schema as an alias body, a bound, or
+an argument for a schema binder (`Dict[{a: Int}]`), so a brace alias used as a
+type needs `Dict[Alias]`. A vertical `$` schema where a type is required is a
+dict if it has a keyed item, else a tuple of its items. A schema item is an
+element -- `T` positional, `key: T` or `(K): T` keyed -- optionally preceded by
+a quantifier saying how many it admits: `?` zero or one, `*` zero or more, or
+`...` the items of a schema, as in `...S` (positional elements only). An item
+takes at most one quantifier. `**V` is `*(Sym): V`. `...` alone admits any item
+and is shorthand for `*, **`; `*` and `**` alone admit any positional or keyed
+item. So `*key: V` is a repeatable literal key. Schemas are closed unless an
 item admits more. A function's parameter list is a schema, except that a
 parameter key must be a name, so `(K): V` is not allowed there:
 `((Int, *Str, **Bool) -> nil)`. A parameter list also takes the implicit
@@ -759,8 +758,8 @@ declaration's is a compact type as an annotation is:
 `def sink count @ Int <Iter[Int] >Sink[Str] -> nil`. A lambda's go inside its
 `|`, as in `do |x <Iter[Int]| x`. Schemas and binding patterns have neither. A
 type whose only positional parameter is a schema, any others being keyword
-parameters, takes `Foo[T]` for `Foo[{*T}]` and `Foo[K, V]` for
-`Foo[{*(K): V}]`; prefer these to a schema with a single rest item.
+parameters, takes `Foo[T]` for `Foo[{*T}]` and `Foo[K, V]` for `Foo[{*(K): V}]`;
+prefer these to a schema with a single rest item.
 
 A cast takes the whole contents of its parentheses, with a compact type.
 `(e @ T)` checks `e` against `T` and has type `T`; `(e !@ T)` has type `T`

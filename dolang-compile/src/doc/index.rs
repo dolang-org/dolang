@@ -600,22 +600,20 @@ impl Index<'_> {
         params
             .iter()
             .map(|param| {
-                let (quant, key, ty, start) = match &param.kind {
-                    TypeParamKind::Pos { quant, ty } => (quant.as_ref(), None, Some(ty), None),
+                let (quant, ty, start) = match &param.kind {
+                    TypeParamKind::Pos { quant, ty } => (quant.as_ref(), Some(ty), None),
                     TypeParamKind::Key { quant, key, ty, .. } => {
                         let span = match key {
                             TypeKey::Sym(span) => *span,
                             TypeKey::Type(key_ty) => key_ty.span(),
                         };
-                        (quant.as_ref(), Some(key), Some(ty), Some(span))
+                        (quant.as_ref(), Some(ty), Some(span))
                     }
-                    TypeParamKind::AnyPos { star_span } => (None, None, None, Some(*star_span)),
+                    TypeParamKind::AnyPos { star_span } => (None, None, Some(*star_span)),
                     TypeParamKind::AnyKey { star_star_span, ty } => {
-                        (None, None, ty.as_ref(), Some(*star_star_span))
+                        (None, ty.as_ref(), Some(*star_star_span))
                     }
-                    TypeParamKind::Open { ellipsis_span } => {
-                        (None, None, None, Some(*ellipsis_span))
-                    }
+                    TypeParamKind::Open { ellipsis_span } => (None, None, Some(*ellipsis_span)),
                 };
                 let span = [param.dash_span, quant.map(|quant| quant.span()), start]
                     .into_iter()
@@ -624,41 +622,30 @@ impl Index<'_> {
                     .reduce(|acc, span| acc | span)
                     .expect("a type item has a source span");
                 let id = self.begin_type(parent, span, documented.then_some(span.start));
-                let (quant, kind) = match &param.kind {
-                    TypeParamKind::Pos {
-                        quant: Some(TypeQuant::Include(_)),
-                        ..
-                    } => (None, Some(doc::TypeItemKind::Include)),
-                    TypeParamKind::Pos { .. } => (quant, Some(doc::TypeItemKind::Pos)),
-                    TypeParamKind::Key { .. } => (
+                let quant = quant.map(|quant| match quant {
+                    TypeQuant::Opt(_) => crate::TypeQuant::Opt,
+                    TypeQuant::Star(_) => crate::TypeQuant::Star,
+                    TypeQuant::Include(_) => crate::TypeQuant::Include,
+                });
+                let kind = match &param.kind {
+                    TypeParamKind::Pos { .. } => doc::TypeItemKind::Pos { quant },
+                    TypeParamKind::Key { key, .. } => doc::TypeItemKind::Key {
                         quant,
-                        Some(doc::TypeItemKind::Key {
-                            key: start.expect("a key has a span"),
-                            key_ty: match key {
-                                Some(TypeKey::Type(key_ty)) => Some(self.type_expr(id, key_ty)?),
-                                _ => None,
-                            },
-                        }),
-                    ),
-                    TypeParamKind::AnyPos { .. } => (None, None),
-                    TypeParamKind::AnyKey { ty: Some(_), .. } => {
-                        (None, Some(doc::TypeItemKind::Pos))
-                    }
-                    TypeParamKind::AnyKey { ty: None, .. } => (None, None),
-                    TypeParamKind::Open { .. } => (None, Some(doc::TypeItemKind::Open)),
-                };
-                let quant = match (&param.kind, quant) {
-                    (TypeParamKind::AnyPos { .. }, _) => Some(crate::TypeQuant::Star),
-                    (TypeParamKind::AnyKey { .. }, _) => Some(crate::TypeQuant::StarStar),
-                    (_, Some(TypeQuant::Opt(_))) => Some(crate::TypeQuant::Opt),
-                    (_, Some(TypeQuant::Star(_))) => Some(crate::TypeQuant::Star),
-                    _ => None,
+                        key: start.expect("a key has a span"),
+                        key_ty: match key {
+                            TypeKey::Type(key_ty) => Some(self.type_expr(id, key_ty)?),
+                            TypeKey::Sym(_) => None,
+                        },
+                    },
+                    TypeParamKind::AnyPos { .. } => doc::TypeItemKind::AnyPos,
+                    TypeParamKind::AnyKey { .. } => doc::TypeItemKind::AnyKey,
+                    TypeParamKind::Open { .. } => doc::TypeItemKind::Open,
                 };
                 let ty = match ty {
                     Some(ty) => Some(self.type_expr(id, ty)?),
                     None => None,
                 };
-                Some(self.finish_type(id, Kind::TypeItem { quant, kind, ty }))
+                Some(self.finish_type(id, Kind::TypeItem { kind, ty }))
             })
             .collect()
     }

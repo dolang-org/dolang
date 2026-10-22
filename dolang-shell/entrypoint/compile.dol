@@ -106,9 +106,9 @@ let KIND_NAMES = $
   $compile.ExpandTypeArg: "ExpandTypeArg"
   $compile.PosTypeItem: "PosTypeItem"
   $compile.KeyTypeItem: "KeyTypeItem"
-  $compile.IncludeTypeItem: "IncludeTypeItem"
+  $compile.AnyPosTypeItem: "AnyPosTypeItem"
+  $compile.AnyKeyTypeItem: "AnyKeyTypeItem"
   $compile.OpenTypeItem: "OpenTypeItem"
-  $compile.AnyTypeItem: "AnyTypeItem"
 
 # How a type argument is given, as the documentation projection names it.
 let ARG_KINDS = $
@@ -120,16 +120,16 @@ let ARG_KINDS = $
 let ITEM_KINDS = $
   $compile.PosTypeItem: pos
   $compile.KeyTypeItem: key
-  $compile.IncludeTypeItem: include
+  $compile.AnyPosTypeItem: any_pos
+  $compile.AnyKeyTypeItem: any_key
   $compile.OpenTypeItem: open
-  $compile.AnyTypeItem: any
 
 # How many of its element an item admits, as the documentation projection names
 # it.
 let QUANTS = $
   :OPT:: opt
   :STAR:: star
-  :STAR_STAR:: star_star
+  :INCLUDE:: include
 
 # How a parameter or binder is declared, as the documentation projection names
 # it.
@@ -258,7 +258,7 @@ def node_json id_to_index node
       base: (node_index id_to_index base)
     if (args != nil)
       args: (node_indices id_to_index args)
-    if type(node, compile.TypeItem)
+    if (type(node, compile.PosTypeItem) || type(node, compile.KeyTypeItem))
       quant: (QUANTS.get node.quant)
     if (items != nil)
       items: (node_indices id_to_index items)
@@ -586,14 +586,16 @@ class Document
   def type_items self items
     let result = []
     for item = items
+      let element = (type(item, compile.PosTypeItem) || type(item, compile.KeyTypeItem))
       result.push $
         kind: (ITEM_KINDS.get (type item))
-        quant: (QUANTS.get item.quant)
+        if element
+          quant: (QUANTS.get item.quant)
         if type(item, compile.KeyTypeItem)
           key: (self.#text(item.key))
         if (type(item, compile.KeyTypeItem) && item.key_ty != nil)
           key_type: (self.#type_tree(item.key_ty))
-        if (!type(item, compile.OpenTypeItem) && !type(item, compile.AnyTypeItem))
+        if (element || type(item, compile.AnyKeyTypeItem) && item.ty != nil)
           type: (self.#type_tree(item.ty))
         if (item.doc != nil)
           doc: (self.#doc_of(item))
