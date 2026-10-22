@@ -12,6 +12,7 @@ import
     @AccessRight: WindowsAccessRight
     - @SecDesc
     - @SecDescSpec
+    - @SecDescOptions
     AccessMask: WindowsAccessMask
 
 # A registry root.
@@ -529,9 +530,8 @@ pub class Key
     self
     # Descriptor to apply.
     desc @ SecDescSpec = nil
-    # Components, as [`sec_desc`](security.windows.sec_desc) takes them, instead
-    # of or alongside `desc`.
-    **options @ Value
+    # Components and control flags, instead of or alongside `desc`.
+    ...options @ SecDescOptions
   do
     ...
 

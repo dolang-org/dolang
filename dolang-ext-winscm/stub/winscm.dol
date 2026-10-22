@@ -14,6 +14,7 @@ import
     - @AccessRight
     - @SecDesc
     - @SecDescSpec
+    - @SecDescOptions
 
 # A control request for [`Service.control`](winscm.Service.control).
 pub @let ControlRequest = $
@@ -788,9 +789,8 @@ pub class Service
     self
     # Descriptor to apply.
     desc @ SecDescSpec = nil
-    # Components, as [`sec_desc`](security.windows.sec_desc) takes them, instead
-    # of or alongside `desc`.
-    **options @ Value
+    # Components and control flags, instead of or alongside `desc`.
+    ...options @ SecDescOptions
   do
     ...
 

@@ -92,7 +92,7 @@ def write_authorized_keys key @ Str
     owner: :BUILTIN_ADMINISTRATORS:
     dacl_protected: true
     dacl:
-      for sid = [:LOCAL_SYSTEM:, :BUILTIN_ADMINISTRATORS:]
+      for sid = [Sid :LOCAL_SYSTEM:, Sid :BUILTIN_ADMINISTRATORS:]
         - allow: $sid
           mask: :GENERIC_ALL:
 

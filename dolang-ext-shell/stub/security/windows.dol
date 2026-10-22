@@ -292,30 +292,53 @@ pub @let AclSpec = $
       *AceSpec
       ?revision: (AclRevision | Int)
 
+# The components and control flags of a security descriptor, as keyword
+# arguments or dictionary items. `S` is what an owner or group may be given
+# as, and `A` what an ACL may be given as: specs by default, built values where
+# a [`SecDesc`](security.windows.SecDesc) method requires them.
+pub @let SecDescOptions[S = SidSpec, A = AclSpec] = $
+  # Owner, or `nil` for an absent owner
+  ?owner: (S | nil)
+  # Primary group, or `nil` for an absent group
+  ?group: (S | nil)
+  # Discretionary ACL, or `nil` for a present null ACL
+  ?dacl: (A | nil)
+  # System ACL, or `nil` for a present null ACL
+  ?sacl: (A | nil)
+  # Owner defaulted flag
+  ?owner_defaulted: Bool
+  # Group defaulted flag
+  ?group_defaulted: Bool
+  # DACL presence; `false` clears an existing DACL
+  ?dacl_present: Bool
+  # DACL defaulted flag
+  ?dacl_defaulted: Bool
+  # DACL inheritance request
+  ?dacl_auto_inherit_required: Bool
+  # DACL inherited flag
+  ?dacl_auto_inherited: Bool
+  # DACL protection
+  ?dacl_protected: Bool
+  # SACL presence; `false` clears an existing SACL
+  ?sacl_present: Bool
+  # SACL defaulted flag
+  ?sacl_defaulted: Bool
+  # SACL inheritance request
+  ?sacl_auto_inherit_required: Bool
+  # SACL inherited flag
+  ?sacl_auto_inherited: Bool
+  # SACL protection
+  ?sacl_protected: Bool
+  # Resource-manager control byte, or `nil` to clear it
+  ?rm_control: (Int | nil)
+
 # A security descriptor, built, given as a self-relative packet, or given as a
-# dictionary of the component arguments of
-# [`sec_desc`](security.windows.sec_desc).
+# dictionary of [`SecDescOptions`](security.windows.SecDescOptions).
 pub @let SecDescSpec = $
   | SecDesc
   | Bin
   | BaseDict $
-      ?owner: (SidSpec | nil)
-      ?group: (SidSpec | nil)
-      ?dacl: (AclSpec | nil)
-      ?sacl: (AclSpec | nil)
-      ?owner_defaulted: Bool
-      ?group_defaulted: Bool
-      ?dacl_present: Bool
-      ?dacl_defaulted: Bool
-      ?dacl_auto_inherit_required: Bool
-      ?dacl_auto_inherited: Bool
-      ?dacl_protected: Bool
-      ?sacl_present: Bool
-      ?sacl_defaulted: Bool
-      ?sacl_auto_inherit_required: Bool
-      ?sacl_auto_inherited: Bool
-      ?sacl_protected: Bool
-      ?rm_control: (Int | nil)
+      ...SecDescOptions
 
 # A symbol naming rights of an [`AccessMask`](security.windows.AccessMask).
 pub @let AccessRight = $
@@ -1059,40 +1082,8 @@ pub class SecDesc
   # given.
   @def (init)
     self
-    # Owner, or `nil` for an absent owner.
-    :owner @ (Sid | nil) = nil
-    # Primary group, or `nil` for an absent group.
-    :group @ (Sid | nil) = nil
-    # Discretionary ACL, or `nil` for a present null ACL.
-    :dacl @ (Acl | nil) = nil
-    # System ACL, or `nil` for a present null ACL.
-    :sacl @ (Acl | nil) = nil
-    # Owner defaulted flag.
-    :owner_defaulted @ Bool = nil
-    # Group defaulted flag.
-    :group_defaulted @ Bool = nil
-    # DACL presence.
-    :dacl_present @ Bool = nil
-    # DACL defaulted flag.
-    :dacl_defaulted @ Bool = nil
-    # DACL inheritance request.
-    :dacl_auto_inherit_required @ Bool = nil
-    # DACL inherited flag.
-    :dacl_auto_inherited @ Bool = nil
-    # DACL protection.
-    :dacl_protected @ Bool = nil
-    # SACL presence.
-    :sacl_present @ Bool = nil
-    # SACL defaulted flag.
-    :sacl_defaulted @ Bool = nil
-    # SACL inheritance request.
-    :sacl_auto_inherit_required @ Bool = nil
-    # SACL inherited flag.
-    :sacl_auto_inherited @ Bool = nil
-    # SACL protection.
-    :sacl_protected @ Bool = nil
-    # Resource-manager control byte.
-    :rm_control @ Int = nil
+    # Components and control flags.
+    ...options @ SecDescOptions[Sid, Acl]
   do
 
   pub def (init) self ...args @ Value
@@ -1227,40 +1218,8 @@ pub class SecDesc
   # as `false` clears that ACL.
   pub def with
     self
-    # Owner, or `nil` for an absent owner.
-    :owner @ (Sid | nil) = nil
-    # Primary group, or `nil` for an absent group.
-    :group @ (Sid | nil) = nil
-    # Discretionary ACL, or `nil` for a present null ACL.
-    :dacl @ (Acl | nil) = nil
-    # System ACL, or `nil` for a present null ACL.
-    :sacl @ (Acl | nil) = nil
-    # Owner defaulted flag.
-    :owner_defaulted @ Bool = nil
-    # Group defaulted flag.
-    :group_defaulted @ Bool = nil
-    # DACL presence.
-    :dacl_present @ Bool = nil
-    # DACL defaulted flag.
-    :dacl_defaulted @ Bool = nil
-    # DACL inheritance request.
-    :dacl_auto_inherit_required @ Bool = nil
-    # DACL inherited flag.
-    :dacl_auto_inherited @ Bool = nil
-    # DACL protection.
-    :dacl_protected @ Bool = nil
-    # SACL presence.
-    :sacl_present @ Bool = nil
-    # SACL defaulted flag.
-    :sacl_defaulted @ Bool = nil
-    # SACL inheritance request.
-    :sacl_auto_inherit_required @ Bool = nil
-    # SACL inherited flag.
-    :sacl_auto_inherited @ Bool = nil
-    # SACL protection.
-    :sacl_protected @ Bool = nil
-    # Resource-manager control byte, or `nil` to clear it.
-    :rm_control @ (Int | nil) = nil
+    # Components and control flags to replace.
+    ...options @ SecDescOptions[Sid, Acl]
   do -> SecDesc
     ...
 
@@ -1442,40 +1401,8 @@ do -> Acl
 pub def sec_desc
   # Descriptor to start from.
   desc @ SecDescSpec = nil
-  # Owner, or `nil` for an absent owner.
-  :owner @ (SidSpec | nil) = nil
-  # Primary group, or `nil` for an absent group.
-  :group @ (SidSpec | nil) = nil
-  # Discretionary ACL, or `nil` for a present null ACL.
-  :dacl @ (AclSpec | nil) = nil
-  # System ACL, or `nil` for a present null ACL.
-  :sacl @ (AclSpec | nil) = nil
-  # Owner defaulted flag.
-  :owner_defaulted @ Bool = nil
-  # Group defaulted flag.
-  :group_defaulted @ Bool = nil
-  # DACL presence. `false` clears the DACL of `desc`.
-  :dacl_present @ Bool = nil
-  # DACL defaulted flag.
-  :dacl_defaulted @ Bool = nil
-  # DACL inheritance request.
-  :dacl_auto_inherit_required @ Bool = nil
-  # DACL inherited flag.
-  :dacl_auto_inherited @ Bool = nil
-  # DACL protection.
-  :dacl_protected @ Bool = nil
-  # SACL presence. `false` clears the SACL of `desc`.
-  :sacl_present @ Bool = nil
-  # SACL defaulted flag.
-  :sacl_defaulted @ Bool = nil
-  # SACL inheritance request.
-  :sacl_auto_inherit_required @ Bool = nil
-  # SACL inherited flag.
-  :sacl_auto_inherited @ Bool = nil
-  # SACL protection.
-  :sacl_protected @ Bool = nil
-  # Resource-manager control byte, or `nil` to clear it.
-  :rm_control @ (Int | nil) = nil
+  # Components and control flags, amending `desc` if given.
+  ...options @ SecDescOptions
 do -> SecDesc
   ...
 

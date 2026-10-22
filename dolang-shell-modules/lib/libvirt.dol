@@ -289,12 +289,6 @@ pub @let DomainState = $
   | :PMSUSPENDED:
   | :BLOCKED:
 
-# A guest OS, in `sys`'s symbol vocabulary.
-@let GuestOs = (:LINUX: | :MACOS: | :FREEBSD: | :WINDOWS:)
-
-# A guest CPU architecture, likewise.
-@let GuestArch = (:X86_64: | :AARCH64:)
-
 # Guest firmware, as a profile selects it.
 @let Firmware = (:BIOS: | :EFI_SECURE:)
 
@@ -303,53 +297,49 @@ pub @let DomainState = $
 
 # Domain options and steps, as keyword arguments and positional items in
 # order. Those marked `*` may repeat.
-#
-# | Option          | Type                                               | Description |
-# | --------------- | -------------------------------------------------- | ----------- |
-# | `image`         | [`ArtifactSpec`](libvirt.ArtifactSpec)             | Base disk image, optionally gzip-, xz-, or zstd-compressed |
-# | `bundle`        | [`ArtifactSpec`](libvirt.ArtifactSpec)             | Bundle written by [`Domain.export`](libvirt.Domain.export) |
-# | `installer`*    | [`InstallerSpec`](libvirt.InstallerSpec)           | Install media to boot |
-# | `drivers`*      | [`ArtifactSpec`](libvirt.ArtifactSpec)             | Driver media read by Setup |
-# | `name`          | `Str`                                              | Domain name; generated when omitted |
-# | `os`            | `Sym`                                              | Guest OS, using `sys`'s symbol vocabulary |
-# | `arch`          | `Sym`                                              | Guest CPU architecture; defaults to and must match the host |
-# | `app`           | `Str`                                              | Cache and data namespace; derived from `shell.program` by default |
-# | `user`          | `Str`                                              | Guest user to create |
-# | `dolang`        | [`DolangSpec`](libvirt.DolangSpec)                 | Do build to install |
-# | `memory`        | `Int`                                              | Guest memory in MiB; defaults to the bundle or OS value |
-# | `vcpus`         | `Int`                                              | Guest vCPU count; defaults to the bundle or OS value |
-# | `disk_size`     | `Str`                                              | Disk size; defaults to the OS value, while a bundle keeps its size |
-# | `cache`         | [`DiskCache`](libvirt.DiskCache)                   | Disk host cache mode |
-# | `io`            | [`DiskIo`](libvirt.DiskIo)                         | Disk I/O submission mode |
-# | `connect_uri`   | `Str`                                              | libvirt connection URI |
-# | `init`          | [`InitSpec`](libvirt.InitSpec)                     | Early boot provisioning |
-# | `wait_timeout`  | `(Int \| Float)`                                   | Seconds to wait for the guest; defaults to the OS timeout |
-# | `add`*          | [`AddSpec`](libvirt.AddSpec)                       | [Step](libvirt.create-steps): uploads a file |
-# | `run`*          | `() -> Value`                                      | [Step](libvirt.create-steps): runs a block in the guest VFS |
-# | `reboot`*       | positional                                         | [Step](libvirt.create-steps): reboots the guest |
-#
-# A `run` block has the strand input and output of the caller.
 pub @let DomainOptions[I, O] = $
+  # Base disk image, optionally gzip-, xz-, or zstd-compressed
   ?image: ArtifactSpec
+  # Bundle written by [`Domain.export`](libvirt.Domain.export)
   ?bundle: ArtifactSpec
+  # Install media to boot
   *installer: InstallerSpec
+  # Driver media read by Setup
   *drivers: ArtifactSpec
+  # Domain name; generated when omitted
   ?name: Str
-  ?os: (:LINUX: | :MACOS: | :FREEBSD: | :WINDOWS:)
-  ?arch: (:X86_64: | :AARCH64:)
+  # Guest OS
+  ?os: sys.Os
+  # Guest CPU architecture; defaults to and must match the host
+  ?arch: sys.Arch
+  # Cache and data namespace; derived from `shell.program` by default
   ?app: Str
+  # Guest user to create
   ?user: Str
+  # Do build to install
   ?dolang: DolangSpec
+  # Guest memory in MiB; defaults to the bundle or OS value
   ?memory: Int
+  # Guest vCPU count; defaults to the bundle or OS value
   ?vcpus: Int
+  # Disk size; defaults to the OS value, while a bundle keeps its size
   ?disk_size: Str
+  # Disk host cache mode
   ?cache: DiskCache
+  # Disk I/O submission mode
   ?io: DiskIo
+  # libvirt connection URI
   ?connect_uri: Str
+  # Early boot provisioning
   ?init: InitSpec
+  # Seconds to wait for the guest; defaults to the OS timeout
   ?wait_timeout: (Int | Float)
+  # [Step](libvirt.create-steps): uploads a file
   *add: AddSpec
+  # [Step](libvirt.create-steps): runs a block in the guest VFS, with the
+  # strand input and output of the caller
   *run: ((<I, >O) -> Value)
+  # [Step](libvirt.create-steps): reboots the guest
   *"reboot"
 
 # One step, in the order `create` runs them.
@@ -526,7 +516,7 @@ def require_name name @ Str -> Str
     throw std.ValueError "invalid libvirt domain name: $name"
   name
 
-def require_os os @ (GuestOs | nil) -> GuestOs
+def require_os os @ (sys.Os | nil) -> sys.Os
   if (os == nil)
     throw std.ValueError "os: is required"
   os
@@ -638,7 +628,7 @@ class WindowsProfile: Profile
 # The profile `os` calls for, with any recorded overrides applied. The one
 # place an OS is mapped to a shape; everything downstream reads the profile.
 def os_profile
-  os @ GuestOs
+  os @ sys.Os
   :machine @ (Str | nil) = nil
   :firmware @ (Firmware | nil) = nil
   :tpm @ (TpmModel | nil) = nil
@@ -698,7 +688,7 @@ def require_iso_program -> Str
 # foreign one needs TCG emulation, plus a machine type and firmware chosen per
 # target. Rejecting it here reports the unsupported argument instead of letting
 # libvirt refuse the document with an error about KVM.
-def require_arch arch @ (GuestArch | nil) -> GuestArch
+def require_arch arch @ (sys.Arch | nil) -> sys.Arch
   let host = sys.cpu_info().arch
   let arch = (arch || host)
   if (arch != host)
@@ -1063,8 +1053,8 @@ class DomainConfig
   field media @ Array[Medium]
   field nvram tpm_state @ (Path | nil)
   field nvram_format @ (Str | nil)
-  field os @ GuestOs
-  field arch @ GuestArch
+  field os @ sys.Os
+  field arch @ sys.Arch
   field disk_boot @ (Int | nil)
   field app @ Str
   field cache io @ (Str | nil)
@@ -1929,8 +1919,8 @@ def create_domain[I, O]
   :image @ ArtifactSpec = nil
   :bundle @ ArtifactSpec = nil
   :name @ Str = nil
-  :os @ GuestOs = nil
-  :arch @ GuestArch = nil
+  :os @ sys.Os = nil
+  :arch @ sys.Arch = nil
   :app @ Str = nil
   :user @ Str = nil
   :dolang @ DolangSpec = nil
@@ -2720,13 +2710,13 @@ def read_member entry @ zip.Entry -> Bin
 # artifact for, which is already the set a domain can be created as: `create`
 # installs Do into every guest, so an OS with no artifact fails long before it
 # could be exported.
-let MANIFEST_OS @ Dict[Str, GuestOs] = $
+let MANIFEST_OS @ Dict[Str, sys.Os] = $
   "linux": :LINUX:
   "macos": :MACOS:
   "windows": :WINDOWS:
   "freebsd": :FREEBSD:
 
-let MANIFEST_ARCH @ Dict[Str, GuestArch] = $
+let MANIFEST_ARCH @ Dict[Str, sys.Arch] = $
   "x86_64": :X86_64:
   "aarch64": :AARCH64:
 
@@ -2773,8 +2763,8 @@ class ManifestMember: Struct[{kind: Str, name: Str, format: (Str | nil), size: I
 
 @let ManifestFields = $
   app: Str
-  os: GuestOs
-  arch: GuestArch
+  os: sys.Os
+  arch: sys.Arch
   user: Str
   command: Str
   memory: Int
@@ -3113,10 +3103,10 @@ def build_provision_iso root@Path files@Dict[Str, (Path | Str)] -> Path
         temporary.rename $destination
   destination.absolute()
 
-def dolang_platform_key os@GuestOs arch@GuestArch -> Str
+def dolang_platform_key os@sys.Os arch@sys.Arch -> Str
   "$(str(arch).lower())-$(str(os).lower())"
 
-def dolang_artifact_name os@GuestOs arch@GuestArch -> (Str | nil)
+def dolang_artifact_name os@sys.Os arch@sys.Arch -> (Str | nil)
   let key = (dolang_platform_key os arch)
   (DOLANG_PLATFORMS.contains(key) && "dolang-$key.tar.gz" || nil)
 
@@ -3159,7 +3149,7 @@ def dolang_release spec @ (DolangSpec | nil) -> (Str | Artifact)
 # The version form resolves to a release URL rather than to an artifact spec the
 # caller wrote, which is why this needs `os`/`arch` and so cannot be built at
 # the same point as the rest of them.
-def dolang_artifact spec@(DolangSpec | nil) os@GuestOs arch@GuestArch -> Artifact
+def dolang_artifact spec@(DolangSpec | nil) os@sys.Os arch@sys.Arch -> Artifact
   let release = dolang_release $spec
   if (type release Artifact)
     return release
@@ -3189,8 +3179,8 @@ class Source
   #
   # Those that are never `nil` are private behind getters, and written first:
   # a write to a pub field could reach a subclass, so it lets `self` escape.
-  field os @ GuestOs
-  field arch @ GuestArch
+  field os @ sys.Os
+  field arch @ sys.Arch
   field user command @ Str
   field probe @ Probe
   # The disk to lay the domain's overlay over, its format, and the media to
@@ -3209,8 +3199,8 @@ class Source
 
   def (init)
     self
-    :os @ GuestOs
-    :arch @ GuestArch
+    :os @ sys.Os
+    :arch @ sys.Arch
     :user @ Str
     :command @ Str
     :probe @ Probe
@@ -3236,11 +3226,11 @@ class Source
     self.nvram_format = nvram_format
 
   #[getter]
-  pub def os self -> GuestOs
+  pub def os self -> sys.Os
     self.#os
 
   #[getter]
-  pub def arch self -> GuestArch
+  pub def arch self -> sys.Arch
     self.#arch
 
   #[getter]
@@ -3279,8 +3269,8 @@ class ImageSource: Source
   def (init)
     self
     :image @ Artifact
-    :os @ GuestOs
-    :arch @ GuestArch
+    :os @ sys.Os
+    :arch @ sys.Arch
     :app @ Str
     :user @ Str
     :staged @ InitState
@@ -3334,8 +3324,8 @@ class InstallerSource: Source
     self
     :installers @ Array[Installer]
     :drivers @ Array[Artifact]
-    :os @ GuestOs
-    :arch @ GuestArch
+    :os @ sys.Os
+    :arch @ sys.Arch
     :app @ Str
     :user @ Str
     :dolang @ Artifact

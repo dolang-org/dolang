@@ -56,12 +56,29 @@ pub class ErrorCode
   pub def value self -> Int
     ...
 
+# A CPU architecture Do supports.
+pub @let Arch = $
+  | :X86_64:
+  | :AARCH64:
+
+# An operating system Do supports.
+pub @let Os = $
+  | :LINUX:
+  | :MACOS:
+  | :FREEBSD:
+  | :WINDOWS:
+
+# A family of operating systems Do supports.
+pub @let OsFamily = $
+  | :UNIX:
+  | :WINDOWS:
+
 # CPU information for the active VFS target, returned by
 # [`cpu_info`](sys.cpu_info).
 pub class CpuInfo
   # Target architecture.
   #[getter]
-  pub def arch self -> (:X86_64: | :AARCH64:)
+  pub def arch self -> Arch
     ...
 
   # Logical CPU count captured when the VFS context is established.
@@ -74,7 +91,7 @@ pub class CpuInfo
 pub class OsInfo
   # Operating system family derived from the target OS.
   #[getter]
-  pub def family self -> (:UNIX: | :WINDOWS:)
+  pub def family self -> OsFamily
     ...
 
   # Whether the process is running under Wine.
@@ -86,7 +103,7 @@ pub class OsInfo
 
   # Specific operating system.
   #[getter]
-  pub def os self -> (:LINUX: | :MACOS: | :FREEBSD: | :WINDOWS:)
+  pub def os self -> Os
     ...
 
 # Returns CPU information for the current VFS target.
