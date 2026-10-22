@@ -79,7 +79,7 @@ let SIGILS = $
 let QUANTS = $
   "opt": "?"
   "star": "*"
-  "star_star": "**"
+  "include": "..."
 
 # A binder's name as its declaration writes it.
 def binder_name binder
@@ -140,13 +140,16 @@ def type_params_text params
     let text = QUANTS.get(param.get("quant", default: nil), default: "")
     let kind = param["kind"]
     if (kind == "open")
-      parts.push "$text..."
+      parts.push "..."
       continue
-    if (kind == "any")
-      parts.push $text
+    if (kind == "any_pos")
+      parts.push "*"
       continue
-    if (kind == "include")
-      text = "$text..."
+    if (kind == "any_key")
+      if (param.get("type", default: nil) == nil)
+        parts.push "**"
+        continue
+      text = "**"
     else if (kind == "key")
       if let key_type = param.get("key_type", default: nil)
         # A name must be parenthesized to not be taken as a symbol key

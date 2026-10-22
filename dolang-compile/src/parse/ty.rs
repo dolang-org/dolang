@@ -1,8 +1,9 @@
 use super::{
     ExprMode, Parser, Result, Scope,
     diag::{
-        ArrayTypeElems, DuplicateImplicit, ImplicitInSchema, ImplicitWithoutArrow,
-        InvalidConstType, NonConstExpr, OptionalQuant, OptionalTypeArg, QuantifiedImplicit,
+        ArrayTypeElems, DuplicateImplicit, ExtraQuant, ImplicitInSchema, ImplicitWithoutArrow,
+        InvalidConstType, KeyedInclusion, KeyedStarStar, NonConstExpr, OptionalQuant,
+        OptionalTypeArg, QuantifiedImplicit, QuantifiedInclusion,
     },
     stream::ExpectKind,
 };
@@ -53,6 +54,22 @@ impl Params {
 
 /// Returns the kind of rest a parameter's or binder's sigil introduces, if it is
 /// one.
+/// What precedes an item's element: a quantifier, or `**`, which begins an element
+/// of its own
+enum Prefix {
+    Quant(TypeQuant),
+    StarStar(Span),
+}
+
+impl Prefix {
+    fn span(&self) -> Span {
+        match self {
+            Prefix::Quant(quant) => quant.span(),
+            Prefix::StarStar(span) => *span,
+        }
+    }
+}
+
 fn rest_sigil(info: &TokenInfo) -> Option<RestKind> {
     match info {
         TokenInfo::Ellipsis => Some(RestKind::Mixed),
@@ -226,8 +243,13 @@ impl Parser<'_> {
                     let (mut param, end) =
                         self.parse_type_layout_item(scope, dash_span.is_some())?;
                     param.dash_span = dash_span;
-                    let positional = matches!(param.kind, Some(TypeParamKind::Pos(_)))
-                        && !matches!(param.quant, Some(TypeQuant::StarStar(_)));
+                    let positional = matches!(
+                        param.kind,
+                        TypeParamKind::Pos {
+                            quant: None | Some(TypeQuant::Opt(_) | TypeQuant::Star(_)),
+                            ..
+                        }
+                    );
                     if !line_start && !positional {
                         let token = Some(Token {
                             info: TokenInfo::Colon,
@@ -267,35 +289,22 @@ impl Parser<'_> {
         scope: &mut Scope,
         dashed: bool,
     ) -> Result<(TypeParam, LayoutEnd)> {
-        let (quant, token) = self.parse_type_quant()?;
-        let bare = matches!(quant, Some(TypeQuant::Star(_) | TypeQuant::StarStar(_)))
-            && self.at_item_end(Params::Vertical)?;
-        let (kind, end) = if bare {
-            (None, LayoutEnd::Compact)
-        } else if dashed && matches!(token, Some(token!(TokenInfo::Op(Op::Bar)))) {
-            (
-                Some(TypeParamKind::Pos(self.parse_type_layout_union(scope)?)),
-                LayoutEnd::Block,
-            )
-        } else {
-            if let Some(ref token @ token!(TokenInfo::Op(Op::Lt | Op::Gt))) = token {
-                self.fail = true;
-                self.diags.push(ImplicitInSchema(token.span));
-                if let Some(quant) = &quant {
-                    self.diags.push(QuantifiedImplicit(quant.span()));
-                }
-                self.advance();
+        let (prefix, token) = self.parse_type_quant()?;
+        if let Some(ref token @ token!(TokenInfo::Op(Op::Lt | Op::Gt))) = token {
+            self.fail = true;
+            self.diags.push(ImplicitInSchema(token.span));
+            if let Some(prefix) = &prefix {
+                self.diags.push(QuantifiedImplicit(prefix.span()));
             }
-            let (kind, end) = self.parse_type_element(scope, Params::Vertical)?;
-            if dashed && matches!(kind, TypeParamKind::Key { .. }) {
-                return Err(self.syntax_error(scope, token, "expected positional type after `-`"));
-            }
-            (Some(kind), end)
-        };
+            self.advance();
+        }
+        let (kind, end) = self.parse_type_element(scope, Params::Vertical, prefix, dashed)?;
+        if dashed && matches!(kind, TypeParamKind::Key { .. }) {
+            return Err(self.syntax_error(scope, token, "expected positional type after `-`"));
+        }
         Ok((
             TypeParam {
                 dash_span: None,
-                quant,
                 kind,
                 delim_span: None,
             },
@@ -503,8 +512,7 @@ impl Parser<'_> {
                 Group::Type(ty) => (
                     vec![TypeParam {
                         dash_span: None,
-                        quant: None,
-                        kind: Some(TypeParamKind::Pos(ty)),
+                        kind: TypeParamKind::Pos { quant: None, ty },
                         delim_span: None,
                     }],
                     Implicits::default(),
@@ -612,14 +620,13 @@ impl Parser<'_> {
                     self.parse_type_params(scope, Params::Array, left)?;
                 if let [
                     TypeParam {
-                        quant: None,
-                        kind: Some(TypeParamKind::Pos(_)),
+                        kind: TypeParamKind::Pos { quant: None, .. },
                         delim_span: None,
                         ..
                     },
                 ] = params.as_slice()
                     && let Some(TypeParam {
-                        kind: Some(TypeParamKind::Pos(elem)),
+                        kind: TypeParamKind::Pos { ty: elem, .. },
                         ..
                     }) = params.pop()
                 {
@@ -748,7 +755,7 @@ impl Parser<'_> {
                 {
                     break this.advance();
                 }
-                let (quant, _) = this.parse_type_quant()?;
+                let (prefix, _) = this.parse_type_quant()?;
                 // An implicit is an item of its own rather than an element a
                 // quantifier applies to, and a list holds at most one of each.
                 if let Some(token) = this.peek()?
@@ -756,9 +763,9 @@ impl Parser<'_> {
                 {
                     let input = matches!(token.info, TokenInfo::Op(Op::Lt));
                     let sigil_span = this.advance();
-                    if let Some(quant) = &quant {
+                    if let Some(prefix) = &prefix {
                         this.fail = true;
-                        this.diags.push(QuantifiedImplicit(quant.span()));
+                        this.diags.push(QuantifiedImplicit(prefix.span()));
                     }
                     // A schema describes data, and an ambient channel is not data
                     if list != Params::Func {
@@ -782,18 +789,10 @@ impl Parser<'_> {
                     }
                     continue;
                 }
-                // `*` and `**` may stand alone, admitting any item of their kind.
-                let bare = matches!(quant, Some(TypeQuant::Star(_) | TypeQuant::StarStar(_)))
-                    && this.at_item_end(list)?;
-                let kind = if bare {
-                    None
-                } else {
-                    Some(this.parse_type_element(scope, list)?.0)
-                };
+                let (kind, _) = this.parse_type_element(scope, list, prefix, false)?;
                 let delim_span = this.consume_comma()?;
                 params.push(TypeParam {
                     dash_span: None,
-                    quant,
                     kind,
                     delim_span,
                 });
@@ -805,25 +804,39 @@ impl Parser<'_> {
         })
     }
 
-    /// Parse one quantifier and retain the next token for the item parser.
-    fn parse_type_quant(&mut self) -> Result<(Option<TypeQuant>, Option<Token>)> {
-        let token = self.peek()?;
-        let quant = match token {
-            Some(token!(TokenInfo::Question)) => Some(TypeQuant::Opt(self.advance())),
-            Some(token!(TokenInfo::Op(Op::Star))) => Some(TypeQuant::Star(self.advance())),
-            Some(token!(TokenInfo::Op(Op::StarStar))) => Some(TypeQuant::StarStar(self.advance())),
-            _ => return Ok((None, token)),
-        };
-        let mut token = self.peek()?;
-        if let Some(TypeQuant::Opt(span)) = quant
-            && matches!(token, Some(token!(TokenInfo::Op(Op::Star | Op::StarStar))))
-        {
-            self.fail = true;
-            self.diags.push(OptionalQuant(span));
-            self.advance();
-            token = self.peek()?;
+    /// Parse an item's quantifier, reporting and dropping any that another follows,
+    /// and retain the next token for the item parser.
+    fn parse_type_quant(&mut self) -> Result<(Option<Prefix>, Option<Token>)> {
+        let mut prefix = None;
+        loop {
+            let token = self.peek()?;
+            let next = match token {
+                Some(token!(TokenInfo::Question)) => Prefix::Quant(TypeQuant::Opt(self.advance())),
+                Some(token!(TokenInfo::Op(Op::Star))) => {
+                    Prefix::Quant(TypeQuant::Star(self.advance()))
+                }
+                Some(token!(TokenInfo::Ellipsis)) => {
+                    Prefix::Quant(TypeQuant::Include(self.advance()))
+                }
+                Some(token!(TokenInfo::Op(Op::StarStar))) => Prefix::StarStar(self.advance()),
+                _ => return Ok((prefix, token)),
+            };
+            if let Some(prev) = prefix {
+                let span = prev.span();
+                self.fail = true;
+                match (prev, &next) {
+                    (_, Prefix::Quant(TypeQuant::Include(_))) => {
+                        self.diags.push(QuantifiedInclusion(span))
+                    }
+                    (
+                        Prefix::Quant(TypeQuant::Opt(_)),
+                        Prefix::Quant(TypeQuant::Star(_)) | Prefix::StarStar(_),
+                    ) => self.diags.push(OptionalQuant(span)),
+                    _ => self.diags.push(ExtraQuant(span)),
+                }
+            }
+            prefix = Some(next);
         }
-        Ok((quant, token))
     }
 
     /// Whether the next token ends an item, so a rest may stand alone.
@@ -856,31 +869,70 @@ impl Parser<'_> {
         &mut self,
         scope: &mut Scope,
         list: Params,
+        prefix: Option<Prefix>,
+        dashed: bool,
     ) -> Result<(TypeParamKind, LayoutEnd)> {
-        match self.peek()? {
-            Some(token!(TokenInfo::Ellipsis)) => {
-                let ellipsis_span = self.advance();
+        let quant = match prefix {
+            Some(Prefix::StarStar(star_star_span)) => {
                 if self.at_item_end(list)? {
-                    return Ok((TypeParamKind::Open { ellipsis_span }, LayoutEnd::Compact));
+                    let kind = TypeParamKind::AnyKey {
+                        star_star_span,
+                        ty: None,
+                    };
+                    return Ok((kind, LayoutEnd::Compact));
                 }
-                let (ty, end) = self.parse_type_element_value(scope, list, false)?;
-                return Ok((TypeParamKind::Include { ellipsis_span, ty }, end));
+                // `**V` repeats a symbol key, so a key of its own is a mistake for `*`
+                let star = Some(Prefix::Quant(TypeQuant::Star(star_star_span)));
+                return Ok(match self.parse_type_element(scope, list, star, dashed)? {
+                    (TypeParamKind::Pos { ty, .. }, end) => (
+                        TypeParamKind::AnyKey {
+                            star_star_span,
+                            ty: Some(ty),
+                        },
+                        end,
+                    ),
+                    (kind, end) => {
+                        self.fail = true;
+                        self.diags.push(KeyedStarStar(star_star_span));
+                        (kind, end)
+                    }
+                });
             }
-            Some(token!(TokenInfo::Key, span)) => {
-                self.advance();
-                let (ty, end) = self.parse_type_element_value(scope, list, true)?;
-                return Ok((
-                    TypeParamKind::Key {
-                        key: TypeKey::Sym(span),
-                        colon_span: span.after_right_char(),
-                        ty,
-                    },
-                    end,
-                ));
+            Some(Prefix::Quant(quant)) => {
+                // `*` and `...` may stand alone, admitting any item of their kind
+                if self.at_item_end(list)? {
+                    match quant {
+                        TypeQuant::Star(star_span) => {
+                            return Ok((TypeParamKind::AnyPos { star_span }, LayoutEnd::Compact));
+                        }
+                        TypeQuant::Include(ellipsis_span) => {
+                            return Ok((TypeParamKind::Open { ellipsis_span }, LayoutEnd::Compact));
+                        }
+                        TypeQuant::Opt(_) => {}
+                    }
+                }
+                Some(quant)
             }
-            _ => {}
+            None => None,
+        };
+        if let Some(token!(TokenInfo::Key, span)) = self.peek()? {
+            self.advance();
+            let (ty, end) = self.parse_type_element_value(scope, list, true)?;
+            return Ok((
+                TypeParamKind::Key {
+                    quant: self.keyed_quant(quant),
+                    key: TypeKey::Sym(span),
+                    colon_span: span.after_right_char(),
+                    ty,
+                },
+                end,
+            ));
         }
-        let (ty, end) = self.parse_type_element_value(scope, list, false)?;
+        let (ty, end) = if dashed && matches!(self.peek()?, Some(token!(TokenInfo::Op(Op::Bar)))) {
+            (self.parse_type_layout_union(scope)?, LayoutEnd::Block)
+        } else {
+            self.parse_type_element_value(scope, list, false)?
+        };
         match self.peek()? {
             Some(token @ token!(TokenInfo::Colon)) => {
                 if list == Params::Func {
@@ -894,6 +946,7 @@ impl Parser<'_> {
                 let (value, end) = self.parse_type_element_value(scope, list, true)?;
                 Ok((
                     TypeParamKind::Key {
+                        quant: self.keyed_quant(quant),
                         key: TypeKey::Type(Box::new(ty)),
                         colon_span,
                         ty: value,
@@ -901,7 +954,19 @@ impl Parser<'_> {
                     end,
                 ))
             }
-            _ => Ok((TypeParamKind::Pos(ty), end)),
+            _ => Ok((TypeParamKind::Pos { quant, ty }, end)),
+        }
+    }
+
+    /// The quantifier of a keyed element, reporting and dropping an inclusion
+    fn keyed_quant(&mut self, quant: Option<TypeQuant>) -> Option<TypeQuant> {
+        match quant {
+            Some(TypeQuant::Include(span)) => {
+                self.fail = true;
+                self.diags.push(KeyedInclusion(span));
+                None
+            }
+            quant => quant,
         }
     }
 
@@ -923,14 +988,13 @@ impl Parser<'_> {
                 }
                 if let [
                     TypeParam {
-                        quant: None,
-                        kind: Some(TypeParamKind::Pos(_)),
+                        kind: TypeParamKind::Pos { quant: None, .. },
                         delim_span: None,
                         ..
                     },
                 ] = params.as_slice()
                     && let Some(TypeParam {
-                        kind: Some(TypeParamKind::Pos(ty)),
+                        kind: TypeParamKind::Pos { ty, .. },
                         ..
                     }) = params.pop()
                 {

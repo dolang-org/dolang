@@ -218,9 +218,8 @@ pub(crate) enum Kind {
     /// An item of a schema, tuple, record or function type's parameters, without its
     /// trailing `,`
     TypeItem {
-        quant: Option<TypeQuant>,
-        /// Absent only for a bare `*` or `**`
-        kind: Option<TypeItemKind>,
+        kind: TypeItemKind,
+        /// Absent for `*`, `**` and `...` alone
         ty: Option<Id>,
     },
 }
@@ -257,14 +256,18 @@ pub(crate) enum TypeArgKind {
 
 #[derive(Debug)]
 pub(crate) enum TypeItemKind {
-    Pos,
+    Pos {
+        quant: Option<TypeQuant>,
+    },
     Key {
+        quant: Option<TypeQuant>,
         /// The key as written, quotes and parentheses and all
         key: Span,
         /// The type giving the key, absent for a bareword symbol
         key_ty: Option<Id>,
     },
-    Include,
+    AnyPos,
+    AnyKey,
     Open,
 }
 

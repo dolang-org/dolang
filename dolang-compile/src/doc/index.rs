@@ -600,63 +600,52 @@ impl Index<'_> {
         params
             .iter()
             .map(|param| {
-                let (key, ty, start) = match &param.kind {
-                    Some(TypeParamKind::Pos(ty)) => (None, Some(ty), None),
-                    Some(TypeParamKind::Key { key, ty, .. }) => {
+                let (quant, ty, start) = match &param.kind {
+                    TypeParamKind::Pos { quant, ty } => (quant.as_ref(), Some(ty), None),
+                    TypeParamKind::Key { quant, key, ty, .. } => {
                         let span = match key {
                             TypeKey::Sym(span) => *span,
                             TypeKey::Type(key_ty) => key_ty.span(),
                         };
-                        (Some(key), Some(ty), Some(span))
+                        (quant.as_ref(), Some(ty), Some(span))
                     }
-                    Some(TypeParamKind::Include { ellipsis_span, ty }) => {
-                        (None, Some(ty), Some(*ellipsis_span))
+                    TypeParamKind::AnyPos { star_span } => (None, None, Some(*star_span)),
+                    TypeParamKind::AnyKey { star_star_span, ty } => {
+                        (None, ty.as_ref(), Some(*star_star_span))
                     }
-                    Some(TypeParamKind::Open { ellipsis_span }) => {
-                        (None, None, Some(*ellipsis_span))
-                    }
-                    None => (None, None, None),
+                    TypeParamKind::Open { ellipsis_span } => (None, None, Some(*ellipsis_span)),
                 };
-                let span = [
-                    param.dash_span,
-                    param.quant.as_ref().map(|quant| quant.span()),
-                    start,
-                ]
-                .into_iter()
-                .flatten()
-                .chain(ty.map(|ty| ty.span()))
-                .reduce(|acc, span| acc | span)
-                .expect("a type item has a source span");
+                let span = [param.dash_span, quant.map(|quant| quant.span()), start]
+                    .into_iter()
+                    .flatten()
+                    .chain(ty.map(|ty| ty.span()))
+                    .reduce(|acc, span| acc | span)
+                    .expect("a type item has a source span");
                 let id = self.begin_type(parent, span, documented.then_some(span.start));
+                let quant = quant.map(|quant| match quant {
+                    TypeQuant::Opt(_) => crate::TypeQuant::Opt,
+                    TypeQuant::Star(_) => crate::TypeQuant::Star,
+                    TypeQuant::Include(_) => crate::TypeQuant::Include,
+                });
                 let kind = match &param.kind {
-                    Some(TypeParamKind::Pos(_)) => Some(doc::TypeItemKind::Pos),
-                    Some(TypeParamKind::Key { .. }) => Some(doc::TypeItemKind::Key {
+                    TypeParamKind::Pos { .. } => doc::TypeItemKind::Pos { quant },
+                    TypeParamKind::Key { key, .. } => doc::TypeItemKind::Key {
+                        quant,
                         key: start.expect("a key has a span"),
                         key_ty: match key {
-                            Some(TypeKey::Type(key_ty)) => Some(self.type_expr(id, key_ty)?),
-                            _ => None,
+                            TypeKey::Type(key_ty) => Some(self.type_expr(id, key_ty)?),
+                            TypeKey::Sym(_) => None,
                         },
-                    }),
-                    Some(TypeParamKind::Include { .. }) => Some(doc::TypeItemKind::Include),
-                    Some(TypeParamKind::Open { .. }) => Some(doc::TypeItemKind::Open),
-                    None => None,
+                    },
+                    TypeParamKind::AnyPos { .. } => doc::TypeItemKind::AnyPos,
+                    TypeParamKind::AnyKey { .. } => doc::TypeItemKind::AnyKey,
+                    TypeParamKind::Open { .. } => doc::TypeItemKind::Open,
                 };
                 let ty = match ty {
                     Some(ty) => Some(self.type_expr(id, ty)?),
                     None => None,
                 };
-                Some(self.finish_type(
-                    id,
-                    Kind::TypeItem {
-                        quant: param.quant.as_ref().map(|quant| match quant {
-                            TypeQuant::Opt(_) => crate::TypeQuant::Opt,
-                            TypeQuant::Star(_) => crate::TypeQuant::Star,
-                            TypeQuant::StarStar(_) => crate::TypeQuant::StarStar,
-                        }),
-                        kind,
-                        ty,
-                    },
-                ))
+                Some(self.finish_type(id, Kind::TypeItem { kind, ty }))
             })
             .collect()
     }

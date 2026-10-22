@@ -87,12 +87,12 @@ let options @ Dict[{name: Str, ?port: Int}] = {name: "db"}
 Each item is an element, optionally preceded by a quantifier saying how many of
 that element the schema admits:
 
-| Element  | Is                               |
-| -------- | -------------------------------- |
-| `T`      | A positional item                |
-| `key: T` | A keyed item                     |
-| `(K): T` | A keyed item whose keys type `K` |
-| `...S`   | The items of the schema `S`      |
+| Element  | Is                                           |
+| -------- | -------------------------------------------- |
+| `T`      | A positional item                            |
+| `key: T` | A keyed item                                 |
+| `(K): T` | A keyed item whose keys type `K`             |
+| `**V`    | Any number of symbol-keyed items of type `V` |
 
 ### Positional Items
 
@@ -115,8 +115,8 @@ let codes @ Dict[{(Tuple[Int, Int]): Str}] = {}
 
 ### Inclusions
 
-`...S` includes the items of the schema `S`, which must be a schema rather than
-a type:
+The quantifier `...` before a positional element includes the items of the
+schema `S` in `...S`, which must be a schema rather than a type:
 
 ```
 @let Colors = {?fg: Color, ?bg: Color}
@@ -128,19 +128,21 @@ let style @ Dict[{?width: Int, ...Colors}] = {}
 A quantifier before an item says how many of the element the schema admits.
 Without one it admits exactly one:
 
-| Quantifier | Admits                                         |
-| ---------- | ---------------------------------------------- |
-| `?`        | Zero or one                                    |
-| `*`        | Zero or more                                   |
-| `**`       | Zero or more keyed items; `**V` is `*(Sym): V` |
+| Quantifier | Admits                                                |
+| ---------- | ----------------------------------------------------- |
+| `?`        | Zero or one                                           |
+| `*`        | Zero or more                                          |
+| `...`      | The items of a schema, as an [inclusion](#inclusions) |
 
-An item takes at most one quantifier, so `?` cannot also repeat.
+An item takes at most one quantifier, so `?` cannot also repeat and an
+inclusion cannot be repeated. `**V` is shorthand for `*(Sym): V` and takes no
+quantifier.
 
 ```
 let options @ Dict[{name: Str, ?port: Int}] = {name: "db"}
 let headers @ Dict[{*(Str): Str}] = {}
 let cookies @ Dict[{*set_cookie: Str}] = {}
-let pairs @ Dict[{*...{Str, Int}}] = {}
+let flags @ Dict[{**Bool}] = {}
 ```
 
 Since a `Dict` is a multi-map, a quantifier gives a literal key an exact
@@ -149,8 +151,8 @@ number.
 
 ### Open Items
 
-`...` alone admits any further item, and is shorthand for `*, **`. A quantifier
-alone admits any further item of its own kind:
+`...` alone admits any further item, and is shorthand for `*, **`. `*` and `**`
+alone admit any further item of their own kind:
 
 | Item  | Admits                       |
 | ----- | ---------------------------- |

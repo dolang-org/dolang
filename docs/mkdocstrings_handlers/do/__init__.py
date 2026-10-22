@@ -409,7 +409,7 @@ _IMPLICITS = ("input", "output")
 _QUANTS = {
     "opt": "?",
     "star": "*",
-    "star_star": "**",
+    "include": "...",
 }
 
 
@@ -514,14 +514,16 @@ def _render_type_params(
         # A `*` sigil would otherwise read as Markdown emphasis
         text = escape(_QUANTS.get(param.get("quant"), ""))
         if param.get("kind") == "open":
-            rendered.append(text + "...")
+            rendered.append("...")
             continue
-        elif param.get("kind") == "any":
-            # A quantifier standing alone, such as `*` or `**`
-            rendered.append(text)
+        elif param.get("kind") == "any_pos":
+            rendered.append(escape("*"))
             continue
-        elif param.get("kind") == "include":
-            text += "..."
+        elif param.get("kind") == "any_key":
+            text = escape("**")
+            if "type" not in param:
+                rendered.append(text)
+                continue
         elif param.get("kind") == "key" and "key_type" in param:
             # A name must be parenthesized to not be taken as a symbol key
             key_type = param["key_type"]
@@ -646,8 +648,8 @@ def _alias_type_lines(
         lines.extend(_doc_lines(param.get("doc"), item_indent, plain))
         quant = _QUANTS.get(param.get("quant"), "")
         kind = param.get("kind")
-        if kind in ("open", "any"):
-            lines.append(start + quant + ("..." if kind == "open" else ""))
+        if kind in ("open", "any_pos") or kind == "any_key" and "type" not in param:
+            lines.append(start + {"open": "...", "any_pos": "*", "any_key": "**"}[kind])
             continue
         value = param["type"]
         if kind == "key":
@@ -668,8 +670,10 @@ def _alias_type_lines(
                     ))
                 continue
             start += " "
-        elif kind == "include":
-            start += quant + "..."
+        elif kind == "any_key":
+            start += "**"
+        elif quant == "...":
+            start += quant
         else:
             # Dash items establish their baseline after `- `, not at the dash.
             start += "- " + quant

@@ -198,7 +198,7 @@ fn quant_sigil(quant: Option<&str>) -> &'static str {
     match quant {
         Some("opt") => "?",
         Some("star") => "*",
-        Some("star_star") => "**",
+        Some("include") => "...",
         _ => "",
     }
 }
@@ -311,15 +311,17 @@ fn render_params(params: &[TypeParamJson]) -> String {
 fn render_param(param: &TypeParamJson) -> String {
     let quant = quant_sigil(param.quant.as_deref());
     let Some(ty) = param.ty.as_ref() else {
-        // An open `...`, or a quantifier standing alone
+        // An element standing alone
         return match param.kind.as_str() {
-            "open" => format!("{quant}..."),
-            _ => quant.to_string(),
-        };
+            "open" => "...",
+            "any_pos" => "*",
+            _ => "**",
+        }
+        .to_string();
     };
     let ty = ty.render(Binding::Func);
     match (param.kind.as_str(), &param.key_type, &param.key) {
-        ("include", _, _) => format!("{quant}...{ty}"),
+        ("any_key", _, _) => format!("**{ty}"),
         // A name must be parenthesized to not be taken as a symbol key
         ("key", Some(key @ TypeJson::Name { .. }), _) => {
             format!("{quant}({}): {ty}", key.render(Binding::Compact))

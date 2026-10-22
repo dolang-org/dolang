@@ -731,30 +731,35 @@ impl<'u> Walk<'_, 'u> {
 
     fn surface_params(&mut self, params: &'u [ast::TypeParam]) -> Vec<surface::TypeParam> {
         use ast::{TypeKey as K, TypeParamKind as P, TypeQuant as Q};
-        use surface::{TypeKey, TypeParamKind, TypeQuant};
+        use surface::{TypeKey, TypeParam, TypeQuant};
 
+        let quant = |quant: &Option<Q>| {
+            quant.as_ref().map(|quant| match quant {
+                Q::Opt(_) => TypeQuant::Opt,
+                Q::Star(_) => TypeQuant::Star,
+                Q::Include(_) => TypeQuant::Include,
+            })
+        };
         params
             .iter()
-            .map(|param| surface::TypeParam {
-                quant: param.quant.as_ref().map(|quant| match quant {
-                    Q::Opt(_) => TypeQuant::Opt,
-                    Q::Star(_) => TypeQuant::Star,
-                    Q::StarStar(_) => TypeQuant::StarStar,
-                }),
-                kind: param.kind.as_ref().map(|kind| match kind {
-                    P::Pos(ty) => TypeParamKind::Pos(self.surface(ty)),
-                    P::Key { key, ty, .. } => TypeParamKind::Key {
-                        key: match key {
-                            K::Sym(span) => TypeKey::Sym(self.symbol(*span)),
-                            K::Type(ty) => TypeKey::Type(Box::new(self.surface(ty))),
-                        },
-                        ty: self.surface(ty),
+            .map(|param| match &param.kind {
+                P::Pos { quant: q, ty } => TypeParam::Pos {
+                    quant: quant(q),
+                    ty: self.surface(ty),
+                },
+                P::Key {
+                    quant: q, key, ty, ..
+                } => TypeParam::Key {
+                    quant: quant(q),
+                    key: match key {
+                        K::Sym(span) => TypeKey::Sym(self.symbol(*span)),
+                        K::Type(ty) => TypeKey::Type(Box::new(self.surface(ty))),
                     },
-                    P::Include { ty, .. } => TypeParamKind::Include {
-                        ty: self.surface(ty),
-                    },
-                    P::Open { ellipsis_span } => TypeParamKind::Open(*ellipsis_span),
-                }),
+                    ty: self.surface(ty),
+                },
+                P::AnyPos { .. } => TypeParam::AnyPos,
+                P::AnyKey { ty, .. } => TypeParam::AnyKey(ty.as_ref().map(|ty| self.surface(ty))),
+                P::Open { ellipsis_span } => TypeParam::Open(*ellipsis_span),
             })
             .collect()
     }
@@ -1867,8 +1872,10 @@ impl<'u> Walk<'_, 'u> {
 /// so the form's meaning never depends on what it includes.
 fn keyed(params: &[ast::TypeParam]) -> bool {
     params.iter().any(|param| {
-        matches!(param.quant, Some(ast::TypeQuant::StarStar(_)))
-            || matches!(param.kind, Some(ast::TypeParamKind::Key { .. }))
+        matches!(
+            param.kind,
+            ast::TypeParamKind::Key { .. } | ast::TypeParamKind::AnyKey { .. }
+        )
     })
 }
 

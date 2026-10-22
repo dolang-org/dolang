@@ -713,26 +713,31 @@ pub class ExpandTypeArg: TypeArg
 # the doc of the comment block directly above it, except the lone parameter of
 # a function type written without parentheses.
 pub class TypeItem: Node
+
+# A positional item, such as `T`, `?T`, `*T` or `...S`.
+pub class PosTypeItem: TypeItem
   # How many of the element the item admits, or `nil` for exactly one.
   #
-  # | Value         | Sigil | Admits            |
-  # | ------------- | ----- | ----------------- |
-  # | `:OPT:`       | `?`   | Zero or one       |
-  # | `:STAR:`      | `*`   | Zero or more      |
-  # | `:STAR_STAR:` | `**`  | Zero or more keyed |
+  # | Value       | Sigil | Admits                          |
+  # | ----------- | ----- | ------------------------------- |
+  # | `:OPT:`     | `?`   | Zero or one                     |
+  # | `:STAR:`    | `*`   | Zero or more                    |
+  # | `:INCLUDE:` | `...` | The items of the schema it gives |
   #[getter]
   pub def quant self -> (Sym | nil)
     ...
-
-# A positional item, such as `T`.
-pub class PosTypeItem: TypeItem
   # The item's type.
   #[getter]
   pub def ty self -> TypeExpr
     ...
 
-# A keyed item, such as `name: T` or `(K): T`.
+# A keyed item, such as `name: T`, `?name: T` or `*(K): V`.
 pub class KeyTypeItem: TypeItem
+  # How many of the element the item admits, or `nil` for exactly one, as
+  # for [`PosTypeItem.quant`](compile.PosTypeItem.quant).
+  #[getter]
+  pub def quant self -> (Sym | nil)
+    ...
   # The item's type.
   #[getter]
   pub def ty self -> TypeExpr
@@ -747,19 +752,19 @@ pub class KeyTypeItem: TypeItem
   pub def key_ty self -> (TypeExpr | nil)
     ...
 
-# An inclusion of a schema's items, such as `...S`.
-pub class IncludeTypeItem: TypeItem
-  # The schema included.
+# A `*` alone, admitting any positional items.
+pub class AnyPosTypeItem: TypeItem
+
+# A `**V`, admitting symbol-keyed items of type `V`, or a `**` alone, admitting
+# any keyed items.
+pub class AnyKeyTypeItem: TypeItem
+  # The value type, or `nil` for a `**` alone.
   #[getter]
-  pub def ty self -> TypeExpr
+  pub def ty self -> (TypeExpr | nil)
     ...
 
-# An unrestricted item, written `...`.
+# A `...` alone, admitting any items.
 pub class OpenTypeItem: TypeItem
-
-# A quantifier standing alone, such as `*` or `**`, admitting any item of its
-# kind.
-pub class AnyTypeItem: TypeItem
 
 # The kind of a [`Token`](compile.Token).
 #

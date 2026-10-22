@@ -565,17 +565,18 @@ impl<'a> Node<'a> {
                 output: output.map(public_node_id),
                 ret: public_node_id(*ret),
             },
-            doc::Kind::TypeItem { quant, kind, ty } => Kind::TypeItem {
-                quant: *quant,
-                kind: kind.as_ref().map(|kind| match kind {
-                    doc::TypeItemKind::Pos => TypeItemKind::Pos,
-                    doc::TypeItemKind::Key { key, key_ty } => TypeItemKind::Key {
+            doc::Kind::TypeItem { kind, ty } => Kind::TypeItem {
+                kind: match kind {
+                    doc::TypeItemKind::Pos { quant } => TypeItemKind::Pos { quant: *quant },
+                    doc::TypeItemKind::Key { quant, key, key_ty } => TypeItemKind::Key {
+                        quant: *quant,
                         key: span(key),
                         key_ty: key_ty.map(public_node_id),
                     },
-                    doc::TypeItemKind::Include => TypeItemKind::Include,
+                    doc::TypeItemKind::AnyPos => TypeItemKind::AnyPos,
+                    doc::TypeItemKind::AnyKey => TypeItemKind::AnyKey,
                     doc::TypeItemKind::Open => TypeItemKind::Open,
-                }),
+                },
                 ty: ty.map(public_node_id),
             },
         }
@@ -860,12 +861,10 @@ pub enum Kind<'a> {
     /// An item of a schema, a tuple or record type, or a function type's
     /// parameters, without a trailing `,`
     TypeItem {
-        /// How many of the element the item admits, or `None` for exactly one
-        quant: Option<TypeQuant>,
-        /// The element the quantifier applies to, or `None` for a bare `*` or `**`
-        kind: Option<TypeItemKind>,
-        /// The item's type, absent for [`TypeItemKind::Open`] and for a bare
-        /// quantifier
+        /// The item's quantifier and element
+        kind: TypeItemKind,
+        /// The item's type: the element's for [`TypeItemKind::Pos`] and
+        /// [`TypeItemKind::Key`], the value type of `**V`, and otherwise absent
         ty: Option<NodeId>,
     },
 }
@@ -890,8 +889,8 @@ pub enum TypeQuant {
     Opt,
     /// `*`: zero or more
     Star,
-    /// `**`: zero or more keyed items
-    StarStar,
+    /// `...`: the items of the schema the element gives
+    Include,
 }
 
 /// Which leftover items a rest parameter takes
@@ -951,19 +950,26 @@ pub enum TypeArgKind {
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 pub enum TypeItemKind {
-    /// `T`
-    Pos,
-    /// `key: T`
+    /// `T`, `?T`, `*T` or `...S`
+    Pos {
+        /// How many of the element the item admits, or `None` for exactly one
+        quant: Option<TypeQuant>,
+    },
+    /// `key: T`, `?key: T` or `*(K): V`
     Key {
+        /// How many of the element the item admits, or `None` for exactly one
+        quant: Option<TypeQuant>,
         /// The key as written: a bareword for a symbol, or a type such as a quoted string
         /// or a parenthesized name
         key: diag::Span,
         /// The form of the type giving the key, or `None` for a bareword symbol
         key_ty: Option<NodeId>,
     },
-    /// `...S`, including a schema's items
-    Include,
-    /// `...`, for unrestricted further schema items
+    /// `*` alone, for any positional items
+    AnyPos,
+    /// `**V`, for symbol-keyed items of type `V`, or `**` alone, for any keyed items
+    AnyKey,
+    /// `...` alone, for any items
     Open,
 }
 

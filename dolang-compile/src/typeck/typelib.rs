@@ -35,7 +35,7 @@ mod tests;
 const MAGIC: [u8; 8] = *b"\xffdotypel";
 /// The format's version, which changes with any change to the format. It isn't 0,
 /// which the bytes after the magic of an older typelib would read as.
-const VERSION: u16 = 4;
+const VERSION: u16 = 5;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct Header {

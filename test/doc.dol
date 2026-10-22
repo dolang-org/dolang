@@ -394,6 +394,7 @@ def remaining_type_forms()
     pub @let Keyed = Record[x: Int]
     pub @let Wide = {...Base, ...}
     pub @let Loose = {*, **}
+    pub @let Named = {**Int}
   let type_of = do |name| untargeted(entity(out, name)["type"])
   assert_eq (type_of("Pair")) $
     "kind": parens
@@ -408,11 +409,14 @@ def remaining_type_forms()
   assert_eq (type_of("Wide")) $
     "kind": schema
     "params":
-      - {"kind": "include", "quant": nil, "type": name_type("Base")}
-      - {"kind": "open", "quant": nil}
+      - {"kind": "pos", "quant": "include", "type": name_type("Base")}
+      - {"kind": "open"}
   assert_eq (type_of("Loose")) $
     "kind": schema
-    "params": [{"kind": "any", "quant": "star"}, {"kind": "any", "quant": "star_star"}]
+    "params": [{"kind": "any_pos"}, {"kind": "any_key"}]
+  assert_eq (type_of("Named")) $
+    "kind": schema
+    "params": [{"kind": "any_key", "type": name_type("Int")}]
 
 # Schema items and union members give the docs of the comments above them,
 # and only when they have one.

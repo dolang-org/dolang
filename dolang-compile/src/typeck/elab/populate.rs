@@ -26,7 +26,7 @@ use super::{
     surface::{
         BinderKind, Class, ConstLit, Member as SourceMember, MemberScope, Name, ParamKind, Ref,
         Signature, SiteId, Super, Symbol, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam,
-        TypeParamKind, TypeQuant,
+        TypeQuant,
     },
 };
 use crate::{
@@ -511,8 +511,8 @@ impl<'t, 'u> Populate<'t, 'u> {
     /// can't change the form's meaning.
     fn keyed_inclusions(&mut self, unit: UnitId, params: &[TypeParam], vertical: bool) {
         for param in params {
-            match &param.kind {
-                Some(TypeParamKind::Open(span)) => {
+            match param {
+                TypeParam::Open(span) => {
                     self.report(
                         unit,
                         KeyedInclusion {
@@ -522,7 +522,10 @@ impl<'t, 'u> Populate<'t, 'u> {
                         },
                     );
                 }
-                Some(TypeParamKind::Include { ty }) if self.may_key(ty, &mut Vec::new()) => {
+                TypeParam::Pos {
+                    quant: Some(TypeQuant::Include),
+                    ty,
+                } if self.may_key(ty, &mut Vec::new()) => {
                     self.report(
                         unit,
                         KeyedInclusion {
@@ -545,16 +548,14 @@ impl<'t, 'u> Populate<'t, 'u> {
             TypeExpr::Group { ty, .. } => self.may_key(ty, aliases),
             // An application's arguments only fill the alias's binders
             TypeExpr::App { base, .. } => self.may_key(base, aliases),
-            TypeExpr::Schema { params, .. } => {
-                params
-                    .iter()
-                    .any(|param| match (&param.quant, &param.kind) {
-                        (Some(TypeQuant::StarStar), _)
-                        | (_, Some(TypeParamKind::Key { .. } | TypeParamKind::Open(_))) => true,
-                        (_, Some(TypeParamKind::Include { ty })) => self.may_key(ty, aliases),
-                        _ => false,
-                    })
-            }
+            TypeExpr::Schema { params, .. } => params.iter().any(|param| match param {
+                TypeParam::Key { .. } | TypeParam::AnyKey(_) | TypeParam::Open(_) => true,
+                TypeParam::Pos {
+                    quant: Some(TypeQuant::Include),
+                    ty,
+                } => self.may_key(ty, aliases),
+                TypeParam::Pos { .. } | TypeParam::AnyPos => false,
+            }),
             TypeExpr::Name(head) => match tables.linked(head.link) {
                 Some(&Referent::Decl(decl)) => {
                     let DeclNode::Alias(alias) = &tables.decls[decl.index()].node else {
@@ -638,44 +639,57 @@ impl<'t, 'u> Populate<'t, 'u> {
             false => top,
         };
         let mut items = Vec::new();
+        let multiplicity = |quant| match quant {
+            None | Some(TypeQuant::Include) => Multiplicity::Required,
+            Some(TypeQuant::Opt) => Multiplicity::Optional,
+            Some(TypeQuant::Star) => Multiplicity::Repeated,
+        };
         for param in params {
-            let (multiplicity, keyed) = match param.quant {
-                None => (Multiplicity::Required, false),
-                Some(TypeQuant::Opt) => (Multiplicity::Optional, false),
-                Some(TypeQuant::Star) => (Multiplicity::Repeated, false),
-                Some(TypeQuant::StarStar) => (Multiplicity::Repeated, true),
-            };
-            let element = |value| match keyed {
-                true => Element::Keyed { key: sym, value },
-                false => Element::Positional(value),
-            };
-            match &param.kind {
-                None if keyed => items.push(Self::item(
-                    multiplicity,
-                    Element::Keyed {
-                        key: any,
-                        value: top,
-                    },
-                )),
-                None => items.push(Self::item(multiplicity, element(top))),
-                Some(TypeParamKind::Pos(ty)) => {
-                    let ty = self.intern(group, ty, Kind::Type, depth);
-                    items.push(Self::item(multiplicity, element(ty)));
+            match param {
+                // Only a schema's items are included, as kind checking requires
+                TypeParam::Pos {
+                    quant: Some(TypeQuant::Include),
+                    ty,
+                } => {
+                    let ty = self.intern(group, ty, Kind::Schema, depth);
+                    items.push(Self::item(Multiplicity::Required, Element::Include(ty)));
                 }
-                Some(TypeParamKind::Key { key, ty }) => {
+                TypeParam::Pos { quant, ty } => {
+                    let ty = self.intern(group, ty, Kind::Type, depth);
+                    items.push(Self::item(multiplicity(*quant), Element::Positional(ty)));
+                }
+                TypeParam::Key { quant, key, ty } => {
                     let key = match key {
                         TypeKey::Sym(name) => self.symbol(group.unit, *name),
                         TypeKey::Type(key) => self.intern(group, key, Kind::Type, depth),
                     };
                     let value = self.intern(group, ty, Kind::Type, depth);
-                    items.push(Self::item(multiplicity, Element::Keyed { key, value }));
+                    items.push(Self::item(
+                        multiplicity(*quant),
+                        Element::Keyed { key, value },
+                    ));
                 }
-                // Only a schema's items are included, as kind checking requires
-                Some(TypeParamKind::Include { ty }) => {
-                    let ty = self.intern(group, ty, Kind::Schema, depth);
-                    items.push(Self::item(multiplicity, Element::Include(ty)));
+                TypeParam::AnyPos => {
+                    items.push(Self::item(Multiplicity::Repeated, Element::Positional(top)));
                 }
-                Some(TypeParamKind::Open(_)) => {
+                // `**V` is `*(Sym): V`
+                TypeParam::AnyKey(Some(ty)) => {
+                    let value = self.intern(group, ty, Kind::Type, depth);
+                    items.push(Self::item(
+                        Multiplicity::Repeated,
+                        Element::Keyed { key: sym, value },
+                    ));
+                }
+                TypeParam::AnyKey(None) => {
+                    items.push(Self::item(
+                        Multiplicity::Repeated,
+                        Element::Keyed {
+                            key: any,
+                            value: top,
+                        },
+                    ));
+                }
+                TypeParam::Open(_) => {
                     items.push(Self::item(Multiplicity::Repeated, Element::Positional(top)));
                     items.push(Self::item(
                         Multiplicity::Repeated,
