@@ -3525,15 +3525,20 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn unbundled_import_reports_nothing() {
+    async fn unbundled_import_is_reported() {
         let mut harness = Harness::checking(Duration::from_millis(50));
         harness.initialize(vec![PositionEncodingKind::UTF16]).await;
         let uri: Uri = "file:///unbundled-test.dol".parse().unwrap();
         let text = "import not_bundled\nnot_bundled.f 1\n";
         harness.open(uri, text, 1).await;
 
+        // Once, at the import; the use recovers
         let checked = harness.next_publish().await;
-        assert_eq!(checked.diagnostics, []);
+        let reported: Vec<_> = (checked.diagnostics.iter())
+            .map(|diag| (diag.range, diag.message.as_str()))
+            .collect();
+        let import = Range::new(Position::new(0, 7), Position::new(0, 18));
+        assert_eq!(reported, [(import, "module `not_bundled` not found")]);
         harness.quiet().await;
     }
 }

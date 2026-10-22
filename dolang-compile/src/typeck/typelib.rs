@@ -26,12 +26,14 @@ use crate::source::Span;
 mod tests;
 
 const MAGIC: [u8; 8] = *b"\xffdotypel";
-const VERSION: [u8; 3] = [0, 0, 6];
+/// The format's version, which changes with any change to the format. It isn't 0,
+/// which the bytes after the magic of an older typelib would read as.
+const VERSION: u16 = 1;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct Header {
     magic: [u8; 8],
-    version: [u8; 3],
+    version: u16,
 }
 
 const HEADER: Header = Header {
@@ -58,6 +60,9 @@ struct Content<'a> {
     exports: Vec<Export<'a>>,
     /// By span, in order
     values: Vec<Value>,
+    /// By name
+    #[serde(borrow)]
+    imports: Vec<Import<'a>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -67,6 +72,14 @@ struct Export<'a> {
     span: Span,
     #[serde(borrow)]
     target: Target<'a>,
+}
+
+/// A module the module imports, at its first import
+#[derive(Serialize, Deserialize)]
+struct Import<'a> {
+    module: &'a str,
+    #[serde(with = "wire::span")]
+    span: Span,
 }
 
 /// An exported variable
@@ -84,7 +97,7 @@ pub(crate) enum Invalid {
     /// It does not start with a typelib's header
     Header,
     /// It is of another version of the format
-    Version([u8; 3]),
+    Version(u16),
     /// It could not be decoded
     Decode(postcard::Error),
     /// It decoded to something no module's surface could be
@@ -95,14 +108,10 @@ impl fmt::Display for Invalid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Invalid::Header => "not a typelib".fmt(f),
-            Invalid::Version([major, minor, patch]) => {
-                let [want_major, want_minor, want_patch] = VERSION;
-                write!(
-                    f,
-                    "typelib format {major}.{minor}.{patch} is not supported \
-                     (expected {want_major}.{want_minor}.{want_patch})"
-                )
-            }
+            Invalid::Version(version) => write!(
+                f,
+                "typelib format {version} is not supported (expected {VERSION})"
+            ),
             Invalid::Decode(error) => write!(f, "malformed typelib: {error}"),
             Invalid::Malformed(why) => write!(f, "malformed typelib: {why}"),
         }
@@ -127,6 +136,10 @@ fn encode(harvest: Harvest<'_>) -> Vec<u8> {
         .map(|(span, annot)| Value { span, annot })
         .collect();
     values.sort_by_key(|value| (value.span.start, value.span.end));
+    let mut imports: Vec<_> = (harvest.imports.into_iter())
+        .map(|(module, span)| Import { module, span })
+        .collect();
+    imports.sort_by_key(|import| import.module);
     let content = Content {
         module,
         path: &path,
@@ -138,6 +151,7 @@ fn encode(harvest: Harvest<'_>) -> Vec<u8> {
         pending: harvest.pending,
         exports,
         values,
+        imports,
     };
     let out = postcard::to_stdvec(&HEADER).expect("a header serializes");
     postcard::to_extend(&content, out).expect("a harvest serializes")
@@ -173,6 +187,12 @@ pub(crate) fn read(bytes: &[u8]) -> Result<Harvest<'_>, Invalid> {
             return Err(Invalid::Malformed("an exported variable is repeated"));
         }
     }
+    let mut imports = FxHashMap::default();
+    for import in content.imports {
+        if imports.insert(import.module, import.span).is_some() {
+            return Err(Invalid::Malformed("an import is repeated"));
+        }
+    }
     let mut harvest = Harvest {
         info: UnitInfo {
             module: Some(content.module),
@@ -187,6 +207,7 @@ pub(crate) fn read(bytes: &[u8]) -> Result<Harvest<'_>, Invalid> {
         pending: content.pending,
         exports,
         values,
+        imports,
     };
     validate(&mut harvest).map_err(Invalid::Malformed)?;
     Ok(harvest)

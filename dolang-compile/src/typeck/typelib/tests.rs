@@ -78,17 +78,18 @@ fn typelib() -> Vec<u8> {
     typeck::typelib(&compile(MODULE, Mode::Module { name: "lib".into() })).unwrap()
 }
 
-/// Check the script against a typelib, returning its diagnostics.
+/// Check the script against a typelib, returning the script's diagnostics.
 fn check(typelib: &[u8]) -> Result<Vec<String>, crate::Error> {
     let script = compile(SCRIPT, Mode::Script);
     let typelib = Typelib::read(typelib)?;
     let mut builder = Builder::new();
     builder.typelib(&typelib)?;
-    builder.unit(&script).unwrap();
+    let script = builder.unit(&script).unwrap();
     let check = builder.check();
     check.smoke();
     Ok(check
         .diagnostics()
+        .filter(|diag| diag.span().unit() == Some(script))
         .map(|diag| diag.message().to_string())
         .collect())
 }
@@ -154,8 +155,8 @@ pub let unused @ json.Value = nil
     let typelib = Typelib::read(&bytes).unwrap();
     assert_eq!(typelib.module(), "lib");
     assert_eq!(typelib.path(), Path::new("lib.dol"));
-    // A name written only in a body is not on the surface
-    assert_eq!(typelib.imports(), ["geometry", "json", "time"]);
+    // A module named only in a body is still imported
+    assert_eq!(typelib.imports(), ["geometry", "json", "time", "uuid"]);
 }
 
 #[test]
@@ -326,5 +327,73 @@ fn corruption() {
     assert!(
         read_ok > 0,
         "some corruptions are read, so the checker is exercised"
+    );
+}
+
+const MISSING: &str = "import gone
+pub @let G = gone.Thing
+";
+
+/// A script that checks only if `G` is unknown
+const RECOVERING: &str = "import lib:
+  - @G
+let _g @ G = 1
+";
+
+/// Check the units together, returning each diagnostic with the index of the unit
+/// it is in, and its line and column.
+fn located(units: &[&Unit<'_>], typelibs: &[&[u8]]) -> Vec<(usize, u32, u32, String)> {
+    let typelibs: Vec<_> = (typelibs.iter())
+        .map(|bytes| Typelib::read(bytes).unwrap())
+        .collect();
+    let mut builder = Builder::new();
+    let mut ids = Vec::new();
+    for typelib in &typelibs {
+        ids.push(builder.typelib(typelib).unwrap());
+    }
+    for unit in units {
+        ids.push(builder.unit(unit).unwrap());
+    }
+    let check = builder.check();
+    check.smoke();
+    check
+        .diagnostics()
+        .map(|diag| {
+            let unit = ids.iter().position(|&id| diag.span().unit() == Some(id));
+            let start = diag.span().span().start();
+            (
+                unit.expect("checker diagnostics name their unit"),
+                start.line_number(),
+                start.column_number(),
+                diag.message().to_string(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn missing_module() {
+    let lib = compile(MISSING, Mode::Module { name: "lib".into() });
+    let script = compile(RECOVERING, Mode::Script);
+    // At the import, from source or typelib; the script recovers
+    let expected = [(0, 1, 8, "module `gone` not found".to_owned())];
+    assert_eq!(located(&[&lib, &script], &[]), expected);
+    let bytes = typeck::typelib(&lib).unwrap();
+    assert_eq!(located(&[&script], &[&bytes]), expected);
+}
+
+#[test]
+fn missing_export_of_dependency() {
+    let lib = compile(
+        "import dep\npub @let G = dep.Thing\n",
+        Mode::Module { name: "lib".into() },
+    );
+    let bytes = typeck::typelib(&lib).unwrap();
+    // The dependency no longer exports what the typelib was written against
+    let dep = compile("pub @class Other\n", Mode::Module { name: "dep".into() });
+    let script = compile(RECOVERING, Mode::Script);
+    assert_eq!(
+        located(&[&dep, &script], &[&bytes]),
+        [(0, 2, 14, "module `dep` has no export `Thing`".to_owned())]
     );
 }

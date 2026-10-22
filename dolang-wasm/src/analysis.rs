@@ -154,7 +154,7 @@ fn imported_by<'t>(
 /// it imports, returning the diagnostics located in it.
 ///
 /// A unit that failed to compile can't be checked and has none.  An import that
-/// isn't bundled is unknown to the checker, which says nothing about it.
+/// isn't bundled is reported once, at the import.
 pub(crate) fn check() -> Vec<Diagnostic> {
     ANALYZED.with_borrow(|unit| {
         let Some(unit) = unit else {
@@ -427,9 +427,15 @@ pub mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn unbundled_imports_are_unknown() {
-        analyze("import fs\nimport json\nfs.read_text (json.encode 1)");
-        assert!(check().is_empty());
+    fn only_unbundled_imports_are_reported() {
+        // `json` is bundled and `fs` is not
+        let source = "import fs\nimport json\nfs.read_text (json.encode 1)";
+        analyze(source);
+        let reported: Vec<_> = check()
+            .into_iter()
+            .map(|diag| (diag.from, diag.to, diag.message))
+            .collect();
+        assert_eq!(reported, [(7, 9, "module `fs` not found".to_owned())]);
     }
 
     #[wasm_bindgen_test]

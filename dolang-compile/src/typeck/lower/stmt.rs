@@ -410,10 +410,7 @@ impl<'u> Scope<'_, '_, 'u> {
                     var: Some(var),
                 }) = self.entry(node.bind().res)
                 {
-                    let value = ExprKind::Import {
-                        module: self.lower.module(module),
-                        item: Some(self.lower.symbol(item)),
-                    };
+                    let value = self.lower.import(module, Some(self.lower.symbol(item)));
                     self.assign(var, expr(value, node.item()));
                 }
             }

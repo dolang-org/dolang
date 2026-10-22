@@ -186,9 +186,29 @@ fn sources(case: &Path, settings: &Settings) -> Vec<Source> {
             false,
         ));
     }
-    for name in &settings.repo_stubs {
-        let (path, file) = repo_stub(name);
-        sources.push(Source::read(path, file, Some(name.clone()), false));
+    // A repository stub's imports are met by their own repository stubs, as the
+    // shell's check finds them. `std` is the fixtures' own.
+    let mut queue = settings.repo_stubs.clone();
+    let mut next = 0;
+    while let Some(name) = queue.get(next).cloned() {
+        next += 1;
+        if sources
+            .iter()
+            .any(|source| source.module.as_ref() == Some(&name))
+        {
+            continue;
+        }
+        let (path, file) = repo_stub(&name);
+        let source = Source::read(path, file, Some(name), false);
+        let mut config = Config::new();
+        config.document(true);
+        let unit = config.unit(&source.path, source.text());
+        queue.extend(
+            (unit.imports().into_iter())
+                .filter(|module| *module != "std" && find_repo_stub(module).is_some())
+                .map(str::to_owned),
+        );
+        sources.push(source);
     }
     // The checker designates classes in `std` that every case relies on
     if !sources
@@ -220,6 +240,11 @@ fn sources(case: &Path, settings: &Settings) -> Vec<Source> {
 
 /// Find a native module's stub: module `x.y` is `x/y.dol` in a stub directory.
 fn repo_stub(name: &str) -> (PathBuf, String) {
+    find_repo_stub(name).unwrap_or_else(|| panic!("no repository stub for module `{name}`"))
+}
+
+/// Find a native module's stub, if it has one.
+fn find_repo_stub(name: &str) -> Option<(PathBuf, String)> {
     let relative = format!("{}.dol", name.replace('.', "/"));
     let mut dirs = vec!["dolang".to_owned()];
     for entry in fs::read_dir(WORKSPACE).unwrap() {
@@ -234,10 +259,10 @@ fn repo_stub(name: &str) -> (PathBuf, String) {
         .filter(|file| Path::new(WORKSPACE).join(file).exists())
         .collect();
     match found.len() {
-        0 => panic!("no repository stub for module `{name}`"),
+        0 => None,
         1 => {
             let file = found.pop().unwrap();
-            (Path::new(WORKSPACE).join(&file), file)
+            Some((Path::new(WORKSPACE).join(&file), file))
         }
         _ => panic!("several repository stubs for module `{name}`: {found:?}"),
     }

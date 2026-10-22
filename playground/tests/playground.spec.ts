@@ -270,7 +270,8 @@ test('http requests run through fetch in Wasm', async ({ page, baseURL }) => {
 test('portable extensions and dynamic modules execute in Wasm', async ({ page }) => {
   await source(page, readFileSync(new URL('./extensions.dol', import.meta.url), 'utf8'));
   await expect(page.locator('#diagnostics-section')).toHaveAttribute('data-checked');
-  await expect(page.locator('#diagnostics')).toBeEmpty();
+  // The checker can't see the module the import handler provides
+  await expect(page.locator('#diagnostics li')).toHaveText(['error · line 44: module `dynamic` not found']);
   await run(page);
   await expect(page.locator('#error')).toBeEmpty();
   await expect(page.locator('#output')).toHaveText('extensions passed\n');
