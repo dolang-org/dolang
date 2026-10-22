@@ -1026,7 +1026,7 @@ def rest_kinds_are_exposed()
       [a, rest, kw]
     def mixed[...R] ...rest @R
       rest
-    let schema @{*Int, **Str, *...{a: Bool}} = nil
+    let schema @{*Int, **Str, ...{a: Bool}} = nil
   let unit = compile.compile "rest_kinds.dol" $source document: true
   assert_no_errors $unit
   let nodes = [...unit.nodes()]
@@ -1054,7 +1054,7 @@ def rest_kinds_are_exposed()
     - $compile.PosTypeItem
     - $compile.PosTypeItem
     - $compile.IncludeTypeItem
-  assert_eq [...schema_items.map(do |p| p.quant)] [:STAR:, :STAR_STAR:, :STAR:]
+  assert_eq [...schema_items.map(do |p| p.quant)] [:STAR:, :STAR_STAR:, nil]
   assert $schema_items.all(do |p| type(p, compile.TypeItem))
   assert_eq (span_text(source, schema_items[1].span)) "**Str"
   unit.emit()

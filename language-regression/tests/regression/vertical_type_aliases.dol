@@ -49,7 +49,6 @@
 @let Base = {name: Str}
 @let Included = $
   ...Base
-  *...Base
   ...$
     Int Str
 

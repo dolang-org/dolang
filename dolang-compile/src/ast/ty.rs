@@ -117,10 +117,7 @@ pub(crate) enum TypeArgKind {
 /// An item a schema or a function type's parameters declare
 pub(crate) struct TypeParam {
     pub(crate) dash_span: Option<Span>,
-    /// How many of the element the item admits
-    pub(crate) quant: Option<TypeQuant>,
-    /// The element the quantifier applies to, absent only for a bare `*` or `**`
-    pub(crate) kind: Option<TypeParamKind>,
+    pub(crate) kind: TypeParamKind,
     /// The trailing `,`
     pub(crate) delim_span: Option<Span>,
 }
@@ -131,30 +128,39 @@ pub(crate) enum TypeQuant {
     Opt(Span),
     /// `*`, for zero or more
     Star(Span),
-    /// `**`, for zero or more keyed items
-    StarStar(Span),
+    /// `...`, for an item per item of the schema the element includes
+    Include(Span),
 }
 
 impl TypeQuant {
     pub(crate) fn span(&self) -> Span {
         match self {
-            TypeQuant::Opt(span) | TypeQuant::Star(span) | TypeQuant::StarStar(span) => *span,
+            TypeQuant::Opt(span) | TypeQuant::Star(span) | TypeQuant::Include(span) => *span,
         }
     }
 }
 
 pub(crate) enum TypeParamKind {
-    /// `T`
-    Pos(TypeExpr),
-    /// `key: T`
+    /// `T`, `?T`, `*T` or `...S`
+    Pos {
+        quant: Option<TypeQuant>,
+        ty: TypeExpr,
+    },
+    /// `key: T`, `?key: T` or `*(K): V`
     Key {
+        quant: Option<TypeQuant>,
         key: TypeKey,
         colon_span: Span,
         ty: TypeExpr,
     },
-    /// `...S`, including a schema's items
-    Include { ellipsis_span: Span, ty: TypeExpr },
-    /// `...`, for an unrestricted schema rest
+    /// `*` alone, for any positional items
+    AnyPos { star_span: Span },
+    /// `**V`, sugar for `*(Sym): V`, or `**` alone, for any keyed items
+    AnyKey {
+        star_star_span: Span,
+        ty: Option<TypeExpr>,
+    },
+    /// `...` alone, for any items
     Open { ellipsis_span: Span },
 }
 
@@ -367,17 +373,16 @@ impl TypeParam {
     /// The item's key type, if it has one, then its type.
     pub(crate) fn tys(&self) -> impl Iterator<Item = &TypeExpr> {
         let (key_ty, ty) = match &self.kind {
-            Some(TypeParamKind::Pos(ty)) | Some(TypeParamKind::Include { ty, .. }) => {
-                (None, Some(ty))
-            }
-            Some(TypeParamKind::Key { key, ty, .. }) => (
+            TypeParamKind::Pos { ty, .. } => (None, Some(ty)),
+            TypeParamKind::Key { key, ty, .. } => (
                 match key {
                     TypeKey::Sym(_) => None,
                     TypeKey::Type(key_ty) => Some(&**key_ty),
                 },
                 Some(ty),
             ),
-            Some(TypeParamKind::Open { .. }) | None => (None, None),
+            TypeParamKind::AnyKey { ty, .. } => (None, ty.as_ref()),
+            TypeParamKind::AnyPos { .. } | TypeParamKind::Open { .. } => (None, None),
         };
         key_ty.into_iter().chain(ty)
     }
@@ -385,17 +390,16 @@ impl TypeParam {
     /// The item's key type, if it has one, then its type.
     pub(crate) fn tys_mut(&mut self) -> impl Iterator<Item = &mut TypeExpr> {
         let (key_ty, ty) = match &mut self.kind {
-            Some(TypeParamKind::Pos(ty)) | Some(TypeParamKind::Include { ty, .. }) => {
-                (None, Some(ty))
-            }
-            Some(TypeParamKind::Key { key, ty, .. }) => (
+            TypeParamKind::Pos { ty, .. } => (None, Some(ty)),
+            TypeParamKind::Key { key, ty, .. } => (
                 match key {
                     TypeKey::Sym(_) => None,
                     TypeKey::Type(key_ty) => Some(&mut **key_ty),
                 },
                 Some(ty),
             ),
-            Some(TypeParamKind::Open { .. }) | None => (None, None),
+            TypeParamKind::AnyKey { ty, .. } => (None, ty.as_mut()),
+            TypeParamKind::AnyPos { .. } | TypeParamKind::Open { .. } => (None, None),
         };
         key_ty.into_iter().chain(ty)
     }
@@ -550,20 +554,18 @@ impl Node for TypeParam {
         if let Some(span) = self.dash_span {
             visit.token(Token::Operator, span, None)?;
         }
-        match &self.quant {
-            Some(TypeQuant::Opt(span)) => visit.token(Token::Operator, *span, None)?,
-            Some(TypeQuant::Star(span)) | Some(TypeQuant::StarStar(span)) => {
-                visit.token(Token::Sigil, *span, None)?
-            }
-            None => {}
-        }
         match &self.kind {
-            Some(TypeParamKind::Pos(ty)) => visit.node(ty)?,
-            Some(TypeParamKind::Key {
+            TypeParamKind::Pos { quant, ty } => {
+                visit_quant(visit, quant)?;
+                visit.node(ty)?
+            }
+            TypeParamKind::Key {
+                quant,
                 key,
                 colon_span,
                 ty,
-            }) => {
+            } => {
+                visit_quant(visit, quant)?;
                 match key {
                     TypeKey::Sym(span) => visit.token(Token::TypeKey, *span, None)?,
                     TypeKey::Type(key_ty) => visit.node(&**key_ty)?,
@@ -571,14 +573,16 @@ impl Node for TypeParam {
                 visit.token(Token::Delim, *colon_span, None)?;
                 visit.node(ty)?
             }
-            Some(TypeParamKind::Include { ellipsis_span, ty }) => {
-                visit.token(Token::Sigil, *ellipsis_span, None)?;
-                visit.node(ty)?
+            TypeParamKind::AnyPos { star_span: span }
+            | TypeParamKind::Open {
+                ellipsis_span: span,
+            } => visit.token(Token::Sigil, *span, None)?,
+            TypeParamKind::AnyKey { star_star_span, ty } => {
+                visit.token(Token::Sigil, *star_star_span, None)?;
+                if let Some(ty) = ty {
+                    visit.node(ty)?
+                }
             }
-            Some(TypeParamKind::Open { ellipsis_span }) => {
-                visit.token(Token::Sigil, *ellipsis_span, None)?;
-            }
-            None => {}
         }
         if let Some(span) = self.delim_span {
             visit.token(Token::Delim, span, None)?;
@@ -588,6 +592,16 @@ impl Node for TypeParam {
 
     fn kind(&self) -> NodeKind {
         NodeKind::TypeParam
+    }
+}
+
+fn visit_quant<V: Visit>(visit: &mut V, quant: &Option<TypeQuant>) -> ControlFlow<V::Break> {
+    match quant {
+        Some(TypeQuant::Opt(span)) => visit.token(Token::Operator, *span, None),
+        Some(TypeQuant::Star(span) | TypeQuant::Include(span)) => {
+            visit.token(Token::Sigil, *span, None)
+        }
+        None => ControlFlow::Continue(()),
     }
 }
 

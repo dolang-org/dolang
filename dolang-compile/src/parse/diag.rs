@@ -428,6 +428,70 @@ impl Diagnose for OptionalQuant {
     }
 }
 
+pub(super) struct ExtraQuant(pub(super) Span);
+
+impl Diagnose for ExtraQuant {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "an item takes at most one quantifier")
+    }
+}
+
+pub(super) struct QuantifiedInclusion(pub(super) Span);
+
+impl Diagnose for QuantifiedInclusion {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "`...` cannot be quantified")
+    }
+}
+
+pub(super) struct KeyedStarStar(pub(super) Span);
+
+impl Diagnose for KeyedStarStar {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "a repeated keyed item is written with `*`, not `**`")
+    }
+}
+
+pub(super) struct KeyedInclusion(pub(super) Span);
+
+impl Diagnose for KeyedInclusion {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "a keyed item cannot be included")
+    }
+}
+
 pub(super) struct ImplicitWithoutArrow(pub(super) Span);
 
 impl Diagnose for ImplicitWithoutArrow {

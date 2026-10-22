@@ -5,8 +5,8 @@ let _bare_pos @ Dict[{*}] = nil
 let _bare_key @ Dict[{**}] = nil
 let _open @ Dict[{...}] = nil
 let _include @ Dict[{?width: Int, ..._Colors}] = nil
-let _repeat_include @ Dict[{*..._Colors}] = nil
-let _group @ Dict[{Int, *...{a: Int, b: Str}, Str}] = nil
+let _group @ Dict[{Int, ...{a: Int, b: Str}, Str}] = nil
+let _any_key @ Dict[{**Int}] = nil
 let _any @ ((...) -> nil) = nil
 let _opt_and_star @ Dict[{?*Int}] = nil
 # error: an item cannot be both optional and repeated
@@ -20,3 +20,77 @@ let _opt_alone @ Dict[{?}] = nil
 #    |
 # LL | let _opt_alone @ Dict[{?}] = nil
 #    |                         ^
+let _repeat_include @ Dict[{*..._Colors}] = nil
+# error: `...` cannot be quantified
+#   --> quant_forms.dol:LL:LL
+#    |
+# LL | let _repeat_include @ Dict[{*..._Colors}] = nil
+#    |                             ^
+let _opt_include @ Dict[{?..._Colors}] = nil
+# error: `...` cannot be quantified
+#   --> quant_forms.dol:LL:LL
+#    |
+# LL | let _opt_include @ Dict[{?..._Colors}] = nil
+#    |                          ^
+let _star_star_include @ Dict[{**..._Colors}] = nil
+# error: `...` cannot be quantified
+#   --> quant_forms.dol:LL:LL
+#    |
+# LL | let _star_star_include @ Dict[{**..._Colors}] = nil
+#    |                                ^^
+let _repeat_open @ Dict[{*...}] = nil
+# error: `...` cannot be quantified
+#   --> quant_forms.dol:LL:LL
+#    |
+# LL | let _repeat_open @ Dict[{*...}] = nil
+#    |                          ^
+let _star_star_key @ Dict[{**name: Int}] = nil
+# error: a repeated keyed item is written with `*`, not `**`
+#   --> quant_forms.dol:LL:LL
+#    |
+# LL | let _star_star_key @ Dict[{**name: Int}] = nil
+#    |                            ^^
+let _star_star_key_type @ Dict[{**(Sym): Int}] = nil
+# error: a repeated keyed item is written with `*`, not `**`
+#   --> quant_forms.dol:LL:LL
+#    |
+# LL | let _star_star_key_type @ Dict[{**(Sym): Int}] = nil
+#    |                                 ^^
+let _include_key @ Dict[{...name: Int}] = nil
+# error: a keyed item cannot be included
+#   --> quant_forms.dol:LL:LL
+#    |
+# LL | let _include_key @ Dict[{...name: Int}] = nil
+#    |                          ^^^
+let _include_key_type @ Dict[{...(Sym): Int}] = nil
+# error: a keyed item cannot be included
+#   --> quant_forms.dol:LL:LL
+#    |
+# LL | let _include_key_type @ Dict[{...(Sym): Int}] = nil
+#    |                               ^^^
+let _opt_star_star @ Dict[{?**Int}] = nil
+# error: an item cannot be both optional and repeated
+#   --> quant_forms.dol:LL:LL
+#    |
+# LL | let _opt_star_star @ Dict[{?**Int}] = nil
+#    |                            ^
+let _star_opt @ Dict[{*?Int}] = nil
+# error: an item takes at most one quantifier
+#   --> quant_forms.dol:LL:LL
+#    |
+# LL | let _star_opt @ Dict[{*?Int}] = nil
+#    |                       ^
+@let _VerticalRepeat = $
+  *..._Colors
+# error: `...` cannot be quantified
+#   --> quant_forms.dol:LL:LL
+#    |
+# LL |   *..._Colors
+#    |   ^
+@let _VerticalStarStarKey = $
+  **name: Int
+# error: a repeated keyed item is written with `*`, not `**`
+#   --> quant_forms.dol:LL:LL
+#    |
+# LL |   **name: Int
+#    |   ^^
