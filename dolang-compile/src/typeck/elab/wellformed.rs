@@ -561,12 +561,11 @@ impl Check<'_, '_> {
                     self.guarded(unit, alias, members, arg.ty(), guarded || nominal, found);
                 }
             }
-            TypeExpr::Schema { params, span, .. } => {
+            TypeExpr::Schema {
+                params, collection, ..
+            } => {
                 // A schema that is a collection applies a class, which guards its items
-                let collection = self
-                    .tables
-                    .braces
-                    .contains_key(&UnitSpan { unit, span: *span });
+                let collection = collection.get().is_some();
                 for param in params {
                     // An inclusion's items are the schema's own
                     let guarded = guarded

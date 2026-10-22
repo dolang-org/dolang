@@ -16,7 +16,7 @@ use super::{
     ids::Rebase,
     interface::PrivateInInterface,
     local,
-    surface::{self, ConstLit, Name, SiteId, StrId, TypeExpr},
+    surface::{self, Collection, ConstLit, Name, SiteId, StrId, TypeExpr},
 };
 use crate::{
     Mode, PreludeImport, Unit,
@@ -223,7 +223,6 @@ pub(crate) fn link<'u>(
         alias_kinds: FxHashMap::default(),
         sigs: FxHashMap::default(),
         fields: FxHashMap::default(),
-        braces: FxHashMap::default(),
         designated: FxHashMap::default(),
         nominees,
         pipes: FxHashMap::default(),
@@ -483,6 +482,7 @@ impl<'u> Walk<'_, 'u> {
                 span,
                 params: self.surface_params(params),
                 tuple: brace_span.is_none() && !keyed(params),
+                collection: Collection::default(),
             },
             ast::TypeExpr::Group { ty, .. } => TypeExpr::Group {
                 span,

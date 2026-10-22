@@ -86,9 +86,6 @@ pub(crate) struct Tables<'u> {
     pub(crate) sigs: FxHashMap<(DeclId, usize), Sig>,
     /// The type of each field, by its class and the span of its name
     pub(crate) fields: FxHashMap<(DeclId, Span), Slot>,
-    /// The class each schema written where a type is required stands for, by its
-    /// span: `std.Dict` of the schema, or `std.Tuple` of its items
-    pub(crate) braces: FxHashMap<UnitSpan, Designated>,
     /// The declarations of `std` and `strand` the checker treats specially
     pub(crate) designated: FxHashMap<DeclId, Designated>,
     /// What each of `strand`'s pipe placeholders nominates, by name, resolved where

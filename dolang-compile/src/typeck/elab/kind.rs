@@ -112,7 +112,6 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
         unit: UnitId::from_index(0),
         packs: None,
         diags,
-        braces: FxHashMap::default(),
     };
     for site in &check.tables.sites {
         check.site(site);
@@ -126,7 +125,6 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
             }
         }
     }
-    tables.braces = check.braces;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -276,7 +274,6 @@ struct Check<'a, 't, 'u> {
     /// Within a rest binding's `@...` pattern, the packs it names so far
     packs: Option<usize>,
     diags: &'a mut Vec<UnitDiag>,
-    braces: FxHashMap<UnitSpan, Designated>,
 }
 
 impl<'t> Check<'_, 't, '_> {
@@ -462,19 +459,16 @@ impl<'t> Check<'_, 't, '_> {
                     self.expect(ty.span(), expected, found, None);
                 }
             }
-            TypeExpr::Schema { params, tuple, .. } => {
+            TypeExpr::Schema {
+                params,
+                tuple,
+                collection,
+                ..
+            } => {
                 self.items(params);
                 // Where a type is required, a schema is a collection, as data is
                 if expected == Some(Kind::Type) {
-                    let class = match tuple {
-                        true => Designated::Intrinsic(Intrinsic::Tuple),
-                        false => Designated::Dict,
-                    };
-                    let span = UnitSpan {
-                        unit: self.unit,
-                        span: ty.span(),
-                    };
-                    self.braces.insert(span, class);
+                    collection.set(*tuple);
                 }
             }
             TypeExpr::Tuple { params, .. } | TypeExpr::Record { params, .. } => {

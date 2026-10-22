@@ -6,7 +6,10 @@
 //! each unit's string table, so a unit's surface means the same thing whether or not
 //! its source is at hand.
 
-use std::fmt::{self, Write};
+use std::{
+    fmt::{self, Write},
+    sync::atomic::{AtomicU8, Ordering},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +19,7 @@ use crate::{
     ast::SpecialMethod,
     source::Span,
     typeck::{
-        r#type::{DeclId, Intrinsic, UnitId, UnitSpan},
+        r#type::{DeclId, Intrinsic, UnitId},
         typelib::wire,
     },
 };
@@ -46,6 +49,38 @@ impl SiteId {
 
     pub(crate) fn index(self) -> usize {
         self.0 as usize
+    }
+}
+
+/// The collection a schema is where a type is required, filled by kind checking
+#[derive(Default)]
+pub(crate) struct Collection(AtomicU8);
+
+impl Collection {
+    const DICT: u8 = 1;
+    const TUPLE: u8 = 2;
+
+    /// `std.Dict`, or `std.Tuple`, or `None` where a schema is one
+    pub(crate) fn get(&self) -> Option<Designated> {
+        match self.0.load(Ordering::Relaxed) {
+            Self::DICT => Some(Designated::Dict),
+            Self::TUPLE => Some(Designated::Intrinsic(Intrinsic::Tuple)),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn set(&self, tuple: bool) {
+        let class = match tuple {
+            true => Self::TUPLE,
+            false => Self::DICT,
+        };
+        self.0.store(class, Ordering::Relaxed);
+    }
+}
+
+impl Clone for Collection {
+    fn clone(&self) -> Self {
+        Self(AtomicU8::new(self.0.load(Ordering::Relaxed)))
     }
 }
 
@@ -89,6 +124,9 @@ pub(crate) enum TypeExpr {
         /// Whether it is written vertically without an explicitly keyed item, as an
         /// array's data is
         tuple: bool,
+        /// Its collection, where kind checking found a type required
+        #[serde(skip)]
+        collection: Collection,
     },
     /// A parenthesized type
     Group {
@@ -565,12 +603,9 @@ impl Printer<'_, '_> {
                 out.write_char(']')
             }
             // A vertical schema that is a tuple prints as one
-            TypeExpr::Schema { params, span, .. }
-                if self.tables.braces.get(&UnitSpan {
-                    unit: self.unit,
-                    span: *span,
-                }) != Some(&Designated::Intrinsic(Intrinsic::Tuple)) =>
-            {
+            TypeExpr::Schema {
+                params, collection, ..
+            } if collection.get() != Some(Designated::Intrinsic(Intrinsic::Tuple)) => {
                 out.write_char('{')?;
                 self.params(params, None, None, out)?;
                 out.write_char('}')

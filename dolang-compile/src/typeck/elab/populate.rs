@@ -471,13 +471,12 @@ impl<'t, 'u> Populate<'t, 'u> {
                 let items = self.items(group, params, false, depth);
                 self.schema(items)
             }
-            TypeExpr::Schema { params, span, .. } if expected == Kind::Type => {
-                let class = self.tables.braces.get(&UnitSpan {
-                    unit: group.unit,
-                    span: *span,
-                });
+            TypeExpr::Schema {
+                params, collection, ..
+            } if expected == Kind::Type => {
+                let class = collection.get();
                 debug_assert!(class.is_some(), "kind checking classifies each brace");
-                let class = class.copied().unwrap_or(Designated::Dict);
+                let class = class.unwrap_or(Designated::Dict);
                 if class == Designated::Intrinsic(Intrinsic::Tuple) {
                     self.keyed_inclusions(group.unit, params, true);
                 }
