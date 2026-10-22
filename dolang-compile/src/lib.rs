@@ -94,6 +94,7 @@ enum ErrorInfo {
     DuplicateModule(String),
     Unresolved,
     NotModule,
+    NotExportable,
     Typelib(typeck::typelib::Invalid),
 }
 
@@ -111,6 +112,9 @@ pub enum ErrorKind {
     Unresolved,
     /// A typelib was requested of a unit that is not a module.
     NotModule,
+    /// A typelib was requested of a module whose public interface names private
+    /// declarations.
+    NotExportable,
     /// A typelib is malformed, or of a version this checker doesn't read.
     Typelib,
 }
@@ -128,6 +132,7 @@ impl Error {
             ErrorInfo::DuplicateModule(_) => ErrorKind::DuplicateModule,
             ErrorInfo::Unresolved => ErrorKind::Unresolved,
             ErrorInfo::NotModule => ErrorKind::NotModule,
+            ErrorInfo::NotExportable => ErrorKind::NotExportable,
             ErrorInfo::Typelib(_) => ErrorKind::Typelib,
         }
     }
@@ -155,6 +160,7 @@ impl Display for Error {
             ErrorInfo::DuplicateModule(name) => write!(f, "duplicate module `{name}`"),
             ErrorInfo::Unresolved => "unit types were not resolved".fmt(f),
             ErrorInfo::NotModule => "only a module has a typelib".fmt(f),
+            ErrorInfo::NotExportable => "the module's interface cannot be exported".fmt(f),
             ErrorInfo::Typelib(invalid) => invalid.fmt(f),
         }
     }
@@ -167,6 +173,7 @@ impl error::Error for Error {
             | ErrorInfo::DuplicateModule(_)
             | ErrorInfo::Unresolved
             | ErrorInfo::NotModule
+            | ErrorInfo::NotExportable
             | ErrorInfo::Typelib(_) => None,
             ErrorInfo::Io(error) => Some(error),
         }

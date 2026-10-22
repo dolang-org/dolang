@@ -250,7 +250,7 @@ pub def call_member f @ (Int -> Str)
   let _ = c 1
   #   ^: flow std.Str
 
-@let Thunks = ((() -> Int) | (() -> Str))
+pub @let Thunks = ((() -> Int) | (() -> Str))
 
 # A union alias's callees are its union's
 pub def aliased_union f @ Thunks

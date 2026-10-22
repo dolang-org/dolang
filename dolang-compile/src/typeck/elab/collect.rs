@@ -14,6 +14,7 @@ use super::{
     AliasCycle, BinderRef, Decl, DeclAst, DeclNode, Diag, Head, ImportCycle, MissingExport,
     ModuleRef, PIPES, Referent, Role, Site, Tables, Target, UnitDiag, UnitInfo,
     ids::Rebase,
+    interface::PrivateInInterface,
     local,
     surface::{self, ConstLit, Name, SiteId, StrId, TypeExpr},
 };
@@ -119,10 +120,19 @@ pub(crate) fn link<'u>(
     let mut decls = Vec::new();
     let mut pending = Vec::new();
     let mut sites = Vec::new();
+    let mut leaks = Vec::new();
     for &id in order {
         let mut harvest = harvests[id.index()]
             .take()
             .expect("each unit is linked once");
+        // A typelib leaves out private declarations, so only a unit with source can
+        // name one in its interface
+        if harvest.info.source.is_some() {
+            let (_, found) = harvest.interface();
+            leaks.extend(
+                (found.iter()).map(|leak| (id, Diag::new(PrivateInInterface::new(&harvest, leak)))),
+            );
+        }
         harvest.visit_ids(&mut Rebase {
             unit: id,
             decls: decls.len(),
@@ -178,6 +188,7 @@ pub(crate) fn link<'u>(
         }
     }
     let mut diags = fixup.diags;
+    diags.extend(leaks);
 
     let mut aliases = Aliases {
         decls: &decls,

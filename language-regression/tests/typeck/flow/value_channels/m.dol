@@ -75,7 +75,7 @@ pub def field_result h @ Holder
 #    = note: `std.Int` does not fit `nil`
 
 # An alias passes channels through its binders
-@let Handler[I, O] = ((Int, <I, >O) -> nil)
+pub @let Handler[I, O] = ((Int, <I, >O) -> nil)
 
 pub def run f @ Handler[Iter[Int], Sink[Str]] <Iter[Int] >Sink[Str]
   f 1

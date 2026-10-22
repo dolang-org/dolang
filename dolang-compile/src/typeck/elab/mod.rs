@@ -7,6 +7,7 @@
 mod capture;
 mod collect;
 mod ids;
+mod interface;
 mod judge;
 mod kind;
 mod overrides;
@@ -41,6 +42,7 @@ pub(crate) use super::report::{Diag, UnitDiag};
 pub(crate) use capture::captures;
 pub(crate) use collect::{Harvest, Pending, harvest, link};
 pub(crate) use ids::Ids;
+pub(crate) use interface::Kept;
 pub(crate) use judge::{JUDGMENTS, Scoped};
 pub(crate) use kind::{Fill, kinds};
 pub(crate) use overrides::overrides;

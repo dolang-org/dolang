@@ -222,7 +222,7 @@ pub class PortBinding
     self.#host_port
 
 # A mount type a runtime reports, or its own name for an unrecognized one.
-@let MountType = (:BIND: | :VOLUME: | :TMPFS: | :IMAGE: | :NPIPE: | :CLUSTER: | Str)
+pub @let MountType = (:BIND: | :VOLUME: | :TMPFS: | :IMAGE: | :NPIPE: | :CLUSTER: | Str)
 
 # A mount of a container, as reported by
 # [`Container.state`](_container.dockman.Container.state).

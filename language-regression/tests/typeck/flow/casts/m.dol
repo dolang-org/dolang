@@ -2,7 +2,7 @@
 # type as an expectation, as an annotated `let` does; an unchecked one, `!@`,
 # doesn't check it.
 
-@let Release = (:STABLE: | :TESTING:)
+pub @let Release = (:STABLE: | :TESTING:)
 
 def pick[T] x @ T y @ T -> T
   # warning: unused variable

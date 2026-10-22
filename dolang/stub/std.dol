@@ -2995,7 +2995,9 @@ pub class FmtValue[T]: Func
     ...
 
 
-@let FmtSegment[V] = (Str | FmtValue[V] | FmtParam)
+# A segment of a [`Fmt`](std.Fmt): literal text, a bound interpolation, or an
+# unbound parameter.
+pub @let FmtSegment[V] = (Str | FmtValue[V] | FmtParam)
 
 #
 # Preserves literal text, bound interpolations, and unbound parameters from a

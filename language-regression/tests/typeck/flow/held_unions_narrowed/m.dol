@@ -4,9 +4,9 @@
 import std:
   - @BaseDict
 
-@let Flag = BaseDict[{flag: Str}]
-@let Cmd[R] = BaseDict[{cmd: Str, *(Item[R] | (Int -> R))}]
-@let Item[R] = (Flag | Cmd[R])
+pub @let Flag = BaseDict[{flag: Str}]
+pub @let Cmd[R] = BaseDict[{cmd: Str, *(Item[R] | (Int -> R))}]
+pub @let Item[R] = (Flag | Cmd[R])
 
 pub def spec[R] *items @ (Item[R] | (Int -> R)) -> R
   ...

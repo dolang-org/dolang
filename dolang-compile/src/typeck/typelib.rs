@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     elab::{
-        BinderRef, Decl, DeclNode, Harvest, Pending, Referent, Role, Site, Target, UnitInfo,
+        BinderRef, Decl, DeclNode, Harvest, Kept, Pending, Referent, Role, Site, Target, UnitInfo,
         surface::{Binder, Decorator, Member, ParamKind, SiteId, StrId},
     },
     r#type::{DeclId, DeclKind, UnitId},
@@ -26,7 +26,7 @@ use crate::source::Span;
 mod tests;
 
 const MAGIC: [u8; 8] = *b"\xffdotypel";
-const VERSION: [u8; 3] = [0, 0, 5];
+const VERSION: [u8; 3] = [0, 0, 6];
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct Header {
@@ -109,9 +109,10 @@ impl fmt::Display for Invalid {
     }
 }
 
-/// Write the typelib of a module's harvest.
-pub(crate) fn write(harvest: Harvest<'_>) -> Vec<u8> {
-    encode(harvest.surface())
+/// Write the typelib of a module's harvest, given what its surface keeps. Its
+/// interface must name no private declaration.
+pub(crate) fn write(harvest: Harvest<'_>, kept: &Kept) -> Vec<u8> {
+    encode(harvest.surface(kept))
 }
 
 /// Encode a harvest that is already a module's surface.

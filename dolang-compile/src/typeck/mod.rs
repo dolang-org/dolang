@@ -35,6 +35,7 @@ use crate::{
 /// | [`ErrorKind::Fail`](crate::ErrorKind::Fail) | The unit failed to compile |
 /// | [`ErrorKind::Unresolved`](crate::ErrorKind::Unresolved) | The unit was compiled without resolving types |
 /// | [`ErrorKind::NotModule`](crate::ErrorKind::NotModule) | The unit is not a module |
+/// | [`ErrorKind::NotExportable`](crate::ErrorKind::NotExportable) | The module's public interface names a private declaration, which its diagnostics report |
 pub fn typelib(unit: &Unit<'_>) -> Result<Vec<u8>, Error> {
     if unit.failed {
         return Err(Error(ErrorInfo::Fail));
@@ -45,7 +46,12 @@ pub fn typelib(unit: &Unit<'_>) -> Result<Vec<u8>, Error> {
     let Mode::Module { .. } = unit.mode else {
         return Err(Error(ErrorInfo::NotModule));
     };
-    Ok(typelib::write(elab::harvest(unit)))
+    let harvest = elab::harvest(unit);
+    let (kept, leaks) = harvest.interface();
+    if !leaks.is_empty() {
+        return Err(Error(ErrorInfo::NotExportable));
+    }
+    Ok(typelib::write(harvest, &kept))
 }
 
 /// A module's typelib, as [`typelib`] wrote it, decoded and found to be one this

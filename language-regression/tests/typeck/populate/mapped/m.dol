@@ -32,7 +32,7 @@ pub def tagged[T, *Us] *values @ ...Pair[T, Us]
   #     ^~~~~~: decl (...m.Pair[T, Us], <in, >out) -> Unknown
   values
 
-@let Known = {Num, ?Text, *Num, key: Text}
+pub @let Known = {Num, ?Text, *Num, key: Text}
 pub def known *values @ ...Box[Known]
   #     ^~~~~: decl (...m.Box[m.Known], <in, >out) -> Unknown
   values

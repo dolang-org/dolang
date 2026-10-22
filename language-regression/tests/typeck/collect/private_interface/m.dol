@@ -1,0 +1,242 @@
+import std:
+  - @Phantom
+
+class C
+
+@class P
+
+@let O = ...
+
+@let A = Int
+
+pub @class Generic[T]
+  pub def get self -> T
+
+# Signatures, of each kind of private declaration
+pub def sig _x @ C :_key @ P *_rest @ O -> A
+  # error: private class `C` in the public interface of function `sig`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def sig _x @ C :_key @ P *_rest @ O -> A
+  #    |                  ^
+  #    |
+  #    = help: declare `C` with `pub`
+  # error: private protocol `P` in the public interface of function `sig`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def sig _x @ C :_key @ P *_rest @ O -> A
+  #    |                            ^
+  #    |
+  #    = help: declare `P` with `pub`
+  # error: private opaque alias `O` in the public interface of function `sig`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def sig _x @ C :_key @ P *_rest @ O -> A
+  #    |                                       ^
+  #    |
+  #    = help: declare `O` with `pub`
+  # error: private alias `A` in the public interface of function `sig`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def sig _x @ C :_key @ P *_rest @ O -> A
+  #    |                                            ^
+  #    |
+  #    = help: declare `A` with `pub`
+  ...
+
+pub def ambient <C >P
+  # error: private class `C` in the public interface of function `ambient`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def ambient <C >P
+  #    |                  ^
+  #    |
+  #    = help: declare `C` with `pub`
+  # error: private protocol `P` in the public interface of function `ambient`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def ambient <C >P
+  #    |                     ^
+  #    |
+  #    = help: declare `P` with `pub`
+  ...
+
+@def over x @ A -> Int
+# error: private alias `A` in the public interface of function `over`
+#   --> m.dol:LL:LL
+#    |
+# LL | @def over x @ A -> Int
+#    |               ^
+#    |
+#    = help: declare `A` with `pub`
+pub def over _x
+  1
+
+# Supertypes, including type-only ones and their arguments
+pub class Sub: C
+# error: private class `C` in the public interface of class `Sub`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Sub: C
+#    |                ^
+#    |
+#    = help: declare `C` with `pub`
+
+pub class Conforms: @P
+# error: private protocol `P` in the public interface of class `Conforms`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Conforms: @P
+#    |                      ^
+#    |
+#    = help: declare `P` with `pub`
+
+pub class Applied: @Generic[O]
+# error: `Applied` does not provide `get`, which `Generic` requires
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Applied: @Generic[O]
+#    |                     ^^^^^^^
+# error: private opaque alias `O` in the public interface of class `Applied`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Applied: @Generic[O]
+#    |                             ^
+#    |
+#    = help: declare `O` with `pub`
+
+# Field types
+pub class Fields
+  pub field x @ A = 0
+# error: private alias `A` in the public interface of field `Fields.x`
+#   --> m.dol:LL:LL
+#    |
+# LL |   pub field x @ A = 0
+#    |                 ^
+#    |
+#    = help: declare `A` with `pub`
+
+# Binder bounds and defaults
+pub def bounded[T @ C] x @ T -> T
+  # error: private class `C` in the public interface of function `bounded`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def bounded[T @ C] x @ T -> T
+  #    |                     ^
+  #    |
+  #    = help: declare `C` with `pub`
+  x
+
+pub @let Defaulted[T = O] = T
+# error: private opaque alias `O` in the public interface of alias `Defaulted`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @let Defaulted[T = O] = T
+#    |                        ^
+#    |
+#    = help: declare `O` with `pub`
+
+# Alias bodies
+pub @let Body = (A | P)
+# error: private alias `A` in the public interface of alias `Body`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @let Body = (A | P)
+#    |                  ^
+#    |
+#    = help: declare `A` with `pub`
+# error: private protocol `P` in the public interface of alias `Body`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @let Body = (A | P)
+#    |                      ^
+#    |
+#    = help: declare `P` with `pub`
+
+pub @let Opaque[T @ A] = ...
+# error: private alias `A` in the public interface of opaque alias `Opaque`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @let Opaque[T @ A] = ...
+#    |                     ^
+#    |
+#    = help: declare `A` with `pub`
+
+# Exported variable annotations
+pub let value @ C = ...
+# error: private class `C` in the public interface of exported variable `value`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let value @ C = ...
+#    |                 ^
+#    |
+#    = help: declare `C` with `pub`
+
+# Methods, including special ones whatever their visibility
+pub class Methods
+  def (init) _self _x @ A
+    # error: private alias `A` in the public interface of method `Methods.(init)`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   def (init) _self _x @ A
+    #    |                         ^
+    #    |
+    #    = help: declare `A` with `pub`
+    nil
+
+  pub def method _self -> O
+    # error: private opaque alias `O` in the public interface of method `Methods.method`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def method _self -> O
+    #    |                           ^
+    #    |
+    #    = help: declare `O` with `pub`
+    ...
+
+# A private field counts towards variance when it is a direct `Phantom`
+pub class Marked[T]
+  field marker @ Phantom[(T, C)]
+# error: private class `C` in the public interface of class `Marked`
+#   --> m.dol:LL:LL
+#    |
+# LL |   field marker @ Phantom[(T, C)]
+#    |                              ^
+#    |
+#    = help: declare `C` with `pub`
+
+# Private members and declarations are not part of the interface
+pub class Members
+  field hidden @ C = ...
+
+  def helper _self _x @ P
+    nil
+
+def private_def _x @ C -> O
+  # warning: unused variable
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | def private_def _x @ C -> O
+  #    |     ^^^^^^^^^^^
+  ...
+
+@let Private = (A | O)
+
+class PrivateClass: C
+  # warning: unused variable
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | class PrivateClass: C
+  #    |       ^^^^^^^^^^^^
+  pub field x @ A = 0
+
+# Nor are bodies or decorators
+def decorate cls
+  cls
+
+#[decorate]
+pub class Decorated
+
+pub def body()
+  let local @ C = ...
+  local

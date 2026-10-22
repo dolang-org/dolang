@@ -10,8 +10,8 @@ use crate::{
     typeck::{
         self, Builder, Typelib,
         elab::{
-            Referent, Target,
-            surface::{Name, StrId},
+            DeclNode, Referent, Target,
+            surface::{Member, Name, StrId},
         },
     },
 };
@@ -234,6 +234,71 @@ fn exported_variables() {
         read(&encode(stray)),
         Err(Invalid::Malformed("a listed variable is not exported"))
     ));
+}
+
+#[test]
+fn private_items() {
+    let source = "
+import std:
+  - @Phantom
+
+class Hidden
+
+@let Inner = Int
+
+pub class Open[T]
+  field marker @ Phantom[T]
+  field secret @ Hidden = ...
+  pub field shown @ Int = 0
+
+  def (init) self
+    nil
+
+  def helper self -> Hidden
+    ...
+
+  pub def get self -> Int
+    ...
+
+def private_def()
+  ...
+";
+    let bytes = typeck::typelib(&compile(source, Mode::Module { name: "lib".into() })).unwrap();
+    let harvest = read(&bytes).unwrap();
+    let text = |name: Option<Name>| harvest.strings[name.unwrap().text.index()];
+    let decls: Vec<_> = (harvest.decls.iter()).map(|decl| text(decl.name)).collect();
+    // The special `(init)` stays whatever its visibility
+    assert_eq!(decls, ["Open", "init", "get"]);
+    let DeclNode::Class(open) = &harvest.decls[0].node else {
+        panic!("`Open` is a class");
+    };
+    let fields: Vec<_> = (open.members.iter())
+        .filter_map(|member| match member {
+            Member::Field(field) => Some(text(field.names.first().copied())),
+            Member::Method { .. } => None,
+        })
+        .collect();
+    // A private `Phantom` field counts towards the class's variance
+    assert_eq!(fields, ["marker", "shown"]);
+    assert_eq!(encode(harvest), bytes);
+}
+
+#[test]
+fn private_in_interface() {
+    for private in [
+        "class Private",
+        "@class Private",
+        "@let Private = ...",
+        "@let Private = Int",
+    ] {
+        let source = format!("{private}\n\npub def f x @ Private\n  x\n");
+        let unit = compile(&source, Mode::Module { name: "lib".into() });
+        let error = typeck::typelib(&unit).unwrap_err();
+        assert!(
+            matches!(error.kind(), ErrorKind::NotExportable),
+            "`{private}` is not exportable"
+        );
+    }
 }
 
 /// Corrupting any byte must make reading fail, or leave a typelib the checker

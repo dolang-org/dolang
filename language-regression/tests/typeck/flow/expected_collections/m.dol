@@ -1,7 +1,7 @@
 # A collection literal takes what's expected of it from any supertype of its
 # class that the expectation names, through aliases, so its symbols stay exact
 
-@let Mount = Dict[{type: (:CACHE: | :BIND:), target: Str}]
+pub @let Mount = Dict[{type: (:CACHE: | :BIND:), target: Str}]
 
 pub def one _m @ Mount
   ...
