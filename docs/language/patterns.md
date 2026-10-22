@@ -662,6 +662,19 @@ Like `if`, `match` can be the right-hand side of `let` or an assignment, and
 gives the result of the body that runs. Without `else`, it gives `nil` when no
 arm matches. The value being matched is evaluated once, before the first arm.
 
+The [type checker](./type-checking.md#narrowing) narrows the value by each arm
+that does not match, so a later arm sees only what remains:
+
+```
+def run step @ ((:cmd:, Str) | (:wait:, Int))
+  match step
+    (:cmd: line) do echo "run $line"
+    _ do
+      # step is (:wait:, Int)
+      let _ secs = step
+      echo "wait $secs"
+```
+
 ## Patterns in `for`
 
 `for` matches each element against its pattern:

@@ -104,13 +104,13 @@ pub class Indicator
     ...
 
 # Display units of an indicator.
-#
-# | Value       | Description                         |
-# | ----------- | ----------------------------------- |
-# | `:COUNT:`   | Display as `pos/len` or `pos`       |
-# | `:BYTES:`   | Display as human-readable bytes     |
-# | `:PERCENT:` | Display `pos / len` as a percentage |
-pub @let Units = (:COUNT: | :BYTES: | :PERCENT:)
+pub @let Units = $
+  # Display as `pos/len` or `pos`
+  | :COUNT:
+  # Display as human-readable bytes
+  | :BYTES:
+  # Display `pos / len` as a percentage
+  | :PERCENT:
 
 # Creates a progress indicator and runs `func` with it.
 #
@@ -229,37 +229,31 @@ pub @let Color = $
   | :BRIGHT:
 
 # A text attribute for [`Colors`](progress.Colors).
-#
-# | Attribute         | Effect        |
-# | ----------------- | ------------- |
-# | `:BOLD:`          | Bold          |
-# | `:DIM:`           | Dim           |
-# | `:ITALIC:`        | Italic        |
-# | `:UNDERLINED:`    | Underlined    |
-# | `:BLINK:`         | Blinking      |
-# | `:REVERSE:`       | Reverse video |
-# | `:HIDDEN:`        | Hidden        |
-# | `:STRIKETHROUGH:` | Strikethrough |
 pub @let Attr = $
+  # Bold
   | :BOLD:
+  # Dim
   | :DIM:
+  # Italic
   | :ITALIC:
+  # Underlined
   | :UNDERLINED:
+  # Blinking
   | :BLINK:
+  # Reverse video
   | :REVERSE:
+  # Hidden
   | :HIDDEN:
+  # Strikethrough
   | :STRIKETHROUGH:
 
 # Colors and attributes of one element of the progress display.
-#
-# | Key     | Meaning          |
-# | ------- | ---------------- |
-# | `fg`    | Foreground color |
-# | `bg`    | Background color |
-# | `attrs` | Text attributes  |
 pub @let Colors = $
+  # Foreground color
   ?fg: Color
+  # Background color
   ?bg: Color
+  # Text attributes
   ?attrs: BaseArray[Attr]
 
 # Display style overrides for [`with`](progress.with).

@@ -10,27 +10,24 @@ import
     - @DateTime
 
 # The type of a TAR entry.
-#
-# | Value            | Description                  |
-# | ---------------- | ---------------------------- |
-# | `:FILE:`         | Regular file                 |
-# | `:DIR:`          | Directory                    |
-# | `:HARDLINK:`     | Hard link                    |
-# | `:SYMLINK:`      | Symbolic link                |
-# | `:FIFO:`         | Named pipe (FIFO)            |
-# | `:CHAR_DEVICE:`  | Character device             |
-# | `:BLOCK_DEVICE:` | Block device                 |
-# | `:CONTIGUOUS:`   | Contiguous file              |
-# | `:UNKNOWN:`      | Any other type               |
 pub @let EntryType = $
+  # Regular file
   | :FILE:
+  # Directory
   | :DIR:
+  # Hard link
   | :HARDLINK:
+  # Symbolic link
   | :SYMLINK:
+  # Named pipe (FIFO)
   | :FIFO:
+  # Character device
   | :CHAR_DEVICE:
+  # Block device
   | :BLOCK_DEVICE:
+  # Contiguous file
   | :CONTIGUOUS:
+  # Any other type
   | :UNKNOWN:
 
 # Metadata and streaming content for the current TAR entry.

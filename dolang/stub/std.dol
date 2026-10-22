@@ -731,13 +731,15 @@ pub class Iterable[T]: @BaseIterable[T]
   pub def chain[*Us] self *values @ ...Iterable[Us] -> Iter[Union[T, ...Us]]
     ...
 
-  @def chomp[U @ (Str | Bin)] self @ Iterable[U] -> Iter[U]
+  @def chomp self @ Iterable[Str] -> Iter[Str]
+  @def chomp self @ Iterable[Bin] -> Iter[Bin]
 
   # Returns an iterator with one trailing line terminator removed from each item.
   pub def chomp self -> Iter[Str | Bin]
     ...
 
-  @def crimp[U @ (Str | Bin)] self@Iterable[U] terminator@(Str | Bin) = nil -> Iter[U]
+  @def crimp self@Iterable[Str] terminator@(Str | Bin) = nil -> Iter[Str]
+  @def crimp self@Iterable[Bin] terminator@(Str | Bin) = nil -> Iter[Bin]
 
   # Returns an iterator with a line terminator appended to each item.
   pub def crimp self terminator@(Str | Bin) = nil -> Iter[Str | Bin]
@@ -822,13 +824,15 @@ pub class Sinkable[T]: @BaseSinkable[T]
   pub def put self value @ T
     ...
 
-  @def prechomp[U @ (Str | Bin)] self @ Sinkable[U] -> Sink[U]
+  @def prechomp self @ Sinkable[Str] -> Sink[Str]
+  @def prechomp self @ Sinkable[Bin] -> Sink[Bin]
 
   # Returns a sink that removes one trailing line terminator from each value.
   pub def prechomp self -> Sink[T]
     ...
 
-  @def precrimp[U @ (Str | Bin)] self@Sinkable[U] terminator@(Str | Bin) = nil -> Sink[U]
+  @def precrimp self@Sinkable[Str] terminator@(Str | Bin) = nil -> Sink[Str]
+  @def precrimp self@Sinkable[Bin] terminator@(Str | Bin) = nil -> Sink[Bin]
 
   # Returns a sink that appends a line terminator to each value.
   pub def precrimp self terminator@(Str | Bin) = nil -> Sink[T]
@@ -859,7 +863,8 @@ pub class Sinkable[T]: @BaseSinkable[T]
 #
 #[mixable]
 pub class Sink[T]: Sinkable[T] @BaseSink[T]
-  @def prechomp[U @ (Str | Bin)] self @ Sink[U] -> Sink[U]
+  @def prechomp self @ Sink[Str] -> Sink[Str]
+  @def prechomp self @ Sink[Bin] -> Sink[Bin]
 
   #
   #
@@ -883,7 +888,8 @@ pub class Sink[T]: Sinkable[T] @BaseSink[T]
   pub def prechomp self -> Sink[T]
     ...
 
-  @def precrimp[U @ (Str | Bin)] self@Sink[U] terminator@(Str | Bin) = nil -> Sink[U]
+  @def precrimp self@Sink[Str] terminator@(Str | Bin) = nil -> Sink[Str]
+  @def precrimp self@Sink[Bin] terminator@(Str | Bin) = nil -> Sink[Bin]
 
   #
   # Creates a wrapper `Sink` that appends a terminator to each value before it is
@@ -3436,7 +3442,8 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   pub def chain[*Us] self *values @ ...Iterable[Us] -> Iter[Union[T, ...Us]]
     ...
 
-  @def chomp[U @ (Str | Bin)] self @ Iter[U] -> Iter[U]
+  @def chomp self @ Iter[Str] -> Iter[Str]
+  @def chomp self @ Iter[Bin] -> Iter[Bin]
 
   #
   # Creates a wrapper `Iter` which removes one trailing line terminator (`\r\n` or
@@ -3469,7 +3476,8 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   pub def count self -> Int
     ...
 
-  @def crimp[U @ (Str | Bin)] self@Iter[U] terminator@(Str | Bin) = nil -> Iter[U]
+  @def crimp self@Iter[Str] terminator@(Str | Bin) = nil -> Iter[Str]
+  @def crimp self@Iter[Bin] terminator@(Str | Bin) = nil -> Iter[Bin]
 
   #
   # Creates a wrapper `Iter` which appends a line terminator to each item.

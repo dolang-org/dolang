@@ -28,9 +28,9 @@
   themselves as the one safe operand and auto-escape everything *else* in
   the expression, corrupting the literal `<code>` tags too.
 #}
-{% macro signature_heading(sig, return_type, heading_level, id, role, toc_label) %}
-{% set content %}<code>{{ sig }}{% if return_type %} -&gt; {{ return_type | convert_markdown(heading_level, id ~ "--returns", strip_paragraph=true) }}{% endif %}</code>{% endset %}
-{{ content | trim | heading(heading_level, role=role, id=id, toc_label=toc_label) }}
+{% macro signature_heading(sig, return_type, heading_level, id, role, toc_label, overload=none) %}
+{% set content %}<code>{{ sig }}{% if return_type %} -&gt; {{ return_type | convert_markdown(heading_level, id ~ "--returns", strip_paragraph=true) }}{% endif %}</code>{% if overload %} <sup class="do-overload">{{ overload.label }}</sup>{% endif %}{% endset %}
+{{ content | trim | heading(heading_level, role=role, id=id, toc_label=toc_label ~ (" " ~ overload.mark if overload else "")) }}
 {% endmacro %}
 
 {% macro parameters(entity, heading_level, base_id) %}

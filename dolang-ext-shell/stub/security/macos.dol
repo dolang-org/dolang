@@ -7,37 +7,34 @@ import
     - @Uuid
 
 # A symbol naming a bit of a [`Mask`](security.macos.Mask).
-#
-# | Symbol                  | Meaning                                                |
-# | ----------------------- | ------------------------------------------------------ |
-# | `:READ_DATA:`           | Read the file's data, or list a directory              |
-# | `:WRITE_DATA:`          | Write the file's data, or create a file in a directory |
-# | `:EXECUTE:`             | Execute the file, or traverse a directory              |
-# | `:DELETE:`              | Delete the file or directory                           |
-# | `:APPEND_DATA:`         | Append to the file's data, or create a subdirectory    |
-# | `:DELETE_CHILD:`        | Delete a file or directory within a directory          |
-# | `:READ_ATTRIBUTES:`     | Read basic attributes                                  |
-# | `:WRITE_ATTRIBUTES:`    | Write basic attributes                                 |
-# | `:READ_EXTATTRIBUTES:`  | Read extended attributes                               |
-# | `:WRITE_EXTATTRIBUTES:` | Write extended attributes                              |
-# | `:READ_SECURITY:`       | Read the ACL                                           |
-# | `:WRITE_SECURITY:`      | Write the ACL                                          |
-# | `:CHANGE_OWNER:`        | Change owner and owning group                          |
-# | `:SYNCHRONIZE:`         | Use synchronous I/O                                    |
 pub @let MaskBit = $
+  # Read the file's data, or list a directory
   | :READ_DATA:
+  # Write the file's data, or create a file in a directory
   | :WRITE_DATA:
+  # Execute the file, or traverse a directory
   | :EXECUTE:
+  # Delete the file or directory
   | :DELETE:
+  # Append to the file's data, or create a subdirectory
   | :APPEND_DATA:
+  # Delete a file or directory within a directory
   | :DELETE_CHILD:
+  # Read basic attributes
   | :READ_ATTRIBUTES:
+  # Write basic attributes
   | :WRITE_ATTRIBUTES:
+  # Read extended attributes
   | :READ_EXTATTRIBUTES:
+  # Write extended attributes
   | :WRITE_EXTATTRIBUTES:
+  # Read the ACL
   | :READ_SECURITY:
+  # Write the ACL
   | :WRITE_SECURITY:
+  # Change owner and owning group
   | :CHANGE_OWNER:
+  # Use synchronous I/O
   | :SYNCHRONIZE:
 
 # macOS extended ACE permission bits.
@@ -86,19 +83,16 @@ pub class Mask: Iterable[MaskBit]
 
 
 # A symbol naming a flag of a [`Flags`](security.macos.Flags).
-#
-# | Symbol                | Meaning                                                            |
-# | --------------------- | ------------------------------------------------------------------ |
-# | `:FILE_INHERIT:`      | Files created within a directory inherit this entry                |
-# | `:DIRECTORY_INHERIT:` | Subdirectories created within a directory inherit this entry       |
-# | `:LIMIT_INHERIT:`     | Stop propagating this entry after one level of inheritance         |
-# | `:ONLY_INHERIT:`      | This entry is inherited but does not apply to the directory itself |
-# | `:INHERITED:`         | This entry was inherited from a parent directory                   |
 pub @let FlagBit = $
+  # Files created within a directory inherit this entry
   | :FILE_INHERIT:
+  # Subdirectories created within a directory inherit this entry
   | :DIRECTORY_INHERIT:
+  # Stop propagating this entry after one level of inheritance
   | :LIMIT_INHERIT:
+  # This entry is inherited but does not apply to the directory itself
   | :ONLY_INHERIT:
+  # This entry was inherited from a parent directory
   | :INHERITED:
 
 # macOS extended ACE inheritance flags.

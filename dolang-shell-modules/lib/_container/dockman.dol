@@ -27,69 +27,60 @@ import progress json patch rand shlex strand proc sys transfer _vfs time
     - @DecodeValue
 
 # An image pull policy.
-#
-# | Value       | Meaning                                  |
-# | ----------- | ---------------------------------------- |
-# | `:MISSING:` | Pull the image only when it is not local |
-# | `:ALWAYS:`  | Always pull the image                    |
-# | `:NEVER:`   | Never pull the image                     |
-pub @let PullPolicy = (:MISSING: | :ALWAYS: | :NEVER:)
+pub @let PullPolicy = $
+  # Pull the image only when it is not local
+  | :MISSING:
+  # Always pull the image
+  | :ALWAYS:
+  # Never pull the image
+  | :NEVER:
 
 # Environment variables to set. A value of `:INHERIT:` copies the variable from
 # the calling environment; any other value is converted to a string.
 pub @let Env = BaseDict[Str | Sym, Value]
 
 # A mount for a container.
-#
-# | Key        | Meaning                                         |
-# | ---------- | ----------------------------------------------- |
-# | `type`     | Mount type                                      |
-# | `target`   | Mount path in the container                     |
-# | `source`   | Host path or volume name. Required for `:BIND:` |
-# | `readonly` | Mount read-only. Defaults to `false`            |
 pub @let ContainerMount = BaseDict $
+  # Mount type
   type: (:BIND: | :VOLUME: | :TMPFS:)
+  # Mount path in the container
   target: (Str | Path)
+  # Host path or volume name. Required for `:BIND:`
   ?source: (Str | Path)
+  # Mount read-only. Defaults to `false`
   ?readonly: Bool
 
 # A mount available to every build step.
-#
-# | Key        | Meaning                                         |
-# | ---------- | ----------------------------------------------- |
-# | `type`     | Mount type                                      |
-# | `target`   | Mount path in the container                     |
-# | `source`   | Host path or volume name. Required for `:BIND:` |
-# | `id`       | Cache ID. Defaults to `target`                  |
-# | `readonly` | Mount read-only. Defaults to `false`            |
-# | `size`     | Size limit                                      |
-# | `chown`    | Change the mount's owner to the container user  |
-# | `selinux`  | Relabel for SELinux: `:SHARED:` or `:PRIVATE:`  |
 pub @let BuildMount = BaseDict $
+  # Mount type
   type: (:CACHE: | :BIND: | :VOLUME: | :TMPFS:)
+  # Mount path in the container
   target: (Str | Path)
+  # Host path or volume name. Required for `:BIND:`
   ?source: (Str | Path)
+  # Cache ID. Defaults to `target`
   ?id: Str
+  # Mount read-only. Defaults to `false`
   ?readonly: Bool
+  # Size limit
   ?size: (Int | Str)
+  # Change the mount's owner to the container user
   ?chown: Bool
+  # Relabel for SELinux: `:SHARED:` or `:PRIVATE:`
   ?selinux: (:SHARED: | :PRIVATE:)
 
 # A network protocol for a published port.
 pub @let PortProtocol = (:TCP: | :UDP: | :SCTP:)
 
 # A container port to publish on the host.
-#
-# | Key              | Meaning                                         |
-# | ---------------- | ----------------------------------------------- |
-# | `container_port` | Container port                                  |
-# | `host_port`      | Host port. Assigned automatically when omitted  |
-# | `host_ip`        | Host address to bind                            |
-# | `protocol`       | Protocol. Defaults to `:TCP:`                   |
 pub @let PortSpec = BaseDict $
+  # Container port
   container_port: (Int | Str)
+  # Host port. Assigned automatically when omitted
   ?host_port: (Int | Str)
+  # Host address to bind
   ?host_ip: Str
+  # Protocol. Defaults to `:TCP:`
   ?protocol: PortProtocol
 
 # A container restart policy.
@@ -115,19 +106,16 @@ pub @let Platform = $
       ?variant: Str
 
 # An image archive format. Docker supports only `:DOCKER_ARCHIVE:`.
-#
-# | Value              | Meaning                                                 |
-# | ------------------ | ------------------------------------------------------- |
-# | `:DOCKER_ARCHIVE:` | Single-file Docker archive, the only multi-image format |
-# | `:OCI_ARCHIVE:`    | Single-file OCI archive                                 |
-# | `:OCI_DIR:`        | OCI layout directory                                    |
-# | `:DOCKER_DIR:`     | Docker directory format                                 |
-# | `:DIR:`            | Plain directory of layers                               |
 pub @let ArchiveFormat = $
+  # Single-file Docker archive, the only multi-image format
   | :DOCKER_ARCHIVE:
+  # Single-file OCI archive
   | :OCI_ARCHIVE:
+  # OCI layout directory
   | :OCI_DIR:
+  # Docker directory format
   | :DOCKER_DIR:
+  # Plain directory of layers
   | :DIR:
 
 # A file to add in a build step, from a path or URL or as direct content.

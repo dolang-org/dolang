@@ -25,9 +25,8 @@ additional space.
 
 ## Target Platform
 
-`os:` is required, and `arch:` defaults to the host architecture. Both use the
-same symbol vocabulary as
-[`sys.os_info().os`](sys)/[`sys.cpu_info().arch`](sys).
+`os:` is required and takes a [`sys.Os`](sys.Os). `arch:` takes a
+[`sys.Arch`](sys.Arch) and defaults to the host architecture.
 
 The domain is defined for KVM with a `host-passthrough` CPU, so `arch:` must be
 the host architecture; a foreign one is rejected rather than emulated.

@@ -12,62 +12,56 @@ import
     @AccessRight: WindowsAccessRight
     - @SecDesc
     - @SecDescSpec
+    - @SecDescOptions
     AccessMask: WindowsAccessMask
 
 # A registry root.
-#
-# | Symbol             | Meaning                              |
-# | ------------------ | ------------------------------------ |
-# | `:CLASSES_ROOT:`   | File associations and class settings |
-# | `:CURRENT_USER:`   | Current user's profile               |
-# | `:LOCAL_MACHINE:`  | Computer-wide configuration          |
-# | `:USERS:`          | All user profiles                    |
-# | `:CURRENT_CONFIG:` | Current hardware profile             |
 pub @let RegistryRoot = $
+  # File associations and class settings
   | :CLASSES_ROOT:
+  # Current user's profile
   | :CURRENT_USER:
+  # Computer-wide configuration
   | :LOCAL_MACHINE:
+  # All user profiles
   | :USERS:
+  # Current hardware profile
   | :CURRENT_CONFIG:
 
 # A registry view.
-#
-# | Symbol     | Meaning                                   |
-# | ---------- | ----------------------------------------- |
-# | `:NATIVE:` | The target process's native registry view |
-# | `:WOW32:`  | The 32-bit registry view                  |
-# | `:WOW64:`  | The 64-bit registry view                  |
-pub @let RegistryView = (:NATIVE: | :WOW32: | :WOW64:)
+pub @let RegistryView = $
+  # The target process's native registry view
+  | :NATIVE:
+  # The 32-bit registry view
+  | :WOW32:
+  # The 64-bit registry view
+  | :WOW64:
 
 # The kind of a stored registry value.
-#
-# | Symbol               | Stored value type            |
-# | -------------------- | ---------------------------- |
-# | `:SZ:`               | UTF-16 string                |
-# | `:EXPAND_SZ:`        | Expandable UTF-16 string     |
-# | `:MULTI_SZ:`         | Sequence of UTF-16 strings   |
-# | `:DWORD:`            | Little-endian 32-bit integer |
-# | `:DWORD_BIG_ENDIAN:` | Big-endian 32-bit integer    |
-# | `:QWORD:`            | Little-endian 64-bit integer |
-# | `:BINARY:`           | Raw bytes                    |
-# | `:NONE:`             | No data                      |
 pub @let ValueKind = $
+  # UTF-16 string
   | :SZ:
+  # Expandable UTF-16 string
   | :EXPAND_SZ:
+  # Sequence of UTF-16 strings
   | :MULTI_SZ:
+  # Little-endian 32-bit integer
   | :DWORD:
+  # Big-endian 32-bit integer
   | :DWORD_BIG_ENDIAN:
+  # Little-endian 64-bit integer
   | :QWORD:
+  # Raw bytes
   | :BINARY:
+  # No data
   | :NONE:
 
 # How opening a key treats a registry link.
-#
-# | Symbol     | Meaning                  |
-# | ---------- | ------------------------ |
-# | `:TARGET:` | Follow the link          |
-# | `:LINK:`   | Open the link key itself |
-pub @let LinkResolution = (:TARGET: | :LINK:)
+pub @let LinkResolution = $
+  # Follow the link
+  | :TARGET:
+  # Open the link key itself
+  | :LINK:
 
 # Registry value data in its natural Do representation. See
 # [`Value.value`](winreg.Value.value) for how each value kind maps to it.
@@ -536,9 +530,8 @@ pub class Key
     self
     # Descriptor to apply.
     desc @ SecDescSpec = nil
-    # Components, as [`sec_desc`](security.windows.sec_desc) takes them, instead
-    # of or alongside `desc`.
-    **options @ Value
+    # Components and control flags, instead of or alongside `desc`.
+    ...options @ SecDescOptions
   do
     ...
 

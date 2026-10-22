@@ -11,6 +11,7 @@ import _shell args compile json shell
 
 let PRELUDE_ITEMS = Set $
   - getter
+  - setter
   - class
   - static
   - final
@@ -362,7 +363,7 @@ def doc_line line
 # already-built [`Index`](#Index) rather than re-walking `unit.nodes()`.
 class Document
   field src module all index root
-  field getter class_target static_target class_decorators
+  field getter setter class_target static_target class_decorators
   field members entities
 
   def (init) self src module all index
@@ -376,6 +377,7 @@ class Document
   pub def result self unit path
     let decorators = self.#prelude_items(unit)
     self.#getter = decorators.get "getter" default: nil
+    self.#setter = decorators.get "setter" default: nil
     self.#class_target = decorators.get "class" default: nil
     self.#static_target = decorators.get "static" default: nil
     self.#class_decorators = [...CLASS_DECORATORS.filter(do |name| decorators.contains name).map(do |name| [name, decorators[name]])]
@@ -615,6 +617,23 @@ class Document
 
   def add_member self node member
     let list = self.#members.get $node.parent else: do return
+    # A getter and a setter describe one field, documented by both: the
+    # getter's comment first, then the setter's
+    if (member[:kind:] == "field")
+      let same = list.find default: nil do |m| [:kind:, :name:, :scope:, :pub:].all(do |k| m[k] == member[k])
+      if (same != nil)
+        let first second = if (member[:access:] == ["get"])
+          [member, same]
+        else
+          [same, member]
+        let docs = [...[first[:doc:], second[:doc:]].filter(do |d| d != nil)]
+        same[:doc:] = (docs.len > 0 && "\n\n".join(docs) || nil)
+        same[:access:] = ["get", "set"]
+        if first.contains(:type:)
+          same[:type:] = first[:type:]
+        else if second.contains(:type:)
+          same[:type:] = second[:type:]
+        return
     list.push $member
 
   def class_entry self id node
@@ -722,6 +741,7 @@ class Document
       span: (span_json(node.name))
       doc: (self.#doc_of(node))
       scope: (self.#scope(id))
+      access: ["get", "set"]
       if (ty != nil)
         type: $ty
 
@@ -736,16 +756,30 @@ class Document
     let returns = self.#type_of $id
     let self_type = self.#self_type $id
     let binders = self.#binders(id)
+    let own = self.#own(id)
+    # A setter's field type is that of the value it takes
+    let value = self.#params(id).get 0 default: {}
     self.#add_member $node $
-      if decorated(self.#own(id), self.#getter)
+      if decorated(own, self.#getter)
         kind: "field"
         name: (self.#text(node.name))
         pub: $is_pub
         span: (span_json(node.name))
         doc: (self.#doc_of(node))
         scope: (self.#scope(id))
+        access: ["get"]
         if (returns != nil)
           type: $returns
+      else if decorated(own, self.#setter)
+        kind: "field"
+        name: (self.#text(node.name))
+        pub: $is_pub
+        span: (span_json(node.name))
+        doc: (self.#doc_of(node))
+        scope: (self.#scope(id))
+        access: ["set"]
+        if value.contains(:type:)
+          type: $value[:type:]
       else
         kind: "method"
         name: (self.#text(node.name))

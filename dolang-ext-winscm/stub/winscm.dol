@@ -14,73 +14,70 @@ import
     - @AccessRight
     - @SecDesc
     - @SecDescSpec
+    - @SecDescOptions
 
 # A control request for [`Service.control`](winscm.Service.control).
-#
-# | Symbol          | Requests that the service         |
-# | --------------- | --------------------------------- |
-# | `:STOP:`        | Stop                              |
-# | `:PAUSE:`       | Pause                             |
-# | `:CONTINUE:`    | Resume from the paused state      |
-# | `:INTERROGATE:` | Report its current status         |
-pub @let ControlRequest = (:STOP: | :PAUSE: | :CONTINUE: | :INTERROGATE:)
+pub @let ControlRequest = $
+  # Stop
+  | :STOP:
+  # Pause
+  | :PAUSE:
+  # Resume from the paused state
+  | :CONTINUE:
+  # Report its current status
+  | :INTERROGATE:
 
 # The state of a service.
-#
-# | Symbol               | Meaning                        |
-# | -------------------- | ------------------------------ |
-# | `:STOPPED:`          | Not running                    |
-# | `:START_PENDING:`    | Starting                       |
-# | `:STOP_PENDING:`     | Stopping                       |
-# | `:RUNNING:`          | Running                        |
-# | `:CONTINUE_PENDING:` | Resuming from the paused state |
-# | `:PAUSE_PENDING:`    | Pausing                        |
-# | `:PAUSED:`           | Paused                         |
 pub @let ServiceState = $
+  # Not running
   | :STOPPED:
+  # Starting
   | :START_PENDING:
+  # Stopping
   | :STOP_PENDING:
+  # Running
   | :RUNNING:
+  # Resuming from the paused state
   | :CONTINUE_PENDING:
+  # Pausing
   | :PAUSE_PENDING:
+  # Paused
   | :PAUSED:
 
 # When a service starts.
-#
-# | Symbol           | Meaning                                       |
-# | ---------------- | --------------------------------------------- |
-# | `:BOOT_START:`   | Starts during boot before the driver is ready |
-# | `:SYSTEM_START:` | Starts during kernel initialization           |
-# | `:AUTO_START:`   | Starts automatically during system startup    |
-# | `:DEMAND_START:` | Starts when requested                         |
-# | `:DISABLED:`     | Cannot be started                             |
 pub @let StartType = $
+  # Starts during boot before the driver is ready
   | :BOOT_START:
+  # Starts during kernel initialization
   | :SYSTEM_START:
+  # Starts automatically during system startup
   | :AUTO_START:
+  # Starts when requested
   | :DEMAND_START:
+  # Cannot be started
   | :DISABLED:
 
 # What Windows does when a service fails to start.
-#
-# | Symbol       | Meaning                                                     |
-# | ------------ | ----------------------------------------------------------- |
-# | `:IGNORE:`   | Logs the error and continues startup                        |
-# | `:NORMAL:`   | Logs the error, displays a message, and continues startup   |
-# | `:SEVERE:`   | Restarts with the last known-good configuration if possible |
-# | `:CRITICAL:` | Restarts with it; fails startup if that restart fails       |
-pub @let ErrorControl = (:IGNORE: | :NORMAL: | :SEVERE: | :CRITICAL:)
+pub @let ErrorControl = $
+  # Logs the error and continues startup
+  | :IGNORE:
+  # Logs the error, displays a message, and continues startup
+  | :NORMAL:
+  # Restarts with the last known-good configuration if possible
+  | :SEVERE:
+  # Restarts with it; fails startup if that restart fails
+  | :CRITICAL:
 
 # Which services
 # [`ScManager.enumerate_services`](winscm.ScManager.enumerate_services)
 # includes.
-#
-# | Symbol       | Includes                        |
-# | ------------ | ------------------------------- |
-# | `:ACTIVE:`   | Services that are not stopped   |
-# | `:INACTIVE:` | Services that are stopped       |
-# | `:ALL:`      | Both                            |
-pub @let StateFilter = (:ACTIVE: | :INACTIVE: | :ALL:)
+pub @let StateFilter = $
+  # Services that are not stopped
+  | :ACTIVE:
+  # Services that are stopped
+  | :INACTIVE:
+  # Both
+  | :ALL:
 
 # A right of a [`ManagerAccessMask`](winscm.ManagerAccessMask): a
 # manager-specific right, or a generic Windows
@@ -241,23 +238,20 @@ pub class ServiceAccessMask: AccessMask
 
 
 # A flag of a [`ServiceType`](winscm.ServiceType).
-#
-# | Symbol                  | Meaning                                             |
-# | ----------------------- | --------------------------------------------------- |
-# | `:KERNEL_DRIVER:`       | Kernel-mode device driver                           |
-# | `:FILE_SYSTEM_DRIVER:`  | File-system driver                                  |
-# | `:WIN32_OWN_PROCESS:`   | Win32 service running in its own process            |
-# | `:WIN32_SHARE_PROCESS:` | Win32 service sharing a process with other services |
-# | `:INTERACTIVE_PROCESS:` | Service that can interact with the desktop          |
-# | `:DRIVER:`              | Either kind of driver                               |
-# | `:WIN32:`               | Either kind of Win32 service                        |
 pub @let ServiceTypeFlag = $
+  # Kernel-mode device driver
   | :KERNEL_DRIVER:
+  # File-system driver
   | :FILE_SYSTEM_DRIVER:
+  # Win32 service running in its own process
   | :WIN32_OWN_PROCESS:
+  # Win32 service sharing a process with other services
   | :WIN32_SHARE_PROCESS:
+  # Service that can interact with the desktop
   | :INTERACTIVE_PROCESS:
+  # Either kind of driver
   | :DRIVER:
+  # Either kind of Win32 service
   | :WIN32:
 
 # Windows service type flags.
@@ -324,29 +318,26 @@ pub class ServiceType: Iterable[ServiceTypeFlag]
 
 
 # A status change in a [`NotifyMask`](winscm.NotifyMask).
-#
-# | Symbol               | Observes a change to                   |
-# | -------------------- | -------------------------------------- |
-# | `:STOPPED:`          | The stopped state                      |
-# | `:START_PENDING:`    | The start-pending state                |
-# | `:STOP_PENDING:`     | The stop-pending state                 |
-# | `:RUNNING:`          | The running state                      |
-# | `:CONTINUE_PENDING:` | The continue-pending state             |
-# | `:PAUSE_PENDING:`    | The pause-pending state                |
-# | `:PAUSED:`           | The paused state                       |
-# | `:CREATED:`          | Service creation                       |
-# | `:DELETED:`          | Service deletion                       |
-# | `:DELETE_PENDING:`   | A service becoming marked for deletion |
 pub @let NotifyChange = $
+  # The stopped state
   | :STOPPED:
+  # The start-pending state
   | :START_PENDING:
+  # The stop-pending state
   | :STOP_PENDING:
+  # The running state
   | :RUNNING:
+  # The continue-pending state
   | :CONTINUE_PENDING:
+  # The pause-pending state
   | :PAUSE_PENDING:
+  # The paused state
   | :PAUSED:
+  # Service creation
   | :CREATED:
+  # Service deletion
   | :DELETED:
+  # A service becoming marked for deletion
   | :DELETE_PENDING:
 
 # Service status changes to observe.
@@ -414,31 +405,28 @@ pub class NotifyMask: Iterable[NotifyChange]
 
 
 # A control in a [`ServiceControlsAccepted`](winscm.ServiceControlsAccepted).
-#
-# | Symbol                    | Accepts control requests to                       |
-# | ------------------------- | ------------------------------------------------- |
-# | `:STOP:`                  | Stop the service                                  |
-# | `:PAUSE_CONTINUE:`        | Pause or continue the service                     |
-# | `:SHUTDOWN:`              | Prepare for system shutdown                       |
-# | `:PARAMCHANGE:`           | Reload configuration parameters                   |
-# | `:NETBINDCHANGE:`         | Handle a network binding change                   |
-# | `:HARDWAREPROFILECHANGE:` | Handle a hardware-profile change                  |
-# | `:POWEREVENT:`            | Handle a power event                              |
-# | `:SESSIONCHANGE:`         | Handle a terminal-services session change         |
-# | `:PRESHUTDOWN:`           | Prepare for system shutdown before other services |
-# | `:TIMECHANGE:`            | Handle a system-time change                       |
-# | `:TRIGGEREVENT:`          | Handle a service-trigger event                    |
 pub @let AcceptedControl = $
+  # Stop the service
   | :STOP:
+  # Pause or continue the service
   | :PAUSE_CONTINUE:
+  # Prepare for system shutdown
   | :SHUTDOWN:
+  # Reload configuration parameters
   | :PARAMCHANGE:
+  # Handle a network binding change
   | :NETBINDCHANGE:
+  # Handle a hardware-profile change
   | :HARDWAREPROFILECHANGE:
+  # Handle a power event
   | :POWEREVENT:
+  # Handle a terminal-services session change
   | :SESSIONCHANGE:
+  # Prepare for system shutdown before other services
   | :PRESHUTDOWN:
+  # Handle a system-time change
   | :TIMECHANGE:
+  # Handle a service-trigger event
   | :TRIGGEREVENT:
 
 # Controls a running service accepts.
@@ -801,9 +789,8 @@ pub class Service
     self
     # Descriptor to apply.
     desc @ SecDescSpec = nil
-    # Components, as [`sec_desc`](security.windows.sec_desc) takes them, instead
-    # of or alongside `desc`.
-    **options @ Value
+    # Components and control flags, instead of or alongside `desc`.
+    ...options @ SecDescOptions
   do
     ...
 

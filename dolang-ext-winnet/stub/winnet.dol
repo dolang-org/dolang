@@ -36,14 +36,15 @@ import
     - @Duration
 
 # The kind of resource a share exposes.
-#
-# | Symbol       | Resource                   |
-# | ------------ | -------------------------- |
-# | `:DISKTREE:` | Disk drive                 |
-# | `:PRINTQ:`   | Print queue                |
-# | `:DEVICE:`   | Communication device       |
-# | `:IPC:`      | Interprocess communication |
-pub @let ShareKind = (:DISKTREE: | :PRINTQ: | :DEVICE: | :IPC:)
+pub @let ShareKind = $
+  # Disk drive
+  | :DISKTREE:
+  # Print queue
+  | :PRINTQ:
+  # Communication device
+  | :DEVICE:
+  # Interprocess communication
+  | :IPC:
 
 # The kind of resource a network connection reaches.
 pub @let ConnectionKind = (:DISK: | :PRINT: | :ANY:)
