@@ -97,19 +97,6 @@ def typelib_exports_are_checked()
     assert ((printed out).contains "module `m` has no export `Absent`")
 
 #[test]
-def typelib_diagnostics_are_located()
-  with_temp_dir do |dir|
-    write_typelib flawed flawed/f.dol $dir
-    let out = BinBuf()
-    assert_throws $proc.Error do
-      cd $FIXTURE do
-        run $shell.exe -m compile check flawed.dol --path $dir stdout: $out stderr: :STDOUT: mode: :CHUNK:
-    let text = printed $out
-    assert (text.contains "this does not satisfy `T @ A`")
-    assert (text.contains "flawed/f.dol:5:19")
-    assert (text.contains "partial: 2 units, 2 diagnostics")
-
-#[test]
 def a_typelib_needs_a_module_name()
   let out = BinBuf()
   assert_throws $proc.Error do

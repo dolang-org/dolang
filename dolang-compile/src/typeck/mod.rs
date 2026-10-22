@@ -192,8 +192,8 @@ impl<'u, 's> Builder<'u, 's> {
     /// Add a module to check by its typelib. The same typelib may be added to any
     /// number of checks.
     ///
-    /// Its classes' conformance to their supertypes is not checked; that was
-    /// done with its source.
+    /// Its types' well-formedness and its classes' conformance to their
+    /// supertypes are not checked; that was done with its source.
     ///
     /// Diagnostics may locate spans of the module, by line and column; it has no
     /// source to show.
@@ -411,8 +411,8 @@ fn check_units(
     let mut work: Vec<_> = (slots.iter_mut().enumerate())
         .map(|(index, slot)| (UnitId::from_index(index), slot))
         .collect();
-    // Largest first, so that no large unit starts last; typelibs only check
-    // declarations
+    // Largest first, so that no large unit starts last; typelibs have nothing of
+    // their own to check
     work.sort_by_key(|(unit, _)| {
         let info = &tables.units[unit.index()];
         std::cmp::Reverse(info.source.map_or(0, |_| info.newlines.len()))
@@ -446,8 +446,8 @@ fn check_units(
         .collect()
 }
 
-/// Check a unit's declarations, and for a unit with source, its bodies, in a new
-/// fork of `shared`
+/// Check a unit with source, its declarations and bodies, in a new fork of
+/// `shared`; a typelib's were checked with its source
 fn check_unit(
     shared: &Arc<r#type::Shared>,
     tables: &elab::Tables<'_>,
@@ -456,11 +456,15 @@ fn check_unit(
 ) -> UnitOutput {
     // A fork of its own, so that what it interns isn't in the layer
     let db = r#type::Database::fork(shared);
-    let mut wellformed = Vec::new();
-    let wellformed_unresolved = elab::wellformed(&db, tables, bounds, unit, &mut wellformed);
     let source = tables.units[unit.index()].source;
-    // A typelib's overrides were checked with its source, and a nonconforming
-    // member only misleads checks against it
+    // A typelib's well-formedness and overrides were checked with its source;
+    // the solver copes with an ill-formed type, and a nonconforming member only
+    // misleads checks against it
+    let mut wellformed = Vec::new();
+    let wellformed_unresolved = match source {
+        Some(_) => elab::wellformed(&db, tables, bounds, unit, &mut wellformed),
+        None => Vec::new(),
+    };
     let mut overrides = Vec::new();
     let overrides_unresolved = match source {
         Some(_) => elab::overrides(&db, tables, unit, &mut overrides),
