@@ -2,15 +2,20 @@
 //! of their syntax trees by collection.
 //!
 //! Nothing here refers to a syntax tree or to source text. Spans are kept, as the
-//! keys the tables are indexed by and for diagnostics, and names are spelled through
-//! each unit's string table, so a unit's surface means the same thing whether or not
-//! its source is at hand.
+//! keys name resolution's tables are indexed by and for diagnostics, and names are
+//! spelled through each unit's string table, so a unit's surface means the same thing
+//! whether or not its source is at hand.
+//!
+//! What a later pass finds of a written form, such as the type it is interned as,
+//! is kept in a slot on the form. Slots are relaxed atomics, filled before the
+//! tables are shared, and are not serialized.
 
 use std::{
     fmt::{self, Write},
     sync::atomic::{AtomicU8, Ordering},
 };
 
+use dolang_util::intern::AtomicId;
 use serde::{Deserialize, Serialize};
 
 use super::{Designated, Tables};
@@ -19,7 +24,7 @@ use crate::{
     ast::SpecialMethod,
     source::Span,
     typeck::{
-        r#type::{DeclId, Intrinsic, UnitId},
+        r#type::{DeclId, Intrinsic, TypeTag, UnitId},
         typelib::wire,
     },
 };
@@ -51,6 +56,9 @@ impl SiteId {
         self.0 as usize
     }
 }
+
+/// The type a written form was interned as, filled by population
+pub(crate) type Interned = AtomicId<TypeTag>;
 
 /// The collection a schema is where a type is required, filled by kind checking
 #[derive(Default)]
@@ -114,6 +122,9 @@ pub(crate) enum TypeExpr {
         span: Span,
         base: Box<TypeExpr>,
         args: Vec<TypeArg>,
+        /// Its type, interned in the group it is written in
+        #[serde(skip)]
+        interned: Interned,
     },
     /// A schema, e.g. `{name: Str, ?port: Int}`. Where a type is required, it is
     /// `std.Dict` of itself, or `std.Tuple` of its items when it is `tuple`.
@@ -171,6 +182,9 @@ pub(crate) enum TypeExpr {
         #[serde(with = "wire::span")]
         arrow_span: Span,
         ret: Box<TypeExpr>,
+        /// Its type, interned in the group it is written in
+        #[serde(skip)]
+        interned: Interned,
     },
     /// A type that could not be interpreted
     Error {
@@ -480,6 +494,9 @@ pub(crate) struct Super {
     pub(crate) bracket_span: Option<Span>,
     /// Whether it exists only in types
     pub(crate) type_only: bool,
+    /// The supertype it names, interned in its class's group
+    #[serde(skip)]
+    pub(crate) interned: Interned,
 }
 
 impl Super {

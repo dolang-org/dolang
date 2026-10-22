@@ -25,8 +25,8 @@ use super::{
     sig::{self, Form},
     surface::{
         BinderKind, Class, ConstLit, Member as SourceMember, MemberScope, Name, ParamKind,
-        Signature, SiteId, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam, TypeParamKind,
-        TypeQuant,
+        Signature, SiteId, Super, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam,
+        TypeParamKind, TypeQuant,
     },
 };
 use crate::{
@@ -134,11 +134,9 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
         reported: FxHashSet::default(),
         defaults: FxHashMap::default(),
         expanding: Vec::new(),
-        expr_types: FxHashMap::default(),
         pattern: None,
         supertype: false,
     };
-    let mut site_types = FxHashMap::default();
     for (index, site) in tables.sites.iter().enumerate() {
         let id = SiteId::from_index(index);
         let scope = populate.scope(site.group(), site.unit);
@@ -153,13 +151,7 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
             Role::Default(binder) => populate.site(scope, id, populate.kind(binder), 0),
             Role::Alias(decl) => populate.site(scope, id, tables.alias_kinds[&decl].kind, 0),
         };
-        site_types.insert(
-            UnitSpan {
-                unit: site.unit,
-                span: site.ty.span(),
-            },
-            ty,
-        );
+        site.interned.set(ty);
     }
     let mut declarations = Vec::new();
     for index in 0..tables.decls.len() {
@@ -167,9 +159,7 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
     }
     // A supertype closing a cycle is dropped, so that the database's supertypes
     // stay acyclic and walking them can't revisit a declaration
-    for (decl, span) in populate.inheritance_cycles() {
-        let unit = tables.decls[decl.index()].unit;
-        let ty = populate.expr_types[&UnitSpan { unit, span }];
+    for (decl, ty) in populate.inheritance_cycles() {
         let (_, declaration) = (declarations.iter_mut())
             .find(|(id, _)| *id == decl)
             .expect("a class with supertypes is populated");
@@ -181,14 +171,11 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
     }
     diags.append(&mut populate.diags);
 
-    let expr_types = std::mem::take(&mut populate.expr_types);
     for (id, declaration) in declarations {
         db.populate(id, declaration);
     }
-    tables.expr_types = expr_types;
     tables.sig_decls = sig_decls;
     tables.groups = groups;
-    tables.site_types = site_types;
 }
 
 /// The name of signature `sig` of a named declaration
@@ -237,8 +224,6 @@ struct Populate<'t, 'u> {
     defaults: FxHashMap<BinderRef, Option<TypeId>>,
     /// The written channels being interned in place of a function type's own
     expanding: Vec<(DeclId, usize, usize)>,
-    /// Each written application and function type, by span
-    expr_types: FxHashMap<UnitSpan, TypeId>,
     /// Within a rest binding's `@...` pattern, the packs it names so far. The
     /// pattern is interpreted in a group of its own, one item of each pack.
     pattern: Option<Vec<TypeId>>,
@@ -417,26 +402,11 @@ impl<'t, 'u> Populate<'t, 'u> {
         // Well-formedness checks these where they are written, in the group they are
         // written in, not where a def's channels are taken by a function type. A
         // pattern's interior is not checked.
-        let dict = matches!(ty, TypeExpr::Schema { .. }) && expected == Kind::Type;
-        if (dict
-            || matches!(
-                ty,
-                TypeExpr::App { .. }
-                    | TypeExpr::Tuple { .. }
-                    | TypeExpr::Record { .. }
-                    | TypeExpr::Array { .. }
-                    | TypeExpr::Func { .. }
-            ))
+        if let TypeExpr::App { interned, .. } | TypeExpr::Func { interned, .. } = ty
             && self.expanding.is_empty()
             && self.pattern.is_none()
         {
-            self.expr_types.insert(
-                UnitSpan {
-                    unit: group.unit,
-                    span: ty.span(),
-                },
-                id,
-            );
+            interned.set(id);
         }
         id
     }
@@ -1253,15 +1223,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                         }
                         _ => continue,
                     };
-                    // Checked for well-formedness by its name, as it has no type
-                    // expression of its own
-                    self.expr_types.insert(
-                        UnitSpan {
-                            unit: decl.unit,
-                            span,
-                        },
-                        ty,
-                    );
+                    super_ref.interned.set(ty);
                     // Every type is a subtype of top, and an erroneous supertype is
                     // already diagnosed
                     let erroneous = ty == self.db.unknown()
@@ -1602,12 +1564,12 @@ impl<'t, 'u> Populate<'t, 'u> {
 
     /// Diagnose each cycle of supertypes among classes and protocols once, where
     /// it closes, in declaration order. Returns the supertype references that
-    /// close them, by the declaring class and the reference's span.
-    fn inheritance_cycles(&mut self) -> Vec<(DeclId, Span)> {
+    /// close them, by the declaring class and the supertype interned.
+    fn inheritance_cycles(&mut self) -> Vec<(DeclId, TypeId)> {
         let mut closing = Vec::new();
         let tables = self.tables;
         let count = tables.decls.len();
-        let mut edges: Vec<Vec<(DeclId, Span)>> = vec![Vec::new(); count];
+        let mut edges: Vec<Vec<(DeclId, &Super)>> = vec![Vec::new(); count];
         for (index, decl) in tables.decls.iter().enumerate() {
             let DeclNode::Class(class) = &decl.node else {
                 continue;
@@ -1636,7 +1598,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                     _ => None,
                 };
                 if let Some(target) = target {
-                    edges[index].push((target, super_ref.span()));
+                    edges[index].push((target, super_ref));
                 }
             }
         }
@@ -1656,7 +1618,7 @@ impl<'t, 'u> Populate<'t, 'u> {
             color[root] = Color::Gray;
             while let Some((node, edge)) = stack.last_mut() {
                 let node = *node;
-                let Some(&(target, span)) = edges[node].get(*edge) else {
+                let Some(&(target, super_ref)) = edges[node].get(*edge) else {
                     color[node] = Color::Black;
                     stack.pop();
                     continue;
@@ -1669,8 +1631,10 @@ impl<'t, 'u> Populate<'t, 'u> {
                     }
                     Color::Gray => {
                         let unit = tables.decls[node].unit;
-                        self.report(unit, InheritanceCycle(span));
-                        closing.push((DeclId::from_index(node), span));
+                        self.report(unit, InheritanceCycle(super_ref.span()));
+                        let ty = (super_ref.interned.get())
+                            .expect("population interns a supertype naming a class");
+                        closing.push((DeclId::from_index(node), ty));
                     }
                     Color::Black => {}
                 }

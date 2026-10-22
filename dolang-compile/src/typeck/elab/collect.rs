@@ -16,7 +16,7 @@ use super::{
     ids::Rebase,
     interface::PrivateInInterface,
     local,
-    surface::{self, Collection, ConstLit, Name, SiteId, StrId, TypeExpr},
+    surface::{self, Collection, ConstLit, Interned, Name, SiteId, StrId, TypeExpr},
 };
 use crate::{
     Mode, PreludeImport, Unit,
@@ -231,8 +231,6 @@ pub(crate) fn link<'u>(
         lifted: FxHashMap::default(),
         sig_decls: FxHashMap::default(),
         groups: FxHashMap::default(),
-        site_types: FxHashMap::default(),
-        expr_types: FxHashMap::default(),
     };
     (tables, diags)
 }
@@ -475,6 +473,7 @@ impl<'u> Walk<'_, 'u> {
                 span,
                 base: Box::new(self.surface(base)),
                 args: args.iter().map(|arg| self.surface_arg(arg)).collect(),
+                interned: Interned::default(),
             },
             ast::TypeExpr::Schema {
                 params, brace_span, ..
@@ -522,6 +521,7 @@ impl<'u> Walk<'_, 'u> {
                     .map(|implicit| Box::new(self.surface(&implicit.ty))),
                 arrow_span: *arrow_span,
                 ret: Box::new(self.surface(ret)),
+                interned: Interned::default(),
             },
             ast::TypeExpr::Error => TypeExpr::Error { span },
         }
@@ -870,6 +870,7 @@ impl<'u> Walk<'_, 'u> {
             role,
             ambient: self.sig,
             owner: self.owner,
+            interned: Interned::default(),
         });
         ty.names(&mut |head, res, fields| self.name_ref(frame, head, res, fields));
         id
@@ -1257,6 +1258,7 @@ impl<'u> Walk<'_, 'u> {
                 args,
                 bracket_span: super_ref.bracket_span,
                 type_only: super_ref.type_only,
+                interned: Interned::default(),
             });
         }
         // A method's overload signatures are one function with its first

@@ -17,7 +17,7 @@ use crate::{
     source::Span,
     typeck::r#type::{
         BinderOrigin, Collection, Database, DeclId, Declaration, Intrinsic, Kind, Member, Names,
-        Scope, Style, Type, TypeId, UnitId, UnitSpan, Variance,
+        Scope, Style, Type, TypeId, UnitId, Variance,
     },
 };
 
@@ -448,7 +448,7 @@ impl Tables<'_> {
                 continue;
             }
             let span = site.ty.span();
-            let ty = self.site_types[&UnitSpan { unit, span }];
+            let ty = site.interned.get().expect("population interns each site");
             let names = match site.group() {
                 Some(key) => self.groups[&key]
                     .iter()

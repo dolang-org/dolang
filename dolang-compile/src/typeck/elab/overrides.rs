@@ -115,10 +115,7 @@ impl Check<'_, '_> {
         let mut pending = Vec::new();
         for super_ref in &self.class.supers {
             let span = super_ref.span();
-            let Some(&ty) = self.tables.expr_types.get(&UnitSpan {
-                unit: self.unit,
-                span,
-            }) else {
+            let Some(ty) = super_ref.interned.get() else {
                 continue;
             };
             let supertype = solver.view(ty, environment);
@@ -482,11 +479,7 @@ impl Check<'_, '_> {
         let ty = self.db.declaration(self.id).supertypes.get(index)?.ty;
         self.class.supers.iter().find_map(|super_ref| {
             let span = super_ref.span();
-            let found = self.tables.expr_types.get(&UnitSpan {
-                unit: self.unit,
-                span,
-            });
-            (found == Some(&ty)).then(|| {
+            (super_ref.interned.get() == Some(ty)).then(|| {
                 let name = self
                     .tables
                     .dotted(self.unit, super_ref.head, &super_ref.fields);

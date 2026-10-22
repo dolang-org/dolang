@@ -29,7 +29,7 @@ use super::{
         BlockId, EscapeKind, Expr, ExprKind, FuncId, FuncKind, Graph, Ir, Origin, Step, Terminal,
         VarId,
     },
-    elab::{DeclAst, ModuleRef, Tables},
+    elab::{DeclAst, ModuleRef, Tables, surface::SiteId},
     r#type::{Database, DeclId, Literal, MemberKey, SymbolId, UnitId},
 };
 use crate::{
@@ -75,8 +75,8 @@ struct Lower<'t, 'u> {
     /// Each guard's phantom return: a block that assigns the result `Never` and
     /// continues to the exit
     returns: RefCell<FxHashMap<BlockId, BlockId>>,
-    /// The binder group each type written in the unit is interpreted in, by its span
-    site_groups: FxHashMap<Span, Option<(DeclId, usize)>>,
+    /// Each type written in the unit, by its span
+    sites: FxHashMap<Span, SiteId>,
     /// The functions created in an `(init)`, which escape its receiver if they
     /// capture it
     captures: RefCell<Vec<Capture>>,
@@ -134,9 +134,9 @@ impl<'t, 'u> Lower<'t, 'u> {
             guards: RefCell::new(FxHashMap::default()),
             returns: RefCell::new(FxHashMap::default()),
             captures: RefCell::new(Vec::new()),
-            site_groups: (tables.sites.iter())
-                .filter(|site| site.unit == unit)
-                .map(|site| (site.ty.span(), site.group()))
+            sites: (tables.sites.iter().enumerate())
+                .filter(|(_, site)| site.unit == unit)
+                .map(|(index, site)| (site.ty.span(), SiteId::from_index(index)))
                 .collect(),
         }
     }
