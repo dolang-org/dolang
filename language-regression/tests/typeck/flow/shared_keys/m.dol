@@ -3,7 +3,7 @@
 # positional items do, one literal each. A parameter takes the first item of its
 # key, and a rest admitting the key takes the later ones.
 
-@let Opts = $
+pub @let Opts = $
   ?image: Str
   *add: Str
 
@@ -65,7 +65,7 @@ pub def missing()
 def absorb :image @ Str = nil **_rest @ Int
   ...
 
-@let Three = $
+pub @let Three = $
   image: Str
   image: Int
   image: Int

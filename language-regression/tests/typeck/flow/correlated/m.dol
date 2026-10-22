@@ -12,7 +12,7 @@ pub def keyed d @ Dict[{a: Int, b: Str}]
       let _ = v
       #       ^: flow std.Str
 
-@let Opts = $
+pub @let Opts = $
   ?tag: Str
   ?count: Int
 
@@ -125,7 +125,7 @@ pub def recent p @ (((:x:, Int), Str) | ((:y:, Str), Int))
       let _ = v
       #       ^: flow std.Int | std.Str
 
-@let Steps = {*run: (() -> nil), *Str}
+pub @let Steps = {*run: (() -> nil), *Str}
 
 # Entries of an aliased schema are its alternatives too
 pub def aliased d @ Dict[Steps]

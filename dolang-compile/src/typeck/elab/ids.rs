@@ -5,7 +5,9 @@
 use rustc_hash::FxHashSet;
 
 use super::{
-    BinderRef, Decl, DeclNode, Harvest, ModuleRef, Referent, Role, Site, Target, local,
+    BinderRef, Decl, DeclNode, Harvest, ModuleRef, Referent, Role, Site, Target,
+    interface::Kept,
+    local,
     surface::{
         Binder, Class, ConstLit, Decorator, Member, Name, Param, ParamKind, Signature, SiteId,
         StrId, Super, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam, TypeParamKind,
@@ -40,18 +42,25 @@ impl Harvest<'_> {
 
     /// The harvest cut down to its surface: what a unit that imports it can see.
     ///
-    /// Closures are left out, along with everything declared within a def, method
-    /// or closure, and the sites, strings and type names only they hold.
-    pub(crate) fn surface(mut self) -> Self {
-        let mut decls = Vec::with_capacity(self.decls.len());
-        for decl in &self.decls {
-            // An outer declaration is allocated first
-            let keep = decl.kind != DeclKind::Closure
-                && decl.outer.is_none_or(|(outer, _)| {
-                    decls[outer.index()]
-                        && matches!(self.decls[outer.index()].node, DeclNode::Class(_))
-                });
-            decls.push(keep);
+    /// The surface keeps what [`Harvest::interface`] says it does. Closures are left
+    /// out, along with everything declared within a def, method or closure, and the
+    /// sites, strings and type names only they hold. A decorator naming a declaration
+    /// left out names nothing.
+    pub(crate) fn surface(mut self, kept: &Kept) -> Self {
+        let decls = &kept.decls;
+        for (index, decl) in self.decls.iter_mut().enumerate() {
+            let DeclNode::Class(class) = &mut decl.node else {
+                continue;
+            };
+            let class_id = DeclId::from_index(index);
+            let mut member = 0;
+            class.members.retain(|item| {
+                member += 1;
+                match item {
+                    Member::Field(_) => !kept.fields.contains(&(class_id, member - 1)),
+                    Member::Method { decl, .. } => decls[decl.index()],
+                }
+            });
         }
 
         let mut used = Used {
@@ -60,13 +69,14 @@ impl Harvest<'_> {
         };
         // The type names whose resolutions the surface reads, by head
         let mut heads = FxHashSet::default();
-        for (decl, _) in self.decls.iter_mut().zip(&decls).filter(|(_, keep)| **keep) {
+        let mut decorators = FxHashSet::default();
+        for (decl, _) in self.decls.iter_mut().zip(decls).filter(|(_, keep)| **keep) {
             decl.visit(&mut used);
             match &decl.node {
                 DeclNode::Class(class) => {
                     for decorator in &class.decorators {
                         if let Decorator::Ident(name) = decorator {
-                            heads.insert(name.span);
+                            decorators.insert(name.span);
                         }
                     }
                     for supertype in &class.supers {
@@ -81,7 +91,7 @@ impl Harvest<'_> {
                 DeclNode::Methods(methods) => {
                     for decorator in methods.iter().flat_map(|method| &method.decorators) {
                         if let Decorator::Ident(name) = decorator {
-                            heads.insert(name.span);
+                            decorators.insert(name.span);
                         }
                     }
                 }
@@ -103,30 +113,42 @@ impl Harvest<'_> {
         }
 
         let mut renumber = Renumber {
-            decls: numbering(&decls, DeclId::from_index),
+            decls: numbering(decls, DeclId::from_index),
             sites: numbering(&used.sites, SiteId::from_index),
             strs: numbering(&used.strs, StrId::from_index),
         };
-        self.pending
-            .retain(|pending| heads.contains(&pending.head.span));
+        let dropped = |target: &Target<'_>| match target {
+            Target::Local(Referent::Decl(decl)) => !decls[decl.index()],
+            _ => false,
+        };
+        self.pending.retain(|pending| {
+            heads.contains(&pending.head.span)
+                || decorators.contains(&pending.head.span) && !dropped(&pending.base)
+        });
         let targets = (self.pending.iter_mut().map(|pending| &mut pending.base))
             .chain(self.exports.values_mut().map(|(_, target)| target));
         for target in targets {
             let Target::Local(referent) = target else {
                 continue;
             };
-            let decl = match referent {
-                Referent::Decl(decl) => *decl,
-                Referent::Binder(binder) => binder.decl,
+            let (decl, binder) = match referent {
+                Referent::Decl(decl) => (*decl, false),
+                Referent::Binder(binder) => (binder.decl, true),
                 _ => continue,
             };
-            // A name the surface reads cannot reach into a body
+            // A name the surface reads cannot reach into a body, nor name a type it
+            // leaves out. Any other declaration it names is not a type, as is
+            // diagnosed.
             if renumber.decls[decl.index()].is_none() {
-                debug_assert!(false, "the surface names a declaration it leaves out");
+                let kind = self.decls[decl.index()].kind;
+                debug_assert!(
+                    !binder && !(kind.nominal() || kind == DeclKind::Alias),
+                    "the surface names a type it leaves out"
+                );
                 *referent = Referent::Error;
             }
         }
-        self.decls = retain(self.decls, &decls);
+        self.decls = retain(self.decls, decls);
         self.sites = retain(self.sites, &used.sites);
         self.strings = retain(self.strings, &used.strs);
         self.visit_ids(&mut renumber);

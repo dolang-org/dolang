@@ -3,7 +3,7 @@
 # stands for, whether it's declared before or after its use, and through the
 # aliases it includes
 
-@let Fields = {size: Int, total: (Int | nil)}
+pub @let Fields = {size: Int, total: (Int | nil)}
 
 pub def struct_items x @ Struct[Fields]
   let _ = x[:size:]
@@ -45,12 +45,12 @@ pub class Sized: Struct[Later]
   pub def (init) self
     Struct.(init) $self (size: 1)
 
-@let Later = $
+pub @let Later = $
   size: Int
 
-@let Base = {a: Int}
-@let Left = {...Base, b: Str}
-@let Both = {...Base, ...Left}
+pub @let Base = {a: Int}
+pub @let Left = {...Base, b: Str}
+pub @let Both = {...Base, ...Left}
 
 pub def included x @ Struct[Both]
   let _ = x[:a:]
@@ -58,7 +58,7 @@ pub def included x @ Struct[Both]
   let _ = x[:b:]
   #   ^: flow std.Str
 
-@let Steps = $
+pub @let Steps = $
   ?tag: Str
   ?count: Int
 

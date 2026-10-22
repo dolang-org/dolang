@@ -43,7 +43,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use dolang::compile::{Config, ErrorKind, Mode, Span, UnitId, typeck};
+use dolang::compile::{Config, ErrorKind, Mode, Severity, Span, UnitId, typeck};
 use dolang_private_test::{Directive, annotate};
 
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/typeck");
@@ -394,12 +394,43 @@ fn from_typelibs(
     failures: &mut String,
 ) {
     // A unit that failed to compile is left out of both checks
-    let written: Vec<Option<Vec<u8>>> = (units.iter().enumerate())
-        .map(|(index, unit)| {
-            let module = ids[index].is_some() && sources[index].module.is_some();
-            module.then(|| typeck::typelib(unit).unwrap())
-        })
-        .collect();
+    let mut written: Vec<Option<Vec<u8>>> = Vec::new();
+    let mut exportable = true;
+    for (index, unit) in units.iter().enumerate() {
+        if !(ids[index].is_some() && sources[index].module.is_some()) {
+            written.push(None);
+            continue;
+        }
+        match typeck::typelib(unit) {
+            Ok(bytes) => written.push(Some(bytes)),
+            // A module whose interface names a private declaration has no typelib,
+            // and its check from source says why
+            Err(error) if matches!(error.kind(), ErrorKind::NotExportable) => {
+                let reported = check.diagnostics().any(|diag| {
+                    let message = diag.message().to_string();
+                    diag.severity() == Severity::Error
+                        && diag.span().unit() == ids[index]
+                        && message.starts_with("private ")
+                        && message.contains(" in the public interface of ")
+                });
+                if !reported {
+                    let _ = write!(
+                        failures,
+                        "\n{}: no typelib, but no private declaration in its interface \
+                         is reported",
+                        sources[index].file
+                    );
+                }
+                exportable = false;
+                written.push(None);
+            }
+            Err(error) => panic!("{}: {error}", sources[index].file),
+        }
+    }
+    // The check from typelibs is compared only when every module has one
+    if !exportable {
+        return;
+    }
     let typelibs: Vec<Option<typeck::Typelib>> = (written.iter())
         .map(|bytes| {
             bytes

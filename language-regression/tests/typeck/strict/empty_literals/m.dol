@@ -3,7 +3,7 @@
 
 import @json
 
-@let Data = {?"Key": Str}
+pub @let Data = {?"Key": Str}
 
 # A pattern default takes the item's type where it's present
 pub def present d @ Dict[Str, json.DecodeValue]

@@ -80,7 +80,7 @@ pub def open b @ Dict[Sym, Int]
   b.insert :x: 2
   b.clear()
 
-@let Optional[T] = {?x: T, *(Str): T}
+pub @let Optional[T] = {?x: T, *(Str): T}
 
 pub def alias b @ Dict[Optional[Int]]
   b.delete :x:

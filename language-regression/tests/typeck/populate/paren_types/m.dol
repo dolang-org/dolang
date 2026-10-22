@@ -33,9 +33,9 @@ pub let callback @ (((Int, Str)) -> nil) = ...
 
 # An inclusion never makes a record, so one that may bring in keyed items is an
 # error rather than a change of meaning
-@let Positional = {Int, *Str}
-@let Keyed = {Int, ?key: Str}
-@let Indirect = {...Keyed}
+pub @let Positional = {Int, *Str}
+pub @let Keyed = {Int, ?key: Str}
+pub @let Indirect = {...Keyed}
 pub let spread @ (Bool, ...Positional) = ...
 #                ^~~~~~~~~~~~~~~~~~~~~: type (std.Bool, ...m.Positional)
 pub let keyed_spread @ (Bool, ...Keyed) = ...
