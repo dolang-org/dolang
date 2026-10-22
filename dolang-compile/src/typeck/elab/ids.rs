@@ -4,7 +4,7 @@
 //! surface for a typelib, and to check one read from a typelib.
 
 use super::{
-    BinderRef, Decl, DeclNode, Harvest, Link, Module, Referent, Role, Site, Target,
+    BinderRef, Decl, DeclNode, Export, Harvest, Link, Module, Referent, Role, Site, Target, Value,
     interface::Kept,
     local,
     surface::{
@@ -34,12 +34,8 @@ impl Harvest<'_> {
         for link in self.refs.values_mut() {
             ids.link(link);
         }
-        for (_, target) in self.exports.values_mut() {
-            target.visit(ids);
-        }
-        for site in self.values.values_mut() {
-            site.visit(ids);
-        }
+        self.exports.visit(ids);
+        self.values.visit(ids);
         self.modules.visit(ids);
     }
 
@@ -99,9 +95,7 @@ impl Harvest<'_> {
             decl.visit(&mut used);
         }
         // Exported variables are on the surface, whether annotated or not
-        for site in self.values.values_mut() {
-            site.visit(&mut used);
-        }
+        self.values.visit(&mut used);
         for (site, _) in (self.sites.iter_mut())
             .zip(used.sites.clone())
             .filter(|(_, keep)| *keep)
@@ -114,9 +108,7 @@ impl Harvest<'_> {
         {
             link.visit(&mut used);
         }
-        for (_, target) in self.exports.values_mut() {
-            target.visit(&mut used);
-        }
+        self.exports.visit(&mut used);
         self.modules.visit(&mut used);
 
         let mut renumber = Renumber {
@@ -128,7 +120,7 @@ impl Harvest<'_> {
         let targets = (self.links.iter_mut().zip(&used.links))
             .filter(|(_, keep)| **keep)
             .map(|(link, _)| &mut link.base)
-            .chain(self.exports.values_mut().map(|(_, target)| target));
+            .chain(self.exports.iter_mut().map(|export| &mut export.target));
         for target in targets {
             let Target::Local(referent) = target else {
                 continue;
@@ -433,7 +425,8 @@ impl Visit for ConstLit {
     fn visit(&mut self, ids: &mut impl Ids) {
         match self {
             ConstLit::Sym(name) => name.visit(ids),
-            ConstLit::Str(_) | ConstLit::Int(_) | ConstLit::Bool(_) | ConstLit::Nil => {}
+            ConstLit::Str(value) => ids.str(value),
+            ConstLit::Int(_) | ConstLit::Bool(_) | ConstLit::Nil => {}
         }
     }
 }
@@ -560,6 +553,19 @@ impl Visit for Link {
 impl Visit for Module {
     fn visit(&mut self, ids: &mut impl Ids) {
         ids.str(&mut self.name);
+    }
+}
+
+impl Visit for Export {
+    fn visit(&mut self, ids: &mut impl Ids) {
+        ids.str(&mut self.name);
+        self.target.visit(ids);
+    }
+}
+
+impl Visit for Value {
+    fn visit(&mut self, ids: &mut impl Ids) {
+        self.annot.visit(ids);
     }
 }
 

@@ -245,7 +245,7 @@ pub(crate) enum TypeExpr {
 /// A literal a constant type stands for
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum ConstLit {
-    Str(Box<str>),
+    Str(StrId),
     Int(i128),
     Bool(bool),
     Nil,
@@ -585,12 +585,12 @@ pub(crate) struct Closure {
 
 impl<'u> Tables<'u> {
     /// A string of a unit's string table
-    pub(crate) fn str(&self, unit: UnitId, id: StrId) -> &'u str {
-        self.strings[unit.index()][id.index()]
+    pub(crate) fn str(&self, unit: UnitId, id: StrId) -> &str {
+        &self.strings[unit.index()][id.index()]
     }
 
     /// A name as written in `unit`
-    pub(crate) fn name(&self, unit: UnitId, name: Name) -> &'u str {
+    pub(crate) fn name(&self, unit: UnitId, name: Name) -> &str {
         self.str(unit, name.text)
     }
 
@@ -635,7 +635,9 @@ impl Printer<'_, '_> {
                 out.write_str(&self.tables.dotted(self.unit, *head, fields))
             }
             TypeExpr::Const { value, .. } => match value {
-                Some(ConstLit::Str(value)) => write!(out, "{value:?}"),
+                Some(ConstLit::Str(value)) => {
+                    write!(out, "{:?}", self.tables.str(self.unit, *value))
+                }
                 Some(ConstLit::Int(value)) => write!(out, "{value}"),
                 Some(ConstLit::Bool(value)) => write!(out, "{value}"),
                 Some(ConstLit::Nil) => out.write_str("nil"),

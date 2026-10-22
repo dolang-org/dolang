@@ -61,7 +61,11 @@ pub fn typelib(unit: &Unit<'_>) -> Result<Vec<u8>, Error> {
 /// declarations as if the module were checked from source, but the module's bodies
 /// are not checked. A typelib is read only by the version of the checker that wrote
 /// it.
-pub struct Typelib<'a>(elab::Harvest<'a>);
+pub struct Typelib<'a> {
+    harvest: elab::Harvest<'a>,
+    /// The modules the module imports, each once, in order
+    imports: Vec<&'a str>,
+}
 
 impl<'a> Typelib<'a> {
     /// Read a typelib.
@@ -73,30 +77,25 @@ impl<'a> Typelib<'a> {
     /// | [`ErrorKind::Typelib`](crate::ErrorKind::Typelib) | The bytes are not a typelib this version of the checker reads |
     pub fn read(bytes: &'a [u8]) -> Result<Self, Error> {
         typelib::read(bytes)
-            .map(Self)
+            .map(|(harvest, imports)| Self { harvest, imports })
             .map_err(|invalid| Error(ErrorInfo::Typelib(invalid)))
     }
 
     /// The module's name.
     pub fn module(&self) -> &'a str {
-        self.0.info.module.expect("a typelib is a module's")
+        self.harvest.info.module.expect("a typelib is a module's")
     }
 
     /// The path of the module's source when the typelib was written, which locates
     /// its diagnostics.
     pub fn path(&self) -> &'a Path {
-        self.0.info.path
+        self.harvest.info.path
     }
 
     /// The modules the module imports, each once, in order. A check finds them
     /// among its units, and reports a module it doesn't have as not found.
     pub fn imports(&self) -> Vec<&'a str> {
-        let strings = &self.0.strings;
-        let mut imports: Vec<&'a str> = (self.0.modules.iter())
-            .map(|module| strings[module.name.index()])
-            .collect();
-        imports.sort_unstable();
-        imports
+        self.imports.clone()
     }
 }
 
@@ -197,7 +196,8 @@ impl<'u, 's> Builder<'u, 's> {
     /// | [`ErrorKind::DuplicateModule`](crate::ErrorKind::DuplicateModule) | A module of the same name was already added |
     pub fn typelib(&mut self, typelib: &Typelib<'u>) -> Result<UnitId, Error> {
         self.module(typelib.module())?;
-        self.units.push(Input::Typelib(Box::new(typelib.0.clone())));
+        self.units
+            .push(Input::Typelib(Box::new(typelib.harvest.clone())));
         Ok(UnitId::from_index(self.units.len() - 1))
     }
 

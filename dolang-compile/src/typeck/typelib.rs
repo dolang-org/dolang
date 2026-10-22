@@ -6,22 +6,22 @@
 //! source, but checks none of its bodies.
 //!
 //! The format is postcard, after a header naming the format and its version. Every
-//! ID is local to the typelib, which is linked as any harvest is.
+//! ID is local to the typelib, which is linked as any harvest is. All text is in
+//! the string table, each string once.
 
-use std::{fmt, path::Path};
+use std::{borrow::Cow, fmt, path::Path};
 
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 use super::{
     elab::{
-        BinderRef, Decl, DeclNode, Harvest, Kept, Link, Module, Referent, Role, Site, Target,
-        UnitInfo,
+        BinderRef, Decl, DeclNode, Export, Harvest, Kept, Link, Module, Referent, Role, Site,
+        Target, UnitInfo, Value,
         surface::{Binder, Decorator, LinkId, Member, ModuleId, ParamKind, Ref, SiteId, StrId},
     },
     r#type::{DeclId, DeclKind, UnitId},
 };
-use crate::source::Span;
 
 #[cfg(test)]
 mod tests;
@@ -29,7 +29,7 @@ mod tests;
 const MAGIC: [u8; 8] = *b"\xffdotypel";
 /// The format's version, which changes with any change to the format. It isn't 0,
 /// which the bytes after the magic of an older typelib would read as.
-const VERSION: u16 = 2;
+const VERSION: u16 = 3;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct Header {
@@ -44,9 +44,9 @@ const HEADER: Header = Header {
 
 #[derive(Serialize, Deserialize)]
 struct Content<'a> {
-    module: &'a str,
+    module: StrId,
     /// The module's path, which only locates its diagnostics
-    path: &'a str,
+    path: StrId,
     newlines: Vec<u32>,
     /// Whether the module was checked strictly, which its signatures depend on
     strict: bool,
@@ -55,29 +55,9 @@ struct Content<'a> {
     decls: Vec<Decl<'a>>,
     sites: Vec<Site>,
     links: Vec<Link>,
-    /// By name, so a module's typelib is the same however its exports were hashed
-    #[serde(borrow)]
-    exports: Vec<Export<'a>>,
-    /// By span, in order
+    exports: Vec<Export>,
     values: Vec<Value>,
     modules: Vec<Module>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Export<'a> {
-    name: &'a str,
-    #[serde(with = "wire::span")]
-    span: Span,
-    target: Target,
-}
-
-/// An exported variable
-#[derive(Serialize, Deserialize)]
-struct Value {
-    /// Its name's
-    #[serde(with = "wire::span")]
-    span: Span,
-    annot: Option<SiteId>,
 }
 
 /// Why a typelib could not be read
@@ -115,35 +95,37 @@ pub(crate) fn write(harvest: Harvest<'_>, kept: &Kept) -> Vec<u8> {
 
 /// Encode a harvest that is already a module's surface.
 fn encode(harvest: Harvest<'_>) -> Vec<u8> {
-    let module = (harvest.info.module).expect("only a module's typelib is written");
     let path = harvest.info.path.to_string_lossy();
-    let mut exports: Vec<_> = (harvest.exports.into_iter())
-        .map(|(name, (span, target))| Export { name, span, target })
-        .collect();
-    exports.sort_by_key(|export| export.name);
-    let mut values: Vec<_> = (harvest.values.into_iter())
-        .map(|(span, annot)| Value { span, annot })
-        .collect();
-    values.sort_by_key(|value| (value.span.start, value.span.end));
+    let mut strings: Vec<&str> = harvest.strings.iter().map(|text| &**text).collect();
+    let mut intern = |text| match strings.iter().position(|&other| other == text) {
+        Some(index) => StrId::from_index(index),
+        None => {
+            strings.push(text);
+            StrId::from_index(strings.len() - 1)
+        }
+    };
+    let module = intern((harvest.info.module).expect("only a module's typelib is written"));
+    let path = intern(&*path);
     let content = Content {
         module,
-        path: &path,
+        path,
         newlines: harvest.info.newlines,
         strict: harvest.info.strict,
-        strings: harvest.strings,
+        strings,
         decls: harvest.decls,
         sites: harvest.sites,
         links: harvest.links,
-        exports,
-        values,
+        exports: harvest.exports,
+        values: harvest.values,
         modules: harvest.modules,
     };
     let out = postcard::to_stdvec(&HEADER).expect("a header serializes");
     postcard::to_extend(&content, out).expect("a harvest serializes")
 }
 
-/// Read a typelib, checking that it is a module's surface.
-pub(crate) fn read(bytes: &[u8]) -> Result<Harvest<'_>, Invalid> {
+/// Read a typelib, checking that it is a module's surface. The names of the modules
+/// it imports are listed with it, each once, in order.
+pub(crate) fn read(bytes: &[u8]) -> Result<(Harvest<'_>, Vec<&str>), Invalid> {
     let (header, rest): (Header, _) =
         postcard::take_from_bytes(bytes).map_err(|_| Invalid::Header)?;
     if header.magic != MAGIC {
@@ -157,40 +139,36 @@ pub(crate) fn read(bytes: &[u8]) -> Result<Harvest<'_>, Invalid> {
     if !rest.is_empty() {
         return Err(Invalid::Malformed("trailing bytes"));
     }
-    let mut exports = FxHashMap::default();
-    for export in content.exports {
-        if exports
-            .insert(export.name, (export.span, export.target))
-            .is_some()
-        {
-            return Err(Invalid::Malformed("an export is repeated"));
-        }
-    }
-    let mut values = FxHashMap::default();
-    for value in content.values {
-        if values.insert(value.span, value.annot).is_some() {
-            return Err(Invalid::Malformed("an exported variable is repeated"));
-        }
-    }
+    let strings = content.strings;
+    let (Some(&module), Some(&path)) = (
+        strings.get(content.module.index()),
+        strings.get(content.path.index()),
+    ) else {
+        return Err(Invalid::Malformed("an ID is out of range"));
+    };
+    let mut imports: Vec<&str> = (content.modules.iter())
+        .filter_map(|module| strings.get(module.name.index()).copied())
+        .collect();
+    imports.sort_unstable();
     let mut harvest = Harvest {
         info: UnitInfo {
-            module: Some(content.module),
-            path: Path::new(content.path),
+            module: Some(module),
+            path: Path::new(path),
             newlines: content.newlines,
             source: None,
             strict: content.strict,
         },
-        strings: content.strings,
+        strings: strings.into_iter().map(Cow::Borrowed).collect(),
         decls: content.decls,
         sites: content.sites,
         links: content.links,
         refs: FxHashMap::default(),
-        exports,
-        values,
+        exports: content.exports,
+        values: content.values,
         modules: content.modules,
     };
     validate(&mut harvest).map_err(Invalid::Malformed)?;
-    Ok(harvest)
+    Ok((harvest, imports))
 }
 
 /// Check what elaboration assumes of a harvest that collection guarantees.
@@ -209,6 +187,19 @@ fn validate(harvest: &mut Harvest<'_>) -> Result<(), &'static str> {
     harvest.visit_ids(&mut ids);
     if !ids.ok {
         return Err("an ID is out of range");
+    }
+    let strings = &harvest.strings;
+    let mut names: Vec<&str> = (harvest.exports.iter())
+        .map(|export| &*strings[export.name.index()])
+        .collect();
+    names.sort_unstable();
+    if names.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err("an export is repeated");
+    }
+    if !(harvest.values.windows(2))
+        .all(|pair| (pair[0].span.start, pair[0].span.end) < (pair[1].span.start, pair[1].span.end))
+    {
+        return Err("the exported variables are out of order");
     }
 
     let decls = &harvest.decls;
@@ -311,11 +302,17 @@ fn validate(harvest: &mut Harvest<'_>) -> Result<(), &'static str> {
     // Each exported variable is listed with its annotation, a type written at the
     // top level
     let mut listed = 0;
-    for (_, target) in harvest.exports.values() {
-        if let Target::Local(Referent::Value(value)) = target {
-            let Some(&annot) = harvest.values.get(&value.span) else {
+    for export in &harvest.exports {
+        if let Target::Local(Referent::Value(value)) = export.target {
+            let values = &harvest.values;
+            let Ok(index) = values
+                .binary_search_by_key(&(value.span.start, value.span.end), |value| {
+                    (value.span.start, value.span.end)
+                })
+            else {
                 return Err("an exported variable is not listed");
             };
+            let annot = values[index].annot;
             if annot.is_some_and(|site| sites[site.index()].owner.is_some()) {
                 return Err("a site is misplaced");
             }
@@ -392,8 +389,8 @@ fn validate(harvest: &mut Harvest<'_>) -> Result<(), &'static str> {
     if named.contains(&false) {
         return Err("a link is not on the surface");
     }
-    for (_, target) in harvest.exports.values() {
-        if let Target::Local(Referent::Binder(_)) = target {
+    for export in &harvest.exports {
+        if let Target::Local(Referent::Binder(_)) = export.target {
             return Err("a binder is exported");
         }
     }

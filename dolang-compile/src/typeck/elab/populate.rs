@@ -288,7 +288,7 @@ impl<'t, 'u> Populate<'t, 'u> {
     /// The literal a constant of `unit` stands for
     fn literal(&self, unit: UnitId, value: &ConstLit) -> Literal {
         match value {
-            ConstLit::Str(value) => Literal::Str(value.clone()),
+            ConstLit::Str(value) => Literal::Str(self.tables.str(unit, *value).into()),
             ConstLit::Int(value) => Literal::Int(*value),
             ConstLit::Bool(value) => Literal::Bool(*value),
             ConstLit::Nil => Literal::Nil,

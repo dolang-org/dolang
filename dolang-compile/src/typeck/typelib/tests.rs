@@ -3,18 +3,23 @@ use std::{
     path::Path,
 };
 
-use super::{Invalid, encode, read};
+use super::{Invalid, encode};
 use crate::{
     Config, ErrorKind, Mode, Unit,
     source::Span,
     typeck::{
         self, Builder, Typelib,
         elab::{
-            DeclNode, Referent, Target,
+            DeclNode, Harvest, Referent, Target, Value,
             surface::{Member, Name, StrId},
         },
     },
 };
+
+/// Read a typelib's harvest.
+fn read(bytes: &[u8]) -> Result<Harvest<'_>, Invalid> {
+    super::read(bytes).map(|(harvest, _)| harvest)
+}
 
 const MODULE: &str = "
 pub class Box[T]
@@ -103,6 +108,39 @@ fn round_trip() {
         "the bodies' declarations are left out"
     );
     assert_eq!(encode(harvest), bytes);
+}
+
+#[test]
+fn text_is_interned_once() {
+    // Constants spell the module's own name and path, and a name it declares
+    let source = "
+pub @let Tag = (\"Tag\" | \"strings\" | \"lib.dol\" | \"tab\\there\")
+pub def tag t @ Tag -> Tag
+  t
+pub let limit @ Tag = \"Tag\"
+";
+    let unit = compile(
+        source,
+        Mode::Module {
+            name: "strings".into(),
+        },
+    );
+    let bytes = typeck::typelib(&unit).unwrap();
+    let harvest = read(&bytes).unwrap();
+    let mut strings: Vec<&str> = harvest.strings.iter().map(|text| &**text).collect();
+    strings.sort_unstable();
+    assert!(
+        strings.windows(2).all(|pair| pair[0] != pair[1]),
+        "a string repeats: {strings:?}"
+    );
+    assert!(strings.contains(&"tab\there"));
+    // Each is written once, in the string table
+    for text in ["Tag", "strings", "lib.dol", "limit"] {
+        let count = (bytes.windows(text.len()))
+            .filter(|window| *window == text.as_bytes())
+            .count();
+        assert_eq!(count, 1, "`{text}` is written {count} times");
+    }
 }
 
 #[test]
@@ -212,11 +250,15 @@ fn exported_variables() {
     let bytes = typelib();
     let harvest = read(&bytes).unwrap();
     let annotated = |name: &str| {
-        let (_, target) = &harvest.exports[name];
-        let Target::Local(Referent::Value(value)) = target else {
+        let export = (harvest.exports.iter())
+            .find(|export| harvest.strings[export.name.index()] == name)
+            .expect("the name is exported");
+        let Target::Local(Referent::Value(value)) = export.target else {
             panic!("`{name}` is exported as a variable");
         };
-        harvest.values[&value.span].is_some()
+        (harvest.values.iter())
+            .find(|listed| listed.span == value.span)
+            .is_some_and(|listed| listed.annot.is_some())
     };
     assert!(annotated("limit"));
     assert!(!annotated("loose"));
@@ -230,7 +272,13 @@ fn exported_variables() {
     ));
 
     let mut stray = read(&bytes).unwrap();
-    stray.values.insert(Span::default(), None);
+    stray.values.insert(
+        0,
+        Value {
+            span: Span::default(),
+            annot: None,
+        },
+    );
     assert!(matches!(
         read(&encode(stray)),
         Err(Invalid::Malformed("a listed variable is not exported"))
@@ -266,7 +314,7 @@ def private_def()
 ";
     let bytes = typeck::typelib(&compile(source, Mode::Module { name: "lib".into() })).unwrap();
     let harvest = read(&bytes).unwrap();
-    let text = |name: Option<Name>| harvest.strings[name.unwrap().text.index()];
+    let text = |name: Option<Name>| &*harvest.strings[name.unwrap().text.index()];
     let decls: Vec<_> = (harvest.decls.iter()).map(|decl| text(decl.name)).collect();
     // The special `(init)` stays whatever its visibility
     assert_eq!(decls, ["Open", "init", "get"]);

@@ -19,6 +19,7 @@ mod variance;
 mod wellformed;
 
 use std::{
+    borrow::Cow,
     fmt::{self, Write},
     path::Path,
 };
@@ -43,7 +44,7 @@ use surface::{
 
 pub(crate) use super::report::{Diag, UnitDiag};
 pub(crate) use capture::captures;
-pub(crate) use collect::{Harvest, Link, Module, harvest, link};
+pub(crate) use collect::{Export, Harvest, Link, Module, Value, find_export, harvest, link};
 pub(crate) use ids::Ids;
 pub(crate) use interface::Kept;
 pub(crate) use judge::{JUDGMENTS, Scoped};
@@ -63,7 +64,7 @@ pub(crate) struct Tables<'u> {
     /// The units, by [`UnitId`]
     pub(crate) units: Vec<UnitInfo<'u>>,
     /// Each unit's string table, by [`UnitId`]
-    pub(crate) strings: Vec<Vec<&'u str>>,
+    pub(crate) strings: Vec<Vec<Cow<'u, str>>>,
     /// Every declaration, by [`DeclId`]
     pub(crate) decls: Vec<Decl<'u>>,
     /// What each link refers to, by [`LinkId`]. Imports and renames are chased
@@ -77,9 +78,8 @@ pub(crate) struct Tables<'u> {
     pub(crate) modules: Vec<Vec<Option<UnitId>>>,
     /// The underlying head of each transparent alias
     pub(crate) aliases: FxHashMap<DeclId, Head>,
-    /// Each unit's exports by name, with the name each is bound by. Empty for a unit
-    /// that is not a module.
-    pub(crate) exports: Vec<FxHashMap<&'u str, (Span, Target)>>,
+    /// Each unit's exports, sorted by name. Empty for a unit that is not a module.
+    pub(crate) exports: Vec<Vec<Export>>,
     /// Each exported variable, by its name, with the site of its annotation if it
     /// has one
     pub(crate) values: FxHashMap<UnitSpan, Option<SiteId>>,
@@ -212,6 +212,15 @@ impl<'u> Tables<'u> {
         (0..self.sig_count(decl))
             .find(|&sig| self.sig_decls.get(&(decl, sig)) == Some(&decl))
             .unwrap_or(0)
+    }
+
+    /// The export of `unit` named `name`
+    pub(crate) fn export(&self, unit: UnitId, name: &str) -> Option<&Export> {
+        find_export(
+            &self.exports[unit.index()],
+            &self.strings[unit.index()],
+            name,
+        )
     }
 
     /// The source text of a span of a unit, for lowering and flow analysis, which

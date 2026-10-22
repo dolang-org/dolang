@@ -287,7 +287,7 @@ impl Flow<'_, '_> {
             return;
         }
         let name = self.db.symbol(item);
-        if !self.tables.exports[unit.index()].contains_key(name) {
+        if self.tables.export(unit, name).is_none() {
             self.problem(Problem::MissingExport {
                 span,
                 module: self.tables.units[unit.index()].name(),
@@ -301,7 +301,7 @@ impl Flow<'_, '_> {
         let mut name: &str = self.db.symbol(item);
         // Re-exports are followed, up to a limit that only a cycle reaches
         for _ in 0..64 {
-            let (_, target) = self.tables.exports[unit.index()].get(name)?;
+            let target = &self.tables.export(unit, name)?.target;
             match *target {
                 Target::Import { module, item } => {
                     name = self.tables.str(unit, item);

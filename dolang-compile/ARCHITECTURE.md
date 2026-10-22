@@ -1200,7 +1200,9 @@ enclosing it.
 A module's exports are its root block's `pub` declarations and bindings, and the
 names its `pub` imports re-export. A unit has a link table, of what its type
 names refer to as far as the unit can tell, each once, and a module table of
-the modules it imports. A name on the surface holds its link, and lowering,
+the modules it imports. Its text, from names to constant strings, is in its
+string table, each string once, which the surface refers to only by ID. A name
+on the surface holds its link, and lowering,
 which reads syntax, finds a name's link by the span of its head. Once every unit
 is collected, each module table is resolved, and each link that goes through an
 import follows the exports of the units checked. Imports and renames are chased
