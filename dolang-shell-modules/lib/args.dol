@@ -28,92 +28,78 @@ import fs:
   - Path
 
 # A boolean flag, set to `true` when present on the command line.
-#
-# | Key       | Meaning                                                            |
-# | --------- | ------------------------------------------------------------------ |
-# | `flag`    | Name                                                               |
-# | `long`    | `--long` name. Defaults to the name; `nil` disables it             |
-# | `short`   | Single-character shorthand, such as `v` for `-v`                   |
-# | `default` | Value when absent. Defaults to `false`                             |
-# | `divider` | Stop interpreting later arguments as options or flags              |
-# | `env`     | Environment variable consulted when the flag is absent             |
-# | `help`    | Description shown in `--help` output                               |
 pub @let FlagSpec = BaseDict $
+  # Name
   flag: Str
+  # `--long` name. Defaults to the name; `nil` disables it
   ?long: (Str | nil)
+  # Single-character shorthand, such as `v` for `-v`
   ?short: Str
+  # Value when absent. Defaults to `false`
   ?default: Bool
+  # Stop interpreting later arguments as options or flags
   ?divider: Bool
+  # Environment variable consulted when the flag is absent
   ?env: Str
+  # Description shown in `--help` output
   ?help: Str
 
 # A named option that takes a value.
-#
-# | Key       | Meaning                                                            |
-# | --------- | ------------------------------------------------------------------ |
-# | `opt`     | Name                                                               |
-# | `long`    | `--long` name. Defaults to the name; `nil` disables it             |
-# | `short`   | Single-character shorthand, such as `f` for `-f`                   |
-# | `parse`   | Parser applied to the raw value                                    |
-# | `default` | Value when absent. Without one, the option is required             |
-# | `divider` | Stop interpreting later arguments as options or flags              |
-# | `env`     | Environment variable consulted when the option is absent           |
-# | `collect` | Accept the option several times and collect the values in an array |
-# | `meta`    | Placeholder shown in help output. Defaults to the uppercased name  |
-# | `values`  | Allowed values                                                     |
-# | `help`    | Description shown in `--help` output                               |
 pub @let OptSpec = BaseDict $
+  # Name
   opt: Str
+  # `--long` name. Defaults to the name; `nil` disables it
   ?long: (Str | nil)
+  # Single-character shorthand, such as `f` for `-f`
   ?short: Str
+  # Parser applied to the raw value
   ?parse: (Str -> Value)
+  # Value when absent. Without one, the option is required
   ?default: Value
+  # Stop interpreting later arguments as options or flags
   ?divider: Bool
+  # Environment variable consulted when the option is absent
   ?env: Str
+  # Accept the option several times and collect the values in an array
   ?collect: Bool
+  # Placeholder shown in help output. Defaults to the uppercased name
   ?meta: Str
+  # Allowed values
   ?values: Iterable[Value]
+  # Description shown in `--help` output
   ?help: Str
 
 # A positional argument.
-#
-# | Key       | Meaning                                                            |
-# | --------- | ------------------------------------------------------------------ |
-# | `arg`     | Name                                                               |
-# | `parse`   | Parser applied to the raw value                                    |
-# | `default` | Value when absent. Without one, the argument is required           |
-# | `divider` | Stop interpreting later arguments as options or flags              |
-# | `collect` | Collect all remaining arguments in an array. Last argument only    |
-# | `values`  | Allowed values                                                     |
-# | `help`    | Description shown in `--help` output                               |
 pub @let ArgSpec = BaseDict $
+  # Name
   arg: Str
+  # Parser applied to the raw value
   ?parse: (Str -> Value)
+  # Value when absent. Without one, the argument is required
   ?default: Value
+  # Stop interpreting later arguments as options or flags
   ?divider: Bool
+  # Collect all remaining arguments in an array. Last argument only
   ?collect: Bool
+  # Allowed values
   ?values: Iterable[Value]
+  # Description shown in `--help` output
   ?help: Str
 
 # A subcommand.
 #
-# Its positional entries are the subcommand's own spec items and, optionally,
-# its handler.
-#
-# | Key     | Meaning                                                  |
-# | ------- | -------------------------------------------------------- |
-# | `cmd`   | Name                                                     |
-# | `help`  | Description shown in `--help` output                     |
-# | `usage` | Replacement for the generated `Usage:` line              |
-#
 # When a subcommand is matched, the result's `cmd` field is its name as a
 # symbol, such as `:deploy:` or `:build_docs:`, and its own fields are in a
-# nested [`Args`](args.Args) at `p[p.cmd]`. The result's `handler` field is the matched
-# handler.
+# nested [`Args`](args.Args) at `p[p.cmd]`. The result's `handler` field is the
+# matched handler.
 pub @let CmdSpec[R, I, O] = BaseDict $
+  # Name
   cmd: Str
+  # Description shown in `--help` output
   ?help: Str
+  # Replacement for the generated `Usage:` line
   ?usage: Str
+  # The subcommand's own spec items and, optionally, its handler
   *(SpecItem[R, I, O] | Handler[R, I, O])
 
 # An item of an argument specification.

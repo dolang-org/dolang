@@ -48,35 +48,32 @@ import
 pub @let Resolve = (:TARGET: | :LINK:)
 
 # The type of a file.
-#
-# | Value            | Description                  |
-# | ---------------- | ---------------------------- |
-# | `:FILE:`         | Regular file                 |
-# | `:DIR:`          | Directory                    |
-# | `:SYMLINK:`      | Symbolic link                |
-# | `:FIFO:`         | Named pipe (FIFO)            |
-# | `:CHAR_DEVICE:`  | Character device             |
-# | `:BLOCK_DEVICE:` | Block device                 |
-# | `:SOCKET:`       | Unix domain socket           |
-# | `:UNKNOWN:`      | Type could not be determined |
 pub @let FileType = $
+  # Regular file
   | :FILE:
+  # Directory
   | :DIR:
+  # Symbolic link
   | :SYMLINK:
+  # Named pipe (FIFO)
   | :FIFO:
+  # Character device
   | :CHAR_DEVICE:
+  # Block device
   | :BLOCK_DEVICE:
+  # Unix domain socket
   | :SOCKET:
+  # Type could not be determined
   | :UNKNOWN:
 
 # How a copy shares blocks between its source and destination.
-#
-# | Value       | Meaning                                                |
-# | ----------- | ------------------------------------------------------ |
-# | `:AUTO:`    | share blocks where possible, copy the data otherwise   |
-# | `:REQUIRE:` | fail rather than copy the data outright                |
-# | `:NEVER:`   | copy the data outright even where sharing is available |
-pub @let CloneMode = (:AUTO: | :REQUIRE: | :NEVER:)
+pub @let CloneMode = $
+  # share blocks where possible, copy the data otherwise
+  | :AUTO:
+  # fail rather than copy the data outright
+  | :REQUIRE:
+  # copy the data outright even where sharing is available
+  | :NEVER:
 
 # An extended-attribute namespace: a name, or `:USER:` or `:SYSTEM:` for the
 # well-known namespaces.

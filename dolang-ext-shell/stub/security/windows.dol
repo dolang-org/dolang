@@ -120,61 +120,55 @@ pub @let WellKnownSid = $
 pub @let SidSpec = (Sid | Str | Bin | WellKnownSid)
 
 # The identifier authority of a SID.
-#
-# | Symbol               | Authority           |
-# | -------------------- | ------------------- |
-# | `:NULL:`             | Null                |
-# | `:WORLD:`            | World               |
-# | `:LOCAL:`            | Local               |
-# | `:CREATOR:`          | Creator             |
-# | `:NON_UNIQUE:`       | Non-unique          |
-# | `:NT:`               | NT                  |
-# | `:RESOURCE_MANAGER:` | Resource manager    |
-# | `:APP_PACKAGE:`      | Application package |
-# | `:MANDATORY_LABEL:`  | Mandatory label     |
-# | `:SCOPED_POLICY:`    | Scoped policy ID    |
-# | `:AUTHENTICATION:`   | Authentication      |
-# | `:PROCESS_TRUST:`    | Process trust       |
 pub @let IdentifierAuthority = $
+  # Null
   | :NULL:
+  # World
   | :WORLD:
+  # Local
   | :LOCAL:
+  # Creator
   | :CREATOR:
+  # Non-unique
   | :NON_UNIQUE:
+  # NT
   | :NT:
+  # Resource manager
   | :RESOURCE_MANAGER:
+  # Application package
   | :APP_PACKAGE:
+  # Mandatory label
   | :MANDATORY_LABEL:
+  # Scoped policy ID
   | :SCOPED_POLICY:
+  # Authentication
   | :AUTHENTICATION:
+  # Process trust
   | :PROCESS_TRUST:
 
 # How Windows classifies a resolved SID.
-#
-# | Value                | Meaning                       |
-# | -------------------- | ----------------------------- |
-# | `:USER:`             | User SID                      |
-# | `:GROUP:`            | Group SID                     |
-# | `:DOMAIN:`           | Domain SID                    |
-# | `:ALIAS:`            | Alias SID                     |
-# | `:WELL_KNOWN_GROUP:` | Well-known group SID          |
-# | `:DELETED_ACCOUNT:`  | Deleted account SID           |
-# | `:INVALID:`          | Invalid SID                   |
-# | `:UNKNOWN:`          | SID of an unknown type        |
-# | `:COMPUTER:`         | Computer SID                  |
-# | `:LABEL:`            | Mandatory integrity label SID |
-# | `:LOGON_SESSION:`    | Logon session SID             |
 pub @let SidNameUse = $
+  # User SID
   | :USER:
+  # Group SID
   | :GROUP:
+  # Domain SID
   | :DOMAIN:
+  # Alias SID
   | :ALIAS:
+  # Well-known group SID
   | :WELL_KNOWN_GROUP:
+  # Deleted account SID
   | :DELETED_ACCOUNT:
+  # Invalid SID
   | :INVALID:
+  # SID of an unknown type
   | :UNKNOWN:
+  # Computer SID
   | :COMPUTER:
+  # Mandatory integrity label SID
   | :LABEL:
+  # Logon session SID
   | :LOGON_SESSION:
 
 # A native ACE type, or `:UNKNOWN:` for an unrecognized type code.
@@ -324,35 +318,32 @@ pub @let SecDescSpec = $
       ?rm_control: (Int | nil)
 
 # A symbol naming rights of an [`AccessMask`](security.windows.AccessMask).
-#
-# | Symbol                       | Meaning                                          |
-# | ---------------------------- | ------------------------------------------------ |
-# | `:DELETE:`                   | Delete the object                                |
-# | `:READ_CONTROL:`             | Read its security descriptor, except the SACL    |
-# | `:WRITE_DAC:`                | Change its discretionary access-control list     |
-# | `:WRITE_OWNER:`              | Change its owner                                 |
-# | `:SYNCHRONIZE:`              | Synchronize access to the object                 |
-# | `:STANDARD_RIGHTS_REQUIRED:` | The standard rights required by most objects     |
-# | `:STANDARD_RIGHTS_ALL:`      | All standard rights                              |
-# | `:ACCESS_SYSTEM_SECURITY:`   | Access its system access-control list            |
-# | `:MAXIMUM_ALLOWED:`          | Request the maximum rights allowed to the caller |
-# | `:GENERIC_READ:`             | Request object-specific read access              |
-# | `:GENERIC_WRITE:`            | Request object-specific write access             |
-# | `:GENERIC_EXECUTE:`          | Request object-specific execute access           |
-# | `:GENERIC_ALL:`              | Request all object-specific access               |
 pub @let AccessRight = $
+  # Delete the object
   | :DELETE:
+  # Read its security descriptor, except the SACL
   | :READ_CONTROL:
+  # Change its discretionary access-control list
   | :WRITE_DAC:
+  # Change its owner
   | :WRITE_OWNER:
+  # Synchronize access to the object
   | :SYNCHRONIZE:
+  # The standard rights required by most objects
   | :STANDARD_RIGHTS_REQUIRED:
+  # All standard rights
   | :STANDARD_RIGHTS_ALL:
+  # Access its system access-control list
   | :ACCESS_SYSTEM_SECURITY:
+  # Request the maximum rights allowed to the caller
   | :MAXIMUM_ALLOWED:
+  # Request object-specific read access
   | :GENERIC_READ:
+  # Request object-specific write access
   | :GENERIC_WRITE:
+  # Request object-specific execute access
   | :GENERIC_EXECUTE:
+  # Request all object-specific access
   | :GENERIC_ALL:
 
 # Generic Windows object access rights.
@@ -435,25 +426,22 @@ pub class AccessMask: Iterable[AccessRight]
 # and [`ObjectAce`](security.windows.ObjectAce) set the outcome flags from
 # their own `successful` and `failed`
 # arguments.
-#
-# | Symbol                   | Meaning                                                |
-# | ------------------------ | ------------------------------------------------------ |
-# | `:OBJECT_INHERIT:`       | Non-container child objects inherit the entry          |
-# | `:CONTAINER_INHERIT:`    | Container child objects inherit the entry              |
-# | `:NO_PROPAGATE_INHERIT:` | Inherited copies stop propagating after one generation |
-# | `:INHERIT_ONLY:`         | The entry applies only through inheritance             |
-# | `:INHERITED:`            | The entry was inherited                                |
-# | `:CRITICAL:`             | The entry is critical and cannot be removed            |
-# | `:SUCCESSFUL_ACCESS:`    | An audit or alarm entry selects successful access      |
-# | `:FAILED_ACCESS:`        | An audit or alarm entry selects failed access          |
 pub @let AceFlag = $
+  # Non-container child objects inherit the entry
   | :OBJECT_INHERIT:
+  # Container child objects inherit the entry
   | :CONTAINER_INHERIT:
+  # Inherited copies stop propagating after one generation
   | :NO_PROPAGATE_INHERIT:
+  # The entry applies only through inheritance
   | :INHERIT_ONLY:
+  # The entry was inherited
   | :INHERITED:
+  # The entry is critical and cannot be removed
   | :CRITICAL:
+  # An audit or alarm entry selects successful access
   | :SUCCESSFUL_ACCESS:
+  # An audit or alarm entry selects failed access
   | :FAILED_ACCESS:
 
 # Flags stored in an ACE header.
@@ -508,37 +496,34 @@ pub class AceFlags: Iterable[AceFlag]
     ...
 
 # A symbol naming a flag of a [`SecDescControl`](security.windows.SecDescControl).
-#
-# | Symbol                         | Meaning                               |
-# | ------------------------------ | ------------------------------------- |
-# | `:OWNER_DEFAULTED:`            | Owner supplied by a default method    |
-# | `:GROUP_DEFAULTED:`            | Group supplied by a default method    |
-# | `:DACL_PRESENT:`               | DACL present                          |
-# | `:DACL_DEFAULTED:`             | DACL supplied by a default method     |
-# | `:SACL_PRESENT:`               | SACL present                          |
-# | `:SACL_DEFAULTED:`             | SACL supplied by a default method     |
-# | `:DACL_AUTO_INHERIT_REQUIRED:` | DACL requires inheritance processing  |
-# | `:SACL_AUTO_INHERIT_REQUIRED:` | SACL requires inheritance processing  |
-# | `:DACL_AUTO_INHERITED:`        | DACL was automatically inherited      |
-# | `:SACL_AUTO_INHERITED:`        | SACL was automatically inherited      |
-# | `:DACL_PROTECTED:`             | DACL blocks inheritable ACEs          |
-# | `:SACL_PROTECTED:`             | SACL blocks inheritable ACEs          |
-# | `:RM_CONTROL_VALID:`           | Resource-manager control byte valid   |
-# | `:SELF_RELATIVE:`              | Descriptor uses self-relative storage |
 pub @let SecDescControlFlag = $
+  # Owner supplied by a default method
   | :OWNER_DEFAULTED:
+  # Group supplied by a default method
   | :GROUP_DEFAULTED:
+  # DACL present
   | :DACL_PRESENT:
+  # DACL supplied by a default method
   | :DACL_DEFAULTED:
+  # SACL present
   | :SACL_PRESENT:
+  # SACL supplied by a default method
   | :SACL_DEFAULTED:
+  # DACL requires inheritance processing
   | :DACL_AUTO_INHERIT_REQUIRED:
+  # SACL requires inheritance processing
   | :SACL_AUTO_INHERIT_REQUIRED:
+  # DACL was automatically inherited
   | :DACL_AUTO_INHERITED:
+  # SACL was automatically inherited
   | :SACL_AUTO_INHERITED:
+  # DACL blocks inheritable ACEs
   | :DACL_PROTECTED:
+  # SACL blocks inheritable ACEs
   | :SACL_PROTECTED:
+  # Resource-manager control byte valid
   | :RM_CONTROL_VALID:
+  # Descriptor uses self-relative storage
   | :SELF_RELATIVE:
 
 # Security descriptor control flags.
@@ -580,19 +565,16 @@ pub class SecDescControl: Iterable[SecDescControlFlag]
     ...
 
 # A symbol naming components of a [`SecInfo`](security.windows.SecInfo).
-#
-# | Symbol    | Component                |
-# | --------- | ------------------------ |
-# | `:OWNER:` | Owner SID                |
-# | `:GROUP:` | Primary group SID        |
-# | `:DACL:`  | Discretionary ACL        |
-# | `:SACL:`  | System ACL               |
-# | `:ALL:`   | All supported components |
 pub @let SecInfoComponent = $
+  # Owner SID
   | :OWNER:
+  # Primary group SID
   | :GROUP:
+  # Discretionary ACL
   | :DACL:
+  # System ACL
   | :SACL:
+  # All supported components
   | :ALL:
 
 # Security descriptor components loaded by a query.
@@ -634,27 +616,24 @@ pub class SecInfo: Iterable[SecInfoComponent]
     ...
 
 # A symbol naming an attribute of a [`TokenGroupAttributes`](security.windows.TokenGroupAttributes).
-#
-# | Symbol                 | Attribute                   |
-# | ---------------------- | --------------------------- |
-# | `:MANDATORY:`          | Mandatory group             |
-# | `:ENABLED_BY_DEFAULT:` | Enabled by default          |
-# | `:ENABLED:`            | Enabled                     |
-# | `:OWNER:`              | Eligible as an object owner |
-# | `:USE_FOR_DENY_ONLY:`  | Used only for deny checks   |
-# | `:INTEGRITY:`          | Integrity SID               |
-# | `:INTEGRITY_ENABLED:`  | Integrity SID enabled       |
-# | `:RESOURCE:`           | Resource group              |
-# | `:LOGON_ID:`           | Logon-session identifier    |
 pub @let TokenGroupAttribute = $
+  # Mandatory group
   | :MANDATORY:
+  # Enabled by default
   | :ENABLED_BY_DEFAULT:
+  # Enabled
   | :ENABLED:
+  # Eligible as an object owner
   | :OWNER:
+  # Used only for deny checks
   | :USE_FOR_DENY_ONLY:
+  # Integrity SID
   | :INTEGRITY:
+  # Integrity SID enabled
   | :INTEGRITY_ENABLED:
+  # Resource group
   | :RESOURCE:
+  # Logon-session identifier
   | :LOGON_ID:
 
 # Windows access-token group attributes.

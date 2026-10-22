@@ -7,47 +7,44 @@ import
     - @Permission
 
 # A symbol naming bits of a [`Mode`](fs.unix.Mode).
-#
-# | Symbol            | Meaning                 |
-# | ----------------- | ----------------------- |
-# | `:OWNER_READ:`    | Owner may read          |
-# | `:OWNER_WRITE:`   | Owner may write         |
-# | `:OWNER_EXECUTE:` | Owner may execute       |
-# | `:GROUP_READ:`    | Group may read          |
-# | `:GROUP_WRITE:`   | Group may write         |
-# | `:GROUP_EXECUTE:` | Group may execute       |
-# | `:OTHER_READ:`    | Everyone may read       |
-# | `:OTHER_WRITE:`   | Everyone may write      |
-# | `:OTHER_EXECUTE:` | Everyone may execute    |
-# | `:SET_UID:`       | Set user ID on execute  |
-# | `:SET_GID:`       | Set group ID on execute |
-# | `:STICKY:`        | Sticky bit              |
-# | `:IFREG:`         | Regular file            |
-# | `:IFDIR:`         | Directory               |
-# | `:IFLNK:`         | Symbolic link           |
-# | `:IFIFO:`         | FIFO                    |
-# | `:IFCHR:`         | Character device        |
-# | `:IFBLK:`         | Block device            |
-# | `:IFSOCK:`        | Socket                  |
 pub @let ModeBit = $
+  # Owner may read
   | :OWNER_READ:
+  # Owner may write
   | :OWNER_WRITE:
+  # Owner may execute
   | :OWNER_EXECUTE:
+  # Group may read
   | :GROUP_READ:
+  # Group may write
   | :GROUP_WRITE:
+  # Group may execute
   | :GROUP_EXECUTE:
+  # Everyone may read
   | :OTHER_READ:
+  # Everyone may write
   | :OTHER_WRITE:
+  # Everyone may execute
   | :OTHER_EXECUTE:
+  # Set user ID on execute
   | :SET_UID:
+  # Set group ID on execute
   | :SET_GID:
+  # Sticky bit
   | :STICKY:
+  # Regular file
   | :IFREG:
+  # Directory
   | :IFDIR:
+  # Symbolic link
   | :IFLNK:
+  # FIFO
   | :IFIFO:
+  # Character device
   | :IFCHR:
+  # Block device
   | :IFBLK:
+  # Socket
   | :IFSOCK:
 
 # Unix `st_mode` bits: permissions, the set-user-ID/set-group-ID/sticky bits,

@@ -304,31 +304,28 @@ pub class Response
 
 # Options of a request, which every request function and [`Client`](http.Client)
 # method takes.
-#
-# | Option    | Description                                                                                                    |
-# | --------- | -------------------------------------------------------------------------------------------------------------- |
-# | `headers` | Request headers -- see [`headers`](http.Client.headers)                                                        |
-# | `query`   | Query parameters -- see [`query`](http.Client.query)                                                           |
-# | `status`  | `:IGNORE:` to return a response whose status is outside `200..=299` instead of raising [`Status`](http.Status) |
 pub @let RequestOptions = $
+  # Request headers -- see [`headers`](http.Client.headers)
   ?headers: BaseDict[Value, Value]
+  # Query parameters -- see [`query`](http.Client.query)
   ?query: BaseDict[Value, Value]
+  # `:IGNORE:` to return a response whose status is outside `200..=299` instead
+  # of raising [`Status`](http.Status)
   ?status: (:IGNORE: | "IGNORE")
 
 # Options of a request with a body: those of
 # [`RequestOptions`](http.RequestOptions), and at most one of these.
-#
-# | Option      | Description                                                                                 |
-# | ----------- | ------------------------------------------------------------------------------------------- |
-# | `body`      | Request body -- see [`body`](http.Client.body)                                              |
-# | `json`      | Request body, JSON-serialized -- see [`json`](http.Client.json)                             |
-# | `lines`     | Request body streamed with a newline after each element -- see [`lines`](http.Client.lines) |
-# | `multipart` | Multipart form parts -- see [`multipart`](http.Client.multipart)                            |
 pub @let BodyOptions = $
+  # Any of [`RequestOptions`](http.RequestOptions)
   ...RequestOptions
+  # Request body -- see [`body`](http.Client.body)
   ?body: (Str | Bin | Iterable[Value])
+  # Request body, JSON-serialized -- see [`json`](http.Client.json)
   ?json: JsonEncodeValue
+  # Request body streamed with a newline after each element -- see
+  # [`lines`](http.Client.lines)
   ?lines: Iterable[Value]
+  # Multipart form parts -- see [`multipart`](http.Client.multipart)
   ?multipart: Iterable[Dict[{name: Str, ...}]]
 
 # An HTTP client.

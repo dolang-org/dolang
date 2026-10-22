@@ -767,49 +767,47 @@ pub class AnyKeyTypeItem: TypeItem
 pub class OpenTypeItem: TypeItem
 
 # The kind of a [`Token`](compile.Token).
-#
-# | Value            | Meaning                                                  |
-# | ---------------- | --------------------------------------------------------- |
-# | `:ANNOTATION:`   | An `@` annotation marker                                  |
-# | `:BINDER:`       | A type binder declaration                                 |
-# | `:COMMENT:`      | A comment                                                  |
-# | `:CONSTANT:`     | A non-numeric, non-string constant such as `nil` or `false` |
-# | `:DELIM:`        | A delimiter such as `(`, `[`, etc                          |
-# | `:ESCAPE:`       | An escape within a string                                  |
-# | `:FIELD:`        | A field, e.g. `bar` in `foo.bar`                           |
-# | `:METHOD:`       | A method declaration name                                  |
-# | `:KEY:`          | A key such as `foo:`                                       |
-# | `:MODULE_NAME:`  | A module name                                              |
-# | `:MODULE_ITEM:`  | A module item                                              |
-# | `:KEYWORD:`      | A keyword such as `while`, `for`, `do`, `import`           |
-# | `:LITERAL:`      | A literal string, including non-escape, non-interpolated portions of quoted strings |
-# | `:NUMBER:`       | A numeric constant                                         |
-# | `:OPERATOR:`     | A unary or binary operator such as `+` or `-`               |
-# | `:STRING_DELIM:` | A string delimiter (`"`)                                   |
-# | `:TYPE:`         | A name within a type expression                           |
-# | `:TYPE_KEY:`     | A keyed argument within a type expression                 |
-# | `:VARIABLE:`     | A variable                                                 |
-# | `:SIGIL:`        | A sigil like `$` or `...`                                  |
 pub @let TokenKind = $
+  # An `@` annotation marker
   | :ANNOTATION:
+  # A type binder declaration
   | :BINDER:
+  # A comment
   | :COMMENT:
+  # A non-numeric, non-string constant such as `nil` or `false`
   | :CONSTANT:
+  # A delimiter such as `(`, `[`, etc
   | :DELIM:
+  # An escape within a string
   | :ESCAPE:
+  # A field, e.g. `bar` in `foo.bar`
   | :FIELD:
+  # A method declaration name
   | :METHOD:
+  # A key such as `foo:`
   | :KEY:
+  # A module name
   | :MODULE_NAME:
+  # A module item
   | :MODULE_ITEM:
+  # A keyword such as `while`, `for`, `do`, `import`
   | :KEYWORD:
+  # A literal string, including non-escape, non-interpolated portions of quoted
+  # strings
   | :LITERAL:
+  # A numeric constant
   | :NUMBER:
+  # A unary or binary operator such as `+` or `-`
   | :OPERATOR:
+  # A string delimiter (`"`)
   | :STRING_DELIM:
+  # A name within a type expression
   | :TYPE:
+  # A keyed argument within a type expression
   | :TYPE_KEY:
+  # A variable
   | :VARIABLE:
+  # A sigil like `$` or `...`
   | :SIGIL:
 
 # A syntactic token.

@@ -265,13 +265,13 @@ pub @let DiskIo = (:IO_URING: | :THREADS: | :NATIVE: | Str)
 pub @let Compress = (Bool | :ZSTD: | :ZLIB:)
 
 # A readiness probe.
-#
-# | Value          | Answers when                                  |
-# | -------------- | --------------------------------------------- |
-# | `:VFS:`        | `dolang-vfs` runs, which is what `with` needs |
-# | `:SSH:`        | sshd accepts a connection                     |
-# | `:CLOUD_INIT:` | cloud-init has written its ready file         |
-@let Probe = (:VFS: | :SSH: | :CLOUD_INIT:)
+@let Probe = $
+  # `dolang-vfs` runs, which is what `with` needs
+  | :VFS:
+  # sshd accepts a connection
+  | :SSH:
+  # cloud-init has written its ready file
+  | :CLOUD_INIT:
 # A medium attached as a cdrom, and its UEFI boot order if it boots.
 @let Medium = (path: Path, boot: (Int | nil))
 # A firmware variable store and its format, as `dumpxml` reports them.

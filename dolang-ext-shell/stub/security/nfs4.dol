@@ -2,37 +2,34 @@
 # NFSv4 access-control-list types.
 
 # A symbol naming a bit of a [`Mask`](security.nfs4.Mask).
-#
-# | Symbol                | Meaning                                                |
-# | --------------------- | ------------------------------------------------------ |
-# | `:READ_DATA:`         | Read the file's data, or list a directory              |
-# | `:WRITE_DATA:`        | Write the file's data, or create a file in a directory |
-# | `:APPEND_DATA:`       | Append to the file's data, or create a subdirectory    |
-# | `:READ_NAMED_ATTRS:`  | Read named attributes                                  |
-# | `:WRITE_NAMED_ATTRS:` | Write named attributes                                 |
-# | `:EXECUTE:`           | Execute the file, or traverse a directory              |
-# | `:DELETE_CHILD:`      | Delete a file or directory within a directory          |
-# | `:READ_ATTRIBUTES:`   | Read basic attributes                                  |
-# | `:WRITE_ATTRIBUTES:`  | Write basic attributes                                 |
-# | `:DELETE:`            | Delete the file or directory                           |
-# | `:READ_ACL:`          | Read the ACL                                           |
-# | `:WRITE_ACL:`         | Write the ACL                                          |
-# | `:WRITE_OWNER:`       | Change owner and owning group                          |
-# | `:SYNCHRONIZE:`       | Use synchronous I/O                                    |
 pub @let MaskBit = $
+  # Read the file's data, or list a directory
   | :READ_DATA:
+  # Write the file's data, or create a file in a directory
   | :WRITE_DATA:
+  # Append to the file's data, or create a subdirectory
   | :APPEND_DATA:
+  # Read named attributes
   | :READ_NAMED_ATTRS:
+  # Write named attributes
   | :WRITE_NAMED_ATTRS:
+  # Execute the file, or traverse a directory
   | :EXECUTE:
+  # Delete a file or directory within a directory
   | :DELETE_CHILD:
+  # Read basic attributes
   | :READ_ATTRIBUTES:
+  # Write basic attributes
   | :WRITE_ATTRIBUTES:
+  # Delete the file or directory
   | :DELETE:
+  # Read the ACL
   | :READ_ACL:
+  # Write the ACL
   | :WRITE_ACL:
+  # Change owner and owning group
   | :WRITE_OWNER:
+  # Use synchronous I/O
   | :SYNCHRONIZE:
 
 # NFSv4 ACE permission bits.
@@ -81,23 +78,21 @@ pub class Mask: Iterable[MaskBit]
 
 
 # A symbol naming a flag of a [`Flags`](security.nfs4.Flags).
-#
-# | Symbol                   | Meaning                                                                          |
-# | ------------------------ | -------------------------------------------------------------------------------- |
-# | `:FILE_INHERIT:`         | Files created within a directory inherit this entry                              |
-# | `:DIRECTORY_INHERIT:`    | Subdirectories created within a directory inherit this entry                     |
-# | `:NO_PROPAGATE_INHERIT:` | Stop propagating this entry after one level of inheritance                       |
-# | `:INHERIT_ONLY:`         | This entry is inherited but does not apply to the directory itself               |
-# | `:SUCCESSFUL_ACCESS:`    | Generate an audit/alarm event on successful access (`:AUDIT:`/`:ALARM:` entries) |
-# | `:FAILED_ACCESS:`        | Generate an audit/alarm event on failed access (`:AUDIT:`/`:ALARM:` entries)     |
-# | `:INHERITED:`            | This entry was inherited from a parent directory                                 |
 pub @let FlagBit = $
+  # Files created within a directory inherit this entry
   | :FILE_INHERIT:
+  # Subdirectories created within a directory inherit this entry
   | :DIRECTORY_INHERIT:
+  # Stop propagating this entry after one level of inheritance
   | :NO_PROPAGATE_INHERIT:
+  # This entry is inherited but does not apply to the directory itself
   | :INHERIT_ONLY:
+  # Generate an audit/alarm event on successful access (`:AUDIT:`/`:ALARM:`
+  # entries)
   | :SUCCESSFUL_ACCESS:
+  # Generate an audit/alarm event on failed access (`:AUDIT:`/`:ALARM:` entries)
   | :FAILED_ACCESS:
+  # This entry was inherited from a parent directory
   | :INHERITED:
 
 # NFSv4 ACE inheritance and audit flags.

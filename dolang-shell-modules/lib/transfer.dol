@@ -22,24 +22,27 @@ import _vfs digest fs http json proc progress shell std sys tar zip
     - Url
 
 # An archive format [`pack`](transfer.pack) writes.
-#
-# | Value        | Meaning                  |
-# | ------------ | ------------------------ |
-# | `:TAR:`      | Uncompressed TAR         |
-# | `:TAR_GZIP:` | gzip-compressed TAR      |
-# | `:TAR_ZSTD:` | Zstandard-compressed TAR |
-# | `:ZIP:`      | ZIP                      |
-pub @let ArchiveFormat = (:TAR: | :TAR_GZIP: | :TAR_ZSTD: | :ZIP:)
+pub @let ArchiveFormat = $
+  # Uncompressed TAR
+  | :TAR:
+  # gzip-compressed TAR
+  | :TAR_GZIP:
+  # Zstandard-compressed TAR
+  | :TAR_ZSTD:
+  # ZIP
+  | :ZIP:
 
 # An input format [`unpack`](transfer.unpack) reads: an archive, or a raw
 # compressed stream.
-#
-# | Value    | Meaning              |
-# | -------- | -------------------- |
-# | `:GZIP:` | Raw gzip stream      |
-# | `:ZSTD:` | Raw Zstandard stream |
-# | `:XZ:`   | Raw XZ stream        |
-pub @let UnpackFormat = (ArchiveFormat | :GZIP: | :ZSTD: | :XZ:)
+pub @let UnpackFormat = $
+  # Any [`ArchiveFormat`](transfer.ArchiveFormat)
+  | ArchiveFormat
+  # Raw gzip stream
+  | :GZIP:
+  # Raw Zstandard stream
+  | :ZSTD:
+  # Raw XZ stream
+  | :XZ:
 import security.unix: security_unix
 import security.windows:
   - @Sid

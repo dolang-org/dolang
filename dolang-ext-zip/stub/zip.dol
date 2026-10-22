@@ -313,12 +313,11 @@ pub class File
     ...
 
 # Access mode accepted by [`open`](zip.open).
-#
-# | Mode  | Description                                                      |
-# | ----- | ---------------------------------------------------------------- |
-# | `"r"` | Read mode -- opens an existing archive for reading               |
-# | `"w"` | Write mode -- creates a new archive, truncating any existing one |
-pub @let OpenMode = ("r" | "w")
+pub @let OpenMode = $
+  # Read mode -- opens an existing archive for reading
+  | "r"
+  # Write mode -- creates a new archive, truncating any existing one
+  | "w"
 
 # Opens a ZIP archive.
 #

@@ -35,13 +35,13 @@ pub class Identity
     ...
 
 # A symbol naming a bit of a [`Permission`](security.unix.Permission).
-#
-# | Symbol      | Meaning            |
-# | ----------- | ------------------ |
-# | `:READ:`    | Read permission    |
-# | `:WRITE:`   | Write permission   |
-# | `:EXECUTE:` | Execute permission |
-pub @let PermissionBit = (:READ: | :WRITE: | :EXECUTE:)
+pub @let PermissionBit = $
+  # Read permission
+  | :READ:
+  # Write permission
+  | :WRITE:
+  # Execute permission
+  | :EXECUTE:
 
 # POSIX read/write/execute permission bits.
 #
