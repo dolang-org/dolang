@@ -181,8 +181,8 @@ pub class Typelib
   pub def path self -> Str
     ...
 
-  # Returns the modules the module's declarations name, each once, in order.
-  # [`check`](compile.check) treats those it isn't given as unknown.
+  # Returns the modules the module imports or its declarations name, each once, in
+  # order. [`check`](compile.check) reports those it isn't given as not found.
   pub def imports self -> Iterable[Str]
     ...
 
@@ -1073,8 +1073,9 @@ do -> Unit
 # Checks the types of units together.
 #
 # A unit's imports of another unit's module are checked against that module.
-# Modules that aren't among the units are treated as unknown. A unit that failed
-# to compile is skipped; its own diagnostics report why.
+# An import of a module that isn't among the units is an error, and the names it
+# imports have unknown types. A unit that failed to compile is skipped; its own
+# diagnostics report why.
 #
 # A module may be given by its [`Typelib`](compile.Typelib) in place of a unit.
 # Its declarations are checked, but not its bodies, and a diagnostic in it is

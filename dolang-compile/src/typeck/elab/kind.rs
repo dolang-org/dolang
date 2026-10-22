@@ -219,13 +219,9 @@ impl Infer {
                         }
                     },
                     Some(Referent::Binder(binder)) => Term::Var(self.vars[&Var::Binder(*binder)]),
-                    Some(
-                        Referent::External { .. }
-                        | Referent::Module(_)
-                        | Referent::Value(_)
-                        | Referent::Error,
-                    )
-                    | None => Term::Flexible,
+                    Some(Referent::Module(_) | Referent::Value(_) | Referent::Error) | None => {
+                        Term::Flexible
+                    }
                 }
             }
             // An application of an alias has its kind. Applying anything else
@@ -352,7 +348,7 @@ impl<'t> Check<'_, 't, '_> {
                 Named::Kind(tables.binder_kinds[binder], unit, name.span)
             }
             Referent::Module(_) | Referent::Value(_) => Named::NotAType,
-            Referent::External { .. } | Referent::Error => Named::Unknown,
+            Referent::Error => Named::Unknown,
         }
     }
 

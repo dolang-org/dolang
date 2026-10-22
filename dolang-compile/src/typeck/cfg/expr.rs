@@ -8,10 +8,7 @@ use super::{FuncId, Pattern, VarId};
 use crate::{
     lex::Op,
     source::Span,
-    typeck::{
-        elab::ModuleRef,
-        r#type::{DeclId, Literal, MemberKey, SymbolId, TypeId},
-    },
+    typeck::r#type::{DeclId, Literal, MemberKey, SymbolId, TypeId, UnitId},
 };
 
 pub(crate) struct Expr {
@@ -69,7 +66,7 @@ pub(crate) enum ExprKind {
     Class(DeclId),
     /// An imported module, or an item of one
     Import {
-        module: ModuleRef,
+        module: UnitId,
         item: Option<SymbolId>,
     },
     /// Instantiating a closure
@@ -193,7 +190,7 @@ pub(crate) enum Target {
     },
     /// A module's member, through an import path to the module, spanning the path
     Import {
-        module: ModuleRef,
+        module: UnitId,
         item: SymbolId,
         span: Span,
         value: Expr,

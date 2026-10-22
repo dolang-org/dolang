@@ -2,6 +2,11 @@
 # requires, so the sealed database stays consistent.
 
 import @ext
+# error: module `ext` not found
+#   --> m.dol:LL:LL
+#    |
+# LL | import @ext
+#    |         ^^^
 
 pub class Num
 pub class Pair[A, B]

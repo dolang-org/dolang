@@ -1231,10 +1231,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                         self.assign_index(at, state, &mut operands, object, &args[..], span);
                     }
                     Target::Import {
-                        ref module,
-                        item,
-                        span,
-                        ..
+                        module, item, span, ..
                     } => {
                         let expected = self.written_import(module, item, span);
                         let ty = self.expect(at, state, &mut operands, value, expected);

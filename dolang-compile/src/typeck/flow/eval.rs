@@ -7,7 +7,7 @@ use crate::source::Span;
 use super::{At, Flow, State, problem::Problem, rule::passed_signature};
 use crate::typeck::{
     cfg::{Expr, ExprKind, FuncId, FuncKind},
-    elab::{Designated, ModuleRef, Referent, Tables, Target},
+    elab::{Designated, Referent, Tables, Target},
     solver::Status,
     r#type::{
         Argument, Binding, BoundRef, Database, DeclId, DeclKind, Intrinsic, SymbolId, Type, TypeId,
@@ -77,7 +77,7 @@ impl Flow<'_, '_> {
                 checked,
             } => self.cast(at, state, operands, value, ty, checked),
             &ExprKind::Class(decl) => class_object(self.db, decl),
-            ExprKind::Import { module, item } => self.import(module, *item, expr.span),
+            ExprKind::Import { module, item } => self.import(*module, *item, expr.span),
             &ExprKind::Lambda(func) => self.expected_lambda(at, func, expected, expr.span),
             ExprKind::Call { .. } => self.call(at, state, operands, expr, expected),
             ExprKind::Invoke { .. } => self.invoke(at, state, operands, expr, expected),
@@ -252,10 +252,9 @@ impl Flow<'_, '_> {
     }
 
     /// The value of an imported item: a def's type, a class object, or a variable's
-    /// annotation. A module, a module that isn't checked, an unannotated variable,
-    /// and any other item are dynamic. An item a checked module doesn't export is
-    /// reported at `span`.
-    fn import(&mut self, module: &ModuleRef, item: Option<SymbolId>, span: Span) -> TypeId {
+    /// annotation. A module, an unannotated variable, and any other item are
+    /// dynamic. An item the module doesn't export is reported at `span`.
+    fn import(&mut self, module: UnitId, item: Option<SymbolId>, span: Span) -> TypeId {
         let Some(item) = item else {
             return self.db.unknown();
         };
@@ -271,7 +270,7 @@ impl Flow<'_, '_> {
     /// it re-exports can't be written, since typing names it by import.
     pub(super) fn written_import(
         &mut self,
-        module: &ModuleRef,
+        module: UnitId,
         item: SymbolId,
         span: Span,
     ) -> Option<TypeId> {
@@ -281,12 +280,9 @@ impl Flow<'_, '_> {
         }
     }
 
-    /// Report an item a checked module doesn't export. One that a re-export names
-    /// is reported where the re-exporting module imports it.
-    fn check_export(&mut self, module: &ModuleRef, item: SymbolId, span: Span) {
-        let &ModuleRef::Unit(unit) = module else {
-            return;
-        };
+    /// Report an item a module doesn't export. One that a re-export names is
+    /// reported where the re-exporting module imports it.
+    fn check_export(&mut self, unit: UnitId, item: SymbolId, span: Span) {
         if !self.observing() || span == Span::INVALID {
             return;
         }
@@ -300,12 +296,8 @@ impl Flow<'_, '_> {
         }
     }
 
-    /// The export a checked module's item names, following re-exports of items
-    fn export(&self, module: &ModuleRef, item: SymbolId) -> Option<&Target<'_>> {
-        let ModuleRef::Unit(unit) = module else {
-            return None;
-        };
-        let mut unit: UnitId = *unit;
+    /// The export a module's item names, following re-exports of items
+    fn export(&self, mut unit: UnitId, item: SymbolId) -> Option<&Target<'_>> {
         let mut name: &str = self.db.symbol(item);
         // Re-exports are followed, up to a limit that only a cycle reaches
         for _ in 0..64 {

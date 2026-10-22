@@ -5,7 +5,7 @@
 use rustc_hash::FxHashSet;
 
 use super::{
-    BinderRef, Decl, DeclNode, Harvest, ModuleRef, Referent, Role, Site, Target,
+    BinderRef, Decl, DeclNode, Harvest, Referent, Role, Site, Target,
     interface::Kept,
     local,
     surface::{
@@ -507,11 +507,9 @@ impl Visit for Referent {
         match self {
             Referent::Decl(decl) => decl.visit(ids),
             Referent::Binder(binder) => binder.visit(ids),
-            Referent::Module(ModuleRef::Unit(unit)) => ids.unit(unit),
+            Referent::Module(unit) => ids.unit(unit),
             Referent::Value(span) => ids.unit(&mut span.unit),
-            Referent::External { .. }
-            | Referent::Module(ModuleRef::External(_))
-            | Referent::Error => {}
+            Referent::Error => {}
         }
     }
 }

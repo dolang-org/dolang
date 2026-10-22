@@ -1,6 +1,11 @@
 # Flow types that each way the checker lowers a construct produces.
 
 import error
+# error: module `error` not found
+#   --> m.dol:LL:LL
+#    |
+# LL | import error
+#    |        ^^^^^
 import std
 
 pub def g()

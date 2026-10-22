@@ -482,25 +482,15 @@ impl DeclNode {
 pub(crate) enum Referent {
     Decl(DeclId),
     Binder(BinderRef),
-    /// An item of a module that no checked unit provides
-    External {
-        module: Box<str>,
-        item: Box<str>,
-    },
-    /// A module, reached by a name that is not dotted
-    Module(ModuleRef),
     /// A binding that exists only at runtime, such as a `let` or a parameter
     Value(#[serde(with = "wire::local_span")] UnitSpan),
     /// Nothing, for a reason already diagnosed
     Error,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum ModuleRef {
-    /// A checked unit, which a harvest names only once linked
+    /// A checked module, reached by a name that is not dotted, which a harvest
+    /// names only once linked. Last, since serde numbers a skipped variant when
+    /// writing but not when reading.
     #[serde(skip)]
-    Unit(UnitId),
-    External(Box<str>),
+    Module(UnitId),
 }
 
 /// What an unresolved name or export refers to
@@ -522,10 +512,6 @@ pub(crate) enum Head {
     /// A class, protocol or opaque alias, or a declaration that is not a type
     Decl(DeclId),
     Binder(BinderRef),
-    External {
-        module: Box<str>,
-        item: Box<str>,
-    },
     /// A union, function type, schema or constant
     Structural,
     /// Nothing, for a reason already diagnosed
@@ -571,6 +557,25 @@ impl Report for AliasCycle {
 
     fn span(&self) -> Span {
         self.0
+    }
+}
+
+struct MissingModule {
+    span: Span,
+    module: String,
+}
+
+impl Report for MissingModule {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "module `{}` not found", self.module)
+    }
+
+    fn span(&self) -> Span {
+        self.span
     }
 }
 

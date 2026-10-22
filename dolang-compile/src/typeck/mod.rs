@@ -88,9 +88,9 @@ impl<'a> Typelib<'a> {
         self.0.info.path
     }
 
-    /// The modules the module's declarations name, each once, in order. A check finds
-    /// what they name among its units, and treats a module it doesn't have as
-    /// unknown.
+    /// The modules the module imports or its declarations name, each once, in
+    /// order. A check finds them among its units, and reports a module it doesn't
+    /// have as not found.
     pub fn imports(&self) -> Vec<&'a str> {
         use elab::Target;
 
@@ -101,6 +101,7 @@ impl<'a> Typelib<'a> {
                 Target::Import { module, .. } | Target::Module(module) => Some(module),
                 Target::Local(_) => None,
             })
+            .chain(self.0.imports.keys().copied())
             .collect();
         imports.sort_unstable();
         imports.dedup();

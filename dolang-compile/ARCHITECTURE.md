@@ -1202,10 +1202,10 @@ names its `pub` imports re-export. Once every unit is collected, each type name
 that goes through an import follows the exports of the units checked, and the
 referent of every type name is recorded by the span of its head. Imports and
 renames are chased away but aliases are not, so `Pair[Int]` refers to the
-`Pair` alias; an item of a module no unit provides is external. Each transparent
-alias then has its underlying head found by following alias chains, in
-declaration order. Import cycles, alias cycles and imports of names a checked
-module does not export are diagnosed.
+`Pair` alias. Each transparent alias then has its underlying head found by
+following alias chains, in declaration order. Imports of modules no unit
+provides, import cycles, alias cycles and imports of names a checked module does
+not export are diagnosed, and their names are erroneous.
 
 `Check` keeps the tables. Its hidden `judgments` method reports what they
 concluded about each span of a unit, such as a type name's referent or an
@@ -1217,19 +1217,18 @@ Kinds come from declarations only, never from uses. A variadic binder is a
 schema and a keyword binder a type; any other binder has its bound's kind, and a
 transparent alias its body's. These equations are solved by union-find over one
 variable per binder and alias, so alias chains and cycles across units need no
-ordering. A kind nothing determines is a type. One that only an external or
-erroneous name could have determined, including an alias on a cycle, is
-flexible: it is recorded as a type but never reported as a mismatch. Every type
-expression is then checked against the kind its use requires. A rest binding's
-annotation is either kind, giving each item's type or the whole pack, and a
-variadic binder's bound likewise. Type arguments are matched to the binders
-they fill: positional arguments in order and then to a variadic binder,
-keyword arguments by name, and an expansion `...X` of either kind, a type
-expanding as any number of it. A declaration whose only positional binder is
-a schema, with only keyword binders besides, takes `Foo[T]` and `Foo[K, V]`
-for its items. Applying a schema, a binder or a
-declaration without binders is an error, as is naming a value or module as a
-type.
+ordering. A kind nothing determines is a type. One that only an erroneous name
+could have determined, including an alias on a cycle, is flexible: it is
+recorded as a type but never reported as a mismatch. Every type expression is
+then checked against the kind its use requires. A rest binding's annotation is
+either kind, giving each item's type or the whole pack, and a variadic binder's
+bound likewise. Type arguments are matched to the binders they fill: positional
+arguments in order and then to a variadic binder, keyword arguments by name, and
+an expansion `...X` of either kind, a type expanding as any number of it. A
+declaration whose only positional binder is a schema, with only keyword binders
+besides, takes `Foo[T]` and `Foo[K, V]` for its items. Applying a schema, a
+binder or a declaration without binders is an error, as is naming a value or
+module as a type.
 
 Signature completion fills each def and method signature with the defaults for
 what it omits, the same for public and private definitions. An omitted

@@ -45,7 +45,6 @@ do
   let bundled = []
   let seen = Set []
   let pending = []
-  let missing = []
 
   def add_typelib typelib to
     to.push $typelib
@@ -103,26 +102,24 @@ do
     if (found != nil)
       add $found $name
       continue
-    let typelib = if no_bundled
-      nil
-    else
-      _shell.resource "dolang.typelib" $name
+    if no_bundled
+      continue
+    let typelib = _shell.resource "dolang.typelib" $name
     if (typelib != nil)
       add_typelib $compile.Typelib(Bin(typelib)) $bundled
-    else
-      missing.push $name
 
-  let counts = {diagnostics: 0, errors: 0, warnings: 0, failed: (no_bundled && missing.len > 0)}
+  let counts = {diagnostics: 0, errors: 0, warnings: 0}
+  let failed = false
 
   def report diag
     counts[:diagnostics:] = (counts[:diagnostics:] + 1)
     if (diag.severity == :ERROR:)
       counts[:errors:] = (counts[:errors:] + 1)
-      counts[:failed:] = true
+      failed = true
     else if (diag.severity == :WARNING:)
       counts[:warnings:] = (counts[:warnings:] + 1)
     if (strict && (!script || diag.severity == :WARNING:))
-      counts[:failed:] = true
+      failed = true
     if script
       if (counts[:errors:] <= 10)
         term.print $diag.render() "\n"
@@ -145,10 +142,7 @@ do
     let listing = result.undecided()
     if (listing != "")
       echo "undecided checks:\n$(listing.trim_end())"
-  missing.sort()
-  for name = missing
-    echo "not found, treated as unknown: $name"
-  let verdict = if (result.validated && !counts[:failed:])
+  let verdict = if (result.validated && !failed)
     "validated"
   else
     "partial"

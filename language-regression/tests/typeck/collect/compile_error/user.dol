@@ -1,11 +1,17 @@
-# A unit that fails to compile is not checked, so what it declares is not known.
+# A unit that fails to compile is not checked, so importing it is an error and
+# what it declares is not known.
 
 import broken:
+  # error: module `broken` not found
+  #   --> user.dol:LL:LL
+  #    |
+  # LL | import broken:
+  #    |        ^^^^^^
   - @Lost
 import good:
   - @Found
 
 pub let lost @ Lost = nil
-#              ^~~~: ref external broken.Lost
+#              ^~~~: ref error
 pub let found @ Found = ...
 #               ^~~~~: ref good.Found

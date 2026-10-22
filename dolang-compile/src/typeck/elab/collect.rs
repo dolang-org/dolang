@@ -7,12 +7,12 @@
 
 use std::{collections::hash_map::Entry as MapEntry, iter};
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 
 use super::{
     AliasCycle, BinderRef, Decl, DeclAst, DeclNode, Diag, Head, ImportCycle, MissingExport,
-    ModuleRef, PIPES, Referent, Role, Site, Tables, Target, UnitDiag, UnitInfo,
+    MissingModule, PIPES, Referent, Role, Site, Tables, Target, UnitDiag, UnitInfo,
     ids::Rebase,
     interface::PrivateInInterface,
     local,
@@ -53,6 +53,9 @@ pub(crate) struct Harvest<'u> {
     /// Each exported variable, by the span of its name, with its annotation if it
     /// has one
     pub(crate) values: FxHashMap<Span, Option<SiteId>>,
+    /// The modules the unit imports, each at the module name in the first import
+    /// statement naming it, and the prelude modules it uses at the start of the unit
+    pub(crate) imports: FxHashMap<&'u str, Span>,
 }
 
 /// Collect the surface of a unit, and resolve its type names as far as it can.
@@ -69,6 +72,8 @@ pub(crate) fn harvest<'u>(unit: &'u Unit<'u>) -> Harvest<'u> {
         sites: &mut sites,
         strings: Vec::new(),
         interned: FxHashMap::default(),
+        imports: FxHashMap::default(),
+        prelude_used: FxHashSet::default(),
         owner: None,
         sig: None,
         declared: FxHashMap::default(),
@@ -80,6 +85,26 @@ pub(crate) fn harvest<'u>(unit: &'u Unit<'u>) -> Harvest<'u> {
         Mode::Script | Mode::Repl => (FxHashMap::default(), FxHashMap::default()),
     };
     let strings = walk.strings;
+    let mut imports = walk.imports;
+    // The prelude imports no statement writes, so a module it names is reported at
+    // the start of the unit, and only when the unit uses it
+    let mut prelude_used = walk.prelude_used;
+    for import in unit.prelude.iter() {
+        let (module, used) = match import {
+            PreludeImport::Items { module, items } => (
+                module,
+                (items.iter()).any(|item| (!item.type_only && !item.unused) || item.type_used),
+            ),
+            PreludeImport::ModuleAsIs { module, unused, .. }
+            | PreludeImport::ModuleRenamed { module, unused, .. } => (module, !unused),
+        };
+        if used {
+            prelude_used.insert(module.as_str());
+        }
+    }
+    for module in prelude_used {
+        imports.entry(module).or_default();
+    }
     Harvest {
         info: UnitInfo {
             module: match &unit.mode {
@@ -97,6 +122,7 @@ pub(crate) fn harvest<'u>(unit: &'u Unit<'u>) -> Harvest<'u> {
         pending,
         exports,
         values,
+        imports,
     }
 }
 
@@ -121,6 +147,7 @@ pub(crate) fn link<'u>(
     let mut pending = Vec::new();
     let mut sites = Vec::new();
     let mut leaks = Vec::new();
+    let mut imports = Vec::new();
     for &id in order {
         let mut harvest = harvests[id.index()]
             .take()
@@ -149,6 +176,7 @@ pub(crate) fn link<'u>(
             (harvest.values.into_iter()).map(|(span, site)| (UnitSpan { unit: id, span }, site)),
         );
         strings[id.index()] = harvest.strings;
+        imports.push((id, harvest.imports));
         units[id.index()] = Some(harvest.info);
     }
     let units: Vec<UnitInfo<'u>> = units
@@ -166,8 +194,18 @@ pub(crate) fn link<'u>(
         exports: &exports,
         memo: FxHashMap::default(),
         stack: Vec::new(),
+        missing: FxHashSet::default(),
         diags: Vec::new(),
     };
+    // A module a unit imports is reported at its import, whether or not anything
+    // names it
+    for (unit, imports) in imports {
+        let mut imports: Vec<_> = imports.into_iter().collect();
+        imports.sort_by_key(|&(module, span)| (span.start, span.end, module));
+        for (module, span) in imports {
+            fixup.module(module, UnitSpan { unit, span });
+        }
+    }
     let referents: FxHashMap<_, _> = pending
         .into_iter()
         .map(|pending| (pending.head, fixup.pending(&pending)))
@@ -180,9 +218,12 @@ pub(crate) fn link<'u>(
             if let Some(&(span, Target::Local(Referent::Decl(decl)))) =
                 exports[strand.index()].get(placeholder)
                 && decls[decl.index()].kind == DeclKind::OpaqueAlias
+                // A nominee whose module isn't checked leaves its placeholder
+                // dynamic; no unit imports it
+                && let Some(&unit) = fixup.modules.get(module)
             {
                 let site = UnitSpan { unit: strand, span };
-                let nominee = fixup.target(&Target::Import { module, item }, site);
+                let nominee = fixup.export(unit, item, site);
                 nominees.insert(placeholder, nominee);
             }
         }
@@ -251,6 +292,8 @@ struct ModuleImport<'u> {
     /// a renamed import binds
     spelled: &'u str,
     module: &'u str,
+    /// Whether the prelude imports the module, rather than a statement
+    prelude: bool,
 }
 
 /// A frame as type resolution pushed one
@@ -404,6 +447,10 @@ struct Walk<'c, 'u> {
     strings: Vec<&'u str>,
     /// Each string of the unit's string table, by its text
     interned: FxHashMap<&'u str, StrId>,
+    /// The modules import statements name, each at the first that does
+    imports: FxHashMap<&'u str, Span>,
+    /// The prelude modules dotted type names reach
+    prelude_used: FxHashSet<&'u str>,
     /// The declaration being walked, and which of its signatures, which encloses any
     /// found within it
     owner: Option<(DeclId, usize)>,
@@ -662,6 +709,7 @@ impl<'u> Walk<'_, 'u> {
                     ModuleImport {
                         spelled: module,
                         module,
+                        prelude: true,
                     },
                 ),
                 PreludeImport::ModuleRenamed {
@@ -671,6 +719,7 @@ impl<'u> Walk<'_, 'u> {
                     ModuleImport {
                         spelled: bind,
                         module,
+                        prelude: true,
                     },
                 ),
             }
@@ -740,6 +789,10 @@ impl<'u> Walk<'_, 'u> {
             }
             Stmt::Import(import) => {
                 for element in &import.elements {
+                    let (ImportElement::ModuleAsIs { module, .. }
+                    | ImportElement::ModuleRenamed { module, .. }
+                    | ImportElement::Items { module, .. }) = element;
+                    self.imports.entry(file.str(*module)).or_insert(*module);
                     match element {
                         ImportElement::ModuleAsIs {
                             module,
@@ -751,6 +804,7 @@ impl<'u> Walk<'_, 'u> {
                             ModuleImport {
                                 spelled: file.str(*module),
                                 module: file.str(*module),
+                                prelude: false,
                             },
                         ),
                         ImportElement::ModuleRenamed {
@@ -763,6 +817,7 @@ impl<'u> Walk<'_, 'u> {
                             ModuleImport {
                                 spelled: file.str(bind.span),
                                 module: file.str(*module),
+                                prelude: false,
                             },
                         ),
                         ImportElement::Items { module, items } => {
@@ -788,11 +843,13 @@ impl<'u> Walk<'_, 'u> {
                 TypeDecl::ModuleAsIs { module, .. } => Entry::Modules(vec![ModuleImport {
                     spelled: file.str(module),
                     module: file.str(module),
+                    prelude: false,
                 }]),
                 TypeDecl::ModuleRenamed { module, bind, .. } => {
                     Entry::Modules(vec![ModuleImport {
                         spelled: file.str(bind.span),
                         module: file.str(module),
+                        prelude: false,
                     }])
                 }
                 TypeDecl::ItemAsIs { module, bind, .. } => Entry::Target(Target::Import {
@@ -829,7 +886,12 @@ impl<'u> Walk<'_, 'u> {
                         .find(|module| names_type_in(module.spelled, &path)),
                 };
                 match module {
-                    Some(module) => Target::Module(module.module),
+                    Some(module) => {
+                        if module.prelude {
+                            self.prelude_used.insert(module.module);
+                        }
+                        Target::Module(module.module)
+                    }
                     // A prelude module constrains no dotted path, so a path may name
                     // a module that does not exist
                     None => Target::Local(Referent::Error),
@@ -1706,6 +1768,8 @@ struct Fixup<'a, 'u> {
     memo: FxHashMap<(UnitId, &'u str), Referent>,
     /// The exports being resolved, outermost first
     stack: Vec<(UnitId, &'u str)>,
+    /// The modules each unit names that no unit provides, each reported once
+    missing: FxHashSet<(UnitId, &'u str)>,
     diags: Vec<UnitDiag>,
 }
 
@@ -1726,30 +1790,40 @@ impl<'u> Fixup<'_, 'u> {
             return base;
         };
         match base {
-            Referent::Module(ModuleRef::Unit(unit)) => self.export(unit, item, pending.head),
-            Referent::Module(ModuleRef::External(module)) => Referent::External {
-                module,
-                item: item.into(),
-            },
-            // Only a module has items, which resolving the name has warned about
+            Referent::Module(unit) => self.export(unit, item, pending.head),
+            // Only a module has items, which resolving the name has warned about,
+            // and a missing module is reported once
             _ => Referent::Error,
         }
+    }
+
+    /// The unit providing `module`, named at `site`. A module no unit provides is
+    /// reported the first time its unit names it.
+    fn module(&mut self, module: &'u str, site: UnitSpan) -> Option<UnitId> {
+        let found = self.modules.get(module).copied();
+        if found.is_none() && self.missing.insert((site.unit, module)) {
+            self.diag(
+                site.unit,
+                MissingModule {
+                    span: site.span,
+                    module: module.into(),
+                },
+            );
+        }
+        found
     }
 
     /// Resolve a target, found at `site`.
     fn target(&mut self, target: &Target<'u>, site: UnitSpan) -> Referent {
         match target {
             Target::Local(referent) => referent.clone(),
-            Target::Module(module) => Referent::Module(match self.modules.get(module) {
-                Some(unit) => ModuleRef::Unit(*unit),
-                None => ModuleRef::External((*module).into()),
-            }),
-            Target::Import { module, item } => match self.modules.get(module) {
-                Some(unit) => self.export(*unit, item, site),
-                None => Referent::External {
-                    module: (*module).into(),
-                    item: (*item).into(),
-                },
+            Target::Module(module) => match self.module(module, site) {
+                Some(unit) => Referent::Module(unit),
+                None => Referent::Error,
+            },
+            Target::Import { module, item } => match self.module(module, site) {
+                Some(unit) => self.export(unit, item, site),
+                None => Referent::Error,
             },
         }
     }
@@ -1845,10 +1919,6 @@ impl Aliases<'_, '_> {
                     }
                     Some(Referent::Decl(decl)) => Head::Decl(*decl),
                     Some(Referent::Binder(binder)) => Head::Binder(*binder),
-                    Some(Referent::External { module, item }) => Head::External {
-                        module: module.clone(),
-                        item: item.clone(),
-                    },
                     Some(Referent::Module(_) | Referent::Value(_) | Referent::Error) | None => {
                         Head::Error
                     }

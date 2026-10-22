@@ -13,6 +13,11 @@ import @security.nfs4
 import hub:
   @g: hubgeo
 import elsewhere:
+  # error: module `elsewhere` not found
+  #   --> user.dol:LL:LL
+  #    |
+  # LL | import elsewhere:
+  #    |        ^^^^^^^^^
   - @Thing
 @import geo:
   Shape: Outline
@@ -41,7 +46,7 @@ pub let acl @ security.nfs4.Acl = ...
 
 # A module no checked unit provides
 pub let thing @ Thing = nil
-#               ^~~~~: ref external elsewhere.Thing
+#               ^~~~~: ref error
 
 # An item that is a re-exported module
 pub let module @ hubgeo = nil

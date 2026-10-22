@@ -280,10 +280,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 module,
                 item,
                 var: None,
-            }) => ExprKind::Import {
-                module: self.lower.module(module),
-                item: Some(self.lower.symbol(item)),
-            },
+            }) => self.lower.import(module, Some(self.lower.symbol(item))),
             Some(Entry::Modules(modules)) => self
                 .module_path(&modules, &[self.text(ident.span)])
                 .unwrap_or(ExprKind::Namespace),
@@ -326,10 +323,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 [item] => Some(self.lower.symbol(item)),
                 _ => return None,
             };
-            Some(ExprKind::Import {
-                module: self.lower.module(module.module),
-                item,
-            })
+            Some(self.lower.import(module.module, item))
         })
     }
 

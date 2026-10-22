@@ -8,8 +8,8 @@ use std::{borrow::Cow, fmt::Write};
 use rustc_hash::FxHashMap;
 
 use super::{
-    Ambient, BinderRef, DeclNode, Designated, Head, KindOf, ModuleRef, ParamTy, Referent, RestSlot,
-    Slot, Tables, Unresolved, sig,
+    Ambient, BinderRef, DeclNode, Designated, Head, KindOf, ParamTy, Referent, RestSlot, Slot,
+    Tables, Unresolved, sig,
     surface::{Member as SourceMember, MemberScope, ParamKind, TypeExpr},
 };
 use crate::{
@@ -219,9 +219,7 @@ impl Tables<'_> {
         match referent {
             Referent::Decl(id) => self.qualified(*id),
             Referent::Binder(binder) => self.binder(*binder),
-            Referent::External { module, item } => format!("external {module}.{item}"),
-            Referent::Module(ModuleRef::Unit(unit)) => format!("module {}", self.unit_name(*unit)),
-            Referent::Module(ModuleRef::External(module)) => format!("module {module}"),
+            Referent::Module(unit) => format!("module {}", self.unit_name(*unit)),
             Referent::Value(_) => "value".to_owned(),
             Referent::Error => "error".to_owned(),
         }
@@ -326,7 +324,6 @@ impl Tables<'_> {
         match head {
             Head::Decl(id) => self.qualified(*id),
             Head::Binder(binder) => self.binder(*binder),
-            Head::External { module, item } => format!("external {module}.{item}"),
             Head::Structural => "structural".to_owned(),
             Head::Error => "error".to_owned(),
         }

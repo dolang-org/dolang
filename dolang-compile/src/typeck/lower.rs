@@ -29,7 +29,7 @@ use super::{
         BlockId, EscapeKind, Expr, ExprKind, FuncId, FuncKind, Graph, Ir, Origin, Step, Terminal,
         VarId,
     },
-    elab::{DeclAst, ModuleRef, Tables, surface::SiteId},
+    elab::{DeclAst, Tables, surface::SiteId},
     r#type::{Database, DeclId, Literal, MemberKey, SymbolId, UnitId},
 };
 use crate::{
@@ -231,10 +231,12 @@ impl<'t, 'u> Lower<'t, 'u> {
             .expect("elaboration collects every declaration of a checked unit")
     }
 
-    fn module(&self, name: &str) -> ModuleRef {
+    /// An import of an item of `name`, or of the module itself. A module no unit
+    /// provides is already reported, and its imports are errors.
+    fn import(&self, name: &str, item: Option<SymbolId>) -> ExprKind {
         match self.modules.get(name) {
-            Some(&unit) => ModuleRef::Unit(unit),
-            None => ModuleRef::External(name.into()),
+            Some(&module) => ExprKind::Import { module, item },
+            None => ExprKind::Error,
         }
     }
 

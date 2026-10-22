@@ -10,10 +10,7 @@ use super::{
 };
 use crate::{
     source::Span,
-    typeck::{
-        elab::ModuleRef,
-        r#type::{Database, Literal, SymbolId},
-    },
+    typeck::r#type::{Database, Literal, SymbolId, UnitId},
 };
 
 impl Ir {
@@ -391,11 +388,8 @@ impl Dump<'_, '_> {
         write!(out, ")")
     }
 
-    fn import(&self, out: &mut String, module: &ModuleRef, item: Option<SymbolId>) -> fmt::Result {
-        match module {
-            ModuleRef::Unit(unit) => write!(out, "<unit{}>", unit.index())?,
-            ModuleRef::External(name) => write!(out, "{name}")?,
-        }
+    fn import(&self, out: &mut String, module: &UnitId, item: Option<SymbolId>) -> fmt::Result {
+        write!(out, "<unit{}>", module.index())?;
         if let Some(item) = item {
             write!(out, "::{}", self.db.symbol(item))?;
         }

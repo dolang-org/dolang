@@ -1209,7 +1209,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                         unit: decl.unit,
                         span: head,
                     }) {
-                        Some(Referent::Decl(_) | Referent::External { .. }) => {
+                        Some(Referent::Decl(_)) => {
                             self.supertype = true;
                             self.reference(
                                 group,
@@ -1221,20 +1221,21 @@ impl<'t, 'u> Populate<'t, 'u> {
                                 0,
                             )
                         }
+                        // A supertype that failed to resolve, such as one from a
+                        // missing module, recovers as unknown
+                        Some(Referent::Error) => {
+                            let ty = self.db.unknown();
+                            super_ref.interned.set(ty);
+                            let runtime = decl.kind == DeclKind::Class && !super_ref.type_only;
+                            supertypes.push(Supertype { ty, runtime });
+                            continue;
+                        }
                         _ => continue,
                     };
                     super_ref.interned.set(ty);
                     // Every type is a subtype of top, and an erroneous supertype is
                     // already diagnosed
-                    let erroneous = ty == self.db.unknown()
-                        && !matches!(
-                            tables.referents.get(&UnitSpan {
-                                unit: decl.unit,
-                                span: head
-                            }),
-                            Some(Referent::External { .. })
-                        );
-                    if ty != self.db.top() && !erroneous {
+                    if ty != self.db.top() && ty != self.db.unknown() {
                         // A protocol's supertypes are all claims
                         let runtime = decl.kind == DeclKind::Class && !super_ref.type_only;
                         supertypes.push(Supertype { ty, runtime });
