@@ -226,26 +226,35 @@ impl TypeExpr {
 
     /// Visit each name within the type: its head, then the fields dotted onto it.
     pub(crate) fn names<'a>(&'a self, f: &mut impl FnMut(&'a Name, &'a [Name])) {
+        self.each_node(&mut |ty| {
+            if let TypeExpr::Name { head, fields, .. } = ty {
+                f(head, fields);
+            }
+        });
+    }
+
+    /// Visit the type and each type within it, outermost first.
+    pub(crate) fn each_node<'a>(&'a self, f: &mut impl FnMut(&'a TypeExpr)) {
+        f(self);
         match self {
-            TypeExpr::Name { head, fields, .. } => f(head, fields),
-            TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
+            TypeExpr::Name { .. } | TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
             TypeExpr::App { base, args, .. } => {
-                base.names(f);
+                base.each_node(f);
                 for arg in args {
-                    arg.ty().names(f);
+                    arg.ty().each_node(f);
                 }
             }
             TypeExpr::Schema { params, .. }
             | TypeExpr::Tuple { params, .. }
             | TypeExpr::Record { params, .. } => {
                 for ty in params.iter().flat_map(TypeParam::tys) {
-                    ty.names(f);
+                    ty.each_node(f);
                 }
             }
-            TypeExpr::Group { ty, .. } | TypeExpr::Array { elem: ty, .. } => ty.names(f),
+            TypeExpr::Group { ty, .. } | TypeExpr::Array { elem: ty, .. } => ty.each_node(f),
             TypeExpr::Union { members, .. } => {
                 for member in members {
-                    member.names(f);
+                    member.each_node(f);
                 }
             }
             TypeExpr::Func {
@@ -256,12 +265,12 @@ impl TypeExpr {
                 ..
             } => {
                 for ty in params.iter().flat_map(TypeParam::tys) {
-                    ty.names(f);
+                    ty.each_node(f);
                 }
                 for ty in [input, output].into_iter().flatten() {
-                    ty.names(f);
+                    ty.each_node(f);
                 }
-                ret.names(f);
+                ret.each_node(f);
             }
         }
     }

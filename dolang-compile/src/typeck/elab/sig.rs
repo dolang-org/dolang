@@ -119,6 +119,24 @@ pub(crate) fn channels(tables: &Tables<'_>, decl: DeclId, sig: usize) -> [Ambien
     })
 }
 
+/// The ambient channels of a function type written in a site whose function types
+/// take the channels of `ambient`, a def or method signature, or else `Value`:
+/// `Written` for each channel in `written`
+pub(crate) fn func_channels(
+    tables: &Tables<'_>,
+    ambient: Option<(DeclId, usize)>,
+    written: [bool; 2],
+) -> [Ambient; 2] {
+    let channels = match ambient {
+        Some((decl, sig)) => channels(tables, decl, sig),
+        None => [Ambient::Value; 2],
+    };
+    [0, 1].map(|index| match written[index] {
+        true => Ambient::Written,
+        false => channels[index],
+    })
+}
+
 /// Whether a declaration is of a strict unit
 fn is_strict(tables: &Tables<'_>, decl: DeclId) -> bool {
     tables.units[tables.decls[decl.index()].unit.index()].strict

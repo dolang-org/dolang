@@ -25,7 +25,8 @@ use super::{
     sig::{self, Form},
     surface::{
         BinderKind, Class, ConstLit, Member as SourceMember, MemberScope, Name, ParamKind,
-        Signature, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam, TypeParamKind, TypeQuant,
+        Signature, SiteId, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam, TypeParamKind,
+        TypeQuant,
     },
 };
 use crate::{
@@ -138,20 +139,19 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
         supertype: false,
     };
     let mut site_types = FxHashMap::default();
-    for site in &tables.sites {
+    for (index, site) in tables.sites.iter().enumerate() {
+        let id = SiteId::from_index(index);
         let scope = populate.scope(site.group(), site.unit);
         let ty = match site.role {
-            Role::Type => populate.intern(scope, &site.ty, Kind::Type, 0),
+            Role::Type => populate.site(scope, id, Kind::Type, 0),
             Role::Rest => {
                 let kind = tables.kind_of(site.unit, &site.ty).unwrap_or(Kind::Type);
-                populate.intern(scope, &site.ty, kind, 0)
+                populate.site(scope, id, kind, 0)
             }
-            Role::Pattern => populate.pattern(scope, &site.ty),
-            Role::Bound(binder) => populate.bound(scope, binder, &site.ty),
-            Role::Default(binder) => populate.intern(scope, &site.ty, populate.kind(binder), 0),
-            Role::Alias(decl) => {
-                populate.intern(scope, &site.ty, tables.alias_kinds[&decl].kind, 0)
-            }
+            Role::Pattern => populate.pattern(scope, id),
+            Role::Bound(binder) => populate.bound(scope, binder, id),
+            Role::Default(binder) => populate.site(scope, id, populate.kind(binder), 0),
+            Role::Alias(decl) => populate.site(scope, id, tables.alias_kinds[&decl].kind, 0),
         };
         site_types.insert(
             UnitSpan {
@@ -220,6 +220,9 @@ struct Group<'g> {
     binders: &'g [BinderRef],
     /// The group is too large to intern, so its binders stand for the dynamic type
     broken: bool,
+    /// The signature whose channels function types take when they omit their own:
+    /// the site's being interned
+    ambient: Option<(DeclId, usize)>,
 }
 
 struct Populate<'t, 'u> {
@@ -257,13 +260,31 @@ impl<'t, 'u> Populate<'t, 'u> {
                 unit,
                 binders: &self.groups[&key],
                 broken: self.broken.contains(&key),
+                ambient: None,
             },
             None => Group {
                 unit,
                 binders: &[],
                 broken: false,
+                ambient: None,
             },
         }
+    }
+
+    /// A site's type, and `group` as its function types are interpreted in
+    fn enter<'g>(&self, group: Group<'g>, site: SiteId) -> (Group<'g>, &'t TypeExpr) {
+        let site = &self.tables.sites[site.index()];
+        let group = Group {
+            ambient: site.ambient,
+            ..group
+        };
+        (group, &site.ty)
+    }
+
+    /// Intern a site as `expected` in `group`
+    fn site(&mut self, group: Group<'_>, site: SiteId, expected: Kind, depth: usize) -> TypeId {
+        let (group, ty) = self.enter(group, site);
+        self.intern(group, ty, expected, depth)
     }
 
     fn kind(&self, binder: BinderRef) -> Kind {
@@ -331,7 +352,8 @@ impl<'t, 'u> Populate<'t, 'u> {
 
     /// A rest binding's `@...` pattern mapped over the packs it names, or the
     /// dynamic schema if it names none, which is already diagnosed
-    fn pattern(&mut self, group: Group<'_>, ty: &TypeExpr) -> TypeId {
+    fn pattern(&mut self, group: Group<'_>, site: SiteId) -> TypeId {
+        let (group, ty) = self.enter(group, site);
         let outer = self.pattern.replace(Vec::new());
         let pattern = self.intern(group, ty, Kind::Type, 0);
         let packs = std::mem::replace(&mut self.pattern, outer).expect("in a pattern");
@@ -487,28 +509,17 @@ impl<'t, 'u> Populate<'t, 'u> {
                 params,
                 input,
                 output,
-                arrow_span,
                 ret,
                 ..
             } if expected == Kind::Type => {
                 let items = self.items(group, params, true, depth);
                 let params = self.schema(items);
-                let ambients = self
-                    .tables
-                    .func_ambients
-                    .get(&UnitSpan {
-                        unit: group.unit,
-                        span: *arrow_span,
-                    })
-                    .copied();
+                let written = [input.is_some(), output.is_some()];
+                let ambients = sig::func_channels(self.tables, group.ambient, written);
                 let [input, output] =
                     [(0, input), (1, output)].map(|(index, written)| match written {
                         Some(implicit) => self.intern(group, implicit, Kind::Type, depth),
-                        None => {
-                            let ambient =
-                                ambients.map_or(Ambient::Value, |ambients| ambients[index]);
-                            self.ambient(group, ambient, index, depth)
-                        }
+                        None => self.ambient(group, ambients[index], index, depth),
                     });
                 let result = self.intern(group, ret, Kind::Type, depth);
                 self.db.intern(Type::Function(Function {
@@ -653,7 +664,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                     unit: self.tables.decls[decl.index()].unit,
                     ..group
                 };
-                let ty = self.intern(owner, self.tables.site_ty(implicit), Kind::Type, depth);
+                let ty = self.site(owner, implicit, Kind::Type, depth);
                 self.expanding.pop();
                 ty
             }
@@ -1041,7 +1052,7 @@ impl<'t, 'u> Populate<'t, 'u> {
     fn default(&mut self, binder: BinderRef) -> Option<TypeId> {
         let tables = self.tables;
         let written = &tables.binders(binder.decl, binder.sig)[binder.slot];
-        let default = tables.site_ty(written.default?);
+        let default = written.default?;
         match self.defaults.get(&binder) {
             Some(Some(ty)) => return Some(*ty),
             // A default that refers to its own binder through an application
@@ -1052,7 +1063,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         let unit = tables.decls[binder.decl.index()].unit;
         let group = self.scope(Some((binder.decl, binder.sig)), unit);
         let pattern = self.pattern.take();
-        let ty = self.intern(group, default, self.kind(binder), 0);
+        let ty = self.site(group, default, self.kind(binder), 0);
         self.pattern = pattern;
         self.defaults.insert(binder, Some(ty));
         Some(ty)
@@ -1060,7 +1071,8 @@ impl<'t, 'u> Populate<'t, 'u> {
 
     /// A binder's bound. A variadic binder's bound may bound each item rather than
     /// the whole pack.
-    fn bound(&mut self, group: Group<'_>, binder: BinderRef, ty: &TypeExpr) -> TypeId {
+    fn bound(&mut self, group: Group<'_>, binder: BinderRef, site: SiteId) -> TypeId {
+        let (group, ty) = self.enter(group, site);
         let kind = self.kind(binder);
         let written = &self.tables.binders(binder.decl, binder.sig)[binder.slot];
         let unit = self.tables.decls[binder.decl.index()].unit;
@@ -1124,9 +1136,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                 }
             };
             let bound = match written {
-                Some(written) => written
-                    .bound
-                    .map(|bound| self.bound(group, binder, tables.site_ty(bound))),
+                Some(written) => written.bound.map(|bound| self.bound(group, binder, bound)),
                 // An omitted channel is unbounded; the body sees it by its unit's
                 // mode
                 None => None,
@@ -1280,7 +1290,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                     None => self.db.intern(Type::Decl(id)),
                     // An alias on or reaching a cycle, already diagnosed
                     Some(_) if tables.aliases.get(&id) == Some(&Head::Error) => self.unknown(kind),
-                    Some(body) => self.intern(group, tables.site_ty(body), kind, 0),
+                    Some(body) => self.site(group, body, kind, 0),
                 };
                 // A pipe placeholder is transparent, standing for its nominee
                 let decl_kind = match tables.pipes.contains_key(&id) {
@@ -1302,7 +1312,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                     .map(|(index, ambient, written)| {
                         match (ambient, written) {
                             (Ambient::Written, Some(implicit)) => {
-                                self.intern(group, tables.site_ty(implicit), Kind::Type, 0)
+                                self.site(group, implicit, Kind::Type, 0)
                             }
                             (ambient, _) => self.ambient(group, ambient, index, 0),
                         }
@@ -1325,7 +1335,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                 let params = self.params(id, group, func, &params);
                 let [input, output, result] =
                     [func.input, func.output, func.ret].map(|written| match written {
-                        Some(written) => self.intern(group, tables.site_ty(written), Kind::Type, 0),
+                        Some(written) => self.site(group, written, Kind::Type, 0),
                         None => self.db.unknown(),
                     });
                 let body = self.db.intern(Type::Function(Function {
@@ -1345,7 +1355,7 @@ impl<'t, 'u> Populate<'t, 'u> {
     /// The type of a parameter, a return type, or a field
     fn slot(&mut self, id: DeclId, group: Group<'_>, slot: &Slot) -> TypeId {
         match *slot {
-            Slot::Annot(ty) => self.intern(group, self.tables.site_ty(ty), Kind::Type, 0),
+            Slot::Annot(ty) => self.site(group, ty, Kind::Type, 0),
             Slot::Unknown => self.db.unknown(),
             Slot::Nil => self.db.intern(Type::Literal(Literal::Nil)),
             Slot::SelfType => self
@@ -1456,11 +1466,11 @@ impl<'t, 'u> Populate<'t, 'u> {
                         items.extend(rest_items(*kind, ty, sym));
                     }
                     RestSlot::Pack(ty) => {
-                        let ty = self.intern(group, self.tables.site_ty(*ty), Kind::Schema, 0);
+                        let ty = self.site(group, *ty, Kind::Schema, 0);
                         items.push(Self::item(Multiplicity::Required, Element::Include(ty)));
                     }
                     RestSlot::Pattern(ty) => {
-                        let ty = self.pattern(group, self.tables.site_ty(*ty));
+                        let ty = self.pattern(group, *ty);
                         items.push(Self::item(Multiplicity::Required, Element::Include(ty)));
                     }
                 },

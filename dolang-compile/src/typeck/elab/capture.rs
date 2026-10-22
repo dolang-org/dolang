@@ -30,9 +30,11 @@ pub(crate) fn captures(tables: &mut Tables<'_>) {
         binders: vec![FxHashSet::default(); count],
         deps: vec![Vec::new(); count],
         bounds: FxHashMap::default(),
+        ambient: None,
         expanding: Vec::new(),
     };
     for site in &tables.sites {
+        needs.ambient = site.ambient;
         if let Some((decl, _)) = site.group() {
             needs.ty(decl.index(), site.unit, &site.ty);
         }
@@ -142,6 +144,9 @@ struct Needs<'t, 'u> {
     deps: Vec<Vec<DeclId>>,
     /// Each bounded binder's entry in `binders` and `deps`
     bounds: FxHashMap<BinderRef, usize>,
+    /// The signature whose channels function types in the site being walked take
+    /// when they omit their own
+    ambient: Option<(DeclId, usize)>,
     /// The written channels being walked in place of a function type's own
     expanding: Vec<(DeclId, usize, usize)>,
 }
@@ -192,7 +197,6 @@ impl Needs<'_, '_> {
                 params,
                 input,
                 output,
-                arrow_span,
                 ret,
                 ..
             } => {
@@ -201,13 +205,10 @@ impl Needs<'_, '_> {
                     self.ty(node, unit, ty);
                 }
                 self.ty(node, unit, ret);
-                let tables = self.tables;
-                let ambients = tables.func_ambients.get(&UnitSpan {
-                    unit,
-                    span: *arrow_span,
-                });
-                for (index, ambient) in ambients.into_iter().flatten().enumerate() {
-                    self.ambient(node, *ambient, index);
+                let written = [input.is_some(), output.is_some()];
+                let ambients = sig::func_channels(self.tables, self.ambient, written);
+                for (index, ambient) in ambients.into_iter().enumerate() {
+                    self.ambient(node, ambient, index);
                 }
             }
         }
@@ -233,8 +234,10 @@ impl Needs<'_, '_> {
                     return;
                 }
                 self.expanding.push((owner, sig, index));
-                let unit = self.tables.decls[owner.index()].unit;
-                self.ty(node, unit, self.tables.site_ty(implicit));
+                let site = &self.tables.sites[implicit.index()];
+                let outer = std::mem::replace(&mut self.ambient, site.ambient);
+                self.ty(node, site.unit, &site.ty);
+                self.ambient = outer;
                 self.expanding.pop();
             }
             Ambient::Written | Ambient::Value => {}

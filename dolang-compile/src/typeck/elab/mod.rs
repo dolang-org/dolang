@@ -86,10 +86,6 @@ pub(crate) struct Tables<'u> {
     pub(crate) sigs: FxHashMap<(DeclId, usize), Sig>,
     /// The type of each field, by its class and the span of its name
     pub(crate) fields: FxHashMap<(DeclId, Span), Slot>,
-    /// The ambient channels of each function type written without them, by its
-    /// `->`, and of each use of `Func` in a type that doesn't give them, by its
-    /// span
-    pub(crate) func_ambients: FxHashMap<UnitSpan, [Ambient; 2]>,
     /// The class each schema written where a type is required stands for, by its
     /// span: `std.Dict` of the schema, or `std.Tuple` of its items
     pub(crate) braces: FxHashMap<UnitSpan, Designated>,

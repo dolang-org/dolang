@@ -223,7 +223,6 @@ pub(crate) fn link<'u>(
         alias_kinds: FxHashMap::default(),
         sigs: FxHashMap::default(),
         fields: FxHashMap::default(),
-        func_ambients: FxHashMap::default(),
         braces: FxHashMap::default(),
         designated: FxHashMap::default(),
         nominees,
