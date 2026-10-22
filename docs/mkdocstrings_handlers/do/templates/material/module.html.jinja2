@@ -60,13 +60,33 @@
 {% set base_id = alias._identifier %}
 {# Captured for the same reason as `signature_heading` in `_params.html.jinja2` #}
 {# An opaque alias (`= ...`) has no type to show. #}
-{% set content %}<code>{{ alias.declaration_name }}{% if alias.annotation and not alias.alias_vertical %} = {{ alias.annotation | convert_markdown(heading_level + 1, base_id ~ "--type", strip_paragraph=true) }}{% endif %}</code>{% endset %}
+{% set content %}<code>{{ alias.declaration_name }}{% if alias.annotation and not alias.alias_vertical %} = {{ alias.annotation | convert_markdown(heading_level + 1, base_id ~ "--type", strip_paragraph=true) }}{% elif alias.alias_head %} = {{ alias.alias_head | convert_markdown(heading_level + 1, base_id ~ "--type", strip_paragraph=true) }}{% endif %}</code>{% endset %}
 {{ content | trim | heading(heading_level + 1, role="class", id=base_id, toc_label=alias.declaration_name) }}
-{% if alias.alias_vertical %}
+{% if alias.alias_vertical and not alias.alias_rows %}
 <pre class="do-alias"><code>{{ alias.alias_declaration | safe }}</code></pre>
 {% endif %}
 {% if alias.doc %}
 {{ alias.doc | convert_markdown(heading_level + 1, base_id) }}
+{% endif %}
+{# Documented items with no docs of their own nested inside them fit in a
+   table, one row each, in place of the declaration. #}
+{% if alias.alias_rows %}
+<table>
+{% if alias.alias_kind == "union" %}
+<thead><tr><th>Type</th><th>Description</th></tr></thead>
+{% else %}
+<thead><tr><th>Item</th><th>Type</th><th>Description</th></tr></thead>
+{% endif %}
+<tbody>
+{% for row in alias.alias_rows %}
+<tr>
+  {% if alias.alias_kind != "union" %}<td><code>{{ row.name }}</code></td>{% endif %}
+  <td>{% if row.type %}<code>{{ row.type | convert_markdown(heading_level + 1, base_id ~ "--" ~ loop.index, strip_paragraph=true) }}</code>{% endif %}</td>
+  <td>{{ row.doc | convert_markdown(heading_level + 1, base_id ~ "--" ~ loop.index, strip_paragraph=true) }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
 {% endif %}
 {% endfor %}
 

@@ -735,6 +735,61 @@ def _alias_type_lines(
     return lines
 
 
+def _alias_rows(ty: dict, scope: _TypeScope) -> list[dict] | None:
+    """An alias's documented schema items or union members, as table rows.
+
+    A table holds one level of docs, so this applies only where items or
+    members are documented and none of their own types are. The schema may be
+    the last argument of an applied type, as `BaseDict $` writes it. Each row has the
+    item's name as written (`None` for a union member), its type, and its doc.
+    """
+    kind = ty.get("kind")
+    if kind == "union":
+        items = ty["members"]
+        if not any("doc" in item for item in items) or any(map(_has_docs, items)):
+            return None
+        return [
+            {"name": None, "type": _render_type(item, scope, _BINDS_UNION), "doc": item.get("doc") or ""}
+            for item in items
+        ]
+    schema = _layout_schema(ty)
+    if schema is None or not _has_docs(schema):
+        return None
+    if kind == "app" and any(_has_docs(arg["type"]) for arg in ty["args"][:-1]):
+        return None
+    if any(_has_docs(item.get("type") or {}) for item in schema["params"]):
+        return None
+    rows = []
+    for item in schema["params"]:
+        quant = _QUANTS.get(item.get("quant"), "")
+        kind = item.get("kind")
+        if kind in ("open", "any_pos", "any_key"):
+            name = {"open": "...", "any_pos": "*", "any_key": "**"}[kind]
+        elif kind == "key" and "key_type" in item:
+            key = _render_type(item["key_type"], scope, _BINDS_COMPACT, plain=True)
+            name = quant + (f"({key})" if item["key_type"].get("kind") == "name" else key)
+        elif kind == "key":
+            name = quant + item.get("key", "")
+        else:
+            # A quantifier alone marks a positional item well enough
+            name = quant or "-"
+        item_ty = item.get("type")
+        rows.append({
+            "name": name,
+            "type": _render_type(item_ty, scope, _BINDS_FUNC) if item_ty else "",
+            "doc": item.get("doc") or "",
+        })
+    return rows
+
+
+def _schema_head(ty: dict, scope: _TypeScope) -> str:
+    """An applied type with its last argument, a schema, elided"""
+    base = _render_type(ty["base"], scope, _BINDS_COMPACT)
+    args = _render_type_args(ty["args"][:-1], scope)
+    schema = ("..." if ty["args"][-1]["kind"] == "expand" else "") + "{…}"
+    return f"{base}\\[{', '.join(filter(None, [args, schema]))}\\]"
+
+
 def _binder_text(binder: dict, scope: _TypeScope) -> str:
     """A binder as its declaration writes it, as plain text."""
     text = _written(binder)
@@ -781,7 +836,12 @@ def _render_annotations(entity: dict, scope: _TypeScope) -> None:
         ty = entity.get("type")
         prefix = f"@let {_declaration_name(entity)} = "
         entity["alias_vertical"] = bool(ty and _alias_layout(ty, scope, len(prefix)))
-        if entity["alias_vertical"]:
+        entity["alias_rows"] = _alias_rows(ty, scope) if ty else None
+        if entity["alias_rows"] is not None:
+            entity["alias_kind"] = "union" if ty["kind"] == "union" else "schema"
+            if ty["kind"] == "app":
+                entity["alias_head"] = _schema_head(ty, scope)
+        elif entity["alias_vertical"]:
             entity["alias_declaration"] = "\n".join(_alias_type_lines(
                 ty, scope, html.escape(prefix), 0, force=True,
             ))
