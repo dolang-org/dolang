@@ -735,6 +735,9 @@ pub(crate) enum RequestKind {
     FileClose {
         file: Cite<FileMarker>,
     },
+    FileDup {
+        file: Cite<FileMarker>,
+    },
     UnixVfs(UnixVfsRequest),
     WindowsAdmin(WindowsAdminRequest),
     ReadDir {
@@ -882,6 +885,7 @@ pub(crate) enum ResponseKind {
     FileSetXattr,
     FileRemoveXattr,
     FileClose,
+    FileDup(Gift<FileMarker>),
     UnixVfs(OpenVfsHandle),
     WindowsAdmin(Gift<VfsMarker>),
     ReadDir(Gift<ReadDirMarker>),

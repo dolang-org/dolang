@@ -1430,6 +1430,26 @@ impl File {
         }
     }
 
+    /// Asks the peer for a second handle on the same open file, positioned
+    /// where this one is but moving independently.
+    pub(crate) async fn dup(&self) -> Result<Self> {
+        self.idle()?;
+        match self
+            .client
+            .request(RequestKind::FileDup { file: self.cite() })
+            .await?
+        {
+            ResponseKind::FileDup(file) => {
+                let mut dup = Self::new(self.client.clone(), file, self.append);
+                if let Some(cursor) = self.cursor.get() {
+                    dup.cursor().cursor = cursor.cursor;
+                }
+                Ok(dup)
+            }
+            response => Err(unexpected(response).into()),
+        }
+    }
+
     pub(crate) async fn try_into_std(self) -> std::result::Result<std::fs::File, Self> {
         Err(self)
     }

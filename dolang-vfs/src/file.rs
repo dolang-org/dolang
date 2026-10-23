@@ -762,6 +762,20 @@ impl File {
         match_file!(self, file => file.lock(request).await)
     }
 
+    /// Returns a second handle on the same open file.
+    ///
+    /// The duplicate starts at this handle's position and moves independently;
+    /// unlike POSIX `dup`, positions are not shared. The open file and its
+    /// locks are: a lock through one handle refuses an overlapping lock through
+    /// the other, and each handle releases only the locks taken through it.
+    /// Handing a file to a child process fails while it has live duplicates.
+    pub async fn dup(&self) -> Result<File> {
+        match &self.inner {
+            FileInner::Client(file) => file.dup().await.map(Self::client),
+            FileInner::Direct(file) => file.dup().await.map(Self::direct),
+        }
+    }
+
     /// Converts this handle into a local standard-library file when possible.
     pub async fn try_into_std(self) -> std::result::Result<std::fs::File, Self> {
         match self.inner {
