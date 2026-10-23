@@ -1,4 +1,5 @@
-import zip
+import fs
+  zip
   testlib.vfs:
     - vfs
   test:
@@ -8,6 +9,7 @@ import zip
     - test
   std:
     - ConcurrencyError
+    - StateError
     - TypeError
     - ValueError
 
@@ -181,3 +183,47 @@ def write_options_are_rejected_in_read_mode()
       archive.open "hello.txt" size: 13 do |_| nil
     assert_throws $TypeError do
       archive.open "hello.txt" compression: :STORED: do |_| nil
+
+#[test]
+#[vfs]
+def open_from_file()
+  zip.open "from_file.zip" "w" do |archive|
+    archive.open "hello.txt" do |file|
+      file.write "Hello, World!"
+
+  fs.open from_file.zip rb do |file|
+    zip.open $file do |archive|
+      archive.open "hello.txt" do |entry|
+        assert_eq (str (entry.read())) "Hello, World!"
+    assert_throws $StateError do file.read()
+    file.close()
+
+#[test]
+#[vfs]
+def write_through_file()
+  fs.open through_file.zip wb do |file|
+    zip.open $file "w" do |archive|
+      archive.open "hello.txt" do |entry|
+        entry.write "Hello, World!"
+
+  zip.open "through_file.zip" do |archive|
+    archive.open "hello.txt" do |entry|
+      assert_eq (str (entry.read())) "Hello, World!"
+
+#[test]
+#[vfs]
+def read_only_file_is_rejected_for_write()
+  zip.open "read_only.zip" "w" do |archive|
+    archive.open "hello.txt" do |file|
+      file.write "Hello, World!"
+
+  fs.open read_only.zip rb do |file|
+    assert_throws $ValueError do
+      zip.open $file "w"
+    zip.open $file do |archive|
+      assert_eq (str (archive.open "hello.txt" do |entry| entry.read())) "Hello, World!"
+
+#[test]
+def non_provider_is_rejected()
+  assert_throws $TypeError do
+    zip.open (1 !@ Str)
