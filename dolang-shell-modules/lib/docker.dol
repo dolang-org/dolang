@@ -60,6 +60,8 @@ pub def run
   :networks @ Iterable[Str] = []
   # User, or `user:group`.
   :user @ Str = nil
+  # Run an init process that forwards signals and reaps child processes.
+  :init @ Bool = false
   # Entrypoint override.
   :entrypoint @ Str = nil
   # Arguments passed to `cmd`.
@@ -67,7 +69,7 @@ pub def run
   <Iter[Value]
   >Sink[Str]
 do
-  docker.run $image $cmd :env :pull :mounts :labels :ports :networks ...args
+  docker.run $image $cmd :env :pull :mounts :labels :ports :networks :init ...args
     if (cd != nil)
       :cd
     if (name != nil)
@@ -101,6 +103,8 @@ pub def create
   :networks @ Iterable[Str] = []
   # User, or `user:group`.
   :user @ Str = nil
+  # Run an init process that forwards signals and reaps child processes.
+  :init @ Bool = false
   # Entrypoint override.
   :entrypoint @ Str = nil
   # Restart policy.
@@ -108,7 +112,7 @@ pub def create
   # Arguments passed to `cmd`.
   *args @ Value
 do -> Container
-  docker.create $image $cmd :env :pull :mounts :labels :ports :networks ...args
+  docker.create $image $cmd :env :pull :mounts :labels :ports :networks :init ...args
     if (cd != nil)
       :cd
     if (name != nil)
