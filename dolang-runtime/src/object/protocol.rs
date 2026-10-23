@@ -13,7 +13,7 @@ use crate::{
         self, Boxable, Boxed, Collect,
         arena::{self, Arena, Upcast},
     },
-    object::{BoundMethod, class::get_native_slot},
+    object::{BoundMethod, class::get_native_slot, interface::Request},
     sig::Unpack,
     strand::{Pinned, Strand},
     sym::{self, Sym},
@@ -163,6 +163,15 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         native: Value<'v>,
     ) -> Result<'v, 's, ()> {
         Err(Error::type_error(strand, "fill not supported"))
+    }
+
+    /// Offer Rust interfaces to an interface query; see [`Request`].
+    #[allow(unused_variables)]
+    fn op_provide<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        request: &mut Request<'v, 's, '_>,
+    ) -> Result<'v, 's, ()> {
+        Ok(())
     }
 
     fn op_verbatim<'a, 's>(
@@ -712,6 +721,11 @@ pub(crate) struct Vtbl<'v> {
         native: Value<'v>,
         _: &'a &'v (),
     ) -> Result<'v, 's, ()>,
+    op_provide: for<'a, 's> fn(
+        this: ErasedRecv<'v, 'a>,
+        request: &mut Request<'v, 's, '_>,
+        _: &'a &'v (),
+    ) -> Result<'v, 's, ()>,
     op_call: for<'a, 's> fn(
         this: ErasedRecv<'v, 'a>,
         strand: &'a mut Strand<'v, 's>,
@@ -849,6 +863,7 @@ impl<'v> Vtbl<'v> {
             op_subtype: op_subtype_glue::<T>,
             op_inspect: op_inspect_glue::<T>,
             op_fill: op_fill_glue::<T>,
+            op_provide: op_provide_glue::<T>,
             op_call: op_call_glue::<T>,
             op_mcall: op_mcall_glue::<T>,
             op_convert: op_convert_glue::<T>,
@@ -1163,6 +1178,14 @@ fn op_fill_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
     unsafe { T::op_fill(Recv::from_erased(this), strand, type_obj, native) }
+}
+
+fn op_provide_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
+    this: ErasedRecv<'v, 'a>,
+    request: &mut Request<'v, 's, '_>,
+    _: &'a &'v (),
+) -> Result<'v, 's, ()> {
+    unsafe { T::op_provide(Recv::from_erased(this), request) }
 }
 
 fn op_call_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1577,6 +1600,10 @@ pub(crate) trait Dispatch<'v, 'a> {
         native: Value<'v>,
     ) -> Result<'v, 's, ()>;
 
+    fn op_provide<'s>(&self, request: &mut Request<'v, 's, '_>) -> Result<'v, 's, ()>
+    where
+        'v: 'a;
+
     fn op_type<'s>(&self, strand: &'a mut Strand<'v, 's>, out: Slot<'v, 'a>);
 
     fn op_subtype<'s>(&self, strand: &'a mut Strand<'v, 's>, supertype: &Value<'v>) -> bool;
@@ -1885,6 +1912,13 @@ impl<'v, 'a, T: AsRecv<'v, 'a>> Dispatch<'v, 'a> for T {
         native: Value<'v>,
     ) -> Result<'v, 's, ()> {
         unsafe { invoke!(self, op_fill, strand, type_obj, native) }
+    }
+
+    fn op_provide<'s>(&self, request: &mut Request<'v, 's, '_>) -> Result<'v, 's, ()>
+    where
+        'v: 'a,
+    {
+        unsafe { invoke!(self, op_provide, request) }
     }
 
     fn op_type<'s>(&self, strand: &'a mut Strand<'v, 's>, out: Slot<'v, 'a>) {

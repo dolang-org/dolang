@@ -100,6 +100,15 @@ instance method. Its `(get)` and `(set)` accessors likewise address type
 properties and dynamic type hooks. Equality and hashing identify the proxied
 singleton; the proxy's own type is `Type`.
 
+Rust code can query a value for a Rust interface named by an `InterfaceTag`
+(`object/interface.rs`). `Value::query` passes a `Request` to the object's
+`op_provide`, which `ObjectWrap` forwards to `Object::provide` and
+`ClassInstance` forwards to each native super slot until one answers. A
+provider lends the interface from inside a borrow of its state, so the
+consumer receives it in a synchronous closure rather than as a return value.
+Errors from either side propagate; a query nothing answers fails with an
+unsupported error, which consumers with a fallback test for.
+
 Do class proxies use the same native type dispatch for inherited members.
 Native handlers receive the registered base `Type<T>` handle even when the
 explicit receiver is a Do subclass.

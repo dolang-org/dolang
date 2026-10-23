@@ -278,6 +278,54 @@ let mut borrow = instance.borrow_mut(strand)?; // Mut<Widget> — exclusive
 let annex = instance.annex();                // &WidgetAnnex — no borrow check
 ```
 
+## Interface Queries
+
+Native code can ask a value for a Rust interface without downcasting to
+another extension's type. An `InterfaceTag` names the interface, usually a
+trait object shared by unrelated providers:
+
+```rust
+pub struct ByteSourceTag;
+
+impl InterfaceTag for ByteSourceTag {
+    type Interface<'v> = dyn ByteSource + 'v;
+}
+```
+
+A provider implements `Object::provide`. `Request` dereferences to the strand,
+so the provider borrows its state with it and lends the interface from inside
+the borrow. Test the tag first, so an unrelated query never borrows:
+
+```rust
+fn provide<'a, 's>(
+    this: Instance<'v, 'a, Self>,
+    request: &mut Request<'v, 's, '_>,
+) -> Result<'v, 's, ()> {
+    if request.wants::<ByteSourceTag>() {
+        let mut state = this.borrow_mut(request)?;
+        if state.is_open() {
+            request.provide::<ByteSourceTag>(&mut *state)?;
+        }
+    }
+    Ok(())
+}
+```
+
+A consumer calls `Value::query`, which lends the interface to a synchronous
+closure for the duration of the provider's borrow. A query on a Do subclass
+reaches its native supers. Errors from the provider (such as a conflicting
+borrow) or the closure propagate. When nothing provides the interface, the
+query fails with `ErrorKind::Unsupported`, which a consumer with a slow path
+tests for:
+
+```rust
+match value.query::<ByteSourceTag, _>(strand, |strand, source| source.take(strand)) {
+    Ok(handle) => { /* fast path */ }
+    Err(e) if e.kind() == ErrorKind::Unsupported => { /* slow path */ }
+    Err(e) => return Err(e),
+}
+```
+
 ## GC Slots and Lifetime Transmuting
 
 When wrapping types that borrow from GC-managed values (e.g. a regex iterator

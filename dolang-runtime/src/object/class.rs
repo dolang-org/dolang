@@ -17,7 +17,9 @@ use crate::{
     error::{Error, ErrorKind, Result},
     gc::{Annex, Collect, arena::Visit},
     object::{
-        BoundMethod, native,
+        BoundMethod,
+        interface::Request,
+        native,
         protocol::{
             Delegated, Dispatch, Inspect, Member, MemberKind, Recv, Spread, SpreadContext,
             instance_mcall_fallback, is_special_mcall,
@@ -2193,6 +2195,24 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         annex.natives[idx]
             .set(native)
             .map_err(|_| Error::state_error(strand, "native slot already initialized"))
+    }
+
+    fn op_provide<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        request: &mut Request<'v, 's, '_>,
+    ) -> Result<'v, 's, ()> {
+        let (strand, answer) = request.parts();
+        strand.with_slots_sync(|strand, [mut delegator]| {
+            Output::set(strand, Slot::reborrow(&mut delegator), &this);
+            for native in this.annex().natives.iter().filter_map(|s| s.get()) {
+                if answer.is_done() {
+                    break;
+                }
+                Delegated::new(native, &delegator)
+                    .op_provide(&mut Request::new(strand, &mut *answer))?;
+            }
+            Ok(())
+        })
     }
 
     fn op_type<'a, 's>(

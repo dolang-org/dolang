@@ -25,6 +25,7 @@ use crate::{
         class::{self, iter_natives},
         dict,
         function::{Function, NativeFunction, NativeFunctionAnnex},
+        interface::{self, InterfaceTag, Request},
         protocol::{
             Delegated, Dispatch, GcObj, Header, Inspect, Protocol, Spread, SpreadContext,
             TypeHandle,
@@ -225,6 +226,20 @@ impl<'v> Value<'v> {
             Output::set(strand, &mut ty, input);
             self_ty.op_subtype(strand, &ty)
         })
+    }
+
+    /// Queries this value for the Rust interface named by `K`, lending it to `consumer`
+    /// if a provider offers it.
+    ///
+    /// Raises an [unsupported](crate::error::ErrorKind::Unsupported) error if nothing
+    /// provides the interface, so a consumer with a fallback can test for that kind and
+    /// propagate any other error from the provider or `consumer`.
+    pub fn query<'s, K: InterfaceTag, R>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        consumer: impl FnOnce(&mut Strand<'v, 's>, &mut K::Interface<'v>) -> Result<'v, 's, R>,
+    ) -> Result<'v, 's, R> {
+        interface::query::<K, R>(self, strand, consumer)
     }
 
     pub(crate) fn is_uninit(&self) -> bool {
@@ -1967,6 +1982,16 @@ impl<'v, 'a> Dispatch<'v, 'a> for Delegated<'v, 'a, &'a Value<'v>> {
                 Delegated::new(receiver, self.delegator).op_fill(strand, type_obj, native)
             }
             Case::Prim(_) => self.receiver.op_fill(strand, type_obj, native),
+        }
+    }
+
+    fn op_provide<'s>(&self, request: &mut Request<'v, 's, '_>) -> Result<'v, 's, ()>
+    where
+        'v: 'a,
+    {
+        match self.receiver.case() {
+            Case::Object(receiver) => Delegated::new(receiver, self.delegator).op_provide(request),
+            Case::Prim(_) => Ok(()),
         }
     }
 

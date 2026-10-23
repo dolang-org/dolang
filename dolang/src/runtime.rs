@@ -40,6 +40,7 @@ pub mod object {
         array_view::{ArrayLike, ArrayView},
         dict_view::{DictLike, DictView, DictViewSink},
         flags::{FlagLike, FlagLikeExt, Flags, FlagsInstanceExt, FlagsTypeExt},
+        interface::{InterfaceTag, Request},
     };
 }
 

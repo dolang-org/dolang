@@ -29,6 +29,7 @@ use crate::{
 
 use super::{
     BoundMethod,
+    interface::Request,
     protocol::{
         self, Inspect, Member, MemberKind, Protocol, TypeHandle, instance_mcall_fallback,
         is_special_mcall, type_mcall_fallback,
@@ -1565,6 +1566,34 @@ pub trait Object<'v>: Sized + 'v {
         async move { Err(Error::not_supported(strand)) }
     }
 
+    /// Offers Rust interfaces to an interface query ([`Value::query`]).
+    ///
+    /// A provider tests [`Request::wants`] for each tag it supports, then lends the
+    /// interface with [`Request::provide`], typically from inside a borrow of its state
+    /// taken with the request (which dereferences to the strand):
+    ///
+    /// ```ignore
+    /// if request.wants::<MyTag>() {
+    ///     let mut state = this.borrow_mut(request)?;
+    ///     request.provide::<MyTag>(&mut *state)?;
+    /// }
+    /// Ok(())
+    /// ```
+    ///
+    /// Errors, including a borrow conflict and the consumer's own errors, propagate to the
+    /// querier. Test the tag before borrowing, so an unrelated query never fails on a
+    /// conflicting borrow.
+    ///
+    /// # Default
+    /// Provides nothing.
+    #[allow(unused_variables)]
+    fn provide<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        request: &mut Request<'v, 's, '_>,
+    ) -> Result<'v, 's, ()> {
+        Ok(())
+    }
+
     /// Performs any object-specific finalization before the main object state is dropped.
     ///
     /// This method is called synchronously just before the runtime drops the main object state.
@@ -1711,6 +1740,25 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &mut Strand<'v, 's>,
     ) -> Result<'v, 's, bool> {
         T::bool(Instance::from_recv(&this), strand)
+    }
+
+    fn op_provide<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        request: &mut Request<'v, 's, '_>,
+    ) -> Result<'v, 's, ()> {
+        let (strand, answer) = request.parts();
+        Strand::for_native_frame(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(provide)")),
+            |strand| {
+                T::provide(
+                    Instance::from_recv(&this),
+                    &mut Request::new(strand, answer),
+                )
+            },
+        )
     }
 
     async fn op_call<'a, 's>(
