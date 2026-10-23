@@ -119,9 +119,10 @@ def run_structured_options()
   let runtime = runtime()
   let name = "dolang-test-run-structured-options"
   remove_container $name
-  let script = r#"printf "%s\n%s\n%s\n" "$PWD" "$TEST_DOLANG_CREATE" "$(id -u)"; test -r /mnt/host-release"#
+  let script = r#"printf "%s\n%s\n%s\n" "$PWD" "$TEST_DOLANG_CREATE" "$(id -u)"; test "$$" -ne 1 && test -r /mnt/host-release"#
   let output = sub do runtime.run ubuntu:24.04 -c $script
     name: $name
+    init: true
     entrypoint: /bin/sh
     cd: /tmp
     env: {TEST_DOLANG_CREATE: "value"}
@@ -303,7 +304,7 @@ def container_inspect_lifecycle()
     progress.steps
       - name: create and inspect
         do
-          ctr = runtime.create ubuntu:24.04 sleep infinity name: $name
+          ctr = runtime.create ubuntu:24.04 sleep infinity init: true name: $name
           ctr.start()
           let state = ctr.state()
           assert_eq $state.name $name
@@ -381,8 +382,9 @@ def container_create_structured_lifecycle()
     progress.steps
       - name: create with structured options
         do
-          ctr = runtime.create ubuntu:24.04 -c "sleep infinity"
+          ctr = runtime.create ubuntu:24.04 -c "exec sleep infinity"
             :name
+            init: true
             entrypoint: /bin/sh
             cd: /tmp
             env: {TEST_DOLANG_CREATE: "value"}
@@ -406,7 +408,7 @@ def container_create_structured_lifecycle()
           assert_eq $ctr.state().state :CREATED:
           assert_eq $ctr.labels["dolang_test"] structured-create
           assert_eq $ctr.entrypoint ["/bin/sh"]
-          assert_eq $ctr.cmd ["-c", "sleep infinity"]
+          assert_eq $ctr.cmd ["-c", "exec sleep infinity"]
       - name: start and verify config via vfs
         do
           ctr.start()
@@ -462,7 +464,7 @@ def container_with_non_root_user()
   remove_container $name
 
   clean_container $name do
-    let ctr = runtime.create ubuntu:24.04 sleep infinity name: $name user: "65534:65534"
+    let ctr = runtime.create ubuntu:24.04 sleep infinity init: true name: $name user: "65534:65534"
     ctr.start()
     let uid = ctr.with do sub do run id -u
     assert_eq $uid "65534"

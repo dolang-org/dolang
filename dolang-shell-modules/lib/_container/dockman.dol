@@ -699,6 +699,7 @@ def container_create_args
   :ports @ Iterable[PortSpec]
   :networks @ Iterable[Str]
   :user @ (Str | nil)
+  :init @ Bool
   :cd @ (Str | Path | nil)
   :entrypoint @ (Str | nil)
   :restart @ (RestartSpec | nil)
@@ -713,6 +714,8 @@ do -> Array[Value]
     ...(container_network_args networks)
     if (user != nil)
       --user $user
+    if init
+      --init
     if (cd != nil)
       --workdir $cd
     if (entrypoint != nil)
@@ -726,6 +729,7 @@ def container_run_args
   :ports @ Iterable[PortSpec]
   :networks @ Iterable[Str]
   :user @ (Str | nil)
+  :init @ Bool
 do -> Array[Value]
   return $
     if (name != nil)
@@ -736,6 +740,8 @@ do -> Array[Value]
     ...(container_network_args networks)
     if (user != nil)
       --user $user
+    if init
+      --init
 
 def normalize_platform platform @ (Platform | nil) -> (Str | nil)
   match platform
@@ -1098,6 +1104,7 @@ pub class Runtime
     :ports @ Iterable[PortSpec]
     :networks @ Iterable[Str]
     :user @ (Str | nil)
+    :init @ Bool
     :entrypoint @ (Str | nil)
     <Iter[Value]
     >Sink[Str]
@@ -1109,7 +1116,7 @@ pub class Runtime
     else
       [...argv]
     let config_args = container_run_args
-      :name :mounts :labels :ports :networks :user
+      :name :mounts :labels :ports :networks :user :init
     self.cli run --rm -i --pull=never
       ...config_args
       --entrypoint env $ctr ...(_vfs.env_args cd env)
@@ -1129,13 +1136,14 @@ pub class Runtime
     :ports @ Iterable[PortSpec] = []
     :networks @ Iterable[Str] = []
     :user @ Str = nil
+    :init @ Bool = false
     :entrypoint @ Str = nil
     *args @ Value
     <Iter[Value]
     >Sink[Str]
   do
     self.#run_direct $ctr $cmd
-      :cd :env :pull :name :mounts :labels :ports :networks :user :entrypoint
+      :cd :env :pull :name :mounts :labels :ports :networks :user :init :entrypoint
       argv: $args
 
   pub def create
@@ -1149,6 +1157,7 @@ pub class Runtime
     :ports @ Iterable[PortSpec] = []
     :networks @ Iterable[Str] = []
     :user @ Str = nil
+    :init @ Bool = false
     :cd @ (Str | Path) = nil
     :entrypoint @ Str = nil
     :restart @ RestartSpec = nil
@@ -1157,7 +1166,7 @@ pub class Runtime
   do -> Container
     ensure_image $self $image $pull
     let config_args = container_create_args
-      :name :env :mounts :labels :ports :networks :user :cd :entrypoint :restart
+      :name :env :mounts :labels :ports :networks :user :init :cd :entrypoint :restart
     let lines @ Array[Str] = []
     let output = try
       sub do self.cli create --pull=never
