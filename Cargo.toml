@@ -30,6 +30,7 @@ members = [
   "dolang-ext-url",
   "dolang-ext-zip",
   "dolang-ext-tar",
+  "dolang-ext-compress",
   "dolang-ext-sqlite",
   "dolang-ext-regex",
   "dolang-ext-glob",
@@ -76,6 +77,7 @@ default-members = [
   "dolang-ext-url",
   "dolang-ext-zip",
   "dolang-ext-tar",
+  "dolang-ext-compress",
   "dolang-ext-sqlite",
   "dolang-ext-regex",
   "dolang-ext-glob",
@@ -188,6 +190,11 @@ version = "0.1.1"
 
 [workspace.dependencies.dolang-ext-sqlite]
 path = "dolang-ext-sqlite"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ext-compress]
+path = "dolang-ext-compress"
 version = "0.1.1"
 
 

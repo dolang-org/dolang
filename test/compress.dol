@@ -1,0 +1,195 @@
+import compress
+  fs
+  sys
+  testlib.vfs:
+    - vfs
+  test:
+    - assert_eq
+    - assert_throws
+    - assert_type
+    - test
+  std:
+    - StateError
+    - TypeError
+    - ValueError
+
+let FORMATS = $
+  - [:GZIP:, "gz"]
+  - [:ZSTD:, "zst"]
+  - [:XZ:, "xz"]
+
+# Larger than one read chunk, and compressible.
+def payload() -> Bin
+  let out = BinBuf()
+  for i = (0..20000)
+    out.extend "line $i\n"
+  out.freeze()
+
+#[test]
+#[vfs]
+def round_trip()
+  let data = payload()
+  for format ext = FORMATS
+    let name = "data.$ext"
+    compress.compress $name $format do |stream|
+      assert_type $compress.Compressor $stream
+      assert_eq $stream.format $format
+      stream.write $data
+    compress.decompress $name $format do |stream|
+      assert_type $compress.Decompressor $stream
+      assert_eq $stream.format $format
+      assert_eq $stream.read() $data
+      assert_eq $stream.read() b""
+
+#[test]
+#[vfs]
+def sized_reads()
+  compress.compress data.gz :GZIP: do |stream| stream.write "hello world"
+  compress.decompress data.gz do |stream|
+    assert_eq $stream.read(5) b"hello"
+    assert_eq $stream.read(100) b" world"
+    assert_eq $stream.read(1) b""
+
+#[test]
+#[vfs]
+def levels()
+  let data = payload()
+  for level = [:FASTEST:, :BEST:, :DEFAULT:, 3]
+    compress.compress data.zst :ZSTD: :level do |stream| stream.write $data
+    compress.decompress data.zst do |stream| assert_eq $stream.read() $data
+  assert_throws $ValueError do compress.compress data.gz :GZIP: level: :HIGH:
+
+#[test]
+#[vfs]
+def auto_detects_format()
+  for format ext = FORMATS
+    let name = "data.$ext"
+    compress.compress $name $format do |stream| stream.write hello
+    compress.decompress $name do |stream|
+      assert_eq $stream.format $format
+      assert_eq $stream.read() b"hello"
+    compress.decompress $name :AUTO: do |stream|
+      assert_eq $stream.format $format
+
+  fs.Path("plain.txt").write "not compressed"
+  assert_throws $ValueError do compress.decompress plain.txt
+  fs.Path("empty").write ""
+  assert_throws $ValueError do compress.decompress empty
+
+#[test]
+#[vfs]
+def invalid_format()
+  fs.Path("data").write ""
+  assert_throws $ValueError do compress.decompress data :BZIP2:
+  assert_throws $ValueError do compress.compress out :AUTO:
+
+#[test]
+#[vfs]
+def chains_through_streams()
+  compress.compress nested.zst :ZSTD: do |outer|
+    compress.compress $outer :GZIP: do |inner|
+      inner.write "nested payload"
+    assert_throws $StateError do outer.write more
+
+  compress.decompress nested.zst do |outer|
+    compress.decompress $outer do |inner|
+      assert_eq $inner.format :GZIP:
+      assert_eq $inner.read() b"nested payload"
+    assert_throws $StateError do outer.read()
+
+  # The outer layer really is zstd wrapping gzip.
+  compress.decompress nested.zst do |outer|
+    assert_eq $outer.read(2) b"\x1f\x8b"
+
+#[test]
+#[vfs]
+def takes_over_files()
+  fs.open data.xz wb do |file|
+    compress.compress $file :XZ: do |stream| stream.write "from a file"
+    assert_throws $StateError do file.write more
+    file.close()
+
+  fs.open data.xz rb do |file|
+    compress.decompress $file do |stream|
+      assert_eq $stream.read() b"from a file"
+    assert_throws $StateError do file.read()
+
+#[test]
+#[vfs]
+def unclosed_compressor_is_finished_by_its_consumer()
+  let stream = compress.compress data.gz :GZIP:
+  stream.write "handed on"
+  compress.compress $stream :ZSTD: do |outer| outer.write " and wrapped"
+  assert_throws $StateError do stream.write more
+
+  # The gzip stream holds the plain write, then the zstd stream.
+  compress.decompress data.gz do |stream|
+    assert_eq $stream.read(9) b"handed on"
+    compress.decompress $stream :ZSTD: do |inner|
+      assert_eq $inner.read() b" and wrapped"
+
+#[test]
+#[vfs]
+def rejects_wrong_direction()
+  fs.Path("data.gz").write ""
+  fs.open data.gz wb do |file|
+    assert_throws $ValueError do compress.decompress $file
+    file.write still-open
+  fs.open data.gz rb do |file|
+    assert_throws $ValueError do compress.compress $file :GZIP:
+    assert_eq $file.read() b"still-open"
+  assert_throws $TypeError do compress.decompress (1 !@ fs.Path)
+
+#[test]
+#[vfs]
+def closed_streams()
+  let stream = compress.compress data.gz :GZIP:
+  stream.close()
+  stream.close()
+  assert_throws $StateError do stream.write more
+  assert_throws $StateError do compress.decompress $stream
+
+  let reader = compress.decompress data.gz
+  reader.close()
+  reader.close()
+  assert_throws $StateError do reader.read()
+
+#[test]
+#[vfs]
+def truncated_stream_raises()
+  let data = payload()
+  for format ext = FORMATS
+    let name = "data.$ext"
+    compress.compress $name $format do |stream| stream.write $data
+    let path = fs.Path $name
+    let full = path.read b
+    path.write (full[..(full.len - 4)])
+    assert_throws $sys.UnexpectedEofError do
+      compress.decompress $name do |stream| stream.read()
+
+#[test]
+#[vfs]
+def corrupt_stream_raises()
+  let data = payload()
+  for format ext = FORMATS
+    let name = "data.$ext"
+    compress.compress $name $format do |stream| stream.write $data
+    let path = fs.Path $name
+    let full = path.read b
+    let broken = BinBuf $full
+    for i = (20..40)
+      broken[i] = (broken[i] ^ 0xff)
+    path.write $broken.freeze()
+    assert_throws $sys.InvalidDataError do
+      compress.decompress $name do |stream| stream.read()
+
+#[test]
+#[vfs]
+def concatenated_members()
+  compress.compress first.gz :GZIP: do |stream| stream.write "one "
+  compress.compress second.gz :GZIP: do |stream| stream.write two
+  let joined = BinBuf $fs.Path("first.gz").read("b")
+  joined.extend $fs.Path("second.gz").read("b")
+  fs.Path("both.gz").write $joined.freeze()
+  compress.decompress both.gz do |stream|
+    assert_eq $stream.read() b"one two"

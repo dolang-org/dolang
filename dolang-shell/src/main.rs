@@ -14,6 +14,8 @@ extern crate dolang_ext_load;
 
 #[cfg(feature = "base64")]
 extern crate dolang_ext_base64;
+#[cfg(feature = "compress")]
+extern crate dolang_ext_compress;
 extern crate dolang_ext_digest;
 #[cfg(feature = "glob")]
 extern crate dolang_ext_glob;

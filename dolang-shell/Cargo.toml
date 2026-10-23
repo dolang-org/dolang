@@ -29,6 +29,7 @@ default = [
   "http_mock",
   "zip",
   "tar",
+  "compress",
   "sqlite",
   "xml",
   "yaml",
@@ -54,6 +55,7 @@ http = ["dep:dolang-ext-http", "url"]
 http_mock = ["dep:dolang-ext-http-mock", "url"]
 zip = ["dep:dolang-ext-zip"]
 tar = ["dep:dolang-ext-tar"]
+compress = ["dep:dolang-ext-compress"]
 sqlite = ["dep:dolang-ext-sqlite"]
 xml = ["dep:dolang-ext-xml"]
 yaml = ["dep:dolang-ext-yaml"]
@@ -139,6 +141,11 @@ optional = true
 
 
 [dependencies.dolang-ext-tar]
+workspace = true
+optional = true
+
+
+[dependencies.dolang-ext-compress]
 workspace = true
 optional = true
 
