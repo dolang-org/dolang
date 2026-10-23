@@ -351,6 +351,14 @@ it before its first seek or write. Offer `IoCaps::CLONE` only when `clone` can
 produce a handle with its own position, starting at the provider's logical
 position; a non-seekable provider holding read-ahead cannot.
 
+The lent interface is `dyn IntoByteIo + 'v`, so implement the trait on the
+borrowed state type itself; an adapter holding short borrows of its fields does
+not live long enough. In the stub, a provider class claims the type-only
+`std.ByteIo` protocol (`class File: ... @ByteIo`), and a consumer accepts it in
+its signature. `fs.File` (`dolang-ext-shell/src/fs/file.rs`) is a provider,
+and `zip.open` (`dolang-ext-zip/src/zip.rs`) is a consumer that also accepts a
+path by opening it and building the handle itself.
+
 ## GC Slots and Lifetime Transmuting
 
 When wrapping types that borrow from GC-managed values (e.g. a regex iterator

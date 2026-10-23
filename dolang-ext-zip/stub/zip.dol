@@ -6,6 +6,8 @@
 import fs:
   - @FileType
   - @Path
+import std:
+  - @ByteIo
 import fs.unix:
   @Path: UnixPath
 import time:
@@ -322,10 +324,32 @@ pub @let OpenMode = $
 # Opens a ZIP archive.
 #
 # The archive stays open until [`Archive.close`](zip.Archive.close) is called.
+#
+# The archive is read from or written to `source`. A path is opened. Any other
+# source, such as an open [`fs.File`](fs.File), is taken over and reads as
+# closed afterward. Reading needs a readable, seekable source and writing a
+# writable, seekable one, and writing starts at the source's beginning, since
+# archive offsets are absolute.
+#
+# ## Errors
+#
+# | Exception | Condition |
+# | --- | --- |
+# | [`TypeError`](std.TypeError) | `source` is not a path or a [`ByteIo`](std.ByteIo) |
+# | [`ValueError`](std.ValueError) | `source` cannot be read or written as `mode` needs; it is left open |
+#
+# ## Example
+#
+# ```
+# fs.open "bundle.zip" rb do |file|
+#   open $file do |archive|
+#     for entry = archive.entries
+#       echo $entry.name
+# ```
 @def open
-  # Path to the ZIP archive
-  # file.
-  path @ (Str | Path)
+  # Path to the ZIP archive, or a source to take
+  # over.
+  source @ (Str | Path | ByteIo)
   # Access mode. Defaults to `"r"`.
   mode @ OpenMode = nil
 do -> Archive
@@ -339,9 +363,9 @@ do -> Archive
 #     echo "Entry: $entry.name"
 # ```
 @def open[R]
-  # Path to the ZIP archive
-  # file.
-  path @ (Str | Path)
+  # Path to the ZIP archive, or a source to take
+  # over.
+  source @ (Str | Path | ByteIo)
   # Called with the [`Archive`](zip.Archive).
   func @ (Archive -> R)
 do -> R
@@ -355,14 +379,14 @@ do -> R
 #     file.write "Hello, World!"
 # ```
 @def open[R]
-  # Path to the ZIP archive
-  # file.
-  path @ (Str | Path)
+  # Path to the ZIP archive, or a source to take
+  # over.
+  source @ (Str | Path | ByteIo)
   # Access mode.
   mode @ OpenMode
   # Called with the [`Archive`](zip.Archive).
   func @ (Archive -> R)
 do -> R
 
-pub def open path @ (Str | Path) ...options @ Value -> Value
+pub def open source @ (Str | Path | ByteIo) ...options @ Value -> Value
   ...

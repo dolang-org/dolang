@@ -15,7 +15,8 @@ use async_zip::{
 };
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, call,
-    error::ResultExt,
+    error::{ErrorKind, ResultExt},
+    io::{ByteHandle, ByteIo, IoCaps, ReadSeek, WriteSeek},
     method,
     object::{ArrayLike, ArrayView, Mut, Ref, TypeBuilder},
     strand::InterruptMask,
@@ -23,17 +24,17 @@ use dolang::runtime::{
     value::{BinEmbryo, View},
     vm::Register,
 };
-use dolang_vfs::file::File as VfsFile;
-use futures_lite::io::AsyncWriteExt as _;
-use tokio::io::{AsyncRead as _, BufReader, ReadBuf};
-use tokio_util::compat::{Compat, FuturesAsyncReadCompatExt as _};
+use futures_lite::io::{AsyncWriteExt as _, BufReader};
+use tokio::io::{AsyncRead as _, ReadBuf};
+use tokio_util::compat::{FuturesAsyncReadCompatExt as _, TokioAsyncReadCompatExt as _};
 
 use crate::global::Global;
 
-type ZipReader = ZipFileReader<Compat<BufReader<VfsFile>>>;
-type ZipReadEntry = ZipEntryReader<'static, Compat<BufReader<VfsFile>>, WithEntry<'static>>;
-type ZipWriter = ZipFileWriter<Compat<VfsFile>>;
-type ZipWriteEntry = EntrySeekableWriter<'static, Compat<VfsFile>>;
+type ZipSource = BufReader<Box<dyn ReadSeek>>;
+type ZipReader = ZipFileReader<ZipSource>;
+type ZipReadEntry = ZipEntryReader<'static, ZipSource, WithEntry<'static>>;
+type ZipWriter = ZipFileWriter<Box<dyn WriteSeek>>;
+type ZipWriteEntry = EntrySeekableWriter<'static, Box<dyn WriteSeek>>;
 
 async fn read_into_embryo(
     reader: &mut (impl futures_lite::io::AsyncRead + Unpin),
@@ -186,9 +187,7 @@ async fn open_read_entry_by_index<'v, 's>(
     let entry = unsafe {
         // SAFETY: the entry borrows `archive`, which remains in the annex until
         // the entry is closed. The File object roots this Archive in slot 0.
-        transmute::<ZipEntryReader<'_, Compat<BufReader<VfsFile>>, WithEntry<'_>>, ZipReadEntry>(
-            entry,
-        )
+        transmute::<ZipEntryReader<'_, ZipSource, WithEntry<'_>>, ZipReadEntry>(entry)
     };
     Ok(FileInner::Read {
         entry: Box::new(entry),
@@ -356,7 +355,7 @@ impl<'v> Object<'v> for Archive {
                                     // SAFETY: the entry borrows `writer`, which remains in the annex until
                                     // the entry is closed. The File object roots this Archive in slot 0.
                                     transmute::<
-                                        EntrySeekableWriter<'_, Compat<VfsFile>>,
+                                        EntrySeekableWriter<'_, Box<dyn WriteSeek>>,
                                         ZipWriteEntry,
                                     >(entry)
                                 };
@@ -472,16 +471,10 @@ impl<'v> Object<'v> for Archive {
                 let inner = unsafe { annex.inner_mut().take() };
                 annex.closed.set(true);
                 match inner {
-                    Some(ArchiveInner::Read(reader)) => {
-                        let file = reader.into_inner().into_inner().into_inner();
-                        file.close().await.into_do(strand)?;
-                    }
+                    Some(ArchiveInner::Read(reader)) => drop(reader.into_inner()),
                     Some(ArchiveInner::Write(writer)) => {
-                        let file = ZipFileWriter::close(writer)
-                            .await
-                            .into_do(strand)?
-                            .into_inner();
-                        file.close().await.into_do(strand)?;
+                        let mut io = ZipFileWriter::close(writer).await.into_do(strand)?;
+                        io.close().await.into_do(strand)?;
                     }
                     None => {}
                 }
@@ -927,9 +920,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
         .value("Entry", global.types.entry)
         .value("File", global.types.file)
         .function("open", async move |strand, args, out| {
-            let ([path], [opt1, opt2]) = unpack!(strand, args, 1, 2)?;
-            let path = dolang_ext_shell::as_path(strand, &path)
-                .ok_or_else(|| Error::type_error(strand, "expected `Str` or `Path` for `path`"))?;
+            let ([source], [opt1, opt2]) = unpack!(strand, args, 1, 2)?;
 
             let (mode, block) = match (&opt1, &opt2) {
                 (None, None) => (None, None),
@@ -948,28 +939,62 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                 .transpose()?
                 .unwrap_or_else(|| "r".to_owned());
 
-            let inner = match mode.as_str() {
-                "r" => {
-                    let file = dolang_ext_shell::open(strand, path.as_ref(), "r")
-                        .await
-                        .into_do(strand)?;
-                    let reader = ZipReader::with_tokio(BufReader::new(file))
-                        .await
-                        .into_do(strand)?;
-                    ArchiveInner::Read(reader)
-                }
-                "w" => {
-                    let file = dolang_ext_shell::open(strand, path.as_ref(), "w")
-                        .await
-                        .into_do(strand)?;
-                    ArchiveInner::Write(ZipWriter::with_tokio(file))
-                }
+            let (need, access) = match mode.as_str() {
+                "r" => (IoCaps::READ | IoCaps::SEEK, "readable"),
+                "w" => (IoCaps::WRITE | IoCaps::SEEK, "writable"),
                 _ => {
                     return Err(Error::value(
                         strand,
                         format!("invalid mode '{mode}': expected 'r' or 'w'"),
                     ));
                 }
+            };
+
+            // A path is opened here and then handled like any other source.
+            let handle = if let Some(path) = dolang_ext_shell::as_path(strand, &source) {
+                let file = dolang_ext_shell::open(strand, path.as_ref(), &mode)
+                    .await
+                    .into_do(strand)?
+                    .compat();
+                if mode == "r" {
+                    ByteHandle::read_seek(file)
+                } else {
+                    ByteHandle::write_seek(file)
+                }
+            } else {
+                source
+                    .query::<ByteIo, _>(strand, |strand, io| {
+                        if !io.caps().contains(need) {
+                            return Err(Error::value(
+                                strand,
+                                format!("archive source must be {access} and seekable"),
+                            ));
+                        }
+                        Ok(io.take())
+                    })
+                    .map_err(|err| {
+                        if err.kind() == ErrorKind::Unsupported {
+                            Error::type_error(
+                                strand,
+                                "expected `Str`, `Path`, or a byte I/O provider for `source`",
+                            )
+                        } else {
+                            err
+                        }
+                    })?
+            };
+
+            let inner = if mode == "r" {
+                let io = handle
+                    .into_read_seek()
+                    .expect("source is readable and seekable");
+                let reader = ZipReader::new(BufReader::new(io)).await.into_do(strand)?;
+                ArchiveInner::Read(reader)
+            } else {
+                let io = handle
+                    .into_write_seek()
+                    .expect("source is writable and seekable");
+                ArchiveInner::Write(ZipWriter::new(io))
             };
 
             if let Some(block) = block {

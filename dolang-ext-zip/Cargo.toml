@@ -51,9 +51,5 @@ workspace = true
 workspace = true
 
 
-[dependencies.dolang-vfs]
-workspace = true
-
-
 [build-dependencies.dolang-private-bundle]
 workspace = true

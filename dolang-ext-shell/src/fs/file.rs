@@ -7,8 +7,10 @@ use std::{
 use bstr::ByteSlice;
 use dolang::runtime::{
     AllocExt, BYTE_STREAM_CHUNK_SIZE, Error, Instance, Object, Output, Result, Slot, State, Strand,
-    Value, call, method,
-    object::{Cast, Mut, Ref, TypeBuilder},
+    Value, call,
+    io::{ByteHandle, ByteIo, IntoByteIo, IoCaps},
+    method,
+    object::{Cast, Mut, Ref, Request, TypeBuilder},
     strand::InterruptMask,
     unpack,
     value::{BinEmbryo, PinBin, PinStr, TypeObject, View},
@@ -21,6 +23,7 @@ use dolang_vfs::{
     process::{StdioRecv, StdioSend},
 };
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+use tokio_util::compat::TokioAsyncReadCompatExt as _;
 
 use dolang_vfs::path as vfs_path;
 
@@ -465,6 +468,8 @@ pub(crate) struct File<'v, M: FileMode = CommonFile> {
     marker: PhantomData<M>,
     file: Option<VfsFile>,
     buf: BinEmbryo<'v>,
+    /// What the file offers as a byte I/O handle, fixed by the open mode.
+    caps: IoCaps,
 }
 
 pub(crate) struct FileAnnex<'v> {
@@ -473,6 +478,56 @@ pub(crate) struct FileAnnex<'v> {
     /// Whether the file was opened for appending, in which case every write
     /// lands at the end and an explicit offset cannot be honored.
     is_append: bool,
+}
+
+/// Capabilities of a file opened with `mode`.
+///
+/// An append-mode file is not seekable as a handle: its writes land at the end
+/// whatever the position.
+fn mode_caps(mode: &str) -> IoCaps {
+    let mut caps = if mode.starts_with('r') {
+        IoCaps::READ
+    } else {
+        IoCaps::WRITE
+    };
+    if mode.contains('+') {
+        caps |= IoCaps::READ | IoCaps::WRITE;
+    }
+    if !mode.starts_with('a') {
+        caps |= IoCaps::SEEK;
+    }
+    caps
+}
+
+impl<M: FileMode> IntoByteIo for File<'_, M> {
+    fn caps(&self) -> IoCaps {
+        self.caps
+    }
+
+    fn take(&mut self) -> ByteHandle {
+        let file = self.file.take().expect("file already taken").compat();
+        let handle = match self.caps {
+            caps if caps.contains(IoCaps::READ | IoCaps::WRITE | IoCaps::SEEK) => {
+                ByteHandle::read_write_seek(file)
+            }
+            caps if caps.contains(IoCaps::READ | IoCaps::SEEK) => ByteHandle::read_seek(file),
+            caps if caps.contains(IoCaps::WRITE | IoCaps::SEEK) => ByteHandle::write_seek(file),
+            caps if caps.contains(IoCaps::READ | IoCaps::WRITE) => ByteHandle::read_write(file),
+            _ => ByteHandle::write(file),
+        };
+        // Read-ahead past the logical position travels with the handle.
+        if self.buf.is_empty() {
+            handle
+        } else {
+            let prefix = self.buf.as_slice().to_vec();
+            self.buf.truncate(0);
+            handle.with_prefix(prefix)
+        }
+    }
+
+    fn clone(&mut self) -> ByteHandle {
+        unreachable!("a file does not offer `CLONE`")
+    }
 }
 
 pub(crate) async fn open<'v, 's>(
@@ -517,6 +572,7 @@ impl<'v, M: FileMode> File<'v, M> {
                 marker: PhantomData,
                 file: Some(file),
                 buf: BinEmbryo::new(),
+                caps: mode_caps(mode),
             },
             FileAnnex {
                 global,
@@ -1034,6 +1090,20 @@ impl<'v, M: FileMode> Object<'v> for File<'v, M> {
             .as_mut()
             .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
         file.write_all(&bytes).await.into_sys(strand)?;
+        Ok(())
+    }
+
+    fn provide<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        request: &mut Request<'v, 's, '_>,
+    ) -> Result<'v, 's, ()> {
+        if request.wants::<ByteIo>() {
+            let mut borrow = this.borrow_mut(request)?;
+            if borrow.file.is_none() {
+                return Err(Error::state_error(request, "file is closed"));
+            }
+            request.provide::<ByteIo>(&mut *borrow)?;
+        }
         Ok(())
     }
 
