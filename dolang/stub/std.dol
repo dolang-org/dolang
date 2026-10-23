@@ -503,6 +503,14 @@ pub @class BaseSink[T]
   pub def (put) self value @ T
 
 
+# A native value that can hand its bytes over to native code, such as an open
+# [`fs.File`](fs.File).
+#
+# A function that accepts one, such as [`zip.open`](zip.open), takes it over,
+# and the value reads as closed afterward. Only native types implement it.
+pub @class ByteIo
+
+
 # An opaque type that mentions its type arguments, for a field that only marks
 # how a class varies with its binders. A field of this type uses its arguments
 # covariantly, although a field is otherwise invariant, so `Phantom[T]` marks a

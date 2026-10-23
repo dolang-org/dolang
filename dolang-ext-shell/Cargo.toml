@@ -69,6 +69,11 @@ features = [
 ]
 
 
+[dependencies.tokio-util]
+version = "0.7"
+features = ["compat"]
+
+
 [dependencies.dolang]
 workspace = true
 
