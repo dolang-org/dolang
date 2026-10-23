@@ -1,7 +1,6 @@
 import std: error
 import regression2:
   - ByteBuf
-  - byte_clone_read
   - byte_overwrite
   - byte_read
   - byte_seek
@@ -33,7 +32,6 @@ def rejects f ...args
 
 let b = ByteBuf b"abcdef" 2 ""
 assert (rejects byte_seek b 0)
-assert (rejects byte_clone_read b)
 assert_eq (byte_read b) b"abcdef"
 
 # A taken provider raises its closed error
@@ -43,12 +41,6 @@ let closed = try
 catch error.StateError: _
   true
 assert $closed
-
-# A clone leaves the provider usable, with its own position
-let c = ByteBuf b"abcdef" 2 "sc"
-assert_eq (byte_clone_read c) b"abcdef"
-assert_eq (byte_clone_read c) b"abcdef"
-assert_eq (byte_read c) b"abcdef"
 
 # Values without a provider are unsupported
 let unsupported = try

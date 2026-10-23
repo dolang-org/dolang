@@ -324,14 +324,6 @@ mod detail {
             let cursor = self.cursor.take().expect("handle already taken");
             self.handle(cursor).with_prefix(mem::take(&mut self.ahead))
         }
-
-        fn clone(&mut self) -> ByteHandle {
-            assert!(self.caps.contains(IoCaps::CLONE), "provider lacks CLONE");
-            let cursor = self.cursor();
-            let mut copy = Cursor::new(cursor.get_ref().clone());
-            copy.set_position(cursor.position() - self.ahead.len() as u64);
-            self.handle(copy)
-        }
     }
 
     impl<'v> Object<'v> for ByteBuf {
@@ -343,7 +335,7 @@ mod detail {
         type TypeAnnex = ();
 
         /// `ByteBuf data ahead modes`: `ahead` bytes of `data` are already read ahead, and
-        /// `modes` adds `w` (write), `s` (seek) and `c` (clone) to reading.
+        /// `modes` adds `w` (write) and `s` (seek) to reading.
         async fn new<'a, 's>(
             this: runtime::Type<'v, Self>,
             strand: &'a mut Strand<'v, 's>,
@@ -366,12 +358,8 @@ mod detail {
                 caps |= match c {
                     'w' => IoCaps::WRITE,
                     's' => IoCaps::SEEK,
-                    'c' => IoCaps::CLONE,
                     _ => return Err(Error::value(strand, "bad modes")),
                 };
-            }
-            if caps.contains(IoCaps::CLONE) && !caps.contains(IoCaps::SEEK) && ahead > 0 {
-                return Err(Error::value(strand, "read-ahead cannot be cloned"));
             }
             let ahead_bytes = data[..ahead].to_vec();
             let mut cursor = Cursor::new(data);
@@ -413,7 +401,7 @@ mod detail {
         }
     }
 
-    /// Takes (or clones) `value`'s byte handle, raising if it lacks `need`.
+    /// Takes `value`'s byte handle, raising if it lacks `need`.
     fn byte_handle<'v, 's>(
         strand: &mut Strand<'v, 's>,
         value: &runtime::Value<'v>,
@@ -423,11 +411,7 @@ mod detail {
             if !io.caps().contains(need) {
                 return Err(Error::value(strand, "missing capability"));
             }
-            Ok(if need.contains(IoCaps::CLONE) {
-                io.clone()
-            } else {
-                io.take()
-            })
+            Ok(io.take())
         })
     }
 
@@ -660,16 +644,6 @@ mod detail {
                     .function("byte_read", async move |strand, args, out| {
                         let ([value], []) = unpack!(strand, args, 1, 0)?;
                         let handle = byte_handle(strand, &value, IoCaps::READ)?;
-                        let mut io = handle.into_read().unwrap();
-                        let mut buf = Vec::new();
-                        let res = io.read_to_end(&mut buf).await;
-                        res.map_err(|e| io_error(strand, e))?;
-                        Output::set(strand, out, &buf[..]);
-                        Ok(())
-                    })
-                    .function("byte_clone_read", async move |strand, args, out| {
-                        let ([value], []) = unpack!(strand, args, 1, 0)?;
-                        let handle = byte_handle(strand, &value, IoCaps::READ | IoCaps::CLONE)?;
                         let mut io = handle.into_read().unwrap();
                         let mut buf = Vec::new();
                         let res = io.read_to_end(&mut buf).await;

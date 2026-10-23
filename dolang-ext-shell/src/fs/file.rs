@@ -524,10 +524,6 @@ impl<M: FileMode> IntoByteIo for File<'_, M> {
             handle.with_prefix(prefix)
         }
     }
-
-    fn clone(&mut self) -> ByteHandle {
-        unreachable!("a file does not offer `CLONE`")
-    }
 }
 
 pub(crate) async fn open<'v, 's>(
@@ -561,25 +557,13 @@ pub(crate) async fn open_native<'v>(
 }
 
 impl<'v, M: FileMode> File<'v, M> {
-    pub(crate) fn create(
-        _strand: &Strand<'v, '_>,
-        global: State<'v, FsGlobal<'v>>,
-        file: VfsFile,
-        mode: &str,
-    ) -> (Self, FileAnnex<'v>) {
-        (
-            File {
-                marker: PhantomData,
-                file: Some(file),
-                buf: BinEmbryo::new(),
-                caps: mode_caps(mode),
-            },
-            FileAnnex {
-                global,
-                is_binary: mode.contains('b'),
-                is_append: mode.starts_with('a'),
-            },
-        )
+    fn create(file: VfsFile, caps: IoCaps) -> Self {
+        File {
+            marker: PhantomData,
+            file: Some(file),
+            buf: BinEmbryo::new(),
+            caps,
+        }
     }
 
     /// Hands this file to a child process as one of its standard streams,
@@ -1136,6 +1120,39 @@ impl<'v, M: FileMode> Object<'v> for File<'v, M> {
                 }
                 Ok(())
             })
+            .method("dup", async move |this, strand, _args, out| {
+                let (file, caps) = {
+                    let mut borrow = this.borrow_mut(strand)?;
+                    // A duplicate cannot share text-mode read-ahead, so it
+                    // re-reads from the logical position instead.
+                    let position = if borrow.buf.is_empty() {
+                        None
+                    } else {
+                        Some(borrow.logical_position(strand).await?)
+                    };
+                    let file = borrow
+                        .file
+                        .as_ref()
+                        .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
+                    let mut file = file.dup().await.into_sys(strand)?;
+                    if let Some(position) = position
+                        && let Err(error) = file.seek(SeekFrom::Start(position)).await
+                    {
+                        // The seek failure is the error worth reporting.
+                        let _ = file.close().await;
+                        return Err(error).into_sys(strand);
+                    }
+                    (file, borrow.caps)
+                };
+                let annex = this.annex();
+                let annex = FileAnnex {
+                    global: annex.global,
+                    is_binary: annex.is_binary,
+                    is_append: annex.is_append,
+                };
+                create_file_with(strand, file, caps, annex, out);
+                Ok(())
+            })
             .method("lock", async move |this, strand, args, out| {
                 let ([range, block], [shared_value]) = unpack!(strand, args, 2, 0, shared = None)?;
                 let shared = shared_value
@@ -1620,14 +1637,30 @@ pub(crate) fn create_file<'v>(
     mode: &str,
     out: impl Output<'v>,
 ) {
-    if mode.contains('b') {
-        let (file, annex) = File::<BinaryFile>::create(strand, global, file, mode);
+    let annex = FileAnnex {
+        global,
+        is_binary: mode.contains('b'),
+        is_append: mode.starts_with('a'),
+    };
+    create_file_with(strand, file, mode_caps(mode), annex, out);
+}
+
+fn create_file_with<'v>(
+    strand: &mut Strand<'v, '_>,
+    file: VfsFile,
+    caps: IoCaps,
+    annex: FileAnnex<'v>,
+    out: impl Output<'v>,
+) {
+    let global = annex.global;
+    if annex.is_binary {
+        let file = File::<BinaryFile>::create(file, caps);
         global
             .types
             .bin_file
             .create_with_annex(strand, file, annex, out);
     } else {
-        let (file, annex) = File::<TextFile>::create(strand, global, file, mode);
+        let file = File::<TextFile>::create(file, caps);
         global
             .types
             .str_file
