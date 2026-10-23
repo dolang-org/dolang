@@ -17,6 +17,7 @@ pub mod error;
 pub mod frame;
 pub(crate) mod gc;
 pub(crate) mod interp;
+pub mod io;
 pub mod object;
 pub(crate) mod sig;
 pub(crate) mod stdlib;

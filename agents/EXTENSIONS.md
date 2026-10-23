@@ -282,13 +282,14 @@ let annex = instance.annex();                // &WidgetAnnex — no borrow check
 
 Native code can ask a value for a Rust interface without downcasting to
 another extension's type. An `InterfaceTag` names the interface, usually a
-trait object shared by unrelated providers:
+trait object shared by unrelated providers. The runtime defines `io::ByteIo`
+for byte I/O handles; an extension can define its own the same way:
 
 ```rust
-pub struct ByteSourceTag;
+pub struct ByteIo;
 
-impl InterfaceTag for ByteSourceTag {
-    type Interface<'v> = dyn ByteSource + 'v;
+impl InterfaceTag for ByteIo {
+    type Interface<'v> = dyn IntoByteIo + 'v;
 }
 ```
 
@@ -301,11 +302,12 @@ fn provide<'a, 's>(
     this: Instance<'v, 'a, Self>,
     request: &mut Request<'v, 's, '_>,
 ) -> Result<'v, 's, ()> {
-    if request.wants::<ByteSourceTag>() {
+    if request.wants::<ByteIo>() {
         let mut state = this.borrow_mut(request)?;
-        if state.is_open() {
-            request.provide::<ByteSourceTag>(&mut *state)?;
+        if state.is_closed() {
+            return Err(Error::state_error(request, "widget is closed"));
         }
+        request.provide::<ByteIo>(&mut *state)?;
     }
     Ok(())
 }
@@ -319,12 +321,35 @@ query fails with `ErrorKind::Unsupported`, which a consumer with a slow path
 tests for:
 
 ```rust
-match value.query::<ByteSourceTag, _>(strand, |strand, source| source.take(strand)) {
-    Ok(handle) => { /* fast path */ }
+let res = value.query::<ByteIo, _>(strand, |strand, io| {
+    if !io.caps().contains(IoCaps::READ | IoCaps::SEEK) {
+        return Err(Error::value(strand, "expected a seekable reader"));
+    }
+    Ok(io.take())
+});
+match res {
+    Ok(handle) => { /* fast path: handle.into_read_seek() */ }
     Err(e) if e.kind() == ErrorKind::Unsupported => { /* slow path */ }
     Err(e) => return Err(e),
 }
 ```
+
+### Byte I/O Handles
+
+`IntoByteIo::take` transfers the provider's handle as an owned `ByteHandle`
+over futures-io traits, and closes the provider: after it, a query raises the
+provider's usual closed error, and further calls on the same lent interface
+panic. Check `caps` before taking, so a rejected provider stays usable.
+`ByteHandle::into_read` and its siblings narrow the handle to the traits the
+consumer needs, handing it back on a mismatch. Do the I/O after the query
+returns, since the closure cannot await.
+
+A provider builds the handle with the constructor matching its capabilities
+(`ByteHandle::read_seek` and so on). Buffered read-ahead goes in
+`with_prefix`, which the handle serves first; a seekable handle realigns past
+it before its first seek or write. Offer `IoCaps::CLONE` only when `clone` can
+produce a handle with its own position, starting at the provider's logical
+position; a non-seekable provider holding read-ahead cannot.
 
 ## GC Slots and Lifetime Transmuting
 

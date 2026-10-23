@@ -46,6 +46,14 @@ pub mod object {
 
 pub use object::{Instance, Object, Type};
 
+/// Native byte I/O handles
+pub mod io {
+    pub use dolang_runtime::io::{
+        ByteHandle, ByteIo, IntoByteIo, IoCaps, Read, ReadSeek, ReadWrite, ReadWriteSeek, Write,
+        WriteSeek,
+    };
+}
+
 /// VM management
 pub mod vm {
     pub use dolang_runtime::frame::Frame;
