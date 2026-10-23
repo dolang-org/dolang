@@ -457,6 +457,7 @@ checksum = "ce2548391e9c1929c21bf6aa2680af86fe4c1b33e6cea9ac1cfeec0bd11218cf"
 dependencies = [
  "compression-core",
  "flate2",
+ "liblzma",
  "memchr",
  "zstd",
  "zstd-safe",
@@ -879,6 +880,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dolang-ext-compress"
+version = "0.1.1"
+dependencies = [
+ "async-compression",
+ "dolang",
+ "dolang-ext-shell",
+ "dolang-private-bundle",
+ "futures-lite",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "dolang-ext-digest"
 version = "0.1.1"
 dependencies = [
@@ -1287,6 +1301,7 @@ dependencies = [
  "dolang",
  "dolang-ext-base64",
  "dolang-ext-compile",
+ "dolang-ext-compress",
  "dolang-ext-digest",
  "dolang-ext-glob",
  "dolang-ext-http",
@@ -2350,6 +2365,26 @@ checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
 dependencies = [
  "cfg-if",
  "windows-link",
+]
+
+[[package]]
+name = "liblzma"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45aec2360b3933207e27908049d8e4df4e476b58180afb1e56b2a4fb72efe4ba"
+dependencies = [
+ "liblzma-sys",
+]
+
+[[package]]
+name = "liblzma-sys"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a046c7f353ba30f810545151e04f63545833803f5b86ee3ddf1517247fe560a5"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
 ]
 
 [[package]]

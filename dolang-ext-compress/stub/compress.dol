@@ -1,0 +1,194 @@
+# dolang: strict
+# Compresses and decompresses gzip, Zstandard, and XZ streams.
+#
+# A stream wraps a file or another [`ByteIo`](std.ByteIo) source or sink, and
+# is itself a `ByteIo`, so streams chain and can be handed to other native
+# consumers.
+
+import fs:
+  - @Path
+import std:
+  - @ByteIo
+
+# A compression format.
+pub @let Format = $
+  # gzip (RFC 1952).
+  | :GZIP:
+  # Zstandard.
+  | :ZSTD:
+  # XZ.
+  | :XZ:
+
+# A compression level: the format's fastest, best, or default setting, or a
+# format-specific number.
+pub @let Level = (:FASTEST: | :BEST: | :DEFAULT: | Int)
+
+# A stream reading decompressed bytes from a compressed source.
+#
+# Returned by [`decompress`](compress.decompress). Handing it to a function
+# that takes a [`ByteIo`](std.ByteIo) passes on the decompressed bytes, and the
+# stream reads as closed afterward.
+pub class Decompressor: @ByteIo
+  # The format being decompressed, as detected for `:AUTO:`.
+  #[getter]
+  pub def format self -> Format
+    ...
+
+  # Reads decompressed bytes.
+  #
+  # Reads to the end of the stream when `size` is omitted. With `size`, reads
+  # that many bytes unless the end is reached first; an empty result means the
+  # end.
+  #
+  # ## Errors
+  #
+  # | Exception | Condition |
+  # | --- | --- |
+  # | [`sys.InvalidDataError`](sys.InvalidDataError) | The compressed data is corrupt |
+  # | [`sys.UnexpectedEofError`](sys.UnexpectedEofError) | The compressed data ends partway through |
+  # | [`StateError`](std.StateError) | The stream is closed |
+  pub def read
+    self
+    # Number of bytes to read; omit to read the rest of the stream.
+    size @ Int = nil
+  do -> Bin
+    ...
+
+  # Closes the stream and its source. Closing again does nothing.
+  pub def close self
+    ...
+
+# A stream compressing bytes written to it into a sink.
+#
+# Returned by [`compress`](compress.compress). Handing it to a function that
+# takes a [`ByteIo`](std.ByteIo) lets that function write through it, and the
+# stream reads as closed afterward.
+pub class Compressor: @ByteIo
+  # The format being written.
+  #[getter]
+  pub def format self -> Format
+    ...
+
+  # Compresses and writes data.
+  #
+  # Raises [`StateError`](std.StateError) when the stream is closed.
+  pub def write
+    self
+    # Data to write.
+    data @ (Bin | Str)
+  do
+    ...
+
+  # Finishes the compressed stream and closes the sink. Closing again does
+  # nothing.
+  #
+  # The output is incomplete until the stream is closed.
+  pub def close self
+    ...
+
+# Opens a decompressing stream over `source`.
+#
+# A path is opened for reading. Any other source must be a readable
+# [`ByteIo`](std.ByteIo), such as an open [`fs.File`](fs.File) or another
+# stream, and is taken over: it reads as closed afterward, and closing the
+# stream closes it.
+#
+# Concatenated compressed streams of the same format read as one.
+#
+# ## Errors
+#
+# | Exception | Condition |
+# | --- | --- |
+# | [`TypeError`](std.TypeError) | `source` is not a path or a [`ByteIo`](std.ByteIo) |
+# | [`ValueError`](std.ValueError) | `source` is not readable, and is left open; or `:AUTO:` does not recognize the format |
+#
+# ## Example
+#
+# ```
+# decompress "notes.txt.gz" do |stream|
+#   echo $ Str $stream.read()
+# ```
+@def decompress
+  # Compressed input.
+  source @ (Str | Path | ByteIo)
+  # Format of the input. `:AUTO:` detects it from the leading bytes.
+  format @ (Format | :AUTO:) = :AUTO:
+do -> Decompressor
+
+# Opens a decompressing stream over `source` and calls `func` with it. The
+# stream is closed when `func` returns.
+@def decompress[R]
+  # Compressed input.
+  source @ (Str | Path | ByteIo)
+  # Called with the [`Decompressor`](compress.Decompressor).
+  func @ (Decompressor -> R)
+do -> R
+
+# Opens a decompressing stream over `source` in `format` and calls `func` with
+# it. The stream is closed when `func` returns.
+@def decompress[R]
+  # Compressed input.
+  source @ (Str | Path | ByteIo)
+  # Format of the input. `:AUTO:` detects it from the leading bytes.
+  format @ (Format | :AUTO:)
+  # Called with the [`Decompressor`](compress.Decompressor).
+  func @ (Decompressor -> R)
+do -> R
+
+pub def decompress source @ (Str | Path | ByteIo) ...options @ Value -> Value
+  ...
+
+# Opens a compressing stream into `sink`.
+#
+# A path is created or truncated. Any other sink must be a writable
+# [`ByteIo`](std.ByteIo), such as an open [`fs.File`](fs.File) or another
+# stream, and is taken over: it reads as closed afterward, and closing the
+# stream finishes the output and closes it.
+#
+# ## Errors
+#
+# | Exception | Condition |
+# | --- | --- |
+# | [`TypeError`](std.TypeError) | `sink` is not a path or a [`ByteIo`](std.ByteIo) |
+# | [`ValueError`](std.ValueError) | `sink` is not writable, and is left open; or `level` is not valid |
+#
+# ## Example
+#
+# ```
+# fs.open "notes.txt.zst" wb do |file|
+#   compress $file :ZSTD: level: :BEST: do |stream|
+#     stream.write "hello\n"
+# ```
+@def compress
+  # Destination for the compressed output.
+  sink @ (Str | Path | ByteIo)
+  # Format to write.
+  format @ Format
+  # Compression level.
+  :level @ Level = :DEFAULT:
+do -> Compressor
+
+# Opens a compressing stream into `sink` and calls `func` with it. The stream
+# is closed, finishing the output, when `func` returns.
+#
+# ```
+# compress "notes.txt.gz" :GZIP: do |stream|
+#   stream.write "hello\n"
+# ```
+@def compress[R]
+  # Destination for the compressed output.
+  sink @ (Str | Path | ByteIo)
+  # Format to write.
+  format @ Format
+  # Called with the [`Compressor`](compress.Compressor).
+  func @ (Compressor -> R)
+  # Compression level.
+  :level @ Level = :DEFAULT:
+do -> R
+
+pub def compress
+  sink @ (Str | Path | ByteIo)
+  format @ Format
+  ...options @ Value
+do -> Value
+  ...

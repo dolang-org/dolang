@@ -6,7 +6,7 @@
 #
 # Results are published atomically: output is staged and renamed into place, so
 # an interrupted operation leaves no partial destination behind.
-import _vfs digest fs http json proc progress shell std sys tar zip
+import _vfs compress digest fs http json progress shell std sys tar zip
   fs:
     - Path
     - with_temp_dir
@@ -1211,7 +1211,7 @@ class ZipUnpack
 pub class ArchiveError: std.RuntimeError
   # The stream that failed to unpack.
   pub field source @ Path = nil
-  # The failing tool's error output, when it printed exactly one line.
+  # The decompressor's error message.
   pub field detail @ (Str | nil) = nil
 
   def (init) self source @ Path detail @ (Str | nil) = nil
@@ -1228,37 +1228,24 @@ def decompress_raw
   destination @ Path
   format @ (:GZIP: | :ZSTD: | :XZ:)
 do -> nil
-  let prog = if (format == :GZIP:)
-    "gzip"
-  else if (format == :ZSTD:)
-    "zstd"
-  else
-    "xz"
-
-  # Capture stderr instead of letting it leak straight to the real process
-  # stderr, and use it for a clearer error on failure — a bare `proc.Error`
-  # only reports the exit status, not why the tool failed. Only the
-  # single-line case is handled specially; anything more just rethrows the
-  # original error rather than guessing how to summarize it. If there's more
-  # than a single line, dump it to stderr for logging purposes (same as
-  # libvirt's fallback for unrecognized errors) before rethrowing.
-  let lines @ Array[Str] = []
   try
     destination.open wb do |file|
-      run $prog -dc -- $source stdin: [] stdout: $file stderr: $lines.prechomp()
-  catch proc.Error: e
-    if (lines.len == 1)
-      throw ArchiveError $source $lines[0]
-    if lines.len
-      echo $"\n".join(lines)
-    throw e
+      compress.decompress $source $format do |stream|
+        while true
+          let chunk = stream.read 65536
+          if (chunk.len == 0)
+            break
+          file.write $chunk
+  catch sys.InvalidDataError: e
+    throw ArchiveError $source (str e)
+  catch sys.UnexpectedEofError: e
+    throw ArchiveError $source (str e)
 
 # Safely extracts an archive or decompresses a single file into a new
 # destination.
 #
 # Extraction validates the whole manifest before writing anything, rejecting
-# unsafe or conflicting paths. Raw decompression runs the corresponding `gzip`,
-# `zstd`, or `xz` program.
+# unsafe or conflicting paths.
 pub def unpack
   # Archive or compressed file to extract.
   source @ (Str | Url | Path)

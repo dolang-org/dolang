@@ -121,7 +121,7 @@ value is a function executed inside the build container's VFS context.
 [XML](xml), [YAML](yaml),
 [SQLite](sqlite), [regex](regex),
 [base64](base64), [digests](digest),
-[zip](zip), [tar](tar),
+[zip](zip), [tar](tar), [compression](compress),
 [time](time), [glob](glob),
 [patch](patch), and
 [shlex](shlex).

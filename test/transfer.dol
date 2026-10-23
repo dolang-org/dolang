@@ -1,4 +1,4 @@
-import digest http http.mock json tar transfer zip
+import compress digest http http.mock json tar transfer zip
   testlib.vfs:
     - vfs
   fs:
@@ -12,7 +12,6 @@ import digest http http.mock json tar transfer zip
     - assert
     - assert_eq
     - assert_throws
-    - ignore
     - test
 
 import fs.unix: unix_fs
@@ -482,20 +481,12 @@ def pack_applies_overrides()
     - {path: "nested", mode: 0o700, ...common}
 
 def compress_raw source destination format
-  destination.open wb do |file|
-    if (format == :GZIP:)
-      run gzip -c -- $source stdout: $file
-    else if (format == :ZSTD:)
-      run zstd -cq -- $source stdout: $file
-    else
-      run xz -c -- $source stdout: $file
+  compress.compress $destination $format do |stream|
+    stream.write $source.read("b")
 
 #[test]
 #[vfs]
 def raw_compression_round_trips()
-  if (os_info().family == :WINDOWS:)
-    ignore "requires gzip, zstd, and xz"
-
   let source = Path "payload.bin"
   source.write b"\x00hello\xffworld\n"
   let formats = $
@@ -516,9 +507,6 @@ def raw_compression_round_trips()
 #[test]
 #[vfs]
 def raw_decompression_validates_destination_and_strip()
-  if (os_info().family == :WINDOWS:)
-    ignore "requires gzip"
-
   let source = Path "payload.bin"
   source.write b"hello"
   compress_raw $source (Path "payload.gz") :GZIP:
@@ -531,9 +519,6 @@ def raw_decompression_validates_destination_and_strip()
 #[test]
 #[vfs]
 def corrupt_raw_input_is_not_published()
-  if (os_info().family == :WINDOWS:)
-    ignore "requires xz"
-
   Path("corrupt.xz").write b"not xz"
   let e = assert_throws $transfer.ArchiveError do transfer.unpack corrupt.xz output
   assert_eq $e.source.name corrupt.xz
