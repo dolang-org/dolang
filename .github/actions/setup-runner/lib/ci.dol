@@ -108,6 +108,23 @@ def configure_cargo()
   export CARGO_PROFILE_TEST_DEBUG line-tables-only
   export CARGO_INCREMENTAL 0
 
+# Allows rootless Podman to stop its pasta network helper on Ubuntu 26.04.
+# https://bugs.launchpad.net/bugs/2154379
+def configure_pasta_apparmor()
+  let profile = fs.Path "/etc/apparmor.d/usr.bin.pasta"
+  if !profile.exists()
+    return
+  let rule = "signal (receive) set=(term) peer=podman,"
+  let contents = fs.read $profile
+  if contents.contains(rule)
+    return
+  let anchor = "  include <abstractions/pasta>\n"
+  if !contents.contains(anchor)
+    throw "unexpected pasta AppArmor profile: missing abstractions/pasta include"
+  sudo.with do
+    fs.write $profile $(contents.replace anchor "$anchor  $rule\n")
+    run apparmor_parser -r $profile
+
 # Installs the virtualization packages a session-mode libvirt domain needs.
 #
 # The last line is what a Windows guest needs beyond a cloud-init one: `ovmf`
@@ -239,6 +256,10 @@ do
         - name: "configure cargo"
           icon: 🦀
           do configure_cargo()
+      if (sys.os_info().os == :LINUX:)
+        - name: "configure pasta AppArmor signals"
+          icon: 🔧
+          do configure_pasta_apparmor()
       if (virt && sys.os_info().os == :LINUX: && sys.cpu_info().arch == :X86_64:)
         - name: "install virtualization packages"
           icon: 📦
