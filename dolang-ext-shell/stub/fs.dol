@@ -158,7 +158,8 @@ pub class DirEntry
 #
 # A file is a [`ByteIo`](std.ByteIo), so a function such as
 # [`zip.open`](zip.open) can take it over, starting at its current position.
-# The file reads as closed afterward.
+# The file reads as closed afterward; hand over a [`dup`](fs.File.dup) to keep
+# using it.
 pub class File: Iter[Str | Bin] Sink[Value] @ByteIo
   # Closes the file.
   #
@@ -182,6 +183,31 @@ pub class File: Iter[Str | Bin] Sink[Value] @ByteIo
   pub def close self
     ...
 
+  # Opens another handle to the same open file.
+  #
+  # The duplicate starts at this file's position, and after that each handle
+  # has its own position. Unlike a POSIX `dup`, reads and seeks through one do
+  # not move the other. The handles share the file's contents and its locks:
+  # lock ranges cannot overlap across duplicates, and closing a handle releases
+  # only the locks taken through it.
+  #
+  # ## Errors
+  #
+  # | Exception | Condition |
+  # | --- | --- |
+  # | [`StateError`](std.StateError) | The file is closed |
+  # | [`sys.ResourceBusyError`](sys.ResourceBusyError) | Later, passing either handle to a child process while the other is open |
+  #
+  # ## Example
+  #
+  # ```
+  # open notes.txt.gz rb do |file|
+  #   let text = compress.decompress $file.dup() do |stream| stream.read()
+  #   let magic = file.read 2
+  # ```
+  pub def dup self -> File
+    ...
+
   # Acquires a byte-range lock while `func` runs.
   #
   # ## Returns
@@ -201,7 +227,8 @@ pub class File: Iter[Str | Bin] Sink[Value] @ByteIo
   # Use [`try_lock`](fs.File.try_lock) for bounded or cancellable waiting.
   #
   # Overlapping active lock ranges on the same file are unsupported, including
-  # identical shared ranges.
+  # identical shared ranges and ranges locked through a [`dup`](fs.File.dup)
+  # of it.
   #
   # Finite zero-length ranges are invalid on Unix. On Windows they conflict
   # only with positive-length ranges that start before and end after their
@@ -702,6 +729,11 @@ pub class StrFile: Iter[Str] File
   pub def (iter) self -> StrFile
     ...
 
+  # Opens another handle to the same open file. See
+  # [`File.dup`](fs.File.dup).
+  pub def dup self -> StrFile
+    ...
+
   # Reads the next line.
   pub def (next) self -> Str
     ...
@@ -723,6 +755,11 @@ pub class StrFile: Iter[Str] File
 pub class BinFile: Iter[Bin] File
   # Returns the file as its own iterator.
   pub def (iter) self -> BinFile
+    ...
+
+  # Opens another handle to the same open file. See
+  # [`File.dup`](fs.File.dup).
+  pub def dup self -> BinFile
     ...
 
   # Reads the next byte chunk.

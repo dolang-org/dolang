@@ -347,9 +347,9 @@ returns, since the closure cannot await.
 A provider builds the handle with the constructor matching its capabilities
 (`ByteHandle::read_seek` and so on). Buffered read-ahead goes in
 `with_prefix`, which the handle serves first; a seekable handle realigns past
-it before its first seek or write. Offer `IoCaps::CLONE` only when `clone` can
-produce a handle with its own position, starting at the provider's logical
-position; a non-seekable provider holding read-ahead cannot.
+it before its first seek or write. There is no way to hand over a handle and
+keep the provider: a script that wants to keep a file passes a duplicate
+(`file.dup()`) instead.
 
 The lent interface is `dyn IntoByteIo + 'v`, so implement the trait on the
 borrowed state type itself; an adapter holding short borrows of its fields does

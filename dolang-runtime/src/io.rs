@@ -2,8 +2,8 @@
 //!
 //! A native object wrapping an OS or VFS handle provides the [`ByteIo`] interface to an
 //! [interface query](crate::object::interface). A consumer checks the provider's
-//! [`IoCaps`], then takes (or clones) an owned [`ByteHandle`] over futures-io traits and
-//! narrows it to the traits it needs.
+//! [`IoCaps`], then takes an owned [`ByteHandle`] over futures-io traits and narrows it
+//! to the traits it needs.
 
 use std::{
     fmt,
@@ -26,9 +26,6 @@ bitflags::bitflags! {
         const WRITE = 1 << 1;
         /// The handle seeks.
         const SEEK = 1 << 2;
-        /// The provider can [clone](IntoByteIo::clone) its handle. Never set on a
-        /// [`ByteHandle`].
-        const CLONE = 1 << 3;
     }
 }
 
@@ -71,7 +68,7 @@ impl InterfaceTag for ByteIo {
 /// provider whose handle was taken stops providing [`ByteIo`] and raises its usual closed
 /// error when queried, so a second consumer gets an error rather than a panic.
 pub trait IntoByteIo {
-    /// The provider's capabilities, checked before taking or cloning.
+    /// The provider's capabilities, checked before taking.
     fn caps(&self) -> IoCaps;
 
     /// Transfers the provider's handle, closing the provider.
@@ -79,18 +76,6 @@ pub trait IntoByteIo {
     /// Buffered read-ahead travels with the handle as its unread
     /// [prefix](ByteHandle::with_prefix).
     fn take(&mut self) -> ByteHandle;
-
-    /// Produces a handle independent of the provider, which stays usable.
-    ///
-    /// The clone starts at the provider's logical position and has its own position, so
-    /// neither side's reads or seeks move the other. Read-ahead cannot be split between two
-    /// readers, so a non-seekable provider holding buffered input does not offer
-    /// [`CLONE`](IoCaps::CLONE).
-    ///
-    /// # Panics
-    ///
-    /// Panics if the provider lacks [`CLONE`](IoCaps::CLONE).
-    fn clone(&mut self) -> ByteHandle;
 }
 
 enum Io {

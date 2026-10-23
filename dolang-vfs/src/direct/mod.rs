@@ -328,6 +328,28 @@ impl File {
         }
     }
 
+    /// Returns a second handle on the same open file, positioned where this
+    /// one is but moving independently.
+    ///
+    /// Both handles share the descriptor and its locks. Read-ahead stays with
+    /// this handle, since the cursor only counts bytes already delivered.
+    pub(crate) async fn dup(&self) -> Result<Self> {
+        let cursor = OnceLock::new();
+        let offset = self.cursor_offset();
+        if offset != 0 {
+            let _ = cursor.set(Box::new(CursorState {
+                cursor: offset,
+                ..CursorState::default()
+            }));
+        }
+        Ok(Self {
+            file: Arc::clone(&self.file),
+            flags: self.flags,
+            locks: self.locks.dup(),
+            cursor,
+        })
+    }
+
     fn cursor_state(&mut self) -> &mut CursorState {
         if self.cursor.get().is_none() {
             self.cursor
@@ -381,6 +403,15 @@ impl File {
                 error,
             )
         };
+        if locks.is_shared() {
+            // A duplicate would share the description with the child, and
+            // with it the kernel offset the child reads from.
+            return Err(restore(
+                file,
+                locks,
+                io::Error::new(io::ErrorKind::ResourceBusy, "file has live duplicates"),
+            ));
+        }
         let owned = match Arc::try_unwrap(file) {
             Ok(file) => file,
             // Operations are still in flight against the shared descriptor.
@@ -865,7 +896,13 @@ impl File {
         // file, this is the *only* reliable release — the descriptor itself
         // may outlive this call.
         let released = self.locks.release_all().await.map_err(Error::from);
-        let File { file, .. } = self;
+        let File { file, locks, .. } = self;
+        if !locks.into_last() {
+            // Other duplicates still use the descriptor, so it stays open, and
+            // nothing about it is busy on this handle's account.
+            drop(file);
+            return released;
+        }
         // Match what the remote backend reports for the same situation: the
         // handle is consumed and cleanup finishes as the outstanding
         // operations drop their references, but the caller is told the

@@ -945,6 +945,7 @@ impl Connection {
                 Ok(ResponseKind::FileRemoveXattr)
             }
             RequestKind::FileClose { file } => self.handle_file_close(context, file).await,
+            RequestKind::FileDup { file } => self.handle_file_dup(context, file).await,
             RequestKind::UnixVfs(request) => self.handle_unix_vfs(context, request).await,
             RequestKind::WindowsAdmin(request) => self.handle_windows_admin(context, request).await,
             RequestKind::ReadDir { path } => self.handle_read_dir(context, path).await,
@@ -1874,6 +1875,17 @@ impl Connection {
             Err(_) => Err(Error::new(ErrorKind::InvalidInput, "invalid opaque file")),
         }?;
         Ok(ResponseKind::FileClose)
+    }
+
+    async fn handle_file_dup(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: Cite<FileMarker>,
+    ) -> Result<ResponseKind> {
+        // The duplicate is a handle of its own here, so the locks each side
+        // takes are told apart, and released, per duplicate.
+        let dup = self.retained_file(context, file)?.0.dup().await?;
+        Ok(ResponseKind::FileDup(context.register(RetainedFile(dup))))
     }
 
     async fn handle_read_dir(

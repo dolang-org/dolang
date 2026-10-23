@@ -1,7 +1,10 @@
 use std::{
     collections::HashMap,
     io,
-    sync::{Arc, Mutex, OnceLock, Weak},
+    sync::{
+        Arc, Mutex, OnceLock, Weak,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use crate::{
@@ -16,15 +19,68 @@ use std::os::fd::OwnedFd;
 #[cfg(windows)]
 use std::os::windows::io::{AsRawHandle, OwnedHandle};
 
+/// One handle's view of the locks on an open file.
+///
+/// Duplicates of a handle share the open file, and with it the OS locks, so
+/// they share one table: its overlap check spans every duplicate, so no lock
+/// can split another. Each handle owns the locks it took and releases only
+/// those.
 #[derive(Debug)]
 pub(crate) struct FileLocks {
-    table: OnceLock<Arc<LockTable>>,
+    /// Only handles hold this strongly, so its count is the number of live
+    /// duplicates. Reservations and locks hold it weakly, and exist only once
+    /// the table has been created.
+    table: Arc<OnceLock<LockTable>>,
+    /// This handle's owner id, assigned on its first lock; `0` until then.
+    owner: AtomicU64,
 }
 
 impl FileLocks {
     pub(crate) fn new() -> Self {
         Self {
-            table: OnceLock::new(),
+            table: Arc::new(OnceLock::new()),
+            owner: AtomicU64::new(0),
+        }
+    }
+
+    /// Returns the locks of a duplicate handle: the same table, and no locks
+    /// of its own yet.
+    pub(crate) fn dup(&self) -> Self {
+        Self {
+            table: self.table.clone(),
+            owner: AtomicU64::new(0),
+        }
+    }
+
+    /// Whether other duplicates of this handle are alive.
+    pub(crate) fn is_shared(&self) -> bool {
+        Arc::strong_count(&self.table) > 1
+    }
+
+    /// Gives up this handle's share of the table, returning whether it was the
+    /// last one.
+    ///
+    /// The caller must have released this handle's locks already.
+    pub(crate) fn into_last(self) -> bool {
+        let table = self.table.clone();
+        drop(self);
+        Arc::into_inner(table).is_some()
+    }
+
+    fn owner(&self, table: &LockTable) -> u64 {
+        let owner = self.owner.load(Ordering::Acquire);
+        if owner != 0 {
+            return owner;
+        }
+        // Racing first locks on one handle may each allocate an id; the loser
+        // takes the winner's, and its own goes unused.
+        let id = table.next_owner.fetch_add(1, Ordering::Relaxed);
+        match self
+            .owner
+            .compare_exchange(0, id, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => id,
+            Err(winner) => winner,
         }
     }
 
@@ -57,8 +113,9 @@ impl FileLocks {
                 "a zero-length Windows file lock at offset zero is unsupported",
             ));
         }
-        let table = self.table.get_or_init(|| Arc::new(LockTable::default()));
-        let reservation = table.reserve(request.range)?;
+        let table = self.table.get_or_init(LockTable::default);
+        let owner = self.owner(table);
+        let reservation = table.reserve(&self.table, request.range, owner)?;
         let result = tokio::task::spawn_blocking(move || {
             let acquired = ArmedLock::acquire(handle, request)?;
             Ok::<_, io::Error>(acquired.map(|armed| (reservation, armed)))
@@ -72,7 +129,7 @@ impl FileLocks {
         reservation.commit(armed).map(Some)
     }
 
-    /// Releases every lock still held on this file, in band.
+    /// Releases every lock this handle still holds, in band.
     ///
     /// Closing a descriptor only drops the underlying locks once *every*
     /// duplicate of the open file description is gone, and duplicates outlive
@@ -81,10 +138,11 @@ impl FileLocks {
     /// explicit unlock is the only reliable release. Callers must do this
     /// before dropping the file's handles.
     pub(crate) async fn release_all(&self) -> io::Result<()> {
-        let Some(table) = self.table.get() else {
+        let owner = self.owner.load(Ordering::Acquire);
+        let Some(table) = self.table.get().filter(|_| owner != 0) else {
             return Ok(());
         };
-        let armed = table.take_all_armed();
+        let armed = table.take_all_armed(owner);
         if armed.is_empty() {
             return Ok(());
         }
@@ -104,9 +162,22 @@ impl FileLocks {
     }
 }
 
+impl Drop for FileLocks {
+    fn drop(&mut self) {
+        // A duplicate dropped without closing must not leave its locks in
+        // force for as long as the others live. Dropping them unlocks.
+        let owner = *self.owner.get_mut();
+        if owner != 0
+            && let Some(table) = self.table.get()
+        {
+            drop(table.take_all_armed(owner));
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct FileLock {
-    table: Weak<LockTable>,
+    table: Weak<OnceLock<LockTable>>,
     id: u64,
 }
 
@@ -115,7 +186,7 @@ impl FileLock {
         let Some(table) = self.table.upgrade() else {
             return Ok(());
         };
-        let armed = table.take_armed(self.id)?;
+        let armed = created(&table).take_armed(self.id)?;
         drop(table);
         let Some(armed) = armed else {
             return Ok(());
@@ -132,7 +203,7 @@ impl FileLock {
 impl Drop for FileLock {
     fn drop(&mut self) {
         if let Some(table) = self.table.upgrade() {
-            let Ok(Some(armed)) = table.take_armed(self.id) else {
+            let Ok(Some(armed)) = created(&table).take_armed(self.id) else {
                 return;
             };
             if tokio::runtime::Handle::try_current().is_ok() {
@@ -143,15 +214,33 @@ impl Drop for FileLock {
                 }));
             } else {
                 let _ = armed.release();
-                table.remove(self.id);
+                created(&table).remove(self.id);
             }
         }
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct LockTable {
     state: Mutex<LockTableState>,
+    /// Next owner id to hand out; `0` means "none", so this starts at `1`.
+    next_owner: AtomicU64,
+}
+
+impl Default for LockTable {
+    fn default() -> Self {
+        Self {
+            state: Mutex::default(),
+            next_owner: AtomicU64::new(1),
+        }
+    }
+}
+
+/// The table behind a reservation or lock, which exists by then.
+fn created(table: &OnceLock<LockTable>) -> &LockTable {
+    table
+        .get()
+        .expect("the lock table is created before any lock")
 }
 
 #[derive(Debug, Default)]
@@ -163,11 +252,18 @@ struct LockTableState {
 #[derive(Debug)]
 struct LockEntry {
     range: FileLockRange,
+    /// The handle that took the lock.
+    owner: u64,
     armed: Option<ArmedLock>,
 }
 
 impl LockTable {
-    fn reserve(self: &Arc<Self>, range: FileLockRange) -> io::Result<Reservation> {
+    fn reserve(
+        &self,
+        shared: &Arc<OnceLock<LockTable>>,
+        range: FileLockRange,
+        owner: u64,
+    ) -> io::Result<Reservation> {
         let mut state = self.state.lock().unwrap();
         if state
             .entries
@@ -184,15 +280,22 @@ impl LockTable {
             .next
             .checked_add(1)
             .ok_or_else(|| io::Error::other("file lock reservation ids exhausted"))?;
-        state.entries.insert(id, LockEntry { range, armed: None });
+        state.entries.insert(
+            id,
+            LockEntry {
+                range,
+                owner,
+                armed: None,
+            },
+        );
         Ok(Reservation {
-            table: Arc::downgrade(self),
+            table: Arc::downgrade(shared),
             id,
             committed: false,
         })
     }
 
-    fn commit(self: &Arc<Self>, id: u64, armed: ArmedLock) -> io::Result<FileLock> {
+    fn commit(&self, id: u64, armed: ArmedLock) -> io::Result<()> {
         let mut state = self.state.lock().unwrap();
         let entry = state
             .entries
@@ -204,27 +307,29 @@ impl LockTable {
             ));
         }
         entry.armed = Some(armed);
-        Ok(FileLock {
-            table: Arc::downgrade(self),
-            id,
-        })
+        Ok(())
     }
 
     fn remove(&self, id: u64) {
         self.state.lock().unwrap().entries.remove(&id);
     }
 
-    fn take_all_armed(&self) -> Vec<ArmedLock> {
+    fn take_all_armed(&self, owner: u64) -> Vec<ArmedLock> {
         let mut state = self.state.lock().unwrap();
         let mut armed = Vec::new();
-        state.entries.retain(|_, entry| match entry.armed.take() {
-            Some(lock) => {
-                armed.push(lock);
-                false
+        state.entries.retain(|_, entry| {
+            if entry.owner != owner {
+                return true;
             }
-            // A reservation that has not committed yet, or a release already in
-            // progress elsewhere; neither is ours to take.
-            None => true,
+            match entry.armed.take() {
+                Some(lock) => {
+                    armed.push(lock);
+                    false
+                }
+                // A reservation that has not committed yet, or a release
+                // already in progress elsewhere; neither is ours to take.
+                None => true,
+            }
         });
         armed
     }
@@ -243,16 +348,16 @@ impl LockTable {
     }
 }
 
-fn release(armed: ArmedLock, table: Weak<LockTable>, id: u64) -> io::Result<()> {
+fn release(armed: ArmedLock, table: Weak<OnceLock<LockTable>>, id: u64) -> io::Result<()> {
     let outcome = armed.release();
     if let Some(table) = table.upgrade() {
-        table.remove(id);
+        created(&table).remove(id);
     }
     outcome
 }
 
 struct Reservation {
-    table: Weak<LockTable>,
+    table: Weak<OnceLock<LockTable>>,
     id: u64,
     committed: bool,
 }
@@ -263,9 +368,12 @@ impl Reservation {
             .table
             .upgrade()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "file is closed"))?;
-        let result = table.commit(self.id, armed);
-        self.committed = result.is_ok();
-        result
+        created(&table).commit(self.id, armed)?;
+        self.committed = true;
+        Ok(FileLock {
+            table: self.table.clone(),
+            id: self.id,
+        })
     }
 }
 
@@ -274,7 +382,7 @@ impl Drop for Reservation {
         if !self.committed
             && let Some(table) = self.table.upgrade()
         {
-            table.remove(self.id);
+            created(&table).remove(self.id);
         }
     }
 }

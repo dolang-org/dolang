@@ -314,10 +314,6 @@ impl IntoByteIo for Decompressor {
         // Reads fill exactly what was asked for, so there is no read-ahead to hand over.
         ByteHandle::read(self.reader.take().expect("stream already taken"))
     }
-
-    fn clone(&mut self) -> ByteHandle {
-        unreachable!("a decompressor does not offer `CLONE`")
-    }
 }
 
 impl<'v> Object<'v> for Decompressor {
@@ -406,10 +402,6 @@ impl IntoByteIo for Compressor {
 
     fn take(&mut self) -> ByteHandle {
         ByteHandle::write(self.writer.take().expect("stream already taken"))
-    }
-
-    fn clone(&mut self) -> ByteHandle {
-        unreachable!("a compressor does not offer `CLONE`")
     }
 }
 

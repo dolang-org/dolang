@@ -1,4 +1,5 @@
 import shell
+import sys
 import term
 import fs:
   - open
@@ -158,6 +159,29 @@ def handing_a_file_to_a_child_steals_it()
         file.read 1
       # Closing a file the handoff already took is still fine.
       file.close()
+
+#[test]
+def handing_a_duplicated_file_to_a_child_waits_for_the_duplicate()
+  with_temp_dir do |dir|
+    let src = r|
+      import shell
+      for value = shell.stdin
+        shell.stdout.put $value
+
+    let path = script $dir echo.dol $src
+    let input = (dir / "in.txt")
+    input.write "hello"
+    let out = (dir / "out.txt")
+
+    let file = open $input rb
+    let dup = file.dup()
+    assert_throws $sys.ResourceBusyError do
+      run $shell.exe --no-cache $path stdin: $file stdout: $out
+    # The refused handoff left the file open.
+    assert_eq (file.read 1) b"h"
+    dup.close()
+    run $shell.exe --no-cache $path stdin: $file stdout: $out
+    assert_eq $out.read() "ello"
 
 #[test]
 def write_reports_bytes_not_characters()
