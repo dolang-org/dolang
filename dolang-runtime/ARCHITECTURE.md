@@ -109,6 +109,13 @@ consumer receives it in a synchronous closure rather than as a return value.
 Errors from either side propagate; a query nothing answers fails with an
 unsupported error, which consumers with a fallback test for.
 
+The first such interface, `io::ByteIo`, hands an owned `ByteHandle` over
+futures-io traits from a native byte source or sink to another extension.
+Taking it closes the provider, while cloning (when the provider reports
+`IoCaps::CLONE`) yields a handle with its own position. A provider's read-ahead
+travels with the handle as a private prefix served before the underlying I/O;
+a seekable handle realigns past it before seeking or writing.
+
 Do class proxies use the same native type dispatch for inherited members.
 Native handlers receive the registered base `Type<T>` handle even when the
 explicit receiver is a Do subclass.

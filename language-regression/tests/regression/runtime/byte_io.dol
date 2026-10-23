@@ -1,0 +1,59 @@
+import std: error
+import regression2:
+  - ByteBuf
+  - byte_clone_read
+  - byte_overwrite
+  - byte_read
+  - byte_seek
+  - byte_tell
+
+# Read-ahead is served before the underlying I/O
+assert_eq (byte_read (ByteBuf b"abcdef" 2 "")) b"abcdef"
+
+# A richer handle narrows to a reader
+assert_eq (byte_read (ByteBuf b"abcdef" 2 "ws")) b"abcdef"
+
+# A seekable handle reports the logical position
+assert_eq (byte_tell (ByteBuf b"abcdef" 2 "s")) 0
+
+# Seeking drops the read-ahead
+assert_eq (byte_seek (ByteBuf b"abcdef" 2 "s") 1) b"bcdef"
+assert_eq (byte_seek (ByteBuf b"abcdef" 2 "s") 3) b"def"
+
+# Writing realigns to the logical position first
+assert_eq (byte_overwrite (ByteBuf b"abcdef" 2 "ws") b"XY") b"XYcdef"
+
+# A consumer rejects a provider lacking a capability before taking
+def rejects f ...args
+  try
+    f ...args
+    false
+  catch error.ValueError: _
+    true
+
+let b = ByteBuf b"abcdef" 2 ""
+assert (rejects byte_seek b 0)
+assert (rejects byte_clone_read b)
+assert_eq (byte_read b) b"abcdef"
+
+# A taken provider raises its closed error
+let closed = try
+  byte_read $b
+  false
+catch error.StateError: _
+  true
+assert $closed
+
+# A clone leaves the provider usable, with its own position
+let c = ByteBuf b"abcdef" 2 "sc"
+assert_eq (byte_clone_read c) b"abcdef"
+assert_eq (byte_clone_read c) b"abcdef"
+assert_eq (byte_read c) b"abcdef"
+
+# Values without a provider are unsupported
+let unsupported = try
+  byte_read 1
+  false
+catch error.UnsupportedError: _
+  true
+assert $unsupported

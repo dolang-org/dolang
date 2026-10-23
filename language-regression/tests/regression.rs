@@ -6,6 +6,7 @@ mod detail {
         runtime::{
             self, Args, Bytecode, Error, Instance, Object, Output, Slot, Sym, call,
             error::ErrorKind,
+            io::{ByteHandle, ByteIo, IntoByteIo, IoCaps},
             object::{
                 FlagLike, FlagLikeExt, Flags, FlagsInstanceExt, FlagsTypeExt, InterfaceTag,
                 Request, TypeBuilder,
@@ -15,7 +16,10 @@ mod detail {
         },
     };
     use dolang_runtime::strand::Strand;
+    use futures::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, Cursor};
     use std::{
+        io::SeekFrom,
+        mem,
         ops::{BitAnd, BitOr, BitXor, Not},
         path::{Path, PathBuf},
         pin::Pin,
@@ -285,6 +289,152 @@ mod detail {
         Ok(())
     }
 
+    /// Native in-memory buffer providing [`ByteIo`], with simulated read-ahead.
+    struct ByteBuf {
+        cursor: Option<Cursor<Vec<u8>>>,
+        ahead: Vec<u8>,
+        caps: IoCaps,
+    }
+
+    impl ByteBuf {
+        fn handle(&self, cursor: Cursor<Vec<u8>>) -> ByteHandle {
+            match (
+                self.caps.contains(IoCaps::WRITE),
+                self.caps.contains(IoCaps::SEEK),
+            ) {
+                (false, false) => ByteHandle::read(cursor),
+                (false, true) => ByteHandle::read_seek(cursor),
+                (true, false) => ByteHandle::read_write(cursor),
+                (true, true) => ByteHandle::read_write_seek(cursor),
+            }
+        }
+
+        fn cursor(&self) -> &Cursor<Vec<u8>> {
+            self.cursor.as_ref().expect("handle already taken")
+        }
+    }
+
+    impl IntoByteIo for ByteBuf {
+        fn caps(&self) -> IoCaps {
+            self.cursor();
+            self.caps
+        }
+
+        fn take(&mut self) -> ByteHandle {
+            let cursor = self.cursor.take().expect("handle already taken");
+            self.handle(cursor).with_prefix(mem::take(&mut self.ahead))
+        }
+
+        fn clone(&mut self) -> ByteHandle {
+            assert!(self.caps.contains(IoCaps::CLONE), "provider lacks CLONE");
+            let cursor = self.cursor();
+            let mut copy = Cursor::new(cursor.get_ref().clone());
+            copy.set_position(cursor.position() - self.ahead.len() as u64);
+            self.handle(copy)
+        }
+    }
+
+    impl<'v> Object<'v> for ByteBuf {
+        const NAME: &'v str = "ByteBuf";
+        const MODULE: &'v str = "regression2";
+
+        type Annex = ();
+        type Type = ();
+        type TypeAnnex = ();
+
+        /// `ByteBuf data ahead modes`: `ahead` bytes of `data` are already read ahead, and
+        /// `modes` adds `w` (write), `s` (seek) and `c` (clone) to reading.
+        async fn new<'a, 's>(
+            this: runtime::Type<'v, Self>,
+            strand: &'a mut Strand<'v, 's>,
+            args: Args<'v, 'a>,
+            out: Slot<'v, 'a>,
+        ) -> runtime::Result<'v, 's, ()> {
+            let ([data, ahead, modes], []) = unpack!(strand, args, 3, 0)?;
+            let data = bin_arg(strand, &data)?;
+            let ahead = ahead
+                .as_int(strand)
+                .and_then(|n| usize::try_from(n).ok())
+                .filter(|&n| n <= data.len())
+                .ok_or_else(|| Error::value(strand, "bad read-ahead"))?;
+            let mut caps = IoCaps::READ;
+            let modes = modes
+                .as_str(strand.vm())
+                .map(|s| s.to_string())
+                .ok_or_else(|| Error::value(strand, "bad modes"))?;
+            for c in modes.chars() {
+                caps |= match c {
+                    'w' => IoCaps::WRITE,
+                    's' => IoCaps::SEEK,
+                    'c' => IoCaps::CLONE,
+                    _ => return Err(Error::value(strand, "bad modes")),
+                };
+            }
+            if caps.contains(IoCaps::CLONE) && !caps.contains(IoCaps::SEEK) && ahead > 0 {
+                return Err(Error::value(strand, "read-ahead cannot be cloned"));
+            }
+            let ahead_bytes = data[..ahead].to_vec();
+            let mut cursor = Cursor::new(data);
+            cursor.set_position(ahead as u64);
+            this.create(
+                strand,
+                ByteBuf {
+                    cursor: Some(cursor),
+                    ahead: ahead_bytes,
+                    caps,
+                },
+                out,
+            );
+            Ok(())
+        }
+
+        fn provide<'a, 's>(
+            this: Instance<'v, 'a, Self>,
+            request: &mut Request<'v, 's, '_>,
+        ) -> runtime::Result<'v, 's, ()> {
+            if request.wants::<ByteIo>() {
+                let mut state = this.borrow_mut(request)?;
+                if state.cursor.is_none() {
+                    return Err(Error::state_error(request, "buffer is closed"));
+                }
+                request.provide::<ByteIo>(&mut *state)?;
+            }
+            Ok(())
+        }
+    }
+
+    fn bin_arg<'v, 's>(
+        strand: &mut Strand<'v, 's>,
+        value: &runtime::Value<'v>,
+    ) -> runtime::Result<'v, 's, Vec<u8>> {
+        match value.as_bin(strand.vm()) {
+            Some(bin) => Ok(Vec::from(bin)),
+            None => Err(Error::value(strand, "expected bin")),
+        }
+    }
+
+    /// Takes (or clones) `value`'s byte handle, raising if it lacks `need`.
+    fn byte_handle<'v, 's>(
+        strand: &mut Strand<'v, 's>,
+        value: &runtime::Value<'v>,
+        need: IoCaps,
+    ) -> runtime::Result<'v, 's, ByteHandle> {
+        value.query::<ByteIo, _>(strand, |strand, io| {
+            if !io.caps().contains(need) {
+                return Err(Error::value(strand, "missing capability"));
+            }
+            Ok(if need.contains(IoCaps::CLONE) {
+                io.clone()
+            } else {
+                io.take()
+            })
+        })
+    }
+
+    fn io_error<'v, 's>(strand: &mut Strand<'v, 's>, err: std::io::Error) -> Error<'v, 's> {
+        Error::value(strand, err.to_string())
+    }
+
     /// Test bitset for exercising `dolang_runtime::object::flags`.
     #[derive(Clone, Copy, PartialEq, Eq, Hash)]
     struct TestFlags(u8);
@@ -448,6 +598,7 @@ mod detail {
                     let optional = vm.sym("optional");
                     let footy = vm.register_type::<Foo>();
                     let counter_ty = vm.register_type::<Counter>();
+                    let byte_buf_ty = vm.register_type::<ByteBuf>();
                     let test_flags_ty = TestFlags::register_type(vm);
 
                     // Configure standard regression functions from dolang-private-test
@@ -471,6 +622,7 @@ mod detail {
                     .value("DEBUG", cfg!(debug_assertions))
                     .value("TestFlags", test_flags_ty)
                     .value("Counter", counter_ty)
+                    .value("ByteBuf", byte_buf_ty)
                     .function("async", async |strand, args, mut out| {
                         let ([mut value], _) = unpack!(strand, args, 1, 0)?;
                         DummyAsync::new(()).await;
@@ -504,6 +656,71 @@ mod detail {
                     .function("bump_fail", async move |strand, args, out| {
                         let ([value], []) = unpack!(strand, args, 1, 0)?;
                         bump(strand, &value, out, true)
+                    })
+                    .function("byte_read", async move |strand, args, out| {
+                        let ([value], []) = unpack!(strand, args, 1, 0)?;
+                        let handle = byte_handle(strand, &value, IoCaps::READ)?;
+                        let mut io = handle.into_read().unwrap();
+                        let mut buf = Vec::new();
+                        let res = io.read_to_end(&mut buf).await;
+                        res.map_err(|e| io_error(strand, e))?;
+                        Output::set(strand, out, &buf[..]);
+                        Ok(())
+                    })
+                    .function("byte_clone_read", async move |strand, args, out| {
+                        let ([value], []) = unpack!(strand, args, 1, 0)?;
+                        let handle = byte_handle(strand, &value, IoCaps::READ | IoCaps::CLONE)?;
+                        let mut io = handle.into_read().unwrap();
+                        let mut buf = Vec::new();
+                        let res = io.read_to_end(&mut buf).await;
+                        res.map_err(|e| io_error(strand, e))?;
+                        Output::set(strand, out, &buf[..]);
+                        Ok(())
+                    })
+                    .function("byte_tell", async move |strand, args, out| {
+                        let ([value], []) = unpack!(strand, args, 1, 0)?;
+                        let handle = byte_handle(strand, &value, IoCaps::READ | IoCaps::SEEK)?;
+                        let mut io = handle.into_read_seek().unwrap();
+                        let res = io.stream_position().await;
+                        let pos = res.map_err(|e| io_error(strand, e))?;
+                        Output::set(strand, out, pos);
+                        Ok(())
+                    })
+                    .function("byte_seek", async move |strand, args, out| {
+                        let ([value, offset], []) = unpack!(strand, args, 2, 0)?;
+                        let offset = offset
+                            .as_int(strand)
+                            .and_then(|n| u64::try_from(n).ok())
+                            .ok_or_else(|| Error::value(strand, "bad offset"))?;
+                        let handle = byte_handle(strand, &value, IoCaps::READ | IoCaps::SEEK)?;
+                        let mut io = handle.into_read_seek().unwrap();
+                        let mut buf = Vec::new();
+                        let res = async {
+                            io.seek(SeekFrom::Start(offset)).await?;
+                            io.read_to_end(&mut buf).await
+                        }
+                        .await;
+                        res.map_err(|e| io_error(strand, e))?;
+                        Output::set(strand, out, &buf[..]);
+                        Ok(())
+                    })
+                    .function("byte_overwrite", async move |strand, args, out| {
+                        let ([value, bytes], []) = unpack!(strand, args, 2, 0)?;
+                        let bytes = bin_arg(strand, &bytes)?;
+                        let need = IoCaps::READ | IoCaps::WRITE | IoCaps::SEEK;
+                        let handle = byte_handle(strand, &value, need)?;
+                        let mut io = handle.into_read_write_seek().unwrap();
+                        let mut buf = Vec::new();
+                        let res = async {
+                            io.write_all(&bytes).await?;
+                            io.flush().await?;
+                            io.seek(SeekFrom::Start(0)).await?;
+                            io.read_to_end(&mut buf).await
+                        }
+                        .await;
+                        res.map_err(|e| io_error(strand, e))?;
+                        Output::set(strand, out, &buf[..]);
+                        Ok(())
                     })
                     .function("coerce_flags", async move |strand, args, out| {
                         let ([value], []) = unpack!(strand, args, 1, 0)?;
