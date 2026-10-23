@@ -1,0 +1,63 @@
+import std: error
+import regression2:
+  - Counter
+  - bump
+  - bump_fail
+  - makefoo
+
+# A native object provides the interface directly
+let c = Counter()
+assert_eq (bump c) 1
+assert_eq (bump c) 2
+assert_eq $c.value 2
+
+# A Do subclass provides it through its native super
+class Sub: Counter
+  pub field label = "sub"
+
+  pub def twice self
+    bump $self
+    bump $self
+
+let s = Sub()
+assert_eq (bump s) 1
+assert_eq $s.twice() 3
+assert_eq $s.value 3
+assert_eq $s.label sub
+
+# Values with no provider are unsupported, which `bump` maps to nil
+assert_eq (bump 1) nil
+assert_eq (bump "x") nil
+assert_eq (bump ([1])) nil
+assert_eq (bump (makefoo())) nil
+
+# A borrow conflict is an error, not a missing interface
+def conflict value
+  try
+    value.while_borrowed do bump $value
+    false
+  catch error.ConcurrencyError: _
+    true
+
+assert (conflict c)
+assert (conflict s)
+assert_eq $c.value 2
+
+# The consumer's error propagates through the provider
+def consumer_error value
+  try
+    bump_fail $value
+    false
+  catch error.ValueError: _
+    true
+
+assert (consumer_error c)
+assert (consumer_error s)
+
+# Answers are per instance and state
+let d = Counter()
+assert_eq (bump d) 1
+d.close()
+assert_eq (bump d) nil
+s.close()
+assert_eq (bump s) nil

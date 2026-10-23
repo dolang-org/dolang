@@ -15,6 +15,7 @@ pub(crate) mod float;
 pub(crate) mod function;
 pub(crate) mod index;
 pub(crate) mod int;
+pub mod interface;
 pub(crate) mod iter;
 pub(crate) mod module;
 pub mod native;

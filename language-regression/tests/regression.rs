@@ -5,7 +5,11 @@ mod detail {
         compile::{self, Config, Mode},
         runtime::{
             self, Args, Bytecode, Error, Instance, Object, Output, Slot, Sym, call,
-            object::{FlagLike, FlagLikeExt, Flags, FlagsInstanceExt, FlagsTypeExt, TypeBuilder},
+            error::ErrorKind,
+            object::{
+                FlagLike, FlagLikeExt, Flags, FlagsInstanceExt, FlagsTypeExt, InterfaceTag,
+                Request, TypeBuilder,
+            },
             unpack,
             vm::Builder,
         },
@@ -174,6 +178,113 @@ mod detail {
         }
     }
 
+    /// Interface lent by [`Counter`] to an interface query.
+    trait Bump {
+        fn bump(&mut self) -> i64;
+    }
+
+    struct BumpTag;
+
+    impl InterfaceTag for BumpTag {
+        type Interface<'v> = dyn Bump + 'v;
+    }
+
+    /// Native counter providing [`BumpTag`], for testing interface queries.
+    struct Counter {
+        n: i64,
+        closed: bool,
+    }
+
+    impl Bump for Counter {
+        fn bump(&mut self) -> i64 {
+            self.n += 1;
+            self.n
+        }
+    }
+
+    impl<'v> Object<'v> for Counter {
+        const NAME: &'v str = "Counter";
+        const MODULE: &'v str = "regression2";
+
+        type Annex = ();
+        type Type = ();
+        type TypeAnnex = ();
+
+        async fn new<'a, 's>(
+            this: runtime::Type<'v, Self>,
+            strand: &'a mut Strand<'v, 's>,
+            args: Args<'v, 'a>,
+            out: Slot<'v, 'a>,
+        ) -> runtime::Result<'v, 's, ()> {
+            let ([], []) = unpack!(strand, args, 0, 0)?;
+            this.create(
+                strand,
+                Counter {
+                    n: 0,
+                    closed: false,
+                },
+                out,
+            );
+            Ok(())
+        }
+
+        fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+            builder
+                .get("value", |this, strand, out| {
+                    let n = this.borrow(strand)?.n;
+                    Output::set(strand, out, n);
+                    Ok(())
+                })
+                // Stops providing `BumpTag`
+                .method("close", async move |this, strand, args, _out| {
+                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                    this.borrow_mut(strand)?.closed = true;
+                    Ok(())
+                })
+                // Calls `f` while holding a mutable borrow of the counter
+                .method("while_borrowed", async move |this, strand, args, out| {
+                    let ([f], []) = unpack!(strand, args, 1, 0)?;
+                    let _guard = this.borrow_mut(strand)?;
+                    call!(strand, f, out).await
+                })
+        }
+
+        fn provide<'a, 's>(
+            this: Instance<'v, 'a, Self>,
+            request: &mut Request<'v, 's, '_>,
+        ) -> runtime::Result<'v, 's, ()> {
+            if request.wants::<BumpTag>() {
+                let mut state = this.borrow_mut(request)?;
+                if !state.closed {
+                    request.provide::<BumpTag>(&mut *state)?;
+                }
+            }
+            Ok(())
+        }
+    }
+
+    /// Bumps `value` through [`BumpTag`], returning the count, or nil if nothing provides it.
+    fn bump<'v, 's>(
+        strand: &mut Strand<'v, 's>,
+        value: &runtime::Value<'v>,
+        out: Slot<'v, '_>,
+        fail: bool,
+    ) -> runtime::Result<'v, 's, ()> {
+        let res = value.query::<BumpTag, _>(strand, |strand, iface| {
+            let n = iface.bump();
+            if fail {
+                return Err(Error::value(strand, "consumer failed"));
+            }
+            Ok(n)
+        });
+        match res {
+            Ok(n) => Output::set(strand, out, n),
+            Err(e) if e.kind() == ErrorKind::Unsupported => {}
+            Err(e) => return Err(e),
+        }
+        Ok(())
+    }
+
     /// Test bitset for exercising `dolang_runtime::object::flags`.
     #[derive(Clone, Copy, PartialEq, Eq, Hash)]
     struct TestFlags(u8);
@@ -336,6 +447,7 @@ mod detail {
                     let msg = vm.sym("msg");
                     let optional = vm.sym("optional");
                     let footy = vm.register_type::<Foo>();
+                    let counter_ty = vm.register_type::<Counter>();
                     let test_flags_ty = TestFlags::register_type(vm);
 
                     // Configure standard regression functions from dolang-private-test
@@ -358,6 +470,7 @@ mod detail {
                     .value("MIRI", cfg!(miri))
                     .value("DEBUG", cfg!(debug_assertions))
                     .value("TestFlags", test_flags_ty)
+                    .value("Counter", counter_ty)
                     .function("async", async |strand, args, mut out| {
                         let ([mut value], _) = unpack!(strand, args, 1, 0)?;
                         DummyAsync::new(()).await;
@@ -384,6 +497,14 @@ mod detail {
                         Ok(())
                     })
                     .function("noop", async move |_strand, _args, _out| Ok(()))
+                    .function("bump", async move |strand, args, out| {
+                        let ([value], []) = unpack!(strand, args, 1, 0)?;
+                        bump(strand, &value, out, false)
+                    })
+                    .function("bump_fail", async move |strand, args, out| {
+                        let ([value], []) = unpack!(strand, args, 1, 0)?;
+                        bump(strand, &value, out, true)
+                    })
                     .function("coerce_flags", async move |strand, args, out| {
                         let ([value], []) = unpack!(strand, args, 1, 0)?;
                         let bits = test_flags_ty.coerce(strand, &value).await?;
