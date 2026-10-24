@@ -505,15 +505,13 @@ impl<'v> Object<'v> for Buffered {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([source], []) = unpack!(strand, args, 1, 0)?;
-        let handle = crate::io::get(strand, &source, |_, _| Ok(()))
-            .await
-            .map_err(|err| {
-                if err.kind() == ErrorKind::Unsupported {
-                    Error::type_error(strand, "expected an `io.Io` value for `source`")
-                } else {
-                    err
-                }
-            })?;
+        let handle = crate::io::get(strand, &source, |_, _| Ok(())).map_err(|err| {
+            if err.kind() == ErrorKind::Unsupported {
+                Error::type_error(strand, "expected an `io.Io` value for `source`")
+            } else {
+                err
+            }
+        })?;
         this.create(strand, Buffered::new(handle), out);
         Ok(())
     }

@@ -31,6 +31,7 @@ pub(crate) const FS_WINDOWS: u8 = 2;
 
 pub(crate) mod attrs;
 pub(crate) mod file;
+pub(crate) mod file_buf;
 pub(crate) mod file_lock;
 pub(crate) mod fs_metadata;
 pub(crate) mod glob;

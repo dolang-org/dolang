@@ -971,7 +971,6 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                     }
                     Ok(())
                 })
-                .await
                 .map_err(|err| {
                     if err.kind() == ErrorKind::Unsupported {
                         Error::type_error(

@@ -199,6 +199,24 @@ def open_from_file()
 
 #[test]
 #[vfs]
+def an_open_archive_shares_the_file()
+  zip.open "shared.zip" "w" do |archive|
+    archive.open "hello.txt" do |entry|
+      entry.write "Hello, World!"
+
+  fs.open shared.zip do |file|
+    assert_eq $file.read(2) b"PK"
+    let archive = zip.open $file
+    archive.open "hello.txt" do |entry|
+      assert_eq (str (entry.read())) "Hello, World!"
+    let pos = file.tell()
+    assert_eq $file.read(4) (file.read 4 offset: pos)
+    archive.open "hello.txt" do |entry|
+      assert_eq (str (entry.read())) "Hello, World!"
+    archive.close()
+
+#[test]
+#[vfs]
 def write_through_file()
   fs.open through_file.zip w do |file|
     zip.open $file "w" do |archive|

@@ -1,29 +1,25 @@
-use std::{
-    future::poll_fn,
-    io::{self, SeekFrom},
-    pin::Pin,
-    task::{Context, Poll, ready},
-};
+use std::io::{self, SeekFrom};
 
 use dolang::runtime::{
     AllocExt, BYTE_STREAM_CHUNK_SIZE, Error, Instance, Object, Output, Result, Slot, State, Strand,
     Value, call,
-    io::{ByteHandle, ByteIo, IntoByteIo, IoCaps},
+    io::{ByteHandle, ByteIo, IntoByteIo, IoCaps, Shared},
     method,
     object::{Cast, Mut, Ref, Request, TypeBuilder},
     strand::InterruptMask,
     unpack,
     value::{BinEmbryo, PinBin, PinStr, TypeObject, View},
 };
-use dolang_util::utf8;
+use dolang_util::{shared::Locked, utf8};
 use dolang_vfs::{
+    error::HandoffError,
     file::{
         CopyDest, CopyMode, File as VfsFile, FileLockBehavior, FileLockMode, FileLockRange,
         OpenOptions,
     },
     process::{StdioRecv, StdioSend},
 };
-use tokio::io::{AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio_util::compat::TokioAsyncReadCompatExt as _;
 
 use dolang_vfs::path as vfs_path;
@@ -31,8 +27,11 @@ use dolang_vfs::path as vfs_path;
 use crate::{
     error::ResultExt as _,
     fs::{
-        file_lock::FileLock as FileLockObject, fs_metadata::create_fs_metadata,
-        metadata::create_metadata, read_into_spare, stream, xattr,
+        file_buf::{FileBuf, read_chunk},
+        file_lock::FileLock as FileLockObject,
+        fs_metadata::create_fs_metadata,
+        metadata::create_metadata,
+        read_into_spare, stream, xattr,
     },
     global::{FsGlobal, WindowsSecurityTag},
     io_mode::encode_value,
@@ -371,10 +370,10 @@ async fn copy_data<'v, 's, const SRC: bool, const DST: bool>(
         ));
     }
 
-    // Buffered data would be invisible to the copy, and read-ahead would go
-    // stale under copied bytes.
-    settle(src, strand).await?;
-    settle(dst, strand).await?;
+    // Pending writes would be invisible to the copy, and the destination's
+    // read-ahead would go stale under copied bytes.
+    flush_pending(src, strand).await?;
+    drop_buffers(dst, strand).await?;
 
     // Each side is borrowed and resolved together, because resolving a cursor
     // requires the exclusive borrow that addressing through it implies.
@@ -457,10 +456,6 @@ async fn copy_data<'v, 's, const SRC: bool, const DST: bool>(
     Ok(())
 }
 
-/// Buffer capacity of a buffered file, and the size from which its reads and
-/// writes skip the buffer.
-const BUFFER_SIZE: usize = 8 * 1024;
-
 /// `fs.BaseFile`, the nominal supertype of both kinds of file. It is never
 /// instantiated.
 pub(crate) struct BaseFile;
@@ -480,19 +475,19 @@ impl<'v> Object<'v> for BaseFile {
 /// A handle to an open file: `fs.File` when `BUFFERED`, `fs.RawFile`
 /// otherwise.
 ///
-/// A file has one position, so its buffer holds read-ahead or pending writes,
-/// never both. Operations that are not streaming reads or writes *settle* the
-/// file first: pending writes are written out, and the file is moved back
-/// over unread read-ahead, so the native handle sits at the logical position.
-/// A raw file never fills its buffer, so it is always settled.
+/// A buffered file keeps its buffer in a [`Shared`] over a clone of the file,
+/// so the handles it lends read and write through the same buffer. Operations
+/// that are not streaming reads or writes *settle* the buffer first: pending
+/// writes are written out, and the file is moved back over unread read-ahead.
+/// They then use `file` directly, which never touches the cursor except to
+/// hand the file off.
 pub(crate) struct File<const BUFFERED: bool = true> {
+    /// The open file, until it is closed or handed off.
     file: Option<VfsFile>,
+    /// A buffered file's buffer, over its own clone of `file`.
+    buf: Option<Shared<FileBuf>>,
     /// What the file offers as a byte I/O handle, fixed by the open mode.
     caps: IoCaps,
-    /// Read-ahead unread from `pos`, or pending writes when `writing`.
-    buf: Vec<u8>,
-    pos: usize,
-    writing: bool,
 }
 
 /// `fs.RawFile`, an unbuffered file.
@@ -529,37 +524,12 @@ impl<'v, const BUFFERED: bool> IntoByteIo<'v> for File<BUFFERED> {
         Ok(self.caps)
     }
 
-    /// A seekable file also moves back over its read-ahead, which resolves on
-    /// the cursor its clones share.
-    fn poll_flush(
-        &mut self,
-        _strand: &mut Strand<'v, '_>,
-        cx: &mut Context<'_>,
-    ) -> Poll<io::Result<()>> {
-        ready!(self.poll_flush_buf(cx))?;
-        let unread = self.unread();
-        if unread > 0 && self.caps.contains(IoCaps::SEEK) {
-            let back = -i64::try_from(unread).map_err(io::Error::other)?;
-            let mut file = Pin::new(self.vfs());
-            file.as_mut().start_seek(SeekFrom::Current(back))?;
-            ready!(file.poll_complete(cx))?;
-            self.clear();
-        }
-        Pin::new(self.vfs()).poll_flush(cx)
-    }
-
-    /// A file that cannot seek hands its read-ahead over as the handle's
-    /// prefix.
+    /// A buffered file lends its buffer, so the consumer reads and writes
+    /// through it.
     fn get<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
-        assert!(!self.writing, "file lent before flushing");
-        let file = self.vfs().clone().compat();
-        let prefix = self.buf.split_off(self.pos);
-        self.clear();
-        let handle = ByteHandle::with_caps(file, self.caps);
-        Ok(if prefix.is_empty() {
-            handle
-        } else {
-            handle.with_prefix(prefix)
+        Ok(match &self.buf {
+            Some(buf) => ByteHandle::with_caps(buf.clone(), self.caps),
+            None => ByteHandle::with_caps(self.vfs().clone().compat(), self.caps),
         })
     }
 }
@@ -664,32 +634,50 @@ pub(crate) async fn open_file<'v, 's>(
     }
 }
 
-/// Settles `this`, borrowing it exclusively only when there is something to
-/// settle, so positional operations on a settled file can still share it.
-async fn settle<'v, 's, const BUFFERED: bool>(
-    this: Instance<'v, '_, File<BUFFERED>>,
-    strand: &mut Strand<'v, 's>,
-) -> Result<'v, 's, ()> {
-    if this.borrow(strand)?.buf.is_empty() {
-        return Ok(());
-    }
-    let mut borrow = this.borrow_mut(strand)?;
-    borrow.check_open(strand)?;
-    borrow.settle().await.into_sys(strand)
-}
-
-/// Writes out pending writes of `this`, for operations that see the file's
-/// contents but not its position.
+/// Writes out the pending writes of a buffered `this`, for operations that see
+/// the file's contents but not its position.
+///
+/// It holds the buffer without waiting under a shared borrow, so positional
+/// operations on a file with nothing to write out can still share it. It
+/// borrows exclusively when there are writes, or when a lent handle is using
+/// the buffer.
 async fn flush_pending<'v, 's, const BUFFERED: bool>(
     this: Instance<'v, '_, File<BUFFERED>>,
     strand: &mut Strand<'v, 's>,
 ) -> Result<'v, 's, ()> {
-    if !this.borrow(strand)?.writing {
-        return Ok(());
+    {
+        let borrow = this.borrow(strand)?;
+        let Some(buf) = &borrow.buf else {
+            return Ok(());
+        };
+        if buf.try_lock().is_some_and(|held| held.pending() == 0) {
+            return Ok(());
+        }
     }
-    let mut borrow = this.borrow_mut(strand)?;
-    borrow.check_open(strand)?;
-    borrow.flush_buf().await.into_sys(strand)
+    this.borrow_mut(strand)?.flush_buf().await.into_sys(strand)
+}
+
+/// Settles a buffered `this`, for operations that change the file's contents
+/// or after which its read-ahead would be stale.
+///
+/// Read-ahead is always dropped. As with [`flush_pending`], the borrow is
+/// exclusive only when there are writes to write out or the buffer is busy.
+async fn drop_buffers<'v, 's, const BUFFERED: bool>(
+    this: Instance<'v, '_, File<BUFFERED>>,
+    strand: &mut Strand<'v, 's>,
+) -> Result<'v, 's, ()> {
+    {
+        let borrow = this.borrow(strand)?;
+        let Some(buf) = &borrow.buf else {
+            return Ok(());
+        };
+        if let Some(mut held) = buf.try_lock()
+            && held.pending() == 0
+        {
+            return held.unread_back().await.into_sys(strand);
+        }
+    }
+    this.borrow_mut(strand)?.settle().await.into_sys(strand)
 }
 
 fn invalid_utf8<'v, 's>(strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
@@ -710,28 +698,44 @@ fn size_arg<'v, 's>(
     .transpose()
 }
 
-/// The buffer, in terms of [`io::Result`]. Callers check that the file is open.
+/// Appends `n` bytes read straight from `file` to `out`, or the rest of the
+/// file when `n` is `None`, stopping short only at the end of the file.
+async fn read_raw<'v>(
+    file: &mut VfsFile,
+    strand: &mut Strand<'v, '_>,
+    out: &mut BinEmbryo<'v>,
+    n: Option<usize>,
+) -> io::Result<()> {
+    let start = out.len();
+    loop {
+        let want = match n {
+            Some(n) => n - (out.len() - start),
+            None => usize::MAX,
+        };
+        if want == 0 || read_chunk(file, strand, out, want).await? == 0 {
+            return Ok(());
+        }
+    }
+}
+
+/// Streaming I/O, in terms of [`io::Result`]: through the buffer of a
+/// buffered file, and straight to the file otherwise. Callers check that the
+/// file is open.
 impl<const BUFFERED: bool> File<BUFFERED> {
+    fn new(file: VfsFile, caps: IoCaps) -> Self {
+        File {
+            buf: BUFFERED.then(|| Shared::new(FileBuf::new(file.clone()))),
+            file: Some(file),
+            caps,
+        }
+    }
+
     /// Capabilities while open; a closed file has none.
     fn open_caps(&self) -> IoCaps {
         if self.file.is_some() {
             self.caps
         } else {
             IoCaps::empty()
-        }
-    }
-
-    /// Buffer capacity: none for a raw file, whose reads and writes therefore
-    /// all go straight to the file.
-    const CAPACITY: usize = if BUFFERED { BUFFER_SIZE } else { 0 };
-
-    fn new(file: VfsFile, caps: IoCaps) -> Self {
-        File {
-            file: Some(file),
-            caps,
-            buf: Vec::new(),
-            pos: 0,
-            writing: false,
         }
     }
 
@@ -746,217 +750,52 @@ impl<const BUFFERED: bool> File<BUFFERED> {
         self.file.as_mut().expect("file is closed")
     }
 
-    fn unread(&self) -> usize {
-        if self.writing {
-            0
-        } else {
-            self.buf.len() - self.pos
-        }
-    }
-
-    fn pending(&self) -> usize {
-        if self.writing { self.buf.len() } else { 0 }
-    }
-
-    fn clear(&mut self) {
-        self.buf.clear();
-        self.pos = 0;
-        self.writing = false;
-    }
-
-    fn consume(&mut self, n: usize) {
-        self.pos += n;
-        if self.pos == self.buf.len() {
-            self.clear();
-        }
-    }
-
-    /// Returns bytes taken from the file to the front of the read-ahead, so a
-    /// failed read loses nothing. A raw file has no read-ahead to return them
-    /// to.
-    fn push_back(&mut self, bytes: &[u8]) {
-        if !BUFFERED || bytes.is_empty() {
-            return;
-        }
-        debug_assert!(!self.writing, "read-ahead while writing");
-        if bytes.len() <= self.pos {
-            self.pos -= bytes.len();
-            self.buf[self.pos..self.pos + bytes.len()].copy_from_slice(bytes);
-        } else {
-            let mut buf = Vec::with_capacity(bytes.len() + self.unread());
-            buf.extend_from_slice(bytes);
-            buf.extend_from_slice(&self.buf[self.pos..]);
-            self.buf = buf;
-            self.pos = 0;
-        }
-    }
-
-    fn poll_flush_buf(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        if !self.writing {
-            return Poll::Ready(Ok(()));
-        }
-        let file = self.file.as_mut().expect("file is closed");
-        while !self.buf.is_empty() {
-            let n = ready!(Pin::new(&mut *file).poll_write(cx, &self.buf))?;
-            if n == 0 {
-                return Poll::Ready(Err(io::ErrorKind::WriteZero.into()));
-            }
-            self.buf.drain(..n);
-        }
-        self.clear();
-        Poll::Ready(Ok(()))
+    /// Holds a buffered file's buffer, after any operation through a lent
+    /// handle.
+    async fn buffer(&mut self) -> io::Result<Locked<'_, FileBuf>> {
+        self.buf
+            .as_mut()
+            .expect("file is not buffered")
+            .lock()
+            .await
     }
 
     /// Writes out pending writes.
     async fn flush_buf(&mut self) -> io::Result<()> {
-        poll_fn(|cx| self.poll_flush_buf(cx)).await
+        match &mut self.buf {
+            Some(buf) => buf.lock().await?.flush_buf().await,
+            None => Ok(()),
+        }
     }
 
-    /// Moves the file back over unread read-ahead and drops it.
-    async fn unread_back(&mut self) -> io::Result<()> {
-        let unread = self.unread();
-        if unread > 0 {
-            let back = -i64::try_from(unread).map_err(io::Error::other)?;
-            self.vfs().seek(SeekFrom::Current(back)).await?;
-        }
-        if !self.writing {
-            self.clear();
-        }
-        Ok(())
-    }
-
-    /// Leaves the native handle at the logical position, with nothing
-    /// buffered.
+    /// Leaves the file at the logical position, with nothing buffered.
     async fn settle(&mut self) -> io::Result<()> {
-        self.flush_buf().await?;
-        self.unread_back().await
-    }
-
-    /// Returns the read-ahead, refilling it first if it is drained. Empty
-    /// means end of file.
-    async fn fill_buf(&mut self) -> io::Result<&[u8]> {
-        if self.unread() == 0 {
-            self.flush_buf().await?;
-            self.buf.resize(Self::CAPACITY, 0);
-            let file = self.file.as_mut().expect("file is closed");
-            match tokio::io::AsyncReadExt::read(file, &mut self.buf).await {
-                Ok(n) => self.buf.truncate(n),
-                Err(err) => {
-                    self.buf.clear();
-                    return Err(err);
-                }
-            }
-        }
-        Ok(&self.buf[self.pos..])
-    }
-
-    /// Appends `n` bytes to `out`, or the rest of the file when `n` is `None`,
-    /// stopping short only at the end of the file.
-    async fn read_into<'v>(
-        &mut self,
-        strand: &mut Strand<'v, '_>,
-        out: &mut BinEmbryo<'v>,
-        n: Option<usize>,
-    ) -> io::Result<()> {
-        let start = out.len();
-        loop {
-            let want = match n {
-                Some(n) => n - (out.len() - start),
-                None => usize::MAX,
-            };
-            if want == 0 {
-                return Ok(());
-            }
-            if self.unread() == 0 && want >= Self::CAPACITY {
-                self.flush_buf().await?;
-                let chunk = want.min(BYTE_STREAM_CHUNK_SIZE);
-                if out.spare_capacity_mut().len() < chunk {
-                    out.reserve(strand, chunk);
-                }
-                let spare = out.spare_capacity_mut();
-                let end = chunk.min(spare.len());
-                let read = read_into_spare(self.vfs(), &mut spare[..end]).await?;
-                if read == 0 {
-                    return Ok(());
-                }
-                // SAFETY: `read` bytes at the front of the spare capacity are
-                // initialized.
-                unsafe { out.advance(read) };
-            } else {
-                let avail = self.fill_buf().await?;
-                if avail.is_empty() {
-                    return Ok(());
-                }
-                let take = avail.len().min(want);
-                out.extend(strand, &avail[..take]);
-                self.consume(take);
-            }
-        }
-    }
-
-    /// Appends one line to `out`, terminator included. Nothing is appended at
-    /// the end of the file.
-    async fn read_line_into<'v>(
-        &mut self,
-        strand: &mut Strand<'v, '_>,
-        out: &mut BinEmbryo<'v>,
-    ) -> io::Result<()> {
-        loop {
-            let avail = self.fill_buf().await?;
-            if avail.is_empty() {
-                return Ok(());
-            }
-            let (take, done) = match avail.iter().position(|&b| b == b'\n') {
-                Some(i) => (i + 1, true),
-                None => (avail.len(), false),
-            };
-            out.extend(strand, &avail[..take]);
-            self.consume(take);
-            if done {
-                return Ok(());
-            }
+        match &mut self.buf {
+            Some(buf) => buf.lock().await?.settle().await,
+            None => Ok(()),
         }
     }
 
     async fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
-        // Writing at the logical position means leaving any read-ahead.
-        self.unread_back().await?;
-        if self.buf.len() + data.len() > Self::CAPACITY {
-            self.flush_buf().await?;
-        }
-        if data.len() >= Self::CAPACITY {
-            self.vfs().write_all(data).await
-        } else {
-            self.buf.extend_from_slice(data);
-            self.writing = true;
-            Ok(())
+        match &mut self.buf {
+            Some(buf) => buf.lock().await?.write_all(data).await,
+            None => self.vfs().write_all(data).await,
         }
     }
 
     async fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        self.flush_buf().await?;
-        let pos = match pos {
-            SeekFrom::Current(n) => {
-                let adjusted = i64::try_from(self.unread())
-                    .ok()
-                    .and_then(|unread| n.checked_sub(unread))
-                    .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
-                SeekFrom::Current(adjusted)
-            }
-            pos => pos,
-        };
-        let pos = self.vfs().seek(pos).await?;
-        self.clear();
-        Ok(pos)
+        match &mut self.buf {
+            Some(buf) => buf.lock().await?.seek(pos).await,
+            None => self.vfs().seek(pos).await,
+        }
     }
 
-    /// The logical position: the native handle's, less unread bytes, plus
-    /// pending writes.
+    /// The logical position.
     async fn tell(&mut self) -> io::Result<u64> {
-        let pos = self.vfs().stream_position().await?;
-        (pos + self.pending() as u64)
-            .checked_sub(self.unread() as u64)
-            .ok_or_else(|| io::Error::other("position is before buffered data"))
+        match &mut self.buf {
+            Some(buf) => buf.lock().await?.tell().await,
+            None => self.vfs().stream_position().await,
+        }
     }
 }
 
@@ -973,30 +812,7 @@ impl<const BUFFERED: bool> File<BUFFERED> {
         this: Instance<'v, '_, Self>,
         strand: &mut Strand<'v, 's>,
     ) -> Result<'v, 's, StdioSend> {
-        let mut borrow = this.borrow_mut(strand)?;
-        borrow.check_open(strand)?;
-        // The child gets the native handle, so it must start at the logical
-        // position with nothing held back.
-        borrow.settle().await.into_sys(strand)?;
-        let mut file = borrow.file.take().expect("file is closed");
-        // The endpoint carries a position of its own, and the cursor lives on
-        // this side rather than in the kernel, so it has to be stated.
-        let offset = match file.stream_position().await {
-            Ok(offset) => offset,
-            Err(error) => {
-                borrow.file = Some(file);
-                return Err(error).into_sys(strand);
-            }
-        };
-        match file.into_stdio_send(offset).await {
-            Ok(stdio) => Ok(stdio),
-            // Nothing was handed over, so the file is still the script's.
-            Err(error) => {
-                let (file, error) = error.into_parts();
-                borrow.file = Some(file);
-                Err(error).into_sys(strand)
-            }
-        }
+        Self::hand_off(this, strand, |file, offset| file.into_stdio_send(offset)).await
     }
 
     /// Receives a child process's output into this file, closing it here.
@@ -1006,22 +822,56 @@ impl<const BUFFERED: bool> File<BUFFERED> {
         this: Instance<'v, '_, Self>,
         strand: &mut Strand<'v, 's>,
     ) -> Result<'v, 's, StdioRecv> {
+        Self::hand_off(this, strand, |file, offset| file.into_stdio_recv(offset)).await
+    }
+
+    /// Converts the file into a standard stream with `into`, which gets the
+    /// logical position.
+    async fn hand_off<'v, 's, T, F>(
+        this: Instance<'v, '_, Self>,
+        strand: &mut Strand<'v, 's>,
+        into: impl FnOnce(VfsFile, u64) -> F,
+    ) -> Result<'v, 's, T>
+    where
+        F: Future<Output = std::result::Result<T, HandoffError<VfsFile>>>,
+    {
         let mut borrow = this.borrow_mut(strand)?;
         borrow.check_open(strand)?;
-        borrow.settle().await.into_sys(strand)?;
-        let mut file = borrow.file.take().expect("file is closed");
+        let File {
+            file: slot, buf, ..
+        } = &mut *borrow;
+        // The child gets the native handle, so it must start at the logical
+        // position with nothing held back. The buffer stays held, so a lent
+        // handle cannot fill it again before it closes.
+        let mut held = match buf {
+            Some(buf) => Some(buf.lock().await.into_sys(strand)?),
+            None => None,
+        };
+        if let Some(held) = &mut held {
+            held.settle().await.into_sys(strand)?;
+        }
+        let mut file = slot.take().expect("file is closed");
+        // The endpoint carries a position of its own, and the cursor lives on
+        // this side rather than in the kernel, so it has to be stated.
         let offset = match file.stream_position().await {
             Ok(offset) => offset,
             Err(error) => {
-                borrow.file = Some(file);
+                *slot = Some(file);
                 return Err(error).into_sys(strand);
             }
         };
-        match file.into_stdio_recv(offset).await {
-            Ok(stdio) => Ok(stdio),
+        match into(file, offset).await {
+            Ok(stdio) => {
+                drop(held);
+                if let Some(mut buf) = buf.take() {
+                    drop(buf.close().await);
+                }
+                Ok(stdio)
+            }
+            // Nothing was handed over, so the file is still the script's.
             Err(error) => {
                 let (file, error) = error.into_parts();
-                borrow.file = Some(file);
+                *slot = Some(file);
                 Err(error).into_sys(strand)
             }
         }
@@ -1079,11 +929,8 @@ impl<const BUFFERED: bool> File<BUFFERED> {
         &mut self,
         strand: &mut Strand<'v, 's>,
     ) -> Result<'v, 's, u64> {
-        let file_ref = self
-            .file
-            .as_mut()
-            .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-        file_ref.stream_position().await.into_sys(strand)
+        self.check_open(strand)?;
+        self.tell().await.into_sys(strand)
     }
 
     async fn seek_to<'v, 's>(
@@ -1091,11 +938,8 @@ impl<const BUFFERED: bool> File<BUFFERED> {
         strand: &mut Strand<'v, 's>,
         seek_from: SeekFrom,
     ) -> Result<'v, 's, u64> {
-        let file_ref = self
-            .file
-            .as_mut()
-            .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-        file_ref.seek(seek_from).await.into_sys(strand)
+        self.check_open(strand)?;
+        self.seek(seek_from).await.into_sys(strand)
     }
 
     /// Reads `size` bytes, or the rest of the file, as a `Bin`.
@@ -1107,10 +951,18 @@ impl<const BUFFERED: bool> File<BUFFERED> {
     ) -> Result<'v, 's, ()> {
         self.check_open(strand)?;
         let mut buf = BinEmbryo::new();
-        if let Err(err) = self.read_into(strand, &mut buf, size).await {
-            self.push_back(buf.as_slice());
-            return Err(err).into_sys(strand);
-        }
+        let res = match &mut self.buf {
+            Some(shared) => {
+                let mut held = shared.lock().await.into_sys(strand)?;
+                let res = held.read_into(strand, &mut buf, size).await;
+                if res.is_err() {
+                    held.push_back(buf.as_slice());
+                }
+                res
+            }
+            None => read_raw(self.vfs(), strand, &mut buf, size).await,
+        };
+        res.into_sys(strand)?;
         buf.finish(strand, out);
         Ok(())
     }
@@ -1122,13 +974,14 @@ impl<const BUFFERED: bool> File<BUFFERED> {
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         self.check_open(strand)?;
+        let mut held = self.buffer().await.into_sys(strand)?;
         let mut buf = BinEmbryo::new();
-        if let Err(err) = self.read_line_into(strand, &mut buf).await {
-            self.push_back(buf.as_slice());
+        if let Err(err) = held.read_line_into(strand, &mut buf).await {
+            held.push_back(buf.as_slice());
             return Err(err).into_sys(strand);
         }
         if std::str::from_utf8(buf.as_slice()).is_err() {
-            self.push_back(buf.as_slice());
+            held.push_back(buf.as_slice());
             return Err(invalid_utf8(strand));
         }
         // SAFETY: validated above.
@@ -1147,9 +1000,10 @@ impl<const BUFFERED: bool> File<BUFFERED> {
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         self.check_open(strand)?;
+        let mut held = self.buffer().await.into_sys(strand)?;
         let mut buf = BinEmbryo::new();
-        if let Err(err) = self.read_into(strand, &mut buf, size).await {
-            self.push_back(buf.as_slice());
+        if let Err(err) = held.read_into(strand, &mut buf, size).await {
+            held.push_back(buf.as_slice());
             return Err(err).into_sys(strand);
         }
         loop {
@@ -1158,23 +1012,23 @@ impl<const BUFFERED: bool> File<BUFFERED> {
                 Ok(text) if text.len() == buf.len() => break,
                 Ok(text) if !eof => text.len(),
                 _ => {
-                    self.push_back(buf.as_slice());
+                    held.push_back(buf.as_slice());
                     return Err(invalid_utf8(strand));
                 }
             };
             if valid > 0 {
-                self.push_back(&buf.as_slice()[valid..]);
+                held.push_back(&buf.as_slice()[valid..]);
                 buf.truncate(valid);
                 break;
             }
             // The first character is incomplete, so read on until it is whole.
             let before = buf.len();
-            if let Err(err) = self.read_into(strand, &mut buf, Some(1)).await {
-                self.push_back(buf.as_slice());
+            if let Err(err) = held.read_into(strand, &mut buf, Some(1)).await {
+                held.push_back(buf.as_slice());
                 return Err(err).into_sys(strand);
             }
             if buf.len() == before {
-                self.push_back(buf.as_slice());
+                held.push_back(buf.as_slice());
                 return Err(invalid_utf8(strand));
             }
         }
@@ -1208,14 +1062,19 @@ impl<const BUFFERED: bool> File<BUFFERED> {
     }
 
     /// Flushes and closes the file, dropping it even if flushing fails.
+    ///
+    /// Lent handles read as closed afterward.
     async fn close<'v, 's>(&mut self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
-        if self.file.is_none() {
+        let Some(file) = self.file.take() else {
             return Ok(());
-        }
-        let flushed = self.flush_buf().await;
-        let file = self.file.take().expect("file is closed");
-        self.buf = Vec::new();
-        self.clear();
+        };
+        let flushed = match self.buf.take() {
+            Some(mut buf) => match buf.close().await {
+                Some(mut buf) => buf.flush_buf().await,
+                None => Ok(()),
+            },
+            None => Ok(()),
+        };
         let closed = file.close().await;
         flushed.into_sys(strand)?;
         closed.into_sys(strand)
@@ -1382,7 +1241,7 @@ impl<'v, const BUFFERED: bool> Object<'v> for File<BUFFERED> {
                     })
                     .transpose()?
                     .unwrap_or(false);
-                settle(this, strand).await?;
+                drop_buffers(this, strand).await?;
                 strand
                     .with_slots(async move |strand, [mut guard, start, end, step]| {
                         let range = lock_range(strand, &range, [start, end, step])?;
@@ -1435,7 +1294,7 @@ impl<'v, const BUFFERED: bool> Object<'v> for File<BUFFERED> {
                     })
                     .transpose()?
                     .unwrap_or(false);
-                settle(this, strand).await?;
+                drop_buffers(this, strand).await?;
                 strand
                     .with_slots(async move |strand, [mut guard, start, end, step]| {
                         let range = lock_range(strand, &range, [start, end, step])?;
@@ -1490,7 +1349,7 @@ impl<'v, const BUFFERED: bool> Object<'v> for File<BUFFERED> {
                 // and make two concurrent reads a borrow error rather than
                 // two reads.
                 if let Some(offset) = offset {
-                    settle(this, strand).await?;
+                    flush_pending(this, strand).await?;
                     let borrow = this.borrow(strand)?;
                     return borrow.read_at(strand, offset, size, out).await;
                 }
@@ -1509,7 +1368,7 @@ impl<'v, const BUFFERED: bool> Object<'v> for File<BUFFERED> {
                     )),
                     // Shared borrow, for the reason given on `read`.
                     Some(offset) => {
-                        settle(this, strand).await?;
+                        drop_buffers(this, strand).await?;
                         let borrow = this.borrow(strand)?;
                         borrow.write_at(data, offset, strand, out).await
                     }
@@ -1832,8 +1691,13 @@ impl<'v, const BUFFERED: bool> Object<'v> for File<BUFFERED> {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check_open(strand)?;
-                borrow.flush_buf().await.into_sys(strand)?;
-                borrow.vfs().flush().await.into_sys(strand)
+                borrow
+                    .buffer()
+                    .await
+                    .into_sys(strand)?
+                    .flush()
+                    .await
+                    .into_sys(strand)
             })
     }
 }

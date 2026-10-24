@@ -342,8 +342,7 @@ provider stays usable, and closing the provider ends the handle too. The
 handle's own `close` only flushes, so a consumer closes and drops what it gets
 whether it opened the stream from a path or was lent it. A consumer gets
 through `io::get` rather than a raw query. It passes the provider's `caps` to a
-check that can refuse it, then polls `IntoByteIo::poll_flush` until the
-provider has settled and gets. It fails with `ErrorKind::Unsupported` when
+check that can refuse it, then gets. It fails with `ErrorKind::Unsupported` when
 nothing provides `ByteIo`:
 
 ```rust
@@ -352,8 +351,7 @@ let handle = io::get(strand, &value, |strand, caps| {
         return Err(Error::value(strand, "expected a seekable reader"));
     }
     Ok(())
-})
-.await?;
+})?;
 ```
 
 `ByteHandle::into_read` and its siblings narrow the handle to the traits the
@@ -364,17 +362,20 @@ A provider builds the handle with `ByteHandle::with_caps`, or the constructor
 matching its capabilities (`ByteHandle::read_seek` and so on). How it shares
 the stream depends on what it holds:
 
-- A provider whose stream clones cheaply, such as `fs.File` over a
-  `vfs::File`, hands out a clone. Its own buffer isn't shared, so
-  `poll_flush` writes out pending writes and moves a seekable stream back over
-  read-ahead. Read-ahead a stream can't take back goes in `with_prefix`, which
-  the handle serves first; a seekable handle realigns past it before its first
-  seek or write.
-- A provider with its own stack, such as a `compress` stream or an
-  `io.Buffered`, keeps it in `io::Shared` and hands out a clone. Each operation
-  on a clone holds the stream until it completes, so consumers and the
-  provider see one position and one buffer. `Shared::close` ends the stream
-  for every clone and returns it, for the provider to finish or drop.
+- A provider with no buffer of its own, whose stream clones cheaply, such as
+  `fs.RawFile` over a `vfs::File`, hands out a clone.
+- A provider with a buffer or stack, such as `fs.File`, a `compress` stream or
+  an `io.Buffered`, keeps it in `io::Shared` and hands out a clone. Each
+  operation on a clone holds the stream until it completes, so consumers and
+  the provider see one position and one buffer. `Shared::close` ends the
+  stream for every clone and returns it, for the provider to finish or drop.
+  `Shared::try_lock` holds it without waiting through a shared reference, for
+  a method that runs under a shared borrow and settles the buffer only when
+  that is cheap.
+
+`ByteHandle::with_prefix` sets bytes the handle serves before the stream's own,
+for a provider whose read-ahead the stream can't take back; a seekable handle
+realigns past it before its first seek or write.
 
 The lent interface is `dyn IntoByteIo<'v> + 'a`, where `'a` is the lend, so an
 adapter can borrow the provider's state or receiver for the query. Each method
