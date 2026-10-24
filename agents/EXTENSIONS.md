@@ -289,7 +289,7 @@ for byte I/O handles; an extension can define its own the same way:
 pub struct ByteIo;
 
 impl InterfaceTag for ByteIo {
-    type Interface<'v> = dyn IntoByteIo + 'v;
+    type Interface<'v, 'a> = dyn IntoByteIo<'v> + 'a;
 }
 ```
 
@@ -322,10 +322,10 @@ tests for:
 
 ```rust
 let res = value.query::<ByteIo, _>(strand, |strand, io| {
-    if !io.caps().contains(IoCaps::READ | IoCaps::SEEK) {
+    if !io.caps(strand)?.contains(IoCaps::READ | IoCaps::SEEK) {
         return Err(Error::value(strand, "expected a seekable reader"));
     }
-    Ok(io.take())
+    io.take(strand)
 });
 match res {
     Ok(handle) => { /* fast path: handle.into_read_seek() */ }
@@ -356,9 +356,8 @@ let handle = io::take(strand, &value, |strand, caps| {
 ```
 
 `ByteHandle::into_read` and its siblings narrow the handle to the traits the
-consumer needs, handing it back on a mismatch. `io::buffered` wraps a handle in
-an `io.Buffered`, and `io::error` maps an `io::Error` to the closest runtime
-error for code without a richer mapping.
+consumer needs, handing it back on a mismatch. `io::error` maps an `io::Error`
+to the closest runtime error for code without a richer mapping.
 
 A provider builds the handle with the constructor matching its capabilities
 (`ByteHandle::read_seek` and so on). Buffered read-ahead goes in
@@ -367,15 +366,36 @@ it before its first seek or write. There is no way to hand over a handle and
 keep the provider: a script that wants to keep a file passes a duplicate
 (`file.dup()`) instead.
 
-The lent interface is `dyn IntoByteIo + 'v`, so implement the trait on the
-borrowed state type itself; an adapter holding short borrows of its fields does
-not live long enough. In the stub, a provider class claims the type-only `io.Io`
-protocol (`import io: - @Io`, then `class File: ... @Io`), and a consumer
-accepts it in its signature. `fs.File` (`dolang-ext-shell/src/fs/file.rs`) is a
-provider, and `zip.open` (`dolang-ext-zip/src/zip.rs`) is a consumer that also
-accepts a path by opening it and building the handle itself. The `compress`
-streams (`dolang-ext-compress/src/compress.rs`) are both: each takes a handle
-and provides its own, so they chain.
+The lent interface is `dyn IntoByteIo<'v> + 'a`, where `'a` is the lend, so an
+adapter can borrow the provider's state or receiver for the query. Each method
+takes the querying strand, and `caps` and
+`take` can raise. A provider that lends from its borrowed state still holds the
+borrow, so it must not run code that could borrow the same object; native
+providers ignore the strand.
+
+A provider type also inherits `io.Io` at runtime: call
+`.supertype(TypeObject::Io)` in `build`, and define getters for the capabilities
+`caps` reports, as `false` once the provider is closed or taken. A capability it
+does not define reads as `false` through `Io`. The type defines its own `read`,
+`write`, `seek` and `close`, and one it lacks raises a `FieldError` through
+`Io`. The helpers (`read_all`, `write_all`, `copy_to`, `chunks`, and
+`(sink)`/`(put)` when the type defines none) come from `Io` and call those
+methods, so the type needs no code for them. `Io` is a `Sink`, so the type
+doesn't add `.supertype(TypeObject::Sink)` either. In the stub, the provider
+class names `Io` as a supertype (`import io: - Io`, then `class File: ... Io`),
+and a consumer that only accepts one imports it type-only (`- @Io`) for its
+signature. `fs.File` (`dolang-ext-shell/src/fs/file.rs`) is a provider, and
+`zip.open` (`dolang-ext-zip/src/zip.rs`) is a consumer that also accepts a path
+by opening it and building the handle itself. The `compress` streams
+(`dolang-ext-compress/src/compress.rs`) are both: each takes a handle and
+provides its own, so they chain.
+
+A Do subclass of `io.Io` provides `ByteIo` too. Its handle sends requests to
+strands that call the stream's methods, so a consumer must poll the handle from
+the VM's event loop, as an `async` native function awaiting it does, never with
+`block_on` or from another thread. An exception from one of those methods
+reaches the handle as an `io::Error` with the exception's message, which the
+consumer maps as it maps any other.
 
 ## GC Slots and Lifetime Transmuting
 

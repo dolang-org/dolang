@@ -1,10 +1,19 @@
 import compress
   fs
+  sys
+  zip
   io:
     - Buffered
+    - Io
+  strand:
+    - channel
+    - spawn
+  testlib.memio:
+    - MemIo
   testlib.vfs:
     - vfs
   test:
+    - assert
     - assert_eq
     - assert_throws
     - test
@@ -12,6 +21,7 @@ import compress
     - RuntimeError
     - StateError
     - TypeError
+    - ValueError
 
 #[test]
 #[vfs]
@@ -178,3 +188,134 @@ def dup_keeps_original()
     assert_eq $buf.read_line() "first\n"
     buf.close()
     assert_eq $file.read() b"first\nsecond\n"
+
+#[test]
+#[vfs]
+def streams_are_io()
+  fs.Path("plain.txt").write "plain"
+  let buf = Buffered $fs.open("plain.txt", buffer: false)
+  assert (type buf Io)
+  assert_eq [buf.readable, buf.writable, buf.seekable] [true, false, true]
+  buf.close()
+  assert_eq [buf.readable, buf.writable, buf.seekable] [false, false, false]
+  compress.compress data.gz :GZIP: do |stream|
+    assert (type stream Io)
+    assert_eq [stream.readable, stream.writable, stream.seekable] [false, true, false]
+    assert_eq (stream.write "data") 4
+  compress.decompress data.gz do |stream|
+    assert (type stream Io)
+    assert_eq [stream.readable, stream.writable, stream.seekable] [true, false, false]
+    stream.close()
+    assert_eq $stream.readable false
+
+#[test]
+#[vfs]
+def helpers_on_native_streams()
+  fs.Path("in.txt").write "héllo\nworld\n"
+  let raw = fs.open in.txt buffer: false
+  assert_eq (raw.read_all()) (Bin "héllo\nworld\n")
+  raw.close()
+  # A line-iterating file still has chunks
+  let file = fs.open in.txt
+  assert_eq [...file.chunks(4)] [b"h\xc3\xa9l", b"lo\nw", b"orld", b"\n"]
+  file.close()
+  let file = fs.open in.txt
+  assert_eq (file.read_all_str()) "héllo\nworld\n"
+  file.close()
+  let buf = Buffered $fs.open("in.txt", buffer: false)
+  assert_eq (buf.read_all_str()) "héllo\nworld\n"
+  buf.close()
+  fs.Path("bad.bin").write b"\xff"
+  let bad = fs.open bad.bin
+  assert_throws $RuntimeError do bad.read_all_str()
+  bad.close()
+
+#[test]
+#[vfs]
+def copy_between_native_streams()
+  fs.Path("in.txt").write "data"
+  let source = fs.open in.txt buffer: false
+  let dest = fs.open out.txt w buffer: false
+  assert_eq (source.copy_to dest) 4
+  dest.write_all "!"
+  source.close()
+  dest.close()
+  assert_eq (fs.Path("out.txt").read_str()) "data!"
+  # A compressor inherits `Io`'s sink
+  compress.compress data.gz :GZIP: do |stream|
+    let source = fs.open in.txt
+    assert_eq (source.copy_to stream) 4
+    source.close()
+    stream.(put) 42
+    assert (type stream Sink)
+    stream.precrimp().put "!"
+  compress.decompress data.gz do |stream|
+    assert_eq (stream.read_all_str()) "data42!\n"
+
+#[test]
+def zip_over_do_streams()
+  let archive = MemIo()
+  zip.open $archive "w" do |out|
+    out.open "hello.txt" do |file| file.write "Hello, World!"
+  assert $archive.closed
+  assert_eq (archive.data[..2]) b"PK"
+  zip.open (MemIo archive.data) do |source|
+    source.open "hello.txt" do |file|
+      assert_eq (str (file.read())) "Hello, World!"
+
+#[test]
+def compress_over_unseekable_do_streams()
+  let sink = MemIo read: false seek: false
+  compress.compress $sink :GZIP: do |stream| stream.write "squeezed"
+  assert $sink.closed
+  let source = MemIo $sink.data write: false seek: false
+  compress.decompress $source do |stream|
+    assert_eq $stream.format :GZIP:
+    assert_eq (stream.read_all_str()) "squeezed"
+
+#[test]
+def unreadable_do_stream_is_refused()
+  assert_throws $ValueError str: "value error: source must be readable" do
+    compress.decompress (MemIo read: false) do |_| nil
+
+class FailingRead: MemIo
+  pub def read _self _size @ Int -> Bin
+    throw StateError("read failed")
+
+# Each consumer raises its own error, with the exception's message
+#[test]
+def do_stream_exception_fails_consumer()
+  assert_throws $sys.Error str: "state error: read failed" do
+    compress.decompress (FailingRead()) do |stream| stream.read()
+  let buf = Buffered (FailingRead())
+  assert_throws $RuntimeError str: "state error: read failed" do buf.read_line()
+
+# A stream whose reads wait until told to go on, and which reports its close.
+class Waiting: MemIo
+  field started go closes
+
+  def (init) self started go closes
+    MemIo.(init) $self write: false seek: false
+    self.#started = started
+    self.#go = go
+    self.#closes = closes
+
+  pub def read self _size @ Int -> Bin
+    self.#started.put true
+    self.#go.next()
+
+  pub def close self
+    self.#closes.put true
+
+#[test]
+def cancelling_consumer_cancels_do_stream()
+  let started_send started = channel()
+  let _go_send go = channel()
+  let closes_send closes = channel()
+  let stream = Waiting $started_send $go $closes_send
+  let consumer = spawn do
+    compress.decompress $stream do |inner| inner.read()
+  started.next()
+  consumer.cancel()
+  # The stream is closed once its server stops
+  assert_eq (closes.next()) true

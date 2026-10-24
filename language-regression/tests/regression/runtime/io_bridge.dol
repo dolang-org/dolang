@@ -1,0 +1,180 @@
+import std: error
+import io:
+  - Io
+  - Buffered
+import strand:
+  - channel
+import regression2:
+  - byte_duplex
+  - byte_overwrite
+  - byte_read
+  - byte_seek
+  - byte_tell
+  - byte_write
+
+# A seekable in-memory stream
+class MemIo: Io
+  pub field data pos closed limit
+
+  def (init) self data limit = nil
+    self.data = data
+    self.pos = 0
+    self.closed = false
+    self.limit = limit
+
+  #[getter]
+  pub def readable _self
+    true
+
+  #[getter]
+  pub def writable _self
+    true
+
+  #[getter]
+  pub def seekable _self
+    true
+
+  pub def read self size
+    let end = (self.pos + size)
+    if (end > self.data.len)
+      end = self.data.len
+    let chunk = (self.data[self.pos..end])
+    self.pos = end
+    chunk
+
+  # Writes at most `limit` bytes per call
+  pub def write self data
+    let bytes = Bin $data
+    if (self.limit != nil && bytes.len > self.limit)
+      bytes = (bytes[..self.limit])
+    let out = BinBuf()
+    out.extend (self.data[..self.pos])
+    out.extend $bytes
+    let rest = (self.pos + bytes.len)
+    if (rest < self.data.len)
+      out.extend (self.data[rest..])
+    self.data = out.freeze()
+    self.pos = rest
+    bytes.len
+
+  pub def seek self offset = nil :start = nil :end = nil
+    if (start != nil)
+      self.pos = start
+    else if (end != nil)
+      self.pos = (self.data.len + end)
+    else if (offset != nil)
+      self.pos = (self.pos + offset)
+    self.pos
+
+  pub def close self
+    self.closed = true
+
+# A native consumer reads, seeks and writes a Do stream
+assert_eq (byte_read (MemIo b"abcdef")) b"abcdef"
+assert_eq (byte_read (MemIo b"")) b""
+assert_eq (byte_tell (MemIo b"abcdef")) 0
+assert_eq (byte_seek (MemIo b"abcdef") 4) b"ef"
+assert_eq (byte_overwrite (MemIo b"abcdef") b"XY") b"XYcdef"
+
+# Writes are repeated while the stream writes short, then the stream is closed
+let short = MemIo b"" 3
+byte_write $short b"hello world"
+assert_eq $short.data b"hello world"
+assert $short.closed
+
+# A buffer over a Do stream reads lines
+let lines = Buffered (MemIo b"one\ntwo\n")
+assert_eq (lines.read_line()) "one\n"
+assert_eq (lines.read_line()) "two\n"
+lines.close()
+
+# An exception from a stream method fails the consumer with its message; the
+# consumer here raises I/O errors as `ValueError`
+class Failing: MemIo
+  pub def read _self _size
+    throw error.StateError "read failed"
+
+def io_failure f
+  try
+    f()
+    nil
+  catch error.ValueError: err
+    str $err
+
+assert_eq (io_failure do byte_read (Failing b"")) "value error: state error: read failed"
+
+# So does one from `close`, to a consumer that closes
+class FailingClose: MemIo
+  pub def close _self
+    throw error.StateError "close failed"
+
+assert_eq (io_failure do byte_write (FailingClose b"") b"x") "value error: state error: close failed"
+
+# A bad result from a stream method fails the consumer
+class BadRead: MemIo
+  pub def read _self _size
+    "text"
+
+assert_eq (io_failure do byte_read (BadRead b"")) "value error: type error: read: expected `Bin`"
+
+class BadWrite: MemIo
+  pub def write _self _data
+    0
+
+let bad_write = (io_failure do byte_write (BadWrite b"") b"x")
+assert_eq $bad_write "value error: write: expected a count of bytes written"
+
+# A capability getter that raises propagates from the query
+class BadCaps: MemIo
+  #[getter]
+  pub def readable _self
+    throw error.StateError "no capabilities"
+
+let bad_caps = try
+  byte_read (BadCaps b"")
+  nil
+catch error.StateError: err
+  str $err
+assert_eq $bad_caps "state error: no capabilities"
+
+# A stream that neither reads nor writes is refused
+class Inert: Io
+  pub def close _self
+    nil
+
+let inert = try
+  byte_read (Inert())
+  false
+catch error.ValueError: _
+  true
+assert $inert
+
+# A stream that does not seek serves a read and a write at once: the read
+# waits for the write
+class Echo: Io
+  field send recv
+
+  def (init) self
+    let send recv = channel()
+    self.#send = send
+    self.#recv = recv
+
+  #[getter]
+  pub def readable _self
+    true
+
+  #[getter]
+  pub def writable _self
+    true
+
+  pub def read self _size
+    self.#recv.next()
+
+  pub def write self data
+    self.#send.put (Bin data)
+    data.len
+
+  pub def close _self
+    nil
+
+assert_eq (byte_duplex (Echo()) b"ping") b"ping"

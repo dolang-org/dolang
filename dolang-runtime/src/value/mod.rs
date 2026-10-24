@@ -237,7 +237,10 @@ impl<'v> Value<'v> {
     pub fn query<'s, K: InterfaceTag, R>(
         &self,
         strand: &mut Strand<'v, 's>,
-        consumer: impl FnOnce(&mut Strand<'v, 's>, &mut K::Interface<'v>) -> Result<'v, 's, R>,
+        consumer: impl for<'a> FnOnce(
+            &mut Strand<'v, 's>,
+            &mut K::Interface<'v, 'a>,
+        ) -> Result<'v, 's, R>,
     ) -> Result<'v, 's, R> {
         interface::query::<K, R>(self, strand, consumer)
     }
@@ -3500,6 +3503,8 @@ pub enum TypeObject {
     Iterable,
     /// `std.Sink`
     Sink,
+    /// `io.Io`, the abstract supertype of byte streams
+    Io,
     /// `std.Func`, the abstract supertype of callables
     Func,
     /// `std.FmtValue`, a value bound to a format specification
@@ -3546,6 +3551,7 @@ impl<'v> Input<'v> for TypeObject {
             TypeObject::Iter => &builtins.input_iter,
             TypeObject::Iterable => &builtins.iterable,
             TypeObject::Sink => &builtins.output_iter,
+            TypeObject::Io => &builtins.io,
             TypeObject::Func => &builtins.func,
             TypeObject::FmtValue => crate::stdlib::fmt::fmt_value_singleton(vm),
             TypeObject::FmtParam => crate::stdlib::fmt::fmt_param_singleton(vm),

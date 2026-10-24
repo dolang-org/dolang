@@ -1003,32 +1003,26 @@ pub trait Object<'v>: Sized + 'v {
     /// Implements Do sink outputsetting `out` to a
     /// sink object which should implement [`Object::put`]
     /// # Default
-    /// Returns a type error
-    #[allow(unused_variables)]
+    /// Dispatches to a `(sink)` inherited from an abstract supertype, such as
+    /// [`Io`](TypeObject::Io)'s. Otherwise returns a type error.
     fn sink<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> impl Future<Output = Result<'v, 's, ()>> {
-        future::ready(Err(Error::type_error(
-            strand,
-            format!("sink coercion not supported: {}", Self::NAME),
-        )))
+        default_object_sink(this, strand, out)
     }
 
     /// Implements Do output iteration (`send`), inserting `value` into the output.
     /// # Default
-    /// Returns a type error
-    #[allow(unused_variables)]
+    /// Dispatches to a `(put)` inherited from an abstract supertype, such as
+    /// [`Io`](TypeObject::Io)'s. Otherwise returns a type error.
     fn put<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         value: Slot<'v, 'a>,
     ) -> impl Future<Output = Result<'v, 's, ()>> {
-        future::ready(Err(Error::type_error(
-            strand,
-            format!("sink `put` not supported: {}", Self::NAME),
-        )))
+        default_object_put(this, strand, value)
     }
 
     /// Implements spread in a context-sensitive way.
@@ -1608,6 +1602,56 @@ pub trait Object<'v>: Sized + 'v {
     fn finalize<'a>(this: Instance<'v, 'a, Self>) {}
 }
 
+async fn default_object_sink<'v, 'a, 's, T: Object<'v>>(
+    this: Instance<'v, 'a, T>,
+    strand: &'a mut Strand<'v, 's>,
+    out: Slot<'v, 'a>,
+) -> Result<'v, 's, ()> {
+    let recv = Recv::<ObjectWrap<'v, T>>::new(this.receiver);
+    let Some(&Entry::Delegate(supertype_index, MemberKind::Method)) =
+        recv.vtbl().entry(Sym::well_known(sym::SINK_METHOD))
+    else {
+        return Err(Error::type_error(
+            strand,
+            format!("sink coercion not supported: {}", T::NAME),
+        ));
+    };
+    let supertype = instance_supertype::<T>(recv, strand, supertype_index);
+    strand
+        .with_slots(async |strand, [mut delegator]| {
+            Output::set(strand, Slot::reborrow(&mut delegator), this);
+            Delegated::new(supertype, &delegator)
+                .op_sink(strand, out)
+                .await
+        })
+        .await
+}
+
+async fn default_object_put<'v, 'a, 's, T: Object<'v>>(
+    this: Instance<'v, 'a, T>,
+    strand: &'a mut Strand<'v, 's>,
+    value: Slot<'v, 'a>,
+) -> Result<'v, 's, ()> {
+    let recv = Recv::<ObjectWrap<'v, T>>::new(this.receiver);
+    let Some(&Entry::Delegate(supertype_index, MemberKind::Method)) =
+        recv.vtbl().entry(Sym::well_known(sym::PUT_METHOD))
+    else {
+        return Err(Error::type_error(
+            strand,
+            format!("sink `put` not supported: {}", T::NAME),
+        ));
+    };
+    let supertype = instance_supertype::<T>(recv, strand, supertype_index);
+    strand
+        .with_slots(async |strand, [mut delegator]| {
+            Output::set(strand, Slot::reborrow(&mut delegator), this);
+            Delegated::new(supertype, &delegator)
+                .op_put(strand, value)
+                .await
+        })
+        .await
+}
+
 async fn default_object_spread<'v, 'a, 's, T: Object<'v>>(
     this: Instance<'v, 'a, T>,
     strand: &'a mut Strand<'v, 's>,
@@ -1839,6 +1883,13 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
                 Some(Entry::Method(_) | Entry::Delegate(_, MemberKind::Method)) => {
                     BoundMethod::create(strand, &this, field, out);
                     Ok(())
+                }
+                Some(Entry::Delegate(idx, MemberKind::Getter | MemberKind::Property)) => {
+                    let supertype = instance_supertype::<T>(this.clone(), strand, *idx);
+                    strand.with_slots_sync(|strand, [mut delegator]| {
+                        Output::set(strand, Slot::reborrow(&mut delegator), &this);
+                        Delegated::new(supertype, &delegator).op_get(strand, field, out)
+                    })
                 }
                 Some(Entry::Setter(_) | Entry::Delegate(_, _)) => Err(Error::field(strand, field)),
                 None => T::get(Instance::from_recv(&this), strand, field, out),

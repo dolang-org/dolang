@@ -110,9 +110,10 @@ Errors from either side propagate; a query nothing answers fails with an
 unsupported error, which consumers with a fallback test for.
 
 The first such interface, `io::ByteIo`, hands an owned `ByteHandle` over
-futures-io traits from a native byte source or sink to another extension (in Do,
-the type-only `io.Io` protocol). Taking
-it closes the provider; a script that wants to keep its handle hands over a
+futures-io traits from a native byte source or sink to another extension.
+Providers inherit `io.Io` (`io/protocol.rs`), an abstract type like `Iterable`
+that declares the stream methods and capability getters. Taking it closes the
+provider; a script that wants to keep its handle hands over a
 duplicate instead. A provider's read-ahead travels with the handle as a private
 prefix served before the underlying I/O; a seekable handle realigns past it
 before seeking or writing.

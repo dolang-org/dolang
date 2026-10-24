@@ -8,7 +8,7 @@
 import fs:
   - @Path
 import io:
-  - @Io
+  - Io
 
 # A compression format.
 pub @let Format = $
@@ -28,7 +28,7 @@ pub @let Level = (:FASTEST: | :BEST: | :DEFAULT: | Int)
 # Returned by [`decompress`](compress.decompress). Handing it to a function
 # that takes an [`Io`](io.Io) passes on the decompressed bytes, and the
 # stream reads as closed afterward.
-pub class Decompressor: @Io
+pub class Decompressor: Io
   # The format being decompressed, as detected for `:AUTO:`.
   #[getter]
   pub def format self -> Format
@@ -63,7 +63,7 @@ pub class Decompressor: @Io
 # Returned by [`compress`](compress.compress). Handing it to a function that
 # takes an [`Io`](io.Io) lets that function write through it, and the
 # stream reads as closed afterward.
-pub class Compressor: @Io
+pub class Compressor: Io
   # The format being written.
   #[getter]
   pub def format self -> Format
@@ -72,11 +72,15 @@ pub class Compressor: @Io
   # Compresses and writes data.
   #
   # Raises [`StateError`](std.StateError) when the stream is closed.
+  #
+  # ## Returns
+  #
+  # The number of bytes written.
   pub def write
     self
     # Data to write.
     data @ (Bin | Str)
-  do
+  do -> Int
     ...
 
   # Finishes the compressed stream and closes the sink. Closing again does

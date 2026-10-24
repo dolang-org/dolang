@@ -5,9 +5,10 @@
 //! [`IoCaps`], then takes an owned [`ByteHandle`] over futures-io traits and narrows it
 //! to the traits it needs. [`take`] does both, flushing the provider first.
 //!
-//! [`buffered`] wraps a handle in a Do `io.Buffered`.
+//! A Do subclass of `io.Io` provides [`ByteIo`] through strands that call its methods,
+//! and its handle sends them requests.
 
-mod buffered;
+pub(crate) mod bridge;
 
 use std::{
     fmt,
@@ -20,9 +21,6 @@ use std::{
 use futures::io::{AsyncRead, AsyncSeek, AsyncWrite};
 
 use crate::{error::Error, object::interface::InterfaceTag, strand::Strand, value::Value};
-
-pub use buffered::buffered;
-pub(crate) use buffered::configure;
 
 bitflags::bitflags! {
     /// Capabilities of a [`ByteIo`] provider or [`ByteHandle`].
@@ -66,7 +64,7 @@ impl<T: ReadSeek + WriteSeek> ReadWriteSeek for T {}
 pub struct ByteIo;
 
 impl InterfaceTag for ByteIo {
-    type Interface<'v> = dyn IntoByteIo + 'v;
+    type Interface<'v, 'a> = dyn IntoByteIo<'v> + 'a;
 }
 
 /// Hands over a provider's byte I/O handle.
@@ -75,15 +73,23 @@ impl InterfaceTag for ByteIo {
 /// cannot consume it. After `take`, every method of the same lent interface panics. A
 /// provider whose handle was taken stops providing [`ByteIo`] and raises its usual closed
 /// error when queried, so a second consumer gets an error rather than a panic.
-pub trait IntoByteIo {
+///
+/// Each method takes the querying strand, so a provider can call back into the VM. A
+/// provider that lends this from its borrowed state holds the borrow during each call, so
+/// it must not run code that could borrow the same object.
+pub trait IntoByteIo<'v> {
     /// The provider's capabilities, checked before taking.
-    fn caps(&self) -> IoCaps;
+    fn caps<'s>(&mut self, strand: &mut Strand<'v, 's>) -> crate::error::Result<'v, 's, IoCaps>;
 
     /// Writes out anything the provider holds back, such as buffered writes.
     ///
     /// The default has nothing to flush.
-    fn poll_flush(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let _ = cx;
+    fn poll_flush(
+        &mut self,
+        strand: &mut Strand<'v, '_>,
+        cx: &mut Context<'_>,
+    ) -> Poll<io::Result<()>> {
+        let _ = (strand, cx);
         Poll::Ready(Ok(()))
     }
 
@@ -92,7 +98,8 @@ pub trait IntoByteIo {
     /// A consumer calls this only after [`poll_flush`](IntoByteIo::poll_flush) returns
     /// `Ready(Ok(()))`. Buffered read-ahead travels with the handle as its unread
     /// [prefix](ByteHandle::with_prefix).
-    fn take(&mut self) -> ByteHandle;
+    fn take<'s>(&mut self, strand: &mut Strand<'v, 's>)
+    -> crate::error::Result<'v, 's, ByteHandle>;
 }
 
 /// Takes `value`'s byte handle, flushing the provider first.
@@ -100,7 +107,7 @@ pub trait IntoByteIo {
 /// `accept` checks the provider's capabilities and raises to refuse it. A value that
 /// provides no [`ByteIo`] raises [`ErrorKind::Unsupported`](crate::error::ErrorKind), so
 /// a caller can replace that error with its own. A flush error is raised as [`error`]
-/// maps it.
+/// maps it, and an error from the provider is raised as is.
 pub async fn take<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
@@ -108,9 +115,10 @@ pub async fn take<'v, 's>(
 ) -> crate::error::Result<'v, 's, ByteHandle> {
     poll_fn(|cx| {
         let res = value.query::<ByteIo, _>(strand, |strand, io| {
-            accept(strand, io.caps())?;
-            match io.poll_flush(cx) {
-                Poll::Ready(Ok(())) => Ok(Poll::Ready(io.take())),
+            let caps = io.caps(strand)?;
+            accept(strand, caps)?;
+            match io.poll_flush(strand, cx) {
+                Poll::Ready(Ok(())) => io.take(strand).map(Poll::Ready),
                 Poll::Ready(Err(err)) => Err(error(strand, err)),
                 Poll::Pending => Ok(Poll::Pending),
             }
@@ -138,7 +146,7 @@ pub fn error<'v, 's>(strand: &mut Strand<'v, 's>, err: io::Error) -> Error<'v, '
     }
 }
 
-enum Io {
+pub(crate) enum Io {
     Read(Box<dyn Read>),
     Write(Box<dyn Write>),
     ReadSeek(Box<dyn ReadSeek>),
@@ -148,7 +156,7 @@ enum Io {
 }
 
 impl Io {
-    fn caps(&self) -> IoCaps {
+    pub(crate) fn caps(&self) -> IoCaps {
         match self {
             Io::Read(_) => IoCaps::READ,
             Io::Write(_) => IoCaps::WRITE,
@@ -165,8 +173,8 @@ impl Io {
 /// The `into_*` conversions narrow it to the traits a consumer needs. A mismatch hands the
 /// handle back.
 pub struct ByteHandle {
-    io: Io,
-    prefix: Vec<u8>,
+    pub(crate) io: Io,
+    pub(crate) prefix: Vec<u8>,
 }
 
 /// Boxes `io` as `$target`, serving `prefix` first if it is not empty.

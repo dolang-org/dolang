@@ -21,7 +21,7 @@ use dolang::runtime::{
     object::{Request, TypeBuilder},
     strand::InterruptMask,
     unpack,
-    value::{BinEmbryo, View},
+    value::{BinEmbryo, TypeObject, View},
     vm::Register,
 };
 use dolang_ext_shell::ResultExt as _;
@@ -305,14 +305,16 @@ pub(crate) struct Decompressor {
     reader: Option<Box<dyn Read>>,
 }
 
-impl IntoByteIo for Decompressor {
-    fn caps(&self) -> IoCaps {
-        IoCaps::READ
+impl<'v> IntoByteIo<'v> for Decompressor {
+    fn caps<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, IoCaps> {
+        Ok(IoCaps::READ)
     }
 
-    fn take(&mut self) -> ByteHandle {
+    fn take<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
         // Reads fill exactly what was asked for, so there is no read-ahead to hand over.
-        ByteHandle::read(self.reader.take().expect("stream already taken"))
+        Ok(ByteHandle::read(
+            self.reader.take().expect("stream already taken"),
+        ))
     }
 }
 
@@ -338,7 +340,13 @@ impl<'v> Object<'v> for Decompressor {
     }
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let builder = builder.supertype(TypeObject::Io);
         builder
+            .get("readable", |this, strand, out| {
+                let open = this.borrow(strand)?.reader.is_some();
+                Output::set(strand, out, open);
+                Ok(())
+            })
             .get("format", |this, strand, out| {
                 let annex = this.annex();
                 Output::set(strand, out, annex.format.sym(annex.global));
@@ -395,13 +403,15 @@ pub(crate) struct Compressor {
     writer: Option<Box<dyn Write>>,
 }
 
-impl IntoByteIo for Compressor {
-    fn caps(&self) -> IoCaps {
-        IoCaps::WRITE
+impl<'v> IntoByteIo<'v> for Compressor {
+    fn caps<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, IoCaps> {
+        Ok(IoCaps::WRITE)
     }
 
-    fn take(&mut self) -> ByteHandle {
-        ByteHandle::write(self.writer.take().expect("stream already taken"))
+    fn take<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
+        Ok(ByteHandle::write(
+            self.writer.take().expect("stream already taken"),
+        ))
     }
 }
 
@@ -427,13 +437,19 @@ impl<'v> Object<'v> for Compressor {
     }
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let builder = builder.supertype(TypeObject::Io);
         builder
+            .get("writable", |this, strand, out| {
+                let open = this.borrow(strand)?.writer.is_some();
+                Output::set(strand, out, open);
+                Ok(())
+            })
             .get("format", |this, strand, out| {
                 let annex = this.annex();
                 Output::set(strand, out, annex.format.sym(annex.global));
                 Ok(())
             })
-            .method("write", async move |this, strand, args, _out| {
+            .method("write", async move |this, strand, args, out| {
                 let ([data], []) = unpack!(strand, args, 1, 0)?;
                 let data = match data.view(strand) {
                     View::Str(s) => s.to_string().into_bytes(),
@@ -446,7 +462,10 @@ impl<'v> Object<'v> for Compressor {
                     .writer
                     .as_mut()
                     .ok_or_else(|| Error::state_error(strand, "stream closed"))?;
-                writer.write_all(&data).await.into_sys(strand)
+                writer.write_all(&data).await.into_sys(strand)?;
+                drop(borrow);
+                Output::set(strand, out, data.len());
+                Ok(())
             })
             .method("close", async move |this, strand, args, _out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;

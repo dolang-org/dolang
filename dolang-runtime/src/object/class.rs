@@ -427,10 +427,11 @@ pub(crate) async fn create<'v, 's>(
 
     // Build native_supers and entries in a single left-to-right MRO pass.
     // native_supers: non-abstract native type objects; index == ClassInstance native slot.
-    // Abstract entries store the type-object value directly (no separate list needed).
+    // abstract_supers: abstract native type objects, direct and inherited; entries store
+    // the type object directly.
     // entry_map: built left-to-right with first-insertion-wins (MRO order).
     let mut native_supers: Vec<Value<'v>> = Vec::new();
-    let mut seen_abstract: Vec<Value<'v>> = Vec::new(); // for dedup only
+    let mut abstract_supers: Vec<Value<'v>> = Vec::new();
     let mut entry_map = HashMap::new();
     let mut type_entry_map = HashMap::new();
 
@@ -448,6 +449,12 @@ pub(crate) async fn create<'v, 's>(
                     continue;
                 }
                 native_supers.push(type_obj.dup());
+            }
+            for type_obj in cls.abstract_supers.iter() {
+                if abstract_supers.iter().any(|s| s.repr_eq(strand, type_obj)) {
+                    continue;
+                }
+                abstract_supers.push(type_obj.dup());
             }
             // Merge parent's entries (left-wins). Abstract entries copy the value directly.
             for (sym, entry) in cls.entries.iter() {
@@ -522,13 +529,13 @@ pub(crate) async fn create<'v, 's>(
 
             // Direct native super. Skip if already seen (inherited via a ClassObject parent).
             if native_supers.iter().any(|s| s.repr_eq(strand, sup))
-                || seen_abstract.iter().any(|s| s.repr_eq(strand, sup))
+                || abstract_supers.iter().any(|s| s.repr_eq(strand, sup))
             {
                 continue;
             }
             if inspect.is_abstract {
                 // Abstract super: store the type-object directly in each entry.
-                seen_abstract.push(sup.dup());
+                abstract_supers.push(sup.dup());
                 for member in inspect.members {
                     entry_map
                         .entry(member.sym)
@@ -649,6 +656,7 @@ pub(crate) async fn create<'v, 's>(
         field_defaults: field_defaults.into(),
         type_field_defaults: type_field_defaults.into(),
         native_supers: native_supers.into(),
+        abstract_supers: abstract_supers.into(),
         is_final: Cell::new(false),
         inherited: Cell::new(false),
     };
@@ -1042,6 +1050,9 @@ pub(crate) struct ClassObjectAnnex<'v> {
     // Non-abstract native supers, in transitive collection order (left-to-right).
     // Index in this slice == slot index in ClassInstance::native_slots.
     pub(crate) native_supers: alias::Box<[Value<'v>]>,
+    // Abstract native supers, direct and inherited, in the same order. They answer
+    // interface queries after the native slots.
+    pub(crate) abstract_supers: alias::Box<[Value<'v>]>,
     // Set by `#[final]`; no class may then inherit from this one.
     pub(crate) is_final: Cell<bool>,
     // Set once a class inherits from this one; `#[final]` then fails.
@@ -1144,7 +1155,7 @@ impl<'v> Annex for ClassObjectAnnex<'v> {
                 FieldDefault::Value(v) | FieldDefault::Thunk(v) => v.accept(visit)?,
             }
         }
-        for v in self.native_supers.iter() {
+        for v in self.native_supers.iter().chain(self.abstract_supers.iter()) {
             v.accept(visit)?;
         }
         ControlFlow::Continue(())
@@ -1363,9 +1374,12 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                         getter: Some(getter),
                         ..
                     })) => strand.sync(async |strand| call!(strand, getter, out, obj).await),
-                    Some(ClassEntry::Method(_) | ClassEntry::Abstract(_, _)) => {
+                    Some(ClassEntry::Method(_) | ClassEntry::Abstract(_, MemberKind::Method)) => {
                         BoundMethod::create(strand, obj, field, out);
                         Ok(())
+                    }
+                    Some(ClassEntry::Abstract(type_obj, _)) => {
+                        Delegated::new(type_obj, &obj).op_get(strand, field, out)
                     }
                     Some(ClassEntry::Property { .. }) => Err(Error::field(strand, field)),
                     Some(ClassEntry::Delegate(_slot, _)) => {
@@ -2211,6 +2225,13 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 Delegated::new(native, &delegator)
                     .op_provide(&mut Request::new(strand, &mut *answer))?;
             }
+            for sup in this.annex().class.annex().abstract_supers.iter() {
+                if answer.is_done() {
+                    break;
+                }
+                Delegated::new(sup, &delegator)
+                    .op_provide(&mut Request::new(strand, &mut *answer))?;
+            }
             Ok(())
         })
     }
@@ -2350,9 +2371,15 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 getter: Some(getter),
                 ..
             })) => strand.sync(async |strand| call!(strand, getter, out, &this).await),
-            Some(ClassEntry::Method(_) | ClassEntry::Abstract(_, _)) => {
+            Some(ClassEntry::Method(_) | ClassEntry::Abstract(_, MemberKind::Method)) => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
+            }
+            Some(ClassEntry::Abstract(type_obj, _)) => {
+                strand.with_slots_sync(|strand, [mut delegator]| {
+                    Output::set(strand, Slot::reborrow(&mut delegator), &this);
+                    Delegated::new(type_obj, &delegator).op_get(strand, field, out)
+                })
             }
             Some(ClassEntry::Delegate(slot, _)) => {
                 let native = annex.natives[*slot]
@@ -2624,6 +2651,16 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     })
                     .await
             }
+            Some(ClassEntry::Abstract(type_obj, MemberKind::Method)) => {
+                strand
+                    .with_slots(async move |strand, [mut delegator]| {
+                        Output::set(strand, Slot::reborrow(&mut delegator), &this);
+                        Delegated::new(type_obj, &delegator)
+                            .op_sink(strand, out)
+                            .await
+                    })
+                    .await
+            }
             _ => Err(Error::not_supported(strand)),
         }
     }
@@ -2723,6 +2760,16 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     .with_slots(async move |strand, [mut delegator]| {
                         Output::set(strand, Slot::reborrow(&mut delegator), &this);
                         Delegated::new(native, &delegator)
+                            .op_put(strand, item)
+                            .await
+                    })
+                    .await
+            }
+            Some(ClassEntry::Abstract(type_obj, MemberKind::Method)) => {
+                strand
+                    .with_slots(async move |strand, [mut delegator]| {
+                        Output::set(strand, Slot::reborrow(&mut delegator), &this);
+                        Delegated::new(type_obj, &delegator)
                             .op_put(strand, item)
                             .await
                     })
