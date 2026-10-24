@@ -843,7 +843,7 @@ def extract p
   let source = if (path == nil)
     shell.stdin.read()
   else
-    Path(path).read()
+    Path(path).read_str()
   let display_path = (path || "<stdin>")
   let result = try
     build_extract $source $display_path $module $doc $all $strict $tokens
@@ -911,7 +911,7 @@ def typelib p
     module = module_among $file [...path.map do |dir| (Path dir)]
   if (module == nil)
     throw args.Error "name the module with --module, or put its source under a --path directory"
-  let unit = compile.compile "$file" $file.read() module: $module typecheck: true
+  let unit = compile.compile "$file" $file.read_str() module: $module typecheck: true
   let failed = false
   for diag = unit.diagnostics()
     if (diag.severity == :ERROR:)

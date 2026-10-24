@@ -1,4 +1,6 @@
 import std: error
+import io:
+  - Buffered
 import regression2:
   - ByteBuf
   - byte_overwrite
@@ -49,3 +51,53 @@ let unsupported = try
 catch error.UnsupportedError: _
   true
 assert $unsupported
+
+# A buffer serves its source's read-ahead, and hands its own on when taken
+let lines = Buffered (ByteBuf b"ab\ncd\nef" 2 "")
+assert_eq (lines.read_line()) "ab\n"
+assert_eq (byte_read lines) b"cd\nef"
+let taken = try
+  lines.read_line()
+  false
+catch error.StateError: _
+  true
+assert $taken
+
+# A taken seekable buffer keeps its logical position
+let seekable = Buffered (ByteBuf b"ab\ncd\n" 0 "s")
+seekable.read_line()
+assert_eq (byte_tell seekable) 3
+
+# Writing to a seekable buffer after reading writes at the logical position
+let rw = Buffered (ByteBuf b"abcdef" 0 "ws")
+assert_eq (rw.read 2) b"ab"
+rw.write XY
+assert_eq (rw.tell()) 4
+rw.seek start: 0
+assert_eq (rw.read()) b"abXYef"
+
+# A duplex buffer keeps read-ahead across writes, and flushes before reading
+# from its source
+let duplex = ByteBuf b"a\nb\n" 0 "d"
+let both = Buffered $duplex
+assert_eq (both.read_line()) "a\n"
+both.write x
+assert_eq (duplex.written()) b""
+assert_eq (both.read_line()) "b\n"
+assert_eq (both.read_line()) ""
+assert_eq (duplex.written()) b"x"
+
+# Taking a buffer flushes its pending writes
+let sink = ByteBuf b"" 0 "d"
+let pending = Buffered $sink
+pending.write pending
+byte_read $pending
+assert_eq (sink.written()) b"pending"
+
+# A buffer needs a byte I/O source
+let bad_source = try
+  Buffered 1
+  false
+catch error.TypeError: _
+  true
+assert $bad_source

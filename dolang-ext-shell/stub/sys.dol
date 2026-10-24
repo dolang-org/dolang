@@ -16,7 +16,7 @@ pub class Error: std.RuntimeError
   #
   # ```
   # try
-  #   fs.read "/definitely/missing"
+  #   fs.read_str "/definitely/missing"
   # catch Error: err
   #   echo $Str(err)
   # ```

@@ -1,0 +1,180 @@
+import compress
+  fs
+  io:
+    - Buffered
+  testlib.vfs:
+    - vfs
+  test:
+    - assert_eq
+    - assert_throws
+    - test
+  std:
+    - RuntimeError
+    - StateError
+    - TypeError
+
+#[test]
+#[vfs]
+def header_then_decompress()
+  compress.compress body.gz :GZIP: do |stream| stream.write "compressed body"
+  let body = fs.Path("body.gz").read()
+  fs.open data w do |file|
+    file.write "header line\n"
+    file.write $body
+  fs.open data buffer: false do |file|
+    let buf = Buffered $file
+    assert_eq $buf.read_line() "header line\n"
+    compress.decompress $buf do |stream|
+      assert_eq $stream.read() b"compressed body"
+    assert_throws $StateError do buf.read()
+
+#[test]
+#[vfs]
+def take_flushes_writes()
+  let buf = Buffered $fs.open("data", "w", buffer: false)
+  buf.write "plain "
+  compress.compress $buf :GZIP: do |stream| stream.write compressed
+  assert_throws $StateError do buf.write more
+  let buf = Buffered $fs.open("data", buffer: false)
+  assert_eq $buf.read(6) b"plain "
+  compress.decompress $buf do |stream|
+    assert_eq $stream.read() b"compressed"
+
+#[test]
+#[vfs]
+def lines()
+  fs.Path("lines.txt").write "one\r\ntwo\nthree"
+  let buf = Buffered $fs.open("lines.txt", buffer: false)
+  assert_eq $buf.read_line() "one\r\n"
+  let rest = $
+    for line = buf
+      - $line
+  assert_eq $rest ["two\n", "three"]
+  assert_eq $buf.read_line() ""
+  buf.close()
+
+  let buf = Buffered $fs.open("lines.txt", buffer: false)
+  assert_eq [...buf.lines().chomp()] ["one", "two", "three"]
+  buf.close()
+
+#[test]
+#[vfs]
+def read_str()
+  # "é" is two bytes, and "€" three.
+  fs.Path("text.txt").write "aé€b"
+  let buf = Buffered $fs.open("text.txt", buffer: false)
+  assert_eq $buf.read_str(2) "a"
+  assert_eq $buf.read_str(1) "é"
+  assert_eq $buf.read_str(4) "€b"
+  assert_eq $buf.read_str(4) ""
+  buf.close()
+
+  let buf = Buffered $fs.open("text.txt", buffer: false)
+  assert_eq $buf.read(1) b"a"
+  assert_eq $buf.read_str() "é€b"
+  buf.close()
+
+#[test]
+#[vfs]
+def invalid_utf8()
+  fs.Path("bad.txt").write b"ok\n\xff\xfe\n"
+  let buf = Buffered $fs.open("bad.txt", buffer: false)
+  assert_eq $buf.read_line() "ok\n"
+  assert_throws $RuntimeError do buf.read_line()
+  # The bytes stay unread.
+  assert_eq $buf.read() b"\xff\xfe\n"
+  buf.close()
+
+  fs.Path("split.txt").write b"a\xc3"
+  let buf = Buffered $fs.open("split.txt", buffer: false)
+  # The split character could still be completed, so it waits.
+  assert_eq $buf.read_str(2) "a"
+  assert_throws $RuntimeError do buf.read_str(2)
+  assert_throws $RuntimeError do buf.read_str()
+  buf.close()
+
+#[test]
+#[vfs]
+def tell_and_seek()
+  fs.Path("seek.txt").write "0123456789"
+  let buf = Buffered $fs.open("seek.txt", buffer: false)
+  assert_eq $buf.read(2) b"01"
+  assert_eq $buf.tell() 2
+  assert_eq $buf.seek(3) 5
+  assert_eq $buf.read(1) b"5"
+  assert_eq $buf.seek(start: 1) 1
+  assert_eq $buf.read(2) b"12"
+  assert_eq $buf.seek(end: -2) 8
+  assert_eq $buf.read() b"89"
+  buf.close()
+
+#[test]
+#[vfs]
+def read_write_switching()
+  let buf = Buffered $fs.open("rw.txt", "w+", buffer: false)
+  buf.write "hello world"
+  assert_eq $buf.tell() 11
+  buf.seek start: 0
+  assert_eq $buf.read(6) b"hello "
+  buf.write WORLD
+  assert_eq $buf.tell() 11
+  buf.seek start: 0
+  assert_eq $buf.read() b"hello WORLD"
+  buf.close()
+  assert_eq $fs.Path("rw.txt").read() b"hello WORLD"
+
+#[test]
+#[vfs]
+def large_transfers()
+  let data = BinBuf()
+  for i = (0..5000)
+    data.extend "line $i\n"
+  let data = data.freeze()
+  let buf = Buffered $fs.open("large.txt", "w", buffer: false)
+  buf.write "x"
+  buf.write $data
+  buf.close()
+  let buf = Buffered $fs.open("large.txt", buffer: false)
+  assert_eq $buf.read(1) b"x"
+  assert_eq $buf.read() $data
+  buf.close()
+
+#[test]
+#[vfs]
+def put_and_flush()
+  let file = fs.open out.txt w buffer: false
+  let buf = Buffered $file
+  buf.put "a"
+  buf.put 1
+  buf.put b"b"
+  assert_eq $fs.Path("out.txt").read() b""
+  buf.flush()
+  assert_eq $fs.Path("out.txt").read() b"a1b"
+  buf.close()
+  buf.close()
+  assert_throws $StateError do buf.write more
+
+#[test]
+#[vfs]
+def wrong_direction()
+  fs.Path("ro.txt").write "data"
+  let buf = Buffered $fs.open("ro.txt", buffer: false)
+  assert_throws $StateError do buf.write more
+  buf.close()
+  let buf = Buffered $fs.open("wo.txt", "w", buffer: false)
+  assert_throws $StateError do buf.read()
+  buf.close()
+  let buf = Buffered $fs.open("ap.txt", "a", buffer: false)
+  assert_throws $StateError do buf.tell()
+  buf.close()
+  assert_throws $TypeError do Buffered 1
+
+#[test]
+#[vfs]
+def dup_keeps_original()
+  fs.Path("dup.txt").write "first\nsecond\n"
+  fs.open dup.txt buffer: false do |file|
+    let buf = Buffered $file.dup()
+    assert_eq $buf.read_line() "first\n"
+    buf.close()
+    assert_eq $file.read() b"first\nsecond\n"

@@ -7,7 +7,7 @@ import test:
 import fs:
   - create_dir
   - open
-  - read
+  - read_str
   - write
   - append
   - remove
@@ -20,7 +20,6 @@ import shell
 import std:
   - RuntimeError
   - StateError
-  - TypeError
 
 #[test]
 #[vfs]
@@ -35,7 +34,7 @@ def write_and_read_back_text()
 
     # Read it back
     open $test_path r do |f|
-      let contents = f.read()
+      let contents = f.read_str()
       assert_eq $contents "Hello, World!"
 
     # Cleanup
@@ -49,12 +48,12 @@ def write_binary_data()
     let binary_data = b"Hello"
 
     # Write binary data
-    open $test_path wb do |f|
+    open $test_path w do |f|
       let written = f.write $binary_data
       assert (written > 0)
 
-    # Read it back in binary mode
-    open $test_path rb do |f|
+    # Read it back
+    open $test_path do |f|
       let contents = f.read()
       assert_eq $contents $binary_data
 
@@ -72,7 +71,7 @@ def sink_put_is_verbatim_for_every_value_type()
       file.put b"BIN"
       file.put 42
 
-    open $test_path rb do |file|
+    open $test_path do |file|
       assert_eq $file.read() b"lineBIN42"
 
 # Terminators are opt-in, and come out identical on every platform unless the
@@ -86,7 +85,7 @@ def sink_put_terminates_only_when_asked()
       out.put "one"
       out.put "two"
 
-    open $test_path rb do |file|
+    open $test_path do |file|
       assert_eq $file.read() b"one\ntwo\n"
 
     open $test_path w do |file|
@@ -97,7 +96,7 @@ def sink_put_terminates_only_when_asked()
       b"one\r\n"
     else
       b"one\n"
-    open $test_path rb do |file|
+    open $test_path do |file|
       assert_eq $file.read() $expected
 
 #[test]
@@ -110,13 +109,13 @@ def write_at_offset()
       # An explicit offset neither consults nor moves the cursor.
       assert_eq (f.write "XY" offset: 2) 2
       assert_eq $f.tell() 0
-      assert_eq $f.read(4) "abXY"
+      assert_eq $f.read(4) b"abXY"
       assert_eq $f.tell() 4
 
       # Writing past the end extends the file, zero-filling the gap.
       assert_eq (f.write "Z" offset: 11) 1
 
-    assert_eq (read test_path) "abXYefghij\0Z"
+    assert_eq (read_str test_path) "abXYefghij\0Z"
     remove $test_path
 
 #[test]
@@ -129,7 +128,7 @@ def write_at_offset_transfers_the_whole_count()
 
     open $test_path "w+" do |f|
       assert_eq (f.write data offset: 0) $data.len
-    assert_eq (read test_path) $data
+    assert_eq (read_str test_path) $data
     remove $test_path
 
 #[test]
@@ -146,7 +145,7 @@ def write_at_offset_is_refused_in_append_mode()
       # The handle still works without one.
       assert_eq (f.write "d") 1
 
-    assert_eq (read test_path) "abcd"
+    assert_eq (read_str test_path) "abcd"
     remove $test_path
 
 #[test]
@@ -166,7 +165,7 @@ def write_to_file_opened_in_append_mode()
 
     # Read all content
     open $test_path r do |f|
-      let contents = f.read()
+      let contents = f.read_str()
       assert (contents.contains "First line")
       assert (contents.contains "Second line")
 
@@ -242,9 +241,9 @@ def remove_all_removes_directory_trees()
 def fs_write_writes_and_truncates_text_file()
     let test_path = "test_fs_write_text.txt"
     assert_eq (write test_path "Hello from fs.write") 19
-    assert_eq (read test_path) "Hello from fs.write"
+    assert_eq (read_str test_path) "Hello from fs.write"
     assert_eq (write (Path test_path) "short") 5
-    assert_eq ((Path test_path).read()) "short"
+    assert_eq ((Path test_path).read_str()) "short"
     remove $test_path
 
 #[test]
@@ -252,7 +251,7 @@ def fs_write_writes_and_truncates_text_file()
 def fs_write_writes_binary_data()
     let test_path = "test_fs_write_binary.bin"
     assert_eq (write test_path b"Hello") 5
-    assert_eq ((Path test_path).read "b") b"Hello"
+    assert_eq ((Path test_path).read()) b"Hello"
     remove $test_path
 
 #[test]
@@ -262,7 +261,7 @@ def fs_append_appends_and_creates_text_files()
     remove $test_path ignore: true
     assert_eq (append test_path "first") 5
     assert_eq (append test_path " second") 7
-    assert_eq (read test_path) "first second"
+    assert_eq (read_str test_path) "first second"
     remove $test_path
 
 #[test]
@@ -271,7 +270,7 @@ def path_append_appends_binary_data()
     let test_path = Path "test_path_append_binary.bin"
     test_path.write b"one"
     assert_eq (test_path.append b"two") 3
-    assert_eq (test_path.read "b") b"onetwo"
+    assert_eq (test_path.read()) b"onetwo"
     test_path.remove()
 
 #[test]
@@ -287,19 +286,8 @@ def path_remove_supports_all_and_ignore()
 
 #[test]
 #[vfs]
-def text_write_rejects_binary_without_changing_file()
-  open restricted.txt w+ do |file|
-    file.write "unchanged"
-    assert_throws $TypeError do file.write b"bad"
-    assert_throws $TypeError do file.write b"bad" offset: 0
-    assert_eq $file.tell() 9
-    file.seek start: 0
-    assert_eq $file.read() "unchanged"
-
-#[test]
-#[vfs]
-def binary_write_accepts_utf8_strings()
-  open utf8.bin w+b do |file|
+def raw_write_accepts_utf8_strings()
+  open utf8.bin w+ buffer: false do |file|
     assert_eq (file.write "hé") 3
     assert_eq (file.write "é" offset: 0) 2
     assert_eq $file.tell() 3

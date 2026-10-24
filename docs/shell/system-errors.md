@@ -15,7 +15,7 @@ classification.
 import fs sys
 
 try
-  fs.read config.ini
+  fs.read_str config.ini
 catch sys.NotFoundError: error
   echo "configuration is missing: $error"
 catch sys.PermissionDeniedError: error
@@ -40,7 +40,7 @@ name when known:
 import fs sys
 
 try
-  fs.read /definitely/missing
+  fs.read_str /definitely/missing
 catch sys.Error: error
   if error.code == nil
     echo $error

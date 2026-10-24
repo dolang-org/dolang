@@ -24,7 +24,7 @@ def local_get_and_put()
   Path("source.bin").write b"hello"
   assert_eq (transfer.get "source.bin") (Path "source.bin")
   transfer.put "source.bin" "output.bin"
-  assert_eq (Path("output.bin").read "b") b"hello"
+  assert_eq (Path("output.bin").read()) b"hello"
 
 #[test]
 #[vfs]
@@ -40,7 +40,7 @@ def http_get_downloads_and_caches()
         # The directory name deliberately isn't `cache`, so that a `cache:`
         # that silently falls back to a default root fails here.
         let result = transfer.get (server.url / "/file.bin") cache: (Path "artifacts")
-        assert_eq $result.read() hello
+        assert_eq $result.read_str() hello
         assert_eq $result.parent.parent (Path "artifacts")
 
 #[test]
@@ -64,9 +64,9 @@ def http_get_revalidates_with_etag()
       do |handle|
         let cache = Path "cache"
         let first = transfer.get (server.url / "/versioned.bin") cache: $cache
-        assert_eq $first.read() hello
+        assert_eq $first.read_str() hello
         let second = transfer.get (server.url / "/versioned.bin") cache: $cache
-        assert_eq $second.read() hello
+        assert_eq $second.read_str() hello
         assert_eq $second $first
 
         let requests = handle.received()
@@ -87,7 +87,7 @@ def http_get_verifies_digest()
       do |_handle|
         let good = "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
         let result = transfer.get (server.url / "/digest.bin") cache: (Path "cache") digest: $good
-        assert_eq $result.read() hello
+        assert_eq $result.read_str() hello
 
         let bad = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
         assert_throws $ValueError do
@@ -107,7 +107,7 @@ def write_cache_metadata entry metadata
   (entry / "metadata.json").write $ json.encode $metadata
 
 def read_cache_metadata entry
-  json.decode((entry / "metadata.json").read())
+  json.decode((entry / "metadata.json").read_str())
 
 def seed_partial cache url name bytes :etag = nil :total = nil
   let entry = (cache_entry cache url)
@@ -142,7 +142,7 @@ def http_get_resumes_partial_download()
           body: lo
       do |handle|
         let result = transfer.get $url cache: $cache
-        assert_eq $result.read() hello
+        assert_eq $result.read_str() hello
         assert_eq $handle.received().len 1
         assert_eq (handle.received()[0].headers.get "if-range") "v1"
         assert (!(entry / "file.bin.part").exists())
@@ -165,7 +165,7 @@ def http_get_restarts_when_range_is_ignored()
           body: hello
       do |handle|
         let result = transfer.get $url cache: $cache
-        assert_eq $result.read() hello
+        assert_eq $result.read_str() hello
         assert_eq $handle.received().len 1
         assert (!(entry / "file.bin.part").exists())
 
@@ -196,7 +196,7 @@ def http_get_restarts_on_invalid_content_range()
           body: hello
       do |handle|
         let result = transfer.get $url cache: $cache
-        assert_eq $result.read() hello
+        assert_eq $result.read_str() hello
         assert_eq $handle.received().len 2
         assert (!(entry / "file.bin.part").exists())
 
@@ -221,7 +221,7 @@ def http_get_restarts_on_unsatisfiable_range()
           body: hello
       do |handle|
         let result = transfer.get $url cache: $cache
-        assert_eq $result.read() hello
+        assert_eq $result.read_str() hello
         assert_eq $handle.received().len 2
         assert (!(entry / "file.bin.part").exists())
 
@@ -246,7 +246,7 @@ def http_get_verifies_digest_across_resumed_data()
           body: lo
       do |_handle|
         let result = transfer.get $url cache: $good_cache digest: $HELLO_SHA256
-        assert_eq $result.read() hello
+        assert_eq $result.read_str() hello
 
         let bad = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
         assert_throws $ValueError do
@@ -286,14 +286,14 @@ def http_get_retains_partial_on_short_body()
         # download is incomplete rather than done.
         assert_throws $ValueError do
           transfer.get $url cache: $cache
-        assert_eq $(entry / "file.bin.part").read() hello
+        assert_eq $(entry / "file.bin.part").read_str() hello
         let metadata = (read_cache_metadata entry)
         assert_eq (metadata.get "state") "partial"
         assert_eq (metadata.get "total") 10
 
         # The retained bytes are picked up where they left off.
         let result = transfer.get $url cache: $cache
-        assert_eq $result.read() helloworld
+        assert_eq $result.read_str() helloworld
         assert (!(entry / "file.bin.part").exists())
 
 #[test]
@@ -321,7 +321,7 @@ def http_get_treats_metadata_without_state_as_complete()
           status: 304
       do |handle|
         let result = transfer.get $url cache: $cache
-        assert_eq $result.read() hello
+        assert_eq $result.read_str() hello
         assert_eq $handle.received().len 1
 
 #[test]
@@ -360,7 +360,7 @@ def http_get_refetches_when_cached_payload_is_gone()
         # the validator instead of publishing the empty response as the
         # payload.
         let result = transfer.get $url cache: $cache
-        assert_eq $result.read() hello
+        assert_eq $result.read_str() hello
         assert_eq $handle.received().len 2
         assert_eq (read_cache_metadata(entry).get "size") 5
 
@@ -416,14 +416,14 @@ def archive_round_trips()
     transfer.pack $source $name format: $format prefix: root
     let destination = Path "out-$(str format)"
     transfer.unpack $name $destination strip: :ROOT:
-    assert_eq $(destination / "hello.txt").read() hello
-    assert_eq $(destination / "nested/data.bin").read("b") b"\x01\x02"
-    assert_eq $(destination / ".hidden").read() hidden
+    assert_eq $(destination / "hello.txt").read_str() hello
+    assert_eq $(destination / "nested/data.bin").read() b"\x01\x02"
+    assert_eq $(destination / ".hidden").read_str() hidden
     assert $(destination / "empty").exists()
     if (os_info().family != :WINDOWS:)
       assert_eq $(destination / "nested/link").metadata(resolve: :LINK:).type :SYMLINK:
       assert_eq [...(destination / "nested/link").read_link().components] ["..", "hello.txt"]
-      assert_eq $(destination / "nested/link").read() hello
+      assert_eq $(destination / "nested/link").read_str() hello
 
 #[test]
 #[vfs]
@@ -440,8 +440,8 @@ def pack_omits_source_directory()
     transfer.pack $source $name format: $format
     let destination = Path "out-$(str format)"
     transfer.unpack $name $destination
-    assert_eq $(destination / "hello.txt").read() hello
-    assert_eq $(destination / "nested/data.bin").read("b") b"\x01\x02"
+    assert_eq $(destination / "hello.txt").read_str() hello
+    assert_eq $(destination / "nested/data.bin").read() b"\x01\x02"
     assert (!(destination / "source").exists())
 
 #[test]
@@ -482,7 +482,7 @@ def pack_applies_overrides()
 
 def compress_raw source destination format
   compress.compress $destination $format do |stream|
-    stream.write $source.read("b")
+    stream.write $source.read()
 
 #[test]
 #[vfs]
@@ -498,11 +498,11 @@ def raw_compression_round_trips()
     compress_raw $source $compressed $format
     let destination = Path "out-$(str format)"
     transfer.unpack $compressed $destination
-    assert_eq $destination.read("b") $source.read("b")
+    assert_eq $destination.read() $source.read()
 
   compress_raw $source (Path "payload.data") :XZ:
   transfer.unpack payload.data explicit-output format: :XZ:
-  assert_eq (Path("explicit-output").read "b") $source.read("b")
+  assert_eq (Path("explicit-output").read()) $source.read()
 
 #[test]
 #[vfs]
@@ -565,7 +565,7 @@ def hard_links_are_created_after_files()
     archive.hard_link (unix_fs.Path "root/file") (unix_fs.Path "root/link")
     archive.entry (unix_fs.Path "root/file") size: 5 do |entry| entry.write hello
   transfer.unpack links.tar out strip: :ROOT:
-  assert_eq (Path("out/link").read()) hello
+  assert_eq (Path("out/link").read_str()) hello
 
 #[test]
 #[vfs]

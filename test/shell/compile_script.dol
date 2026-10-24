@@ -33,7 +33,7 @@ def cli_compilation_passes_through_precompiled_bytecode()
       let output = (dir / "output.dolc")
       source.write $bytecode
       run $exe --compile $output $source
-      assert_eq $output.read("b") $bytecode
+      assert_eq $output.read() $bytecode
 
 #[test]
 def runs_a_precompiled_script()
@@ -51,7 +51,7 @@ def runs_a_precompiled_script()
     compiled.write (compile script)
 
     run $exe $compiled $output
-    assert_eq $output.read() "ran"
+    assert_eq $output.read_str() "ran"
 
 #[test]
 def explicit_source_and_modes()

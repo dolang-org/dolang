@@ -17,6 +17,7 @@ use crate::{
 };
 
 pub(crate) mod fmt;
+
 mod math;
 mod strand;
 
@@ -289,6 +290,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         })
         .commit();
 
+    crate::io::configure(builder);
     math::configure(builder);
     strand::configure(builder);
 }

@@ -35,7 +35,7 @@ use crate::{
     error_code::{CodeObject, Errno, ErrorCode, FreeBsdErrno, LinuxErrno, MacosErrno, WinError},
     fs::{
         FS_UNIX, FS_WINDOWS,
-        file::{BinaryFile, File, TextFile},
+        file::{BaseFile, File, RawFile},
         file_lock::FileLock,
         fs_metadata::FsMetadata,
         metadata::{Metadata, Mode},
@@ -540,9 +540,9 @@ pub(crate) struct FsTypes<'v> {
     pub(crate) fs_metadata: Type<'v, FsMetadata>,
     pub(crate) unix_fs_metadata: Type<'v, FsMetadata<FS_UNIX>>,
     pub(crate) windows_fs_metadata: Type<'v, FsMetadata<FS_WINDOWS>>,
-    pub(crate) file: Type<'v, File<'v>>,
-    pub(crate) str_file: Type<'v, File<'v, TextFile>>,
-    pub(crate) bin_file: Type<'v, File<'v, BinaryFile>>,
+    pub(crate) base_file: Type<'v, BaseFile>,
+    pub(crate) file: Type<'v, File>,
+    pub(crate) raw_file: Type<'v, RawFile>,
     pub(crate) file_lock: Type<'v, FileLock>,
     pub(crate) dir_entry: Type<'v, DirEntry>,
     pub(crate) unix_dir_entry: Type<'v, DirEntry<FS_UNIX>>,
@@ -617,14 +617,14 @@ impl<'v> FsGlobal<'v> {
             .build_type::<DirEntry<FS_WINDOWS>>((), ())
             .nominal_supertype(dir_entry)
             .build();
-        let file = builder.register_type::<File>();
-        let str_file = builder
-            .build_type::<File<TextFile>>((), ())
-            .nominal_supertype(file)
+        let base_file = builder.register_type::<BaseFile>();
+        let file = builder
+            .build_type::<File>((), ())
+            .nominal_supertype(base_file)
             .build();
-        let bin_file = builder
-            .build_type::<File<BinaryFile>>((), ())
-            .nominal_supertype(file)
+        let raw_file = builder
+            .build_type::<RawFile>((), ())
+            .nominal_supertype(base_file)
             .build();
         Self {
             local,
@@ -642,9 +642,9 @@ impl<'v> FsGlobal<'v> {
                 fs_metadata,
                 unix_fs_metadata,
                 windows_fs_metadata,
+                base_file,
                 file,
-                str_file,
-                bin_file,
+                raw_file,
                 file_lock: builder.register_type(),
                 dir_entry,
                 unix_dir_entry,

@@ -230,7 +230,7 @@ def image_build_patch_step()
           +beta
       tag: $tag
 
-    let contents = runtime.with $tag do path.read()
+    let contents = runtime.with $tag do path.read_str()
     assert_eq $contents "beta\n"
 
 #[test]

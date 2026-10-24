@@ -38,8 +38,8 @@ pub class Stdin[T]: std.Iter[T]
   # Reads raw bytes.
   #
   # With a `size` this is a single read, which may return fewer bytes than
-  # asked for, as [`fs.File.read`](fs.File) does. Without one it reads to
-  # end of stream.
+  # asked for, as [`fs.BaseFile.read`](fs.BaseFile.read) does. Without one it
+  # reads to end of stream.
   #
   # ## Returns
   #

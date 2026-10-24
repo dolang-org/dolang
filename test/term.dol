@@ -532,10 +532,10 @@ def console_pins_past_capture()
     let err = (dir / "err.txt")
     run $shell.exe --no-cache $path $seen stderr: $err
 
-    assert_eq $seen.read() r#"["captured\n"]"#
+    assert_eq $seen.read_str() r#"["captured\n"]"#
     # Both `write` and `put` are verbatim, so the only LF here is the one in
     # the source.
-    assert_eq $err.read() "pinned-write\npinned-put"
+    assert_eq $err.read_str() "pinned-write\npinned-put"
 
 #[test]
 def concurrent_lines_do_not_interleave()
@@ -559,7 +559,7 @@ def concurrent_lines_do_not_interleave()
     let err = (dir / "err.txt")
     run $shell.exe --no-cache $path stderr: $err
 
-    let lines = Array(err.read().split("\n"))
+    let lines = Array(err.read_str().split("\n"))
     # `split` on a trailing terminator leaves one empty tail element.
     assert_eq $lines[lines.len - 1] ""
     let body = lines[..(lines.len - 1)]
@@ -673,8 +673,8 @@ def progress_lines_use_context_capture()
     let err = (dir / "err.txt")
     run $shell.exe --no-cache $path $seen stderr: $err
 
-    assert $seen.read().contains "working"
-    assert_eq (err.read()) ""
+    assert $seen.read_str().contains "working"
+    assert_eq (err.read_str()) ""
 
 #[test]
 def do_subclass_console()
@@ -797,11 +797,11 @@ def reentrant_console_does_not_recurse()
     # The inner console saw the line, and the re-entrant `echo` skipped both
     # captures rather than landing in the enclosing one — which is what keeps
     # the guard simple.
-    assert_eq $seen.read() r#"["hello\n"] []"#
+    assert_eq $seen.read_str() r#"["hello\n"] []"#
     # It reached the host console, whose line ending is LF on every platform.
     # Two of them: the data the console was handed already carried `echo`'s
     # terminator, and the re-entrant `echo` adds its own.
-    assert_eq $err.read() "loud: hello\n\n"
+    assert_eq $err.read_str() "loud: hello\n\n"
 
 #[test]
 def filters_control_sequences()

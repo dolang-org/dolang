@@ -103,7 +103,7 @@ pub def tarball()
 # directory is also its crate name.
 def workspace_stems()
   let stems = []
-  for member = toml.decode(fs.read "Cargo.toml")["workspace"]["members"]
+  for member = toml.decode(str(fs.read("Cargo.toml")))["workspace"]["members"]
     stems.push $ member.replace "-" "_"
   stems
 

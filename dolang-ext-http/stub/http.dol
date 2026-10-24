@@ -390,15 +390,15 @@ pub @let BodyOptions = $
 # optional; a `json` part's `content_type` defaults to `application/json`.
 #
 # A part `body` accepts a [`Str`](std.Str), a [`Bin`](std.Bin), or
-# an iterable to stream, such as a file opened in binary mode. Binary mode
-# matters: text-mode file iteration is line-oriented, while binary mode yields
-# the raw chunks an upload wants.
+# an iterable to stream, such as a file opened with `buffer: false`. That
+# matters: a buffered file iterates over text lines, while an unbuffered one
+# yields the raw chunks an upload wants.
 #
 # The `content-type` header, boundary included, is set automatically. Do not
 # set it yourself on a multipart request.
 #
 # ```
-# open report.bin rb do |file|
+# open report.bin buffer: false do |file|
 #   client.post https://api.example.com/upload
 #     multipart:
 #       - name: file

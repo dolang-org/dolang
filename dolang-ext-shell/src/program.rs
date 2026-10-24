@@ -185,7 +185,7 @@ async fn resolve_io_file<'v, 's>(
 
     let fs = strand.force_state::<FsTag>();
     let file = file::open(strand, fs, path.to_path(), mode).await?;
-    file::create_file(strand, fs, file, mode, out);
+    file::create_file(strand, fs, file, mode, false, out);
     Ok(true)
 }
 
@@ -265,10 +265,8 @@ async fn configure_direct_input<'v, 's>(
         .and_then(|fs| file::cast_file(fs, input))
     {
         let stdio = file.command_recv(strand).await?;
-        if let Some(stdio) = stdio {
-            command.stdin(stdio).into_sys(strand)?;
-            return Ok(true);
-        }
+        command.stdin(stdio).into_sys(strand)?;
+        return Ok(true);
     }
     Ok(false)
 }
@@ -303,10 +301,8 @@ async fn configure_direct_output<'v, 's>(
         .and_then(|fs| file::cast_file(fs, output))
     {
         let stdio = file.command_send(strand).await?;
-        if let Some(stdio) = stdio {
-            command.stdout(stdio).into_sys(strand)?;
-            return Ok(true);
-        }
+        command.stdout(stdio).into_sys(strand)?;
+        return Ok(true);
     }
     Ok(false)
 }
@@ -336,10 +332,8 @@ async fn configure_direct_stderr<'v, 's>(
         .and_then(|fs| file::cast_file(fs, stderr))
     {
         let stdio = file.command_send(strand).await?;
-        if let Some(stdio) = stdio {
-            command.stderr(stdio).into_sys(strand)?;
-            return Ok(true);
-        }
+        command.stderr(stdio).into_sys(strand)?;
+        return Ok(true);
     }
     Ok(false)
 }

@@ -3,10 +3,15 @@
 //! A native object wrapping an OS or VFS handle provides the [`ByteIo`] interface to an
 //! [interface query](crate::object::interface). A consumer checks the provider's
 //! [`IoCaps`], then takes an owned [`ByteHandle`] over futures-io traits and narrows it
-//! to the traits it needs.
+//! to the traits it needs. [`take`] does both, flushing the provider first.
+//!
+//! [`buffered`] wraps a handle in a Do `io.Buffered`.
+
+mod buffered;
 
 use std::{
     fmt,
+    future::poll_fn,
     io::{self, SeekFrom},
     pin::Pin,
     task::{Context, Poll, ready},
@@ -14,7 +19,10 @@ use std::{
 
 use futures::io::{AsyncRead, AsyncSeek, AsyncWrite};
 
-use crate::object::interface::InterfaceTag;
+use crate::{error::Error, object::interface::InterfaceTag, strand::Strand, value::Value};
+
+pub use buffered::buffered;
+pub(crate) use buffered::configure;
 
 bitflags::bitflags! {
     /// Capabilities of a [`ByteIo`] provider or [`ByteHandle`].
@@ -71,11 +79,63 @@ pub trait IntoByteIo {
     /// The provider's capabilities, checked before taking.
     fn caps(&self) -> IoCaps;
 
+    /// Writes out anything the provider holds back, such as buffered writes.
+    ///
+    /// The default has nothing to flush.
+    fn poll_flush(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let _ = cx;
+        Poll::Ready(Ok(()))
+    }
+
     /// Transfers the provider's handle, closing the provider.
     ///
-    /// Buffered read-ahead travels with the handle as its unread
+    /// A consumer calls this only after [`poll_flush`](IntoByteIo::poll_flush) returns
+    /// `Ready(Ok(()))`. Buffered read-ahead travels with the handle as its unread
     /// [prefix](ByteHandle::with_prefix).
     fn take(&mut self) -> ByteHandle;
+}
+
+/// Takes `value`'s byte handle, flushing the provider first.
+///
+/// `accept` checks the provider's capabilities and raises to refuse it. A value that
+/// provides no [`ByteIo`] raises [`ErrorKind::Unsupported`](crate::error::ErrorKind), so
+/// a caller can replace that error with its own. A flush error is raised as [`error`]
+/// maps it.
+pub async fn take<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: &Value<'v>,
+    mut accept: impl FnMut(&mut Strand<'v, 's>, IoCaps) -> crate::error::Result<'v, 's, ()>,
+) -> crate::error::Result<'v, 's, ByteHandle> {
+    poll_fn(|cx| {
+        let res = value.query::<ByteIo, _>(strand, |strand, io| {
+            accept(strand, io.caps())?;
+            match io.poll_flush(cx) {
+                Poll::Ready(Ok(())) => Ok(Poll::Ready(io.take())),
+                Poll::Ready(Err(err)) => Err(error(strand, err)),
+                Poll::Pending => Ok(Poll::Pending),
+            }
+        });
+        match res {
+            Ok(Poll::Ready(handle)) => Poll::Ready(Ok(handle)),
+            Ok(Poll::Pending) => Poll::Pending,
+            Err(err) => Poll::Ready(Err(err)),
+        }
+    })
+    .await
+}
+
+/// Maps an I/O error to the closest runtime error.
+///
+/// Malformed input raises a `ValueError` and a timeout a `TimeoutError`. Anything else
+/// raises a `RuntimeError` with the error's message.
+pub fn error<'v, 's>(strand: &mut Strand<'v, 's>, err: io::Error) -> Error<'v, 's> {
+    match err.kind() {
+        io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => {
+            Error::value(strand, err.to_string())
+        }
+        io::ErrorKind::TimedOut => Error::timed_out(strand),
+        _ => Error::runtime(strand, err),
+    }
 }
 
 enum Io {
@@ -85,6 +145,19 @@ enum Io {
     WriteSeek(Box<dyn WriteSeek>),
     ReadWrite(Box<dyn ReadWrite>),
     ReadWriteSeek(Box<dyn ReadWriteSeek>),
+}
+
+impl Io {
+    fn caps(&self) -> IoCaps {
+        match self {
+            Io::Read(_) => IoCaps::READ,
+            Io::Write(_) => IoCaps::WRITE,
+            Io::ReadSeek(_) => IoCaps::READ | IoCaps::SEEK,
+            Io::WriteSeek(_) => IoCaps::WRITE | IoCaps::SEEK,
+            Io::ReadWrite(_) => IoCaps::READ | IoCaps::WRITE,
+            Io::ReadWriteSeek(_) => IoCaps::READ | IoCaps::WRITE | IoCaps::SEEK,
+        }
+    }
 }
 
 /// An owned, erased byte I/O handle.
@@ -167,14 +240,7 @@ impl ByteHandle {
 
     /// The handle's capabilities.
     pub fn caps(&self) -> IoCaps {
-        match self.io {
-            Io::Read(_) => IoCaps::READ,
-            Io::Write(_) => IoCaps::WRITE,
-            Io::ReadSeek(_) => IoCaps::READ | IoCaps::SEEK,
-            Io::WriteSeek(_) => IoCaps::WRITE | IoCaps::SEEK,
-            Io::ReadWrite(_) => IoCaps::READ | IoCaps::WRITE,
-            Io::ReadWriteSeek(_) => IoCaps::READ | IoCaps::WRITE | IoCaps::SEEK,
-        }
+        self.io.caps()
     }
 
     /// Converts to a reader.
@@ -240,6 +306,77 @@ impl ByteHandle {
             Io::ReadWriteSeek(io) => narrow!(dyn ReadWriteSeek; io, prefix),
             io => return Err(Self { io, prefix }),
         })
+    }
+}
+
+/// Forwards to the handle's traits, failing with [`io::ErrorKind::Unsupported`] where it
+/// has none. Flushing and closing succeed trivially on a handle that does not write.
+impl AsyncRead for Io {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        match self.get_mut() {
+            Io::Read(io) => Pin::new(io).poll_read(cx, buf),
+            Io::ReadSeek(io) => Pin::new(io).poll_read(cx, buf),
+            Io::ReadWrite(io) => Pin::new(io).poll_read(cx, buf),
+            Io::ReadWriteSeek(io) => Pin::new(io).poll_read(cx, buf),
+            Io::Write(_) | Io::WriteSeek(_) => Poll::Ready(Err(io::ErrorKind::Unsupported.into())),
+        }
+    }
+}
+
+impl AsyncWrite for Io {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        match self.get_mut() {
+            Io::Write(io) => Pin::new(io).poll_write(cx, buf),
+            Io::WriteSeek(io) => Pin::new(io).poll_write(cx, buf),
+            Io::ReadWrite(io) => Pin::new(io).poll_write(cx, buf),
+            Io::ReadWriteSeek(io) => Pin::new(io).poll_write(cx, buf),
+            Io::Read(_) | Io::ReadSeek(_) => Poll::Ready(Err(io::ErrorKind::Unsupported.into())),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            Io::Write(io) => Pin::new(io).poll_flush(cx),
+            Io::WriteSeek(io) => Pin::new(io).poll_flush(cx),
+            Io::ReadWrite(io) => Pin::new(io).poll_flush(cx),
+            Io::ReadWriteSeek(io) => Pin::new(io).poll_flush(cx),
+            Io::Read(_) | Io::ReadSeek(_) => Poll::Ready(Ok(())),
+        }
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            Io::Write(io) => Pin::new(io).poll_close(cx),
+            Io::WriteSeek(io) => Pin::new(io).poll_close(cx),
+            Io::ReadWrite(io) => Pin::new(io).poll_close(cx),
+            Io::ReadWriteSeek(io) => Pin::new(io).poll_close(cx),
+            Io::Read(_) | Io::ReadSeek(_) => Poll::Ready(Ok(())),
+        }
+    }
+}
+
+impl AsyncSeek for Io {
+    fn poll_seek(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        pos: SeekFrom,
+    ) -> Poll<io::Result<u64>> {
+        match self.get_mut() {
+            Io::ReadSeek(io) => Pin::new(io).poll_seek(cx, pos),
+            Io::WriteSeek(io) => Pin::new(io).poll_seek(cx, pos),
+            Io::ReadWriteSeek(io) => Pin::new(io).poll_seek(cx, pos),
+            Io::Read(_) | Io::Write(_) | Io::ReadWrite(_) => {
+                Poll::Ready(Err(io::ErrorKind::Unsupported.into()))
+            }
+        }
     }
 }
 

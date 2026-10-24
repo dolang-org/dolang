@@ -6,7 +6,7 @@ mod detail {
         runtime::{
             self, Args, Bytecode, Error, Instance, Object, Output, Slot, Sym, call,
             error::ErrorKind,
-            io::{ByteHandle, ByteIo, IntoByteIo, IoCaps},
+            io::{self, ByteHandle, ByteIo, IntoByteIo, IoCaps},
             object::{
                 FlagLike, FlagLikeExt, Flags, FlagsInstanceExt, FlagsTypeExt, InterfaceTag,
                 Request, TypeBuilder,
@@ -16,13 +16,14 @@ mod detail {
         },
     };
     use dolang_runtime::strand::Strand;
-    use futures::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, Cursor};
+    use futures::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, Cursor};
     use std::{
         io::SeekFrom,
         mem,
         ops::{BitAnd, BitOr, BitXor, Not},
         path::{Path, PathBuf},
         pin::Pin,
+        sync::{Arc, Mutex},
         task::{Context as TaskContext, Poll},
     };
 
@@ -294,10 +295,59 @@ mod detail {
         cursor: Option<Cursor<Vec<u8>>>,
         ahead: Vec<u8>,
         caps: IoCaps,
+        /// Where a duplex buffer's writes go, kept after the handle is taken.
+        written: Option<Arc<Mutex<Vec<u8>>>>,
+    }
+
+    /// Reads from a cursor and writes to a separate sink, like a socket.
+    struct Duplex {
+        reader: Cursor<Vec<u8>>,
+        written: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl AsyncRead for Duplex {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            cx: &mut TaskContext<'_>,
+            buf: &mut [u8],
+        ) -> Poll<std::io::Result<usize>> {
+            Pin::new(&mut self.get_mut().reader).poll_read(cx, buf)
+        }
+    }
+
+    impl AsyncWrite for Duplex {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut TaskContext<'_>,
+            buf: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            self.written.lock().unwrap().extend_from_slice(buf);
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(
+            self: Pin<&mut Self>,
+            _cx: &mut TaskContext<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_close(
+            self: Pin<&mut Self>,
+            _cx: &mut TaskContext<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
     }
 
     impl ByteBuf {
         fn handle(&self, cursor: Cursor<Vec<u8>>) -> ByteHandle {
+            if let Some(written) = &self.written {
+                return ByteHandle::read_write(Duplex {
+                    reader: cursor,
+                    written: written.clone(),
+                });
+            }
             match (
                 self.caps.contains(IoCaps::WRITE),
                 self.caps.contains(IoCaps::SEEK),
@@ -335,7 +385,8 @@ mod detail {
         type TypeAnnex = ();
 
         /// `ByteBuf data ahead modes`: `ahead` bytes of `data` are already read ahead, and
-        /// `modes` adds `w` (write) and `s` (seek) to reading.
+        /// `modes` adds `w` (write) and `s` (seek) to reading. `d` (duplex) writes to a
+        /// separate sink that `written` returns, and cannot seek.
         async fn new<'a, 's>(
             this: runtime::Type<'v, Self>,
             strand: &'a mut Strand<'v, 's>,
@@ -350,6 +401,7 @@ mod detail {
                 .filter(|&n| n <= data.len())
                 .ok_or_else(|| Error::value(strand, "bad read-ahead"))?;
             let mut caps = IoCaps::READ;
+            let mut written = None;
             let modes = modes
                 .as_str(strand.vm())
                 .map(|s| s.to_string())
@@ -358,8 +410,15 @@ mod detail {
                 caps |= match c {
                     'w' => IoCaps::WRITE,
                     's' => IoCaps::SEEK,
+                    'd' => {
+                        written = Some(Arc::default());
+                        IoCaps::WRITE
+                    }
                     _ => return Err(Error::value(strand, "bad modes")),
                 };
+            }
+            if written.is_some() && caps.contains(IoCaps::SEEK) {
+                return Err(Error::value(strand, "bad modes"));
             }
             let ahead_bytes = data[..ahead].to_vec();
             let mut cursor = Cursor::new(data);
@@ -370,6 +429,7 @@ mod detail {
                     cursor: Some(cursor),
                     ahead: ahead_bytes,
                     caps,
+                    written,
                 },
                 out,
             );
@@ -389,6 +449,17 @@ mod detail {
             }
             Ok(())
         }
+
+        fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+            builder.method("written", async move |this, strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let written = this.borrow(strand)?.written.clone();
+                let written = written.ok_or_else(|| Error::value(strand, "not duplex"))?;
+                let bytes = written.lock().unwrap().clone();
+                Output::set(strand, out, &bytes[..]);
+                Ok(())
+            })
+        }
     }
 
     fn bin_arg<'v, 's>(
@@ -402,17 +473,18 @@ mod detail {
     }
 
     /// Takes `value`'s byte handle, raising if it lacks `need`.
-    fn byte_handle<'v, 's>(
+    async fn byte_handle<'v, 's>(
         strand: &mut Strand<'v, 's>,
         value: &runtime::Value<'v>,
         need: IoCaps,
     ) -> runtime::Result<'v, 's, ByteHandle> {
-        value.query::<ByteIo, _>(strand, |strand, io| {
-            if !io.caps().contains(need) {
+        io::take(strand, value, |strand, caps| {
+            if !caps.contains(need) {
                 return Err(Error::value(strand, "missing capability"));
             }
-            Ok(io.take())
+            Ok(())
         })
+        .await
     }
 
     fn io_error<'v, 's>(strand: &mut Strand<'v, 's>, err: std::io::Error) -> Error<'v, 's> {
@@ -643,7 +715,7 @@ mod detail {
                     })
                     .function("byte_read", async move |strand, args, out| {
                         let ([value], []) = unpack!(strand, args, 1, 0)?;
-                        let handle = byte_handle(strand, &value, IoCaps::READ)?;
+                        let handle = byte_handle(strand, &value, IoCaps::READ).await?;
                         let mut io = handle.into_read().unwrap();
                         let mut buf = Vec::new();
                         let res = io.read_to_end(&mut buf).await;
@@ -653,7 +725,8 @@ mod detail {
                     })
                     .function("byte_tell", async move |strand, args, out| {
                         let ([value], []) = unpack!(strand, args, 1, 0)?;
-                        let handle = byte_handle(strand, &value, IoCaps::READ | IoCaps::SEEK)?;
+                        let handle =
+                            byte_handle(strand, &value, IoCaps::READ | IoCaps::SEEK).await?;
                         let mut io = handle.into_read_seek().unwrap();
                         let res = io.stream_position().await;
                         let pos = res.map_err(|e| io_error(strand, e))?;
@@ -666,7 +739,8 @@ mod detail {
                             .as_int(strand)
                             .and_then(|n| u64::try_from(n).ok())
                             .ok_or_else(|| Error::value(strand, "bad offset"))?;
-                        let handle = byte_handle(strand, &value, IoCaps::READ | IoCaps::SEEK)?;
+                        let handle =
+                            byte_handle(strand, &value, IoCaps::READ | IoCaps::SEEK).await?;
                         let mut io = handle.into_read_seek().unwrap();
                         let mut buf = Vec::new();
                         let res = async {
@@ -682,7 +756,7 @@ mod detail {
                         let ([value, bytes], []) = unpack!(strand, args, 2, 0)?;
                         let bytes = bin_arg(strand, &bytes)?;
                         let need = IoCaps::READ | IoCaps::WRITE | IoCaps::SEEK;
-                        let handle = byte_handle(strand, &value, need)?;
+                        let handle = byte_handle(strand, &value, need).await?;
                         let mut io = handle.into_read_write_seek().unwrap();
                         let mut buf = Vec::new();
                         let res = async {

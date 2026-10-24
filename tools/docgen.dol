@@ -281,7 +281,7 @@ pub def extract_docs spec out_dir
   extract_doc_json $spec $out_dir
   MKDOCS_API_DIR.remove all: true ignore: true
   let modules = $
-    for doc = out_dir.glob("*.json").map do |p| (json.decode(p.read())["doc"])
+    for doc = out_dir.glob("*.json").map do |p| (json.decode(str(p.read()))["doc"])
       $doc["module"]: $doc
   for name document = modules
     generate_doc_pages $modules $name $document["entities"]

@@ -32,9 +32,9 @@ let DOC_CRATES = $
 # Names of workspace members whose manifests allow publishing. Cargo orders a
 # multi-package publish by dependency itself, so member order doesn't matter.
 def publish_crates()
-  let workspace = toml.decode $Path("Cargo.toml").read()
+  let workspace = toml.decode $str(Path("Cargo.toml").read())
   stream do for member = workspace["workspace"]["members"]
-    bind toml.decode((Path member / "Cargo.toml").read())["package"]
+    bind toml.decode(str((Path member / "Cargo.toml").read()))["package"]
       "name": name
       "publish": publish = true
       ...
@@ -122,7 +122,7 @@ class Spec
       let cargo_home = env.get CARGO_HOME
       let config_path = ((cargo_home && Path(cargo_home) || home_dir() / ".cargo") / "config.toml")
       let runner = if config_path.exists()
-        let Dict("target": Dict(target = {}) ...) = toml.decode $config_path.read()
+        let Dict("target": Dict(target = {}) ...) = toml.decode $str(config_path.read())
         let Dict(target = {}) = target.get $self.tuple default: {}
         target.get runner default: []
       else
@@ -170,7 +170,7 @@ def default_shell_tests slow release
 
 def wasm_tool name
   # The CLI must exactly match the locked library version.
-  let lock = toml.decode $Path("Cargo.lock").read()
+  let lock = toml.decode $str(Path("Cargo.lock").read())
   let package = lock["package"].find(do |package| package["name"] == "wasm-bindgen")
   let version = package["version"]
   let tools_dir = Path "target/wasm-bindgen/$version"
@@ -221,7 +221,7 @@ def vim_test()
       -u NONE -i NONE -n -es -V1
       -S vim/test/syntax.vim
       test/syntax/fixtures.json vim/syntax/dol.vim
-    let fixtures = json.decode $Path("test/syntax/fixtures.json").read()
+    let fixtures = json.decode $str(Path("test/syntax/fixtures.json").read())
     echo "Vim: $(fixtures.len) syntax fixtures passed ($editor)"
 
 def rustdoc_build()
@@ -340,7 +340,11 @@ let WINDOWS_FORBIDDEN_IMPORTS = $
 
 def verify_windows_crt spec name
   let bin = spec.bin $name
-  let contents = bin.read "b"
+  # Older runtimes return text from `read` unless given `b`.
+  let contents = try
+    bin.read "b"
+  catch std.UnexpectedPosError: _
+    bin.read()
   for needle = WINDOWS_FORBIDDEN_IMPORTS
     if contents.contains(Bin needle)
       throw std.RuntimeError "$bin imports $needle: crt-static did not take effect"

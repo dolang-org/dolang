@@ -13,7 +13,7 @@ import progress json patch rand shlex strand proc sys transfer _vfs time
   fs:
     - Path
     - with_temp_dir
-    - @BinFile
+    - @File
   url:
     - Url
   shell:
@@ -1600,19 +1600,19 @@ pub class Builder
     self
     target @ Path
     chmod @ (Int | Mode | nil)
-    copy_data @ (BinFile -> nil)
+    copy_data @ (File -> nil)
   do
     let mode = _vfs.parse_mode $chmod
     self.#live_agent().with do
       let dir = target.parent
       if (dir != nil)
         dir.create_dir all: true
-      target.open wb do |dest| copy_data $dest
+      target.open w do |dest| copy_data $dest
       if (mode != nil)
         target.update_metadata mode: $mode
 
   def add_file self path@Path target@Path chmod@(Int | Mode | nil)
-    path.open rb do |src|
+    path.open do |src|
       self.#copy_to_target $target $chmod do |dest|
         while true
           let chunk = src.read $COPY_BLOCK_SIZE
@@ -1654,7 +1654,7 @@ pub class Builder
     let patch_data = if (content != nil)
       content
     else if (source != nil)
-      (Path source).read b
+      (Path source).read()
     else
       throw "patch: expected exactly one of source or content"
 
@@ -1670,13 +1670,13 @@ pub class Builder
     else if (kind == :DELETE:)
       let source = p.source
       self.#live_agent().with do
-        let result = p.apply (source.read "b")
+        let result = p.apply (source.read())
         if (result.len != 0)
           throw "delete patch did not produce empty output: $source"
         source.remove()
     else
       self.#live_agent().with do
-        let result = p.apply (p.source.read "b")
+        let result = p.apply (p.source.read())
         self.#add_content $result $p.target nil
         if (kind == :MOVE: && p.source != p.target)
           p.source.remove()

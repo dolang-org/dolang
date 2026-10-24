@@ -122,4 +122,4 @@ def editor_saves_history_explicitly()
       editor.readline "" []
       editor.save_history()
     run $shell.exe $script $history stdin: ["remember me\n"]
-    assert (history.read().contains "remember me")
+    assert (history.read_str().contains "remember me")

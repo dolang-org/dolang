@@ -106,7 +106,7 @@ pub def file_scopes >Sink[Str] -> Int
     dir
   let _dir = dir
   #   ^~~~: flow fs.Path
-  let bin = fs.Path("a.bin").open "rb" do |file| file.read()
+  let bin = fs.Path("a.bin").open buffer: false do |file| file.read()
   let _bin = bin
   #   ^~~~: flow std.Bin
   n

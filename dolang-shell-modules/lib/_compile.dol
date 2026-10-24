@@ -58,10 +58,10 @@ do
 
   def add file module
     if (!script && is_typelib(file))
-      add_typelib $compile.Typelib(file.read("b")) $typelibs
+      add_typelib $compile.Typelib(file.read()) $typelibs
     else
       let imports = (module == nil && prelude || {})
-      let unit = compile.compile "$file" $file.read() module: $module prelude: $imports typecheck: true document: true
+      let unit = compile.compile "$file" $file.read_str() module: $module prelude: $imports typecheck: true document: true
       units.push $unit
       if (module != nil)
         seen.add $module
@@ -75,7 +75,7 @@ do
     let module = if script
       nil
     else if is_typelib(file)
-      compile.Typelib(file.read("b")).module
+      compile.Typelib(file.read()).module
     else
       module_among $file $dirs
     if (module != nil)

@@ -1,0 +1,139 @@
+import compress
+import
+  testlib.vfs:
+    - vfs
+  test:
+    - assert_eq
+    - assert_throws
+    - test
+  fs:
+    - copy_data
+    - open
+    - read_str
+    - write
+  std:
+    - RuntimeError
+    - StateError
+
+#[test]
+#[vfs]
+def positional_reads_see_pending_writes()
+  open buffered.txt w+ do |file|
+    file.write "hello"
+    assert_eq (file.read 5 offset: 0) b"hello"
+    assert_eq (file.metadata().size) 5
+
+#[test]
+#[vfs]
+def tell_and_seek_follow_the_logical_position()
+  write buffered.txt "alpha\nbeta\n"
+  open buffered.txt do |file|
+    assert_eq (file.read_line()) "alpha\n"
+    assert_eq (file.tell()) 6
+    assert_eq (file.seek 1) 7
+    assert_eq (file.read_line()) "eta\n"
+    assert_eq (file.read_line()) ""
+  open buffered.txt w do |file|
+    file.write "abc"
+    assert_eq (file.tell()) 3
+
+#[test]
+#[vfs]
+def writes_after_a_read_land_at_the_logical_position()
+  write buffered.txt "alpha\nbeta\n"
+  open buffered.txt r+ do |file|
+    assert_eq (file.read_line()) "alpha\n"
+    file.write "BETA"
+    assert_eq (file.read_line()) "\n"
+  assert_eq (read_str "buffered.txt") "alpha\nBETA\n"
+
+#[test]
+#[vfs]
+def reads_after_a_write_see_it()
+  write buffered.txt "alpha\nbeta\n"
+  open buffered.txt r+ do |file|
+    file.write "ALPHA"
+    assert_eq (file.read_line()) "\n"
+    file.seek start: 0
+    assert_eq (file.read_line()) "ALPHA\n"
+
+#[test]
+#[vfs]
+def large_writes_keep_their_order()
+  let big = ("x".repeat 20000)
+  open buffered.txt w do |file|
+    file.write "a"
+    file.write $big
+    file.write "b"
+  assert_eq (read_str "buffered.txt") "a$(big)b"
+
+#[test]
+#[vfs]
+def copies_start_at_the_logical_position()
+  write src.txt "alpha\nbeta\n"
+  open src.txt do |src|
+    assert_eq (src.read_line()) "alpha\n"
+    open dst.txt w do |dst|
+      dst.write "head:"
+      assert_eq (copy_data src dst) 5
+      assert_eq (src.tell()) 11
+      assert_eq (dst.tell()) 10
+  assert_eq (read_str "dst.txt") "head:beta\n"
+
+#[test]
+#[vfs]
+def set_size_applies_to_pending_writes_and_read_ahead()
+  open buffered.txt w do |file|
+    file.write "abcdef"
+    file.set_size 3
+  assert_eq (read_str "buffered.txt") "abc"
+  write buffered.txt "alpha\nbeta\n"
+  open buffered.txt r+ do |file|
+    assert_eq (file.read 2) b"al"
+    file.set_size 4
+    assert_eq (file.read_str()) "ph"
+
+#[test]
+#[vfs]
+def appending_reads_back_the_appended_data()
+  write buffered.txt "start"
+  open buffered.txt a+ do |file|
+    file.write ":more"
+    assert_eq (file.tell()) 10
+    file.seek start: 0
+    assert_eq (file.read_str()) "start:more"
+
+#[test]
+#[vfs]
+def read_str_keeps_characters_whole()
+  write buffered.txt "é!"
+  open buffered.txt do |file|
+    # The first character is read whole even past the size.
+    assert_eq (file.read_str 1) "é"
+    assert_eq (file.read_str 1) "!"
+  write buffered.txt "aé"
+  open buffered.txt do |file|
+    # A later split character is left for the next read.
+    assert_eq (file.read_str 2) "a"
+    assert_eq (file.read_str()) "é"
+
+#[test]
+#[vfs]
+def invalid_text_is_left_unread()
+  write buffered.txt b"ok\xff\n"
+  open buffered.txt do |file|
+    assert_throws $RuntimeError do file.read_line()
+    assert_eq (file.read()) b"ok\xff\n"
+
+#[test]
+#[vfs]
+def taking_a_file_hands_over_pending_and_buffered_bytes()
+  open data.bin w do |file|
+    file.write "header\n"
+    compress.compress $file :GZIP: do |stream|
+      stream.write "payload"
+  open data.bin do |file|
+    assert_eq (file.read_line()) "header\n"
+    let payload = compress.decompress $file do |stream| stream.read()
+    assert_eq $payload b"payload"
+    assert_throws $StateError do file.read()

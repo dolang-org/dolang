@@ -83,7 +83,7 @@ def stdio_vfs_runs_over_strand_stream()
     finally
       time.timeout 30 do vfs.stop()
 
-    open $marker r do |file| assert_eq $file.read() "remote"
+    open $marker r do |file| assert_eq $file.read_str() "remote"
 
 #[test]
 #[parametrize command: stdio_launchers]
@@ -130,7 +130,7 @@ def filesystem_imports_load_on_host_and_execute_in_active_vfs()
               import boot_host_probe
               assert_eq $boot_host_probe.source host
               assert_eq $boot_host_probe.cwd $remote
-              assert_eq (fs.read "module-marker") host
+              assert_eq (fs.read_str "module-marker") host
       finally
         time.timeout 30 do vfs.stop()
       assert_eq $fs.Path("module-marker").exists() false

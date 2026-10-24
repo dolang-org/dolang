@@ -23,7 +23,7 @@ def seek_and_tell()
   let path = "test_fs_seek.bin"
   let data = b"abcdef"
   write $path $data
-  open $path "rb" do |file|
+  open $path do |file|
     assert_eq (file.tell()) 0
     assert_eq (file.seek 2) 2
     assert_eq (file.tell()) 2
@@ -51,10 +51,10 @@ def seek_clears_buffered_text_reads()
 def duplicates_have_their_own_position()
   let path = "test_fs_dup.bin"
   write $path b"abcdef"
-  open $path "rb" do |file|
+  open $path buffer: false do |file|
     assert_eq (file.read 2) b"ab"
     let dup = file.dup()
-    assert_type $fs.BinFile $dup
+    assert_type $fs.RawFile $dup
     assert_eq (dup.tell()) 2
     assert_eq (dup.read 2) b"cd"
     assert_eq (file.tell()) 2
@@ -74,7 +74,7 @@ def text_duplicates_start_after_buffered_reads()
   open $path "r" do |file|
     assert_eq (file.next()) "alpha\n"
     let dup = file.dup()
-    assert_type $fs.StrFile $dup
+    assert_type $fs.File $dup
     assert_eq (dup.next()) "beta\n"
     assert_eq (file.next()) "beta\n"
     assert_eq (dup.next()) "gamma\n"

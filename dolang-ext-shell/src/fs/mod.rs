@@ -43,7 +43,6 @@ pub(crate) mod xattr;
 use crate::{
     error::{ErrorExt as _, ResultExt as _},
     fs::{
-        file::File,
         fs_metadata::create_fs_metadata,
         metadata::create_metadata,
         path::{convert_path_kind, create_path, path_from_value, safe_concat},
@@ -478,34 +477,26 @@ async fn entries<'v, 's>(
     Ok(())
 }
 
+/// Reads the whole file at `path`, as `Bin`, or as `Str` when `text`.
 async fn read<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, FsGlobal<'v>>,
     path: vfs_path::Path<'_>,
-    mode: Option<Slot<'v, '_>>,
+    text: bool,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    let mode = match mode {
-        None => "r",
-        Some(mode) => match mode.as_str(strand) {
-            Some(s) if s.to_string() == "b" => "rb",
-            Some(_) => return Err(Error::type_error(strand, "fs.read: mode must be `b`")),
-            None => return Err(Error::type_error(strand, "fs.read: mode must be a string")),
-        },
-    };
-    let is_binary = mode == "rb";
-    let mut file = file::open(strand, global, path, mode).await?;
+    let mut file = file::open(strand, global, path, "r").await?;
     let mut embryo = BinEmbryo::new_with_capacity(strand, 8192);
     let read_result = read_all(strand, &mut file, &mut embryo).await;
     let close_result = file.close().await;
     read_result?;
     close_result.into_sys(strand)?;
-    if is_binary {
-        embryo.finish(strand, out);
-    } else {
+    if text {
         embryo
             .finish_str(strand, out)
             .map_err(|_| Error::runtime(strand, "invalid UTF-8 data"))?;
+    } else {
+        embryo.finish(strand, out);
     }
     Ok(())
 }
@@ -1110,12 +1101,13 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
     let size_kw = builder.sym("size");
     let offset_kw = builder.sym("offset");
     let clone_kw = builder.sym("clone");
+    let buffer_kw = builder.sym("buffer");
     let module = builder
         .module("fs")
         .function("open", async move |strand, args, out| {
-            let ([path], [opt1, opt2]) = unpack!(strand, args, 1, 2)?;
+            let ([path], [opt1, opt2, buffer]) = unpack!(strand, args, 1, 2, buffer_kw = None)?;
             let path = path_from_value(strand, &path)?;
-            File::open(strand, global, path.to_path(), opt1, opt2, out).await
+            file::open_file(strand, global, path.to_path(), opt1, opt2, buffer, out).await
         })
         .function("remove", async move |strand, args, _out| {
             let ([], [all, ignore], paths) =
@@ -1250,9 +1242,14 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             exists(strand, global, path.to_path(), out).await
         })
         .function("read", async move |strand, args, out| {
-            let ([path], [mode]) = unpack!(strand, args, 1, 1)?;
+            let ([path], []) = unpack!(strand, args, 1, 0)?;
             let path = path_from_value(strand, &path)?;
-            read(strand, global, path.to_path(), mode, out).await
+            read(strand, global, path.to_path(), false, out).await
+        })
+        .function("read_str", async move |strand, args, out| {
+            let ([path], []) = unpack!(strand, args, 1, 0)?;
+            let path = path_from_value(strand, &path)?;
+            read(strand, global, path.to_path(), true, out).await
         })
         .function("write", async move |strand, args, out| {
             let ([path, data], []) = unpack!(strand, args, 2, 0)?;
@@ -1480,9 +1477,9 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
                 clone_kw = None
             )?;
             let src = file::cast_file(global, &src)
-                .ok_or_else(|| Error::type_error(strand, "src must be an fs.File"))?;
+                .ok_or_else(|| Error::type_error(strand, "src must be an fs.BaseFile"))?;
             let dst = file::cast_file(global, &dst)
-                .ok_or_else(|| Error::type_error(strand, "dst must be an fs.File"))?;
+                .ok_or_else(|| Error::type_error(strand, "dst must be an fs.BaseFile"))?;
             file::copy_files(strand, global, src, dst, range, size, offset, clone, out).await
         })
         .function("rename", async move |strand, args, _out| {
@@ -1640,9 +1637,9 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             create_path(strand, global, temp_path, out)?;
             Ok(())
         })
+        .value("BaseFile", global.types.base_file)
         .value("File", global.types.file)
-        .value("StrFile", global.types.str_file)
-        .value("BinFile", global.types.bin_file)
+        .value("RawFile", global.types.raw_file)
         .value("FileLock", global.types.file_lock)
         .value("Metadata", global.types.metadata)
         .value("FsMetadata", global.types.fs_metadata)

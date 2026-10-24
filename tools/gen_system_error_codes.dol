@@ -32,7 +32,7 @@ let SOURCES = [
 
 def verify_source source path
   let name _url expected = source
-  let hash = digest.sha256 $path.read("b")
+  let hash = digest.sha256 $path.read()
   let actual = "${hash:x}"
   if (actual != expected)
     throw std.ValueError "$name: expected sha256:$expected, got sha256:$actual"
@@ -53,7 +53,7 @@ def parse_errno paths
   let definitions = {}
   let order = []
   for path = paths
-    for caps = DEFINE.find $path.read()
+    for caps = DEFINE.find $str(path.read())
       let name = str $caps[1]
       if !definitions.contains(name)
         order.push $name
@@ -237,7 +237,7 @@ args.with
       if options.check
         let stale = false
         for path generated = outputs
-          if (path.read() != generated)
+          if (str(path.read()) != generated)
             shell.stderr.write "generated output is stale: $path\n"
             stale = true
         if stale

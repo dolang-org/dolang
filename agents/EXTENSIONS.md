@@ -339,10 +339,26 @@ match res {
 `IntoByteIo::take` transfers the provider's handle as an owned `ByteHandle`
 over futures-io traits, and closes the provider: after it, a query raises the
 provider's usual closed error, and further calls on the same lent interface
-panic. Check `caps` before taking, so a rejected provider stays usable.
+panic. A consumer takes through `io::take` rather than a raw query. It passes
+the provider's `caps` to a check that can refuse it, so a rejected provider
+stays usable, then polls `IntoByteIo::poll_flush` until the provider has
+written out what it holds back (an `io.Buffered`'s pending writes) and takes.
+It fails with `ErrorKind::Unsupported` when nothing provides `ByteIo`:
+
+```rust
+let handle = io::take(strand, &value, |strand, caps| {
+    if !caps.contains(IoCaps::READ | IoCaps::SEEK) {
+        return Err(Error::value(strand, "expected a seekable reader"));
+    }
+    Ok(())
+})
+.await?;
+```
+
 `ByteHandle::into_read` and its siblings narrow the handle to the traits the
-consumer needs, handing it back on a mismatch. Do the I/O after the query
-returns, since the closure cannot await.
+consumer needs, handing it back on a mismatch. `io::buffered` wraps a handle in
+an `io.Buffered`, and `io::error` maps an `io::Error` to the closest runtime
+error for code without a richer mapping.
 
 A provider builds the handle with the constructor matching its capabilities
 (`ByteHandle::read_seek` and so on). Buffered read-ahead goes in
@@ -353,13 +369,13 @@ keep the provider: a script that wants to keep a file passes a duplicate
 
 The lent interface is `dyn IntoByteIo + 'v`, so implement the trait on the
 borrowed state type itself; an adapter holding short borrows of its fields does
-not live long enough. In the stub, a provider class claims the type-only
-`std.ByteIo` protocol (`class File: ... @ByteIo`), and a consumer accepts it in
-its signature. `fs.File` (`dolang-ext-shell/src/fs/file.rs`) is a provider,
-and `zip.open` (`dolang-ext-zip/src/zip.rs`) is a consumer that also accepts a
-path by opening it and building the handle itself. The `compress` streams
-(`dolang-ext-compress/src/compress.rs`) are both: each takes a handle and
-provides its own, so they chain.
+not live long enough. In the stub, a provider class claims the type-only `io.Io`
+protocol (`import io: - @Io`, then `class File: ... @Io`), and a consumer
+accepts it in its signature. `fs.File` (`dolang-ext-shell/src/fs/file.rs`) is a
+provider, and `zip.open` (`dolang-ext-zip/src/zip.rs`) is a consumer that also
+accepts a path by opening it and building the handle itself. The `compress`
+streams (`dolang-ext-compress/src/compress.rs`) are both: each takes a handle
+and provides its own, so they chain.
 
 ## GC Slots and Lifetime Transmuting
 

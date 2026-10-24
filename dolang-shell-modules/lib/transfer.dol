@@ -140,7 +140,7 @@ def digest_spec spec @ Str -> DigestSpec
 
 def digest_state path@Path constructor@(() -> digest.State) -> digest.State
   let state = constructor()
-  path.open rb do |file|
+  path.open buffer: false do |file|
     for chunk = file
       state.update $chunk
   state
@@ -152,7 +152,7 @@ def read_metadata path@Path identity@Str -> (Partial | Complete | nil)
   if !path.exists()
     return nil
   let data = try
-    json.decode(path.read())
+    json.decode(path.read_str())
   catch _
     return nil
   if !(type data Dict)
@@ -415,10 +415,10 @@ class Cache
       else
         digest_info.constructor()
 
-      let mode @ ("ab" | "wb") = if (resume_from != nil)
-        "ab"
+      let mode @ ("a" | "w") = if (resume_from != nil)
+        "a"
       else
-        "wb"
+        "w"
       part.open $mode do |file|
         for chunk = response.chunks()
           file.write $chunk
@@ -554,7 +554,7 @@ def put_url source@Path destination@Url headers@(BaseDict[Str | Sym, Str] | nil)
   let total = source.metadata().size
   let message = (destination.name || str destination)
   progress.show :message :total icon: ⬆️ units: :BYTES: do |indicator|
-    source.open rb do |file|
+    source.open buffer: false do |file|
       let track = do |chunk @ Bin| -> Bin
         indicator.delta $chunk.len
         chunk
@@ -634,7 +634,7 @@ def input_format_from_name name @ (Str | nil) -> (UnpackFormat | nil)
     :XZ:
 
 def sniff_format path @ Path -> UnpackFormat
-  let head = path.open rb do |file| file.read 512
+  let head = path.open do |file| file.read 512
   if (head.starts_with b"PK\x03\x04" || head.starts_with b"PK\x05\x06" ||
       head.starts_with b"PK\x07\x08")
     :ZIP:
@@ -769,7 +769,7 @@ do -> nil
       else if (file_metadata.type == :FILE:)
         let values = (filesystem_metadata path :FILE: metadata)
         archive.entry $name size: $file_metadata.size ...values do |entry|
-          path.open rb do |file|
+          path.open buffer: false do |file|
             for chunk = file
               entry.write $chunk
               indicator.delta $chunk.len
@@ -800,7 +800,7 @@ do -> nil
         # The size hint reserves the ZIP64 fields in the local file header,
         # without which an entry over 4 GiB cannot be written at all.
         archive.open (str name) mode: $values[:mode:] size: $file_metadata.size do |entry|
-          path.open rb do |file|
+          path.open buffer: false do |file|
             for chunk = file
               entry.write $chunk
               indicator.delta $chunk.len
@@ -1135,7 +1135,7 @@ class TarUnpack
           let item = (by_raw.get raw)
           if (item != nil && item.kind == :FILE:)
             let destination = (output_path root item)
-            destination.open wb do |file|
+            destination.open w do |file|
               for chunk = entry
                 file.write $chunk
                 indicator.delta $chunk.len
@@ -1189,7 +1189,7 @@ class ZipUnpack
           if (item.kind == :FILE:)
             archive.open $item.raw do |entry|
               let destination = (output_path root item)
-              destination.open wb do |file|
+              destination.open w do |file|
                 let remaining = item.size
                 while (remaining > 0)
                   let amount = if (remaining < 65536)
@@ -1229,7 +1229,7 @@ def decompress_raw
   format @ (:GZIP: | :ZSTD: | :XZ:)
 do -> nil
   try
-    destination.open wb do |file|
+    destination.open w do |file|
       compress.decompress $source $format do |stream|
         while true
           let chunk = stream.read 65536
