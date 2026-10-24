@@ -945,7 +945,6 @@ impl Connection {
                 Ok(ResponseKind::FileRemoveXattr)
             }
             RequestKind::FileClose { file } => self.handle_file_close(context, file).await,
-            RequestKind::FileDup { file } => self.handle_file_dup(context, file).await,
             RequestKind::UnixVfs(request) => self.handle_unix_vfs(context, request).await,
             RequestKind::WindowsAdmin(request) => self.handle_windows_admin(context, request).await,
             RequestKind::ReadDir { path } => self.handle_read_dir(context, path).await,
@@ -1464,27 +1463,6 @@ impl Connection {
             .map_err(|_| Error::new(ErrorKind::InvalidInput, "invalid opaque file"))
     }
 
-    /// Takes a file out of the session's registry, for an operation that
-    /// consumes it.
-    ///
-    /// Uses the recovering [`try_unregister`], so a file with operations still
-    /// in flight stays registered and the peer can retry once they finish;
-    /// [`handle_file_close`](Self::handle_file_close) deliberately does not,
-    /// because a close must still take effect after the racing operation ends.
-    ///
-    /// [`try_unregister`]: dolang_rpc::server::CallContext::try_unregister
-    fn take_file(
-        &self,
-        context: &CallContext<VfsProtocol>,
-        file: Cite<FileMarker>,
-    ) -> Result<RetainedFile> {
-        match context.try_unregister::<RetainedFile>(file) {
-            Ok(Some(file)) => Ok(file),
-            Ok(None) => Err(Error::new(ErrorKind::ResourceBusy, "opaque file is in use")),
-            Err(_) => Err(Error::new(ErrorKind::InvalidInput, "invalid opaque file")),
-        }
-    }
-
     async fn handle_file_read(
         &self,
         context: CallContext<VfsProtocol>,
@@ -1663,15 +1641,18 @@ impl Connection {
     ) -> Result<Gift<StdioSendMarker>> {
         // Check before taking the file so stopping leaves the peer's handle alone.
         self.reserve_stdio(false)?;
-        let file = self.take_file(context, file)?;
+        // The handoff takes the file from every clone, so it is refused while
+        // operations are still in flight, and the registration stays for the
+        // peer to retry.
+        let retained = self.retained_file(context, file.clone())?.0.clone();
         // The peer's cursor is the one that matters, and the descriptor the
         // child inherits carries a position of its own, so plant it explicitly
         // rather than letting this side's idea of the position decide.
-        let stdio = file
-            .0
+        let stdio = retained
             .into_stdio_send(offset)
             .await
             .map_err(handoff_error)?;
+        let _ = context.unregister::<RetainedFile>(file);
         Ok(context.register(RetainedStdioSend {
             stdio: Mutex::new(stdio),
         }))
@@ -1685,15 +1666,18 @@ impl Connection {
     ) -> Result<Gift<StdioRecvMarker>> {
         self.reserve_stdio(true)?;
         let slot = DrainSlot(self.drain.clone());
-        let file = self.take_file(context, file)?;
+        // The handoff takes the file from every clone, so it is refused while
+        // operations are still in flight, and the registration stays for the
+        // peer to retry.
+        let retained = self.retained_file(context, file.clone())?.0.clone();
         // The peer's cursor is the one that matters, and the descriptor the
         // child inherits carries a position of its own, so plant it explicitly
         // rather than letting this side's idea of the position decide.
-        let stdio = file
-            .0
+        let stdio = retained
             .into_stdio_recv(offset)
             .await
             .map_err(handoff_error)?;
+        let _ = context.unregister::<RetainedFile>(file);
         Ok(context.register(RetainedStdioRecv {
             stdio: Mutex::new(stdio),
             _slot: slot,
@@ -1865,27 +1849,14 @@ impl Connection {
         context: &CallContext<VfsProtocol>,
         file: Cite<FileMarker>,
     ) -> Result<ResponseKind> {
-        let retained = self.retained_file(context, file.clone())?;
-        drop(retained);
-        match context.unregister::<RetainedFile>(file) {
-            // `close` releases every lock still held on the file in band, so
-            // there is nothing to unwind here first.
-            Ok(Some(file)) => file.0.close().await,
-            Ok(None) => Err(Error::new(ErrorKind::ResourceBusy, "opaque file is in use")),
-            Err(_) => Err(Error::new(ErrorKind::InvalidInput, "invalid opaque file")),
-        }?;
+        // A clone closes the file for every operation still holding the
+        // registration, so the registration can simply go.
+        let retained = self.retained_file(context, file.clone())?.0.clone();
+        let _ = context.unregister::<RetainedFile>(file);
+        // `close` releases every lock still held on the file in band, so there
+        // is nothing to unwind here first.
+        retained.close().await?;
         Ok(ResponseKind::FileClose)
-    }
-
-    async fn handle_file_dup(
-        &self,
-        context: &CallContext<VfsProtocol>,
-        file: Cite<FileMarker>,
-    ) -> Result<ResponseKind> {
-        // The duplicate is a handle of its own here, so the locks each side
-        // takes are told apart, and released, per duplicate.
-        let dup = self.retained_file(context, file)?.0.dup().await?;
-        Ok(ResponseKind::FileDup(context.register(RetainedFile(dup))))
     }
 
     async fn handle_read_dir(

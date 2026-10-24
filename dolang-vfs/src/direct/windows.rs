@@ -1593,7 +1593,7 @@ impl Direct {
             .open(typed_windows_path(path)?)
             .await
             .map_err(crate::error::Error::into_io_error)?;
-        Self::impl_file_xattrs(&file.file, namespace).await
+        Self::impl_file_xattrs(&file.fd()?, namespace).await
     }
 
     pub(super) async fn impl_streams(&self, path: &Path, follow: bool) -> Result<Vec<StreamEntry>> {
@@ -1615,7 +1615,7 @@ impl Direct {
             .open(typed_windows_path(path)?)
             .await
             .map_err(crate::error::Error::into_io_error)?;
-        Self::impl_file_xattr(&file.file, name, namespace).await
+        Self::impl_file_xattr(&file.fd()?, name, namespace).await
     }
 
     pub(super) async fn impl_set_xattr(
@@ -1633,7 +1633,7 @@ impl Direct {
             .open(typed_windows_path(path)?)
             .await
             .map_err(crate::error::Error::into_io_error)?;
-        Self::impl_file_set_xattr(&file.file, name, namespace, value).await
+        Self::impl_file_set_xattr(&file.fd()?, name, namespace, value).await
     }
 
     pub(super) async fn impl_remove_xattr(
@@ -1651,7 +1651,7 @@ impl Direct {
             .open(typed_windows_path(path)?)
             .await
             .map_err(crate::error::Error::into_io_error)?;
-        Self::impl_file_remove_xattr(&file.file, name, namespace).await
+        Self::impl_file_remove_xattr(&file.fd()?, name, namespace).await
     }
 
     pub(super) async fn impl_file_xattrs(

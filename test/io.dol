@@ -181,16 +181,6 @@ def wrong_direction()
 
 #[test]
 #[vfs]
-def dup_keeps_original()
-  fs.Path("dup.txt").write "first\nsecond\n"
-  fs.open dup.txt buffer: false do |file|
-    let buf = Buffered $file.dup()
-    assert_eq $buf.read_line() "first\n"
-    buf.close()
-    assert_eq $file.read() b"first\nsecond\n"
-
-#[test]
-#[vfs]
 def streams_are_io()
   fs.Path("plain.txt").write "plain"
   let buf = Buffered $fs.open("plain.txt", buffer: false)

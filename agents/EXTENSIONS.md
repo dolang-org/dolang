@@ -363,8 +363,7 @@ A provider builds the handle with the constructor matching its capabilities
 (`ByteHandle::read_seek` and so on). Buffered read-ahead goes in
 `with_prefix`, which the handle serves first; a seekable handle realigns past
 it before its first seek or write. There is no way to hand over a handle and
-keep the provider: a script that wants to keep a file passes a duplicate
-(`file.dup()`) instead.
+keep the provider.
 
 The lent interface is `dyn IntoByteIo<'v> + 'a`, where `'a` is the lend, so an
 adapter can borrow the provider's state or receiver for the query. Each method

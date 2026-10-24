@@ -49,6 +49,8 @@ pub enum ErrorKind {
     UnexpectedEof,
     OutOfMemory,
     Other,
+    /// The file was closed, through this handle or a clone of it.
+    Closed,
 }
 
 impl From<io::ErrorKind> for ErrorKind {
@@ -138,7 +140,7 @@ impl From<ErrorKind> for io::ErrorKind {
             ErrorKind::Unsupported => Self::Unsupported,
             ErrorKind::UnexpectedEof => Self::UnexpectedEof,
             ErrorKind::OutOfMemory => Self::OutOfMemory,
-            ErrorKind::Other => Self::Other,
+            ErrorKind::Other | ErrorKind::Closed => Self::Other,
         }
     }
 }
@@ -278,6 +280,12 @@ impl Error {
 
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Self {
+        // An error that crossed an `io` interface, such as the cursor traits,
+        // comes back as itself rather than as its `io` kind.
+        let error = match error.downcast::<Self>() {
+            Ok(error) => return error,
+            Err(error) => error,
+        };
         let kind = error.kind().into();
         let message = error.to_string();
         match error.raw_os_error() {

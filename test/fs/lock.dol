@@ -105,26 +105,3 @@ def closing_file_releases_scoped_locks()
         guard.release()
       second.try_lock (..) do |guard|
         assert $guard.held
-
-#[test]
-#[vfs]
-def duplicates_share_locks()
-  if (sys.os_info().os == :FREEBSD:)
-    ignore "requires byte-range locks"
-  let path = "dup_file_lock.bin"
-  open $path w+ do |first|
-    open $path r+ do |other|
-      first.lock (0..10) do |_|
-        let dup = first.dup()
-        assert_throws $sys.InvalidInputError do
-          dup.lock (5..15) do |_|
-            nil
-        dup.lock (10..20) do |guard|
-          assert $guard.held
-          dup.close()
-          guard.release()
-        # Closing the duplicate released its range but not the original's.
-        other.try_lock (10..20) do |guard|
-          assert $guard.held
-        other.try_lock (0..10) do |guard|
-          assert $!guard.held
