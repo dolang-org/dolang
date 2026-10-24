@@ -353,13 +353,13 @@ keep the provider: a script that wants to keep a file passes a duplicate
 
 The lent interface is `dyn IntoByteIo + 'v`, so implement the trait on the
 borrowed state type itself; an adapter holding short borrows of its fields does
-not live long enough. In the stub, a provider class claims the type-only
-`std.ByteIo` protocol (`class File: ... @ByteIo`), and a consumer accepts it in
-its signature. `fs.File` (`dolang-ext-shell/src/fs/file.rs`) is a provider,
-and `zip.open` (`dolang-ext-zip/src/zip.rs`) is a consumer that also accepts a
-path by opening it and building the handle itself. The `compress` streams
-(`dolang-ext-compress/src/compress.rs`) are both: each takes a handle and
-provides its own, so they chain.
+not live long enough. In the stub, a provider class claims the type-only `io.Io`
+protocol (`import io: - @Io`, then `class File: ... @Io`), and a consumer
+accepts it in its signature. `fs.File` (`dolang-ext-shell/src/fs/file.rs`) is a
+provider, and `zip.open` (`dolang-ext-zip/src/zip.rs`) is a consumer that also
+accepts a path by opening it and building the handle itself. The `compress`
+streams (`dolang-ext-compress/src/compress.rs`) are both: each takes a handle
+and provides its own, so they chain.
 
 ## GC Slots and Lifetime Transmuting
 

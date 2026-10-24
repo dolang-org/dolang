@@ -1,0 +1,9 @@
+# dolang: strict
+# Native byte I/O.
+
+# A native value that can hand its bytes over to native code, such as an open
+# [`fs.File`](fs.File).
+#
+# A function that accepts one, such as [`zip.open`](zip.open), takes it over,
+# and the value reads as closed afterward. Only native types implement it.
+pub @class Io

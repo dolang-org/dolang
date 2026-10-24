@@ -22,14 +22,14 @@ import
     @Metadata: WindowsMetadata
     @FsMetadata: WindowsFsMetadata
     @DirEntry: WindowsDirEntry
+  io:
+    - @Io
   @security
   security.windows:
     - @Sid
     - @SecDesc
     - @SecDescSpec
     - @SecDescOptions
-  std:
-    - @ByteIo
   time:
     - @DateTime
 
@@ -156,11 +156,11 @@ pub class DirEntry
 # value's encoded bytes without adding a line terminator. Their `.write()`
 # methods accept the data types documented on each subtype.
 #
-# A file is a [`ByteIo`](std.ByteIo), so a function such as
+# A file is an [`Io`](io.Io), so a function such as
 # [`zip.open`](zip.open) can take it over, starting at its current position.
 # The file reads as closed afterward; hand over a [`dup`](fs.File.dup) to keep
 # using it.
-pub class File: Iter[Str | Bin] Sink[Value] @ByteIo
+pub class File: Iter[Str | Bin] Sink[Value] @Io
   # Closes the file.
   #
   # This is required if [`open`](fs.open) was not given a block.
@@ -171,7 +171,7 @@ pub class File: Iter[Str | Bin] Sink[Value] @ByteIo
   # kept by this process rather than by the operating system, so two live
   # handles would each believe a cursor the other moves. Use the file after the
   # handoff and it raises the ordinary closed-file error. Handing the file to a
-  # function that takes a [`ByteIo`](std.ByteIo) closes it the same way.
+  # function that takes an [`Io`](io.Io) closes it the same way.
   #
   # ## Example
   #
