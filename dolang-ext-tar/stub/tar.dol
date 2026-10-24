@@ -4,6 +4,8 @@
 import
   fs:
     - @Path
+  io:
+    - @Io
   fs.unix:
     @Path: UnixPath
   time:
@@ -325,7 +327,19 @@ pub class Writer
 
 # Opens an archive and calls `func` with a [`Reader`](tar.Reader).
 #
-# Compression is detected from gzip or zstd magic bytes.
+# A path is opened for reading. Any other source must be a readable
+# [`Io`](io.Io), such as an open [`fs.File`](fs.File), and is taken over: it
+# reads as closed afterward.
+#
+# Compression is detected from gzip or zstd magic bytes, so the source need
+# not seek.
+#
+# ## Errors
+#
+# | Exception | Condition |
+# | --- | --- |
+# | [`TypeError`](std.TypeError) | `source` is not a path or an [`Io`](io.Io) |
+# | [`ValueError`](std.ValueError) | `source` is not readable, and is left open |
 #
 # ## Example
 #
@@ -335,14 +349,26 @@ pub class Writer
 #     echo "$entry.path: $entry.size bytes"
 # ```
 pub def read[R]
-  # Archive path.
-  path @ (Str | Path)
+  # Archive input.
+  source @ (Str | Path | Io)
   # Reader scope, called with a [`Reader`](tar.Reader).
   func @ (Reader -> R)
 do -> R
   ...
 
 # Creates an archive and calls `func` with a [`Writer`](tar.Writer).
+#
+# A path is created or truncated. Any other sink must be a writable
+# [`Io`](io.Io), such as an open [`fs.File`](fs.File), and is taken over: it
+# reads as closed afterward. The archive is finished and the sink closed when
+# `func` returns.
+#
+# ## Errors
+#
+# | Exception | Condition |
+# | --- | --- |
+# | [`TypeError`](std.TypeError) | `sink` is not a path or an [`Io`](io.Io) |
+# | [`ValueError`](std.ValueError) | `sink` is not writable, and is left open |
 #
 # ## Example
 #
@@ -352,13 +378,14 @@ do -> R
 #     entry.write hello
 # ```
 pub def write[R]
-  # Archive path.
-  path @ (Str | Path)
+  # Archive output.
+  sink @ (Str | Path | Io)
   # Compression.
   #
   # When omitted, `.gz` and `.tgz` select gzip, `.zst` and `.tzst` select
   # zstd, and other extensions select no compression. Extension matching is
-  # case-insensitive. An explicit `compression` overrides the path.
+  # case-insensitive. An explicit `compression` overrides the path. An
+  # [`Io`](io.Io) sink has no extension, so it defaults to no compression.
   :compression @ (:NONE: | :GZIP: | :ZSTD:) = nil
   # Writer scope, called with a [`Writer`](tar.Writer).
   func @ (Writer -> R)

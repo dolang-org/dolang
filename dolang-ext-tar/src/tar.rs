@@ -1,6 +1,6 @@
 use std::{
     future::poll_fn,
-    io::{self, SeekFrom},
+    io,
     path::Path,
     pin::Pin,
     str,
@@ -12,19 +12,25 @@ use async_compression::tokio::{
     write::{GzipEncoder, ZstdEncoder},
 };
 use dolang::runtime::{
-    BYTE_STREAM_CHUNK_SIZE, Error, Instance, Object, Output, Result, Slot, State, Strand, call,
-    error::ResultExt,
+    BYTE_STREAM_CHUNK_SIZE, Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
+    call,
+    error::{ErrorKind, ResultExt},
+    io::{ByteHandle, IoCaps},
     object::{Mut, Ref, TypeBuilder},
     unpack,
-    value::{BinEmbryo, Nil, TypeObject, View},
+    value::{BinEmbryo, Nil, TypeObject},
     vm::Register,
 };
+use dolang_ext_shell::ResultExt as _;
 use tokio::io::{
-    AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader, DuplexStream,
-    ReadBuf,
+    AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, DuplexStream, ReadBuf,
 };
 use tokio_stream::StreamExt;
 use tokio_tar::{Archive, Builder as TarBuilder, Entries, Entry, EntryType, Header};
+use tokio_util::compat::{
+    FuturesAsyncReadCompatExt as _, FuturesAsyncWriteCompatExt as _, TokioAsyncReadCompatExt as _,
+    TokioAsyncWriteCompatExt as _,
+};
 
 use crate::global::Global;
 
@@ -666,10 +672,12 @@ impl<'v> Object<'v> for TarEntryWriter {
             "write",
             async move |this, strand, args, _out| {
                 let ([data], []) = unpack!(strand, args, 1, 0)?;
-                let data = match data.view(strand) {
-                    View::Str(value) => String::from(value).into_bytes(),
-                    View::Bin(value) => value.to_vec(),
-                    _ => return Err(Error::type_error(strand, "expected Str or Bin")),
+                let data = if let Some(value) = data.as_bin(strand) {
+                    value.to_vec()
+                } else if let Some(value) = data.as_str(strand) {
+                    String::from(value).into_bytes()
+                } else {
+                    return Err(Error::type_error(strand, "expected Str or Bin"));
                 };
                 validate_entry_writer!(this, strand);
                 this.borrow_mut(strand)?.write(strand, &data).await
@@ -692,10 +700,12 @@ impl<'v> Object<'v> for TarEntryWriter {
         strand: &'a mut Strand<'v, 's>,
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let data = match value.view(strand) {
-            View::Str(value) => String::from(value).into_bytes(),
-            View::Bin(value) => value.to_vec(),
-            _ => return Err(Error::type_error(strand, "expected Str or Bin")),
+        let data = if let Some(value) = value.as_bin(strand) {
+            value.to_vec()
+        } else if let Some(value) = value.as_str(strand) {
+            String::from(value).into_bytes()
+        } else {
+            return Err(Error::type_error(strand, "expected Str or Bin"));
         };
         validate_entry_writer!(this, strand);
         this.borrow_mut(strand)?.write(strand, &data).await
@@ -898,24 +908,61 @@ impl<'v> Object<'v> for TarWriter {
     }
 }
 
+/// Takes the byte handle `endpoint` names: a path is opened, and any other value must
+/// provide `ByteIo` with `need`.
+async fn take_handle<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    endpoint: &Value<'v>,
+    need: IoCaps,
+    name: &str,
+) -> Result<'v, 's, ByteHandle> {
+    let write = need.contains(IoCaps::WRITE);
+    if let Some(path) = dolang_ext_shell::as_path(strand, endpoint) {
+        let mode = if write { "w" } else { "r" };
+        let file = dolang_ext_shell::open(strand, path.as_ref(), mode)
+            .await
+            .into_sys(strand)?;
+        return Ok(if write {
+            ByteHandle::write(file.compat_write())
+        } else {
+            ByteHandle::read(file.compat())
+        });
+    }
+    dolang::runtime::io::take(strand, endpoint, |strand, caps| {
+        if !caps.contains(need) {
+            let access = if write { "writable" } else { "readable" };
+            return Err(Error::value(strand, format!("{name} must be {access}")));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|err| {
+        if err.kind() == ErrorKind::Unsupported {
+            Error::type_error(
+                strand,
+                format!("expected `Str`, `Path`, or a byte I/O provider for `{name}`"),
+            )
+        } else {
+            err
+        }
+    })
+}
+
 async fn open_reader<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    path: &Path,
+    handle: ByteHandle,
 ) -> Result<'v, 's, (NativeEntries, Compression)> {
-    let mut file = dolang_ext_shell::open(strand, path, "r")
-        .await
-        .into_do(strand)?;
-    let mut magic = [0; ZSTD_MAGIC.len()];
-    let mut magic_len = 0;
-    while magic_len < magic.len() {
-        let read = file.read(&mut magic[magic_len..]).await.into_do(strand)?;
+    let mut source = handle.into_read().expect("source is readable").compat();
+    let mut magic = Vec::with_capacity(ZSTD_MAGIC.len());
+    while magic.len() < ZSTD_MAGIC.len() {
+        let mut bytes = [0; ZSTD_MAGIC.len()];
+        let want = ZSTD_MAGIC.len() - magic.len();
+        let read = source.read(&mut bytes[..want]).await.into_do(strand)?;
         if read == 0 {
             break;
         }
-        magic_len += read;
+        magic.extend_from_slice(&bytes[..read]);
     }
-    file.seek(SeekFrom::Start(0)).await.into_do(strand)?;
-    let magic = &magic[..magic_len];
     let compression = if magic.starts_with(GZIP_MAGIC) {
         Compression::Gzip
     } else if magic.starts_with(ZSTD_MAGIC) {
@@ -923,7 +970,13 @@ async fn open_reader<'v, 's>(
     } else {
         Compression::None
     };
-    let buffered = BufReader::with_capacity(BYTE_STREAM_CHUNK_SIZE, file);
+    // Replay the detected bytes ahead of the rest of the source.
+    let source = ByteHandle::read(source.into_inner())
+        .with_prefix(magic)
+        .into_read()
+        .expect("handle is readable")
+        .compat();
+    let buffered = BufReader::with_capacity(BYTE_STREAM_CHUNK_SIZE, source);
     let reader: DynReader = match compression {
         Compression::None => Box::pin(buffered),
         Compression::Gzip => Box::pin(GzipDecoder::new(buffered)),
@@ -938,10 +991,12 @@ fn parse_compression<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
     value: Option<Slot<'v, '_>>,
-    path: &Path,
+    path: Option<&Path>,
 ) -> Result<'v, 's, Compression> {
     let Some(value) = value else {
-        let extension = path.extension().and_then(|extension| extension.to_str());
+        let extension = path
+            .and_then(Path::extension)
+            .and_then(|extension| extension.to_str());
         return Ok(match extension {
             Some(extension)
                 if extension.eq_ignore_ascii_case("gz")
@@ -978,10 +1033,9 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
         .value("Writer", global.types.writer)
         .value("EntryWriter", global.types.entry_writer)
         .function("read", async move |strand, args, out| {
-            let ([path, block], []) = unpack!(strand, args, 2, 0)?;
-            let path = dolang_ext_shell::as_path(strand, &path)
-                .ok_or_else(|| Error::type_error(strand, "path must be a Str or Path"))?;
-            let (entries, compression) = open_reader(strand, path.as_ref()).await?;
+            let ([source, block], []) = unpack!(strand, args, 2, 0)?;
+            let handle = take_handle(strand, &source, IoCaps::READ, "source").await?;
+            let (entries, compression) = open_reader(strand, handle).await?;
             strand
                 .with_slots(async move |strand, [mut reader]| {
                     global.types.reader.create_with_annex(
@@ -1012,18 +1066,19 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                 .await
         })
         .function("write", async move |strand, args, out| {
-            let ([path, block], [compression]) =
+            let ([sink, block], [compression]) =
                 unpack!(strand, args, 2, 0, compression_sym = None)?;
-            let path = dolang_ext_shell::as_path(strand, &path)
-                .ok_or_else(|| Error::type_error(strand, "path must be a Str or Path"))?;
-            let compression = parse_compression(strand, global, compression, path.as_ref())?;
-            let file = dolang_ext_shell::open(strand, path.as_ref(), "w")
-                .await
-                .into_do(strand)?;
+            let path = dolang_ext_shell::as_path(strand, &sink);
+            let compression = parse_compression(strand, global, compression, path.as_deref())?;
+            let handle = take_handle(strand, &sink, IoCaps::WRITE, "sink").await?;
+            let sink = handle
+                .into_write()
+                .expect("sink is writable")
+                .compat_write();
             let writer: DynWriter = match compression {
-                Compression::None => Box::pin(file),
-                Compression::Gzip => Box::pin(GzipEncoder::new(file)),
-                Compression::Zstd => Box::pin(ZstdEncoder::new(file)),
+                Compression::None => Box::pin(sink),
+                Compression::Gzip => Box::pin(GzipEncoder::new(sink)),
+                Compression::Zstd => Box::pin(ZstdEncoder::new(sink)),
             };
             let native_builder = TarBuilder::new(writer);
             strand
