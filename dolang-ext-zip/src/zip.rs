@@ -962,7 +962,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                     ByteHandle::write_seek(file)
                 }
             } else {
-                dolang::runtime::io::take(strand, &source, |strand, caps| {
+                dolang::runtime::io::get(strand, &source, |strand, caps| {
                     if !caps.contains(need) {
                         return Err(Error::value(
                             strand,

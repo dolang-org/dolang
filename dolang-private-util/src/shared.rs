@@ -12,6 +12,7 @@ use std::{
     future::{Future, poll_fn},
     io::{self, IoSlice, IoSliceMut, SeekFrom},
     mem,
+    ops::{Deref, DerefMut},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll, ready},
@@ -91,6 +92,16 @@ impl<T> Shared<T> {
         .await
     }
 
+    /// Holds the stream for several operations in a row, until the guard drops.
+    ///
+    /// It waits for an operation in progress on another handle, and fails if the stream is
+    /// closed.
+    pub async fn lock(&mut self) -> io::Result<Locked<'_, T>> {
+        let res = poll_fn(|cx| self.poll_acquire(cx).map_ok(|_| ())).await;
+        self.settle(res.is_err());
+        res.map(|()| Locked { shared: self })
+    }
+
     #[cfg(test)]
     fn is_shared(&self) -> bool {
         matches!(*self.state.borrow(), State::Wrapped { .. })
@@ -159,6 +170,41 @@ impl<T> Shared<T> {
         };
         self.settle(res.is_ready());
         res
+    }
+}
+
+/// A stream held by [`Shared::lock`].
+pub struct Locked<'a, T> {
+    shared: &'a mut Shared<T>,
+}
+
+impl<T> Deref for Locked<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        // SAFETY: the guard borrows the handle exclusively, so the cell has no other borrow.
+        let state = unsafe { &*self.shared.state.as_ptr() };
+        match state {
+            State::Plain { io, .. } => io.as_ref(),
+            State::Wrapped { guard, .. } => guard.as_ref().and_then(|held| held.as_ref()),
+        }
+        .expect("the stream is held")
+    }
+}
+
+impl<T> DerefMut for Locked<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        match self.shared.state.get_mut() {
+            State::Plain { io, .. } => io.as_mut(),
+            State::Wrapped { guard, .. } => guard.as_mut().and_then(|held| held.as_mut()),
+        }
+        .expect("the stream is held")
+    }
+}
+
+impl<T> Drop for Locked<'_, T> {
+    fn drop(&mut self) {
+        self.shared.settle(true);
     }
 }
 
@@ -488,6 +534,22 @@ mod tests {
         assert_eq!(buf, b"abcdef");
         assert!(read(&mut b, waker, 2).is_pending());
         Pin::new(&mut a).consume(2);
+        assert!(matches!(read(&mut b, waker, 2), Poll::Ready(Ok(ref data)) if data == b"cd"));
+    }
+
+    #[test]
+    fn lock_holds_the_stream_until_dropped() {
+        let waker = Waker::noop();
+        let mut a = Shared::new(Cursor::new(b"abcdef".to_vec()));
+        let mut b = a.clone();
+        let mut locked = pin!(a.lock());
+        let Poll::Ready(Ok(mut held)) = locked.as_mut().poll(&mut Context::from_waker(waker))
+        else {
+            panic!("expected the stream");
+        };
+        held.set_position(2);
+        assert!(read(&mut b, waker, 2).is_pending());
+        drop(held);
         assert!(matches!(read(&mut b, waker, 2), Poll::Ready(Ok(ref data)) if data == b"cd"));
     }
 

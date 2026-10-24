@@ -326,8 +326,8 @@ pub @let OpenMode = $
 # The archive stays open until [`Archive.close`](zip.Archive.close) is called.
 #
 # The archive is read from or written to `source`. A path is opened. Any other
-# source, such as an open [`fs.File`](fs.File), is taken over and reads as
-# closed afterward. Reading needs a readable, seekable source and writing a
+# source, such as an open [`fs.File`](fs.File), is used without being closed.
+# Reading needs a readable, seekable source and writing a
 # writable, seekable one, and writing starts at the source's beginning, since
 # archive offsets are absolute.
 #

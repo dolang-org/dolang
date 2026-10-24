@@ -9,7 +9,6 @@ import fs
     - test
   std:
     - ConcurrencyError
-    - StateError
     - TypeError
     - ValueError
 
@@ -195,8 +194,8 @@ def open_from_file()
     zip.open $file do |archive|
       archive.open "hello.txt" do |entry|
         assert_eq (str (entry.read())) "Hello, World!"
-    assert_throws $StateError do file.read()
-    file.close()
+    file.seek start: 0
+    assert_eq $file.read(2) b"PK"
 
 #[test]
 #[vfs]

@@ -24,7 +24,7 @@ assert_eq (byte_seek (ByteBuf b"abcdef" 2 "s") 3) b"def"
 # Writing realigns to the logical position first
 assert_eq (byte_overwrite (ByteBuf b"abcdef" 2 "ws") b"XY") b"XYcdef"
 
-# A consumer rejects a provider lacking a capability before taking
+# A consumer rejects a provider lacking a capability before getting its handle
 def rejects f ...args
   try
     f ...args
@@ -36,7 +36,7 @@ let b = ByteBuf b"abcdef" 2 ""
 assert (rejects byte_seek b 0)
 assert_eq (byte_read b) b"abcdef"
 
-# A taken provider raises its closed error
+# A provider's own error is raised as is; this one hands out its handle once
 let closed = try
   byte_read $b
   false
@@ -52,18 +52,14 @@ catch error.UnsupportedError: _
   true
 assert $unsupported
 
-# A buffer serves its source's read-ahead, and hands its own on when taken
+# A buffer serves its source's read-ahead, and lends itself, so a consumer reads
+# through it and the buffer stays open
 let lines = Buffered (ByteBuf b"ab\ncd\nef" 2 "")
 assert_eq (lines.read_line()) "ab\n"
 assert_eq (byte_read lines) b"cd\nef"
-let taken = try
-  lines.read_line()
-  false
-catch error.StateError: _
-  true
-assert $taken
+assert_eq (lines.read_line()) ""
 
-# A taken seekable buffer keeps its logical position
+# A lent seekable buffer reports its logical position
 let seekable = Buffered (ByteBuf b"ab\ncd\n" 0 "s")
 seekable.read_line()
 assert_eq (byte_tell seekable) 3
@@ -87,7 +83,7 @@ assert_eq (both.read_line()) "b\n"
 assert_eq (both.read_line()) ""
 assert_eq (duplex.written()) b"x"
 
-# Taking a buffer flushes its pending writes
+# Reading through a lent buffer flushes its pending writes first
 let sink = ByteBuf b"" 0 "d"
 let pending = Buffered $sink
 pending.write pending

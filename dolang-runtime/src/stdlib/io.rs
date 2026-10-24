@@ -5,9 +5,11 @@
 //! A handle that cannot seek keeps the two buffers apart, since its reads and writes are
 //! separate streams. Reads and writes at least a buffer long skip the buffer once it is
 //! drained or flushed.
+//!
+//! The buffer sits in a [`Shared`] with its handle, so the handle `Buffered` lends reads
+//! and writes through the same buffer.
 
 use std::{
-    future::poll_fn,
     io::{self, SeekFrom},
     mem::MaybeUninit,
     pin::Pin,
@@ -15,13 +17,16 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use dolang_util::utf8;
-use futures::io::{AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
+use dolang_util::{shared::Locked, utf8};
+use futures::io::{
+    AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite,
+    AsyncWriteExt,
+};
 
 use crate::{
     BYTE_STREAM_CHUNK_SIZE,
     error::{Error, ErrorKind, Result},
-    io::{ByteHandle, ByteIo, IntoByteIo, Io, IoCaps},
+    io::{ByteHandle, ByteIo, IntoByteIo, Io, IoCaps, Shared},
     object::{
         interface::Request,
         native::{Instance, Object, Type, TypeBuilder},
@@ -36,10 +41,8 @@ use crate::{
 const CAPACITY: usize = 8 * 1024;
 
 /// A buffer over an owned byte handle.
-pub(crate) struct Buffered {
-    /// The handle, until it is closed or taken.
-    io: Option<Io>,
-    caps: IoCaps,
+struct BufIo {
+    io: Io,
     /// Read-ahead, unread from `rpos`.
     rbuf: Vec<u8>,
     rpos: usize,
@@ -47,63 +50,25 @@ pub(crate) struct Buffered {
     wbuf: Vec<u8>,
 }
 
-impl Buffered {
-    /// Wraps `handle`, serving its prefix first.
-    fn new(handle: ByteHandle) -> Self {
-        let ByteHandle { io, prefix } = handle;
-        Self {
-            caps: io.caps(),
-            io: Some(io),
-            rbuf: prefix,
-            rpos: 0,
-            wbuf: Vec::new(),
-        }
-    }
-
-    /// Raises unless the buffer is open and its handle has `need`.
-    fn check<'v, 's>(&self, strand: &mut Strand<'v, 's>, need: IoCaps) -> Result<'v, 's, ()> {
-        if self.io.is_none() {
-            return Err(Error::state_error(strand, "buffer is closed"));
-        }
-        let missing = need - self.caps;
-        if missing.contains(IoCaps::READ) {
-            Err(Error::state_error(strand, "buffer is not readable"))
-        } else if missing.contains(IoCaps::WRITE) {
-            Err(Error::state_error(strand, "buffer is not writable"))
-        } else if missing.contains(IoCaps::SEEK) {
-            Err(Error::state_error(strand, "buffer is not seekable"))
-        } else {
-            Ok(())
-        }
-    }
-
-    /// Capabilities while open; a closed buffer has none.
-    fn open_caps(&self) -> IoCaps {
-        if self.io.is_some() {
-            self.caps
-        } else {
-            IoCaps::empty()
-        }
-    }
-
-    fn io(&mut self) -> &mut Io {
-        self.io.as_mut().expect("buffer is closed")
-    }
-
+impl BufIo {
     fn unread(&self) -> usize {
         self.rbuf.len() - self.rpos
     }
 
     fn seekable(&self) -> bool {
-        self.caps.contains(IoCaps::SEEK)
+        self.io.caps().contains(IoCaps::SEEK)
     }
 
     fn consume(&mut self, n: usize) {
         self.rpos += n;
         if self.rpos == self.rbuf.len() {
-            self.rbuf.clear();
-            self.rpos = 0;
+            self.drop_read_ahead();
         }
+    }
+
+    fn drop_read_ahead(&mut self) {
+        self.rbuf.clear();
+        self.rpos = 0;
     }
 
     /// Returns bytes taken from the handle to the front of the read-ahead.
@@ -120,10 +85,13 @@ impl Buffered {
         }
     }
 
+    /// Writes out pending writes.
+    ///
+    /// Reads call this first. On a seekable handle they must, so the read starts after the
+    /// writes. On one that cannot seek, a peer may be waiting for them before it answers.
     fn poll_flush_buf(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let io = self.io.as_mut().expect("buffer is closed");
         while !self.wbuf.is_empty() {
-            let n = ready!(Pin::new(&mut *io).poll_write(cx, &self.wbuf))?;
+            let n = ready!(Pin::new(&mut self.io).poll_write(cx, &self.wbuf))?;
             if n == 0 {
                 return Poll::Ready(Err(io::ErrorKind::WriteZero.into()));
             }
@@ -132,51 +100,17 @@ impl Buffered {
         Poll::Ready(Ok(()))
     }
 
-    /// Writes out pending writes.
-    async fn flush_buf(&mut self) -> io::Result<()> {
-        poll_fn(|cx| self.poll_flush_buf(cx)).await
-    }
-
-    /// Prepares to read from the handle.
-    ///
-    /// Pending writes go first. On a seekable handle they must, so the read starts after
-    /// them. On one that cannot seek, a peer may be waiting for them before it answers.
-    async fn begin_read(&mut self) -> io::Result<()> {
-        self.flush_buf().await
-    }
-
     /// Prepares to write, moving a seekable handle back over unread bytes.
-    async fn begin_write(&mut self) -> io::Result<()> {
+    fn poll_begin_write(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         if !self.seekable() {
-            return Ok(());
+            return Poll::Ready(Ok(()));
         }
         if self.unread() > 0 {
             let back = -i64::try_from(self.unread()).map_err(io::Error::other)?;
-            self.io().seek(SeekFrom::Current(back)).await?;
+            ready!(Pin::new(&mut self.io).poll_seek(cx, SeekFrom::Current(back)))?;
         }
-        self.rbuf.clear();
-        self.rpos = 0;
-        Ok(())
-    }
-
-    /// Returns the read-ahead, refilling it first if it is drained. Empty means end of
-    /// stream.
-    async fn fill_buf(&mut self) -> io::Result<&[u8]> {
-        if self.unread() == 0 {
-            self.begin_read().await?;
-            self.rbuf.clear();
-            self.rpos = 0;
-            self.rbuf.resize(CAPACITY, 0);
-            let io = self.io.as_mut().expect("buffer is closed");
-            match io.read(&mut self.rbuf).await {
-                Ok(n) => self.rbuf.truncate(n),
-                Err(err) => {
-                    self.rbuf.clear();
-                    return Err(err);
-                }
-            }
-        }
-        Ok(&self.rbuf[self.rpos..])
+        self.drop_read_ahead();
+        Poll::Ready(Ok(()))
     }
 
     /// Appends `n` bytes to `out`, or the rest of the stream when `n` is `None`, stopping
@@ -197,14 +131,13 @@ impl Buffered {
                 return Ok(());
             }
             if self.unread() == 0 && want >= CAPACITY {
-                self.begin_read().await?;
                 let chunk = want.min(BYTE_STREAM_CHUNK_SIZE);
                 out.reserve(alloc, chunk);
                 let spare = &mut out.spare_capacity_mut()[..chunk];
                 spare.fill(MaybeUninit::new(0));
                 // SAFETY: every byte of `spare` was just initialized.
                 let spare = unsafe { &mut *(spare as *mut [MaybeUninit<u8>] as *mut [u8]) };
-                let read = self.io().read(spare).await?;
+                let read = self.read(spare).await?;
                 if read == 0 {
                     return Ok(());
                 }
@@ -245,25 +178,101 @@ impl Buffered {
             }
         }
     }
+}
 
-    async fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
-        self.begin_write().await?;
-        if self.wbuf.len() + data.len() > CAPACITY {
-            self.flush_buf().await?;
+impl AsyncRead for BufIo {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        if this.unread() == 0 && buf.len() >= CAPACITY {
+            ready!(this.poll_flush_buf(cx))?;
+            return Pin::new(&mut this.io).poll_read(cx, buf);
         }
-        if data.len() >= CAPACITY {
-            self.io().write_all(data).await
-        } else {
-            self.wbuf.extend_from_slice(data);
-            Ok(())
+        let avail = ready!(Pin::new(&mut *this).poll_fill_buf(cx))?;
+        let n = avail.len().min(buf.len());
+        buf[..n].copy_from_slice(&avail[..n]);
+        this.consume(n);
+        Poll::Ready(Ok(n))
+    }
+}
+
+/// Refills the read-ahead only once it is drained. Empty means end of stream.
+impl AsyncBufRead for BufIo {
+    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<&[u8]>> {
+        let this = self.get_mut();
+        if this.unread() == 0 {
+            ready!(this.poll_flush_buf(cx))?;
+            this.rbuf.resize(CAPACITY, 0);
+            match Pin::new(&mut this.io).poll_read(cx, &mut this.rbuf) {
+                Poll::Ready(Ok(n)) => this.rbuf.truncate(n),
+                res => {
+                    this.rbuf.clear();
+                    return res.map_ok(|_| &[][..]);
+                }
+            }
         }
+        Poll::Ready(Ok(&this.rbuf[this.rpos..]))
     }
 
-    async fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        self.flush_buf().await?;
+    fn consume(self: Pin<&mut Self>, amt: usize) {
+        self.get_mut().consume(amt);
+    }
+}
+
+impl AsyncWrite for BufIo {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        ready!(this.poll_begin_write(cx))?;
+        if this.wbuf.len() + buf.len() > CAPACITY {
+            ready!(this.poll_flush_buf(cx))?;
+        }
+        if buf.len() >= CAPACITY {
+            return Pin::new(&mut this.io).poll_write(cx, buf);
+        }
+        this.wbuf.extend_from_slice(buf);
+        Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        ready!(this.poll_flush_buf(cx))?;
+        Pin::new(&mut this.io).poll_flush(cx)
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        ready!(this.poll_flush_buf(cx))?;
+        Pin::new(&mut this.io).poll_close(cx)
+    }
+}
+
+/// `SeekFrom::Current(0)` reports the logical position, keeping both buffers: the
+/// handle's position, less unread bytes, plus pending writes.
+impl AsyncSeek for BufIo {
+    fn poll_seek(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        pos: SeekFrom,
+    ) -> Poll<io::Result<u64>> {
+        let this = self.get_mut();
+        if pos == SeekFrom::Current(0) {
+            let pos = ready!(Pin::new(&mut this.io).poll_seek(cx, pos))?;
+            let pos = (pos + this.wbuf.len() as u64)
+                .checked_sub(this.unread() as u64)
+                .ok_or_else(|| io::Error::other("position is before buffered data"));
+            return Poll::Ready(pos);
+        }
+        ready!(this.poll_flush_buf(cx))?;
         let pos = match pos {
             SeekFrom::Current(n) => {
-                let adjusted = i64::try_from(self.unread())
+                let adjusted = i64::try_from(this.unread())
                     .ok()
                     .and_then(|unread| n.checked_sub(unread))
                     .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
@@ -271,37 +280,80 @@ impl Buffered {
             }
             pos => pos,
         };
-        let pos = self.io().seek(pos).await?;
-        self.rbuf.clear();
-        self.rpos = 0;
-        Ok(pos)
+        let pos = ready!(Pin::new(&mut this.io).poll_seek(cx, pos))?;
+        this.drop_read_ahead();
+        Poll::Ready(Ok(pos))
     }
+}
 
-    /// The logical position: the handle's, less unread bytes, plus pending writes.
-    async fn tell(&mut self) -> io::Result<u64> {
-        let pos = self.io().seek(SeekFrom::Current(0)).await?;
-        (pos + self.wbuf.len() as u64)
-            .checked_sub(self.unread() as u64)
-            .ok_or_else(|| io::Error::other("position is before buffered data"))
-    }
+/// A buffer over an owned byte handle, shared with the handles it lends.
+pub(crate) struct Buffered {
+    /// The buffer, until it is closed.
+    io: Option<Shared<BufIo>>,
+    caps: IoCaps,
+}
 
-    async fn flush(&mut self) -> io::Result<()> {
-        self.flush_buf().await?;
-        self.io().flush().await
-    }
-
-    /// Flushes and closes the handle, dropping it even if flushing fails.
-    async fn close(&mut self) -> io::Result<()> {
-        if self.io.is_none() {
-            return Ok(());
+impl Buffered {
+    /// Wraps `handle`, serving its prefix first.
+    fn new(handle: ByteHandle) -> Self {
+        let ByteHandle { io, prefix } = handle;
+        Self {
+            caps: io.caps(),
+            io: Some(Shared::new(BufIo {
+                io,
+                rbuf: prefix,
+                rpos: 0,
+                wbuf: Vec::new(),
+            })),
         }
-        let flushed = self.flush_buf().await;
-        let mut io = self.io.take().expect("buffer is closed");
-        self.rbuf = Vec::new();
-        self.rpos = 0;
-        self.wbuf = Vec::new();
-        let closed = io.close().await;
-        flushed.and(closed)
+    }
+
+    /// Raises unless the buffer is open and its handle has `need`.
+    fn check<'v, 's>(&self, strand: &mut Strand<'v, 's>, need: IoCaps) -> Result<'v, 's, ()> {
+        if self.io.is_none() {
+            return Err(Error::state_error(strand, "buffer is closed"));
+        }
+        let missing = need - self.caps;
+        if missing.contains(IoCaps::READ) {
+            Err(Error::state_error(strand, "buffer is not readable"))
+        } else if missing.contains(IoCaps::WRITE) {
+            Err(Error::state_error(strand, "buffer is not writable"))
+        } else if missing.contains(IoCaps::SEEK) {
+            Err(Error::state_error(strand, "buffer is not seekable"))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Capabilities while open; a closed buffer has none.
+    fn open_caps(&self) -> IoCaps {
+        if self.io.is_some() {
+            self.caps
+        } else {
+            IoCaps::empty()
+        }
+    }
+
+    /// Holds the buffer for a method, after any operation through a lent handle.
+    async fn lock<'v, 's>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, Locked<'_, BufIo>> {
+        let io = self.io.as_mut().expect("buffer is closed");
+        io.lock().await.map_err(|err| crate::io::error(strand, err))
+    }
+
+    /// Flushes and closes the buffer, dropping it even if flushing fails.
+    ///
+    /// The handle's own `close` only flushes a lent handle, so the source stays open.
+    async fn close(&mut self) -> io::Result<()> {
+        let Some(mut shared) = self.io.take() else {
+            return Ok(());
+        };
+        match shared.close().await {
+            Some(mut io) => io.close().await,
+            None => Ok(()),
+        }
     }
 }
 
@@ -310,22 +362,10 @@ impl<'v> IntoByteIo<'v> for Buffered {
         Ok(self.caps)
     }
 
-    fn poll_flush(
-        &mut self,
-        _strand: &mut Strand<'v, '_>,
-        cx: &mut Context<'_>,
-    ) -> Poll<io::Result<()>> {
-        ready!(self.poll_flush_buf(cx))?;
-        Pin::new(self.io()).poll_flush(cx)
-    }
-
-    fn take<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
-        assert!(self.wbuf.is_empty(), "buffer taken before flushing");
-        let io = self.io.take().expect("buffer already taken");
-        let prefix = self.rbuf.split_off(self.rpos);
-        self.rbuf = Vec::new();
-        self.rpos = 0;
-        Ok(ByteHandle { io, prefix })
+    /// Lends the buffer itself, so the consumer reads and writes through it.
+    fn get<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
+        let io = self.io.as_ref().expect("buffer is closed").clone();
+        Ok(ByteHandle::with_caps(io, self.caps))
     }
 }
 
@@ -355,13 +395,14 @@ impl Buffered {
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         self.check(strand, IoCaps::READ)?;
+        let mut io = self.lock(strand).await?;
         let mut buf = BinEmbryo::new();
-        if let Err(err) = self.read_line_into(strand, &mut buf).await {
-            self.push_back(buf.as_slice());
+        if let Err(err) = io.read_line_into(strand, &mut buf).await {
+            io.push_back(buf.as_slice());
             return Err(crate::io::error(strand, err));
         }
         if str::from_utf8(buf.as_slice()).is_err() {
-            self.push_back(buf.as_slice());
+            io.push_back(buf.as_slice());
             return Err(invalid_utf8(strand));
         }
         // SAFETY: validated above.
@@ -380,9 +421,10 @@ impl Buffered {
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         self.check(strand, IoCaps::READ)?;
+        let mut io = self.lock(strand).await?;
         let mut buf = BinEmbryo::new();
-        if let Err(err) = self.read_into(strand, &mut buf, size).await {
-            self.push_back(buf.as_slice());
+        if let Err(err) = io.read_into(strand, &mut buf, size).await {
+            io.push_back(buf.as_slice());
             return Err(crate::io::error(strand, err));
         }
         loop {
@@ -391,23 +433,23 @@ impl Buffered {
                 Ok(text) if text.len() == buf.len() => break,
                 Ok(text) if !eof => text.len(),
                 _ => {
-                    self.push_back(buf.as_slice());
+                    io.push_back(buf.as_slice());
                     return Err(invalid_utf8(strand));
                 }
             };
             if valid > 0 {
-                self.push_back(&buf.as_slice()[valid..]);
+                io.push_back(&buf.as_slice()[valid..]);
                 buf.truncate(valid);
                 break;
             }
             // The first character is incomplete, so read on until it is whole.
             let before = buf.len();
-            if let Err(err) = self.read_into(strand, &mut buf, Some(1)).await {
-                self.push_back(buf.as_slice());
+            if let Err(err) = io.read_into(strand, &mut buf, Some(1)).await {
+                io.push_back(buf.as_slice());
                 return Err(crate::io::error(strand, err));
             }
             if buf.len() == before {
-                self.push_back(buf.as_slice());
+                io.push_back(buf.as_slice());
                 return Err(invalid_utf8(strand));
             }
         }
@@ -435,15 +477,16 @@ async fn put_value<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
+    let mut io = this.lock(strand).await?;
     let res = if let Some(b) = value.as_bin(strand.vm()) {
         let b = b.pin();
-        this.write_all(&b).await
+        io.write_all(&b).await
     } else if let Some(s) = value.as_str(strand.vm()) {
         let s = s.pin();
-        this.write_all(s.as_bytes()).await
+        io.write_all(s.as_bytes()).await
     } else {
         let s = value.to_string(strand)?;
-        this.write_all(s.as_bytes()).await
+        io.write_all(s.as_bytes()).await
     };
     res.map_err(|err| crate::io::error(strand, err))
 }
@@ -462,7 +505,7 @@ impl<'v> Object<'v> for Buffered {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([source], []) = unpack!(strand, args, 1, 0)?;
-        let handle = crate::io::take(strand, &source, |_, _| Ok(()))
+        let handle = crate::io::get(strand, &source, |_, _| Ok(()))
             .await
             .map_err(|err| {
                 if err.kind() == ErrorKind::Unsupported {
@@ -552,9 +595,10 @@ impl<'v> Object<'v> for Buffered {
                 let size = size_arg(strand, size)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::READ)?;
+                let mut io = borrow.lock(strand).await?;
                 let mut buf = BinEmbryo::new();
-                if let Err(err) = borrow.read_into(strand, &mut buf, size).await {
-                    borrow.push_back(buf.as_slice());
+                if let Err(err) = io.read_into(strand, &mut buf, size).await {
+                    io.push_back(buf.as_slice());
                     return Err(crate::io::error(strand, err));
                 }
                 buf.finish(strand, out);
@@ -580,12 +624,13 @@ impl<'v> Object<'v> for Buffered {
                 let ([data], []) = unpack!(strand, args, 1, 0)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::WRITE)?;
+                let mut io = borrow.lock(strand).await?;
                 let res = if let Some(b) = data.as_bin(strand.vm()) {
                     let b = b.pin();
-                    borrow.write_all(&b).await.map(|()| b.len())
+                    io.write_all(&b).await.map(|()| b.len())
                 } else if let Some(s) = data.as_str(strand.vm()) {
                     let s = s.pin();
-                    borrow.write_all(s.as_bytes()).await.map(|()| s.len())
+                    io.write_all(s.as_bytes()).await.map(|()| s.len())
                 } else {
                     return Err(Error::type_error(strand, "expected `Str` or `Bin`"));
                 };
@@ -597,7 +642,7 @@ impl<'v> Object<'v> for Buffered {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::empty())?;
-                let res = borrow.flush().await;
+                let res = borrow.lock(strand).await?.flush().await;
                 res.map_err(|err| crate::io::error(strand, err))
             })
             .method("close", async move |this, strand, args, _out| {
@@ -610,7 +655,7 @@ impl<'v> Object<'v> for Buffered {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::SEEK)?;
-                let res = borrow.tell().await;
+                let res = borrow.lock(strand).await?.stream_position().await;
                 let pos = res.map_err(|err| crate::io::error(strand, err))?;
                 Output::set(strand, out, pos);
                 Ok(())
@@ -644,7 +689,7 @@ impl<'v> Object<'v> for Buffered {
                 };
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::SEEK)?;
-                let res = borrow.seek(pos).await;
+                let res = borrow.lock(strand).await?.seek(pos).await;
                 let pos = res.map_err(|err| crate::io::error(strand, err))?;
                 Output::set(strand, out, pos);
                 Ok(())

@@ -54,7 +54,8 @@ pub class Decompressor: Io
   do -> Bin
     ...
 
-  # Closes the stream and its source. Closing again does nothing.
+  # Closes the stream, and its source if it was opened from a path. Closing
+  # again does nothing.
   pub def close self
     ...
 
@@ -83,8 +84,8 @@ pub class Compressor: Io
   do -> Int
     ...
 
-  # Finishes the compressed stream and closes the sink. Closing again does
-  # nothing.
+  # Finishes the compressed stream, then closes the sink if it was opened from
+  # a path, or flushes it otherwise. Closing again does nothing.
   #
   # The output is incomplete until the stream is closed.
   pub def close self
@@ -94,8 +95,7 @@ pub class Compressor: Io
 #
 # A path is opened for reading. Any other source must be a readable
 # [`Io`](io.Io), such as an open [`fs.File`](fs.File) or another
-# stream, and is taken over: it reads as closed afterward, and closing the
-# stream closes it.
+# stream, which is read without being closed.
 #
 # Concatenated compressed streams of the same format read as one.
 #
@@ -146,8 +146,8 @@ pub def decompress source @ (Str | Path | Io) ...options @ Value -> Value
 #
 # A path is created or truncated. Any other sink must be a writable
 # [`Io`](io.Io), such as an open [`fs.File`](fs.File) or another
-# stream, and is taken over: it reads as closed afterward, and closing the
-# stream finishes the output and closes it.
+# stream, which is written without being closed. Closing the compressing
+# stream finishes the output.
 #
 # ## Errors
 #
