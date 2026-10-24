@@ -8,6 +8,9 @@ repository.workspace = true
 rust-version.workspace = true
 
 
+[dependencies.futures]
+workspace = true
+
 [dependencies.rustc-hash]
 workspace = true
 
