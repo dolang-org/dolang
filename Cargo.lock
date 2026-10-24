@@ -1069,6 +1069,7 @@ dependencies = [
  "dolang-private-bundle",
  "tokio",
  "tokio-stream",
+ "tokio-util",
 ]
 
 [[package]]

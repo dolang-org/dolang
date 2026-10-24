@@ -1,4 +1,8 @@
-import tar
+import fs
+  sys
+  tar
+  testlib.memio:
+    - MemIo
   testlib.vfs:
     - vfs
   test:
@@ -11,6 +15,7 @@ import tar
     - ConcurrencyError
     - RuntimeError
     - StateError
+    - TypeError
     - ValueError
 
 import fs.unix: unix_fs
@@ -171,3 +176,54 @@ def errors_still_close_entry_and_archive_scopes()
   tar.read archive-error.tar.gz do |archive|
     assert_eq $archive.compression :GZIP:
     assert_eq $archive.next().path (unix_fs.Path "complete")
+
+#[test]
+#[vfs]
+def open_files_are_taken_over()
+  fs.open archive.tar w do |file|
+    write_archive $file :NONE:
+    assert_throws $StateError do file.write more
+  fs.open archive.tar do |file|
+    check_archive $file :NONE:
+    assert_throws $StateError do file.read()
+  fs.open archive.tar buffer: false do |file|
+    assert_type $fs.RawFile $file
+    check_archive $file :NONE:
+
+#[test]
+#[vfs]
+def io_sinks_default_to_no_compression()
+  fs.open plain.tar.gz w do |file|
+    tar.write $file do |archive|
+      assert_eq $archive.compression :NONE:
+      archive.entry item size: 2 do |entry| entry.write ok
+  tar.read plain.tar.gz do |archive|
+    assert_eq $archive.compression :NONE:
+
+  fs.open packed.tar w do |file|
+    write_archive $file :GZIP:
+  check_archive packed.tar :GZIP:
+
+#[test]
+def unseekable_streams()
+  let sink = MemIo read: false seek: false
+  write_archive $sink :GZIP:
+  assert $sink.closed
+  let source = MemIo $sink.data write: false seek: false
+  check_archive $source :GZIP:
+
+#[test]
+#[vfs]
+def rejects_wrong_values()
+  assert_throws $TypeError do tar.read (1 !@ fs.Path) do |_| nil
+  assert_throws $TypeError do tar.write (1 !@ fs.Path) do |_| nil
+  assert_throws $sys.Error do tar.read missing.tar do |_| nil
+  fs.Path("archive.tar").write ""
+  fs.open archive.tar w do |file|
+    assert_throws $ValueError str: "value error: source must be readable" do
+      tar.read $file do |_| nil
+    file.write still-open
+  fs.open archive.tar do |file|
+    assert_throws $ValueError str: "value error: sink must be writable" do
+      tar.write $file do |_| nil
+    assert_eq $file.read() b"still-open"
