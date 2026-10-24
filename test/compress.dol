@@ -116,20 +116,6 @@ def takes_over_files()
 
 #[test]
 #[vfs]
-def duplicates_keep_the_file()
-  fs.open data.gz w do |file|
-    compress.compress $file.dup() :GZIP: do |stream| stream.write "from a duplicate"
-    file.seek end: 0
-    file.write trailer
-
-  fs.open data.gz do |file|
-    compress.decompress $file.dup() do |stream|
-      assert_eq $stream.read(16) b"from a duplicate"
-    assert_eq (file.read 2) b"\x1f\x8b"
-    assert_eq (file.read()[-7..]) b"trailer"
-
-#[test]
-#[vfs]
 def unclosed_compressor_is_finished_by_its_consumer()
   let stream = compress.compress data.gz :GZIP:
   stream.write "handed on"

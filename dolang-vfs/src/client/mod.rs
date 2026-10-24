@@ -5,8 +5,8 @@ use std::{
     io::{self, IsTerminal},
     mem,
     pin::Pin,
-    sync::{Arc, OnceLock},
-    task::{Context, Poll},
+    sync::{Arc, Mutex, atomic::AtomicU64},
+    task::{Context, Poll, ready},
 };
 
 #[cfg(unix)]
@@ -36,7 +36,7 @@ use tokio::net::windows::named_pipe::NamedPipeServer;
 #[cfg(all(docsrs, not(windows)))]
 struct NamedPipeServer;
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf},
     task::JoinHandle,
 };
 
@@ -95,12 +95,19 @@ struct ClientShared {
 
 /// A file handle returned by a [`Client`] operation.
 ///
-/// Holds an opaque remote file reference.
+/// Holds an opaque remote file reference, shared by every clone.
+#[derive(Clone)]
 pub struct File {
     client: Client,
-    file: Gift<FileMarker>,
     append: bool,
-    cursor: OnceLock<Box<ClientCursor>>,
+    shared: Arc<FileShared>,
+}
+
+struct FileShared {
+    /// The reference, until the file is closed or handed off. Requests cite it
+    /// under the lock and need it no longer.
+    file: Mutex<Option<Gift<FileMarker>>>,
+    pos: AtomicU64,
 }
 
 pub(crate) struct ReadDir {
@@ -366,25 +373,6 @@ impl Drop for Process {
     }
 }
 
-struct ClientCursor {
-    /// The seek position, maintained entirely on this side: the VFS protocol
-    /// carries an explicit offset on every operation and the peer keeps no
-    /// position of its own. Advanced by bytes actually transferred, so a short
-    /// read at EOF leaves it where the data stopped, exactly as the kernel
-    /// would.
-    cursor: u64,
-    /// Whether the peer opened this file for append. Append writes have to use
-    /// [`RequestKind::FileAppend`], since the offset on a positional write is
-    /// ignored on an append-mode description and the resulting position can
-    /// only be learned from the peer.
-    /// Distance from the end requested by a pending `SeekFrom::End`, applied
-    /// once the [`RequestKind::FileSize`] reply lands.
-    seek_delta: i64,
-    pending: Option<PendingFileOperation>,
-    read_body: Option<PendingTrailerRead>,
-    write_body: Option<PendingTrailerWrite>,
-}
-
 pub(crate) struct FileLock {
     client: Client,
     /// The peer's handle for the held lock, taken once it is released.
@@ -430,44 +418,165 @@ impl Drop for FileLock {
     }
 }
 
-struct PendingFileOperation {
-    kind: FileOperationKind,
-    call: Call<VfsProtocol>,
-}
-
-struct PendingTrailerWrite {
-    send: Option<TrailerSend<Call<VfsProtocol>>>,
-    call: Option<Call<VfsProtocol>>,
-    target: usize,
-    sent: usize,
-    unreported: usize,
-}
-
-struct PendingTrailerRead {
-    recv: TrailerRecv,
-    remaining: usize,
-    read: usize,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FileOperationKind {
-    Read,
-    Size,
-}
-
 impl fmt::Debug for File {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ClientFile")
-            .field("file", &self.file)
-            .field(
-                "pending",
-                &self
-                    .cursor
-                    .get()
-                    .and_then(|cursor| cursor.pending.as_ref())
-                    .map(|pending| pending.kind),
-            )
+            .field("file", &self.shared.file.lock().unwrap())
             .finish_non_exhaustive()
+    }
+}
+
+/// A cursor read, until the peer answers with the data trailer.
+pub(crate) struct ReadOp {
+    call: Call<VfsProtocol>,
+    len: usize,
+}
+
+impl ReadOp {
+    pub(crate) async fn cancel(mut self) {
+        self.call.cancel();
+        let _ = self.call.await;
+    }
+}
+
+impl Future for ReadOp {
+    type Output = io::Result<Body>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let result = ready!(Pin::new(&mut self.call).poll(cx));
+        let (response, trailer) = result.map_err(Error::from)?.into_response_trailer();
+        match response.map_err(io::Error::from)? {
+            ResponseKind::FileRead => {}
+            response => return Poll::Ready(Err(unexpected(response))),
+        }
+        let Some(recv) = trailer else {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "file read response is missing its data trailer",
+            )));
+        };
+        Poll::Ready(Ok(Body {
+            recv,
+            remaining: self.len,
+        }))
+    }
+}
+
+/// The data trailer of a cursor read.
+///
+/// This reads the trailer straight into the caller's `ReadBuf`, which for the
+/// Do-side `fs.File` is arena memory the collector adopts without a copy. Do
+/// not "simplify" the cursor path by delegating to a positional `read_at`:
+/// that would land the data in an owned `BytesMut` first and cost a
+/// chunk-sized copy per read, with nothing failing to say so.
+pub(crate) struct Body {
+    recv: TrailerRecv,
+    remaining: usize,
+}
+
+impl AsyncRead for Body {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let before = buf.filled().len();
+        ready!(Pin::new(&mut self.recv).poll_read(cx, buf))?;
+        let read = buf.filled().len() - before;
+        if read > self.remaining {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "file read response exceeds requested length",
+            )));
+        }
+        self.remaining -= read;
+        Poll::Ready(Ok(()))
+    }
+}
+
+/// A cursor write, streamed into the request's data trailer.
+pub(crate) struct WriteOp {
+    send: Option<TrailerSend<Call<VfsProtocol>>>,
+    call: Option<Call<VfsProtocol>>,
+    offset: u64,
+    sent: usize,
+}
+
+impl WriteOp {
+    /// Dropping the sender aborts a trailer still being sent; a committed one
+    /// has to be cancelled and waited for.
+    pub(crate) async fn cancel(mut self) {
+        if let Some(mut call) = self.call.take() {
+            call.cancel();
+            let _ = call.await;
+        }
+    }
+}
+
+impl file::WriteOp for WriteOp {
+    fn poll_send(&mut self, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        let send = self
+            .send
+            .as_mut()
+            .expect("file write trailer already committed");
+        let sent = ready!(Pin::new(send).poll_write(cx, buf))?;
+        self.sent += sent;
+        Poll::Ready(Ok(sent))
+    }
+
+    fn poll_finish(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<(usize, u64)>> {
+        if self.call.is_none() {
+            let send = self.send.take().expect("file write already finished");
+            self.call = Some(send.finish());
+        }
+        let call = self.call.as_mut().unwrap();
+        let result = ready!(Pin::new(call).poll(cx));
+        self.call = None;
+        let response = result
+            .map_err(Error::from)?
+            .into_response()
+            .map_err(io::Error::from)?;
+        // A positional write lands exactly where it was aimed. An append write
+        // does not: the offset it used is the peer's business, so the reply
+        // carries the resulting position.
+        let (written, end) = match response {
+            ResponseKind::FileWrite(written) => (written, self.offset + written as u64),
+            ResponseKind::FileAppend(result) => result,
+            response => return Poll::Ready(Err(unexpected(response))),
+        };
+        if written != self.sent {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "file write response does not acknowledge the submitted trailer",
+            )));
+        }
+        Poll::Ready(Ok((written, end)))
+    }
+}
+
+/// An end-relative seek asking the peer for the file's length.
+pub(crate) struct SizeOp(Call<VfsProtocol>);
+
+impl SizeOp {
+    pub(crate) async fn cancel(mut self) {
+        self.0.cancel();
+        let _ = self.0.await;
+    }
+}
+
+impl Future for SizeOp {
+    type Output = io::Result<u64>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let result = ready!(Pin::new(&mut self.0).poll(cx));
+        match result
+            .map_err(Error::from)?
+            .into_response()
+            .map_err(io::Error::from)?
+        {
+            ResponseKind::FileSize(len) => Poll::Ready(Ok(len)),
+            response => Poll::Ready(Err(unexpected(response))),
+        }
     }
 }
 
@@ -475,31 +584,69 @@ impl File {
     fn new(client: Client, file: Gift<FileMarker>, append: bool) -> Self {
         Self {
             client,
-            file,
             append,
-            cursor: OnceLock::new(),
+            shared: Arc::new(FileShared {
+                file: Mutex::new(Some(file)),
+                pos: AtomicU64::new(0),
+            }),
         }
     }
 
-    fn cursor(&mut self) -> &mut ClientCursor {
-        if self.cursor.get().is_none() {
-            assert!(
-                self.cursor
-                    .set(Box::new(ClientCursor {
-                        cursor: 0,
-                        seek_delta: 0,
-                        pending: None,
-                        read_body: None,
-                        write_body: None,
-                    }))
-                    .is_ok()
-            );
-        }
-        self.cursor.get_mut().unwrap()
+    /// The cursor position, shared by every clone.
+    pub(crate) fn position(&self) -> &AtomicU64 {
+        &self.shared.pos
     }
 
-    fn cite(&self) -> Cite<FileMarker> {
-        self.file.cite()
+    /// Starts a cursor read of up to `len` bytes at `offset`.
+    pub(crate) fn start_read(&self, offset: u64, len: usize) -> Result<ReadOp> {
+        // A short read is always legal for `AsyncRead`, so a request for more
+        // than one chunk simply comes back in several; the peer has to have
+        // the whole reply in hand before it can answer at all, which is what
+        // bounds this.
+        let len = len.min(MAX_FILE_READ);
+        let call = self.client.call(RequestKind::FileRead {
+            file: self.cite()?,
+            offset,
+            len,
+        });
+        Ok(ReadOp { call, len })
+    }
+
+    /// Starts a cursor write at `offset`. Append writes have to use
+    /// [`RequestKind::FileAppend`], since the offset on a positional write is
+    /// ignored on an append-mode description.
+    pub(crate) fn start_write(&self, offset: u64) -> Result<WriteOp> {
+        let file = self.cite()?;
+        let request = if self.append {
+            RequestKind::FileAppend { file }
+        } else {
+            RequestKind::FileWrite { file, offset }
+        };
+        Ok(WriteOp {
+            send: Some(self.client.call_with_trailer(request)),
+            call: None,
+            offset,
+            sent: 0,
+        })
+    }
+
+    /// Starts asking the peer for the file's length.
+    pub(crate) fn start_size(&self) -> Result<SizeOp> {
+        Ok(SizeOp(
+            self.client
+                .call(RequestKind::FileSize { file: self.cite()? }),
+        ))
+    }
+
+    /// Cites the file, unless it has been closed.
+    fn cite(&self) -> Result<Cite<FileMarker>> {
+        self.shared
+            .file
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(Gift::cite)
+            .ok_or_else(|| Error::new(ErrorKind::Closed, "file is closed"))
     }
 
     /// Asks the peer to convert this file into a standard-output endpoint at
@@ -510,11 +657,10 @@ impl File {
     /// success; a failure — a busy file above all — leaves it registered and
     /// this handle usable.
     async fn stdio_send(&self, offset: u64) -> Result<StdioSend> {
-        self.idle()?;
         match self
             .client
             .request(RequestKind::FileToStdioSend {
-                file: self.cite(),
+                file: self.cite()?,
                 offset,
             })
             .await?
@@ -534,11 +680,10 @@ impl File {
     /// Asks the peer to convert this file into a standard-input endpoint at
     /// `offset`. See [`stdio_send`](Self::stdio_send).
     async fn stdio_recv(&self, offset: u64) -> Result<StdioRecv> {
-        self.idle()?;
         match self
             .client
             .request(RequestKind::FileToStdioRecv {
-                file: self.cite(),
+                file: self.cite()?,
                 offset,
             })
             .await?
@@ -558,9 +703,8 @@ impl File {
     /// Reads at `offset` over the wire, appending into `buf`'s spare capacity.
     ///
     /// Detached from the handle: it takes a citation and its own clone of the
-    /// client, so several may be outstanding at once. It deliberately touches
-    /// none of `cursor`, `pending`, `read_body`, or `write_body` — positional
-    /// operations and the cursor-based poll path share nothing but the file.
+    /// client, so several may be outstanding at once. Positional operations
+    /// and the cursor share nothing but the file.
     pub(crate) fn read_at<'b>(
         &self,
         buf: &'b mut BytesMut,
@@ -569,6 +713,7 @@ impl File {
         let client = self.client.clone();
         let file = self.cite();
         async move {
+            let file = file?;
             // Taken for the duration and put back below, matching the direct
             // backend's contract rather than having two: a cancelled read
             // leaves the buffer empty on either route.
@@ -618,6 +763,7 @@ impl File {
         let file = self.cite();
         let append = self.append;
         async move {
+            let file = file?;
             if append {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
@@ -646,6 +792,7 @@ impl File {
         let client = self.client.clone();
         let file = self.cite();
         async move {
+            let file = file?;
             let len = buf.len().min(MAX_FILE_READ);
             if len == 0 {
                 return Ok(0);
@@ -675,6 +822,7 @@ impl File {
         let file = self.cite();
         let append = self.append;
         async move {
+            let file = file?;
             if append {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
@@ -700,6 +848,7 @@ impl File {
         let client = self.client.clone();
         let file = self.cite();
         async move {
+            let file = file?;
             match Self::send_write(client, RequestKind::FileAppend { file }, &data).await? {
                 ResponseKind::FileAppend(result) => Ok(result),
                 response => Err(unexpected(response).into()),
@@ -752,349 +901,6 @@ impl File {
         send.write_all(data).await?;
         send.finish().await?.into_response()
     }
-
-    fn poll_request(
-        &mut self,
-        cx: &mut Context<'_>,
-        kind: FileOperationKind,
-        request: impl FnOnce(Cite<FileMarker>) -> (RequestKind, Option<Vec<u8>>),
-    ) -> Poll<io::Result<(ResponseKind, Option<TrailerRecv>)>> {
-        if self.cursor().pending.is_none() {
-            let (request, trailer) = request(self.cite());
-            let call = {
-                assert!(trailer.is_none());
-                self.client.call(request)
-            };
-            self.cursor().pending = Some(PendingFileOperation { kind, call });
-        }
-        let pending = self.cursor().pending.as_mut().unwrap();
-        if pending.kind != kind {
-            return Poll::Ready(Err(io::Error::other(format!(
-                "file operation {:?} polled while {:?} is pending",
-                kind, pending.kind
-            ))));
-        }
-        match Pin::new(&mut pending.call).poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(result) => {
-                self.cursor().pending = None;
-                let (response, trailer) = result.map_err(Error::from)?.into_response_trailer();
-                Poll::Ready(
-                    response
-                        .map(|response| (response, trailer))
-                        .map_err(Into::into),
-                )
-            }
-        }
-    }
-
-    fn idle(&self) -> Result<()> {
-        let Some(cursor) = self.cursor.get() else {
-            return Ok(());
-        };
-        if cursor
-            .read_body
-            .as_ref()
-            .is_some_and(|body| body.remaining != 0)
-            || cursor.write_body.is_some()
-        {
-            Err(io::Error::other("file trailer operation is still pending").into())
-        } else if let Some(pending) = &cursor.pending {
-            Err(io::Error::other(format!(
-                "file operation {:?} is still pending",
-                pending.kind
-            ))
-            .into())
-        } else {
-            Ok(())
-        }
-    }
-
-    async fn cancel_pending(&mut self) {
-        // A read trailer can simply be dropped. The peer releases the file
-        // before it responds at all now that it reads the range up front, so
-        // nothing it still counts as in flight depends on us draining this;
-        // `TrailerRecv::drop` notifies the peer and refunds the pool on its own.
-        let Some(cursor) = self.cursor.get_mut() else {
-            return;
-        };
-        cursor.read_body = None;
-        if let Some(mut pending) = cursor.write_body.take()
-            && let Some(mut call) = pending.call.take()
-        {
-            call.cancel();
-            let _ = call.await;
-        }
-        if let Some(mut pending) = cursor.pending.take() {
-            pending.call.cancel();
-            let _ = pending.call.await;
-        }
-    }
-}
-
-impl AsyncRead for File {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        let file = &mut *self;
-        loop {
-            // This reads the trailer straight into the caller's `ReadBuf`,
-            // which for the Do-side `fs.File` is arena memory the collector
-            // adopts without a copy. Do not "simplify" this by delegating to
-            // a positional `read_at`: that would land the data in an owned
-            // `BytesMut` first and cost a chunk-sized copy per read, with
-            // nothing failing to say so.
-            if buf.remaining() == 0 {
-                return Poll::Ready(Ok(()));
-            }
-            let cursor = file.cursor();
-            if let Some(body) = cursor.read_body.as_mut() {
-                let before = buf.filled().len();
-                match Pin::new(&mut body.recv).poll_read(cx, buf) {
-                    Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Err(error)) => {
-                        cursor.read_body = None;
-                        return Poll::Ready(Err(error));
-                    }
-                    Poll::Ready(Ok(())) => {
-                        let read = buf.filled().len() - before;
-                        if read > body.remaining {
-                            cursor.read_body = None;
-                            return Poll::Ready(Err(io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "file read response exceeds requested length",
-                            )));
-                        }
-                        body.remaining -= read;
-                        body.read += read;
-                        // Advance only by what the caller has actually
-                        // seen. Bytes still buffered in the trailer are
-                        // discarded by `start_seek`, so counting them here
-                        // would push the cursor past the last byte anyone
-                        // received.
-                        cursor.cursor += read as u64;
-                        if read > 0 {
-                            return Poll::Ready(Ok(()));
-                        }
-                        let empty = body.read == 0;
-                        cursor.read_body = None;
-                        if empty {
-                            return Poll::Ready(Ok(()));
-                        }
-                        continue;
-                    }
-                }
-            }
-            // A short read is always legal for `AsyncRead`, so a request
-            // for more than one chunk simply comes back in several; the
-            // peer has to have the whole reply in hand before it can answer
-            // at all, which is what bounds this.
-            let requested = buf.remaining().min(MAX_FILE_READ);
-            let offset = file.cursor().cursor;
-            match file.poll_request(cx, FileOperationKind::Read, |file| {
-                (
-                    RequestKind::FileRead {
-                        file,
-                        offset,
-                        len: requested,
-                    },
-                    None,
-                )
-            }) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Ok((ResponseKind::FileRead, trailer))) => {
-                    let Some(trailer) = trailer else {
-                        return Poll::Ready(Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "file read response is missing its data trailer",
-                        )));
-                    };
-                    file.cursor().read_body = Some(PendingTrailerRead {
-                        recv: trailer,
-                        remaining: requested,
-                        read: 0,
-                    });
-                }
-                Poll::Ready(Ok((response, _))) => {
-                    return Poll::Ready(Err(unexpected(response)));
-                }
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-            }
-        }
-    }
-}
-
-impl AsyncWrite for File {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        let file = &mut *self;
-        if buf.is_empty() {
-            return Poll::Ready(Ok(0));
-        }
-        if file.cursor().write_body.is_none() {
-            let request = if file.append {
-                RequestKind::FileAppend { file: file.cite() }
-            } else {
-                RequestKind::FileWrite {
-                    file: file.cite(),
-                    offset: file.cursor().cursor,
-                }
-            };
-            file.cursor().write_body = Some(PendingTrailerWrite {
-                send: Some(file.client.call_with_trailer(request)),
-                call: None,
-                target: buf.len(),
-                sent: 0,
-                unreported: 0,
-            });
-        }
-        let pending = file.cursor().write_body.as_mut().unwrap();
-        if let Some(call) = pending.call.as_mut() {
-            match Pin::new(call).poll(cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(result) => {
-                    let target = pending.target;
-                    let unreported = pending.unreported;
-                    file.cursor().write_body = None;
-                    let response = result
-                        .map_err(Error::from)?
-                        .into_response()
-                        .map_err(io::Error::from)?;
-                    let written = ack_write(&mut file.cursor().cursor, response)?;
-                    if written != target {
-                        return Poll::Ready(Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "file write response does not acknowledge the submitted trailer",
-                        )));
-                    }
-                    return Poll::Ready(Ok(unreported));
-                }
-            }
-        }
-        let remaining = pending.target - pending.sent;
-        let send = pending.send.as_mut().unwrap();
-        match Pin::new(send).poll_write(cx, &buf[..buf.len().min(remaining)]) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
-            Poll::Ready(Ok(n)) => {
-                pending.sent += n;
-                if pending.sent == pending.target {
-                    let send = pending.send.take().unwrap();
-                    pending.call = Some(send.finish());
-                    pending.unreported = n;
-                    cx.waker().wake_by_ref();
-                    return Poll::Pending;
-                }
-                Poll::Ready(Ok(n))
-            }
-        }
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let file = &mut *self;
-        if let Some(pending) = file.cursor().write_body.as_mut() {
-            if pending.call.is_none() {
-                let send = pending.send.take().unwrap();
-                pending.call = Some(send.finish());
-            }
-            let call = pending.call.as_mut().unwrap();
-            return match Pin::new(call).poll(cx) {
-                Poll::Pending => Poll::Pending,
-                Poll::Ready(result) => {
-                    file.cursor().write_body = None;
-                    Poll::Ready(
-                        result
-                            .map_err(Error::from)
-                            .map_err(io::Error::from)
-                            .and_then(|result| {
-                                ack_write(
-                                    &mut file.cursor().cursor,
-                                    result.into_response().map_err(io::Error::from)?,
-                                )
-                                .map(|_| ())
-                            }),
-                    )
-                }
-            };
-        }
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.as_mut().poll_flush(cx)
-    }
-}
-
-impl AsyncSeek for File {
-    fn start_seek(mut self: Pin<&mut Self>, position: io::SeekFrom) -> io::Result<()> {
-        let file = &mut *self;
-        if file
-            .cursor()
-            .read_body
-            .as_ref()
-            .is_some_and(|body| body.remaining != 0)
-        {
-            file.cursor().read_body.take();
-        }
-        file.idle().map_err(Error::into_io_error)?;
-        file.cursor().seek_delta = 0;
-        // `Start` and `Current` are answerable here: the cursor is
-        // ours. Only `End` has to ask the peer how long the file is.
-        let absolute = match position {
-            io::SeekFrom::Start(offset) => Some(offset),
-            io::SeekFrom::Current(delta) => Some(
-                file.cursor()
-                    .cursor
-                    .checked_add_signed(delta)
-                    .ok_or_else(negative_seek)?,
-            ),
-            io::SeekFrom::End(delta) => {
-                file.cursor().seek_delta = delta;
-                None
-            }
-        };
-        match absolute {
-            Some(offset) => file.cursor().cursor = offset,
-            None => {
-                file.cursor().pending = Some(PendingFileOperation {
-                    kind: FileOperationKind::Size,
-                    call: file
-                        .client
-                        .call(RequestKind::FileSize { file: file.cite() }),
-                });
-            }
-        }
-        Ok(())
-    }
-
-    fn poll_complete(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<u64>> {
-        let file = &mut *self;
-        // Nothing outstanding means the seek already landed in the
-        // cursor, or there was no seek at all and the caller just wants
-        // the position.
-        if file.cursor().pending.is_none() {
-            return Poll::Ready(Ok(file.cursor().cursor));
-        }
-        match file.poll_request(cx, FileOperationKind::Size, |file| {
-            (RequestKind::FileSize { file }, None)
-        }) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok((ResponseKind::FileSize(len), _))) => {
-                let Some(offset) = len.checked_add_signed(file.cursor().seek_delta) else {
-                    return Poll::Ready(Err(negative_seek()));
-                };
-                file.cursor().cursor = offset;
-                Poll::Ready(Ok(offset))
-            }
-            Poll::Ready(Ok((response, _))) => Poll::Ready(Err(unexpected(response))),
-            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
-        }
-    }
 }
 
 impl File {
@@ -1102,13 +908,12 @@ impl File {
         self,
         offset: u64,
     ) -> std::result::Result<StdioSend, HandoffError<Self>> {
-        let file = self;
-        match file.stdio_send(offset).await {
-            // The peer consumed the file, so this handle simply goes away:
-            // dropping its reference names an id the peer has already
-            // retired, which it ignores.
-            Ok(stdio) => Ok(stdio),
-            Err(error) => Err(HandoffError::new(file, error)),
+        match self.stdio_send(offset).await {
+            Ok(stdio) => {
+                self.retire();
+                Ok(stdio)
+            }
+            Err(error) => Err(HandoffError::new(self, error)),
         }
     }
 
@@ -1116,21 +921,30 @@ impl File {
         self,
         offset: u64,
     ) -> std::result::Result<StdioRecv, HandoffError<Self>> {
-        let file = self;
-        match file.stdio_recv(offset).await {
-            Ok(stdio) => Ok(stdio),
-            Err(error) => Err(HandoffError::new(file, error)),
+        match self.stdio_recv(offset).await {
+            Ok(stdio) => {
+                self.retire();
+                Ok(stdio)
+            }
+            Err(error) => Err(HandoffError::new(self, error)),
         }
     }
 
+    /// Forgets the reference after the peer consumed the file, closing every
+    /// clone. Dropping it names an id the peer has already retired, which it
+    /// ignores.
+    fn retire(&self) {
+        self.shared.file.lock().unwrap().take();
+    }
+
+    /// Closes the file for every clone. Closing it again does nothing.
     pub(crate) async fn close(self) -> Result<()> {
-        let mut file = self;
-        file.cancel_pending().await;
-        match file
+        let Some(file) = self.shared.file.lock().unwrap().take() else {
+            return Ok(());
+        };
+        match self
             .client
-            .request(RequestKind::FileClose {
-                file: file.file.cite(),
-            })
+            .request(RequestKind::FileClose { file: file.cite() })
             .await?
         {
             ResponseKind::FileClose => Ok(()),
@@ -1154,7 +968,8 @@ impl File {
     /// out two registrations for one file. That case is caught server-side,
     /// where both handles are local.
     pub(crate) fn is_same_file(&self, other: &Self) -> bool {
-        self.can_copy_data_with(other) && self.file == other.file
+        self.can_copy_data_with(other)
+            && matches!((self.cite(), other.cite()), (Ok(this), Ok(other)) if this == other)
     }
 
     /// Asks the peer for one bounded copy step between two of its own files,
@@ -1174,8 +989,8 @@ impl File {
         match self
             .client
             .request(RequestKind::FileCopyData {
-                src: self.cite(),
-                dst: dst.cite(),
+                src: self.cite()?,
+                dst: dst.cite()?,
                 src_offset,
                 target,
                 len,
@@ -1190,11 +1005,10 @@ impl File {
 
     pub(crate) async fn set_size(&self, size: u64) -> Result<()> {
         let file = self;
-        file.idle()?;
         match file
             .client
             .request(RequestKind::FileSetSize {
-                file: file.cite(),
+                file: file.cite()?,
                 size,
             })
             .await?
@@ -1206,11 +1020,10 @@ impl File {
 
     pub(crate) async fn sync(&self, data: bool) -> Result<()> {
         let file = self;
-        file.idle()?;
         match file
             .client
             .request(RequestKind::FileSync {
-                file: file.cite(),
+                file: file.cite()?,
                 data,
             })
             .await?
@@ -1222,10 +1035,9 @@ impl File {
 
     pub(crate) async fn metadata(&self) -> Result<Metadata> {
         let file = self;
-        file.idle()?;
         match file
             .client
-            .request(RequestKind::FileMetadata { file: file.cite() })
+            .request(RequestKind::FileMetadata { file: file.cite()? })
             .await?
         {
             ResponseKind::FileMetadata(result) => Ok(result),
@@ -1235,10 +1047,9 @@ impl File {
 
     pub(crate) async fn fs_metadata(&self) -> Result<FsMetadata> {
         let file = self;
-        file.idle()?;
         match file
             .client
-            .request(RequestKind::FileFsMetadata { file: file.cite() })
+            .request(RequestKind::FileFsMetadata { file: file.cite()? })
             .await?
         {
             ResponseKind::FileFsMetadata(result) => Ok(result),
@@ -1248,11 +1059,10 @@ impl File {
 
     pub(crate) async fn acl(&self, kind: AclKind, default: bool) -> Result<Option<Acl>> {
         let file = self;
-        file.idle()?;
         match file
             .client
             .request(RequestKind::FileAcl {
-                file: file.cite(),
+                file: file.cite()?,
                 kind,
                 default,
             })
@@ -1270,11 +1080,10 @@ impl File {
         default: bool,
     ) -> Result<()> {
         let file = self;
-        file.idle()?;
         match file
             .client
             .request(RequestKind::FileSetAcl {
-                file: file.cite(),
+                file: file.cite()?,
                 kind,
                 acl: acl.cloned(),
                 default,
@@ -1291,11 +1100,10 @@ impl File {
         mask: dolang_winterop::security::SecInfo,
     ) -> Result<SecDesc> {
         let file = self;
-        file.idle()?;
         match file
             .client
             .request(RequestKind::FileSecDesc {
-                file: file.cite(),
+                file: file.cite()?,
                 mask,
             })
             .await?
@@ -1307,11 +1115,10 @@ impl File {
 
     pub(crate) async fn update_sec_desc(&self, sec_desc: &SecDesc) -> Result<()> {
         let file = self;
-        file.idle()?;
         match file
             .client
             .request(RequestKind::FileUpdateSecDesc {
-                file: file.cite(),
+                file: file.cite()?,
                 sec_desc: sec_desc.clone(),
             })
             .await?
@@ -1323,11 +1130,10 @@ impl File {
 
     pub(crate) async fn xattrs(&self, namespace: XattrNamespace<'_>) -> Result<Vec<XattrEntry>> {
         let file = self;
-        file.idle()?;
         match file
             .client
             .request(RequestKind::FileXattrs {
-                file: file.cite(),
+                file: file.cite()?,
                 namespace: XattrNamespaceRequest::from(namespace),
             })
             .await?
@@ -1339,11 +1145,10 @@ impl File {
 
     pub(crate) async fn xattr(&self, name: &str, namespace: Option<&str>) -> Result<Vec<u8>> {
         let file = self;
-        file.idle()?;
         match file
             .client
             .request(RequestKind::FileXattr {
-                file: file.cite(),
+                file: file.cite()?,
                 name: name.to_owned(),
                 namespace: namespace.map(str::to_owned),
             })
@@ -1356,10 +1161,9 @@ impl File {
 
     pub(crate) async fn streams(&self) -> Result<Vec<StreamEntry>> {
         let file = self;
-        file.idle()?;
         match file
             .client
-            .request(RequestKind::FileStreams { file: file.cite() })
+            .request(RequestKind::FileStreams { file: file.cite()? })
             .await?
         {
             ResponseKind::FileStreams(result) => Ok(result),
@@ -1374,11 +1178,10 @@ impl File {
         value: &[u8],
     ) -> Result<()> {
         let file = self;
-        file.idle()?;
         match file
             .client
             .request(RequestKind::FileSetXattr {
-                file: file.cite(),
+                file: file.cite()?,
                 name: name.to_owned(),
                 namespace: namespace.map(str::to_owned),
                 value: value.to_vec(),
@@ -1392,11 +1195,10 @@ impl File {
 
     pub(crate) async fn remove_xattr(&self, name: &str, namespace: Option<&str>) -> Result<()> {
         let file = self;
-        file.idle()?;
         match file
             .client
             .request(RequestKind::FileRemoveXattr {
-                file: file.cite(),
+                file: file.cite()?,
                 name: name.to_owned(),
                 namespace: namespace.map(str::to_owned),
             })
@@ -1409,11 +1211,10 @@ impl File {
 
     pub(crate) async fn lock(&self, request: FileLockRequest) -> Result<Option<file::FileLock>> {
         let file = self;
-        file.idle()?;
         match file
             .client
             .request(RequestKind::FileLock {
-                file: file.cite(),
+                file: file.cite()?,
                 request,
             })
             .await?
@@ -1430,55 +1231,8 @@ impl File {
         }
     }
 
-    /// Asks the peer for a second handle on the same open file, positioned
-    /// where this one is but moving independently.
-    pub(crate) async fn dup(&self) -> Result<Self> {
-        self.idle()?;
-        match self
-            .client
-            .request(RequestKind::FileDup { file: self.cite() })
-            .await?
-        {
-            ResponseKind::FileDup(file) => {
-                let mut dup = Self::new(self.client.clone(), file, self.append);
-                if let Some(cursor) = self.cursor.get() {
-                    dup.cursor().cursor = cursor.cursor;
-                }
-                Ok(dup)
-            }
-            response => Err(unexpected(response).into()),
-        }
-    }
-
     pub(crate) async fn try_into_std(self) -> std::result::Result<std::fs::File, Self> {
         Err(self)
-    }
-}
-
-fn negative_seek() -> io::Error {
-    io::Error::new(
-        io::ErrorKind::InvalidInput,
-        "invalid seek to a negative or overflowing position",
-    )
-}
-
-/// Applies a write acknowledgement to the cursor and reports the byte count.
-///
-/// A positional write lands exactly where it was aimed, so the cursor simply
-/// advances by what the peer accepted. An append write does not: the offset it
-/// used is the peer's business, so the reply carries the resulting position and
-/// the cursor takes it verbatim.
-fn ack_write(cursor: &mut u64, response: ResponseKind) -> io::Result<usize> {
-    match response {
-        ResponseKind::FileWrite(written) => {
-            *cursor += written as u64;
-            Ok(written)
-        }
-        ResponseKind::FileAppend((written, end)) => {
-            *cursor = end;
-            Ok(written)
-        }
-        response => Err(unexpected(response)),
     }
 }
 
@@ -1928,6 +1682,20 @@ struct PreparedRelays {
 enum ClientChildState {
     Live(Gift<ChildMarker>),
     Exited(ProcessStatus),
+}
+
+struct PendingTrailerWrite {
+    send: Option<TrailerSend<Call<VfsProtocol>>>,
+    call: Option<Call<VfsProtocol>>,
+    target: usize,
+    sent: usize,
+    unreported: usize,
+}
+
+struct PendingTrailerRead {
+    recv: TrailerRecv,
+    remaining: usize,
+    read: usize,
 }
 
 /// A writable standard-stream endpoint owned by a remote VFS session.

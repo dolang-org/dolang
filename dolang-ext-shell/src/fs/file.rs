@@ -1376,25 +1376,6 @@ impl<'v, const BUFFERED: bool> Object<'v> for File<BUFFERED> {
             .method("close", async move |this, strand, _args, _out| {
                 this.borrow_mut(strand)?.close(strand).await
             })
-            .method("dup", async move |this, strand, _args, out| {
-                // The duplicate starts at the logical position.
-                settle(this, strand).await?;
-                let (file, caps) = {
-                    let borrow = this.borrow(strand)?;
-                    let file = borrow
-                        .file
-                        .as_ref()
-                        .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-                    (file.dup().await.into_sys(strand)?, borrow.caps)
-                };
-                let annex = this.annex();
-                let annex = FileAnnex {
-                    global: annex.global,
-                    is_append: annex.is_append,
-                };
-                create_file_with(strand, file, caps, annex, BUFFERED, out);
-                Ok(())
-            })
             .method("lock", async move |this, strand, args, out| {
                 let ([range, block], [shared_value]) = unpack!(strand, args, 2, 0, shared = None)?;
                 let shared = shared_value

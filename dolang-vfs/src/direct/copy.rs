@@ -1105,9 +1105,9 @@ impl File {
             unreachable!("append copies use the representation-independent path")
         };
         #[cfg(windows)]
-        let dst_readable = dst.flags.contains(super::FileFlags::READ);
-        let src = Arc::clone(&self.file);
-        let dst = Arc::clone(&dst.file);
+        let dst_readable = dst.shared.flags.contains(super::FileFlags::READ);
+        let src = self.fd()?;
+        let dst = dst.fd()?;
         tokio::task::spawn_blocking(move || {
             #[cfg(unix)]
             {

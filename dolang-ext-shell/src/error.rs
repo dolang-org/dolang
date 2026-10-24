@@ -296,6 +296,7 @@ fn sys_error<'v, 's>(strand: &mut Strand<'v, 's>, error: VfsError) -> Error<'v, 
         .system_code()
         .map(|code| (code.operating_system(), code.raw()));
     match error.kind() {
+        ErrorKind::Closed => Error::state_error(strand, message),
         ErrorKind::Other => create_sys_error(strand, global.types.sys_error, message, system_code),
         ErrorKind::InvalidInput => {
             create_sys_error(strand, global.types.invalid_input, message, system_code)

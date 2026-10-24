@@ -200,19 +200,6 @@ def open_from_file()
 
 #[test]
 #[vfs]
-def open_from_a_duplicate_keeps_the_file()
-  zip.open "from_dup.zip" "w" do |archive|
-    archive.open "hello.txt" do |file|
-      file.write "Hello, World!"
-
-  fs.open from_dup.zip do |file|
-    zip.open $file.dup() do |archive|
-      archive.open "hello.txt" do |entry|
-        assert_eq (str (entry.read())) "Hello, World!"
-    assert_eq (file.read 2) b"PK"
-
-#[test]
-#[vfs]
 def write_through_file()
   fs.open through_file.zip w do |file|
     zip.open $file "w" do |archive|
