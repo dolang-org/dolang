@@ -9,16 +9,16 @@
 //! The helpers (`read_all`, `write_all`, `chunks`, `(put)`, ...) call the stream's own
 //! methods through the delegator, so they keep no state and need no buffer.
 //!
-//! A Do subclass's instance provides [`ByteIo`] by lending [`DoIo`]. Taking it starts an
-//! owner strand that runs a server strand for each of the handle's
+//! A Do subclass's instance provides [`ByteIo`] by lending [`DoIo`]. Getting its handle
+//! starts an owner strand that runs a server strand for each of the handle's
 //! [lanes](crate::io::bridge::Lanes). A server calls the stream's `read`, `write` and
-//! `seek` for the handle's requests. Once every lane is closed, the owner calls the
-//! stream's `close` and reports the result to the handle.
+//! `seek` for the handle's requests. Once every lane is closed, the owner reports to the
+//! handle that the servers stopped. The stream stays open.
 //!
 //! The owner holds the [`Root`] of its own strand handle, which keeps it alive until the
 //! handle's end of the lanes shuts down. It runs under an interrupt nested from the
 //! consumer's, so cancelling the consumer, or shutting down the VM, interrupts the
-//! servers. `close` runs with interrupts masked. An exception from a stream method
+//! servers. An exception from a stream method
 //! reaches the handle as an [`io::Error`] with its message.
 
 use std::{
@@ -48,7 +48,7 @@ use crate::{
             recv_special_mcall,
         },
     },
-    strand::{InterruptMask, Strand},
+    strand::Strand,
     sym::{self, Sym},
     unpack,
     value::{BinEmbryo, Output, Root, Slot, TypeObject, Value, fmt::Format},
@@ -543,7 +543,7 @@ impl<'v> IntoByteIo<'v> for DoIo<'_, 'v> {
     }
 
     /// Starts the owner strand, which serves the handle's lanes.
-    fn take<'s>(&mut self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
+    fn get<'s>(&mut self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
         let caps = self.caps(strand)?;
         if !caps.intersects(IoCaps::READ | IoCaps::WRITE) {
             return Err(Error::value(strand, "stream must be readable or writable"));
@@ -567,9 +567,9 @@ impl<'v> IntoByteIo<'v> for DoIo<'_, 'v> {
     }
 }
 
-/// Serves `lanes` until they close, then closes `stream`.
+/// Serves `lanes` until they close, then reports that the servers stopped.
 async fn own<'v>(strand: &mut Strand<'v, '_>, stream: &Value<'v>, lanes: Lanes) {
-    let Lanes { servers, closed } = lanes;
+    let Lanes { servers, done } = lanes;
     let servers = servers
         .into_iter()
         .map(|lane| {
@@ -580,16 +580,7 @@ async fn own<'v>(strand: &mut Strand<'v, '_>, stream: &Value<'v>, lanes: Lanes) 
         })
         .collect::<Vec<_>>();
     join_all(servers).await;
-    let res = strand
-        .with_interrupt_mask(InterruptMask::all(), async |strand| {
-            strand
-                .with_slots(async |strand, [mut out]| {
-                    method!(strand, stream, Sym::well_known(sym::CLOSE), &mut out).await
-                })
-                .await
-        })
-        .await;
-    reply(strand, closed, res);
+    let _ = done.send(Ok(()));
 }
 
 /// Serves the requests on `lane` until it closes or the strand is interrupted.

@@ -16,7 +16,7 @@ use async_compression::futures::{bufread::ZstdDecoder, write::ZstdEncoder};
 use dolang::runtime::{
     BYTE_STREAM_CHUNK_SIZE, Error, Object, Output, Result, Slot, State, Strand, Sym, Value, call,
     error::ErrorKind,
-    io::{ByteHandle, ByteIo, IntoByteIo, IoCaps, Read, Write},
+    io::{ByteHandle, ByteIo, IntoByteIo, IoCaps, Read, Shared, Write},
     method,
     object::{Request, TypeBuilder},
     strand::InterruptMask,
@@ -239,9 +239,9 @@ fn parse_level<'v, 's>(
     Ok(Level::Precise(level))
 }
 
-/// Takes the byte handle `endpoint` names: a path is opened, and any other value must
+/// Gets the byte handle `endpoint` names: a path is opened, and any other value must
 /// provide [`ByteIo`] with `need`.
-async fn take_handle<'v, 's>(
+async fn endpoint_handle<'v, 's>(
     strand: &mut Strand<'v, 's>,
     endpoint: &Value<'v>,
     need: IoCaps,
@@ -260,7 +260,7 @@ async fn take_handle<'v, 's>(
             ByteHandle::read(file)
         });
     }
-    dolang::runtime::io::take(strand, endpoint, |strand, caps| {
+    dolang::runtime::io::get(strand, endpoint, |strand, caps| {
         if !caps.contains(need) {
             let access = if write { "writable" } else { "readable" };
             return Err(Error::value(strand, format!("{name} must be {access}")));
@@ -300,9 +300,9 @@ pub(crate) struct StreamAnnex<'v> {
     format: Format,
 }
 
-/// A decompressing reader.
+/// A decompressing reader, shared with the handles it lends.
 pub(crate) struct Decompressor {
-    reader: Option<Box<dyn Read>>,
+    reader: Option<Shared<Box<dyn Read>>>,
 }
 
 impl<'v> IntoByteIo<'v> for Decompressor {
@@ -310,11 +310,10 @@ impl<'v> IntoByteIo<'v> for Decompressor {
         Ok(IoCaps::READ)
     }
 
-    fn take<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
+    fn get<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
         // Reads fill exactly what was asked for, so there is no read-ahead to hand over.
-        Ok(ByteHandle::read(
-            self.reader.take().expect("stream already taken"),
-        ))
+        let reader = self.reader.as_ref().expect("stream is closed");
+        Ok(ByteHandle::read(reader.clone()))
     }
 }
 
@@ -392,15 +391,22 @@ impl<'v> Object<'v> for Decompressor {
             })
             .method("close", async move |this, strand, args, _out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                drop(this.borrow_mut(strand)?.reader.take());
+                let reader = this.borrow_mut(strand)?.reader.take();
+                if let Some(mut reader) = reader {
+                    // Closes it for the handles lent out too.
+                    drop(reader.close().await);
+                }
                 Ok(())
             })
     }
 }
 
-/// A compressing writer.
+/// A compressing writer, shared with the handles it lends.
+///
+/// A lent handle's `close` only flushes, so only the compressor's own `close`
+/// finishes the stream.
 pub(crate) struct Compressor {
-    writer: Option<Box<dyn Write>>,
+    writer: Option<Shared<Box<dyn Write>>>,
 }
 
 impl<'v> IntoByteIo<'v> for Compressor {
@@ -408,10 +414,9 @@ impl<'v> IntoByteIo<'v> for Compressor {
         Ok(IoCaps::WRITE)
     }
 
-    fn take<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
-        Ok(ByteHandle::write(
-            self.writer.take().expect("stream already taken"),
-        ))
+    fn get<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
+        let writer = self.writer.as_ref().expect("stream is closed");
+        Ok(ByteHandle::write(writer.clone()))
     }
 }
 
@@ -469,7 +474,11 @@ impl<'v> Object<'v> for Compressor {
             })
             .method("close", async move |this, strand, args, _out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let Some(mut writer) = this.borrow_mut(strand)?.writer.take() else {
+                let writer = this.borrow_mut(strand)?.writer.take();
+                let Some(mut writer) = writer else {
+                    return Ok(());
+                };
+                let Some(mut writer) = writer.close().await else {
                     return Ok(());
                 };
                 // Finishes the stream, then closes the inner handle.
@@ -505,7 +514,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                 None => None,
             };
 
-            let handle = take_handle(strand, &source, IoCaps::READ, "source").await?;
+            let handle = endpoint_handle(strand, &source, IoCaps::READ, "source").await?;
             let inner = handle.into_read().expect("source is readable");
             let (format, inner) = match format {
                 Some(format) => (format, inner),
@@ -534,7 +543,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             };
 
             let state = Decompressor {
-                reader: Some(format.decoder(inner)),
+                reader: Some(Shared::new(format.decoder(inner))),
             };
             let annex = StreamAnnex { global, format };
             let ty = global.types.decompressor;
@@ -562,10 +571,10 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                 .expect("`:AUTO:` is rejected for compression");
             let level = parse_level(strand, global, level)?;
 
-            let handle = take_handle(strand, &sink, IoCaps::WRITE, "sink").await?;
+            let handle = endpoint_handle(strand, &sink, IoCaps::WRITE, "sink").await?;
             let inner = handle.into_write().expect("sink is writable");
             let state = Compressor {
-                writer: Some(format.encoder(inner, level)),
+                writer: Some(Shared::new(format.encoder(inner, level))),
             };
             let annex = StreamAnnex { global, format };
             let ty = global.types.compressor;

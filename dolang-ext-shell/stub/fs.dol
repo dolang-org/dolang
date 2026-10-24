@@ -139,8 +139,8 @@ pub class DirEntry
 # Every operation on a closed file raises [`StateError`](std.StateError).
 #
 # A file is an [`Io`](io.Io), so a function such as
-# [`zip.open`](zip.open) can take it over, starting at its current position.
-# The file reads as closed afterward.
+# [`zip.open`](zip.open) can use it, starting at its current position, without
+# closing it.
 pub class BaseFile: Io
   # Closes the file, first writing out pending writes.
   #
@@ -152,8 +152,7 @@ pub class BaseFile: Io
   # closes it: the child receives the file itself, and the seek position is
   # kept by this process rather than by the operating system, so two live
   # handles would each believe a cursor the other moves. Use the file after the
-  # handoff and it raises the ordinary closed-file error. Handing the file to a
-  # function that takes an [`Io`](io.Io) closes it the same way.
+  # handoff and it raises the ordinary closed-file error.
   #
   # ## Example
   #

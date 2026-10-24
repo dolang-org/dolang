@@ -4,6 +4,7 @@ import compress
   testlib.vfs:
     - vfs
   test:
+    - assert
     - assert_eq
     - assert_throws
     - assert_type
@@ -89,13 +90,13 @@ def chains_through_streams()
   compress.compress nested.zst :ZSTD: do |outer|
     compress.compress $outer :GZIP: do |inner|
       inner.write "nested payload"
-    assert_throws $StateError do outer.write more
+    assert $outer.writable
 
   compress.decompress nested.zst do |outer|
     compress.decompress $outer do |inner|
       assert_eq $inner.format :GZIP:
       assert_eq $inner.read() b"nested payload"
-    assert_throws $StateError do outer.read()
+    assert $outer.readable
 
   # The outer layer really is zstd wrapping gzip.
   compress.decompress nested.zst do |outer|
@@ -103,24 +104,26 @@ def chains_through_streams()
 
 #[test]
 #[vfs]
-def takes_over_files()
+def files_stay_open()
   fs.open data.xz w do |file|
     compress.compress $file :XZ: do |stream| stream.write "from a file"
-    assert_throws $StateError do file.write more
-    file.close()
+    file.write " more"
+  assert (fs.Path("data.xz").read().ends_with b" more")
 
+  compress.compress data.xz :XZ: do |stream| stream.write "from a file"
   fs.open data.xz buffer: false do |file|
     compress.decompress $file do |stream|
       assert_eq $stream.read() b"from a file"
-    assert_throws $StateError do file.read()
+    file.read()
 
 #[test]
 #[vfs]
-def unclosed_compressor_is_finished_by_its_consumer()
+def a_lent_compressor_stays_open()
   let stream = compress.compress data.gz :GZIP:
   stream.write "handed on"
   compress.compress $stream :ZSTD: do |outer| outer.write " and wrapped"
-  assert_throws $StateError do stream.write more
+  assert $stream.writable
+  stream.close()
 
   # The gzip stream holds the plain write, then the zstd stream.
   compress.decompress data.gz do |stream|

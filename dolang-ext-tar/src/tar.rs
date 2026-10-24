@@ -908,9 +908,9 @@ impl<'v> Object<'v> for TarWriter {
     }
 }
 
-/// Takes the byte handle `endpoint` names: a path is opened, and any other value must
+/// Gets the byte handle `endpoint` names: a path is opened, and any other value must
 /// provide `ByteIo` with `need`.
-async fn take_handle<'v, 's>(
+async fn endpoint_handle<'v, 's>(
     strand: &mut Strand<'v, 's>,
     endpoint: &Value<'v>,
     need: IoCaps,
@@ -928,7 +928,7 @@ async fn take_handle<'v, 's>(
             ByteHandle::read(file.compat())
         });
     }
-    dolang::runtime::io::take(strand, endpoint, |strand, caps| {
+    dolang::runtime::io::get(strand, endpoint, |strand, caps| {
         if !caps.contains(need) {
             let access = if write { "writable" } else { "readable" };
             return Err(Error::value(strand, format!("{name} must be {access}")));
@@ -1034,7 +1034,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
         .value("EntryWriter", global.types.entry_writer)
         .function("read", async move |strand, args, out| {
             let ([source, block], []) = unpack!(strand, args, 2, 0)?;
-            let handle = take_handle(strand, &source, IoCaps::READ, "source").await?;
+            let handle = endpoint_handle(strand, &source, IoCaps::READ, "source").await?;
             let (entries, compression) = open_reader(strand, handle).await?;
             strand
                 .with_slots(async move |strand, [mut reader]| {
@@ -1070,7 +1070,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                 unpack!(strand, args, 2, 0, compression_sym = None)?;
             let path = dolang_ext_shell::as_path(strand, &sink);
             let compression = parse_compression(strand, global, compression, path.as_deref())?;
-            let handle = take_handle(strand, &sink, IoCaps::WRITE, "sink").await?;
+            let handle = endpoint_handle(strand, &sink, IoCaps::WRITE, "sink").await?;
             let sink = handle
                 .into_write()
                 .expect("sink is writable")
