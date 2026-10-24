@@ -31,7 +31,7 @@ def symlink_file_basic()
   assert $link.exists()
 
   open $link r do |f|
-    let contents = f.read()
+    let contents = f.read_str()
     assert_eq $contents "symlink target"
 
   let resolved = link.read_link()
@@ -52,7 +52,7 @@ def symlink_dir_creates_directory_symlink()
   assert $link.exists()
 
   open (link / "file.txt") r do |f|
-    let contents = f.read()
+    let contents = f.read_str()
     assert_eq $contents "in target dir"
 
 #[test]
@@ -68,7 +68,7 @@ def symlink_file_creates_file_symlink()
 
   assert $link.exists()
   open $link r do |f|
-    let contents = f.read()
+    let contents = f.read_str()
     assert_eq $contents "file target"
 
 #[test]

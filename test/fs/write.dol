@@ -20,7 +20,6 @@ import shell
 import std:
   - RuntimeError
   - StateError
-  - TypeError
 
 #[test]
 #[vfs]
@@ -35,7 +34,7 @@ def write_and_read_back_text()
 
     # Read it back
     open $test_path r do |f|
-      let contents = f.read()
+      let contents = f.read_str()
       assert_eq $contents "Hello, World!"
 
     # Cleanup
@@ -110,7 +109,7 @@ def write_at_offset()
       # An explicit offset neither consults nor moves the cursor.
       assert_eq (f.write "XY" offset: 2) 2
       assert_eq $f.tell() 0
-      assert_eq $f.read(4) "abXY"
+      assert_eq $f.read(4) b"abXY"
       assert_eq $f.tell() 4
 
       # Writing past the end extends the file, zero-filling the gap.
@@ -166,7 +165,7 @@ def write_to_file_opened_in_append_mode()
 
     # Read all content
     open $test_path r do |f|
-      let contents = f.read()
+      let contents = f.read_str()
       assert (contents.contains "First line")
       assert (contents.contains "Second line")
 
@@ -284,17 +283,6 @@ def path_remove_supports_all_and_ignore()
     assert (!dir.exists())
     dir.remove ignore: true
 
-
-#[test]
-#[vfs]
-def text_write_rejects_binary_without_changing_file()
-  open restricted.txt w+ do |file|
-    file.write "unchanged"
-    assert_throws $TypeError do file.write b"bad"
-    assert_throws $TypeError do file.write b"bad" offset: 0
-    assert_eq $file.tell() 9
-    file.seek start: 0
-    assert_eq $file.read() "unchanged"
 
 #[test]
 #[vfs]

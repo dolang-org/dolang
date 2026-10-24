@@ -15,6 +15,7 @@ use std::{
     task::{Context, Poll, ready},
 };
 
+use dolang_util::utf8;
 use futures::io::{AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 
 use super::{ByteHandle, ByteIo, IntoByteIo, Io, IoCaps};
@@ -373,15 +374,14 @@ impl Buffered {
         }
         loop {
             let eof = size.is_none_or(|size| buf.len() < size);
-            let err = match str::from_utf8(buf.as_slice()) {
-                Ok(_) => break,
-                Err(err) => err,
+            let valid = match utf8::complete_prefix(buf.as_slice()) {
+                Ok(text) if text.len() == buf.len() => break,
+                Ok(text) if !eof => text.len(),
+                _ => {
+                    self.push_back(buf.as_slice());
+                    return Err(invalid_utf8(strand));
+                }
             };
-            if eof || err.error_len().is_some() {
-                self.push_back(buf.as_slice());
-                return Err(invalid_utf8(strand));
-            }
-            let valid = err.valid_up_to();
             if valid > 0 {
                 self.push_back(&buf.as_slice()[valid..]);
                 buf.truncate(valid);

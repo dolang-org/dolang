@@ -84,7 +84,7 @@ import _shell _vfs base64 digest json proc progress rand shell shlex ssh std str
   fs:
     - Path
     - with_temp_dir
-    - @BinFile
+    - @BaseFile
   url:
     - Url
   _vm.cloud_init: cloud_init
@@ -819,7 +819,7 @@ def virsh_undefine connect_uri@Str name@Str :quiet@Bool = false
 let CHUNK_SIZE = (512 * 1024)
 let PARALLEL = 8
 
-def copy_chunks total@Int input@BinFile output@BinFile indicator@progress.Indicator
+def copy_chunks total@Int input@BaseFile output@BaseFile indicator@progress.Indicator
   strand.pipeline
     do strand.pool $PARALLEL (Range 0 total CHUNK_SIZE) do |offset|
       let chunk = input.read $CHUNK_SIZE :offset

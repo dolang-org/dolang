@@ -13,7 +13,7 @@ import progress json patch rand shlex strand proc sys transfer _vfs time
   fs:
     - Path
     - with_temp_dir
-    - @BinFile
+    - @RawFile
   url:
     - Url
   shell:
@@ -1600,7 +1600,7 @@ pub class Builder
     self
     target @ Path
     chmod @ (Int | Mode | nil)
-    copy_data @ (BinFile -> nil)
+    copy_data @ (RawFile -> nil)
   do
     let mode = _vfs.parse_mode $chmod
     self.#live_agent().with do

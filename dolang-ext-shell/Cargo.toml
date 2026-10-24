@@ -87,6 +87,10 @@ features = ["diagnostic-rendering"]
 workspace = true
 
 
+[dependencies.dolang-util]
+workspace = true
+
+
 [dependencies.dolang-winterop]
 workspace = true
 

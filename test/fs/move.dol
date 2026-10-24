@@ -27,7 +27,7 @@ def move_file()
 
   assert $!src.exists()
   open $dst r do |f|
-    assert_eq (f.read()) "hello move"
+    assert_eq (f.read_str()) "hello move"
 
 #[test]
 #[vfs]
@@ -54,7 +54,7 @@ def move_directory_with_all()
 
   assert $!src.exists()
   open (dst / "nested" / "file.txt") r do |f|
-    assert_eq (f.read()) "nested move"
+    assert_eq (f.read_str()) "nested move"
 
 #[test]
 #[vfs]
@@ -69,4 +69,4 @@ def path_move_method()
 
   assert $!src.exists()
   open $dst r do |f|
-    assert_eq (f.read()) "method move"
+    assert_eq (f.read_str()) "method move"

@@ -93,13 +93,15 @@ pub @let XattrNamespace = (Str | :USER: | :SYSTEM:)
 # | `"w+"` | Read and write (truncates existing file) |
 # | `"a+"` | Read and append                          |
 #
-# A `"b"` suffix selects binary mode, as in `"rb"`, `"wb"`, or `"r+b"`.
+# Without a `"b"` suffix, [`open`](fs.open) returns a buffered
+# [`File`](fs.File). With one, as in `"rb"`, `"wb"`, or `"r+b"`, it returns
+# an unbuffered [`RawFile`](fs.RawFile).
 pub @let OpenMode = (OpenTextMode | OpenBinaryMode)
 
-# Text file access modes accepted by [`open`](fs.open).
+# Buffered file access modes accepted by [`open`](fs.open).
 pub @let OpenTextMode = ("r" | "w" | "a" | "r+" | "w+" | "a+")
 
-# Binary file access modes accepted by [`open`](fs.open).
+# Raw file access modes accepted by [`open`](fs.open).
 pub @let OpenBinaryMode = ("rb" | "wb" | "ab" | "r+b" | "w+b" | "a+b")
 
 # An entry within a directory.
@@ -140,31 +142,20 @@ pub class DirEntry
   pub def type self -> FileType
     ...
 
-# An open file.
+# The interface shared by [`File`](fs.File) and [`RawFile`](fs.RawFile).
 #
-# Returned by [`open`](fs.open) and [`Path.open`](fs.Path.open).
-# Every operation on a closed file raises
-# [`StateError`](std.StateError).
-#
-# A file is both an iterator and a sink, so it can be used with `for`,
-# `.next()`, `.put()`, and `strand.redirect`. The open mode fixes which for the
-# file's lifetime: a [`StrFile`](fs.StrFile) yields lines, and a
-# [`BinFile`](fs.BinFile) yields arbitrary chunks. In either mode the values
-# read from a file concatenate back to exactly the file's bytes.
-#
-# Both subtypes accept arbitrary values through `.put()`, which writes each
-# value's encoded bytes without adding a line terminator. Their `.write()`
-# methods accept the data types documented on each subtype.
+# Every operation on a closed file raises [`StateError`](std.StateError).
 #
 # A file is an [`Io`](io.Io), so a function such as
 # [`zip.open`](zip.open) can take it over, starting at its current position.
 # The file reads as closed afterward; hand over a [`dup`](fs.File.dup) to keep
 # using it.
-pub class File: Iter[Str | Bin] Sink[Value] @Io
-  # Closes the file.
+pub class BaseFile: @Io
+  # Closes the file, first writing out pending writes.
   #
-  # This is required if [`open`](fs.open) was not given a block.
-  # Closing a file that is already closed does nothing.
+  # The file is closed even if writing them out fails. This is required if
+  # [`open`](fs.open) was not given a block. Closing a file that is already
+  # closed does nothing.
   #
   # Passing a file to a child process as `stdin:`, `stdout:`, or `stderr:` also
   # closes it: the child receives the file itself, and the seek position is
@@ -176,36 +167,11 @@ pub class File: Iter[Str | Bin] Sink[Value] @Io
   # ## Example
   #
   # ```
-  # let file = open data.txt r
-  # let data = file.read()
+  # let file = open data.txt
+  # let data = file.read_str()
   # file.close()
   # ```
   pub def close self
-    ...
-
-  # Opens another handle to the same open file.
-  #
-  # The duplicate starts at this file's position, and after that each handle
-  # has its own position. Unlike a POSIX `dup`, reads and seeks through one do
-  # not move the other. The handles share the file's contents and its locks:
-  # lock ranges cannot overlap across duplicates, and closing a handle releases
-  # only the locks taken through it.
-  #
-  # ## Errors
-  #
-  # | Exception | Condition |
-  # | --- | --- |
-  # | [`StateError`](std.StateError) | The file is closed |
-  # | [`sys.ResourceBusyError`](sys.ResourceBusyError) | Later, passing either handle to a child process while the other is open |
-  #
-  # ## Example
-  #
-  # ```
-  # open notes.txt.gz rb do |file|
-  #   let text = compress.decompress $file.dup() do |stream| stream.read()
-  #   let magic = file.read 2
-  # ```
-  pub def dup self -> File
     ...
 
   # Acquires a byte-range lock while `func` runs.
@@ -224,7 +190,7 @@ pub class File: Iter[Str | Bin] Sink[Value] @Io
   #
   # Native blocking acquisition cannot be canceled. Canceling the strand may
   # leave a blocking worker waiting for a conflicting lock and delay shutdown.
-  # Use [`try_lock`](fs.File.try_lock) for bounded or cancellable waiting.
+  # Use [`try_lock`](fs.BaseFile.try_lock) for bounded or cancellable waiting.
   #
   # Overlapping active lock ranges on the same file are unsupported, including
   # identical shared ranges and ranges locked through a [`dup`](fs.File.dup)
@@ -284,27 +250,18 @@ pub class File: Iter[Str | Bin] Sink[Value] @Io
   do -> R
     ...
 
-  # Reads data from the file.
-  #
-  # ## Returns
-  #
-  # A `Str` in text mode, or a `Bin` in binary mode.
+  # Reads bytes from the file.
   #
   # ## Example
   #
   # ```
-  # # Read entire file
-  # open input.txt r do |file|
-  #   let content = file.read()
-  #   echo "File contents: $content"
-  #
   # # Read a specific number of bytes
-  # open data.bin rb do |file|
+  # open data.bin do |file|
   #   let header = file.read 4
   #   let rest = file.read()
   #
   # # Read a record without moving the cursor
-  # open data.bin rb do |file|
+  # open data.bin do |file|
   #   let record = file.read 64 offset: (index * 64)
   # ```
   pub def read
@@ -327,18 +284,13 @@ pub class File: Iter[Str | Bin] Sink[Value] @Io
     # be in flight on one handle at once — several strands can read different
     # regions of the same open file concurrently. Streaming reads still take
     # the handle exclusively, since they move the cursor.
-    #
-    # In text mode the bytes read must be complete UTF-8. There is no cursor
-    # for a positional read to carry a split character forward on, so unlike a
-    # streaming read it cannot hold a partial character back for next time.
     :offset @ Int = nil
-  do -> (Str | Bin)
+  do -> Bin
     ...
 
   # Writes data to the file.
   #
   # All of `data` is written, however many transfers that takes.
-  # [`BinFile.write`](fs.BinFile.write) also accepts binary data.
   #
   # ## Returns
   #
@@ -363,14 +315,14 @@ pub class File: Iter[Str | Bin] Sink[Value] @Io
   #   file.write "Hello"
   #
   # # Patch a record in place without disturbing the cursor
-  # open data.bin r+b do |file|
+  # open data.bin r+ do |file|
   #   file.write $record offset: (index * 64)
   # ```
   pub def write
     self
     # Data to write. Strings
     # are written as UTF-8 text.
-    data @ Str
+    data @ (Str | Bin)
     # Byte offset to write at. Without it, writes at
     # the cursor and advances it.
     #
@@ -379,7 +331,7 @@ pub class File: Iter[Str | Bin] Sink[Value] @Io
     # file can be written without seeking between them. Writing past the end
     # extends the file, zero-filling the gap.
     #
-    # As with [`read`](fs.File.read), any number of positional writes may be
+    # As with [`read`](fs.BaseFile.read), any number of positional writes may be
     # in flight on one handle at once.
     :offset @ Int = nil
   do -> Int
@@ -389,7 +341,7 @@ pub class File: Iter[Str | Bin] Sink[Value] @Io
   pub def copy_data
     self
     # Handle to write to.
-    dst @ File
+    dst @ BaseFile
     # Absolute byte region of the source.
     :range @ Range[Int] = nil
     # Number of bytes to take from the source cursor.
@@ -403,9 +355,6 @@ pub class File: Iter[Str | Bin] Sink[Value] @Io
     ...
 
   # Truncates the file to the given byte length.
-  #
-  # If the file has buffered unread data, the logical cursor position is
-  # preserved after truncation.
   #
   # ## Example
   #
@@ -566,7 +515,7 @@ pub class File: Iter[Str | Bin] Sink[Value] @Io
   pub def xattr
     self
     # Attribute name
-    # or entry from [`xattrs`](fs.File.xattrs).
+    # or entry from [`xattrs`](fs.BaseFile.xattrs).
     name @ (Str | XattrEntry)
     # Namespace to query.
     :namespace @ XattrNamespace = nil
@@ -587,7 +536,7 @@ pub class File: Iter[Str | Bin] Sink[Value] @Io
   pub def set_xattr
     self
     # Attribute name
-    # or entry from [`xattrs`](fs.File.xattrs).
+    # or entry from [`xattrs`](fs.BaseFile.xattrs).
     name @ (Str | XattrEntry)
     # Attribute bytes; strings
     # use UTF-8.
@@ -608,7 +557,7 @@ pub class File: Iter[Str | Bin] Sink[Value] @Io
   pub def remove_xattr
     self
     # Attribute name
-    # or entry from [`xattrs`](fs.File.xattrs).
+    # or entry from [`xattrs`](fs.BaseFile.xattrs).
     name @ (Str | XattrEntry)
     # Namespace to update.
     :namespace @ XattrNamespace = nil
@@ -632,6 +581,9 @@ pub class File: Iter[Str | Bin] Sink[Value] @Io
 
   # Returns the current cursor position in bytes.
   #
+  # For a [`File`](fs.File), this is the logical position, where the next
+  # read or write happens.
+  #
   # ## Example
   #
   # ```
@@ -645,9 +597,6 @@ pub class File: Iter[Str | Bin] Sink[Value] @Io
 
   # Moves the file cursor.
   #
-  # Buffered unread data is discarded before the seek so subsequent reads use
-  # the new cursor position.
-  #
   # ## Returns
   #
   # The new absolute byte position.
@@ -655,7 +604,7 @@ pub class File: Iter[Str | Bin] Sink[Value] @Io
   # ## Example
   #
   # ```
-  # open data.bin rb do |file|
+  # open data.bin r do |file|
   #   file.seek start: 10   # absolute
   #   file.seek 10          # relative to the cursor
   #   file.seek (0 - 4)     # backwards
@@ -673,24 +622,99 @@ pub class File: Iter[Str | Bin] Sink[Value] @Io
   do -> Int
     ...
 
+# An open, buffered file.
+#
+# Returned by [`open`](fs.open) and [`Path.open`](fs.Path.open), except for
+# the `"b"` modes, which return a [`RawFile`](fs.RawFile).
+#
+# Reads fetch ahead, and writes are held back until the buffer fills, a read
+# needs the file, or the file is flushed or closed. Every other method sees the
+# file as written: pending writes go out first, and the file is moved back
+# over any read-ahead. A file is not closed when it is garbage collected, so
+# close it to keep its pending writes, or use it from a block that closes it.
+#
+# A file reads lines and text as well as bytes. Text must be UTF-8, and line
+# endings are not translated.
+#
+# A file is both an iterator and a sink, so it can be used with `for`,
+# `.next()`, `.put()`, and `strand.redirect`. It yields lines, **including
+# their terminators**, so a `\r\n` file stays `\r\n` and a final line without
+# one yields a value without one. Use [`chomp`](std.Iter.chomp) to strip them:
+#
+# ```
+# for line = file.chomp()
+#   echo $line
+# ```
+#
+# Passed to a child process as `stdin:`, `stdout:`, or `stderr:`, the child
+# reads or writes from the file's logical position.
+pub class File: Iter[Str] Sink[Value] BaseFile
+  # Opens another handle to the same open file.
+  #
+  # The duplicate starts at this file's position, and after that each handle
+  # has its own position. Unlike a POSIX `dup`, reads and seeks through one do
+  # not move the other. The handles share the file's contents and its locks:
+  # lock ranges cannot overlap across duplicates, and closing a handle releases
+  # only the locks taken through it.
+  #
+  # ## Errors
+  #
+  # | Exception | Condition |
+  # | --- | --- |
+  # | [`StateError`](std.StateError) | The file is closed |
+  # | [`sys.ResourceBusyError`](sys.ResourceBusyError) | Later, passing either handle to a child process while the other is open |
+  #
+  # ## Example
+  #
+  # ```
+  # open notes.txt.gz r do |file|
+  #   let text = compress.decompress $file.dup() do |stream| stream.read()
+  #   let magic = file.read 2
+  # ```
+  pub def dup self -> File
+    ...
+
+  # Reads text.
+  #
+  # A character that `size` would split is left for the next read, unless it
+  # is the first, which is read whole.
+  #
+  # ## Example
+  #
+  # ```
+  # open notes.txt do |file|
+  #   let text = file.read_str()
+  # ```
+  pub def read_str
+    self
+    # Number of bytes to read. Without it, reads to the end of the file.
+    size @ Int = nil
+  do -> Str
+    ...
+
+  # Reads the next line, including its terminator.
+  #
+  # ## Returns
+  #
+  # The line, or `""` at the end of the file. Only the last line can lack a
+  # terminator.
+  pub def read_line self -> Str
+    ...
+
+  # Returns the file as an iterator over its lines.
+  pub def lines self -> File
+    ...
+
+  # Writes out pending writes.
+  pub def flush self
+    ...
+
   # Returns the file as its own iterator.
   pub def (iter) self -> File
     ...
 
-  # Fetches the next value from the file.
-  #
-  # In text mode this reads the next line as a [`Str`](std.Str),
-  # **including its terminator**, so a `\r\n` file stays `\r\n` and a final
-  # line without one yields a value without one. Use
-  # [`chomp`](std.Iter.chomp) to strip them:
-  #
-  # ```
-  # for line = file.chomp()
-  #   echo $line
-  # ```
-  #
-  # In binary mode it reads a chunk of data of arbitrary length.
-  pub def (next) self -> (Str | Bin)
+  # Reads the next line, as [`read_line`](fs.File.read_line) does.
+  pub def (next) self -> Str
     ...
 
   # Returns the file as its own sink.
@@ -701,7 +725,7 @@ pub class File: Iter[Str | Bin] Sink[Value] @Io
   #
   # A [`Str`](std.Str) or [`Bin`](std.Bin) contributes its own
   # bytes and nothing else, and anything else is converted to a string first.
-  # No line ending is appended in either mode, and none is translated.
+  # No line ending is appended, and none is translated.
   #
   # Use [`precrimp`](std.Sink.precrimp) to terminate written values, with
   # [`shell.line_ending()`](shell.line_ending) for the target's
@@ -720,68 +744,48 @@ pub class File: Iter[Str | Bin] Sink[Value] @Io
   do
     ...
 
-# Reads text lines from a file opened in text mode.
+# An open, unbuffered file.
 #
-# `.write()` accepts only `Str`. `.put()` retains the arbitrary-value encoding
-# of [`File`](fs.File).
-pub class StrFile: Iter[Str] File
-  # Returns the file as its own iterator.
-  pub def (iter) self -> StrFile
-    ...
-
-  # Opens another handle to the same open file. See
-  # [`File.dup`](fs.File.dup).
-  pub def dup self -> StrFile
-    ...
-
-  # Reads the next line.
-  pub def (next) self -> Str
-    ...
-
-  # Reads text from the file. See [`File.read`](fs.File.read) for options.
-  pub def read self size@Int = nil :offset@Int = nil -> Str
-    ...
-
-  # Writes UTF-8 text to the file. See [`File.write`](fs.File.write) for options.
-  #
-  # Raises [`TypeError`](std.TypeError) when `data` is not a `Str`.
-  pub def write self data@Str :offset@Int = nil -> Int
-    ...
-
-# Reads byte chunks from a file opened in binary mode.
+# Returned by [`open`](fs.open) and [`Path.open`](fs.Path.open) for the
+# `"b"` modes. Each read and write goes straight to the file.
 #
-# `.write()` accepts bytes or strings, writing strings as UTF-8 bytes. `.put()`
-# retains the arbitrary-value encoding of [`File`](fs.File).
-pub class BinFile: Iter[Bin] File
+# A raw file is both an iterator and a sink, so it can be used with `for`,
+# `.next()`, `.put()`, and `strand.redirect`. It yields chunks of bytes, which
+# concatenate back to exactly the file's contents.
+pub class RawFile: Iter[Bin] Sink[Value] BaseFile
+  # Opens another handle to the same open file, as
+  # [`File.dup`](fs.File.dup) does.
+  pub def dup self -> RawFile
+    ...
+
   # Returns the file as its own iterator.
-  pub def (iter) self -> BinFile
+  pub def (iter) self -> RawFile
     ...
 
-  # Opens another handle to the same open file. See
-  # [`File.dup`](fs.File.dup).
-  pub def dup self -> BinFile
-    ...
-
-  # Reads the next byte chunk.
+  # Reads the next chunk of data, of arbitrary length.
   pub def (next) self -> Bin
     ...
 
-  # Reads bytes from the file. See [`File.read`](fs.File.read) for options.
-  pub def read self size@Int = nil :offset@Int = nil -> Bin
+  # Returns the file as its own sink.
+  pub def (sink) self -> RawFile
     ...
 
-  # Writes bytes or UTF-8 text. See [`File.write`](fs.File.write) for options.
-  pub def write self data@(Str | Bin) :offset@Int = nil -> Int
+  # Writes a value to the file, as [`File`](fs.File) does.
+  pub def (put)
+    self
+    # Value to write.
+    value @ Value
+  do
     ...
 
 # The state of a scoped [`File`](fs.File) lock.
 #
-# Passed to the block given to [`File.lock`](fs.File.lock) and
-# [`File.try_lock`](fs.File.try_lock).
+# Passed to the block given to [`File.lock`](fs.BaseFile.lock) and
+# [`File.try_lock`](fs.BaseFile.try_lock).
 pub class FileLock
   # Whether the lock is currently held.
   #
-  # The value is false when [`try_lock`](fs.File.try_lock) does not acquire
+  # The value is false when [`try_lock`](fs.BaseFile.try_lock) does not acquire
   # the lock, and after releasing it.
   #[getter]
   pub def held self -> Bool
@@ -797,7 +801,7 @@ pub class FileLock
 #
 # Returned by [`fs_metadata`](fs.fs_metadata),
 # [`Path.fs_metadata`](fs.Path.fs_metadata), and
-# [`File.fs_metadata`](fs.File.fs_metadata). For metadata about a single file
+# [`File.fs_metadata`](fs.BaseFile.fs_metadata). For metadata about a single file
 # entry, use [`Metadata`](fs.Metadata).
 #
 # Platform-specific members belong to [`fs.unix.FsMetadata`](fs.unix.FsMetadata)
@@ -834,7 +838,7 @@ pub class FsMetadata
 #
 # Returned by [`metadata`](fs.metadata),
 # [`Path.metadata`](fs.Path.metadata), and
-# [`File.metadata`](fs.File.metadata). For filesystem-level capacity and
+# [`File.metadata`](fs.BaseFile.metadata). For filesystem-level capacity and
 # mount metadata, use [`FsMetadata`](fs.FsMetadata).
 #
 # Platform-specific members belong to [`fs.unix.Metadata`](fs.unix.Metadata)
@@ -1116,13 +1120,13 @@ pub class Path
     self
     # File access mode. Defaults to `"r"`.
     mode @ OpenTextMode = nil
-  do -> StrFile
+  do -> File
 
   # The method form of [`fs.open`](fs.open) with a block.
   @def open[R]
     self
     # Block to run with the file; it is closed when the block returns.
-    func @ (StrFile -> R)
+    func @ (File -> R)
   do -> R
 
   # The method form of [`fs.open`](fs.open) with a mode and a block.
@@ -1131,18 +1135,18 @@ pub class Path
     # File access mode.
     mode @ OpenTextMode
     # Block to run with the file; it is closed when the block returns.
-    func @ (StrFile -> R)
+    func @ (File -> R)
   do -> R
 
   @def open
     self
     mode @ OpenBinaryMode
-  do -> BinFile
+  do -> RawFile
 
   @def open[R]
     self
     mode @ OpenBinaryMode
-    func @ (BinFile -> R)
+    func @ (RawFile -> R)
   do -> R
 
   pub def open self ...options @ Value -> Value
@@ -1471,7 +1475,8 @@ pub class XattrEntry
 
 # Opens a file.
 #
-# The file stays open until [`File.close`](fs.File.close) is called.
+# The file stays open until its `close` method is called. Writes are buffered,
+# so a file that is never closed may lose them.
 #
 # ```
 # let file = open data.txt w
@@ -1483,7 +1488,7 @@ pub class XattrEntry
   path @ (Str | Path)
   # File access mode. Defaults to `"r"`.
   mode @ OpenTextMode = nil
-do -> StrFile
+do -> File
 
 # Opens a file for reading and runs a block with it. The file is closed when
 # the block returns.
@@ -1496,7 +1501,7 @@ do -> StrFile
   # Path to the file to open.
   path @ (Str | Path)
   # Block to run with the file.
-  func @ (StrFile -> R)
+  func @ (File -> R)
 do -> R
 
 # Opens a file with a mode and runs a block with it. The file is closed when
@@ -1512,22 +1517,22 @@ do -> R
   # File access mode.
   mode @ OpenTextMode
   # Block to run with the file.
-  func @ (StrFile -> R)
+  func @ (File -> R)
 do -> R
 
 @def open
   path @ (Str | Path)
   mode @ OpenBinaryMode
-do -> BinFile
+do -> RawFile
 
 @def open[R]
   path @ (Str | Path)
   mode @ OpenBinaryMode
-  func @ (BinFile -> R)
+  func @ (RawFile -> R)
 do -> R
 
-# Opens a file, returning [`StrFile`](fs.StrFile) for text modes and
-# [`BinFile`](fs.BinFile) for binary modes. The default mode is `"r"`.
+# Opens a file, returning a buffered [`File`](fs.File), or a
+# [`RawFile`](fs.RawFile) for the `"b"` modes. The default mode is `"r"`.
 #
 # With a block, passes it the file and closes the file when the block exits.
 pub def open path @ (Str | Path) ...options @ Value -> Value
@@ -1653,8 +1658,8 @@ do -> Int
 # ## Example
 #
 # ```
-# open source.bin rb do |src|
-#   open dest.bin wb do |dst|
+# open source.bin do |src|
+#   open dest.bin w do |dst|
 #     # Splice a fixed region of the source onto wherever dst happens to be
 #     copy_data $src $dst range: (0..4096)
 #
@@ -1662,15 +1667,15 @@ do -> Int
 #     let count = copy_data $src $dst
 #     echo "copied $count bytes"
 #
-# open archive.bin r+b do |file|
+# open archive.bin r+ do |file|
 #   # Both sides positional, so one handle can serve as both
 #   copy_data $file $file range: (0..64) offset: 8192
 # ```
 pub def copy_data
   # Handle to read from.
-  src @ File
+  src @ BaseFile
   # Handle to write to.
-  dst @ File
+  dst @ BaseFile
   # Absolute byte region of the source.
   #
   # ### Source Addressing
@@ -1683,7 +1688,7 @@ pub def copy_data
   # | given    | given   | an error — a range already carries its length |
   #
   # `range:` follows the same conventions as
-  # [`File.lock`](fs.File.lock): half-open, `..` is the whole file, an open
+  # [`File.lock`](fs.BaseFile.lock): half-open, `..` is the whole file, an open
   # end means "to the end of the file", an omitted start is `0`, `step` must be
   # `1`, and endpoints counted from the end are rejected.
   #

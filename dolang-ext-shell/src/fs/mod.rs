@@ -43,7 +43,6 @@ pub(crate) mod xattr;
 use crate::{
     error::{ErrorExt as _, ResultExt as _},
     fs::{
-        file::File,
         fs_metadata::create_fs_metadata,
         metadata::create_metadata,
         path::{convert_path_kind, create_path, path_from_value, safe_concat},
@@ -1115,7 +1114,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
         .function("open", async move |strand, args, out| {
             let ([path], [opt1, opt2]) = unpack!(strand, args, 1, 2)?;
             let path = path_from_value(strand, &path)?;
-            File::open(strand, global, path.to_path(), opt1, opt2, out).await
+            file::open_file(strand, global, path.to_path(), opt1, opt2, out).await
         })
         .function("remove", async move |strand, args, _out| {
             let ([], [all, ignore], paths) =
@@ -1480,9 +1479,9 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
                 clone_kw = None
             )?;
             let src = file::cast_file(global, &src)
-                .ok_or_else(|| Error::type_error(strand, "src must be an fs.File"))?;
+                .ok_or_else(|| Error::type_error(strand, "src must be an fs.BaseFile"))?;
             let dst = file::cast_file(global, &dst)
-                .ok_or_else(|| Error::type_error(strand, "dst must be an fs.File"))?;
+                .ok_or_else(|| Error::type_error(strand, "dst must be an fs.BaseFile"))?;
             file::copy_files(strand, global, src, dst, range, size, offset, clone, out).await
         })
         .function("rename", async move |strand, args, _out| {
@@ -1640,9 +1639,9 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             create_path(strand, global, temp_path, out)?;
             Ok(())
         })
+        .value("BaseFile", global.types.base_file)
         .value("File", global.types.file)
-        .value("StrFile", global.types.str_file)
-        .value("BinFile", global.types.bin_file)
+        .value("RawFile", global.types.raw_file)
         .value("FileLock", global.types.file_lock)
         .value("Metadata", global.types.metadata)
         .value("FsMetadata", global.types.fs_metadata)

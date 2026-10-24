@@ -26,7 +26,7 @@ def copy_file()
   copy $src $dst
 
   open $dst r do |f|
-    let contents = f.read()
+    let contents = f.read_str()
     assert_eq $contents "hello world"
 
 #[test]
@@ -44,7 +44,7 @@ def copy_over_existing_file()
   copy $src $dst
 
   open $dst r do |f|
-    let contents = f.read()
+    let contents = f.read_str()
     assert_eq $contents "new content"
 
 #[test]
@@ -81,7 +81,7 @@ def copy_directory_with_all()
   copy $src $dst all: true
 
   open (dst / "nested" / "file.txt") r do |f|
-    let contents = f.read()
+    let contents = f.read_str()
     assert_eq $contents "nested content"
 
 #[test]
@@ -96,7 +96,7 @@ def path_copy_method()
   src.copy $dst
 
   open $dst r do |f|
-    let contents = f.read()
+    let contents = f.read_str()
     assert_eq $contents "copied with method"
 
 #[test]

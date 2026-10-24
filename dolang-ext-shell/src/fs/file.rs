@@ -1,10 +1,10 @@
 use std::{
+    future::poll_fn,
     io::{self, SeekFrom},
-    marker::PhantomData,
-    mem, result, str,
+    pin::Pin,
+    task::{Context, Poll, ready},
 };
 
-use bstr::ByteSlice;
 use dolang::runtime::{
     AllocExt, BYTE_STREAM_CHUNK_SIZE, Error, Instance, Object, Output, Result, Slot, State, Strand,
     Value, call,
@@ -15,6 +15,7 @@ use dolang::runtime::{
     unpack,
     value::{BinEmbryo, PinBin, PinStr, TypeObject, View},
 };
+use dolang_util::utf8;
 use dolang_vfs::{
     file::{
         CopyDest, CopyMode, File as VfsFile, FileLockBehavior, FileLockMode, FileLockRange,
@@ -22,23 +23,21 @@ use dolang_vfs::{
     },
     process::{StdioRecv, StdioSend},
 };
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+use tokio::io::{AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 use tokio_util::compat::TokioAsyncReadCompatExt as _;
 
 use dolang_vfs::path as vfs_path;
 
 use crate::{
-    error::{ErrorExt as _, ResultExt as _},
+    error::ResultExt as _,
     fs::{
         file_lock::FileLock as FileLockObject, fs_metadata::create_fs_metadata,
-        metadata::create_metadata, read_all, read_into_spare, stream, xattr,
+        metadata::create_metadata, read_into_spare, stream, xattr,
     },
     global::{FsGlobal, WindowsSecurityTag},
     io_mode::encode_value,
     util,
 };
-
-const TEXT_BUFFER_SIZE: usize = 8192;
 
 fn lock_endpoint<'v, 's>(
     strand: &mut Strand<'v, 's>,
@@ -149,19 +148,6 @@ fn read_offset<'v, 's>(
                 .ok_or_else(|| Error::type_error(strand, "offset must be a non-negative integer"))
         })
         .transpose()
-}
-
-fn maximal_utf8_prefix(bytes: &[u8]) -> result::Result<&str, ()> {
-    match str::from_utf8(bytes) {
-        Ok(s) => Ok(s),
-        Err(e) => {
-            if e.error_len().is_none() {
-                Ok(unsafe { str::from_utf8_unchecked(&bytes[0..e.valid_up_to()]) })
-            } else {
-                Err(())
-            }
-        }
-    }
 }
 
 /// Reads `size` bytes at `offset`, or to the end of the file when `size` is
@@ -289,12 +275,12 @@ pub(crate) fn copy_mode_sym<'v, 's>(
 /// borrow, so several copies and positional reads can be in flight on one
 /// handle at once; a side addressed through its cursor moves that cursor and
 /// takes the handle exclusively.
-enum CopySide<'v, 'a, M: FileMode> {
-    Positional(Ref<'v, 'a, File<'v, M>>),
-    Cursor(Mut<'v, 'a, File<'v, M>>),
+enum CopySide<'v, 'a, const BUFFERED: bool> {
+    Positional(Ref<'v, 'a, File<BUFFERED>>),
+    Cursor(Mut<'v, 'a, File<BUFFERED>>),
 }
 
-impl<'v, M: FileMode> CopySide<'v, '_, M> {
+impl<'v, const BUFFERED: bool> CopySide<'v, '_, BUFFERED> {
     fn file<'b, 's>(&'b self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, &'b VfsFile> {
         let file = match self {
             Self::Positional(borrow) => borrow.file.as_ref(),
@@ -311,11 +297,11 @@ impl<'v, M: FileMode> CopySide<'v, '_, M> {
 /// into `(offset, destination, length)` before anything reaches the VFS, which
 /// knows nothing of either.
 #[allow(clippy::too_many_arguments)]
-async fn copy_data<'v, 's, S: FileMode, D: FileMode>(
+async fn copy_data<'v, 's, const SRC: bool, const DST: bool>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, FsGlobal<'v>>,
-    src: Instance<'v, '_, File<'v, S>>,
-    dst: Instance<'v, '_, File<'v, D>>,
+    src: Instance<'v, '_, File<SRC>>,
+    dst: Instance<'v, '_, File<DST>>,
     range: Option<Slot<'v, '_>>,
     size: Option<Slot<'v, '_>>,
     offset: Option<Slot<'v, '_>>,
@@ -367,10 +353,7 @@ async fn copy_data<'v, 's, S: FileMode, D: FileMode>(
     let same_handle = {
         let src = src.borrow(strand)?;
         let dst = dst.borrow(strand)?;
-        std::ptr::eq(
-            (&*src as *const File<'v, S>).cast::<()>(),
-            (&*dst as *const File<'v, D>).cast::<()>(),
-        )
+        std::ptr::addr_eq(&*src, &*dst)
     };
     if same_handle && (region.is_none() || offset.is_none()) {
         return Err(Error::state_error(
@@ -380,10 +363,13 @@ async fn copy_data<'v, 's, S: FileMode, D: FileMode>(
         ));
     }
 
+    // Buffered data would be invisible to the copy, and read-ahead would go
+    // stale under copied bytes.
+    settle(src, strand).await?;
+    settle(dst, strand).await?;
+
     // Each side is borrowed and resolved together, because resolving a cursor
     // requires the exclusive borrow that addressing through it implies.
-    // `logical_position` rather than the platform's own: the read-ahead buffer
-    // puts that one ahead of the cursor the script can see.
     let (mut src_side, src_offset, len) = match region {
         Some((start, end)) => (
             CopySide::Positional(src.borrow(strand)?),
@@ -392,7 +378,7 @@ async fn copy_data<'v, 's, S: FileMode, D: FileMode>(
         ),
         None => {
             let mut borrow = src.borrow_mut(strand)?;
-            let position = borrow.logical_position(strand).await?;
+            let position = borrow.stream_position(strand).await?;
             (CopySide::Cursor(borrow), position, size)
         }
     };
@@ -404,7 +390,7 @@ async fn copy_data<'v, 's, S: FileMode, D: FileMode>(
         None if dst_is_append => (CopySide::Cursor(dst.borrow_mut(strand)?), CopyDest::Append),
         None => {
             let mut borrow = dst.borrow_mut(strand)?;
-            let position = borrow.logical_position(strand).await?;
+            let position = borrow.stream_position(strand).await?;
             (CopySide::Cursor(borrow), CopyDest::At(position))
         }
     };
@@ -463,18 +449,45 @@ async fn copy_data<'v, 's, S: FileMode, D: FileMode>(
     Ok(())
 }
 
-/// A handle to an open file.
-pub(crate) struct File<'v, M: FileMode = CommonFile> {
-    marker: PhantomData<M>,
+/// Buffer capacity of a buffered file, and the size from which its reads and
+/// writes skip the buffer.
+const BUFFER_SIZE: usize = 8 * 1024;
+
+/// `fs.BaseFile`, the nominal supertype of both kinds of file. It is never
+/// instantiated.
+pub(crate) struct BaseFile;
+
+impl<'v> Object<'v> for BaseFile {
+    const NAME: &'v str = "BaseFile";
+    const MODULE: &'v str = "fs";
+    type Annex = ();
+    type Type = ();
+    type TypeAnnex = ();
+}
+
+/// A handle to an open file: `fs.File` when `BUFFERED`, `fs.RawFile`
+/// otherwise.
+///
+/// A file has one position, so its buffer holds read-ahead or pending writes,
+/// never both. Operations that are not streaming reads or writes *settle* the
+/// file first: pending writes are written out, and the file is moved back
+/// over unread read-ahead, so the native handle sits at the logical position.
+/// A raw file never fills its buffer, so it is always settled.
+pub(crate) struct File<const BUFFERED: bool = true> {
     file: Option<VfsFile>,
-    buf: BinEmbryo<'v>,
     /// What the file offers as a byte I/O handle, fixed by the open mode.
     caps: IoCaps,
+    /// Read-ahead unread from `pos`, or pending writes when `writing`.
+    buf: Vec<u8>,
+    pos: usize,
+    writing: bool,
 }
+
+/// `fs.RawFile`, an unbuffered file.
+pub(crate) type RawFile = File<false>;
 
 pub(crate) struct FileAnnex<'v> {
     global: State<'v, FsGlobal<'v>>,
-    is_binary: bool,
     /// Whether the file was opened for appending, in which case every write
     /// lands at the end and an explicit offset cannot be honored.
     is_append: bool,
@@ -499,28 +512,41 @@ fn mode_caps(mode: &str) -> IoCaps {
     caps
 }
 
-impl<M: FileMode> IntoByteIo for File<'_, M> {
+/// Builds the byte I/O handle for a file opened with `caps`.
+fn byte_handle(file: VfsFile, caps: IoCaps) -> ByteHandle {
+    let file = file.compat();
+    match caps {
+        caps if caps.contains(IoCaps::READ | IoCaps::WRITE | IoCaps::SEEK) => {
+            ByteHandle::read_write_seek(file)
+        }
+        caps if caps.contains(IoCaps::READ | IoCaps::SEEK) => ByteHandle::read_seek(file),
+        caps if caps.contains(IoCaps::WRITE | IoCaps::SEEK) => ByteHandle::write_seek(file),
+        caps if caps.contains(IoCaps::READ | IoCaps::WRITE) => ByteHandle::read_write(file),
+        _ => ByteHandle::write(file),
+    }
+}
+
+impl<const BUFFERED: bool> IntoByteIo for File<BUFFERED> {
     fn caps(&self) -> IoCaps {
         self.caps
     }
 
+    fn poll_flush(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        ready!(self.poll_flush_buf(cx))?;
+        Pin::new(self.vfs()).poll_flush(cx)
+    }
+
+    /// Read-ahead travels with the handle as its prefix, which needs no seek
+    /// and so works on a file that cannot seek.
     fn take(&mut self) -> ByteHandle {
-        let file = self.file.take().expect("file already taken").compat();
-        let handle = match self.caps {
-            caps if caps.contains(IoCaps::READ | IoCaps::WRITE | IoCaps::SEEK) => {
-                ByteHandle::read_write_seek(file)
-            }
-            caps if caps.contains(IoCaps::READ | IoCaps::SEEK) => ByteHandle::read_seek(file),
-            caps if caps.contains(IoCaps::WRITE | IoCaps::SEEK) => ByteHandle::write_seek(file),
-            caps if caps.contains(IoCaps::READ | IoCaps::WRITE) => ByteHandle::read_write(file),
-            _ => ByteHandle::write(file),
-        };
-        // Read-ahead past the logical position travels with the handle.
-        if self.buf.is_empty() {
+        assert!(!self.writing, "file taken before flushing");
+        let file = self.file.take().expect("file already taken");
+        let prefix = self.buf.split_off(self.pos);
+        self.clear();
+        let handle = byte_handle(file, self.caps);
+        if prefix.is_empty() {
             handle
         } else {
-            let prefix = self.buf.as_slice().to_vec();
-            self.buf.truncate(0);
             handle.with_prefix(prefix)
         }
     }
@@ -556,16 +582,357 @@ pub(crate) async fn open_native<'v>(
         .map_err(dolang_vfs::error::Error::into_io_error)
 }
 
-impl<'v, M: FileMode> File<'v, M> {
-    fn create(file: VfsFile, caps: IoCaps) -> Self {
+/// Implements `fs.open`: a text mode returns a buffered `File`, a `b` mode a
+/// `RawFile`.
+pub(crate) async fn open_file<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, FsGlobal<'v>>,
+    path: vfs_path::Path<'_>,
+    opt1: Option<Slot<'v, '_>>,
+    opt2: Option<Slot<'v, '_>>,
+    out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    // Determine mode and block
+    let (mode, block) = match (&opt1, &opt2) {
+        (None, None) => ("r".to_string(), None),
+        (Some(slot), None) => {
+            // Single arg: check if it's a mode string or block callable
+            if let Some(mode) = slot.as_str(strand) {
+                (mode.to_string(), None)
+            } else {
+                ("r".to_string(), Some(slot))
+            }
+        }
+
+        (Some(slot1), Some(slot2)) => {
+            // Two args: first must be mode, second is block
+            let mode = slot1
+                .as_str(strand)
+                .ok_or_else(|| Error::type_error(strand, "mode must be a string"))?
+                .to_string();
+            (mode, Some(slot2))
+        }
+        (None, Some(_)) => unreachable!(),
+    };
+
+    // Validate mode string (strip 'b' suffix for validation)
+    let base_mode = mode.strip_suffix('b').unwrap_or(&mode);
+    match base_mode {
+        "r" | "w" | "a" | "r+" | "w+" | "a+" => {}
+        _ => {
+            return Err(Error::value(strand, format!("invalid mode: {}", mode)));
+        }
+    }
+    let buffered = !mode.ends_with('b');
+
+    let file = open(strand, global, path, &mode).await?;
+
+    if let Some(block) = block {
+        strand
+            .with_slots(async move |strand, [mut handle, mut tmp]| {
+                create_file(strand, global, file, &mode, buffered, &mut handle);
+                let result = call!(strand, block, out, &handle).await;
+                // Always closed, even on error. A close error matters only
+                // when the block succeeded: it may be a buffered write failing
+                // late.
+                let closed = method!(strand, &handle, global.syms.close, &mut tmp).await;
+                result.and(closed)
+            })
+            .await
+    } else {
+        create_file(strand, global, file, &mode, buffered, out);
+        Ok(())
+    }
+}
+
+/// Settles `this`, borrowing it exclusively only when there is something to
+/// settle, so positional operations on a settled file can still share it.
+async fn settle<'v, 's, const BUFFERED: bool>(
+    this: Instance<'v, '_, File<BUFFERED>>,
+    strand: &mut Strand<'v, 's>,
+) -> Result<'v, 's, ()> {
+    if this.borrow(strand)?.buf.is_empty() {
+        return Ok(());
+    }
+    let mut borrow = this.borrow_mut(strand)?;
+    borrow.check_open(strand)?;
+    borrow.settle().await.into_sys(strand)
+}
+
+/// Writes out pending writes of `this`, for operations that see the file's
+/// contents but not its position.
+async fn flush_pending<'v, 's, const BUFFERED: bool>(
+    this: Instance<'v, '_, File<BUFFERED>>,
+    strand: &mut Strand<'v, 's>,
+) -> Result<'v, 's, ()> {
+    if !this.borrow(strand)?.writing {
+        return Ok(());
+    }
+    let mut borrow = this.borrow_mut(strand)?;
+    borrow.check_open(strand)?;
+    borrow.flush_buf().await.into_sys(strand)
+}
+
+fn invalid_utf8<'v, 's>(strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
+    Error::runtime(strand, "invalid UTF-8 data")
+}
+
+/// Parses an optional byte count.
+fn size_arg<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    size: Option<Slot<'v, '_>>,
+) -> Result<'v, 's, Option<usize>> {
+    size.map(|size| {
+        size.to_i64(strand)
+            .ok()
+            .and_then(|n| usize::try_from(n).ok())
+            .ok_or_else(|| Error::type_error(strand, "size must be a non-negative integer"))
+    })
+    .transpose()
+}
+
+/// The buffer, in terms of [`io::Result`]. Callers check that the file is open.
+impl<const BUFFERED: bool> File<BUFFERED> {
+    /// Buffer capacity: none for a raw file, whose reads and writes therefore
+    /// all go straight to the file.
+    const CAPACITY: usize = if BUFFERED { BUFFER_SIZE } else { 0 };
+
+    fn new(file: VfsFile, caps: IoCaps) -> Self {
         File {
-            marker: PhantomData,
             file: Some(file),
-            buf: BinEmbryo::new(),
             caps,
+            buf: Vec::new(),
+            pos: 0,
+            writing: false,
         }
     }
 
+    fn check_open<'v, 's>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
+        match self.file {
+            Some(_) => Ok(()),
+            None => Err(Error::state_error(strand, "file is closed")),
+        }
+    }
+
+    fn vfs(&mut self) -> &mut VfsFile {
+        self.file.as_mut().expect("file is closed")
+    }
+
+    fn unread(&self) -> usize {
+        if self.writing {
+            0
+        } else {
+            self.buf.len() - self.pos
+        }
+    }
+
+    fn pending(&self) -> usize {
+        if self.writing { self.buf.len() } else { 0 }
+    }
+
+    fn clear(&mut self) {
+        self.buf.clear();
+        self.pos = 0;
+        self.writing = false;
+    }
+
+    fn consume(&mut self, n: usize) {
+        self.pos += n;
+        if self.pos == self.buf.len() {
+            self.clear();
+        }
+    }
+
+    /// Returns bytes taken from the file to the front of the read-ahead, so a
+    /// failed read loses nothing. A raw file has no read-ahead to return them
+    /// to.
+    fn push_back(&mut self, bytes: &[u8]) {
+        if !BUFFERED || bytes.is_empty() {
+            return;
+        }
+        debug_assert!(!self.writing, "read-ahead while writing");
+        if bytes.len() <= self.pos {
+            self.pos -= bytes.len();
+            self.buf[self.pos..self.pos + bytes.len()].copy_from_slice(bytes);
+        } else {
+            let mut buf = Vec::with_capacity(bytes.len() + self.unread());
+            buf.extend_from_slice(bytes);
+            buf.extend_from_slice(&self.buf[self.pos..]);
+            self.buf = buf;
+            self.pos = 0;
+        }
+    }
+
+    fn poll_flush_buf(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if !self.writing {
+            return Poll::Ready(Ok(()));
+        }
+        let file = self.file.as_mut().expect("file is closed");
+        while !self.buf.is_empty() {
+            let n = ready!(Pin::new(&mut *file).poll_write(cx, &self.buf))?;
+            if n == 0 {
+                return Poll::Ready(Err(io::ErrorKind::WriteZero.into()));
+            }
+            self.buf.drain(..n);
+        }
+        self.clear();
+        Poll::Ready(Ok(()))
+    }
+
+    /// Writes out pending writes.
+    async fn flush_buf(&mut self) -> io::Result<()> {
+        poll_fn(|cx| self.poll_flush_buf(cx)).await
+    }
+
+    /// Moves the file back over unread read-ahead and drops it.
+    async fn unread_back(&mut self) -> io::Result<()> {
+        let unread = self.unread();
+        if unread > 0 {
+            let back = -i64::try_from(unread).map_err(io::Error::other)?;
+            self.vfs().seek(SeekFrom::Current(back)).await?;
+        }
+        if !self.writing {
+            self.clear();
+        }
+        Ok(())
+    }
+
+    /// Leaves the native handle at the logical position, with nothing
+    /// buffered.
+    async fn settle(&mut self) -> io::Result<()> {
+        self.flush_buf().await?;
+        self.unread_back().await
+    }
+
+    /// Returns the read-ahead, refilling it first if it is drained. Empty
+    /// means end of file.
+    async fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        if self.unread() == 0 {
+            self.flush_buf().await?;
+            self.buf.resize(Self::CAPACITY, 0);
+            let file = self.file.as_mut().expect("file is closed");
+            match tokio::io::AsyncReadExt::read(file, &mut self.buf).await {
+                Ok(n) => self.buf.truncate(n),
+                Err(err) => {
+                    self.buf.clear();
+                    return Err(err);
+                }
+            }
+        }
+        Ok(&self.buf[self.pos..])
+    }
+
+    /// Appends `n` bytes to `out`, or the rest of the file when `n` is `None`,
+    /// stopping short only at the end of the file.
+    async fn read_into<'v>(
+        &mut self,
+        strand: &mut Strand<'v, '_>,
+        out: &mut BinEmbryo<'v>,
+        n: Option<usize>,
+    ) -> io::Result<()> {
+        let start = out.len();
+        loop {
+            let want = match n {
+                Some(n) => n - (out.len() - start),
+                None => usize::MAX,
+            };
+            if want == 0 {
+                return Ok(());
+            }
+            if self.unread() == 0 && want >= Self::CAPACITY {
+                self.flush_buf().await?;
+                let chunk = want.min(BYTE_STREAM_CHUNK_SIZE);
+                if out.spare_capacity_mut().len() < chunk {
+                    out.reserve(strand, chunk);
+                }
+                let spare = out.spare_capacity_mut();
+                let end = chunk.min(spare.len());
+                let read = read_into_spare(self.vfs(), &mut spare[..end]).await?;
+                if read == 0 {
+                    return Ok(());
+                }
+                // SAFETY: `read` bytes at the front of the spare capacity are
+                // initialized.
+                unsafe { out.advance(read) };
+            } else {
+                let avail = self.fill_buf().await?;
+                if avail.is_empty() {
+                    return Ok(());
+                }
+                let take = avail.len().min(want);
+                out.extend(strand, &avail[..take]);
+                self.consume(take);
+            }
+        }
+    }
+
+    /// Appends one line to `out`, terminator included. Nothing is appended at
+    /// the end of the file.
+    async fn read_line_into<'v>(
+        &mut self,
+        strand: &mut Strand<'v, '_>,
+        out: &mut BinEmbryo<'v>,
+    ) -> io::Result<()> {
+        loop {
+            let avail = self.fill_buf().await?;
+            if avail.is_empty() {
+                return Ok(());
+            }
+            let (take, done) = match avail.iter().position(|&b| b == b'\n') {
+                Some(i) => (i + 1, true),
+                None => (avail.len(), false),
+            };
+            out.extend(strand, &avail[..take]);
+            self.consume(take);
+            if done {
+                return Ok(());
+            }
+        }
+    }
+
+    async fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
+        // Writing at the logical position means leaving any read-ahead.
+        self.unread_back().await?;
+        if self.buf.len() + data.len() > Self::CAPACITY {
+            self.flush_buf().await?;
+        }
+        if data.len() >= Self::CAPACITY {
+            self.vfs().write_all(data).await
+        } else {
+            self.buf.extend_from_slice(data);
+            self.writing = true;
+            Ok(())
+        }
+    }
+
+    async fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.flush_buf().await?;
+        let pos = match pos {
+            SeekFrom::Current(n) => {
+                let adjusted = i64::try_from(self.unread())
+                    .ok()
+                    .and_then(|unread| n.checked_sub(unread))
+                    .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+                SeekFrom::Current(adjusted)
+            }
+            pos => pos,
+        };
+        let pos = self.vfs().seek(pos).await?;
+        self.clear();
+        Ok(pos)
+    }
+
+    /// The logical position: the native handle's, less unread bytes, plus
+    /// pending writes.
+    async fn tell(&mut self) -> io::Result<u64> {
+        let pos = self.vfs().stream_position().await?;
+        (pos + self.pending() as u64)
+            .checked_sub(self.unread() as u64)
+            .ok_or_else(|| io::Error::other("position is before buffered data"))
+    }
+}
+
+impl<const BUFFERED: bool> File<BUFFERED> {
     /// Hands this file to a child process as one of its standard streams,
     /// giving it up here.
     ///
@@ -574,18 +941,16 @@ impl<'v, M: FileMode> File<'v, M> {
     /// cursor the other moves. Surrendering the handle makes that unobservable
     /// — subsequent use gives the ordinary "file is closed" error — instead of
     /// quietly reading and writing at the wrong places.
-    pub(crate) async fn command_send<'a, 's>(
-        this: Instance<'v, 'a, Self>,
+    async fn command_send<'v, 's>(
+        this: Instance<'v, '_, Self>,
         strand: &mut Strand<'v, 's>,
-    ) -> Result<'v, 's, Option<StdioSend>> {
+    ) -> Result<'v, 's, StdioSend> {
         let mut borrow = this.borrow_mut(strand)?;
-        if !borrow.buf.is_empty() {
-            return Ok(None);
-        }
-        let mut file = borrow
-            .file
-            .take()
-            .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
+        borrow.check_open(strand)?;
+        // The child gets the native handle, so it must start at the logical
+        // position with nothing held back.
+        borrow.settle().await.into_sys(strand)?;
+        let mut file = borrow.file.take().expect("file is closed");
         // The endpoint carries a position of its own, and the cursor lives on
         // this side rather than in the kernel, so it has to be stated.
         let offset = match file.stream_position().await {
@@ -595,35 +960,28 @@ impl<'v, M: FileMode> File<'v, M> {
                 return Err(error).into_sys(strand);
             }
         };
-        let stdio = match file.into_stdio_send(offset).await {
-            Ok(stdio) => stdio,
+        match file.into_stdio_send(offset).await {
+            Ok(stdio) => Ok(stdio),
             // Nothing was handed over, so the file is still the script's.
             Err(error) => {
                 let (file, error) = error.into_parts();
                 borrow.file = Some(file);
-                return Err(error).into_sys(strand);
+                Err(error).into_sys(strand)
             }
-        };
-        Ok(Some(stdio))
+        }
     }
 
     /// Receives a child process's output into this file, closing it here.
     ///
     /// Steals the file for the same reason as [`File::command_send`].
-    pub(crate) async fn command_recv<'a, 's>(
-        this: Instance<'v, 'a, Self>,
+    async fn command_recv<'v, 's>(
+        this: Instance<'v, '_, Self>,
         strand: &mut Strand<'v, 's>,
-    ) -> Result<'v, 's, Option<StdioRecv>> {
+    ) -> Result<'v, 's, StdioRecv> {
         let mut borrow = this.borrow_mut(strand)?;
-        if !borrow.buf.is_empty() {
-            return Ok(None);
-        }
-        let mut file = borrow
-            .file
-            .take()
-            .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-        // The endpoint carries a position of its own, and the cursor lives on
-        // this side rather than in the kernel, so it has to be stated.
+        borrow.check_open(strand)?;
+        borrow.settle().await.into_sys(strand)?;
+        let mut file = borrow.file.take().expect("file is closed");
         let offset = match file.stream_position().await {
             Ok(offset) => offset,
             Err(error) => {
@@ -631,24 +989,22 @@ impl<'v, M: FileMode> File<'v, M> {
                 return Err(error).into_sys(strand);
             }
         };
-        let stdio = match file.into_stdio_recv(offset).await {
-            Ok(stdio) => stdio,
+        match file.into_stdio_recv(offset).await {
+            Ok(stdio) => Ok(stdio),
             Err(error) => {
                 let (file, error) = error.into_parts();
                 borrow.file = Some(file);
-                return Err(error).into_sys(strand);
+                Err(error).into_sys(strand)
             }
-        };
-        Ok(Some(stdio))
+        }
     }
 
-    /// Reads at an explicit offset, leaving the cursor and its buffer alone.
-    async fn read_at<'s>(
+    /// Reads at an explicit offset, leaving the cursor alone.
+    async fn read_at<'v, 's>(
         &self,
         strand: &mut Strand<'v, 's>,
         offset: u64,
         size: Option<usize>,
-        is_binary: bool,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let file = self
@@ -657,19 +1013,12 @@ impl<'v, M: FileMode> File<'v, M> {
             .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
         let mut buf = BinEmbryo::new_with_capacity(strand, size.unwrap_or(0));
         read_at_looping(strand, file, &mut buf, offset, size).await?;
-        if is_binary {
-            buf.finish(strand, out);
-            Ok(())
-        } else {
-            // There is no cursor to carry a split character forward on, so
-            // unlike a streaming text read this cannot stash a remainder.
-            buf.finish_str(strand, out)
-                .map_err(|_| Error::runtime(strand, "invalid UTF-8 data"))
-        }
+        buf.finish(strand, out);
+        Ok(())
     }
 
     /// Writes at an explicit offset, leaving the cursor alone.
-    async fn write_at<'a, 's>(
+    async fn write_at<'v, 'a, 's>(
         &self,
         data: Slot<'v, 'a>,
         offset: u64,
@@ -698,17 +1047,18 @@ impl<'v, M: FileMode> File<'v, M> {
         Ok(())
     }
 
-    async fn logical_position<'s>(&mut self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, u64> {
+    async fn stream_position<'v, 's>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, u64> {
         let file_ref = self
             .file
             .as_mut()
             .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-        let pos = file_ref.stream_position().await.into_sys(strand)?;
-        pos.checked_sub(self.buf.len() as u64)
-            .ok_or_else(|| Error::runtime(strand, "file cursor is before buffered data"))
+        file_ref.stream_position().await.into_sys(strand)
     }
 
-    async fn seek_to<'s>(
+    async fn seek_to<'v, 's>(
         &mut self,
         strand: &mut Strand<'v, 's>,
         seek_from: SeekFrom,
@@ -717,198 +1067,109 @@ impl<'v, M: FileMode> File<'v, M> {
             .file
             .as_mut()
             .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-        let pos = file_ref.seek(seek_from).await.into_sys(strand)?;
-        self.buf.truncate(0);
-        Ok(pos)
+        file_ref.seek(seek_from).await.into_sys(strand)
     }
-}
 
-impl<'v> File<'v> {
-    pub(crate) async fn open<'s>(
+    /// Reads `size` bytes, or the rest of the file, as a `Bin`.
+    async fn read<'v, 's>(
+        &mut self,
         strand: &mut Strand<'v, 's>,
-        global: State<'v, FsGlobal<'v>>,
-        path: vfs_path::Path<'_>,
-        opt1: Option<Slot<'v, '_>>,
-        opt2: Option<Slot<'v, '_>>,
+        size: Option<usize>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        // Determine mode and block
-        let (mode, block) = match (&opt1, &opt2) {
-            (None, None) => ("r".to_string(), None),
-            (Some(slot), None) => {
-                // Single arg: check if it's a mode string or block callable
-                if let Some(mode) = slot.as_str(strand) {
-                    (mode.to_string(), None)
-                } else {
-                    ("r".to_string(), Some(slot))
-                }
-            }
-
-            (Some(slot1), Some(slot2)) => {
-                // Two args: first must be mode, second is block
-                let mode = slot1
-                    .as_str(strand)
-                    .ok_or_else(|| Error::type_error(strand, "mode must be a string"))?
-                    .to_string();
-                (mode, Some(slot2))
-            }
-            (None, Some(_)) => unreachable!(),
-        };
-
-        // Validate mode string (strip 'b' suffix for validation)
-        let base_mode = mode.strip_suffix('b').unwrap_or(&mode);
-        match base_mode {
-            "r" | "w" | "a" | "r+" | "w+" | "a+" => {}
-            _ => {
-                return Err(Error::value(strand, format!("invalid mode: {}", mode)));
-            }
+        self.check_open(strand)?;
+        let mut buf = BinEmbryo::new();
+        if let Err(err) = self.read_into(strand, &mut buf, size).await {
+            self.push_back(buf.as_slice());
+            return Err(err).into_sys(strand);
         }
-
-        let file = open(strand, global, path, &mode).await?;
-
-        if let Some(block) = block {
-            strand
-                .with_slots(async move |strand, [mut handle, mut tmp]| {
-                    // Block scope mode: create handle, call block with auto-close
-                    create_file(strand, global, file, &mode, &mut handle);
-
-                    // Call the block with the handle as argument
-                    let result = call!(strand, block, out, &handle).await;
-
-                    // Always close the file, even on error
-                    let _ = method!(strand, &handle, global.syms.close, &mut tmp).await;
-
-                    result
-                })
-                .await
-        } else {
-            // No block: just return the handle in the slot
-            create_file(strand, global, file, &mode, out);
-            Ok(())
-        }
-    }
-}
-
-impl<'v, M: FileMode> File<'v, M> {
-    async fn fill_buf<'s>(&mut self, strand: &mut Strand<'v, 's>, n: usize) -> Result<'v, 's, ()> {
-        let file_ref = self
-            .file
-            .as_mut()
-            .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-        let buf = &mut self.buf;
-        if buf.len() >= n {
-            return Ok(());
-        }
-        if n > buf.capacity() {
-            buf.reserve(strand, n - buf.len())
-        }
-        let read = read_into_spare(file_ref, buf.spare_capacity_mut())
-            .await
-            .into_sys(strand)?;
-        unsafe { buf.advance(read) };
+        buf.finish(strand, out);
         Ok(())
     }
 
-    async fn read_binary<'s>(
+    /// Reads a line as a `Str`, or `""` at the end of the file.
+    async fn read_line<'v, 's>(
         &mut self,
-        n: usize,
         strand: &mut Strand<'v, 's>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        while self.buf.len() < n {
-            let remaining = n - self.buf.len();
-            if self.buf.spare_capacity_mut().len() < remaining {
-                self.buf.reserve(strand, remaining);
-            }
-            let file = self
-                .file
-                .as_mut()
-                .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-            let spare = self.buf.spare_capacity_mut();
-            let read = read_into_spare(file, &mut spare[..remaining])
-                .await
-                .into_sys(strand)?;
-            if read == 0 {
+        self.check_open(strand)?;
+        let mut buf = BinEmbryo::new();
+        if let Err(err) = self.read_line_into(strand, &mut buf).await {
+            self.push_back(buf.as_slice());
+            return Err(err).into_sys(strand);
+        }
+        if std::str::from_utf8(buf.as_slice()).is_err() {
+            self.push_back(buf.as_slice());
+            return Err(invalid_utf8(strand));
+        }
+        // SAFETY: validated above.
+        unsafe { buf.finish_str_unchecked(strand, out) };
+        Ok(())
+    }
+
+    /// Reads up to `size` bytes, or the rest of the file, as a `Str`.
+    ///
+    /// A character split by `size` is left for the next read. When `size` is
+    /// too small for the first character, the whole character is read.
+    async fn read_str<'v, 's>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        size: Option<usize>,
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        self.check_open(strand)?;
+        let mut buf = BinEmbryo::new();
+        if let Err(err) = self.read_into(strand, &mut buf, size).await {
+            self.push_back(buf.as_slice());
+            return Err(err).into_sys(strand);
+        }
+        loop {
+            let eof = size.is_none_or(|size| buf.len() < size);
+            let valid = match utf8::complete_prefix(buf.as_slice()) {
+                Ok(text) if text.len() == buf.len() => break,
+                Ok(text) if !eof => text.len(),
+                _ => {
+                    self.push_back(buf.as_slice());
+                    return Err(invalid_utf8(strand));
+                }
+            };
+            if valid > 0 {
+                self.push_back(&buf.as_slice()[valid..]);
+                buf.truncate(valid);
                 break;
             }
-            unsafe { self.buf.advance(read) };
-        }
-        let buf = mem::take(&mut self.buf);
-        buf.finish(strand, out);
-        Ok(())
-    }
-
-    async fn read_binary_all<'s>(
-        &mut self,
-        strand: &mut Strand<'v, 's>,
-        out: Slot<'v, '_>,
-    ) -> Result<'v, 's, ()> {
-        let mut buf = mem::take(&mut self.buf);
-        let file = self
-            .file
-            .as_mut()
-            .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-        read_all(strand, file, &mut buf).await?;
-        buf.finish(strand, out);
-        Ok(())
-    }
-
-    async fn read_text<'s>(
-        &mut self,
-        n: usize,
-        strand: &mut Strand<'v, 's>,
-        out: Slot<'v, '_>,
-    ) -> Result<'v, 's, ()> {
-        self.fill_buf(strand, n).await?;
-        match maximal_utf8_prefix(self.buf.as_slice()) {
-            Ok(s) => {
-                let consumed = s.len();
-                let rem = self.buf.len() - consumed;
-                let mut buf =
-                    mem::replace(&mut self.buf, BinEmbryo::new_with_capacity(strand, rem));
-                self.buf.extend(strand, &buf.as_slice()[consumed..]);
-                buf.truncate(consumed);
-                unsafe { buf.finish_str_unchecked(strand, out) };
-                Ok(())
+            // The first character is incomplete, so read on until it is whole.
+            let before = buf.len();
+            if let Err(err) = self.read_into(strand, &mut buf, Some(1)).await {
+                self.push_back(buf.as_slice());
+                return Err(err).into_sys(strand);
             }
-            Err(()) => Err(Error::runtime(strand, "invalid UTF-8 data")),
+            if buf.len() == before {
+                self.push_back(buf.as_slice());
+                return Err(invalid_utf8(strand));
+            }
         }
+        // SAFETY: validated above.
+        unsafe { buf.finish_str_unchecked(strand, out) };
+        Ok(())
     }
 
-    async fn read_text_all<'s>(
-        &mut self,
-        strand: &mut Strand<'v, 's>,
-        out: Slot<'v, '_>,
-    ) -> Result<'v, 's, ()> {
-        let mut buf = mem::take(&mut self.buf);
-        let file = self
-            .file
-            .as_mut()
-            .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-        read_all(strand, file, &mut buf).await?;
-        buf.finish_str(strand, out)
-            .map_err(|_| Error::runtime(strand, "invalid UTF-8 data"))
-    }
-
-    async fn write<'a, 's>(
+    async fn write<'v, 'a, 's>(
         &mut self,
         data: Slot<'v, 'a>,
         strand: &mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let file = self
-            .file
-            .as_mut()
-            .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-
+        self.check_open(strand)?;
         let bytes_written = match data.view(strand) {
             View::Str(s) => {
                 let s = s.pin();
-                file.write_all(s.as_bytes()).await.map(|_| s.len())
+                self.write_all(s.as_bytes()).await.map(|_| s.len())
             }
             View::Bin(b) => {
                 let b = b.pin();
-                file.write_all(&b).await.map(|_| b.len())
+                self.write_all(&b).await.map(|_| b.len())
             }
             _ => return Err(Error::type_error(strand, "expected `Str` or `Bin`")),
         }
@@ -918,7 +1179,21 @@ impl<'v, M: FileMode> File<'v, M> {
         Ok(())
     }
 
-    async fn metadata<'s>(
+    /// Flushes and closes the file, dropping it even if flushing fails.
+    async fn close<'v, 's>(&mut self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
+        if self.file.is_none() {
+            return Ok(());
+        }
+        let flushed = self.flush_buf().await;
+        let file = self.file.take().expect("file is closed");
+        self.buf = Vec::new();
+        self.clear();
+        let closed = file.close().await;
+        flushed.into_sys(strand)?;
+        closed.into_sys(strand)
+    }
+
+    async fn metadata<'v, 's>(
         &self,
         strand: &mut Strand<'v, 's>,
         global: State<'v, FsGlobal<'v>>,
@@ -934,7 +1209,7 @@ impl<'v, M: FileMode> File<'v, M> {
         Ok(())
     }
 
-    async fn fs_metadata<'s>(
+    async fn fs_metadata<'v, 's>(
         &self,
         strand: &mut Strand<'v, 's>,
         global: State<'v, FsGlobal<'v>>,
@@ -951,8 +1226,8 @@ impl<'v, M: FileMode> File<'v, M> {
     }
 }
 
-impl<'v, M: FileMode> Object<'v> for File<'v, M> {
-    const NAME: &'v str = M::NAME;
+impl<'v, const BUFFERED: bool> Object<'v> for File<BUFFERED> {
+    const NAME: &'v str = if BUFFERED { "File" } else { "RawFile" };
     const MODULE: &'v str = "fs";
     type Annex = FileAnnex<'v>;
     type Type = ();
@@ -973,84 +1248,25 @@ impl<'v, M: FileMode> Object<'v> for File<'v, M> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let mut borrow = this.borrow_mut(strand)?;
-        let is_binary = this.annex().is_binary;
-
-        if is_binary {
-            // Binary mode: read a chunk of data
-            let mut buf = mem::take(&mut borrow.buf);
-            buf.reserve(strand, BYTE_STREAM_CHUNK_SIZE.saturating_sub(buf.len()));
-
-            let file_ref = borrow
-                .file
-                .as_mut()
-                .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-
-            match read_into_spare(file_ref, buf.spare_capacity_mut()).await {
-                Ok(0) => {
-                    borrow.buf = buf;
-                    Ok(false)
-                }
-                Ok(read) => {
-                    unsafe { buf.advance(read) };
-                    buf.finish(strand, out);
-                    Ok(true)
-                }
-                Err(e) => {
-                    borrow.buf = buf;
-                    Err(e.into_sys(strand))
-                }
-            }
-        } else {
-            // Text mode: read a line using buffered approach
-            // Take ownership of the buffer temporarily
-            let mut buf = mem::take(&mut borrow.buf);
-
-            loop {
-                // Check if we already have a complete line in the buffer
-                if let Some((line, _rest)) = buf.as_slice().split_once_str(b"\n") {
-                    // The terminator stays with the line: concatenating what a
-                    // file yields has to reproduce the file, `\r\n` included.
-                    let line_len = line.len();
-                    borrow.buf = BinEmbryo::new_with_capacity(strand, buf.len() - (line_len + 1));
-                    borrow.buf.extend(strand, &buf.as_slice()[line_len + 1..]);
-                    buf.truncate(line_len + 1);
-                    buf.finish_str(strand, out)
-                        .map_err(|_| Error::runtime(strand, "invalid UTF-8"))?;
-                    return Ok(true);
-                }
-
-                // Need to read more data
-                buf.reserve(strand, TEXT_BUFFER_SIZE);
-
-                let file_ref = borrow
-                    .file
-                    .as_mut()
-                    .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-
-                match read_into_spare(file_ref, buf.spare_capacity_mut()).await {
-                    Ok(0) => {
-                        // EOF reached
-                        if buf.is_empty() {
-                            borrow.buf = buf;
-                            return Ok(false);
-                        } else {
-                            buf.finish_str(strand, out)
-                                .map_err(|_| Error::runtime(strand, "invalid UTF-8"))?;
-                            return Ok(true);
-                        }
-                    }
-                    Ok(read) => {
-                        unsafe { buf.advance(read) };
-                        // Continue loop to check for newline
-                        continue;
-                    }
-                    Err(e) => {
-                        borrow.buf = buf;
-                        return Err(e.into_sys(strand));
-                    }
-                }
-            }
+        if BUFFERED {
+            let mut out = out;
+            borrow.read_line(strand, Slot::reborrow(&mut out)).await?;
+            return Ok(out.as_str(strand).is_some_and(|line| !line.is_empty()));
         }
+        let file_ref = borrow
+            .file
+            .as_mut()
+            .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
+        let mut buf = BinEmbryo::new_with_capacity(strand, BYTE_STREAM_CHUNK_SIZE);
+        let read = read_into_spare(file_ref, buf.spare_capacity_mut())
+            .await
+            .into_sys(strand)?;
+        if read == 0 {
+            return Ok(false);
+        }
+        unsafe { buf.advance(read) };
+        buf.finish(strand, out);
+        Ok(true)
     }
 
     async fn sink<'a, 's>(
@@ -1069,12 +1285,8 @@ impl<'v, M: FileMode> Object<'v> for File<'v, M> {
     ) -> Result<'v, 's, ()> {
         let bytes = encode_value(strand, &value)?;
         let mut borrow = this.borrow_mut(strand)?;
-        let file = borrow
-            .file
-            .as_mut()
-            .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-        file.write_all(&bytes).await.into_sys(strand)?;
-        Ok(())
+        borrow.check_open(strand)?;
+        borrow.write_all(&bytes).await.into_sys(strand)
     }
 
     fn provide<'a, 's>(
@@ -1110,47 +1322,29 @@ impl<'v, M: FileMode> Object<'v> for File<'v, M> {
         let range_sym = builder.sym("range");
         let size_sym = builder.sym("size");
         let clone_sym = builder.sym("clone");
-        builder
+        let builder = builder
             .supertype(TypeObject::Iter)
             .supertype(TypeObject::Sink)
             .method("close", async move |this, strand, _args, _out| {
-                let mut borrow = this.borrow_mut(strand)?;
-                if let Some(file) = borrow.file.take() {
-                    file.close().await.into_sys(strand)?
-                }
-                Ok(())
+                this.borrow_mut(strand)?.close(strand).await
             })
             .method("dup", async move |this, strand, _args, out| {
+                // The duplicate starts at the logical position.
+                settle(this, strand).await?;
                 let (file, caps) = {
-                    let mut borrow = this.borrow_mut(strand)?;
-                    // A duplicate cannot share text-mode read-ahead, so it
-                    // re-reads from the logical position instead.
-                    let position = if borrow.buf.is_empty() {
-                        None
-                    } else {
-                        Some(borrow.logical_position(strand).await?)
-                    };
+                    let borrow = this.borrow(strand)?;
                     let file = borrow
                         .file
                         .as_ref()
                         .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-                    let mut file = file.dup().await.into_sys(strand)?;
-                    if let Some(position) = position
-                        && let Err(error) = file.seek(SeekFrom::Start(position)).await
-                    {
-                        // The seek failure is the error worth reporting.
-                        let _ = file.close().await;
-                        return Err(error).into_sys(strand);
-                    }
-                    (file, borrow.caps)
+                    (file.dup().await.into_sys(strand)?, borrow.caps)
                 };
                 let annex = this.annex();
                 let annex = FileAnnex {
                     global: annex.global,
-                    is_binary: annex.is_binary,
                     is_append: annex.is_append,
                 };
-                create_file_with(strand, file, caps, annex, out);
+                create_file_with(strand, file, caps, annex, BUFFERED, out);
                 Ok(())
             })
             .method("lock", async move |this, strand, args, out| {
@@ -1163,6 +1357,7 @@ impl<'v, M: FileMode> Object<'v> for File<'v, M> {
                     })
                     .transpose()?
                     .unwrap_or(false);
+                settle(this, strand).await?;
                 strand
                     .with_slots(async move |strand, [mut guard, start, end, step]| {
                         let range = lock_range(strand, &range, [start, end, step])?;
@@ -1215,6 +1410,7 @@ impl<'v, M: FileMode> Object<'v> for File<'v, M> {
                     })
                     .transpose()?
                     .unwrap_or(false);
+                settle(this, strand).await?;
                 strand
                     .with_slots(async move |strand, [mut guard, start, end, step]| {
                         let range = lock_range(strand, &range, [start, end, step])?;
@@ -1258,45 +1454,26 @@ impl<'v, M: FileMode> Object<'v> for File<'v, M> {
             })
             .method("read", async move |this, strand, args, out| {
                 let ([], [size, offset]) = unpack!(strand, args, 0, 1, offset_sym = None)?;
-                let size: Option<usize> = size
-                    .map(|s| {
-                        s.to_i64(strand)
-                            .ok()
-                            .and_then(|n| usize::try_from(n).ok())
-                            .ok_or_else(|| {
-                                Error::type_error(strand, "size must be a non-negative integer")
-                            })
-                    })
-                    .transpose()?;
+                let size = size_arg(strand, size)?;
                 let offset = read_offset(strand, offset)?;
 
-                let is_binary = this.annex().is_binary;
-
                 // An explicit offset is a disjoint path: it neither consults
-                // nor disturbs the cursor or the buffer behind it. So it takes
+                // nor disturbs the cursor. So it takes
                 // a *shared* borrow, and any number of positional operations
                 // can be in flight on one handle at once — taking the
                 // exclusive borrow here would serialize them for no reason,
                 // and make two concurrent reads a borrow error rather than
                 // two reads.
                 if let Some(offset) = offset {
+                    settle(this, strand).await?;
                     let borrow = this.borrow(strand)?;
-                    return borrow.read_at(strand, offset, size, is_binary, out).await;
+                    return borrow.read_at(strand, offset, size, out).await;
                 }
-                let mut borrow = this.borrow_mut(strand)?;
-                match (is_binary, size) {
-                    (true, Some(n)) => borrow.read_binary(n, strand, out).await,
-                    (true, None) => borrow.read_binary_all(strand, out).await,
-                    (false, Some(n)) => borrow.read_text(n, strand, out).await,
-                    (false, None) => borrow.read_text_all(strand, out).await,
-                }
+                this.borrow_mut(strand)?.read(strand, size, out).await
             })
             .method("write", async move |this, strand, args, out| {
                 let ([data], [offset]) = unpack!(strand, args, 1, 0, offset_sym = None)?;
                 let offset = read_offset(strand, offset)?;
-                if M::TEXT && !matches!(data.view(strand), View::Str(_)) {
-                    return Err(Error::type_error(strand, "StrFile.write: expected Str"));
-                }
                 match offset {
                     // An append handle writes at the end no matter what offset
                     // the platform is given, so honoring one is impossible
@@ -1307,6 +1484,7 @@ impl<'v, M: FileMode> Object<'v> for File<'v, M> {
                     )),
                     // Shared borrow, for the reason given on `read`.
                     Some(offset) => {
+                        settle(this, strand).await?;
                         let borrow = this.borrow(strand)?;
                         borrow.write_at(data, offset, strand, out).await
                     }
@@ -1329,7 +1507,7 @@ impl<'v, M: FileMode> Object<'v> for File<'v, M> {
                 )?;
                 let global = this.annex().global;
                 let dst = cast_file(global, &dst)
-                    .ok_or_else(|| Error::type_error(strand, "expected fs.File"))?;
+                    .ok_or_else(|| Error::type_error(strand, "expected fs.BaseFile"))?;
                 copy_to(strand, global, this, dst, range, size, offset, clone, out).await
             })
             .method("set_size", async move |this, strand, args, _out| {
@@ -1342,26 +1520,18 @@ impl<'v, M: FileMode> Object<'v> for File<'v, M> {
                 })?;
 
                 let mut borrow = this.borrow_mut(strand)?;
-                let pos = borrow.logical_position(strand).await?;
-                {
-                    let file = borrow
-                        .file
-                        .as_mut()
-                        .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-                    file.set_size(size).await.into_sys(strand)?;
-                }
-                borrow.seek_to(strand, SeekFrom::Start(pos)).await?;
-                Ok(())
+                borrow.check_open(strand)?;
+                // Read-ahead could hold bytes the new size cuts off.
+                borrow.settle().await.into_sys(strand)?;
+                borrow.vfs().set_size(size).await.into_sys(strand)
             })
-            // No flush of our own beforehand: `buf` is read-ahead only, and
-            // every write path here goes straight to the file, so there is
-            // never buffered data on this side for a sync to miss.
             .method("sync", async move |this, strand, args, _out| {
                 let ([], [data]) = unpack!(strand, args, 0, 0, data_sym = None)?;
                 let data = data
                     .map(|data| crate::util::bool(strand, data, "data"))
                     .transpose()?
                     .unwrap_or(false);
+                flush_pending(this, strand).await?;
                 let borrow = this.borrow(strand)?;
                 let file = borrow
                     .file
@@ -1371,11 +1541,13 @@ impl<'v, M: FileMode> Object<'v> for File<'v, M> {
                 Ok(())
             })
             .method("metadata", async move |this, strand, _args, out| {
+                flush_pending(this, strand).await?;
                 this.borrow(strand)?
                     .metadata(strand, this.annex().global, out)
                     .await
             })
             .method("fs_metadata", async move |this, strand, _args, out| {
+                flush_pending(this, strand).await?;
                 this.borrow(strand)?
                     .fs_metadata(strand, this.annex().global, out)
                     .await
@@ -1564,7 +1736,13 @@ impl<'v, M: FileMode> Object<'v> for File<'v, M> {
             })
             .method("tell", async move |this, strand, _args, out| {
                 let mut borrow = this.borrow_mut(strand)?;
-                let pos = borrow.logical_position(strand).await?;
+                borrow.check_open(strand)?;
+                // Appended writes land at the end, which only writing them
+                // out reveals.
+                if this.annex().is_append {
+                    borrow.flush_buf().await.into_sys(strand)?;
+                }
+                let pos = borrow.tell().await.into_sys(strand)?;
                 Output::set(strand, out, i128::from(pos));
                 Ok(())
             })
@@ -1577,10 +1755,7 @@ impl<'v, M: FileMode> Object<'v> for File<'v, M> {
                         let offset = offset.to_i64(strand).map_err(|_| {
                             Error::type_error(strand, "seek offset must be an integer")
                         })?;
-                        let buffered = i64::try_from(borrow.buf.len()).map_err(|_| {
-                            Error::runtime(strand, "file buffer is too large to seek")
-                        })?;
-                        SeekFrom::Current(offset - buffered)
+                        SeekFrom::Current(offset)
                     }
                     (None, Some(start), None) => {
                         let start = start
@@ -1604,45 +1779,54 @@ impl<'v, M: FileMode> Object<'v> for File<'v, M> {
                         return Err(Error::unexpected_key(strand, end_sym));
                     }
                 };
-                let pos = borrow.seek_to(strand, seek_from).await?;
+                borrow.check_open(strand)?;
+                let pos = borrow.seek(seek_from).await.into_sys(strand)?;
 
                 Output::set(strand, out, i128::from(pos));
                 Ok(())
+            });
+        if !BUFFERED {
+            return builder;
+        }
+        builder
+            .method("read_str", async move |this, strand, args, out| {
+                let ([], [size]) = unpack!(strand, args, 0, 1)?;
+                let size = size_arg(strand, size)?;
+                this.borrow_mut(strand)?.read_str(strand, size, out).await
+            })
+            .method("read_line", async move |this, strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                this.borrow_mut(strand)?.read_line(strand, out).await
+            })
+            .method("lines", async move |this, strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                Output::set(strand, out, this);
+                Ok(())
+            })
+            .method("flush", async move |this, strand, args, _out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.check_open(strand)?;
+                borrow.flush_buf().await.into_sys(strand)?;
+                borrow.vfs().flush().await.into_sys(strand)
             })
     }
 }
 
-pub(crate) trait FileMode: 'static {
-    const NAME: &'static str;
-    const TEXT: bool = false;
-}
-pub(crate) struct CommonFile;
-pub(crate) struct TextFile;
-pub(crate) struct BinaryFile;
-impl FileMode for CommonFile {
-    const NAME: &'static str = "File";
-}
-impl FileMode for TextFile {
-    const NAME: &'static str = "StrFile";
-    const TEXT: bool = true;
-}
-impl FileMode for BinaryFile {
-    const NAME: &'static str = "BinFile";
-}
-
+/// Creates a file `fs.open` opened with `mode`, buffered or raw.
 pub(crate) fn create_file<'v>(
     strand: &mut Strand<'v, '_>,
     global: State<'v, FsGlobal<'v>>,
     file: VfsFile,
     mode: &str,
+    buffered: bool,
     out: impl Output<'v>,
 ) {
     let annex = FileAnnex {
         global,
-        is_binary: mode.contains('b'),
         is_append: mode.starts_with('a'),
     };
-    create_file_with(strand, file, mode_caps(mode), annex, out);
+    create_file_with(strand, file, mode_caps(mode), annex, buffered, out);
 }
 
 fn create_file_with<'v>(
@@ -1650,31 +1834,25 @@ fn create_file_with<'v>(
     file: VfsFile,
     caps: IoCaps,
     annex: FileAnnex<'v>,
+    buffered: bool,
     out: impl Output<'v>,
 ) {
-    let global = annex.global;
-    if annex.is_binary {
-        let file = File::<BinaryFile>::create(file, caps);
-        global
-            .types
-            .bin_file
-            .create_with_annex(strand, file, annex, out);
+    let types = &annex.global.types;
+    if buffered {
+        let ty = types.file;
+        ty.create_with_annex(strand, File::new(file, caps), annex, out);
     } else {
-        let file = File::<TextFile>::create(file, caps);
-        global
-            .types
-            .str_file
-            .create_with_annex(strand, file, annex, out);
+        let ty = types.raw_file;
+        ty.create_with_annex(strand, RawFile::new(file, caps), annex, out);
     }
 }
 
 /// Native casts match representations, not nominal supertypes. Keep the
-/// concrete witness so copies and process handoffs can use any file subtype,
-/// including a native delegate held by a Do class.
+/// concrete witness so copies and process handoffs can use either kind of
+/// file, including a native delegate held by a Do class.
 pub(crate) enum FileCast<'v, 'a> {
-    Common(Cast<'v, 'a, File<'v>>),
-    Text(Cast<'v, 'a, File<'v, TextFile>>),
-    Binary(Cast<'v, 'a, File<'v, BinaryFile>>),
+    Buffered(Cast<'v, 'a, File>),
+    Raw(Cast<'v, 'a, RawFile>),
 }
 
 pub(crate) fn cast_file<'v, 'a>(
@@ -1683,71 +1861,52 @@ pub(crate) fn cast_file<'v, 'a>(
 ) -> Option<FileCast<'v, 'a>> {
     global
         .types
-        .str_file
+        .file
         .cast(value)
-        .map(FileCast::Text)
-        .or_else(|| global.types.bin_file.cast(value).map(FileCast::Binary))
-        .or_else(|| global.types.file.cast(value).map(FileCast::Common))
+        .map(FileCast::Buffered)
+        .or_else(|| global.types.raw_file.cast(value).map(FileCast::Raw))
+}
+
+/// Enters whichever kind of file `$cast` holds, binding the instance as
+/// `$file`.
+macro_rules! enter_file {
+    ($cast:expr, $strand:expr, |$s:ident, $file:ident| $body:expr) => {
+        match $cast {
+            FileCast::Buffered(cast) => cast.enter($strand, async move |$s, $file| $body).await,
+            FileCast::Raw(cast) => cast.enter($strand, async move |$s, $file| $body).await,
+        }
+    };
 }
 
 impl<'v> FileCast<'v, '_> {
+    /// See [`File::command_send`].
     pub(crate) async fn command_send<'s>(
         self,
         strand: &mut Strand<'v, 's>,
-    ) -> Result<'v, 's, Option<StdioSend>> {
-        match self {
-            Self::Common(file) => {
-                file.enter(strand, async |strand, inst| {
-                    File::<CommonFile>::command_send(inst, strand).await
-                })
-                .await
-            }
-            Self::Text(file) => {
-                file.enter(strand, async |strand, inst| {
-                    File::<TextFile>::command_send(inst, strand).await
-                })
-                .await
-            }
-            Self::Binary(file) => {
-                file.enter(strand, async |strand, inst| {
-                    File::<BinaryFile>::command_send(inst, strand).await
-                })
-                .await
-            }
-        }
+    ) -> Result<'v, 's, StdioSend> {
+        enter_file!(self, strand, |strand, file| File::command_send(
+            file, strand
+        )
+        .await)
     }
+
+    /// See [`File::command_recv`].
     pub(crate) async fn command_recv<'s>(
         self,
         strand: &mut Strand<'v, 's>,
-    ) -> Result<'v, 's, Option<StdioRecv>> {
-        match self {
-            Self::Common(file) => {
-                file.enter(strand, async |strand, inst| {
-                    File::<CommonFile>::command_recv(inst, strand).await
-                })
-                .await
-            }
-            Self::Text(file) => {
-                file.enter(strand, async |strand, inst| {
-                    File::<TextFile>::command_recv(inst, strand).await
-                })
-                .await
-            }
-            Self::Binary(file) => {
-                file.enter(strand, async |strand, inst| {
-                    File::<BinaryFile>::command_recv(inst, strand).await
-                })
-                .await
-            }
-        }
+    ) -> Result<'v, 's, StdioRecv> {
+        enter_file!(self, strand, |strand, file| File::command_recv(
+            file, strand
+        )
+        .await)
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn copy_to<'v, 's, S: FileMode>(
+async fn copy_to<'v, 's, const SRC: bool>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, FsGlobal<'v>>,
-    src: Instance<'v, '_, File<'v, S>>,
+    src: Instance<'v, '_, File<SRC>>,
     dst: FileCast<'v, '_>,
     range: Option<Slot<'v, '_>>,
     size: Option<Slot<'v, '_>>,
@@ -1755,26 +1914,10 @@ async fn copy_to<'v, 's, S: FileMode>(
     clone: Option<Slot<'v, '_>>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    match dst {
-        FileCast::Common(dst) => {
-            dst.enter(strand, async move |strand, dst| {
-                copy_data(strand, global, src, dst, range, size, offset, clone, out).await
-            })
-            .await
-        }
-        FileCast::Text(dst) => {
-            dst.enter(strand, async move |strand, dst| {
-                copy_data(strand, global, src, dst, range, size, offset, clone, out).await
-            })
-            .await
-        }
-        FileCast::Binary(dst) => {
-            dst.enter(strand, async move |strand, dst| {
-                copy_data(strand, global, src, dst, range, size, offset, clone, out).await
-            })
-            .await
-        }
-    }
+    enter_file!(dst, strand, |strand, dst| copy_data(
+        strand, global, src, dst, range, size, offset, clone, out
+    )
+    .await)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1789,24 +1932,8 @@ pub(crate) async fn copy_files<'v, 's>(
     clone: Option<Slot<'v, '_>>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    match src {
-        FileCast::Common(src) => {
-            src.enter(strand, async move |strand, src| {
-                copy_to(strand, global, src, dst, range, size, offset, clone, out).await
-            })
-            .await
-        }
-        FileCast::Text(src) => {
-            src.enter(strand, async move |strand, src| {
-                copy_to(strand, global, src, dst, range, size, offset, clone, out).await
-            })
-            .await
-        }
-        FileCast::Binary(src) => {
-            src.enter(strand, async move |strand, src| {
-                copy_to(strand, global, src, dst, range, size, offset, clone, out).await
-            })
-            .await
-        }
-    }
+    enter_file!(src, strand, |strand, src| copy_to(
+        strand, global, src, dst, range, size, offset, clone, out
+    )
+    .await)
 }

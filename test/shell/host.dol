@@ -83,7 +83,7 @@ def stdio_vfs_runs_over_strand_stream()
     finally
       time.timeout 30 do vfs.stop()
 
-    open $marker r do |file| assert_eq $file.read() "remote"
+    open $marker r do |file| assert_eq $file.read_str() "remote"
 
 #[test]
 #[parametrize command: stdio_launchers]

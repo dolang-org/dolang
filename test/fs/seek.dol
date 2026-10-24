@@ -54,7 +54,7 @@ def duplicates_have_their_own_position()
   open $path "rb" do |file|
     assert_eq (file.read 2) b"ab"
     let dup = file.dup()
-    assert_type $fs.BinFile $dup
+    assert_type $fs.RawFile $dup
     assert_eq (dup.tell()) 2
     assert_eq (dup.read 2) b"cd"
     assert_eq (file.tell()) 2
@@ -74,7 +74,7 @@ def text_duplicates_start_after_buffered_reads()
   open $path "r" do |file|
     assert_eq (file.next()) "alpha\n"
     let dup = file.dup()
-    assert_type $fs.StrFile $dup
+    assert_type $fs.File $dup
     assert_eq (dup.next()) "beta\n"
     assert_eq (file.next()) "beta\n"
     assert_eq (dup.next()) "gamma\n"

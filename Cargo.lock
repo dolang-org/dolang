@@ -1025,6 +1025,7 @@ dependencies = [
  "dolang-ext-time",
  "dolang-ext-uuid",
  "dolang-private-bundle",
+ "dolang-private-util",
  "dolang-vfs",
  "dolang-winterop",
  "dunce",

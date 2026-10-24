@@ -21,7 +21,7 @@ def file_set_size_preserves_buffered_cursor()
     assert_eq (file.tell()) 6
     file.set_size 2
     assert_eq (file.tell()) 6
-    assert_eq (file.read()) ""
+    assert_eq (file.read_str()) ""
 
 #[test]
 #[vfs]

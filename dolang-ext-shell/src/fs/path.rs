@@ -20,7 +20,7 @@ use dolang::runtime::{
 use dolang_vfs::metadata::AttrFlags;
 use dolang_vfs::path as vfs_path;
 
-use super::file::File;
+use super::file;
 
 pub(crate) struct Path;
 pub(crate) struct UnixPath;
@@ -450,7 +450,7 @@ macro_rules! impl_concrete_path {
                     .method("open", async move |this, strand, args, out| {
                         let ([], [opt1, opt2]) = unpack!(strand, args, 0, 2)?;
                         let annex = this.annex();
-                        File::open(strand, annex.global, annex.as_path(), opt1, opt2, out).await
+                        file::open_file(strand, annex.global, annex.as_path(), opt1, opt2, out).await
                     })
                     .method("metadata", async move |this, strand, args, out| {
                         let ([], [resolve]) = unpack!(strand, args, 0, 0, resolve = None)?;

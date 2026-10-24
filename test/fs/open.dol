@@ -7,11 +7,12 @@ import
     - assert_eq
     - test
   fs:
+    - read
     - open
     - Path
+    - BaseFile
     - File
-    - StrFile
-    - BinFile
+    - RawFile
   std:
     - StateError
     - ValueError
@@ -26,7 +27,7 @@ def basic_open()
   # Test basic open without block
   let f = open $path r
   let debug_str = dbg $f
-  assert_eq $debug_str "<fs.StrFile>"
+  assert_eq $debug_str "<fs.File>"
   f.close()
   f.close()
 
@@ -40,14 +41,14 @@ def block_scope()
   # Test block scope syntax
   let result = open $path r do |file|
     let s = dbg $file
-    assert_eq $s "<fs.StrFile>"
+    assert_eq $s "<fs.File>"
     "success"
   assert_eq $result "success"
 
 
 #[test]
 #[vfs]
-def modes_choose_runtime_subtypes()
+def modes_choose_types()
   for mode = ["r", "w", "a", "r+", "w+", "a+"]
     open modes.txt w do |file| file.write "hello\n"
     for path = ["modes.txt", Path("modes.txt")]
@@ -56,9 +57,8 @@ def modes_choose_runtime_subtypes()
       else
         open $path $mode
       assert (type file File)
-      assert (type file StrFile)
-      assert $!(type file BinFile)
-      assert_eq (dbg file) "<fs.StrFile>"
+      assert (type file BaseFile)
+      assert $!(type file RawFile)
       file.close()
       file.close()
       let binary_mode = "$(mode)b"
@@ -66,17 +66,17 @@ def modes_choose_runtime_subtypes()
         path.open $binary_mode
       else
         open $path $binary_mode
-      assert (type binary File)
-      assert (type binary BinFile)
-      assert $!(type binary StrFile)
-      assert_eq (dbg binary) "<fs.BinFile>"
+      assert (type binary RawFile)
+      assert (type binary BaseFile)
+      assert $!(type binary File)
+      assert_eq (dbg binary) "<fs.RawFile>"
       binary.close()
       if (type path Path)
-        path.open $mode do |file| assert (type file StrFile)
-        path.open $binary_mode do |file| assert (type file BinFile)
+        path.open $mode do |file| assert (type file File)
+        path.open $binary_mode do |file| assert (type file RawFile)
       else
-        open $path $mode do |file| assert (type file StrFile)
-        open $path $binary_mode do |file| assert (type file BinFile)
+        open $path $mode do |file| assert (type file File)
+        open $path $binary_mode do |file| assert (type file RawFile)
 
 #[test]
 #[vfs]
@@ -85,12 +85,12 @@ def default_modes_and_block_cleanup()
   let path = Path default.txt
   let first = open default.txt
   let second = path.open()
-  assert (type first StrFile)
-  assert (type second StrFile)
+  assert (type first File)
+  assert (type second File)
   first.close()
   second.close()
-  open default.txt do |file| assert (type file StrFile)
-  path.open do |file| assert (type file StrFile)
+  open default.txt do |file| assert (type file File)
+  path.open do |file| assert (type file File)
   for mode = ["r", "rb"]
     let held = nil
     open default.txt $mode do |file|
@@ -104,22 +104,18 @@ def default_modes_and_block_cleanup()
 
 #[test]
 #[vfs]
-def subtypes_can_be_matched()
-  open match.txt w do |file| file.write "hello"
-  for mode = ["r", "rb"]
-    open match.txt $mode do |file|
-      let label = match file
-        StrFile(_) do "text"
-        BinFile(_) do "binary"
-      assert_eq $label (mode == "r" && "text" || "binary")
-
+def block_form_flushes_buffered_writes()
+  open flushed.txt w do |file|
+    file.write "pending"
+    assert_eq (read "flushed.txt") ""
+  assert_eq (read "flushed.txt") "pending"
 
 #[test]
 #[vfs]
-def subtype_reads_and_iteration_have_mode_specific_values()
+def reads_and_iteration_have_mode_specific_values()
   open values.txt w do |file| file.write "one\ntwo\n"
   open values.txt do |file|
-    assert_eq (file.read 4) "one\n"
+    assert_eq (file.read 4) b"one\n"
     assert_eq $file.next() "two\n"
     file.seek start: 0
     for line = file
@@ -130,3 +126,14 @@ def subtype_reads_and_iteration_have_mode_specific_values()
     file.seek start: 0
     for chunk = file
       assert (type chunk Bin)
+
+#[test]
+#[vfs]
+def kinds_can_be_matched()
+  open match.txt w do |file| file.write "hello"
+  for mode = ["r", "rb"]
+    open match.txt $mode do |file|
+      let label = match file
+        File(_) do "buffered"
+        RawFile(_) do "raw"
+      assert_eq $label (mode == "r" && "buffered" || "raw")

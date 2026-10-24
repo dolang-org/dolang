@@ -355,7 +355,7 @@ def relays_between_two_sessions()
 
 #[test]
 #[vfs]
-def copies_between_runtime_file_subtypes()
+def copies_between_file_kinds()
   for source_mode = ["r", "rb"]
     for dest_mode = ["w+", "w+b"]
       seeded mixed-src.txt "hello"

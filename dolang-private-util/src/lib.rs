@@ -8,6 +8,7 @@ pub mod mono;
 pub mod pairsort;
 pub mod pin;
 pub mod ring;
+pub mod utf8;
 pub mod verified;
 
 /// The debug topics a `DOLANG_DEBUG` value enables.

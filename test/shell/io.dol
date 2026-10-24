@@ -161,6 +161,26 @@ def handing_a_file_to_a_child_steals_it()
       file.close()
 
 #[test]
+def a_child_starts_where_buffered_reads_and_writes_leave_off()
+  with_temp_dir do |dir|
+    let echo = script $dir echo.dol $ r|
+      import shell
+      for value = shell.stdin
+        shell.stdout.put $value
+
+    let input = (dir / "in.txt")
+    input.write "header\nbody\n"
+    let out = (dir / "out.txt")
+    let file = open $input
+    assert_eq (file.read_line()) "header\n"
+    let output = open $out w
+    output.write "first\n"
+    # The child reads past the header that buffering already fetched, and
+    # writes after the line buffering held back.
+    run $shell.exe --no-cache $echo stdin: $file stdout: $output
+    assert_eq $out.read() "first\nbody\n"
+
+#[test]
 def handing_a_duplicated_file_to_a_child_waits_for_the_duplicate()
   with_temp_dir do |dir|
     let src = r|
@@ -308,7 +328,7 @@ def naming_shell_stderr_inherits_the_stream()
 
 
 #[test]
-def handing_output_file_subtypes_to_a_child_steals_them()
+def handing_output_files_to_a_child_steals_them()
   with_temp_dir do |dir|
     let src = r|
       import shell
