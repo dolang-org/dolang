@@ -618,9 +618,21 @@ pub class BaseFile: Io
 #
 # Reads fetch ahead, and writes are held back until the buffer fills, a read
 # needs the file, or the file is flushed or closed. Every other method sees the
-# file as written: pending writes go out first, and the file is moved back
-# over any read-ahead. A file is not closed when it is garbage collected, so
-# close it to keep its pending writes, or use it from a block that closes it.
+# file as written: pending writes go out first. A positional write, a lock,
+# [`set_size`](fs.BaseFile.set_size) and a copy into the file also drop
+# read-ahead, so later reads see the change. A file is not closed when it is
+# garbage collected, so close it to keep its pending writes, or use it from a
+# block that closes it.
+#
+# A function the file is passed to, such as [`zip.open`](zip.open), reads and
+# writes through the same buffer, so the file and the function see each
+# other's reads and writes.
+#
+# Positional reads and writes run concurrently, as on a
+# [`RawFile`](fs.RawFile), unless the file holds pending writes or a function
+# it was passed to is reading or writing through it. Then the operation takes
+# the file exclusively while it writes them out or waits, and another operation
+# on the file raises [`ConcurrencyError`](std.ConcurrencyError) meanwhile.
 #
 # A file reads lines and text as well as bytes. Text must be UTF-8, and line
 # endings are not translated.

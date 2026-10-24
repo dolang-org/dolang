@@ -3,11 +3,12 @@
 //! A native object wrapping an OS or VFS handle provides the [`ByteIo`] interface to an
 //! [interface query](crate::object::interface). A consumer checks the provider's
 //! [`IoCaps`], then gets an owned [`ByteHandle`] over futures-io traits and narrows it to
-//! the traits it needs. [`get`] does both, flushing the provider first.
+//! the traits it needs. [`get`] does both.
 //!
 //! The handle is lent: it shares the provider's stream, which stays open, and only the
 //! provider's own `close` closes it. A provider with its own stack, such as a buffer or a
-//! decoder, keeps it in a [`Shared`] and hands out clones.
+//! decoder, keeps it in a [`Shared`] and hands out clones, so the provider and its
+//! consumers see one buffer and one position.
 //!
 //! A Do subclass of `io.Io` provides [`ByteIo`] through strands that call its methods,
 //! and its handle sends them requests.
@@ -16,7 +17,6 @@ pub(crate) mod bridge;
 
 use std::{
     fmt,
-    future::poll_fn,
     io::{self, SeekFrom},
     pin::Pin,
     task::{Context, Poll, ready},
@@ -85,55 +85,29 @@ pub trait IntoByteIo<'v> {
     /// The provider's capabilities, checked before getting the handle.
     fn caps<'s>(&mut self, strand: &mut Strand<'v, 's>) -> crate::error::Result<'v, 's, IoCaps>;
 
-    /// Settles the provider before it lends: writes out anything it holds back, such as
-    /// buffered writes, and gives back read-ahead its stream can take back.
-    ///
-    /// The default has nothing to settle.
-    fn poll_flush(
-        &mut self,
-        strand: &mut Strand<'v, '_>,
-        cx: &mut Context<'_>,
-    ) -> Poll<io::Result<()>> {
-        let _ = (strand, cx);
-        Poll::Ready(Ok(()))
-    }
-
     /// Returns a handle sharing the provider's stream.
     ///
-    /// A consumer calls this only after [`poll_flush`](IntoByteIo::poll_flush) returns
-    /// `Ready(Ok(()))`. Read-ahead the provider cannot give back to its stream travels with
-    /// the handle as its unread [prefix](ByteHandle::with_prefix).
+    /// A provider that buffers shares its buffer with the handle, so reads and writes
+    /// through either see the other's.
     fn get<'s>(&mut self, strand: &mut Strand<'v, 's>) -> crate::error::Result<'v, 's, ByteHandle>;
 }
 
-/// Gets `value`'s byte handle, flushing the provider first.
+/// Gets `value`'s byte handle.
 ///
 /// `accept` checks the provider's capabilities and raises to refuse it. A value that
 /// provides no [`ByteIo`] raises [`ErrorKind::Unsupported`](crate::error::ErrorKind), so
-/// a caller can replace that error with its own. A flush error is raised as [`error`]
-/// maps it, and an error from the provider is raised as is.
-pub async fn get<'v, 's>(
+/// a caller can replace that error with its own. An error from the provider is raised as
+/// is.
+pub fn get<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
     mut accept: impl FnMut(&mut Strand<'v, 's>, IoCaps) -> crate::error::Result<'v, 's, ()>,
 ) -> crate::error::Result<'v, 's, ByteHandle> {
-    poll_fn(|cx| {
-        let res = value.query::<ByteIo, _>(strand, |strand, io| {
-            let caps = io.caps(strand)?;
-            accept(strand, caps)?;
-            match io.poll_flush(strand, cx) {
-                Poll::Ready(Ok(())) => io.get(strand).map(Poll::Ready),
-                Poll::Ready(Err(err)) => Err(error(strand, err)),
-                Poll::Pending => Ok(Poll::Pending),
-            }
-        });
-        match res {
-            Ok(Poll::Ready(handle)) => Poll::Ready(Ok(handle)),
-            Ok(Poll::Pending) => Poll::Pending,
-            Err(err) => Poll::Ready(Err(err)),
-        }
+    value.query::<ByteIo, _>(strand, |strand, io| {
+        let caps = io.caps(strand)?;
+        accept(strand, caps)?;
+        io.get(strand)
     })
-    .await
 }
 
 /// Maps an I/O error to the closest runtime error.

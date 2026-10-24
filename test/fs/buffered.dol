@@ -13,6 +13,8 @@ import
     - write
   std:
     - RuntimeError
+  strand:
+    - fork
 
 #[test]
 #[vfs]
@@ -126,7 +128,7 @@ def invalid_text_is_left_unread()
 
 #[test]
 #[vfs]
-def lending_a_file_hands_over_pending_and_buffered_bytes()
+def a_lent_file_shares_pending_and_buffered_bytes()
   open data.bin w do |file|
     file.write "header\n"
     compress.compress $file :GZIP: do |stream|
@@ -136,3 +138,22 @@ def lending_a_file_hands_over_pending_and_buffered_bytes()
     let payload = compress.decompress $file do |stream| stream.read()
     assert_eq $payload b"payload"
     file.read()
+
+#[test]
+#[vfs]
+def a_positional_write_drops_read_ahead()
+  write buffered.txt "alpha\nbeta\n"
+  open buffered.txt r+ do |file|
+    assert_eq (file.read_line()) "alpha\n"
+    file.write BETA offset: 6
+    assert_eq (file.read_line()) "BETA\n"
+
+#[test]
+#[vfs]
+def positional_writes_run_concurrently()
+  open buffered.txt w+ do |file|
+    fork
+      do file.write a offset: 0
+      do file.write b offset: 1
+      do file.write c offset: 2
+    assert_eq (file.read 3 offset: 0) b"abc"

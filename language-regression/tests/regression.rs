@@ -473,7 +473,7 @@ mod detail {
     }
 
     /// Gets `value`'s byte handle, raising if it lacks `need`.
-    async fn byte_handle<'v, 's>(
+    fn byte_handle<'v, 's>(
         strand: &mut Strand<'v, 's>,
         value: &runtime::Value<'v>,
         need: IoCaps,
@@ -484,7 +484,6 @@ mod detail {
             }
             Ok(())
         })
-        .await
     }
 
     fn io_error<'v, 's>(strand: &mut Strand<'v, 's>, err: std::io::Error) -> Error<'v, 's> {
@@ -715,7 +714,7 @@ mod detail {
                     })
                     .function("byte_read", async move |strand, args, out| {
                         let ([value], []) = unpack!(strand, args, 1, 0)?;
-                        let handle = byte_handle(strand, &value, IoCaps::READ).await?;
+                        let handle = byte_handle(strand, &value, IoCaps::READ)?;
                         let mut io = handle.into_read().unwrap();
                         let mut buf = Vec::new();
                         let res = io.read_to_end(&mut buf).await;
@@ -725,8 +724,7 @@ mod detail {
                     })
                     .function("byte_tell", async move |strand, args, out| {
                         let ([value], []) = unpack!(strand, args, 1, 0)?;
-                        let handle =
-                            byte_handle(strand, &value, IoCaps::READ | IoCaps::SEEK).await?;
+                        let handle = byte_handle(strand, &value, IoCaps::READ | IoCaps::SEEK)?;
                         let mut io = handle.into_read_seek().unwrap();
                         let res = io.stream_position().await;
                         let pos = res.map_err(|e| io_error(strand, e))?;
@@ -739,8 +737,7 @@ mod detail {
                             .as_int(strand)
                             .and_then(|n| u64::try_from(n).ok())
                             .ok_or_else(|| Error::value(strand, "bad offset"))?;
-                        let handle =
-                            byte_handle(strand, &value, IoCaps::READ | IoCaps::SEEK).await?;
+                        let handle = byte_handle(strand, &value, IoCaps::READ | IoCaps::SEEK)?;
                         let mut io = handle.into_read_seek().unwrap();
                         let mut buf = Vec::new();
                         let res = async {
@@ -756,7 +753,7 @@ mod detail {
                         let ([value, bytes], []) = unpack!(strand, args, 2, 0)?;
                         let bytes = bin_arg(strand, &bytes)?;
                         let need = IoCaps::READ | IoCaps::WRITE | IoCaps::SEEK;
-                        let handle = byte_handle(strand, &value, need).await?;
+                        let handle = byte_handle(strand, &value, need)?;
                         let mut io = handle.into_read_write_seek().unwrap();
                         let mut buf = Vec::new();
                         let res = async {
@@ -773,7 +770,7 @@ mod detail {
                     .function("byte_write", async move |strand, args, _out| {
                         let ([value, bytes], []) = unpack!(strand, args, 2, 0)?;
                         let bytes = bin_arg(strand, &bytes)?;
-                        let handle = byte_handle(strand, &value, IoCaps::WRITE).await?;
+                        let handle = byte_handle(strand, &value, IoCaps::WRITE)?;
                         let mut io = handle.into_write().unwrap();
                         let res = async {
                             io.write_all(&bytes).await?;
@@ -787,7 +784,7 @@ mod detail {
                         let ([value, bytes], []) = unpack!(strand, args, 2, 0)?;
                         let bytes = bin_arg(strand, &bytes)?;
                         let need = IoCaps::READ | IoCaps::WRITE;
-                        let handle = byte_handle(strand, &value, need).await?;
+                        let handle = byte_handle(strand, &value, need)?;
                         let (mut reader, mut writer) = handle.into_read_write().unwrap().split();
                         let mut buf = vec![0; bytes.len()];
                         let (read, written) = futures::join!(reader.read(&mut buf), async {

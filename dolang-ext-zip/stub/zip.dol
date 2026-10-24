@@ -347,8 +347,7 @@ pub @let OpenMode = $
 #       echo $entry.name
 # ```
 @def open
-  # Path to the ZIP archive, or a source to take
-  # over.
+  # Path to the ZIP archive, or a seekable stream holding it.
   source @ (Str | Path | Io)
   # Access mode. Defaults to `"r"`.
   mode @ OpenMode = nil
@@ -363,8 +362,7 @@ do -> Archive
 #     echo "Entry: $entry.name"
 # ```
 @def open[R]
-  # Path to the ZIP archive, or a source to take
-  # over.
+  # Path to the ZIP archive, or a seekable stream holding it.
   source @ (Str | Path | Io)
   # Called with the [`Archive`](zip.Archive).
   func @ (Archive -> R)
@@ -379,8 +377,7 @@ do -> R
 #     file.write "Hello, World!"
 # ```
 @def open[R]
-  # Path to the ZIP archive, or a source to take
-  # over.
+  # Path to the ZIP archive, or a seekable stream holding it.
   source @ (Str | Path | Io)
   # Access mode.
   mode @ OpenMode

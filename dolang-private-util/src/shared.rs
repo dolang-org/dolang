@@ -4,13 +4,17 @@
 //! behind a mutex that every clone shares, and each operation holds the lock from its first poll
 //! until it completes, so no clone touches the stream mid-operation or replaces the waker it
 //! stored. Once the other clones are gone, the next operation takes the stream back out.
+//!
+//! [`Shared::try_lock`] holds the stream through a shared reference when that needs no
+//! waiting, for callers that only have one.
 
 use std::{
-    cell::RefCell,
+    cell::{RefCell, RefMut},
     error::Error,
     fmt,
     future::{Future, poll_fn},
     io::{self, IoSlice, IoSliceMut, SeekFrom},
+    marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
     pin::Pin,
@@ -100,6 +104,32 @@ impl<T> Shared<T> {
         let res = poll_fn(|cx| self.poll_acquire(cx).map_ok(|_| ())).await;
         self.settle(res.is_err());
         res.map(|()| Locked { shared: self })
+    }
+
+    /// Holds the stream without waiting, through a shared reference.
+    ///
+    /// Returns `None` if the stream is closed, if an operation is in progress on this or
+    /// another handle, or if this handle is already held. Cloning this handle while the guard
+    /// is held panics.
+    pub fn try_lock(&self) -> Option<TryLocked<'_, T>> {
+        let state = self.state.try_borrow_mut().ok()?;
+        let held = match &*state {
+            State::Plain {
+                io: Some(_),
+                busy: false,
+            } => None,
+            State::Wrapped {
+                inner,
+                guard: None,
+                waiting: None,
+            } => Some(inner.try_lock_owned().filter(|held| held.is_some())?),
+            _ => return None,
+        };
+        let held = match held {
+            None => TryHeld::Plain(state),
+            Some(held) => TryHeld::Wrapped(held, PhantomData),
+        };
+        Some(TryLocked { held })
     }
 
     #[cfg(test)]
@@ -205,6 +235,45 @@ impl<T> DerefMut for Locked<'_, T> {
 impl<T> Drop for Locked<'_, T> {
     fn drop(&mut self) {
         self.shared.settle(true);
+    }
+}
+
+/// A stream held by [`Shared::try_lock`].
+pub struct TryLocked<'a, T> {
+    held: TryHeld<'a, T>,
+}
+
+enum TryHeld<'a, T> {
+    /// The handle's own state, borrowed for as long as the guard lives.
+    Plain(RefMut<'a, State<T>>),
+    Wrapped(OwnedMutexGuard<Option<T>>, PhantomData<&'a Shared<T>>),
+}
+
+impl<T> Deref for TryLocked<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        match &self.held {
+            TryHeld::Plain(state) => match &**state {
+                State::Plain { io, .. } => io.as_ref(),
+                State::Wrapped { .. } => None,
+            },
+            TryHeld::Wrapped(held, _) => held.as_ref(),
+        }
+        .expect("the stream is held")
+    }
+}
+
+impl<T> DerefMut for TryLocked<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        match &mut self.held {
+            TryHeld::Plain(state) => match &mut **state {
+                State::Plain { io, .. } => io.as_mut(),
+                State::Wrapped { .. } => None,
+            },
+            TryHeld::Wrapped(held, _) => held.as_mut(),
+        }
+        .expect("the stream is held")
     }
 }
 
@@ -551,6 +620,62 @@ mod tests {
         assert!(read(&mut b, waker, 2).is_pending());
         drop(held);
         assert!(matches!(read(&mut b, waker, 2), Poll::Ready(Ok(ref data)) if data == b"cd"));
+    }
+
+    #[test]
+    fn try_lock_holds_a_plain_handle() {
+        let a = Shared::new(Cursor::new(b"abcdef".to_vec()));
+        let mut held = a.try_lock().expect("the stream");
+        held.set_position(2);
+        assert!(a.try_lock().is_none());
+        drop(held);
+        assert_eq!(a.try_lock().expect("the stream").position(), 2);
+        assert!(!a.is_shared());
+    }
+
+    #[test]
+    fn try_lock_is_seen_by_clones() {
+        let a = Shared::new(Cursor::new(b"abcdef".to_vec()));
+        let mut b = a.clone();
+        a.try_lock().expect("the stream").set_position(2);
+        assert!(
+            matches!(read(&mut b, Waker::noop(), 2), Poll::Ready(Ok(ref data)) if data == b"cd")
+        );
+    }
+
+    #[test]
+    fn try_lock_fails_while_another_handle_holds_the_stream() {
+        let gate = Gate::default();
+        let a = Shared::new(gate.clone());
+        let mut b = a.clone();
+        assert!(read(&mut b, Waker::noop(), 1).is_pending());
+        assert!(a.try_lock().is_none());
+        gate.open();
+        assert!(read(&mut b, Waker::noop(), 1).is_ready());
+        let held = a.try_lock().expect("the stream");
+        assert!(read(&mut b, Waker::noop(), 1).is_pending());
+        drop(held);
+        assert!(read(&mut b, Waker::noop(), 1).is_ready());
+    }
+
+    #[test]
+    fn try_lock_fails_mid_operation_on_this_handle() {
+        let waker = Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        let mut a = Shared::new(BufReader::new(Cursor::new(b"abcdef".to_vec())));
+        assert!(Pin::new(&mut a).poll_fill_buf(&mut cx).is_ready());
+        assert!(a.try_lock().is_none());
+        Pin::new(&mut a).consume(1);
+        assert!(a.try_lock().is_some());
+    }
+
+    #[test]
+    fn try_lock_fails_once_closed() {
+        let mut a = Shared::new(Cursor::new(b"abcdef".to_vec()));
+        let b = a.clone();
+        assert!(matches!(close(&mut a, Waker::noop()), Poll::Ready(Some(_))));
+        assert!(a.try_lock().is_none());
+        assert!(b.try_lock().is_none());
     }
 
     #[test]

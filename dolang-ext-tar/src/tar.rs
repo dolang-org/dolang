@@ -935,7 +935,6 @@ async fn endpoint_handle<'v, 's>(
         }
         Ok(())
     })
-    .await
     .map_err(|err| {
         if err.kind() == ErrorKind::Unsupported {
             Error::type_error(
