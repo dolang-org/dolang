@@ -4,7 +4,7 @@ use std::{
     io, mem,
     path::{Path, PathBuf},
     process::Stdio,
-    sync::{Arc, OnceLock},
+    sync::{Arc, atomic::AtomicU64},
 };
 
 use bytes::{Bytes, BytesMut};
@@ -16,7 +16,7 @@ use std::os::windows::io::AsHandle;
 
 use tokio::{
     fs::{self, File as TokioFile},
-    io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf},
+    io::{AsyncRead, ReadBuf},
     process::Command as TokioCommand,
     sync::Mutex,
 };
@@ -123,21 +123,26 @@ pub struct Child {
 
 /// A local asynchronous file handle.
 ///
-/// The handle is a shared `std::fs::File` plus a cursor this crate maintains
-/// itself. Byte I/O is positional: every read and write names the offset it
-/// acts on, takes `&self`, and holds no state on the handle, so any number of
-/// them may be in flight at once. The kernel's own file offset is left unused
-/// except where a descriptor is handed to another process.
-///
-/// The cursor-based traits are layered on top for callers that want a stream.
-/// Their state is allocated lazily and reachable for mutation only through
-/// `&mut self`.
-#[derive(Debug)]
+/// Clones share one open file. Byte I/O is positional: every read and write
+/// names the offset it acts on, takes `&self`, and holds no state on the
+/// handle, so any number of them may be in flight at once. The kernel's own
+/// file offset is left unused except where a descriptor is handed to another
+/// process. The cursor position is stored here, but moved by
+/// [`crate::file::File`].
+#[derive(Debug, Clone)]
 pub struct File {
-    file: Arc<std::fs::File>,
+    shared: Arc<Shared>,
+}
+
+#[derive(Debug)]
+struct Shared {
+    /// The descriptor, until the file is closed or handed off. Operations
+    /// clone it under the lock and run on their clone, so taking it waits for
+    /// no one.
+    file: std::sync::Mutex<Option<Arc<std::fs::File>>>,
     flags: FileFlags,
     locks: FileLocks,
-    cursor: OnceLock<Box<CursorState>>,
+    pos: AtomicU64,
 }
 
 bitflags::bitflags! {
@@ -151,46 +156,6 @@ bitflags::bitflags! {
     }
 }
 
-/// State used only by the cursor-based asynchronous I/O traits.
-#[derive(Debug)]
-struct CursorState {
-    /// Offset of the next byte the cursor-based traits will hand to a caller.
-    ///
-    cursor: u64,
-    /// Bytes read from the file but not yet delivered, starting at
-    /// `pending_read[pending_pos..]` and living at file offsets
-    /// `[cursor, cursor + undelivered)`.
-    ///
-    /// Because the cursor only advances as bytes reach the caller, a seek can
-    /// simply discard this rather than rewinding the kernel by the unread
-    /// amount, which is the bookkeeping `tokio::fs::File` needs and we do not.
-    ///
-    /// Consumption is tracked with an index rather than `Buf::advance` on
-    /// purpose: advancing walks the buffer's start pointer forward, and
-    /// `clear` does not walk it back, so a recycled buffer would lose its
-    /// capacity a little at a time and reallocate on every read.
-    pending_read: BytesMut,
-    pending_pos: usize,
-    /// Buffer recycled across writes, so streaming does not allocate per call.
-    write_scratch: BytesMut,
-    op: CursorOp,
-    /// Position a started seek will report from `poll_complete`.
-    seek_to: Option<u64>,
-}
-
-impl Default for CursorState {
-    fn default() -> Self {
-        Self {
-            cursor: 0,
-            pending_read: BytesMut::new(),
-            pending_pos: 0,
-            write_scratch: BytesMut::new(),
-            op: CursorOp::Idle,
-            seek_to: None,
-        }
-    }
-}
-
 /// Largest transfer handed to a single blocking worker.
 ///
 /// This sizes a *syscall*, which is why it is not
@@ -199,35 +164,6 @@ impl Default for CursorState {
 /// round trip to the blocking pool for each. Matches what `tokio::fs` uses for
 /// the same job.
 const MAX_BLOCKING_IO: usize = 2 * 1024 * 1024;
-
-/// Blocking work the cursor-based traits have outstanding.
-#[derive(Debug)]
-enum CursorOp {
-    Idle,
-    /// A read is in flight. The buffer is returned by the worker rather than
-    /// borrowed from the caller, because the task cannot be cancelled.
-    Reading(tokio::task::JoinHandle<(Result<usize>, BytesMut)>),
-    /// A write is in flight, carrying the byte count, resulting position, and
-    /// the buffer to recycle.
-    Writing(tokio::task::JoinHandle<(Result<(usize, u64)>, BytesMut)>),
-    /// An end-relative seek is resolving the file's current length.
-    Sizing(tokio::task::JoinHandle<Result<u64>>, i64),
-}
-
-/// Applies `delta` to `base`, rejecting a negative result as `lseek` does.
-fn offset_delta(base: u64, delta: i64) -> io::Result<u64> {
-    let result = if delta >= 0 {
-        base.checked_add(delta as u64)
-    } else {
-        base.checked_sub(delta.unsigned_abs())
-    };
-    result.ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "seek would move the cursor outside the representable range",
-        )
-    })
-}
 
 /// Fills `buf`'s spare capacity from `offset` and hands the buffer back.
 fn read_blocking(
@@ -310,6 +246,117 @@ fn write_blocking_owned(
     (result, buf)
 }
 
+/// A cursor read handed to a blocking worker. The buffer is returned by the
+/// worker rather than borrowed from the caller, because the task cannot be
+/// cancelled.
+pub(crate) struct ReadOp(tokio::task::JoinHandle<(Result<usize>, BytesMut)>);
+
+impl Future for ReadOp {
+    type Output = io::Result<Body>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let (result, buf) = ready!(Pin::new(&mut self.0).poll(cx)).unwrap_or_else(|_| {
+            (
+                Err(Error::other("file read worker failed")),
+                BytesMut::new(),
+            )
+        });
+        result?;
+        Poll::Ready(Ok(Body { buf, pos: 0 }))
+    }
+}
+
+/// Bytes a cursor read brought back, delivered from `buf[pos..]`.
+///
+/// Consumption is tracked with an index rather than `Buf::advance` on
+/// purpose: advancing walks the buffer's start pointer forward, and `clear`
+/// does not walk it back, so a recycled buffer would lose its capacity a
+/// little at a time and reallocate on every read.
+pub(crate) struct Body {
+    buf: BytesMut,
+    pos: usize,
+}
+
+impl Body {
+    pub(crate) fn into_scratch(self) -> BytesMut {
+        self.buf
+    }
+}
+
+impl AsyncRead for Body {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let take = (self.buf.len() - self.pos).min(buf.remaining());
+        buf.put_slice(&self.buf[self.pos..self.pos + take]);
+        self.pos += take;
+        Poll::Ready(Ok(()))
+    }
+}
+
+/// A blocking write, handing back its byte count, the resulting position and
+/// the buffer to recycle.
+type WriteWorker = tokio::task::JoinHandle<(Result<(usize, u64)>, BytesMut)>;
+
+/// A cursor write. The bytes are copied into `scratch` because the worker
+/// cannot be cancelled and so must not borrow the caller's buffer.
+pub(crate) struct WriteOp {
+    file: Arc<std::fs::File>,
+    offset: u64,
+    append: bool,
+    seekable: bool,
+    scratch: BytesMut,
+    worker: Option<WriteWorker>,
+}
+
+impl WriteOp {
+    pub(crate) fn into_scratch(self) -> BytesMut {
+        self.scratch
+    }
+}
+
+impl file::WriteOp for WriteOp {
+    fn poll_send(&mut self, _cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        self.scratch.extend_from_slice(buf);
+        Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_finish(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<(usize, u64)>> {
+        let worker = self.worker.get_or_insert_with(|| {
+            let file = Arc::clone(&self.file);
+            let scratch = mem::take(&mut self.scratch);
+            let (offset, append, seekable) = (self.offset, self.append, self.seekable);
+            tokio::task::spawn_blocking(move || {
+                write_blocking_owned(&file, scratch, offset, append, seekable)
+            })
+        });
+        let (result, scratch) = ready!(Pin::new(worker).poll(cx)).unwrap_or_else(|_| {
+            (
+                Err(Error::other("file write worker failed")),
+                BytesMut::new(),
+            )
+        });
+        self.worker = None;
+        self.scratch = scratch;
+        Poll::Ready(result.map_err(Into::into))
+    }
+}
+
+/// An end-relative seek resolving the file's current length.
+pub(crate) struct SizeOp(tokio::task::JoinHandle<Result<u64>>);
+
+impl Future for SizeOp {
+    type Output = io::Result<u64>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let len = ready!(Pin::new(&mut self.0).poll(cx))
+            .unwrap_or_else(|_| Err(Error::other("file size worker failed")))?;
+        Poll::Ready(Ok(len))
+    }
+}
+
 impl File {
     pub(crate) fn from_std(file: std::fs::File, read: bool, write: bool, append: bool) -> Self {
         // One `fstat` on an already-open descriptor, to know up front whether
@@ -321,60 +368,102 @@ impl File {
         flags.set(FileFlags::APPEND, append);
         flags.set(FileFlags::SEEKABLE, seekable);
         Self {
-            file: Arc::new(file),
-            locks: FileLocks::new(),
-            flags,
-            cursor: OnceLock::new(),
+            shared: Arc::new(Shared {
+                file: std::sync::Mutex::new(Some(Arc::new(file))),
+                flags,
+                locks: FileLocks::new(),
+                pos: AtomicU64::new(0),
+            }),
         }
     }
 
-    /// Returns a second handle on the same open file, positioned where this
-    /// one is but moving independently.
-    ///
-    /// Both handles share the descriptor and its locks. Read-ahead stays with
-    /// this handle, since the cursor only counts bytes already delivered.
-    pub(crate) async fn dup(&self) -> Result<Self> {
-        let cursor = OnceLock::new();
-        let offset = self.cursor_offset();
-        if offset != 0 {
-            let _ = cursor.set(Box::new(CursorState {
-                cursor: offset,
-                ..CursorState::default()
-            }));
-        }
-        Ok(Self {
-            file: Arc::clone(&self.file),
-            flags: self.flags,
-            locks: self.locks.dup(),
-            cursor,
+    /// Returns the descriptor, unless the file has been closed.
+    fn fd(&self) -> Result<Arc<std::fs::File>> {
+        self.shared
+            .file
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| Error::new(ErrorKind::Closed, "file is closed"))
+    }
+
+    /// Takes the descriptor from every clone, unless an operation still holds
+    /// it.
+    fn take_exclusive(&self) -> Result<std::fs::File> {
+        let mut slot = self.shared.file.lock().unwrap();
+        let file = slot
+            .take()
+            .ok_or_else(|| Error::new(ErrorKind::Closed, "file is closed"))?;
+        Arc::try_unwrap(file).map_err(|file| {
+            *slot = Some(file);
+            io::Error::new(io::ErrorKind::ResourceBusy, "file is in use").into()
         })
     }
 
-    fn cursor_state(&mut self) -> &mut CursorState {
-        if self.cursor.get().is_none() {
-            self.cursor
-                .set(Box::new(CursorState::default()))
-                .expect("cursor state was checked above");
-        }
-        self.cursor.get_mut().expect("cursor state was initialized")
+    /// Puts back a descriptor taken by a handoff that failed.
+    fn restore(&self, file: std::fs::File) {
+        *self.shared.file.lock().unwrap() = Some(Arc::new(file));
     }
 
-    fn cursor_offset(&self) -> u64 {
-        self.cursor.get().map_or(0, |state| state.cursor)
+    /// The cursor position, shared by every clone.
+    pub(crate) fn position(&self) -> &AtomicU64 {
+        &self.shared.pos
     }
 
-    /// Writes `offset` into the kernel's file offset.
+    /// Starts a cursor read of up to `len` bytes at `offset`, filling
+    /// `scratch`.
+    pub(crate) fn start_read(
+        &self,
+        offset: u64,
+        len: usize,
+        scratch: &mut BytesMut,
+    ) -> Result<ReadOp> {
+        let file = self.fd()?;
+        let seekable = self.shared.flags.contains(FileFlags::SEEKABLE);
+        let mut scratch = mem::take(scratch);
+        scratch.clear();
+        scratch.reserve(len.min(MAX_BLOCKING_IO));
+        Ok(ReadOp(tokio::task::spawn_blocking(move || {
+            read_blocking(&file, scratch, offset, seekable)
+        })))
+    }
+
+    /// Starts a cursor write at `offset`, returning it with how many of `len`
+    /// bytes it will take.
+    pub(crate) fn start_write(
+        &self,
+        offset: u64,
+        len: usize,
+        scratch: &mut BytesMut,
+    ) -> Result<(WriteOp, usize)> {
+        let file = self.fd()?;
+        let target = len.min(MAX_BLOCKING_IO);
+        let mut scratch = mem::take(scratch);
+        scratch.clear();
+        scratch.reserve(target);
+        let op = WriteOp {
+            file,
+            offset,
+            append: self.shared.flags.contains(FileFlags::APPEND),
+            seekable: self.shared.flags.contains(FileFlags::SEEKABLE),
+            scratch,
+            worker: None,
+        };
+        Ok((op, target))
+    }
+
+    /// Starts resolving the file's current length.
+    pub(crate) fn start_size(&self) -> Result<SizeOp> {
+        let file = self.fd()?;
+        Ok(SizeOp(tokio::task::spawn_blocking(move || {
+            Ok(file.metadata()?.len())
+        })))
+    }
+
+    /// Surrenders the descriptor to hand it to another process, closing every
+    /// clone.
     ///
-    /// Required before a descriptor reaches another process or another API:
-    /// they read from the *kernel's* offset, which positional I/O has been
-    /// bypassing.
-    fn materialize(&self, offset: u64) -> io::Result<()> {
-        materialize(&self.file, self.flags.contains(FileFlags::SEEKABLE), offset)
-    }
-
-    /// Surrenders the descriptor to hand it to another process.
-    ///
-    /// The handle is consumed rather than duplicated: on Unix the child can
+    /// The descriptor is taken rather than duplicated: on Unix the child can
     /// simply inherit *this* descriptor, so a `dup` would buy a second one only
     /// to close the first behind it. Taking it outright is also what makes the
     /// steal real — nothing on this side can still be reading or writing
@@ -384,58 +473,28 @@ impl File {
         send: bool,
         offset: u64,
     ) -> std::result::Result<std::fs::File, HandoffError<Self>> {
-        let File {
-            file,
-            locks,
-            flags,
-            cursor,
-        } = self;
-        // Takes the locks as a parameter rather than capturing them, because
-        // they have to be released between the two failure points below.
-        let restore = move |file: Arc<std::fs::File>, locks, error: io::Error| {
-            HandoffError::new(
-                File {
-                    file,
-                    locks,
-                    flags,
-                    cursor,
-                },
-                error,
-            )
+        // Fails while operations are still in flight against the descriptor.
+        // Nothing has been given away — the locks are still held and the
+        // descriptor is untouched — so the caller gets the handle back and may
+        // retry once they finish.
+        let owned = match self.take_exclusive() {
+            Ok(owned) => owned,
+            Err(error) => return Err(HandoffError::new(self, error)),
         };
-        if locks.is_shared() {
-            // A duplicate would share the description with the child, and
-            // with it the kernel offset the child reads from.
-            return Err(restore(
-                file,
-                locks,
-                io::Error::new(io::ErrorKind::ResourceBusy, "file has live duplicates"),
-            ));
-        }
-        let owned = match Arc::try_unwrap(file) {
-            Ok(file) => file,
-            // Operations are still in flight against the shared descriptor.
-            // Nothing has been given away — the locks are still held and the
-            // descriptor is untouched — so the caller gets the handle back and
-            // may retry once they finish.
-            Err(file) => {
-                return Err(restore(
-                    file,
-                    locks,
-                    io::Error::new(io::ErrorKind::ResourceBusy, "file is in use"),
-                ));
-            }
+        let restore = |file, error: io::Error| {
+            self.restore(file);
+            HandoffError::new(self.clone(), error)
         };
-        // Only now that the descriptor is exclusively ours. The locks this side
-        // holds have to come off in band for the same reason as in `close`: the
-        // description is about to outlive this handle in another process, so
-        // closing our end would not lift them.
-        if let Err(error) = locks.release_all().await {
+        // The locks this side holds have to come off in band for the same
+        // reason as in `close`: the description is about to outlive this
+        // handle in another process, so closing our end would not lift them.
+        if let Err(error) = self.shared.locks.release_all().await {
             // Some locks may already be off, so the handle comes back degraded.
             // Still better than dropping it along with the error, since the
             // caller at least gets to close it.
-            return Err(restore(Arc::new(owned), locks, error));
+            return Err(restore(owned, error));
         }
+        let flags = self.shared.flags;
         #[cfg(unix)]
         let result = {
             let _ = send;
@@ -443,7 +502,7 @@ impl File {
             // has been bypassing.
             match materialize(&owned, flags.contains(FileFlags::SEEKABLE), offset) {
                 Ok(()) => Ok(owned),
-                Err(error) => Err(restore(Arc::new(owned), locks, error)),
+                Err(error) => Err(restore(owned, error)),
             }
         };
         #[cfg(windows)]
@@ -456,7 +515,7 @@ impl File {
                 drop(owned);
                 Ok(file)
             }
-            Err(error) => Err(restore(Arc::new(owned), locks, error)),
+            Err(error) => Err(restore(owned, error)),
         };
         result
     }
@@ -525,227 +584,6 @@ fn reopen_for_stdio(
 }
 
 impl File {
-    /// Drives an in-flight cursor operation to completion.
-    fn poll_settle(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let state = self.cursor_state();
-        match &mut state.op {
-            CursorOp::Idle => Poll::Ready(Ok(())),
-            CursorOp::Reading(handle) => {
-                let (result, buf) = ready!(Pin::new(handle).poll(cx)).unwrap_or_else(|_| {
-                    (
-                        Err(Error::other("file read worker failed")),
-                        BytesMut::new(),
-                    )
-                });
-                // Settle the state machine before reporting the failure: the
-                // join handle has already completed, so leaving it in place
-                // would panic the next poll rather than retry the read.
-                state.op = CursorOp::Idle;
-                state.pending_read = buf;
-                state.pending_pos = 0;
-                result?;
-                Poll::Ready(Ok(()))
-            }
-            CursorOp::Writing(handle) => {
-                let (result, buf) = ready!(Pin::new(handle).poll(cx)).unwrap_or_else(|_| {
-                    (
-                        Err(Error::other("file write worker failed")),
-                        BytesMut::new(),
-                    )
-                });
-                state.op = CursorOp::Idle;
-                state.write_scratch = buf;
-                let (_, end) = result?;
-                state.cursor = end;
-                Poll::Ready(Ok(()))
-            }
-            CursorOp::Sizing(handle, delta) => {
-                let delta = *delta;
-                let len = ready!(Pin::new(handle).poll(cx))
-                    .unwrap_or_else(|_| Err(Error::other("file size worker failed")))?;
-                state.op = CursorOp::Idle;
-                let position = offset_delta(len, delta)?;
-                state.cursor = position;
-                state.seek_to = Some(position);
-                Poll::Ready(Ok(()))
-            }
-        }
-    }
-}
-
-impl AsyncRead for File {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        let this = self.get_mut();
-        let file = Arc::clone(&this.file);
-        let seekable = this.flags.contains(FileFlags::SEEKABLE);
-        loop {
-            let state = this.cursor_state();
-            let undelivered = state.pending_read.len() - state.pending_pos;
-            if undelivered > 0 {
-                let take = undelivered.min(buf.remaining());
-                let from = state.pending_pos;
-                buf.put_slice(&state.pending_read[from..from + take]);
-                state.pending_pos += take;
-                state.cursor += take as u64;
-                return Poll::Ready(Ok(()));
-            }
-            match &state.op {
-                CursorOp::Reading(_) => {
-                    ready!(this.poll_settle(cx))?;
-                    // An empty buffer back from the worker means end of file.
-                    if this.cursor_state().pending_read.is_empty() {
-                        return Poll::Ready(Ok(()));
-                    }
-                }
-                CursorOp::Idle => {
-                    if buf.remaining() == 0 {
-                        return Poll::Ready(Ok(()));
-                    }
-                    let want = buf.remaining().min(MAX_BLOCKING_IO);
-                    let state = this.cursor_state();
-                    let offset = state.cursor;
-                    let mut scratch = std::mem::take(&mut state.pending_read);
-                    scratch.clear();
-                    state.pending_pos = 0;
-                    scratch.reserve(want);
-                    let file = Arc::clone(&file);
-                    state.op = CursorOp::Reading(tokio::task::spawn_blocking(move || {
-                        read_blocking(&file, scratch, offset, seekable)
-                    }));
-                }
-                _ => {
-                    return Poll::Ready(Err(io::Error::other(
-                        "file read polled while another operation is in progress",
-                    )));
-                }
-            }
-        }
-    }
-}
-
-impl AsyncWrite for File {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        let this = self.get_mut();
-        let file = Arc::clone(&this.file);
-        let append = this.flags.contains(FileFlags::APPEND);
-        let seekable = this.flags.contains(FileFlags::SEEKABLE);
-        loop {
-            let state = this.cursor_state();
-            match &mut state.op {
-                CursorOp::Writing(handle) => {
-                    let (result, scratch) =
-                        ready!(Pin::new(handle).poll(cx)).unwrap_or_else(|_| {
-                            (
-                                Err(Error::other("file write worker failed")),
-                                BytesMut::new(),
-                            )
-                        });
-                    state.op = CursorOp::Idle;
-                    state.write_scratch = scratch;
-                    let (written, end) = result?;
-                    state.cursor = end;
-                    return Poll::Ready(Ok(written));
-                }
-                CursorOp::Idle => {
-                    if buf.is_empty() {
-                        return Poll::Ready(Ok(0));
-                    }
-                    // A write invalidates whatever was read ahead of it.
-                    state.pending_read.clear();
-                    state.pending_pos = 0;
-                    let take = buf.len().min(MAX_BLOCKING_IO);
-                    // The bytes are copied because the worker cannot be
-                    // cancelled and so must not borrow the caller's buffer.
-                    // The destination is recycled across writes.
-                    let mut scratch = std::mem::take(&mut state.write_scratch);
-                    scratch.clear();
-                    scratch.extend_from_slice(&buf[..take]);
-                    let offset = state.cursor;
-                    let file = Arc::clone(&file);
-                    state.op = CursorOp::Writing(tokio::task::spawn_blocking(move || {
-                        write_blocking_owned(&file, scratch, offset, append, seekable)
-                    }));
-                }
-                _ => {
-                    return Poll::Ready(Err(io::Error::other(
-                        "file write polled while another operation is in progress",
-                    )));
-                }
-            }
-        }
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        // Each write reaches the file within its own blocking call, so there
-        // is nothing buffered to push; flushing only has to wait for work
-        // already handed to a worker.
-        self.get_mut().poll_settle(cx)
-    }
-
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.get_mut().poll_settle(cx)
-    }
-}
-
-impl AsyncSeek for File {
-    fn start_seek(self: Pin<&mut Self>, position: io::SeekFrom) -> io::Result<()> {
-        let this = self.get_mut();
-        let file = Arc::clone(&this.file);
-        let state = this.cursor_state();
-        if !matches!(state.op, CursorOp::Idle) {
-            return Err(io::Error::other(
-                "file seek started while another operation is in progress",
-            ));
-        }
-        state.pending_read.clear();
-        state.pending_pos = 0;
-        match position {
-            // Both of these resolve locally: no syscall, and for the remote
-            // backend no round trip either.
-            io::SeekFrom::Start(offset) => {
-                state.cursor = offset;
-                state.seek_to = Some(offset);
-            }
-            io::SeekFrom::Current(delta) => {
-                let offset = offset_delta(state.cursor, delta)?;
-                state.cursor = offset;
-                state.seek_to = Some(offset);
-            }
-            // Only an end-relative seek needs the file's current length, and
-            // that answer is stale the moment it is produced — as it is for
-            // `lseek(SEEK_END)` too.
-            io::SeekFrom::End(delta) => {
-                state.op = CursorOp::Sizing(
-                    tokio::task::spawn_blocking(move || -> Result<u64> {
-                        Ok(file.metadata()?.len())
-                    }),
-                    delta,
-                );
-            }
-        }
-        Ok(())
-    }
-
-    fn poll_complete(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<u64>> {
-        let this = self.get_mut();
-        if matches!(this.cursor_state().op, CursorOp::Sizing(..)) {
-            ready!(this.poll_settle(cx))?;
-        }
-        let state = this.cursor_state();
-        let position = state.seek_to.take().unwrap_or(state.cursor);
-        Poll::Ready(Ok(position))
-    }
-}
-
-impl File {
     /// Whether this descriptor names a regular file suitable for extent and
     /// range-copy syscalls.
     #[cfg(any(
@@ -755,7 +593,7 @@ impl File {
         windows
     ))]
     pub(crate) async fn is_regular(&self) -> Result<bool> {
-        let file = Arc::clone(&self.file);
+        let file = self.fd()?;
         tokio::task::spawn_blocking(move || Ok(file.metadata()?.is_file()))
             .await
             .unwrap_or_else(|_| Err(Error::other("file metadata worker failed")))
@@ -767,7 +605,7 @@ impl File {
     /// decline to supply an index, and callers must not read a missing
     /// identity as proof that two handles are distinct.
     pub(crate) async fn id(&self) -> Option<FileId> {
-        let file = Arc::clone(&self.file);
+        let file = self.fd().ok()?;
         tokio::task::spawn_blocking(move || Self::impl_id(&file))
             .await
             .ok()?
@@ -779,9 +617,10 @@ impl File {
         buf: &'b mut BytesMut,
         offset: u64,
     ) -> impl Future<Output = Result<usize>> + Send + use<'b> {
-        let file = Arc::clone(&self.file);
-        let seekable = self.flags.contains(FileFlags::SEEKABLE);
+        let file = self.fd();
+        let seekable = self.shared.flags.contains(FileFlags::SEEKABLE);
         async move {
+            let file = file?;
             let taken = mem::take(buf);
             let (result, taken) = match tokio::task::spawn_blocking(move || {
                 read_blocking(&file, taken, offset, seekable)
@@ -807,10 +646,11 @@ impl File {
         buf: &'b mut [std::mem::MaybeUninit<u8>],
         offset: u64,
     ) -> impl Future<Output = Result<usize>> + Send + use<'b> {
-        let file = Arc::clone(&self.file);
-        let seekable = self.flags.contains(FileFlags::SEEKABLE);
+        let file = self.fd();
+        let seekable = self.shared.flags.contains(FileFlags::SEEKABLE);
         let want = buf.len().min(MAX_BLOCKING_IO);
         async move {
+            let file = file?;
             let owned = BytesMut::with_capacity(want);
             let (result, owned) = match tokio::task::spawn_blocking(move || {
                 read_blocking(&file, owned, offset, seekable)
@@ -834,9 +674,10 @@ impl File {
         data: Bytes,
         offset: u64,
     ) -> impl Future<Output = Result<usize>> + Send + use<> {
-        let file = Arc::clone(&self.file);
-        let append = self.flags.contains(FileFlags::APPEND);
+        let file = self.fd();
+        let append = self.shared.flags.contains(FileFlags::APPEND);
         async move {
+            let file = file?;
             if append {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
@@ -863,9 +704,10 @@ impl File {
     /// Appends `data` atomically, returning the byte count and the position
     /// just past what was written.
     pub fn append(&self, data: Bytes) -> impl Future<Output = Result<(usize, u64)>> + Send + use<> {
-        let file = Arc::clone(&self.file);
-        let seekable = self.flags.contains(FileFlags::SEEKABLE);
+        let file = self.fd();
+        let seekable = self.shared.flags.contains(FileFlags::SEEKABLE);
         async move {
+            let file = file?;
             tokio::task::spawn_blocking(move || write_blocking(&file, &data, 0, true, seekable))
                 .await
                 .unwrap_or_else(|_| Err(Error::other("file write worker failed")))
@@ -888,21 +730,18 @@ impl File {
         Ok(StdioRecv::from_file(TokioFile::from_std(file)))
     }
 
+    /// Closes the file for every clone. Closing it again does nothing.
     pub(crate) async fn close(self) -> Result<()> {
+        let Some(file) = self.shared.file.lock().unwrap().take() else {
+            return Ok(());
+        };
         // Unlock in band rather than leaving it to the handles being closed:
         // duplicates of this open file description may still be alive
         // elsewhere, which would keep the locks in force past this point.
         // Now that outstanding operations hold their own reference to the
         // file, this is the *only* reliable release — the descriptor itself
         // may outlive this call.
-        let released = self.locks.release_all().await.map_err(Error::from);
-        let File { file, locks, .. } = self;
-        if !locks.into_last() {
-            // Other duplicates still use the descriptor, so it stays open, and
-            // nothing about it is busy on this handle's account.
-            drop(file);
-            return released;
-        }
+        let released = self.shared.locks.release_all().await.map_err(Error::from);
         // Match what the remote backend reports for the same situation: the
         // handle is consumed and cleanup finishes as the outstanding
         // operations drop their references, but the caller is told the
@@ -923,14 +762,14 @@ impl File {
     }
 
     pub(crate) async fn set_size(&self, size: u64) -> Result<()> {
-        let file = Arc::clone(&self.file);
+        let file = self.fd()?;
         Ok(tokio::task::spawn_blocking(move || file.set_len(size))
             .await
             .unwrap_or_else(|_| Err(io::Error::other("failed to join file resize task")))?)
     }
 
     pub(crate) async fn sync(&self, data: bool) -> Result<()> {
-        let file = Arc::clone(&self.file);
+        let file = self.fd()?;
         Ok(tokio::task::spawn_blocking(move || match data {
             true => file.sync_data(),
             false => file.sync_all(),
@@ -940,7 +779,7 @@ impl File {
     }
 
     pub(crate) async fn metadata(&self) -> Result<Metadata> {
-        let file = Arc::clone(&self.file);
+        let file = self.fd()?;
         #[cfg(unix)]
         {
             tokio::task::spawn_blocking(move || {
@@ -962,14 +801,14 @@ impl File {
     }
 
     pub(crate) async fn fs_metadata(&self) -> Result<FsMetadata> {
-        let file = Arc::clone(&self.file);
+        let file = self.fd()?;
         tokio::task::spawn_blocking(move || Direct::fs_metadata_from_file(&file))
             .await
             .unwrap_or_else(|_| Err(Error::other("failed to join fs metadata query task")))
     }
 
     pub(crate) async fn acl(&self, kind: AclKind, default: bool) -> Result<Option<Acl>> {
-        let file = Arc::clone(&self.file);
+        let file = self.fd()?;
         tokio::task::spawn_blocking(move || Direct::acl_from_file(&file, kind, default))
             .await
             .unwrap_or_else(|_| Err(Error::other("failed to join ACL query task")))
@@ -981,7 +820,7 @@ impl File {
         acl: Option<&Acl>,
         default: bool,
     ) -> Result<()> {
-        let file = Arc::clone(&self.file);
+        let file = self.fd()?;
         let acl = acl.cloned();
         tokio::task::spawn_blocking(move || {
             Direct::set_acl_file(&file, kind, acl.as_ref(), default)
@@ -994,14 +833,14 @@ impl File {
         &self,
         mask: dolang_winterop::security::SecInfo,
     ) -> Result<SecDesc> {
-        let file = Arc::clone(&self.file);
+        let file = self.fd()?;
         tokio::task::spawn_blocking(move || Direct::sec_desc_from_file(&file, mask))
             .await
             .unwrap_or_else(|_| Err(Error::other("failed to join security descriptor task")))
     }
 
     pub(crate) async fn update_sec_desc(&self, sec_desc: &SecDesc) -> Result<()> {
-        let file = Arc::clone(&self.file);
+        let file = self.fd()?;
         let sec_desc = sec_desc.clone();
         tokio::task::spawn_blocking(move || Direct::update_sec_desc_file(&file, &sec_desc))
             .await
@@ -1009,15 +848,15 @@ impl File {
     }
 
     pub(crate) async fn xattrs(&self, namespace: XattrNamespace<'_>) -> Result<Vec<XattrEntry>> {
-        Direct::impl_file_xattrs(&self.file, namespace).await
+        Direct::impl_file_xattrs(&self.fd()?, namespace).await
     }
 
     pub(crate) async fn xattr(&self, name: &str, namespace: Option<&str>) -> Result<Vec<u8>> {
-        Direct::impl_file_xattr(&self.file, name, namespace).await
+        Direct::impl_file_xattr(&self.fd()?, name, namespace).await
     }
 
     pub(crate) async fn streams(&self) -> Result<Vec<StreamEntry>> {
-        Direct::impl_file_streams(&self.file).await
+        Direct::impl_file_streams(&self.fd()?).await
     }
 
     pub(crate) async fn set_xattr(
@@ -1026,11 +865,11 @@ impl File {
         namespace: Option<&str>,
         value: &[u8],
     ) -> Result<()> {
-        Direct::impl_file_set_xattr(&self.file, name, namespace, value).await
+        Direct::impl_file_set_xattr(&self.fd()?, name, namespace, value).await
     }
 
     pub(crate) async fn remove_xattr(&self, name: &str, namespace: Option<&str>) -> Result<()> {
-        Direct::impl_file_remove_xattr(&self.file, name, namespace).await
+        Direct::impl_file_remove_xattr(&self.fd()?, name, namespace).await
     }
 
     pub(crate) async fn lock(&self, request: FileLockRequest) -> Result<Option<file::FileLock>> {
@@ -1038,40 +877,42 @@ impl File {
         // description, which is what the lock is keyed on anyway; sharing the
         // original avoids the `dup` and, on Windows, keeps `LockFileEx`
         // operating on the very handle it will later be released through.
+        let file = self.fd()?;
         #[cfg(unix)]
-        let handle = self.file.as_fd().try_clone_to_owned()?;
+        let handle = file.as_fd().try_clone_to_owned()?;
         #[cfg(windows)]
-        let handle = self.file.as_handle().try_clone_to_owned()?;
+        let handle = file.as_handle().try_clone_to_owned()?;
         Ok(self
+            .shared
             .locks
             .acquire(handle, request)
             .await
             .map(|lock| lock.map(file::FileLock::direct))?)
     }
 
-    pub(crate) async fn try_into_std(self) -> std::result::Result<std::fs::File, Self> {
-        // Surrendering the descriptor means surrendering the cursor with it,
-        // so hand over one positioned where this handle believes it is.
-        if self.materialize(self.cursor_offset()).is_err() {
+    /// Surrenders the descriptor positioned at `offset`, closing every clone.
+    pub(crate) async fn try_into_std(
+        self,
+        offset: u64,
+    ) -> std::result::Result<std::fs::File, Self> {
+        // Fails while operations are still in flight against the descriptor,
+        // since it cannot be given away exclusively.
+        let Ok(file) = self.take_exclusive() else {
+            return Err(self);
+        };
+        // Another API reads from the *kernel's* offset, which positional I/O
+        // has been bypassing.
+        if materialize(
+            &file,
+            self.shared.flags.contains(FileFlags::SEEKABLE),
+            offset,
+        )
+        .is_err()
+        {
+            self.restore(file);
             return Err(self);
         }
-        let File {
-            file,
-            locks,
-            flags,
-            cursor,
-        } = self;
-        match Arc::try_unwrap(file) {
-            Ok(file) => Ok(file),
-            // Operations are still in flight against the shared descriptor,
-            // so it cannot be given away exclusively.
-            Err(file) => Err(File {
-                file,
-                locks,
-                flags,
-                cursor,
-            }),
-        }
+        Ok(file)
     }
 }
 

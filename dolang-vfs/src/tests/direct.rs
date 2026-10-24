@@ -856,10 +856,10 @@ async fn a_busy_handoff_returns_the_handle() {
 }
 
 #[tokio::test]
-async fn a_duplicate_has_its_own_position() {
+async fn clones_share_the_position() {
     let direct = Vfs::direct().unwrap();
     let dir = tempdir().unwrap();
-    let path = dir.path().join("dup.bin");
+    let path = dir.path().join("clone.bin");
     std::fs::write(&path, b"abcdef").unwrap();
 
     let mut options = direct.open_options();
@@ -869,33 +869,98 @@ async fn a_duplicate_has_its_own_position() {
         .await
         .unwrap();
 
-    let mut dup = file.dup().await.unwrap();
-    let mut rest = Vec::new();
-    tokio::io::AsyncReadExt::read_to_end(&mut dup, &mut rest)
-        .await
-        .unwrap();
-    assert_eq!(rest, b"cdef");
-    tokio::io::AsyncReadExt::read_exact(&mut file, &mut buf)
+    let mut clone = file.clone();
+    tokio::io::AsyncReadExt::read_exact(&mut clone, &mut buf)
         .await
         .unwrap();
     assert_eq!(&buf, b"cd");
-
-    // Closing one duplicate leaves the descriptor open for the other, and is
-    // not reported as busy.
-    dup.close().await.unwrap();
     tokio::io::AsyncReadExt::read_exact(&mut file, &mut buf)
         .await
         .unwrap();
     assert_eq!(&buf, b"ef");
+
+    tokio::io::AsyncSeekExt::seek(&mut clone, io::SeekFrom::Start(1))
+        .await
+        .unwrap();
+    tokio::io::AsyncReadExt::read_exact(&mut file, &mut buf)
+        .await
+        .unwrap();
+    assert_eq!(&buf, b"bc");
+    file.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn read_ahead_is_dropped_when_a_clone_moves_the_cursor() {
+    let direct = Vfs::direct().unwrap();
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("clone-read-ahead.bin");
+    std::fs::write(&path, b"abcdef").unwrap();
+
+    let mut options = direct.open_options();
+    let mut file = options.read(true).open(typed(&path)).await.unwrap();
+    let mut clone = file.clone();
+
+    // Start a read of the whole file and abandon it, then settle it into
+    // read-ahead without delivering anything. Should the first poll already
+    // deliver, the cursor is past the end and the seek below still decides
+    // what comes next.
+    let mut whole = [0u8; 6];
+    let mut whole = tokio::io::ReadBuf::new(&mut whole);
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+    let _ = tokio::io::AsyncRead::poll_read(std::pin::Pin::new(&mut file), &mut cx, &mut whole);
+    tokio::io::AsyncWriteExt::flush(&mut file).await.unwrap();
+
+    tokio::io::AsyncSeekExt::seek(&mut clone, io::SeekFrom::Start(1))
+        .await
+        .unwrap();
+    let mut buf = [0u8; 2];
+    tokio::io::AsyncReadExt::read_exact(&mut file, &mut buf)
+        .await
+        .unwrap();
+    assert_eq!(&buf, b"bc");
+    file.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn closing_a_clone_closes_the_file() {
+    let direct = Vfs::direct().unwrap();
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("clone-close.bin");
+    std::fs::write(&path, b"abcdef").unwrap();
+
+    let mut options = direct.open_options();
+    let mut file = options
+        .read(true)
+        .write(true)
+        .open(typed(&path))
+        .await
+        .unwrap();
+    file.clone().close().await.unwrap();
+
+    let closed = |error: io::Error| crate::error::Error::from(error).kind();
+    let mut buf = [0u8; 2];
+    let error = tokio::io::AsyncReadExt::read(&mut file, &mut buf)
+        .await
+        .unwrap_err();
+    assert_eq!(closed(error), ErrorKind::Closed);
+    let error = tokio::io::AsyncWriteExt::write(&mut file, b"x")
+        .await
+        .unwrap_err();
+    assert_eq!(closed(error), ErrorKind::Closed);
+    let mut positional = bytes::BytesMut::with_capacity(2);
+    let error = file.read_at(&mut positional, 0).await.unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::Closed);
+    assert_eq!(file.metadata().await.unwrap_err().kind(), ErrorKind::Closed);
     file.close().await.unwrap();
 }
 
 #[cfg(not(target_os = "freebsd"))]
 #[tokio::test]
-async fn duplicates_share_locks_and_release_their_own() {
+async fn clones_share_locks_and_any_close_releases_them() {
     let direct = Vfs::direct().unwrap();
     let dir = tempdir().unwrap();
-    let path = dir.path().join("dup-locks");
+    let path = dir.path().join("clone-locks");
     let file = open_lock_file(&direct, &path).await;
     let other = open_lock_file(&direct, &path).await;
     let exclusive = |start, end| {
@@ -908,71 +973,44 @@ async fn duplicates_share_locks_and_release_their_own() {
     };
 
     let _held = file.lock_request(exclusive(0, 10)).await.unwrap().unwrap();
-    let dup = file.dup().await.unwrap();
-    // The OS would let the duplicate split the lock, since they share it.
-    let error = dup.lock_request(exclusive(5, 15)).await.unwrap_err();
-    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
-    let _dup_held = dup.lock_request(exclusive(10, 20)).await.unwrap().unwrap();
+    let clone = file.clone();
+    // The OS would let the clone split the lock, since they share it.
+    let error = clone.lock_request(exclusive(5, 15)).await.unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    let _clone_held = clone
+        .lock_request(exclusive(10, 20))
+        .await
+        .unwrap()
+        .unwrap();
 
-    dup.close().await.unwrap();
-    assert!(
-        other
-            .lock_request(exclusive(10, 20))
-            .await
-            .unwrap()
-            .is_some()
-    );
-    assert!(
-        other
-            .lock_request(exclusive(0, 10))
-            .await
-            .unwrap()
-            .is_none()
-    );
-
-    // Dropping a duplicate releases its locks as well.
-    let dup = file.dup().await.unwrap();
-    let _dup_held = dup.lock_request(exclusive(20, 30)).await.unwrap().unwrap();
-    assert!(
-        other
-            .lock_request(exclusive(20, 30))
-            .await
-            .unwrap()
-            .is_none()
-    );
-    drop(dup);
-    assert!(
-        other
-            .lock_request(exclusive(20, 30))
-            .await
-            .unwrap()
-            .is_some()
-    );
-    assert!(
-        other
-            .lock_request(exclusive(0, 10))
-            .await
-            .unwrap()
-            .is_none()
-    );
+    clone.close().await.unwrap();
+    for range in [(0, 10), (10, 20)] {
+        assert!(
+            other
+                .lock_request(exclusive(range.0, range.1))
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
 }
 
 #[tokio::test]
-async fn a_handoff_with_live_duplicates_returns_the_handle() {
+async fn a_handoff_closes_every_clone() {
     let direct = Vfs::direct().unwrap();
     let dir = tempdir().unwrap();
-    let path = dir.path().join("dup-handoff.bin");
+    let path = dir.path().join("clone-handoff.bin");
     std::fs::write(&path, b"abcdef").unwrap();
 
     let mut options = direct.open_options();
     let file = options.read(true).open(typed(&path)).await.unwrap();
-    let dup = file.dup().await.unwrap();
+    let clone = file.clone();
 
-    let failed = file.into_stdio_send(0).await.unwrap_err();
-    assert_eq!(failed.error().kind(), crate::error::ErrorKind::ResourceBusy);
-    let file = failed.into_handle();
-    dup.close().await.unwrap();
     drop(file.into_stdio_send(0).await.unwrap());
+    assert_eq!(
+        clone.metadata().await.unwrap_err().kind(),
+        ErrorKind::Closed
+    );
 }
 
 /// The point of the positional API: many operations in flight on one handle,

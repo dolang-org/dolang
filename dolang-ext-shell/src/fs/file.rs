@@ -23,7 +23,7 @@ use dolang_vfs::{
     },
     process::{StdioRecv, StdioSend},
 };
-use tokio::io::{AsyncSeekExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 use tokio_util::compat::TokioAsyncReadCompatExt as _;
 
 use dolang_vfs::path as vfs_path;
@@ -524,42 +524,38 @@ fn mode_caps(mode: &str) -> IoCaps {
     caps
 }
 
-/// Builds the byte I/O handle for a file opened with `caps`.
-fn byte_handle(file: VfsFile, caps: IoCaps) -> ByteHandle {
-    let file = file.compat();
-    match caps {
-        caps if caps.contains(IoCaps::READ | IoCaps::WRITE | IoCaps::SEEK) => {
-            ByteHandle::read_write_seek(file)
-        }
-        caps if caps.contains(IoCaps::READ | IoCaps::SEEK) => ByteHandle::read_seek(file),
-        caps if caps.contains(IoCaps::WRITE | IoCaps::SEEK) => ByteHandle::write_seek(file),
-        caps if caps.contains(IoCaps::READ | IoCaps::WRITE) => ByteHandle::read_write(file),
-        _ => ByteHandle::write(file),
-    }
-}
-
 impl<'v, const BUFFERED: bool> IntoByteIo<'v> for File<BUFFERED> {
     fn caps<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, IoCaps> {
         Ok(self.caps)
     }
 
+    /// A seekable file also moves back over its read-ahead, which resolves on
+    /// the cursor its clones share.
     fn poll_flush(
         &mut self,
         _strand: &mut Strand<'v, '_>,
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<()>> {
         ready!(self.poll_flush_buf(cx))?;
+        let unread = self.unread();
+        if unread > 0 && self.caps.contains(IoCaps::SEEK) {
+            let back = -i64::try_from(unread).map_err(io::Error::other)?;
+            let mut file = Pin::new(self.vfs());
+            file.as_mut().start_seek(SeekFrom::Current(back))?;
+            ready!(file.poll_complete(cx))?;
+            self.clear();
+        }
         Pin::new(self.vfs()).poll_flush(cx)
     }
 
-    /// Read-ahead travels with the handle as its prefix, which needs no seek
-    /// and so works on a file that cannot seek.
-    fn take<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
-        assert!(!self.writing, "file taken before flushing");
-        let file = self.file.take().expect("file already taken");
+    /// A file that cannot seek hands its read-ahead over as the handle's
+    /// prefix.
+    fn get<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
+        assert!(!self.writing, "file lent before flushing");
+        let file = self.vfs().clone().compat();
         let prefix = self.buf.split_off(self.pos);
         self.clear();
-        let handle = byte_handle(file, self.caps);
+        let handle = ByteHandle::with_caps(file, self.caps);
         Ok(if prefix.is_empty() {
             handle
         } else {
@@ -1375,25 +1371,6 @@ impl<'v, const BUFFERED: bool> Object<'v> for File<BUFFERED> {
             })
             .method("close", async move |this, strand, _args, _out| {
                 this.borrow_mut(strand)?.close(strand).await
-            })
-            .method("dup", async move |this, strand, _args, out| {
-                // The duplicate starts at the logical position.
-                settle(this, strand).await?;
-                let (file, caps) = {
-                    let borrow = this.borrow(strand)?;
-                    let file = borrow
-                        .file
-                        .as_ref()
-                        .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
-                    (file.dup().await.into_sys(strand)?, borrow.caps)
-                };
-                let annex = this.annex();
-                let annex = FileAnnex {
-                    global: annex.global,
-                    is_append: annex.is_append,
-                };
-                create_file_with(strand, file, caps, annex, BUFFERED, out);
-                Ok(())
             })
             .method("lock", async move |this, strand, args, out| {
                 let ([range, block], [shared_value]) = unpack!(strand, args, 2, 0, shared = None)?;

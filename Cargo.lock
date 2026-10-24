@@ -1260,6 +1260,7 @@ dependencies = [
 name = "dolang-private-util"
 version = "0.1.1"
 dependencies = [
+ "futures",
  "rustc-hash",
 ]
 

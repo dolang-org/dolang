@@ -2,8 +2,8 @@
 //!
 //! A [`Handle`] sends each read, write and seek as a [`Request`] to a server strand
 //! that calls the stream's methods, and the servers' ends are [`Lanes`]. The handle
-//! buffers reads and writes. Once its lanes are closed, the stream is closed, and the
-//! handle waits for that when it closes.
+//! buffers reads and writes. Closing the handle closes its lanes and waits for the
+//! servers to stop, but leaves the stream open.
 //!
 //! A seekable stream has one position, so its requests share one lane. Otherwise reads
 //! and writes are independent, and a stream that does both has a lane for each.
@@ -43,8 +43,8 @@ pub(crate) enum Request {
 pub(crate) struct Lanes {
     /// One receiver per server.
     pub(crate) servers: Vec<mpsc::UnboundedReceiver<Request>>,
-    /// Where the stream's `close` reports its result.
-    pub(crate) closed: Reply<()>,
+    /// Where the owner reports that the servers stopped.
+    pub(crate) done: Reply<()>,
 }
 
 /// Creates a handle with `caps`, and the lanes its servers serve.
@@ -64,7 +64,7 @@ pub(crate) fn handle(caps: IoCaps) -> (ByteHandle, Lanes) {
         let (write_tx, write_rx) = mpsc::unbounded();
         (Some(read_tx), Some(write_tx), vec![read_rx, write_rx])
     };
-    let (closed_tx, closed_rx) = oneshot::channel();
+    let (done_tx, done_rx) = oneshot::channel();
     let io = Handle {
         reads,
         writes,
@@ -75,22 +75,13 @@ pub(crate) fn handle(caps: IoCaps) -> (ByteHandle, Lanes) {
         write_buf: Vec::new(),
         write: None,
         seek: None,
-        closed: Some(closed_rx),
-    };
-    let handle = match (read, write, seek) {
-        (true, false, false) => ByteHandle::read(io),
-        (false, true, false) => ByteHandle::write(io),
-        (true, false, true) => ByteHandle::read_seek(io),
-        (false, true, true) => ByteHandle::write_seek(io),
-        (true, true, false) => ByteHandle::read_write(io),
-        (true, true, true) => ByteHandle::read_write_seek(io),
-        (false, false, _) => panic!("handle neither reads nor writes"),
+        done: Some(done_rx),
     };
     let lanes = Lanes {
         servers,
-        closed: closed_tx,
+        done: done_tx,
     };
-    (handle, lanes)
+    (ByteHandle::with_caps(io, caps), lanes)
 }
 
 fn closed() -> io::Error {
@@ -125,7 +116,7 @@ struct Handle {
     write_buf: Vec<u8>,
     write: Pending<usize>,
     seek: Pending<u64>,
-    closed: Pending<()>,
+    done: Pending<()>,
 }
 
 impl Handle {
@@ -224,17 +215,17 @@ impl AsyncWrite for Handle {
         self.get_mut().poll_drain(cx)
     }
 
-    /// Writes out the buffer, closes the lanes, and waits for the stream's `close`.
+    /// Writes out the buffer, closes the lanes, and waits for the servers to stop.
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
         ready!(this.poll_drain(cx))?;
         this.reads = None;
         this.writes = None;
-        let Some(rx) = &mut this.closed else {
+        let Some(rx) = &mut this.done else {
             return Poll::Ready(Ok(()));
         };
         let res = ready!(Pin::new(rx).poll(cx));
-        this.closed = None;
+        this.done = None;
         // The owner stops without reporting only when the VM shuts down.
         Poll::Ready(res.unwrap_or(Ok(())))
     }

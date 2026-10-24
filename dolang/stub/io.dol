@@ -14,14 +14,16 @@
 # but not iterable: iterate [`chunks`](io.Io.chunks), or iterate a subclass
 # that supports it.
 #
-# A function that accepts an `Io`, such as [`zip.open`](zip.open), takes
-# over a native stream's bytes, and the stream reads as closed afterward.
+# A function that accepts an `Io`, such as [`zip.open`](zip.open), uses the
+# stream without closing it. Afterward its position reflects what the function
+# read or wrote, though a reader may have read ahead past what it used. Only
+# the stream's own `close` closes it.
 #
-# It can also take over a Do subclass's instance, which must report its
-# capabilities. Taking it starts strands that call its `read`, `write` and
-# `seek` as the function needs bytes, and its `close` once when the function is
-# done with it. Don't use the stream yourself until it is closed. An exception
-# from one of its methods fails the function with the exception's message.
+# A function can also use a Do subclass's instance, which must report its
+# capabilities. Strands call its `read`, `write` and `seek` as the function
+# needs bytes, never its `close`. Don't use the stream yourself until the
+# function is done with it. An exception from one of its methods fails the
+# function with the exception's message.
 #
 # ## Example
 #
@@ -186,15 +188,15 @@ pub class Io: Sink[Value]
 # Buffers reads and writes over another [`Io`](io.Io).
 #
 # Reads fetch ahead, and writes are held back until the buffer fills, a read
-# or seek needs the handle, or the buffer is flushed, closed, or taken. A
+# or seek needs the handle, or the buffer is flushed or closed. A
 # buffer is not closed when it is garbage collected, so close it to keep its
 # pending writes, or use it from a block that closes it.
 #
 # A buffer reads lines and text as well as bytes. Text must be UTF-8, and line
 # endings are not translated. Iterating it yields lines.
 #
-# Taking the buffer, by passing it to a function that accepts an `Io`, flushes
-# it and hands over its read-ahead along with the handle.
+# A function that accepts an `Io` reads and writes through the buffer, so the
+# buffer stays consistent and open afterward.
 #
 # ## Errors
 #
@@ -206,14 +208,14 @@ pub class Io: Sink[Value]
 # ## Example
 #
 # ```
-# let file = Buffered $ fs.open data.txt buffer: false
-# let header = file.read_line()
-# for line = file.chomp()
-#   echo $line
-# file.close()
+# fs.open data.txt buffer: false do |raw|
+#   let file = Buffered $raw
+#   let header = file.read_line()
+#   for line = file.chomp()
+#     echo $line
 # ```
 pub class Buffered: Iter[Str] Io
-  # Buffers `source`, taking it over.
+  # Buffers `source`, which stays open when the buffer closes.
   pub def (init)
     self
     # Byte source to buffer.
@@ -295,9 +297,9 @@ pub class Buffered: Iter[Str] Io
   pub def flush self
     ...
 
-  # Flushes and closes the buffer and its source.
+  # Flushes and closes the buffer, leaving its source open.
   #
-  # The source is closed even if flushing fails. Closing a closed buffer does
+  # The buffer is closed even if flushing fails. Closing a closed buffer does
   # nothing.
   pub def close self
     ...

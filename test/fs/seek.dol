@@ -1,20 +1,17 @@
 import test:
   - assert_eq
   - assert_throws
-  - assert_type
   - test
 
-import fs
-  fs:
-    - open
-    - remove
-    - write
+import fs:
+  - open
+  - remove
+  - write
 
 import testlib.vfs:
   - vfs
 import std:
   - MissingPosError
-  - StateError
   - UnexpectedKeyError
 
 #[test]
@@ -44,41 +41,6 @@ def seek_clears_buffered_text_reads()
     assert_eq (file.next()) "alpha\n"
     assert_eq (file.seek start: 0) 0
     assert_eq (file.next()) "alpha\n"
-  remove $path
-
-#[test]
-#[vfs]
-def duplicates_have_their_own_position()
-  let path = "test_fs_dup.bin"
-  write $path b"abcdef"
-  open $path buffer: false do |file|
-    assert_eq (file.read 2) b"ab"
-    let dup = file.dup()
-    assert_type $fs.RawFile $dup
-    assert_eq (dup.tell()) 2
-    assert_eq (dup.read 2) b"cd"
-    assert_eq (file.tell()) 2
-    assert_eq (file.read()) b"cdef"
-    dup.close()
-    assert_eq (file.seek start: 0) 0
-    assert_eq (file.read 1) b"a"
-    file.close()
-    assert_throws $StateError do file.dup()
-  remove $path
-
-#[test]
-#[vfs]
-def text_duplicates_start_after_buffered_reads()
-  let path = "test_fs_dup.txt"
-  write $path "alpha\nbeta\ngamma\n"
-  open $path "r" do |file|
-    assert_eq (file.next()) "alpha\n"
-    let dup = file.dup()
-    assert_type $fs.File $dup
-    assert_eq (dup.next()) "beta\n"
-    assert_eq (file.next()) "beta\n"
-    assert_eq (dup.next()) "gamma\n"
-    dup.close()
   remove $path
 
 #[test]

@@ -2,8 +2,12 @@
 //!
 //! A native object wrapping an OS or VFS handle provides the [`ByteIo`] interface to an
 //! [interface query](crate::object::interface). A consumer checks the provider's
-//! [`IoCaps`], then takes an owned [`ByteHandle`] over futures-io traits and narrows it
-//! to the traits it needs. [`take`] does both, flushing the provider first.
+//! [`IoCaps`], then gets an owned [`ByteHandle`] over futures-io traits and narrows it to
+//! the traits it needs. [`get`] does both, flushing the provider first.
+//!
+//! The handle is lent: it shares the provider's stream, which stays open, and only the
+//! provider's own `close` closes it. A provider with its own stack, such as a buffer or a
+//! decoder, keeps it in a [`Shared`] and hands out clones.
 //!
 //! A Do subclass of `io.Io` provides [`ByteIo`] through strands that call its methods,
 //! and its handle sends them requests.
@@ -18,6 +22,7 @@ use std::{
     task::{Context, Poll, ready},
 };
 
+pub use dolang_util::shared::Shared;
 use futures::io::{AsyncRead, AsyncSeek, AsyncWrite};
 
 use crate::{error::Error, object::interface::InterfaceTag, strand::Strand, value::Value};
@@ -67,23 +72,23 @@ impl InterfaceTag for ByteIo {
     type Interface<'v, 'a> = dyn IntoByteIo<'v> + 'a;
 }
 
-/// Hands over a provider's byte I/O handle.
+/// Hands out a provider's byte I/O handle.
 ///
-/// A provider lends this from inside its borrowed state, so [`take`](IntoByteIo::take)
-/// cannot consume it. After `take`, every method of the same lent interface panics. A
-/// provider whose handle was taken stops providing [`ByteIo`] and raises its usual closed
-/// error when queried, so a second consumer gets an error rather than a panic.
+/// A provider lends this from inside its borrowed state. The handle it [gets](IntoByteIo::get)
+/// shares the provider's stream rather than taking it, so the provider stays usable, and
+/// closing the provider ends the handle too. A handle's own `close` only flushes.
 ///
 /// Each method takes the querying strand, so a provider can call back into the VM. A
 /// provider that lends this from its borrowed state holds the borrow during each call, so
 /// it must not run code that could borrow the same object.
 pub trait IntoByteIo<'v> {
-    /// The provider's capabilities, checked before taking.
+    /// The provider's capabilities, checked before getting the handle.
     fn caps<'s>(&mut self, strand: &mut Strand<'v, 's>) -> crate::error::Result<'v, 's, IoCaps>;
 
-    /// Writes out anything the provider holds back, such as buffered writes.
+    /// Settles the provider before it lends: writes out anything it holds back, such as
+    /// buffered writes, and gives back read-ahead its stream can take back.
     ///
-    /// The default has nothing to flush.
+    /// The default has nothing to settle.
     fn poll_flush(
         &mut self,
         strand: &mut Strand<'v, '_>,
@@ -93,22 +98,21 @@ pub trait IntoByteIo<'v> {
         Poll::Ready(Ok(()))
     }
 
-    /// Transfers the provider's handle, closing the provider.
+    /// Returns a handle sharing the provider's stream.
     ///
     /// A consumer calls this only after [`poll_flush`](IntoByteIo::poll_flush) returns
-    /// `Ready(Ok(()))`. Buffered read-ahead travels with the handle as its unread
-    /// [prefix](ByteHandle::with_prefix).
-    fn take<'s>(&mut self, strand: &mut Strand<'v, 's>)
-    -> crate::error::Result<'v, 's, ByteHandle>;
+    /// `Ready(Ok(()))`. Read-ahead the provider cannot give back to its stream travels with
+    /// the handle as its unread [prefix](ByteHandle::with_prefix).
+    fn get<'s>(&mut self, strand: &mut Strand<'v, 's>) -> crate::error::Result<'v, 's, ByteHandle>;
 }
 
-/// Takes `value`'s byte handle, flushing the provider first.
+/// Gets `value`'s byte handle, flushing the provider first.
 ///
 /// `accept` checks the provider's capabilities and raises to refuse it. A value that
 /// provides no [`ByteIo`] raises [`ErrorKind::Unsupported`](crate::error::ErrorKind), so
 /// a caller can replace that error with its own. A flush error is raised as [`error`]
 /// maps it, and an error from the provider is raised as is.
-pub async fn take<'v, 's>(
+pub async fn get<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
     mut accept: impl FnMut(&mut Strand<'v, 's>, IoCaps) -> crate::error::Result<'v, 's, ()>,
@@ -118,7 +122,7 @@ pub async fn take<'v, 's>(
             let caps = io.caps(strand)?;
             accept(strand, caps)?;
             match io.poll_flush(strand, cx) {
-                Poll::Ready(Ok(())) => io.take(strand).map(Poll::Ready),
+                Poll::Ready(Ok(())) => io.get(strand).map(Poll::Ready),
                 Poll::Ready(Err(err)) => Err(error(strand, err)),
                 Poll::Pending => Ok(Poll::Pending),
             }
@@ -226,6 +230,26 @@ impl ByteHandle {
     /// Creates a seekable reading and writing handle.
     pub fn read_write_seek(io: impl ReadWriteSeek) -> Self {
         Self::new(Io::ReadWriteSeek(Box::new(io)))
+    }
+
+    /// Creates a handle with `caps` over `io`, which implements every trait.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `caps` neither reads nor writes.
+    pub fn with_caps(io: impl ReadWriteSeek, caps: IoCaps) -> Self {
+        let read = caps.contains(IoCaps::READ);
+        let write = caps.contains(IoCaps::WRITE);
+        let seek = caps.contains(IoCaps::SEEK);
+        match (read, write, seek) {
+            (true, false, false) => Self::read(io),
+            (false, true, false) => Self::write(io),
+            (true, false, true) => Self::read_seek(io),
+            (false, true, true) => Self::write_seek(io),
+            (true, true, false) => Self::read_write(io),
+            (true, true, true) => Self::read_write_seek(io),
+            (false, false, _) => panic!("handle neither reads nor writes"),
+        }
     }
 
     /// Sets bytes to read before the underlying I/O, such as a provider's read-ahead.
