@@ -1,12 +1,187 @@
 # dolang: strict
-# Native byte I/O.
+# Byte streams.
 
-# A native value that can hand its bytes over to native code, such as an open
-# [`fs.File`](fs.File).
+# A byte stream, such as an open [`fs.File`](fs.File).
 #
-# A function that accepts one, such as [`zip.open`](zip.open), takes it over,
-# and the value reads as closed afterward. Only native types implement it.
-pub @class Io
+# `Io` is the common type of byte streams. A subclass defines the methods
+# below that it supports, and the capability getters report which those are.
+# One it does not define raises [`FieldError`](std.FieldError), and its
+# capabilities are `false` unless it overrides them.
+#
+# The helpers, such as [`read_all`](io.Io.read_all), are written in terms of
+# those methods. Reading text by size or by line needs read-ahead, so it is left
+# to [`Buffered`](io.Buffered). An `Io` is a [`Sink`](std.Sink) of its bytes,
+# but not iterable: iterate [`chunks`](io.Io.chunks), or iterate a subclass
+# that supports it.
+#
+# A function that accepts an `Io`, such as [`zip.open`](zip.open), takes
+# over a native stream's bytes, and the stream reads as closed afterward.
+#
+# It can also take over a Do subclass's instance, which must report its
+# capabilities. Taking it starts strands that call its `read`, `write` and
+# `seek` as the function needs bytes, and its `close` once when the function is
+# done with it. Don't use the stream yourself until it is closed. An exception
+# from one of its methods fails the function with the exception's message.
+#
+# ## Example
+#
+# ```
+# class Memory: Io
+#   pub field data pos
+#
+#   def (init) self data
+#     self.data = data
+#     self.pos = 0
+#
+#   #[getter]
+#   pub def readable _self
+#     true
+#
+#   pub def read self size
+#     let end = (self.pos + size)
+#     if (end > self.data.len)
+#       end = self.data.len
+#     let chunk = (self.data[self.pos..end])
+#     self.pos = end
+#     chunk
+#
+#   pub def close _self
+#     nil
+#
+# compress.decompress (Memory $fs.Path("data.gz").read()) do |stream|
+#   echo (stream.read_all_str())
+# ```
+pub class Io: Sink[Value]
+  # Whether the stream reads. A closed stream does not.
+  #[getter]
+  pub def readable self -> Bool
+    ...
+
+  # Whether the stream writes. A closed stream does not.
+  #[getter]
+  pub def writable self -> Bool
+    ...
+
+  # Whether the stream seeks. A closed stream does not.
+  #[getter]
+  pub def seekable self -> Bool
+    ...
+
+  # Reads bytes.
+  #
+  # ## Returns
+  #
+  # At most `size` bytes. An empty result means the end of the stream.
+  pub def read
+    self
+    # Number of bytes to read.
+    size @ Int
+  do -> Bin
+    ...
+
+  # Writes data.
+  #
+  # ## Returns
+  #
+  # The number of bytes written.
+  pub def write
+    self
+    # Data to write.
+    data @ (Str | Bin)
+  do -> Int
+    ...
+
+  # Moves the position.
+  #
+  # ## Returns
+  #
+  # The new absolute byte position.
+  pub def seek
+    self
+    # Byte offset relative to the current position.
+    offset @ Int = nil
+    # Absolute byte offset from the start of the stream.
+    :start @ Int = nil
+    # Byte offset relative to the end of the stream.
+    :end @ Int = nil
+  do -> Int
+    ...
+
+  # Closes the stream.
+  pub def close self
+    ...
+
+  # Reads the rest of the stream.
+  pub def read_all self -> Bin
+    ...
+
+  # Reads the rest of the stream as text.
+  #
+  # ## Errors
+  #
+  # | Exception | Condition |
+  # | --- | --- |
+  # | [`RuntimeError`](std.RuntimeError) | The text is not valid UTF-8 |
+  pub def read_all_str self -> Str
+    ...
+
+  # Writes all of `data`, repeating [`write`](io.Io.write) until it is written.
+  #
+  # ## Errors
+  #
+  # | Exception | Condition |
+  # | --- | --- |
+  # | [`RuntimeError`](std.RuntimeError) | A `write` reports no bytes written, or more than it was given |
+  pub def write_all
+    self
+    # Data to write.
+    data @ (Str | Bin)
+  do
+    ...
+
+  # Puts the rest of the stream into a sink, in chunks.
+  #
+  # ## Returns
+  #
+  # The number of bytes copied.
+  #
+  # ## Example
+  #
+  # ```
+  # let dest = fs.open copy.bin w
+  # source.copy_to $dest
+  # dest.close()
+  # ```
+  pub def copy_to
+    self
+    # Destination, such as another `Io`.
+    dest @ BaseSinkable[Bin]
+  do -> Int
+    ...
+
+  # Returns an iterator over the rest of the stream, one [`read`](io.Io.read)
+  # per item.
+  pub def chunks
+    self
+    # Number of bytes to read per item.
+    size @ Int = 65536
+  do -> Iter[Bin]
+    ...
+
+  # Returns the stream as its own sink.
+  pub def (sink) self -> Io
+    ...
+
+  # Writes a value with [`write_all`](io.Io.write_all).
+  #
+  # A [`Str`](std.Str) or [`Bin`](std.Bin) contributes its own bytes, and
+  # anything else is converted to a string first. No line ending is appended.
+  pub def (put)
+    self
+    # Value to write.
+    value @ Value
+  do
+    ...
 
 # Buffers reads and writes over another [`Io`](io.Io).
 #
@@ -37,7 +212,7 @@ pub @class Io
 #   echo $line
 # file.close()
 # ```
-pub class Buffered: Iter[Str] Sink[Value] @Io
+pub class Buffered: Iter[Str] Io
   # Buffers `source`, taking it over.
   pub def (init)
     self

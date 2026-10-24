@@ -1,4 +1,6 @@
 import
+  io:
+    - Io
   testlib.vfs:
     - vfs
   test:
@@ -166,3 +168,28 @@ def kinds_can_be_matched()
         File(_) do "buffered"
         RawFile(_) do "raw"
       assert_eq $label (buffer && "buffered" || "raw")
+
+#[test]
+#[vfs]
+def files_are_io_streams()
+  open io.txt w do |file| file.write "hello"
+  for buffer = [true, false]
+    open io.txt :buffer do |file|
+      assert (type file BaseFile)
+      assert (type file Io)
+
+#[test]
+#[vfs]
+def capabilities_follow_the_mode()
+  open caps.txt w do |file| file.write "hello"
+  let cases = $
+    - ("r", [true, false, true])
+    - ("w", [false, true, true])
+    - ("r+", [true, true, true])
+    - ("a", [false, true, false])
+  for buffer = [true, false]
+    for mode caps = cases
+      let file = open caps.txt $mode :buffer
+      assert_eq [file.readable, file.writable, file.seekable] $caps
+      file.close()
+      assert_eq [file.readable, file.writable, file.seekable] [false, false, false]

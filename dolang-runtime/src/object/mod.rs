@@ -16,6 +16,7 @@ pub(crate) mod function;
 pub(crate) mod index;
 pub(crate) mod int;
 pub mod interface;
+pub(crate) mod io;
 pub(crate) mod iter;
 pub(crate) mod module;
 pub mod native;
@@ -176,6 +177,8 @@ pub(crate) struct BuiltinTypes<'v> {
     pub(crate) value_type: TypeHandle<'v, types::Value>,
     pub(crate) type_type: TypeHandle<'v, types::Type>,
     pub(crate) iterable: TypeHandle<'v, iter::Iterable>,
+    pub(crate) io: TypeHandle<'v, io::Io>,
+    pub(crate) io_chunks: TypeHandle<'v, io::Chunks<'v>>,
     pub(crate) num_type: TypeHandle<'v, num::Num>,
     pub(crate) sinkable: TypeHandle<'v, iter::Sinkable>,
     pub(crate) input_iter: TypeHandle<'v, iter::Iter>,
@@ -299,6 +302,8 @@ impl<'v> BuiltinTypes<'v> {
             value_type: types.register_type_handle(),
             type_type: types.register_type_handle(),
             iterable: types.register_type_handle(),
+            io: types.register_type_handle(),
+            io_chunks: types.register_type_handle(),
             num_type: types.register_type_handle(),
             sinkable: types.register_type_handle(),
             int_type: types.register_type_handle(),
@@ -353,6 +358,7 @@ pub(crate) struct Singletons<'v> {
     pub(crate) value: Value<'v>,
     pub(crate) type_obj: Value<'v>,
     pub(crate) iterable: Value<'v>,
+    pub(crate) io: Value<'v>,
     pub(crate) num: Value<'v>,
     pub(crate) sinkable: Value<'v>,
     pub(crate) getter: Value<'v>,
@@ -432,6 +438,7 @@ impl<'v> Singletons<'v> {
             value: v!(builtin_types.value_type, types::Value),
             type_obj: v!(builtin_types.type_type, types::Type),
             iterable: v!(builtin_types.iterable, iter::Iterable),
+            io: v!(builtin_types.io, io::Io),
             num: v!(builtin_types.num_type, num::Num),
             sinkable: v!(builtin_types.sinkable, iter::Sinkable),
             getter: v!(

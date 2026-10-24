@@ -23,7 +23,7 @@ import
     @FsMetadata: WindowsFsMetadata
     @DirEntry: WindowsDirEntry
   io:
-    - @Io
+    - Io
   @security
   security.windows:
     - @Sid
@@ -142,7 +142,7 @@ pub class DirEntry
 # [`zip.open`](zip.open) can take it over, starting at its current position.
 # The file reads as closed afterward; hand over a [`dup`](fs.File.dup) to keep
 # using it.
-pub class BaseFile: @Io
+pub class BaseFile: Io
   # Closes the file, first writing out pending writes.
   #
   # The file is closed even if writing them out fails. This is required if
@@ -640,7 +640,7 @@ pub class BaseFile: @Io
 #
 # Passed to a child process as `stdin:`, `stdout:`, or `stderr:`, the child
 # reads or writes from the file's logical position.
-pub class File: Iter[Str] Sink[Value] BaseFile
+pub class File: Iter[Str] BaseFile
   # Opens another handle to the same open file.
   #
   # The duplicate starts at this file's position, and after that each handle
@@ -744,7 +744,7 @@ pub class File: Iter[Str] Sink[Value] BaseFile
 # A raw file is both an iterator and a sink, so it can be used with `for`,
 # `.next()`, `.put()`, and `strand.redirect`. It yields chunks of bytes, which
 # concatenate back to exactly the file's contents.
-pub class RawFile: Iter[Bin] Sink[Value] BaseFile
+pub class RawFile: Iter[Bin] BaseFile
   # Opens another handle to the same open file, as
   # [`File.dup`](fs.File.dup) does.
   pub def dup self -> RawFile

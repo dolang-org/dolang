@@ -1,0 +1,156 @@
+import std: error
+import io:
+  - Io
+  - Buffered
+import regression2:
+  - ByteBuf
+
+# A Do class can inherit `Io` and is an instance of it
+class Empty: Io
+  pub field name = "empty"
+
+let empty = Empty()
+assert (type empty Io)
+
+# Capabilities it does not override are absent
+assert_eq $empty.readable false
+assert_eq $empty.writable false
+assert_eq $empty.seekable false
+
+# Stream methods it does not define raise as missing fields
+let missing = try
+  empty.read 1
+  false
+catch error.FieldError: _
+  true
+assert $missing
+
+# Overridden capabilities and methods win
+class Zeros: Io
+  #[getter]
+  pub def readable _self
+    true
+
+  pub def read _self _size
+    b"\0"
+
+let zeros = Zeros()
+assert_eq $zeros.readable true
+assert_eq $zeros.writable false
+assert_eq (zeros.read 1) b"\0"
+
+# A buffer is an `Io` reporting its source's capabilities
+let reader = Buffered (ByteBuf b"abc" 0 "")
+assert (type reader Io)
+assert_eq $reader.readable true
+assert_eq $reader.writable false
+assert_eq $reader.seekable false
+
+let seekable = Buffered (ByteBuf b"abc" 0 "ws")
+assert_eq $seekable.readable true
+assert_eq $seekable.writable true
+assert_eq $seekable.seekable true
+
+# A closed buffer reports no capabilities
+seekable.close()
+assert_eq $seekable.readable false
+assert_eq $seekable.writable false
+assert_eq $seekable.seekable false
+
+# The helpers call the stream's own methods
+class MemIo: Io
+  pub field data pos out limit
+
+  def (init) self data limit = nil
+    self.data = data
+    self.pos = 0
+    self.out = BinBuf()
+    self.limit = limit
+
+  #[getter]
+  pub def readable _self
+    true
+
+  #[getter]
+  pub def writable _self
+    true
+
+  pub def read self size
+    let end = (self.pos + size)
+    if (end > self.data.len)
+      end = self.data.len
+    let chunk = (self.data[self.pos..end])
+    self.pos = end
+    chunk
+
+  # Writes at most `limit` bytes per call
+  pub def write self data
+    let bytes = Bin $data
+    if (self.limit != nil && bytes.len > self.limit)
+      bytes = (bytes[..self.limit])
+    self.out.append $bytes
+    bytes.len
+
+assert_eq (MemIo(b"hello").read_all()) b"hello"
+assert_eq (MemIo(b"").read_all()) b""
+assert_eq (MemIo(Bin("héllo")).read_all_str()) "héllo"
+
+let invalid = try
+  MemIo(b"\xff").read_all_str()
+  false
+catch error.RuntimeError: _
+  true
+assert $invalid
+
+assert_eq [...MemIo(b"abcde").chunks(2)] [b"ab", b"cd", b"e"]
+assert_eq [...MemIo(b"").chunks()] []
+
+let bad_size = try
+  MemIo(b"").chunks 0
+  false
+catch error.TypeError: _
+  true
+assert $bad_size
+
+# Short writes are repeated
+let short = MemIo b"" 2
+short.write_all "hello"
+assert_eq (short.out.freeze()) b"hello"
+
+# A write that makes no progress raises
+class Stuck: Io
+  pub def write _self _data
+    0
+
+let stuck = try
+  Stuck().write_all "x"
+  false
+catch error.RuntimeError: _
+  true
+assert $stuck
+
+# Copying puts chunks into the destination's sink
+let dest = MemIo b"" 4
+assert_eq (MemIo(b"abcdef").copy_to dest) 6
+assert_eq (dest.out.freeze()) b"abcdef"
+
+let chunks = []
+assert_eq (MemIo(b"abc").copy_to chunks) 3
+assert_eq $chunks [b"abc"]
+
+# A stream is its own sink, writing values as text
+let sink = MemIo b""
+assert_eq (sink.(sink)()) $sink
+sink.(put) "a"
+sink.(put) b"b"
+sink.(put) 1
+assert_eq (sink.out.freeze()) b"ab1"
+
+# A stream is a `Sink`, with its methods
+assert (type sink Sink)
+assert (type sink Sinkable)
+let more = MemIo b""
+more.put "x"
+more.premap(do |n| "<$n>").put 1
+more.prechomp().put "y\n"
+assert_eq (more.out.freeze()) b"x<1>y"

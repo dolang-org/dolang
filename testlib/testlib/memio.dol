@@ -1,0 +1,77 @@
+import io:
+  - Io
+
+# An in-memory byte stream.
+#
+# It reads, writes and seeks unless told otherwise, and records whether it was
+# closed.
+pub class MemIo: Io
+  pub field data @ Bin
+  pub field pos @ Int
+  pub field closed @ Bool
+  field read @ Bool
+  field write @ Bool
+  field seek @ Bool
+
+  def (init)
+    self
+    data @ Bin = b""
+    :read @ Bool = true
+    :write @ Bool = true
+    :seek @ Bool = true
+  do
+    self.data = data
+    self.pos = 0
+    self.closed = false
+    self.#read = read
+    self.#write = write
+    self.#seek = seek
+
+  #[getter]
+  pub def readable self -> Bool
+    self.#read
+
+  #[getter]
+  pub def writable self -> Bool
+    self.#write
+
+  #[getter]
+  pub def seekable self -> Bool
+    self.#seek
+
+  pub def read self size @ Int -> Bin
+    let end = (self.pos + size)
+    if (end > self.data.len)
+      end = self.data.len
+    let chunk = (self.data[self.pos..end])
+    self.pos = end
+    chunk
+
+  pub def write self data @ (Str | Bin) -> Int
+    let bytes = Bin $data
+    let out = BinBuf()
+    out.extend (self.data[..self.pos])
+    out.extend $bytes
+    let rest = (self.pos + bytes.len)
+    if (rest < self.data.len)
+      out.extend (self.data[rest..])
+    self.data = out.freeze()
+    self.pos = rest
+    bytes.len
+
+  pub def seek
+    self
+    offset @ (Int | nil) = nil
+    :start @ (Int | nil) = nil
+    :end @ (Int | nil) = nil
+  do -> Int
+    if (start != nil)
+      self.pos = start
+    else if (end != nil)
+      self.pos = (self.data.len + end)
+    else if (offset != nil)
+      self.pos = (self.pos + offset)
+    self.pos
+
+  pub def close self
+    self.closed = true

@@ -471,6 +471,10 @@ impl<'v> Object<'v> for BaseFile {
     type Annex = ();
     type Type = ();
     type TypeAnnex = ();
+
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder.supertype(TypeObject::Io)
+    }
 }
 
 /// A handle to an open file: `fs.File` when `BUFFERED`, `fs.RawFile`
@@ -534,29 +538,33 @@ fn byte_handle(file: VfsFile, caps: IoCaps) -> ByteHandle {
     }
 }
 
-impl<const BUFFERED: bool> IntoByteIo for File<BUFFERED> {
-    fn caps(&self) -> IoCaps {
-        self.caps
+impl<'v, const BUFFERED: bool> IntoByteIo<'v> for File<BUFFERED> {
+    fn caps<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, IoCaps> {
+        Ok(self.caps)
     }
 
-    fn poll_flush(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    fn poll_flush(
+        &mut self,
+        _strand: &mut Strand<'v, '_>,
+        cx: &mut Context<'_>,
+    ) -> Poll<io::Result<()>> {
         ready!(self.poll_flush_buf(cx))?;
         Pin::new(self.vfs()).poll_flush(cx)
     }
 
     /// Read-ahead travels with the handle as its prefix, which needs no seek
     /// and so works on a file that cannot seek.
-    fn take(&mut self) -> ByteHandle {
+    fn take<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
         assert!(!self.writing, "file taken before flushing");
         let file = self.file.take().expect("file already taken");
         let prefix = self.buf.split_off(self.pos);
         self.clear();
         let handle = byte_handle(file, self.caps);
-        if prefix.is_empty() {
+        Ok(if prefix.is_empty() {
             handle
         } else {
             handle.with_prefix(prefix)
-        }
+        })
     }
 }
 
@@ -708,6 +716,15 @@ fn size_arg<'v, 's>(
 
 /// The buffer, in terms of [`io::Result`]. Callers check that the file is open.
 impl<const BUFFERED: bool> File<BUFFERED> {
+    /// Capabilities while open; a closed file has none.
+    fn open_caps(&self) -> IoCaps {
+        if self.file.is_some() {
+            self.caps
+        } else {
+            IoCaps::empty()
+        }
+    }
+
     /// Buffer capacity: none for a raw file, whose reads and writes therefore
     /// all go straight to the file.
     const CAPACITY: usize = if BUFFERED { BUFFER_SIZE } else { 0 };
@@ -1338,8 +1355,24 @@ impl<'v, const BUFFERED: bool> Object<'v> for File<BUFFERED> {
         let size_sym = builder.sym("size");
         let clone_sym = builder.sym("clone");
         let builder = builder
-            .supertype(TypeObject::Iter)
-            .supertype(TypeObject::Sink)
+            .supertype(TypeObject::Io)
+            .supertype(TypeObject::Iter);
+        let builder = builder
+            .get("readable", |this, strand, out| {
+                let caps = this.borrow(strand)?.open_caps();
+                Output::set(strand, out, caps.contains(IoCaps::READ));
+                Ok(())
+            })
+            .get("writable", |this, strand, out| {
+                let caps = this.borrow(strand)?.open_caps();
+                Output::set(strand, out, caps.contains(IoCaps::WRITE));
+                Ok(())
+            })
+            .get("seekable", |this, strand, out| {
+                let caps = this.borrow(strand)?.open_caps();
+                Output::set(strand, out, caps.contains(IoCaps::SEEK));
+                Ok(())
+            })
             .method("close", async move |this, strand, _args, _out| {
                 this.borrow_mut(strand)?.close(strand).await
             })

@@ -191,7 +191,7 @@ mod detail {
     struct BumpTag;
 
     impl InterfaceTag for BumpTag {
-        type Interface<'v> = dyn Bump + 'v;
+        type Interface<'v, 'a> = dyn Bump + 'a;
     }
 
     /// Native counter providing [`BumpTag`], for testing interface queries.
@@ -364,15 +364,18 @@ mod detail {
         }
     }
 
-    impl IntoByteIo for ByteBuf {
-        fn caps(&self) -> IoCaps {
+    impl<'v> IntoByteIo<'v> for ByteBuf {
+        fn caps<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> runtime::Result<'v, 's, IoCaps> {
             self.cursor();
-            self.caps
+            Ok(self.caps)
         }
 
-        fn take(&mut self) -> ByteHandle {
+        fn take<'s>(
+            &mut self,
+            _strand: &mut Strand<'v, 's>,
+        ) -> runtime::Result<'v, 's, ByteHandle> {
             let cursor = self.cursor.take().expect("handle already taken");
-            self.handle(cursor).with_prefix(mem::take(&mut self.ahead))
+            Ok(self.handle(cursor).with_prefix(mem::take(&mut self.ahead)))
         }
     }
 
@@ -768,6 +771,35 @@ mod detail {
                         .await;
                         res.map_err(|e| io_error(strand, e))?;
                         Output::set(strand, out, &buf[..]);
+                        Ok(())
+                    })
+                    .function("byte_write", async move |strand, args, _out| {
+                        let ([value, bytes], []) = unpack!(strand, args, 2, 0)?;
+                        let bytes = bin_arg(strand, &bytes)?;
+                        let handle = byte_handle(strand, &value, IoCaps::WRITE).await?;
+                        let mut io = handle.into_write().unwrap();
+                        let res = async {
+                            io.write_all(&bytes).await?;
+                            io.close().await
+                        }
+                        .await;
+                        res.map_err(|e| io_error(strand, e))
+                    })
+                    // Reads while writing `bytes`, returning what the read got.
+                    .function("byte_duplex", async move |strand, args, out| {
+                        let ([value, bytes], []) = unpack!(strand, args, 2, 0)?;
+                        let bytes = bin_arg(strand, &bytes)?;
+                        let need = IoCaps::READ | IoCaps::WRITE;
+                        let handle = byte_handle(strand, &value, need).await?;
+                        let (mut reader, mut writer) = handle.into_read_write().unwrap().split();
+                        let mut buf = vec![0; bytes.len()];
+                        let (read, written) = futures::join!(reader.read(&mut buf), async {
+                            writer.write_all(&bytes).await?;
+                            writer.flush().await
+                        });
+                        let res = written.and(read);
+                        let n = res.map_err(|e| io_error(strand, e))?;
+                        Output::set(strand, out, &buf[..n]);
                         Ok(())
                     })
                     .function("coerce_flags", async move |strand, args, out| {

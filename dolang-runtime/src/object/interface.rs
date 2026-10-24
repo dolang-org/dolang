@@ -25,9 +25,10 @@ use crate::{
 /// Names the interface type provided under a unique tag.
 ///
 /// The tag is a key, usually a unit struct; its [`TypeId`] identifies the request. The
-/// interface is usually a trait object, such as `dyn Trait + 'v`.
+/// interface is usually a trait object, such as `dyn Trait<'v> + 'a`, where `'a` is the
+/// lend: a provider can lend a value that borrows from its receiver or its stack.
 pub trait InterfaceTag: 'static {
-    type Interface<'v>: ?Sized + 'v;
+    type Interface<'v, 'a>: ?Sized;
 }
 
 /// An outstanding interface request, passed to providers.
@@ -57,12 +58,15 @@ impl<'v, 's, 'r> Request<'v, 's, 'r> {
     /// nothing otherwise.
     ///
     /// Returns the consumer's error, which the provider should propagate.
-    pub fn provide<K: InterfaceTag>(&mut self, iface: &mut K::Interface<'v>) -> Result<'v, 's, ()> {
+    pub fn provide<K: InterfaceTag>(
+        &mut self,
+        iface: &mut K::Interface<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         if !self.wants::<K>() {
             return Ok(());
         }
         let mut iface = iface;
-        // SAFETY: `wants` checked the tag, so the answer expects `&mut K::Interface<'v>`.
+        // SAFETY: `wants` checked the tag, so the answer expects `&mut K::Interface<'v, '_>`.
         unsafe {
             self.answer
                 .answer(&mut *self.strand, NonNull::from(&mut iface).cast())
@@ -106,7 +110,7 @@ pub(crate) trait Answer<'v, 's> {
     ///
     /// # Safety
     ///
-    /// `iface` must point to a `&mut K::Interface<'v>`, where `K` has the [`TypeId`]
+    /// `iface` must point to a `&mut K::Interface<'v, '_>`, where `K` has the [`TypeId`]
     /// returned by [`Answer::tag`].
     unsafe fn answer(
         &mut self,
@@ -124,7 +128,7 @@ struct Query<K, F, R> {
 impl<'v, 's, K, F, R> Answer<'v, 's> for Query<K, F, R>
 where
     K: InterfaceTag,
-    F: FnOnce(&mut Strand<'v, 's>, &mut K::Interface<'v>) -> Result<'v, 's, R>,
+    F: for<'a> FnOnce(&mut Strand<'v, 's>, &mut K::Interface<'v, 'a>) -> Result<'v, 's, R>,
 {
     fn tag(&self) -> TypeId {
         TypeId::of::<K>()
@@ -140,17 +144,28 @@ where
         iface: NonNull<()>,
     ) -> Result<'v, 's, ()> {
         // SAFETY: guaranteed by the caller.
-        let iface = unsafe { &mut **iface.cast::<&mut K::Interface<'v>>().as_ptr() };
+        let iface = unsafe { lent::<K>(iface) };
         let consumer = self.consumer.take().expect("request already answered");
         self.result = Some(consumer(strand, iface)?);
         Ok(())
     }
 }
 
+/// Reads the interface `iface` points to, for a lend no longer than the call.
+///
+/// # Safety
+///
+/// `iface` must point to a live `&mut K::Interface<'v, 'b>` for some `'b` outliving `'a`.
+unsafe fn lent<'a, 'v, K: InterfaceTag>(iface: NonNull<()>) -> &'a mut K::Interface<'v, 'a> {
+    // SAFETY: guaranteed by the caller. Shortening the lend to `'a` only narrows what the
+    // consumer may assume.
+    unsafe { &mut **iface.cast::<&mut K::Interface<'v, 'a>>().as_ptr() }
+}
+
 pub(crate) fn query<'v, 's, K: InterfaceTag, R>(
     value: &Value<'v>,
     strand: &mut Strand<'v, 's>,
-    consumer: impl FnOnce(&mut Strand<'v, 's>, &mut K::Interface<'v>) -> Result<'v, 's, R>,
+    consumer: impl for<'a> FnOnce(&mut Strand<'v, 's>, &mut K::Interface<'v, 'a>) -> Result<'v, 's, R>,
 ) -> Result<'v, 's, R> {
     let mut query = Query::<K, _, _> {
         consumer: Some(consumer),
