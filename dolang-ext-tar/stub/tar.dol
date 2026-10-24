@@ -328,8 +328,8 @@ pub class Writer
 # Opens an archive and calls `func` with a [`Reader`](tar.Reader).
 #
 # A path is opened for reading. Any other source must be a readable
-# [`Io`](io.Io), such as an open [`fs.File`](fs.File), and is taken over: it
-# reads as closed afterward.
+# [`Io`](io.Io), such as an open [`fs.File`](fs.File), which is read without
+# being closed.
 #
 # Compression is detected from gzip or zstd magic bytes, so the source need
 # not seek.
@@ -359,9 +359,9 @@ do -> R
 # Creates an archive and calls `func` with a [`Writer`](tar.Writer).
 #
 # A path is created or truncated. Any other sink must be a writable
-# [`Io`](io.Io), such as an open [`fs.File`](fs.File), and is taken over: it
-# reads as closed afterward. The archive is finished and the sink closed when
-# `func` returns.
+# [`Io`](io.Io), such as an open [`fs.File`](fs.File), which is written without
+# being closed. The archive is finished when `func` returns, and a sink opened
+# from a path is closed.
 #
 # ## Errors
 #

@@ -36,19 +36,25 @@ def header_then_decompress()
     assert_eq $buf.read_line() "header line\n"
     compress.decompress $buf do |stream|
       assert_eq $stream.read() b"compressed body"
-    assert_throws $StateError do buf.read()
+    # The buffer was lent, so it is still open.
+    buf.seek start: 0
+    assert_eq $buf.read_line() "header line\n"
 
 #[test]
 #[vfs]
-def take_flushes_writes()
+def lending_keeps_write_order()
   let buf = Buffered $fs.open("data", "w", buffer: false)
   buf.write "plain "
   compress.compress $buf :GZIP: do |stream| stream.write compressed
-  assert_throws $StateError do buf.write more
+  buf.write " more"
+  buf.close()
+  let data = fs.Path("data").read()
+  assert (data.starts_with b"plain ")
+  assert (data.ends_with b" more")
   let buf = Buffered $fs.open("data", buffer: false)
   assert_eq $buf.read(6) b"plain "
   compress.decompress $buf do |stream|
-    assert_eq $stream.read() b"compressed"
+    assert_eq $stream.read(10) b"compressed"
 
 #[test]
 #[vfs]
@@ -165,6 +171,15 @@ def put_and_flush()
   assert_throws $StateError do buf.write more
 
 #[test]
+def closing_a_buffer_leaves_its_source_open()
+  let source = MemIo()
+  let buf = Buffered $source
+  buf.write data
+  buf.close()
+  assert_eq $source.data b"data"
+  assert_eq $source.closed false
+
+#[test]
 #[vfs]
 def wrong_direction()
   fs.Path("ro.txt").write "data"
@@ -178,16 +193,6 @@ def wrong_direction()
   assert_throws $StateError do buf.tell()
   buf.close()
   assert_throws $TypeError do Buffered 1
-
-#[test]
-#[vfs]
-def dup_keeps_original()
-  fs.Path("dup.txt").write "first\nsecond\n"
-  fs.open dup.txt buffer: false do |file|
-    let buf = Buffered $file.dup()
-    assert_eq $buf.read_line() "first\n"
-    buf.close()
-    assert_eq $file.read() b"first\nsecond\n"
 
 #[test]
 #[vfs]
@@ -257,7 +262,7 @@ def zip_over_do_streams()
   let archive = MemIo()
   zip.open $archive "w" do |out|
     out.open "hello.txt" do |file| file.write "Hello, World!"
-  assert $archive.closed
+  assert_eq $archive.closed false
   assert_eq (archive.data[..2]) b"PK"
   zip.open (MemIo archive.data) do |source|
     source.open "hello.txt" do |file|
@@ -267,7 +272,7 @@ def zip_over_do_streams()
 def compress_over_unseekable_do_streams()
   let sink = MemIo read: false seek: false
   compress.compress $sink :GZIP: do |stream| stream.write "squeezed"
-  assert $sink.closed
+  assert_eq $sink.closed false
   let source = MemIo $sink.data write: false seek: false
   compress.decompress $source do |stream|
     assert_eq $stream.format :GZIP:
@@ -290,32 +295,34 @@ def do_stream_exception_fails_consumer()
   let buf = Buffered (FailingRead())
   assert_throws $RuntimeError str: "state error: read failed" do buf.read_line()
 
-# A stream whose reads wait until told to go on, and which reports its close.
+# A stream whose reads wait until told to go on, and which reports when a read
+# ends.
 class Waiting: MemIo
-  field started go closes
+  field started go ends
 
-  def (init) self started go closes
+  def (init) self started go ends
     MemIo.(init) $self write: false seek: false
     self.#started = started
     self.#go = go
-    self.#closes = closes
+    self.#ends = ends
 
   pub def read self _size @ Int -> Bin
     self.#started.put true
-    self.#go.next()
-
-  pub def close self
-    self.#closes.put true
+    try
+      self.#go.next()
+    finally
+      self.#ends.put true
 
 #[test]
 def cancelling_consumer_cancels_do_stream()
   let started_send started = channel()
   let _go_send go = channel()
-  let closes_send closes = channel()
-  let stream = Waiting $started_send $go $closes_send
+  let ends_send ends = channel()
+  let stream = Waiting $started_send $go $ends_send
   let consumer = spawn do
     compress.decompress $stream do |inner| inner.read()
   started.next()
   consumer.cancel()
-  # The stream is closed once its server stops
-  assert_eq (closes.next()) true
+  # The server's read is interrupted, and the stream stays open.
+  assert_eq (ends.next()) true
+  assert_eq $stream.closed false

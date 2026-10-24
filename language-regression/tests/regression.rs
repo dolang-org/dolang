@@ -370,10 +370,7 @@ mod detail {
             Ok(self.caps)
         }
 
-        fn take<'s>(
-            &mut self,
-            _strand: &mut Strand<'v, 's>,
-        ) -> runtime::Result<'v, 's, ByteHandle> {
+        fn get<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> runtime::Result<'v, 's, ByteHandle> {
             let cursor = self.cursor.take().expect("handle already taken");
             Ok(self.handle(cursor).with_prefix(mem::take(&mut self.ahead)))
         }
@@ -475,13 +472,13 @@ mod detail {
         }
     }
 
-    /// Takes `value`'s byte handle, raising if it lacks `need`.
+    /// Gets `value`'s byte handle, raising if it lacks `need`.
     async fn byte_handle<'v, 's>(
         strand: &mut Strand<'v, 's>,
         value: &runtime::Value<'v>,
         need: IoCaps,
     ) -> runtime::Result<'v, 's, ByteHandle> {
-        io::take(strand, value, |strand, caps| {
+        io::get(strand, value, |strand, caps| {
             if !caps.contains(need) {
                 return Err(Error::value(strand, "missing capability"));
             }

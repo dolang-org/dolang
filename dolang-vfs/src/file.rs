@@ -2,16 +2,15 @@
 
 use std::{
     future::Future,
-    io,
     mem::MaybeUninit,
     pin::Pin,
+    sync::atomic::Ordering,
     task::{Context, Poll},
 };
 
 use bytes::{Bytes, BytesMut};
 use dolang_winterop::security::SecDesc;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
 
 use crate::{
     client, direct,
@@ -23,8 +22,10 @@ use crate::{
 };
 
 mod copy;
+mod cursor;
 
 pub(crate) use copy::{COPY_LIMIT, FileId};
+pub(crate) use cursor::WriteOp;
 
 /// Selects an extended-attribute namespace when listing attributes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -303,31 +304,45 @@ pub struct CopyDataResult {
     pub destination_end: Option<u64>,
 }
 
-/// An asynchronous file handle backed by either a remote [`Client`] or local [`Direct`].
-///
-/// File handles implement Tokio's asynchronous read, write, and seek traits.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum FileInner {
     Client(client::File),
     Direct(direct::File),
 }
 
+/// An asynchronous file handle backed by either a remote [`Client`] or local [`Direct`].
+///
+/// File handles implement Tokio's asynchronous read, write, and seek traits.
+///
+/// Clones share one open file, as duplicated descriptors do: one cursor
+/// position, one set of locks, and one closed state. Closing or handing off
+/// the file through any clone closes it for all of them, and their later
+/// operations fail with [`ErrorKind::Closed`]. Operations in flight are not
+/// shared: a clone starts with none, and its reads and writes do not wait for
+/// another clone's.
 #[derive(Debug)]
 pub struct File {
     pub(crate) inner: FileInner,
+    cursor: Option<Box<cursor::Cursor>>,
+}
+
+impl Clone for File {
+    fn clone(&self) -> Self {
+        Self::with_cursor(self.inner.clone(), None)
+    }
 }
 
 impl File {
     pub(crate) fn client(file: client::File) -> Self {
-        Self {
-            inner: FileInner::Client(file),
-        }
+        Self::with_cursor(FileInner::Client(file), None)
     }
 
     pub(crate) fn direct(file: direct::File) -> Self {
-        Self {
-            inner: FileInner::Direct(file),
-        }
+        Self::with_cursor(FileInner::Direct(file), None)
+    }
+
+    fn with_cursor(inner: FileInner, cursor: Option<Box<cursor::Cursor>>) -> Self {
+        Self { inner, cursor }
     }
 }
 
@@ -359,15 +374,6 @@ impl<T, L: Future<Output = T>, R: Future<Output = T>> Future for EitherFuture<L,
     }
 }
 
-macro_rules! dispatch_file_mut {
-    ($self:expr, $method:ident($($arg:expr),* $(,)?)) => {{
-        match &mut $self.inner {
-            FileInner::Client(file) => Pin::new(file).$method($($arg),*),
-            FileInner::Direct(file) => Pin::new(file).$method($($arg),*),
-        }
-    }};
-}
-
 macro_rules! match_file {
     (move $self:expr, $file:ident => $body:expr) => {{
         match $self.inner {
@@ -381,44 +387,6 @@ macro_rules! match_file {
             FileInner::Direct($file) => $body,
         }
     }};
-}
-
-impl AsyncRead for File {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        dispatch_file_mut!(self.as_mut().get_mut(), poll_read(cx, buf))
-    }
-}
-
-impl AsyncWrite for File {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        dispatch_file_mut!(self.as_mut().get_mut(), poll_write(cx, buf))
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        dispatch_file_mut!(self.as_mut().get_mut(), poll_flush(cx))
-    }
-
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        dispatch_file_mut!(self.as_mut().get_mut(), poll_shutdown(cx))
-    }
-}
-
-impl AsyncSeek for File {
-    fn start_seek(mut self: Pin<&mut Self>, position: io::SeekFrom) -> io::Result<()> {
-        dispatch_file_mut!(self.as_mut().get_mut(), start_seek(position))
-    }
-
-    fn poll_complete(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<u64>> {
-        dispatch_file_mut!(self.as_mut().get_mut(), poll_complete(cx))
-    }
 }
 
 /// Puts a handle recovered from a failed handoff back in the wrapper it was
@@ -438,9 +406,10 @@ impl File {
     /// is the one holding it, which is not the case for anything relaying on
     /// someone else's behalf.
     ///
-    /// The handle is consumed because two live handles onto one description
-    /// would each believe a cursor the other moves. Callers that want to keep
-    /// reading or writing should open the file again instead.
+    /// The file is taken from every clone, which then reads as closed, because
+    /// a live handle onto the description would believe a cursor the child
+    /// moves. Callers that want to keep reading or writing should open the
+    /// file again instead.
     ///
     /// # Errors
     ///
@@ -452,15 +421,21 @@ impl File {
         self,
         offset: u64,
     ) -> std::result::Result<StdioSend, HandoffError<Self>> {
-        match self.inner {
-            FileInner::Client(file) => file
-                .into_stdio_send(offset)
-                .await
-                .map_err(|error| rewrap(error, Self::client)),
-            FileInner::Direct(file) => file
-                .into_stdio_send(offset)
-                .await
-                .map_err(|error| rewrap(error, Self::direct)),
+        if let Err(error) = self.check_idle() {
+            return Err(HandoffError::new(self, error));
+        }
+        let File { inner, cursor } = self;
+        match inner {
+            FileInner::Client(file) => file.into_stdio_send(offset).await.map_err(|error| {
+                rewrap(error, |file| {
+                    Self::with_cursor(FileInner::Client(file), cursor)
+                })
+            }),
+            FileInner::Direct(file) => file.into_stdio_send(offset).await.map_err(|error| {
+                rewrap(error, |file| {
+                    Self::with_cursor(FileInner::Direct(file), cursor)
+                })
+            }),
         }
     }
 
@@ -470,20 +445,27 @@ impl File {
         self,
         offset: u64,
     ) -> std::result::Result<StdioRecv, HandoffError<Self>> {
-        match self.inner {
-            FileInner::Client(file) => file
-                .into_stdio_recv(offset)
-                .await
-                .map_err(|error| rewrap(error, Self::client)),
-            FileInner::Direct(file) => file
-                .into_stdio_recv(offset)
-                .await
-                .map_err(|error| rewrap(error, Self::direct)),
+        if let Err(error) = self.check_idle() {
+            return Err(HandoffError::new(self, error));
+        }
+        let File { inner, cursor } = self;
+        match inner {
+            FileInner::Client(file) => file.into_stdio_recv(offset).await.map_err(|error| {
+                rewrap(error, |file| {
+                    Self::with_cursor(FileInner::Client(file), cursor)
+                })
+            }),
+            FileInner::Direct(file) => file.into_stdio_recv(offset).await.map_err(|error| {
+                rewrap(error, |file| {
+                    Self::with_cursor(FileInner::Direct(file), cursor)
+                })
+            }),
         }
     }
 
-    /// Closes this handle.
-    pub async fn close(self) -> Result<()> {
+    /// Closes the file, for every clone. Closing a closed file does nothing.
+    pub async fn close(mut self) -> Result<()> {
+        self.cancel_cursor().await;
         match_file!(move self, file => file.close().await)
     }
 
@@ -762,25 +744,26 @@ impl File {
         match_file!(self, file => file.lock(request).await)
     }
 
-    /// Returns a second handle on the same open file.
+    /// Converts this handle into a local standard-library file when possible,
+    /// taking it from every clone.
     ///
-    /// The duplicate starts at this handle's position and moves independently;
-    /// unlike POSIX `dup`, positions are not shared. The open file and its
-    /// locks are: a lock through one handle refuses an overlapping lock through
-    /// the other, and each handle releases only the locks taken through it.
-    /// Handing a file to a child process fails while it has live duplicates.
-    pub async fn dup(&self) -> Result<File> {
-        match &self.inner {
-            FileInner::Client(file) => file.dup().await.map(Self::client),
-            FileInner::Direct(file) => file.dup().await.map(Self::direct),
-        }
-    }
-
-    /// Converts this handle into a local standard-library file when possible.
+    /// Surrendering the descriptor means surrendering the cursor with it, so
+    /// the file comes back positioned where this handle is.
     pub async fn try_into_std(self) -> std::result::Result<std::fs::File, Self> {
-        match self.inner {
-            FileInner::Client(file) => file.try_into_std().await.map_err(Self::client),
-            FileInner::Direct(file) => file.try_into_std().await.map_err(Self::direct),
+        if self.check_idle().is_err() {
+            return Err(self);
+        }
+        let pos = self.inner.position().load(Ordering::Relaxed);
+        let File { inner, cursor } = self;
+        match inner {
+            FileInner::Client(file) => file
+                .try_into_std()
+                .await
+                .map_err(|file| Self::with_cursor(FileInner::Client(file), cursor)),
+            FileInner::Direct(file) => file
+                .try_into_std(pos)
+                .await
+                .map_err(|file| Self::with_cursor(FileInner::Direct(file), cursor)),
         }
     }
 }

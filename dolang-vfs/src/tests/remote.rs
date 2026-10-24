@@ -1120,10 +1120,10 @@ async fn remote_file_locks_round_trip() {
 
 #[cfg(not(target_os = "freebsd"))]
 #[tokio::test]
-async fn remote_duplicates_share_locks_and_release_their_own() {
+async fn remote_clones_share_the_position_locks_and_close() {
     let (client, server_task) = connected_pair().await;
     let temp = tempdir().unwrap();
-    let path = crate::path::PathBuf::from_native(temp.path().join("dup")).unwrap();
+    let path = crate::path::PathBuf::from_native(temp.path().join("clone")).unwrap();
     std::fs::write(path.to_path().as_str(), b"abcdef").unwrap();
     let mut options = client.open_options();
     options.read(true).write(true);
@@ -1132,38 +1132,41 @@ async fn remote_duplicates_share_locks_and_release_their_own() {
 
     let mut buf = [0u8; 2];
     file.read_exact(&mut buf).await.unwrap();
-    let mut dup = file.dup().await.unwrap();
-    let mut rest = Vec::new();
-    dup.read_to_end(&mut rest).await.unwrap();
-    assert_eq!(rest, b"cdef");
-    file.read_exact(&mut buf).await.unwrap();
+    let mut clone = file.clone();
+    clone.read_exact(&mut buf).await.unwrap();
     assert_eq!(&buf, b"cd");
+    file.read_exact(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"ef");
+    clone.seek(std::io::SeekFrom::Start(1)).await.unwrap();
+    file.read_exact(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"bc");
 
     let range = |start, end| FileLockRange::new(start, Some(end)).unwrap();
     let mode = FileLockMode::Exclusive;
     let behavior = FileLockBehavior::Try;
     let _held = file.lock(range(0, 10), mode, behavior).await.unwrap();
-    let error = dup.lock(range(5, 15), mode, behavior).await.unwrap_err();
+    let error = clone.lock(range(5, 15), mode, behavior).await.unwrap_err();
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
-    let _dup_held = dup.lock(range(10, 20), mode, behavior).await.unwrap();
 
-    dup.close().await.unwrap();
-    assert!(
-        other
-            .lock(range(10, 20), mode, behavior)
-            .await
-            .unwrap()
-            .is_some()
-    );
+    clone.close().await.unwrap();
     assert!(
         other
             .lock(range(0, 10), mode, behavior)
             .await
             .unwrap()
-            .is_none()
+            .is_some()
     );
-
+    assert_eq!(
+        file.metadata().await.unwrap_err().kind(),
+        crate::error::ErrorKind::Closed
+    );
+    let error = file.read(&mut buf).await.unwrap_err();
+    assert_eq!(
+        crate::error::Error::from(error).kind(),
+        crate::error::ErrorKind::Closed
+    );
     file.close().await.unwrap();
+
     other.close().await.unwrap();
     stop_pair(client, server_task).await;
 }

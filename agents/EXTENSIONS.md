@@ -325,7 +325,7 @@ let res = value.query::<ByteIo, _>(strand, |strand, io| {
     if !io.caps(strand)?.contains(IoCaps::READ | IoCaps::SEEK) {
         return Err(Error::value(strand, "expected a seekable reader"));
     }
-    io.take(strand)
+    io.get(strand)
 });
 match res {
     Ok(handle) => { /* fast path: handle.into_read_seek() */ }
@@ -336,17 +336,18 @@ match res {
 
 ### Byte I/O Handles
 
-`IntoByteIo::take` transfers the provider's handle as an owned `ByteHandle`
-over futures-io traits, and closes the provider: after it, a query raises the
-provider's usual closed error, and further calls on the same lent interface
-panic. A consumer takes through `io::take` rather than a raw query. It passes
-the provider's `caps` to a check that can refuse it, so a rejected provider
-stays usable, then polls `IntoByteIo::poll_flush` until the provider has
-written out what it holds back (an `io.Buffered`'s pending writes) and takes.
-It fails with `ErrorKind::Unsupported` when nothing provides `ByteIo`:
+`IntoByteIo::get` lends the provider's stream as an owned `ByteHandle` over
+futures-io traits. The handle shares the stream rather than taking it: the
+provider stays usable, and closing the provider ends the handle too. The
+handle's own `close` only flushes, so a consumer closes and drops what it gets
+whether it opened the stream from a path or was lent it. A consumer gets
+through `io::get` rather than a raw query. It passes the provider's `caps` to a
+check that can refuse it, then polls `IntoByteIo::poll_flush` until the
+provider has settled and gets. It fails with `ErrorKind::Unsupported` when
+nothing provides `ByteIo`:
 
 ```rust
-let handle = io::take(strand, &value, |strand, caps| {
+let handle = io::get(strand, &value, |strand, caps| {
     if !caps.contains(IoCaps::READ | IoCaps::SEEK) {
         return Err(Error::value(strand, "expected a seekable reader"));
     }
@@ -359,23 +360,32 @@ let handle = io::take(strand, &value, |strand, caps| {
 consumer needs, handing it back on a mismatch. `io::error` maps an `io::Error`
 to the closest runtime error for code without a richer mapping.
 
-A provider builds the handle with the constructor matching its capabilities
-(`ByteHandle::read_seek` and so on). Buffered read-ahead goes in
-`with_prefix`, which the handle serves first; a seekable handle realigns past
-it before its first seek or write. There is no way to hand over a handle and
-keep the provider: a script that wants to keep a file passes a duplicate
-(`file.dup()`) instead.
+A provider builds the handle with `ByteHandle::with_caps`, or the constructor
+matching its capabilities (`ByteHandle::read_seek` and so on). How it shares
+the stream depends on what it holds:
+
+- A provider whose stream clones cheaply, such as `fs.File` over a
+  `vfs::File`, hands out a clone. Its own buffer isn't shared, so
+  `poll_flush` writes out pending writes and moves a seekable stream back over
+  read-ahead. Read-ahead a stream can't take back goes in `with_prefix`, which
+  the handle serves first; a seekable handle realigns past it before its first
+  seek or write.
+- A provider with its own stack, such as a `compress` stream or an
+  `io.Buffered`, keeps it in `io::Shared` and hands out a clone. Each operation
+  on a clone holds the stream until it completes, so consumers and the
+  provider see one position and one buffer. `Shared::close` ends the stream
+  for every clone and returns it, for the provider to finish or drop.
 
 The lent interface is `dyn IntoByteIo<'v> + 'a`, where `'a` is the lend, so an
 adapter can borrow the provider's state or receiver for the query. Each method
 takes the querying strand, and `caps` and
-`take` can raise. A provider that lends from its borrowed state still holds the
+`get` can raise. A provider that lends from its borrowed state still holds the
 borrow, so it must not run code that could borrow the same object; native
 providers ignore the strand.
 
 A provider type also inherits `io.Io` at runtime: call
 `.supertype(TypeObject::Io)` in `build`, and define getters for the capabilities
-`caps` reports, as `false` once the provider is closed or taken. A capability it
+`caps` reports, as `false` once the provider is closed. A capability it
 does not define reads as `false` through `Io`. The type defines its own `read`,
 `write`, `seek` and `close`, and one it lacks raises a `FieldError` through
 `Io`. The helpers (`read_all`, `write_all`, `copy_to`, `chunks`, and
@@ -387,13 +397,14 @@ and a consumer that only accepts one imports it type-only (`- @Io`) for its
 signature. `fs.File` (`dolang-ext-shell/src/fs/file.rs`) is a provider, and
 `zip.open` (`dolang-ext-zip/src/zip.rs`) is a consumer that also accepts a path
 by opening it and building the handle itself. The `compress` streams
-(`dolang-ext-compress/src/compress.rs`) are both: each takes a handle and
+(`dolang-ext-compress/src/compress.rs`) are both: each gets a handle and
 provides its own, so they chain.
 
 A Do subclass of `io.Io` provides `ByteIo` too. Its handle sends requests to
-strands that call the stream's methods, so a consumer must poll the handle from
-the VM's event loop, as an `async` native function awaiting it does, never with
-`block_on` or from another thread. An exception from one of those methods
+strands that call the stream's `read`, `write` and `seek`, never its `close`, so
+a consumer must poll the handle from the VM's event loop, as an `async` native
+function awaiting it does, never with `block_on` or from another thread. An
+exception from one of those methods
 reaches the handle as an `io::Error` with the exception's message, which the
 consumer maps as it maps any other.
 

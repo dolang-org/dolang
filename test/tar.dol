@@ -179,13 +179,14 @@ def errors_still_close_entry_and_archive_scopes()
 
 #[test]
 #[vfs]
-def open_files_are_taken_over()
+def open_files_stay_open()
   fs.open archive.tar w do |file|
     write_archive $file :NONE:
-    assert_throws $StateError do file.write more
+    file.write more
+  assert (fs.Path("archive.tar").read().ends_with b"more")
   fs.open archive.tar do |file|
     check_archive $file :NONE:
-    assert_throws $StateError do file.read()
+    file.read()
   fs.open archive.tar buffer: false do |file|
     assert_type $fs.RawFile $file
     check_archive $file :NONE:
@@ -208,7 +209,7 @@ def io_sinks_default_to_no_compression()
 def unseekable_streams()
   let sink = MemIo read: false seek: false
   write_archive $sink :GZIP:
-  assert $sink.closed
+  assert_eq $sink.closed false
   let source = MemIo $sink.data write: false seek: false
   check_archive $source :GZIP:
 

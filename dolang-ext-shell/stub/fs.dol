@@ -139,9 +139,8 @@ pub class DirEntry
 # Every operation on a closed file raises [`StateError`](std.StateError).
 #
 # A file is an [`Io`](io.Io), so a function such as
-# [`zip.open`](zip.open) can take it over, starting at its current position.
-# The file reads as closed afterward; hand over a [`dup`](fs.File.dup) to keep
-# using it.
+# [`zip.open`](zip.open) can use it, starting at its current position, without
+# closing it.
 pub class BaseFile: Io
   # Closes the file, first writing out pending writes.
   #
@@ -153,8 +152,7 @@ pub class BaseFile: Io
   # closes it: the child receives the file itself, and the seek position is
   # kept by this process rather than by the operating system, so two live
   # handles would each believe a cursor the other moves. Use the file after the
-  # handoff and it raises the ordinary closed-file error. Handing the file to a
-  # function that takes an [`Io`](io.Io) closes it the same way.
+  # handoff and it raises the ordinary closed-file error.
   #
   # ## Example
   #
@@ -185,8 +183,7 @@ pub class BaseFile: Io
   # Use [`try_lock`](fs.BaseFile.try_lock) for bounded or cancellable waiting.
   #
   # Overlapping active lock ranges on the same file are unsupported, including
-  # identical shared ranges and ranges locked through a [`dup`](fs.File.dup)
-  # of it.
+  # identical shared ranges.
   #
   # Finite zero-length ranges are invalid on Unix. On Windows they conflict
   # only with positive-length ranges that start before and end after their
@@ -641,31 +638,6 @@ pub class BaseFile: Io
 # Passed to a child process as `stdin:`, `stdout:`, or `stderr:`, the child
 # reads or writes from the file's logical position.
 pub class File: Iter[Str] BaseFile
-  # Opens another handle to the same open file.
-  #
-  # The duplicate starts at this file's position, and after that each handle
-  # has its own position. Unlike a POSIX `dup`, reads and seeks through one do
-  # not move the other. The handles share the file's contents and its locks:
-  # lock ranges cannot overlap across duplicates, and closing a handle releases
-  # only the locks taken through it.
-  #
-  # ## Errors
-  #
-  # | Exception | Condition |
-  # | --- | --- |
-  # | [`StateError`](std.StateError) | The file is closed |
-  # | [`sys.ResourceBusyError`](sys.ResourceBusyError) | Later, passing either handle to a child process while the other is open |
-  #
-  # ## Example
-  #
-  # ```
-  # open notes.txt.gz r do |file|
-  #   let text = compress.decompress $file.dup() do |stream| stream.read()
-  #   let magic = file.read 2
-  # ```
-  pub def dup self -> File
-    ...
-
   # Reads text.
   #
   # A character that `size` would split is left for the next read, unless it
@@ -745,11 +717,6 @@ pub class File: Iter[Str] BaseFile
 # `.next()`, `.put()`, and `strand.redirect`. It yields chunks of bytes, which
 # concatenate back to exactly the file's contents.
 pub class RawFile: Iter[Bin] BaseFile
-  # Opens another handle to the same open file, as
-  # [`File.dup`](fs.File.dup) does.
-  pub def dup self -> RawFile
-    ...
-
   # Returns the file as its own iterator.
   pub def (iter) self -> RawFile
     ...

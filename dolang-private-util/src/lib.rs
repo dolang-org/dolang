@@ -8,6 +8,7 @@ pub mod mono;
 pub mod pairsort;
 pub mod pin;
 pub mod ring;
+pub mod shared;
 pub mod utf8;
 pub mod verified;
 
