@@ -128,7 +128,7 @@ def llvm_keep name
 
 # Reads the pinned Dolang release tag from the checked out workspace.
 pub def dolang_version()
-  fs.read(VERSION_FILE).trim()
+  str(fs.read(VERSION_FILE)).trim()
 
 # Where the bundle sits on the runner, between `build` and `actions/cache`.
 pub def path()

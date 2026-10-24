@@ -9,7 +9,7 @@ import
   fs:
     - copy_data
     - open
-    - read
+    - read_str
     - write
   std:
     - RuntimeError
@@ -45,7 +45,7 @@ def writes_after_a_read_land_at_the_logical_position()
     assert_eq (file.read_line()) "alpha\n"
     file.write "BETA"
     assert_eq (file.read_line()) "\n"
-  assert_eq (read "buffered.txt") "alpha\nBETA\n"
+  assert_eq (read_str "buffered.txt") "alpha\nBETA\n"
 
 #[test]
 #[vfs]
@@ -65,7 +65,7 @@ def large_writes_keep_their_order()
     file.write "a"
     file.write $big
     file.write "b"
-  assert_eq (read "buffered.txt") "a$(big)b"
+  assert_eq (read_str "buffered.txt") "a$(big)b"
 
 #[test]
 #[vfs]
@@ -78,7 +78,7 @@ def copies_start_at_the_logical_position()
       assert_eq (copy_data src dst) 5
       assert_eq (src.tell()) 11
       assert_eq (dst.tell()) 10
-  assert_eq (read "dst.txt") "head:beta\n"
+  assert_eq (read_str "dst.txt") "head:beta\n"
 
 #[test]
 #[vfs]
@@ -86,7 +86,7 @@ def set_size_applies_to_pending_writes_and_read_ahead()
   open buffered.txt w do |file|
     file.write "abcdef"
     file.set_size 3
-  assert_eq (read "buffered.txt") "abc"
+  assert_eq (read_str "buffered.txt") "abc"
   write buffered.txt "alpha\nbeta\n"
   open buffered.txt r+ do |file|
     assert_eq (file.read 2) b"al"

@@ -10,6 +10,7 @@ import
   fs:
     - open
     - read
+    - read_str
     - sync
     - write
     - Path
@@ -26,7 +27,7 @@ def file_sync_flushes_an_open_handle()
     file.write "alpha\n"
     file.sync()
     file.sync data: true
-  assert_eq (read path) "alpha\n"
+  assert_eq (read_str path) "alpha\n"
 
 #[test]
 #[vfs]
@@ -39,7 +40,7 @@ def path_sync_and_fs_sync_flush_by_name()
   sync $path
   sync $path data: true
 
-  assert_eq (read path "b") b"abc"
+  assert_eq (read path) b"abc"
 
 #[test]
 #[vfs]

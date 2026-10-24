@@ -110,7 +110,7 @@ def checking_does_not_execute_and_bytecode_is_a_noop()
     run $exe --compile $bytecode $script
     assert_eq (check dir "main.dolc") ""
     let disguised = (dir / "main.bytes")
-    disguised.write $bytecode.read("b")
+    disguised.write $bytecode.read()
     assert_eq (check dir "main.bytes") ""
 
 #[test]

@@ -82,7 +82,7 @@ def runs_script_in_remote_vfs()
           --unset-env TEST_DOLANG_SSH_UNSET
           example $script $marker plain --target-option
 
-    assert_eq $marker.read() |
+    assert_eq $marker.read_str() |
       program=$script
       args=3
       plain=plain
@@ -90,7 +90,7 @@ def runs_script_in_remote_vfs()
       set=value
       inherit=local
       unset=nil
-    assert_eq $(remote_dir / "cwd-marker").read() remote
+    assert_eq $(remote_dir / "cwd-marker").read_str() remote
 
 #[test]
 def runs_bundled_entrypoint_in_remote_vfs()
@@ -124,7 +124,7 @@ def runs_bundled_entrypoint_in_remote_vfs()
       do
         run $exe -m ssh --command $(_vfs.bin()) example -m test $module
 
-    assert_eq $marker.read() ran
+    assert_eq $marker.read_str() ran
 
 #[test]
 def rejects_unknown_bundled_entrypoint()
@@ -138,7 +138,7 @@ def rejects_unknown_bundled_entrypoint()
       env PATH: $path do
         run $exe -m ssh --command $(_vfs.bin()) example -m no_such_entrypoint
           stderr: $err
-    assert (err.read().contains "unknown entrypoint: no_such_entrypoint")
+    assert (err.read_str().contains "unknown entrypoint: no_such_entrypoint")
 
 #[test]
 def remote_scripts_keep_cli_prelude_and_precompiled_support()
@@ -153,9 +153,9 @@ def remote_scripts_keep_cli_prelude_and_precompiled_support()
     env PATH: "$dir:$(shell.env["PATH"])" do
       run $exe --no-cache --import-item std.str=stringify -m ssh
         --command $(_vfs.bin()) --no-login-env example $script $marker
-      assert_eq $marker.read() "42"
+      assert_eq $marker.read_str() "42"
       run $exe --import-item std.str=stringify --compile $compiled $script
       marker.remove()
       run $exe -m ssh
         --command $(_vfs.bin()) --no-login-env example $compiled $marker
-      assert_eq $marker.read() "42"
+      assert_eq $marker.read_str() "42"

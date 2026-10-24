@@ -90,4 +90,4 @@ def remote_repl_keeps_history_on_the_host()
         stderr: :STDOUT:
         mode: :CHUNK:
     assert_eq (Str(output.freeze())) "remote-repl\n"
-    assert ((state / "dolang/history").read().contains("echo remote-repl"))
+    assert ((state / "dolang/history").read_str().contains("echo remote-repl"))

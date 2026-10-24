@@ -4,7 +4,7 @@ import _shell fs load shell
 def is_precompiled path
   if (path.ext == "dolc")
     return true
-  path.open rb do |file|
+  path.open do |file|
     (file.read(8) == b"\xffdobytec")
 
 # Recognizes bytecode without reading the entire file.
@@ -23,11 +23,11 @@ def cache_path path mode prelude strict
 def read path mode prelude strict cache refresh
   shell.with_host do
     if is_precompiled(path)
-      return (path.read("b"), false)
+      return (path.read(), false)
     let cached = (cache && cache_path(path, mode, prelude, strict) || nil)
     if (!refresh && cached != nil && cached.exists() && path.metadata().modified <= cached.metadata().modified)
-      return (cached.read("b"), true)
-    let bytecode = _shell.compile $path $path.read() mode: $mode prelude: $prelude strict: $strict
+      return (cached.read(), true)
+    let bytecode = _shell.compile $path $path.read_str() mode: $mode prelude: $prelude strict: $strict
     if (cached != nil)
       cached.parent.create_dir all: true
       cached.write $bytecode

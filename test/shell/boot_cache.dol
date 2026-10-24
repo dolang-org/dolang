@@ -40,10 +40,10 @@ def cache_reuse_invalidation_recovery_and_disable()
     import time
     script.update_metadata modified: (time.DateTime.from_unix(time.DateTime.now().unix_secs + 2))
     assert_eq (run_script script) "second\n"
-    let before = cached[0].read "b"
+    let before = cached[0].read()
     script.write "echo third\n"
     assert_eq (run_script(script, "--no-cache")) "third\n"
-    assert_eq $cached[0].read("b") $before
+    assert_eq $cached[0].read() $before
 
 #[test]
 def cache_settings_and_execution_errors()
@@ -60,7 +60,7 @@ def cache_settings_and_execution_errors()
     for _ = 0..2
       assert_throws $proc.Error do
         run $shell.exe $error_script stderr: (BinBuf())
-    assert_eq $marker.read() "xx"
+    assert_eq $marker.read_str() "xx"
 
 #[test]
 def strictness_and_compilation_mode_have_separate_cache_entries()

@@ -127,7 +127,7 @@ def with_uses_stdio_vfs()
     _ssh.with_program $shim example $block
       command: [_vfs.bin()]
 
-    assert_eq $marker.read() remote
+    assert_eq $marker.read_str() remote
 
     let err = assert_throws $RuntimeError do
       _ssh.with_program $shim example

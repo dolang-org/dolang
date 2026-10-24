@@ -40,7 +40,7 @@ def replaces_process_with_snapshotted_context()
     let err = assert_throws $proc.Error do
       run $shell.exe $parent $child $marker $dir
     assert_eq $err.rc 23
-    assert_eq $marker.read() "argument|scoped|$(dir.canonical())"
+    assert_eq $marker.read_str() "argument|scoped|$(dir.canonical())"
 
 #[test]
 def resolution_errors_are_catchable()

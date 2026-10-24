@@ -31,7 +31,7 @@ pub @class Io
 # ## Example
 #
 # ```
-# let file = Buffered $ fs.open data.txt rb
+# let file = Buffered $ fs.open data.txt buffer: false
 # let header = file.read_line()
 # for line = file.chomp()
 #   echo $line

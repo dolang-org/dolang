@@ -373,6 +373,7 @@ macro_rules! impl_concrete_path {
                 let ignore = builder.sym("ignore");
                 let max_depth = builder.sym("max_depth");
                 let resolve = builder.sym("resolve");
+                let buffer = builder.sym("buffer");
                 let replace = builder.sym("replace");
                 let mode = builder.sym("mode");
                 let data_kw = builder.sym("data");
@@ -448,9 +449,10 @@ macro_rules! impl_concrete_path {
                         Ok(())
                     })
                     .method("open", async move |this, strand, args, out| {
-                        let ([], [opt1, opt2]) = unpack!(strand, args, 0, 2)?;
+                        let ([], [opt1, opt2, buffer]) = unpack!(strand, args, 0, 2, buffer = None)?;
                         let annex = this.annex();
-                        file::open_file(strand, annex.global, annex.as_path(), opt1, opt2, out).await
+                        let path = annex.as_path();
+                        file::open_file(strand, annex.global, path, opt1, opt2, buffer, out).await
                     })
                     .method("metadata", async move |this, strand, args, out| {
                         let ([], [resolve]) = unpack!(strand, args, 0, 0, resolve = None)?;
@@ -636,9 +638,14 @@ macro_rules! impl_concrete_path {
                         super::exists(strand, annex.global, annex.as_path(), out).await
                     })
                     .method("read", async move |this, strand, args, out| {
-                        let ([], [mode]) = unpack!(strand, args, 0, 1)?;
+                        let ([], []) = unpack!(strand, args, 0, 0)?;
                         let annex = this.annex();
-                        super::read(strand, annex.global, annex.as_path(), mode, out).await
+                        super::read(strand, annex.global, annex.as_path(), false, out).await
+                    })
+                    .method("read_str", async move |this, strand, args, out| {
+                        let ([], []) = unpack!(strand, args, 0, 0)?;
+                        let annex = this.annex();
+                        super::read(strand, annex.global, annex.as_path(), true, out).await
                     })
                     .method("write", async move |this, strand, args, out| {
                         let ([data], []) = unpack!(strand, args, 1, 0)?;

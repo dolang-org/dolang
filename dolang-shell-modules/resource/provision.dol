@@ -169,7 +169,7 @@ def start_sshd()
         service.start()
 
 def main config_path @ Path
-  bind json.decode $config_path.read()
+  bind json.decode $config_path.read_str()
     Dict $
       "user": Str(user)
       "password": Str(password)

@@ -36,7 +36,7 @@ context:
 ```
 import sudo fs
 
-let shadow = sudo.with do fs.read /etc/shadow
+let shadow = sudo.with do fs.read_str /etc/shadow
 ```
 
 Both accept `user:` to run as an account other than root. They also accept

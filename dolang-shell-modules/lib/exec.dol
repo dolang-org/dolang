@@ -148,7 +148,7 @@ class Operation
     self.#synthetic = synthetic_module_name $self.#key
 
   def compile self -> compile.Unit
-    let source = self.#path.read()
+    let source = self.#path.read_str()
     let prelude = {...self.#prelude, $self.#synthetic: inject_keys self.#inject}
     let name = self.#name
     if (name == nil)
@@ -181,7 +181,7 @@ class Operation
   pub def run self <Iter[Value] >Sink[Value] -> Value
     if cache_usable $self.#cache $self.#path
       try
-        return self.#run_loaded $ self.#cache.read "b"
+        return self.#run_loaded $ self.#cache.read()
       catch std.BytecodeError: _
         nil
     self.#compile_cached()

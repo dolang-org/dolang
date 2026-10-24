@@ -477,34 +477,26 @@ async fn entries<'v, 's>(
     Ok(())
 }
 
+/// Reads the whole file at `path`, as `Bin`, or as `Str` when `text`.
 async fn read<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, FsGlobal<'v>>,
     path: vfs_path::Path<'_>,
-    mode: Option<Slot<'v, '_>>,
+    text: bool,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    let mode = match mode {
-        None => "r",
-        Some(mode) => match mode.as_str(strand) {
-            Some(s) if s.to_string() == "b" => "rb",
-            Some(_) => return Err(Error::type_error(strand, "fs.read: mode must be `b`")),
-            None => return Err(Error::type_error(strand, "fs.read: mode must be a string")),
-        },
-    };
-    let is_binary = mode == "rb";
-    let mut file = file::open(strand, global, path, mode).await?;
+    let mut file = file::open(strand, global, path, "r").await?;
     let mut embryo = BinEmbryo::new_with_capacity(strand, 8192);
     let read_result = read_all(strand, &mut file, &mut embryo).await;
     let close_result = file.close().await;
     read_result?;
     close_result.into_sys(strand)?;
-    if is_binary {
-        embryo.finish(strand, out);
-    } else {
+    if text {
         embryo
             .finish_str(strand, out)
             .map_err(|_| Error::runtime(strand, "invalid UTF-8 data"))?;
+    } else {
+        embryo.finish(strand, out);
     }
     Ok(())
 }
@@ -1109,12 +1101,13 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
     let size_kw = builder.sym("size");
     let offset_kw = builder.sym("offset");
     let clone_kw = builder.sym("clone");
+    let buffer_kw = builder.sym("buffer");
     let module = builder
         .module("fs")
         .function("open", async move |strand, args, out| {
-            let ([path], [opt1, opt2]) = unpack!(strand, args, 1, 2)?;
+            let ([path], [opt1, opt2, buffer]) = unpack!(strand, args, 1, 2, buffer_kw = None)?;
             let path = path_from_value(strand, &path)?;
-            file::open_file(strand, global, path.to_path(), opt1, opt2, out).await
+            file::open_file(strand, global, path.to_path(), opt1, opt2, buffer, out).await
         })
         .function("remove", async move |strand, args, _out| {
             let ([], [all, ignore], paths) =
@@ -1249,9 +1242,14 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             exists(strand, global, path.to_path(), out).await
         })
         .function("read", async move |strand, args, out| {
-            let ([path], [mode]) = unpack!(strand, args, 1, 1)?;
+            let ([path], []) = unpack!(strand, args, 1, 0)?;
             let path = path_from_value(strand, &path)?;
-            read(strand, global, path.to_path(), mode, out).await
+            read(strand, global, path.to_path(), false, out).await
+        })
+        .function("read_str", async move |strand, args, out| {
+            let ([path], []) = unpack!(strand, args, 1, 0)?;
+            let path = path_from_value(strand, &path)?;
+            read(strand, global, path.to_path(), true, out).await
         })
         .function("write", async move |strand, args, out| {
             let ([path, data], []) = unpack!(strand, args, 2, 0)?;

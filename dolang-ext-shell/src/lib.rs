@@ -268,9 +268,8 @@ pub async fn open<'v, 's>(
     path: &path::Path,
     mode: &str,
 ) -> io::Result<dolang_vfs::file::File> {
-    match mode {
-        "r" | "w" | "a" | "r+" | "w+" | "a+" => {}
-        _ => return Err(io::Error::other(format!("invalid mode: {}", mode))),
+    if !fs::file::MODES.contains(&mode) {
+        return Err(io::Error::other(format!("invalid mode: {}", mode)));
     }
     let global = strand.force_state::<FsTag>();
     fs::file::open_native(

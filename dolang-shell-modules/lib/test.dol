@@ -215,7 +215,7 @@ class Harness
   def run_file self path
     let output = StrBuf()
     try
-      let source = path.read()
+      let source = path.read_str()
       let compiled = compile.compile $path $source
       let diagnostics = [...compiled.diagnostics()]
       let warnings = diagnostics.any do |d| (d.severity == :WARNING:)

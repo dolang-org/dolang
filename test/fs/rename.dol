@@ -107,8 +107,8 @@ def rename_without_replacing_existing_file()
   else
     assert_throws $RuntimeError do rename $src $dst replace: false
 
-  assert_eq (src.read()) source
-  assert_eq (dst.read()) destination
+  assert_eq (src.read_str()) source
+  assert_eq (dst.read_str()) destination
 
 #[test]
 #[vfs]
@@ -123,4 +123,4 @@ def path_rename_without_replacement()
   else
     src.rename $dst replace: false
     assert $!src.exists()
-    assert_eq (dst.read()) source
+    assert_eq (dst.read_str()) source

@@ -115,7 +115,7 @@ def configure_pasta_apparmor()
   if !profile.exists()
     return
   let rule = "signal (receive) set=(term) peer=podman,"
-  let contents = fs.read $profile
+  let contents = str(fs.read(profile))
   if contents.contains(rule)
     return
   let anchor = "  include <abstractions/pasta>\n"

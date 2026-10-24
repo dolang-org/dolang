@@ -21,4 +21,4 @@ def run_reuses_loaded_rules_when_reentered()
           do |_args| dodo.run inner
 
     cd $dir do dodo.run outer
-    assert_eq $marker.read() x
+    assert_eq $marker.read_str() x

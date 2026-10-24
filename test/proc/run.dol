@@ -117,7 +117,7 @@ def background_strand_process_groups()
       sleep 0.01
       attempts = (attempts + 1)
     assert $pid_path.exists()
-    let pid = pid_path.read().trim()
+    let pid = pid_path.read_str().trim()
 
     worker.cancel()
     assert_throws $CanceledError do worker.join()
@@ -536,7 +536,7 @@ def cross_domain_redirects_host_process_stdout_into_remote_file()
     with_remote_vfs do open $path w do |output|
       echo "remote-stdout" stdout: $output
       output.close()
-    assert_eq (path.read().trim_end "\r\n") "remote-stdout"
+    assert_eq (path.read_str().trim_end "\r\n") "remote-stdout"
 
 #[test]
 #[vfs]

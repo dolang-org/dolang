@@ -105,7 +105,7 @@ def listening dir block :stale = false
     do run sh -c r#"echo $$ > "$1"; shift; exec "$@""# sh $pidfile $agent --listen $socket
     do
       assert_eq $strand.next().trim() READY
-      let process = proc.open (int(pidfile.read().trim()))
+      let process = proc.open (int(pidfile.read_str().trim()))
       try
         block $socket $process
       finally
@@ -232,7 +232,7 @@ def login_environment_import_and_cleanup()
         assert_eq (b"".join bytes) b"a\xffb"
       finally
         time.timeout 10 do vfs.stop()
-      let pid = (fs.Path "$script.daemon").read().trim()
+      let pid = (fs.Path "$script.daemon").read_str().trim()
       time.timeout 10 do
         while true
           try

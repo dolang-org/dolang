@@ -64,7 +64,7 @@ def stdin_handle_shares_the_buffered_reader()
 
     # Values written to the child's stdin contribute their own bytes and
     # nothing else, so the terminators here are the ones `crimp` put in.
-    assert_eq $out.read() "one\n|two\nthree\n"
+    assert_eq $out.read_str() "one\n|two\nthree\n"
 
 # Neither `put` nor `write` invents bytes: the value edge and the byte edge
 # agree, so what reaches the stream is exactly what the script supplied.
@@ -83,7 +83,7 @@ def put_and_write_are_both_verbatim()
     let out = (dir / "out.txt")
     run $shell.exe --no-cache $path stdout: $out
 
-    assert_eq $out.read() "abc\n"
+    assert_eq $out.read_str() "abc\n"
 
 # A terminator is something the script asks for by name, and `crimp` puts the
 # same bytes on every platform unless told to use the target's ending.
@@ -100,7 +100,7 @@ def put_terminates_only_through_crimp()
     let out = (dir / "out.txt")
     run $shell.exe --no-cache $path stdout: $out
 
-    assert_eq $out.read() "a\nb\n"
+    assert_eq $out.read_str() "a\nb\n"
 
 # Reading a stream and writing it back reproduces it byte for byte, whichever
 # framing the reader chose and whatever line endings the data carries.
@@ -117,9 +117,9 @@ def the_value_edge_round_trips()
     let input = (dir / "in.txt")
     input.write $mixed
     let out = (dir / "out.txt")
-    open $input rb do |file|
+    open $input do |file|
       run $shell.exe --no-cache $path stdin: $file stdout: $out
-    assert_eq $out.read() $mixed
+    assert_eq $out.read_str() $mixed
 
     # Chunk framing cuts the stream somewhere else and reproduces it just the
     # same, which is what makes the two interchangeable.
@@ -129,9 +129,9 @@ def the_value_edge_round_trips()
         shell.stdout.put $value
 
     let out2 = (dir / "out2.txt")
-    open $input rb do |file|
+    open $input do |file|
       run $shell.exe --no-cache $chunked stdin: $file stdout: $out2
-    assert_eq $out2.read() $mixed
+    assert_eq $out2.read_str() $mixed
 
 #[test]
 def handing_a_file_to_a_child_steals_it()
@@ -146,10 +146,10 @@ def handing_a_file_to_a_child_steals_it()
     input.write "hello"
     let out = (dir / "out.txt")
 
-    for mode = ["r", "rb"]
-      let file = open $input $mode
+    for buffer = [true, false]
+      let file = open $input :buffer
       run $shell.exe --no-cache $path stdin: $file stdout: $out
-      assert_eq $out.read() "hello"
+      assert_eq $out.read_str() "hello"
 
       # The child was given the file itself, not a view onto it. The seek
       # position lives in this process now, so two live handles would each
@@ -178,7 +178,7 @@ def a_child_starts_where_buffered_reads_and_writes_leave_off()
     # The child reads past the header that buffering already fetched, and
     # writes after the line buffering held back.
     run $shell.exe --no-cache $echo stdin: $file stdout: $output
-    assert_eq $out.read() "first\nbody\n"
+    assert_eq $out.read_str() "first\nbody\n"
 
 #[test]
 def handing_a_duplicated_file_to_a_child_waits_for_the_duplicate()
@@ -193,7 +193,7 @@ def handing_a_duplicated_file_to_a_child_waits_for_the_duplicate()
     input.write "hello"
     let out = (dir / "out.txt")
 
-    let file = open $input rb
+    let file = open $input
     let dup = file.dup()
     assert_throws $sys.ResourceBusyError do
       run $shell.exe --no-cache $path stdin: $file stdout: $out
@@ -201,7 +201,7 @@ def handing_a_duplicated_file_to_a_child_waits_for_the_duplicate()
     assert_eq (file.read 1) b"h"
     dup.close()
     run $shell.exe --no-cache $path stdin: $file stdout: $out
-    assert_eq $out.read() "ello"
+    assert_eq $out.read_str() "ello"
 
 #[test]
 def write_reports_bytes_not_characters()
@@ -217,10 +217,10 @@ def write_reports_bytes_not_characters()
     let raw = (dir / "raw.txt")
     run $shell.exe --no-cache $path $out stdout: $raw
 
-    assert_eq $out.read() "6"
+    assert_eq $out.read_str() "6"
     # The bytes themselves, not just the count — and redirecting keeps the
     # child's output off the test runner's terminal.
-    open $raw rb do |f|
+    open $raw do |f|
       assert_eq (f.read()) b"h\xc3\xa9llo"
 
 #[test]
@@ -234,7 +234,7 @@ def write_passes_binary_through_verbatim()
     let out = (dir / "out.bin")
     run $shell.exe --no-cache $path stdout: $out
 
-    open $out rb do |f|
+    open $out do |f|
       assert_eq (f.read()) b"\x01\x02\xff"
 
 #[test]
@@ -250,8 +250,8 @@ def stdout_and_stderr_handles_do_not_cross()
     let err = (dir / "err.txt")
     run $shell.exe --no-cache $path stdout: $out stderr: $err
 
-    assert_eq $out.read() "on-stdout\n"
-    assert_eq $err.read() "on-stderr\n"
+    assert_eq $out.read_str() "on-stdout\n"
+    assert_eq $err.read_str() "on-stderr\n"
 
 #[test]
 def stderr_can_merge_into_stdout()
@@ -265,7 +265,7 @@ def stderr_can_merge_into_stdout()
     let out = (dir / "out.txt")
     run $shell.exe --no-cache $path stdout: $out stderr: :STDOUT:
 
-    let merged = out.read()
+    let merged = out.read_str()
     assert $merged.contains("on-stdout\n")
     assert $merged.contains("on-stderr\n")
 
@@ -285,7 +285,7 @@ def console_write_is_verbatim_but_echo_sanitizes()
     run $shell.exe --no-cache $path stderr: $err
 
     let ESC = str b"\x1b"
-    assert_eq $err.read() "a$ESC[31mb\nab\n"
+    assert_eq $err.read_str() "a$ESC[31mb\nab\n"
 
 #[test]
 def console_write_takes_pieces()
@@ -302,8 +302,8 @@ def console_write_takes_pieces()
     let err = (dir / "err.txt")
     run $shell.exe --no-cache $path $out stderr: $err
 
-    assert_eq $out.read() "7"
-    assert_eq $err.read() "héllo\n"
+    assert_eq $out.read_str() "7"
+    assert_eq $err.read_str() "héllo\n"
 
 #[test]
 def naming_shell_stderr_inherits_the_stream()
@@ -324,7 +324,7 @@ def naming_shell_stderr_inherits_the_stream()
     let err = (dir / "err.txt")
     run $shell.exe --no-cache $outer $inner stderr: $err
 
-    assert_eq $err.read() "from-grandchild\n"
+    assert_eq $err.read_str() "from-grandchild\n"
 
 
 #[test]
@@ -336,14 +336,14 @@ def handing_output_files_to_a_child_steals_them()
       shell.stderr.put "stderr"
 
     let path = script $dir output.dol $src
-    for mode = ["w", "wb"]
+    for buffer = [true, false]
       let out = (dir / "out.txt")
       let err = (dir / "err.txt")
-      let stdout = open $out $mode
-      let stderr = open $err $mode
+      let stdout = open $out w :buffer
+      let stderr = open $err w :buffer
       run $shell.exe --no-cache $path stdout: $stdout stderr: $stderr
-      assert_eq $out.read() "stdout"
-      assert_eq $err.read() "stderr"
+      assert_eq $out.read_str() "stdout"
+      assert_eq $err.read_str() "stderr"
       assert_throws $StateError do stdout.write "closed"
       assert_throws $StateError do stderr.write "closed"
       stdout.close()

@@ -26,14 +26,14 @@ def looks_up_entrypoint_bytecode()
 def guest_provisioning_source_is_complete_text()
   let source = _shell.resource dolang-shell-modules provision.dol
   assert_type $Str $source
-  assert_eq $source $Path("dolang-shell-modules/resource/provision.dol").read()
+  assert_eq $source $Path("dolang-shell-modules/resource/provision.dol").read_str()
   assert_eq (source.ends_with "\n") true
   # Provisioning writes this text directly onto the disc, preserving the
   # newline and all source bytes for the guest's released interpreter.
   with_temp_dir do |dir|
     let path = (dir / "provision.dol")
     path.write $source
-    assert_eq (path.read "b") (Bin source)
+    assert_eq (path.read()) (Bin source)
 
 #[test]
 def returns_nil_when_missing()

@@ -1201,7 +1201,7 @@ do -> Bin
 # ## Example
 #
 # ```
-# let blob = fs.Path("ws01.blob").read "b"
+# let blob = fs.Path("ws01.blob").read()
 # winnet.apply_offline_join $blob
 #   windows_path: (fs.windows.Path r"D:\Windows")
 # ```

@@ -36,7 +36,7 @@ def extract_source source :module = "fixture" ...flags
 
 # The fixture's source text.
 def fixture_source()
-  (FIXTURE / "fixture.dol").read()
+  (FIXTURE / "fixture.dol").read_str()
 
 # The entities with a name, in the order reported.
 def entities out name

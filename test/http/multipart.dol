@@ -201,10 +201,10 @@ def file_backed_part_round_trips()
       do |handle|
         with_temp_dir do |dir|
           let path = (dir / "report.txt")
-          open $path wb do |file|
+          open $path w do |file|
             file.write b"file-backed upload"
 
-          open $path rb do |file|
+          open $path buffer: false do |file|
             let file_parts = $
               - name: file
                 filename: report.txt

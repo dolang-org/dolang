@@ -7,7 +7,7 @@ import
     - assert_eq
     - test
   fs:
-    - read
+    - read_str
     - open
     - Path
     - BaseFile
@@ -15,7 +15,10 @@ import
     - RawFile
   std:
     - StateError
+    - TypeError
     - ValueError
+  sys:
+    - AlreadyExistsError
 
 #[test]
 #[vfs]
@@ -48,7 +51,7 @@ def block_scope()
 
 #[test]
 #[vfs]
-def modes_choose_types()
+def buffer_chooses_types()
   for mode = ["r", "w", "a", "r+", "w+", "a+"]
     open modes.txt w do |file| file.write "hello\n"
     for path = ["modes.txt", Path("modes.txt")]
@@ -61,22 +64,46 @@ def modes_choose_types()
       assert $!(type file RawFile)
       file.close()
       file.close()
-      let binary_mode = "$(mode)b"
-      let binary = if (type path Path)
-        path.open $binary_mode
+      let raw = if (type path Path)
+        path.open $mode buffer: false
       else
-        open $path $binary_mode
-      assert (type binary RawFile)
-      assert (type binary BaseFile)
-      assert $!(type binary File)
-      assert_eq (dbg binary) "<fs.RawFile>"
-      binary.close()
+        open $path $mode buffer: false
+      assert (type raw RawFile)
+      assert (type raw BaseFile)
+      assert $!(type raw File)
+      assert_eq (dbg raw) "<fs.RawFile>"
+      raw.close()
       if (type path Path)
-        path.open $mode do |file| assert (type file File)
-        path.open $binary_mode do |file| assert (type file RawFile)
+        path.open $mode buffer: true do |file| assert (type file File)
+        path.open $mode buffer: false do |file| assert (type file RawFile)
       else
-        open $path $mode do |file| assert (type file File)
-        open $path $binary_mode do |file| assert (type file RawFile)
+        open $path $mode buffer: true do |file| assert (type file File)
+        open $path $mode buffer: false do |file| assert (type file RawFile)
+
+#[test]
+#[vfs]
+def b_modes_are_rejected()
+  open modes.txt w do |file| file.write "hello"
+  for mode = ["rb", "wb", "r+b", "a+b"]
+    let err = assert_throws $ValueError do open modes.txt $mode
+    assert ((str err).contains "buffer: false")
+    assert_throws $ValueError do (Path "modes.txt").open $mode
+  let err = assert_throws $ValueError do open modes.txt q
+  assert $!((str err).contains "buffer")
+  assert_throws $TypeError do open modes.txt buffer: 1
+  assert_throws $TypeError do open modes.txt buffer: nil
+
+#[test]
+#[vfs]
+def exclusive_modes_create_new_files()
+  open fresh.txt x do |file| file.write "one"
+  assert_eq (read_str "fresh.txt") "one"
+  assert_throws $AlreadyExistsError do open fresh.txt x
+  assert_throws $AlreadyExistsError do (Path "fresh.txt").open x+
+  open fresh-rw.txt x+ do |file|
+    file.write "two"
+    file.seek start: 0
+    assert_eq (file.read_str()) "two"
 
 #[test]
 #[vfs]
@@ -91,13 +118,15 @@ def default_modes_and_block_cleanup()
   second.close()
   open default.txt do |file| assert (type file File)
   path.open do |file| assert (type file File)
-  for mode = ["r", "rb"]
+  open default.txt buffer: false do |file| assert (type file RawFile)
+  path.open buffer: false do |file| assert (type file RawFile)
+  for buffer = [true, false]
     let held = nil
-    open default.txt $mode do |file|
+    open default.txt :buffer do |file|
       held = file
     assert_throws $StateError do held.read()
     assert_throws $ValueError do
-      path.open $mode do |file|
+      path.open :buffer do |file|
         held = file
         throw (ValueError "test error")
     assert_throws $StateError do held.read()
@@ -107,12 +136,12 @@ def default_modes_and_block_cleanup()
 def block_form_flushes_buffered_writes()
   open flushed.txt w do |file|
     file.write "pending"
-    assert_eq (read "flushed.txt") ""
-  assert_eq (read "flushed.txt") "pending"
+    assert_eq (read_str "flushed.txt") ""
+  assert_eq (read_str "flushed.txt") "pending"
 
 #[test]
 #[vfs]
-def reads_and_iteration_have_mode_specific_values()
+def reads_and_iteration_depend_on_buffering()
   open values.txt w do |file| file.write "one\ntwo\n"
   open values.txt do |file|
     assert_eq (file.read 4) b"one\n"
@@ -120,7 +149,7 @@ def reads_and_iteration_have_mode_specific_values()
     file.seek start: 0
     for line = file
       assert (type line Str)
-  open values.txt rb do |file|
+  open values.txt buffer: false do |file|
     assert_eq (file.read 4) b"one\n"
     assert_eq $file.next() b"two\n"
     file.seek start: 0
@@ -131,9 +160,9 @@ def reads_and_iteration_have_mode_specific_values()
 #[vfs]
 def kinds_can_be_matched()
   open match.txt w do |file| file.write "hello"
-  for mode = ["r", "rb"]
-    open match.txt $mode do |file|
+  for buffer = [true, false]
+    open match.txt :buffer do |file|
       let label = match file
         File(_) do "buffered"
         RawFile(_) do "raw"
-      assert_eq $label (mode == "r" && "buffered" || "raw")
+      assert_eq $label (buffer && "buffered" || "raw")

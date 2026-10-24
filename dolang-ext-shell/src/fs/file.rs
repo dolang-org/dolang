@@ -106,10 +106,12 @@ fn lock_range<'v, 's>(
     FileLockRange::new(start, end).map_err(|error| Error::value(strand, error.to_string()))
 }
 
-/// Configure OpenOptions based on mode string (supports 'b' suffix for binary mode).
+/// Access modes `fs.open` accepts.
+pub(crate) const MODES: [&str; 8] = ["r", "w", "a", "x", "r+", "w+", "a+", "x+"];
+
+/// Configures `opts` for `mode`, one of [`MODES`].
 fn configure_options(opts: &mut OpenOptions, mode: &str) {
-    // Strip 'b' suffix for binary mode - it doesn't affect file opening
-    match mode.strip_suffix('b').unwrap_or(mode) {
+    match mode {
         "r" => {
             opts.read(true);
         }
@@ -119,6 +121,9 @@ fn configure_options(opts: &mut OpenOptions, mode: &str) {
         "a" => {
             opts.write(true).append(true).create(true);
         }
+        "x" => {
+            opts.write(true).create_new(true);
+        }
         "r+" => {
             opts.read(true).write(true);
         }
@@ -127,6 +132,9 @@ fn configure_options(opts: &mut OpenOptions, mode: &str) {
         }
         "a+" => {
             opts.read(true).write(true).append(true).create(true);
+        }
+        "x+" => {
+            opts.read(true).write(true).create_new(true);
         }
         _ => {
             // Invalid mode - will be handled by the caller
@@ -582,14 +590,15 @@ pub(crate) async fn open_native<'v>(
         .map_err(dolang_vfs::error::Error::into_io_error)
 }
 
-/// Implements `fs.open`: a text mode returns a buffered `File`, a `b` mode a
-/// `RawFile`.
+/// Implements `fs.open`: returns a buffered `File`, or a `RawFile` with
+/// `buffer: false`.
 pub(crate) async fn open_file<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, FsGlobal<'v>>,
     path: vfs_path::Path<'_>,
     opt1: Option<Slot<'v, '_>>,
     opt2: Option<Slot<'v, '_>>,
+    buffer: Option<Slot<'v, '_>>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     // Determine mode and block
@@ -615,15 +624,21 @@ pub(crate) async fn open_file<'v, 's>(
         (None, Some(_)) => unreachable!(),
     };
 
-    // Validate mode string (strip 'b' suffix for validation)
-    let base_mode = mode.strip_suffix('b').unwrap_or(&mode);
-    match base_mode {
-        "r" | "w" | "a" | "r+" | "w+" | "a+" => {}
-        _ => {
-            return Err(Error::value(strand, format!("invalid mode: {}", mode)));
-        }
+    if !MODES.contains(&mode.as_str()) {
+        let message = match mode.strip_suffix('b') {
+            Some(base) if MODES.contains(&base) => {
+                format!("invalid mode: {mode}; for an unbuffered file, pass `buffer: false`")
+            }
+            _ => format!("invalid mode: {mode}"),
+        };
+        return Err(Error::value(strand, message));
     }
-    let buffered = !mode.ends_with('b');
+    let buffered = match buffer {
+        None => true,
+        Some(buffer) => buffer
+            .as_bool(strand)
+            .ok_or_else(|| Error::type_error(strand, "buffer must be a Bool"))?,
+    };
 
     let file = open(strand, global, path, &mode).await?;
 

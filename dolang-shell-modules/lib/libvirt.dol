@@ -761,7 +761,7 @@ def data_root app @ Str -> Path
 
 def file_digest path @ Path -> Str
   let state = digest.Blake3()
-  path.open rb do |file|
+  path.open buffer: false do |file|
     for chunk = file
       state.update $chunk
   "${state.digest():x}"
@@ -1514,7 +1514,7 @@ class DomainXml
     let path = (workdir / "domain.xml")
     if !path.exists()
       return nil
-    path.read()
+    path.read_str()
 
 # Everything a domain can be asked to do, including the parts `create_domain`
 # needs and a caller has no business calling.
@@ -1865,7 +1865,7 @@ class DomainImpl
   pub def upload self source@(Str | Path) dest@(Str | Path) :chmod@(Int | Mode | nil) = nil
     let source = Path $source
     let message = (source.name || str source)
-    source.open rb do |input|
+    source.open do |input|
       let total = input.metadata().size
       progress.show :message :total icon: ⬆️ units: :BYTES: do |ind|
         self.with do
@@ -1874,7 +1874,7 @@ class DomainImpl
           # opened against a Windows target fails with "path cannot be
           # converted between path types".
           let target = Path $dest
-          target.open wb do |output|
+          target.open w do |output|
             copy_chunks $total $input $output $ind
           if (chmod != nil)
             target.update_metadata mode: $chmod
@@ -1882,12 +1882,12 @@ class DomainImpl
   # Copies one file from the domain to the local VFS.
   pub def download self source@(Str | Path) dest@(Str | Path)
     let dest = Path $dest
-    dest.open wb do |output|
+    dest.open w do |output|
       self.with do
         # The guest's path, so built in the guest's context — see `upload`.
         let remote = Path $source
         let message = (remote.name || str remote)
-        remote.open rb do |input|
+        remote.open do |input|
           let total = input.metadata().size
           progress.show :message :total icon: ⬇️ units: :BYTES: do |ind|
             copy_chunks $total $input $output $ind
@@ -2444,7 +2444,7 @@ class Add
   pub def read self app @ Str -> (Str | Bin)
     let resolved = self.resolve $app
     if (type resolved Path)
-      resolved.read b
+      resolved.read()
     else
       resolved
 
@@ -2664,7 +2664,7 @@ do
           icon: 🗜️
           total: $total
           units: :BYTES:
-          do |ind| path.open rb do |file| strand.pipeline
+          do |ind| path.open do |file| strand.pipeline
             do while let chunk = file.read $BUNDLE_CHUNK
               strand.put $chunk
             do for chunk
@@ -2881,7 +2881,7 @@ def extract_member bundle@Path member@ManifestMember dest@Path
       icon: 📤
       total: $member.size
       units: :BYTES:
-      do |ind| dest.open wb do |out| entry.open do |file| strand.pipeline
+      do |ind| dest.open w do |out| entry.open do |file| strand.pipeline
         do while let chunk = file.read $BUNDLE_CHUNK
           strand.put $chunk
         do for chunk
@@ -3048,7 +3048,7 @@ def unpack_payload root@Path archive@Path -> Path
             # layout is a release-artifact detail, and `bootstrap.cmd` copies
             # one directory.
             let target = (staging / name)
-            target.open wb do |file|
+            target.open w do |file|
               for chunk = member
                 file.write $chunk
         staging.rename $destination
@@ -3092,7 +3092,7 @@ def build_provision_iso root@Path files@Dict[Str, (Path | Str)] -> Path
             parent.create_dir all: true
           let value = files[name]
           if (type value Path)
-            target.write $(value.read "b")
+            target.write $(value.read())
           else
             target.write $value
         let temporary = (dir / "provision.iso")
@@ -3283,7 +3283,7 @@ class ImageSource: Source
     let stored = prepared_image $resolved $root
     let seed = progress.show message: "prepare cloud-init" icon: ☁️ do |_|
       let key: _ :public = keys
-      let public_key = public.read().trim()
+      let public_key = public.read_str().trim()
       let :boot :write :packages = staged
       # Rendered here rather than at parse time: an `init:` `add:` naming a
       # `source:` is fetched with everything else, and its bytes are only in
@@ -3380,7 +3380,7 @@ class InstallerSource: Source
         "provision.json": $ json.encode $
           :user :password
           root: $WINDOWS_ROOT
-          authorized_key: $(public.read().trim())
+          authorized_key: $(public.read_str().trim())
         for file = payload.entries()
           "payload/$(file.name)": (payload / file)
     media.push (path: provision, boot: nil)

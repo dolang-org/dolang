@@ -84,25 +84,17 @@ pub @let XattrNamespace = (Str | :USER: | :SYSTEM:)
 
 # File access mode accepted by [`open`](fs.open).
 #
-# | Mode   | Description                              |
-# | ------ | ---------------------------------------- |
-# | `"r"`  | Read-only                                |
-# | `"w"`  | Write-only (truncates existing file)     |
-# | `"a"`  | Append to existing file                  |
-# | `"r+"` | Read and write                           |
-# | `"w+"` | Read and write (truncates existing file) |
-# | `"a+"` | Read and append                          |
-#
-# Without a `"b"` suffix, [`open`](fs.open) returns a buffered
-# [`File`](fs.File). With one, as in `"rb"`, `"wb"`, or `"r+b"`, it returns
-# an unbuffered [`RawFile`](fs.RawFile).
-pub @let OpenMode = (OpenTextMode | OpenBinaryMode)
-
-# Buffered file access modes accepted by [`open`](fs.open).
-pub @let OpenTextMode = ("r" | "w" | "a" | "r+" | "w+" | "a+")
-
-# Raw file access modes accepted by [`open`](fs.open).
-pub @let OpenBinaryMode = ("rb" | "wb" | "ab" | "r+b" | "w+b" | "a+b")
+# | Mode   | Description                               |
+# | ------ | ----------------------------------------- |
+# | `"r"`  | Read-only                                 |
+# | `"w"`  | Write-only (truncates existing file)      |
+# | `"a"`  | Append to existing file                   |
+# | `"x"`  | Write-only (fails if the file exists)     |
+# | `"r+"` | Read and write                            |
+# | `"w+"` | Read and write (truncates existing file)  |
+# | `"a+"` | Read and append                           |
+# | `"x+"` | Read and write (fails if the file exists) |
+pub @let OpenMode = ("r" | "w" | "a" | "x" | "r+" | "w+" | "a+" | "x+")
 
 # An entry within a directory.
 #
@@ -624,8 +616,8 @@ pub class BaseFile: @Io
 
 # An open, buffered file.
 #
-# Returned by [`open`](fs.open) and [`Path.open`](fs.Path.open), except for
-# the `"b"` modes, which return a [`RawFile`](fs.RawFile).
+# Returned by [`open`](fs.open) and [`Path.open`](fs.Path.open), except with
+# `buffer: false`, which returns a [`RawFile`](fs.RawFile).
 #
 # Reads fetch ahead, and writes are held back until the buffer fills, a read
 # needs the file, or the file is flushed or closed. Every other method sees the
@@ -746,8 +738,8 @@ pub class File: Iter[Str] Sink[Value] BaseFile
 
 # An open, unbuffered file.
 #
-# Returned by [`open`](fs.open) and [`Path.open`](fs.Path.open) for the
-# `"b"` modes. Each read and write goes straight to the file.
+# Returned by [`open`](fs.open) and [`Path.open`](fs.Path.open) with
+# `buffer: false`. Each read and write goes straight to the file.
 #
 # A raw file is both an iterator and a sink, so it can be used with `for`,
 # `.next()`, `.put()`, and `strand.redirect`. It yields chunks of bytes, which
@@ -1119,7 +1111,9 @@ pub class Path
   @def open
     self
     # File access mode. Defaults to `"r"`.
-    mode @ OpenTextMode = nil
+    mode @ OpenMode = nil
+    # Whether to buffer the file.
+    :buffer @ true = nil
   do -> File
 
   # The method form of [`fs.open`](fs.open) with a block.
@@ -1127,42 +1121,61 @@ pub class Path
     self
     # Block to run with the file; it is closed when the block returns.
     func @ (File -> R)
+    # Whether to buffer the file.
+    :buffer @ true = nil
   do -> R
 
   # The method form of [`fs.open`](fs.open) with a mode and a block.
   @def open[R]
     self
     # File access mode.
-    mode @ OpenTextMode
+    mode @ OpenMode
     # Block to run with the file; it is closed when the block returns.
     func @ (File -> R)
+    # Whether to buffer the file.
+    :buffer @ true = nil
   do -> R
 
+  # The method form of [`fs.open`](fs.open) for an unbuffered file.
   @def open
     self
-    mode @ OpenBinaryMode
+    # File access mode. Defaults to `"r"`.
+    mode @ OpenMode = nil
+    # Opens an unbuffered [`RawFile`](fs.RawFile).
+    :buffer @ false
   do -> RawFile
 
+  # The method form of [`fs.open`](fs.open) for an unbuffered file with a
+  # block.
   @def open[R]
     self
-    mode @ OpenBinaryMode
+    # Block to run with the file; it is closed when the block returns.
     func @ (RawFile -> R)
+    # Opens an unbuffered [`RawFile`](fs.RawFile).
+    :buffer @ false
+  do -> R
+
+  # The method form of [`fs.open`](fs.open) for an unbuffered file with a
+  # mode and a block.
+  @def open[R]
+    self
+    # File access mode.
+    mode @ OpenMode
+    # Block to run with the file; it is closed when the block returns.
+    func @ (RawFile -> R)
+    # Opens an unbuffered [`RawFile`](fs.RawFile).
+    :buffer @ false
   do -> R
 
   pub def open self ...options @ Value -> Value
     ...
 
-  # The method form of [`fs.read`](fs.read) for a text file.
-  @def read self -> Str
+  # The method form of [`fs.read`](fs.read).
+  pub def read self -> Bin
+    ...
 
-  # The method form of [`fs.read`](fs.read) in binary mode.
-  @def read
-    self
-    # Binary mode.
-    mode @ "b"
-  do -> Bin
-
-  pub def read self ...options @ Value -> Value
+  # The method form of [`fs.read_str`](fs.read_str).
+  pub def read_str self -> Str
     ...
 
   # The method form of [`fs.write`](fs.write).
@@ -1487,7 +1500,9 @@ pub class XattrEntry
   # Path to the file to open.
   path @ (Str | Path)
   # File access mode. Defaults to `"r"`.
-  mode @ OpenTextMode = nil
+  mode @ OpenMode = nil
+  # Whether to buffer the file.
+  :buffer @ true = nil
 do -> File
 
 # Opens a file for reading and runs a block with it. The file is closed when
@@ -1495,13 +1510,15 @@ do -> File
 #
 # ```
 # open config.txt do |file|
-#   echo "Content: $(file.read())"
+#   echo "Content: $(file.read_str())"
 # ```
 @def open[R]
   # Path to the file to open.
   path @ (Str | Path)
   # Block to run with the file.
   func @ (File -> R)
+  # Whether to buffer the file.
+  :buffer @ true = nil
 do -> R
 
 # Opens a file with a mode and runs a block with it. The file is closed when
@@ -1515,27 +1532,71 @@ do -> R
   # Path to the file to open.
   path @ (Str | Path)
   # File access mode.
-  mode @ OpenTextMode
+  mode @ OpenMode
   # Block to run with the file.
   func @ (File -> R)
+  # Whether to buffer the file.
+  :buffer @ true = nil
 do -> R
 
+# Opens an unbuffered file.
+#
+# ```
+# let file = open data.bin w buffer: false
+# file.write b"\x00\x01"
+# file.close()
+# ```
 @def open
+  # Path to the file to open.
   path @ (Str | Path)
-  mode @ OpenBinaryMode
+  # File access mode. Defaults to `"r"`.
+  mode @ OpenMode = nil
+  # Opens an unbuffered [`RawFile`](fs.RawFile).
+  :buffer @ false
 do -> RawFile
 
+# Opens an unbuffered file for reading and runs a block with it. The file is
+# closed when the block returns.
 @def open[R]
+  # Path to the file to open.
   path @ (Str | Path)
-  mode @ OpenBinaryMode
+  # Block to run with the file.
   func @ (RawFile -> R)
+  # Opens an unbuffered [`RawFile`](fs.RawFile).
+  :buffer @ false
 do -> R
 
-# Opens a file, returning a buffered [`File`](fs.File), or a
-# [`RawFile`](fs.RawFile) for the `"b"` modes. The default mode is `"r"`.
+# Opens an unbuffered file with a mode and runs a block with it. The file is
+# closed when the block returns.
+@def open[R]
+  # Path to the file to open.
+  path @ (Str | Path)
+  # File access mode.
+  mode @ OpenMode
+  # Block to run with the file.
+  func @ (RawFile -> R)
+  # Opens an unbuffered [`RawFile`](fs.RawFile).
+  :buffer @ false
+do -> R
+
+# Opens a file, returning a buffered [`File`](fs.File), or an unbuffered
+# [`RawFile`](fs.RawFile) with `buffer: false`. The default mode is `"r"`.
 #
 # With a block, passes it the file and closes the file when the block exits.
 pub def open path @ (Str | Path) ...options @ Value -> Value
+  ...
+
+# Reads the entire contents of a file in one call.
+#
+# ## Example
+#
+# ```
+# let data = read "archive.bin"
+# ```
+pub def read
+  # Path to the file to read.
+  path @ (Str | Path)
+do -> Bin
   ...
 
 # Reads the entire contents of a text file in one call.
@@ -1547,28 +1608,12 @@ pub def open path @ (Str | Path) ...options @ Value -> Value
 # ## Example
 #
 # ```
-# let text = read "config.txt"
+# let text = read_str "config.txt"
 # ```
-@def read
+pub def read_str
   # Path to the file to read.
   path @ (Str | Path)
 do -> Str
-
-# Reads the entire contents of a file in one call as binary data.
-#
-# ## Example
-#
-# ```
-# let data = read "archive.bin" "b"
-# ```
-@def read
-  # Path to the file to read.
-  path @ (Str | Path)
-  # Binary mode.
-  mode @ "b"
-do -> Bin
-
-pub def read path @ (Str | Path) ...options @ Value -> Value
   ...
 
 # Writes the entire contents of a file in one call, creating or truncating it.

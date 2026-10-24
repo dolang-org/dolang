@@ -155,7 +155,7 @@ pub def decompress source @ (Str | Path | Io) ...options @ Value -> Value
 # ## Example
 #
 # ```
-# fs.open "notes.txt.zst" wb do |file|
+# fs.open "notes.txt.zst" w do |file|
 #   compress $file :ZSTD: level: :BEST: do |stream|
 #     stream.write "hello\n"
 # ```

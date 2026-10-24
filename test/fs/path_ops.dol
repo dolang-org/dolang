@@ -107,11 +107,11 @@ def alternate_data_stream_io()
 
   assert $base.exists()
   assert $stream.exists()
-  assert_eq $base.read() "base"
-  assert_eq $stream.read() "stream"
+  assert_eq $base.read_str() "base"
+  assert_eq $stream.read_str() "stream"
 
   stream.open r do |f|
-    assert_eq $f.read() "stream"
+    assert_eq $f.read_str() "stream"
 
   let parsed = Path $stream
   assert_eq $parsed.name "ads.txt"
@@ -140,7 +140,7 @@ def alternate_data_stream_enumeration()
       assert_eq $path.name "ads.txt"
       assert_eq $path.stream_name ""
       assert_eq $path.stream_type "DATA"
-      assert_eq $path.read() "base"
+      assert_eq $path.read_str() "base"
       saw_base = true
     else if (entry.name == "zone")
       assert_eq $entry.type "DATA"
@@ -148,7 +148,7 @@ def alternate_data_stream_enumeration()
       assert_eq $path.name "ads.txt"
       assert_eq $path.stream_name "zone"
       assert_eq $path.stream_type "DATA"
-      assert_eq $path.read() "stream"
+      assert_eq $path.read_str() "stream"
       file_entry = entry
       saw_named = true
 
@@ -160,7 +160,7 @@ def alternate_data_stream_enumeration()
   open $base r do |file|
     for entry = file.streams()
       if (entry.name == "zone")
-        assert_eq ((base / entry).read()) "stream"
+        assert_eq ((base / entry).read_str()) "stream"
         saw_file_named = true
         break
   assert $saw_file_named
@@ -174,7 +174,7 @@ def alternate_data_stream_enumeration()
   assert $saw_path_named
 
   remove (base / file_entry)
-  assert_eq $base.read() "base"
+  assert_eq $base.read_str() "base"
   assert_throws $RuntimeError do
     stream.read()
 
@@ -200,4 +200,4 @@ def directory_alternate_data_stream_enumeration()
   assert_eq $path.name "adsdir"
   assert_eq $path.stream_name "zone"
   assert_eq $path.stream_type "DATA"
-  assert_eq $path.read() "stream"
+  assert_eq $path.read_str() "stream"

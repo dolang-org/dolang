@@ -10,6 +10,7 @@ import strand sys sys.unix sys.freebsd sys.linux sys.macos sys.windows
   fs:
     - open
     - read
+    - read_str
     - write
     - remove
     - Path
@@ -49,17 +50,17 @@ def read_partial()
 
 #[test]
 #[vfs]
-def read_binary_mode()
+def read_returns_bin()
   let path = "test_fs_read_binary.bin"
   write $path b"[package]\n"
 
-  # Test reading in binary mode
-  open $path "rb" do |file|
+  # Reads return bytes
+  open $path do |file|
     let contents = file.read()
     # Verify we got some binary data
     assert $ type $contents $Bin
     assert (contents.len > 0)
-    # Binary mode returns bytes, check that we got a string representation
+    # The bytes match what was written
     assert (contents.contains "[" )
 
 #[test]
@@ -69,7 +70,7 @@ def read_binary_transfers_the_whole_count()
   let data = ("abcdefghij".repeat 200000)
   write $path $data
 
-  open $path "rb" do |file|
+  open $path do |file|
     let whole = file.read $data.len
     assert_eq $whole.len $data.len
     assert_eq (str whole) $data
@@ -103,7 +104,7 @@ def read_at_offset_binary()
   let path = "test_fs_read_offset.bin"
   write $path b"\x00\x01\x02\x03\xff"
 
-  open $path "rb" do |file|
+  open $path do |file|
     let chunk = (file.read 2 offset: 1)
     assert_type $Bin $chunk
     assert_eq $chunk b"\x01\x02"
@@ -169,9 +170,9 @@ def read_after_close_fails()
 def fs_read_reads_entire_text_file()
   let test_path = "test_fs_read.txt"
   write $test_path "alpha\nbeta\n"
-  let contents = read $test_path
+  let contents = read_str $test_path
   assert_eq $contents "alpha\nbeta\n"
-  assert_eq (read (Path test_path)) "alpha\nbeta\n"
+  assert_eq (read_str (Path test_path)) "alpha\nbeta\n"
   remove $test_path
 
 #[test]
@@ -180,8 +181,8 @@ def fs_read_reads_entire_binary_file()
   let test_path = "test_fs_read.bin"
   let data = b"\x00\x01\x02\xff"
   write $test_path $data
-  assert_eq (read test_path "b") $data
-  assert_eq ((Path test_path).read "b") $data
+  assert_eq (read test_path) $data
+  assert_eq ((Path test_path).read()) $data
   remove $test_path
 
 #[test]
@@ -190,8 +191,8 @@ def fs_read_grows_for_large_full_reads()
   let test_path = "test_fs_read_large.txt"
   let data = ("abcdefghij".repeat 2000)
   write $test_path $data
-  assert_eq (read test_path) $data
-  assert_eq ((Path test_path).read()) $data
+  assert_eq (read_str test_path) $data
+  assert_eq ((Path test_path).read_str()) $data
   remove $test_path
 
 #[test]
@@ -200,26 +201,16 @@ def fs_read_rejects_invalid_utf_8_data()
   let test_path = "test_fs_read_invalid.bin"
   write $test_path b"\xff\xfe"
   let err = assert_throws $RuntimeError do
-    read $test_path
+    read_str $test_path
   assert_eq (str err) "invalid UTF-8 data"
   remove $test_path
-
-#[test]
-#[vfs]
-def fs_read_rejects_invalid_mode()
-  let path = "test_fs_read_invalid_mode.txt"
-  write $path "hello"
-  let err = assert_throws $RuntimeError do
-    read $path "rb"
-  assert_eq (str err) "type error: fs.read: mode must be `b`"
-  remove $path
 
 #[test]
 #[vfs]
 def missing_file_yields_sys_error()
   let missing = Path "missing.txt"
   let err = assert_throws $sys.NotFoundError do
-    missing.read()
+    missing.read_str()
   assert_type $sys.Error $err
   let code = err.code
   assert_type $sys.ErrorCode $code
@@ -246,4 +237,4 @@ def missing_file_yields_sys_error()
 def sys_error_is_caught_by_runtime_error()
   let missing = Path "missing.txt"
   assert_throws $RuntimeError do
-    missing.read()
+    missing.read_str()

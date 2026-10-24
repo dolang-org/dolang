@@ -134,7 +134,7 @@ def freebsd()
     let source = (dir / "upload.bin")
     let downloaded = (dir / "download.bin")
     run dd if=/dev/urandom of=$source bs=1M count=16 status=none
-    let source_data = source.read b
+    let source_data = source.read()
     let expected = digest.blake3 $source_data
 
     let domain = libvirt.create
@@ -178,7 +178,7 @@ def freebsd()
       progress.show message: "transfer round trip" icon: 🔁 do |_|
         domain.upload $source /tmp/dolang-libvirt-transfer.bin
         domain.download /tmp/dolang-libvirt-transfer.bin $downloaded
-      let downloaded_data = downloaded.read b
+      let downloaded_data = downloaded.read()
       assert_eq (digest.blake3 downloaded_data) $expected
 
       export_and_restore $domain
@@ -212,7 +212,7 @@ def windows()
     let source = (dir / "upload.bin")
     let downloaded = (dir / "download.bin")
     run dd if=/dev/urandom of=$source bs=1M count=16 status=none
-    let source_data = source.read b
+    let source_data = source.read()
     let expected = digest.blake3 $source_data
 
     let domain = libvirt.create
@@ -253,13 +253,13 @@ def windows()
       let output = domain.with do sub do run cmd /c echo hello world
       assert_eq $output.trim() "hello world"
 
-      let added = domain.with do Path(r"C:\Windows\Temp\dolang-libvirt-add.txt").read().trim()
+      let added = domain.with do Path(r"C:\Windows\Temp\dolang-libvirt-add.txt").read_str().trim()
       assert_eq $added "added by the test"
 
       progress.show message: "transfer round trip" icon: 🔁 do |_|
         domain.upload $source r"C:\Windows\Temp\dolang-libvirt-transfer.bin"
         domain.download r"C:\Windows\Temp\dolang-libvirt-transfer.bin" $downloaded
-      let downloaded_data = downloaded.read b
+      let downloaded_data = downloaded.read()
       assert_eq (digest.blake3 downloaded_data) $expected
 
       # The round trip that carries the firmware variable store and the vTPM
@@ -285,7 +285,7 @@ def windows_media()
   # handle on the page. This excludes the LTSC link, whose label puts `LTSC`
   # between `ISO` and `64-bit`.
   let link = regex.Regex r#"<a[^>]*aria-label="[^"]*Windows 11 Enterprise ISO 64-bit \(en-US\)"[^>]*href="(https://go\.microsoft\.com/fwlink/[^"]+)""#
-  let page = (transfer.get page_url app: "dolang-libvirt-test").read()
+  let page = (transfer.get page_url app: "dolang-libvirt-test").read_str()
   let found = link.match $page
   if !found
     throw std.ValueError "no Windows 11 Enterprise en-US 64-bit ISO link on $page_url"
@@ -332,7 +332,7 @@ def export_and_restore domain :sentinel :bundle_name :command :expect :memory = 
       # from the manifest, and the file written before shutdown is still there.
       let output = restored.with do sub do run ...command
       assert_eq $output.trim() $expect
-      let restored_token = restored.with do Path(sentinel).read().trim()
+      let restored_token = restored.with do Path(sentinel).read_str().trim()
       assert_eq $restored_token $token
 
       # No seed means nothing was re-provisioned. Read straight out of libvirt
