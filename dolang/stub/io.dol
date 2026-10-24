@@ -7,3 +7,150 @@
 # A function that accepts one, such as [`zip.open`](zip.open), takes it over,
 # and the value reads as closed afterward. Only native types implement it.
 pub @class Io
+
+# Buffers reads and writes over another [`Io`](io.Io).
+#
+# Reads fetch ahead, and writes are held back until the buffer fills, a read
+# or seek needs the handle, or the buffer is flushed, closed, or taken. A
+# buffer is not closed when it is garbage collected, so close it to keep its
+# pending writes, or use it from a block that closes it.
+#
+# A buffer reads lines and text as well as bytes. Text must be UTF-8, and line
+# endings are not translated. Iterating it yields lines.
+#
+# Taking the buffer, by passing it to a function that accepts an `Io`, flushes
+# it and hands over its read-ahead along with the handle.
+#
+# ## Errors
+#
+# | Exception | Condition |
+# | --- | --- |
+# | [`StateError`](std.StateError) | The buffer is closed, or its source does not read, write, or seek as the method needs |
+# | [`RuntimeError`](std.RuntimeError) | Text read is not valid UTF-8, or the source fails |
+#
+# ## Example
+#
+# ```
+# let file = Buffered $ fs.open data.txt rb
+# let header = file.read_line()
+# for line = file.chomp()
+#   echo $line
+# file.close()
+# ```
+pub class Buffered: Iter[Str] Sink[Value] @Io
+  # Buffers `source`, taking it over.
+  pub def (init)
+    self
+    # Byte source to buffer.
+    source @ Io
+  do
+    ...
+
+  # Reads bytes.
+  #
+  # A result shorter than `size` means the end of the stream was reached, and
+  # an empty one means it already had been.
+  pub def read
+    self
+    # Number of bytes to read. Without it, reads to the end of the stream.
+    size @ Int = nil
+  do -> Bin
+    ...
+
+  # Reads text.
+  #
+  # A character that `size` would split is left for the next read, unless it
+  # is the first, which is read whole.
+  pub def read_str
+    self
+    # Number of bytes to read. Without it, reads to the end of the stream.
+    size @ Int = nil
+  do -> Str
+    ...
+
+  # Reads the next line, including its terminator.
+  #
+  # ## Returns
+  #
+  # The line, or `""` at the end of the stream. Only the last line can lack a
+  # terminator.
+  pub def read_line self -> Str
+    ...
+
+  # Returns the buffer as an iterator over its lines.
+  pub def lines self -> Buffered
+    ...
+
+  # Returns the buffer as its own iterator.
+  pub def (iter) self -> Buffered
+    ...
+
+  # Reads the next line, as [`read_line`](io.Buffered.read_line) does.
+  pub def (next) self -> Str
+    ...
+
+  # Writes data.
+  #
+  # ## Returns
+  #
+  # The number of bytes written.
+  pub def write
+    self
+    # Data to write.
+    data @ (Str | Bin)
+  do -> Int
+    ...
+
+  # Returns the buffer as its own sink.
+  pub def (sink) self -> Buffered
+    ...
+
+  # Writes a value.
+  #
+  # A [`Str`](std.Str) or [`Bin`](std.Bin) contributes its own bytes, and
+  # anything else is converted to a string first. No line ending is appended.
+  pub def (put)
+    self
+    # Value to write.
+    value @ Value
+  do
+    ...
+
+  # Writes out pending writes.
+  pub def flush self
+    ...
+
+  # Flushes and closes the buffer and its source.
+  #
+  # The source is closed even if flushing fails. Closing a closed buffer does
+  # nothing.
+  pub def close self
+    ...
+
+  # Returns the logical position: where the next read or write happens.
+  pub def tell self -> Int
+    ...
+
+  # Moves the position, writing out pending writes and discarding read-ahead.
+  #
+  # ## Returns
+  #
+  # The new absolute byte position.
+  #
+  # ## Example
+  #
+  # ```
+  # file.seek start: 10   # absolute
+  # file.seek 10          # relative to the position
+  # file.seek end: (0 - 1)  # relative to the end
+  # ```
+  pub def seek
+    self
+    # Byte offset relative to the current position.
+    offset @ Int = nil
+    # Absolute byte offset from the start of the stream.
+    :start @ Int = nil
+    # Byte offset relative to the end of the stream.
+    :end @ Int = nil
+  do -> Int
+    ...

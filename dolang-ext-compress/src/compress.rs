@@ -260,24 +260,24 @@ async fn take_handle<'v, 's>(
             ByteHandle::read(file)
         });
     }
-    endpoint
-        .query::<ByteIo, _>(strand, |strand, io| {
-            if !io.caps().contains(need) {
-                let access = if write { "writable" } else { "readable" };
-                return Err(Error::value(strand, format!("{name} must be {access}")));
-            }
-            Ok(io.take())
-        })
-        .map_err(|err| {
-            if err.kind() == ErrorKind::Unsupported {
-                Error::type_error(
-                    strand,
-                    format!("expected `Str`, `Path`, or a byte I/O provider for `{name}`"),
-                )
-            } else {
-                err
-            }
-        })
+    dolang::runtime::io::take(strand, endpoint, |strand, caps| {
+        if !caps.contains(need) {
+            let access = if write { "writable" } else { "readable" };
+            return Err(Error::value(strand, format!("{name} must be {access}")));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|err| {
+        if err.kind() == ErrorKind::Unsupported {
+            Error::type_error(
+                strand,
+                format!("expected `Str`, `Path`, or a byte I/O provider for `{name}`"),
+            )
+        } else {
+            err
+        }
+    })
 }
 
 async fn read_into_embryo(

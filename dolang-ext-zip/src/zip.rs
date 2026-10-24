@@ -16,7 +16,7 @@ use async_zip::{
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, call,
     error::{ErrorKind, ResultExt},
-    io::{ByteHandle, ByteIo, IoCaps, ReadSeek, WriteSeek},
+    io::{ByteHandle, IoCaps, ReadSeek, WriteSeek},
     method,
     object::{ArrayLike, ArrayView, Mut, Ref, TypeBuilder},
     strand::InterruptMask,
@@ -962,26 +962,26 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                     ByteHandle::write_seek(file)
                 }
             } else {
-                source
-                    .query::<ByteIo, _>(strand, |strand, io| {
-                        if !io.caps().contains(need) {
-                            return Err(Error::value(
-                                strand,
-                                format!("archive source must be {access} and seekable"),
-                            ));
-                        }
-                        Ok(io.take())
-                    })
-                    .map_err(|err| {
-                        if err.kind() == ErrorKind::Unsupported {
-                            Error::type_error(
-                                strand,
-                                "expected `Str`, `Path`, or a byte I/O provider for `source`",
-                            )
-                        } else {
-                            err
-                        }
-                    })?
+                dolang::runtime::io::take(strand, &source, |strand, caps| {
+                    if !caps.contains(need) {
+                        return Err(Error::value(
+                            strand,
+                            format!("archive source must be {access} and seekable"),
+                        ));
+                    }
+                    Ok(())
+                })
+                .await
+                .map_err(|err| {
+                    if err.kind() == ErrorKind::Unsupported {
+                        Error::type_error(
+                            strand,
+                            "expected `Str`, `Path`, or a byte I/O provider for `source`",
+                        )
+                    } else {
+                        err
+                    }
+                })?
             };
 
             let inner = if mode == "r" {
