@@ -450,9 +450,9 @@ check (time.Date.from_ymd(2024, 2, 29).rfc() == "2024-02-29") "Date.from_ymd"
         assert_eq!(
             names,
             [
-                "base64", "compile", "digest", "glob", "http", "json", "load", "math", "rand",
-                "regex", "std", "strand", "term", "test", "time", "toml", "url", "uuid", "xml",
-                "yaml",
+                "base64", "compile", "digest", "glob", "http", "io", "json", "load", "math",
+                "rand", "regex", "std", "strand", "term", "test", "time", "toml", "url", "uuid",
+                "xml", "yaml",
             ]
         );
         let typelibs: Vec<_> = bundled

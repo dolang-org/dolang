@@ -7,7 +7,7 @@ pub static RESOURCES: &[Resource] = include!(concat!(env!("OUT_DIR"), "/resource
 
 dolang::resources!(RESOURCES);
 
-/// Each module's name and typelib: `std`, `math` and `strand`, the extensions
+/// Each module's name and typelib: `std`, `io`, `math` and `strand`, the extensions
 /// [`run`](crate::run) applies, and the `test` shim. Extension discovery is
 /// unavailable on Wasm, so the extensions are listed here as they are where
 /// they are applied.
