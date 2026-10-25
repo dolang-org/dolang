@@ -1,12 +1,19 @@
 use dolang::runtime::strand::InterruptMask;
-use dolang_vfs::process::Command;
+use dolang_vfs::{
+    Vfs,
+    file::File as VfsFile,
+    process::{ChildIn, ChildOut, Command, PipeRecv, PipeSend},
+};
 use futures::future::MaybeDone;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio_util::compat::{FuturesAsyncReadCompatExt as _, FuturesAsyncWriteCompatExt as _};
 
 use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
     AllocExt, Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
+    error::ErrorKind,
+    io::{self, IoCaps},
     method,
     object::TypeBuilder,
     unpack,
@@ -83,6 +90,12 @@ struct ResolvedIo<'v, 'a> {
     mode: IoMode,
 }
 
+/// Parses a launch's reserved keywords, storing what each standard stream
+/// names in `input`, `output` and `stderr`.
+///
+/// A path is opened as a file. An unnamed stdin or stdout is the ambient one,
+/// and an unnamed stderr is left nil. How each stream reaches the child is
+/// decided later, by the `connect_*` functions.
 async fn resolve_io<'v, 's, 'a>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, ProcGlobal<'v>>,
@@ -118,46 +131,36 @@ async fn resolve_io<'v, 's, 'a>(
         stderr: stderr_key.is_some(),
     };
 
-    let input_temp = if let Some(stdin_key) = stdin_key {
-        if resolve_io_file(strand, &stdin_key, "r", &mut input).await? {
-            true
-        } else {
-            stdin_key.iter(strand, Slot::reborrow(&mut input)).await?;
+    let input_temp = match stdin_key {
+        Some(key) => resolve_io_value(strand, &key, "r", &mut input).await?,
+        None => {
+            strand.input(Slot::reborrow(&mut input));
             false
         }
-    } else {
-        strand.input(Slot::reborrow(&mut input));
-        false
     };
 
-    let output_temp = if let Some(stdout_key) = stdout_key {
-        if resolve_io_file(strand, &stdout_key, "w", &mut output).await? {
-            true
-        } else {
-            stdout_key.sink(strand, Slot::reborrow(&mut output)).await?;
+    let output_temp = match stdout_key {
+        Some(key) => resolve_io_value(strand, &key, "w", &mut output).await?,
+        None => {
+            strand.output(Slot::reborrow(&mut output));
             false
         }
-    } else {
-        strand.output(Slot::reborrow(&mut output));
-        false
     };
 
-    let stderr_temp = if let Some(stderr_key) = stderr_key {
-        if let Some(sym) = stderr_key.as_sym(strand)
-            && sym == global.syms.stdout_redirect
+    let stderr_temp = match stderr_key {
+        Some(key)
+            if key
+                .as_sym(strand)
+                .is_some_and(|sym| sym == global.syms.stdout_redirect) =>
         {
+            // The same value as stdout, which `run` merges.
             Output::set(strand, &mut stderr, &output);
             false
-        } else if resolve_io_file(strand, &stderr_key, "w", &mut stderr).await? {
-            true
-        } else {
-            stderr_key.sink(strand, Slot::reborrow(&mut stderr)).await?;
-            false
         }
-    } else {
+        Some(key) => resolve_io_value(strand, &key, "w", &mut stderr).await?,
         // Left nil: an unnamed stderr follows the ambient console, which `run`
         // resolves to either inheriting fd 2 or a byte pump into the console.
-        false
+        None => false,
     };
 
     Ok(ResolvedIo {
@@ -171,6 +174,22 @@ async fn resolve_io<'v, 's, 'a>(
         policy: policy_key,
         mode,
     })
+}
+
+/// Stores the stream `arg` names in `out`, opening a path with `mode`.
+///
+/// Returns whether it opened a file, which the launch must close.
+async fn resolve_io_value<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    arg: &Value<'v>,
+    mode: &str,
+    out: &mut Slot<'v, '_>,
+) -> Result<'v, 's, bool> {
+    if resolve_io_file(strand, arg, mode, out).await? {
+        return Ok(true);
+    }
+    Output::set(strand, out, arg);
+    Ok(false)
 }
 
 async fn resolve_io_file<'v, 's>(
@@ -214,61 +233,62 @@ async fn cleanup_io<'v, 's>(
         .await
 }
 
-async fn configure_negotiated_input<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    command: &mut Command<'_>,
-    input: &Value<'v>,
-) -> Result<'v, 's, Option<RecvGuard>> {
-    let recv_result = pipe_channel::negotiate_recv(input, strand).await?;
-    if let Some(guard) = recv_result {
-        let pipe = guard.recv_pipe().await.into_sys(strand)?;
-        command.stdin(pipe).into_sys(strand)?;
-        Ok(Some(guard))
-    } else {
-        Ok(None)
+/// How [`run`] linked one standard stream to the child.
+enum Link<G, P> {
+    /// Configured entirely on the command: null, inherited, a file descriptor,
+    /// or a stream forwarded to a vfs relay.
+    Wired,
+    /// A pipe channel negotiated a pipe, whose guard must outlive the launch.
+    Negotiated(G),
+    /// The parent's end of a pipe of `run`'s own, which a pump serves.
+    Pipe(P),
+}
+
+impl<G, P> Link<G, P> {
+    fn split(self) -> (Option<G>, Option<P>) {
+        match self {
+            Self::Wired => (None, None),
+            Self::Negotiated(guard) => (Some(guard), None),
+            Self::Pipe(pipe) => (None, Some(pipe)),
+        }
     }
 }
 
-async fn configure_negotiated_output<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    command: &mut Command<'_>,
-    output: &Value<'v>,
-) -> Result<'v, 's, Option<SendGuard>> {
-    let send_result = pipe_channel::negotiate_send(output, strand).await?;
-    if let Some(guard) = send_result {
-        let pipe = guard.send_pipe().await.into_sys(strand)?;
-        command.stdout(pipe).into_sys(strand)?;
-        Ok(Some(guard))
-    } else {
-        Ok(None)
+/// What a pumped output pipe is copied into.
+#[derive(Clone, Copy)]
+enum OutTarget {
+    /// The stream's value, as a sink.
+    Sink,
+    /// The console.
+    Console,
+}
+
+impl OutTarget {
+    fn pump<'v, 'a>(self, value: &'a Value<'v>) -> PumpTarget<'v, 'a> {
+        match self {
+            Self::Sink => PumpTarget::Sink(value),
+            Self::Console => PumpTarget::Console,
+        }
     }
 }
 
-async fn configure_direct_input<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    command: &mut Command<'_>,
-    input: &Value<'v>,
-) -> Result<'v, 's, bool> {
-    if input.is_nil() || input.eq(strand, Singleton::Null)? {
-        command.stdin_null();
-        return Ok(true);
-    }
-    if strand
+type InLink = Link<RecvGuard, PipeSend>;
+type OutLink = Link<SendGuard, (PipeRecv, OutTarget)>;
+
+fn is_null<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Result<'v, 's, bool> {
+    Ok(value.is_nil() || value.eq(strand, Singleton::Null)?)
+}
+
+fn is_shell_stdin<'v>(strand: &Strand<'v, '_>, value: &Value<'v>) -> bool {
+    strand
         .try_state::<ShellTag>()
-        .is_some_and(|shell| shell.types.stdin.cast(input).is_some())
-    {
-        command.stdin_inherit().into_sys(strand)?;
-        return Ok(true);
-    }
-    if let Some(file) = strand
-        .try_state::<FsTag>()
-        .and_then(|fs| file::cast_file(fs, input))
-    {
-        let file = file.command_file(strand).await?;
-        command.stdin(file).into_sys(strand)?;
-        return Ok(true);
-    }
-    Ok(false)
+        .is_some_and(|shell| shell.types.stdin.cast(value).is_some())
+}
+
+fn is_shell_stderr<'v>(strand: &Strand<'v, '_>, value: &Value<'v>) -> bool {
+    strand
+        .try_state::<ShellTag>()
+        .is_some_and(|shell| shell.types.stderr.cast(value).is_some())
 }
 
 /// Whether `value` is an unredirected default for standard output: either the
@@ -283,59 +303,234 @@ fn is_default_stdout<'v>(strand: &Strand<'v, '_>, value: &Value<'v>) -> bool {
         || dolang_ext_term::is_default_output(strand, value)
 }
 
-async fn configure_direct_output<'v, 's>(
+/// Returns `value`'s file to hand to the child as is.
+async fn command_file<'v, 's>(
     strand: &mut Strand<'v, 's>,
+    value: &Value<'v>,
+) -> Result<'v, 's, Option<VfsFile>> {
+    let Some(file) = strand
+        .try_state::<FsTag>()
+        .and_then(|fs| file::cast_file(fs, value))
+    else {
+        return Ok(None);
+    };
+    file.command_file(strand).await.map(Some)
+}
+
+/// Returns `value`'s byte handle, for a vfs relay to copy, if it provides one.
+///
+/// It must have `caps`, or `message` is raised.
+fn byte_handle<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: &Value<'v>,
+    caps: IoCaps,
+    message: &'static str,
+) -> Result<'v, 's, Option<io::ByteHandle>> {
+    let handle = io::get(strand, value, |strand, have| {
+        if have.contains(caps) {
+            Ok(())
+        } else {
+            Err(Error::value(strand, message))
+        }
+    });
+    match handle {
+        Ok(handle) => Ok(Some(handle)),
+        Err(err) if err.kind() == ErrorKind::Unsupported => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+/// Returns `value`'s reader, if it is a stream.
+fn forward_input<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: &Value<'v>,
+) -> Result<'v, 's, Option<ChildIn>> {
+    const MESSAGE: &str = "stdin must be readable";
+    let Some(handle) = byte_handle(strand, value, IoCaps::READ, MESSAGE)? else {
+        return Ok(None);
+    };
+    let reader = handle
+        .into_read()
+        .map_err(|_| Error::value(strand, MESSAGE))?;
+    Ok(Some(ChildIn::reader(reader.compat())))
+}
+
+/// Returns `value`'s writer, if it is a stream.
+fn forward_output<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: &Value<'v>,
+    message: &'static str,
+) -> Result<'v, 's, Option<ChildOut>> {
+    let Some(handle) = byte_handle(strand, value, IoCaps::WRITE, message)? else {
+        return Ok(None);
+    };
+    let writer = handle
+        .into_write()
+        .map_err(|_| Error::value(strand, message))?;
+    Ok(Some(ChildOut::writer(writer.compat_write())))
+}
+
+/// Replaces `slot`'s value with its iterator.
+async fn make_iter<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    slot: &mut Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    strand
+        .with_slots(async |strand, [mut iter]| {
+            slot.iter(strand, Slot::reborrow(&mut iter)).await?;
+            Output::set(strand, slot, &*iter);
+            Ok(())
+        })
+        .await
+}
+
+/// Replaces `slot`'s value with its sink.
+async fn make_sink<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    slot: &mut Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    strand
+        .with_slots(async |strand, [mut sink]| {
+            slot.sink(strand, Slot::reborrow(&mut sink)).await?;
+            Output::set(strand, slot, &*sink);
+            Ok(())
+        })
+        .await
+}
+
+/// Connects the child's stdin to `input`.
+///
+/// In order: null, the shell's own stdin, a file's descriptor, a stream
+/// forwarded to a vfs relay, a negotiated pipe channel, and finally a pipe
+/// that `input_pump` fills from `input`'s items. A pipe channel is checked
+/// before streams, since it negotiates a better pipe, and so is a file, which
+/// gives the child an exact position. `input` is left holding its iterator
+/// when one is needed.
+async fn connect_stdin<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    vfs: &Vfs,
     command: &mut Command<'_>,
-    output: &Value<'v>,
-) -> Result<'v, 's, bool> {
-    if output.is_nil() || output.eq(strand, Singleton::Null)? {
+    input: &mut Slot<'v, '_>,
+) -> Result<'v, 's, InLink> {
+    if is_null(strand, input)? {
+        command.stdin_null();
+        return Ok(Link::Wired);
+    }
+    if is_shell_stdin(strand, input) {
+        command.stdin_inherit().into_sys(strand)?;
+        return Ok(Link::Wired);
+    }
+    if let Some(file) = command_file(strand, input).await? {
+        command.stdin(file).into_sys(strand)?;
+        return Ok(Link::Wired);
+    }
+    if !pipe_channel::is_receiver(strand, input)
+        && let Some(reader) = forward_input(strand, input)?
+    {
+        command.stdin(reader).into_sys(strand)?;
+        return Ok(Link::Wired);
+    }
+    make_iter(strand, input).await?;
+    if let Some(guard) = pipe_channel::negotiate_recv(input, strand).await? {
+        let pipe = guard.recv_pipe().await.into_sys(strand)?;
+        command.stdin(pipe).into_sys(strand)?;
+        return Ok(Link::Negotiated(guard));
+    }
+    let (parent, child) = vfs.pipe(None).await.into_sys(strand)?;
+    command.stdin(child).into_sys(strand)?;
+    Ok(Link::Pipe(parent))
+}
+
+/// Connects the child's stdout to `output`, or to the console when
+/// `to_console`.
+///
+/// The order mirrors [`connect_stdin`], with the defaults for stdout and
+/// stderr inherited. A pumped `output` is left holding its sink.
+async fn connect_stdout<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    vfs: &Vfs,
+    command: &mut Command<'_>,
+    output: &mut Slot<'v, '_>,
+    to_console: bool,
+) -> Result<'v, 's, OutLink> {
+    if to_console {
+        let (child, parent) = vfs.pipe(None).await.into_sys(strand)?;
+        command.stdout(child).into_sys(strand)?;
+        return Ok(Link::Pipe((parent, OutTarget::Console)));
+    }
+    if is_null(strand, output)? {
         command.stdout_null();
-        return Ok(true);
+        return Ok(Link::Wired);
     }
     if is_default_stdout(strand, output) {
         command.stdout_inherit().into_sys(strand)?;
-        return Ok(true);
+        return Ok(Link::Wired);
     }
-    if let Some(file) = strand
-        .try_state::<FsTag>()
-        .and_then(|fs| file::cast_file(fs, output))
-    {
-        let file = file.command_file(strand).await?;
+    if is_shell_stderr(strand, output) {
+        command.stdout_inherit_stderr().into_sys(strand)?;
+        return Ok(Link::Wired);
+    }
+    if let Some(file) = command_file(strand, output).await? {
         command.stdout(file).into_sys(strand)?;
-        return Ok(true);
+        return Ok(Link::Wired);
     }
-    Ok(false)
+    if !pipe_channel::is_sender(strand, output)
+        && let Some(writer) = forward_output(strand, output, "stdout must be writable")?
+    {
+        command.stdout(writer).into_sys(strand)?;
+        return Ok(Link::Wired);
+    }
+    make_sink(strand, output).await?;
+    if let Some(guard) = pipe_channel::negotiate_send(output, strand).await? {
+        let pipe = guard.send_pipe().await.into_sys(strand)?;
+        command.stdout(pipe).into_sys(strand)?;
+        return Ok(Link::Negotiated(guard));
+    }
+    let (child, parent) = vfs.pipe(None).await.into_sys(strand)?;
+    command.stdout(child).into_sys(strand)?;
+    Ok(Link::Pipe((parent, OutTarget::Sink)))
 }
 
-async fn configure_direct_stderr<'v, 's>(
+/// Connects the child's stderr to a named `stderr`, which isn't stdout's.
+///
+/// The order matches [`connect_stdout`]'s.
+async fn connect_stderr<'v, 's>(
     strand: &mut Strand<'v, 's>,
+    vfs: &Vfs,
     command: &mut Command<'_>,
-    stderr: &Value<'v>,
-) -> Result<'v, 's, bool> {
-    if stderr.is_nil() || stderr.eq(strand, Singleton::Null)? {
+    stderr: &mut Slot<'v, '_>,
+) -> Result<'v, 's, OutLink> {
+    if is_null(strand, stderr)? {
         command.stderr_null();
-        return Ok(true);
+        return Ok(Link::Wired);
     }
     if is_default_stdout(strand, stderr) {
         command.stderr_inherit_stdout().into_sys(strand)?;
-        return Ok(true);
+        return Ok(Link::Wired);
     }
-    if strand
-        .try_state::<ShellTag>()
-        .is_some_and(|shell| shell.types.stderr.cast(stderr).is_some())
-    {
+    if is_shell_stderr(strand, stderr) {
         command.stderr_inherit().into_sys(strand)?;
-        return Ok(true);
+        return Ok(Link::Wired);
     }
-    if let Some(file) = strand
-        .try_state::<FsTag>()
-        .and_then(|fs| file::cast_file(fs, stderr))
-    {
-        let file = file.command_file(strand).await?;
+    if let Some(file) = command_file(strand, stderr).await? {
         command.stderr(file).into_sys(strand)?;
-        return Ok(true);
+        return Ok(Link::Wired);
     }
-    Ok(false)
+    if !pipe_channel::is_sender(strand, stderr)
+        && let Some(writer) = forward_output(strand, stderr, "stderr must be writable")?
+    {
+        command.stderr(writer).into_sys(strand)?;
+        return Ok(Link::Wired);
+    }
+    make_sink(strand, stderr).await?;
+    if let Some(guard) = pipe_channel::negotiate_send(stderr, strand).await? {
+        let pipe = guard.send_pipe().await.into_sys(strand)?;
+        command.stderr(pipe).into_sys(strand)?;
+        return Ok(Link::Negotiated(guard));
+    }
+    let (child, parent) = vfs.pipe(None).await.into_sys(strand)?;
+    command.stderr(child).into_sys(strand)?;
+    Ok(Link::Pipe((parent, OutTarget::Sink)))
 }
 
 fn apply_env_and_cwd<'v, 's>(
@@ -463,26 +658,18 @@ where
         .await
 }
 
-/// The parent ends of whatever pipes were created for the child.
+/// The parent ends of whatever pipes `run` created for the child, with what
+/// each is pumped from or into.
 ///
-/// A stream is `None` when it was wired up directly — inherited, negotiated, or
-/// handed a file descriptor — and so needs no pump.
-#[derive(Default)]
-struct Pipes {
-    stdin: Option<Box<dyn AsyncWrite + Unpin>>,
-    stdout: Option<Box<dyn AsyncRead + Unpin>>,
-    stderr: Option<Box<dyn AsyncRead + Unpin>>,
-}
-
-/// Where each pumped stream is going.
-struct PumpTargets<'v, 'a> {
-    stdin: &'a Value<'v>,
-    stdout: PumpTarget<'v, 'a>,
-    /// Framing for whichever of the above are sinks.
+/// A stream is `None` when it was wired up otherwise — inherited, negotiated,
+/// handed a file descriptor, or forwarded to a vfs relay — and so needs no
+/// pump.
+struct Pumps<'v, 'a> {
+    stdin: Option<(PipeSend, &'a Value<'v>)>,
+    stdout: Option<(PipeRecv, PumpTarget<'v, 'a>)>,
+    stderr: Option<(PipeRecv, PumpTarget<'v, 'a>)>,
+    /// Framing for whichever outputs are pumped into sinks.
     mode: IoMode,
-    /// `None` when stderr is inherited or merged into stdout, so nothing pumps
-    /// it.
-    stderr: Option<PumpTarget<'v, 'a>>,
 }
 
 /// Runs input/output pumps and waits for process completion with unified error handling.
@@ -490,26 +677,23 @@ async fn run_monitor<'v, 's>(
     strand: &mut Strand<'v, 's>,
     process: &mut dolang_vfs::process::Child,
     name: &str,
-    target: PumpTargets<'v, '_>,
-    pipes: Pipes,
+    pumps: Pumps<'v, '_>,
 ) -> Result<'v, 's, ()> {
     let (res, ires, ores, eres) = {
+        let mode = pumps.mode;
         // Create pumps
-        let ipump = match pipes.stdin {
+        let ipump = match pumps.stdin {
             None => MaybeDone::Done(Ok(())),
-            Some(writer) => {
-                let input = target.stdin;
+            Some((writer, input)) => {
                 MaybeDone::Future(strand.spawn_scoped(None, async move |strand| {
                     input_pump(strand, input, writer).await
                 }))
             }
         };
 
-        let opump = match pipes.stdout {
+        let opump = match pumps.stdout {
             None => MaybeDone::Done(Ok(())),
-            Some(reader) => {
-                let output = target.stdout;
-                let mode = target.mode;
+            Some((reader, output)) => {
                 MaybeDone::Future(strand.spawn_scoped(None, async move |strand| match output {
                     PumpTarget::Sink(output) => output_pump(strand, output, reader, mode).await,
                     PumpTarget::Console => console_pump(strand, reader).await,
@@ -517,15 +701,14 @@ async fn run_monitor<'v, 's>(
             }
         };
 
-        let epump = match (target.stderr, pipes.stderr) {
-            (Some(output), Some(reader)) => {
-                let mode = target.mode;
+        let epump = match pumps.stderr {
+            None => MaybeDone::Done(Ok(())),
+            Some((reader, output)) => {
                 MaybeDone::Future(strand.spawn_scoped(None, async move |strand| match output {
                     PumpTarget::Sink(output) => output_pump(strand, output, reader, mode).await,
                     PumpTarget::Console => console_pump(strand, reader).await,
                 }))
             }
-            _ => MaybeDone::Done(Ok(())),
         };
 
         // Wait for completion
@@ -576,8 +759,11 @@ async fn run_monitor<'v, 's>(
             res?;
         }
         if let Some(res) = eres {
-            // Check results
             res?;
+        }
+        // So does a stream a vfs relay copied.
+        if let Some(error) = process.relay_error() {
+            return Err(io::error(strand, error));
         }
         Ok(())
     } else {
@@ -586,9 +772,11 @@ async fn run_monitor<'v, 's>(
 }
 
 struct RunIo<'v, 'a> {
-    /// What each standard stream is connected to. Nil stderr means it was left
-    /// unnamed, which `run` resolves against the ambient console.
-    value: Streams<&'a Value<'v>>,
+    /// What each standard stream names. Nil stderr means it was left unnamed,
+    /// which `run` resolves against the ambient console.
+    ///
+    /// `run` replaces a pumped stream's value with its iterator or sink.
+    streams: Streams<Slot<'v, 'a>>,
     /// Whether the caller named each stream explicitly.
     ///
     /// An unnamed stream is anonymous and follows the ambient console; a named
@@ -607,6 +795,17 @@ async fn run<'v, 's>(
     global: State<'v, ProcGlobal<'v>>,
     io: RunIo<'v, '_>,
 ) -> Result<'v, 's, ()> {
+    let RunIo {
+        streams:
+            Streams {
+                stdin: mut input,
+                stdout: mut output,
+                mut stderr,
+            },
+        explicit,
+        policy_override,
+        mode,
+    } = io;
     let (vfs, target, background, mut termination_policy) = {
         let local = global.local.get(strand);
         (
@@ -622,7 +821,7 @@ async fn run<'v, 's>(
         vfs_path::Kind::Windows => vfs_path::Path::windows(name),
     };
     let mut command = vfs.command(program);
-    if let Some(policy_override) = io.policy_override {
+    if let Some(policy_override) = policy_override {
         termination_policy = parse_policy_dict(
             strand,
             global,
@@ -659,97 +858,47 @@ async fn run<'v, 's>(
     // gating it on a tty would make capture work interactively and silently
     // not in CI.
     let captured = dolang_ext_term::is_captured(strand);
-    let stdout_to_console = !io.explicit.stdout
-        && is_default_stdout(strand, io.value.stdout)
+    let stdout_to_console = !explicit.stdout
+        && is_default_stdout(strand, &output)
         && (captured || (console_owned && core.terminal.stdout_is_terminal));
-    let stderr_to_console =
-        !io.explicit.stderr && (captured || (console_owned && core.terminal.stderr_is_terminal));
+    let stderr_to_console = captured || (console_owned && core.terminal.stderr_is_terminal);
+    // Compared before stdout's value is replaced by its sink.
+    let stderr_merge = explicit.stderr && stderr.eq(strand, &output)?;
 
-    let mut stdin_pipe = None;
-    let mut stdout_pipe = None;
-    let mut stderr_pipe = None;
-    let stderr_inherit = io.value.stderr.is_nil() && !stderr_to_console;
-    if stderr_inherit {
-        command.stderr_inherit().into_sys(strand)?;
-    }
-    let stderr_merge = !io.value.stderr.is_nil() && io.value.stderr.eq(strand, io.value.stdout)?;
-
-    let recv_guard = configure_negotiated_input(strand, &mut command, io.value.stdin).await?;
-    let send_guard = configure_negotiated_output(strand, &mut command, io.value.stdout).await?;
-    let stderr_guard = if stderr_inherit || stderr_merge {
-        None
-    } else {
-        configure_negotiated_output(strand, &mut command, io.value.stderr).await?
-    };
-    // Which streams were satisfied by pipe-channel negotiation and so need no
-    // further wiring.
-    let negotiated = Streams {
-        stdin: recv_guard.is_some(),
-        stdout: send_guard.is_some(),
-        stderr: stderr_guard.is_some(),
-    };
-    // The guards must outlive the launch.
-    let _recv_guard = recv_guard;
-    let _send_guard = send_guard;
-    let _stderr_guard = stderr_guard;
-
-    if !negotiated.stdin && !configure_direct_input(strand, &mut command, io.value.stdin).await? {
-        let (parent_stdin, child_stdin) = vfs.pipe(None).await.into_sys(strand)?;
-        command.stdin(child_stdin).into_sys(strand)?;
-        stdin_pipe = Some(parent_stdin);
-    }
-
-    let stdout_direct = negotiated.stdout
-        || (!stdout_to_console
-            && configure_direct_output(strand, &mut command, io.value.stdout).await?);
-    if !stdout_direct {
-        let (child_stdout, parent_stdout) = vfs.pipe(None).await.into_sys(strand)?;
-        command.stdout(child_stdout).into_sys(strand)?;
-        stdout_pipe = Some(parent_stdout);
-    }
-    if stderr_merge {
+    let stdin_link = connect_stdin(strand, &vfs, &mut command, &mut input).await?;
+    let stdout_link =
+        connect_stdout(strand, &vfs, &mut command, &mut output, stdout_to_console).await?;
+    let stderr_link = if stderr_merge {
         command.stderr_to_stdout().into_sys(strand)?;
-    }
-
-    if !stderr_inherit
-        && !stderr_merge
-        && !negotiated.stderr
-        && (stderr_to_console
-            || !configure_direct_stderr(strand, &mut command, io.value.stderr).await?)
-    {
-        let (child_stderr, parent_stderr) = vfs.pipe(None).await.into_sys(strand)?;
-        command.stderr(child_stderr).into_sys(strand)?;
-        stderr_pipe = Some(parent_stderr);
-    }
+        Link::Wired
+    } else if explicit.stderr {
+        connect_stderr(strand, &vfs, &mut command, &mut stderr).await?
+    } else if stderr_to_console {
+        let (child, parent) = vfs.pipe(None).await.into_sys(strand)?;
+        command.stderr(child).into_sys(strand)?;
+        Link::Pipe((parent, OutTarget::Console))
+    } else {
+        command.stderr_inherit().into_sys(strand)?;
+        Link::Wired
+    };
+    // Negotiated guards must outlive the launch.
+    let (_stdin_guard, stdin_pipe) = stdin_link.split();
+    let (_stdout_guard, stdout_pipe) = stdout_link.split();
+    let (_stderr_guard, stderr_pipe) = stderr_link.split();
 
     apply_env_and_cwd(global, strand, &mut command);
     apply_args(strand, args, &mut command)?;
 
     let mut proc = command.spawn().await.into_sys(strand)?;
-    let pipes = Pipes {
-        stdin: stdin_pipe.map(|pipe| Box::new(pipe) as Box<dyn AsyncWrite + Unpin>),
-        stdout: stdout_pipe.map(|pipe| Box::new(pipe) as Box<dyn AsyncRead + Unpin>),
-        stderr: stderr_pipe.map(|pipe| Box::new(pipe) as Box<dyn AsyncRead + Unpin>),
-    };
-    let target = PumpTargets {
-        stdin: io.value.stdin,
-        stdout: if stdout_to_console {
-            PumpTarget::Console
-        } else {
-            PumpTarget::Sink(io.value.stdout)
-        },
-        mode: io.mode,
-        stderr: (!stderr_inherit && !stderr_merge).then_some(if stderr_to_console {
-            PumpTarget::Console
-        } else {
-            PumpTarget::Sink(io.value.stderr)
-        }),
+    let pumps = Pumps {
+        stdin: stdin_pipe.map(|pipe| (pipe, &*input)),
+        stdout: stdout_pipe.map(|(pipe, target)| (pipe, target.pump(&output))),
+        stderr: stderr_pipe.map(|(pipe, target)| (pipe, target.pump(&stderr))),
+        mode,
     };
     let res = {
         strand
-            .interrupt_guard(async |strand| {
-                run_monitor(strand, &mut proc, name, target, pipes).await
-            })
+            .interrupt_guard(async |strand| run_monitor(strand, &mut proc, name, pumps).await)
             .await
     };
 
@@ -782,24 +931,29 @@ async fn dispatch_run<'v, 's>(
             )
             .await?;
 
-            let value = Streams {
-                stdin: &*input,
-                stdout: &*output,
-                stderr: &*stderr,
-            };
             let res = run(
                 strand,
                 name,
                 resolved.args,
                 global,
                 RunIo {
-                    value,
+                    streams: Streams {
+                        stdin: Slot::reborrow(&mut input),
+                        stdout: Slot::reborrow(&mut output),
+                        stderr: Slot::reborrow(&mut stderr),
+                    },
                     explicit: resolved.explicit,
                     policy_override: resolved.policy,
                     mode: resolved.mode,
                 },
             )
             .await;
+            // A file `run` opened is never replaced by an iterator or sink.
+            let value = Streams {
+                stdin: &*input,
+                stdout: &*output,
+                stderr: &*stderr,
+            };
             cleanup_io(strand, global, value, resolved.temp).await;
             res
         })

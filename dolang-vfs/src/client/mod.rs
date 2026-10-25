@@ -57,8 +57,8 @@ use crate::{
     metadata::{FsMetadata, Metadata, MetadataPatch},
     path::{self, WellKnownPath},
     process::{
-        self, ChildIn, ChildOut, PipeRecv, PipeRecvInner, PipeSend, PipeSendInner, ProcessControl,
-        ProcessExit, ProcessInfo, ProcessStatus, StartTime, TerminationPolicy,
+        self, PipeRecv, PipeRecvInner, PipeSend, PipeSendInner, ProcessControl, ProcessExit,
+        ProcessInfo, ProcessStatus, SpawnIn, SpawnOut, StartTime, TerminationPolicy,
     },
     protocol::{
         AccessRequest, AclRequest, CanonicalizeRequest, ChildExit, CopyRequest, CreateDirRequest,
@@ -2337,10 +2337,10 @@ impl<'a> Command<'a> {
         self
     }
 
-    pub(crate) fn stdin(&mut self, stdio: ChildIn) -> Result<&mut Self> {
+    pub(crate) fn stdin(&mut self, stdio: SpawnIn) -> Result<&mut Self> {
         let stdio = match stdio {
-            ChildIn::Pipe(stdio) => stdio,
-            ChildIn::File(file) => {
+            SpawnIn::Pipe(stdio) => stdio,
+            SpawnIn::File(file) => {
                 self.stdin = ClientRecv::File(file);
                 return Ok(self);
             }
@@ -2357,10 +2357,10 @@ impl<'a> Command<'a> {
         Ok(self)
     }
 
-    pub(crate) fn stdout(&mut self, stdio: ChildOut) -> Result<&mut Self> {
+    pub(crate) fn stdout(&mut self, stdio: SpawnOut) -> Result<&mut Self> {
         let stdio = match stdio {
-            ChildOut::Pipe(stdio) => stdio,
-            ChildOut::File(file) => {
+            SpawnOut::Pipe(stdio) => stdio,
+            SpawnOut::File(file) => {
                 self.stdout = ClientSend::File(file);
                 return Ok(self);
             }
@@ -2418,10 +2418,10 @@ impl<'a> Command<'a> {
         self
     }
 
-    pub(crate) fn stderr(&mut self, stdio: ChildOut) -> Result<&mut Self> {
+    pub(crate) fn stderr(&mut self, stdio: SpawnOut) -> Result<&mut Self> {
         let stdio = match stdio {
-            ChildOut::Pipe(stdio) => stdio,
-            ChildOut::File(file) => {
+            SpawnOut::Pipe(stdio) => stdio,
+            SpawnOut::File(file) => {
                 self.stderr = ClientSend::File(file);
                 return Ok(self);
             }

@@ -60,7 +60,7 @@ current strand's input `Iter` and output `Sink`, while stderr is connected to
 the current [console](term.Console). Use `stdin:`, `stdout:`, and
 `stderr:` to replace those connections for one invocation.
 
-Each redirect accepts a path or an `Iter`/`Sink`.
+Each redirect accepts a path, an [`io.Io`](io.Io) stream, or an `Iter`/`Sink`.
 [`std.null`](std.Null) provides empty input and discards output:
 
 ```
@@ -217,10 +217,18 @@ in each direction:
   values, and puts those values into the output `Sink`.
 
 This applies both to the implicit `Iter` and `Sink` in a pipeline and to values
-given explicitly with `stdin:`, `stdout:`, or `stderr:`. Certain types pass the
-underlying stream directly when possible to avoid the round-trip through a Do
-value, such as `File` handles and the `shell.stdin` and `shell.stdout`
-singletons.
+given explicitly with `stdin:`, `stdout:`, or `stderr:`.
+
+A redirect to an [`io.Io`](io.Io) stream skips the translation: bytes are
+copied between the program and the stream as they are, whatever the `mode:`.
+A stream that is also iterable, such as [`io.Buffered`](io.Buffered), is read
+as bytes rather than items, and the copy may read past what the program
+consumed. When the program succeeds, an error from the stream fails the
+invocation; otherwise the program's exit status is reported.
+
+`File` handles and the `shell.stdin`, `shell.stdout` and `shell.stderr`
+singletons go further and hand the program the underlying stream, so a file's
+position afterward is exactly where the program left it.
 
 ### Output Mode
 

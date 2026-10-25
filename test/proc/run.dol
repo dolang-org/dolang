@@ -1,4 +1,4 @@
-import json shell
+import io json shell
 import proc sys sys.unix sys.windows _vfs term
   testlib.vfs:
     - vfs
@@ -388,6 +388,111 @@ def stdio_adapters_frame_without_transforming()
   assert_eq $captured "first\r\nsecond\n"
   captured = sub chomp: false do run $exe $script raw
   assert_eq $captured "first\r\nsecond\n\n"
+
+# A Do stream, read and written through `io.Io`'s bridge.
+class Memory: io.Io
+  pub field data pos written fail
+
+  def (init) self data = b"" :fail = nil
+    self.data = data
+    self.pos = 0
+    self.written = []
+    self.fail = fail
+
+  #[getter]
+  pub def readable _self
+    true
+
+  #[getter]
+  pub def writable _self
+    true
+
+  pub def read self size = nil
+    if self.fail
+      throw ValueError $self.fail
+    let end = self.data.len
+    if (size != nil && self.pos + size < end)
+      end = (self.pos + size)
+    let chunk = (self.data[self.pos..end])
+    self.pos = end
+    chunk
+
+  pub def write self *data
+    if self.fail
+      throw ValueError $self.fail
+    let total = 0
+    for piece = data
+      self.written.push $piece
+      total = (total + piece.len)
+    total
+
+  pub def bytes self
+    (b"".join self.written)
+
+# A Do stream that never ends.
+class Endless: io.Io
+  #[getter]
+  pub def readable _self
+    true
+
+  pub def read _self _size = nil
+    b"endless\n"
+
+def stream_child()
+  let script = Path "stream-child.dol"
+  script.write r|
+    import shell
+    import strand
+
+    if (shell.args[0] == "stdout")
+      strand.put b"\xffraw\r\n"
+    else if (shell.args[0] == "stderr")
+      shell.stderr.write b"\xfferr\r\n"
+    else
+      shell.stdin.read 1
+  script
+
+#[test]
+#[vfs]
+def stream_stdin_is_forwarded()
+  let res = sub chomp: false do cat stdin: (io.Concat ["one", "two"] end: "\n")
+  assert_eq $res "one\ntwo\n"
+  res = sub chomp: false do cat stdin: (Memory b"do\nstream")
+  assert_eq $res "do\nstream"
+  # A buffer is a stream, so its bytes go through, not its lines.
+  let out = Memory()
+  cat stdin: (io.Buffered (Memory b"\xff\x00raw\n")) stdout: $out
+  assert_eq $out.bytes() b"\xff\x00raw\n"
+
+#[test]
+#[vfs]
+def stream_output_is_forwarded()
+  let script = stream_child()
+  # The bytes arrive as is, whatever the `mode:`.
+  let out = Memory()
+  run $exe $script stdout stdout: $out
+  assert_eq $out.bytes() b"\xffraw\r\n"
+  out = Memory()
+  run $exe $script stderr stderr: $out
+  assert_eq $out.bytes() b"\xfferr\r\n"
+  # A native stream is flushed when the child's output ends.
+  out = Memory()
+  let buffered = io.Buffered $out
+  run $exe $script stdout stdout: $buffered
+  assert_eq $out.bytes() b"\xffraw\r\n"
+
+#[test]
+#[vfs]
+def failing_stream_fails_successful_child()
+  let err = assert_throws $ValueError do cat stdin: $Memory(fail: "source broke")
+  assert_eq (str err) "value error: source broke"
+  err = assert_throws $ValueError do echo hi stdout: $Memory(fail: "sink broke")
+  assert_eq (str err) "value error: sink broke"
+
+#[test]
+#[vfs]
+def child_may_leave_forwarded_stdin_unread()
+  run $exe $stream_child() one stdin: $Endless()
 
 #[test]
 #[vfs]

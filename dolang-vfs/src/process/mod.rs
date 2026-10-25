@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     io::{self, IoSlice},
     pin::Pin,
     process::Stdio,
@@ -10,7 +11,7 @@ use dolang_rpc::handle::DefaultHandle;
 use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf},
-    task::JoinHandle,
+    task::{JoinError, JoinHandle},
 };
 
 use crate::{
@@ -143,7 +144,6 @@ enum CommandInner<'a> {
 }
 
 /// What a child reads as its standard input.
-#[derive(Debug)]
 pub enum ChildIn {
     /// The read end of a pipe.
     Pipe(PipeRecv),
@@ -153,10 +153,15 @@ pub enum ChildIn {
     /// so reading through the file picks up after what the child consumed.
     /// Every clone shares the cursor, so it moves for all of them.
     File(File),
+    /// A stream, copied into a pipe while the child runs.
+    ///
+    /// The copy may read past what the child consumed. Once the child exits,
+    /// the copy stops, and an error it met is reported by
+    /// [`Child::relay_error`] unless it is [`io::ErrorKind::BrokenPipe`].
+    Reader(Box<dyn AsyncRead + Send + Unpin>),
 }
 
 /// Where a child writes its standard output or standard error.
-#[derive(Debug)]
 pub enum ChildOut {
     /// The write end of a pipe.
     Pipe(PipeSend),
@@ -165,6 +170,60 @@ pub enum ChildOut {
     /// Once the child has exited, the cursor is wherever the child left off,
     /// so writing through the file continues after the child's output. Every
     /// clone shares the cursor, so it moves for all of them.
+    File(File),
+    /// A stream, copied from a pipe while the child runs.
+    ///
+    /// The stream is shut down once the child's output ends, and
+    /// [`Child::wait`] waits for that. An error the copy met is reported by
+    /// [`Child::relay_error`].
+    Writer(Box<dyn AsyncWrite + Send + Unpin>),
+}
+
+impl ChildIn {
+    /// Creates a stream endpoint.
+    pub fn reader(reader: impl AsyncRead + Send + Unpin + 'static) -> Self {
+        Self::Reader(Box::new(reader))
+    }
+}
+
+impl ChildOut {
+    /// Creates a stream endpoint.
+    pub fn writer(writer: impl AsyncWrite + Send + Unpin + 'static) -> Self {
+        Self::Writer(Box::new(writer))
+    }
+}
+
+impl fmt::Debug for ChildIn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pipe(pipe) => f.debug_tuple("Pipe").field(pipe).finish(),
+            Self::File(file) => f.debug_tuple("File").field(file).finish(),
+            Self::Reader(_) => f.debug_tuple("Reader").finish_non_exhaustive(),
+        }
+    }
+}
+
+impl fmt::Debug for ChildOut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pipe(pipe) => f.debug_tuple("Pipe").field(pipe).finish(),
+            Self::File(file) => f.debug_tuple("File").field(file).finish(),
+            Self::Writer(_) => f.debug_tuple("Writer").finish_non_exhaustive(),
+        }
+    }
+}
+
+/// A standard input endpoint a spawn target takes as is, once
+/// [`classify_recv`] has relayed whatever it can't.
+pub(crate) enum SpawnIn {
+    Pipe(PipeRecv),
+    File(File),
+}
+
+/// A standard output or error endpoint a spawn target takes as is, once
+/// [`classify_send`] has relayed whatever it can't.
+pub(crate) enum SpawnOut {
+    Pipe(PipeSend),
     File(File),
 }
 
@@ -255,14 +314,17 @@ impl PendingRelays {
                 .into_iter()
                 .map(|(src, dst)| tokio::spawn(relay(src, dst)))
                 .collect(),
+            error: None,
         }
     }
 }
 
 #[derive(Default)]
 struct ActiveRelays {
-    inputs: Vec<JoinHandle<()>>,
-    outputs: Vec<JoinHandle<()>>,
+    inputs: Vec<JoinHandle<io::Result<()>>>,
+    outputs: Vec<JoinHandle<io::Result<()>>>,
+    /// The first error a finished relay reported.
+    error: Option<io::Error>,
 }
 
 impl ActiveRelays {
@@ -272,6 +334,19 @@ impl ActiveRelays {
         }
     }
 
+    /// Keeps `result`'s error if it is the first.
+    fn record(&mut self, result: std::result::Result<io::Result<()>, JoinError>) {
+        let error = match result {
+            Ok(Ok(())) => return,
+            Ok(Err(error)) => error,
+            Err(error) => match error.try_into_panic() {
+                Ok(panic) => std::panic::resume_unwind(panic),
+                Err(_) => return,
+            },
+        };
+        self.error.get_or_insert(error);
+    }
+
     /// Waits for output relays to finish flushing everything the child
     /// already produced before it exited. Input relays are aborted instead
     /// of awaited, since no further input can matter once the child is gone.
@@ -279,10 +354,24 @@ impl ActiveRelays {
     /// Once the child has exited, its end of each output pipe is closed, so
     /// the relay's copy loop reaches EOF and returns on its own; this just
     /// ensures the caller can't observe a partially-relayed destination.
+    ///
+    /// An input relay that already finished keeps its error, unless the
+    /// child closed its end of the pipe first. Every output relay keeps its
+    /// error.
     async fn finish(&mut self) {
-        self.abort_inputs();
-        for handle in self.outputs.drain(..) {
-            let _ = handle.await;
+        for handle in std::mem::take(&mut self.inputs) {
+            if !handle.is_finished() {
+                handle.abort();
+                continue;
+            }
+            match handle.await {
+                Ok(Err(error)) if error.kind() == io::ErrorKind::BrokenPipe => {}
+                result => self.record(result),
+            }
+        }
+        for handle in std::mem::take(&mut self.outputs) {
+            let result = handle.await;
+            self.record(result);
         }
     }
 
@@ -309,6 +398,15 @@ pub struct Child {
 }
 
 impl Child {
+    /// Takes the first error a stream relay met, once [`wait`](Self::wait)
+    /// has finished the relays.
+    ///
+    /// The process status is reported apart from this, so a caller can
+    /// decide which matters more.
+    pub fn relay_error(&mut self) -> Option<io::Error> {
+        self.relays.error.take()
+    }
+
     /// Waits for the process to exit.
     pub async fn wait(&mut self) -> Result<ProcessStatus> {
         let status = match &mut self.inner {
@@ -383,21 +481,17 @@ async fn classify_recv(
     target: &Vfs,
     stdio: ChildIn,
     relays: &mut PendingRelays,
-) -> Result<ChildIn> {
-    let direct = match &stdio {
-        ChildIn::Pipe(pipe) => is_direct_recv(target, pipe),
-        ChildIn::File(file) => is_direct_file(target, file),
-    };
-    if direct {
-        return Ok(stdio);
-    }
-    let (send, recv) = target.pipe(None).await?;
+) -> Result<SpawnIn> {
     let source: RelaySource = match stdio {
+        ChildIn::Pipe(pipe) if is_direct_recv(target, &pipe) => return Ok(SpawnIn::Pipe(pipe)),
+        ChildIn::File(file) if is_direct_file(target, &file) => return Ok(SpawnIn::File(file)),
         ChildIn::Pipe(pipe) => Box::new(pipe),
         ChildIn::File(file) => Box::new(file),
+        ChildIn::Reader(reader) => reader,
     };
+    let (send, recv) = target.pipe(None).await?;
     relays.inputs.push((source, send));
-    Ok(ChildIn::Pipe(recv))
+    Ok(SpawnIn::Pipe(recv))
 }
 
 /// Classifies a stdout/stderr endpoint for a process about to be spawned in
@@ -407,21 +501,17 @@ async fn classify_send(
     target: &Vfs,
     stdio: ChildOut,
     relays: &mut PendingRelays,
-) -> Result<ChildOut> {
-    let direct = match &stdio {
-        ChildOut::Pipe(pipe) => is_direct_send(target, pipe),
-        ChildOut::File(file) => is_direct_file(target, file),
-    };
-    if direct {
-        return Ok(stdio);
-    }
-    let (send, recv) = target.pipe(None).await?;
+) -> Result<SpawnOut> {
     let sink: RelaySink = match stdio {
+        ChildOut::Pipe(pipe) if is_direct_send(target, &pipe) => return Ok(SpawnOut::Pipe(pipe)),
+        ChildOut::File(file) if is_direct_file(target, &file) => return Ok(SpawnOut::File(file)),
         ChildOut::Pipe(pipe) => Box::new(pipe),
         ChildOut::File(file) => Box::new(file),
+        ChildOut::Writer(writer) => writer,
     };
+    let (send, recv) = target.pipe(None).await?;
     relays.outputs.push((recv, sink));
-    Ok(ChildOut::Pipe(send))
+    Ok(SpawnOut::Pipe(send))
 }
 
 impl<'a> Command<'a> {
@@ -879,15 +969,18 @@ pub(crate) struct NativePipeRecv {
     ready: Option<(Vec<u8>, usize)>,
 }
 
-/// Pumps bytes from `src` to `dst` until EOF or error, then shuts `dst` down.
-pub(crate) async fn relay<R, W>(src: R, mut dst: W)
+/// Pumps bytes from `src` to `dst` until EOF or error, then shuts `dst` down,
+/// returning the first error.
+pub(crate) async fn relay<R, W>(src: R, mut dst: W) -> io::Result<()>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
     let mut src = BufReader::with_capacity(STREAM_CHUNK_SIZE, src);
-    let _ = tokio::io::copy_buf(&mut src, &mut dst).await;
-    let _ = dst.shutdown().await;
+    let copied = tokio::io::copy_buf(&mut src, &mut dst).await;
+    let shutdown = dst.shutdown().await;
+    copied?;
+    shutdown
 }
 
 /// Creates a native OS pipe, optionally hinting a kernel buffer size.
