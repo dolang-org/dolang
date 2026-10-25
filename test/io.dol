@@ -5,6 +5,7 @@ import compress
   zip
   io:
     - Buffered
+    - Concat
     - Io
   strand:
     - channel
@@ -354,3 +355,65 @@ def cancelling_consumer_cancels_do_stream()
   # The server's read is interrupted, and the stream stays open.
   assert_eq (ends.next()) true
   assert_eq $stream.closed false
+
+#[test]
+def concat_converts_items()
+  let stream = Concat ["a", b"b", 1, true]
+  assert_eq $stream.readable true
+  assert_eq $stream.writable false
+  assert_eq (stream.read_all()) b"ab1true"
+
+#[test]
+def concat_appends_end()
+  assert_eq (Concat(["x", "y"], end: "\n").read_all_str()) "x\ny\n"
+  assert_eq (Concat([b"x"], end: b"\0").read_all()) b"x\0"
+  assert_eq (Concat([]).read_all()) b""
+  assert_throws $TypeError do Concat [] end: 1
+
+def recording pulled items
+  items.map do |item|
+    pulled.push $item
+    item
+
+#[test]
+def concat_reads_split_and_span_items()
+  let pulled = []
+  let stream = Concat (recording(pulled, ["abc", "defg"]))
+  assert_eq $pulled.len 0
+  assert_eq (stream.read(2)) b"ab"
+  assert_eq $pulled.len 1
+  assert_eq (stream.read(3)) b"cde"
+  assert_eq (stream.read(10)) b"fg"
+  assert_eq (stream.read(1)) b""
+
+def failing_item item
+  if (item == "boom")
+    throw ValueError bad
+  item
+
+#[test]
+def concat_iterator_exception()
+  let stream = Concat (["a", "boom"].map(failing_item))
+  assert_eq (stream.read(1)) b"a"
+  assert_throws $ValueError str: "value error: bad" do stream.read(1)
+  let failing = Concat (["boom"].map(failing_item))
+  assert_throws $ValueError str: "value error: bad" do
+    compress.decompress $failing do |inner| inner.read()
+
+#[test]
+def concat_feeds_native_consumer()
+  let sink = MemIo()
+  compress.compress $sink :GZIP: do |stream| stream.write "streamed in pieces"
+  let data = sink.data
+  let chunks = [data[..5], data[5..10], data[10..]]
+  compress.decompress (Concat chunks) do |stream|
+    assert_eq (stream.read_all_str()) "streamed in pieces"
+
+#[test]
+def concat_close()
+  let stream = Concat ["abc"]
+  assert_eq (stream.read(1)) b"a"
+  stream.close()
+  assert_eq $stream.readable false
+  assert_throws $StateError do stream.read(1)
+  stream.close()

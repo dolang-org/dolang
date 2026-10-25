@@ -1578,6 +1578,10 @@ pub trait Object<'v>: Sized + 'v {
     /// querier. Test the tag before borrowing, so an unrelated query never fails on a
     /// conflicting borrow.
     ///
+    /// A request this leaves unanswered falls through to the abstract supertypes. An
+    /// [`Io`](TypeObject::Io) subtype that answers no [`ByteIo`](crate::io::ByteIo) is
+    /// served through its own `read`, `write` and `seek`, as a Do subclass is.
+    ///
     /// # Default
     /// Provides nothing.
     #[allow(unused_variables)]
@@ -1799,10 +1803,26 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             |strand| {
                 T::provide(
                     Instance::from_recv(&this),
-                    &mut Request::new(strand, answer),
+                    &mut Request::new(strand, &mut *answer),
                 )
             },
-        )
+        )?;
+        if answer.is_done() {
+            return Ok(());
+        }
+        // Unanswered: fall through to the abstract supertypes, as a class instance does.
+        let supertypes = instance_supertypes::<T>(this.clone(), strand);
+        strand.with_slots_sync(|strand, [mut delegator]| {
+            Output::set(strand, Slot::reborrow(&mut delegator), &this);
+            for supertype in supertypes {
+                if answer.is_done() {
+                    break;
+                }
+                Delegated::new(supertype, &delegator)
+                    .op_provide(&mut Request::new(strand, &mut *answer))?;
+            }
+            Ok(())
+        })
     }
 
     async fn op_call<'a, 's>(
@@ -3700,6 +3720,14 @@ fn instance_supertype<'v, 'a, T: Object<'v>>(
     vm: &Vm<'v>,
     idx: usize,
 ) -> &'a Value<'v> {
+    &instance_supertypes::<T>(this, vm)[idx]
+}
+
+/// The abstract supertypes of `this`'s type, as `TypeAnnexInner::supertypes` lists them.
+fn instance_supertypes<'v, 'a, T: Object<'v>>(
+    this: Recv<'v, 'a, ObjectWrap<'v, T>>,
+    vm: &Vm<'v>,
+) -> &'a [Value<'v>] {
     let Case::Object(type_obj) = this.singleton(vm).case() else {
         unreachable!();
     };
@@ -3707,7 +3735,7 @@ fn instance_supertype<'v, 'a, T: Object<'v>>(
     let type_obj = unsafe {
         GcObjBorrow::<'v, 'v, TypeObjectWrap<'v, T>>::from_raw(type_obj.into_raw().cast())
     };
-    &type_obj.annex().supertypes[idx]
+    &type_obj.annex().supertypes
 }
 
 /// Call glue: reconstructs a typed `Instance<T>` from the raw header and calls `F`.

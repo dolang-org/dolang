@@ -415,6 +415,13 @@ exception from one of those methods
 reaches the handle as an `io::Error` with the exception's message, which the
 consumer maps as it maps any other.
 
+A native type that inherits `io.Io` but answers no `ByteIo` in `provide` is
+served the same way, through its own Do methods. `io.Concat` relies on this.
+To stream a Do iterable into a native consumer, such as a request body, call
+`io::concat(strand, &iterable, end)`. It returns a read handle over the items'
+bytes, converted as `io.Concat` converts them, without the caller holding a
+slot.
+
 ## GC Slots and Lifetime Transmuting
 
 When wrapping types that borrow from GC-managed values (e.g. a regex iterator

@@ -32,9 +32,10 @@ use futures::io::{AsyncRead, AsyncSeek, AsyncWrite};
 
 use crate::{
     error::{Error, ErrorKind},
-    object::interface::InterfaceTag,
+    object::{interface::InterfaceTag, native::Mut},
+    stdlib::io::{Concat, ConcatType},
     strand::Strand,
-    value::Value,
+    value::{Output, Value},
 };
 
 bitflags::bitflags! {
@@ -117,6 +118,30 @@ pub fn get<'v, 's>(
         let caps = io.caps(strand)?;
         accept(strand, caps)?;
         io.get(strand)
+    })
+}
+
+/// Gets a read handle over the concatenated bytes of `iterable`'s items, each followed by
+/// `end`, as `io.Concat` reads them.
+///
+/// The handle pulls items as it reads, on strands owned by the handle, which keep the
+/// iterable alive until the handle is dropped. An exception from the iterable reaches the
+/// reader as an [`io::Error`] made by [`from_do`].
+pub fn concat<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    iterable: &Value<'v>,
+    end: &[u8],
+) -> crate::error::Result<'v, 's, ByteHandle> {
+    let ty = *strand.state::<ConcatType>();
+    strand.with_slots_sync(|strand, [mut concat]| {
+        ty.create(strand, Concat::new(end.to_vec()), &mut concat);
+        ty.cast(&concat)
+            .unwrap()
+            .enter_sync(strand, |strand, inst| {
+                let mut borrow = inst.borrow_mut_unwrap();
+                Output::set(strand, Mut::slot_mut::<0>(&mut borrow), iterable);
+            });
+        get(strand, &concat, |_, _| Ok(()))
     })
 }
 

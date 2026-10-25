@@ -1,5 +1,6 @@
-//! The `io` module, `io.Buffered`, a buffer over a [`ByteHandle`], and [`Stream`], the
-//! anonymous `io.Io` a handle becomes as an [`Input`].
+//! The `io` module, `io.Buffered`, a buffer over a [`ByteHandle`], [`Stream`], the
+//! anonymous `io.Io` a handle becomes as an [`Input`], and `io.Concat`, an iterable read as
+//! bytes.
 //!
 //! A seekable handle that reads and writes holds read-ahead or pending writes, never both:
 //! a write first moves the handle back over unread bytes, and a read or seek first flushes.
@@ -33,12 +34,12 @@ use crate::{
     },
     object::{
         interface::Request,
-        native::{Instance, Object, Type, TypeBuilder},
+        native::{Instance, Mut, Object, Type, TypeBuilder},
     },
     strand::Strand,
-    sym::Sym,
+    sym::{self, Sym},
     unpack,
-    value::{BinEmbryo, Input, InputBy, Output, Slot, TypeObject, private::Sealed},
+    value::{BinEmbryo, Input, InputBy, Output, Slot, TypeObject, Value, private::Sealed},
     vm::{Alloc, Builder, StateTag, Vm},
 };
 
@@ -535,11 +536,14 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     let buffered = builder.register_type::<Buffered>();
     let stream = builder.register_type::<Stream>();
     builder.register_state::<StreamType>(stream);
+    let concat = builder.register_type::<Concat>();
+    builder.register_state::<ConcatType>(concat);
     let io = builder.singletons().io.dup();
     builder
         .module("io")
         .value("Io", &io)
         .value("Buffered", buffered)
+        .value("Concat", concat)
         .commit();
 }
 
@@ -901,6 +905,152 @@ impl<'v> Object<'v> for Stream {
     }
 }
 
+/// A Do iterable read as the concatenation of its items' bytes, each followed by `end`.
+///
+/// Slot 0 holds the iterable until the first read, then its iterator until it ends. Items
+/// are pulled only as reads need them. `Concat` answers no [`ByteIo`] itself: `Io` serves
+/// it through its own `read`, on the strands of the handle's owner.
+pub(crate) struct Concat {
+    end: Vec<u8>,
+    /// Bytes converted but not yet read.
+    pending: Vec<u8>,
+    state: ConcatState,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConcatState {
+    /// Slot 0 holds the iterable.
+    Ready,
+    /// Slot 0 holds the iterator.
+    Iterating,
+    Done,
+    Closed,
+}
+
+/// The registered [`Concat`] type, for [`crate::io::concat`].
+pub(crate) struct ConcatType;
+
+impl StateTag for ConcatType {
+    type State<'v> = Type<'v, Concat>;
+}
+
+impl Concat {
+    pub(crate) fn new(end: Vec<u8>) -> Self {
+        Self {
+            end,
+            pending: Vec::new(),
+            state: ConcatState::Ready,
+        }
+    }
+
+    /// Pulls items until `size` bytes are pending or the iterator ends.
+    async fn fill<'v, 's>(
+        this: &mut Mut<'v, '_, Self>,
+        strand: &mut Strand<'v, 's>,
+        size: usize,
+    ) -> Result<'v, 's, ()> {
+        strand
+            .with_slots(async move |strand, [mut item]| {
+                if this.state == ConcatState::Ready {
+                    Mut::slot::<0>(this)
+                        .iter(strand, Slot::reborrow(&mut item))
+                        .await?;
+                    Output::set(strand, Mut::slot_mut::<0>(this), &item);
+                    this.state = ConcatState::Iterating;
+                }
+                while this.state == ConcatState::Iterating && this.pending.len() < size {
+                    if !Mut::slot::<0>(this)
+                        .next(strand, Slot::reborrow(&mut item))
+                        .await?
+                    {
+                        this.state = ConcatState::Done;
+                        Mut::slot_mut::<0>(this).store(Value::NIL);
+                        break;
+                    }
+                    if let Some(b) = item.as_bin(strand.vm()) {
+                        this.pending.extend_from_slice(&b.pin());
+                    } else if let Some(s) = item.as_str(strand.vm()) {
+                        this.pending.extend_from_slice(s.pin().as_bytes());
+                    } else {
+                        let text = item.to_string(strand)?;
+                        this.pending.extend_from_slice(text.as_bytes());
+                    }
+                    let Self { end, pending, .. } = &mut **this;
+                    pending.extend_from_slice(end);
+                }
+                Ok(())
+            })
+            .await
+    }
+}
+
+impl<'v> Object<'v> for Concat {
+    const NAME: &'v str = "Concat";
+    const MODULE: &'v str = "io";
+    const SLOTS: usize = 1;
+    type Annex = ();
+    type Type = ();
+    type TypeAnnex = ();
+
+    async fn new<'a, 's>(
+        this: Type<'v, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        args: crate::arg::Args<'v, 'a>,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let end_sym = Sym::well_known(sym::END);
+        let ([items], [end]) = unpack!(strand, args, 1, 0, end_sym = None)?;
+        let end = match end {
+            None => Vec::new(),
+            Some(end) => {
+                if let Some(b) = end.as_bin(strand.vm()) {
+                    b.pin().to_vec()
+                } else if let Some(s) = end.as_str(strand.vm()) {
+                    s.pin().as_bytes().to_vec()
+                } else {
+                    return Err(Error::type_error(strand, "end: expected `Str` or `Bin`"));
+                }
+            }
+        };
+        this.create(strand, Concat::new(end), &mut out);
+        this.cast(&out).unwrap().enter_sync(strand, |strand, inst| {
+            let mut borrow = inst.borrow_mut_unwrap();
+            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &items);
+        });
+        Ok(())
+    }
+
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder
+            .supertype(TypeObject::Io)
+            .get("readable", |this, strand, out| {
+                let this = this.borrow(strand)?;
+                Output::set(strand, out, this.state != ConcatState::Closed);
+                Ok(())
+            })
+            .method("read", async move |this, strand, args, out| {
+                let ([size], []) = unpack!(strand, args, 1, 0)?;
+                let size = size_value(strand, size)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                let open = borrow.state != ConcatState::Closed;
+                check_caps(strand, "stream", open, IoCaps::READ, IoCaps::READ)?;
+                Concat::fill(&mut borrow, strand, size).await?;
+                let n = size.min(borrow.pending.len());
+                Output::set(strand, out, &borrow.pending[..n]);
+                borrow.pending.drain(..n);
+                Ok(())
+            })
+            .method("close", async move |this, strand, args, _out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.state = ConcatState::Closed;
+                borrow.pending = Vec::new();
+                Mut::slot_mut::<0>(&mut borrow).store(Value::NIL);
+                Ok(())
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use futures::io::{AsyncReadExt as _, Cursor};
@@ -908,6 +1058,7 @@ mod tests {
     use crate::{
         io::{self, ByteHandle},
         method,
+        object::array::Array,
         strand::Strand,
         sym::{self, Sym},
         test_support::with_vm,
@@ -1055,6 +1206,21 @@ mod tests {
             .await
             .unwrap();
             assert_eq!(bin(strand, &out), b"b");
+        });
+    }
+
+    #[test]
+    fn concat_handle_reads_items() {
+        with_vm(async |strand, [mut items]| {
+            let vm = strand.vm();
+            let inner = vec![Value::from_input(vm, "ab"), Value::from_input(vm, 7_i64)];
+            let array = vm.builtin_types().array;
+            array.create(strand, Array { inner }, Slot::reborrow(&mut items));
+            let handle = io::concat(strand, &items, b"\n").unwrap();
+            let mut reader = handle.into_read().unwrap();
+            let mut got = Vec::new();
+            reader.read_to_end(&mut got).await.unwrap();
+            assert_eq!(got, b"ab\n7\n");
         });
     }
 }

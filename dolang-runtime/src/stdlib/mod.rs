@@ -17,7 +17,7 @@ use crate::{
 };
 
 pub(crate) mod fmt;
-mod io;
+pub(crate) mod io;
 
 mod math;
 mod strand;
