@@ -47,8 +47,11 @@ pub class MemIo: Io
     self.pos = end
     chunk
 
-  pub def write self data @ (Str | Bin) -> Int
-    let bytes = Bin $data
+  pub def write self *data @ (Str | Bin) -> Int
+    let joined = BinBuf()
+    for piece = data
+      joined.extend (Bin piece)
+    let bytes = joined.freeze()
     let out = BinBuf()
     out.extend (self.data[..self.pos])
     out.extend $bytes

@@ -53,6 +53,14 @@ def sized_reads()
 
 #[test]
 #[vfs]
+def write_pieces()
+  compress.compress data.gz :GZIP: do |stream|
+    assert_eq (stream.write "hello" b" " "world") 11
+  compress.decompress data.gz do |stream|
+    assert_eq $stream.read() b"hello world"
+
+#[test]
+#[vfs]
 def levels()
   let data = payload()
   for level = [:FASTEST:, :BEST:, :DEFAULT:, 3]

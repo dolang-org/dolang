@@ -8,6 +8,8 @@
 import std
 import fs:
   - @Path
+import io:
+  - Io
 
 # The process's standard input.
 #
@@ -16,7 +18,19 @@ import fs:
 # Every handle reads through one shared buffered reader, so mixing iteration
 # with [`read`](shell.Stdin.read) picks up exactly where the other left off.
 # What differs between handles is only how they frame that stream.
-pub class Stdin[T]: std.Iter[T]
+#
+# A function that accepts an [`Io`](io.Io), such as
+# [`compress.decompress`](compress.decompress), reads through the same reader.
+pub class Stdin[T]: std.Iter[T] Io
+  # Whether the stream reads, which it always does.
+  #[getter]
+  pub def readable self -> Bool
+    ...
+
+  # Does nothing: the process's input stays open.
+  pub def close self
+    ...
+
   # Returns a handle that yields lines.
   #
   # This is the default framing, so it is only needed to undo a previous
@@ -24,7 +38,8 @@ pub class Stdin[T]: std.Iter[T]
   pub def lines self -> Stdin[Str]
     ...
 
-  # Returns a handle that yields arbitrary-sized [`Bin`](std.Bin) chunks.
+  # Returns a handle that yields [`Bin`](std.Bin) chunks of at most `size`
+  # bytes, as much as each read returns.
   #
   # ## Example
   #
@@ -32,7 +47,11 @@ pub class Stdin[T]: std.Iter[T]
   # for chunk = shell.stdin.chunks()
   #   hasher.update $chunk
   # ```
-  pub def chunks self -> Stdin[Bin]
+  pub def chunks
+    self
+    # Most bytes per chunk.
+    size @ Int = 65536
+  do -> Stdin[Bin]
     ...
 
   # Reads raw bytes.
@@ -88,31 +107,42 @@ pub class Stdin[T]: std.Iter[T]
 # Always writes to the real stream. Naming this handle is how you opt out of
 # terminal takeover; use [`term.console`](term.Console) to follow it
 # instead.
-pub class Stdout: std.Sink[Value]
-  # Writes bytes verbatim.
+#
+# A function that accepts an [`Io`](io.Io), such as
+# [`compress.compress`](compress.compress), writes to the stream directly.
+# Writes from every source take turns, so a write's pieces are never split by
+# another one.
+pub class Stdout: Io
+  # Whether the stream writes, which it always does.
+  #[getter]
+  pub def writable self -> Bool
+    ...
+
+  # Writes bytes verbatim, given in pieces, which stay together.
   #
   # ## Returns
   #
-  # [`Int`](std.Int) - Bytes written. For a [`Str`](std.Str) this
-  # is the UTF-8 byte count, not the character count.
+  # [`Int`](std.Int) - Bytes written, which is all of them. For a
+  # [`Str`](std.Str) this is the UTF-8 byte count, not the character count.
   #
   # ## Errors
   #
   # | Exception                           | Condition                       |
   # | ----------------------------------- | ------------------------------- |
-  # | [`TypeError`](std.TypeError) | `data` is not a `Str` or `Bin`  |
+  # | [`TypeError`](std.TypeError) | A piece is not a `Str` or `Bin`  |
   #
   # ## Example
   #
   # ```
   # shell.stdout.write "no newline"
   # shell.stdout.write b"\x00\x01\xff"
+  # shell.stdout.write $line "\n"
   # assert_eq (shell.stdout.write "héllo") 6
   # ```
   pub def write
     self
     # Bytes to write.
-    data @ (Str | Bin)
+    *data @ (Str | Bin)
   do -> Int
     ...
 
@@ -122,6 +152,11 @@ pub class Stdout: std.Sink[Value]
   # ordering relative to buffered stdout is otherwise not guaranteed. The
   # interpreter flushes on exit.
   pub def flush self
+    ...
+
+  # Flushes, as [`flush`](shell.Stdout.flush) does. The process's output
+  # stays open.
+  pub def close self
     ...
 
   # Accepts values as a [sink](std.Sink), so this handle can be the
@@ -157,8 +192,15 @@ pub class Stdout: std.Sink[Value]
 # Stateless and interchangeable, as [`Stdout`](shell.Stdout) is. Unlike
 # [`term.console`](term.Console), this bypasses extensions that have
 # taken over the terminal shell-wide: it is the error stream itself.
-pub class Stderr: std.Sink[Value]
-  # Writes bytes verbatim. Identical in behavior to
+#
+# Functions that accept an [`Io`](io.Io) write to it as they do to `Stdout`.
+pub class Stderr: Io
+  # Whether the stream writes, which it always does.
+  #[getter]
+  pub def writable self -> Bool
+    ...
+
+  # Writes bytes verbatim, given in pieces. Identical in behavior to
   # [`Stdout.write`](shell.Stdout.write).
   #
   # ## Returns
@@ -173,12 +215,17 @@ pub class Stderr: std.Sink[Value]
   pub def write
     self
     # Bytes to write.
-    data @ (Str | Bin)
+    *data @ (Str | Bin)
   do -> Int
     ...
 
   # Flushes buffered output to the stream.
   pub def flush self
+    ...
+
+  # Flushes, as [`flush`](shell.Stderr.flush) does. The process's error
+  # stream stays open.
+  pub def close self
     ...
 
   # Accepts values as a [sink](std.Sink), writing them verbatim, as

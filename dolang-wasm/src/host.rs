@@ -1,8 +1,8 @@
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, Strand,
+    Error, Object, Output, Result, Strand,
     object::TypeBuilder,
     unpack,
-    value::{Root, TypeObject, View},
+    value::{Root, TypeObject},
     vm::{Builder, StateTag},
 };
 use js_sys::{Function, Object as JsObject, Promise, Reflect, Uint8Array};
@@ -136,7 +136,7 @@ impl<'v> Object<'v> for PlaygroundConsole {
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
-            .supertype(TypeObject::Sink)
+            .supertype(TypeObject::Io)
             .method("write", async move |_this, strand, args, out| {
                 let bytes = dolang_ext_term::write_data(strand, args)?;
                 write_host(strand, &bytes).await?;
@@ -145,6 +145,10 @@ impl<'v> Object<'v> for PlaygroundConsole {
             })
             .method("flush", async move |_this, strand, args, _out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
+                Ok(())
+            })
+            .get("writable", |_this, strand, out| {
+                Output::set(strand, out, true);
                 Ok(())
             })
             .get("line_ending", |_this, strand, out| {
@@ -166,28 +170,6 @@ impl<'v> Object<'v> for PlaygroundConsole {
                 dolang_ext_term::create_geometry(strand, None, None, out);
                 Ok(())
             })
-    }
-
-    async fn sink<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
-        Ok(())
-    }
-
-    async fn put<'a, 's>(
-        _this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        value: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        let bytes = match value.view(strand) {
-            View::Str(value) => value.pin().as_bytes().to_vec(),
-            View::Bin(value) => value.pin().to_vec(),
-            _ => value.to_string(strand)?.into_bytes(),
-        };
-        write_host(strand, &bytes).await
     }
 }
 

@@ -271,9 +271,10 @@ pub class BaseFile: Io
   do -> Bin
     ...
 
-  # Writes data to the file.
+  # Writes data to the file, given in pieces.
   #
-  # All of `data` is written, however many transfers that takes.
+  # All of `data` is written, however many transfers that takes. With
+  # `offset:`, the pieces go to consecutive offsets.
   #
   # ## Returns
   #
@@ -295,7 +296,7 @@ pub class BaseFile: Io
   # open output.txt w do |file|
   #   let bytes_written = file.write "Hello, World!"
   #   echo "Wrote $bytes_written bytes"
-  #   file.write "Hello"
+  #   file.write $line "\n"
   #
   # # Patch a record in place without disturbing the cursor
   # open data.bin r+ do |file|
@@ -303,9 +304,6 @@ pub class BaseFile: Io
   # ```
   pub def write
     self
-    # Data to write. Strings
-    # are written as UTF-8 text.
-    data @ (Str | Bin)
     # Byte offset to write at. Without it, writes at
     # the cursor and advances it.
     #
@@ -317,6 +315,9 @@ pub class BaseFile: Io
     # As with [`read`](fs.BaseFile.read), any number of positional writes may be
     # in flight on one handle at once.
     :offset @ Int = nil
+    # Data to write. Strings
+    # are written as UTF-8 text.
+    *data @ (Str | Bin)
   do -> Int
     ...
 

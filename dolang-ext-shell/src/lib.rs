@@ -100,22 +100,18 @@ pub fn default_output<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>)
 /// so this must run while the runtime is still alive.
 pub async fn flush<'v, 's>(strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
     let global = strand.state::<Tag>();
-    global
-        .stdio
-        .stdout
-        .lock()
-        .await
-        .flush()
-        .await
-        .map_err(|error| Error::runtime(strand, error))?;
-    global
-        .stdio
-        .stderr
-        .lock()
-        .await
-        .flush()
-        .await
-        .map_err(|error| Error::runtime(strand, error))?;
+    let mut stdout = global.stdio.stdout.clone();
+    let result = match stdout.lock().await {
+        Ok(mut stream) => futures::AsyncWriteExt::flush(&mut *stream).await,
+        Err(error) => Err(error),
+    };
+    result.map_err(|error| Error::runtime(strand, error))?;
+    let mut stderr = global.stdio.stderr.clone();
+    let result = match stderr.lock().await {
+        Ok(mut stream) => futures::AsyncWriteExt::flush(&mut *stream).await,
+        Err(error) => Err(error),
+    };
+    result.map_err(|error| Error::runtime(strand, error))?;
     global
         .terminal
         .writer

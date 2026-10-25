@@ -1,9 +1,11 @@
 use std::{
     future::poll_fn,
-    io,
+    io::{self, IoSlice},
+    ops::Deref,
     path::Path,
     pin::Pin,
     str,
+    task::{Context, Poll, ready},
     time::{Duration, SystemTime},
 };
 
@@ -13,13 +15,13 @@ use async_compression::tokio::{
 };
 use dolang::runtime::io::IoResultExt as _;
 use dolang::runtime::{
-    BYTE_STREAM_CHUNK_SIZE, Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
-    call,
+    Arg, BYTE_STREAM_CHUNK_SIZE, Error, Instance, Object, Output, Result, Slot, State, Strand,
+    Value, call,
     error::{ErrorKind, ResultExt},
-    io::{ByteHandle, IoCaps},
-    object::{Mut, Ref, TypeBuilder},
+    io::{ByteHandle, ByteIo, IntoByteIo, IoCaps, Shared},
+    object::{Mut, Ref, Request, TypeBuilder},
     unpack,
-    value::{BinEmbryo, Nil, TypeObject},
+    value::{BinEmbryo, Nil, PinBin, PinStr, TypeObject, View},
     vm::Register,
 };
 use tokio::io::{
@@ -28,8 +30,8 @@ use tokio::io::{
 use tokio_stream::StreamExt;
 use tokio_tar::{Archive, Builder as TarBuilder, Entries, Entry, EntryType, Header};
 use tokio_util::compat::{
-    FuturesAsyncReadCompatExt as _, FuturesAsyncWriteCompatExt as _, TokioAsyncReadCompatExt as _,
-    TokioAsyncWriteCompatExt as _,
+    Compat, FuturesAsyncReadCompatExt as _, FuturesAsyncWriteCompatExt as _,
+    TokioAsyncReadCompatExt as _, TokioAsyncWriteCompatExt as _,
 };
 
 use crate::global::Global;
@@ -83,10 +85,87 @@ pub(crate) struct TarWriter {
 }
 
 pub(crate) struct TarEntryWriter {
-    stream: Option<DuplexStream>,
+    /// Taken when the entry's scope ends, which closes it for lent handles too.
+    stream: Option<Shared<Compat<EntrySink>>>,
     generation: u64,
+}
+
+/// An entry's content stream, refusing to go past the declared size.
+struct EntrySink {
+    stream: DuplexStream,
     written: u64,
     size: u64,
+}
+
+impl EntrySink {
+    /// Fails if `len` more bytes would go past the declared size.
+    fn check(&self, len: usize) -> io::Result<()> {
+        let len = u64::try_from(len).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        if self.written.saturating_add(len) > self.size {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "tar entry exceeds declared size",
+            ));
+        }
+        Ok(())
+    }
+
+    fn count(&mut self, written: io::Result<usize>) -> io::Result<usize> {
+        let written = written?;
+        self.written += written as u64;
+        Ok(written)
+    }
+}
+
+impl AsyncWrite for EntrySink {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        this.check(buf.len())?;
+        let written = ready!(Pin::new(&mut this.stream).poll_write(cx, buf));
+        Poll::Ready(this.count(written))
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        this.check(bufs.iter().map(|buf| buf.len()).sum())?;
+        let written = ready!(Pin::new(&mut this.stream).poll_write_vectored(cx, bufs));
+        Poll::Ready(this.count(written))
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.stream.is_write_vectored()
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().stream).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().stream).poll_shutdown(cx)
+    }
+}
+
+/// Lends a handle sharing an entry's content stream.
+struct EntryIo<'a> {
+    stream: &'a Shared<Compat<EntrySink>>,
+}
+
+impl<'v> IntoByteIo<'v> for EntryIo<'_> {
+    fn caps<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, IoCaps> {
+        Ok(IoCaps::WRITE)
+    }
+
+    fn get<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
+        Ok(ByteHandle::write(self.stream.clone()))
+    }
 }
 
 fn compression_sym<'v>(
@@ -397,9 +476,28 @@ impl<'v> Object<'v> for TarEntry {
     type Type = ();
     type TypeAnnex = ();
 
+    // Native consumers are served through `read` by `Io`'s bridge, so a read
+    // after the reader advances fails as `read` does.
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .supertype(TypeObject::Iter)
+            .supertype(TypeObject::Io)
+            .get("readable", |this, strand, out| {
+                let child = this.borrow(strand)?;
+                let generation = child.generation;
+                let active = this
+                    .annex()
+                    .types
+                    .reader
+                    .cast(Ref::slot::<0>(&child))
+                    .ok_or_else(|| Error::state_error(strand, "tar entry is invalid"))?
+                    .enter_sync(strand, |strand, reader| {
+                        let reader = reader.borrow(strand)?;
+                        Ok(!reader.closed && reader.generation == generation)
+                    })?;
+                Output::set(strand, out, active);
+                Ok(())
+            })
             .get("path", |this, strand, out| {
                 active_entry!(this, strand, borrow, {
                     let bytes = borrow
@@ -638,27 +736,6 @@ impl<'v> Object<'v> for TarEntry {
     }
 }
 
-impl TarEntryWriter {
-    async fn write<'v, 's>(
-        &mut self,
-        strand: &mut Strand<'v, 's>,
-        data: &[u8],
-    ) -> Result<'v, 's, ()> {
-        let len = u64::try_from(data.len()).map_err(|_| Error::overflow(strand))?;
-        if self.written.saturating_add(len) > self.size {
-            return Err(Error::value(strand, "tar entry exceeds declared size"));
-        }
-        self.stream
-            .as_mut()
-            .ok_or_else(|| Error::state_error(strand, "tar entry writer is closed"))?
-            .write_all(data)
-            .await
-            .into_do(strand)?;
-        self.written += len;
-        Ok(())
-    }
-}
-
 impl<'v> Object<'v> for TarEntryWriter {
     const NAME: &'v str = "EntryWriter";
     const MODULE: &'v str = "tar";
@@ -667,48 +744,90 @@ impl<'v> Object<'v> for TarEntryWriter {
     type Type = ();
     type TypeAnnex = ();
 
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder.supertype(TypeObject::Sink).method(
-            "write",
-            async move |this, strand, args, _out| {
-                let ([data], []) = unpack!(strand, args, 1, 0)?;
-                let data = if let Some(value) = data.as_bin(strand) {
-                    value.to_vec()
-                } else if let Some(value) = data.as_str(strand) {
-                    String::from(value).into_bytes()
-                } else {
-                    return Err(Error::type_error(strand, "expected Str or Bin"));
-                };
-                validate_entry_writer!(this, strand);
-                this.borrow_mut(strand)?.write(strand, &data).await
-            },
-        )
-    }
-
-    async fn sink<'a, 's>(
+    fn provide<'a, 's>(
         this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
+        request: &mut Request<'v, 's, '_>,
     ) -> Result<'v, 's, ()> {
-        validate_entry_writer!(this, strand);
-        Output::set(strand, out, this);
+        if request.wants::<ByteIo>() {
+            validate_entry_writer!(this, request);
+            let borrow = this.borrow(request)?;
+            let Some(stream) = &borrow.stream else {
+                return Err(Error::state_error(request, "tar entry writer is closed"));
+            };
+            request.provide::<ByteIo>(&mut EntryIo { stream })?;
+        }
         Ok(())
     }
 
-    async fn put<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        value: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        let data = if let Some(value) = value.as_bin(strand) {
-            value.to_vec()
-        } else if let Some(value) = value.as_str(strand) {
-            String::from(value).into_bytes()
-        } else {
-            return Err(Error::type_error(strand, "expected Str or Bin"));
-        };
-        validate_entry_writer!(this, strand);
-        this.borrow_mut(strand)?.write(strand, &data).await
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder
+            .supertype(TypeObject::Io)
+            // The stream is taken when the entry's scope ends.
+            .get("writable", |this, strand, out| {
+                let writable = this.borrow(strand)?.stream.is_some();
+                Output::set(strand, out, writable);
+                Ok(())
+            })
+            .method("write", async move |this, strand, args, out| {
+                let mut pieces = Vec::with_capacity(args.len());
+                for arg in args {
+                    let piece = match arg {
+                        Arg::Pos(piece) => piece.into_ref(),
+                        Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
+                    };
+                    pieces.push(match piece.view(strand) {
+                        View::Str(value) => Piece::Str(value.pin()),
+                        View::Bin(value) => Piece::Bin(value.pin()),
+                        _ => return Err(Error::type_error(strand, "expected Str or Bin")),
+                    });
+                }
+                let mut slices = pieces
+                    .iter()
+                    .map(|piece| IoSlice::new(piece))
+                    .collect::<Vec<_>>();
+                let written = slices.iter().map(|slice| slice.len()).sum::<usize>();
+
+                validate_entry_writer!(this, strand);
+                let stream = this.borrow(strand)?.stream.clone();
+                let Some(mut stream) = stream else {
+                    return Err(Error::state_error(strand, "tar entry writer is closed"));
+                };
+                let Ok(mut sink) = stream.lock().await else {
+                    return Err(Error::state_error(strand, "tar entry writer is closed"));
+                };
+                let sink = sink.get_mut();
+                if sink.check(written).is_err() {
+                    return Err(Error::value(strand, "tar entry exceeds declared size"));
+                }
+                let mut slices = &mut slices[..];
+                IoSlice::advance_slices(&mut slices, 0);
+                while !slices.is_empty() {
+                    let n = sink.write_vectored(slices).await.into_do(strand)?;
+                    if n == 0 {
+                        return Err(io::Error::from(io::ErrorKind::WriteZero)).into_do(strand);
+                    }
+                    IoSlice::advance_slices(&mut slices, n);
+                }
+                Output::set(strand, out, written);
+                Ok(())
+            })
+    }
+}
+
+/// A pinned piece of a write.
+enum Piece<'v, 'a> {
+    Str(PinStr<'v, 'a>),
+    Bin(PinBin<'v, 'a>),
+}
+
+impl Deref for Piece<'_, '_> {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        match self {
+            Self::Str(value) => value.as_bytes(),
+            Self::Bin(value) => value,
+        }
     }
 }
 
@@ -786,10 +905,15 @@ impl<'v> Object<'v> for TarWriter {
                     global.types.entry_writer.create_with_annex(
                         strand,
                         TarEntryWriter {
-                            stream: Some(entry_stream),
+                            stream: Some(Shared::new(
+                                EntrySink {
+                                    stream: entry_stream,
+                                    written: 0,
+                                    size,
+                                }
+                                .compat_write(),
+                            )),
                             generation,
-                            written: 0,
-                            size,
                         },
                         global,
                         &mut handle,
@@ -808,15 +932,18 @@ impl<'v> Object<'v> for TarWriter {
                     };
                     let invoke = async {
                         let result = call!(strand, block, out, &handle).await;
-                        let written = handle_cast
-                            .enter(strand, async move |strand, handle_obj| {
-                                let mut handle_borrow = handle_obj.borrow_mut(strand)?;
-                                if let Some(mut stream) = handle_borrow.stream.take() {
-                                    let _ = stream.shutdown().await;
-                                }
-                                Ok(handle_borrow.written)
-                            })
-                            .await?;
+                        let stream = handle_cast.enter_sync(strand, |strand, handle_obj| {
+                            Ok(handle_obj.borrow_mut(strand)?.stream.take())
+                        })?;
+                        // Closing waits for a write in progress on a lent handle.
+                        let mut written = 0;
+                        if let Some(mut stream) = stream
+                            && let Some(sink) = stream.close().await
+                        {
+                            let mut sink = sink.into_inner();
+                            let _ = sink.stream.shutdown().await;
+                            written = sink.written;
+                        }
                         Ok((result, written))
                     };
                     let ((native_builder, append_result), invoke_result) =

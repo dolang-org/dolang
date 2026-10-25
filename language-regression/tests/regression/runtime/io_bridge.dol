@@ -43,8 +43,11 @@ class MemIo: Io
     chunk
 
   # Writes at most `limit` bytes per call
-  pub def write self data
-    let bytes = Bin $data
+  pub def write self *data
+    let joined = BinBuf()
+    for piece = data
+      joined.extend (Bin piece)
+    let bytes = joined.freeze()
     if (self.limit != nil && bytes.len > self.limit)
       bytes = (bytes[..self.limit])
     let out = BinBuf()
@@ -116,7 +119,7 @@ let bad_read = "type error: read: expected `Bin`"
 assert_throws $error.RuntimeError str: $bad_read do byte_read (BadRead b"")
 
 class BadWrite: MemIo
-  pub def write _self _data
+  pub def write _self *_data
     0
 
 let bad_write = "write: expected a count of bytes written"
@@ -168,9 +171,13 @@ class Echo: Io
   pub def read self _size
     self.#recv.next()
 
-  pub def write self data
-    self.#send.put (Bin data)
-    data.len
+  pub def write self *data
+    let joined = BinBuf()
+    for piece = data
+      joined.extend (Bin piece)
+    let bytes = joined.freeze()
+    self.#send.put $bytes
+    bytes.len
 
   pub def close _self
     nil

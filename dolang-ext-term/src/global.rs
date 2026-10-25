@@ -8,7 +8,7 @@ use dolang::runtime::{
 };
 
 use crate::{
-    console::{Console, DefaultOutput, SinkConsole, SubConsole},
+    console::{Console, DefaultOutput, IoConsole, SubConsole},
     geometry::Geometry,
     local::Local,
     term::{StyleKeys, StyleObject, Text},
@@ -16,7 +16,7 @@ use crate::{
 
 pub(crate) struct Types<'v> {
     pub(crate) console: Type<'v, Console>,
-    pub(crate) sink_console: Type<'v, SinkConsole>,
+    pub(crate) io_console: Type<'v, IoConsole>,
     pub(crate) sub_console: Type<'v, SubConsole>,
     pub(crate) default: Type<'v, DefaultOutput>,
     pub(crate) geometry: Type<'v, Geometry>,
@@ -29,10 +29,8 @@ pub(crate) struct Syms<'v> {
     pub(crate) value: Sym<'v, 'v>,
     /// `Fmt.len`, the number of segments in a sequence
     pub(crate) len: Sym<'v, 'v>,
-    pub(crate) chunk: Sym<'v, 'v>,
-    pub(crate) line: Sym<'v, 'v>,
-    pub(crate) mode: Sym<'v, 'v>,
     pub(crate) write: Sym<'v, 'v>,
+    pub(crate) write_all: Sym<'v, 'v>,
     pub(crate) flush: Sym<'v, 'v>,
     pub(crate) line_ending: Sym<'v, 'v>,
     pub(crate) can_style: Sym<'v, 'v>,
@@ -81,8 +79,8 @@ impl StateTag for Tag {
 impl<'v> Global<'v> {
     pub(crate) fn new(builder: &mut Builder<'v>) -> Self {
         let console = builder.register_type::<Console>();
-        let sink_console = builder
-            .build_type::<SinkConsole>((), ())
+        let io_console = builder
+            .build_type::<IoConsole>((), ())
             .nominal_supertype(console)
             .build();
         let sub_console = builder
@@ -97,7 +95,7 @@ impl<'v> Global<'v> {
         Self {
             types: Types {
                 console,
-                sink_console,
+                io_console,
                 sub_console,
                 default,
                 geometry: builder.register_type(),
@@ -108,10 +106,8 @@ impl<'v> Global<'v> {
             syms: Syms {
                 value: builder.sym("value"),
                 len: builder.sym("len"),
-                chunk: builder.sym("CHUNK"),
-                line: builder.sym("LINE"),
-                mode: builder.sym("mode"),
                 write: builder.sym("write"),
+                write_all: builder.sym("write_all"),
                 flush: builder.sym("flush"),
                 line_ending: builder.sym("line_ending"),
                 can_style: builder.sym("can_style"),

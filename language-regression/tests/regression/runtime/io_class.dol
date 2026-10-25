@@ -59,13 +59,14 @@ assert_eq $seekable.seekable false
 
 # The helpers call the stream's own methods
 class MemIo: Io
-  pub field data pos out limit
+  pub field data pos out limit calls
 
   def (init) self data limit = nil
     self.data = data
     self.pos = 0
     self.out = BinBuf()
     self.limit = limit
+    self.calls = []
 
   #[getter]
   pub def readable _self
@@ -83,9 +84,14 @@ class MemIo: Io
     self.pos = end
     chunk
 
-  # Writes at most `limit` bytes per call
-  pub def write self data
-    let bytes = Bin $data
+  # Writes at most `limit` bytes per call, recording how many pieces each
+  # call got
+  pub def write self *data
+    self.calls.push $data.len
+    let joined = BinBuf()
+    for piece = data
+      joined.extend (Bin piece)
+    let bytes = joined.freeze()
     if (self.limit != nil && bytes.len > self.limit)
       bytes = (bytes[..self.limit])
     self.out.append $bytes
@@ -117,9 +123,34 @@ let short = MemIo b"" 2
 short.write_all "hello"
 assert_eq (short.out.freeze()) b"hello"
 
+# The first write gets every piece, and what a short write leaves goes on as
+# one, even when it stops partway through a piece
+let pieces = MemIo b"" 3
+pieces.write_all "hello" "\n" b"xy"
+assert_eq (pieces.out.freeze()) b"hello\nxy"
+assert_eq $pieces.calls [3, 1, 1]
+
+# Writing no pieces calls nothing
+let nothing = MemIo b""
+nothing.write_all()
+assert_eq $nothing.calls []
+
+# A piece that is not a `Str` or `Bin` raises before anything is written
+let bad_piece = MemIo b""
+assert_throws $error.TypeError do bad_piece.write_all "a" 1
+assert_eq $bad_piece.calls []
+
+# A buffer writes its pieces through to a Do stream in one call
+let source = MemIo b""
+let buffered = Buffered $source
+assert_eq (buffered.write "a" b"b" "c") 3
+buffered.flush()
+assert_eq (source.out.freeze()) b"abc"
+assert_eq $source.calls [1]
+
 # A write that makes no progress raises
 class Stuck: Io
-  pub def write _self _data
+  pub def write _self *_data
     0
 
 let stuck = try

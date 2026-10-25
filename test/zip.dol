@@ -1,8 +1,11 @@
 import fs
+  compress
+  io
   zip
   testlib.vfs:
     - vfs
   test:
+    - assert
     - assert_eq
     - assert_throws
     - assert_type
@@ -244,3 +247,35 @@ def read_only_file_is_rejected_for_write()
 def non_provider_is_rejected()
   assert_throws $TypeError do
     zip.open (1 !@ Str)
+
+#[test]
+#[vfs]
+def write_takes_pieces()
+  zip.open "pieces.zip" "w" do |archive|
+    archive.open "a.txt" do |file|
+      assert (type file io.Io)
+      assert $file.writable
+      assert_eq $file.readable false
+      assert_eq (file.write "line" b"\x00" "\n") 6
+      assert_eq (file.write()) 0
+      assert_throws $TypeError do file.write "a" 1
+
+  zip.open "pieces.zip" do |archive|
+    archive.open "a.txt" do |file|
+      assert $file.readable
+      assert_eq $file.writable false
+      assert_eq (file.read()) b"line\x00\n"
+
+# Functions that accept an `Io` read and write a file through its methods.
+#[test]
+#[vfs]
+def native_consumers_use_a_file()
+  zip.open "nested.zip" "w" do |archive|
+    archive.open "data.gz" compression: :STORED: do |file|
+      compress.compress $file :GZIP: do |stream|
+        stream.write "hello" "\n"
+
+  zip.open "nested.zip" do |archive|
+    archive.open "data.gz" do |file|
+      compress.decompress $file :GZIP: do |stream|
+        assert_eq (stream.read_all_str()) "hello\n"

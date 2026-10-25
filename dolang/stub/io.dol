@@ -90,15 +90,20 @@ pub class Io: Sink[Value]
   do -> Bin
     ...
 
-  # Writes data.
+  # Writes data, given in pieces.
+  #
+  # One call is one write, so a stream that writes in one operation keeps the
+  # pieces together. Pass a line and its terminator to one call rather than
+  # joining them first. Pieces stay together only as far as the stream does.
   #
   # ## Returns
   #
-  # The number of bytes written.
+  # The number of bytes written, counting through the pieces in order. It can
+  # be short, even partway through a piece.
   pub def write
     self
     # Data to write.
-    data @ (Str | Bin)
+    *data @ (Str | Bin)
   do -> Int
     ...
 
@@ -138,6 +143,10 @@ pub class Io: Sink[Value]
 
   # Writes all of `data`, repeating [`write`](io.Io.write) until it is written.
   #
+  # The first `write` gets every piece, and later ones get what the earlier
+  # ones left. The pieces stay together only when the first `write` takes them
+  # all.
+  #
   # ## Errors
   #
   # | Exception | Condition |
@@ -146,7 +155,7 @@ pub class Io: Sink[Value]
   pub def write_all
     self
     # Data to write.
-    data @ (Str | Bin)
+    *data @ (Str | Bin)
   do
     ...
 
@@ -278,15 +287,18 @@ pub class Buffered: Iter[Str] Io
   pub def (next) self -> Str
     ...
 
-  # Writes data.
+  # Writes data, given in pieces.
+  #
+  # The pieces are buffered together, so a flush writes them in one write of
+  # the source when they fit in the buffer.
   #
   # ## Returns
   #
-  # The number of bytes written.
+  # The number of bytes written, which is all of them.
   pub def write
     self
     # Data to write.
-    data @ (Str | Bin)
+    *data @ (Str | Bin)
   do -> Int
     ...
 

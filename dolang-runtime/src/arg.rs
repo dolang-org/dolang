@@ -164,6 +164,22 @@ impl<'v, 'a> Args<'v, 'a> {
         }
     }
 
+    /// Iterates the remaining arguments without consuming them, so they can be iterated
+    /// again afterward.
+    pub(crate) fn reborrow(&mut self) -> Args<'v, '_> {
+        let content = match &self.content {
+            ArgContent::Borrowed { sig, slots } => ArgContent::Borrowed { sig, slots },
+            ArgContent::Owned(items) => ArgContent::Owned(items),
+        };
+        Args {
+            content,
+            phantom: PhantomData,
+            mask: self.mask.clone(),
+            index: self.index,
+            headroom: self.headroom,
+        }
+    }
+
     /// Insert a positional value into the headroom slot, expanding the
     /// visible argument range by one.
     ///

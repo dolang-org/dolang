@@ -833,6 +833,25 @@ def copy_chunks total@Int input@BaseFile output@BaseFile indicator@progress.Indi
 def payload_directory user @ Str -> Str
   "/home/$(user)/.dolang-libvirt-guest"
 
+# Collects console output as plain text.
+class Transcript: term.Console
+  field buffer @ StrBuf
+
+  def (init) self buffer @ StrBuf
+    self.#buffer = buffer
+    term.Console.(init) $self
+
+  pub def write self *data @ (Str | Bin) -> Int
+    let written = 0
+    for piece = data
+      let text = Str $piece
+      self.#buffer.append $text
+      written = (written + text.len)
+    written
+
+  pub def flush _self
+    nil
+
 # How to reach a managed domain's guest over SSH.
 #
 # These are exactly the facts `create` records in the domain's `<dolang:vm>`
@@ -903,7 +922,7 @@ class Guest
       # An SSH transport that is not up yet fails as a nonzero `ssh` exit; a
       # VFS that cannot be reached over one fails as a `sys.Error`.
       try
-        term.capture $output do
+        term.capture (Transcript output) do
           probe()
         self.probe_output = nil
         return
@@ -951,7 +970,7 @@ class Guest
     while true
       let output = StrBuf()
       try
-        term.capture $output do
+        term.capture (Transcript output) do
           probe()
       catch proc.Error: _
         return
@@ -2675,7 +2694,7 @@ do
               ind.delta $bytes.len
       digests[kind] = "${state.digest():x}"
     archive.open $MANIFEST_MEMBER mode: 0o644 do |entry|
-      entry.write $ bundle_manifest $info $members $domain_xml $digests
+      entry.put $ bundle_manifest $info $members $domain_xml $digests
 
 # Finds a bundle member by name, or `nil`.
 def find_member archive@zip.Archive name@Str -> (zip.Entry | nil)

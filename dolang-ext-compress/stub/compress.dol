@@ -70,17 +70,17 @@ pub class Compressor: Io
   pub def format self -> Format
     ...
 
-  # Compresses and writes data.
+  # Compresses and writes data, given in pieces.
   #
   # Raises [`StateError`](std.StateError) when the stream is closed.
   #
   # ## Returns
   #
-  # The number of bytes written.
+  # The number of bytes written, which is all of them.
   pub def write
     self
     # Data to write.
-    data @ (Bin | Str)
+    *data @ (Bin | Str)
   do -> Int
     ...
 

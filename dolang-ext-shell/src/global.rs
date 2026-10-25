@@ -8,6 +8,7 @@ use std::{
 
 use dolang::runtime::{
     Sym, Type,
+    io::Shared,
     object::{FlagLikeExt, Flags},
     strand::LocalKey,
     value::TypeObject,
@@ -17,6 +18,7 @@ use tokio::{
     io::{self as tio, AsyncWrite, stderr},
     sync::Mutex,
 };
+use tokio_util::compat::{Compat, TokioAsyncReadCompatExt as _, TokioAsyncWriteCompatExt as _};
 
 use crate::{
     console::HostConsole,
@@ -102,16 +104,20 @@ pub(crate) struct Syms<'v> {
 /// - There is exactly one `BufReader` over stdin. A second one would silently
 ///   split buffered input, so reading through `shell.stdin` and through the
 ///   implicit input stay coherent no matter how many handle objects exist.
-/// - Writes serialize on a mutex rather than on a per-object GC borrow, so
-///   concurrent writes from forked strands queue instead of failing with a
-///   concurrency error.
+/// - Writes serialize on the stream's lock rather than on a per-object GC
+///   borrow, so concurrent writes from forked strands queue instead of failing
+///   with a concurrency error.
 ///
 /// It also means handle instances are interchangeable, so nothing needs to root
 /// a particular one.
+///
+/// Each stream is a [`Shared`] that is never used directly: every use clones
+/// it, and the byte handles the objects lend are clones too, so they share the
+/// one buffer and lock.
 pub(crate) struct Stdio {
-    pub(crate) stdin: Mutex<tio::BufReader<tio::Stdin>>,
-    pub(crate) stdout: Mutex<tio::Stdout>,
-    pub(crate) stderr: Mutex<tio::Stderr>,
+    pub(crate) stdin: Shared<Compat<tio::BufReader<tio::Stdin>>>,
+    pub(crate) stdout: Shared<Compat<tio::Stdout>>,
+    pub(crate) stderr: Shared<Compat<tio::Stderr>>,
 }
 
 pub(crate) struct Terminal {
@@ -232,9 +238,9 @@ impl<'v> Global<'v> {
         };
         Self {
             stdio: Stdio {
-                stdin: Mutex::new(tio::BufReader::new(tio::stdin())),
-                stdout: Mutex::new(tio::stdout()),
-                stderr: Mutex::new(tio::stderr()),
+                stdin: Shared::new(tio::BufReader::new(tio::stdin()).compat()),
+                stdout: Shared::new(tio::stdout().compat_write()),
+                stderr: Shared::new(tio::stderr().compat_write()),
             },
             terminal: Terminal {
                 writer: Mutex::new(Box::pin(stderr())),

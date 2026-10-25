@@ -5,7 +5,7 @@ import
   fs:
     - @Path
   io:
-    - @Io
+    - Io
   fs.unix:
     @Path: UnixPath
   time:
@@ -38,13 +38,22 @@ pub @let EntryType = $
 # advances or leaves scope. Iterating an entry yields arbitrary-sized
 # [`Bin`](std.Bin) chunks until the content is exhausted.
 #
+# A function that accepts an [`Io`](io.Io), such as
+# [`compress.decompress`](compress.decompress), can read the content while the
+# handle is valid.
+#
 # ## Example
 #
 # ```
 # for chunk = entry
 #   output.put $chunk
 # ```
-pub class Entry: Iter[Bin]
+pub class Entry: Iter[Bin] Io
+  # Whether the content can be read: whether the handle is still valid.
+  #[getter]
+  pub def readable self -> Bool
+    ...
+
   # Device major number, or `nil` when absent.
   #[getter]
   pub def device_major self -> (Int | nil)
@@ -125,10 +134,18 @@ pub class Entry: Iter[Bin]
   pub def (next) self -> Bin
     ...
 
-# Content sink for one scoped TAR entry.
+# Content stream for one scoped TAR entry.
 #
-# Subtype of [`Sink`](std.Sink). Putting a [`Str`](std.Str) or
-# [`Bin`](std.Bin) value appends its bytes without adding separators.
+# The writer is valid until the entry's scope ends. A function that accepts an
+# [`Io`](io.Io), such as [`compress.compress`](compress.compress), can write
+# the content during the scope.
+#
+# ## Errors
+#
+# | Exception | Condition |
+# | --- | --- |
+# | [`StateError`](std.StateError) | The entry's scope has ended |
+# | [`ValueError`](std.ValueError) | A write would exceed the declared size; nothing of it is written |
 #
 # ## Example
 #
@@ -136,20 +153,29 @@ pub class Entry: Iter[Bin]
 # entry.put "first"
 # entry.put b"second"
 # ```
-pub class EntryWriter: Sink[Str | Bin]
-  # Writes raw string or binary bytes.
+pub class EntryWriter: Io
+  # Whether the writer is still valid.
+  #[getter]
+  pub def writable self -> Bool
+    ...
+
+  # Writes raw string or binary bytes, given in pieces.
+  #
+  # ## Returns
+  #
+  # The number of bytes written, which is all of them.
   #
   # ## Example
   #
   # ```
-  # entry.write header
+  # entry.write $header "\n"
   # entry.write b"\x00\x01"
   # ```
   pub def write
     self
     # Bytes to write.
-    data @ (Str | Bin)
-  do
+    *data @ (Str | Bin)
+  do -> Int
     ...
 
 # Destructive iterator over the entries in an open TAR archive.

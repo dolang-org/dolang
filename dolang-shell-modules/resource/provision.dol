@@ -1,6 +1,6 @@
 # dolang: strict
 
-import json proc std sys term winnet winreg winscm
+import @io json proc std sys term winnet winreg winscm
   fs.windows:
     - Path
   security.windows:
@@ -186,23 +186,28 @@ def main config_path @ Path
   start_sshd()
   log "done"
 
-# Writes everything to several consoles at once.
+# Writes everything to the console and a log.
 class Tee: term.Console
-  field consoles @ Array[term.Console]
+  field console @ term.Console
+  field log @ io.Buffered
 
-  def (init) self *consoles @ term.Console
-    self.#consoles = [...consoles]
+  def (init) self console @ term.Console log @ io.Buffered
+    self.#console = console
+    self.#log = log
     term.Console.(init) $self
 
+  # Every target gets all of `data`, even one that writes short.
   pub def write self *data @ (Str | Bin) -> Int
+    self.#console.write_all ...data
+    self.#log.write_all ...data
     let written = 0
-    for console = self.#consoles
-      written = (console.write ...data)
+    for piece = data
+      written = (written + piece.len)
     written
 
   pub def flush self
-    for console = self.#consoles
-      console.flush()
+    self.#console.flush()
+    self.#log.flush()
 
 # The answer file names this script directly, with no shell behind it to
 # redirect with, so the transcript is captured here instead. Child output
@@ -230,7 +235,7 @@ if (shell.args.len < 1)
 let Path(directory) = (shell.program !@ Path).absolute().parent
 else throw std.RuntimeError "could not determine script parent directory"
 (directory / "provision.log").open w do |out|
-  term.capture (Tee term.console (term.SinkConsole out)) do
+  term.capture (Tee term.console (out !@ io.Buffered)) do
     try
       main $Path(shell.args[0]).absolute()
     catch e

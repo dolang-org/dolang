@@ -1,7 +1,7 @@
 use crate::global::Tag;
 
 use dolang::runtime::{
-    Instance, Object, Output, Result, Slot, State, Strand, Value,
+    Instance, Object, Output, Result, State, Strand, Value,
     object::TypeBuilder,
     unpack,
     value::{Root, TypeObject},
@@ -9,7 +9,7 @@ use dolang::runtime::{
 };
 use tokio::io::AsyncWriteExt;
 
-use crate::{error::ErrorExt as _, global::Global, io_mode::encode_value};
+use crate::{error::ErrorExt as _, global::Global};
 
 /// The host console's line ending: LF on every platform, since this is a
 /// terminal, not a file, and `echo` has always written LF on Windows too.
@@ -31,7 +31,7 @@ impl<'v> Object<'v> for HostConsole {
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
-            .supertype(TypeObject::Sink)
+            .supertype(TypeObject::Io)
             .method("write", async move |_this, strand, args, out| {
                 let bytes = dolang_ext_term::write_data(strand, args)?;
                 write_host(strand, &bytes).await?;
@@ -49,6 +49,10 @@ impl<'v> Object<'v> for HostConsole {
                     .flush()
                     .await
                     .map_err(|error| error.into_sys(strand))
+            })
+            .get("writable", |_this, strand, out| {
+                Output::set(strand, out, true);
+                Ok(())
             })
             .get("line_ending", |_this, strand, out| {
                 Output::set(strand, out, LINE_ENDING);
@@ -100,24 +104,6 @@ impl<'v> Object<'v> for HostConsole {
     ) -> Result<'v, 's, bool> {
         let global = strand.state::<Tag>();
         Ok(global.types.host_console.cast(other).is_some())
-    }
-
-    async fn sink<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
-        Ok(())
-    }
-
-    async fn put<'a, 's>(
-        _this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        value: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        let bytes = encode_value(strand, &value)?;
-        write_host(strand, &bytes).await
     }
 }
 

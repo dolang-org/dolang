@@ -1,6 +1,10 @@
-import shell term strand json
+import compress shell term strand json
   fs:
     - with_temp_dir
+  io:
+    - Buffered
+    - Concat
+    - Io
   test:
     - assert
     - assert_eq
@@ -9,6 +13,7 @@ import shell term strand json
     - test
   std:
     - FmtValue
+    - StateError
     - TypeError
     - ValueError
 
@@ -31,6 +36,46 @@ class Recorder: term.Console
 
   pub def flush _self
     nil
+
+# Collects each write's pieces as one string.
+class Collect: term.Console
+  pub field out
+
+  def (init) self out
+    self.out = out
+    term.Console.(init) $self
+
+  pub def write self *data
+    let line = ""
+    for piece = data
+      line = "$line$(Str piece)"
+    self.out.push $line
+    line.len
+
+  pub def flush _self
+    nil
+
+# A stream that records each write's pieces as one string.
+class WriteLog: Io
+  pub field writes
+  pub field closed = false
+
+  def (init) self
+    self.writes = []
+
+  #[getter]
+  pub def writable _self
+    true
+
+  pub def write self *data
+    let line = ""
+    for piece = data
+      line = "$line$(Str piece)"
+    self.writes.push $line
+    line.len
+
+  pub def close self
+    self.closed = true
 
 class Fancy: term.Console
   pub field lines
@@ -392,7 +437,7 @@ def script dir name source
 #[test]
 def capture_collects_echo_lines()
   let out = []
-  term.capture $out do
+  term.capture (Collect out) do
     echo hello world
     echo second
   assert_eq $out ["hello world\n", "second\n"]
@@ -416,35 +461,60 @@ def print_stays_unterminated()
 
   assert_eq (term.sub mixed) abc
 
-# Framing decides where the console's byte stream is cut into values and
-# nothing else, so the same bytes come out either way.
 #[test]
-def capture_into_sink_frames_without_transforming()
-  # `echo`'s terminator went into the byte stream, so it is part of the value.
-  let lines = []
-  term.capture $lines do echo hello
-  assert_eq $lines ["hello\n"]
+def capture_wraps_an_io()
+  # An `Io` that is not a console gets an `IoConsole`, which passes each
+  # `write` on as one write of the stream, terminator included.
+  let log = WriteLog()
+  term.capture $log do
+    assert_eq (term.output().can_style) false
+    echo (term.text "warn" fg: :YELLOW:)
+    print hi
+  assert_eq $log.writes ["warn\n", "hi"]
+  assert_eq $log.closed false
 
-  # `chomp` is how a caller asks for it back off, and composes with the sink
-  # the same way it would anywhere else.
-  let chomped = []
-  term.capture (chomped.sink().prechomp()) do echo hello
-  assert_eq $chomped ["hello"]
+  assert_throws $TypeError do term.capture 42 do nil
 
-  # Chunk framing cuts the stream elsewhere and reproduces it just the same.
-  let chunks = []
-  term.capture $chunks mode: :CHUNK: do echo hello
-  let joined = ""
-  for chunk = chunks
-    joined = "$joined$(str(chunk))"
-  assert_eq $joined "hello\n"
+#[test]
+def io_console()
+  let log = WriteLog()
+  let console = term.IoConsole $log
+  assert (type console Io)
+  assert_eq $console.writable true
+  assert_eq $console.can_style false
+  assert_eq (console.write "a" b"b" "\n") 3
+  assert_eq $log.writes ["ab\n"]
+  assert_throws $TypeError do console.write "a" 1
+
+  # A stream without `flush` has nothing to flush.
+  console.flush()
+
+  # Closing leaves the stream open.
+  console.close()
+  console.close()
+  assert_eq $console.writable false
+  assert_eq $log.closed false
+  assert_throws $StateError do console.write "x"
+
+  assert_throws $TypeError do term.IoConsole 42
+
+#[test]
+def io_console_flushes_its_stream()
+  let log = WriteLog()
+  let buffer = Buffered $log
+  let console = term.IoConsole $buffer can_style: true
+  assert_eq $console.can_style true
+  console.write "held"
+  assert_eq $log.writes []
+  console.flush()
+  assert_eq $log.writes ["held"]
 
 #[test]
 def capture_flushes_partial_line()
   # An unterminated `print` is only visible once the scope ends and flushes,
   # and it has no terminator to carry.
   let out = []
-  term.capture $out do print hi
+  term.capture (Collect out) do print hi
   assert_eq $out ["hi"]
 
 #[test]
@@ -454,7 +524,7 @@ def capture_is_unstyled_by_default()
   assert_eq (term.sub do echo (term.text "warn" fg: :YELLOW:)) warn
   # And the console says so, which is what `echo` consulted to decide.
   let out = []
-  term.capture $out do
+  term.capture (Collect out) do
     assert_eq (term.output().can_style) false
 
 #[test]
@@ -465,20 +535,20 @@ def capture_can_style_opt_in()
   let styled = "$ESC[33mwarn$ESC[0m"
   assert_eq (term.sub can_style: true do echo (term.text "warn" fg: :YELLOW:)) $styled
 
-  # The same opt-in on the sink adapter, which is the route `capture` takes.
-  let out = []
-  term.capture (term.SinkConsole(out, can_style: true)) do
+  # The same opt-in on the stream adapter, which is the route `capture` takes.
+  let log = WriteLog()
+  term.capture (term.IoConsole log can_style: true) do
     assert_eq (term.output().can_style) true
     echo (term.text "warn" fg: :YELLOW:)
-  assert_eq $out ["$styled\n"]
+  assert_eq $log.writes ["$styled\n"]
 
 #[test]
 def capture_reports_no_geometry()
-  # A sink is never a terminal and has no layout, and the pin still answers
+  # A capture is never a terminal and has no layout, and the pin still answers
   # for the real terminal — unaffected by the capture in progress.
   let host = term.console.geometry()
   let out = []
-  term.capture $out do
+  term.capture (Collect out) do
     assert_eq (term.output().is_tty) false
     let captured = term.output().geometry()
     assert_eq $captured.rows nil
@@ -491,9 +561,9 @@ def capture_reports_no_geometry()
 def nesting_composes()
   let outer = []
   let inner = []
-  term.capture $outer do
+  term.capture (Collect outer) do
     echo o1
-    term.capture $inner do echo i1
+    term.capture (Collect inner) do echo i1
     echo o2
 
   assert_eq $outer ["o1\n", "o2\n"]
@@ -502,7 +572,7 @@ def nesting_composes()
 #[test]
 def spawn_inherits_capture()
   let out = []
-  term.capture $out do
+  term.capture (Collect out) do
     let s = strand.spawn do echo from-spawn
     s.join()
   assert_eq $out ["from-spawn\n"]
@@ -519,20 +589,19 @@ def console_pins_past_capture()
       import shell
       import strand
       import fs
-      let out = []
-      term.capture $out do
+      let out = term.sub chomp: false do
         term.console.write "pinned-write\n"
         strand.pipeline output: $term.console
           do strand.from ["pinned-put"]
         echo captured
-      fs.write $shell.args[0] (str out)
+      fs.write $shell.args[0] $out
 
     let path = script $dir pin.dol $src
     let seen = (dir / "seen.txt")
     let err = (dir / "err.txt")
     run $shell.exe --no-cache $path $seen stderr: $err
 
-    assert_eq $seen.read_str() r#"["captured\n"]"#
+    assert_eq $seen.read_str() "captured\n"
     # Both `write` and `put` are verbatim, so the only LF here is the one in
     # the source.
     assert_eq $err.read_str() "pinned-write\npinned-put"
@@ -611,7 +680,7 @@ def mute_silences_echo_and_child_stderr()
   # — so it composes with an enclosing capture rather than fighting it, and
   # a named `stdout:` is untouched.
   let out = []
-  term.capture $out do
+  term.capture (Collect out) do
     term.mute do
       echo hidden
       print more
@@ -660,13 +729,11 @@ def progress_lines_use_context_capture()
   with_temp_dir do |dir|
     let src = r|
       import fs progress shell term
-      let outer = []
-      let inner = []
-      term.capture $outer do
+      let outer = term.sub do
         progress.with do
-          term.capture $inner do
+          term.sub do
             progress.show message: working do |_| nil
-      (fs.Path shell.args[0]).write (str outer)
+      (fs.Path shell.args[0]).write $outer
 
     let path = script $dir progress.dol $src
     let seen = (dir / "seen.txt")
@@ -693,6 +760,13 @@ def do_subclass_console()
   assert_eq $recorder.can_style false
   assert_eq $recorder.is_tty false
   assert_eq (recorder.geometry().cols) nil
+
+  # It is an `Io`, so `put` comes from there and writes through `write`.
+  assert (type recorder Io)
+  assert_eq $recorder.writable true
+  recorder.put 42
+  let last = recorder.lines[recorder.lines.len - 1]
+  assert_eq (Str last[0]) "42"
 
 #[test]
 def do_console_declares_capabilities()
@@ -731,13 +805,26 @@ def capture_reads_line_ending_once()
 
 #[test]
 def console_write_takes_pieces()
-  let out = []
-  let console = term.SinkConsole $out
-  assert_eq (console.write "a" b"b" "\n") 3
-  assert_eq $out ["ab\n"]
-  assert_throws $TypeError do console.write "a" 1
-
   assert_eq (term.sub do term.output().write "a" "b") ab
+
+#[test]
+def host_console_is_an_io()
+  assert (type term.console Io)
+  assert_eq $term.console.writable true
+  # The host console never closes stderr.
+  assert_throws $std.FieldError do term.console.close()
+
+#[test]
+def native_consumers_write_to_a_console()
+  let recorder = Recorder()
+  compress.compress $recorder :GZIP: do |stream|
+    stream.write "hello" "\n"
+  let pieces = []
+  for line = recorder.lines
+    for piece = line
+      pieces.push $piece
+  compress.decompress (Concat pieces) :GZIP: do |stream|
+    assert_eq (stream.read_all_str()) "hello\n"
 
 #[test]
 def geometry_dimensions()
@@ -784,8 +871,7 @@ def reentrant_console_does_not_recurse()
           nil
 
       let loud = Loud()
-      let outer = []
-      term.capture $outer do
+      let outer = term.sub chomp: false do
         term.capture $loud do echo hello
       fs.write $shell.args[0] "$(str loud.seen) $(str outer)"
 
@@ -797,7 +883,7 @@ def reentrant_console_does_not_recurse()
     # The inner console saw the line, and the re-entrant `echo` skipped both
     # captures rather than landing in the enclosing one — which is what keeps
     # the guard simple.
-    assert_eq $seen.read_str() r#"["hello\n"] []"#
+    assert_eq $seen.read_str() r#"["hello\n"] "#
     # It reached the host console, whose line ending is LF on every platform.
     # Two of them: the data the console was handed already carried `echo`'s
     # terminator, and the re-entrant `echo` adds its own.

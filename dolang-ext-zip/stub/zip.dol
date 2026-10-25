@@ -7,7 +7,7 @@ import fs:
   - @FileType
   - @Path
 import io:
-  - @Io
+  - Io
 import fs.unix:
   @Path: UnixPath
 import time:
@@ -255,7 +255,21 @@ pub class Entry
 # Returned by [`Archive.open`](zip.Archive.open) and
 # [`Entry.open`](zip.Entry.open). Entry metadata such as size and Unix mode
 # is available on [`Entry`](zip.Entry) rather than here.
-pub class File
+#
+# A function that accepts an [`Io`](io.Io), such as
+# [`compress.compress`](compress.compress), can read or write the file, as its
+# mode allows.
+pub class File: Io
+  # Whether the file is open for reading.
+  #[getter]
+  pub def readable self -> Bool
+    ...
+
+  # Whether the file is open for writing.
+  #[getter]
+  pub def writable self -> Bool
+    ...
+
   # Closes the file.
   #
   # ## Example
@@ -293,7 +307,11 @@ pub class File
   do -> Bin
     ...
 
-  # Writes data to the file. Write mode only.
+  # Writes data, given in pieces, to the file. Write mode only.
+  #
+  # ## Returns
+  #
+  # The number of bytes written, which is all of them.
   #
   # ## Errors
   #
@@ -304,14 +322,14 @@ pub class File
   # ```
   # open "output.zip" "w" do |archive|
   #   archive.open "data.bin" do |file|
-  #     file.write "Hello, World!"
+  #     file.write "Hello, " "World!"
   #     file.write b"\x00\x01\x02\x03"
   # ```
   pub def write
     self
     # Data to write.
-    data @ (Bin | Str)
-  do
+    *data @ (Bin | Str)
+  do -> Int
     ...
 
 # Access mode accepted by [`open`](zip.open).
