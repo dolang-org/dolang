@@ -1,4 +1,5 @@
-//! The `io` module, and `io.Buffered`, a buffer over a [`ByteHandle`].
+//! The `io` module, `io.Buffered`, a buffer over a [`ByteHandle`], and [`Stream`], the
+//! anonymous `io.Io` a handle becomes as an [`Input`].
 //!
 //! A seekable handle that reads and writes holds read-ahead or pending writes, never both:
 //! a write first moves the handle back over unread bytes, and a read or seek first flushes.
@@ -11,7 +12,7 @@
 
 use std::{
     io::{self, SeekFrom},
-    mem::MaybeUninit,
+    mem::{self, MaybeUninit},
     pin::Pin,
     str,
     task::{Context, Poll, ready},
@@ -26,15 +27,19 @@ use futures::io::{
 use crate::{
     BYTE_STREAM_CHUNK_SIZE,
     error::{Error, ErrorKind, Result},
-    io::{ByteHandle, ByteIo, IntoByteIo, Io, IoCaps, IoErrorExt as _, IoResultExt as _, Shared},
+    io::{
+        ByteHandle, ByteIo, IntoByteIo, Io, IoCaps, IoErrorExt as _, IoResultExt as _, Prefixed,
+        Shared,
+    },
     object::{
         interface::Request,
         native::{Instance, Object, Type, TypeBuilder},
     },
     strand::Strand,
+    sym::Sym,
     unpack,
-    value::{BinEmbryo, Output, Slot, TypeObject},
-    vm::{Alloc, Builder},
+    value::{BinEmbryo, Input, InputBy, Output, Slot, TypeObject, private::Sealed},
+    vm::{Alloc, Builder, StateTag, Vm},
 };
 
 /// Buffer capacity, and the size from which reads and writes skip the buffer.
@@ -132,17 +137,9 @@ impl BufIo {
             }
             if self.unread() == 0 && want >= CAPACITY {
                 let chunk = want.min(BYTE_STREAM_CHUNK_SIZE);
-                out.reserve(alloc, chunk);
-                let spare = &mut out.spare_capacity_mut()[..chunk];
-                spare.fill(MaybeUninit::new(0));
-                // SAFETY: every byte of `spare` was just initialized.
-                let spare = unsafe { &mut *(spare as *mut [MaybeUninit<u8>] as *mut [u8]) };
-                let read = self.read(spare).await?;
-                if read == 0 {
+                if read_spare(self, alloc, out, chunk).await? == 0 {
                     return Ok(());
                 }
-                // SAFETY: `read` bytes at the front of the spare capacity are initialized.
-                unsafe { out.advance(read) };
             } else {
                 let avail = self.fill_buf().await?;
                 if avail.is_empty() {
@@ -178,6 +175,24 @@ impl BufIo {
             }
         }
     }
+}
+
+/// Reads once from `reader` into at most `n` bytes appended to `out`, returning the count.
+async fn read_spare<'v>(
+    reader: &mut (impl AsyncRead + Unpin),
+    alloc: &mut dyn Alloc<'v>,
+    out: &mut BinEmbryo<'v>,
+    n: usize,
+) -> io::Result<usize> {
+    out.reserve(alloc, n);
+    let spare = &mut out.spare_capacity_mut()[..n];
+    spare.fill(MaybeUninit::new(0));
+    // SAFETY: every byte of `spare` was just initialized.
+    let spare = unsafe { &mut *(spare as *mut [MaybeUninit<u8>] as *mut [u8]) };
+    let read = reader.read(spare).await?;
+    // SAFETY: `read` bytes at the front of the spare capacity are initialized.
+    unsafe { out.advance(read) };
+    Ok(read)
 }
 
 impl AsyncRead for BufIo {
@@ -310,28 +325,12 @@ impl Buffered {
 
     /// Raises unless the buffer is open and its handle has `need`.
     fn check<'v, 's>(&self, strand: &mut Strand<'v, 's>, need: IoCaps) -> Result<'v, 's, ()> {
-        if self.io.is_none() {
-            return Err(Error::state_error(strand, "buffer is closed"));
-        }
-        let missing = need - self.caps;
-        if missing.contains(IoCaps::READ) {
-            Err(Error::state_error(strand, "buffer is not readable"))
-        } else if missing.contains(IoCaps::WRITE) {
-            Err(Error::state_error(strand, "buffer is not writable"))
-        } else if missing.contains(IoCaps::SEEK) {
-            Err(Error::state_error(strand, "buffer is not seekable"))
-        } else {
-            Ok(())
-        }
+        check_caps(strand, "buffer", self.io.is_some(), self.caps, need)
     }
 
     /// Capabilities while open; a closed buffer has none.
     fn open_caps(&self) -> IoCaps {
-        if self.io.is_some() {
-            self.caps
-        } else {
-            IoCaps::empty()
-        }
+        open_caps(&self.io, self.caps)
     }
 
     /// Holds the buffer for a method, after any operation through a lent handle.
@@ -347,13 +346,47 @@ impl Buffered {
     ///
     /// The handle's own `close` only flushes a lent handle, so the source stays open.
     async fn close(&mut self) -> io::Result<()> {
-        let Some(mut shared) = self.io.take() else {
-            return Ok(());
-        };
-        match shared.close().await {
-            Some(mut io) => io.close().await,
-            None => Ok(()),
-        }
+        close_shared(&mut self.io).await
+    }
+}
+
+/// Raises unless the stream, called `noun` in messages, is open and has `need`.
+fn check_caps<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    noun: &str,
+    open: bool,
+    caps: IoCaps,
+    need: IoCaps,
+) -> Result<'v, 's, ()> {
+    let missing = need - caps;
+    let problem = if !open {
+        "closed"
+    } else if missing.contains(IoCaps::READ) {
+        "not readable"
+    } else if missing.contains(IoCaps::WRITE) {
+        "not writable"
+    } else if missing.contains(IoCaps::SEEK) {
+        "not seekable"
+    } else {
+        return Ok(());
+    };
+    Err(Error::state_error(strand, format!("{noun} is {problem}")))
+}
+
+/// Capabilities while open; a closed stream has none.
+fn open_caps<T>(io: &Option<Shared<T>>, caps: IoCaps) -> IoCaps {
+    if io.is_some() { caps } else { IoCaps::empty() }
+}
+
+/// Closes a shared stream for every handle, then closes the stream itself. Closing a closed
+/// stream does nothing.
+async fn close_shared<T: AsyncWrite + Unpin>(io: &mut Option<Shared<T>>) -> io::Result<()> {
+    let Some(mut shared) = io.take() else {
+        return Ok(());
+    };
+    match shared.close().await {
+        Some(mut io) => io.close().await,
+        None => Ok(()),
     }
 }
 
@@ -373,18 +406,56 @@ fn invalid_utf8<'v, 's>(strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
     Error::runtime(strand, "invalid UTF-8 data")
 }
 
+/// Parses a byte count.
+fn size_value<'v, 's>(strand: &mut Strand<'v, 's>, size: Slot<'v, '_>) -> Result<'v, 's, usize> {
+    size.to_i64(strand)
+        .ok()
+        .and_then(|n| usize::try_from(n).ok())
+        .ok_or_else(|| Error::type_error(strand, "size must be a non-negative integer"))
+}
+
 /// Parses an optional byte count.
 fn size_arg<'v, 's>(
     strand: &mut Strand<'v, 's>,
     size: Option<Slot<'v, '_>>,
 ) -> Result<'v, 's, Option<usize>> {
-    size.map(|size| {
-        size.to_i64(strand)
-            .ok()
-            .and_then(|n| usize::try_from(n).ok())
-            .ok_or_else(|| Error::type_error(strand, "size must be a non-negative integer"))
+    size.map(|size| size_value(strand, size)).transpose()
+}
+
+/// Parses `seek`'s arguments: exactly one of a relative `offset`, `start:` or `end:`.
+fn seek_arg<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    offset: Option<Slot<'v, '_>>,
+    start: Option<Slot<'v, '_>>,
+    end: Option<Slot<'v, '_>>,
+    start_sym: Sym<'v, '_>,
+    end_sym: Sym<'v, '_>,
+) -> Result<'v, 's, SeekFrom> {
+    Ok(match (offset, start, end) {
+        (Some(offset), None, None) => SeekFrom::Current(
+            offset
+                .to_i64(strand)
+                .map_err(|_| Error::type_error(strand, "seek offset must be an integer"))?,
+        ),
+        (None, Some(start), None) => {
+            let start = start
+                .to_i64(strand)
+                .map_err(|_| Error::type_error(strand, "start must be an integer"))?;
+            SeekFrom::Start(
+                u64::try_from(start)
+                    .map_err(|_| Error::value(strand, "start offset must be non-negative"))?,
+            )
+        }
+        (None, None, Some(end)) => SeekFrom::End(
+            end.to_i64(strand)
+                .map_err(|_| Error::type_error(strand, "end must be an integer"))?,
+        ),
+        (None, None, None) => return Err(Error::missing_positional(strand, 0)),
+        (Some(_), Some(_), _) => return Err(Error::unexpected_key(strand, start_sym)),
+        (Some(_), None, Some(_)) | (None, Some(_), Some(_)) => {
+            return Err(Error::unexpected_key(strand, end_sym));
+        }
     })
-    .transpose()
 }
 
 impl Buffered {
@@ -462,6 +533,8 @@ impl Buffered {
 /// Registers the `io` module.
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     let buffered = builder.register_type::<Buffered>();
+    let stream = builder.register_type::<Stream>();
+    builder.register_state::<StreamType>(stream);
     let io = builder.singletons().io.dup();
     builder
         .module("io")
@@ -661,30 +734,7 @@ impl<'v> Object<'v> for Buffered {
             .method("seek", async move |this, strand, args, out| {
                 let ([], [offset, start, end]) =
                     unpack!(strand, args, 0, 1, start_sym = None, end_sym = None)?;
-                let pos = match (offset, start, end) {
-                    (Some(offset), None, None) => {
-                        SeekFrom::Current(offset.to_i64(strand).map_err(|_| {
-                            Error::type_error(strand, "seek offset must be an integer")
-                        })?)
-                    }
-                    (None, Some(start), None) => {
-                        let start = start
-                            .to_i64(strand)
-                            .map_err(|_| Error::type_error(strand, "start must be an integer"))?;
-                        SeekFrom::Start(u64::try_from(start).map_err(|_| {
-                            Error::value(strand, "start offset must be non-negative")
-                        })?)
-                    }
-                    (None, None, Some(end)) => SeekFrom::End(
-                        end.to_i64(strand)
-                            .map_err(|_| Error::type_error(strand, "end must be an integer"))?,
-                    ),
-                    (None, None, None) => return Err(Error::missing_positional(strand, 0)),
-                    (Some(_), Some(_), _) => return Err(Error::unexpected_key(strand, start_sym)),
-                    (Some(_), None, Some(_)) | (None, Some(_), Some(_)) => {
-                        return Err(Error::unexpected_key(strand, end_sym));
-                    }
-                };
+                let pos = seek_arg(strand, offset, start, end, start_sym, end_sym)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::SEEK)?;
                 let res = borrow.lock(strand).await?.seek(pos).await;
@@ -692,5 +742,319 @@ impl<'v> Object<'v> for Buffered {
                 Output::set(strand, out, pos);
                 Ok(())
             })
+    }
+}
+
+/// An owned byte handle as a Do `io.Io`, without a buffer.
+///
+/// Each `read` polls the handle once, after serving its prefix. Unlike [`Buffered`], it owns
+/// its stream, so `close` closes the handle.
+pub(crate) struct Stream {
+    /// The handle, until it is closed.
+    io: Option<Shared<Prefixed<Io>>>,
+    caps: IoCaps,
+}
+
+/// The registered [`Stream`] type, for the [`Input`] impl of [`ByteHandle`].
+struct StreamType;
+
+impl StateTag for StreamType {
+    type State<'v> = Type<'v, Stream>;
+}
+
+impl Stream {
+    fn new(handle: ByteHandle) -> Self {
+        let ByteHandle { io, prefix } = handle;
+        Self {
+            caps: io.caps(),
+            io: Some(Shared::new(Prefixed::new(io, prefix))),
+        }
+    }
+
+    /// Raises unless the stream is open and has `need`.
+    fn check<'v, 's>(&self, strand: &mut Strand<'v, 's>, need: IoCaps) -> Result<'v, 's, ()> {
+        check_caps(strand, "stream", self.io.is_some(), self.caps, need)
+    }
+
+    /// Holds the handle for a method, after any operation through a lent handle.
+    async fn lock<'v, 's>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, Locked<'_, Prefixed<Io>>> {
+        let io = self.io.as_mut().expect("stream is closed");
+        io.lock().await.into_do_io(strand)
+    }
+}
+
+impl<'v> IntoByteIo<'v> for Stream {
+    fn caps<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, IoCaps> {
+        Ok(self.caps)
+    }
+
+    fn get<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
+        let io = self.io.as_ref().expect("stream is closed").clone();
+        Ok(ByteHandle::with_caps(io, self.caps))
+    }
+}
+
+/// Wraps the handle in a [`Stream`] that owns it.
+impl<'v> Input<'v> for ByteHandle {
+    #[allow(private_interfaces)]
+    fn input_take<'a>(&'a mut self, vm: &'a Vm<'v>, _: Sealed) -> InputBy<'v, 'a> {
+        let handle = mem::replace(self, ByteHandle::read(futures::io::empty()));
+        let ty = *vm.state::<StreamType>();
+        InputBy::Value(ty.create_raw(vm, Stream::new(handle), ()), None)
+    }
+}
+
+impl<'v> Object<'v> for Stream {
+    const NAME: &'v str = "Stream";
+    const MODULE: &'v str = "io";
+    type Annex = ();
+    type Type = ();
+    type TypeAnnex = ();
+
+    fn provide<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        request: &mut Request<'v, 's, '_>,
+    ) -> Result<'v, 's, ()> {
+        if request.wants::<ByteIo>() {
+            let mut borrow = this.borrow_mut(request)?;
+            borrow.check(request, IoCaps::empty())?;
+            request.provide::<ByteIo>(&mut *borrow)?;
+        }
+        Ok(())
+    }
+
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let start_sym = builder.sym("start");
+        let end_sym = builder.sym("end");
+        builder
+            .supertype(TypeObject::Io)
+            .get("readable", |this, strand, out| {
+                let this = this.borrow(strand)?;
+                let caps = open_caps(&this.io, this.caps);
+                Output::set(strand, out, caps.contains(IoCaps::READ));
+                Ok(())
+            })
+            .get("writable", |this, strand, out| {
+                let this = this.borrow(strand)?;
+                let caps = open_caps(&this.io, this.caps);
+                Output::set(strand, out, caps.contains(IoCaps::WRITE));
+                Ok(())
+            })
+            .get("seekable", |this, strand, out| {
+                let this = this.borrow(strand)?;
+                let caps = open_caps(&this.io, this.caps);
+                Output::set(strand, out, caps.contains(IoCaps::SEEK));
+                Ok(())
+            })
+            .method("read", async move |this, strand, args, out| {
+                let ([size], []) = unpack!(strand, args, 1, 0)?;
+                let size = size_value(strand, size)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.check(strand, IoCaps::READ)?;
+                let mut io = borrow.lock(strand).await?;
+                let mut buf = BinEmbryo::new();
+                let chunk = size.min(BYTE_STREAM_CHUNK_SIZE);
+                read_spare(&mut *io, strand, &mut buf, chunk)
+                    .await
+                    .into_do_io(strand)?;
+                buf.finish(strand, out);
+                Ok(())
+            })
+            .method("write", async move |this, strand, args, out| {
+                let ([data], []) = unpack!(strand, args, 1, 0)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.check(strand, IoCaps::WRITE)?;
+                let mut io = borrow.lock(strand).await?;
+                let res = if let Some(b) = data.as_bin(strand.vm()) {
+                    let b = b.pin();
+                    io.write(&b).await
+                } else if let Some(s) = data.as_str(strand.vm()) {
+                    let s = s.pin();
+                    io.write(s.as_bytes()).await
+                } else {
+                    return Err(Error::type_error(strand, "expected `Str` or `Bin`"));
+                };
+                let written = res.into_do_io(strand)?;
+                Output::set(strand, out, written);
+                Ok(())
+            })
+            .method("seek", async move |this, strand, args, out| {
+                let ([], [offset, start, end]) =
+                    unpack!(strand, args, 0, 1, start_sym = None, end_sym = None)?;
+                let pos = seek_arg(strand, offset, start, end, start_sym, end_sym)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.check(strand, IoCaps::SEEK)?;
+                let res = borrow.lock(strand).await?.seek(pos).await;
+                let pos = res.into_do_io(strand)?;
+                Output::set(strand, out, pos);
+                Ok(())
+            })
+            .method("close", async move |this, strand, args, _out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                let res = close_shared(&mut borrow.io).await;
+                res.into_do_io(strand)
+            })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use futures::io::{AsyncReadExt as _, Cursor};
+
+    use crate::{
+        io::{self, ByteHandle},
+        method,
+        strand::Strand,
+        sym::{self, Sym},
+        test_support::with_vm,
+        value::{Output, Slot, Value},
+    };
+
+    fn bin<'v>(strand: &mut Strand<'v, '_>, value: &Value<'v>) -> Vec<u8> {
+        value.as_bin(strand.vm()).expect("`Bin`").pin().to_vec()
+    }
+
+    #[test]
+    fn reads_prefix_then_handle() {
+        with_vm(async |strand, [mut stream, mut out]| {
+            let handle =
+                ByteHandle::read(Cursor::new(b"cdef".to_vec())).with_prefix(b"ab".to_vec());
+            Output::set(strand, Slot::reborrow(&mut stream), handle);
+            let read = Sym::well_known(sym::READ);
+            let mut got = Vec::new();
+            loop {
+                method!(strand, &stream, read, Slot::reborrow(&mut out), 3_i64)
+                    .await
+                    .unwrap();
+                let chunk = bin(strand, &out);
+                if chunk.is_empty() {
+                    break;
+                }
+                assert!(chunk.len() <= 3);
+                got.extend(chunk);
+            }
+            assert_eq!(got, b"abcdef");
+            stream
+                .get(
+                    strand,
+                    Sym::well_known(sym::READABLE),
+                    Slot::reborrow(&mut out),
+                )
+                .unwrap();
+            assert_eq!(out.as_bool(strand), Some(true));
+            stream
+                .get(
+                    strand,
+                    Sym::well_known(sym::WRITABLE),
+                    Slot::reborrow(&mut out),
+                )
+                .unwrap();
+            assert_eq!(out.as_bool(strand), Some(false));
+        });
+    }
+
+    #[test]
+    fn chunks_are_bounded() {
+        with_vm(async |strand, [mut stream, mut iter, mut item]| {
+            let handle = ByteHandle::read(Cursor::new(b"hello".to_vec()));
+            Output::set(strand, Slot::reborrow(&mut stream), handle);
+            method!(
+                strand,
+                &stream,
+                Sym::well_known(sym::CHUNKS),
+                Slot::reborrow(&mut iter),
+                2_i64
+            )
+            .await
+            .unwrap();
+            let mut got = Vec::new();
+            while iter.next(strand, Slot::reborrow(&mut item)).await.unwrap() {
+                let chunk = bin(strand, &item);
+                assert!(!chunk.is_empty() && chunk.len() <= 2);
+                got.extend(chunk);
+            }
+            assert_eq!(got, b"hello");
+        });
+    }
+
+    #[test]
+    fn writes_seeks_and_closes() {
+        with_vm(async |strand, [mut stream, mut out]| {
+            let handle = ByteHandle::read_write_seek(Cursor::new(Vec::new()));
+            Output::set(strand, Slot::reborrow(&mut stream), handle);
+            method!(
+                strand,
+                &stream,
+                Sym::well_known(sym::WRITE),
+                Slot::reborrow(&mut out),
+                "xyz"
+            )
+            .await
+            .unwrap();
+            assert_eq!(out.as_int(strand), Some(3));
+            let start = Sym::well_known(sym::START);
+            method!(
+                strand,
+                &stream,
+                Sym::well_known(sym::SEEK),
+                Slot::reborrow(&mut out),
+                start: 0_i64
+            )
+            .await
+            .unwrap();
+            assert_eq!(out.as_int(strand), Some(0));
+            let read = Sym::well_known(sym::READ);
+            method!(strand, &stream, read, Slot::reborrow(&mut out), 8_i64)
+                .await
+                .unwrap();
+            assert_eq!(bin(strand, &out), b"xyz");
+
+            method!(
+                strand,
+                &stream,
+                Sym::well_known(sym::CLOSE),
+                Slot::reborrow(&mut out)
+            )
+            .await
+            .unwrap();
+            stream
+                .get(
+                    strand,
+                    Sym::well_known(sym::READABLE),
+                    Slot::reborrow(&mut out),
+                )
+                .unwrap();
+            assert_eq!(out.as_bool(strand), Some(false));
+            let res = method!(strand, &stream, read, Slot::reborrow(&mut out), 1_i64).await;
+            assert!(res.is_err());
+        });
+    }
+
+    #[test]
+    fn lent_handle_shares_position() {
+        with_vm(async |strand, [mut stream, mut out]| {
+            let handle = ByteHandle::read(Cursor::new(b"cd".to_vec())).with_prefix(b"ab".to_vec());
+            Output::set(strand, Slot::reborrow(&mut stream), handle);
+            let lent = io::get(strand, &stream, |_, _| Ok(())).unwrap();
+            let mut reader = lent.into_read().unwrap();
+            let mut byte = [0];
+            assert_eq!(reader.read(&mut byte).await.unwrap(), 1);
+            assert_eq!(byte, *b"a");
+            drop(reader);
+            method!(
+                strand,
+                &stream,
+                Sym::well_known(sym::READ),
+                Slot::reborrow(&mut out),
+                8_i64
+            )
+            .await
+            .unwrap();
+            assert_eq!(bin(strand, &out), b"b");
+        });
     }
 }

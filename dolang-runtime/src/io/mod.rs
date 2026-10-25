@@ -287,6 +287,9 @@ impl Io {
 ///
 /// The `into_*` conversions narrow it to the traits a consumer needs. A mismatch hands the
 /// handle back.
+///
+/// As an [`Input`](crate::value::Input), a handle becomes a Do `io.Io` that owns it: its
+/// methods read, write and seek the handle, and its `close` closes it.
 pub struct ByteHandle {
     pub(crate) io: Io,
     pub(crate) prefix: Vec<u8>,
@@ -533,14 +536,14 @@ impl fmt::Debug for ByteHandle {
 }
 
 /// Serves an unread prefix before `inner`.
-struct Prefixed<B> {
+pub(crate) struct Prefixed<B> {
     prefix: Vec<u8>,
     pos: usize,
     inner: B,
 }
 
 impl<B> Prefixed<B> {
-    fn new(inner: B, prefix: Vec<u8>) -> Self {
+    pub(crate) fn new(inner: B, prefix: Vec<u8>) -> Self {
         Self {
             prefix,
             pos: 0,
@@ -623,6 +626,30 @@ impl AsyncWrite for Prefixed<Box<dyn ReadWrite>> {
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         Pin::new(&mut self.get_mut().inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_close(cx)
+    }
+}
+
+/// Realigns a seekable handle before writing, so writes land at the logical position. On
+/// one that cannot seek, the prefix belongs to the read side and writes pass through.
+impl AsyncWrite for Prefixed<Io> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        if this.inner.caps().contains(IoCaps::SEEK) {
+            ready!(this.poll_realign(cx))?;
+        }
+        Pin::new(&mut this.inner).poll_write(cx, buf)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {

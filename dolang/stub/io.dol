@@ -14,6 +14,9 @@
 # but not iterable: iterate [`chunks`](io.Io.chunks), or iterate a subclass
 # that supports it.
 #
+# A function may return an `Io` over a native stream, such as a response body.
+# Its `close` closes that stream.
+#
 # A function that accepts an `Io`, such as [`zip.open`](zip.open), uses the
 # stream without closing it. Afterward its position reflects what the function
 # read or wrote, though a reader may have read ahead past what it used. Only

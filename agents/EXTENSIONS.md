@@ -401,6 +401,12 @@ by opening it and building the handle itself. The `compress` streams
 (`dolang-ext-compress/src/compress.rs`) are both: each gets a handle and
 provides its own, so they chain.
 
+An extension that only hands a native stream to Do, such as a response body,
+needs no provider type: setting a `ByteHandle` as an output
+(`Output::set(strand, out, handle)`) wraps it in a runtime `io.Io` that owns
+it. Its `read` serves the prefix and then polls the handle once per call, its
+`close` closes the handle, and it provides `ByteIo` by lending clones.
+
 A Do subclass of `io.Io` provides `ByteIo` too. Its handle sends requests to
 strands that call the stream's `read`, `write` and `seek`, never its `close`, so
 a consumer must poll the handle from the VM's event loop, as an `async` native
