@@ -376,6 +376,7 @@ version = "1"
 
 [workspace.dependencies.futures]
 version = "0.3.31"
+features = ["write-all-vectored"]
 
 
 [workspace.dependencies.httpdate]

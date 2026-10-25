@@ -3074,6 +3074,15 @@ impl<'v, 'a> Slot<'v, 'a> {
         unsafe { &mut *self.0 }
     }
 
+    /// Gives up the slot for a shared reference to its value, for as long as the slot was
+    /// valid.
+    ///
+    /// The value can then be viewed or pinned for that whole scope, such as the pieces of
+    /// a call's arguments.
+    pub fn into_ref(self) -> &'a Value<'v> {
+        self.into_inner()
+    }
+
     pub(crate) fn take(&mut self) -> Value<'v> {
         unsafe { mem::replace(&mut *self.0, Value::NIL) }
     }

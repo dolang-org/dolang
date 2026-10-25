@@ -1,11 +1,11 @@
 use std::{
-    io::{self, SeekFrom},
+    io::{self, IoSlice, SeekFrom},
     ops::{Deref, DerefMut},
 };
 
 use dolang::runtime::{
-    AllocExt, BYTE_STREAM_CHUNK_SIZE, Error, Instance, Object, Output, Result, Slot, State, Strand,
-    Value, call,
+    AllocExt, Arg, Args, BYTE_STREAM_CHUNK_SIZE, Error, Instance, Object, Output, Result, Slot,
+    State, Strand, Sym, Value, call,
     io::{ByteHandle, ByteIo, IntoByteIo, IoCaps, Shared},
     method,
     object::{Cast, Mut, Ref, Request, TypeBuilder},
@@ -153,6 +153,36 @@ fn read_offset<'v, 's>(
                 .ok_or_else(|| Error::type_error(strand, "offset must be a non-negative integer"))
         })
         .transpose()
+}
+
+/// Parses `write`'s arguments: any number of `Str` or `Bin` pieces, pinned, and an
+/// optional `offset:`.
+fn write_args<'v, 's, 'a>(
+    strand: &mut Strand<'v, 's>,
+    args: Args<'v, 'a>,
+    offset_sym: Sym<'v, '_>,
+) -> Result<'v, 's, (Vec<Pinned<'v, 'a>>, Option<Slot<'v, 'a>>)> {
+    let mut pieces = Vec::with_capacity(args.len());
+    let mut offset = None;
+    for arg in args {
+        match arg {
+            Arg::Pos(value) => {
+                let piece = match value.into_ref().view(strand) {
+                    View::Str(value) => Pinned::Str(value.pin()),
+                    View::Bin(value) => Pinned::Bin(value.pin()),
+                    _ => return Err(Error::type_error(strand, "expected `Str` or `Bin`")),
+                };
+                pieces.push(piece);
+            }
+            Arg::Key(key, value) if key == offset_sym => {
+                if offset.replace(value).is_some() {
+                    return Err(Error::duplicate_key(strand, key));
+                }
+            }
+            Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
+        }
+    }
+    Ok((pieces, offset))
 }
 
 /// Reads `size` bytes at `offset`, or to the end of the file when `size` is
@@ -572,7 +602,8 @@ pub(crate) trait FileKind<'v>: Sized + 'v {
     /// Leaves the file at the logical position, with nothing buffered.
     async fn settle(&mut self) -> io::Result<()>;
 
-    async fn write_all(&mut self, data: &[u8]) -> io::Result<()>;
+    /// Writes all of `data`, taken together.
+    async fn write_all(&mut self, data: &mut [IoSlice<'_>]) -> io::Result<()>;
 
     async fn seek(&mut self, pos: SeekFrom) -> io::Result<u64>;
 
@@ -690,7 +721,7 @@ impl<'v> FileKind<'v> for File {
         self.buffer().await?.settle().await
     }
 
-    async fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
+    async fn write_all(&mut self, data: &mut [IoSlice<'_>]) -> io::Result<()> {
         self.buffer().await?.write_all(data).await
     }
 
@@ -813,8 +844,16 @@ impl<'v> FileKind<'v> for RawFile {
         Ok(())
     }
 
-    async fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
-        self.vfs().write_all(data).await
+    async fn write_all(&mut self, mut data: &mut [IoSlice<'_>]) -> io::Result<()> {
+        IoSlice::advance_slices(&mut data, 0);
+        while !data.is_empty() {
+            let n = self.vfs().write_vectored(data).await?;
+            if n == 0 {
+                return Err(io::ErrorKind::WriteZero.into());
+            }
+            IoSlice::advance_slices(&mut data, n);
+        }
+        Ok(())
     }
 
     async fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
@@ -1141,28 +1180,28 @@ impl<'v, T: FileKind<'v>> FileObject<T> {
     }
 
     /// Writes at an explicit offset, leaving the cursor alone.
-    async fn write_at<'a, 's>(
+    ///
+    /// The pieces are written one after another, at consecutive offsets.
+    async fn write_at<'s>(
         &self,
-        data: Slot<'v, 'a>,
+        pieces: &[Pinned<'v, '_>],
         offset: u64,
         strand: &mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
+        out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        // Pinned and written from where it lies rather than copied into a
+        // Pinned and written from where they lie rather than copied into a
         // `Bytes` first: the pin holds the address stable across the write, and
-        // `data` is a rooted argument slot, so the value cannot go away
+        // the pieces are rooted argument slots, so they cannot go away
         // underneath it. A pin costs nothing today; against a moving collector
         // this would be worth deciding by payload size, since it trades a
         // memcpy for holding the address down across a whole transfer.
-        let pinned = match data.view(strand) {
-            View::Str(value) => Pinned::Str(value.pin()),
-            View::Bin(value) => Pinned::Bin(value.pin()),
-            _ => return Err(Error::type_error(strand, "expected `Str` or `Bin`")),
-        };
         let file = self.open_ref(strand)?;
-        let written = write_at_looping(file, pinned.as_slice(), offset)
-            .await
-            .into_sys(strand)?;
+        let mut written = 0;
+        for piece in pieces {
+            written += write_at_looping(file, piece.as_slice(), offset + written as u64)
+                .await
+                .into_sys(strand)?;
+        }
         Output::set(strand, out, written);
         Ok(())
     }
@@ -1197,27 +1236,23 @@ impl<'v, T: FileKind<'v>> FileObject<T> {
         Ok(())
     }
 
-    async fn write<'a, 's>(
+    async fn write<'s>(
         &mut self,
-        data: Slot<'v, 'a>,
+        pieces: &[Pinned<'v, '_>],
         strand: &mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
+        out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         self.check_open(strand)?;
-        let bytes_written = match data.view(strand) {
-            View::Str(s) => {
-                let s = s.pin();
-                self.write_all(s.as_bytes()).await.map(|_| s.len())
-            }
-            View::Bin(b) => {
-                let b = b.pin();
-                self.write_all(&b).await.map(|_| b.len())
-            }
-            _ => return Err(Error::type_error(strand, "expected `Str` or `Bin`")),
-        }
-        .into_sys(strand)?;
-
-        Output::set(strand, out, bytes_written);
+        let mut slices = pieces
+            .iter()
+            .map(|piece| IoSlice::new(piece.as_slice()))
+            .collect::<Vec<_>>();
+        let len = pieces
+            .iter()
+            .map(|piece| piece.as_slice().len())
+            .sum::<usize>();
+        self.write_all(&mut slices).await.into_sys(strand)?;
+        Output::set(strand, out, len);
         Ok(())
     }
 
@@ -1302,7 +1337,10 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
         let bytes = encode_value(strand, &value)?;
         let mut borrow = this.borrow_mut(strand)?;
         borrow.check_open(strand)?;
-        borrow.write_all(&bytes).await.into_sys(strand)
+        borrow
+            .write_all(&mut [IoSlice::new(&bytes)])
+            .await
+            .into_sys(strand)
     }
 
     fn provide<'a, 's>(
@@ -1483,7 +1521,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                 this.borrow_mut(strand)?.read(strand, size, out).await
             })
             .method("write", async move |this, strand, args, out| {
-                let ([data], [offset]) = unpack!(strand, args, 1, 0, offset_sym = None)?;
+                let (pieces, offset) = write_args(strand, args, offset_sym)?;
                 let offset = read_offset(strand, offset)?;
                 match offset {
                     // An append handle writes at the end no matter what offset
@@ -1497,11 +1535,11 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                     Some(offset) => {
                         T::drop_buffers(this, strand).await?;
                         let borrow = this.borrow(strand)?;
-                        borrow.write_at(data, offset, strand, out).await
+                        borrow.write_at(&pieces, offset, strand, out).await
                     }
                     None => {
                         let mut borrow = this.borrow_mut(strand)?;
-                        borrow.write(data, strand, out).await
+                        borrow.write(&pieces, strand, out).await
                     }
                 }
             })

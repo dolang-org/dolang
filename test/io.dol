@@ -60,6 +60,15 @@ def lending_keeps_write_order()
 
 #[test]
 #[vfs]
+def write_pieces()
+  let buf = Buffered $fs.open("data", "w", buffer: false)
+  assert_eq (buf.write "one" b"\n" "two") 7
+  buf.write_all "\n" "three"
+  buf.close()
+  assert_eq (fs.Path("data").read_str()) "one\ntwo\nthree"
+
+#[test]
+#[vfs]
 def lines()
   fs.Path("lines.txt").write "one\r\ntwo\nthree"
   let buf = Buffered $fs.open("lines.txt", buffer: false)

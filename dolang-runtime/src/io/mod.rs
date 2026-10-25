@@ -22,7 +22,7 @@ pub(crate) mod bridge;
 
 use std::{
     fmt,
-    io::{self, SeekFrom},
+    io::{self, IoSlice, SeekFrom},
     pin::Pin,
     task::{Context, Poll, ready},
 };
@@ -513,6 +513,20 @@ impl AsyncWrite for Io {
         }
     }
 
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        match self.get_mut() {
+            Io::Write(io) => Pin::new(io).poll_write_vectored(cx, bufs),
+            Io::WriteSeek(io) => Pin::new(io).poll_write_vectored(cx, bufs),
+            Io::ReadWrite(io) => Pin::new(io).poll_write_vectored(cx, bufs),
+            Io::ReadWriteSeek(io) => Pin::new(io).poll_write_vectored(cx, bufs),
+            Io::Read(_) | Io::ReadSeek(_) => Poll::Ready(Err(io::ErrorKind::Unsupported.into())),
+        }
+    }
+
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.get_mut() {
             Io::Write(io) => Pin::new(io).poll_flush(cx),
@@ -653,6 +667,14 @@ impl AsyncWrite for Prefixed<Box<dyn ReadWrite>> {
         Pin::new(&mut self.get_mut().inner).poll_write(cx, buf)
     }
 
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.get_mut().inner).poll_write_vectored(cx, bufs)
+    }
+
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.get_mut().inner).poll_flush(cx)
     }
@@ -677,6 +699,18 @@ impl AsyncWrite for Prefixed<Io> {
         Pin::new(&mut this.inner).poll_write(cx, buf)
     }
 
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        if this.inner.caps().contains(IoCaps::SEEK) {
+            ready!(this.poll_realign(cx))?;
+        }
+        Pin::new(&mut this.inner).poll_write_vectored(cx, bufs)
+    }
+
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.get_mut().inner).poll_flush(cx)
     }
@@ -696,6 +730,16 @@ impl AsyncWrite for Prefixed<Box<dyn ReadWriteSeek>> {
         let this = self.get_mut();
         ready!(this.poll_realign(cx))?;
         Pin::new(&mut this.inner).poll_write(cx, buf)
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        ready!(this.poll_realign(cx))?;
+        Pin::new(&mut this.inner).poll_write_vectored(cx, bufs)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {

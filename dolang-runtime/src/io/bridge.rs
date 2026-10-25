@@ -10,7 +10,7 @@
 
 use std::{
     future::Future,
-    io::{self, SeekFrom},
+    io::{self, IoSlice, SeekFrom},
     pin::Pin,
     task::{Context, Poll, ready},
 };
@@ -191,6 +191,16 @@ impl AsyncWrite for Handle {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
+        self.poll_write_vectored(cx, &[IoSlice::new(buf)])
+    }
+
+    /// Buffers as much of every piece as fits, so the stream's `write` gets them in one
+    /// call.
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
         if this.writes.is_none() {
             return Poll::Ready(Err(closed()));
@@ -206,9 +216,16 @@ impl AsyncWrite for Handle {
         if this.write_buf.len() >= WRITE_SIZE {
             ready!(this.poll_drain(cx))?;
         }
-        let n = buf.len().min(WRITE_SIZE - this.write_buf.len());
-        this.write_buf.extend_from_slice(&buf[..n]);
-        Poll::Ready(Ok(n))
+        let mut written = 0;
+        for buf in bufs {
+            let n = buf.len().min(WRITE_SIZE - this.write_buf.len());
+            this.write_buf.extend_from_slice(&buf[..n]);
+            written += n;
+            if n < buf.len() {
+                break;
+            }
+        }
+        Poll::Ready(Ok(written))
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -259,5 +276,35 @@ impl AsyncSeek for Handle {
             this.read_pos = 0;
         }
         Poll::Ready(res)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{io::IoSlice, pin::Pin, task::Context};
+
+    use futures::{StreamExt as _, io::AsyncWrite, task::noop_waker_ref};
+
+    use super::{IoCaps, Request, handle};
+
+    #[test]
+    fn vectored_write_buffers_every_piece() {
+        let (handle, lanes) = handle(IoCaps::WRITE);
+        let mut writer = handle.into_write().expect("handle writes");
+        let mut cx = Context::from_waker(noop_waker_ref());
+        let pieces = [
+            IoSlice::new(b"line"),
+            IoSlice::new(b""),
+            IoSlice::new(b"\n"),
+        ];
+        let written = Pin::new(&mut writer).poll_write_vectored(&mut cx, &pieces);
+        assert!(matches!(written, std::task::Poll::Ready(Ok(5))));
+        assert!(Pin::new(&mut writer).poll_flush(&mut cx).is_pending());
+        let mut servers = lanes.servers;
+        let request = futures::executor::block_on(servers[0].next());
+        let Some(Request::Write(data, _)) = request else {
+            panic!("expected a write");
+        };
+        assert_eq!(data, b"line\n");
     }
 }

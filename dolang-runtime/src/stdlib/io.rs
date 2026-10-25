@@ -12,8 +12,9 @@
 //! and writes through the same buffer.
 
 use std::{
-    io::{self, SeekFrom},
+    io::{self, IoSlice, SeekFrom},
     mem::{self, MaybeUninit},
+    ops::Deref,
     pin::Pin,
     str,
     task::{Context, Poll, ready},
@@ -27,6 +28,7 @@ use futures::io::{
 
 use crate::{
     BYTE_STREAM_CHUNK_SIZE,
+    arg::{Arg, Args},
     error::{Error, ErrorKind, Result},
     io::{
         ByteHandle, ByteIo, IntoByteIo, Io, IoCaps, IoErrorExt as _, IoResultExt as _, Prefixed,
@@ -39,7 +41,11 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{BinEmbryo, Input, InputBy, Output, Slot, TypeObject, Value, private::Sealed},
+    value::{
+        BinEmbryo, Input, InputBy, Output, Slot, TypeObject, Value,
+        private::Sealed,
+        view::{PinBin, PinStr},
+    },
     vm::{Alloc, Builder, StateTag, Vm},
 };
 
@@ -256,6 +262,27 @@ impl AsyncWrite for BufIo {
         Poll::Ready(Ok(buf.len()))
     }
 
+    /// Buffers every piece, so a stream that writes them at once gets them together.
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        ready!(this.poll_begin_write(cx))?;
+        let len = bufs.iter().map(|buf| buf.len()).sum::<usize>();
+        if this.wbuf.len() + len > CAPACITY {
+            ready!(this.poll_flush_buf(cx))?;
+        }
+        if len >= CAPACITY {
+            return Pin::new(&mut this.io).poll_write_vectored(cx, bufs);
+        }
+        for buf in bufs {
+            this.wbuf.extend_from_slice(buf);
+        }
+        Poll::Ready(Ok(len))
+    }
+
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
         ready!(this.poll_flush_buf(cx))?;
@@ -423,6 +450,56 @@ fn size_arg<'v, 's>(
     size.map(|size| size_value(strand, size)).transpose()
 }
 
+/// A `Str` or `Bin` a write takes its bytes from, pinned for the write.
+enum Piece<'v, 'a> {
+    Str(PinStr<'v, 'a>),
+    Bin(PinBin<'v, 'a>),
+}
+
+impl Deref for Piece<'_, '_> {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        match self {
+            Piece::Str(s) => s.as_bytes(),
+            Piece::Bin(b) => b,
+        }
+    }
+}
+
+/// Pins the arguments of a `write`: any number of `Str` or `Bin` pieces.
+fn pieces<'v, 's, 'a>(
+    strand: &mut Strand<'v, 's>,
+    args: Args<'v, 'a>,
+) -> Result<'v, 's, Vec<Piece<'v, 'a>>> {
+    let mut pieces = Vec::with_capacity(args.len());
+    for arg in args {
+        let value: &'a Value<'v> = match arg {
+            Arg::Pos(value) => value.into_ref(),
+            Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
+        };
+        let piece = if let Some(b) = value.as_bin(strand.vm()) {
+            Piece::Bin(b.pin())
+        } else if let Some(s) = value.as_str(strand.vm()) {
+            Piece::Str(s.pin())
+        } else {
+            return Err(Error::type_error(strand, "expected `Str` or `Bin`"));
+        };
+        pieces.push(piece);
+    }
+    Ok(pieces)
+}
+
+/// Slices over pinned pieces, and their total length.
+fn slices<'a>(pieces: &'a [Piece<'_, '_>]) -> (Vec<IoSlice<'a>>, usize) {
+    let slices = pieces
+        .iter()
+        .map(|piece| IoSlice::new(piece))
+        .collect::<Vec<_>>();
+    let len = pieces.iter().map(|piece| piece.len()).sum();
+    (slices, len)
+}
+
 /// Parses `seek`'s arguments: exactly one of a relative `offset`, `start:` or `end:`.
 fn seek_arg<'v, 's>(
     strand: &mut Strand<'v, 's>,
@@ -578,7 +655,7 @@ impl<'v> Object<'v> for Buffered {
     async fn new<'a, 's>(
         this: Type<'v, Self>,
         strand: &'a mut Strand<'v, 's>,
-        args: crate::arg::Args<'v, 'a>,
+        args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([source], []) = unpack!(strand, args, 1, 0)?;
@@ -696,21 +773,14 @@ impl<'v> Object<'v> for Buffered {
                 Ok(())
             })
             .method("write", async move |this, strand, args, out| {
-                let ([data], []) = unpack!(strand, args, 1, 0)?;
+                let pieces = pieces(strand, args)?;
+                let (mut slices, len) = slices(&pieces);
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::WRITE)?;
                 let mut io = borrow.lock(strand).await?;
-                let res = if let Some(b) = data.as_bin(strand.vm()) {
-                    let b = b.pin();
-                    io.write_all(&b).await.map(|()| b.len())
-                } else if let Some(s) = data.as_str(strand.vm()) {
-                    let s = s.pin();
-                    io.write_all(s.as_bytes()).await.map(|()| s.len())
-                } else {
-                    return Err(Error::type_error(strand, "expected `Str` or `Bin`"));
-                };
-                let written = res.into_do_io(strand)?;
-                Output::set(strand, out, written);
+                let res = io.write_all_vectored(&mut slices).await;
+                res.into_do_io(strand)?;
+                Output::set(strand, out, len);
                 Ok(())
             })
             .method("flush", async move |this, strand, args, _out| {
@@ -868,19 +938,12 @@ impl<'v> Object<'v> for Stream {
                 Ok(())
             })
             .method("write", async move |this, strand, args, out| {
-                let ([data], []) = unpack!(strand, args, 1, 0)?;
+                let pieces = pieces(strand, args)?;
+                let (slices, _) = slices(&pieces);
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::WRITE)?;
                 let mut io = borrow.lock(strand).await?;
-                let res = if let Some(b) = data.as_bin(strand.vm()) {
-                    let b = b.pin();
-                    io.write(&b).await
-                } else if let Some(s) = data.as_str(strand.vm()) {
-                    let s = s.pin();
-                    io.write(s.as_bytes()).await
-                } else {
-                    return Err(Error::type_error(strand, "expected `Str` or `Bin`"));
-                };
+                let res = io.write_vectored(&slices).await;
                 let written = res.into_do_io(strand)?;
                 Output::set(strand, out, written);
                 Ok(())
@@ -995,7 +1058,7 @@ impl<'v> Object<'v> for Concat {
     async fn new<'a, 's>(
         this: Type<'v, Self>,
         strand: &'a mut Strand<'v, 's>,
-        args: crate::arg::Args<'v, 'a>,
+        args: Args<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let end_sym = Sym::well_known(sym::END);

@@ -10,7 +10,7 @@
 
 use std::{
     future::poll_fn,
-    io::{self, SeekFrom},
+    io::{self, IoSlice, SeekFrom},
     pin::Pin,
     task::{Context, Poll, ready},
 };
@@ -173,14 +173,15 @@ impl FileBuf {
         poll_fn(|cx| Pin::new(&mut *self).poll_flush(cx)).await
     }
 
-    /// Writes all of `data`.
-    pub(crate) async fn write_all(&mut self, mut data: &[u8]) -> io::Result<()> {
+    /// Writes all of `data`, taken together.
+    pub(crate) async fn write_all(&mut self, mut data: &mut [IoSlice<'_>]) -> io::Result<()> {
+        IoSlice::advance_slices(&mut data, 0);
         while !data.is_empty() {
-            let n = poll_fn(|cx| Pin::new(&mut *self).poll_write(cx, data)).await?;
+            let n = poll_fn(|cx| Pin::new(&mut *self).poll_write_vectored(cx, data)).await?;
             if n == 0 {
                 return Err(io::ErrorKind::WriteZero.into());
             }
-            data = &data[n..];
+            IoSlice::advance_slices(&mut data, n);
         }
         Ok(())
     }
@@ -325,6 +326,28 @@ impl AsyncWrite for FileBuf {
         this.buf.extend_from_slice(data);
         this.writing = true;
         Poll::Ready(Ok(data.len()))
+    }
+
+    /// Buffers every piece, so the file gets them in one write once flushed.
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        ready!(this.poll_unread_back(cx))?;
+        let len = bufs.iter().map(|buf| buf.len()).sum::<usize>();
+        if this.buf.len() + len > CAPACITY {
+            ready!(this.poll_flush_buf(cx))?;
+        }
+        if len >= CAPACITY {
+            return Pin::new(&mut this.file).poll_write_vectored(cx, bufs);
+        }
+        for buf in bufs {
+            this.buf.extend_from_slice(buf);
+        }
+        this.writing = true;
+        Poll::Ready(Ok(len))
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {

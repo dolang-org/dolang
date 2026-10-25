@@ -15,7 +15,8 @@ use async_compression::futures::{bufread::XzDecoder, write::XzEncoder};
 use async_compression::futures::{bufread::ZstdDecoder, write::ZstdEncoder};
 use dolang::runtime::io::IoResultExt as _;
 use dolang::runtime::{
-    BYTE_STREAM_CHUNK_SIZE, Error, Object, Output, Result, Slot, State, Strand, Sym, Value, call,
+    Arg, BYTE_STREAM_CHUNK_SIZE, Error, Object, Output, Result, Slot, State, Strand, Sym, Value,
+    call,
     error::ErrorKind,
     io::{ByteHandle, ByteIo, IntoByteIo, IoCaps, Read, Shared, Write},
     method,
@@ -454,12 +455,19 @@ impl<'v> Object<'v> for Compressor {
                 Ok(())
             })
             .method("write", async move |this, strand, args, out| {
-                let ([data], []) = unpack!(strand, args, 1, 0)?;
-                let data = match data.view(strand) {
-                    View::Str(s) => s.to_string().into_bytes(),
-                    View::Bin(b) => b.to_vec(),
-                    _ => return Err(Error::type_error(strand, "expected bytes")),
-                };
+                // The encoder copies what it is given, so joining the pieces costs no more.
+                let mut data = Vec::new();
+                for arg in args {
+                    let piece = match arg {
+                        Arg::Pos(piece) => piece,
+                        Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
+                    };
+                    match piece.view(strand) {
+                        View::Str(s) => data.extend_from_slice(s.pin().as_bytes()),
+                        View::Bin(b) => data.extend_from_slice(&b.pin()),
+                        _ => return Err(Error::type_error(strand, "expected bytes")),
+                    }
+                }
 
                 let mut borrow = this.borrow_mut(strand)?;
                 let writer = borrow

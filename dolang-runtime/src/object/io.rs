@@ -21,12 +21,17 @@
 //! servers. An exception from a stream method reaches the handle as an [`std::io::Error`]
 //! made by [`from_do`](crate::io::from_do).
 
-use std::{cell::Cell, io::SeekFrom, ops::ControlFlow, rc::Rc};
+use std::{
+    cell::{Cell, UnsafeCell},
+    io::SeekFrom,
+    ops::ControlFlow,
+    rc::Rc,
+};
 
 use futures::{StreamExt as _, channel::mpsc, future::join_all};
 
 use crate::{
-    arg::Args,
+    arg::{Arg, Args, OwnedItem},
     error::{Error, Result},
     gc::{Collect, arena::Visit},
     io::{
@@ -209,8 +214,12 @@ impl<'v> Protocol<'v> for Io {
                 Ok(())
             }
             sym::WRITE_ALL => {
-                let ([stream, data], []) = unpack!(strand, args, 2, 0)?;
-                write_all(strand, &stream, &data).await
+                let stream = match args.next() {
+                    Some(Arg::Pos(stream)) => stream,
+                    Some(Arg::Key(key, _)) => return Err(Error::unexpected_key(strand, key)),
+                    None => return Err(Error::missing_positional(strand, 0)),
+                };
+                write_all(strand, &stream, args).await
             }
             sym::COPY_TO => {
                 let ([stream, dest], []) = unpack!(strand, args, 2, 0)?;
@@ -331,20 +340,76 @@ async fn read_chunk<'v, 's>(
     }
 }
 
+/// Writes all of the pieces in `args` with `stream`'s `write`.
+///
+/// The first `write` gets every piece, so a stream that writes them at once keeps them
+/// together. It gets copies of the arguments, since a call takes its arguments, and `args`
+/// still holds them afterward for what a short write leaves, which is joined into one `Bin`.
+async fn write_all<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    stream: &Value<'v>,
+    mut args: Args<'v, '_>,
+) -> Result<'v, 's, ()> {
+    let mut items: Vec<OwnedItem<'v>> = Vec::with_capacity(args.len() + 1);
+    // Headroom for the receiver.
+    items.push((None, UnsafeCell::new(Value::NIL)));
+    let mut len = 0;
+    for arg in args.reborrow() {
+        let piece = match arg {
+            Arg::Pos(piece) => piece,
+            Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
+        };
+        len += piece_len(strand, &piece)?;
+        items.push((None, UnsafeCell::new(piece.dup())));
+    }
+    if len == 0 {
+        return Ok(());
+    }
+    strand
+        .with_slots(async move |strand, [mut count, mut rest]| {
+            let write = Sym::well_known(sym::WRITE);
+            stream
+                .method(strand, write, Args::new_owned(&items, 1), &mut count)
+                .await?;
+            let mut skip = written(strand, &count, len)?;
+            if skip == len {
+                return Ok(());
+            }
+            let mut left = BinEmbryo::new_with_capacity(strand, len - skip);
+            for arg in args {
+                let Arg::Pos(piece) = arg else { continue };
+                let Some(bytes) = piece.as_u8_slice_raw(strand.vm()) else {
+                    continue;
+                };
+                if skip >= bytes.len() {
+                    skip -= bytes.len();
+                    continue;
+                }
+                left.extend(strand, &bytes[skip..]);
+                skip = 0;
+            }
+            left.finish(strand, &mut rest);
+            write_all_value(strand, stream, &rest).await
+        })
+        .await
+}
+
+/// The length of a `write` piece, which must be a `Str` or `Bin`.
+fn piece_len<'v, 's>(strand: &mut Strand<'v, 's>, piece: &Value<'v>) -> Result<'v, 's, usize> {
+    match piece.as_u8_slice_raw(strand.vm()) {
+        Some(bytes) => Ok(bytes.len()),
+        None => Err(Error::type_error(strand, "expected `Str` or `Bin`")),
+    }
+}
+
 /// Writes all of `data` with `stream`'s `write`, passing what a short write leaves as a
 /// `Bin`.
-async fn write_all<'v, 's>(
+async fn write_all_value<'v, 's>(
     strand: &mut Strand<'v, 's>,
     stream: &Value<'v>,
     data: &Value<'v>,
 ) -> Result<'v, 's, ()> {
-    let len = if let Some(b) = data.as_bin(strand.vm()) {
-        b.len()
-    } else if let Some(s) = data.as_str(strand.vm()) {
-        s.len()
-    } else {
-        return Err(Error::type_error(strand, "expected `Str` or `Bin`"));
-    };
+    let len = piece_len(strand, data)?;
     strand
         .with_slots(async move |strand, [mut rest, mut written_count]| {
             let write = Sym::well_known(sym::WRITE);
@@ -353,13 +418,10 @@ async fn write_all<'v, 's>(
                 if offset == 0 {
                     method!(strand, stream, write, &mut written_count, data).await?;
                 } else {
-                    if let Some(b) = data.as_bin(strand.vm()) {
-                        let b = b.pin();
-                        Output::set(strand, &mut rest, &b[offset..]);
-                    } else {
-                        let s = data.as_str(strand.vm()).expect("checked above").pin();
-                        Output::set(strand, &mut rest, &s.as_bytes()[offset..]);
-                    }
+                    let Some(bytes) = data.as_u8_slice_raw(strand.vm()) else {
+                        return Err(Error::type_error(strand, "expected `Str` or `Bin`"));
+                    };
+                    Output::set(strand, &mut rest, &bytes[offset..]);
                     method!(strand, stream, write, &mut written_count, &rest).await?;
                 }
                 offset += written(strand, &written_count, len - offset)?;
@@ -391,13 +453,13 @@ async fn put<'v, 's>(
     value: &Value<'v>,
 ) -> Result<'v, 's, ()> {
     if value.as_bin(strand.vm()).is_some() || value.as_str(strand.vm()).is_some() {
-        return write_all(strand, stream, value).await;
+        return write_all_value(strand, stream, value).await;
     }
     let text = value.to_string(strand)?;
     strand
         .with_slots(async move |strand, [mut data]| {
             Output::set(strand, &mut data, text.as_str());
-            write_all(strand, stream, &data).await
+            write_all_value(strand, stream, &data).await
         })
         .await
 }
