@@ -833,25 +833,6 @@ def copy_chunks total@Int input@BaseFile output@BaseFile indicator@progress.Indi
 def payload_directory user @ Str -> Str
   "/home/$(user)/.dolang-libvirt-guest"
 
-# Collects console output as plain text.
-class Transcript: term.Console
-  field buffer @ StrBuf
-
-  def (init) self buffer @ StrBuf
-    self.#buffer = buffer
-    term.Console.(init) $self
-
-  pub def write self *data @ (Str | Bin) -> Int
-    let written = 0
-    for piece = data
-      let text = Str $piece
-      self.#buffer.append $text
-      written = (written + text.len)
-    written
-
-  pub def flush _self
-    nil
-
 # How to reach a managed domain's guest over SSH.
 #
 # These are exactly the facts `create` records in the domain's `<dolang:vm>`
@@ -918,19 +899,19 @@ class Guest
   # wait that ran out of time can report it.
   def wait self probe @ (() -> Value)
     while true
-      let output = StrBuf()
+      let output = BinBuf()
       # An SSH transport that is not up yet fails as a nonzero `ssh` exit; a
       # VFS that cannot be reached over one fails as a `sys.Error`.
       try
-        term.capture (Transcript output) do
+        term.capture $output do
           probe()
         self.probe_output = nil
         return
       catch proc.Error: _
-        self.probe_output = output.freeze().trim()
+        self.probe_output = output.freeze_str().trim()
         time.sleep $READY_SLEEP
       catch sys.Error: _
-        self.probe_output = output.freeze().trim()
+        self.probe_output = output.freeze_str().trim()
         time.sleep $READY_SLEEP
 
   # The probe `probe` names, as the function the waits below poll. It raises if
@@ -968,9 +949,9 @@ class Guest
   pub def wait_gone self probe @ Probe
     let probe = self.#probe_for $probe
     while true
-      let output = StrBuf()
+      let output = BinBuf()
       try
-        term.capture (Transcript output) do
+        term.capture $output do
           probe()
       catch proc.Error: _
         return

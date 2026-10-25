@@ -2,6 +2,9 @@
 #
 # The `std` module provides core language facilities.
 
+import io:
+  - Io
+
 # The union of its type arguments. `Union[Int, Str]` is `(Int | Str)`, and an
 # expanded schema adds its items' types, as in `Union[T, ...Us]`.
 pub @let Union[...Ts] = ...
@@ -1625,7 +1628,16 @@ pub class Bin: @Index[Range[Int], Bin]
 #
 # Mutable byte buffer; the mutable counterpart to [`Bin`](std.Bin).
 #
-pub class BinBuf: @Index[Int] @Assign[Int] Sink[Value]
+# A buffer is an [`Io`](io.Io) that only writes, appending what it is given, so
+# it can collect the output of anything that writes to a stream:
+#
+# ```
+# let buf = BinBuf()
+# run uname -r stdout: $buf
+# let release = buf.freeze_str()
+# ```
+#
+pub class BinBuf: @Index[Int] @Assign[Int] Io
   #
   #
   # Builds a buffer, optionally seeded with the contents of existing binary data.
@@ -1793,6 +1805,50 @@ pub class BinBuf: @Index[Int] @Assign[Int] Sink[Value]
   # ```
   #
   pub def freeze self -> Bin
+    ...
+
+  # Converts the buffer's current contents into an immutable [`Str`](std.Str)
+  # without copying, and empties the buffer, as [`freeze`](std.BinBuf.freeze)
+  # does.
+  #
+  # The contents are checked as UTF-8 only here, so text written in pieces
+  # that split characters is collected intact.
+  #
+  # ## Errors
+  #
+  # Raises a [`RuntimeError`](std.RuntimeError) if the contents are not valid
+  # UTF-8, leaving them in the buffer.
+  #
+  # ## Example
+  #
+  # ```
+  # let buf = BinBuf()
+  # buf.write b"caf\xc3"
+  # buf.write b"\xa9"
+  # assert_eq $buf.freeze_str() "café"
+  # ```
+  pub def freeze_str self -> Str
+    ...
+
+  # Always `true`.
+  #[getter]
+  pub def writable self -> Bool
+    ...
+
+  # Appends data, given in pieces.
+  #
+  # ## Returns
+  #
+  # The number of bytes appended, which is all of them.
+  pub def write
+    self
+    # Data to append.
+    *data @ (Str | Bin)
+  do -> Int
+    ...
+
+  # Does nothing, since writes are never held back.
+  pub def flush self
     ...
 
   #

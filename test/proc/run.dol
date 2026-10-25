@@ -480,6 +480,10 @@ def stream_output_is_forwarded()
   let buffered = io.Buffered $out
   run $exe $script stdout stdout: $buffered
   assert_eq $out.bytes() b"\xffraw\r\n"
+  # So is a `BinBuf`.
+  let buf = BinBuf()
+  run $exe $script stdout stdout: $buf
+  assert_eq $buf.freeze() b"\xffraw\r\n"
 
 #[test]
 #[vfs]

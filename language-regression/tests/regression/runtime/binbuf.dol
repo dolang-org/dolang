@@ -1,5 +1,11 @@
 import std:
   - FmtValue
+import io:
+  - Buffered
+  - Concat
+  - Io
+import regression2:
+  - byte_write
 
 # BinBuf: mutable byte buffer
 
@@ -163,3 +169,53 @@ assert_eq (it6b.next()) b"cd"
 assert_eq (it6a.next()) b"ef"
 assert_eq (it6b.next()) b"gh"
 assert_eq $d6.len 0
+
+# a buffer is a stream that only writes
+let w = BinBuf()
+assert (type w Io)
+assert_eq (w.readable, w.writable, w.seekable) (false, true, false)
+assert_eq (w.write "ab" b"\x00" "c") 4
+assert_eq (w.write()) 0
+w.flush()
+assert_eq $w.freeze() b"ab\x00c"
+
+# a write checks every piece before appending any
+let w2 = BinBuf(b"x")
+assert_throws $std.TypeError do w2.write "a" 1
+assert_eq $w2.freeze() b"x"
+
+# the inherited helpers write through `write`
+let w3 = BinBuf()
+w3.write_all "a" b"b"
+w3.put 1
+(Concat ["c", "d"]).copy_to $w3
+assert_eq $w3.freeze() b"ab1cd"
+
+# reading and seeking are not supported
+assert_throws $std.FieldError do BinBuf().read 1
+
+# freeze_str checks UTF-8 only when freezing, so characters split across writes
+# survive
+let t = BinBuf()
+t.write b"caf\xc3"
+t.write b"\xa9"
+assert_eq $t.freeze_str() "café"
+assert_eq $t.len 0
+assert_eq (t.freeze_str()) ""
+
+# invalid contents raise and stay in the buffer
+let t2 = BinBuf(b"\xff")
+assert_throws $std.RuntimeError str: "invalid UTF-8 data" do t2.freeze_str()
+assert_eq $t2.freeze() b"\xff"
+
+# a native consumer writes through the stream's own `write`
+let n = BinBuf()
+byte_write $n b"native"
+assert_eq $n.freeze() b"native"
+
+let b = BinBuf()
+let buffered = Buffered $b
+buffered.write "held"
+assert_eq $b.len 0
+buffered.flush()
+assert_eq $b.freeze() b"held"

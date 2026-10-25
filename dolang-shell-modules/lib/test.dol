@@ -11,29 +11,6 @@ let pass_style = term.Style fg: :GREEN:
 let name_style = term.Style dim: true
 let note_style = term.Style bold: true
 
-# Collects a test's console output, styling included.
-class Transcript: term.Console
-  field buffer
-
-  def (init) self buffer
-    self.#buffer = buffer
-    term.Console.(init) $self
-
-  #[getter]
-  pub def can_style _self
-    true
-
-  pub def write self *data
-    let written = 0
-    for piece = data
-      let text = Str $piece
-      self.#buffer.append $text
-      written = (written + text.len)
-    written
-
-  pub def flush _self
-    nil
-
 class TestCase
   pub field module name tags func
 
@@ -211,18 +188,18 @@ class Harness
 
   def with_capture self output func
     if self.#capture
-      term.capture (Transcript output) $func
+      term.capture (term.IoConsole output can_style: true) $func
     else
       func()
 
   def run_test self case
     self.#record_test()
-    let output = StrBuf()
+    let output = BinBuf()
     try
       self.#with_capture $output do self.#with_timeout $case.func
       self.#record_success()
     catch std.RuntimeError: e
-      let captured = (self.#capture && output.freeze())
+      let captured = (self.#capture && output.freeze_str())
       self.#record_error $e $(strand.error_backtrace()) $case.module $case.name $captured
 
   def run_module self path cases
@@ -236,7 +213,7 @@ class Harness
               w.delta()
 
   def run_file self path
-    let output = StrBuf()
+    let output = BinBuf()
     try
       let source = path.read_str()
       let compiled = compile.compile $path $source
@@ -252,7 +229,7 @@ class Harness
       cases = [...cases.filter(do |case| self.#matches_filter case)]
       self.#run_module $path $cases
     catch std.RuntimeError: e
-      let captured = (self.#capture && output.freeze())
+      let captured = (self.#capture && output.freeze_str())
       self.#record_error $e $(strand.error_backtrace()) $path nil $captured
 
   def report self
