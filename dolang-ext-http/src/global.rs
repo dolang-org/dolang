@@ -7,7 +7,7 @@ use dolang::runtime::{
 use reqwest::Method;
 
 use crate::{
-    http::{ChunkIter, Client, ErrorObject, LineIter, Response, StatusObject},
+    http::{Client, ErrorObject, Response, StatusObject},
     sse::{Event, EventIter},
 };
 
@@ -17,13 +17,16 @@ pub(crate) struct Types<'v> {
     pub(crate) event: Type<'v, Event>,
     pub(crate) status: Type<'v, StatusObject>,
     pub(crate) response: Type<'v, Response>,
-    pub(crate) chunk_iter: Type<'v, ChunkIter>,
     pub(crate) event_iter: Type<'v, EventIter>,
-    pub(crate) line_iter: Type<'v, LineIter<'v>>,
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    pub(crate) body_io: Type<'v, crate::body_io::BodyIo>,
 }
 
 pub(crate) struct Syms<'v> {
     pub(crate) body: Sym<'v, 'v>,
+    pub(crate) buffered: Sym<'v, 'v>,
+    pub(crate) chomp: Sym<'v, 'v>,
+    pub(crate) chunks: Sym<'v, 'v>,
     pub(crate) content_type: Sym<'v, 'v>,
     pub(crate) cookies: Sym<'v, 'v>,
     pub(crate) close: Sym<'v, 'v>,
@@ -88,12 +91,15 @@ impl<'v> Global<'v> {
                     .nominal_supertype(error)
                     .build(),
                 response: builder.register_type(),
-                chunk_iter: builder.register_type(),
                 event_iter: builder.register_type(),
-                line_iter: builder.register_type(),
+                #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+                body_io: builder.register_type(),
             },
             syms: Syms {
                 body: builder.sym("body"),
+                buffered: builder.sym("Buffered"),
+                chomp: builder.sym("chomp"),
+                chunks: builder.sym("chunks"),
                 content_type: builder.sym("content_type"),
                 cookies: builder.sym("cookies"),
                 close: builder.sym("close"),

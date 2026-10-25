@@ -50,7 +50,7 @@ pub use object::{Instance, Object, Type};
 pub mod io {
     pub use dolang_runtime::io::{
         ByteHandle, ByteIo, IntoByteIo, IntoIoError, IoCaps, IoError, IoErrorExt, IoResultExt,
-        Read, ReadSeek, ReadWrite, ReadWriteSeek, Shared, Write, WriteSeek, error, get,
+        Read, ReadSeek, ReadWrite, ReadWriteSeek, Shared, Write, WriteSeek, concat, error, get,
     };
 }
 

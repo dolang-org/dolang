@@ -1,0 +1,70 @@
+import compress
+import http
+import http.mock
+import io:
+  - Buffered
+import std:
+  - StateError
+import test:
+  - assert_eq
+  - assert_throws
+  - test
+import testlib.memio:
+  - MemIo
+
+# Serves `body` at a GET endpoint for the duration of `block`.
+def serving body block
+  http.mock.Server do |server|
+    server.mock
+      - method: GET
+        path: /body
+        respond:
+          status: 200
+          headers: {"x-kind": "test"}
+          body: $body
+      do |_handle| block (server.url / "/body")
+
+#[test]
+def io_reads_the_body()
+  serving "one\r\ntwo\nthree" do |url|
+    http.get $url do |res|
+      assert_eq (res.io().read_all()) b"one\r\ntwo\nthree"
+      # The metadata outlives the body.
+      assert_eq $res.status 200
+      assert_eq $res.headers["x-kind"] test
+    http.get $url do |res|
+      assert_eq [...res.io().chunks(4)] [b"one\r", b"\ntwo", b"\nthr", b"ee"]
+    http.get $url do |res|
+      let lines = Buffered $res.io()
+      assert_eq $lines.read_line() "one\r\n"
+      assert_eq [...lines] ["two\n", "three"]
+    http.get $url do |res|
+      assert_eq [...res.chunks()] [b"one\r\ntwo\nthree"]
+    http.get $url do |res|
+      assert_eq [...res.lines()] ["one", "two", "three"]
+
+#[test]
+def io_feeds_native_consumers()
+  let sink = MemIo()
+  compress.compress $sink :GZIP: do |stream| stream.write "compressed response"
+  serving $sink.data do |url|
+    http.get $url do |res|
+      compress.decompress $res.io() do |stream|
+        assert_eq (stream.read_all_str()) "compressed response"
+
+#[test]
+def body_is_read_once()
+  serving "body" do |url|
+    http.get $url do |res|
+      res.io()
+      assert_throws $StateError str: "state error: closed" do res.text()
+      assert_throws $StateError str: "state error: closed" do res.chunks()
+
+#[test]
+def close_closes_the_stream()
+  serving "body" do |url|
+    let res = http.get $url
+    let stream = res.io()
+    res.close()
+    assert_eq $stream.readable false
+    assert_throws $StateError do stream.read(1)

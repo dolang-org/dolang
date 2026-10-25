@@ -10,7 +10,10 @@ use dolang::runtime::{
     value::TypeObject,
 };
 
-use crate::{global::Global, http::ResultExt as _};
+use crate::{
+    global::Global,
+    http::{ResultExt as _, chunk},
+};
 
 pub(crate) struct Event;
 
@@ -280,12 +283,13 @@ impl<'v> Object<'v> for EventIter {
                     response
                         .enter(strand, async move |strand, response| {
                             let mut response_borrow = response.borrow_mut(strand)?;
-                            let inner = response_borrow
+                            let body = response_borrow
                                 .inner
                                 .as_mut()
-                                .ok_or_else(|| Error::state_error(strand, "closed"))?;
+                                .ok_or_else(|| Error::state_error(strand, "closed"))?
+                                .body(strand)?;
 
-                            inner.chunk().await.into_http(strand)
+                            chunk(body).await.into_http(strand)
                         })
                         .await
                 })
