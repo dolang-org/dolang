@@ -13,6 +13,7 @@ use async_compression::futures::{bufread::GzipDecoder, write::GzipEncoder};
 use async_compression::futures::{bufread::XzDecoder, write::XzEncoder};
 #[cfg(feature = "zstd")]
 use async_compression::futures::{bufread::ZstdDecoder, write::ZstdEncoder};
+use dolang::runtime::io::IoResultExt as _;
 use dolang::runtime::{
     BYTE_STREAM_CHUNK_SIZE, Error, Object, Output, Result, Slot, State, Strand, Sym, Value, call,
     error::ErrorKind,
@@ -24,7 +25,6 @@ use dolang::runtime::{
     value::{BinEmbryo, TypeObject, View},
     vm::Register,
 };
-use dolang_ext_shell::ResultExt as _;
 use futures_lite::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::io::{AsyncRead as TokioAsyncRead, ReadBuf};
 use tokio_util::compat::{FuturesAsyncReadCompatExt as _, TokioAsyncReadCompatExt as _};
@@ -252,7 +252,7 @@ async fn endpoint_handle<'v, 's>(
         let mode = if write { "w" } else { "r" };
         let file = dolang_ext_shell::open(strand, path.as_ref(), mode)
             .await
-            .into_sys(strand)?
+            .into_do_io(strand)?
             .compat();
         return Ok(if write {
             ByteHandle::write(file)
@@ -378,7 +378,7 @@ impl<'v> Object<'v> for Decompressor {
                     data.reserve(strand, remaining);
                     let n = read_into_embryo(reader, &mut data, remaining)
                         .await
-                        .into_sys(strand)?;
+                        .into_do_io(strand)?;
                     if n == 0 {
                         break;
                     }
@@ -466,7 +466,7 @@ impl<'v> Object<'v> for Compressor {
                     .writer
                     .as_mut()
                     .ok_or_else(|| Error::state_error(strand, "stream closed"))?;
-                writer.write_all(&data).await.into_sys(strand)?;
+                writer.write_all(&data).await.into_do_io(strand)?;
                 drop(borrow);
                 Output::set(strand, out, data.len());
                 Ok(())
@@ -481,7 +481,7 @@ impl<'v> Object<'v> for Compressor {
                     return Ok(());
                 };
                 // Finishes the stream, then closes the inner handle.
-                writer.close().await.into_sys(strand)
+                writer.close().await.into_do_io(strand)
             })
     }
 }
@@ -523,7 +523,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                     while magic.len() < XZ_MAGIC.len() {
                         let mut byte = [0; XZ_MAGIC.len()];
                         let want = XZ_MAGIC.len() - magic.len();
-                        let read = inner.read(&mut byte[..want]).await.into_sys(strand)?;
+                        let read = inner.read(&mut byte[..want]).await.into_do_io(strand)?;
                         if read == 0 {
                             break;
                         }

@@ -12,62 +12,72 @@ use dolang_vfs::{
 
 use dolang::runtime::{
     AllocExt, Args, Error, Instance, Object, Output, Result, Slot, Strand, Type,
-    object::TypeBuilder, unpack, value::TypeObject,
+    io::{self as runtime_io, IntoIoError, IoError},
+    object::{Request, TypeBuilder},
+    unpack,
+    value::TypeObject,
+    vm::Builder,
 };
 
 use crate::error_code;
 
-pub(crate) struct SysError;
-pub(crate) struct InvalidInputError;
-pub(crate) struct NotFoundError;
-pub(crate) struct PermissionDeniedError;
-pub(crate) struct AlreadyExistsError;
-pub(crate) struct TimedOutError;
-pub(crate) struct UnsupportedError;
-
 macro_rules! sys_error_types {
-    ($($type:ident),+ $(,)?) => {
+    ($($type:ident => $kind:ident),+ $(,)?) => {
         $(pub(crate) struct $type;)+
 
         $(impl<'v> SysErrorType<'v> for $type {
             const NAME: &'v str = stringify!($type);
+            const KIND: ErrorKind = ErrorKind::$kind;
         })+
     };
 }
 
+pub(crate) struct SysError;
+
+impl<'v> SysErrorType<'v> for SysError {
+    const NAME: &'v str = "Error";
+    const KIND: ErrorKind = ErrorKind::Other;
+}
+
 sys_error_types!(
-    ConnectionRefusedError,
-    ConnectionResetError,
-    HostUnreachableError,
-    NetworkUnreachableError,
-    ConnectionAbortedError,
-    NotConnectedError,
-    AddrInUseError,
-    AddrNotAvailableError,
-    NetworkDownError,
-    BrokenPipeError,
-    WouldBlockError,
-    NotADirectoryError,
-    IsADirectoryError,
-    DirectoryNotEmptyError,
-    ReadOnlyFilesystemError,
-    StaleNetworkFileHandleError,
-    WriteZeroError,
-    StorageFullError,
-    NotSeekableError,
-    QuotaExceededError,
-    FileTooLargeError,
-    ResourceBusyError,
-    ExecutableFileBusyError,
-    DeadlockError,
-    CrossesDevicesError,
-    TooManyLinksError,
-    InvalidFilenameError,
-    ArgumentListTooLongError,
-    InvalidDataError,
-    InterruptedError,
-    UnexpectedEofError,
-    OutOfMemoryError,
+    InvalidInputError => InvalidInput,
+    NotFoundError => NotFound,
+    PermissionDeniedError => PermissionDenied,
+    AlreadyExistsError => AlreadyExists,
+    TimedOutError => TimedOut,
+    UnsupportedError => Unsupported,
+    ConnectionRefusedError => ConnectionRefused,
+    ConnectionResetError => ConnectionReset,
+    HostUnreachableError => HostUnreachable,
+    NetworkUnreachableError => NetworkUnreachable,
+    ConnectionAbortedError => ConnectionAborted,
+    NotConnectedError => NotConnected,
+    AddrInUseError => AddrInUse,
+    AddrNotAvailableError => AddrNotAvailable,
+    NetworkDownError => NetworkDown,
+    BrokenPipeError => BrokenPipe,
+    WouldBlockError => WouldBlock,
+    NotADirectoryError => NotADirectory,
+    IsADirectoryError => IsADirectory,
+    DirectoryNotEmptyError => DirectoryNotEmpty,
+    ReadOnlyFilesystemError => ReadOnlyFilesystem,
+    StaleNetworkFileHandleError => StaleNetworkFileHandle,
+    WriteZeroError => WriteZero,
+    StorageFullError => StorageFull,
+    NotSeekableError => NotSeekable,
+    QuotaExceededError => QuotaExceeded,
+    FileTooLargeError => FileTooLarge,
+    ResourceBusyError => ResourceBusy,
+    ExecutableFileBusyError => ExecutableFileBusy,
+    DeadlockError => Deadlock,
+    CrossesDevicesError => CrossesDevices,
+    TooManyLinksError => TooManyLinks,
+    InvalidFilenameError => InvalidFilename,
+    ArgumentListTooLongError => ArgumentListTooLong,
+    InvalidDataError => InvalidData,
+    InterruptedError => Interrupted,
+    UnexpectedEofError => UnexpectedEof,
+    OutOfMemoryError => OutOfMemory,
 );
 
 pub(crate) struct SysErrorObject<T>(PhantomData<T>);
@@ -95,8 +105,29 @@ impl SysErrorAnnex {
     }
 }
 
+/// Lends a `sys.Error` to a byte handle as an [`io::Error`].
+struct SysIoError<'a> {
+    kind: ErrorKind,
+    annex: &'a SysErrorAnnex,
+}
+
+impl IntoIoError for SysIoError<'_> {
+    fn io_error(&mut self) -> io::Error {
+        let message = self.annex.message.clone();
+        match self.annex.system_code {
+            Some((operating_system, code)) => {
+                VfsError::from_system_code(self.kind, message, operating_system, code)
+            }
+            None => VfsError::new(self.kind, message),
+        }
+        .into_io_error()
+    }
+}
+
 trait SysErrorType<'v>: Sized + 'v {
     const NAME: &'v str;
+    /// The kind the class answers with when it crosses a byte handle.
+    const KIND: ErrorKind;
 }
 
 impl<'v, T: SysErrorType<'v>> Object<'v> for SysErrorObject<T> {
@@ -145,6 +176,16 @@ impl<'v, T: SysErrorType<'v>> Object<'v> for SysErrorObject<T> {
         })
     }
 
+    fn provide<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        request: &mut Request<'v, 's, '_>,
+    ) -> Result<'v, 's, ()> {
+        request.provide::<IoError>(&mut SysIoError {
+            kind: T::KIND,
+            annex: &this.annex(),
+        })
+    }
+
     fn display<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -162,34 +203,6 @@ impl<'v, T: SysErrorType<'v>> Object<'v> for SysErrorObject<T> {
         Self::display(this, strand, w)?;
         fmt!(strand, w, ">")
     }
-}
-
-impl<'v> SysErrorType<'v> for SysError {
-    const NAME: &'v str = "Error";
-}
-
-impl<'v> SysErrorType<'v> for InvalidInputError {
-    const NAME: &'v str = "InvalidInputError";
-}
-
-impl<'v> SysErrorType<'v> for NotFoundError {
-    const NAME: &'v str = "NotFoundError";
-}
-
-impl<'v> SysErrorType<'v> for PermissionDeniedError {
-    const NAME: &'v str = "PermissionDeniedError";
-}
-
-impl<'v> SysErrorType<'v> for AlreadyExistsError {
-    const NAME: &'v str = "AlreadyExistsError";
-}
-
-impl<'v> SysErrorType<'v> for TimedOutError {
-    const NAME: &'v str = "TimedOutError";
-}
-
-impl<'v> SysErrorType<'v> for UnsupportedError {
-    const NAME: &'v str = "UnsupportedError";
 }
 
 fn create_sys_error<'v, 's, T: SysErrorType<'v>>(
@@ -281,8 +294,15 @@ impl<'v> Object<'v> for ProcError {
     }
 }
 
+/// Maps an I/O error through the runtime's entry point, which also recognizes an error
+/// a Do stream raised through a byte handle.
 pub(crate) fn io_error<'v, 's>(strand: &mut Strand<'v, 's>, error: io::Error) -> Error<'v, 's> {
-    vfs_error(strand, error.into())
+    runtime_io::error(strand, error)
+}
+
+/// Installs the VM's I/O error handler, which maps native errors to `sys.Error`.
+pub(crate) fn install(builder: &mut Builder<'_>) {
+    builder.io_error_handler(|strand, error| vfs_error(strand, error.into()));
 }
 
 pub(crate) fn vfs_error<'v, 's>(strand: &mut Strand<'v, 's>, error: VfsError) -> Error<'v, 's> {

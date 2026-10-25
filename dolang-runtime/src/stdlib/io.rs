@@ -26,7 +26,7 @@ use futures::io::{
 use crate::{
     BYTE_STREAM_CHUNK_SIZE,
     error::{Error, ErrorKind, Result},
-    io::{ByteHandle, ByteIo, IntoByteIo, Io, IoCaps, Shared},
+    io::{ByteHandle, ByteIo, IntoByteIo, Io, IoCaps, IoErrorExt as _, IoResultExt as _, Shared},
     object::{
         interface::Request,
         native::{Instance, Object, Type, TypeBuilder},
@@ -340,7 +340,7 @@ impl Buffered {
         strand: &mut Strand<'v, 's>,
     ) -> Result<'v, 's, Locked<'_, BufIo>> {
         let io = self.io.as_mut().expect("buffer is closed");
-        io.lock().await.map_err(|err| crate::io::error(strand, err))
+        io.lock().await.into_do_io(strand)
     }
 
     /// Flushes and closes the buffer, dropping it even if flushing fails.
@@ -399,7 +399,7 @@ impl Buffered {
         let mut buf = BinEmbryo::new();
         if let Err(err) = io.read_line_into(strand, &mut buf).await {
             io.push_back(buf.as_slice());
-            return Err(crate::io::error(strand, err));
+            return Err(err.into_do_io(strand));
         }
         if str::from_utf8(buf.as_slice()).is_err() {
             io.push_back(buf.as_slice());
@@ -425,7 +425,7 @@ impl Buffered {
         let mut buf = BinEmbryo::new();
         if let Err(err) = io.read_into(strand, &mut buf, size).await {
             io.push_back(buf.as_slice());
-            return Err(crate::io::error(strand, err));
+            return Err(err.into_do_io(strand));
         }
         loop {
             let eof = size.is_none_or(|size| buf.len() < size);
@@ -446,7 +446,7 @@ impl Buffered {
             let before = buf.len();
             if let Err(err) = io.read_into(strand, &mut buf, Some(1)).await {
                 io.push_back(buf.as_slice());
-                return Err(crate::io::error(strand, err));
+                return Err(err.into_do_io(strand));
             }
             if buf.len() == before {
                 io.push_back(buf.as_slice());
@@ -488,7 +488,7 @@ async fn put_value<'v, 's>(
         let s = value.to_string(strand)?;
         io.write_all(s.as_bytes()).await
     };
-    res.map_err(|err| crate::io::error(strand, err))
+    res.into_do_io(strand)
 }
 
 impl<'v> Object<'v> for Buffered {
@@ -597,7 +597,7 @@ impl<'v> Object<'v> for Buffered {
                 let mut buf = BinEmbryo::new();
                 if let Err(err) = io.read_into(strand, &mut buf, size).await {
                     io.push_back(buf.as_slice());
-                    return Err(crate::io::error(strand, err));
+                    return Err(err.into_do_io(strand));
                 }
                 buf.finish(strand, out);
                 Ok(())
@@ -632,7 +632,7 @@ impl<'v> Object<'v> for Buffered {
                 } else {
                     return Err(Error::type_error(strand, "expected `Str` or `Bin`"));
                 };
-                let written = res.map_err(|err| crate::io::error(strand, err))?;
+                let written = res.into_do_io(strand)?;
                 Output::set(strand, out, written);
                 Ok(())
             })
@@ -641,20 +641,20 @@ impl<'v> Object<'v> for Buffered {
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::empty())?;
                 let res = borrow.lock(strand).await?.flush().await;
-                res.map_err(|err| crate::io::error(strand, err))
+                res.into_do_io(strand)
             })
             .method("close", async move |this, strand, args, _out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 let res = borrow.close().await;
-                res.map_err(|err| crate::io::error(strand, err))
+                res.into_do_io(strand)
             })
             .method("tell", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::SEEK)?;
                 let res = borrow.lock(strand).await?.stream_position().await;
-                let pos = res.map_err(|err| crate::io::error(strand, err))?;
+                let pos = res.into_do_io(strand)?;
                 Output::set(strand, out, pos);
                 Ok(())
             })
@@ -688,7 +688,7 @@ impl<'v> Object<'v> for Buffered {
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::SEEK)?;
                 let res = borrow.lock(strand).await?.seek(pos).await;
-                let pos = res.map_err(|err| crate::io::error(strand, err))?;
+                let pos = res.into_do_io(strand)?;
                 Output::set(strand, out, pos);
                 Ok(())
             })

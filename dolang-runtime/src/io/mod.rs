@@ -12,6 +12,11 @@
 //!
 //! A Do subclass of `io.Io` provides [`ByteIo`] through strands that call its methods,
 //! and its handle sends them requests.
+//!
+//! Errors cross a handle as [`io::Error`]s. An exception from a Do stream method becomes
+//! one through the [`IoError`] interface or the core table, and a consumer maps a
+//! handle's error back with [`error`], which defers to the VM's
+//! [I/O error handler](crate::vm::Register::io_error_handler).
 
 pub(crate) mod bridge;
 
@@ -25,7 +30,12 @@ use std::{
 pub use dolang_util::shared::Shared;
 use futures::io::{AsyncRead, AsyncSeek, AsyncWrite};
 
-use crate::{error::Error, object::interface::InterfaceTag, strand::Strand, value::Value};
+use crate::{
+    error::{Error, ErrorKind},
+    object::interface::InterfaceTag,
+    strand::Strand,
+    value::Value,
+};
 
 bitflags::bitflags! {
     /// Capabilities of a [`ByteIo`] provider or [`ByteHandle`].
@@ -110,17 +120,144 @@ pub fn get<'v, 's>(
     })
 }
 
-/// Maps an I/O error to the closest runtime error.
+/// Tag for the interface that turns a Do error into an [`io::Error`].
 ///
-/// Malformed input raises a `ValueError` and a timeout a `TimeoutError`. Anything else
-/// raises a `RuntimeError` with the error's message.
+/// When a Do stream method raises, the bridge queries the exception for this, so a
+/// native error class can keep its kind, code and message across a byte handle. An
+/// exception that doesn't answer maps through the core table: a `ValueError` becomes
+/// [`InvalidInput`](io::ErrorKind::InvalidInput), a timeout
+/// [`TimedOut`](io::ErrorKind::TimedOut), and anything else
+/// [`Other`](io::ErrorKind::Other).
+pub struct IoError;
+
+impl InterfaceTag for IoError {
+    type Interface<'v, 'a> = dyn IntoIoError + 'a;
+}
+
+/// Converts a Do error to an [`io::Error`] for a byte handle.
+pub trait IntoIoError {
+    /// Returns the error as an [`io::Error`].
+    ///
+    /// The error should keep its message without any prefix naming its kind, so that
+    /// mapping it back doesn't add one.
+    fn io_error(&mut self) -> io::Error;
+}
+
+/// A core error class in the default mapping.
+#[derive(Clone, Copy, Debug)]
+enum CoreClass {
+    Value,
+    TimedOut,
+    Runtime,
+}
+
+/// A Do error that crossed a byte handle in its core form.
+///
+/// [`error`] recognizes it, so it comes back as its own class even when an
+/// [I/O error handler](crate::vm::Register::io_error_handler) is installed.
+#[derive(Debug)]
+struct CoreError {
+    class: CoreClass,
+    message: String,
+}
+
+impl fmt::Display for CoreError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for CoreError {}
+
+/// Converts a Do error raised by a stream method to an [`io::Error`].
+///
+/// The exception answers [`IoError`] if it can, and maps through the core table
+/// otherwise.
+pub(crate) fn from_do<'v, 's>(strand: &mut Strand<'v, 's>, mut err: Error<'v, 's>) -> io::Error {
+    if let Some(exception) = err.exception(strand)
+        && let Ok(err) = exception.query::<IoError, _>(strand, |_, iface| Ok(iface.io_error()))
+    {
+        return err;
+    }
+    let (kind, class, message) = match err.kind() {
+        ErrorKind::Value => match err.value_message() {
+            Some(message) => (io::ErrorKind::InvalidInput, CoreClass::Value, message),
+            None => (
+                io::ErrorKind::InvalidInput,
+                CoreClass::Value,
+                err.display(strand).to_string(),
+            ),
+        },
+        ErrorKind::TimedOut => (
+            io::ErrorKind::TimedOut,
+            CoreClass::TimedOut,
+            err.display(strand).to_string(),
+        ),
+        _ => (
+            io::ErrorKind::Other,
+            CoreClass::Runtime,
+            err.display(strand).to_string(),
+        ),
+    };
+    io::Error::new(kind, CoreError { class, message })
+}
+
+/// Maps an I/O error to a Do error.
+///
+/// An error a Do stream raised through the bridge comes back as its core class. The
+/// VM's [I/O error handler](crate::vm::Register::io_error_handler) maps anything else,
+/// and without one, the core table applies: malformed input raises a `ValueError`, a
+/// timeout a `TimedOutError`, and anything else a `RuntimeError` with the error's
+/// message.
 pub fn error<'v, 's>(strand: &mut Strand<'v, 's>, err: io::Error) -> Error<'v, 's> {
-    match err.kind() {
-        io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => {
-            Error::value(strand, err.to_string())
-        }
-        io::ErrorKind::TimedOut => Error::timed_out(strand),
-        _ => Error::runtime(strand, err),
+    let err = match err.downcast::<CoreError>() {
+        Ok(CoreError { class, message }) => return core_error(strand, class, message),
+        Err(err) => err,
+    };
+    if let Some(handler) = strand.vm().io_error_handler.borrow().as_ref() {
+        return handler(strand, err);
+    }
+    let class = match err.kind() {
+        io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => CoreClass::Value,
+        io::ErrorKind::TimedOut => CoreClass::TimedOut,
+        _ => CoreClass::Runtime,
+    };
+    core_error(strand, class, err.to_string())
+}
+
+fn core_error<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    class: CoreClass,
+    message: String,
+) -> Error<'v, 's> {
+    match class {
+        CoreClass::Value => Error::value(strand, message),
+        CoreClass::TimedOut => Error::timed_out(strand),
+        CoreClass::Runtime => Error::runtime(strand, message),
+    }
+}
+
+/// [`io::Error`] extension trait.
+pub trait IoErrorExt {
+    /// Maps the error to a Do error with [`error`].
+    fn into_do_io<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's>;
+}
+
+impl IoErrorExt for io::Error {
+    fn into_do_io<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
+        error(strand, self)
+    }
+}
+
+/// [`io::Result`] extension trait.
+pub trait IoResultExt<T> {
+    /// Maps the error to a Do error with [`error`].
+    fn into_do_io<'v, 's>(self, strand: &mut Strand<'v, 's>) -> crate::error::Result<'v, 's, T>;
+}
+
+impl<T> IoResultExt<T> for io::Result<T> {
+    fn into_do_io<'v, 's>(self, strand: &mut Strand<'v, 's>) -> crate::error::Result<'v, 's, T> {
+        self.map_err(|err| error(strand, err))
     }
 }
 

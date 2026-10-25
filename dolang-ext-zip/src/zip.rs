@@ -12,11 +12,12 @@ use async_zip::{
         read::{WithEntry, ZipEntryReader, seek::ZipFileReader},
         write::{EntrySeekableWriter, ZipFileWriter},
     },
+    error::ZipError,
 };
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, call,
     error::{ErrorKind, ResultExt},
-    io::{ByteHandle, IoCaps, ReadSeek, WriteSeek},
+    io::{ByteHandle, IoCaps, IoResultExt as _, ReadSeek, WriteSeek},
     method,
     object::{ArrayLike, ArrayView, Mut, Ref, TypeBuilder},
     strand::InterruptMask,
@@ -35,6 +36,23 @@ type ZipReader = ZipFileReader<ZipSource>;
 type ZipReadEntry = ZipEntryReader<'static, ZipSource, WithEntry<'static>>;
 type ZipWriter = ZipFileWriter<Box<dyn WriteSeek>>;
 type ZipWriteEntry = EntrySeekableWriter<'static, Box<dyn WriteSeek>>;
+
+/// Archive result extension trait.
+trait ZipResultExt<T> {
+    /// Maps an I/O failure of the underlying handle with
+    /// [`io::error`](dolang::runtime::io::error), and a malformed archive to a
+    /// `RuntimeError`.
+    fn into_do_zip<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T>;
+}
+
+impl<T> ZipResultExt<T> for std::result::Result<T, ZipError> {
+    fn into_do_zip<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T> {
+        match self {
+            Err(ZipError::UpstreamReadError(err)) => Err(err).into_do_io(strand),
+            res => res.into_do(strand),
+        }
+    }
+}
 
 async fn read_into_embryo(
     reader: &mut (impl futures_lite::io::AsyncRead + Unpin),
@@ -183,7 +201,7 @@ async fn open_read_entry_by_index<'v, 's>(
     archive: &mut ZipReader,
     index: usize,
 ) -> Result<'v, 's, FileInner> {
-    let entry = archive.reader_with_entry(index).await.into_do(strand)?;
+    let entry = archive.reader_with_entry(index).await.into_do_zip(strand)?;
     let entry = unsafe {
         // SAFETY: the entry borrows `archive`, which remains in the annex until
         // the entry is closed. The File object roots this Archive in slot 0.
@@ -349,8 +367,10 @@ impl<'v> Object<'v> for Archive {
                                     entry = entry.size(size, size);
                                 }
                                 entry = entry.unix_permissions(FILE_TYPE | mode_bits);
-                                let entry =
-                                    writer.write_entry_seekable(entry).await.into_do(strand)?;
+                                let entry = writer
+                                    .write_entry_seekable(entry)
+                                    .await
+                                    .into_do_zip(strand)?;
                                 let entry = unsafe {
                                     // SAFETY: the entry borrows `writer`, which remains in the annex until
                                     // the entry is closed. The File object roots this Archive in slot 0.
@@ -421,10 +441,13 @@ impl<'v> Object<'v> for Archive {
 
                 let mut entry = ZipEntryBuilder::new(name.into(), Compression::Stored);
                 entry = entry.unix_permissions(DIR_TYPE | mode_bits);
-                let entry_writer = writer.write_entry_seekable(entry).await.into_do(strand)?;
+                let entry_writer = writer
+                    .write_entry_seekable(entry)
+                    .await
+                    .into_do_zip(strand)?;
                 EntrySeekableWriter::close(entry_writer)
                     .await
-                    .into_do(strand)
+                    .into_do_zip(strand)
             })
             .method("symlink", async move |this, strand, args, _out| {
                 let annex = this.annex();
@@ -452,14 +475,17 @@ impl<'v> Object<'v> for Archive {
 
                 let mut entry = ZipEntryBuilder::new(name.into(), Compression::Stored);
                 entry = entry.unix_permissions(SYMLINK_TYPE | mode_bits);
-                let mut entry_writer = writer.write_entry_seekable(entry).await.into_do(strand)?;
+                let mut entry_writer = writer
+                    .write_entry_seekable(entry)
+                    .await
+                    .into_do_zip(strand)?;
                 entry_writer
                     .write_all(target.as_bytes())
                     .await
-                    .into_do(strand)?;
+                    .into_do_io(strand)?;
                 EntrySeekableWriter::close(entry_writer)
                     .await
-                    .into_do(strand)
+                    .into_do_zip(strand)
             })
             .method("close", async move |this, strand, args, _out| {
                 let annex = this.annex();
@@ -473,8 +499,8 @@ impl<'v> Object<'v> for Archive {
                 match inner {
                     Some(ArchiveInner::Read(reader)) => drop(reader.into_inner()),
                     Some(ArchiveInner::Write(writer)) => {
-                        let mut io = ZipFileWriter::close(writer).await.into_do(strand)?;
-                        io.close().await.into_do(strand)?;
+                        let mut io = ZipFileWriter::close(writer).await.into_do_zip(strand)?;
+                        io.close().await.into_do_io(strand)?;
                     }
                     None => {}
                 }
@@ -850,7 +876,7 @@ impl<'v> Object<'v> for File {
                     data.reserve(strand, remaining);
                     let n = read_into_embryo(entry, &mut data, remaining)
                         .await
-                        .into_do(strand)?;
+                        .into_do_io(strand)?;
                     if n == 0 {
                         if !*validated {
                             if entry.compute_hash() != entry.entry().crc32() {
@@ -882,7 +908,7 @@ impl<'v> Object<'v> for File {
                 let FileInner::Write(entry) = inner else {
                     return Err(Error::state_error(strand, "cannot write in read mode"));
                 };
-                entry.write_all(&data).await.into_do(strand)
+                entry.write_all(&data).await.into_do_io(strand)
             })
             .method("close", async move |this, strand, args, _out| {
                 let global = *this.annex();
@@ -900,7 +926,7 @@ impl<'v> Object<'v> for File {
                     .enter(strand, async move |strand, archive| {
                         let result = match inner {
                             FileInner::Write(entry) => {
-                                EntrySeekableWriter::close(*entry).await.into_do(strand)
+                                EntrySeekableWriter::close(*entry).await.into_do_zip(strand)
                             }
                             FileInner::Read { .. } => Ok(()),
                         };
@@ -954,7 +980,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             let handle = if let Some(path) = dolang_ext_shell::as_path(strand, &source) {
                 let file = dolang_ext_shell::open(strand, path.as_ref(), &mode)
                     .await
-                    .into_do(strand)?
+                    .into_do_io(strand)?
                     .compat();
                 if mode == "r" {
                     ByteHandle::read_seek(file)
@@ -987,7 +1013,9 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                 let io = handle
                     .into_read_seek()
                     .expect("source is readable and seekable");
-                let reader = ZipReader::new(BufReader::new(io)).await.into_do(strand)?;
+                let reader = ZipReader::new(BufReader::new(io))
+                    .await
+                    .into_do_zip(strand)?;
                 ArchiveInner::Read(reader)
             } else {
                 let io = handle

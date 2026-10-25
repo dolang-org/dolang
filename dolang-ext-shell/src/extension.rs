@@ -59,6 +59,7 @@ impl Extension for Shell {
         let global = builder.register_state::<Tag>(global);
         let local = global.local;
         pipe_channel::install(builder);
+        crate::error::install(builder);
         console::install(builder, global);
         builder.lazy::<ErrorTag>(
             &[

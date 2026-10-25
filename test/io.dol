@@ -1,6 +1,7 @@
 import compress
   fs
   sys
+  sys.linux
   zip
   io:
     - Buffered
@@ -287,13 +288,40 @@ class FailingRead: MemIo
   pub def read _self _size @ Int -> Bin
     throw StateError("read failed")
 
-# Each consumer raises its own error, with the exception's message
+# A core exception outside the table reaches each consumer as a `RuntimeError`
+# with its message
 #[test]
 def do_stream_exception_fails_consumer()
-  assert_throws $sys.Error str: "state error: read failed" do
+  assert_throws $RuntimeError str: "state error: read failed" do
     compress.decompress (FailingRead()) do |stream| stream.read()
   let buf = Buffered (FailingRead())
   assert_throws $RuntimeError str: "state error: read failed" do buf.read_line()
+
+class MissingRead: MemIo
+  pub def read _self _size @ Int -> Bin
+    throw sys.NotFoundError gone code: $sys.linux.Errno.ENOENT
+
+# A system error keeps its class, code and message through each consumer
+#[test]
+def do_stream_system_error_keeps_identity()
+  let consumers = $
+    - do Buffered(MissingRead()).read()
+    - do compress.decompress (MissingRead()) do |stream| stream.read()
+    - do zip.open (MissingRead b"0123456789012345678901234567890123456789") do |_| nil
+  for consume = consumers
+    let err = assert_throws $sys.NotFoundError str: "gone (ENOENT)" do consume()
+    assert_eq $err.code.value $sys.linux.Errno.ENOENT.value
+
+class InvalidRead: MemIo
+  pub def read _self _size @ Int -> Bin
+    throw ValueError bad
+
+# A `ValueError` keeps its class and message, even with system errors loaded
+#[test]
+def do_stream_value_error_keeps_class()
+  let err = assert_throws $ValueError str: "value error: bad" do
+    Buffered(InvalidRead()).read()
+  assert (!type(err, sys.Error))
 
 # A stream whose reads wait until told to go on, and which reports when a read
 # ends.

@@ -22,8 +22,14 @@
 # A function can also use a Do subclass's instance, which must report its
 # capabilities. Strands call its `read`, `write` and `seek` as the function
 # needs bytes, never its `close`. Don't use the stream yourself until the
-# function is done with it. An exception from one of its methods fails the
-# function with the exception's message.
+# function is done with it.
+#
+# An exception from one of its methods fails the function. A
+# [`ValueError`](std.ValueError) or [`TimedOutError`](std.TimedOutError) fails
+# it with the same class and message, and any other exception with a
+# [`RuntimeError`](std.RuntimeError) carrying its message. An error class from
+# a native module can keep its class, as [`sys.Error`](sys.Error) keeps its
+# class and code.
 #
 # ## Example
 #
@@ -203,7 +209,10 @@ pub class Io: Sink[Value]
 # | Exception | Condition |
 # | --- | --- |
 # | [`StateError`](std.StateError) | The buffer is closed, or its source does not read, write, or seek as the method needs |
-# | [`RuntimeError`](std.RuntimeError) | Text read is not valid UTF-8, or the source fails |
+# | [`RuntimeError`](std.RuntimeError) | Text read is not valid UTF-8 |
+#
+# A failure of the source raises its own error, such as a
+# [`sys.Error`](sys.Error) from a file, or the exception a Do stream raised.
 #
 # ## Example
 #
