@@ -1,3 +1,5 @@
+import compress
+import io
 import shell
 import term
 import fs:
@@ -11,6 +13,7 @@ import test:
 import testlib.vfs:
   - vfs
 import std:
+  - Error
   - TypeError
 
 # Writes `source` into the temp dir and returns the script path, so tests can
@@ -84,6 +87,77 @@ def put_and_write_are_both_verbatim()
     run $shell.exe --no-cache $path stdout: $out
 
     assert_eq $out.read_str() "abc\n"
+
+#[test]
+def standard_streams_are_io()
+  assert (type shell.stdin io.Io)
+  assert (type shell.stdout io.Io)
+  assert (type shell.stderr io.Io)
+  assert $shell.stdin.readable
+  assert $shell.stdout.writable
+  assert $shell.stderr.writable
+  # A bad piece fails the write before anything is written.
+  assert_throws $TypeError do shell.stdout.write "a" 42
+  assert_throws $Error do shell.stdout.write x: "a"
+
+# A write takes its data in pieces, and closing the process's stream only
+# flushes it.
+#[test]
+def write_takes_pieces()
+  with_temp_dir do |dir|
+    let src = r|
+      import shell
+      let n = shell.stdout.write "a" b"b" "\n"
+      shell.stdout.close()
+      shell.stdout.write "$n" "\n"
+
+    let path = script $dir pieces.dol $src
+    let out = (dir / "out.txt")
+    run $shell.exe --no-cache $path stdout: $out
+
+    assert_eq $out.read_str() "ab\n3\n"
+
+# Chunk framing caps each chunk at the size asked for.
+#[test]
+def stdin_chunks_take_a_size()
+  assert_throws $TypeError do shell.stdin.chunks 0
+  with_temp_dir do |dir|
+    let src = r|
+      import shell
+      for chunk = shell.stdin.chunks 2
+        shell.stdout.write $chunk "|"
+
+    let path = script $dir chunks.dol $src
+    let out = (dir / "out.txt")
+    run $shell.exe --no-cache $path stdin: ["abcde"] stdout: $out
+
+    assert_eq $out.read_str() "ab|cd|e|"
+
+# Functions that accept an `Io` read and write the standard streams directly.
+#[test]
+def native_consumers_use_the_standard_streams()
+  with_temp_dir do |dir|
+    let gzip = script $dir gzip.dol r|
+      import compress
+      import shell
+      compress.compress $shell.stdout :GZIP: do |stream|
+        stream.write "hello" "\n"
+
+    let gunzip = script $dir gunzip.dol r|
+      import compress
+      import shell
+      compress.decompress $shell.stdin :GZIP: do |stream|
+        shell.stdout.write (stream.read_all())
+
+    let packed = (dir / "out.gz")
+    run $shell.exe --no-cache $gzip stdout: $packed
+    compress.decompress $packed do |stream|
+      assert_eq (stream.read_all_str()) "hello\n"
+
+    let out = (dir / "out.txt")
+    open $packed do |file|
+      run $shell.exe --no-cache $gunzip stdin: $file stdout: $out
+    assert_eq $out.read_str() "hello\n"
 
 # A terminator is something the script asks for by name, and `crimp` puts the
 # same bytes on every platform unless told to use the target's ending.

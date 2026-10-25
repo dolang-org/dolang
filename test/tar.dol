@@ -1,4 +1,6 @@
 import fs
+  compress
+  io
   sys
   tar
   testlib.memio:
@@ -13,6 +15,7 @@ import fs
     - test
   std:
     - ConcurrencyError
+    - Error
     - RuntimeError
     - StateError
     - TypeError
@@ -228,3 +231,54 @@ def rejects_wrong_values()
     assert_throws $ValueError str: "value error: sink must be writable" do
       tar.write $file do |_| nil
     assert_eq $file.read() b"still-open"
+
+#[test]
+#[vfs]
+def entries_are_io()
+  tar.write pieces.tar do |archive|
+    archive.entry item size: 6 do |entry|
+      assert (type entry io.Io)
+      assert $entry.writable
+      assert_eq (entry.write "ab" b"c" "\n") 4
+      assert_throws $TypeError do entry.write "a" 1
+      # A write that would go past the size writes none of its pieces.
+      assert_throws $ValueError do entry.write "de" "fg"
+      entry.put 42
+      assert_eq (entry.write()) 0
+      assert $entry.writable
+    archive.entry next size: 0 do |_| nil
+
+  tar.read pieces.tar do |archive|
+    let entry = archive.next()
+    assert (type entry io.Io)
+    assert $entry.readable
+    assert_eq (entry.read 10) b"abc\n42"
+    archive.next()
+    assert_eq $entry.readable false
+
+# Functions that accept an `Io` write an entry directly, while its scope lasts,
+# and read an entry while it is current.
+#[test]
+#[vfs]
+def native_consumers_use_entries()
+  compress.compress probe.gz :GZIP: do |stream| stream.write "hello\n"
+  let size = fs.Path("probe.gz").metadata().size
+
+  let escaped = nil
+  tar.write nested.tar do |archive|
+    archive.entry data.gz :size do |entry|
+      compress.compress $entry :GZIP: do |stream|
+        stream.write "hello" "\n"
+    archive.entry empty size: 0 do |entry|
+      escaped = compress.compress $entry :GZIP:
+  # The handle the compressor holds was closed with the entry's scope.
+  assert_throws $Error do
+    escaped.write "late"
+    escaped.close()
+
+  tar.read nested.tar do |archive|
+    let entry = archive.next()
+    compress.decompress $entry :GZIP: do |stream|
+      assert_eq (stream.read_all_str()) "hello\n"
+    archive.next()
+    assert_throws $Error do compress.decompress $entry :GZIP: do |stream| stream.read_all()

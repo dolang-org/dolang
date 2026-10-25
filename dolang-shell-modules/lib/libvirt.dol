@@ -2675,7 +2675,7 @@ do
               ind.delta $bytes.len
       digests[kind] = "${state.digest():x}"
     archive.open $MANIFEST_MEMBER mode: 0o644 do |entry|
-      entry.write $ bundle_manifest $info $members $domain_xml $digests
+      entry.put $ bundle_manifest $info $members $domain_xml $digests
 
 # Finds a bundle member by name, or `nil`.
 def find_member archive@zip.Archive name@Str -> (zip.Entry | nil)

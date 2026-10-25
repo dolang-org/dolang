@@ -6,7 +6,7 @@ use std::{
 
 use dolang::runtime::value::fmt::Format;
 
-use tokio::io::AsyncWriteExt;
+use futures::AsyncWriteExt as _;
 
 use dolang::runtime::object::fmt;
 
@@ -14,8 +14,9 @@ use dolang::{
     compile::Config,
     runtime::{
         AllocExt, Arg, Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call,
+        io::{ByteHandle, ByteIo, IntoByteIo, IoCaps, Shared},
         method,
-        object::{Mut, Ref, TypeBuilder},
+        object::{Mut, Ref, Request, TypeBuilder},
         strand::Redirect,
         unpack,
         value::{AsTuple, Nil, TypeObject},
@@ -29,7 +30,9 @@ use crate::{
     error::{ErrorExt, ResultExt as _},
     fs::path::{cast_path, create_path, path_from_value},
     global::{FsTag, Global, ProgramSource, ShellGlobal, ShellTag, Tag},
-    io_mode::{IoMode, encode_value, line_ending, read_raw, read_value, write_raw},
+    io_mode::{
+        IoMode, encode_value, line_ending, read_chunk_value, read_raw, read_value, write_pieces,
+    },
     local::{Local, ProgramOverride},
     pipe_channel,
     shell_args::Args as ShellArgs,
@@ -100,6 +103,34 @@ impl Display for Exec {
 
 impl std::error::Error for Exec {}
 
+/// Lends a handle sharing one of [`Global::stdio`]'s streams: its buffer and
+/// its lock.
+struct StdIo<'a, T> {
+    stream: &'a Shared<T>,
+    caps: IoCaps,
+    handle: fn(Shared<T>) -> ByteHandle,
+}
+
+impl<'v, T> IntoByteIo<'v> for StdIo<'_, T> {
+    fn caps<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, IoCaps> {
+        Ok(self.caps)
+    }
+
+    fn get<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
+        Ok((self.handle)(self.stream.clone()))
+    }
+}
+
+/// Flushes one of [`Global::stdio`]'s output streams.
+async fn flush_stream<'v, 's, W: futures::AsyncWrite + Unpin>(
+    stream: &Shared<W>,
+    strand: &mut Strand<'v, 's>,
+) -> Result<'v, 's, ()> {
+    let mut stream = stream.clone();
+    let mut writer = stream.lock().await.into_sys(strand)?;
+    writer.flush().await.into_sys(strand)
+}
+
 /// The process's standard input, exported as `shell.stdin`.
 ///
 /// A handle, not a wrapper: the underlying reader lives in [`Global::stdio`] so
@@ -112,11 +143,19 @@ impl std::error::Error for Exec {}
 /// fork or buffer anything. Both framings are lossless.
 pub(crate) struct Stdin {
     mode: IoMode,
+    /// The most bytes a chunk holds, in chunk framing.
+    chunk: usize,
 }
+
+/// The default `chunks` size, as `Io.chunks` has.
+const STDIN_CHUNK: usize = 65536;
 
 impl Stdin {
     pub(crate) fn new(mode: IoMode) -> Self {
-        Self { mode }
+        Self {
+            mode,
+            chunk: STDIN_CHUNK,
+        }
     }
 }
 
@@ -133,9 +172,33 @@ impl<'v> Object<'v> for Stdin {
     type Type = ();
     type TypeAnnex = ();
 
+    fn provide<'a, 's>(
+        _this: Instance<'v, 'a, Self>,
+        request: &mut Request<'v, 's, '_>,
+    ) -> Result<'v, 's, ()> {
+        if request.wants::<ByteIo>() {
+            let global = request.state::<Tag>();
+            request.provide::<ByteIo>(&mut StdIo {
+                stream: &global.stdio.stdin,
+                caps: IoCaps::READ,
+                handle: |stream| ByteHandle::read(stream),
+            })?;
+        }
+        Ok(())
+    }
+
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .supertype(TypeObject::Iter)
+            .supertype(TypeObject::Io)
+            .get("readable", |_this, strand, out| {
+                Output::set(strand, out, true);
+                Ok(())
+            })
+            .method("close", async move |_this, strand, args, _out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                Ok(())
+            })
             .method("read", async move |_this, strand, args, out| {
                 let ([], [size]) = unpack!(strand, args, 0, 1)?;
                 let size = size
@@ -149,8 +212,9 @@ impl<'v> Object<'v> for Stdin {
                     })
                     .transpose()?;
                 let global = strand.state::<Tag>();
-                let mut reader = global.stdio.stdin.lock().await;
-                read_raw(&mut *reader, size, strand, out).await
+                let mut stdin = global.stdio.stdin.clone();
+                let mut reader = stdin.lock().await.into_sys(strand)?;
+                read_raw(reader.get_mut(), size, strand, out).await
             })
             .method("lines", async move |_this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
@@ -162,12 +226,27 @@ impl<'v> Object<'v> for Stdin {
                 Ok(())
             })
             .method("chunks", async move |_this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let ([], [size]) = unpack!(strand, args, 0, 1)?;
+                let chunk = match size {
+                    Some(size) => size
+                        .to_i64(strand)
+                        .ok()
+                        .and_then(|size| usize::try_from(size).ok())
+                        .filter(|&size| size > 0)
+                        .ok_or_else(|| {
+                            Error::type_error(strand, "size must be a positive integer")
+                        })?,
+                    None => STDIN_CHUNK,
+                };
                 let global = strand.state::<ShellTag>();
-                global
-                    .types
-                    .stdin
-                    .create(strand, Stdin::new(IoMode::Chunk), out);
+                global.types.stdin.create(
+                    strand,
+                    Stdin {
+                        mode: IoMode::Chunk,
+                        chunk,
+                    },
+                    out,
+                );
                 Ok(())
             })
     }
@@ -183,9 +262,13 @@ impl<'v> Object<'v> for Stdin {
         let Some(other) = global.types.stdin.cast(other) else {
             return Ok(false);
         };
-        let mode = this.borrow(strand)?.mode;
+        let (mode, chunk) = {
+            let this = this.borrow(strand)?;
+            (this.mode, this.chunk)
+        };
         other.enter_sync(strand, |strand, other| {
-            Ok(other.borrow(strand)?.mode == mode)
+            let other = other.borrow(strand)?;
+            Ok(other.mode == mode && (mode == IoMode::Line || other.chunk == chunk))
         })
     }
 
@@ -204,12 +287,18 @@ impl<'v> Object<'v> for Stdin {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let global = strand.state::<Tag>();
-        let mode = this.borrow(strand)?.mode;
+        let (mode, chunk) = {
+            let this = this.borrow(strand)?;
+            (this.mode, this.chunk)
+        };
         let read = {
-            let mut reader = global.stdio.stdin.lock().await;
-            read_value(&mut *reader, mode, strand, &mut out)
-                .await
-                .map_err(|err| err.into_sys(strand))?
+            let mut stdin = global.stdio.stdin.clone();
+            let mut reader = stdin.lock().await.into_sys(strand)?;
+            let read = match mode {
+                IoMode::Line => read_value(reader.get_mut(), mode, strand, &mut out).await,
+                IoMode::Chunk => read_chunk_value(reader.get_mut(), chunk, strand, &mut out).await,
+            };
+            read.map_err(|err| err.into_sys(strand))?
         };
         Ok(read)
     }
@@ -234,26 +323,42 @@ impl<'v> Object<'v> for Stdout {
     type Type = ();
     type TypeAnnex = ();
 
+    fn provide<'a, 's>(
+        _this: Instance<'v, 'a, Self>,
+        request: &mut Request<'v, 's, '_>,
+    ) -> Result<'v, 's, ()> {
+        if request.wants::<ByteIo>() {
+            let global = request.state::<Tag>();
+            request.provide::<ByteIo>(&mut StdIo {
+                stream: &global.stdio.stdout,
+                caps: IoCaps::WRITE,
+                handle: |stream| ByteHandle::write(stream),
+            })?;
+        }
+        Ok(())
+    }
+
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
-            .supertype(TypeObject::Sink)
+            .supertype(TypeObject::Io)
+            .get("writable", |_this, strand, out| {
+                Output::set(strand, out, true);
+                Ok(())
+            })
             .method("write", async move |_this, strand, args, out| {
-                let ([data], []) = unpack!(strand, args, 1, 0)?;
                 let global = strand.state::<Tag>();
-                let mut writer = global.stdio.stdout.lock().await;
-                write_raw(&mut *writer, data, strand, out).await
+                write_pieces(&global.stdio.stdout, args, strand, out).await
             })
             .method("flush", async move |_this, strand, args, _out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let global = strand.state::<Tag>();
-                global
-                    .stdio
-                    .stdout
-                    .lock()
-                    .await
-                    .flush()
-                    .await
-                    .map_err(|err| err.into_sys(strand))
+                flush_stream(&global.stdio.stdout, strand).await
+            })
+            // The process's own stream stays open.
+            .method("close", async move |_this, strand, args, _out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let global = strand.state::<Tag>();
+                flush_stream(&global.stdio.stdout, strand).await
             })
     }
 
@@ -283,11 +388,9 @@ impl<'v> Object<'v> for Stdout {
     ) -> Result<'v, 's, ()> {
         let global = strand.state::<Tag>();
         let bytes = encode_value(strand, &value)?;
-        let mut writer = global.stdio.stdout.lock().await;
-        writer
-            .write_all(&bytes)
-            .await
-            .map_err(|err| err.into_sys(strand))
+        let mut stream = global.stdio.stdout.clone();
+        let mut writer = stream.lock().await.into_sys(strand)?;
+        writer.write_all(&bytes).await.into_sys(strand)
     }
 }
 
@@ -310,26 +413,42 @@ impl<'v> Object<'v> for Stderr {
     type Type = ();
     type TypeAnnex = ();
 
+    fn provide<'a, 's>(
+        _this: Instance<'v, 'a, Self>,
+        request: &mut Request<'v, 's, '_>,
+    ) -> Result<'v, 's, ()> {
+        if request.wants::<ByteIo>() {
+            let global = request.state::<Tag>();
+            request.provide::<ByteIo>(&mut StdIo {
+                stream: &global.stdio.stderr,
+                caps: IoCaps::WRITE,
+                handle: |stream| ByteHandle::write(stream),
+            })?;
+        }
+        Ok(())
+    }
+
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
-            .supertype(TypeObject::Sink)
+            .supertype(TypeObject::Io)
+            .get("writable", |_this, strand, out| {
+                Output::set(strand, out, true);
+                Ok(())
+            })
             .method("write", async move |_this, strand, args, out| {
-                let ([data], []) = unpack!(strand, args, 1, 0)?;
                 let global = strand.state::<Tag>();
-                let mut writer = global.stdio.stderr.lock().await;
-                write_raw(&mut *writer, data, strand, out).await
+                write_pieces(&global.stdio.stderr, args, strand, out).await
             })
             .method("flush", async move |_this, strand, args, _out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let global = strand.state::<Tag>();
-                global
-                    .stdio
-                    .stderr
-                    .lock()
-                    .await
-                    .flush()
-                    .await
-                    .map_err(|err| err.into_sys(strand))
+                flush_stream(&global.stdio.stderr, strand).await
+            })
+            // The process's own stream stays open.
+            .method("close", async move |_this, strand, args, _out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let global = strand.state::<Tag>();
+                flush_stream(&global.stdio.stderr, strand).await
             })
     }
 
@@ -359,11 +478,9 @@ impl<'v> Object<'v> for Stderr {
     ) -> Result<'v, 's, ()> {
         let global = strand.state::<Tag>();
         let bytes = encode_value(strand, &value)?;
-        let mut writer = global.stdio.stderr.lock().await;
-        writer
-            .write_all(&bytes)
-            .await
-            .map_err(|err| err.into_sys(strand))
+        let mut stream = global.stdio.stderr.clone();
+        let mut writer = stream.lock().await.into_sys(strand)?;
+        writer.write_all(&bytes).await.into_sys(strand)
     }
 }
 

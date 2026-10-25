@@ -1,8 +1,9 @@
 use std::{
     cell::{Cell, UnsafeCell},
     future::poll_fn,
-    io,
+    io::{self, IoSlice},
     mem::transmute,
+    ops::Deref,
     pin::Pin,
 };
 
@@ -15,14 +16,14 @@ use async_zip::{
     error::ZipError,
 };
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, call,
+    Arg, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, call,
     error::{ErrorKind, ResultExt},
     io::{ByteHandle, IoCaps, IoResultExt as _, ReadSeek, WriteSeek},
     method,
     object::{ArrayLike, ArrayView, Mut, Ref, TypeBuilder},
     strand::InterruptMask,
     unpack,
-    value::{BinEmbryo, View},
+    value::{BinEmbryo, PinBin, PinStr, TypeObject, View},
     vm::Register,
 };
 use futures_lite::io::{AsyncWriteExt as _, BufReader};
@@ -812,6 +813,23 @@ pub(crate) struct File {
     inner: Option<FileInner>,
 }
 
+/// A pinned piece of a write.
+enum Piece<'v, 'a> {
+    Str(PinStr<'v, 'a>),
+    Bin(PinBin<'v, 'a>),
+}
+
+impl Deref for Piece<'_, '_> {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        match self {
+            Self::Str(s) => s.as_bytes(),
+            Self::Bin(b) => b,
+        }
+    }
+}
+
 impl File {
     fn new(inner: FileInner) -> Self {
         Self { inner: Some(inner) }
@@ -843,8 +861,21 @@ impl<'v> Object<'v> for File {
             .enter_finalize(|archive| archive.annex().file_open.set(false));
     }
 
+    // Native consumers are served through `read` and `write` by `Io`'s bridge,
+    // whose strands root this file, and so the archive its entry borrows.
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
+            .supertype(TypeObject::Io)
+            .get("readable", |this, strand, out| {
+                let readable = matches!(this.borrow(strand)?.inner, Some(FileInner::Read { .. }));
+                Output::set(strand, out, readable);
+                Ok(())
+            })
+            .get("writable", |this, strand, out| {
+                let writable = matches!(this.borrow(strand)?.inner, Some(FileInner::Write(_)));
+                Output::set(strand, out, writable);
+                Ok(())
+            })
             .method("read", async move |this, strand, args, out| {
                 let ([], [size]) = unpack!(strand, args, 0, 1)?;
                 let size: Option<usize> = size
@@ -892,13 +923,24 @@ impl<'v> Object<'v> for File {
                 data.finish(strand, out);
                 Ok(())
             })
-            .method("write", async move |this, strand, args, _out| {
-                let ([data], []) = unpack!(strand, args, 1, 0)?;
-                let data = match data.view(strand) {
-                    View::Str(s) => s.to_string().into_bytes(),
-                    View::Bin(b) => b.to_vec(),
-                    _ => return Err(Error::type_error(strand, "expected bytes")),
-                };
+            .method("write", async move |this, strand, args, out| {
+                let mut pieces = Vec::with_capacity(args.len());
+                for arg in args {
+                    let piece = match arg {
+                        Arg::Pos(piece) => piece.into_ref(),
+                        Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
+                    };
+                    pieces.push(match piece.view(strand) {
+                        View::Str(s) => Piece::Str(s.pin()),
+                        View::Bin(b) => Piece::Bin(b.pin()),
+                        _ => return Err(Error::type_error(strand, "expected bytes")),
+                    });
+                }
+                let mut slices = pieces
+                    .iter()
+                    .map(|piece| IoSlice::new(piece))
+                    .collect::<Vec<_>>();
+                let written = slices.iter().map(|slice| slice.len()).sum::<usize>();
 
                 let mut borrow = this.borrow_mut(strand)?;
                 let inner = borrow
@@ -908,7 +950,18 @@ impl<'v> Object<'v> for File {
                 let FileInner::Write(entry) = inner else {
                     return Err(Error::state_error(strand, "cannot write in read mode"));
                 };
-                entry.write_all(&data).await.into_do_io(strand)
+                let mut slices = &mut slices[..];
+                IoSlice::advance_slices(&mut slices, 0);
+                while !slices.is_empty() {
+                    let n = entry.write_vectored(slices).await.into_do_io(strand)?;
+                    if n == 0 {
+                        return Err(io::Error::from(io::ErrorKind::WriteZero)).into_do_io(strand);
+                    }
+                    IoSlice::advance_slices(&mut slices, n);
+                }
+                drop(borrow);
+                Output::set(strand, out, written);
+                Ok(())
             })
             .method("close", async move |this, strand, args, _out| {
                 let global = *this.annex();

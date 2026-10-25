@@ -1,16 +1,18 @@
 use crate::global::Tag;
 
-use std::io;
+use std::io::{self, IoSlice};
 
 use dolang::runtime::{
-    BYTE_STREAM_CHUNK_SIZE, Error, Output, Result, Slot, Strand, Value,
-    value::{BinEmbryo, View},
+    Arg, Args, BYTE_STREAM_CHUNK_SIZE, Error, Output, Result, Slot, Strand, Value,
+    io::Shared,
+    value::{BinEmbryo, PinBin, PinStr, View},
 };
 use dolang_vfs::target::OperatingSystem;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWriteExt};
+use futures::AsyncWriteExt as _;
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead};
 
 use crate::{
-    error::{ErrorExt as _, ResultExt as _},
+    error::ResultExt as _,
     fs::{read_all, read_into_spare},
 };
 
@@ -60,17 +62,31 @@ where
 {
     match mode {
         IoMode::Line => read_line_value(reader, strand, out).await,
-        IoMode::Chunk => {
-            let mut chunk = BinEmbryo::new_with_capacity(strand, BYTE_STREAM_CHUNK_SIZE);
-            let len = read_into_spare(reader, chunk.spare_capacity_mut()).await?;
-            if len == 0 {
-                return Ok(false);
-            }
-            unsafe { chunk.advance(len) };
-            chunk.finish(strand, out);
-            Ok(true)
-        }
+        IoMode::Chunk => read_chunk_value(reader, BYTE_STREAM_CHUNK_SIZE, strand, out).await,
     }
+}
+
+/// Reads one chunk of at most `size` bytes, at whatever boundary the read falls
+/// on, as a `Bin`.
+pub(crate) async fn read_chunk_value<'v, R>(
+    reader: &mut R,
+    size: usize,
+    strand: &mut Strand<'v, '_>,
+    out: &mut impl Output<'v>,
+) -> io::Result<bool>
+where
+    R: AsyncBufRead + Unpin,
+{
+    let mut chunk = BinEmbryo::new_with_capacity(strand, size);
+    let spare = chunk.spare_capacity_mut();
+    let len = spare.len().min(size);
+    let len = read_into_spare(reader, &mut spare[..len]).await?;
+    if len == 0 {
+        return Ok(false);
+    }
+    unsafe { chunk.advance(len) };
+    chunk.finish(strand, out);
+    Ok(true)
 }
 
 /// Reads one line, terminator included, as a `Str`.
@@ -128,7 +144,7 @@ fn invalid_utf8(error: std::str::Utf8Error) -> io::Error {
 /// terminator is appended and none is translated — a caller that wants one says
 /// so with `crimp`.
 ///
-/// Differs from [`write_raw`] only in stringifying anything that is not a `Str`
+/// Differs from [`write_pieces`] only in stringifying anything that is not a `Str`
 /// or `Bin` rather than rejecting it, so `put 42` writes `42` the way `echo`
 /// would.
 pub(crate) fn encode_value<'v, 's>(
@@ -173,37 +189,71 @@ where
     Ok(())
 }
 
-/// Writes the bytes of a `Str` or `Bin` value verbatim, reporting the byte count.
+/// A pinned `Str` or `Bin` payload, held so the bytes underneath it keep their
+/// address for as long as a write is borrowing them.
+pub(crate) enum Pinned<'v, 'a> {
+    Str(PinStr<'v, 'a>),
+    Bin(PinBin<'v, 'a>),
+}
+
+impl<'v, 'a> Pinned<'v, 'a> {
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Str(value) => value.as_bytes(),
+            Self::Bin(value) => value,
+        }
+    }
+
+    /// Pins a `Str` or `Bin` piece of a write.
+    pub(crate) fn new<'s>(
+        strand: &mut Strand<'v, 's>,
+        value: &'a Value<'v>,
+    ) -> Result<'v, 's, Self> {
+        match value.view(strand) {
+            View::Str(value) => Ok(Self::Str(value.pin())),
+            View::Bin(value) => Ok(Self::Bin(value.pin())),
+            _ => Err(Error::type_error(strand, "expected `Str` or `Bin`")),
+        }
+    }
+}
+
+/// Writes the bytes of `Str` and `Bin` pieces verbatim, reporting the byte count.
 ///
 /// The unframed counterpart to [`encode_value`]. Handle methods such as
 /// `shell.stdout.write` sit on a byte edge rather than a value edge, so no
 /// [`IoMode`] applies: no line ending is appended and none is translated.
 /// Anything that is not a `Str` or `Bin` is a type error rather than being
 /// stringified, since there is no framing convention to stringify it into.
-pub(crate) async fn write_raw<'v, 'a, 's, W>(
-    writer: &mut W,
-    data: Slot<'v, 'a>,
+///
+/// The pieces are written under one hold of the stream's lock, so other
+/// writers cannot come between them.
+pub(crate) async fn write_pieces<'v, 'a, 's, W>(
+    stream: &Shared<W>,
+    args: Args<'v, 'a>,
     strand: &mut Strand<'v, 's>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()>
 where
-    W: AsyncWriteExt + Unpin + ?Sized,
+    W: futures::AsyncWrite + Unpin,
 {
-    let written = match data.view(strand) {
-        View::Str(value) => {
-            let value = value.pin();
-            writer
-                .write_all(value.as_bytes())
-                .await
-                .map(|_| value.len())
+    let mut pieces = Vec::with_capacity(args.len());
+    for arg in args {
+        match arg {
+            Arg::Pos(value) => pieces.push(Pinned::new(strand, value.into_ref())?),
+            Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
         }
-        View::Bin(value) => {
-            let value = value.pin();
-            writer.write_all(&value).await.map(|_| value.len())
-        }
-        _ => return Err(Error::type_error(strand, "expected `Str` or `Bin`")),
     }
-    .map_err(|error| error.into_sys(strand))?;
+    let mut slices = pieces
+        .iter()
+        .map(|piece| IoSlice::new(piece.as_slice()))
+        .collect::<Vec<_>>();
+    let written = slices.iter().map(|slice| slice.len()).sum::<usize>();
+    let mut stream = stream.clone();
+    let mut stream = stream.lock().await.into_sys(strand)?;
+    stream
+        .write_all_vectored(&mut slices)
+        .await
+        .into_sys(strand)?;
     Output::set(strand, out, written);
     Ok(())
 }

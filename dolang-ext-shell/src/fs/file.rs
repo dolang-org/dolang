@@ -11,7 +11,7 @@ use dolang::runtime::{
     object::{Cast, Mut, Ref, Request, TypeBuilder},
     strand::InterruptMask,
     unpack,
-    value::{BinEmbryo, PinBin, PinStr, TypeObject, View},
+    value::{BinEmbryo, TypeObject},
 };
 use dolang_util::{shared::Locked, utf8};
 use dolang_vfs::file::{
@@ -32,7 +32,7 @@ use crate::{
         read_into_spare, stream, xattr,
     },
     global::{FsGlobal, WindowsSecurityTag},
-    io_mode::encode_value,
+    io_mode::{Pinned, encode_value},
     util,
 };
 
@@ -167,12 +167,7 @@ fn write_args<'v, 's, 'a>(
     for arg in args {
         match arg {
             Arg::Pos(value) => {
-                let piece = match value.into_ref().view(strand) {
-                    View::Str(value) => Pinned::Str(value.pin()),
-                    View::Bin(value) => Pinned::Bin(value.pin()),
-                    _ => return Err(Error::type_error(strand, "expected `Str` or `Bin`")),
-                };
-                pieces.push(piece);
+                pieces.push(Pinned::new(strand, value.into_ref())?);
             }
             Arg::Key(key, value) if key == offset_sym => {
                 if offset.replace(value).is_some() {
@@ -258,22 +253,6 @@ async fn write_at_looping(file: &VfsFile, data: &[u8], offset: u64) -> io::Resul
         written += n;
     }
     Ok(total)
-}
-
-/// A pinned `Str` or `Bin` payload, held so the bytes underneath it keep their
-/// address for as long as a write is borrowing them.
-enum Pinned<'v, 'a> {
-    Str(PinStr<'v, 'a>),
-    Bin(PinBin<'v, 'a>),
-}
-
-impl<'v, 'a> Pinned<'v, 'a> {
-    fn as_slice(&self) -> &[u8] {
-        match self {
-            Self::Str(value) => value.as_bytes(),
-            Self::Bin(value) => value,
-        }
-    }
 }
 
 /// Parses the `clone:` keyword argument
