@@ -9,6 +9,8 @@
 import
   fs:
     - @Path
+  io:
+    - @Io
   security.unix:
     - @Identity
   security.windows:
@@ -430,6 +432,8 @@ pub class Program: Func
     self
     # Destination for
     # standard output.
+    #
+    # A stream receives the bytes as they are, whatever the `mode:`.
     :stdout @ (Path | Str | Sinkable[Str])
     :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
@@ -455,7 +459,9 @@ pub class Program: Func
     self
     # Source for
     # standard input.
-    :stdin @ (Path | Str | Iterable[Value])
+    #
+    # A stream is read as bytes, even when it is also iterable.
+    :stdin @ (Path | Str | Io | Iterable[Value])
     :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
     :mode @ :LINE: = nil
@@ -467,7 +473,7 @@ pub class Program: Func
   # chunks.
   @def (call)
     self
-    :stdin @ (Path | Str | Iterable[Value])
+    :stdin @ (Path | Str | Io | Iterable[Value])
     :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
     :mode @ :CHUNK:
@@ -478,7 +484,7 @@ pub class Program: Func
   # Runs the program, reading `stdin:` and writing `stdout:` as lines.
   @def (call)
     self
-    :stdin @ (Path | Str | Iterable[Value])
+    :stdin @ (Path | Str | Io | Iterable[Value])
     :stdout @ (Path | Str | Sinkable[Str])
     :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
@@ -489,7 +495,7 @@ pub class Program: Func
   # Runs the program, reading `stdin:` and writing `stdout:` as chunks.
   @def (call)
     self
-    :stdin @ (Path | Str | Iterable[Value])
+    :stdin @ (Path | Str | Io | Iterable[Value])
     :stdout @ (Path | Str | Sinkable[Bin])
     :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
@@ -748,6 +754,8 @@ pub @class Run: Func
     program @ (Str | Path)
     # Destination for
     # standard output.
+    #
+    # A stream receives the bytes as they are, whatever the `mode:`.
     :stdout @ (Path | Str | Sinkable[Str])
     :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
@@ -775,7 +783,9 @@ pub @class Run: Func
     program @ (Str | Path)
     # Source for
     # standard input.
-    :stdin @ (Path | Str | Iterable[Value])
+    #
+    # A stream is read as bytes, even when it is also iterable.
+    :stdin @ (Path | Str | Io | Iterable[Value])
     :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
     :mode @ :LINE: = nil
@@ -788,7 +798,7 @@ pub @class Run: Func
   @def (call)
     self
     program @ (Str | Path)
-    :stdin @ (Path | Str | Iterable[Value])
+    :stdin @ (Path | Str | Io | Iterable[Value])
     :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
     :mode @ :CHUNK:
@@ -800,7 +810,7 @@ pub @class Run: Func
   @def (call)
     self
     program @ (Str | Path)
-    :stdin @ (Path | Str | Iterable[Value])
+    :stdin @ (Path | Str | Io | Iterable[Value])
     :stdout @ (Path | Str | Sinkable[Str])
     :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
@@ -812,7 +822,7 @@ pub @class Run: Func
   @def (call)
     self
     program @ (Str | Path)
-    :stdin @ (Path | Str | Iterable[Value])
+    :stdin @ (Path | Str | Io | Iterable[Value])
     :stdout @ (Path | Str | Sinkable[Bin])
     :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil

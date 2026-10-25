@@ -40,7 +40,7 @@ use crate::{
     metadata::{FsMetadata, Metadata, MetadataPatch},
     path::{self, WellKnownPath},
     process::{
-        self, ChildIn, ChildOut, PipeRecv, PipeSend, ProcessControl, ProcessStatus,
+        self, PipeRecv, PipeSend, ProcessControl, ProcessStatus, SpawnIn, SpawnOut,
         TerminationPolicy,
     },
     security::{Acl, AclKind, PrincipalId, PrincipalIdKind, SecurityInfo, SidName},
@@ -109,9 +109,9 @@ pub struct Command<'a> {
     stdin: Option<Stdio>,
     stdout: Option<Stdio>,
     stderr: Option<Stdio>,
-    stdin_resource: Option<ChildIn>,
-    stdout_resource: Option<ChildOut>,
-    stderr_resource: Option<ChildOut>,
+    stdin_resource: Option<SpawnIn>,
+    stdout_resource: Option<SpawnOut>,
+    stderr_resource: Option<SpawnOut>,
     stderr_to_stdout: bool,
     process_control: ProcessControl,
     termination_policy: TerminationPolicy,
@@ -1090,13 +1090,13 @@ impl Command<'_> {
         self
     }
 
-    pub(crate) fn stdin(&mut self, stdio: ChildIn) -> Result<&mut Self> {
+    pub(crate) fn stdin(&mut self, stdio: SpawnIn) -> Result<&mut Self> {
         self.stdin = None;
         self.stdin_resource = Some(stdio);
         Ok(self)
     }
 
-    pub(crate) fn stdout(&mut self, stdio: ChildOut) -> Result<&mut Self> {
+    pub(crate) fn stdout(&mut self, stdio: SpawnOut) -> Result<&mut Self> {
         self.stdout = None;
         self.stdout_resource = Some(stdio);
         Ok(self)
@@ -1147,7 +1147,7 @@ impl Command<'_> {
         self
     }
 
-    pub(crate) fn stderr(&mut self, stdio: ChildOut) -> Result<&mut Self> {
+    pub(crate) fn stderr(&mut self, stdio: SpawnOut) -> Result<&mut Self> {
         self.stderr = None;
         self.stderr_resource = Some(stdio);
         self.stderr_to_stdout = false;
@@ -1209,18 +1209,18 @@ impl Command<'_> {
         let mut files = Vec::new();
         if let Some(stdin) = self.stdin_resource.take() {
             self.stdin = Some(match stdin {
-                ChildIn::Pipe(pipe) => pipe.into_stdio().await?,
-                ChildIn::File(file) => Stdio::from(child_file(&file, false, &mut files)?),
+                SpawnIn::Pipe(pipe) => pipe.into_stdio().await?,
+                SpawnIn::File(file) => Stdio::from(child_file(&file, false, &mut files)?),
             });
         }
         if self.stderr_to_stdout {
             if let Some(stdout) = self.stdout_resource.take() {
                 let (stdout, stderr) = match stdout {
-                    ChildOut::Pipe(pipe) => {
+                    SpawnOut::Pipe(pipe) => {
                         let stderr = pipe.try_clone().await?;
                         (pipe.into_stdio().await?, stderr.into_stdio().await?)
                     }
-                    ChildOut::File(file) => {
+                    SpawnOut::File(file) => {
                         let handle = child_file(&file, true, &mut files)?;
                         let stderr = handle.try_clone()?;
                         (Stdio::from(handle), Stdio::from(stderr))
@@ -1295,10 +1295,10 @@ fn child_file(file: &file::File, send: bool, files: &mut Vec<ChildFile>) -> Resu
 }
 
 /// Converts a standard output or error stream for the child.
-async fn child_out(stdio: ChildOut, files: &mut Vec<ChildFile>) -> Result<Stdio> {
+async fn child_out(stdio: SpawnOut, files: &mut Vec<ChildFile>) -> Result<Stdio> {
     Ok(match stdio {
-        ChildOut::Pipe(pipe) => pipe.into_stdio().await?,
-        ChildOut::File(file) => Stdio::from(child_file(&file, true, files)?),
+        SpawnOut::Pipe(pipe) => pipe.into_stdio().await?,
+        SpawnOut::File(file) => Stdio::from(child_file(&file, true, files)?),
     })
 }
 

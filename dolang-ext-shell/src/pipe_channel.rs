@@ -527,6 +527,22 @@ pub(crate) struct PipeSender;
 // Async negotiate functions
 // ---------------------------------------------------------------------------
 
+/// Whether `value` is a pipe channel's receiving end, which negotiates a pipe
+/// instead of being read as a stream.
+pub(crate) fn is_receiver<'v>(strand: &Strand<'v, '_>, value: &Value<'v>) -> bool {
+    strand
+        .try_state::<PipeTag>()
+        .is_some_and(|global| global.types.pipe_receiver.cast(value).is_some())
+}
+
+/// Whether `value` is a pipe channel's sending end, which negotiates a pipe
+/// instead of being written as a stream.
+pub(crate) fn is_sender<'v>(strand: &Strand<'v, '_>, value: &Value<'v>) -> bool {
+    strand
+        .try_state::<PipeTag>()
+        .is_some_and(|global| global.types.pipe_sender.cast(value).is_some())
+}
+
 pub(crate) async fn negotiate_recv<'v, 's>(
     input: &Value<'v>,
     strand: &mut Strand<'v, 's>,
