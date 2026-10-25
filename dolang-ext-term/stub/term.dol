@@ -33,6 +33,9 @@
 # whose value is neither `true` nor `:INHERIT:`, an unknown color name, a
 # numeric value out of range, or an RGB value that is not three integers.
 
+import io:
+  - Io
+
 # A color [style option](term.style-options).
 pub @let Color = (:BLACK: | :RED: | :GREEN: | :YELLOW: | :BLUE: | :MAGENTA: | :CYAN: | :WHITE: | :BRIGHT_BLACK: | :BRIGHT_RED: | :BRIGHT_GREEN: | :BRIGHT_YELLOW: | :BRIGHT_BLUE: | :BRIGHT_MAGENTA: | :BRIGHT_CYAN: | :BRIGHT_WHITE: | :INHERIT: | Int | (Int, Int, Int) | Array[Int])
 
@@ -54,21 +57,27 @@ pub @let StyleOptions = $
 
 # The console interface: where human-readable output goes.
 #
+# A console is a write-only [`Io`](io.Io). Besides
+# [`write`](term.Console.write), it reports how output should look on its
+# device and makes buffered output visible with
+# [`flush`](term.Console.flush). [`(put)`](io.Io.(put)),
+# [`write_all`](io.Io.write_all) and the rest come from `Io`, so a function
+# that accepts an `Io` can write to a console.
+#
 # `Console` is abstract. The implementations provided are the host console
-# ([`term.console`](term.console)) and
-# [`SinkConsole`](term.SinkConsole).
+# ([`term.console`](term.console)) and [`IoConsole`](term.IoConsole). The host
+# console has no `close`.
 #
 # ## Subclassing
 #
 # Do classes may subclass `Console` to implement one. Supply `write` and
-# `flush`; `put`, the sink protocol, and the capability members come from the
-# base:
+# `flush`; the capability members come from the base:
 #
-# | Console                            | `can_style`    | `is_tty`          | `geometry()`        |
-# | ---------------------------------- | -------------- | ----------------- | ------------------- |
-# | `Console` (the base)               | `false`        | `false`           | no dimensions       |
-# | Host (`term.console`)              | styling policy | usable terminal   | the terminal's size |
-# | [`SinkConsole`](term.SinkConsole) | as constructed | `false`           | no dimensions       |
+# | Console                         | `can_style`    | `is_tty`        | `geometry()`        |
+# | ------------------------------- | -------------- | --------------- | ------------------- |
+# | `Console` (the base)            | `false`        | `false`         | no dimensions       |
+# | Host (`term.console`)           | styling policy | usable terminal | the terminal's size |
+# | [`IoConsole`](term.IoConsole)   | as constructed | `false`         | no dimensions       |
 #
 # ```
 # class Recorder: term.Console
@@ -98,9 +107,14 @@ pub @let StyleOptions = $
 #
 # A console whose own methods call `echo` does not recurse: while a write is
 # being dispatched, console output falls through to the host.
-pub class Console: std.Sink[Value]
+pub class Console: Io
   # Initializes the base console. A subclass calls this from its own `(init)`.
   pub def (init) self
+    ...
+
+  # Whether the console writes, which the base reports as `true`.
+  #[getter]
+  pub def writable self -> Bool
     ...
 
   # Whether the console supports ANSI styling.
@@ -183,18 +197,6 @@ pub class Console: std.Sink[Value]
   do -> Int
     ...
 
-  # Accepts values as a [sink](std.Sink).
-  #
-  # A value contributes exactly its own bytes; no terminator is added. Ask for
-  # one with [`precrimp`](std.Sink.precrimp):
-  #
-  # ```
-  # pipeline output: (term.console.precrimp())
-  #   do strand.from ["building", "linking"]
-  # ```
-  pub def (sink) self -> Console
-    ...
-
 # The dimensions of a [`Console`](term.Console), as
 # [`geometry()`](term.Console.geometry) reports them.
 #
@@ -232,72 +234,67 @@ pub class Geometry
   pub def rows self -> (Int | nil)
     ...
 
-# A [`Console`](term.Console) over an ordinary [sink](std.Sink).
+# A [`Console`](term.Console) over another [`Io`](io.Io).
 #
-# It supplies the rest of the console interface.
+# Each [`write`](term.IoConsole.write) reaches the stream as one
+# [`write_all`](io.Io.write_all) of its pieces joined, so a line and its
+# terminator arrive in one `write` of the stream. Nothing is translated on the
+# way through. [`capture`](term.capture) wraps an `Io` that is not a console in
+# one of these.
 #
-# [`capture`](term.capture) wraps a plain sink in one of these
-# automatically.
+# [`line_ending`](term.Console.line_ending) is `"\n"`,
+# [`is_tty`](term.Console.is_tty) is `false`, and
+# [`geometry()`](term.Console.geometry) has no dimensions.
 #
-# It implements the [`Console`](term.Console) interface with `write` and
-# `flush`; `flush` emits any partial final line, which is what makes an
-# unterminated `print` visible when a capture scope ends.
-# [`line_ending`](term.Console.line_ending) is the interpreter host's, chosen
-# arbitrarily -- a sink has no platform of its own.
-# [`is_tty`](term.Console.is_tty) is always `false` and
-# [`geometry()`](term.Console.geometry) has no dimensions, since a sink is
-# never a terminal.
+# ## Errors
 #
-# ## Output mode {: #term.SinkConsole.output-mode }
-#
-# The `mode:` given at construction fixes how written data is divided into
-# values for the console's lifetime. In either mode, the values concatenate
-# back to exactly the bytes that were written.
-#
-# - `:LINE:` -- one [`Str`](std.Str) per complete line, **terminator
-#   included**. The default.
-# - `:CHUNK:` -- arbitrary [`Bin`](std.Bin) chunks. Chunk boundaries are
-#   unspecified.
-#
-# ```
-# let lines = []
-# term.capture $lines do echo hello
-# assert_eq $lines ["hello\n"]
-#
-# let chomped = []
-# term.capture (chomped.prechomp()) do echo hello
-# assert_eq $chomped ["hello"]
-#
-# let chunks = []
-# term.capture $chunks mode: :CHUNK: do echo hello
-# # [b"hello\n"]
-# ```
-#
-# Nothing is translated on the way through: a line ending that arrives is the
-# line ending that is stored.
-pub class SinkConsole: Console
-  # Wraps a sink in a console.
+# | Exception                             | Condition                       |
+# | ------------------------------------- | ------------------------------- |
+# | [`TypeError`](std.TypeError)          | The stream is not an `Io`       |
+# | [`StateError`](std.StateError)        | The console is closed           |
+pub class IoConsole: Console
+  # Wraps a stream in a console.
   #
   # ## Example
   #
   # ```
-  # # Style is off by default.
-  # let plain = []
-  # term.capture $plain do echo $warning
-  #
-  # # Opt in to SGR styling.
-  # let styled = []
-  # term.capture (term.SinkConsole styled can_style: true) do echo $warning
+  # fs.open build.log w do |log|
+  #   term.capture (IoConsole log can_style: true) do
+  #     echo $warning
   # ```
   pub def (init)
     self
-    # Where output values are written.
-    sink @ Sink[Value]
+    # Stream to write to.
+    io @ Io
     # Emit ANSI styling. Off by default.
     :can_style @ Bool = false
-    # [Output mode](term.SinkConsole.output-mode). Defaults to `:LINE:`.
-    :mode @ (:LINE: | :CHUNK:) = nil
   do
+    ...
+
+  # Whether the console writes, which it does until it is closed.
+  #[getter]
+  pub def writable self -> Bool
+    ...
+
+  # Writes data, given in pieces.
+  #
+  # ## Returns
+  #
+  # The number of bytes written, which is all of them.
+  pub def write
+    self
+    # Pieces to write, in order.
+    *data @ (Str | Bin)
+  do -> Int
+    ...
+
+  # Flushes the stream, if it has a `flush`.
+  pub def flush self
+    ...
+
+  # Closes the console, leaving the stream open. Closing a closed console does
+  # nothing.
+  pub def close self
     ...
 
 # Reusable terminal style settings.
@@ -543,52 +540,22 @@ pub class Text
 # Runs a block with `console` installed as the ambient console, then flushes it
 # and restores the previous one.
 #
-# The override is inherited by all strands spawned inside the call.
+# The override is inherited by all strands spawned inside the call. Output
+# reaches the console as written, terminators included.
 #
-# Captured lines keep their terminator, since the capture reproduces what was
-# written rather than reinterpreting it:
-#
-# ```
-# let lines = []
-# term.capture $lines do
-#   echo "Hello, Alice!"
-# assert_eq $lines ["Hello, Alice!\n"]
-# ```
-#
-# Put a [`prechomp`](std.Sink.prechomp) in front of the sink to strip
-# them:
+# ## Example
 #
 # ```
-# let lines = []
-# term.capture (lines.prechomp()) do
-#   echo "Hello, Alice!"
-# assert_eq $lines ["Hello, Alice!"]
+# fs.open build.log w do |log|
+#   term.capture $log do
+#     echo "Hello, Alice!"
 # ```
-#
-# The scope always ends with a flush, so an unterminated `print` still arrives
-# -- with no terminator, because none was written:
-#
-# ```
-# let out = []
-# term.capture $out do print hi
-# assert_eq $out ["hi"]
-# ```
-#
-# ## Errors
-#
-# | Exception                             | Condition                                                                              |
-# | ------------------------------------- | -------------------------------------------------------------------------------------- |
-# | [`ValueError`](std.ValueError) | `mode:` is given when `console` is already a `Console`, which fixes its own output mode |
 pub def capture[R]
-  # Destination to
-  # install. A plain sink is wrapped in a
-  # [`SinkConsole`](term.SinkConsole) using the requested `mode:`.
-  console @ (Console | Sink[Value])
+  # Console to install. Another `Io` is wrapped in an
+  # [`IoConsole`](term.IoConsole) without styling.
+  console @ (Console | Io)
   # Block to run.
   block @ (() -> R)
-  # [Output mode](term.SinkConsole.output-mode) when `console` is a plain
-  # sink. Defaults to `:LINE:`.
-  :mode @ (:LINE: | :CHUNK:) = nil
 do -> R
   ...
 

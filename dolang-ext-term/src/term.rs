@@ -10,7 +10,7 @@ use dolang::{
         object::{Mut, Ref, TypeBuilder},
         strand::Redirect,
         unpack,
-        value::{Singleton, StrEmbryo, TypeObject, View},
+        value::{StrEmbryo, TypeObject, View},
         vm::Builder,
     },
 };
@@ -18,7 +18,7 @@ use dolang::{
 use crate::{
     console::{self, DefaultOutput, SubConsole},
     global::Global,
-    util::{Framing, strip_line_ending},
+    util::strip_line_ending,
 };
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
@@ -1533,7 +1533,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .value("Text", global.types.text)
         .value("Style", global.types.style)
         .value("Console", global.types.console)
-        .value("SinkConsole", global.types.sink_console)
+        .value("IoConsole", global.types.io_console)
         .value("Geometry", global.types.geometry)
         .value("Default", global.types.default)
         // A getter: the host installs its console after this module commits.
@@ -1553,30 +1553,25 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .function_with_slots(
             "capture",
             async move |strand, args, out, [mut console, mut line_ending, mut tmp]| {
-                let mode_sym = global.syms.mode;
-                let ([target, func], [mode]) = unpack!(strand, args, 2, 0, mode_sym = None)?;
+                let ([target, func], []) = unpack!(strand, args, 2, 0)?;
                 if target.is_instance_of(strand, global.types.console) {
-                    if mode.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            "mode: applies only when capturing into a plain sink",
-                        ));
-                    }
                     Output::set(strand, &mut console, target);
-                } else {
-                    // Any ordinary sink works; the adapter supplies the rest of
-                    // the console interface. A bare sink does not style — pass
-                    // a `term.SinkConsole` built with `can_style: true` to say
+                } else if target.is_instance_of(strand, TypeObject::Io) {
+                    // Any other stream works; the adapter supplies the rest of
+                    // the console interface. It does not style — pass a
+                    // `term.IoConsole` built with `can_style: true` to say
                     // otherwise.
-                    let mode = crate::util::parse_mode(strand, mode.as_deref())?;
-                    console::create_sink_console(
+                    console::create_io_console(
                         strand,
                         &target,
                         false,
-                        mode,
                         Slot::reborrow(&mut console),
-                    )
-                    .await?;
+                    )?;
+                } else {
+                    return Err(Error::type_error(
+                        strand,
+                        "capture: expected `term.Console` or `io.Io`",
+                    ));
                 }
                 let can_style = console::can_style(strand, &console)?;
                 console::line_ending(strand, &console, &mut line_ending)?;
@@ -1589,8 +1584,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     async move |strand| call!(strand, func, out).await,
                 )
                 .await;
-                // An unterminated `print` is only visible once the partial line
-                // is emitted, so the scope always ends with a flush.
+                // The scope always ends with a flush, so output a console holds
+                // back still arrives.
                 let flushed = method!(strand, &console, global.syms.flush, &mut tmp).await;
                 result.and(flushed)
             },
@@ -1640,18 +1635,12 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             "mute",
             async move |strand, args, out, [mut console, mut scratch, mut line_ending]| {
                 let ([func], []) = unpack!(strand, args, 1, 0)?;
-                // A console over std.null discards everything written to it —
-                // the same mechanism `capture` uses, just wired to a sink that
-                // throws writes away instead of collecting them.
-                Output::set(strand, &mut scratch, Singleton::Null);
-                console::create_sink_console(
-                    strand,
-                    &scratch,
-                    false,
-                    Framing::Line,
-                    Slot::reborrow(&mut console),
-                )
-                .await?;
+                // A console that discards everything written to it — the same
+                // mechanism `capture` uses, just throwing writes away.
+                global
+                    .types
+                    .sub_console
+                    .create(strand, SubConsole::discard(), &mut console);
                 Output::set(strand, &mut line_ending, console::LINE_ENDING);
                 // The strand's own implicit output only needs touching when it
                 // is still `term.default` — the startup placeholder that

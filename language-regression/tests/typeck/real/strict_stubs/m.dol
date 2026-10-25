@@ -197,7 +197,7 @@ pub def stdin() -> nil
     #   ^~~~~~: flow std.Bin
   nil
 
-# Standard output is a sink
+# Standard output is an `Io`, which `capture` wraps in a console
 pub def stdout() -> Int
   term.capture $shell.stdout do 1
 

@@ -11,6 +11,29 @@ let pass_style = term.Style fg: :GREEN:
 let name_style = term.Style dim: true
 let note_style = term.Style bold: true
 
+# Collects a test's console output, styling included.
+class Transcript: term.Console
+  field buffer
+
+  def (init) self buffer
+    self.#buffer = buffer
+    term.Console.(init) $self
+
+  #[getter]
+  pub def can_style _self
+    true
+
+  pub def write self *data
+    let written = 0
+    for piece = data
+      let text = Str $piece
+      self.#buffer.append $text
+      written = (written + text.len)
+    written
+
+  pub def flush _self
+    nil
+
 class TestCase
   pub field module name tags func
 
@@ -188,7 +211,7 @@ class Harness
 
   def with_capture self output func
     if self.#capture
-      term.capture (term.SinkConsole(output, can_style: true)) $func
+      term.capture (Transcript output) $func
     else
       func()
 
