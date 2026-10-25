@@ -526,15 +526,15 @@ impl ChildFile {
     /// file closed in the meantime is left alone.
     pub(crate) fn sync(&self) {
         #[cfg(unix)]
-        let Ok(handle) = self.file.fd() else {
+        let Ok(mut handle) = self.file.fd() else {
             return;
         };
         #[cfg(windows)]
-        let handle = &self.handle;
+        let mut handle = &self.handle;
         use std::io::Seek as _;
         // Querying the position of an open regular file does not fail in
         // practice, and the status is worth more than this.
-        if let Ok(pos) = { &*handle }.stream_position() {
+        if let Ok(pos) = handle.stream_position() {
             self.file.shared.pos.store(pos, Ordering::Relaxed);
         }
     }
