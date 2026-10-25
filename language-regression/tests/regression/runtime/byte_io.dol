@@ -97,3 +97,9 @@ let bad_source = try
 catch error.TypeError: _
   true
 assert $bad_source
+
+# A native read error maps through the core table: malformed data raises a
+# `ValueError`, and an OS error a `RuntimeError`
+let malformed = Buffered (ByteBuf b"" 0 "v")
+assert_throws $error.ValueError str: "value error: bad data" do malformed.read()
+assert_throws $error.RuntimeError do Buffered(ByteBuf(b"", 0, "o")).read()

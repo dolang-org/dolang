@@ -6,7 +6,7 @@ mod detail {
         runtime::{
             self, Args, Bytecode, Error, Instance, Object, Output, Slot, Sym, call,
             error::ErrorKind,
-            io::{self, ByteHandle, ByteIo, IntoByteIo, IoCaps},
+            io::{self, ByteHandle, ByteIo, IntoByteIo, IoCaps, IoResultExt as _},
             object::{
                 FlagLike, FlagLikeExt, Flags, FlagsInstanceExt, FlagsTypeExt, InterfaceTag,
                 Request, TypeBuilder,
@@ -297,6 +297,24 @@ mod detail {
         caps: IoCaps,
         /// Where a duplex buffer's writes go, kept after the handle is taken.
         written: Option<Arc<Mutex<Vec<u8>>>>,
+        /// The error every read fails with, as a mode character.
+        fail: Option<char>,
+    }
+
+    /// Fails every read, with malformed data (`v`) or an OS error (`o`).
+    struct FailRead(char);
+
+    impl AsyncRead for FailRead {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut TaskContext<'_>,
+            _buf: &mut [u8],
+        ) -> Poll<std::io::Result<usize>> {
+            Poll::Ready(Err(match self.0 {
+                'v' => std::io::Error::new(std::io::ErrorKind::InvalidData, "bad data"),
+                _ => std::io::Error::from_raw_os_error(2),
+            }))
+        }
     }
 
     /// Reads from a cursor and writes to a separate sink, like a socket.
@@ -342,6 +360,9 @@ mod detail {
 
     impl ByteBuf {
         fn handle(&self, cursor: Cursor<Vec<u8>>) -> ByteHandle {
+            if let Some(fail) = self.fail {
+                return ByteHandle::read(FailRead(fail));
+            }
             if let Some(written) = &self.written {
                 return ByteHandle::read_write(Duplex {
                     reader: cursor,
@@ -386,7 +407,8 @@ mod detail {
 
         /// `ByteBuf data ahead modes`: `ahead` bytes of `data` are already read ahead, and
         /// `modes` adds `w` (write) and `s` (seek) to reading. `d` (duplex) writes to a
-        /// separate sink that `written` returns, and cannot seek.
+        /// separate sink that `written` returns, and cannot seek. `v` fails reads with
+        /// malformed data and `o` with an OS error.
         async fn new<'a, 's>(
             this: runtime::Type<'v, Self>,
             strand: &'a mut Strand<'v, 's>,
@@ -402,6 +424,7 @@ mod detail {
                 .ok_or_else(|| Error::value(strand, "bad read-ahead"))?;
             let mut caps = IoCaps::READ;
             let mut written = None;
+            let mut fail = None;
             let modes = modes
                 .as_str(strand.vm())
                 .map(|s| s.to_string())
@@ -413,6 +436,10 @@ mod detail {
                     'd' => {
                         written = Some(Arc::default());
                         IoCaps::WRITE
+                    }
+                    'v' | 'o' => {
+                        fail = Some(c);
+                        IoCaps::empty()
                     }
                     _ => return Err(Error::value(strand, "bad modes")),
                 };
@@ -430,6 +457,7 @@ mod detail {
                     ahead: ahead_bytes,
                     caps,
                     written,
+                    fail,
                 },
                 out,
             );
@@ -484,10 +512,6 @@ mod detail {
             }
             Ok(())
         })
-    }
-
-    fn io_error<'v, 's>(strand: &mut Strand<'v, 's>, err: std::io::Error) -> Error<'v, 's> {
-        Error::value(strand, err.to_string())
     }
 
     /// Test bitset for exercising `dolang_runtime::object::flags`.
@@ -718,7 +742,7 @@ mod detail {
                         let mut io = handle.into_read().unwrap();
                         let mut buf = Vec::new();
                         let res = io.read_to_end(&mut buf).await;
-                        res.map_err(|e| io_error(strand, e))?;
+                        res.into_do_io(strand)?;
                         Output::set(strand, out, &buf[..]);
                         Ok(())
                     })
@@ -727,7 +751,7 @@ mod detail {
                         let handle = byte_handle(strand, &value, IoCaps::READ | IoCaps::SEEK)?;
                         let mut io = handle.into_read_seek().unwrap();
                         let res = io.stream_position().await;
-                        let pos = res.map_err(|e| io_error(strand, e))?;
+                        let pos = res.into_do_io(strand)?;
                         Output::set(strand, out, pos);
                         Ok(())
                     })
@@ -745,7 +769,7 @@ mod detail {
                             io.read_to_end(&mut buf).await
                         }
                         .await;
-                        res.map_err(|e| io_error(strand, e))?;
+                        res.into_do_io(strand)?;
                         Output::set(strand, out, &buf[..]);
                         Ok(())
                     })
@@ -763,7 +787,7 @@ mod detail {
                             io.read_to_end(&mut buf).await
                         }
                         .await;
-                        res.map_err(|e| io_error(strand, e))?;
+                        res.into_do_io(strand)?;
                         Output::set(strand, out, &buf[..]);
                         Ok(())
                     })
@@ -777,7 +801,7 @@ mod detail {
                             io.close().await
                         }
                         .await;
-                        res.map_err(|e| io_error(strand, e))
+                        res.into_do_io(strand)
                     })
                     // Reads while writing `bytes`, returning what the read got.
                     .function("byte_duplex", async move |strand, args, out| {
@@ -792,7 +816,7 @@ mod detail {
                             writer.flush().await
                         });
                         let res = written.and(read);
-                        let n = res.map_err(|e| io_error(strand, e))?;
+                        let n = res.into_do_io(strand)?;
                         Output::set(strand, out, &buf[..n]);
                         Ok(())
                     })

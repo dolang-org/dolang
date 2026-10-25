@@ -18,15 +18,10 @@
 //! The owner holds the [`Root`] of its own strand handle, which keeps it alive until the
 //! handle's end of the lanes shuts down. It runs under an interrupt nested from the
 //! consumer's, so cancelling the consumer, or shutting down the VM, interrupts the
-//! servers. An exception from a stream method
-//! reaches the handle as an [`io::Error`] with its message.
+//! servers. An exception from a stream method reaches the handle as an [`std::io::Error`]
+//! made by [`from_do`](crate::io::from_do).
 
-use std::{
-    cell::Cell,
-    io::{self, SeekFrom},
-    ops::ControlFlow,
-    rc::Rc,
-};
+use std::{cell::Cell, io::SeekFrom, ops::ControlFlow, rc::Rc};
 
 use futures::{StreamExt as _, channel::mpsc, future::join_all};
 
@@ -37,6 +32,7 @@ use crate::{
     io::{
         ByteHandle, ByteIo, IntoByteIo, IoCaps,
         bridge::{self, Lanes, Reply},
+        from_do,
     },
     method,
     object::{
@@ -610,9 +606,9 @@ async fn serve<'v>(
     }
 }
 
-/// Sends `res` to the handle, an exception as its message.
+/// Sends `res` to the handle, an exception as an [`std::io::Error`].
 fn reply<'v, 's, T>(strand: &mut Strand<'v, 's>, tx: Reply<T>, res: Result<'v, 's, T>) {
-    let res = res.map_err(|err| io::Error::other(err.display(strand).to_string()));
+    let res = res.map_err(|err| from_do(strand, err));
     let _ = tx.send(res);
 }
 

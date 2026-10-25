@@ -89,34 +89,38 @@ assert_eq (lines.read_line()) "one\n"
 assert_eq (lines.read_line()) "two\n"
 lines.close()
 
-# An exception from a stream method fails the consumer with its message; the
-# consumer here raises I/O errors as `ValueError`
+# An exception from a stream method fails the consumer. A `ValueError` keeps
+# its class and message, and any other error becomes a `RuntimeError` with its
+# message
+class Invalid: MemIo
+  pub def read _self _size
+    throw error.ValueError "bad"
+
+assert_throws $error.ValueError str: "value error: bad" do byte_read (Invalid b"")
+assert_throws $error.ValueError str: "value error: bad" do Buffered(Invalid(b"")).read()
+
 class Failing: MemIo
   pub def read _self _size
     throw error.StateError "read failed"
 
-def io_failure f
-  try
-    f()
-    nil
-  catch error.ValueError: err
-    str $err
-
-assert_eq (io_failure do byte_read (Failing b"")) "value error: state error: read failed"
+let failing = "state error: read failed"
+assert_throws $error.RuntimeError str: $failing do byte_read (Failing b"")
+assert_throws $error.RuntimeError str: $failing do Buffered(Failing(b"")).read()
 
 # A bad result from a stream method fails the consumer
 class BadRead: MemIo
   pub def read _self _size
     "text"
 
-assert_eq (io_failure do byte_read (BadRead b"")) "value error: type error: read: expected `Bin`"
+let bad_read = "type error: read: expected `Bin`"
+assert_throws $error.RuntimeError str: $bad_read do byte_read (BadRead b"")
 
 class BadWrite: MemIo
   pub def write _self _data
     0
 
-let bad_write = (io_failure do byte_write (BadWrite b"") b"x")
-assert_eq $bad_write "value error: write: expected a count of bytes written"
+let bad_write = "write: expected a count of bytes written"
+assert_throws $error.RuntimeError str: $bad_write do byte_write (BadWrite b"") b"x"
 
 # A capability getter that raises propagates from the query
 class BadCaps: MemIo

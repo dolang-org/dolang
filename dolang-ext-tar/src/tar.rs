@@ -11,6 +11,7 @@ use async_compression::tokio::{
     bufread::{GzipDecoder, ZstdDecoder},
     write::{GzipEncoder, ZstdEncoder},
 };
+use dolang::runtime::io::IoResultExt as _;
 use dolang::runtime::{
     BYTE_STREAM_CHUNK_SIZE, Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
     call,
@@ -21,7 +22,6 @@ use dolang::runtime::{
     value::{BinEmbryo, Nil, TypeObject},
     vm::Register,
 };
-use dolang_ext_shell::ResultExt as _;
 use tokio::io::{
     AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, DuplexStream, ReadBuf,
 };
@@ -921,7 +921,7 @@ async fn endpoint_handle<'v, 's>(
         let mode = if write { "w" } else { "r" };
         let file = dolang_ext_shell::open(strand, path.as_ref(), mode)
             .await
-            .into_sys(strand)?;
+            .into_do_io(strand)?;
         return Ok(if write {
             ByteHandle::write(file.compat_write())
         } else {

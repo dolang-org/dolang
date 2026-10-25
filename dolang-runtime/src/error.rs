@@ -844,6 +844,32 @@ impl<'v, 's> Error<'v, 's> {
         }
     }
 
+    /// The exception value, or `None` for a non-local jump.
+    pub(crate) fn exception(&mut self, strand: &mut Strand<'v, 's>) -> Option<Value<'v>> {
+        if self.as_nl_branch().is_some() {
+            return None;
+        }
+        loop {
+            match &self.inner {
+                Variant::Boxed(root, _) => return Some(root.get()),
+                _ => self.expand(strand.inner),
+            }
+        }
+    }
+
+    /// The message of a core value error, without its kind prefix.
+    pub(crate) fn value_message(&self) -> Option<String> {
+        let Variant::Boxed(root, info) = &self.inner else {
+            return None;
+        };
+        let val = root.get();
+        let boxed = val.downcast_native(info.vm, info.vm.builtin_types().error)?;
+        match boxed.get() {
+            Boxed::Value(msg) => Some(msg.to_string()),
+            _ => None,
+        }
+    }
+
     /// Is error ordinarily catchable by Do programs?
     pub fn catchable(&self) -> bool {
         !matches!(self.inner, Variant::NonLocalJump(..)) && !matches!(self.kind(), ErrorKind::Abort)

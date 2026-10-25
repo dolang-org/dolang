@@ -5,6 +5,7 @@ use std::{
     collections::{HashMap, hash_map::Entry},
     future::Future,
     hash::{BuildHasher, DefaultHasher, RandomState},
+    io,
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut, Range},
@@ -223,6 +224,7 @@ pub(crate) fn force_lazy_unit<'v, A: Alloc<'v> + ?Sized>(alloc: &mut A, unit: us
 
 type Trap<'v> = dyn for<'s> Fn(&mut Strand<'v, 's>) -> Result<'v, 's, ()> + 'v;
 type ChannelFactory<'v> = dyn for<'s> Fn(&mut Strand<'v, 's>, Slot<'v, '_>, Slot<'v, '_>) + 'v;
+type IoErrorHandler<'v> = dyn for<'s> Fn(&mut Strand<'v, 's>, io::Error) -> Error<'v, 's> + 'v;
 
 /// VM handle.
 ///
@@ -239,6 +241,7 @@ pub struct Vm<'v> {
     pub(crate) importers: MonoVec<Value<'v>>,
     pub(crate) pipe_handler: RefCell<Option<Box<ChannelFactory<'v>>>>,
     pub(crate) trap: RefCell<Option<Box<Trap<'v>>>>,
+    pub(crate) io_error_handler: RefCell<Option<Box<IoErrorHandler<'v>>>>,
     // SAFETY: GC objects may point into state, so `arena` must be cleared first (but not dropped)
     pub(crate) state: RefCell<HashMap<TypeId, ErasedState>>,
     // SAFETY: must be unregistered after clearing GC objects and state, as this invalidates
@@ -279,6 +282,7 @@ impl<'v> Drop for Vm<'v> {
         self.native_modules.get_mut().clear();
         self.importers.drain().for_each(drop);
         *self.pipe_handler.get_mut() = None;
+        *self.io_error_handler.get_mut() = None;
         self.type_singletons.drain().for_each(drop);
         // Close spawn channel (should already be None after enter() returns)
         self.spawn_tx.get_mut().take();
@@ -1033,6 +1037,7 @@ impl Builder<'static> {
             importers: Default::default(),
             pipe_handler: Default::default(),
             trap: Default::default(),
+            io_error_handler: Default::default(),
             import_cache: Default::default(),
             locals: Default::default(),
             local_root_count: Cell::new(0),
@@ -1345,6 +1350,21 @@ impl<'v> Builder<'v> {
         trap: impl for<'s> Fn(&mut Strand<'v, 's>) -> Result<'v, 's, ()> + 'v,
     ) -> &mut Self {
         *self.reg.inner.trap.borrow_mut() = Some(Box::new(trap));
+        self
+    }
+
+    /// Sets the function that maps an [`io::Error`] to a Do error.
+    ///
+    /// [`io::error`](crate::io::error) calls it for errors from native byte handles, so
+    /// an extension that defines system error classes can raise them for OS errors. An
+    /// error a Do stream raised through the [`io.Io`](crate::io) bridge in the runtime's
+    /// own form comes back without calling the handler. Without a handler, errors map to
+    /// the core classes.
+    pub fn io_error_handler(
+        &mut self,
+        handler: impl for<'s> Fn(&mut Strand<'v, 's>, io::Error) -> Error<'v, 's> + 'v,
+    ) -> &mut Self {
+        *self.reg.inner.io_error_handler.borrow_mut() = Some(Box::new(handler));
         self
     }
 
