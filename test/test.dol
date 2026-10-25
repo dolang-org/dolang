@@ -12,25 +12,6 @@ import proc shell term
     tags: register_tags
     run: run_tests
 
-# Collects console output into a buffer.
-class Transcript: term.Console
-  field buffer
-
-  def (init) self buffer
-    self.#buffer = buffer
-    term.Console.(init) $self
-
-  pub def write self *data
-    let written = 0
-    for piece = data
-      let text = Str $piece
-      self.#buffer.append $text
-      written = (written + text.len)
-    written
-
-  pub def flush _self
-    nil
-
 #[test]
 def registration_requires_active_collection()
   assert_throws $std.StateError do register_tags "orphan"
@@ -53,10 +34,10 @@ def ignored_tests_are_omitted_from_report()
       def passed()
         nil
 
-    let output = StrBuf()
-    let rc = term.capture (Transcript output) do
+    let output = BinBuf()
+    let rc = term.capture $output do
       run_tests jobs: 1 module_jobs: 1 capture: true $path
-    let report = output.freeze()
+    let report = output.freeze_str()
     assert_eq $rc 0
     assert $report.contains("passed: 1/1")
     assert_not $report.contains("wrong platform")

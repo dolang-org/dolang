@@ -119,13 +119,15 @@ binary chunks, or a streaming consumer:
 let lines = []
 run git status --short stdout: $lines
 
-let bytes = BinBuf()
-run gzip -c data.txt stdout: $bytes mode: :CHUNK:
+let chunks = []
+run gzip -c data.txt stdout: $chunks mode: :CHUNK:
 ```
 
 In the first example, `lines` receives one `Str` per line. In the second,
-`bytes` receives `Bin` chunks and retains the exact compressed output. The
-[`mode:`](#output-mode) argument chooses between these forms.
+`chunks` receives `Bin` chunks of the compressed output. The
+[`mode:`](#output-mode) argument chooses between these forms. To collect the
+exact bytes in one piece, redirect to a [`BinBuf`](std.BinBuf), which is an
+[`io.Io` stream](#external-io-and-do-values).
 
 Use [`term.sub`](term.sub) when the
 goal is to capture any console-bound output, including a program's unredirected

@@ -6,6 +6,7 @@ import compress
   io:
     - Buffered
     - Concat
+    - Cursor
     - Io
   strand:
     - channel
@@ -426,3 +427,57 @@ def concat_close()
   assert_eq $stream.readable false
   assert_throws $StateError do stream.read(1)
   stream.close()
+
+#[test]
+def zip_through_cursors()
+  let buf = BinBuf()
+  zip.open (Cursor buf) "w" do |out|
+    out.open "hello.txt" do |file| file.write "Hello, World!"
+  zip.open (Cursor (buf.freeze())) do |source|
+    source.open "hello.txt" do |file|
+      assert_eq (file.read_all_str()) "Hello, World!"
+
+# A bounded window reads an archive stored partway through a file
+#[test]
+#[vfs]
+def zip_embedded_in_file()
+  let buf = BinBuf()
+  zip.open (Cursor buf) "w" do |out|
+    out.open "inner.txt" do |file| file.write "inside"
+  let archive = buf.freeze()
+  fs.open bundle.bin w do |file|
+    file.write "header"
+    file.write $archive
+    file.write "trailer"
+  fs.open bundle.bin do |file|
+    zip.open (Cursor file (6..(6 + archive.len))) do |source|
+      source.open "inner.txt" do |entry|
+        assert_eq (entry.read_all_str()) "inside"
+
+#[test]
+#[vfs]
+def cursor_writes_file_window()
+  fs.open data.bin w do |file| file.write "0123456789"
+  fs.open data.bin r+ do |file|
+    let window = Cursor $file (3..6)
+    assert_eq (window.write("abcdef")) 3
+    window.seek start: 1
+    assert_eq (window.read(10)) b"bc"
+    window.close()
+    assert $file.readable
+    file.seek start: 0
+    assert_eq (file.read_all()) b"012abc6789"
+
+#[test]
+def cursor_over_do_stream()
+  let source = MemIo b"0123456789"
+  let window = Cursor $source (2..5)
+  assert_eq (window.read_all()) b"234"
+  assert_eq (window.write("xy")) 0
+  window.seek start: 0
+  assert_eq (window.write("xy")) 2
+  window.flush()
+  assert_eq $source.data b"01xy456789"
+  window.close()
+  assert_eq $source.closed false
+  assert_throws $ValueError do Cursor (MemIo seek: false)

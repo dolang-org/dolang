@@ -1,5 +1,6 @@
 use std::{
     hash::{DefaultHasher, Hash},
+    mem,
     ops::ControlFlow,
 };
 
@@ -9,7 +10,8 @@ use crate::{
     arg::Args,
     error::{Error, Result},
     gc::{Collect, arena::Visit},
-    object::protocol::members,
+    io::IoCaps,
+    object::{interface::Request, protocol::members},
     strand::Strand,
     sym::{self, Sym},
     unpack,
@@ -18,7 +20,9 @@ use crate::{
 };
 
 use super::{
-    BoundMethod, index, iter,
+    BoundMethod, index,
+    io::{provide_bridge, recv_get, recv_mcall},
+    iter,
     protocol::{
         GcObj, Inspect, Protocol, Recv, instance_get_fallback, instance_mcall_fallback,
         is_special_mcall, type_mcall_fallback,
@@ -70,11 +74,11 @@ impl<'v> BinBuf<'v> {
         }
     }
 
-    fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.embryo.len() - self.offset
     }
 
-    fn as_slice(&self) -> &[u8] {
+    pub(crate) fn as_slice(&self) -> &[u8] {
         &self.embryo.as_slice()[self.offset..]
     }
 
@@ -171,6 +175,17 @@ impl<'v> BinBuf<'v> {
         self.embryo.splice(strand, start, end, replacement);
     }
 
+    /// Writes `bytes` at logical index `at`, overwriting what is there and extending past
+    /// the end. A gap between the end and `at` is zero-filled first.
+    pub(crate) fn overwrite<'s>(&mut self, strand: &mut Strand<'v, 's>, at: usize, bytes: &[u8]) {
+        let len = self.len();
+        if at > len {
+            self.extend_raw(strand, &vec![0; at - len]);
+        }
+        let end = (at + bytes.len()).min(self.len());
+        self.splice(strand, at, end, bytes);
+    }
+
     fn clear(&mut self) {
         self.embryo.truncate(0);
         self.offset = 0;
@@ -180,6 +195,23 @@ impl<'v> BinBuf<'v> {
         self.settle(strand);
         self.grow_hint = self.grow_hint.max(self.embryo.capacity());
         self.embryo.freeze_reset(strand, out);
+    }
+
+    /// Freezes the contents as a `Str`, or raises and leaves them in place if they are not
+    /// valid UTF-8.
+    fn freeze_str<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        out: impl Output<'v>,
+    ) -> Result<'v, 's, ()> {
+        self.settle(strand);
+        if str::from_utf8(self.embryo.as_slice()).is_err() {
+            return Err(Error::runtime(strand, "invalid UTF-8 data"));
+        }
+        self.grow_hint = self.grow_hint.max(self.embryo.capacity());
+        // SAFETY: validated above.
+        unsafe { mem::take(&mut self.embryo).finish_str_unchecked(strand, out) };
+        Ok(())
     }
 }
 
@@ -435,6 +467,32 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 borrow.freeze(strand, out);
                 Ok(())
             }
+            sym::FREEZE_STR => {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.freeze_str(strand, out)
+            }
+            sym::WRITE => {
+                let ([], [], pieces) = unpack!(strand, args, 0, 0, *)?;
+                let pieces: Vec<_> = pieces.collect();
+                let mut total = 0;
+                for piece in &pieces {
+                    match piece.as_u8_slice_raw(strand.vm()) {
+                        Some(bytes) => total += bytes.len(),
+                        None => return Err(Error::type_error(strand, "expected `Str` or `Bin`")),
+                    }
+                }
+                let mut borrow = this.borrow_mut(strand)?;
+                for piece in &pieces {
+                    borrow.copy_from_value(strand, piece);
+                }
+                Output::set(strand, out, total);
+                Ok(())
+            }
+            sym::FLUSH => {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                Ok(())
+            }
             sym::STARTS_WITH => {
                 let ([prefix], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.borrow(strand)?;
@@ -492,7 +550,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
             _ if is_special_mcall(method.tag()) => {
                 instance_mcall_fallback(strand, &this, method, args, out).await
             }
-            _ => iter::sink_mcall(strand, &this, method, args, out).await,
+            _ => recv_mcall(strand, &this, method, args, out).await,
         }
     }
 
@@ -508,6 +566,14 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 Output::set(strand, out, len);
                 Ok(())
             }
+            sym::READABLE | sym::SEEKABLE => {
+                Output::set(strand, out, false);
+                Ok(())
+            }
+            sym::WRITABLE => {
+                Output::set(strand, out, true);
+                Ok(())
+            }
             sym::APPEND
             | sym::PUSH
             | sym::EXTEND
@@ -519,12 +585,25 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
             | sym::STARTS_WITH
             | sym::ENDS_WITH
             | sym::CONTAINS
-            | sym::DRAIN => {
+            | sym::DRAIN
+            | sym::FREEZE_STR
+            | sym::WRITE
+            | sym::FLUSH => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
-            _ => iter::sink_get(strand, &this, field, out),
+            _ => recv_get(strand, &this, field, out),
         }
+    }
+
+    /// Provides [`ByteIo`](crate::io::ByteIo) through the `Io` bridge, whose strands call
+    /// `write`: the buffer lives in the VM's heap, so a native handle can't append to it.
+    fn op_provide<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        request: &mut Request<'v, 's, '_>,
+    ) -> Result<'v, 's, ()> {
+        let stream = Value::from_input(request.vm(), &this);
+        provide_bridge(request, &stream, IoCaps::WRITE)
     }
 
     async fn op_sink<'a, 's>(
@@ -588,6 +667,8 @@ impl<'v> Protocol<'v> for Class {
         supertype: &Value<'v>,
     ) -> bool {
         supertype.eq(strand, &this).unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Io).unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Sink).unwrap_or(false)
             || supertype
                 .eq(strand, &strand.singletons().sinkable)
                 .unwrap_or(false)
@@ -641,6 +722,17 @@ impl<'v> Protocol<'v> for Class {
                 Method(sym::ENDS_WITH),
                 Method(sym::CONTAINS),
                 Method(sym::DRAIN),
+                Method(sym::FREEZE_STR),
+                Getter(sym::READABLE),
+                Getter(sym::WRITABLE),
+                Getter(sym::SEEKABLE),
+                Method(sym::WRITE),
+                Method(sym::FLUSH),
+                Method(sym::READ_ALL),
+                Method(sym::READ_ALL_STR),
+                Method(sym::WRITE_ALL),
+                Method(sym::COPY_TO),
+                Method(sym::CHUNKS),
             ],
         })
     }
@@ -698,7 +790,10 @@ impl<'v> Protocol<'v> for Class {
             | sym::STARTS_WITH
             | sym::ENDS_WITH
             | sym::CONTAINS
-            | sym::DRAIN => {
+            | sym::DRAIN
+            | sym::FREEZE_STR
+            | sym::WRITE
+            | sym::FLUSH => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }

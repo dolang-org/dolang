@@ -26,6 +26,7 @@ use futures::io::{
     AsyncWriteExt,
 };
 
+use super::cursor::Cursor;
 use crate::{
     BYTE_STREAM_CHUNK_SIZE,
     arg::{Arg, Args},
@@ -185,7 +186,7 @@ impl BufIo {
 }
 
 /// Reads once from `reader` into at most `n` bytes appended to `out`, returning the count.
-async fn read_spare<'v>(
+pub(super) async fn read_spare<'v>(
     reader: &mut (impl AsyncRead + Unpin),
     alloc: &mut dyn Alloc<'v>,
     out: &mut BinEmbryo<'v>,
@@ -379,7 +380,7 @@ impl Buffered {
 }
 
 /// Raises unless the stream, called `noun` in messages, is open and has `need`.
-fn check_caps<'v, 's>(
+pub(super) fn check_caps<'v, 's>(
     strand: &mut Strand<'v, 's>,
     noun: &str,
     open: bool,
@@ -402,13 +403,15 @@ fn check_caps<'v, 's>(
 }
 
 /// Capabilities while open; a closed stream has none.
-fn open_caps<T>(io: &Option<Shared<T>>, caps: IoCaps) -> IoCaps {
+pub(super) fn open_caps<T>(io: &Option<Shared<T>>, caps: IoCaps) -> IoCaps {
     if io.is_some() { caps } else { IoCaps::empty() }
 }
 
 /// Closes a shared stream for every handle, then closes the stream itself. Closing a closed
 /// stream does nothing.
-async fn close_shared<T: AsyncWrite + Unpin>(io: &mut Option<Shared<T>>) -> io::Result<()> {
+pub(super) async fn close_shared<T: AsyncWrite + Unpin>(
+    io: &mut Option<Shared<T>>,
+) -> io::Result<()> {
     let Some(mut shared) = io.take() else {
         return Ok(());
     };
@@ -435,7 +438,10 @@ fn invalid_utf8<'v, 's>(strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
 }
 
 /// Parses a byte count.
-fn size_value<'v, 's>(strand: &mut Strand<'v, 's>, size: Slot<'v, '_>) -> Result<'v, 's, usize> {
+pub(super) fn size_value<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    size: Slot<'v, '_>,
+) -> Result<'v, 's, usize> {
     size.to_i64(strand)
         .ok()
         .and_then(|n| usize::try_from(n).ok())
@@ -451,7 +457,7 @@ fn size_arg<'v, 's>(
 }
 
 /// A `Str` or `Bin` a write takes its bytes from, pinned for the write.
-enum Piece<'v, 'a> {
+pub(super) enum Piece<'v, 'a> {
     Str(PinStr<'v, 'a>),
     Bin(PinBin<'v, 'a>),
 }
@@ -468,7 +474,7 @@ impl Deref for Piece<'_, '_> {
 }
 
 /// Pins the arguments of a `write`: any number of `Str` or `Bin` pieces.
-fn pieces<'v, 's, 'a>(
+pub(super) fn pieces<'v, 's, 'a>(
     strand: &mut Strand<'v, 's>,
     args: Args<'v, 'a>,
 ) -> Result<'v, 's, Vec<Piece<'v, 'a>>> {
@@ -491,7 +497,7 @@ fn pieces<'v, 's, 'a>(
 }
 
 /// Slices over pinned pieces, and their total length.
-fn slices<'a>(pieces: &'a [Piece<'_, '_>]) -> (Vec<IoSlice<'a>>, usize) {
+pub(super) fn slices<'a>(pieces: &'a [Piece<'_, '_>]) -> (Vec<IoSlice<'a>>, usize) {
     let slices = pieces
         .iter()
         .map(|piece| IoSlice::new(piece))
@@ -501,7 +507,7 @@ fn slices<'a>(pieces: &'a [Piece<'_, '_>]) -> (Vec<IoSlice<'a>>, usize) {
 }
 
 /// Parses `seek`'s arguments: exactly one of a relative `offset`, `start:` or `end:`.
-fn seek_arg<'v, 's>(
+pub(super) fn seek_arg<'v, 's>(
     strand: &mut Strand<'v, 's>,
     offset: Option<Slot<'v, '_>>,
     start: Option<Slot<'v, '_>>,
@@ -615,12 +621,14 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     builder.register_state::<StreamType>(stream);
     let concat = builder.register_type::<Concat>();
     builder.register_state::<ConcatType>(concat);
+    let cursor = builder.register_type::<Cursor>();
     let io = builder.singletons().io.dup();
     builder
         .module("io")
         .value("Io", &io)
         .value("Buffered", buffered)
         .value("Concat", concat)
+        .value("Cursor", cursor)
         .commit();
 }
 

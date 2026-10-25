@@ -52,7 +52,7 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{BinEmbryo, Output, Root, Slot, TypeObject, Value, fmt::Format},
+    value::{BinEmbryo, Input, Output, Root, Slot, TypeObject, Value, fmt::Format},
     vm::Vm,
 };
 
@@ -195,72 +195,7 @@ impl<'v> Protocol<'v> for Io {
                 let ([_self_val], []) = unpack!(strand, args, 1, 0)?;
                 Ok(())
             }
-            sym::READ_ALL => {
-                let ([stream], []) = unpack!(strand, args, 1, 0)?;
-                let mut buf = BinEmbryo::new();
-                read_to_end(strand, &stream, &mut buf).await?;
-                buf.finish(strand, out);
-                Ok(())
-            }
-            sym::READ_ALL_STR => {
-                let ([stream], []) = unpack!(strand, args, 1, 0)?;
-                let mut buf = BinEmbryo::new();
-                read_to_end(strand, &stream, &mut buf).await?;
-                if str::from_utf8(buf.as_slice()).is_err() {
-                    return Err(Error::runtime(strand, "invalid UTF-8 data"));
-                }
-                // SAFETY: validated above.
-                unsafe { buf.finish_str_unchecked(strand, out) };
-                Ok(())
-            }
-            sym::WRITE_ALL => {
-                let stream = match args.next() {
-                    Some(Arg::Pos(stream)) => stream,
-                    Some(Arg::Key(key, _)) => return Err(Error::unexpected_key(strand, key)),
-                    None => return Err(Error::missing_positional(strand, 0)),
-                };
-                write_all(strand, &stream, args).await
-            }
-            sym::COPY_TO => {
-                let ([stream, dest], []) = unpack!(strand, args, 2, 0)?;
-                copy_to(strand, &stream, &dest, out).await
-            }
-            sym::CHUNKS => {
-                let ([stream], [size]) = unpack!(strand, args, 1, 1)?;
-                let size = match size {
-                    Some(size) => size
-                        .to_i64(strand)
-                        .ok()
-                        .and_then(|n| usize::try_from(n).ok())
-                        .filter(|&n| n > 0)
-                        .ok_or_else(|| {
-                            Error::type_error(strand, "size must be a positive integer")
-                        })?,
-                    None => CHUNK,
-                };
-                let stream = stream.dup();
-                strand.builtin_types().io_chunks.create(
-                    strand,
-                    Chunks {
-                        stream,
-                        size,
-                        done: Cell::new(false),
-                    },
-                    out,
-                );
-                Ok(())
-            }
-            sym::SINK_METHOD => {
-                let ([stream], []) = unpack!(strand, args, 1, 0)?;
-                Output::set(strand, out, &stream);
-                Ok(())
-            }
-            sym::PUT_METHOD => {
-                let ([stream, value], []) = unpack!(strand, args, 2, 0)?;
-                put(strand, &stream, &value).await
-            }
-            // The stream methods are the subclass's to define.
-            _ => Err(Error::field(strand, method)),
+            _ => helper_mcall(strand, method, args, out).await,
         }
     }
 
@@ -297,6 +232,127 @@ impl<'v> Protocol<'v> for Io {
         };
         put(strand, stream, &item).await
     }
+}
+
+/// Calls an `Io` helper on the stream that `args` start with. Any other method is the
+/// stream's own to define, so it raises as a missing field.
+async fn helper_mcall<'v, 'a, 's>(
+    strand: &'a mut Strand<'v, 's>,
+    method: Sym<'v, 'a>,
+    mut args: Args<'v, 'a>,
+    out: Slot<'v, 'a>,
+) -> Result<'v, 's, ()> {
+    match method.tag() {
+        sym::READ_ALL => {
+            let ([stream], []) = unpack!(strand, args, 1, 0)?;
+            let mut buf = BinEmbryo::new();
+            read_to_end(strand, &stream, &mut buf).await?;
+            buf.finish(strand, out);
+            Ok(())
+        }
+        sym::READ_ALL_STR => {
+            let ([stream], []) = unpack!(strand, args, 1, 0)?;
+            let mut buf = BinEmbryo::new();
+            read_to_end(strand, &stream, &mut buf).await?;
+            if str::from_utf8(buf.as_slice()).is_err() {
+                return Err(Error::runtime(strand, "invalid UTF-8 data"));
+            }
+            // SAFETY: validated above.
+            unsafe { buf.finish_str_unchecked(strand, out) };
+            Ok(())
+        }
+        sym::WRITE_ALL => {
+            let stream = match args.next() {
+                Some(Arg::Pos(stream)) => stream,
+                Some(Arg::Key(key, _)) => return Err(Error::unexpected_key(strand, key)),
+                None => return Err(Error::missing_positional(strand, 0)),
+            };
+            write_all(strand, &stream, args).await
+        }
+        sym::COPY_TO => {
+            let ([stream, dest], []) = unpack!(strand, args, 2, 0)?;
+            copy_to(strand, &stream, &dest, out).await
+        }
+        sym::CHUNKS => {
+            let ([stream], [size]) = unpack!(strand, args, 1, 1)?;
+            let size = match size {
+                Some(size) => size
+                    .to_i64(strand)
+                    .ok()
+                    .and_then(|n| usize::try_from(n).ok())
+                    .filter(|&n| n > 0)
+                    .ok_or_else(|| Error::type_error(strand, "size must be a positive integer"))?,
+                None => CHUNK,
+            };
+            let stream = stream.dup();
+            strand.builtin_types().io_chunks.create(
+                strand,
+                Chunks {
+                    stream,
+                    size,
+                    done: Cell::new(false),
+                },
+                out,
+            );
+            Ok(())
+        }
+        sym::SINK_METHOD => {
+            let ([stream], []) = unpack!(strand, args, 1, 0)?;
+            Output::set(strand, out, &stream);
+            Ok(())
+        }
+        sym::PUT_METHOD => {
+            let ([stream, value], []) = unpack!(strand, args, 2, 0)?;
+            put(strand, &stream, &value).await
+        }
+        // The stream methods are the subclass's to define.
+        _ => Err(Error::field(strand, method)),
+    }
+}
+
+/// Answers `Io`'s inherited members for a native receiver that forwards to `Io` by hand:
+/// the `Sink` methods and the helpers. Any other method raises as a missing field.
+pub(crate) async fn recv_mcall<'v, 'a, 's>(
+    strand: &'a mut Strand<'v, 's>,
+    rcvr: impl Input<'v>,
+    method: Sym<'v, 'a>,
+    mut args: Args<'v, 'a>,
+    out: Slot<'v, 'a>,
+) -> Result<'v, 's, ()> {
+    if classify(method.tag()) == Some(Surface::Sinkable) {
+        return sink_mcall(strand, rcvr, method, args, out).await;
+    }
+    args.prepend_self(Value::from_input(strand.vm(), rcvr));
+    helper_mcall(strand, method, args, out).await
+}
+
+/// Binds `Io`'s inherited methods for a native receiver that forwards to `Io` by hand.
+pub(crate) fn recv_get<'v, 'a, 's>(
+    strand: &'a mut Strand<'v, 's>,
+    rcvr: impl Input<'v>,
+    field: Sym<'v, 'a>,
+    out: Slot<'v, 'a>,
+) -> Result<'v, 's, ()> {
+    match field.tag() {
+        sym::READ_ALL | sym::READ_ALL_STR | sym::WRITE_ALL | sym::COPY_TO | sym::CHUNKS => {
+            BoundMethod::create(strand, rcvr, field, out);
+            Ok(())
+        }
+        _ => sink_get(strand, rcvr, field, out),
+    }
+}
+
+/// Provides [`ByteIo`] for a native receiver with `caps` through the bridge, whose strands
+/// call its own `read`, `write` and `seek`, as for a Do subclass.
+pub(crate) fn provide_bridge<'v, 's>(
+    request: &mut Request<'v, 's, '_>,
+    stream: &Value<'v>,
+    caps: IoCaps,
+) -> Result<'v, 's, ()> {
+    request.provide::<ByteIo>(&mut DoIo {
+        stream,
+        caps: Some(caps),
+    })
 }
 
 /// Appends the rest of `stream` to `buf`, calling its `read` until it returns `b""`.
