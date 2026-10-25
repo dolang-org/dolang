@@ -1,8 +1,12 @@
 import http
 import http.mock
+import std:
+  - RuntimeError
+  - ValueError
 import test:
   - assert
   - assert_eq
+  - assert_throws
   - test
 
 #[test]
@@ -227,3 +231,79 @@ def url_composes_absolute_and_relative_paths()
         # already `/` for a fresh mock server.
         let relative = http.get (server.url / "root")
         assert_eq $relative.status 200
+
+#[test]
+def invalid_matchers_raise()
+  http.mock.Server do |server|
+    for item = [{method: "G T"}, {path: "/a?b=1"}, {path: "http://host/x"}]
+      assert_throws $ValueError do
+        server.mock {...item, respond: {status: 200}}
+
+#[test]
+def reset_unmounts_persistent_mocks()
+  http.mock.Server do |server|
+    let handle = server.mock
+      - path: /reset
+        expect: 1
+        respond:
+          status: 200
+    http.get (server.url / "/reset")
+
+    server.reset()
+    let after = http.get (server.url / "/reset") status: :IGNORE:
+    assert_eq $after.status 404
+    assert_eq $handle.received() []
+    let err = assert_throws $RuntimeError do
+      handle.verify()
+    assert ((str err).contains "mock: unmounted")
+    handle.unmount()
+
+#[test]
+def reset_inside_scoped_mock()
+  http.mock.Server do |server|
+    server.mock
+      - path: /reset
+        respond:
+          status: 200
+      do |handle|
+        server.reset()
+        assert_eq $handle.received() []
+
+    let err = assert_throws $RuntimeError do
+      server.mock
+        - path: /reset
+          expect: 0
+          name: counted
+          respond:
+            status: 200
+        do |_handle|
+          server.reset()
+    assert ((str err).contains "counted: unmounted")
+
+#[test]
+def unmount_inside_scoped_mock()
+  http.mock.Server do |server|
+    server.mock
+      - path: /unmount
+        respond:
+          status: 200
+      do |handle|
+        handle.unmount()
+        let after = http.get (server.url / "/unmount") status: :IGNORE:
+        assert_eq $after.status 404
+
+#[test]
+def reset_cancels_callbacks()
+  http.mock.Server do |server|
+    let calls = [0]
+    server.mock
+      - respond: do |_req|
+          calls[0] = (calls[0] + 1)
+          {status: 200}
+    let resp = http.get (server.url / "/cb")
+    assert_eq $resp.status 200
+
+    server.reset()
+    let after = http.get (server.url / "/cb") status: :IGNORE:
+    assert_eq $after.status 404
+    assert_eq $calls [1]

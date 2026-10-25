@@ -519,17 +519,26 @@ async fn verify_expect(
 
 /// Checks every entry's `expect:` and unmounts it (via dropping its guard)
 /// regardless of the outcome, aggregating any failures into a single error.
+/// An entry already unmounted (by `.unmount()` or `server.reset()`) fails
+/// its `expect:`, as in `Mock.verify`.
 async fn verify_all<'v, 's>(
     strand: &mut Strand<'v, 's>,
     entries: Vec<MockEntry>,
 ) -> Result<'v, 's, ()> {
     let mut messages = Vec::new();
     for entry in entries {
-        let taken = entry.guard.unwrap();
-        if let Some(msg) = verify_expect(&taken, entry.expect, entry.name.as_deref()).await {
-            messages.push(msg);
+        match (entry.guard, entry.expect) {
+            (Some(guard), expect) => {
+                if let Some(msg) = verify_expect(&guard, expect, entry.name.as_deref()).await {
+                    messages.push(msg);
+                }
+            }
+            (None, None) => {}
+            (None, Some(_)) => {
+                let label = entry.name.as_deref().unwrap_or("mock");
+                messages.push(format!("{label}: unmounted"));
+            }
         }
-        drop(taken);
     }
     if messages.is_empty() {
         Ok(())
@@ -609,13 +618,32 @@ async fn parse_mock_spec<'v, 's>(
                 let mut name: Option<String> = None;
                 let mut uses_callback = false;
 
+                // wiremock panics on input its matchers reject, so check it
+                // first, the same way they do.
                 if dict.get(strand, global.syms.method, None, &mut tmp)? {
-                    all.push(Box::new(matchers::method(
-                        tmp.to_string(strand)?.to_ascii_uppercase(),
-                    )));
+                    let method = tmp.to_string(strand)?.to_ascii_uppercase();
+                    http::Method::from_bytes(method.as_bytes()).map_err(|_| {
+                        Error::value(strand, format!("method: invalid HTTP method {method:?}"))
+                    })?;
+                    all.push(Box::new(matchers::method(method)));
                 }
                 if dict.get(strand, global.syms.path, None, &mut tmp)? {
-                    all.push(Box::new(matchers::path(tmp.to_string(strand)?)));
+                    let path = tmp.to_string(strand)?;
+                    if path.contains('?') {
+                        return Err(Error::value(
+                            strand,
+                            format!(
+                                "path: {path:?} contains `?`; match query parameters with `query:`"
+                            ),
+                        ));
+                    }
+                    if url::Url::parse(&path).is_ok_and(|url| url.host_str().is_some()) {
+                        return Err(Error::value(
+                            strand,
+                            format!("path: {path:?} must not include a host"),
+                        ));
+                    }
+                    all.push(Box::new(matchers::path(path)));
                 }
                 if dict.get(strand, global.syms.path_regex, None, &mut tmp)? {
                     let pattern = tmp.to_string(strand)?;
@@ -858,12 +886,12 @@ fn spawn_runtime() -> (
     (handle, shutdown_tx, thread)
 }
 
-/// Slot 0 holds a Do array of every persistent (non-scoped) `Mock` this
-/// server has registered — keeping them reachable independent of whether the
-/// script retained the handle `.mock()` returned, so an unreferenced handle
-/// can't be GC'd and unmount the mock almost immediately. Scoped mocks are
-/// never added here; their lifetime is controlled explicitly by the
-/// enclosing `do` block. `Mock::unmount` removes the entry once done.
+/// Slot 0 holds a Do array of every mounted `Mock` this server has
+/// registered, scoped or not. It keeps a persistent mock reachable
+/// independent of whether the script retained the handle `.mock()`
+/// returned, so an unreferenced handle can't be GC'd and unmount the mock
+/// almost immediately, and it lets `reset` unmount every mock before
+/// resetting wiremock. Unmounting a `Mock` removes its entry.
 pub(crate) struct Server {
     inner: Option<MockServer>,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
@@ -893,9 +921,8 @@ struct MockEntry {
     name: Option<String>,
 }
 
-/// Slot 0 (when present, i.e. this `Mock` came from a persistent, no-block
-/// `.mock()` call) holds the owning `Server`, so `.unmount()` can remove
-/// itself from that server's keep-alive array (see `Server::SLOTS`) without
+/// Slot 0 holds the owning `Server`, so unmounting can remove the `Mock`
+/// from that server's array of mounted mocks (see `Server::SLOTS`) without
 /// any Rc/RefCell bookkeeping — liveness is just "reachable in the object
 /// graph", the same way the GC already tracks everything else.
 ///
@@ -999,13 +1026,45 @@ impl<'v> Object<'v> for Server {
             })
             .method("reset", async move |this, strand, args, _out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
+                let global = this.annex().global;
+                if this.borrow(strand)?.inner.is_none() {
+                    return Err(Error::state_error(strand, "server closed"));
+                }
+                // wiremock panics when a guard for a mock it reset is used or
+                // dropped, so unmount every mock first.
+                let result = strand
+                    .with_slots(async move |strand, [mut mounted, mut item]| {
+                        {
+                            let mut borrow = this.borrow_mut(strand)?;
+                            Output::set(strand, &mut mounted, Mut::slot::<0>(&borrow));
+                            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), Empty::Array);
+                        }
+                        let mut result = Ok(());
+                        if let Some(mounted) = mounted.as_array(strand) {
+                            for i in 0..mounted.len(strand)? {
+                                mounted.get(strand, i, &mut item)?;
+                                let next = global
+                                    .types
+                                    .mock
+                                    .cast(&item)
+                                    .unwrap()
+                                    .enter(strand, async |strand, instance| {
+                                        unmount_mock(strand, instance, global).await
+                                    })
+                                    .await;
+                                result = combine_results(strand, result, next);
+                            }
+                        }
+                        result
+                    })
+                    .await;
                 let borrow = this.borrow(strand)?;
                 let server = borrow
                     .inner
                     .as_ref()
                     .ok_or_else(|| Error::state_error(strand, "server closed"))?;
                 server.reset().await;
-                Ok(())
+                result
             })
             .method("received_requests", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
@@ -1129,34 +1188,46 @@ impl<'v> Object<'v> for Server {
                                 )?;
                             }
 
-                            if let Some(block) = block {
-                                // Scoped: this `Mock` is never added to the
-                                // server's keep-alive array, so nothing else
-                                // retains the guards — they're explicitly taken
-                                // back out and dropped below regardless of the
-                                // block's outcome.
-                                let mock_object = MockObject { entries };
-                                global.types.mock.create_with_annex(
-                                    strand,
-                                    mock_object,
-                                    global,
-                                    &mut item,
-                                );
-                                if any_callback {
-                                    global.types.mock.cast(&item).unwrap().enter_sync(
-                                        strand,
-                                        |strand, instance| {
-                                            let mut mock_borrow = instance.borrow_mut(strand)?;
-                                            Output::set(
-                                                strand,
-                                                Mut::slot_mut::<1>(&mut mock_borrow),
-                                                &cb_handle,
-                                            );
-                                            Ok(())
-                                        },
-                                    )?;
-                                }
+                            // Register this `Mock` in the server's array of
+                            // mounted mocks (which keeps a persistent one
+                            // reachable whether or not the script retains the
+                            // returned handle, and lets `reset` unmount every
+                            // one), and give it a back-reference to the server
+                            // so unmounting can remove it from that array.
+                            let mock_object = MockObject { entries };
+                            global.types.mock.create_with_annex(
+                                strand,
+                                mock_object,
+                                global,
+                                &mut item,
+                            );
+                            global.types.mock.cast(&item).unwrap().enter_sync(
+                                strand,
+                                |strand, instance| {
+                                    let mut mock_borrow = instance.borrow_mut(strand)?;
+                                    Output::set(strand, Mut::slot_mut::<0>(&mut mock_borrow), this);
+                                    if any_callback {
+                                        Output::set(
+                                            strand,
+                                            Mut::slot_mut::<1>(&mut mock_borrow),
+                                            &cb_handle,
+                                        );
+                                    }
+                                    Ok(())
+                                },
+                            )?;
+                            {
+                                let server_borrow = this.borrow(strand)?;
+                                let array = Ref::slot::<0>(&server_borrow)
+                                    .as_array(strand)
+                                    .ok_or_else(|| Error::state_error(strand, "server closed"))?;
+                                array.push(strand, &item)?;
+                            }
 
+                            if let Some(block) = block {
+                                // Scoped: the guards are explicitly taken back
+                                // out and dropped below regardless of the
+                                // block's outcome.
                                 let result = call!(strand, block, out, &item).await;
 
                                 let verify_result = strand
@@ -1174,7 +1245,7 @@ impl<'v> Object<'v> for Server {
                                     })
                                     .await;
 
-                                let cancel_result = strand
+                                let unmount_result = strand
                                     .with_interrupt_mask(InterruptMask::all(), async |strand| {
                                         global
                                             .types
@@ -1182,57 +1253,15 @@ impl<'v> Object<'v> for Server {
                                             .cast(&item)
                                             .unwrap()
                                             .enter(strand, async |strand, instance| {
-                                                cancel_callback_strand(strand, instance, global)
-                                                    .await
+                                                unmount_mock(strand, instance, global).await
                                             })
                                             .await
                                     })
                                     .await;
 
                                 let result = combine_results(strand, result, verify_result);
-                                combine_results(strand, result, cancel_result)
+                                combine_results(strand, result, unmount_result)
                             } else {
-                                // Persistent: register this `Mock` in the
-                                // server's own keep-alive array (so it stays
-                                // reachable independent of whether the script
-                                // retains the returned handle), and give the
-                                // `Mock` a back-reference to the server so
-                                // `.unmount()` can remove itself from that array.
-                                let mock_object = MockObject { entries };
-                                global.types.mock.create_with_annex(
-                                    strand,
-                                    mock_object,
-                                    global,
-                                    &mut item,
-                                );
-                                global.types.mock.cast(&item).unwrap().enter_sync(
-                                    strand,
-                                    |strand, instance| {
-                                        let mut mock_borrow = instance.borrow_mut(strand)?;
-                                        Output::set(
-                                            strand,
-                                            Mut::slot_mut::<0>(&mut mock_borrow),
-                                            this,
-                                        );
-                                        if any_callback {
-                                            Output::set(
-                                                strand,
-                                                Mut::slot_mut::<1>(&mut mock_borrow),
-                                                &cb_handle,
-                                            );
-                                        }
-                                        Ok(())
-                                    },
-                                )?;
-                                {
-                                    let server_borrow = this.borrow(strand)?;
-                                    let array = Ref::slot::<0>(&server_borrow)
-                                        .as_array(strand)
-                                        .ok_or_else(|| {
-                                            Error::state_error(strand, "server closed")
-                                        })?;
-                                    array.push(strand, &item)?;
-                                }
                                 Output::set(strand, out, &item);
                                 Ok(())
                             }
@@ -1271,6 +1300,36 @@ async fn cancel_callback_strand<'v, 's>(
             Ok(())
         })
         .await
+}
+
+/// Drops every guard of a `Mock`, cancels its callback strand, and removes
+/// it from its server's array of mounted mocks. Shared by `.unmount()`,
+/// scoped `server.mock ... do |mock| ...` cleanup, and `server.reset()`.
+async fn unmount_mock<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    this: Instance<'v, '_, MockObject>,
+    global: State<'v, Global<'v>>,
+) -> Result<'v, 's, ()> {
+    for entry in &mut this.borrow_mut(strand)?.entries {
+        drop(entry.guard.take());
+    }
+    cancel_callback_strand(strand, this, global).await?;
+    strand.with_slots_sync(|strand, [mut server]| {
+        {
+            let borrow = this.borrow(strand)?;
+            Output::set(strand, &mut server, Ref::slot::<0>(&borrow));
+        }
+        if let Some(server) = global.types.server.cast(&server) {
+            server.enter_sync(strand, |strand, server| {
+                let server_borrow = server.borrow(strand)?;
+                if let Some(array) = Ref::slot::<0>(&server_borrow).as_array(strand) {
+                    remove_identical(strand, &array, this)?;
+                }
+                Ok(())
+            })?;
+        }
+        Ok(())
+    })
 }
 
 /// Removes the array element identical to `target` (by identity), if
@@ -1342,28 +1401,7 @@ impl<'v> Object<'v> for MockObject {
             .method("unmount", async move |this, strand, args, _out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let global = *this.annex();
-                for entry in &mut this.borrow_mut(strand)?.entries {
-                    drop(entry.guard.take());
-                }
-                cancel_callback_strand(strand, this, global).await?;
-                strand.with_slots_sync(|strand, [mut server]| {
-                    {
-                        let borrow = this.borrow(strand)?;
-                        Output::set(strand, &mut server, Ref::slot::<0>(&borrow));
-                    }
-                    if !server.is_nil()
-                        && let Some(server) = global.types.server.cast(&server)
-                    {
-                        server.enter_sync(strand, |strand, server| {
-                            let server_borrow = server.borrow(strand)?;
-                            if let Some(array) = Ref::slot::<0>(&server_borrow).as_array(strand) {
-                                remove_identical(strand, &array, this)?;
-                            }
-                            Ok(())
-                        })?;
-                    }
-                    Ok(())
-                })
+                unmount_mock(strand, this, global).await
             })
     }
 }
