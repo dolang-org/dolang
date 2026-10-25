@@ -71,8 +71,7 @@ def http_get_revalidates_with_etag()
 
         let requests = handle.received()
         assert_eq $requests.len 2
-        # `.received()` orders most-recent-first (wiremock's own convention).
-        assert_eq (requests[0].headers.get "if-none-match") "v1"
+        assert_eq (requests[1].headers.get "if-none-match") "v1"
 
 #[test]
 #[vfs]

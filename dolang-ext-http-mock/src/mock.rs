@@ -1,10 +1,11 @@
 use crate::global::Tag;
 
-use std::borrow::Cow;
+use std::{borrow::Cow, net::Ipv4Addr, net::SocketAddr, rc::Rc};
 
+use bytes::Bytes;
 use dolang::runtime::{
     Arg, Args, Error, Input, Object, Output, Result, Slot, State, Strand, Type, Value, call,
-    error::ResultExt as _,
+    io::IoResultExt as _,
     method,
     object::{DictLike, DictView, DictViewSink, Instance, Mut, Ref, TypeBuilder},
     strand::InterruptMask,
@@ -14,10 +15,12 @@ use dolang::runtime::{
 };
 use dolang_ext_time::{as_datetime, datetime};
 use dolang_ext_url::create_url;
-use http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
-use wiremock::{Match, Mock, MockGuard, MockServer, Request, Respond, ResponseTemplate, matchers};
+use futures::{StreamExt as _, stream::FuturesUnordered};
+use http::{HeaderName, HeaderValue, StatusCode};
+use tokio::sync::{mpsc, oneshot};
 
 use crate::global::Global;
+use crate::serve::{self, Dispatch, RequestSnapshot, Response};
 
 fn header_value_to_str(value: &HeaderValue) -> Cow<'_, str> {
     match value.to_str() {
@@ -55,29 +58,6 @@ fn header_value_or_datetime<'v, 's>(
     }
 }
 
-/// Owned, `Send + 'static` snapshot of a [`Request`], built on wiremock's
-/// dedicated runtime thread (inside a synchronous `Match`/`Respond`
-/// callback) and shipped across to the main VM thread's background strand.
-/// Doubles as [`RequestObject`]'s `Annex` — none of these fields ever change
-/// after capture, so there's no need for a separate GC-facing struct.
-pub(crate) struct RequestSnapshot {
-    method: String,
-    url: String,
-    headers: HeaderMap,
-    body: Vec<u8>,
-}
-
-impl RequestSnapshot {
-    fn capture(request: &Request) -> Self {
-        Self {
-            method: request.method.as_str().to_string(),
-            url: request.url.to_string(),
-            headers: request.headers.clone(),
-            body: request.body.clone(),
-        }
-    }
-}
-
 /// Native `http.mock.Request` object: a request captured either by
 /// `Mock.received()`/`Server.received_requests()` or handed to a
 /// `match:`/`respond: do |req| ...` callback. `.headers` is a lazy
@@ -90,7 +70,7 @@ pub(crate) struct RequestObject;
 impl<'v> Object<'v> for RequestObject {
     const NAME: &'v str = "Request";
     const MODULE: &'v str = "http.mock";
-    type Annex = RequestSnapshot;
+    type Annex = Rc<RequestSnapshot>;
     type Type = ();
     type TypeAnnex = ();
 
@@ -105,7 +85,7 @@ impl<'v> Object<'v> for RequestObject {
                 Ok(())
             })
             .get("body", |this, strand, out| {
-                Output::set(strand, out, this.annex().body.as_slice());
+                Output::set(strand, out, &this.annex().body[..]);
                 Ok(())
             })
             .get("headers", |this, strand, out| {
@@ -183,246 +163,58 @@ impl<'v> DictLike<'v> for Headers {
     }
 }
 
-/// Builds a [`RequestObject`] from a captured `wiremock::Request`.
-fn create_request<'v, 's>(
+/// Copies the array in `src` into a new array in `out`, so the caller gets a
+/// stable view of a live array.
+fn copy_array<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
-    request: &Request,
-    out: impl Output<'v>,
-) -> Result<'v, 's, ()> {
-    global.types.request.create_with_annex(
-        strand,
-        RequestObject,
-        RequestSnapshot::capture(request),
-        out,
-    );
-    Ok(())
-}
-
-/// Builds a [`RequestObject`] from an already-captured [`RequestSnapshot`]
-/// (the cross-thread payload used by `match:`/`respond:` callbacks — see
-/// [`Dispatch`]).
-fn create_request_from_snapshot<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
-    snapshot: RequestSnapshot,
-    out: impl Output<'v>,
-) -> Result<'v, 's, ()> {
-    global
-        .types
-        .request
-        .create_with_annex(strand, RequestObject, snapshot, out);
-    Ok(())
-}
-
-fn requests_to_array<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    global: State<'v, Global<'v>>,
-    requests: &[Request],
+    src: &Value<'v>,
     mut out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     strand.with_slots_sync(|strand, [mut item]| {
         Output::set(strand, &mut out, Empty::Array);
-        let array = out.as_array(strand).unwrap();
-        for req in requests {
-            create_request(strand, global, req, &mut item)?;
-            array.push(strand, &item)?;
+        let dst = out.as_array(strand).unwrap();
+        if let Some(src) = src.as_array(strand) {
+            for i in 0..src.len(strand)? {
+                src.get(strand, i, &mut item)?;
+                dst.push(strand, &item)?;
+            }
         }
         Ok(())
     })
 }
 
-/// One message sent from a synchronous wiremock `Match`/`Respond` callback
-/// (running on `Server`'s dedicated tokio runtime thread, see
-/// [`spawn_runtime`]) to the `Mock`'s background strand (running on the main
-/// VM thread, see [`run_callback_strand`]). `index` identifies which spec's
-/// `match:`/`respond:` closure to invoke, matching its position in the
-/// `Mock`'s callback-records array (see [`MockObject`]'s slot 1).
-enum Dispatch {
-    Match {
-        index: usize,
-        request: RequestSnapshot,
-        reply: tokio::sync::oneshot::Sender<bool>,
-    },
-    Respond {
-        index: usize,
-        request: RequestSnapshot,
-        reply: tokio::sync::oneshot::Sender<ResponseTemplate>,
-    },
+/// One declarative matcher of a mock item.
+enum Matcher {
+    Method(http::Method),
+    Path(String),
+    PathRegex(regex::Regex),
+    /// The header is present and every one of its values equals this one.
+    /// Values aren't split on commas, which HTTP dates contain.
+    Header(HeaderName, HeaderValue),
+    /// Some decoded query pair equals this one.
+    Query(String, String),
+    #[cfg(feature = "json")]
+    BodyJson(serde_json::Value),
 }
 
-/// Bridges a wiremock `Match` callback to a `match: do |req| ...` Do
-/// closure. `matches` runs synchronously on `Server`'s dedicated runtime
-/// thread; it ships a [`Dispatch::Match`] over `tx` and blocks (via
-/// `futures::executor::block_on`, safe here since nothing on this thread's
-/// single-threaded runtime needs to keep running while we wait — the reply
-/// is produced entirely by the other thread's VM event loop) until the
-/// background strand replies.
-struct CallbackMatch {
-    index: usize,
-    tx: tokio::sync::mpsc::UnboundedSender<Dispatch>,
-}
-
-impl Match for CallbackMatch {
-    fn matches(&self, request: &Request) -> bool {
-        let (reply, rx) = tokio::sync::oneshot::channel();
-        let msg = Dispatch::Match {
-            index: self.index,
-            request: RequestSnapshot::capture(request),
-            reply,
-        };
-        if self.tx.send(msg).is_err() {
-            return false;
-        }
-        futures::executor::block_on(rx).unwrap_or(false)
-    }
-}
-
-/// Bridges a wiremock `Respond` callback to a `respond: do |req| ...` Do
-/// closure. Same blocking-bridge approach as [`CallbackMatch`]. If the
-/// background strand (or the closure it invokes) fails — including the Do
-/// closure raising an error — a `500` response carrying the failure message
-/// is returned rather than propagating a panic across the FFI-like
-/// sync/async boundary.
-struct CallbackRespond {
-    index: usize,
-    tx: tokio::sync::mpsc::UnboundedSender<Dispatch>,
-}
-
-impl Respond for CallbackRespond {
-    fn respond(&self, request: &Request) -> ResponseTemplate {
-        let (reply, rx) = tokio::sync::oneshot::channel();
-        let msg = Dispatch::Respond {
-            index: self.index,
-            request: RequestSnapshot::capture(request),
-            reply,
-        };
-        if self.tx.send(msg).is_err() {
-            return ResponseTemplate::new(500)
-                .set_body_string("http.mock: callback strand is gone");
-        }
-        futures::executor::block_on(rx).unwrap_or_else(|_| {
-            ResponseTemplate::new(500).set_body_string("http.mock: callback strand is gone")
-        })
-    }
-}
-
-/// Either a static response template or a callback-backed one; both
-/// implement `Respond` so `Mock::respond_with` can take either uniformly.
-enum Responder {
-    Static(ResponseTemplate),
-    Callback(CallbackRespond),
-}
-
-impl Respond for Responder {
-    fn respond(&self, request: &Request) -> ResponseTemplate {
+impl Matcher {
+    fn matches(&self, request: &RequestSnapshot) -> bool {
         match self {
-            Responder::Static(template) => template.respond(request),
-            Responder::Callback(callback) => callback.respond(request),
-        }
-    }
-}
-
-/// Runs the single background strand backing one `Mock` object's
-/// callback-based matchers/responders (see [`MockObject`]'s slot 2).
-/// Receives [`Dispatch`] messages from any of the `Mock`'s registered
-/// `CallbackMatch`/`CallbackRespond` instances, looks up the corresponding
-/// entry in `callbacks` (a Do array of `{match: callable?, respond:
-/// callable?}` dicts, one per spec, indexed the same as `MockEntry`), invokes
-/// the closure, and replies. Exits once every sender is dropped (i.e. once
-/// the `Mock` unmounts all of its entries), or the strand is cancelled.
-async fn run_callback_strand<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    callbacks: &Value<'v>,
-    mut rx: tokio::sync::mpsc::UnboundedReceiver<Dispatch>,
-) -> Result<'v, 's, ()> {
-    let global = strand.state::<Tag>();
-    let callbacks = callbacks.as_array(strand).unwrap();
-    while let Some(msg) = rx.recv().await {
-        match msg {
-            Dispatch::Match {
-                index,
-                request,
-                reply,
-            } => {
-                let matched = strand
-                    .with_slots(
-                        async |strand,
-                               [mut record, mut cb, mut req, mut ret]|
-                               -> Result<'v, 's, bool> {
-                            callbacks.get(strand, index, &mut record)?;
-                            let record_dict = record.as_dict(strand).unwrap();
-                            if !record_dict.get(strand, global.syms.match_kw, None, &mut cb)? {
-                                return Ok(true);
-                            }
-                            create_request_from_snapshot(
-                                strand,
-                                global,
-                                request,
-                                Slot::reborrow(&mut req),
-                            )?;
-                            call!(strand, &cb, &mut ret, &req).await?;
-                            ret.to_bool(strand)
-                        },
-                    )
-                    .await
-                    .unwrap_or(false);
-                let _ = reply.send(matched);
+            Matcher::Method(method) => request.method == *method,
+            Matcher::Path(path) => request.url.path() == path,
+            Matcher::PathRegex(regex) => regex.is_match(request.url.path()),
+            Matcher::Header(name, value) => {
+                let mut values = request.headers.get_all(name).iter().peekable();
+                values.peek().is_some() && values.all(|v| v == value)
             }
-            Dispatch::Respond {
-                index,
-                request,
-                reply,
-            } => {
-                let response = strand
-                    .with_slots(async |strand, [mut record, mut cb, mut req, mut ret]| {
-                        callbacks.get(strand, index, &mut record)?;
-                        let record_dict = record.as_dict(strand).unwrap();
-                        record_dict.get(strand, global.syms.respond, None, &mut cb)?;
-                        create_request_from_snapshot(
-                            strand,
-                            global,
-                            request,
-                            Slot::reborrow(&mut req),
-                        )?;
-                        call!(strand, &cb, &mut ret, &req).await?;
-                        build_response(strand, global, &ret).await
-                    })
-                    .await
-                    .unwrap_or_else(|err| {
-                        ResponseTemplate::new(500).set_body_string(format!("http.mock: {err}"))
-                    });
-                let _ = reply.send(response);
-            }
+            Matcher::Query(key, value) => request
+                .url
+                .query_pairs()
+                .any(|(k, v)| k == key.as_str() && v == value.as_str()),
+            #[cfg(feature = "json")]
+            Matcher::BodyJson(json) => serde_json::from_slice::<serde_json::Value>(&request.body)
+                .is_ok_and(|body| body == *json),
         }
-    }
-    Ok(())
-}
-
-/// Matcher accumulator: matches only if every inner matcher matches. An empty
-/// vector trivially matches everything, so "no matcher kwargs" naturally
-/// becomes "match any request" with no special-casing.
-struct AllOf(Vec<Box<dyn Match>>);
-
-impl Match for AllOf {
-    fn matches(&self, request: &Request) -> bool {
-        self.0.iter().all(|matcher| matcher.matches(request))
-    }
-}
-
-/// Builds an exact-value header matcher. `wiremock::matchers::header` splits
-/// the header value on commas (it's designed for multi-value headers like
-/// `Accept:`), which silently breaks matching any value that legitimately
-/// contains a comma itself — HTTP-date header values being the common case
-/// (e.g. `Thu, 01 Jan 1970 00:16:40 GMT`). Route around it with an anchored,
-/// escaped `header_regex` instead, which compares the raw value with no
-/// splitting.
-fn header_exact_matcher(name: HeaderName, value: HeaderValue) -> Box<dyn Match> {
-    if let Ok(value) = value.to_str() {
-        let pattern = format!("^{}$", regex::escape(value));
-        Box::new(matchers::header_regex(name, &pattern))
-    } else {
-        Box::new(matchers::header(name, value))
     }
 }
 
@@ -489,27 +281,17 @@ fn format_expect_range(min: u64, max: Option<u64>) -> String {
     }
 }
 
-/// The sole place `MockGuard::received_requests` is read for count checking.
-/// wiremock's own `Mock::expect`/`MockServer::verify` are never used (see
-/// ARCHITECTURE.md): expectations always stay `Unbounded` on the wiremock
-/// side so `Drop for MockGuard` can never panic, and we check counts
-/// ourselves via this fully public, non-panicking accessor instead.
-///
 /// Returns `None` if satisfied (or no `expect:` was given), or a failure
 /// message otherwise. Plain `String` rather than `Error` since callers
 /// aggregate messages across every entry of a `Mock` object before deciding
 /// whether to raise anything.
-async fn verify_expect(
-    guard: &MockGuard,
-    expect: Option<(u64, Option<u64>)>,
-    name: Option<&str>,
-) -> Option<String> {
-    let (min, max) = expect?;
-    let n = guard.received_requests().await.len() as u64;
+fn verify_expect(entry: &MockEntry) -> Option<String> {
+    let (min, max) = entry.expect?;
+    let n = entry.count;
     if n >= min && max.is_none_or(|max| n <= max) {
         None
     } else {
-        let label = name.unwrap_or("mock");
+        let label = entry.name.as_deref().unwrap_or("mock");
         Some(format!(
             "{label}: expected {} matching request(s), received {n}",
             format_expect_range(min, max)
@@ -517,29 +299,29 @@ async fn verify_expect(
     }
 }
 
-/// Checks every entry's `expect:` and unmounts it (via dropping its guard)
-/// regardless of the outcome, aggregating any failures into a single error.
-/// An entry already unmounted (by `.unmount()` or `server.reset()`) fails
-/// its `expect:`, as in `Mock.verify`.
-async fn verify_all<'v, 's>(
+/// Checks every entry's `expect:`, raising one error listing every failure.
+/// Entries of an unmounted `Mock` (by `.unmount()` or `server.reset()`) fail
+/// their `expect:`.
+fn verify_mock<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    entries: Vec<MockEntry>,
+    mock: Instance<'v, '_, MockObject>,
 ) -> Result<'v, 's, ()> {
-    let mut messages = Vec::new();
-    for entry in entries {
-        match (entry.guard, entry.expect) {
-            (Some(guard), expect) => {
-                if let Some(msg) = verify_expect(&guard, expect, entry.name.as_deref()).await {
-                    messages.push(msg);
-                }
+    let messages = {
+        let mock = mock.borrow(strand)?;
+        let mut messages = Vec::new();
+        for entry in &mock.entries {
+            if entry.expect.is_none() {
+                continue;
             }
-            (None, None) => {}
-            (None, Some(_)) => {
+            if !mock.mounted {
                 let label = entry.name.as_deref().unwrap_or("mock");
                 messages.push(format!("{label}: unmounted"));
+            } else if let Some(msg) = verify_expect(entry) {
+                messages.push(msg);
             }
         }
-    }
+        messages
+    };
     if messages.is_empty() {
         Ok(())
     } else {
@@ -564,44 +346,23 @@ fn combine_results<'v, 's>(
 }
 
 /// Parses one matcher/response spec dict (one dash item of `server.mock`'s
-/// variadic argument list) into wiremock matcher/responder/expect/name
-/// parts.
-///
-/// `index` is this spec's position among the specs passed to the same
-/// `server.mock` call — it doubles as this entry's index into the `Mock`'s
-/// callback-records array (see [`MockObject`]'s slot 1), and identifies it
-/// in [`Dispatch`] messages sent by any `CallbackMatch`/`CallbackRespond`
-/// this spec registers. `tx` is the channel those callbacks send through;
-/// it's only ever cloned into a callback struct if this spec actually uses
-/// `match:`/`respond:` callables, so passing it unconditionally costs
-/// nothing when a spec is fully declarative.
+/// variadic argument list) into a [`MockEntry`].
 ///
 /// Always pushes exactly one element to `callbacks` (nil if this spec used
-/// no callback), keeping it 1:1 with the returned entry.
+/// no callback), keeping it 1:1 with the `Mock`'s entries; the dispatcher
+/// finds an entry's `match:`/`respond:` closures there by index.
 #[cfg_attr(not(feature = "json"), allow(unused_variables, unused_mut))]
 async fn parse_mock_spec<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
     spec: &Slot<'v, '_>,
-    index: usize,
-    tx: &tokio::sync::mpsc::UnboundedSender<Dispatch>,
     callbacks: &Array<'v, '_>,
-) -> Result<
-    'v,
-    's,
-    (
-        Vec<Box<dyn Match>>,
-        Responder,
-        Option<(u64, Option<u64>)>,
-        Option<String>,
-        bool,
-    ),
-> {
+) -> Result<'v, 's, MockEntry> {
     let dict = spec
         .as_dict(strand)
         .ok_or_else(|| Error::type_error(strand, "mock: expected a Dict"))?;
 
-    let (all, response, expect, name, uses_callback) = strand
+    let (matchers, response, has_respond, expect, name) = strand
         .with_slots(
             async move |strand,
                         [
@@ -612,20 +373,19 @@ async fn parse_mock_spec<'v, 's>(
                 mut respond_cb,
                 mut record,
             ]| {
-                let mut all: Vec<Box<dyn Match>> = Vec::new();
-                let mut response: Option<Responder> = None;
+                let mut matchers = Vec::new();
+                let mut response = None;
+                let mut has_respond = false;
                 let mut expect: Option<(u64, Option<u64>)> = None;
                 let mut name: Option<String> = None;
                 let mut uses_callback = false;
 
-                // wiremock panics on input its matchers reject, so check it
-                // first, the same way they do.
                 if dict.get(strand, global.syms.method, None, &mut tmp)? {
                     let method = tmp.to_string(strand)?.to_ascii_uppercase();
-                    http::Method::from_bytes(method.as_bytes()).map_err(|_| {
+                    let method = http::Method::from_bytes(method.as_bytes()).map_err(|_| {
                         Error::value(strand, format!("method: invalid HTTP method {method:?}"))
                     })?;
-                    all.push(Box::new(matchers::method(method)));
+                    matchers.push(Matcher::Method(method));
                 }
                 if dict.get(strand, global.syms.path, None, &mut tmp)? {
                     let path = tmp.to_string(strand)?;
@@ -643,13 +403,18 @@ async fn parse_mock_spec<'v, 's>(
                             format!("path: {path:?} must not include a host"),
                         ));
                     }
-                    all.push(Box::new(matchers::path(path)));
+                    let path = if path.starts_with('/') {
+                        path
+                    } else {
+                        format!("/{path}")
+                    };
+                    matchers.push(Matcher::Path(path));
                 }
                 if dict.get(strand, global.syms.path_regex, None, &mut tmp)? {
                     let pattern = tmp.to_string(strand)?;
-                    regex::Regex::new(&pattern)
+                    let regex = regex::Regex::new(&pattern)
                         .map_err(|err| Error::value(strand, format!("path_regex: {err}")))?;
-                    all.push(Box::new(matchers::path_regex(pattern)));
+                    matchers.push(Matcher::PathRegex(regex));
                 }
                 if dict.get(strand, global.syms.headers, None, &mut tmp)? {
                     let headers_dict = tmp
@@ -664,7 +429,7 @@ async fn parse_mock_spec<'v, 's>(
                             let name = HeaderName::from_bytes(key.to_string(strand)?.as_bytes())
                                 .map_err(|err| Error::runtime(strand, err))?;
                             let hvalue = header_value_from_slot(strand, value)?;
-                            all.push(header_exact_matcher(name, hvalue));
+                            matchers.push(Matcher::Header(name, hvalue));
                             Ok(())
                         },
                     )?;
@@ -679,10 +444,10 @@ async fn parse_mock_spec<'v, 's>(
                         Slot::reborrow(&mut tmp2),
                         Slot::reborrow(&mut tmp3),
                         |strand, key, value| {
-                            all.push(Box::new(matchers::query_param(
+                            matchers.push(Matcher::Query(
                                 key.to_string(strand)?,
                                 value.to_string(strand)?,
-                            )));
+                            ));
                             Ok(())
                         },
                     )?;
@@ -692,9 +457,9 @@ async fn parse_mock_spec<'v, 's>(
                     strand.import("json", &mut tmp2).await?;
                     let encode = global.syms.encode;
                     method!(strand, Slot::reborrow(&mut tmp2), encode, &mut tmp3, &tmp).await?;
-                    all.push(Box::new(matchers::body_json_string(
-                        tmp3.to_string(strand)?,
-                    )));
+                    let json = serde_json::from_str(&tmp3.to_string(strand)?)
+                        .map_err(|err| Error::runtime(strand, err))?;
+                    matchers.push(Matcher::BodyJson(json));
                 }
                 #[cfg(not(feature = "json"))]
                 if dict.get(strand, global.syms.body_json, None, &mut tmp)? {
@@ -704,10 +469,6 @@ async fn parse_mock_spec<'v, 's>(
                     ));
                 }
                 if dict.get(strand, global.syms.match_kw, None, &mut match_cb)? {
-                    all.push(Box::new(CallbackMatch {
-                        index,
-                        tx: tx.clone(),
-                    }));
                     uses_callback = true;
                 }
                 if dict.get(strand, global.syms.expect, None, &mut tmp)? {
@@ -718,15 +479,10 @@ async fn parse_mock_spec<'v, 's>(
                 }
 
                 if dict.get(strand, global.syms.respond, None, &mut respond_cb)? {
+                    has_respond = true;
                     if respond_cb.as_dict(strand).is_some() {
-                        response = Some(Responder::Static(
-                            build_response(strand, global, &respond_cb).await?,
-                        ));
+                        response = Some(build_response(strand, global, &respond_cb).await?);
                     } else {
-                        response = Some(Responder::Callback(CallbackRespond {
-                            index,
-                            tx: tx.clone(),
-                        }));
                         uses_callback = true;
                     }
                 }
@@ -739,13 +495,21 @@ async fn parse_mock_spec<'v, 's>(
                 }
                 callbacks.push(strand, &record)?;
 
-                Ok((all, response, expect, name, uses_callback))
+                Ok((matchers, response, has_respond, expect, name))
             },
         )
         .await?;
 
-    let response = response.ok_or_else(|| Error::missing_key(strand, "respond"))?;
-    Ok((all, response, expect, name, uses_callback))
+    if !has_respond {
+        return Err(Error::missing_key(strand, "respond"));
+    }
+    Ok(MockEntry {
+        matchers,
+        response,
+        expect,
+        name,
+        count: 0,
+    })
 }
 
 /// Walks a dict's pairs, calling `f` with (key, value) scratch slots reborrowed
@@ -769,7 +533,7 @@ async fn build_response<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
     respond: &Slot<'v, '_>,
-) -> Result<'v, 's, ResponseTemplate> {
+) -> Result<'v, 's, Response> {
     let dict = respond
         .as_dict(strand)
         .ok_or_else(|| Error::type_error(strand, "respond must be a dict"))?;
@@ -833,81 +597,209 @@ async fn build_response<'v, 's>(
         })
         .await?;
 
-    let mut template = ResponseTemplate::new(
-        StatusCode::from_u16(status.unwrap_or(200))
-            .map_err(|_| Error::value(strand, "respond.status out of range"))?,
-    );
-    for (name, value) in headers {
-        template = template.insert_header(name, value);
-    }
-    if let Some(body) = body {
-        template = template.set_body_bytes(body);
-    }
-    Ok(template)
+    let status = StatusCode::from_u16(status.unwrap_or(200))
+        .map_err(|_| Error::value(strand, "respond.status out of range"))?;
+    Ok(Response {
+        status,
+        headers,
+        body: body.map(Bytes::from).unwrap_or_default(),
+    })
 }
 
-/// Spawns a dedicated OS thread running its own single-threaded tokio
-/// runtime, and returns a handle to it plus the means to shut it down.
-///
-/// This exists solely so that `MockServer::start` (and hence wiremock's
-/// internal hyper accept loop, which `tokio::spawn`s onto whatever runtime
-/// is ambient when `start` is called) runs on a thread other than the one
-/// driving the Do VM. That's required once any mock uses a callback
-/// matcher/responder (stage 2): wiremock's `Match`/`Respond` are
-/// synchronous and must block their calling thread on a channel round trip
-/// to a Do closure running on the main VM thread — blocking the VM's own
-/// thread that way would deadlock. Every other wiremock call (registering
-/// mocks, resetting, reading received requests) only touches shared
-/// `Arc<RwLock<..>>` state with no callback involved, so those stay ordinary
-/// `.await`s on the main thread, same as stage 1.
-fn spawn_runtime() -> (
-    tokio::runtime::Handle,
-    tokio::sync::oneshot::Sender<()>,
-    std::thread::JoinHandle<()>,
-) {
-    let (handle_tx, handle_rx) = std::sync::mpsc::channel();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-    let thread = std::thread::Builder::new()
-        .name("dolang-http-mock".to_string())
-        .spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("failed to build http.mock tokio runtime");
-            let _ = handle_tx.send(rt.handle().clone());
-            rt.block_on(async move {
-                let _ = shutdown_rx.await;
-            });
-        })
-        .expect("failed to spawn http.mock runtime thread");
-    let handle = handle_rx
-        .recv()
-        .expect("http.mock runtime thread failed to start");
-    (handle, shutdown_tx, thread)
+/// Runs a server's dispatcher strand: each request from [`serve::serve`]
+/// is answered in its own scoped child strand, so a slow callback (or one
+/// that calls the same server) doesn't hold up other requests. Exits when the
+/// server task drops its sender, or when cancelled by `close`.
+async fn run_dispatcher<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    server: &Value<'v>,
+    mut rx: mpsc::UnboundedReceiver<Dispatch>,
+) -> Result<'v, 's, ()> {
+    let strand = &*strand;
+    let mut in_flight = FuturesUnordered::new();
+    loop {
+        tokio::select! {
+            dispatch = rx.recv() => {
+                let Some(Dispatch { request, reply }) = dispatch else {
+                    break;
+                };
+                in_flight.push(strand.spawn_scoped(None, async move |strand| {
+                    let response = match respond(strand, server, request).await {
+                        Ok(response) => response,
+                        Err(err) => Response::new(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("http.mock: {err}"),
+                        ),
+                    };
+                    let _ = reply.send(response);
+                    Ok(())
+                }));
+            }
+            Some(_) = in_flight.next(), if !in_flight.is_empty() => {}
+        }
+    }
+    Ok(())
+}
+
+/// Records `request` on `server` and answers it from the first matching
+/// mounted mock, or with a 404.
+async fn respond<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    server: &Value<'v>,
+    request: RequestSnapshot,
+) -> Result<'v, 's, Response> {
+    let global = strand.state::<Tag>();
+    let request = Rc::new(request);
+    strand
+        .with_slots(
+            async |strand, [mut req, mut mounted, mut received, mut mock]| {
+                global.types.request.create_with_annex(
+                    strand,
+                    RequestObject,
+                    request.clone(),
+                    &mut req,
+                );
+                global.types.server.cast(server).unwrap().enter_sync(
+                    strand,
+                    |strand, server| {
+                        let borrow = server.borrow(strand)?;
+                        // Mocks can unmount while a callback runs, so walk a copy.
+                        copy_array(
+                            strand,
+                            Ref::slot::<0>(&borrow),
+                            Slot::reborrow(&mut mounted),
+                        )?;
+                        Output::set(strand, &mut received, Ref::slot::<2>(&borrow));
+                        Ok(())
+                    },
+                )?;
+                if let Some(received) = received.as_array(strand) {
+                    received.push(strand, &req)?;
+                }
+                let mounted = mounted.as_array(strand).unwrap();
+                for i in 0..mounted.len(strand)? {
+                    mounted.get(strand, i, &mut mock)?;
+                    let response = global
+                        .types
+                        .mock
+                        .cast(&mock)
+                        .unwrap()
+                        .enter(strand, async |strand, mock| {
+                            respond_mock(strand, global, mock, &request, &req).await
+                        })
+                        .await?;
+                    if let Some(response) = response {
+                        return Ok(response);
+                    }
+                }
+                Ok(Response::new(StatusCode::NOT_FOUND, Bytes::new()))
+            },
+        )
+        .await
+}
+
+/// Answers `request` from the first of `mock`'s entries that matches it, if
+/// any, counting and recording it there.
+async fn respond_mock<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    mock: Instance<'v, '_, MockObject>,
+    request: &RequestSnapshot,
+    req: &Slot<'v, '_>,
+) -> Result<'v, 's, Option<Response>> {
+    strand
+        .with_slots(
+            async |strand, [mut callbacks, mut received, mut record, mut cb, mut ret]| {
+                let len = {
+                    let borrow = mock.borrow(strand)?;
+                    Output::set(strand, &mut callbacks, Ref::slot::<1>(&borrow));
+                    borrow.entries.len()
+                };
+                let callbacks = callbacks.as_array(strand).unwrap();
+                for i in 0..len {
+                    {
+                        let borrow = mock.borrow(strand)?;
+                        if !borrow.mounted {
+                            return Ok(None);
+                        }
+                        if !borrow.entries[i]
+                            .matchers
+                            .iter()
+                            .all(|m| m.matches(request))
+                        {
+                            continue;
+                        }
+                    }
+                    callbacks.get(strand, i, &mut record)?;
+                    let record = record.as_dict(strand);
+                    if let Some(record) = &record
+                        && record.get(strand, global.syms.match_kw, None, &mut cb)?
+                        && !cb.is_nil()
+                    {
+                        // A failing `match:` counts as no match.
+                        let matched = match call!(strand, &cb, &mut ret, req).await {
+                            Ok(()) => ret.to_bool(strand).unwrap_or(false),
+                            Err(_) => false,
+                        };
+                        if !matched {
+                            continue;
+                        }
+                    }
+
+                    let response = {
+                        let mut borrow = mock.borrow_mut(strand)?;
+                        if !borrow.mounted {
+                            return Ok(None);
+                        }
+                        borrow.entries[i].count += 1;
+                        Output::set(strand, &mut received, Mut::slot::<2>(&borrow));
+                        borrow.entries[i].response.clone()
+                    };
+                    if let Some(received) = received.as_array(strand) {
+                        received.push(strand, req)?;
+                    }
+                    let response = match response {
+                        Some(response) => response,
+                        None => {
+                            record
+                                .unwrap()
+                                .get(strand, global.syms.respond, None, &mut cb)?;
+                            call!(strand, &cb, &mut ret, req).await?;
+                            build_response(strand, global, &ret).await?
+                        }
+                    };
+                    return Ok(Some(response));
+                }
+                Ok(None)
+            },
+        )
+        .await
 }
 
 /// Slot 0 holds a Do array of every mounted `Mock` this server has
-/// registered, scoped or not. It keeps a persistent mock reachable
-/// independent of whether the script retained the handle `.mock()`
-/// returned, so an unreferenced handle can't be GC'd and unmount the mock
-/// almost immediately, and it lets `reset` unmount every mock before
-/// resetting wiremock. Unmounting a `Mock` removes its entry.
+/// registered, scoped or not, in registration order: the dispatcher matches
+/// requests against it, and it keeps a persistent mock reachable whether or
+/// not the script retained the handle `.mock()` returned. Unmounting a `Mock`
+/// removes its entry.
+///
+/// Slot 1 holds the `strand.Strand` handle of the dispatcher strand (see
+/// [`run_dispatcher`]), which `close` cancels.
+///
+/// Slot 2 holds a Do array of every request received, matched or not.
 pub(crate) struct Server {
-    inner: Option<MockServer>,
-    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
-    thread: Option<std::thread::JoinHandle<()>>,
+    address: SocketAddr,
+    /// Dropping this stops the server task.
+    shutdown: Option<oneshot::Sender<()>>,
+    /// Resolves once the server task has dropped its listener.
+    stopped: Option<oneshot::Receiver<()>>,
 }
 
-impl Drop for Server {
-    fn drop(&mut self) {
-        // Best-effort: signal the dedicated thread to stop. Can't join here
-        // (Drop isn't async), so this doesn't guarantee the thread has
-        // actually exited by the time `Server` is gone — only `.close()`
-        // does that. Acceptable since this path only fires for a `Server`
-        // that was never explicitly closed (e.g. dropped via GC).
-        if let Some(tx) = self.shutdown.take() {
-            let _ = tx.send(());
+impl Server {
+    fn check_open<'v, 's>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
+        if self.shutdown.is_none() {
+            return Err(Error::state_error(strand, "server closed"));
         }
+        Ok(())
     }
 }
 
@@ -916,31 +808,94 @@ pub(crate) struct ServerAnnex<'v> {
 }
 
 struct MockEntry {
-    guard: Option<MockGuard>,
+    matchers: Vec<Matcher>,
+    /// `None` when `respond:` is a callback.
+    response: Option<Response>,
     expect: Option<(u64, Option<u64>)>,
     name: Option<String>,
+    /// Requests this entry has matched.
+    count: u64,
 }
 
 /// Slot 0 holds the owning `Server`, so unmounting can remove the `Mock`
-/// from that server's array of mounted mocks (see `Server::SLOTS`) without
+/// from that server's array of mounted mocks (see `Server`'s slots) without
 /// any Rc/RefCell bookkeeping — liveness is just "reachable in the object
 /// graph", the same way the GC already tracks everything else.
 ///
-/// Slot 1 (when present, i.e. at least one of this `Mock`'s entries used a
-/// `match:`/`respond:` callback) holds the `strand.Strand` handle for the
-/// background strand spawned to run those callbacks (see
-/// [`run_callback_strand`]); `.unmount()` cancels it so the strand doesn't
-/// linger after every entry's guard has been dropped.
+/// Slot 1 holds a Do array with one element per entry: a `{match:, respond:}`
+/// dict of the entry's callbacks, or nil if it has none.
+///
+/// Slot 2 holds a Do array of the requests this `Mock` matched, in arrival
+/// order.
 pub(crate) struct MockObject {
     entries: Vec<MockEntry>,
+    mounted: bool,
 }
 
 pub(crate) type MockObjectAnnex<'v> = State<'v, Global<'v>>;
 
+/// Binds a listener, starts the server task and the dispatcher strand, and
+/// writes the new `Server` to `out`.
+async fn start_server<'v, 's>(
+    this: Type<'v, Server>,
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    mut out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    if tokio::runtime::Handle::try_current().is_err() {
+        return Err(Error::runtime(strand, "http.mock requires a tokio runtime"));
+    }
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .into_do_io(strand)?;
+    let address = listener.local_addr().into_do_io(strand)?;
+    let (dispatch_tx, dispatch_rx) = mpsc::unbounded_channel();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let (stopped_tx, stopped_rx) = oneshot::channel();
+    let value = Server {
+        address,
+        shutdown: Some(shutdown_tx),
+        stopped: Some(stopped_rx),
+    };
+    this.create_with_annex(
+        strand,
+        value,
+        ServerAnnex { global },
+        Slot::reborrow(&mut out),
+    );
+    strand
+        .with_slots(async |strand, [mut dispatcher]| {
+            // The dispatcher roots the `Server`, and the `Server` roots the
+            // dispatcher's handle; if neither is otherwise reachable, the
+            // collector unwinds the strand and drops the `Server`, which stops
+            // the server task.
+            strand.spawn_background(
+                &out,
+                None,
+                &mut dispatcher,
+                async move |strand, server, _out| run_dispatcher(strand, server, dispatch_rx).await,
+            )?;
+            this.cast(&out)
+                .unwrap()
+                .enter_sync(strand, |strand, instance| {
+                    let mut borrow = instance.borrow_mut(strand)?;
+                    Output::set(strand, Mut::slot_mut::<0>(&mut borrow), Empty::Array);
+                    Output::set(strand, Mut::slot_mut::<1>(&mut borrow), &dispatcher);
+                    Output::set(strand, Mut::slot_mut::<2>(&mut borrow), Empty::Array);
+                    Ok(())
+                })
+        })
+        .await?;
+    strand
+        .vm()
+        .spawn_task(serve::serve(listener, dispatch_tx, shutdown_rx, stopped_tx));
+    Ok(())
+}
+
 impl<'v> Object<'v> for Server {
     const NAME: &'v str = "Server";
     const MODULE: &'v str = "http.mock";
-    const SLOTS: usize = 1;
+    const SLOTS: usize = 3;
     type Annex = ServerAnnex<'v>;
     type Type = ();
     type TypeAnnex = ();
@@ -953,25 +908,11 @@ impl<'v> Object<'v> for Server {
     ) -> Result<'v, 's, ()> {
         let global = strand.state::<Tag>();
         let ([], [func]) = unpack!(strand, args, 0, 1)?;
-        let (runtime, shutdown, thread) = spawn_runtime();
-        let server = runtime.spawn(MockServer::start()).await.into_do(strand)?;
 
         if let Some(func) = func {
             strand
                 .with_slots(async move |strand, [mut handle, tmp]| {
-                    let value = Server {
-                        inner: Some(server),
-                        shutdown: Some(shutdown),
-                        thread: Some(thread),
-                    };
-                    this.create_with_annex(strand, value, ServerAnnex { global }, &mut handle);
-                    this.cast(&handle)
-                        .unwrap()
-                        .enter_sync(strand, |strand, instance| {
-                            let mut borrow = instance.borrow_mut(strand)?;
-                            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), Empty::Array);
-                            Ok(())
-                        })?;
+                    start_server(this, strand, global, Slot::reborrow(&mut handle)).await?;
                     let res = call!(strand, func, out, &handle).await;
                     let _ = strand
                         .with_interrupt_mask(InterruptMask::all(), async move |strand| {
@@ -982,25 +923,7 @@ impl<'v> Object<'v> for Server {
                 })
                 .await
         } else {
-            let value = Server {
-                inner: Some(server),
-                shutdown: Some(shutdown),
-                thread: Some(thread),
-            };
-            this.create_with_annex(
-                strand,
-                value,
-                ServerAnnex { global },
-                Slot::reborrow(&mut out),
-            );
-            this.cast(&out)
-                .unwrap()
-                .enter_sync(strand, |strand, instance| {
-                    let mut borrow = instance.borrow_mut(strand)?;
-                    Output::set(strand, Mut::slot_mut::<0>(&mut borrow), Empty::Array);
-                    Ok(())
-                })?;
-            Ok(())
+            start_server(this, strand, global, Slot::reborrow(&mut out)).await
         }
     }
 
@@ -1009,315 +932,204 @@ impl<'v> Object<'v> for Server {
             .supertype(TypeObject::Func)
             .method("close", async move |this, strand, args, _out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let (shutdown, thread) = {
+                let global = this.annex().global;
+                let stopped = {
                     let mut borrow = this.borrow_mut(strand)?;
-                    drop(borrow.inner.take());
-                    (borrow.shutdown.take(), borrow.thread.take())
+                    drop(borrow.shutdown.take());
+                    borrow.stopped.take()
                 };
-                if let Some(tx) = shutdown {
-                    let _ = tx.send(());
-                }
-                if let Some(thread) = thread {
-                    let _ = tokio::task::spawn_blocking(move || thread.join())
-                        .await
-                        .into_do(strand)?;
+                strand
+                    .with_slots(async |strand, [mut dispatcher, mut tmp]| {
+                        {
+                            let borrow = this.borrow(strand)?;
+                            Output::set(strand, &mut dispatcher, Ref::slot::<1>(&borrow));
+                        }
+                        if !dispatcher.is_nil() {
+                            method!(
+                                strand,
+                                Slot::reborrow(&mut dispatcher),
+                                global.syms.cancel,
+                                &mut tmp
+                            )
+                            .await?;
+                        }
+                        Ok(())
+                    })
+                    .await?;
+                if let Some(stopped) = stopped {
+                    let _ = stopped.await;
                 }
                 Ok(())
             })
             .method("reset", async move |this, strand, args, _out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let global = this.annex().global;
-                if this.borrow(strand)?.inner.is_none() {
-                    return Err(Error::state_error(strand, "server closed"));
-                }
-                // wiremock panics when a guard for a mock it reset is used or
-                // dropped, so unmount every mock first.
-                let result = strand
-                    .with_slots(async move |strand, [mut mounted, mut item]| {
-                        {
-                            let mut borrow = this.borrow_mut(strand)?;
-                            Output::set(strand, &mut mounted, Mut::slot::<0>(&borrow));
-                            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), Empty::Array);
+                this.borrow(strand)?.check_open(strand)?;
+                strand.with_slots_sync(|strand, [mut mounted, mut item]| {
+                    {
+                        let mut borrow = this.borrow_mut(strand)?;
+                        Output::set(strand, &mut mounted, Mut::slot::<0>(&borrow));
+                        Output::set(strand, Mut::slot_mut::<0>(&mut borrow), Empty::Array);
+                        Output::set(strand, Mut::slot_mut::<2>(&mut borrow), Empty::Array);
+                    }
+                    let mut result = Ok(());
+                    if let Some(mounted) = mounted.as_array(strand) {
+                        for i in 0..mounted.len(strand)? {
+                            mounted.get(strand, i, &mut item)?;
+                            let next = global
+                                .types
+                                .mock
+                                .cast(&item)
+                                .unwrap()
+                                .enter_sync(strand, |strand, instance| {
+                                    unmount_mock(strand, instance, global)
+                                });
+                            result = combine_results(strand, result, next);
                         }
-                        let mut result = Ok(());
-                        if let Some(mounted) = mounted.as_array(strand) {
-                            for i in 0..mounted.len(strand)? {
-                                mounted.get(strand, i, &mut item)?;
-                                let next = global
-                                    .types
-                                    .mock
-                                    .cast(&item)
-                                    .unwrap()
-                                    .enter(strand, async |strand, instance| {
-                                        unmount_mock(strand, instance, global).await
-                                    })
-                                    .await;
-                                result = combine_results(strand, result, next);
-                            }
-                        }
-                        result
-                    })
-                    .await;
-                let borrow = this.borrow(strand)?;
-                let server = borrow
-                    .inner
-                    .as_ref()
-                    .ok_or_else(|| Error::state_error(strand, "server closed"))?;
-                server.reset().await;
-                result
+                    }
+                    result
+                })
             })
             .method("received_requests", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = this.annex().global;
-                let requests = {
-                    let borrow = this.borrow(strand)?;
-                    let server = borrow
-                        .inner
-                        .as_ref()
-                        .ok_or_else(|| Error::state_error(strand, "server closed"))?;
-                    server.received_requests().await
-                }
-                .unwrap_or_default();
-                requests_to_array(strand, global, &requests, out)
+                let borrow = this.borrow(strand)?;
+                borrow.check_open(strand)?;
+                copy_array(strand, Ref::slot::<2>(&borrow), out)
             })
             .get("address", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
-                let server = borrow
-                    .inner
-                    .as_ref()
-                    .ok_or_else(|| Error::state_error(strand, "server closed"))?;
-                Output::set(strand, out, server.address().to_string().as_str());
+                borrow.check_open(strand)?;
+                Output::set(strand, out, borrow.address.to_string().as_str());
                 Ok(())
             })
             .get("url", |this, strand, out| {
-                let uri = {
+                let address = {
                     let borrow = this.borrow(strand)?;
-                    let server = borrow
-                        .inner
-                        .as_ref()
-                        .ok_or_else(|| Error::state_error(strand, "server closed"))?;
-                    server.uri()
+                    borrow.check_open(strand)?;
+                    borrow.address
                 };
-                let url = url::Url::parse(&uri).map_err(|err| Error::runtime(strand, err))?;
+                let url = url::Url::parse(&format!("http://{address}"))
+                    .map_err(|err| Error::runtime(strand, err))?;
                 create_url(strand, url, out);
                 Ok(())
             })
             .method("mock", async move |this, strand, args, out| {
                 let global = this.annex().global;
                 strand
-                    .with_slots(
-                        async move |strand, [mut item, mut callbacks, mut cb_handle]| {
-                            let mut specs: Vec<Slot<'_, '_>> = Vec::new();
-                            let mut block = None;
+                    .with_slots(async move |strand, [mut item, mut callbacks]| {
+                        let mut specs: Vec<Slot<'_, '_>> = Vec::new();
+                        let mut block = None;
 
-                            for arg in args {
-                                match arg {
-                                    Arg::Pos(slot) => {
-                                        if slot.as_dict(strand).is_some() {
-                                            specs.push(slot);
-                                        } else if block.is_none() {
-                                            block = Some(slot);
-                                        } else {
-                                            return Err(Error::unexpected_positional(
-                                                strand,
-                                                specs.len() + 1,
-                                            ));
-                                        }
-                                    }
-                                    Arg::Key(sym, _) => {
-                                        return Err(Error::unexpected_key(strand, sym));
-                                    }
-                                }
-                            }
-                            if specs.is_empty() {
-                                return Err(Error::runtime(
-                                    strand,
-                                    "mock: at least one matcher/response dict is required",
-                                ));
-                            }
-
-                            Output::set(strand, &mut callbacks, Empty::Array);
-                            let callbacks_array = callbacks.as_array(strand).unwrap();
-                            let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Dispatch>();
-
-                            let mut entries = Vec::new();
-                            let mut any_callback = false;
-                            for spec in &specs {
-                                let (matchers, responder, expect, name, uses_callback) =
-                                    parse_mock_spec(
-                                        strand,
-                                        global,
-                                        spec,
-                                        entries.len(),
-                                        &tx,
-                                        &callbacks_array,
-                                    )
-                                    .await?;
-                                any_callback |= uses_callback;
-                                let mut wm_mock =
-                                    Mock::given(AllOf(matchers)).respond_with(responder);
-                                if let Some(name) = &name {
-                                    wm_mock = wm_mock.named(name.clone());
-                                }
-                                let guard = {
-                                    let borrow = this.borrow(strand)?;
-                                    let server = borrow.inner.as_ref().ok_or_else(|| {
-                                        Error::state_error(strand, "server closed")
-                                    })?;
-                                    server.register_as_scoped(wm_mock).await
-                                };
-                                entries.push(MockEntry {
-                                    guard: Some(guard),
-                                    expect,
-                                    name,
-                                });
-                            }
-
-                            // Only spawn a background strand if some entry
-                            // actually registered a callback; otherwise this
-                            // `Mock` is fully declarative and there is nothing
-                            // for it to dispatch.
-                            if any_callback {
-                                strand.spawn_background(
-                                    &callbacks,
-                                    None,
-                                    &mut cb_handle,
-                                    async move |strand, callbacks, _out| {
-                                        run_callback_strand(strand, callbacks, rx).await
-                                    },
-                                )?;
-                            }
-
-                            // Register this `Mock` in the server's array of
-                            // mounted mocks (which keeps a persistent one
-                            // reachable whether or not the script retains the
-                            // returned handle, and lets `reset` unmount every
-                            // one), and give it a back-reference to the server
-                            // so unmounting can remove it from that array.
-                            let mock_object = MockObject { entries };
-                            global.types.mock.create_with_annex(
-                                strand,
-                                mock_object,
-                                global,
-                                &mut item,
-                            );
-                            global.types.mock.cast(&item).unwrap().enter_sync(
-                                strand,
-                                |strand, instance| {
-                                    let mut mock_borrow = instance.borrow_mut(strand)?;
-                                    Output::set(strand, Mut::slot_mut::<0>(&mut mock_borrow), this);
-                                    if any_callback {
-                                        Output::set(
+                        for arg in args {
+                            match arg {
+                                Arg::Pos(slot) => {
+                                    if slot.as_dict(strand).is_some() {
+                                        specs.push(slot);
+                                    } else if block.is_none() {
+                                        block = Some(slot);
+                                    } else {
+                                        return Err(Error::unexpected_positional(
                                             strand,
-                                            Mut::slot_mut::<1>(&mut mock_borrow),
-                                            &cb_handle,
-                                        );
+                                            specs.len() + 1,
+                                        ));
                                     }
-                                    Ok(())
-                                },
-                            )?;
-                            {
-                                let server_borrow = this.borrow(strand)?;
-                                let array = Ref::slot::<0>(&server_borrow)
-                                    .as_array(strand)
-                                    .ok_or_else(|| Error::state_error(strand, "server closed"))?;
-                                array.push(strand, &item)?;
+                                }
+                                Arg::Key(sym, _) => {
+                                    return Err(Error::unexpected_key(strand, sym));
+                                }
                             }
+                        }
+                        if specs.is_empty() {
+                            return Err(Error::runtime(
+                                strand,
+                                "mock: at least one matcher/response dict is required",
+                            ));
+                        }
+                        this.borrow(strand)?.check_open(strand)?;
 
-                            if let Some(block) = block {
-                                // Scoped: the guards are explicitly taken back
-                                // out and dropped below regardless of the
-                                // block's outcome.
-                                let result = call!(strand, block, out, &item).await;
+                        Output::set(strand, &mut callbacks, Empty::Array);
+                        let callbacks_array = callbacks.as_array(strand).unwrap();
+                        let mut entries = Vec::new();
+                        for spec in &specs {
+                            entries.push(
+                                parse_mock_spec(strand, global, spec, &callbacks_array).await?,
+                            );
+                        }
 
-                                let verify_result = strand
-                                    .with_interrupt_mask(InterruptMask::all(), async |strand| {
-                                        let entries =
-                                            global.types.mock.cast(&item).unwrap().enter_sync(
-                                                strand,
-                                                |strand, instance| {
-                                                    Ok(std::mem::take(
-                                                        &mut instance.borrow_mut(strand)?.entries,
-                                                    ))
-                                                },
-                                            )?;
-                                        verify_all(strand, entries).await
-                                    })
-                                    .await;
-
-                                let unmount_result = strand
-                                    .with_interrupt_mask(InterruptMask::all(), async |strand| {
-                                        global
-                                            .types
-                                            .mock
-                                            .cast(&item)
-                                            .unwrap()
-                                            .enter(strand, async |strand, instance| {
-                                                unmount_mock(strand, instance, global).await
-                                            })
-                                            .await
-                                    })
-                                    .await;
-
-                                let result = combine_results(strand, result, verify_result);
-                                combine_results(strand, result, unmount_result)
-                            } else {
-                                Output::set(strand, out, &item);
+                        // Register this `Mock` in the server's array of
+                        // mounted mocks, and give it a back-reference to the
+                        // server so unmounting can remove it from that array.
+                        let mock_object = MockObject {
+                            entries,
+                            mounted: true,
+                        };
+                        global
+                            .types
+                            .mock
+                            .create_with_annex(strand, mock_object, global, &mut item);
+                        global.types.mock.cast(&item).unwrap().enter_sync(
+                            strand,
+                            |strand, instance| {
+                                let mut mock_borrow = instance.borrow_mut(strand)?;
+                                Output::set(strand, Mut::slot_mut::<0>(&mut mock_borrow), this);
+                                Output::set(
+                                    strand,
+                                    Mut::slot_mut::<1>(&mut mock_borrow),
+                                    &callbacks,
+                                );
+                                Output::set(
+                                    strand,
+                                    Mut::slot_mut::<2>(&mut mock_borrow),
+                                    Empty::Array,
+                                );
                                 Ok(())
-                            }
-                        },
-                    )
+                            },
+                        )?;
+                        {
+                            let server_borrow = this.borrow(strand)?;
+                            let array = Ref::slot::<0>(&server_borrow).as_array(strand).unwrap();
+                            array.push(strand, &item)?;
+                        }
+
+                        if let Some(block) = block {
+                            let result = call!(strand, block, out, &item).await;
+                            let cleanup = strand
+                                .with_interrupt_mask(InterruptMask::all(), async |strand| {
+                                    global.types.mock.cast(&item).unwrap().enter_sync(
+                                        strand,
+                                        |strand, instance| {
+                                            let verified = verify_mock(strand, instance);
+                                            let unmounted = unmount_mock(strand, instance, global);
+                                            combine_results(strand, verified, unmounted)
+                                        },
+                                    )
+                                })
+                                .await;
+                            combine_results(strand, result, cleanup)
+                        } else {
+                            Output::set(strand, out, &item);
+                            Ok(())
+                        }
+                    })
                     .await
             })
     }
 }
 
-/// Cancels this `Mock`'s background callback strand (slot 1), if it has
-/// one. Shared by the explicit `.unmount()` method and by the scoped
-/// `server.mock ... do |mock| ...` cleanup path, so both tear down the
-/// strand the same way instead of leaving it running until GC drops the
-/// last channel sender.
-async fn cancel_callback_strand<'v, 's>(
+/// Unmounts a `Mock`, forgets the requests it matched, and removes it from
+/// its server's array of mounted mocks. Shared by `.unmount()`, scoped
+/// `server.mock ... do |mock| ...` cleanup, and `server.reset()`.
+fn unmount_mock<'v, 's>(
     strand: &mut Strand<'v, 's>,
     this: Instance<'v, '_, MockObject>,
     global: State<'v, Global<'v>>,
 ) -> Result<'v, 's, ()> {
-    strand
-        .with_slots(async |strand, [mut cb_handle, mut tmp]| {
-            {
-                let borrow = this.borrow(strand)?;
-                Output::set(strand, &mut cb_handle, Ref::slot::<1>(&borrow));
-            }
-            if !cb_handle.is_nil() {
-                method!(
-                    strand,
-                    Slot::reborrow(&mut cb_handle),
-                    global.syms.cancel,
-                    &mut tmp
-                )
-                .await?;
-            }
-            Ok(())
-        })
-        .await
-}
-
-/// Drops every guard of a `Mock`, cancels its callback strand, and removes
-/// it from its server's array of mounted mocks. Shared by `.unmount()`,
-/// scoped `server.mock ... do |mock| ...` cleanup, and `server.reset()`.
-async fn unmount_mock<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    this: Instance<'v, '_, MockObject>,
-    global: State<'v, Global<'v>>,
-) -> Result<'v, 's, ()> {
-    for entry in &mut this.borrow_mut(strand)?.entries {
-        drop(entry.guard.take());
-    }
-    cancel_callback_strand(strand, this, global).await?;
     strand.with_slots_sync(|strand, [mut server]| {
         {
-            let borrow = this.borrow(strand)?;
-            Output::set(strand, &mut server, Ref::slot::<0>(&borrow));
+            let mut borrow = this.borrow_mut(strand)?;
+            borrow.mounted = false;
+            Output::set(strand, Mut::slot_mut::<2>(&mut borrow), Empty::Array);
+            Output::set(strand, &mut server, Mut::slot::<0>(&borrow));
         }
         if let Some(server) = global.types.server.cast(&server) {
             server.enter_sync(strand, |strand, server| {
@@ -1355,7 +1167,7 @@ fn remove_identical<'v, 's>(
 impl<'v> Object<'v> for MockObject {
     const NAME: &'v str = "Mock";
     const MODULE: &'v str = "http.mock";
-    const SLOTS: usize = 2;
+    const SLOTS: usize = 3;
     type Annex = MockObjectAnnex<'v>;
     type Type = ();
     type TypeAnnex = ();
@@ -1364,44 +1176,17 @@ impl<'v> Object<'v> for MockObject {
         builder
             .method("received", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = *this.annex();
-                let mut requests = Vec::new();
-                for entry in &this.borrow(strand)?.entries {
-                    if let Some(guard) = entry.guard.as_ref() {
-                        requests.extend(guard.received_requests().await);
-                    }
-                }
-                requests_to_array(strand, global, &requests, out)
+                let borrow = this.borrow(strand)?;
+                copy_array(strand, Ref::slot::<2>(&borrow), out)
             })
             .method("verify", async move |this, strand, args, _out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let mut messages = Vec::new();
-                for entry in &this.borrow(strand)?.entries {
-                    match (entry.guard.as_ref(), entry.expect) {
-                        (_, None) => {}
-                        (Some(guard), Some(_)) => {
-                            if let Some(msg) =
-                                verify_expect(guard, entry.expect, entry.name.as_deref()).await
-                            {
-                                messages.push(msg);
-                            }
-                        }
-                        (None, Some(_)) => {
-                            let label = entry.name.as_deref().unwrap_or("mock");
-                            messages.push(format!("{label}: unmounted"));
-                        }
-                    }
-                }
-                if messages.is_empty() {
-                    Ok(())
-                } else {
-                    Err(Error::runtime(strand, messages.join("\n")))
-                }
+                verify_mock(strand, this)
             })
             .method("unmount", async move |this, strand, args, _out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let global = *this.annex();
-                unmount_mock(strand, this, global).await
+                unmount_mock(strand, this, global)
             })
     }
 }

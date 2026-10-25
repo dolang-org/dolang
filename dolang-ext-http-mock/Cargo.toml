@@ -15,10 +15,14 @@ doctest = false
 
 [features]
 default = ["json"]
-json = ["dep:dolang-ext-json"]
+json = ["dep:dolang-ext-json", "dep:serde_json"]
 
 
 [dependencies.bstr]
+workspace = true
+
+
+[dependencies.bytes]
 workspace = true
 
 
@@ -30,12 +34,31 @@ workspace = true
 version = "1"
 
 
+[dependencies.http-body-util]
+version = "0.1"
+
+
 [dependencies.httpdate]
 workspace = true
 
 
+[dependencies.hyper]
+version = "1"
+features = ["server", "http1", "http2"]
+
+
+[dependencies.hyper-util]
+version = "0.1"
+features = ["server", "server-auto", "http1", "http2", "tokio"]
+
+
 [dependencies.regex]
 workspace = true
+
+
+[dependencies.serde_json]
+workspace = true
+optional = true
 
 
 [dependencies.url]
@@ -43,11 +66,7 @@ workspace = true
 
 [dependencies.tokio]
 workspace = true
-features = ["rt", "sync"]
-
-
-[dependencies.wiremock]
-version = "0.6"
+features = ["macros", "net", "rt", "sync"]
 
 
 [dependencies.dolang-ext-json]
