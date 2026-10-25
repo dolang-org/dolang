@@ -35,7 +35,7 @@ use crate::{
     error_code::{CodeObject, Errno, ErrorCode, FreeBsdErrno, LinuxErrno, MacosErrno, WinError},
     fs::{
         FS_UNIX, FS_WINDOWS,
-        file::{BaseFile, File, RawFile},
+        file::{BaseFile, File, FileObject, RawFile},
         file_lock::FileLock,
         fs_metadata::FsMetadata,
         metadata::{Metadata, Mode},
@@ -541,8 +541,8 @@ pub(crate) struct FsTypes<'v> {
     pub(crate) unix_fs_metadata: Type<'v, FsMetadata<FS_UNIX>>,
     pub(crate) windows_fs_metadata: Type<'v, FsMetadata<FS_WINDOWS>>,
     pub(crate) base_file: Type<'v, BaseFile>,
-    pub(crate) file: Type<'v, File>,
-    pub(crate) raw_file: Type<'v, RawFile>,
+    pub(crate) file: Type<'v, FileObject<File>>,
+    pub(crate) raw_file: Type<'v, FileObject<RawFile>>,
     pub(crate) file_lock: Type<'v, FileLock>,
     pub(crate) dir_entry: Type<'v, DirEntry>,
     pub(crate) unix_dir_entry: Type<'v, DirEntry<FS_UNIX>>,
@@ -619,11 +619,11 @@ impl<'v> FsGlobal<'v> {
             .build();
         let base_file = builder.register_type::<BaseFile>();
         let file = builder
-            .build_type::<File>((), ())
+            .build_type::<FileObject<File>>((), ())
             .nominal_supertype(base_file)
             .build();
         let raw_file = builder
-            .build_type::<RawFile>((), ())
+            .build_type::<FileObject<RawFile>>((), ())
             .nominal_supertype(base_file)
             .build();
         Self {
