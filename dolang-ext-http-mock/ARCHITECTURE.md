@@ -37,15 +37,17 @@ the `/` operator) is the correct way to target a path.
 through the GC via `Object::SLOTS`, rather than through `Rc<RefCell<_>>`
 shared ownership:
 
-- `Server` slot 0 holds a Do array of every *persistent* (no-block)
-  `Mock` it has produced — the array is this crate's keep-alive mechanism,
-  so a script doesn't need to retain a persistent mock's return value for it
-  to keep matching requests. `.unmount()` removes the `Mock` from this array
-  (`remove_identical`, an identity scan since array views expose no direct
-  "remove by value").
-- `Mock` slot 0 (persistent mocks only) holds a back-reference to its owning
-  `Server`, so `.unmount()` can find and remove itself from slot 0's array
-  above without the `Server` needing to know about it in advance.
+- `Server` slot 0 holds a Do array of every mounted `Mock`, scoped or
+  persistent. For persistent (no-block) mocks it is this crate's keep-alive
+  mechanism, so a script doesn't need to retain a persistent mock's return
+  value for it to keep matching requests. `.reset()` unmounts every `Mock` in
+  it before calling `MockServer::reset`, since wiremock panics when a
+  `MockGuard` for a reset mock is used or dropped. Unmounting removes the
+  `Mock` from this array (`remove_identical`, an identity scan since array
+  views expose no direct "remove by value").
+- `Mock` slot 0 holds a back-reference to its owning `Server`, so unmounting
+  can find and remove the `Mock` from slot 0's array above without the
+  `Server` needing to know about it in advance.
 - `Mock` slot 1 (only mocks with at least one `match:`/`respond:` callback)
   holds the `strand.Strand` handle for that mock's background callback
   strand (see below) — keeping it rooted, and letting `.unmount()`/scoped
@@ -134,3 +136,14 @@ entirely:
   non-panicking `MockGuard::received_requests()` and comparing its length
   against the declared range, raising an ordinary catchable Do error on
   mismatch (`verify_expect` in `src/mock.rs`).
+
+## Other wiremock panics
+
+The same `panic = abort` concern applies to the rest of wiremock's API:
+
+- The `method` and `path` matcher constructors panic on input they reject,
+  so `parse_mock_spec` checks it the same way first and raises
+  `ValueError`. Other constructors are reached only with typed or
+  pre-validated input (`path_regex` is compiled first).
+- `.reset()` unmounts every `Mock` before calling `MockServer::reset` (see
+  above), so no `MockGuard` outlives the mocks wiremock reset.

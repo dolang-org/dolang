@@ -108,7 +108,8 @@ pub class Mock
 
   # Unmounts every mock this handle registered, so they match nothing further.
   #
-  # Unmounting already-unmounted mocks does nothing.
+  # Unmounting does not check `expect:`; call [`verify`](http.mock.Mock.verify)
+  # first for that. Unmounting already-unmounted mocks does nothing.
   pub def unmount self
     ...
 
@@ -198,10 +199,8 @@ pub class Server: Func
   #
   # `expect:` states how many matching requests the item should receive, as an
   # [`Int`](std.Int) or a range, and `name:` labels the item in the
-  # resulting failure message. The count is checked when the item is unmounted
-  # -- at the end of a scoped block, or on
-  # [`Mock.unmount`](http.mock.Mock.unmount) -- and on demand via
-  # [`Mock.verify`](http.mock.Mock.verify).
+  # resulting failure message. The count is checked at the end of a scoped
+  # block, and on demand via [`Mock.verify`](http.mock.Mock.verify).
   #
   # The returned [`Mock`](http.mock.Mock) covers every item this call
   # registered.
@@ -213,7 +212,9 @@ pub class Server: Func
   # | `RuntimeError`                                  | No items were given                           |
   # | [`MissingKeyError`](std.MissingKeyError) | An item has no `respond:`                    |
   # | [`ValueError`](std.ValueError)           | An item's `path_regex` is invalid             |
-  # | `RuntimeError`                                  | An item's `expect:` is unsatisfied on unmount |
+  # | [`ValueError`](std.ValueError)           | An item's `method` is not a valid HTTP method |
+  # | [`ValueError`](std.ValueError)           | An item's `path` contains `?` or a host       |
+  # | `RuntimeError`                                  | An item's `expect:` is unsatisfied at block end |
   #
   # ## Example
   #
@@ -292,8 +293,11 @@ pub class Server: Func
   pub def received_requests self -> Array[Request]
     ...
 
-  # Removes every mock registered on the server and forgets every request it
-  # received.
+  # Unmounts every mock registered on the server, scoped or not, and forgets
+  # every request it received.
+  #
+  # Their [`Mock`](http.mock.Mock) handles then report no requests, and
+  # [`Mock.verify`](http.mock.Mock.verify) fails for items with `expect:`.
   pub def reset self
     ...
 
