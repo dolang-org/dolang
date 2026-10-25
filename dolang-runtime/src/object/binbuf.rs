@@ -74,11 +74,11 @@ impl<'v> BinBuf<'v> {
         }
     }
 
-    fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.embryo.len() - self.offset
     }
 
-    fn as_slice(&self) -> &[u8] {
+    pub(crate) fn as_slice(&self) -> &[u8] {
         &self.embryo.as_slice()[self.offset..]
     }
 
@@ -173,6 +173,17 @@ impl<'v> BinBuf<'v> {
     ) {
         self.settle(strand);
         self.embryo.splice(strand, start, end, replacement);
+    }
+
+    /// Writes `bytes` at logical index `at`, overwriting what is there and extending past
+    /// the end. A gap between the end and `at` is zero-filled first.
+    pub(crate) fn overwrite<'s>(&mut self, strand: &mut Strand<'v, 's>, at: usize, bytes: &[u8]) {
+        let len = self.len();
+        if at > len {
+            self.extend_raw(strand, &vec![0; at - len]);
+        }
+        let end = (at + bytes.len()).min(self.len());
+        self.splice(strand, at, end, bytes);
     }
 
     fn clear(&mut self) {

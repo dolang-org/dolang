@@ -1637,6 +1637,8 @@ pub class Bin: @Index[Range[Int], Bin]
 # let release = buf.freeze_str()
 # ```
 #
+# To read, overwrite or seek within a buffer, use an [`io.Cursor`](io.Cursor).
+#
 pub class BinBuf: @Index[Int] @Assign[Int] Io
   #
   #
@@ -4762,6 +4764,10 @@ pub class Str: @Index[Range[Int], Str]
 # out.put "second"
 # assert_eq $buf.freeze() "first\nsecond\n"
 # ```
+#
+# A `StrBuf` is not an [`Io`](io.Io), since bytes written in pieces can split a
+# character. An [`io.Cursor`](io.Cursor) over it takes bytes from anything that
+# writes to a stream, holding back a split character until it is complete.
 #
 pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   #

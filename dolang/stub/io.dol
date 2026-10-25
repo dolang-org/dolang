@@ -415,3 +415,145 @@ pub class Concat: Io
   # nothing.
   pub def close self
     ...
+
+# Reads, writes and seeks a window of in-memory data or another stream.
+#
+# The target is a [`Str`](std.Str), [`Bin`](std.Bin),
+# [`BinBuf`](std.BinBuf), [`StrBuf`](std.StrBuf), or an `Io` that reads and
+# seeks. A `Str` or `Bin` is only read. A buffer is read and written in place, so the cursor sees changes
+# made to it by other means: reads stop at its current length, and a write
+# overwrites from the position and extends the buffer when it reaches the end.
+# A `BinBuf` is padded with zero bytes up to a position past its end before a
+# write there.
+#
+# `range` limits the cursor to a window of the target. Positions count from
+# the window's start, and seeking to the end lands on the window's end, or the
+# target's end when the window is open. Reads stop at the window's end, and a
+# write is cut short there.
+#
+# An `Io` target is read and written through, and written only if it writes.
+# The cursor keeps its own position and seeks the target before each read or
+# write, so the target's position changes but doesn't matter. Don't use the
+# target while a read or write through the cursor is in progress, such as
+# from another strand.
+#
+# A `StrBuf` stays valid UTF-8, so a cursor over one also lets text written
+# in arbitrary pieces reach it:
+#
+# - The bytes of an unfinished final character are held back until a later
+#   write completes it. Positions don't count them, a seek that moves raises
+#   while they are held, and [`flush`](io.Cursor.flush) keeps them held.
+# - An overwrite must start and end on character boundaries of the contents,
+#   or at their end.
+#
+# Closing the cursor leaves the target as it is.
+#
+# ## Errors
+#
+# | Exception | Condition |
+# | --- | --- |
+# | [`TypeError`](std.TypeError) | `target` is not one of the types above, or `range` is not a `Range` |
+# | [`ValueError`](std.ValueError) | An `Io` target doesn't read and seek |
+# | [`ValueError`](std.ValueError) | `range` has a negative or non-integer bound, runs backward, or steps by other than 1 |
+# | [`ValueError`](std.ValueError) | A `StrBuf` write is not valid UTF-8 or would split a character, a seek moves while bytes are held, or the cursor is closed while they are |
+# | [`StateError`](std.StateError) | The cursor is closed, or a write targets a `Str`, a `Bin` or an `Io` that doesn't write |
+#
+# ## Example
+#
+# ```
+# let buf = BinBuf()
+# buf.extend b"size: ????\n"
+# let field = Cursor $buf (6..10)
+# field.write "1234"
+#
+# let text = StrBuf()
+# let out = Cursor $text
+# compress.decompress (Cursor $data) do |stream|
+#   stream.copy_to $out
+# out.close()
+#
+# # An archive stored at `offset` within a file
+# fs.open bundle.bin do |file|
+#   zip.open (Cursor $file (offset..(offset + size))) do |archive|
+#     archive.open README do |entry|
+#       echo (entry.read_all_str())
+# ```
+pub class Cursor: Io
+  # Opens a cursor over `target`.
+  pub def (init)
+    self
+    # Data to read and write.
+    target @ (Str | Bin | BinBuf | StrBuf | Io)
+    # Byte range of the window, such as `(offset..)` or
+    # `(offset..(offset + size))`; the whole target when omitted.
+    range @ (Range[Int] | nil) = nil
+  do
+    ...
+
+  # Whether the cursor reads, which it does until it is closed.
+  #[getter]
+  pub def readable self -> Bool
+    ...
+
+  # Whether the cursor writes: while open, when the target is a buffer or an
+  # `Io` that writes.
+  #[getter]
+  pub def writable self -> Bool
+    ...
+
+  # Whether the cursor seeks, which it does until it is closed.
+  #[getter]
+  pub def seekable self -> Bool
+    ...
+
+  # Reads bytes.
+  #
+  # ## Returns
+  #
+  # At most `size` bytes. A memory target gives fewer only at the end of the
+  # window or the target. An empty result means the end.
+  pub def read
+    self
+    # Number of bytes to read.
+    size @ Int
+  do -> Bin
+    ...
+
+  # Writes data, given in pieces.
+  #
+  # ## Returns
+  #
+  # The number of bytes written. A memory target writes fewer only at the end
+  # of a bounded window. Bytes a `StrBuf` cursor holds back count as written.
+  pub def write
+    self
+    # Data to write.
+    *data @ (Str | Bin)
+  do -> Int
+    ...
+
+  # Moves the position.
+  #
+  # ## Returns
+  #
+  # The new position within the window.
+  pub def seek
+    self
+    # Byte offset relative to the current position.
+    offset @ Int = nil
+    # Byte offset from the start of the window.
+    :start @ Int = nil
+    # Byte offset relative to the end of the window.
+    :end @ Int = nil
+  do -> Int
+    ...
+
+  # Flushes an `Io` target. Writes reach a memory target at once, and held
+  # bytes stay held.
+  pub def flush self
+    ...
+
+  # Closes the cursor, dropping any held bytes, after flushing an `Io` target.
+  # The target stays open. Closing a closed cursor does nothing.
+  pub def close self
+    ...

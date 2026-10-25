@@ -84,11 +84,11 @@ impl<'v> StrBuf<'v> {
         }
     }
 
-    fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.embryo.len() - self.offset
     }
 
-    fn as_str(&self) -> &str {
+    pub(crate) fn as_str(&self) -> &str {
         &self.embryo.as_str()[self.offset..]
     }
 
@@ -159,6 +159,26 @@ impl<'v> StrBuf<'v> {
         } else {
             Err(Error::type_error(strand, "StrBuf.extend: expected Str"))
         }
+    }
+
+    /// Writes `text` at byte index `at`, overwriting what is there and extending past the
+    /// end. Returns `false`, changing nothing, unless both ends of the overwritten span are
+    /// character boundaries of the contents.
+    pub(crate) fn overwrite<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        at: usize,
+        text: &str,
+    ) -> bool {
+        let cur = self.as_str();
+        let end = (at + text.len()).min(cur.len());
+        if !cur.is_char_boundary(at) || !cur.is_char_boundary(end) {
+            return false;
+        }
+        self.reserve(strand, text.len() - (end - at));
+        // SAFETY: capacity is reserved above, and both ends of the span are boundaries.
+        unsafe { self.embryo.splice_unchecked(at, end, text.as_bytes()) };
+        true
     }
 
     fn clear(&mut self) {
