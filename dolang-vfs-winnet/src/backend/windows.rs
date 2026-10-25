@@ -72,7 +72,41 @@ use crate::wire::{
     WinNetRequest, WinNetResponse,
 };
 
+/// Views `count` rows a Windows API returned.
+///
+/// An empty result may come back without a buffer, which
+/// `slice::from_raw_parts` does not accept, so that case is answered without
+/// touching the pointer. A non-empty result always has one.
+unsafe fn rows<'a, T>(ptr: *const T, count: usize) -> &'a [T] {
+    if count == 0 {
+        return &[];
+    }
+    assert!(
+        !ptr.is_null(),
+        "Windows returned {count} rows without a buffer"
+    );
+    unsafe { slice::from_raw_parts(ptr, count) }
+}
+
 struct NetBuffer(*mut u8);
+impl NetBuffer {
+    /// The single structure a successful NetAPI query returned.
+    ///
+    /// Callers guarantee `T` is the structure for the level they asked for.
+    unsafe fn get<T>(&self) -> &T {
+        assert!(
+            !self.0.is_null(),
+            "NetAPI reported success without a buffer"
+        );
+        unsafe { &*self.0.cast::<T>() }
+    }
+    /// The `count` rows a NetAPI enumeration returned.
+    ///
+    /// Callers guarantee `T` is the structure for the level they asked for.
+    unsafe fn rows<T>(&self, count: u32) -> &[T] {
+        unsafe { rows(self.0.cast(), count as usize) }
+    }
+}
 impl Drop for NetBuffer {
     fn drop(&mut self) {
         if !self.0.is_null() {
@@ -227,12 +261,11 @@ fn account_rights(sid: &Sid) -> Result<Vec<String>, Error> {
         return Err(lsa_status("LsaEnumerateAccountRights", code));
     }
     let buffer = LsaBuffer(raw.cast());
-    let rows = unsafe { slice::from_raw_parts(raw, count as usize) };
-    let result = rows
+    let result = unsafe { rows(raw, count as usize) }
         .iter()
         .map(|row| {
             let units = usize::from(row.Length) / size_of::<u16>();
-            String::from_utf16(unsafe { slice::from_raw_parts(row.Buffer, units) })
+            String::from_utf16(unsafe { rows(row.Buffer, units) })
                 .map_err(|e| Error::new(ErrorKind::InvalidData, e))
         })
         .collect::<Result<Vec<_>, _>>();
@@ -285,9 +318,9 @@ fn modal_get(level: u32) -> Result<NetBuffer, Error> {
 
 fn account_policy() -> Result<AccountPolicy, Error> {
     let zero = modal_get(0)?;
-    let zero = unsafe { &*zero.0.cast::<USER_MODALS_INFO_0>() };
+    let zero = unsafe { zero.get::<USER_MODALS_INFO_0>() };
     let three = modal_get(3)?;
-    let three = unsafe { &*three.0.cast::<USER_MODALS_INFO_3>() };
+    let three = unsafe { three.get::<USER_MODALS_INFO_3>() };
     Ok(AccountPolicy {
         min_password_length: zero.usrmod0_min_passwd_len,
         max_password_age: (zero.usrmod0_max_passwd_age != u32::MAX)
@@ -400,6 +433,7 @@ fn update_account_policy(update: AccountPolicyUpdate) -> Result<AccountPolicy, E
 }
 
 unsafe fn sid_from_raw(raw: *mut core::ffi::c_void) -> Result<Sid, Error> {
+    assert!(!raw.is_null(), "Windows returned an account without a SID");
     let len = unsafe { GetLengthSid(raw) } as usize;
     Sid::from_bytes(unsafe { slice::from_raw_parts(raw.cast(), len) })
         .map_err(|e| Error::new(ErrorKind::InvalidData, e))
@@ -413,7 +447,7 @@ fn get(name: &str) -> Result<(Sid, UserInfo), Error> {
         return Err(status("NetUserGetInfo", code));
     }
     let buffer = NetBuffer(raw);
-    let info = unsafe { &*buffer.0.cast::<USER_INFO_4>() };
+    let info = unsafe { buffer.get::<USER_INFO_4>() };
     let sid = unsafe { sid_from_raw(info.usri4_user_sid) }?;
     let result = UserInfo {
         sid: sid.clone(),
@@ -610,7 +644,7 @@ fn group_get(name: &str) -> Result<(Sid, GroupInfo), Error> {
         return Err(status("NetLocalGroupGetInfo", code));
     }
     let buffer = NetBuffer(raw);
-    let row = unsafe { &*buffer.0.cast::<LOCALGROUP_INFO_1>() };
+    let row = unsafe { buffer.get::<LOCALGROUP_INFO_1>() };
     let actual = unsafe { string(row.lgrpi1_name) };
     let sid = account_sid(&actual)?;
     Ok((
@@ -860,7 +894,7 @@ fn share_get(name: &str) -> Result<ShareInfo, Error> {
         return Err(status("NetShareGetInfo", code));
     }
     let buffer = NetBuffer(raw);
-    unsafe { share_info(&*buffer.0.cast::<SHARE_INFO_502>()) }
+    unsafe { share_info(buffer.get::<SHARE_INFO_502>()) }
 }
 fn share_set<T>(name: &[u16], level: u32, value: &T) -> Result<(), Error> {
     let mut parm = 0;
@@ -1391,7 +1425,7 @@ fn machine_info() -> Result<MachineInfo, Error> {
         return Err(status("NetWkstaGetInfo level 100", code));
     }
     let buffer = NetBuffer(raw);
-    let wksta = unsafe { &*buffer.0.cast::<WKSTA_INFO_100>() };
+    let wksta = unsafe { buffer.get::<WKSTA_INFO_100>() };
     let name = unsafe { string(wksta.wki100_computername) };
     let domain = unsafe { string(wksta.wki100_langroup) };
     let version_major = wksta.wki100_ver_major;
@@ -1405,7 +1439,7 @@ fn machine_info() -> Result<MachineInfo, Error> {
     let code = unsafe { NetServerGetInfo(ptr::null(), 101, &mut raw) };
     let (comment, server_type, server_started) = if code == NERR_Success {
         let buffer = NetBuffer(raw);
-        let server = unsafe { &*buffer.0.cast::<SERVER_INFO_101>() };
+        let server = unsafe { buffer.get::<SERVER_INFO_101>() };
         (
             unsafe { optional(server.sv101_comment) },
             ServerType::from_bits_retain(server.sv101_type),
@@ -1592,8 +1626,7 @@ fn dispatch(request: WinNetRequest) -> Result<WinNetResponse, Error> {
                 return Err(status("NetUserEnum", code));
             }
             let buffer = NetBuffer(raw);
-            let rows =
-                unsafe { slice::from_raw_parts(buffer.0.cast::<USER_INFO_0>(), read as usize) };
+            let rows = unsafe { buffer.rows::<USER_INFO_0>(read) };
             let mut users = Vec::with_capacity(rows.len());
             for row in rows {
                 let name = unsafe { string(row.usri0_name) };
@@ -1663,9 +1696,7 @@ fn dispatch(request: WinNetRequest) -> Result<WinNetResponse, Error> {
                 return Err(status("NetLocalGroupEnum", code));
             }
             let buffer = NetBuffer(raw);
-            let rows = unsafe {
-                slice::from_raw_parts(buffer.0.cast::<LOCALGROUP_INFO_0>(), read as usize)
-            };
+            let rows = unsafe { buffer.rows::<LOCALGROUP_INFO_0>(read) };
             let mut groups = Vec::with_capacity(rows.len());
             for row in rows {
                 let name = unsafe { string(row.lgrpi0_name) };
@@ -1729,10 +1760,7 @@ fn dispatch(request: WinNetRequest) -> Result<WinNetResponse, Error> {
                 return Err(status("NetLocalGroupGetMembers", code));
             }
             let buffer = NetBuffer(raw);
-            let rows = unsafe {
-                slice::from_raw_parts(buffer.0.cast::<LOCALGROUP_MEMBERS_INFO_0>(), read as usize)
-            };
-            let members = rows
+            let members = unsafe { buffer.rows::<LOCALGROUP_MEMBERS_INFO_0>(read) }
                 .iter()
                 .map(|row| unsafe { sid_from_raw(row.lgrmi0_sid) })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -1808,9 +1836,7 @@ fn dispatch(request: WinNetRequest) -> Result<WinNetResponse, Error> {
                 return Err(status("NetShareEnum", code));
             }
             let buffer = NetBuffer(raw);
-            let rows =
-                unsafe { slice::from_raw_parts(buffer.0.cast::<SHARE_INFO_502>(), read as usize) };
-            let shares = rows
+            let shares = unsafe { buffer.rows::<SHARE_INFO_502>(read) }
                 .iter()
                 .map(|row| unsafe { share_info(row) })
                 .collect::<Result<Vec<_>, _>>()?;
