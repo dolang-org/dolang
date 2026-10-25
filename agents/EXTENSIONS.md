@@ -401,6 +401,12 @@ by opening it and building the handle itself. The `compress` streams
 (`dolang-ext-compress/src/compress.rs`) are both: each gets a handle and
 provides its own, so they chain.
 
+An extension that only hands a native stream to Do, such as a response body,
+needs no provider type: setting a `ByteHandle` as an output
+(`Output::set(strand, out, handle)`) wraps it in a runtime `io.Io` that owns
+it. Its `read` serves the prefix and then polls the handle once per call, its
+`close` closes the handle, and it provides `ByteIo` by lending clones.
+
 A Do subclass of `io.Io` provides `ByteIo` too. Its handle sends requests to
 strands that call the stream's `read`, `write` and `seek`, never its `close`, so
 a consumer must poll the handle from the VM's event loop, as an `async` native
@@ -408,6 +414,13 @@ function awaiting it does, never with `block_on` or from another thread. An
 exception from one of those methods
 reaches the handle as an `io::Error` with the exception's message, which the
 consumer maps as it maps any other.
+
+A native type that inherits `io.Io` but answers no `ByteIo` in `provide` is
+served the same way, through its own Do methods. `io.Concat` relies on this.
+To stream a Do iterable into a native consumer, such as a request body, call
+`io::concat(strand, &iterable, end)`. It returns a read handle over the items'
+bytes, converted as `io.Concat` converts them, without the caller holding a
+slot.
 
 ## GC Slots and Lifetime Transmuting
 

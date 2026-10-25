@@ -1,6 +1,6 @@
 use crate::global::Tag;
 
-use std::{borrow::Cow, mem, pin::Pin, result, str};
+use std::{borrow::Cow, mem, result, str};
 
 use dolang::runtime::value::fmt::Format;
 
@@ -13,9 +13,9 @@ use dolang::runtime::{
     call,
     error::{ErrorKind, ResultExt as _},
     method,
-    object::{DictLike, DictView, DictViewSink, Mut, Ref, TypeBuilder},
+    object::{DictLike, DictView, DictViewSink, Mut, TypeBuilder},
     unpack,
-    value::{BinEmbryo, TypeObject},
+    value::{Nil, TypeObject},
     vm::Register,
 };
 use dolang_ext_time::{as_datetime, datetime};
@@ -27,13 +27,13 @@ use reqwest::{
     multipart,
 };
 
-use bstr::ByteSlice;
 use bytes::Bytes;
 use dolang_ext_url::{create_url, value_to_url};
-use futures::stream::{Stream, StreamExt as _};
+use futures::stream::StreamExt as _;
 
 use crate::{
-    body::IterBodies,
+    body::{self, Bodies},
+    body_io::{self, ByteStream},
     global::Global,
     sse::{EventIter, SseParser},
 };
@@ -301,9 +301,12 @@ async fn status_error<'v, 's>(
 
     let mut body = Vec::new();
     let mut truncated = false;
+    let Some(mut stream) = response.body.take() else {
+        unreachable!("a status error reads a fresh response");
+    };
     loop {
         if body.len() >= STATUS_BODY_LIMIT {
-            match response.chunk().await {
+            match chunk(&mut stream).await {
                 Ok(Some(_)) => truncated = true,
                 Ok(None) => {}
                 Err(_) => truncated = true,
@@ -311,7 +314,7 @@ async fn status_error<'v, 's>(
             break;
         }
 
-        match response.chunk().await {
+        match chunk(&mut stream).await {
             Ok(Some(chunk)) => {
                 let remaining = STATUS_BODY_LIMIT - body.len();
                 if chunk.len() > remaining {
@@ -511,7 +514,7 @@ async fn multipart_part<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
     part_spec: &Value<'v>,
-    bodies: &mut IterBodies<'v, '_, '_>,
+    bodies: &mut Bodies,
 ) -> Result<'v, 's, (String, multipart::Part)> {
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum BodyKind {
@@ -524,15 +527,7 @@ async fn multipart_part<'v, 's>(
     let _ = global;
     strand
         .with_slots(
-            async move |strand,
-                        [
-                mut iter,
-                mut item,
-                mut key,
-                mut value,
-                mut body_iter,
-                mut body,
-            ]| {
+            async move |strand, [mut iter, mut item, mut key, mut value, mut body]| {
                 let mut name = None;
                 let mut body_kind = None;
                 let mut filename = None;
@@ -616,10 +611,8 @@ async fn multipart_part<'v, 's>(
                 } else if let Some(text) = body.as_str(strand) {
                     multipart::Part::text(text.to_string())
                 } else {
-                    match body.iter(strand, &mut body_iter).await {
-                        Ok(()) => {
-                            multipart::Part::stream(bodies.add(strand, &body_iter, false).await?)
-                        }
+                    match body::reader(strand, &body).await {
+                        Ok(reader) => multipart::Part::stream(bodies.add(strand, reader).await?),
                         Err(e) if e.kind() == ErrorKind::Type => {
                             multipart::Part::text(body.to_string(strand)?)
                         }
@@ -657,8 +650,6 @@ async fn request<'v, 's>(
             mut item,
             mut key,
             mut value,
-            mut body_iterator,
-            mut body_roots,
             mut tmp,
         ]| {
             let mut url = None;
@@ -736,7 +727,7 @@ async fn request<'v, 's>(
             let url = value_to_url(st, &url)?;
             let mut builder = client.request(method, url);
 
-            let mut bodies = IterBodies::new(&mut body_roots);
+            let mut bodies = Bodies::new();
 
             if let Some(body) = body {
                 // Try direct conversions first (backward compatibility)
@@ -747,14 +738,11 @@ async fn request<'v, 's>(
                     // Direct string - no streaming needed
                     builder = builder.body(str.to_string());
                 } else {
-                    // Try to get an iterator for streaming
-                    match body.iter(st, &mut body_iterator).await {
-                        Ok(()) => {
-                            // We have an iterator - stream it where the target can
-                            builder = builder.body(bodies.add(st, &body_iterator, false).await?);
-                        }
+                    // Stream the value's bytes, or its items
+                    match body::reader(st, &body).await {
+                        Ok(reader) => builder = builder.body(bodies.add(st, reader).await?),
                         Err(e) if e.kind() == ErrorKind::Type => {
-                            // Not iterable - convert to string
+                            // Neither - convert to string
                             builder = builder.body(body.to_string(st)?);
                         }
                         Err(e) => return Err(e),
@@ -773,8 +761,8 @@ async fn request<'v, 's>(
             }
 
             if let Some(lines) = lines {
-                lines.iter(st, &mut body_iterator).await?;
-                builder = builder.body(bodies.add(st, &body_iterator, true).await?);
+                let reader = body::items(st, &lines, b"\n").await?;
+                builder = builder.body(bodies.add(st, reader).await?);
             }
 
             if let Some(multipart) = multipart {
@@ -1043,9 +1031,6 @@ pub(crate) struct Response {
     pub(crate) inner: Option<ResponseParts>,
 }
 
-/// Body of a response as a stream of chunks.
-type ByteStream = Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>>>>;
-
 /// An open response: its metadata and unread body.
 ///
 /// The body is read through `bytes_stream`, the one body API that reqwest's
@@ -1056,7 +1041,8 @@ pub(crate) struct ResponseParts {
     headers: HeaderMap,
     /// reqwest's message for a failure status, captured before the body is taken.
     error_message: Option<String>,
-    body: ByteStream,
+    /// The body, until it is read whole or handed out as an `Io`.
+    body: Option<ByteStream>,
 }
 
 impl ResponseParts {
@@ -1070,35 +1056,72 @@ impl ResponseParts {
             url: response.url().clone(),
             headers: mem::take(response.headers_mut()),
             error_message,
-            body: Box::pin(response.bytes_stream()),
+            body: Some(Box::pin(response.bytes_stream())),
         }
     }
 
-    /// Reads the next chunk of the body, or `None` at its end.
-    pub(crate) async fn chunk(&mut self) -> reqwest::Result<Option<Bytes>> {
-        self.body.next().await.transpose()
+    /// Returns the unread body.
+    pub(crate) fn body<'v, 's>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, &mut ByteStream> {
+        self.body
+            .as_mut()
+            .ok_or_else(|| Error::state_error(strand, "closed"))
     }
+}
 
-    /// Reads the rest of the body.
-    async fn bytes(mut self) -> reqwest::Result<Vec<u8>> {
-        let mut bytes = Vec::new();
-        while let Some(chunk) = self.chunk().await? {
-            bytes.extend_from_slice(&chunk);
-        }
-        Ok(bytes)
-    }
+/// Reads the next chunk of `body`, or `None` at its end.
+pub(crate) async fn chunk(body: &mut ByteStream) -> reqwest::Result<Option<Bytes>> {
+    body.next().await.transpose()
+}
 
-    /// Reads the rest of the body as text, replacing invalid UTF-8.
-    async fn text(self) -> reqwest::Result<String> {
-        let bytes = self.bytes().await?;
-        Ok(String::from_utf8(bytes)
-            .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned()))
+/// Reads the rest of `body`.
+async fn bytes(mut body: ByteStream) -> reqwest::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    while let Some(chunk) = chunk(&mut body).await? {
+        bytes.extend_from_slice(&chunk);
     }
+    Ok(bytes)
+}
+
+/// Reads the rest of `body` as text, replacing invalid UTF-8.
+async fn text(body: ByteStream) -> reqwest::Result<String> {
+    let bytes = bytes(body).await?;
+    Ok(String::from_utf8(bytes)
+        .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned()))
+}
+
+/// Takes the unread body of an open response.
+fn take_body<'v, 's>(
+    this: Instance<'v, '_, Response>,
+    strand: &mut Strand<'v, 's>,
+) -> Result<'v, 's, ByteStream> {
+    let body = this
+        .borrow_mut(strand)?
+        .inner
+        .as_mut()
+        .and_then(|inner| inner.body.take());
+    body.ok_or_else(|| Error::state_error(strand, "closed"))
+}
+
+/// Takes the unread body as an `Io`, which closing the response also closes.
+fn take_io<'v, 's>(
+    this: Instance<'v, '_, Response>,
+    strand: &mut Strand<'v, 's>,
+    mut out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    let body = take_body(this, strand)?;
+    body_io::create(strand, *this.annex(), body, Slot::reborrow(&mut out));
+    let mut borrow = this.borrow_mut(strand)?;
+    Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &out);
+    Ok(())
 }
 
 impl<'v> Object<'v> for Response {
     const NAME: &'v str = "Response";
     const MODULE: &'v str = "http";
+    const SLOTS: usize = 1;
     type Annex = State<'v, Global<'v>>;
     type Type = ();
     type TypeAnnex = ();
@@ -1114,13 +1137,8 @@ impl<'v> Object<'v> for Response {
         let builder =
             builder.method_with_slots("json", async move |this, strand, args, out, [mut json]| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let mut borrow = this.borrow_mut(strand)?;
-                let inner = if let Some(inner) = borrow.inner.take() {
-                    inner
-                } else {
-                    return Err(Error::state_error(strand, "closed"));
-                };
-                let text = inner.text().await.into_http(strand)?;
+                let body = take_body(this, strand)?;
+                let text = text(body).await.into_http(strand)?;
                 strand.import("json", &mut json).await?;
                 method!(strand, json, decode, out, text.as_str()).await
             });
@@ -1149,25 +1167,15 @@ impl<'v> Object<'v> for Response {
             })
             .method("body", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let mut borrow = this.borrow_mut(strand)?;
-                let inner = if let Some(inner) = borrow.inner.take() {
-                    inner
-                } else {
-                    return Err(Error::state_error(strand, "closed"));
-                };
-                let res = inner.bytes().await.into_http(strand)?;
+                let body = take_body(this, strand)?;
+                let res = bytes(body).await.into_http(strand)?;
                 Output::set(strand, out, res.as_slice());
                 Ok(())
             })
             .method("text", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let mut borrow = this.borrow_mut(strand)?;
-                let inner = if let Some(inner) = borrow.inner.take() {
-                    inner
-                } else {
-                    return Err(Error::state_error(strand, "closed"));
-                };
-                let res = inner.text().await.into_http(strand)?;
+                let body = take_body(this, strand)?;
+                let res = text(body).await.into_http(strand)?;
                 Output::set(strand, out, res.as_str());
                 Ok(())
             })
@@ -1187,41 +1195,27 @@ impl<'v> Object<'v> for Response {
                     Err(status_error(strand, global, inner).await)
                 }
             })
-            .method_with_slots(
-                "chunks",
-                async move |this, strand, args, out, [mut iter]| {
-                    let ([], []) = unpack!(strand, args, 0, 0)?;
-                    let global = *this.annex();
-                    let borrow = this.borrow(strand)?;
-                    if borrow.inner.is_none() {
-                        return Err(Error::state_error(strand, "closed"));
-                    }
-                    drop(borrow);
-                    global
-                        .types
-                        .chunk_iter
-                        .create_with_annex(strand, ChunkIter, global, &mut iter);
-                    // Store the response object in slot 0 of the iterator
-                    global.types.chunk_iter.cast(&iter).unwrap().enter_sync(
-                        strand,
-                        |strand, iterator| {
-                            let mut iter_borrow = iterator.borrow_mut(strand)?;
-                            Output::set(strand, Mut::slot_mut::<0>(&mut iter_borrow), this);
-                            Ok(())
-                        },
-                    )?;
-                    Output::set(strand, out, iter);
-                    Ok(())
-                },
-            )
+            .method("io", async move |this, strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                take_io(this, strand, out)
+            })
+            .method_with_slots("chunks", async move |this, strand, args, out, [mut io]| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let global = *this.annex();
+                take_io(this, strand, Slot::reborrow(&mut io))?;
+                method!(strand, io, global.syms.chunks, out).await
+            })
             .method_with_slots(
                 "events",
                 async move |this, strand, args, out, [mut iter]| {
                     let ([], []) = unpack!(strand, args, 0, 0)?;
                     let global = *this.annex();
-                    let borrow = this.borrow(strand)?;
-                    if borrow.inner.is_none() {
-                        return Err(Error::state_error(strand, "closed"));
+                    let mut borrow = this.borrow_mut(strand)?;
+                    match borrow.inner.as_mut() {
+                        Some(inner) => {
+                            inner.body(strand)?;
+                        }
+                        None => return Err(Error::state_error(strand, "closed")),
                     }
                     drop(borrow);
                     global.types.event_iter.create_with_annex(
@@ -1244,207 +1238,34 @@ impl<'v> Object<'v> for Response {
                     Ok(())
                 },
             )
-            .method_with_slots("lines", async move |this, strand, args, out, [mut iter]| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = *this.annex();
-                let borrow = this.borrow(strand)?;
-                if borrow.inner.is_none() {
-                    return Err(Error::state_error(strand, "closed"));
-                }
-                drop(borrow);
-                global.types.line_iter.create_with_annex(
-                    strand,
-                    LineIter::new(),
-                    global,
-                    &mut iter,
-                );
-                // Store the response object in slot 0 of the iterator
-                global.types.line_iter.cast(&iter).unwrap().enter_sync(
-                    strand,
-                    |strand, iterator| {
-                        let mut iter_borrow = iterator.borrow_mut(strand)?;
-                        Output::set(strand, Mut::slot_mut::<0>(&mut iter_borrow), this);
-                        Ok(())
-                    },
-                )?;
-                Output::set(strand, out, iter);
-                Ok(())
-            })
-            .method("close", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
-                drop(this.borrow_mut(strand)?.inner.take());
-                Ok(())
-            })
-    }
-}
-
-pub(crate) struct ChunkIter;
-
-impl<'v> Object<'v> for ChunkIter {
-    const NAME: &'v str = "ResponseChunkIter";
-    const MODULE: &'v str = "http";
-    const SLOTS: usize = 1;
-    type Annex = State<'v, Global<'v>>;
-    type Type = ();
-    type TypeAnnex = ();
-
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder.supertype(TypeObject::Iter)
-    }
-
-    async fn iter<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
-        Ok(())
-    }
-
-    async fn next<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, bool> {
-        let global = *this.annex();
-
-        strand
-            .with_slots(async move |strand, [mut response]| {
-                let borrow = this.borrow(strand)?;
-
-                // Get the response object from slot 0
-                Output::set(strand, &mut response, Ref::slot::<0>(&borrow));
-                drop(borrow);
-                global
-                    .types
-                    .response
-                    .cast(&response)
-                    .ok_or_else(|| Error::state_error(strand, "invalid response reference"))?
-                    .enter(strand, async move |strand, response| {
-                        // Borrow the response mutably to call chunk()
-                        let mut response_borrow = response.borrow_mut(strand)?;
-                        let inner = response_borrow
-                            .inner
-                            .as_mut()
-                            .ok_or_else(|| Error::state_error(strand, "closed"))?;
-
-                        match inner.chunk().await.into_http(strand)? {
-                            Some(chunk) => {
-                                Output::set(strand, out, chunk.as_ref());
-                                Ok(true)
-                            }
-                            None => Ok(false),
-                        }
-                    })
-                    .await
-            })
-            .await
-    }
-}
-
-pub(crate) struct LineIter<'v> {
-    buffer: BinEmbryo<'v>,
-}
-
-impl<'v> LineIter<'v> {
-    fn new() -> Self {
-        Self {
-            buffer: BinEmbryo::new(),
-        }
-    }
-}
-
-impl<'v> Object<'v> for LineIter<'v> {
-    const NAME: &'v str = "ResponseLineIter";
-    const MODULE: &'v str = "http";
-    const SLOTS: usize = 1;
-    type Annex = State<'v, Global<'v>>;
-    type Type = ();
-    type TypeAnnex = ();
-
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder.supertype(TypeObject::Iter)
-    }
-
-    async fn iter<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
-        Ok(())
-    }
-
-    async fn next<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, bool> {
-        let global = *this.annex();
-
-        loop {
-            // Check if we have a complete line in the buffer
-            {
-                let mut borrow = this.borrow_mut(strand)?;
-                if let Some((line, _)) = borrow.buffer.as_slice().split_once_str(b"\n") {
-                    let line_len = line.len();
-                    let trimmed_line_len = line_len - line.ends_with(b"\r") as usize;
-                    let mut next =
-                        BinEmbryo::new_with_capacity(strand, borrow.buffer.len() - (line_len + 1));
-                    next.extend(strand, &borrow.buffer.as_slice()[line_len + 1..]);
-                    borrow.buffer.truncate(trimmed_line_len);
-                    let buf = mem::replace(&mut borrow.buffer, next);
-                    drop(borrow);
-                    buf.finish_str(strand, out)
-                        .map_err(|_| Error::runtime(strand, "invalid UTF-8"))?;
-                    return Ok(true);
-                }
-            }
-
-            // Get the response object from slot 0 and read a chunk
-            let chunk = strand
-                .with_slots(async move |strand, [mut response]| {
-                    let borrow = this.borrow(strand)?;
-                    Output::set(strand, &mut response, Ref::slot::<0>(&borrow));
-                    drop(borrow);
-                    global
-                        .types
-                        .response
-                        .cast(&response)
-                        .ok_or_else(|| Error::state_error(strand, "invalid response reference"))?
-                        .enter(strand, async move |strand, response| {
-                            let mut response_borrow = response.borrow_mut(strand)?;
-                            let inner = response_borrow
-                                .inner
-                                .as_mut()
-                                .ok_or_else(|| Error::state_error(strand, "closed"))?;
-
-                            inner.chunk().await.into_http(strand)
-                        })
-                        .await
-                })
-                .await?;
-
-            match chunk {
-                Some(chunk) => {
-                    // Add to buffer
-                    let mut borrow = this.borrow_mut(strand)?;
-                    borrow.buffer.extend(strand, &chunk);
-                }
-                None => {
-                    // End of stream - return any remaining data as the last line
-                    let mut borrow = this.borrow_mut(strand)?;
-                    if !borrow.buffer.is_empty() {
-                        let buf = mem::take(&mut borrow.buffer);
-                        drop(borrow);
-                        buf.finish_str(strand, out)
-                            .map_err(|_| Error::runtime(strand, "invalid UTF-8"))?;
-                        return Ok(true);
+            .method_with_slots(
+                "lines",
+                async move |this, strand, args, out, [mut io, mut module, mut buffered]| {
+                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                    let global = *this.annex();
+                    take_io(this, strand, Slot::reborrow(&mut io))?;
+                    strand.import("io", &mut module).await?;
+                    method!(strand, module, global.syms.buffered, &mut buffered, &io).await?;
+                    method!(strand, buffered, global.syms.chomp, out).await
+                },
+            )
+            .method_with_slots(
+                "close",
+                async move |this, strand, args, _out, [mut io, tmp]| {
+                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                    let global = *this.annex();
+                    {
+                        let mut borrow = this.borrow_mut(strand)?;
+                        drop(borrow.inner.take());
+                        Output::set(strand, &mut io, Mut::slot::<0>(&borrow));
+                        Output::set(strand, Mut::slot_mut::<0>(&mut borrow), Nil);
                     }
-                    return Ok(false);
-                }
-            }
-        }
+                    if io.is_nil() {
+                        return Ok(());
+                    }
+                    method!(strand, io, global.syms.close, tmp).await
+                },
+            )
     }
 }
 

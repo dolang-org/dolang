@@ -1,8 +1,18 @@
+import fs:
+  - open
+  - with_temp_dir
 import http
 import http.mock
+import io:
+  - Buffered
+import std:
+  - ValueError
 import test:
   - assert_eq
+  - assert_throws
   - test
+import testlib.memio:
+  - MemIo
 
 class RequestBody
   pub field value = "custom body"
@@ -68,3 +78,64 @@ def lines_parameter_adds_newlines_between_items()
         http.post (server.url / "/post") lines: ["hello", "world"] do |res|
           assert_eq $res.status 201
           assert_eq $res.text() "hello\nworld\n"
+
+# Mounts an echoing POST endpoint for the duration of `block`.
+def echoing block
+  http.mock.Server do |server|
+    server.mock
+      - method: POST
+        path: /post
+        respond: do |req| $
+          status: 201
+          body: $req.body
+      do |_handle| block (server.url / "/post")
+
+def failing_item item
+  if (item == "boom")
+    throw ValueError bad
+  item
+
+class FailingIo: MemIo
+  pub def read _self _size
+    throw ValueError "read failed"
+
+#[test]
+def stream_bodies_send_their_bytes()
+  echoing do |url|
+    with_temp_dir do |dir|
+      let path = (dir / "body.txt")
+      open $path w do |file|
+        file.write "one\ntwo\n"
+
+      # A buffered file
+      open $path do |file|
+        http.post $url body: $file do |res|
+          assert_eq $res.text() "one\ntwo\n"
+        # The body was lent, so the file is still open.
+        file.seek start: 0
+        assert_eq $file.read() b"one\ntwo\n"
+
+      # A stream that also iterates lines sends its bytes.
+      open $path buffer: false do |file|
+        http.post $url body: (Buffered file) do |res|
+          assert_eq $res.text() "one\ntwo\n"
+
+    # A Do stream
+    http.post $url body: (MemIo b"in memory") do |res|
+      assert_eq $res.text() "in memory"
+
+#[test]
+def unreadable_stream_body_raises()
+  echoing do |url|
+    assert_throws $ValueError str: "value error: body must be readable" do
+      http.post $url body: (MemIo read: false)
+
+#[test]
+def body_errors_fail_the_request()
+  echoing do |url|
+    assert_throws $ValueError str: "value error: read failed" do
+      http.post $url body: (FailingIo b"unused")
+    assert_throws $ValueError str: "value error: bad" do
+      http.post $url body: (["a", "boom"].map(failing_item))
+    assert_throws $ValueError str: "value error: bad" do
+      http.post $url lines: (["a", "boom"].map(failing_item))

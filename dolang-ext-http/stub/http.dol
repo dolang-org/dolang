@@ -1,5 +1,7 @@
 # dolang: strict
 import
+  io:
+    - @Io
   json:
     @DecodeValue: JsonDecodeValue
     @EncodeValue: JsonEncodeValue
@@ -199,24 +201,27 @@ pub class Response
   pub def headers self -> Map[Str, Str | DateTime]
     ...
 
-  # Reads the whole body as bytes, consuming and closing the response.
+  # Reads the whole body as bytes.
+  #
+  # Reading the body consumes it: `body`, `text`, `json`, `io`, `chunks` and
+  # `lines` each take it, and a second raises [`StateError`](std.StateError).
+  # The status and headers stay readable until the response is closed.
   pub def body self -> Bin
     ...
 
-  # Reads the whole body as text, consuming and closing the response.
+  # Reads the whole body as text.
   #
   # ## Errors
   #
   # | Exception                         | Condition                             |
   # | --------------------------------- | ------------------------------------- |
-  # | `RuntimeError`                    | The response is already closed        |
+  # | [`StateError`](std.StateError)    | The body was read or the response closed |
   # | [`Error`](http.Error)             | A transport or protocol failure       |
   # | [`ValueError`](std.ValueError) | The body is not valid UTF-8       |
   pub def text self -> Str
     ...
 
-  # Reads the whole body and parses it as JSON, consuming and closing the
-  # response.
+  # Reads the whole body and parses it as JSON.
   #
   # Available when the extension is built with its `json` feature.
   #
@@ -224,7 +229,7 @@ pub class Response
   #
   # | Exception                             | Condition                       |
   # | ------------------------------------- | ------------------------------- |
-  # | `RuntimeError`                        | The response is already closed  |
+  # | [`StateError`](std.StateError)        | The body was read or the response closed |
   # | [`Error`](http.Error)                 | A transport or protocol failure |
   # | [`ValueError`](std.ValueError) | The body is not valid JSON      |
   #
@@ -238,7 +243,27 @@ pub class Response
   pub def json self -> JsonDecodeValue
     ...
 
-  # Streams the body as raw byte chunks, so a large response need not be held
+  # Returns the body as a byte stream.
+  #
+  # The stream can be passed to any function that accepts an [`io.Io`](io.Io),
+  # such as [`compress.decompress`](compress.decompress). Closing the response
+  # closes it.
+  #
+  # A failure reading the body raises from the stream's methods as an I/O
+  # error, not an [`Error`](http.Error).
+  #
+  # ## Example
+  #
+  # ```
+  # get https://example.com/data.gz do |response|
+  #   compress.decompress $response.io() do |stream|
+  #     echo (stream.read_all_str())
+  # ```
+  pub def io self -> Io
+    ...
+
+  # Streams the body as byte chunks of at most 64 KiB each, as
+  # [`io().chunks()`](io.Io.chunks) does, so a large response need not be held
   # in memory whole.
   #
   # ## Example
@@ -255,6 +280,9 @@ pub class Response
 
   # Streams the body as lines, split on `\n` or `\r\n` with the line ending
   # stripped.
+  #
+  # The lines are read through an [`io.Buffered`](io.Buffered) over
+  # [`io()`](http.Response.io).
   #
   # ## Example
   #
@@ -274,7 +302,7 @@ pub class Response
   #
   # | Exception                             | Condition                            |
   # | ------------------------------------- | ------------------------------------ |
-  # | `RuntimeError`                        | The response is already closed       |
+  # | [`StateError`](std.StateError)        | The body was read or the response closed |
   # | [`Error`](http.Error)                 | The underlying body read fails       |
   # | [`ValueError`](std.ValueError) | The stream contains invalid UTF-8    |
   #
@@ -296,7 +324,8 @@ pub class Response
   pub def throw_for_status self
     ...
 
-  # Closes the response, releasing the connection.
+  # Closes the response, releasing the connection, and closes any stream
+  # [`io`](http.Response.io), `chunks` or `lines` returned.
   #
   # Closing an already-closed response does nothing.
   pub def close self
@@ -319,7 +348,7 @@ pub @let BodyOptions = $
   # Any of [`RequestOptions`](http.RequestOptions)
   ...RequestOptions
   # Request body -- see [`body`](http.Client.body)
-  ?body: (Str | Bin | Iterable[Value])
+  ?body: (Str | Bin | Io | Iterable[Value])
   # Request body, JSON-serialized -- see [`json`](http.Client.json)
   ?json: JsonEncodeValue
   # Request body streamed with a newline after each element -- see
@@ -343,8 +372,16 @@ pub @let BodyOptions = $
 # Sends the request body as given. Mutually exclusive with `json`, `lines` and
 # `multipart`.
 #
-# A [`Str`](std.Str) or [`Bin`](std.Bin) is sent as-is. An iterable
-# is streamed, its values written back to back with nothing between them.
+# A [`Str`](std.Str) or [`Bin`](std.Bin) is sent as-is. An
+# [`io.Io`](io.Io), such as an open file, streams its bytes and stays open. A
+# stream that is also iterable, such as an [`io.Buffered`](io.Buffered), sends
+# its bytes, not its lines. Any other iterable is streamed, its values written
+# back to back with nothing between them, as [`io.Concat`](io.Concat) reads
+# them.
+#
+# An exception from the stream or iterable fails the request, as it fails any
+# function that accepts an [`io.Io`](io.Io). A stream that does not read raises
+# [`ValueError`](std.ValueError).
 #
 # ```
 # client.post https://api.example.com/data
@@ -354,6 +391,9 @@ pub @let BodyOptions = $
 # client.post https://api.example.com/stream
 #   body: ["chunk1", "chunk2", "chunk3"]
 #   headers: {"content-type": "application/octet-stream"}
+#
+# open report.bin do |file|
+#   client.put https://api.example.com/upload body: $file
 # ```
 #
 # ### `json` {: #http.Client.json }
@@ -389,16 +429,13 @@ pub @let BodyOptions = $
 # with its `json` feature -- `json`. `filename` and `content_type` are
 # optional; a `json` part's `content_type` defaults to `application/json`.
 #
-# A part `body` accepts a [`Str`](std.Str), a [`Bin`](std.Bin), or
-# an iterable to stream, such as a file opened with `buffer: false`. That
-# matters: a buffered file iterates over text lines, while an unbuffered one
-# yields the raw chunks an upload wants.
+# A part `body` accepts what [`body`](#http.Client.body) does.
 #
 # The `content-type` header, boundary included, is set automatically. Do not
 # set it yourself on a multipart request.
 #
 # ```
-# open report.bin buffer: false do |file|
+# open report.bin do |file|
 #   client.post https://api.example.com/upload
 #     multipart:
 #       - name: file

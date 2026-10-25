@@ -14,6 +14,9 @@
 # but not iterable: iterate [`chunks`](io.Io.chunks), or iterate a subclass
 # that supports it.
 #
+# A function may return an `Io` over a native stream, such as a response body.
+# Its `close` closes that stream.
+#
 # A function that accepts an `Io`, such as [`zip.open`](zip.open), uses the
 # stream without closing it. Afterward its position reflects what the function
 # read or wrote, though a reader may have read ahead past what it used. Only
@@ -339,4 +342,64 @@ pub class Buffered: Iter[Str] Io
     # Byte offset relative to the end of the stream.
     :end @ Int = nil
   do -> Int
+    ...
+
+# Reads the items of an iterable as one byte stream.
+#
+# A [`Str`](std.Str) or [`Bin`](std.Bin) item contributes its own bytes, and
+# anything else is converted to a string first, as
+# [`Io.(put)`](io.Io.(put)) writes it. `end` follows every item.
+#
+# Items are taken from the iterable only as reads need them, and bytes a read
+# leaves are kept for the next. A `Concat` reads, but does not write or seek. A
+# function that accepts an `Io`, such as
+# [`compress.decompress`](compress.decompress), can read it.
+#
+# ## Errors
+#
+# | Exception | Condition |
+# | --- | --- |
+# | [`StateError`](std.StateError) | The stream is closed |
+# | [`TypeError`](std.TypeError) | `end` is not a `Str` or `Bin` |
+#
+# An exception from the iterable is raised by the read that needed the item.
+#
+# ## Example
+#
+# ```
+# compress.compress lines.gz :GZIP: do |stream|
+#   (Concat $lines end: "\n").copy_to $stream
+# ```
+pub class Concat: Io
+  # Reads `items` in order.
+  pub def (init)
+    self
+    # Items to read.
+    items @ Iterable[Value]
+    # Bytes to follow every item.
+    :end @ (Str | Bin) = ""
+  do
+    ...
+
+  # Whether the stream reads, which it does until it is closed.
+  #[getter]
+  pub def readable self -> Bool
+    ...
+
+  # Reads bytes.
+  #
+  # ## Returns
+  #
+  # At most `size` bytes, fewer only at the end of the items. An empty result
+  # means the end of the stream.
+  pub def read
+    self
+    # Number of bytes to read.
+    size @ Int
+  do -> Bin
+    ...
+
+  # Closes the stream, dropping the iterable. Closing a closed stream does
+  # nothing.
+  pub def close self
     ...

@@ -223,6 +223,29 @@ def file_backed_part_round_trips()
         assert_eq (str parts[0]["body"]) "file-backed upload"
 
 #[test]
+def buffered_file_part_sends_bytes()
+  http.mock.Server do |server|
+    server.mock
+      - method: POST
+        path: /multipart-file
+        respond:
+          status: 201
+      do |handle|
+        with_temp_dir do |dir|
+          let path = (dir / "lines.txt")
+          open $path w do |file|
+            file.write "one\ntwo\n"
+
+          open $path do |file|
+            http.post (server.url / "/multipart-file")
+              multipart:
+                - name: file
+                  body: $file
+
+        let parts = (parts_of handle)
+        assert_eq (str parts[0]["body"]) "one\ntwo\n"
+
+#[test]
 def body_and_multipart_are_mutually_exclusive()
   http.mock.Server do |server|
     server.mock

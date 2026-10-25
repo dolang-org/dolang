@@ -918,7 +918,6 @@ dependencies = [
 name = "dolang-ext-http"
 version = "0.1.1"
 dependencies = [
- "bstr",
  "bytes",
  "dolang",
  "dolang-ext-json",
@@ -928,7 +927,6 @@ dependencies = [
  "futures",
  "httpdate",
  "reqwest",
- "tokio",
  "url",
 ]
 

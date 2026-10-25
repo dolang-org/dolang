@@ -32,9 +32,10 @@ use futures::io::{AsyncRead, AsyncSeek, AsyncWrite};
 
 use crate::{
     error::{Error, ErrorKind},
-    object::interface::InterfaceTag,
+    object::{interface::InterfaceTag, native::Mut},
+    stdlib::io::{Concat, ConcatType},
     strand::Strand,
-    value::Value,
+    value::{Output, Value},
 };
 
 bitflags::bitflags! {
@@ -117,6 +118,30 @@ pub fn get<'v, 's>(
         let caps = io.caps(strand)?;
         accept(strand, caps)?;
         io.get(strand)
+    })
+}
+
+/// Gets a read handle over the concatenated bytes of `iterable`'s items, each followed by
+/// `end`, as `io.Concat` reads them.
+///
+/// The handle pulls items as it reads, on strands owned by the handle, which keep the
+/// iterable alive until the handle is dropped. An exception from the iterable reaches the
+/// reader as an [`io::Error`] made by [`from_do`].
+pub fn concat<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    iterable: &Value<'v>,
+    end: &[u8],
+) -> crate::error::Result<'v, 's, ByteHandle> {
+    let ty = *strand.state::<ConcatType>();
+    strand.with_slots_sync(|strand, [mut concat]| {
+        ty.create(strand, Concat::new(end.to_vec()), &mut concat);
+        ty.cast(&concat)
+            .unwrap()
+            .enter_sync(strand, |strand, inst| {
+                let mut borrow = inst.borrow_mut_unwrap();
+                Output::set(strand, Mut::slot_mut::<0>(&mut borrow), iterable);
+            });
+        get(strand, &concat, |_, _| Ok(()))
     })
 }
 
@@ -287,6 +312,9 @@ impl Io {
 ///
 /// The `into_*` conversions narrow it to the traits a consumer needs. A mismatch hands the
 /// handle back.
+///
+/// As an [`Input`](crate::value::Input), a handle becomes a Do `io.Io` that owns it: its
+/// methods read, write and seek the handle, and its `close` closes it.
 pub struct ByteHandle {
     pub(crate) io: Io,
     pub(crate) prefix: Vec<u8>,
@@ -533,14 +561,14 @@ impl fmt::Debug for ByteHandle {
 }
 
 /// Serves an unread prefix before `inner`.
-struct Prefixed<B> {
+pub(crate) struct Prefixed<B> {
     prefix: Vec<u8>,
     pos: usize,
     inner: B,
 }
 
 impl<B> Prefixed<B> {
-    fn new(inner: B, prefix: Vec<u8>) -> Self {
+    pub(crate) fn new(inner: B, prefix: Vec<u8>) -> Self {
         Self {
             prefix,
             pos: 0,
@@ -623,6 +651,30 @@ impl AsyncWrite for Prefixed<Box<dyn ReadWrite>> {
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         Pin::new(&mut self.get_mut().inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_close(cx)
+    }
+}
+
+/// Realigns a seekable handle before writing, so writes land at the logical position. On
+/// one that cannot seek, the prefix belongs to the read side and writes pass through.
+impl AsyncWrite for Prefixed<Io> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        if this.inner.caps().contains(IoCaps::SEEK) {
+            ready!(this.poll_realign(cx))?;
+        }
+        Pin::new(&mut this.inner).poll_write(cx, buf)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
