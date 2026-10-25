@@ -37,7 +37,7 @@ use crate::{
 use dolang::runtime::value::View;
 use dolang_vfs::{
     Vfs as VfsVfs,
-    process::{StdioRecv, StdioSend},
+    process::{PipeRecv, PipeSend},
 };
 use std::collections::HashMap;
 
@@ -385,9 +385,9 @@ async fn negotiate_stream_pipes<'v, 's>(
     's,
     (
         pipe_channel::RecvGuard,
-        StdioRecv,
+        PipeRecv,
         pipe_channel::SendGuard,
-        StdioSend,
+        PipeSend,
     ),
 > {
     let recv_guard = pipe_channel::negotiate_recv(input, strand)

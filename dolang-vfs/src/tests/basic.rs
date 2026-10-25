@@ -349,10 +349,7 @@ async fn fd_passing() {
         .await
         .unwrap();
     let mut command = client.command(typed_str("echo"));
-    command
-        .arg("hello_world")
-        .stdout(crate::tests::support::stdio_send(output).await)
-        .unwrap();
+    command.arg("hello_world").stdout(output).unwrap();
     let mut child = command.spawn().await.unwrap();
     let status = child.wait().await.unwrap();
 
@@ -366,6 +363,40 @@ async fn fd_passing() {
 
     server_task.abort();
     let _ = server_task.await;
+}
+
+/// A host file passed natively follows the child, read back on this side.
+#[tokio::test]
+async fn a_passed_file_follows_the_child() {
+    use tokio::io::{AsyncSeekExt as _, AsyncWriteExt as _};
+
+    let dir = tempdir().unwrap();
+    let socket_path = dir.path().join("test.sock");
+    let server_task = start_server(&socket_path).await;
+    let file = dir.path().join("passed-file");
+
+    let client = connect_client(&socket_path).await;
+    let mut output = client
+        .open_options()
+        .write(true)
+        .create(true)
+        .open(typed(&file))
+        .await
+        .unwrap();
+    output.write_all(b"a\n").await.unwrap();
+    output.flush().await.unwrap();
+    let mut command = client.command(typed_str("sh"));
+    command.arg("-c").arg("printf 'b\\n'");
+    command.stdout(output.clone()).unwrap();
+    let mut child = command.spawn().await.unwrap();
+    assert!(child.wait().await.unwrap().success());
+
+    assert_eq!(output.stream_position().await.unwrap(), 4);
+    output.write_all(b"c\n").await.unwrap();
+    output.close().await.unwrap();
+    assert_eq!(std::fs::read(&file).unwrap(), b"a\nb\nc\n");
+
+    stop_server(client, server_task).await;
 }
 
 #[tokio::test]

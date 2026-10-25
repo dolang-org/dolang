@@ -14,10 +14,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     client, direct,
-    error::{Error, ErrorKind, HandoffError, Result},
+    error::{Error, ErrorKind, Result},
     metadata::{FsMetadata, Metadata},
     path,
-    process::{StdioRecv, StdioSend},
     security::{Acl, AclKind},
 };
 
@@ -389,80 +388,7 @@ macro_rules! match_file {
     }};
 }
 
-/// Puts a handle recovered from a failed handoff back in the wrapper it was
-/// dispatched out of.
-pub(crate) fn rewrap<I, O>(error: HandoffError<I>, wrap: impl FnOnce(I) -> O) -> HandoffError<O> {
-    let (handle, error) = error.into_parts();
-    HandoffError::new(wrap(handle), error)
-}
-
 impl File {
-    /// Consumes this handle, converting it into a standard-output or
-    /// standard-error endpoint positioned at `offset`.
-    ///
-    /// The endpoint carries a position of its own and the cursor is kept on
-    /// this side rather than in the kernel, so the position has to be stated
-    /// explicitly: this handle's own is only the right answer when the caller
-    /// is the one holding it, which is not the case for anything relaying on
-    /// someone else's behalf.
-    ///
-    /// The file is taken from every clone, which then reads as closed, because
-    /// a live handle onto the description would believe a cursor the child
-    /// moves. Callers that want to keep reading or writing should open the
-    /// file again instead.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HandoffError`], which carries the handle back. Nothing has
-    /// been surrendered when it does — most importantly on the busy path,
-    /// where operations are still in flight against the descriptor and the
-    /// caller may simply retry once they finish.
-    pub async fn into_stdio_send(
-        self,
-        offset: u64,
-    ) -> std::result::Result<StdioSend, HandoffError<Self>> {
-        if let Err(error) = self.check_idle() {
-            return Err(HandoffError::new(self, error));
-        }
-        let File { inner, cursor } = self;
-        match inner {
-            FileInner::Client(file) => file.into_stdio_send(offset).await.map_err(|error| {
-                rewrap(error, |file| {
-                    Self::with_cursor(FileInner::Client(file), cursor)
-                })
-            }),
-            FileInner::Direct(file) => file.into_stdio_send(offset).await.map_err(|error| {
-                rewrap(error, |file| {
-                    Self::with_cursor(FileInner::Direct(file), cursor)
-                })
-            }),
-        }
-    }
-
-    /// Consumes this handle, converting it into a standard-input endpoint
-    /// positioned at `offset`. See [`into_stdio_send`](Self::into_stdio_send).
-    pub async fn into_stdio_recv(
-        self,
-        offset: u64,
-    ) -> std::result::Result<StdioRecv, HandoffError<Self>> {
-        if let Err(error) = self.check_idle() {
-            return Err(HandoffError::new(self, error));
-        }
-        let File { inner, cursor } = self;
-        match inner {
-            FileInner::Client(file) => file.into_stdio_recv(offset).await.map_err(|error| {
-                rewrap(error, |file| {
-                    Self::with_cursor(FileInner::Client(file), cursor)
-                })
-            }),
-            FileInner::Direct(file) => file.into_stdio_recv(offset).await.map_err(|error| {
-                rewrap(error, |file| {
-                    Self::with_cursor(FileInner::Direct(file), cursor)
-                })
-            }),
-        }
-    }
-
     /// Closes the file, for every clone. Closing a closed file does nothing.
     pub async fn close(mut self) -> Result<()> {
         self.cancel_cursor().await;

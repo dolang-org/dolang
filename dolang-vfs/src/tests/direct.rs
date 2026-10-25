@@ -311,15 +311,31 @@ async fn byte_range_locks_contend_and_release() {
     );
 }
 
-// Whole-file locks work everywhere on Unix, FreeBSD's `flock` included, and the
-// child inherits this very descriptor there, so it would share the lock on
-// every one of these platforms if the handoff did not lift it first.
+/// Runs `script` under `sh` with the given standard streams, waiting for it to
+/// exit successfully.
+#[cfg(unix)]
+async fn run_sh(direct: &Vfs, script: &str, stdin: Option<File>, stdout: Option<File>) {
+    let mut command = direct.command(crate::path::Path::unix("sh"));
+    command.arg("-c").arg(script);
+    if let Some(stdin) = stdin {
+        command.stdin(stdin).unwrap();
+    }
+    if let Some(stdout) = stdout {
+        command.stdout(stdout).unwrap();
+    }
+    let mut child = command.spawn().await.unwrap();
+    assert!(child.wait().await.unwrap().success());
+}
+
+// The child shares the open file, and with it the lock on every Unix platform,
+// FreeBSD's whole-file `flock` included. The file stays open here, so the lock
+// stays the script's.
 #[cfg(unix)]
 #[tokio::test]
-async fn handing_a_file_to_a_child_releases_its_locks() {
+async fn locks_stay_held_across_a_child() {
     let direct = Vfs::direct().unwrap();
     let dir = tempdir().unwrap();
-    let path = dir.path().join("closed-locks");
+    let path = dir.path().join("child-locks");
     let first = open_lock_file(&direct, &path).await;
     let second = open_lock_file(&direct, &path).await;
 
@@ -333,10 +349,7 @@ async fn handing_a_file_to_a_child_releases_its_locks() {
         .await
         .unwrap()
         .unwrap();
-    // The description outlives this handle in the child, so closing our end
-    // would not lift the lock; the handoff has to unlock in band, exactly as
-    // `close` does.
-    let handed_over = first.into_stdio_send(0).await.unwrap();
+    run_sh(&direct, "true", None, Some(first.clone())).await;
 
     assert!(
         second
@@ -348,12 +361,10 @@ async fn handing_a_file_to_a_child_releases_its_locks() {
             ))
             .await
             .unwrap()
-            .is_some()
+            .is_none()
     );
-    // Already released above; releasing again must be a no-op rather than an
-    // error, since the script never asked for the lock to come off.
     held.release().await.unwrap();
-    drop(handed_over);
+    first.close().await.unwrap();
 }
 
 #[cfg(target_os = "freebsd")]
@@ -826,10 +837,10 @@ async fn direct_write_at_from_borrows_its_source() {
     appender.close().await.unwrap();
 }
 
-/// A handoff the handle is too busy for must hand the handle back intact, so a
-/// caller can retry once the outstanding work finishes.
+/// Operations in flight on the file don't keep a child from taking it.
+#[cfg(unix)]
 #[tokio::test]
-async fn a_busy_handoff_returns_the_handle() {
+async fn a_child_takes_a_busy_file() {
     let direct = Vfs::direct().unwrap();
     let dir = tempdir().unwrap();
     let path = dir.path().join("busy.bin");
@@ -839,20 +850,14 @@ async fn a_busy_handoff_returns_the_handle() {
     let file = options.read(true).open(typed(&path)).await.unwrap();
 
     // A positional operation takes its own reference to the descriptor when it
-    // is created, so holding the future without polling it is enough to make
-    // the handle non-exclusive.
+    // is created, so holding the future without polling it is enough to keep
+    // the descriptor shared.
     let mut buf = bytes::BytesMut::with_capacity(8);
     let pending = file.read_at(&mut buf, 0);
 
-    let failed = file.into_stdio_send(0).await.unwrap_err();
-    assert_eq!(failed.error().kind(), crate::error::ErrorKind::ResourceBusy);
-    let file = failed.into_handle();
-
-    // Nothing was surrendered, so the handle still works and the retry lands
-    // once the outstanding operation is gone.
+    run_sh(&direct, "cat > /dev/null", Some(file.clone()), None).await;
     assert_eq!(pending.await.unwrap(), 6);
     assert_eq!(&buf[..], b"abcdef");
-    drop(file.into_stdio_send(0).await.unwrap());
 }
 
 #[tokio::test]
@@ -995,22 +1000,87 @@ async fn clones_share_locks_and_any_close_releases_them() {
     }
 }
 
+/// Output continues after what the child wrote, through every clone.
+#[cfg(unix)]
 #[tokio::test]
-async fn a_handoff_closes_every_clone() {
+async fn a_child_moves_the_output_cursor() {
+    use tokio::io::{AsyncSeekExt as _, AsyncWriteExt as _};
+
     let direct = Vfs::direct().unwrap();
     let dir = tempdir().unwrap();
-    let path = dir.path().join("clone-handoff.bin");
-    std::fs::write(&path, b"abcdef").unwrap();
+    let path = dir.path().join("child-output.txt");
 
     let mut options = direct.open_options();
-    let file = options.read(true).open(typed(&path)).await.unwrap();
-    let clone = file.clone();
+    let mut file = options
+        .write(true)
+        .create(true)
+        .open(typed(&path))
+        .await
+        .unwrap();
+    let mut clone = file.clone();
+    file.write_all(b"a\n").await.unwrap();
+    file.flush().await.unwrap();
 
-    drop(file.into_stdio_send(0).await.unwrap());
-    assert_eq!(
-        clone.metadata().await.unwrap_err().kind(),
-        ErrorKind::Closed
-    );
+    run_sh(&direct, "printf 'b\\n'", None, Some(file.clone())).await;
+
+    assert_eq!(clone.stream_position().await.unwrap(), 4);
+    clone.write_all(b"c\n").await.unwrap();
+    clone.flush().await.unwrap();
+    file.close().await.unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"a\nb\nc\n");
+}
+
+/// Input picks up after what the child consumed.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_child_moves_the_input_cursor() {
+    use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
+
+    let direct = Vfs::direct().unwrap();
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("child-input.txt");
+    std::fs::write(&path, b"123456").unwrap();
+
+    let mut options = direct.open_options();
+    let mut file = options.read(true).open(typed(&path)).await.unwrap();
+    let mut buf = [0; 2];
+    file.read_exact(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"12");
+
+    // `dd` reads exactly what it is asked for, so the position it leaves is
+    // known.
+    run_sh(
+        &direct,
+        "dd bs=1 count=2 of=/dev/null 2>/dev/null",
+        Some(file.clone()),
+        None,
+    )
+    .await;
+
+    assert_eq!(file.stream_position().await.unwrap(), 4);
+    let mut rest = Vec::new();
+    file.read_to_end(&mut rest).await.unwrap();
+    assert_eq!(rest, b"56");
+}
+
+/// An append-mode child writes at the end, and the file has no position to
+/// follow.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_child_appends_to_an_append_mode_file() {
+    use tokio::io::AsyncWriteExt as _;
+
+    let direct = Vfs::direct().unwrap();
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("child-append.txt");
+    std::fs::write(&path, b"a\n").unwrap();
+
+    let mut options = direct.open_options();
+    let mut file = options.append(true).open(typed(&path)).await.unwrap();
+    run_sh(&direct, "printf 'b\\n'", None, Some(file.clone())).await;
+    file.write_all(b"c\n").await.unwrap();
+    file.close().await.unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"a\nb\nc\n");
 }
 
 /// The point of the positional API: many operations in flight on one handle,

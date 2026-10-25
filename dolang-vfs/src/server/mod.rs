@@ -6,6 +6,8 @@ use std::sync::{
 #[cfg(unix)]
 use std::{path::Path, time::Duration};
 
+use std::process::Stdio;
+
 use bytes::{Buf, BytesMut};
 #[cfg(unix)]
 use dolang_rpc::auth::AuthKey;
@@ -34,17 +36,18 @@ use tokio::{
 use crate::{
     MAX_FILE_READ, STREAM_CHUNK_SIZE, SessionMode, Vfs,
     directory::ReadDir,
-    error::{Error, ErrorKind, HandoffError, Result},
+    error::{Error, ErrorKind, Result},
     extension::{self, ExtContext},
     file::XattrEntry,
     file::{AccessFlags, CopyDest, CopyMode, File, FileLock, FileLockRequest, StreamEntry},
     metadata::{FsMetadata, Metadata},
     path,
     process::{
-        Child, Command, Process, ProcessInfo, Processes, Signal, StartTime, StdioRecv, StdioSend,
+        Child, Command, PipeRecv, PipeSend, Process, ProcessInfo, ProcessStatus, Processes, Signal,
+        StartTime,
     },
     protocol::{
-        AccessRequest, AclRequest, CanonicalizeRequest, CopyRequest, CreateDirRequest,
+        AccessRequest, AclRequest, CanonicalizeRequest, ChildExit, CopyRequest, CreateDirRequest,
         ExtensionRequest, ExtensionResponse, FsMetadataRequest, GlobRequest, HardLinkRequest,
         MetadataRequest, MoveRequest, OpenFlags, OpenHandle, OpenRequest, OpenVfsHandle,
         PipeResponse, ProcessPage, QueryResponse, ReadDirPage, ReadLinkRequest, RemoveDirRequest,
@@ -243,7 +246,7 @@ impl OpaqueResource for RetainedFile {
 }
 
 struct RetainedStdioSend {
-    stdio: Mutex<StdioSend>,
+    stdio: Mutex<PipeSend>,
 }
 
 impl OpaqueResource for RetainedStdioSend {
@@ -251,7 +254,7 @@ impl OpaqueResource for RetainedStdioSend {
 }
 
 struct RetainedStdioRecv {
-    stdio: Mutex<StdioRecv>,
+    stdio: Mutex<PipeRecv>,
     /// Returned to the drain when the endpoint dies, however it ends.
     _slot: DrainSlot,
 }
@@ -260,7 +263,21 @@ impl OpaqueResource for RetainedStdioRecv {
     type Marker = StdioRecvMarker;
 }
 
-struct RetainedChild(Mutex<Child>);
+struct RetainedChild {
+    child: Mutex<Child>,
+    /// The files the child was given, whose final positions go back to the
+    /// peer with its exit.
+    files: Vec<File>,
+}
+
+/// Reports a child's exit along with where it left `files`.
+fn child_exit(status: ProcessStatus, files: &[File]) -> ChildExit {
+    let positions = files
+        .iter()
+        .map(|file| file.inner.position().load(Ordering::Relaxed))
+        .collect();
+    ChildExit { status, positions }
+}
 
 impl OpaqueResource for RetainedChild {
     type Marker = ChildMarker;
@@ -854,14 +871,6 @@ impl Connection {
                 self.handle_file_lock(context, file, request).await
             }
             RequestKind::FileUnlock { lock } => self.handle_file_unlock(context, lock).await,
-            RequestKind::FileToStdioSend { file, offset } => Ok(ResponseKind::FileToStdioSend(
-                self.handle_file_to_stdio_send(context, file, offset)
-                    .await?,
-            )),
-            RequestKind::FileToStdioRecv { file, offset } => Ok(ResponseKind::FileToStdioRecv(
-                self.handle_file_to_stdio_recv(context, file, offset)
-                    .await?,
-            )),
             RequestKind::StdioSendClose { stdio } => {
                 self.close_stdio_send(context, stdio)?;
                 Ok(ResponseKind::StdioSendClose)
@@ -1087,29 +1096,31 @@ impl Connection {
         cmd.process_control(req.process_control);
         cmd.termination_policy(req.termination_policy);
 
-        self.configure_spawn_stdio(context, &mut cmd, req.stdin, req.stdout, req.stderr)
+        let files = self
+            .configure_spawn_stdio(context, &mut cmd, req.stdin, req.stdout, req.stderr)
             .await?;
 
         let child = cmd.spawn().await?;
-        Ok(ResponseKind::Spawn(
-            context.register(RetainedChild(Mutex::new(child))),
-        ))
+        Ok(ResponseKind::Spawn(context.register(RetainedChild {
+            child: Mutex::new(child),
+            files,
+        })))
     }
 
     fn spawn_stdio_recv(
         &self,
         context: &CallContext<VfsProtocol>,
         target: StdioRecvTarget,
-    ) -> Result<Option<StdioRecv>> {
+    ) -> Result<Option<SpawnStdio<PipeRecv>>> {
         match target {
             StdioRecvTarget::Null => Ok(None),
             StdioRecvTarget::Native(handle) => {
                 if self.mode == SessionMode::Remote {
                     return Err(Self::unsupported("native process stdio"));
                 }
-                Ok(Some(StdioRecv::from_file(tokio::fs::File::from_std(
-                    handle.into_inner().into(),
-                ))))
+                Ok(Some(SpawnStdio::Native(Stdio::from(std::fs::File::from(
+                    handle.into_inner(),
+                )))))
             }
             StdioRecvTarget::Opaque(stdio) => {
                 // Consuming the receiver releases its drain slot: once a child
@@ -1123,25 +1134,38 @@ impl Connection {
                         "opaque stdio receive is in use",
                     ));
                 };
-                Ok(Some(stdio.stdio.into_inner()))
+                Ok(Some(SpawnStdio::Pipe(stdio.stdio.into_inner())))
             }
+            StdioRecvTarget::File { file, pos } => self.spawn_stdio_file(context, file, pos),
         }
+    }
+
+    /// Positions a retained file at `pos`, the peer's cursor, for a child.
+    fn spawn_stdio_file<P>(
+        &self,
+        context: &CallContext<VfsProtocol>,
+        file: Cite<FileMarker>,
+        pos: u64,
+    ) -> Result<Option<SpawnStdio<P>>> {
+        let file = self.retained_file(context, file)?.0.clone();
+        file.inner.position().store(pos, Ordering::Relaxed);
+        Ok(Some(SpawnStdio::File(file)))
     }
 
     fn spawn_stdio_send(
         &self,
         context: &CallContext<VfsProtocol>,
         target: StdioSendTarget,
-    ) -> Result<Option<StdioSend>> {
+    ) -> Result<Option<SpawnStdio<PipeSend>>> {
         match target {
             StdioSendTarget::Null | StdioSendTarget::Stdout => Ok(None),
             StdioSendTarget::Native(handle) => {
                 if self.mode == SessionMode::Remote {
                     return Err(Self::unsupported("native process stdio"));
                 }
-                Ok(Some(StdioSend::from_file(tokio::fs::File::from_std(
-                    handle.into_inner().into(),
-                ))))
+                Ok(Some(SpawnStdio::Native(Stdio::from(std::fs::File::from(
+                    handle.into_inner(),
+                )))))
             }
             StdioSendTarget::Opaque(stdio) => {
                 let stdio = context
@@ -1153,11 +1177,14 @@ impl Connection {
                         "opaque stdio send is in use",
                     ));
                 };
-                Ok(Some(stdio.stdio.into_inner()))
+                Ok(Some(SpawnStdio::Pipe(stdio.stdio.into_inner())))
             }
+            StdioSendTarget::File { file, pos } => self.spawn_stdio_file(context, file, pos),
         }
     }
 
+    /// Configures the child's standard streams, returning the files among
+    /// them in stdin, stdout, stderr order.
     async fn configure_spawn_stdio(
         &self,
         context: &CallContext<VfsProtocol>,
@@ -1165,31 +1192,46 @@ impl Connection {
         stdin: StdioRecvTarget,
         stdout: StdioSendTarget,
         stderr: StdioSendTarget,
-    ) -> Result<()> {
+    ) -> Result<Vec<File>> {
         let stdin = self.spawn_stdio_recv(context, stdin);
         let stdout = self.spawn_stdio_send(context, stdout);
         let stderr_to_stdout = matches!(stderr, StdioSendTarget::Stdout);
         let stderr = self.spawn_stdio_send(context, stderr);
         let (stdin, stdout, stderr) = (stdin?, stdout?, stderr?);
 
-        if let Some(stdio) = stdin {
-            command.stdin(stdio)?;
-        } else {
-            command.stdin_null();
-        }
-        if let Some(stdio) = stdout {
-            command.stdout(stdio)?;
-        } else {
-            command.stdout_null();
-        }
+        let mut files = Vec::new();
+        match stdin {
+            Some(SpawnStdio::Pipe(pipe)) => command.stdin(pipe)?,
+            Some(SpawnStdio::Native(stdio)) => command.stdin_native(stdio)?,
+            Some(SpawnStdio::File(file)) => {
+                files.push(file.clone());
+                command.stdin(file)?
+            }
+            None => command.stdin_null(),
+        };
+        match stdout {
+            Some(SpawnStdio::Pipe(pipe)) => command.stdout(pipe)?,
+            Some(SpawnStdio::Native(stdio)) => command.stdout_native(stdio)?,
+            Some(SpawnStdio::File(file)) => {
+                files.push(file.clone());
+                command.stdout(file)?
+            }
+            None => command.stdout_null(),
+        };
         if stderr_to_stdout {
             command.stderr_to_stdout()?;
-        } else if let Some(stdio) = stderr {
-            command.stderr(stdio)?;
         } else {
-            command.stderr_null();
+            match stderr {
+                Some(SpawnStdio::Pipe(pipe)) => command.stderr(pipe)?,
+                Some(SpawnStdio::Native(stdio)) => command.stderr_native(stdio)?,
+                Some(SpawnStdio::File(file)) => {
+                    files.push(file.clone());
+                    command.stderr(file)?
+                }
+                None => command.stderr_null(),
+            };
         }
-        Ok(())
+        Ok(files)
     }
 
     fn take_child(
@@ -1208,8 +1250,8 @@ impl Connection {
         context: &mut CallContext<VfsProtocol>,
         child: Cite<ChildMarker>,
     ) -> Result<ResponseKind> {
-        let child = self.take_child(context, child)?;
-        let mut child = child.0.into_inner();
+        let RetainedChild { child, files } = self.take_child(context, child)?;
+        let mut child = child.into_inner();
         let status = match context.cancel_guard(async |_| child.wait().await).await {
             Ok(result) => result?,
             Err(_) => child
@@ -1217,7 +1259,7 @@ impl Connection {
                 .await?
                 .ok_or_else(|| Error::other("process was orphaned during cancelled wait"))?,
         };
-        Ok(ResponseKind::ChildWait(status))
+        Ok(ResponseKind::ChildWait(child_exit(status, &files)))
     }
 
     async fn handle_child_terminate(
@@ -1225,9 +1267,11 @@ impl Connection {
         context: &CallContext<VfsProtocol>,
         child: Cite<ChildMarker>,
     ) -> Result<ResponseKind> {
-        let child = self.take_child(context, child)?;
-        let status = child.0.into_inner().terminate().await?;
-        Ok(ResponseKind::ChildTerminate(status))
+        let RetainedChild { child, files } = self.take_child(context, child)?;
+        let status = child.into_inner().terminate().await?;
+        Ok(ResponseKind::ChildTerminate(
+            status.map(|status| child_exit(status, &files)),
+        ))
     }
 
     fn handle_child_close(
@@ -1631,57 +1675,6 @@ impl Connection {
     ) -> Result<()> {
         let file = self.retained_file(context, file)?;
         file.0.sync(data).await
-    }
-
-    async fn handle_file_to_stdio_send(
-        &self,
-        context: &CallContext<VfsProtocol>,
-        file: Cite<FileMarker>,
-        offset: u64,
-    ) -> Result<Gift<StdioSendMarker>> {
-        // Check before taking the file so stopping leaves the peer's handle alone.
-        self.reserve_stdio(false)?;
-        // The handoff takes the file from every clone, so it is refused while
-        // operations are still in flight, and the registration stays for the
-        // peer to retry.
-        let retained = self.retained_file(context, file.clone())?.0.clone();
-        // The peer's cursor is the one that matters, and the descriptor the
-        // child inherits carries a position of its own, so plant it explicitly
-        // rather than letting this side's idea of the position decide.
-        let stdio = retained
-            .into_stdio_send(offset)
-            .await
-            .map_err(handoff_error)?;
-        let _ = context.unregister::<RetainedFile>(file);
-        Ok(context.register(RetainedStdioSend {
-            stdio: Mutex::new(stdio),
-        }))
-    }
-
-    async fn handle_file_to_stdio_recv(
-        &self,
-        context: &CallContext<VfsProtocol>,
-        file: Cite<FileMarker>,
-        offset: u64,
-    ) -> Result<Gift<StdioRecvMarker>> {
-        self.reserve_stdio(true)?;
-        let slot = DrainSlot(self.drain.clone());
-        // The handoff takes the file from every clone, so it is refused while
-        // operations are still in flight, and the registration stays for the
-        // peer to retry.
-        let retained = self.retained_file(context, file.clone())?.0.clone();
-        // The peer's cursor is the one that matters, and the descriptor the
-        // child inherits carries a position of its own, so plant it explicitly
-        // rather than letting this side's idea of the position decide.
-        let stdio = retained
-            .into_stdio_recv(offset)
-            .await
-            .map_err(handoff_error)?;
-        let _ = context.unregister::<RetainedFile>(file);
-        Ok(context.register(RetainedStdioRecv {
-            stdio: Mutex::new(stdio),
-            _slot: slot,
-        }))
     }
 
     async fn handle_file_metadata(
@@ -2347,16 +2340,14 @@ impl Connection {
     }
 }
 
-/// Reports a handoff that did not happen.
-///
-/// The handle it carries back is dropped here rather than restored: the
-/// registration was already retired to take it, and a fresh one would answer to
-/// an id the peer does not hold. The peer's handle is dead either way, so the
-/// file is closed instead of leaked. The one failure this side *can* recover
-/// from — a busy file — is caught before the file is taken at all, in
-/// [`take_file`](Session::take_file).
-fn handoff_error<H>(error: HandoffError<H>) -> Error {
-    Into::into(error.into_error())
+/// A child's standard stream as the peer named it.
+enum SpawnStdio<P> {
+    /// A pipe end the peer retained here.
+    Pipe(P),
+    /// A native handle the peer passed along, used as is.
+    Native(Stdio),
+    /// A file the peer retained here.
+    File(File),
 }
 
 #[cfg(test)]

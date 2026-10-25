@@ -5,7 +5,10 @@ use std::{
     io::{self, IsTerminal},
     mem,
     pin::Pin,
-    sync::{Arc, Mutex, atomic::AtomicU64},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     task::{Context, Poll, ready},
 };
 
@@ -43,19 +46,22 @@ use tokio::{
 use crate::{
     MAX_FILE_READ, STREAM_CHUNK_SIZE, SessionMode, Vfs, client, direct,
     directory::{self, DirEntry},
-    error::{Error, ErrorKind, HandoffError, Result},
+    error::{Error, ErrorKind, Result},
     extension::ExtensionSet,
     extension::VfsExtension,
-    file::{self, AccessFlags, CopyDest, CopyMode, File as VfsFile, FileLockRequest, StreamEntry},
+    file::{
+        self, AccessFlags, CopyDest, CopyMode, File as VfsFile, FileInner, FileLockRequest,
+        StreamEntry,
+    },
     file::{XattrEntry, XattrNamespace},
     metadata::{FsMetadata, Metadata, MetadataPatch},
     path::{self, WellKnownPath},
     process::{
-        self, ProcessControl, ProcessExit, ProcessInfo, ProcessStatus, StartTime, StdioRecv,
-        StdioRecvInner, StdioSend, StdioSendInner, TerminationPolicy,
+        self, ChildIn, ChildOut, PipeRecv, PipeRecvInner, PipeSend, PipeSendInner, ProcessControl,
+        ProcessExit, ProcessInfo, ProcessStatus, StartTime, TerminationPolicy,
     },
     protocol::{
-        AccessRequest, AclRequest, CanonicalizeRequest, CopyRequest, CreateDirRequest,
+        AccessRequest, AclRequest, CanonicalizeRequest, ChildExit, CopyRequest, CreateDirRequest,
         ExtensionRequest, ExtensionResponse, FsMetadataRequest, GlobRequest, HardLinkRequest,
         MetadataRequest, MoveRequest, OpenFlags, OpenHandle, OpenRequest, OpenVfsHandle,
         ProcessPage, QueryResponse, ReadLinkRequest, RemoveDirRequest, RemoveRequest,
@@ -104,8 +110,8 @@ pub struct File {
 }
 
 struct FileShared {
-    /// The reference, until the file is closed or handed off. Requests cite it
-    /// under the lock and need it no longer.
+    /// The reference, until the file is closed. Requests cite it under the
+    /// lock and need it no longer.
     file: Mutex<Option<Gift<FileMarker>>>,
     pos: AtomicU64,
 }
@@ -597,6 +603,11 @@ impl File {
         &self.shared.pos
     }
 
+    /// The client the file was opened through.
+    pub(crate) fn client(&self) -> &Client {
+        &self.client
+    }
+
     /// Starts a cursor read of up to `len` bytes at `offset`.
     pub(crate) fn start_read(&self, offset: u64, len: usize) -> Result<ReadOp> {
         // A short read is always legal for `AsyncRead`, so a request for more
@@ -647,57 +658,6 @@ impl File {
             .as_ref()
             .map(Gift::cite)
             .ok_or_else(|| Error::new(ErrorKind::Closed, "file is closed"))
-    }
-
-    /// Asks the peer to convert this file into a standard-output endpoint at
-    /// `offset`, consuming it on that side.
-    ///
-    /// Takes `&self` rather than consuming, so that the caller keeps the handle
-    /// to hand back when this fails. The peer only retires its registration on
-    /// success; a failure — a busy file above all — leaves it registered and
-    /// this handle usable.
-    async fn stdio_send(&self, offset: u64) -> Result<StdioSend> {
-        match self
-            .client
-            .request(RequestKind::FileToStdioSend {
-                file: self.cite()?,
-                offset,
-            })
-            .await?
-        {
-            ResponseKind::FileToStdioSend(stdio) => Ok({
-                StdioSend::remote(RemoteStdioSend {
-                    client: self.client.clone(),
-                    stdio: Some(stdio),
-                    pending: None,
-                    write_body: None,
-                })
-            }),
-            response => Err(unexpected(response).into()),
-        }
-    }
-
-    /// Asks the peer to convert this file into a standard-input endpoint at
-    /// `offset`. See [`stdio_send`](Self::stdio_send).
-    async fn stdio_recv(&self, offset: u64) -> Result<StdioRecv> {
-        match self
-            .client
-            .request(RequestKind::FileToStdioRecv {
-                file: self.cite()?,
-                offset,
-            })
-            .await?
-        {
-            ResponseKind::FileToStdioRecv(stdio) => Ok({
-                StdioRecv::remote(RemoteStdioRecv {
-                    client: self.client.clone(),
-                    stdio: Some(stdio),
-                    pending: None,
-                    read_body: None,
-                })
-            }),
-            response => Err(unexpected(response).into()),
-        }
     }
 
     /// Reads at `offset` over the wire, appending into `buf`'s spare capacity.
@@ -904,39 +864,6 @@ impl File {
 }
 
 impl File {
-    pub(crate) async fn into_stdio_send(
-        self,
-        offset: u64,
-    ) -> std::result::Result<StdioSend, HandoffError<Self>> {
-        match self.stdio_send(offset).await {
-            Ok(stdio) => {
-                self.retire();
-                Ok(stdio)
-            }
-            Err(error) => Err(HandoffError::new(self, error)),
-        }
-    }
-
-    pub(crate) async fn into_stdio_recv(
-        self,
-        offset: u64,
-    ) -> std::result::Result<StdioRecv, HandoffError<Self>> {
-        match self.stdio_recv(offset).await {
-            Ok(stdio) => {
-                self.retire();
-                Ok(stdio)
-            }
-            Err(error) => Err(HandoffError::new(self, error)),
-        }
-    }
-
-    /// Forgets the reference after the peer consumed the file, closing every
-    /// clone. Dropping it names an id the peer has already retired, which it
-    /// ignores.
-    fn retire(&self) {
-        self.shared.file.lock().unwrap().take();
-    }
-
     /// Closes the file for every clone. Closing it again does nothing.
     pub(crate) async fn close(self) -> Result<()> {
         let Some(file) = self.shared.file.lock().unwrap().take() else {
@@ -1659,6 +1586,34 @@ pub struct Child {
     client: Client,
     state: ClientChildState,
     relays: ClientRelays,
+    files: ChildFiles,
+}
+
+/// The files a child was given, whose cursors follow it once it exits.
+#[derive(Default)]
+struct ChildFiles {
+    /// Files retained by the server, in the order of their positions in a
+    /// [`ChildExit`].
+    remote: Vec<File>,
+    /// Host files handed over natively, read back here.
+    native: Vec<direct::ChildFile>,
+}
+
+impl ChildFiles {
+    fn sync(&mut self, exit: &ChildExit) {
+        for (file, pos) in self.remote.drain(..).zip(&exit.positions) {
+            file.shared.pos.store(*pos, Ordering::Relaxed);
+        }
+        for file in self.native.drain(..) {
+            file.sync();
+        }
+    }
+}
+
+/// A file named as a child's standard stream, as the server will see it.
+enum FileTarget {
+    Retained { file: Cite<FileMarker>, pos: u64 },
+    Native(OsHandle),
 }
 
 #[derive(Default)]
@@ -1675,8 +1630,8 @@ enum HostOutput {
 
 #[derive(Default)]
 struct PreparedRelays {
-    stdin: Option<StdioSend>,
-    outputs: Vec<(StdioRecv, HostOutput)>,
+    stdin: Option<PipeSend>,
+    outputs: Vec<(PipeRecv, HostOutput)>,
 }
 
 enum ClientChildState {
@@ -1702,7 +1657,7 @@ struct PendingTrailerRead {
 ///
 /// This implements [`AsyncWrite`]. Shutting it down
 /// closes the corresponding remote endpoint.
-pub struct RemoteStdioSend {
+pub struct RemotePipeSend {
     client: Client,
     stdio: Option<Gift<StdioSendMarker>>,
     pending: Option<(StdioSendOperation, Call<VfsProtocol>)>,
@@ -1712,7 +1667,7 @@ pub struct RemoteStdioSend {
 /// A readable standard-stream endpoint owned by a remote VFS session.
 ///
 /// This implements [`AsyncRead`].
-pub struct RemoteStdioRecv {
+pub struct RemotePipeRecv {
     client: Client,
     stdio: Option<Gift<StdioRecvMarker>>,
     pending: Option<Call<VfsProtocol>>,
@@ -1724,18 +1679,18 @@ enum StdioSendOperation {
     Close,
 }
 
-impl fmt::Debug for RemoteStdioSend {
+impl fmt::Debug for RemotePipeSend {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RemoteStdioSend")
+        f.debug_struct("RemotePipeSend")
             .field("stdio", &self.stdio)
             .field("pending", &self.pending.as_ref().map(|p| p.0))
             .finish_non_exhaustive()
     }
 }
 
-impl fmt::Debug for RemoteStdioRecv {
+impl fmt::Debug for RemotePipeRecv {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RemoteStdioRecv")
+        f.debug_struct("RemotePipeRecv")
             .field("stdio", &self.stdio)
             .field("pending", &self.pending.is_some())
             .finish_non_exhaustive()
@@ -1753,7 +1708,7 @@ fn stdio_send_rpc_error(error: dolang_rpc::Error) -> io::Error {
     }
 }
 
-impl AsyncWrite for RemoteStdioSend {
+impl AsyncWrite for RemotePipeSend {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -1899,7 +1854,7 @@ impl AsyncWrite for RemoteStdioSend {
     }
 }
 
-impl AsyncRead for RemoteStdioRecv {
+impl AsyncRead for RemotePipeRecv {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -1978,7 +1933,7 @@ impl AsyncRead for RemoteStdioRecv {
     }
 }
 
-impl RemoteStdioSend {
+impl RemotePipeSend {
     pub(crate) fn client(&self) -> &Client {
         &self.client
     }
@@ -2011,7 +1966,7 @@ impl RemoteStdioSend {
     }
 }
 
-impl RemoteStdioRecv {
+impl RemotePipeRecv {
     pub(crate) fn client(&self) -> &Client {
         &self.client
     }
@@ -2051,7 +2006,8 @@ enum ClientRecv {
     Null,
     Inherit,
     Native(DefaultHandle),
-    Resource(StdioRecv),
+    Resource(PipeRecv),
+    File(VfsFile),
 }
 
 enum ClientSend {
@@ -2059,10 +2015,47 @@ enum ClientSend {
     Stdout,
     Inherit(HostOutput),
     Native(DefaultHandle),
-    Resource(StdioSend),
+    Resource(PipeSend),
+    File(VfsFile),
 }
 
 impl<'a> Command<'a> {
+    /// A file the spawn path should have relayed instead.
+    fn foreign_file() -> Error {
+        Error::new(ErrorKind::InvalidInput, "file belongs to a different VFS")
+    }
+
+    /// Prepares `file` for a child's standard stream, collecting what moves
+    /// its cursor afterwards into `files`.
+    fn prepare_file(
+        client: &Client,
+        file: VfsFile,
+        send: bool,
+        files: &mut ChildFiles,
+    ) -> Result<FileTarget> {
+        match file.inner {
+            FileInner::Client(file) => {
+                if !client.is_same_vfs(&file.client) {
+                    return Err(Self::foreign_file());
+                }
+                let target = FileTarget::Retained {
+                    file: file.cite()?,
+                    pos: file.shared.pos.load(Ordering::Relaxed),
+                };
+                files.remote.push(file);
+                Ok(target)
+            }
+            FileInner::Direct(file) => {
+                if client.mode() == SessionMode::Remote {
+                    return Err(Self::foreign_file());
+                }
+                let (handle, sync) = file.child_stdio(send)?;
+                files.native.extend(sync);
+                Ok(FileTarget::Native(OsHandle::new(handle.into())))
+            }
+        }
+    }
+
     fn new(client: &'a Client, program: path::Path<'_>) -> Self {
         Self {
             client,
@@ -2082,13 +2075,14 @@ impl<'a> Command<'a> {
         client: &Client,
         stdio: ClientRecv,
         relays: &mut PreparedRelays,
+        files: &mut ChildFiles,
     ) -> Result<StdioRecvTarget> {
         match stdio {
             ClientRecv::Null => Ok(StdioRecvTarget::Null),
             ClientRecv::Inherit => {
                 let (send, recv) = client.pipe(None).await?;
                 relays.stdin = Some(send);
-                let StdioRecv(StdioRecvInner::Remote(remote)) = recv else {
+                let PipeRecv(PipeRecvInner::Remote(remote)) = recv else {
                     return Err(io::Error::other(
                         "remote pipe unexpectedly returned a native receive endpoint",
                     )
@@ -2103,21 +2097,25 @@ impl<'a> Command<'a> {
                 Ok(StdioRecvTarget::Native(OsHandle::new(handle)))
             }
             ClientRecv::Resource(stdio) => match stdio.0 {
-                StdioRecvInner::Native(native) => {
+                PipeRecvInner::Native(native) => {
                     if client.mode() == SessionMode::Remote {
                         return client.unsupported("native process stdio");
                     }
-                    let handle = StdioRecv(StdioRecvInner::Native(native))
+                    let handle = PipeRecv(PipeRecvInner::Native(native))
                         .into_blocking_handle()
                         .await?;
                     Ok(StdioRecvTarget::Native(OsHandle::new(handle)))
                 }
-                StdioRecvInner::Remote(remote) => Self::prepare_remote_recv(client, remote),
+                PipeRecvInner::Remote(remote) => Self::prepare_remote_recv(client, remote),
             },
+            ClientRecv::File(file) => Ok(match Self::prepare_file(client, file, false, files)? {
+                FileTarget::Retained { file, pos } => StdioRecvTarget::File { file, pos },
+                FileTarget::Native(handle) => StdioRecvTarget::Native(handle),
+            }),
         }
     }
 
-    fn prepare_remote_recv(client: &Client, remote: RemoteStdioRecv) -> Result<StdioRecvTarget> {
+    fn prepare_remote_recv(client: &Client, remote: RemotePipeRecv) -> Result<StdioRecvTarget> {
         if !client.is_same_vfs(&remote.client) {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
@@ -2133,6 +2131,7 @@ impl<'a> Command<'a> {
         client: &Client,
         stdio: ClientSend,
         relays: &mut PreparedRelays,
+        files: &mut ChildFiles,
     ) -> Result<StdioSendTarget> {
         match stdio {
             ClientSend::Null => Ok(StdioSendTarget::Null),
@@ -2140,7 +2139,7 @@ impl<'a> Command<'a> {
             ClientSend::Inherit(output) => {
                 let (send, recv) = client.pipe(None).await?;
                 relays.outputs.push((recv, output));
-                let StdioSend(StdioSendInner::Remote(remote)) = send else {
+                let PipeSend(PipeSendInner::Remote(remote)) = send else {
                     return Err(io::Error::other(
                         "remote pipe unexpectedly returned a native send endpoint",
                     )
@@ -2155,21 +2154,25 @@ impl<'a> Command<'a> {
                 Ok(StdioSendTarget::Native(OsHandle::new(handle)))
             }
             ClientSend::Resource(stdio) => match stdio.0 {
-                StdioSendInner::Native(native) => {
+                PipeSendInner::Native(native) => {
                     if client.mode() == SessionMode::Remote {
                         return client.unsupported("native process stdio");
                     }
-                    let handle = StdioSend(StdioSendInner::Native(native))
+                    let handle = PipeSend(PipeSendInner::Native(native))
                         .into_blocking_handle()
                         .await?;
                     Ok(StdioSendTarget::Native(OsHandle::new(handle)))
                 }
-                StdioSendInner::Remote(remote) => Self::prepare_remote_send(client, remote),
+                PipeSendInner::Remote(remote) => Self::prepare_remote_send(client, remote),
             },
+            ClientSend::File(file) => Ok(match Self::prepare_file(client, file, true, files)? {
+                FileTarget::Retained { file, pos } => StdioSendTarget::File { file, pos },
+                FileTarget::Native(handle) => StdioSendTarget::Native(handle),
+            }),
         }
     }
 
-    fn prepare_remote_send(client: &Client, remote: RemoteStdioSend) -> Result<StdioSendTarget> {
+    fn prepare_remote_send(client: &Client, remote: RemotePipeSend) -> Result<StdioSendTarget> {
         if !client.is_same_vfs(&remote.client) {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
@@ -2186,20 +2189,21 @@ impl<'a> Command<'a> {
         stdout: ClientSend,
         stderr: ClientSend,
         relays: &mut PreparedRelays,
+        files: &mut ChildFiles,
     ) -> Result<(StdioSendTarget, StdioSendTarget)> {
-        let stdout = Self::prepare_send(client, stdout, relays).await?;
-        let stderr = Self::prepare_send(client, stderr, relays).await?;
+        let stdout = Self::prepare_send(client, stdout, relays, files).await?;
+        let stderr = Self::prepare_send(client, stderr, relays, files).await?;
         Ok((stdout, stderr))
     }
 }
 
-async fn relay_stdin(mut send: StdioSend) {
+async fn relay_stdin(mut send: PipeSend) {
     let mut stdin = BufReader::with_capacity(STREAM_CHUNK_SIZE, tokio::io::stdin());
     let _ = tokio::io::copy_buf(&mut stdin, &mut send).await;
     let _ = send.shutdown().await;
 }
 
-async fn relay_output<W>(recv: StdioRecv, mut output: W)
+async fn relay_output<W>(recv: PipeRecv, mut output: W)
 where
     W: AsyncWrite + Unpin,
 {
@@ -2273,9 +2277,10 @@ impl Child {
             })
             .await?
         {
-            ResponseKind::ChildWait(result) => {
+            ResponseKind::ChildWait(exit) => {
                 self.relays.finish();
-                self.store_result(result);
+                self.files.sync(&exit);
+                self.store_result(exit.status);
                 self.result().unwrap()
             }
             response => Err(unexpected(response).into()),
@@ -2297,12 +2302,14 @@ impl Child {
             })
             .await?
         {
-            ResponseKind::ChildTerminate(result) => {
+            ResponseKind::ChildTerminate(exit) => {
                 self.relays.finish();
-                if let Some(status) = result {
-                    self.state = ClientChildState::Exited(status);
-                }
-                Ok(result)
+                let Some(exit) = exit else {
+                    return Ok(None);
+                };
+                self.files.sync(&exit);
+                self.state = ClientChildState::Exited(exit.status);
+                Ok(Some(exit.status))
             }
             response => Err(unexpected(response).into()),
         }
@@ -2330,8 +2337,15 @@ impl<'a> Command<'a> {
         self
     }
 
-    pub(crate) fn stdin(&mut self, stdio: StdioRecv) -> Result<&mut Self> {
-        if let StdioRecvInner::Remote(remote) = &stdio.0
+    pub(crate) fn stdin(&mut self, stdio: ChildIn) -> Result<&mut Self> {
+        let stdio = match stdio {
+            ChildIn::Pipe(stdio) => stdio,
+            ChildIn::File(file) => {
+                self.stdin = ClientRecv::File(file);
+                return Ok(self);
+            }
+        };
+        if let PipeRecvInner::Remote(remote) = &stdio.0
             && !self.client.is_same_vfs(&remote.client)
         {
             return Err(Error::new(
@@ -2343,8 +2357,15 @@ impl<'a> Command<'a> {
         Ok(self)
     }
 
-    pub(crate) fn stdout(&mut self, stdio: StdioSend) -> Result<&mut Self> {
-        if let StdioSendInner::Remote(remote) = &stdio.0
+    pub(crate) fn stdout(&mut self, stdio: ChildOut) -> Result<&mut Self> {
+        let stdio = match stdio {
+            ChildOut::Pipe(stdio) => stdio,
+            ChildOut::File(file) => {
+                self.stdout = ClientSend::File(file);
+                return Ok(self);
+            }
+        };
+        if let PipeSendInner::Remote(remote) = &stdio.0
             && !self.client.is_same_vfs(&remote.client)
         {
             return Err(Error::new(
@@ -2397,8 +2418,15 @@ impl<'a> Command<'a> {
         self
     }
 
-    pub(crate) fn stderr(&mut self, stdio: StdioSend) -> Result<&mut Self> {
-        if let StdioSendInner::Remote(remote) = &stdio.0
+    pub(crate) fn stderr(&mut self, stdio: ChildOut) -> Result<&mut Self> {
+        let stdio = match stdio {
+            ChildOut::Pipe(stdio) => stdio,
+            ChildOut::File(file) => {
+                self.stderr = ClientSend::File(file);
+                return Ok(self);
+            }
+        };
+        if let PipeSendInner::Remote(remote) = &stdio.0
             && !self.client.is_same_vfs(&remote.client)
         {
             return Err(Error::new(
@@ -2462,8 +2490,10 @@ impl<'a> Command<'a> {
             termination_policy,
         } = self;
         let mut relays = PreparedRelays::default();
-        let stdin = Self::prepare_recv(client, stdin, &mut relays).await?;
-        let (stdout, stderr) = Self::prepare_outputs(client, stdout, stderr, &mut relays).await?;
+        let mut files = ChildFiles::default();
+        let stdin = Self::prepare_recv(client, stdin, &mut relays, &mut files).await?;
+        let (stdout, stderr) =
+            Self::prepare_outputs(client, stdout, stderr, &mut relays, &mut files).await?;
         let req = SpawnRequest {
             program,
             args,
@@ -2480,6 +2510,7 @@ impl<'a> Command<'a> {
                 client: client.clone(),
                 state: ClientChildState::Live(child),
                 relays: relays.start(),
+                files,
             }),
             response => Err(unexpected(response).into()),
         }
@@ -2650,20 +2681,20 @@ impl Client {
         self.windows_admin_vfs(cwd, env, elevate).await
     }
 
-    pub async fn pipe(&self, buf_size: Option<usize>) -> Result<(StdioSend, StdioRecv)> {
+    pub async fn pipe(&self, buf_size: Option<usize>) -> Result<(PipeSend, PipeRecv)> {
         if self.mode() == SessionMode::Native {
             return process::pipe(buf_size).map_err(Into::into);
         }
         match self.request(RequestKind::Pipe { buf_size }).await? {
             ResponseKind::Pipe(pipe) => Ok({
                 (
-                    StdioSend::remote(RemoteStdioSend {
+                    PipeSend::remote(RemotePipeSend {
                         client: self.clone(),
                         stdio: Some(pipe.send),
                         pending: None,
                         write_body: None,
                     }),
-                    StdioRecv::remote(RemoteStdioRecv {
+                    PipeRecv::remote(RemotePipeRecv {
                         client: self.clone(),
                         stdio: Some(pipe.recv),
                         pending: None,

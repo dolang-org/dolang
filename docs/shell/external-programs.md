@@ -79,7 +79,16 @@ run tool stdout: $std.null
 run tool stdout: combined.log stderr: :STDOUT:
 ```
 
-An [`fs.File`](fs.File) can be used directly as an input or output.
+An [`fs.File`](fs.File) can be used directly as an input or output. The
+program starts at the file's position, and when `run` returns, the file is
+still open and positioned where the program left off:
+
+```
+open build.log w do |log|
+  log.write "configure\n"
+  run ./configure stdout: $log stderr: :STDOUT:
+  log.write "done\n"
+```
 
 See [Terminal Output](./terminal-output.md) for the distinction between
 the output stream and the console.

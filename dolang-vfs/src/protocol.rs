@@ -164,6 +164,11 @@ pub(crate) enum StdioRecvTarget {
     Null,
     Native(OsHandle),
     Opaque(Cite<StdioRecvMarker>),
+    /// A file retained here, read from `pos` on.
+    File {
+        file: Cite<FileMarker>,
+        pos: u64,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -172,6 +177,20 @@ pub(crate) enum StdioSendTarget {
     Stdout,
     Native(OsHandle),
     Opaque(Cite<StdioSendMarker>),
+    /// A file retained here, written from `pos` on.
+    File {
+        file: Cite<FileMarker>,
+        pos: u64,
+    },
+}
+
+/// How a spawned child ended, and where it left the files it was given.
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct ChildExit {
+    pub(crate) status: ProcessStatus,
+    /// The final position of each [`StdioRecvTarget::File`] and
+    /// [`StdioSendTarget::File`] target, in stdin, stdout, stderr order.
+    pub(crate) positions: Vec<u64>,
 }
 
 bitflags::bitflags! {
@@ -657,14 +676,6 @@ pub(crate) enum RequestKind {
     FileUnlock {
         lock: Cite<FileLockMarker>,
     },
-    FileToStdioSend {
-        file: Cite<FileMarker>,
-        offset: u64,
-    },
-    FileToStdioRecv {
-        file: Cite<FileMarker>,
-        offset: u64,
-    },
     StdioSendClose {
         stdio: Cite<StdioSendMarker>,
     },
@@ -837,8 +848,8 @@ pub(crate) enum RequestKind {
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) enum ResponseKind {
     Spawn(Gift<ChildMarker>),
-    ChildWait(ProcessStatus),
-    ChildTerminate(Option<ProcessStatus>),
+    ChildWait(ChildExit),
+    ChildTerminate(Option<ChildExit>),
     ChildClose,
     Query(QueryResponse),
     UserName(String),
@@ -862,8 +873,6 @@ pub(crate) enum ResponseKind {
     FileSync,
     FileLock(Option<Gift<FileLockMarker>>),
     FileUnlock,
-    FileToStdioSend(Gift<StdioSendMarker>),
-    FileToStdioRecv(Gift<StdioRecvMarker>),
     StdioSendClose,
     StdioSendWrite(usize),
     StdioSendClone(Gift<StdioSendMarker>),
