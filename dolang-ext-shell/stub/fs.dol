@@ -148,12 +148,6 @@ pub class BaseFile: Io
   # [`open`](fs.open) was not given a block. Closing a file that is already
   # closed does nothing.
   #
-  # Passing a file to a child process as `stdin:`, `stdout:`, or `stderr:` also
-  # closes it: the child receives the file itself, and the seek position is
-  # kept by this process rather than by the operating system, so two live
-  # handles would each believe a cursor the other moves. Use the file after the
-  # handoff and it raises the ordinary closed-file error.
-  #
   # ## Example
   #
   # ```
@@ -648,7 +642,11 @@ pub class BaseFile: Io
 # ```
 #
 # Passed to a child process as `stdin:`, `stdout:`, or `stderr:`, the child
-# reads or writes from the file's logical position.
+# reads or writes from the file's logical position. The file stays open, and
+# when the call returns it is positioned where the child left off, so writing
+# a log around a program keeps its output in order. Don't use the file until
+# the call returns. If the call is interrupted, seek before using the file
+# again.
 pub class File: Iter[Str] BaseFile
   # Reads text.
   #

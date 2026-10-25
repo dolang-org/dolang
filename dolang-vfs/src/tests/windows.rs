@@ -292,7 +292,7 @@ async fn file_stdio_is_reopened_without_overlapped() {
         .arg("/s")
         .arg("/c")
         .arg("echo first")
-        .stdout(crate::tests::support::stdio_send(output).await)
+        .stdout(output)
         .unwrap();
     let mut child = command.spawn().await.unwrap();
     assert!(child.wait().await.unwrap().success());
@@ -306,7 +306,7 @@ async fn file_stdio_is_reopened_without_overlapped() {
         .arg("/s")
         .arg("/c")
         .arg("echo second")
-        .stdout(crate::tests::support::stdio_send(output).await)
+        .stdout(output)
         .unwrap();
     let mut child = command.spawn().await.unwrap();
     assert!(child.wait().await.unwrap().success());

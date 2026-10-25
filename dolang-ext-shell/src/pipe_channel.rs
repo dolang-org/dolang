@@ -9,7 +9,7 @@ use std::{
     task::{Poll, Waker},
 };
 
-use dolang_vfs::process::{StdioRecv, StdioSend};
+use dolang_vfs::process::{PipeRecv, PipeSend};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 
 use dolang::runtime::{
@@ -93,8 +93,8 @@ struct PipeChannelShared {
     /// about how it was `put` needs remembering.
     buffered: bool,
     state: PipeState,
-    send_end: EndState<StdioSend>,
-    recv_end: EndState<BufReader<StdioRecv>>,
+    send_end: EndState<PipeSend>,
+    recv_end: EndState<BufReader<PipeRecv>>,
     send_closed: bool,
     recv_closed: bool,
     send_wakers: VecDeque<Waker>,
@@ -220,7 +220,7 @@ impl PipeChannelShared {
         self.wake_negotiators();
     }
 
-    fn restore_send_end(&mut self, sender: StdioSend) {
+    fn restore_send_end(&mut self, sender: PipeSend) {
         if self.send_closed {
             drop(sender);
             self.wake_senders();
@@ -250,7 +250,7 @@ impl PipeChannelShared {
     }
 }
 
-async fn drain_pipe(mut reader: BufReader<StdioRecv>, send_end: &mut StdioSend) -> io::Result<()> {
+async fn drain_pipe(mut reader: BufReader<PipeRecv>, send_end: &mut PipeSend) -> io::Result<()> {
     let mut buf = [0u8; 8192];
     loop {
         let n = reader.read(&mut buf).await?;
@@ -282,11 +282,11 @@ fn take_buffered_bytes<'v, 's>(
 
 struct SendEndGuard {
     shared: Rc<RefCell<PipeChannelShared>>,
-    end: Option<StdioSend>,
+    end: Option<PipeSend>,
 }
 
 impl SendEndGuard {
-    fn new(shared: Rc<RefCell<PipeChannelShared>>, end: StdioSend) -> Self {
+    fn new(shared: Rc<RefCell<PipeChannelShared>>, end: PipeSend) -> Self {
         Self {
             shared,
             end: Some(end),
@@ -307,25 +307,25 @@ impl SendEndGuard {
 
     /// Takes the end out of the guard so that `Drop` does not restore it,
     /// leaving the channel's slot `Taken`.
-    fn steal(mut self) -> StdioSend {
+    fn steal(mut self) -> PipeSend {
         self.end.take().expect("send end taken twice")
     }
 }
 
-impl AsRef<StdioSend> for SendEndGuard {
-    fn as_ref(&self) -> &StdioSend {
+impl AsRef<PipeSend> for SendEndGuard {
+    fn as_ref(&self) -> &PipeSend {
         self.end.as_ref().unwrap()
     }
 }
 
-impl AsMut<StdioSend> for SendEndGuard {
-    fn as_mut(&mut self) -> &mut StdioSend {
+impl AsMut<PipeSend> for SendEndGuard {
+    fn as_mut(&mut self) -> &mut PipeSend {
         self.end.as_mut().unwrap()
     }
 }
 
 impl Deref for SendEndGuard {
-    type Target = StdioSend;
+    type Target = PipeSend;
 
     fn deref(&self) -> &Self::Target {
         self.as_ref()
@@ -348,7 +348,7 @@ impl Drop for SendEndGuard {
 
 struct RecvEndGuard {
     shared: Rc<RefCell<PipeChannelShared>>,
-    end: Option<BufReader<StdioRecv>>,
+    end: Option<BufReader<PipeRecv>>,
 }
 
 impl RecvEndGuard {
@@ -370,25 +370,25 @@ impl RecvEndGuard {
 
     /// Takes the end out of the guard so that `Drop` does not restore it,
     /// leaving the channel's slot `Taken`.
-    fn steal(mut self) -> BufReader<StdioRecv> {
+    fn steal(mut self) -> BufReader<PipeRecv> {
         self.end.take().expect("recv end taken twice")
     }
 }
 
-impl AsRef<BufReader<StdioRecv>> for RecvEndGuard {
-    fn as_ref(&self) -> &BufReader<StdioRecv> {
+impl AsRef<BufReader<PipeRecv>> for RecvEndGuard {
+    fn as_ref(&self) -> &BufReader<PipeRecv> {
         self.end.as_ref().unwrap()
     }
 }
 
-impl AsMut<BufReader<StdioRecv>> for RecvEndGuard {
-    fn as_mut(&mut self) -> &mut BufReader<StdioRecv> {
+impl AsMut<BufReader<PipeRecv>> for RecvEndGuard {
+    fn as_mut(&mut self) -> &mut BufReader<PipeRecv> {
         self.end.as_mut().unwrap()
     }
 }
 
 impl Deref for RecvEndGuard {
-    type Target = BufReader<StdioRecv>;
+    type Target = BufReader<PipeRecv>;
 
     fn deref(&self) -> &Self::Target {
         self.as_ref()
@@ -434,7 +434,7 @@ pub(crate) struct RecvGuard {
 }
 
 impl RecvGuard {
-    pub(crate) async fn recv_pipe(&self) -> io::Result<StdioRecv> {
+    pub(crate) async fn recv_pipe(&self) -> io::Result<PipeRecv> {
         let reader = RecvEndGuard::take(&self.shared)
             .map_err(|_| io::Error::other("pipe: consumer end closed"))?;
         Ok(reader.get_ref().try_clone().await?)
@@ -450,7 +450,7 @@ impl RecvGuard {
     /// exactly as [`Self::recv_pipe`] drops them by duplicating the descriptor
     /// out from under the same buffer. Negotiation hands buffered bytes back
     /// to the channel before either is reached, so there are none.
-    pub(crate) fn steal_recv_pipe(&self) -> io::Result<StdioRecv> {
+    pub(crate) fn steal_recv_pipe(&self) -> io::Result<PipeRecv> {
         let reader = RecvEndGuard::take(&self.shared)
             .map_err(|_| io::Error::other("pipe: consumer end closed"))?;
         debug_assert!(
@@ -472,7 +472,7 @@ pub(crate) struct SendGuard {
 }
 
 impl SendGuard {
-    pub(crate) async fn send_pipe(&self) -> io::Result<StdioSend> {
+    pub(crate) async fn send_pipe(&self) -> io::Result<PipeSend> {
         let sender = SendEndGuard::take(&self.shared)
             .map_err(|_| io::Error::other("pipe: producer end closed"))?;
         Ok(sender.try_clone().await?)
@@ -494,7 +494,7 @@ impl SendGuard {
     /// end never sees EOF and a disconnected server is indistinguishable from
     /// a hung one. Taking the ends outright is what makes the disconnect
     /// observable.
-    pub(crate) fn steal_send_pipe(&self) -> io::Result<StdioSend> {
+    pub(crate) fn steal_send_pipe(&self) -> io::Result<PipeSend> {
         let sender = SendEndGuard::take(&self.shared)
             .map_err(|_| io::Error::other("pipe: producer end closed"))?;
         Ok(sender.steal())

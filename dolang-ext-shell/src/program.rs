@@ -264,8 +264,8 @@ async fn configure_direct_input<'v, 's>(
         .try_state::<FsTag>()
         .and_then(|fs| file::cast_file(fs, input))
     {
-        let stdio = file.command_recv(strand).await?;
-        command.stdin(stdio).into_sys(strand)?;
+        let file = file.command_file(strand).await?;
+        command.stdin(file).into_sys(strand)?;
         return Ok(true);
     }
     Ok(false)
@@ -300,8 +300,8 @@ async fn configure_direct_output<'v, 's>(
         .try_state::<FsTag>()
         .and_then(|fs| file::cast_file(fs, output))
     {
-        let stdio = file.command_send(strand).await?;
-        command.stdout(stdio).into_sys(strand)?;
+        let file = file.command_file(strand).await?;
+        command.stdout(file).into_sys(strand)?;
         return Ok(true);
     }
     Ok(false)
@@ -331,8 +331,8 @@ async fn configure_direct_stderr<'v, 's>(
         .try_state::<FsTag>()
         .and_then(|fs| file::cast_file(fs, stderr))
     {
-        let stdio = file.command_send(strand).await?;
-        command.stderr(stdio).into_sys(strand)?;
+        let file = file.command_file(strand).await?;
+        command.stderr(file).into_sys(strand)?;
         return Ok(true);
     }
     Ok(false)

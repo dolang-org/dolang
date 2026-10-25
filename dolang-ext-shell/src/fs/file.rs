@@ -11,13 +11,8 @@ use dolang::runtime::{
     value::{BinEmbryo, PinBin, PinStr, TypeObject, View},
 };
 use dolang_util::{shared::Locked, utf8};
-use dolang_vfs::{
-    error::HandoffError,
-    file::{
-        CopyDest, CopyMode, File as VfsFile, FileLockBehavior, FileLockMode, FileLockRange,
-        OpenOptions,
-    },
-    process::{StdioRecv, StdioSend},
+use dolang_vfs::file::{
+    CopyDest, CopyMode, File as VfsFile, FileLockBehavior, FileLockMode, FileLockRange, OpenOptions,
 };
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio_util::compat::TokioAsyncReadCompatExt as _;
@@ -482,7 +477,7 @@ impl<'v> Object<'v> for BaseFile {
 /// They then use `file` directly, which never touches the cursor except to
 /// hand the file off.
 pub(crate) struct File<const BUFFERED: bool = true> {
-    /// The open file, until it is closed or handed off.
+    /// The open file, until it is closed.
     file: Option<VfsFile>,
     /// A buffered file's buffer, over its own clone of `file`.
     buf: Option<Shared<FileBuf>>,
@@ -800,81 +795,20 @@ impl<const BUFFERED: bool> File<BUFFERED> {
 }
 
 impl<const BUFFERED: bool> File<BUFFERED> {
-    /// Hands this file to a child process as one of its standard streams,
-    /// giving it up here.
+    /// Hands this file to a child process as one of its standard streams.
     ///
-    /// The handoff *steals* the file: the seek position is kept in this process
-    /// rather than in the kernel, so two live handles would each believe a
-    /// cursor the other moves. Surrendering the handle makes that unobservable
-    /// — subsequent use gives the ordinary "file is closed" error — instead of
-    /// quietly reading and writing at the wrong places.
-    async fn command_send<'v, 's>(
+    /// The child gets a clone starting at the logical position, with nothing
+    /// held back in the buffer, and the file stays usable here. The clone
+    /// shares the cursor, which the VFS moves to where the child left off once
+    /// it exits, and the buffer reads and writes from the cursor.
+    async fn command_file<'v, 's>(
         this: Instance<'v, '_, Self>,
         strand: &mut Strand<'v, 's>,
-    ) -> Result<'v, 's, StdioSend> {
-        Self::hand_off(this, strand, |file, offset| file.into_stdio_send(offset)).await
-    }
-
-    /// Receives a child process's output into this file, closing it here.
-    ///
-    /// Steals the file for the same reason as [`File::command_send`].
-    async fn command_recv<'v, 's>(
-        this: Instance<'v, '_, Self>,
-        strand: &mut Strand<'v, 's>,
-    ) -> Result<'v, 's, StdioRecv> {
-        Self::hand_off(this, strand, |file, offset| file.into_stdio_recv(offset)).await
-    }
-
-    /// Converts the file into a standard stream with `into`, which gets the
-    /// logical position.
-    async fn hand_off<'v, 's, T, F>(
-        this: Instance<'v, '_, Self>,
-        strand: &mut Strand<'v, 's>,
-        into: impl FnOnce(VfsFile, u64) -> F,
-    ) -> Result<'v, 's, T>
-    where
-        F: Future<Output = std::result::Result<T, HandoffError<VfsFile>>>,
-    {
+    ) -> Result<'v, 's, VfsFile> {
         let mut borrow = this.borrow_mut(strand)?;
         borrow.check_open(strand)?;
-        let File {
-            file: slot, buf, ..
-        } = &mut *borrow;
-        // The child gets the native handle, so it must start at the logical
-        // position with nothing held back. The buffer stays held, so a lent
-        // handle cannot fill it again before it closes.
-        let mut held = match buf {
-            Some(buf) => Some(buf.lock().await.into_sys(strand)?),
-            None => None,
-        };
-        if let Some(held) = &mut held {
-            held.settle().await.into_sys(strand)?;
-        }
-        let mut file = slot.take().expect("file is closed");
-        // The endpoint carries a position of its own, and the cursor lives on
-        // this side rather than in the kernel, so it has to be stated.
-        let offset = match file.stream_position().await {
-            Ok(offset) => offset,
-            Err(error) => {
-                *slot = Some(file);
-                return Err(error).into_sys(strand);
-            }
-        };
-        match into(file, offset).await {
-            Ok(stdio) => {
-                drop(held);
-                if let Some(mut buf) = buf.take() {
-                    drop(buf.close().await);
-                }
-                Ok(stdio)
-            }
-            // Nothing was handed over, so the file is still the script's.
-            Err(error) => {
-                let (file, error) = error.into_parts();
-                *slot = Some(file);
-                Err(error).into_sys(strand)
-            }
-        }
+        borrow.settle().await.into_sys(strand)?;
+        Ok(borrow.vfs().clone())
     }
 
     /// Reads at an explicit offset, leaving the cursor alone.
@@ -1768,23 +1702,12 @@ macro_rules! enter_file {
 }
 
 impl<'v> FileCast<'v, '_> {
-    /// See [`File::command_send`].
-    pub(crate) async fn command_send<'s>(
+    /// See [`File::command_file`].
+    pub(crate) async fn command_file<'s>(
         self,
         strand: &mut Strand<'v, 's>,
-    ) -> Result<'v, 's, StdioSend> {
-        enter_file!(self, strand, |strand, file| File::command_send(
-            file, strand
-        )
-        .await)
-    }
-
-    /// See [`File::command_recv`].
-    pub(crate) async fn command_recv<'s>(
-        self,
-        strand: &mut Strand<'v, 's>,
-    ) -> Result<'v, 's, StdioRecv> {
-        enter_file!(self, strand, |strand, file| File::command_recv(
+    ) -> Result<'v, 's, VfsFile> {
+        enter_file!(self, strand, |strand, file| File::command_file(
             file, strand
         )
         .await)

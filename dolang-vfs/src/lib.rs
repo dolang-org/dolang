@@ -462,7 +462,7 @@ impl Vfs {
     pub async fn pipe(
         &self,
         buf_size: Option<usize>,
-    ) -> error::Result<(process::StdioSend, process::StdioRecv)> {
+    ) -> error::Result<(process::PipeSend, process::PipeRecv)> {
         match &self.inner {
             VfsInner::Client(client) => client.pipe(buf_size).await,
             VfsInner::Direct(direct) => direct.pipe(buf_size).await,

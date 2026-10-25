@@ -8,8 +8,9 @@ import test:
   - assert_eq
   - assert_throws
   - test
+import testlib.vfs:
+  - vfs
 import std:
-  - StateError
   - TypeError
 
 # Writes `source` into the temp dir and returns the script path, so tests can
@@ -132,32 +133,28 @@ def the_value_edge_round_trips()
       run $shell.exe --no-cache $chunked stdin: $file stdout: $out2
     assert_eq $out2.read_str() $mixed
 
+# The child takes what is left of the input, and reading through the file
+# afterwards picks up after it rather than reading the same bytes again.
 #[test]
-def handing_a_file_to_a_child_steals_it()
-  with_temp_dir do |dir|
-    let src = r|
-      import shell
-      for value = shell.stdin
-        shell.stdout.put $value
+#[vfs]
+def input_reads_on_after_a_child()
+  let echo = script $cd() echo.dol $ r|
+    import shell
+    for value = shell.stdin
+      shell.stdout.put $value
 
-    let path = script $dir echo.dol $src
-    let input = (dir / "in.txt")
-    input.write "hello"
-    let out = (dir / "out.txt")
-
-    for buffer = [true, false]
-      let file = open $input :buffer
-      run $shell.exe --no-cache $path stdin: $file stdout: $out
-      assert_eq $out.read_str() "hello"
-
-      # The child was given the file itself, not a view onto it. The seek
-      # position lives in this process now, so two live handles would each
-      # believe a cursor the other moves; the handoff closes this one rather
-      # than let it read from somewhere it cannot know.
-      assert_throws $StateError do
-        file.read 1
-      # Closing a file the handoff already took is still fine.
-      file.close()
+  let input = (cd() / "in.txt")
+  input.write "header\nbody\n"
+  let out = (cd() / "out.txt")
+  open $input do |file|
+    # Buffering reads past the header, but the child starts right after it.
+    assert_eq (file.read_line()) "header\n"
+    run $shell.exe --no-cache $echo stdin: $file stdout: $out
+    assert_eq $out.read_str() "body\n"
+    assert_eq (file.read_str()) ""
+    # The file is still open, with its position its own again.
+    file.seek start: 0
+    assert_eq (file.read_line()) "header\n"
 
 #[test]
 def a_child_starts_where_buffered_reads_and_writes_leave_off()
@@ -303,24 +300,21 @@ def naming_shell_stderr_inherits_the_stream()
     assert_eq $err.read_str() "from-grandchild\n"
 
 
+# Writing after a child continues after its output, on either stream.
 #[test]
-def handing_output_files_to_a_child_steals_them()
-  with_temp_dir do |dir|
-    let src = r|
-      import shell
-      shell.stdout.put "stdout"
-      shell.stderr.put "stderr"
+#[vfs]
+def output_continues_after_a_child()
+  let path = script $cd() output.dol $ r|
+    import shell
+    let stream = (shell.args[0] == "err" && shell.stderr || shell.stdout)
+    stream.put "$(shell.args[0])\n"
 
-    let path = script $dir output.dol $src
-    for buffer = [true, false]
-      let out = (dir / "out.txt")
-      let err = (dir / "err.txt")
-      let stdout = open $out w :buffer
-      let stderr = open $err w :buffer
-      run $shell.exe --no-cache $path stdout: $stdout stderr: $stderr
-      assert_eq $out.read_str() "stdout"
-      assert_eq $err.read_str() "stderr"
-      assert_throws $StateError do stdout.write "closed"
-      assert_throws $StateError do stderr.write "closed"
-      stdout.close()
-      stderr.close()
+  for buffer = [true, false]
+    let log = (cd() / "log.txt")
+    open $log w :buffer do |file|
+      file.write "a\n"
+      run $shell.exe --no-cache $path out stdout: $file
+      file.write "b\n"
+      run $shell.exe --no-cache $path err stderr: $file
+      file.write "c\n"
+    assert_eq $log.read_str() "a\nout\nb\nerr\nc\n"

@@ -22,8 +22,6 @@ use crate::{
 use dolang_winterop::security::SecInfo;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
-use crate::tests::support;
-
 async fn connected_pair() -> (Vfs, tokio::task::JoinHandle<VfsResult<()>>) {
     let (client_stream, server_stream) = tokio::io::duplex(1024 * 1024);
     // `Server::new` itself now runs the RPC handshake, so it must be driven
@@ -510,7 +508,7 @@ async fn retained_files_can_be_used_for_remote_stdio() {
     stdin.write_all(b"remote-input\n").await.unwrap();
     stdin.seek(SeekFrom::Start(0)).await.unwrap();
     let mut command = command_with_args(&client, stdin_command());
-    command.stdin(support::stdio_recv(stdin).await).unwrap();
+    command.stdin(stdin).unwrap();
     let mut child = command.spawn().await.unwrap();
     assert!(child.wait().await.unwrap().success());
 
@@ -518,7 +516,7 @@ async fn retained_files_can_be_used_for_remote_stdio() {
     options.read(true).write(true).create(true).truncate(true);
     let stdout = options.open(stdout_path.to_path()).await.unwrap();
     let mut command = command_with_args(&client, stdout_command());
-    command.stdout(support::stdio_send(stdout).await).unwrap();
+    command.stdout(stdout).unwrap();
     let mut child = command.spawn().await.unwrap();
     assert!(child.wait().await.unwrap().success());
 
@@ -526,7 +524,7 @@ async fn retained_files_can_be_used_for_remote_stdio() {
     options.read(true).write(true).create(true).truncate(true);
     let stderr = options.open(stderr_path.to_path()).await.unwrap();
     let mut command = command_with_args(&client, stderr_command());
-    command.stderr(support::stdio_send(stderr).await).unwrap();
+    command.stderr(stderr).unwrap();
     let mut child = command.spawn().await.unwrap();
     assert!(child.wait().await.unwrap().success());
 
@@ -590,7 +588,7 @@ async fn direct_file_relays_as_remote_process_stdin() {
     stdin.seek(SeekFrom::Start(0)).await.unwrap();
 
     let mut command = command_with_args(&remote_vfs, stdin_command());
-    command.stdin(support::stdio_recv(stdin).await).unwrap();
+    command.stdin(stdin).unwrap();
     let mut child = command.spawn().await.unwrap();
     assert!(child.wait().await.unwrap().success());
 
@@ -611,7 +609,7 @@ async fn remote_file_relays_as_direct_process_stdin() {
     stdin.seek(SeekFrom::Start(0)).await.unwrap();
 
     let mut command = command_with_args(&direct_vfs, stdin_command());
-    command.stdin(support::stdio_recv(stdin).await).unwrap();
+    command.stdin(stdin).unwrap();
     let mut child = command.spawn().await.unwrap();
     assert!(child.wait().await.unwrap().success());
 
@@ -631,7 +629,7 @@ async fn remote_process_stdout_relays_into_direct_file() {
     let stdout = options.open(stdout_path.to_path()).await.unwrap();
 
     let mut command = command_with_args(&remote_vfs, stdout_command());
-    command.stdout(support::stdio_send(stdout).await).unwrap();
+    command.stdout(stdout).unwrap();
     let mut child = command.spawn().await.unwrap();
     assert!(child.wait().await.unwrap().success());
 
@@ -684,7 +682,7 @@ async fn file_relays_between_two_remote_sessions() {
     stdin.write_all(b"remote-input\n").await.unwrap();
     stdin.seek(SeekFrom::Start(0)).await.unwrap();
     let mut command = command_with_args(&second_vfs, stdin_command());
-    command.stdin(support::stdio_recv(stdin).await).unwrap();
+    command.stdin(stdin).unwrap();
     let mut child = command.spawn().await.unwrap();
     assert!(child.wait().await.unwrap().success());
 
@@ -692,7 +690,7 @@ async fn file_relays_between_two_remote_sessions() {
     options.read(true).write(true).create(true).truncate(true);
     let stdout = options.open(stdout_path.to_path()).await.unwrap();
     let mut command = command_with_args(&second_vfs, stdout_command());
-    command.stdout(support::stdio_send(stdout).await).unwrap();
+    command.stdout(stdout).unwrap();
     let mut child = command.spawn().await.unwrap();
     assert!(child.wait().await.unwrap().success());
 
@@ -733,16 +731,12 @@ async fn pipeline_relays_across_three_domains() {
     let (mid_send, mid_recv) = a.pipe(None).await.unwrap();
 
     let mut stage_a = command_with_args(&a_vfs, cat_command());
-    stage_a
-        .stdin(support::stdio_recv(stdin_file).await)
-        .unwrap();
+    stage_a.stdin(stdin_file).unwrap();
     stage_a.stdout(mid_send).unwrap();
 
     let mut stage_b = command_with_args(&b_vfs, cat_command());
     stage_b.stdin(mid_recv).unwrap();
-    stage_b
-        .stdout(support::stdio_send(stdout_file).await)
-        .unwrap();
+    stage_b.stdout(stdout_file).unwrap();
 
     let run = async {
         let mut stage_b = stage_b.spawn().await.unwrap();
@@ -961,14 +955,6 @@ async fn regular_file_round_trip_over_generic_stream() {
     file.read_to_end(&mut data).await.unwrap();
     assert_eq!(data, b"abc");
     file.close().await.unwrap();
-
-    // Making a stdio endpoint and dropping it unused must leave the peer
-    // undisturbed. It needs a handle of its own, since the handoff consumes the
-    // one it is given.
-    let mut options = client.open_options();
-    options.read(true);
-    let handoff = options.open(path.to_path()).await.unwrap();
-    drop(support::stdio_recv(handoff).await);
 
     stop_pair(client, server_task).await;
 }
@@ -1682,8 +1668,7 @@ async fn remote_copy_data_rejects_overlap_the_client_cannot_see() {
 }
 
 /// Handles from two different sessions have nothing shareable, so the copy
-/// relays through this process rather than being refused the way a stdio
-/// handoff is.
+/// relays through this process.
 #[tokio::test]
 async fn remote_copy_data_relays_across_sessions() {
     let (source_client, source_task) = connected_pair().await;
@@ -1915,4 +1900,94 @@ async fn remote_well_known_paths_match_direct() {
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
     }
     stop_pair(client, task).await;
+}
+
+/// Runs `script` under `sh` in `vfs` with the given files as its streams.
+#[cfg(unix)]
+async fn run_sh(
+    vfs: &Vfs,
+    script: &str,
+    stdin: Option<crate::file::File>,
+    stdout: Option<crate::file::File>,
+) {
+    let mut command = vfs.command(typed_str("sh"));
+    command.arg("-c").arg(script);
+    if let Some(stdin) = stdin {
+        command.stdin(stdin).unwrap();
+    }
+    if let Some(stdout) = stdout {
+        command.stdout(stdout).unwrap();
+    }
+    let mut child = command.spawn().await.unwrap();
+    assert!(child.wait().await.unwrap().success());
+}
+
+/// Writes `a`, has a child in `child_vfs` write `b`, then writes `c`, all
+/// through `file`.
+#[cfg(unix)]
+async fn log_around_a_child(child_vfs: &Vfs, mut file: crate::file::File) {
+    file.write_all(b"a\n").await.unwrap();
+    file.flush().await.unwrap();
+    run_sh(child_vfs, "printf 'b\\n'", None, Some(file.clone())).await;
+    assert_eq!(file.stream_position().await.unwrap(), 4);
+    file.write_all(b"c\n").await.unwrap();
+    file.flush().await.unwrap();
+    file.seek(SeekFrom::Start(0)).await.unwrap();
+    let mut data = Vec::new();
+    file.read_to_end(&mut data).await.unwrap();
+    assert_eq!(data, b"a\nb\nc\n");
+}
+
+/// Opens a fresh file for reading and writing.
+#[cfg(unix)]
+async fn open_rw(vfs: &Vfs, path: &Path) -> crate::file::File {
+    let path = crate::path::PathBuf::from_native(path.to_owned()).unwrap();
+    let mut options = vfs.open_options();
+    options.read(true).write(true).create(true).truncate(true);
+    options.open(path.to_path()).await.unwrap()
+}
+
+/// A retained file follows a remote child, with its final position coming
+/// back with the exit.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_remote_child_moves_a_retained_file_cursor() {
+    let (client, server_task) = connected_pair().await;
+    let temp = tempdir().unwrap();
+
+    let file = open_rw(&client, &temp.path().join("output")).await;
+    log_around_a_child(&client, file).await;
+
+    let mut input = open_rw(&client, &temp.path().join("input")).await;
+    input.write_all(b"123456").await.unwrap();
+    input.seek(SeekFrom::Start(2)).await.unwrap();
+    run_sh(
+        &client,
+        "dd bs=1 count=2 of=/dev/null 2>/dev/null",
+        Some(input.clone()),
+        None,
+    )
+    .await;
+    assert_eq!(input.stream_position().await.unwrap(), 4);
+    let mut rest = Vec::new();
+    input.read_to_end(&mut rest).await.unwrap();
+    assert_eq!(rest, b"56");
+
+    stop_pair(client, server_task).await;
+}
+
+/// A relayed file follows what the relay wrote, either way across.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_relayed_file_follows_the_child() {
+    let (client, server_task) = connected_pair().await;
+    let direct = Vfs::direct().unwrap();
+    let temp = tempdir().unwrap();
+
+    let file = open_rw(&direct, &temp.path().join("host")).await;
+    log_around_a_child(&client, file).await;
+    let file = open_rw(&client, &temp.path().join("remote")).await;
+    log_around_a_child(&direct, file).await;
+
+    stop_pair(client, server_task).await;
 }

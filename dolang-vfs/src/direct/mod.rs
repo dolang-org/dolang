@@ -4,7 +4,10 @@ use std::{
     io, mem,
     path::{Path, PathBuf},
     process::Stdio,
-    sync::{Arc, atomic::AtomicU64},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use bytes::{Bytes, BytesMut};
@@ -15,7 +18,7 @@ use std::os::fd::AsFd;
 use std::os::windows::io::AsHandle;
 
 use tokio::{
-    fs::{self, File as TokioFile},
+    fs,
     io::{AsyncRead, ReadBuf},
     process::Command as TokioCommand,
     sync::Mutex,
@@ -29,14 +32,17 @@ use wax::{
 
 use crate::{
     Vfs, directory,
-    error::{Error, ErrorKind, HandoffError, Result},
+    error::{Error, ErrorKind, Result},
     extension::ExtensionSet,
     extension::{self, DirectContext, ExtContext, VfsExtension},
     file::{self, AccessFlags, FileId, FileLockRequest, StreamEntry},
     file::{XattrEntry, XattrNamespace},
     metadata::{FsMetadata, Metadata, MetadataPatch},
     path::{self, WellKnownPath},
-    process::{self, ProcessControl, ProcessStatus, StdioRecv, StdioSend, TerminationPolicy},
+    process::{
+        self, ChildIn, ChildOut, PipeRecv, PipeSend, ProcessControl, ProcessStatus,
+        TerminationPolicy,
+    },
     security::{Acl, AclKind, PrincipalId, PrincipalIdKind, SecurityInfo, SidName},
     session::{self, Query},
     target::TargetInfo,
@@ -103,9 +109,9 @@ pub struct Command<'a> {
     stdin: Option<Stdio>,
     stdout: Option<Stdio>,
     stderr: Option<Stdio>,
-    stdin_resource: Option<StdioRecv>,
-    stdout_resource: Option<StdioSend>,
-    stderr_resource: Option<StdioSend>,
+    stdin_resource: Option<ChildIn>,
+    stdout_resource: Option<ChildOut>,
+    stderr_resource: Option<ChildOut>,
     stderr_to_stdout: bool,
     process_control: ProcessControl,
     termination_policy: TerminationPolicy,
@@ -115,6 +121,8 @@ pub struct Command<'a> {
 /// A process spawned by [`Direct`].
 pub struct Child {
     inner: tokio::process::Child,
+    /// Files whose cursors follow the child once it exits.
+    files: Vec<ChildFile>,
     process_control: ProcessControl,
     termination_policy: TerminationPolicy,
     #[cfg(windows)]
@@ -400,7 +408,7 @@ impl File {
         })
     }
 
-    /// Puts back a descriptor taken by a handoff that failed.
+    /// Puts back a descriptor taken by a surrender that failed.
     fn restore(&self, file: std::fs::File) {
         *self.shared.file.lock().unwrap() = Some(Arc::new(file));
     }
@@ -460,64 +468,75 @@ impl File {
         })))
     }
 
-    /// Surrenders the descriptor to hand it to another process, closing every
-    /// clone.
+    /// Opens a handle for a child process's standard stream, positioned at
+    /// the cursor, along with what moves the cursor to where the child left
+    /// off, unless the file has no position to follow.
     ///
-    /// The descriptor is taken rather than duplicated: on Unix the child can
-    /// simply inherit *this* descriptor, so a `dup` would buy a second one only
-    /// to close the first behind it. Taking it outright is also what makes the
-    /// steal real — nothing on this side can still be reading or writing
-    /// through the description the child is about to share.
-    async fn into_stdio_file(
-        self,
-        send: bool,
-        offset: u64,
-    ) -> std::result::Result<std::fs::File, HandoffError<Self>> {
-        // Fails while operations are still in flight against the descriptor.
-        // Nothing has been given away — the locks are still held and the
-        // descriptor is untouched — so the caller gets the handle back and may
-        // retry once they finish.
-        let owned = match self.take_exclusive() {
-            Ok(owned) => owned,
-            Err(error) => return Err(HandoffError::new(self, error)),
-        };
-        let restore = |file, error: io::Error| {
-            self.restore(file);
-            HandoffError::new(self.clone(), error)
-        };
-        // The locks this side holds have to come off in band for the same
-        // reason as in `close`: the description is about to outlive this
-        // handle in another process, so closing our end would not lift them.
-        if let Err(error) = self.shared.locks.release_all().await {
-            // Some locks may already be off, so the handle comes back degraded.
-            // Still better than dropping it along with the error, since the
-            // caller at least gets to close it.
-            return Err(restore(owned, error));
-        }
+    /// The file stays open here, and so do its locks.
+    pub(crate) fn child_stdio(&self, send: bool) -> Result<(std::fs::File, Option<ChildFile>)> {
+        let file = self.fd()?;
         let flags = self.shared.flags;
+        let offset = self.shared.pos.load(Ordering::Relaxed);
+        // An append-mode child writes at the end whatever the position, and a
+        // stream has no position to follow.
+        let tracked = flags.contains(FileFlags::SEEKABLE) && !flags.contains(FileFlags::APPEND);
         #[cfg(unix)]
-        let result = {
+        {
             let _ = send;
             // The child reads from the *kernel's* offset, which positional I/O
-            // has been bypassing.
-            match materialize(&owned, flags.contains(FileFlags::SEEKABLE), offset) {
-                Ok(()) => Ok(owned),
-                Err(error) => Err(restore(owned, error)),
-            }
+            // has been bypassing. Its descriptor shares the description with
+            // this one, so the offset it leaves can be read back from here.
+            materialize(&file, flags.contains(FileFlags::SEEKABLE), offset)?;
+            let handle = file.try_clone()?;
+            let sync = tracked.then(|| ChildFile { file: self.clone() });
+            Ok((handle, sync))
+        }
+        #[cfg(windows)]
+        {
+            // `ReOpenFile` cannot inherit the original handle's access, so this
+            // is a second description with a pointer of its own; the position
+            // the child leaves is read back through a duplicate of it.
+            let handle = reopen_for_stdio(&file, flags, send, offset)?;
+            let sync = if tracked {
+                Some(ChildFile {
+                    file: self.clone(),
+                    handle: handle.try_clone()?,
+                })
+            } else {
+                None
+            };
+            Ok((handle, sync))
+        }
+    }
+}
+
+/// A file handed to a child process as a standard stream, whose cursor follows
+/// the child once it has exited.
+pub(crate) struct ChildFile {
+    file: File,
+    /// The child's own description, which on Windows has a pointer of its own.
+    #[cfg(windows)]
+    handle: std::fs::File,
+}
+
+impl ChildFile {
+    /// Moves the cursor to where the child left the OS file position.
+    ///
+    /// Call only once the child has exited, so the position has settled. A
+    /// file closed in the meantime is left alone.
+    pub(crate) fn sync(&self) {
+        #[cfg(unix)]
+        let Ok(handle) = self.file.fd() else {
+            return;
         };
         #[cfg(windows)]
-        let result = match reopen_for_stdio(&owned, flags, send, offset) {
-            // `ReOpenFile` cannot inherit the original handle's access, so
-            // unlike the Unix path this really is a second description; the
-            // original still has to go, and taking it above is what guarantees
-            // it does.
-            Ok(file) => {
-                drop(owned);
-                Ok(file)
-            }
-            Err(error) => Err(restore(owned, error)),
-        };
-        result
+        let handle = &self.handle;
+        use std::io::Seek as _;
+        // Querying the position of an open regular file does not fail in
+        // practice, and the status is worth more than this.
+        if let Ok(pos) = { &*handle }.stream_position() {
+            self.file.shared.pos.store(pos, Ordering::Relaxed);
+        }
     }
 }
 
@@ -712,22 +731,6 @@ impl File {
                 .await
                 .unwrap_or_else(|_| Err(Error::other("file write worker failed")))
         }
-    }
-
-    pub(crate) async fn into_stdio_send(
-        self,
-        offset: u64,
-    ) -> std::result::Result<StdioSend, HandoffError<Self>> {
-        let file = self.into_stdio_file(true, offset).await?;
-        Ok(StdioSend::from_file(TokioFile::from_std(file)))
-    }
-
-    pub(crate) async fn into_stdio_recv(
-        self,
-        offset: u64,
-    ) -> std::result::Result<StdioRecv, HandoffError<Self>> {
-        let file = self.into_stdio_file(false, offset).await?;
-        Ok(StdioRecv::from_file(TokioFile::from_std(file)))
     }
 
     /// Closes the file for every clone. Closing it again does nothing.
@@ -1030,6 +1033,7 @@ impl Child {
     ) -> Self {
         Self {
             inner: child,
+            files: Vec::new(),
             process_control,
             termination_policy,
             #[cfg(windows)]
@@ -1040,15 +1044,25 @@ impl Child {
 
 impl Child {
     pub(crate) async fn wait(&mut self) -> Result<ProcessStatus> {
-        Ok(ProcessStatus::from_native(self.inner.wait().await?)?)
+        let status = self.inner.wait().await?;
+        self.sync_files();
+        Ok(ProcessStatus::from_native(status)?)
     }
 
-    pub(crate) async fn terminate(self) -> Result<Option<ProcessStatus>> {
-        Ok(self
-            .impl_terminate()
-            .await?
-            .map(ProcessStatus::from_native)
-            .transpose()?)
+    pub(crate) async fn terminate(mut self) -> Result<Option<ProcessStatus>> {
+        let files = mem::take(&mut self.files);
+        let status = self.impl_terminate().await?;
+        if status.is_some() {
+            files.iter().for_each(ChildFile::sync);
+        }
+        Ok(status.map(ProcessStatus::from_native).transpose()?)
+    }
+
+    /// Moves the cursors of files handed to the child to where it left them.
+    fn sync_files(&mut self) {
+        for file in mem::take(&mut self.files) {
+            file.sync();
+        }
     }
 }
 
@@ -1076,16 +1090,32 @@ impl Command<'_> {
         self
     }
 
-    pub(crate) fn stdin(&mut self, stdio: StdioRecv) -> Result<&mut Self> {
+    pub(crate) fn stdin(&mut self, stdio: ChildIn) -> Result<&mut Self> {
         self.stdin = None;
         self.stdin_resource = Some(stdio);
         Ok(self)
     }
 
-    pub(crate) fn stdout(&mut self, stdio: StdioSend) -> Result<&mut Self> {
+    pub(crate) fn stdout(&mut self, stdio: ChildOut) -> Result<&mut Self> {
         self.stdout = None;
         self.stdout_resource = Some(stdio);
         Ok(self)
+    }
+
+    pub(crate) fn stdin_native(&mut self, stdio: Stdio) {
+        self.stdin_resource = None;
+        self.stdin = Some(stdio);
+    }
+
+    pub(crate) fn stdout_native(&mut self, stdio: Stdio) {
+        self.stdout_resource = None;
+        self.stdout = Some(stdio);
+    }
+
+    pub(crate) fn stderr_native(&mut self, stdio: Stdio) {
+        self.stderr_resource = None;
+        self.stderr = Some(stdio);
+        self.stderr_to_stdout = false;
     }
 
     pub(crate) fn stdin_inherit(&mut self) -> Result<&mut Self> {
@@ -1117,7 +1147,7 @@ impl Command<'_> {
         self
     }
 
-    pub(crate) fn stderr(&mut self, stdio: StdioSend) -> Result<&mut Self> {
+    pub(crate) fn stderr(&mut self, stdio: ChildOut) -> Result<&mut Self> {
         self.stderr = None;
         self.stderr_resource = Some(stdio);
         self.stderr_to_stdout = false;
@@ -1176,22 +1206,36 @@ impl Command<'_> {
             .await;
         let resolved = resolved.ok_or_else(Direct::program_not_found_error)?;
 
+        let mut files = Vec::new();
         if let Some(stdin) = self.stdin_resource.take() {
-            self.stdin = Some(stdin.into_stdio().await?);
+            self.stdin = Some(match stdin {
+                ChildIn::Pipe(pipe) => pipe.into_stdio().await?,
+                ChildIn::File(file) => Stdio::from(child_file(&file, false, &mut files)?),
+            });
         }
         if self.stderr_to_stdout {
             if let Some(stdout) = self.stdout_resource.take() {
-                let stderr = stdout.try_clone().await?;
-                self.stdout = Some(stdout.into_stdio().await?);
-                self.stderr = Some(stderr.into_stdio().await?);
+                let (stdout, stderr) = match stdout {
+                    ChildOut::Pipe(pipe) => {
+                        let stderr = pipe.try_clone().await?;
+                        (pipe.into_stdio().await?, stderr.into_stdio().await?)
+                    }
+                    ChildOut::File(file) => {
+                        let handle = child_file(&file, true, &mut files)?;
+                        let stderr = handle.try_clone()?;
+                        (Stdio::from(handle), Stdio::from(stderr))
+                    }
+                };
+                self.stdout = Some(stdout);
+                self.stderr = Some(stderr);
             } else if self.stdout.is_some() {
                 self.impl_stderr_inherit_stdout()?;
             }
         } else if let Some(stderr) = self.stderr_resource.take() {
-            self.stderr = Some(stderr.into_stdio().await?);
+            self.stderr = Some(child_out(stderr, &mut files).await?);
         }
         if let Some(stdout) = self.stdout_resource.take() {
-            self.stdout = Some(stdout.into_stdio().await?);
+            self.stdout = Some(child_out(stdout, &mut files).await?);
         }
 
         let mut command = TokioCommand::new(&resolved);
@@ -1230,8 +1274,32 @@ impl Command<'_> {
 
         self.configure_process(&mut command)?;
         let child = command.spawn()?;
-        self.finish_spawn(child)
+        let mut child = self.finish_spawn(child)?;
+        child.files = files;
+        Ok(child)
     }
+}
+
+/// Opens `file` for a child's standard stream, collecting what moves its
+/// cursor afterwards into `files`.
+fn child_file(file: &file::File, send: bool, files: &mut Vec<ChildFile>) -> Result<std::fs::File> {
+    let file::FileInner::Direct(file) = &file.inner else {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "file belongs to a different VFS",
+        ));
+    };
+    let (handle, sync) = file.child_stdio(send)?;
+    files.extend(sync);
+    Ok(handle)
+}
+
+/// Converts a standard output or error stream for the child.
+async fn child_out(stdio: ChildOut, files: &mut Vec<ChildFile>) -> Result<Stdio> {
+    Ok(match stdio {
+        ChildOut::Pipe(pipe) => pipe.into_stdio().await?,
+        ChildOut::File(file) => Stdio::from(child_file(&file, true, files)?),
+    })
 }
 
 impl OpenOptions {
@@ -1547,7 +1615,7 @@ impl Direct {
         }
     }
 
-    pub(crate) async fn pipe(&self, buf_size: Option<usize>) -> Result<(StdioSend, StdioRecv)> {
+    pub(crate) async fn pipe(&self, buf_size: Option<usize>) -> Result<(PipeSend, PipeRecv)> {
         Ok(process::pipe(buf_size)?)
     }
 

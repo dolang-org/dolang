@@ -219,7 +219,7 @@ fn poll_read_op(op: &mut ReadOp, cx: &mut Context<'_>) -> Poll<io::Result<Body>>
 
 impl FileInner {
     /// The cursor position, shared by every clone.
-    pub(super) fn position(&self) -> &AtomicU64 {
+    pub(crate) fn position(&self) -> &AtomicU64 {
         match self {
             Self::Direct(file) => file.position(),
             Self::Client(file) => file.position(),
