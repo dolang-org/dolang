@@ -836,12 +836,7 @@ fn index_from<'v, 's>(
     let len = glue.len(owner, strand);
     if let Some(slice) = range::slice(index, strand, len)? {
         let indices: Box<dyn Iterator<Item = usize>> = match slice {
-            range::Slice::Contiguous { start, end } => {
-                if start > end {
-                    return Err(Error::index(strand));
-                }
-                Box::new(start..end)
-            }
+            range::Slice::Contiguous { start, end } => Box::new(start..end),
             range::Slice::Stepped(indices) => Box::new(indices.into_iter()),
         };
         let mut array = array::Array::new();
@@ -1250,7 +1245,7 @@ mod tests {
     }
 
     #[test]
-    fn index_from_errors_when_slice_start_exceeds_end() {
+    fn index_from_is_empty_when_slice_start_exceeds_end() {
         with_fixture_vm(async |strand, [mut owner_slot]| {
             make_owner(strand, &[1, 2, 3, 4, 5], Slot::reborrow(&mut owner_slot));
             let owner: &Value = &owner_slot;
@@ -1260,13 +1255,11 @@ mod tests {
             };
 
             // A contiguous range whose resolved start (5) is past its resolved end
-            // (2) — `Range::slice`/`index::position` each resolve fine in isolation,
-            // but the pair is nonsensical as a slice. `start`/`end` are constructed
-            // and consumed in the same expression, immediately embedded (by value)
-            // into the `Range`, which becomes GC-scanned as soon as it's rooted in
-            // `range_slot` below.
+            // (2) slices nothing. `start`/`end` are constructed and consumed in the
+            // same expression, immediately embedded (by value) into the `Range`,
+            // which becomes GC-scanned as soon as it's rooted in `range_slot` below.
             strand
-                .with_slots::<2, _>(async |strand, [mut range_slot, out_slot]| {
+                .with_slots(async |strand, [mut range_slot, mut out_slot]| {
                     let range = range::Range::new(
                         Value::from_i64(strand, 5),
                         Value::from_i64(strand, 2),
@@ -1278,8 +1271,17 @@ mod tests {
                         Slot::reborrow(&mut range_slot),
                     );
                     let range_value: &Value = &range_slot;
-                    let err = index_from(owner, &glue, strand, range_value, out_slot).unwrap_err();
-                    assert_eq!(err.kind(), ErrorKind::Index);
+                    index_from(
+                        owner,
+                        &glue,
+                        strand,
+                        range_value,
+                        Slot::reborrow(&mut out_slot),
+                    )
+                    .unwrap();
+                    let out: &Value = &out_slot;
+                    let array = out.downcast_ref(strand.builtin_types().array).unwrap();
+                    assert!(array.borrow().unwrap().inner.is_empty());
                 })
                 .await;
         });

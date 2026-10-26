@@ -45,6 +45,10 @@ impl<'v> Range<'v> {
         Self { start, end, step }
     }
 
+    fn step(&self) -> Option<&Value<'v>> {
+        (!self.step.is_nil()).then_some(&self.step)
+    }
+
     pub(crate) fn parts(&self) -> (&Value<'v>, &Value<'v>, &Value<'v>) {
         (&self.start, &self.end, &self.step)
     }
@@ -77,7 +81,8 @@ impl<'v> Range<'v> {
             )
             .ok_or_else(|| Error::index(strand))?
         };
-        Ok((start, end))
+        // An end before the start is an empty slice at the start.
+        Ok((start, end.max(start)))
     }
 
     fn slice<'a, 's>(&self, strand: &'a mut Strand<'v, 's>, len: usize) -> Result<'v, 's, Slice> {
@@ -264,22 +269,14 @@ impl<'v> Protocol<'v> for Range<'v> {
         let borrow = this.get();
         strand.with_slots_sync(|strand, [mut start, mut step]| {
             Output::set(strand, &mut start, &borrow.start);
-            Output::set(strand, &mut step, &borrow.step);
             if start.is_nil() {
                 Output::set(strand, &mut start, 0);
             }
+            let (_, direction) = direction(strand, &start, &borrow.end, borrow.step())?;
+            Output::set(strand, &mut step, &borrow.step);
             if step.is_nil() {
                 Output::set(strand, &mut step, 1);
             }
-            let direction = if borrow.end.is_nil() {
-                Direction::Unbounded
-            } else if start.op_lt(strand, &borrow.end)?.to_bool(strand)? {
-                Direction::Increasing
-            } else if start.op_gt(strand, &borrow.end)?.to_bool(strand)? {
-                Direction::Decreasing
-            } else {
-                Direction::Empty
-            };
             strand.builtin_types().range_iter.create(
                 strand,
                 Iter {
@@ -305,25 +302,44 @@ impl<'v> Protocol<'v> for Range<'v> {
             sym::CONTAINS => {
                 let ([value], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.get();
-                // Determine range direction and check containment accordingly
-                // For increasing ranges (start < end): value >= start && value < end
-                // For decreasing ranges (start > end): value > end && value <= start
-                // For empty ranges (start == end): nothing is contained
-                let is_increasing = borrow.start.op_lt(strand, &borrow.end)?.to_bool(strand)?;
-                let is_decreasing = borrow.start.op_gt(strand, &borrow.end)?.to_bool(strand)?;
-                let contained = if is_increasing {
-                    // Increasing: [start, end)
-                    let gte_start = borrow.start.op_lte(strand, &value)?.to_bool(strand)?;
-                    let lt_end = value.op_lt(strand, &borrow.end)?.to_bool(strand)?;
-                    gte_start && lt_end
-                } else if is_decreasing {
-                    // Decreasing: (end, start]
-                    let gt_end = borrow.end.op_lt(strand, &value)?.to_bool(strand)?;
-                    let lte_start = value.op_lte(strand, &borrow.start)?.to_bool(strand)?;
-                    gt_end && lte_start
+                let start = if borrow.start.is_nil() {
+                    Value::from_i64(strand, 0)
                 } else {
-                    // Empty range: start == end, nothing is contained
-                    false
+                    borrow.start.dup()
+                };
+                let (ascending, direction) = direction(strand, &start, &borrow.end, borrow.step())?;
+                let in_bounds = match direction {
+                    Direction::Empty => false,
+                    Direction::Increasing => {
+                        start.op_lte(strand, &value)?.to_bool(strand)?
+                            && value.op_lt(strand, &borrow.end)?.to_bool(strand)?
+                    }
+                    Direction::Decreasing => {
+                        borrow.end.op_lt(strand, &value)?.to_bool(strand)?
+                            && value.op_lte(strand, &start)?.to_bool(strand)?
+                    }
+                    Direction::Unbounded => {
+                        if ascending {
+                            start.op_lte(strand, &value)?.to_bool(strand)?
+                        } else {
+                            value.op_lte(strand, &start)?.to_bool(strand)?
+                        }
+                    }
+                };
+                // Without a step, membership is the interval alone, so any
+                // ordered type works. With one, only values a whole number of
+                // steps from the start are members; `step - step` stands in for
+                // zero in the step's type.
+                let contained = match borrow.step() {
+                    Some(step) if in_bounds => {
+                        let zero = step.op_sub(strand, step)?;
+                        value
+                            .op_sub(strand, &start)?
+                            .op_mod(strand, step)?
+                            .op_eq(strand, &zero)?
+                            .to_bool(strand)?
+                    }
+                    _ => in_bounds,
                 };
                 Output::set(strand, out, contained);
                 Ok(())
@@ -367,6 +383,45 @@ impl<'v> Protocol<'v> for Range<'v> {
     ) -> Result<'v, 's, ()> {
         super::iter::spread_iter(strand, this.clone(), sink).await
     }
+}
+
+/// Picks the direction of travel from the step's sign: ascending when there is
+/// no step, otherwise judged by whether `start + step` lands above or below
+/// `start`, so any type with `+` and ordering works. Bounds that lie against
+/// the step make the range empty; only a missing end is unbounded.
+fn direction<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    start: &Value<'v>,
+    end: &Value<'v>,
+    step: Option<&Value<'v>>,
+) -> Result<'v, 's, (bool, Direction)> {
+    let ascending = match step {
+        None => true,
+        Some(step) => {
+            let next = start.op_add(strand, step)?;
+            if next.op_gt(strand, start)?.to_bool(strand)? {
+                true
+            } else if next.op_lt(strand, start)?.to_bool(strand)? {
+                false
+            } else {
+                return Err(Error::value(strand, "range step must not be zero"));
+            }
+        }
+    };
+    let direction = if end.is_nil() {
+        Direction::Unbounded
+    } else if ascending {
+        if start.op_lt(strand, end)?.to_bool(strand)? {
+            Direction::Increasing
+        } else {
+            Direction::Empty
+        }
+    } else if start.op_gt(strand, end)?.to_bool(strand)? {
+        Direction::Decreasing
+    } else {
+        Direction::Empty
+    };
+    Ok((ascending, direction))
 }
 
 enum Direction {

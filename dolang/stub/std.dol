@@ -3422,6 +3422,12 @@ pub class Range[T @ Num]: Iterable[T] @Spread[T]
   #
   # `a..b` is half-open: it includes `a` and excludes `b`. An omitted endpoint
   # is `nil`.
+  #
+  # Iteration counts from `start`, or 0 when it is `nil`, toward `end` by
+  # `step`, which defaults to `1`. A range whose end lies on the wrong side of
+  # its start for the step is empty: `5..1` has no values, while
+  # `Range 5 1 -1` yields 5, 4, 3, 2. A range with no `end` iterates forever.
+  # Iterating with a zero step raises [`ValueError`](std.ValueError).
   pub def (init) self start@(T|nil) = nil end@(T|nil) = nil step@(T|nil) = nil
     ...
 
@@ -3440,26 +3446,29 @@ pub class Range[T @ Num]: Iterable[T] @Spread[T]
   pub def step self -> (T | nil)
     ...
 
-  # Tests whether the given value is within the Range interval. For increasing
-  # ranges (start < end), checks if value is in \[start, end). For decreasing
-  # ranges (start > end), checks if value is in (end, start].
+  # Tests whether the given value lies in the range: from `start` (inclusive)
+  # toward `end` (exclusive) in the step's direction. With an explicit `step`,
+  # the value must also be a whole number of steps from `start`. Without one,
+  # any value in the interval matches, so ranges of any ordered type work.
+  # Raises [`ValueError`](std.ValueError) for a zero step.
   #
   # ## Example
   #
   # ```playground
   # #> import test:
   # #>   - assert
-  # # Increasing Range [0, 5)
   # let r1 = Range 0 5
   # assert (r1.contains 0)
   # assert (r1.contains 4)
   # assert (!r1.contains 5)
   #
-  # # Decreasing Range (0, 5]
-  # let r2 = Range 5 0 -1
+  # let r2 = Range 5 0 -2
   # assert (r2.contains 5)
   # assert (r2.contains 1)
-  # assert (!r2.contains 0)
+  # assert (!r2.contains 2)
+  #
+  # # Without a step, the range ascends, and 5..0 is empty
+  # assert (!(Range 5 0).contains 3)
   # ```
   pub def contains
     self
@@ -3468,7 +3477,7 @@ pub class Range[T @ Num]: Iterable[T] @Spread[T]
   do -> Bool
     ...
 
-  # Iterates the interval. Open-ended ranges require a concrete start.
+  # Iterates the range's values.
   pub def (iter) self -> Iter[T]
     ...
 
