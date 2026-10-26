@@ -5,6 +5,7 @@ fn expr(kind: ExprKind) -> Expr {
     Expr {
         kind,
         span: Span::INVALID,
+        synthetic: false,
     }
 }
 

@@ -11,6 +11,7 @@ use super::{
     jump::{Finally, Loop},
     nil,
     scope::{DeclKey, Entry, Frame},
+    synthetic,
 };
 use crate::{
     ast::{
@@ -107,7 +108,10 @@ impl<'u> Scope<'_, '_, 'u> {
         let init = self.ctx.init.clone().expect("lowering an `(init)`");
         let span = init.span;
         if let Some(&(_, flag)) = init.supers.first() {
-            self.assign(flag, expr(ExprKind::Literal(Literal::Bool(true)), span));
+            self.assign(
+                flag,
+                synthetic(ExprKind::Literal(Literal::Bool(true)), span),
+            );
         }
         self.emit(Step::Escape {
             span,
@@ -181,7 +185,7 @@ impl<'u> Scope<'_, '_, 'u> {
             self.graph().var_mut(var).flags.insert(VarFlags::BOTTOM);
             self.assign(
                 var,
-                expr(ExprKind::Literal(Literal::Bool(false)), init.span),
+                synthetic(ExprKind::Literal(Literal::Bool(false)), init.span),
             );
             supers.push((class, var));
             self.graph().func_mut(self.ctx.func).supers.push(var);
@@ -629,7 +633,7 @@ impl<'u> Scope<'_, '_, 'u> {
             }
             let pattern = if let ast::Pattern::TypeTest(test) = pattern {
                 let class = self.pattern_class(test);
-                self.emit(Step::Eval(expr(
+                self.emit(Step::Eval(synthetic(
                     ExprKind::TypeTest {
                         value: Box::new(expr(ExprKind::Copy(var), span)),
                         class,
@@ -740,7 +744,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 let success = self.block();
                 let failure = self.block();
                 self.end(Terminal::If {
-                    cond: expr(
+                    cond: synthetic(
                         ExprKind::Binary {
                             op: crate::lex::Op::EqEq,
                             operands: Box::new([
@@ -784,7 +788,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 let success = self.block();
                 let failure = self.block();
                 self.end(Terminal::If {
-                    cond: expr(
+                    cond: synthetic(
                         ExprKind::TypeTest {
                             value: Box::new(expr(ExprKind::Copy(var), span)),
                             class,
@@ -1533,7 +1537,7 @@ impl<'u> Scope<'_, '_, 'u> {
                         items: items.into(),
                         group,
                     },
-                    value: expr(args, span),
+                    value: synthetic(args, span),
                 });
                 self.nested_lets(nested, &frame);
                 self.defaults(params, &frame, false);

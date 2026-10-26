@@ -102,7 +102,7 @@ fn enclosing() {
 
 #[test]
 fn checked() {
-    let source = "let x = 1\nlet y = x\n";
+    let source = "let x = 1\nlet y = x\nlet z = 2\n";
     let mut config = Config::new();
     config.typecheck(true);
     let unit = config.unit(Path::new("test.dol"), source);
@@ -121,7 +121,7 @@ fn checked() {
         let judged = judged.unwrap();
         (judged.name().map(str::to_owned), judged.ty(Style::Reader))
     };
-    let read = source.rfind('x').unwrap();
+    let read = source.find("= x").unwrap() + 2;
     assert_eq!(
         judged(4, Role::Bind),
         (Some("x".to_owned()), "1".to_owned())
@@ -130,4 +130,7 @@ fn checked() {
         judged(read, Role::Read),
         (Some("x".to_owned()), "1".to_owned())
     );
+    // An expression other than a variable has a value
+    let literal = source.find('2').unwrap();
+    assert_eq!(judged(literal, Role::Value), (None, "2".to_owned()));
 }

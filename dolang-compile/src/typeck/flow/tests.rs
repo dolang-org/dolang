@@ -54,7 +54,7 @@ fn analyze(check: &Check<'_>, unit: usize, reversed: bool) -> Rendered {
     let layer = check.layers[unit]
         .as_ref()
         .expect("a lowered unit has a layer");
-    let outputs = Tree::new(ir, &layout, &runs, layer, &check.tables, reversed).finish();
+    let outputs = Tree::new(ir, &layout, &runs, layer, &check.tables, reversed, true).finish();
     let mut facts = Vec::new();
     let mut problems = Vec::new();
     let mut unresolved = Vec::new();
@@ -96,13 +96,17 @@ fn agreed(check: &Check<'_>, unit: usize) -> Rendered {
     forward
 }
 
-/// The rendered types of the facts at spans of `unit` whose text is `name`
+/// The rendered types of the references and bindings at spans of `unit` whose
+/// text is `name`
 fn facts_named(check: &Check<'_>, unit: usize, name: &str) -> Vec<String> {
     let flow = check.flows[unit]
         .as_ref()
         .expect("a unit with source is analyzed");
     (flow.facts.iter())
-        .filter(|((span, _), _)| check.tables.text(UnitId::from_index(unit), *span) == name)
+        .filter(|((span, role), _)| {
+            matches!(role, Role::Read | Role::Bind)
+                && check.tables.text(UnitId::from_index(unit), *span) == name
+        })
         .map(|(_, seen)| check.render_fact(seen.fact.ty))
         .collect()
 }
@@ -122,10 +126,31 @@ fn agree_with(source: &str, inspect: impl FnOnce(&Check<'_>)) {
         .collect();
     assert!(!unit.failed, "the fixture doesn't compile: {diags:?}");
     let mut builder = Builder::new();
+    builder.analysis(true);
     builder.unit(&unit).unwrap();
     let check = builder.check();
     agreed(&check, 0);
     inspect(&check);
+}
+
+/// Without an analysis, the final pass logs nothing but still reports
+#[test]
+fn unlogged() {
+    let mut config = Config::new();
+    config.typecheck(true);
+    let unit = config.unit(
+        Path::new("test.dol"),
+        "@class Empty\ndef f e @ Empty\n  e()\n",
+    );
+    assert!(!unit.failed);
+    let mut builder = Builder::new();
+    builder.unit(&unit).unwrap();
+    let check = builder.check();
+    let flow = check.flows[0]
+        .as_ref()
+        .expect("a unit with source is analyzed");
+    assert!(flow.facts.is_empty(), "{:?}", flow.facts);
+    assert!(!flow.problems.is_empty());
 }
 
 #[test]
@@ -411,6 +436,7 @@ pub def run n @ Int width @ Int text @ Str
     let script = config.unit(Path::new("test.dol"), source);
     assert!(!script.failed);
     let mut builder = Builder::new();
+    builder.analysis(true);
     builder.unit(&std).unwrap();
     builder.unit(&script).unwrap();
     let check = builder.check();

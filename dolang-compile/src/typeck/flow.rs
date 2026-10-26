@@ -166,16 +166,21 @@ impl Results {
     }
 }
 
-/// Whether a fact is what a variable reference read or what a binding bound
+/// What a fact at a span is about
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Role {
     /// A variable reference, which sees its variable's narrowed type
     Read,
     /// A binding, which sees the value it bound
     Bind,
+    /// An expression's type; a `do` block's is its instantiated function type
+    Value,
+    /// The type an expression was evaluated against, where one was expected of
+    /// it
+    Expected,
 }
 
-/// What a reference or binding saw, joined over every context
+/// What a reference, binding or expression saw, joined over every context
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Seen {
     pub(crate) fact: Fact,
@@ -245,15 +250,17 @@ impl Layout {
 }
 
 /// Analyze each of a unit's `runs` in a fork of its own of the unit's `layer`,
-/// giving each run's fork and what it concluded, by run ID
+/// giving each run's fork and what it concluded, by run ID. Facts are logged only
+/// when `logging`, for an analysis.
 pub(crate) fn analyze(
     ir: &Ir,
     layout: &Layout,
     runs: &[Run],
     layer: &Arc<Shared>,
     tables: &Tables<'_>,
+    logging: bool,
 ) -> Vec<(Database, Results)> {
-    Tree::new(ir, layout, runs, layer, tables, false).finish()
+    Tree::new(ir, layout, runs, layer, tables, false, logging).finish()
 }
 
 /// Analyzes a unit's runs, each as a rayon task spawned once the run it's
@@ -266,6 +273,8 @@ struct Tree<'a, 'u> {
     tables: &'a Tables<'u>,
     /// Whether each run takes its queue's last entry rather than its first
     reversed: bool,
+    /// Whether each run's final pass logs facts
+    logging: bool,
     /// Each run's fork and results, by run ID, set by the task that analyzed it
     #[expect(clippy::type_complexity, reason = "one slot per run")]
     outputs: Box<[Mutex<Option<(Database, Results)>>]>,
@@ -279,6 +288,7 @@ impl<'a, 'u> Tree<'a, 'u> {
         layer: &'a Arc<Shared>,
         tables: &'a Tables<'u>,
         reversed: bool,
+        logging: bool,
     ) -> Self {
         Self {
             ir,
@@ -287,6 +297,7 @@ impl<'a, 'u> Tree<'a, 'u> {
             layer,
             tables,
             reversed,
+            logging,
             outputs: runs.iter().map(|_| Mutex::new(None)).collect(),
         }
     }
@@ -322,7 +333,7 @@ impl<'a, 'u> Tree<'a, 'u> {
         // Its solvers share their probes' verdicts, which hold only for its
         // database and assumptions
         let verdicts = Verdicts::default();
-        let flow = Flow::new(
+        let mut flow = Flow::new(
             self.ir,
             self.layout,
             run,
@@ -331,6 +342,7 @@ impl<'a, 'u> Tree<'a, 'u> {
             self.tables,
             self.reversed,
         );
+        flow.logging = self.logging;
         let (results, accumulators) = flow.analyze(inherited);
         for &child in &run.late {
             let (db, inherited) = self.fork(&db, &accumulators, child);
@@ -467,6 +479,8 @@ struct Flow<'a, 'u> {
     diverged: Option<Divergence>,
     /// Filled by the final pass, which leaves states alone
     results: Option<Results>,
+    /// Whether the final pass logs facts, for an analysis
+    logging: bool,
     /// The running function's variables that may have escaped at the running
     /// step, starting from its block's [`Block::escaped`](super::cfg::Block::escaped)
     escaped: BitBox,
@@ -525,6 +539,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             defaulting: false,
             diverged: None,
             results: None,
+            logging: false,
             escaped: BitBox::default(),
         }
     }
@@ -813,9 +828,6 @@ impl<'a, 'u> Flow<'a, 'u> {
 
     /// Record what a reference or binding of `var` at `span` saw
     fn record(&mut self, span: Span, role: Role, var: VarId, fact: Fact) {
-        if span == Span::INVALID || !self.observing() {
-            return;
-        }
         let named = matches!(
             self.ir.var(var).origin,
             Origin::Source(_) | Origin::Field(_)
@@ -824,6 +836,14 @@ impl<'a, 'u> Flow<'a, 'u> {
             fact,
             var: named.then_some(var),
         };
+        self.log(span, role, seen);
+    }
+
+    /// Log what was seen at `span`, if the check was asked for an analysis
+    pub(super) fn log(&mut self, span: Span, role: Role, seen: Seen) {
+        if !self.logging || span == Span::INVALID {
+            return;
+        }
         if let Some(results) = &mut self.results {
             results.facts.push(((span, role), seen));
         }
