@@ -26,6 +26,8 @@ fn analysis(spans: &[(u32, u32)]) -> Analysis {
                 name: Some(index.to_string().into()),
                 ty,
                 unassigned: false,
+                decl: None,
+                overload: None,
             };
             (span(start, end), entry)
         })
@@ -34,7 +36,8 @@ fn analysis(spans: &[(u32, u32)]) -> Analysis {
         db: db.share(),
         labels: Labels::from_iter([]),
     };
-    Analysis::new(Arc::new(types), [Some(Tree::new(judgments))].into())
+    let units = [Some(Tree::new(judgments))].into();
+    Analysis::new(Arc::new(types), units, [].into())
 }
 
 /// The names of the node at `offset` and its ancestors, innermost first
@@ -133,4 +136,46 @@ fn checked() {
     // An expression other than a variable has a value
     let literal = source.find('2').unwrap();
     assert_eq!(judged(literal, Role::Value), (None, "2".to_owned()));
+}
+
+#[test]
+fn resolved() {
+    let source = "\
+class A
+  pub def get self
+    self
+class B
+@def pick x @ A -> A
+@def pick x @ B -> B
+def pick x
+  x
+def run a @ A b @ B
+  a.get()
+  pick(b)
+";
+    let mut config = Config::new();
+    config.typecheck(true);
+    let unit = config.unit(Path::new("test.dol"), source);
+    assert!(!unit.failed);
+    let mut builder = Builder::new();
+    builder.analysis(true);
+    let id = builder.unit(&unit).unwrap();
+    let analysis = builder.check().into_analysis().unwrap();
+    let judged = |at: &str, role| {
+        let node = analysis.at(id, source.find(at).unwrap() as u32).unwrap();
+        node.judgments()
+            .find(|judged| judged.role() == role)
+            .unwrap()
+    };
+    // A method call reaches the member its class declares. The receiver and
+    // the callee are nodes of their own.
+    let member = judged("get()", Role::Member);
+    assert_eq!(member.name(), Some("get"));
+    let declaration = member.declaration().unwrap();
+    assert_eq!((declaration.module(), declaration.name()), ("test", "A"));
+    assert_eq!(judged("get()", Role::Callee).overload(), None);
+    // A call of an overloaded function chooses by source order
+    let callee = judged("(b)", Role::Callee);
+    assert_eq!(callee.overload(), Some(1));
+    assert!(callee.declaration().is_none());
 }

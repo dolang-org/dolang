@@ -13,7 +13,7 @@
 use std::{cell::Cell, collections::VecDeque, iter, mem, slice};
 
 use super::{
-    At, Flow, Results, State,
+    At, Detail, Flow, Results, Role, Seen, State,
     problem::{MemberUse, Misfit, Problem},
     rule::{Call, PreparedCall},
 };
@@ -139,7 +139,7 @@ impl Flow<'_, '_> {
             };
         }
         let member = self.special("call");
-        match self.resolve(ty, member, Access::Any, span) {
+        match self.resolve(ty, member, Access::Any, span, false) {
             Resolved::Method(signature, bound) => CallTarget {
                 signature,
                 receivers: if bound { vec![callee] } else { Vec::new() },
@@ -285,13 +285,15 @@ impl Flow<'_, '_> {
     }
 
     /// Look up a receiver's member. What the lookup can't decide is recorded at
-    /// `span` as an unresolved check.
+    /// `span` as an unresolved check. A use written in source `logs` the
+    /// member it reaches.
     fn resolve(
         &mut self,
         receiver: TypeId,
         member: Member,
         access: Access,
         span: Span,
+        logs: bool,
     ) -> Resolved {
         if matches!(self.db.ty(receiver), Type::Unknown(_)) {
             return Resolved::Dynamic;
@@ -326,6 +328,10 @@ impl Flow<'_, '_> {
         };
         let signatures =
             |signatures: Option<Signatures>| signatures.map(|signatures| signature(&signatures));
+        let reached = match &lookup {
+            Lookup::Found(found) if logs => Some(found.class),
+            _ => None,
+        };
         let resolved = match lookup {
             Lookup::Found(found) => match found.kind {
                 FoundKind::Field(ty) => solver.reify(ty).map_or_else(
@@ -363,6 +369,11 @@ impl Flow<'_, '_> {
         };
         if unreified.get() {
             self.gap(span, "a member the checker can't type");
+        }
+        if let Some(class) = reached {
+            let mut seen = Seen::ty(self.db.intern(Type::Decl(class)));
+            seen.detail = Detail::Member(member.key);
+            self.log(span, Role::Member, seen);
         }
         resolved
     }
@@ -519,6 +530,7 @@ impl Flow<'_, '_> {
             expected: None,
             span,
             callee: Some(accessor),
+            logs: false,
         };
         let saved = self.results.replace(Results::default());
         let mut operands = VecDeque::new();
@@ -573,6 +585,7 @@ impl Flow<'_, '_> {
             expected,
             span,
             callee: None,
+            logs: false,
         };
         let Some(alternatives) = self.alternatives(receiver, span) else {
             let receiver = (receiver, object.span);
@@ -622,7 +635,7 @@ impl Flow<'_, '_> {
         let span = call.span;
         let leading = [receiver];
         let receiver = receiver.0;
-        match self.resolve(receiver, member, Access::Any, span) {
+        match self.resolve(receiver, member, Access::Any, span, true) {
             Resolved::Dynamic => unknown,
             Resolved::Missing | Resolved::Fallback { get: None, .. } => {
                 self.missing(receiver, within, member, span, Vec::new());
@@ -695,6 +708,7 @@ impl Flow<'_, '_> {
             expected,
             span: expr.span,
             callee: None,
+            logs: true,
         };
         if member.key == self.special("call").key
             && let Some((class, true)) = self.class_of(receiver)
@@ -750,6 +764,7 @@ impl Flow<'_, '_> {
             expected: None,
             span,
             callee: None,
+            logs: false,
         };
         let member = self.special(name);
         let mut operands = VecDeque::new();
@@ -788,6 +803,7 @@ impl Flow<'_, '_> {
             expected: None,
             span,
             callee: None,
+            logs: false,
         };
         let member = self.special(name);
         let given = (alternatives.into_iter().flatten())
@@ -802,6 +818,7 @@ impl Flow<'_, '_> {
                     member,
                     &[],
                     span,
+                    false,
                 );
                 let given = self.call_targets(at, state, &mut operands, targets, call);
                 (alternative, given)
@@ -827,15 +844,17 @@ impl Flow<'_, '_> {
         if receiver.0 == bottom {
             return self.call_with(at, state, operands, bottom, leading, call);
         }
-        let targets =
-            self.member_targets(at, state, operands, receiver, member, leading, call.span);
+        let targets = self.member_targets(
+            at, state, operands, receiver, member, leading, call.span, call.logs,
+        );
         self.call_targets(at, state, operands, targets, call)
     }
 
     /// The targets a call through a receiver's member reaches, passing `leading`
     /// before the call's own arguments: one for each alternative of a union, or of
     /// a member's value that is one. A getter or `(get)` is called here, with no
-    /// arguments, for the value it gives.
+    /// arguments, for the value it gives. A use written in source `logs` the
+    /// members it reaches.
     #[expect(clippy::too_many_arguments, reason = "a call through a member")]
     fn member_targets(
         &mut self,
@@ -846,9 +865,12 @@ impl Flow<'_, '_> {
         member: Member,
         leading: &[(TypeId, Span)],
         span: Span,
+        logs: bool,
     ) -> Vec<CallTarget> {
         let Some(alternatives) = self.alternatives(receiver.0, span) else {
-            return self.reached(at, state, operands, receiver, None, member, leading, span);
+            return self.reached(
+                at, state, operands, receiver, None, member, leading, span, logs,
+            );
         };
         let mut targets = Vec::new();
         for alternative in alternatives {
@@ -862,6 +884,7 @@ impl Flow<'_, '_> {
                     member,
                     leading,
                     span,
+                    logs,
                 )),
                 None => targets.push(CallTarget::dynamic(leading)),
             }
@@ -882,6 +905,7 @@ impl Flow<'_, '_> {
         member: Member,
         leading: &[(TypeId, Span)],
         span: Span,
+        logs: bool,
     ) -> Vec<CallTarget> {
         // A getter's result, or `(get)`'s, called with the arguments
         let got = Call {
@@ -889,8 +913,9 @@ impl Flow<'_, '_> {
             expected: None,
             span,
             callee: None,
+            logs: false,
         };
-        match self.resolve(receiver.0, member, Access::Any, span) {
+        match self.resolve(receiver.0, member, Access::Any, span, logs) {
             Resolved::Dynamic => vec![CallTarget::dynamic(leading)],
             Resolved::Missing | Resolved::Fallback { get: None, .. } => {
                 self.missing(receiver.0, within, member, span, Vec::new());
@@ -964,7 +989,7 @@ impl Flow<'_, '_> {
             None => (None, vec![Some(receiver)]),
         };
         let resolved: Vec<_> = (alternatives.into_iter().flatten())
-            .map(|ty| (ty, self.resolve(ty, member, Access::Class, span)))
+            .map(|ty| (ty, self.resolve(ty, member, Access::Class, span, true)))
             .collect();
         let field = |resolved: &Resolved| matches!(resolved, Resolved::Field(_));
         let accessor = |resolved: &Resolved| {
@@ -992,6 +1017,7 @@ impl Flow<'_, '_> {
                 expected: None,
                 span,
                 callee: None,
+                logs: false,
             };
             self.call_targets(at, state, operands, targets, call);
             return;
@@ -1046,6 +1072,7 @@ impl Flow<'_, '_> {
             expected: None,
             span,
             callee: None,
+            logs: false,
         };
         self.call_targets(at, state, operands, vec![target], call);
     }
@@ -1123,6 +1150,7 @@ impl Flow<'_, '_> {
             expected,
             span: expr.span,
             callee: None,
+            logs: false,
         };
         let member = self.special("index");
         let receiver = (receiver, object.span);
@@ -1146,6 +1174,7 @@ impl Flow<'_, '_> {
             expected: None,
             span,
             callee: None,
+            logs: false,
         };
         let member = self.special("assign");
         let receiver = (receiver, object.span);
@@ -1180,6 +1209,7 @@ impl Flow<'_, '_> {
             expected: None,
             span: expr.span,
             callee: None,
+            logs: false,
         };
         let member = self.special(name);
         self.send(
@@ -1239,6 +1269,7 @@ impl Flow<'_, '_> {
             expected: None,
             span: expr.span,
             callee: None,
+            logs: false,
         };
         let (member, reflected) = (self.special(name), self.special(reflected));
         let (lhs, rhs) = ((lhs, left.span), (rhs, right.span));
@@ -1275,6 +1306,7 @@ impl Flow<'_, '_> {
                     reflected_member,
                     &[alternative],
                     span,
+                    false,
                 ),
                 false => self.reached(
                     at,
@@ -1285,6 +1317,7 @@ impl Flow<'_, '_> {
                     member,
                     &[rhs],
                     span,
+                    false,
                 ),
             });
         }
@@ -1301,13 +1334,13 @@ impl Flow<'_, '_> {
             Some(alternatives) => alternatives.into_iter().all(|alternative| {
                 alternative.is_some_and(|ty| {
                     matches!(
-                        self.resolve(ty, member, Access::Any, span),
+                        self.resolve(ty, member, Access::Any, span, false),
                         Resolved::Missing
                     )
                 })
             }),
             None => matches!(
-                self.resolve(ty, member, Access::Any, span),
+                self.resolve(ty, member, Access::Any, span, false),
                 Resolved::Missing
             ),
         }
@@ -1357,6 +1390,7 @@ impl Flow<'_, '_> {
             expected: None,
             span: expr.span,
             callee: None,
+            logs: false,
         };
         // The VM builds a range literal itself, without calling `Range`
         match self.solver(&Gas::default()).default_construction(class) {

@@ -15,7 +15,7 @@ pub(crate) mod r#type;
 pub(crate) mod typelib;
 mod undecided;
 
-use std::{num::NonZeroUsize, path::Path, sync::Arc};
+use std::{borrow::Cow, num::NonZeroUsize, path::Path, sync::Arc};
 
 use rustc_hash::FxHashSet;
 
@@ -24,7 +24,7 @@ use crate::{
     diag::{self, Diag, Severity},
 };
 
-pub use analysis::{Analysis, Judged, Node};
+pub use analysis::{Analysis, Declaration, Judged, Node};
 pub use flow::Role;
 pub use r#type::Style;
 
@@ -330,14 +330,26 @@ impl<'u, 's> Builder<'u, 's> {
             labels,
         });
         let analysis = (self.analysis).then(|| {
+            let db = r#type::Database::fork(&types.db);
             let units = (flows.iter().zip(&cfgs).zip(&layers).enumerate())
                 .map(|(index, ((flow, cfg), layer))| {
                     let unit = UnitId::from_index(index);
                     let (flow, cfg, layer) = (flow.as_ref()?, cfg.as_ref()?, layer.as_ref()?);
-                    Some(tree(&tables, unit, flow, cfg, layer))
+                    Some(tree(&tables, &db, unit, flow, cfg, layer))
                 })
                 .collect();
-            Analysis::new(Arc::clone(&types), units)
+            // Placed now, so a member use's class is found without the units
+            let places = db
+                .declarations()
+                .map(|(copy, _)| {
+                    let original = copies
+                        .origin(copy)
+                        .expect("every declaration in the results is a copy");
+                    let (module, name) = tables.place(original)?;
+                    Some((module.into_boxed_str(), name.into_boxed_str()))
+                })
+                .collect();
+            Analysis::new(Arc::clone(&types), units, places)
         });
         undecided::report(&tables.units, &unresolved, &mut diags);
         Check {
@@ -369,9 +381,11 @@ struct UnitOutput {
     runs: Vec<(r#type::Database, flow::Results)>,
 }
 
-/// A unit's judgments, each variable named by its unit's source
+/// A unit's judgments, each variable named by its unit's source, and each
+/// member by `results`, the check's own database its facts are interned in
 fn tree(
     tables: &elab::Tables<'_>,
+    results: &r#type::Database,
     unit: UnitId,
     flow: &flow::Results,
     cfg: &cfg::Ir,
@@ -380,16 +394,36 @@ fn tree(
     let db = r#type::Database::fork(layer);
     let judgments = (flow.facts.iter())
         .map(|&((span, role), seen)| {
-            let name = seen.var.and_then(|var| match cfg.var(var).origin {
-                cfg::Origin::Source(span) => Some(tables.text(unit, span)),
-                cfg::Origin::Field(key) => Some(db.symbol(key.name)),
-                _ => None,
-            });
+            let (mut decl, mut overload) = (None, None);
+            let name = match seen.detail {
+                flow::Detail::Var(var) => match cfg.var(var).origin {
+                    cfg::Origin::Source(span) => Some(Cow::Borrowed(tables.text(unit, span))),
+                    cfg::Origin::Field(key) => Some(Cow::Borrowed(db.symbol(key.name))),
+                    _ => None,
+                },
+                flow::Detail::Member(key) => {
+                    if let &r#type::Type::Decl(class) = results.ty(seen.fact.ty) {
+                        decl = Some(class);
+                    }
+                    let name = results.symbol(key.name);
+                    Some(match key.special {
+                        true => Cow::Owned(format!("({name})")),
+                        false => Cow::Borrowed(name),
+                    })
+                }
+                flow::Detail::Overload(index) => {
+                    overload = Some(index);
+                    None
+                }
+                flow::Detail::None => None,
+            };
             let entry = analysis::Entry {
                 role,
                 name: name.map(Box::from),
                 ty: seen.fact.ty,
                 unassigned: seen.fact.unassigned,
+                decl,
+                overload,
             };
             (span, entry)
         })
@@ -416,6 +450,9 @@ fn gather(
         let mut copier = results.copier(&db, copies);
         facts.extend((run.facts.into_iter()).map(|(key, mut seen)| {
             seen.fact.ty = copier.ty(seen.fact.ty);
+            if let flow::Detail::Member(member) = &mut seen.detail {
+                member.name = copier.symbol(member.name);
+            }
             (key, seen)
         }));
         problems.append(&mut run.problems);
@@ -679,16 +716,34 @@ impl Check<'_> {
                     Role::Read | Role::Bind => "flow",
                     Role::Value => "value",
                     Role::Expected => "expected",
+                    Role::Member => "reached",
+                    Role::Callee => "callee",
                 };
-                let value = match (judged.unassigned(), judged.none()) {
-                    (false, _) => ty,
-                    (true, true) => "unassigned".to_owned(),
-                    (true, false) => format!("{ty} | unassigned"),
+                let value = match (judged.role(), judged.unassigned(), judged.none()) {
+                    (Role::Member, ..) => format!("{ty}.{}", judged.name().unwrap_or("?")),
+                    (Role::Callee, ..) => match judged.overload() {
+                        Some(index) => format!("overload {index}: {ty}"),
+                        None => ty,
+                    },
+                    (_, false, _) => ty,
+                    (_, true, true) => "unassigned".to_owned(),
+                    (_, true, false) => format!("{ty} | unassigned"),
                 };
                 (name, node.span(), value)
             }));
         }
         judgments.sort_by_key(|&(name, span, _)| (span.start, span.end, name));
+        // A union's alternatives each reach a member, and a call is made once
+        // for each alternative of a union callee
+        judgments.dedup_by(|(name, span, value), (kept_name, kept_span, kept)| {
+            let same =
+                (*name, *span) == (*kept_name, *kept_span) && matches!(*name, "reached" | "callee");
+            if same {
+                kept.push_str(" | ");
+                kept.push_str(value);
+            }
+            same
+        });
         judgments
             .into_iter()
             .map(|(name, span, value)| Judgment {

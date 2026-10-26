@@ -8,7 +8,7 @@ use std::{cmp::Reverse, iter, sync::Arc};
 
 use super::{
     flow::Role,
-    r#type::{Database, Labels, Shared, Style, TypeId},
+    r#type::{Database, DeclId, Labels, Shared, Style, TypeId},
 };
 use crate::{UnitId, source::Span};
 
@@ -33,11 +33,25 @@ pub struct Analysis {
     types: Arc<Types>,
     /// Each unit's tree, by [`UnitId`], for a unit checked from source
     units: Box<[Option<Tree>]>,
+    /// Where each declaration of `types` is, by its ID there, unless it's a
+    /// signature's
+    places: Box<[Option<Place>]>,
 }
 
+/// Where a declaration is: its module's name and its name in the module
+pub(crate) type Place = (Box<str>, Box<str>);
+
 impl Analysis {
-    pub(crate) fn new(types: Arc<Types>, units: Box<[Option<Tree>]>) -> Self {
-        Self { types, units }
+    pub(crate) fn new(
+        types: Arc<Types>,
+        units: Box<[Option<Tree>]>,
+        places: Box<[Option<Place>]>,
+    ) -> Self {
+        Self {
+            types,
+            units,
+            places,
+        }
     }
 
     /// The innermost node of `unit` containing the byte `offset`, or `None` where
@@ -61,7 +75,7 @@ impl Analysis {
     pub fn nodes(&self, unit: UnitId) -> impl Iterator<Item = Node<'_>> {
         let tree = self.tree(unit);
         (0..tree.map_or(0, |tree| tree.nodes.len())).map(move |index| Node {
-            types: &self.types,
+            analysis: self,
             tree: tree.expect("a unit with nodes has a tree"),
             index,
         })
@@ -77,7 +91,7 @@ impl Analysis {
         let tree = self.tree(unit)?;
         let index = tree.find(start, contains)?;
         Some(Node {
-            types: &self.types,
+            analysis: self,
             tree,
             index,
         })
@@ -100,9 +114,14 @@ struct NodeData {
 /// One judgment at a node's span
 pub(crate) struct Entry {
     pub(crate) role: Role,
+    /// The variable's name, or the member's
     pub(crate) name: Option<Box<str>>,
     pub(crate) ty: TypeId,
     pub(crate) unassigned: bool,
+    /// The class declaring the member a member use reached
+    pub(crate) decl: Option<DeclId>,
+    /// The overload a call chose
+    pub(crate) overload: Option<u32>,
 }
 
 impl Tree {
@@ -166,7 +185,7 @@ fn contains(outer: Span, inner: Span) -> bool {
 /// A node of an [`Analysis`]: what the checker concluded about one span
 #[derive(Clone, Copy)]
 pub struct Node<'a> {
-    types: &'a Types,
+    analysis: &'a Analysis,
     tree: &'a Tree,
     index: usize,
 }
@@ -194,15 +213,18 @@ impl<'a> Node<'a> {
 
     /// Its judgments, by role
     pub fn judgments(self) -> impl Iterator<Item = Judged<'a>> {
-        let types = self.types;
-        (self.data().entries.iter()).map(move |entry| Judged { types, entry })
+        let analysis = self.analysis;
+        self.data()
+            .entries
+            .iter()
+            .map(move |entry| Judged { analysis, entry })
     }
 }
 
 /// One judgment of a [`Node`]
 #[derive(Clone, Copy)]
 pub struct Judged<'a> {
-    types: &'a Types,
+    analysis: &'a Analysis,
     entry: &'a Entry,
 }
 
@@ -211,9 +233,24 @@ impl<'a> Judged<'a> {
         self.entry.role
     }
 
-    /// The name of the variable it reads or binds, if the variable has one
+    /// The name of the variable it reads or binds, if the variable has one, or
+    /// of the member a member use reached
     pub fn name(self) -> Option<&'a str> {
         self.entry.name.as_deref()
+    }
+
+    /// The class declaring the member a member use reached
+    pub fn declaration(self) -> Option<Declaration<'a>> {
+        let decl = self.entry.decl?;
+        let (module, name) = self.analysis.places.get(decl.index())?.as_ref()?;
+        Some(Declaration { module, name })
+    }
+
+    /// The index of the overload a call chose, among its function's `@def`
+    /// signatures in source order. `None` for a call of a function's
+    /// implementation, or of a function with one signature.
+    pub fn overload(self) -> Option<u32> {
+        self.entry.overload
     }
 
     /// Whether some path reaches it without assigning the variable
@@ -221,14 +258,35 @@ impl<'a> Judged<'a> {
         self.entry.unassigned
     }
 
-    /// Its type, as `style` shows it. A read no path assigns sees no type.
+    /// Its type, as `style` shows it: a member use's is the class declaring the
+    /// member, and a call's the signature it reached. A read no path assigns
+    /// sees no type.
     pub fn ty(self, style: Style) -> String {
-        self.types.render(self.entry.ty, style)
+        self.analysis.types.render(self.entry.ty, style)
     }
 
     /// Whether it saw no value at all
     pub(crate) fn none(self) -> bool {
-        self.entry.ty == Database::fork(&self.types.db).bottom()
+        self.entry.ty == Database::fork(&self.analysis.types.db).bottom()
+    }
+}
+
+/// A declaration, as a module's document index finds it
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Declaration<'a> {
+    module: &'a str,
+    name: &'a str,
+}
+
+impl<'a> Declaration<'a> {
+    /// The name of the module that declares it
+    pub fn module(self) -> &'a str {
+        self.module
+    }
+
+    /// Its name in its module, qualified by the declarations it's nested in
+    pub fn name(self) -> &'a str {
+        self.name
     }
 }
 

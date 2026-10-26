@@ -1,0 +1,59 @@
+# The final pass judges what a member use written in source reaches, and the
+# signature a call written in source reaches, with the overload it chose.
+
+pub class Box
+  pub field item @ Int = 0
+
+  pub def (init) self item @ Int
+    self.item = item
+
+  pub def doubled self -> Int
+    (self.item * 2)
+
+  @def pick self x @ Int -> Int
+  @def pick self x @ Str -> Str
+  pub def pick _self x
+    x
+
+pub class Crate: Box
+  pub def (init) self
+    Box.(init) $self 1
+
+pub class Bag
+  pub field item @ Str = ""
+
+@def twice x @ Int -> Int
+@def twice x @ Str -> Str
+pub def twice x
+  x
+
+pub def pick[T] x @ T -> T
+  x
+
+pub def uses b @ Box c @ Crate n @ Int either @ (Box | Bag)
+  let method = b.doubled()
+  #            ^~~~~~~~~~~: reached m.Box.doubled
+  #            ^~~~~~~~~~~: callee (m.Box, <m.uses.#0, >m.uses.#1) -> std.Int
+  let got = b.item
+  #         ^~~~~~: reached m.Box.item
+  b.item = n
+  # An inherited member is reached in the class declaring it
+  let inherited = c.doubled()
+  #               ^~~~~~~~~~~: reached m.Box.doubled
+  let generic = pick(n)
+  #             ^~~~~~~: callee (std.Int, <m.uses.#0, >m.uses.#1) -> std.Int
+  let overloaded = twice("s")
+  #                ^~~~~~~~~~: callee overload 1: (std.Str, <m.uses.#0, >m.uses.#1) -> std.Str
+  let chosen = b.pick(n)
+  #            ^~~~~~~~~: callee overload 0: (m.Box, std.Int, <m.uses.#0, >m.uses.#1) -> std.Int
+  # A union's alternatives each reach their own
+  let item = either.item
+  #          ^~~~~~~~~~~: reached m.Box.item | m.Bag.item
+  let made = Box(n)
+  #          ^~~~~~: callee (std.Int, <m.uses.#0, >m.uses.#1) -> m.Box
+  # A call held back for its call's parameter
+  let nested = pick([pick(n)])
+  #                  ^~~~~~~: callee (std.Int, <m.uses.#0, >m.uses.#1) -> std.Int
+  # An operator reaches its special member implicitly
+  let sum = (n + 1)
+  let _ = [method, got, inherited, generic, overloaded, chosen, item, made, nested, sum]

@@ -38,7 +38,7 @@ use dolang_util::mono::MonoVec;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
-    At, Fact, Flow, Role, Seen, State,
+    At, Detail, Flow, Role, Seen, State,
     member::CallTarget,
     problem::{Misfit, Problem},
     state::Group,
@@ -107,9 +107,10 @@ struct Rule<'s, 'a, 'p> {
     calls: Vec<(Term, Span, bool)>,
     /// Whether it's made for a final pass that logs facts
     logging: bool,
-    /// The `do` blocks and arguments held back that it types, by the variable
-    /// standing for each one's value and its span, which the final pass logs
-    values: Vec<(Term, Span)>,
+    /// What the final pass logs once it's solved: the `do` blocks and
+    /// arguments held back that it types, and the calls written in source that
+    /// it checks
+    logged: Vec<Pending>,
     /// Whether what it makes is held back in a `for`, so it may occur zero
     /// times
     repeated: bool,
@@ -138,9 +139,45 @@ struct Rule<'s, 'a, 'p> {
 struct Found {
     prepared: *const Prepared,
     ty: TypeId,
-    /// What the arguments held back in it were found to be, by span, which
-    /// passing it closed leaves untyped
-    values: Vec<(TypeId, Span)>,
+    /// What it logs of itself and of the arguments held back in it, as they
+    /// were found, which passing it closed leaves untyped
+    logged: Vec<(Span, Role, Seen)>,
+}
+
+/// What a rule's final run logs once it's solved
+#[derive(Clone, Copy)]
+enum Pending {
+    /// A `do` block's or an argument held back's value, by the variable
+    /// standing for it
+    Value(Term, Span),
+    /// A call's callee, by its constraint's obligation
+    Callee(ObligationId, Span),
+    /// What an argument found exactly logs
+    Seen(Span, Role, Seen),
+}
+
+impl Pending {
+    /// What it logs, as `solver` solved it, with `reify` giving a term's type,
+    /// or `None` while that's not known
+    fn resolve(
+        self,
+        solver: &Solver<'_>,
+        reify: impl Fn(Term) -> Option<TypeId>,
+    ) -> Option<(Span, Role, Seen)> {
+        match self {
+            Pending::Value(term, span) => Some((span, Role::Value, Seen::ty(reify(term)?))),
+            Pending::Callee(obligation, span) => {
+                let (callee, overload) = solver.called(obligation)?;
+                let mut seen = Seen::ty(reify(callee)?);
+                if let Some(index) = overload {
+                    let index = u32::try_from(index).expect("an overload's index fits");
+                    seen.detail = Detail::Overload(index);
+                }
+                Some((span, Role::Callee, seen))
+            }
+            Pending::Seen(span, role, seen) => Some((span, role, seen)),
+        }
+    }
 }
 
 /// An argument held back, with the variable standing for it
@@ -164,7 +201,7 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
             held: Vec::new(),
             calls: Vec::new(),
             logging: false,
-            values: Vec::new(),
+            logged: Vec::new(),
             repeated: false,
             defaulting: false,
             seed: true,
@@ -225,7 +262,7 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
             self.solver.blind(term, twin);
         }
         if self.logging {
-            self.values.push((term, span));
+            self.logged.push(Pending::Value(term, span));
         }
         term
     }
@@ -238,16 +275,18 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
         {
             let term = self.closed(found.ty);
             if self.logging {
-                self.values.extend(prepared.span().map(|span| (term, span)));
-                for &(ty, span) in &found.values {
-                    self.values.push((self.closed(ty), span));
-                }
+                self.logged
+                    .extend(prepared.span().map(|span| Pending::Value(term, span)));
+                let logged = found.logged.iter();
+                let logged = logged.map(|&(span, role, seen)| Pending::Seen(span, role, seen));
+                self.logged.extend(logged);
             }
             return term;
         }
         let term = self.solver.infer();
         if self.logging {
-            self.values.extend(prepared.span().map(|span| (term, span)));
+            let value = prepared.span().map(|span| Pending::Value(term, span));
+            self.logged.extend(value);
         }
         self.held.push(Held {
             prepared,
@@ -443,7 +482,7 @@ struct Run<'g> {
     passed: Vec<(VarId, Term)>,
     pending: Vec<Term>,
     calls: Vec<(Term, Span, bool)>,
-    values: Vec<(Term, Span)>,
+    logged: Vec<Pending>,
     outcomes: Vec<Outcome>,
     /// How many of the checks are the rule's own, ahead of what's expected of
     /// it and its sub-rules'
@@ -560,6 +599,8 @@ pub(super) struct PreparedCall {
     values: Values,
     member: Option<Member>,
     span: Span,
+    /// Whether it's written in source, so the final pass logs its callee
+    logs: bool,
     /// The ambient channels it passes
     channels: (Option<TypeId>, Option<TypeId>),
 }
@@ -571,6 +612,7 @@ impl PreparedCall {
             expected,
             span: self.span,
             callee: self.member,
+            logs: self.logs,
         }
     }
 }
@@ -944,6 +986,9 @@ pub(super) struct Call<'e> {
     pub(super) expected: Option<TypeId>,
     pub(super) span: Span,
     pub(super) callee: Option<Member>,
+    /// Whether it's written in source, so the final pass logs its callee and
+    /// the members it reaches
+    pub(super) logs: bool,
 }
 
 /// What a call can pass its arguments against, when the callee's parameters are
@@ -1042,7 +1087,7 @@ impl<'a> Flow<'a, '_> {
                     passed,
                     pending,
                     calls,
-                    values,
+                    logged,
                     found,
                     seeded,
                     ..
@@ -1072,7 +1117,7 @@ impl<'a> Flow<'a, '_> {
                     passed,
                     pending,
                     calls,
-                    values,
+                    logged,
                     outcomes,
                     own,
                     rejected,
@@ -1155,7 +1200,7 @@ impl<'a> Flow<'a, '_> {
             passed,
             pending,
             calls,
-            values: held,
+            logged,
             outcomes,
             ..
         } = run;
@@ -1174,13 +1219,12 @@ impl<'a> Flow<'a, '_> {
             .collect();
         if self.observing() {
             self.blame(&solver, &checks, &outcomes[..checks.len()]);
-            for (term, span) in held {
-                let ty = solver.reify(term).unwrap_or(self.db.unknown());
-                let fact = Fact {
-                    ty,
-                    unassigned: false,
-                };
-                self.log(span, Role::Value, Seen { fact, var: None });
+            let unknown = self.db.unknown();
+            let reify = |term| Some(solver.reify(term).unwrap_or(unknown));
+            for pending in logged {
+                if let Some((span, role, seen)) = pending.resolve(&solver, reify) {
+                    self.log(span, role, seen);
+                }
             }
         } else {
             for (var, ty) in self::passed(&mut solver, self.db, &results, &passed, &pending) {
@@ -1644,6 +1688,7 @@ impl<'a> Flow<'a, '_> {
             expected,
             span: expr.span,
             callee: None,
+            logs: true,
         };
         self.call_value(at, state, operands, (callee_type, callee.span), &[], call)
     }
@@ -1756,6 +1801,7 @@ impl<'a> Flow<'a, '_> {
             values,
             member: call.callee,
             span: call.span,
+            logs: call.logs,
             channels: self.channels(at),
         }
     }
@@ -1846,7 +1892,7 @@ impl<'a> Flow<'a, '_> {
                 rule,
                 values,
                 spread,
-                (span, name.clone()),
+                (span, name.clone(), call.logs),
                 callee_type,
                 input,
                 output,
@@ -1930,6 +1976,7 @@ impl<'a> Flow<'a, '_> {
                     expected: None,
                     span: expr.span,
                     callee: None,
+                    logs: true,
                 };
                 match <[CallTarget; 1]>::try_from(targets) {
                     Ok([target]) => {
@@ -2039,7 +2086,7 @@ impl<'a> Flow<'a, '_> {
     fn sub_rule<'p>(&self, rule: &mut Rule<'_, '_, 'p>, held: Held<'p>, expected: Option<Term>) {
         let (db, gas) = (rule.db, rule.gas);
         let lengths = (rule.checks.len(), rule.passed.len(), rule.pending.len());
-        let logged = rule.values.len();
+        let logged = rule.logged.len();
         let delta = {
             let mut fork = rule.solver.fork(gas);
             let mut sub = Rule {
@@ -2048,7 +2095,7 @@ impl<'a> Flow<'a, '_> {
                 pending: std::mem::take(&mut rule.pending),
                 calls: std::mem::take(&mut rule.calls),
                 logging: rule.logging,
-                values: std::mem::take(&mut rule.values),
+                logged: std::mem::take(&mut rule.logged),
                 found: std::mem::take(&mut rule.found),
                 repeated: held.repeated,
                 defaulting: rule.defaulting,
@@ -2124,18 +2171,21 @@ impl<'a> Flow<'a, '_> {
                     && exact != db.bottom()
                     && (sub.passed.len(), sub.pending.len()) == (lengths.1, lengths.2)
                 {
-                    let values = (sub.values[logged..].iter())
-                        .filter_map(|&(term, span)| {
-                            let ty = (sub.solver.reify(term))
-                                .or_else(|_| sub.solver.reify_found(term))
-                                .ok()?;
-                            Some((ty, span))
-                        })
+                    let solver = &*sub.solver;
+                    let reify = |term| {
+                        solver
+                            .reify(term)
+                            .or_else(|_| solver.reify_found(term))
+                            .ok()
+                    };
+                    let logged = sub.logged[logged..]
+                        .iter()
+                        .filter_map(|pending| pending.resolve(solver, reify))
                         .collect();
                     sub.found.push(Found {
                         prepared: held.prepared,
                         ty: exact,
-                        values,
+                        logged,
                     });
                 }
             }
@@ -2144,7 +2194,7 @@ impl<'a> Flow<'a, '_> {
                 passed,
                 pending,
                 calls,
-                values,
+                logged,
                 found,
                 seeded,
                 ..
@@ -2154,10 +2204,10 @@ impl<'a> Flow<'a, '_> {
                 rule.passed,
                 rule.pending,
                 rule.calls,
-                rule.values,
+                rule.logged,
                 rule.found,
                 rule.seeded,
-            ) = (checks, passed, pending, calls, values, found, seeded);
+            ) = (checks, passed, pending, calls, logged, found, seeded);
             fork.commit()
         };
         rule.solver.absorb(delta);
@@ -2180,7 +2230,7 @@ impl<'a> Flow<'a, '_> {
                     rule,
                     &call.values,
                     spread,
-                    (call.span, name),
+                    (call.span, name, call.logs),
                     call.callee,
                     input,
                     output,
@@ -3865,7 +3915,7 @@ fn call_constraint<'p>(
     rule: &mut Rule<'_, '_, 'p>,
     values: &'p Values,
     spread: Option<DeclId>,
-    (span, name): (Span, Option<String>),
+    (span, name, logs): (Span, Option<String>, bool),
     callee: TypeId,
     input: Option<TypeId>,
     output: Option<TypeId>,
@@ -3903,8 +3953,12 @@ fn call_constraint<'p>(
         args: spans,
         callee: name,
     };
-    rule.solver.constrain_call(call, Provenance::default());
+    let constraint = rule.solver.constrain_call(call, Provenance::default());
     rule.checks.push(check);
+    if rule.logging && logs {
+        let obligation = rule.solver.obligation(constraint);
+        rule.logged.push(Pending::Callee(obligation, span));
+    }
     result
 }
 

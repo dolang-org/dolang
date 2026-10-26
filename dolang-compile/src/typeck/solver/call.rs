@@ -131,6 +131,48 @@ impl Solver<'_> {
         }
     }
 
+    /// The signature a call reached and, if it chose one of an overloaded
+    /// function's signatures to reach it, its index: the callee of the call it
+    /// derived that relates its arguments to a function's parameters. `None`
+    /// until it's reduced that far, and for a dynamic callee or one that
+    /// reaches several, as a union's members do.
+    pub(crate) fn called(&self, obligation: ObligationId) -> Option<(Term, Option<usize>)> {
+        let mut at = obligation;
+        let mut overload = None;
+        let mut seen = vec![at];
+        loop {
+            let Relation::Call(call) = self.relation(at) else {
+                return None;
+            };
+            let mut next = None;
+            for dependency in self.dependencies(at) {
+                match dependency.step {
+                    Step::Arguments => return Some((call.callee, overload)),
+                    Step::Instantiation
+                    | Step::Overload(_)
+                    | Step::Callable(_)
+                    | Step::RigidBound
+                    | Step::SkolemBound
+                    | Step::IntrinsicBacking(_)
+                    | Step::Metatype => match next {
+                        Some((child, _)) if child != dependency.obligation => return None,
+                        _ => next = Some((dependency.obligation, dependency.step)),
+                    },
+                    _ => {}
+                }
+            }
+            let (child, step) = next?;
+            if let Step::Overload(index) = step {
+                overload = Some(index);
+            }
+            if seen.contains(&child) {
+                return None;
+            }
+            seen.push(child);
+            at = child;
+        }
+    }
+
     /// The implicit binders a call's own channels fill, by slot: the caller
     /// supplies its channels, so they're never inferred. An omitted one is
     /// gradual.
