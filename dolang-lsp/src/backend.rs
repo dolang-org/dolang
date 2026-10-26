@@ -30,6 +30,7 @@ use crate::{
     doc_index,
     lookup::{self, Modules, Target},
     module_path::ModulePath,
+    signature,
     workspace::{Resolved, Workspace},
 };
 
@@ -259,18 +260,35 @@ fn one_line_source(content: &str, span: &diag::Span) -> String {
         .join(" ")
 }
 
-fn parameter_label(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<String> {
+/// A parameter of a signature, from its declaration
+fn parameter(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<signature::Param> {
     let node = unit.node(id)?;
-    if !matches!(
-        node.kind(),
-        Kind::PositionalParam { .. }
-            | Kind::KeyParam { .. }
-            | Kind::RestParam { .. }
-            | Kind::SelfParam { .. }
-    ) {
-        return None;
-    }
-    node.span().map(|span| one_line_source(content, &span))
+    let default = match node.kind() {
+        Kind::PositionalParam { default, .. } | Kind::KeyParam { default, .. } => default,
+        Kind::RestParam { .. } | Kind::SelfParam { .. } => None,
+        _ => return None,
+    };
+    let span = node.span()?;
+    let ty = node
+        .children()
+        .filter_map(|child| unit.node(child))
+        .find(|child| matches!(child.kind(), Kind::Type { .. }))
+        .and_then(|child| child.span());
+    // The parameter as written ends where its annotation or default starts
+    let end = [ty.as_ref(), default.as_ref()]
+        .into_iter()
+        .flatten()
+        .map(|span| span.start().byte_offset())
+        .min()
+        .unwrap_or(span.end().byte_offset());
+    let head = content.get(span.start().byte_offset()..end)?.trim_end();
+    let head = head.strip_suffix('=').unwrap_or(head).trim_end();
+    let head = head.strip_suffix('@').unwrap_or(head).trim_end();
+    Some(signature::Param {
+        head: head.lines().map(str::trim).collect::<Vec<_>>().join(" "),
+        ty: ty.map(|span| one_line_source(content, &span)),
+        default: default.is_some(),
+    })
 }
 
 /// A node's children in source order.
@@ -322,20 +340,10 @@ fn declaration_label(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<Strin
     } else {
         type_label(content, unit, &children)
     };
-    let returns = || {
-        ty.as_deref()
-            .map(|ty| format!(" -> {ty}"))
-            .unwrap_or_default()
-    };
-    let annot = || {
-        ty.as_deref()
-            .map(|ty| format!(" @{ty}"))
-            .unwrap_or_default()
-    };
     let params = || {
         children
             .iter()
-            .filter_map(|child| parameter_label(content, unit, *child))
+            .filter_map(|child| parameter(content, unit, *child))
             .collect::<Vec<_>>()
     };
     // Only the decorators the type checker designates say anything about the
@@ -406,45 +414,29 @@ fn declaration_label(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<Strin
                 Kind::Method { .. } => designated(&["getter", "setter"]),
                 _ => String::new(),
             };
-            format!(
-                "{decorators}{}{}def {name}{}{}",
+            let prefix = format!(
+                "{decorators}{}{}def {name}",
                 if is_pub && !at { "pub " } else { "" },
                 if at { "@" } else { "" },
-                if params.is_empty() {
-                    String::new()
-                } else {
-                    format!(" {}", params.join(" "))
-                },
-                returns()
-            )
+            );
+            signature::def(&prefix, &params, ty.as_deref())
         }
         Kind::SpecialMethod { .. } => {
-            let params = params();
-            format!(
-                "def {name}{}{}",
-                if params.is_empty() {
-                    String::new()
-                } else {
-                    format!(" {}", params.join(" "))
-                },
-                returns()
-            )
+            signature::def(&format!("def {name}"), &params(), ty.as_deref())
         }
-        Kind::Field { is_pub, .. } => {
-            format!(
-                "{}field {name}{}",
-                if is_pub { "pub " } else { "" },
-                annot()
-            )
-        }
-        Kind::Bind { is_pub, .. } => {
-            format!("{}let {name}{}", if is_pub { "pub " } else { "" }, annot())
-        }
-        // A parameter is labeled by its source, annotation included
+        Kind::Field { is_pub, .. } => signature::binding(
+            &format!("{}field {name}", if is_pub { "pub " } else { "" }),
+            ty.as_deref(),
+        ),
+        Kind::Bind { is_pub, .. } => signature::binding(
+            &format!("{}let {name}", if is_pub { "pub " } else { "" }),
+            ty.as_deref(),
+        ),
+        // A parameter is labeled as written, but for its default
         Kind::PositionalParam { .. }
         | Kind::KeyParam { .. }
         | Kind::RestParam { .. }
-        | Kind::SelfParam { .. } => parameter_label(content, unit, id)?,
+        | Kind::SelfParam { .. } => parameter(content, unit, id)?.alone(),
         _ => return None,
     };
     Some(label)
@@ -453,7 +445,7 @@ fn declaration_label(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<Strin
 /// Hover text for a name that resolves outside this document -- an import or
 /// a prelude binding -- built from the static doc index rather than a local
 /// doc comment, since there is no declaration in this file to read one from.
-fn external_hover(kind: Kind<'_>, content: &str) -> Option<String> {
+fn external_hover(kind: Kind<'_>, content: &str) -> Vec<Described> {
     let (module, item) = match kind {
         Kind::ImportModule { module, .. } => (span_text(content, &module), ""),
         Kind::ImportItem { module, item, .. } => {
@@ -461,62 +453,151 @@ fn external_hover(kind: Kind<'_>, content: &str) -> Option<String> {
         }
         Kind::PreludeModule { module, .. } => (module, ""),
         Kind::PreludeItem { module, item, .. } => (module, item),
-        _ => return None,
+        _ => return Vec::new(),
     };
     bundled_hover(module, item)
 }
 
-/// Hover text for an item of a bundled module, from the static doc index
-fn bundled_hover(module: &str, item: &str) -> Option<String> {
-    let entries = doc_index::lookup(module, item);
-    if entries.is_empty() {
-        return None;
-    }
-    // Overloads share a name, and each is described in turn
-    Some(
-        entries
-            .iter()
-            .map(render_external_hover)
-            .collect::<Vec<_>>()
-            .join("\n\n---\n\n"),
-    )
+/// Hover text for an item of a bundled module, from the static doc index.
+/// Overloads share a name, and each is described in turn.
+fn bundled_hover(module: &str, item: &str) -> Vec<Described> {
+    doc_index::lookup(module, item)
+        .iter()
+        .map(Described::entry)
+        .collect()
 }
 
-/// Assembles a hover markdown blob from a fenced signature and a doc comment,
-/// for both a local declaration and an external one from the static doc index.
-fn render_hover_markdown(label: &str, prose: &str) -> String {
-    let fence = if label.contains("```") { "````" } else { "```" };
-    let mut markdown = format!("{fence}dolang\n{label}\n{fence}");
-    if !prose.is_empty() {
-        markdown.push_str("\n\n");
-        markdown.push_str(prose);
-    }
-    markdown
+/// One declaration's docs, as hover shows them
+#[derive(Debug, Clone)]
+struct Described {
+    /// Its signature, fenced
+    label: String,
+    /// Where it's declared, as "in module `m`" or "in class `m.C`"
+    note: Option<String>,
+    /// Its doc comment
+    prose: String,
+    shape: Shape,
 }
 
-fn render_external_hover(entry: &doc_index::DocEntry) -> String {
-    render_hover_markdown(&doc_index::signature(entry), entry.doc)
+/// What a declaration's label says
+#[derive(Debug, Clone, Copy)]
+enum Shape {
+    /// A function, method or class, whose signature says what its checked
+    /// type would
+    Signature,
+    /// A variable or parameter, whose checked type says all its label does
+    Value,
+    Other,
+}
+
+impl Described {
+    /// An entry of the static doc index
+    fn entry(entry: &doc_index::DocEntry) -> Self {
+        let note = match (entry.kind, entry.item.rsplit_once('.')) {
+            ("module", _) => None,
+            (_, Some((class, _))) => Some(format!("in class `{}.{class}`", entry.module)),
+            (_, None) => Some(format!("in module `{}`", entry.module)),
+        };
+        let shape = match entry.kind {
+            "function" | "method" | "class" => Shape::Signature,
+            "value" => Shape::Value,
+            _ => Shape::Other,
+        };
+        Described {
+            label: doc_index::signature(entry),
+            note,
+            prose: entry.doc.to_owned(),
+            shape,
+        }
+    }
+
+    /// The docs as markdown: a fenced label, where it's declared, then its doc
+    /// comment. Below a `typed` block, a value's label repeats it, so only its
+    /// doc comment is left, and nothing when it has none.
+    fn render(&self, typed: bool) -> Option<String> {
+        if typed && matches!(self.shape, Shape::Value) {
+            return (!self.prose.is_empty()).then(|| self.prose.clone());
+        }
+        let label = &self.label;
+        let fence = if label.contains("```") { "````" } else { "```" };
+        let mut markdown = format!("{fence}dolang\n{label}\n{fence}");
+        if let Some(note) = &self.note {
+            markdown.push_str(&format!("\n\n*{note}*"));
+        }
+        if !self.prose.is_empty() {
+            markdown.push_str("\n\n");
+            markdown.push_str(&self.prose);
+        }
+        Some(markdown)
+    }
 }
 
 /// Pre-render local hover text while the compiler unit and its spans live.
-fn build_hovers(unit: &Unit<'_>, content: &str) -> HashMap<NodeId, String> {
+fn build_hovers(unit: &Unit<'_>, content: &str) -> HashMap<NodeId, Vec<Described>> {
     unit.nodes()
         .filter_map(|(id, node)| {
-            let markdown =
-                external_hover(node.kind(), content).or_else(|| local_hover(unit, content, id))?;
-            Some((id, markdown))
+            let mut docs = external_hover(node.kind(), content);
+            if docs.is_empty() {
+                docs.extend(local_hover(unit, id, None));
+            }
+            (!docs.is_empty()).then_some((id, docs))
         })
         .collect()
 }
 
-/// Hover text for a declaration in a unit: its signature and doc comment
-fn local_hover(unit: &Unit<'_>, content: &str, id: NodeId) -> Option<String> {
+/// Hover text for a declaration in a unit: its signature, where it's declared
+/// unless that's `module`'s top level, and its doc comment. `module` is `None`
+/// for the document's own module, whose name a note leaves out.
+fn local_hover(unit: &Unit<'_>, id: NodeId, module: Option<&str>) -> Option<Described> {
+    let content = unit.source();
     let label = declaration_label(content, unit, id)?;
-    let doc = unit
-        .node(id)?
-        .doc()
-        .map(|span| normalize_doc(content, &span));
-    Some(render_hover_markdown(&label, doc.as_deref().unwrap_or("")))
+    let node = unit.node(id)?;
+    let shape = match node.kind() {
+        Kind::Function { .. }
+        | Kind::Method { .. }
+        | Kind::SpecialMethod { .. }
+        | Kind::Class { .. } => Shape::Signature,
+        Kind::Bind { .. }
+        | Kind::PositionalParam { .. }
+        | Kind::KeyParam { .. }
+        | Kind::RestParam { .. }
+        | Kind::SelfParam { .. } => Shape::Value,
+        _ => Shape::Other,
+    };
+    Some(Described {
+        label,
+        note: source_note(unit, id, module),
+        prose: node
+            .doc()
+            .map(|span| normalize_doc(content, &span))
+            .unwrap_or_default(),
+        shape,
+    })
+}
+
+/// Where a declaration in a unit is: in the classes around it, or at the top
+/// level of `module`. A declaration in anything else, such as a function,
+/// gets no note.
+fn source_note(unit: &Unit<'_>, id: NodeId, module: Option<&str>) -> Option<String> {
+    let root = unit.root()?;
+    let mut path = Vec::new();
+    let mut parent = unit.node(id)?.parent()?;
+    while parent != root {
+        let node = unit.node(parent)?;
+        let Kind::Class { name, .. } = node.kind() else {
+            return None;
+        };
+        path.push(span_text(unit.source(), &name));
+        parent = node.parent()?;
+    }
+    let class = !path.is_empty();
+    path.extend(module);
+    path.reverse();
+    match (class, &path[..]) {
+        (_, []) => None,
+        (true, _) => Some(format!("in class `{}`", path.join("."))),
+        (false, _) => Some(format!("in module `{}`", path.join("."))),
+    }
 }
 
 /// Assemble the document outline from the node table.
@@ -615,7 +696,7 @@ struct Patch {
 struct Decl {
     name_range: Range,
     uses: Vec<Range>,
-    hover: Option<String>,
+    hover: Vec<Described>,
 }
 
 /// Orders the projections of one document.
@@ -727,8 +808,9 @@ impl Document {
     }
 
     /// The declarations the name at `offset` stands for in the modules the
-    /// check read from source, and the overload a call of it chose. That's an
-    /// item imported from a module, as the reference `id` names it; a function
+    /// check read from source, and the overload a call of it chose. That's a
+    /// module, as its root; an item imported from a module, as the reference
+    /// `id` names it; a function
     /// declared here, when a call chose one of its overloads; the members a
     /// member use reached, one for each class of a union receiver; or the
     /// item a path through a module names.
@@ -747,7 +829,13 @@ impl Document {
         let found = match reference {
             Some(id) => {
                 let content = self.unit.source();
+                let root = |module: &str| {
+                    let module = modules.get(module)?;
+                    Some(Target::Source(module, module.unit.root()?))
+                };
                 let target = match self.unit.node(id).map(|node| node.kind()) {
+                    Some(Kind::ImportModule { module, .. }) => root(span_text(content, &module)),
+                    Some(Kind::PreludeModule { module, .. }) => root(module),
                     Some(Kind::ImportItem { module, item, .. }) => lookup::item(
                         modules,
                         span_text(content, &module),
@@ -849,20 +937,36 @@ fn location(
 
 /// What hover shows of a declaration found in another module, or of the
 /// overload `chosen` of it. An overload with no doc comment of its own has its
-/// implementation's.
-fn target_hover(target: &Target<'_>, chosen: Option<u32>) -> Option<String> {
+/// implementation's. A declaration in `own`, the document's module, is noted
+/// as a local one is.
+fn target_hover(target: &Target<'_>, chosen: Option<u32>, own: Option<&str>) -> Vec<Described> {
     match *target {
         Target::Source(module, implementation) => {
-            let (_, id) = chosen_node(target, chosen)?;
-            let unit = &module.unit;
-            let content = unit.source();
-            let label = declaration_label(content, unit, id)?;
-            let doc = unit
-                .node(id)?
-                .doc()
-                .or_else(|| unit.node(implementation)?.doc())
-                .map(|span| normalize_doc(content, &span));
-            Some(render_hover_markdown(&label, doc.as_deref().unwrap_or("")))
+            let described = chosen_node(target, chosen).and_then(|(_, id)| {
+                let unit = &module.unit;
+                // A module is documented by the comment opening its source
+                if unit.root() == Some(id) {
+                    return Some(Described {
+                        label: format!("module {}", module.name),
+                        note: None,
+                        prose: unit
+                            .node(id)?
+                            .doc()
+                            .map(|span| normalize_doc(unit.source(), &span))
+                            .unwrap_or_default(),
+                        shape: Shape::Other,
+                    });
+                }
+                let name = Some(&module.name[..]).filter(|&name| Some(name) != own);
+                let mut described = local_hover(unit, id, name)?;
+                if described.prose.is_empty()
+                    && let Some(span) = unit.node(implementation)?.doc()
+                {
+                    described.prose = normalize_doc(unit.source(), &span);
+                }
+                Some(described)
+            });
+            described.into_iter().collect()
         }
         Target::Bundled(ref module, ref item) => {
             let entries = doc_index::lookup(module, item);
@@ -871,32 +975,9 @@ fn target_hover(target: &Target<'_>, chosen: Option<u32>) -> Option<String> {
                 .filter(|_| entries.len() > 1)
                 .and_then(|index| entries.get(usize::try_from(index).ok()?));
             match entry {
-                Some(entry) => Some(render_external_hover(entry)),
+                Some(entry) => vec![Described::entry(entry)],
                 None => bundled_hover(module, item),
             }
-        }
-    }
-}
-
-/// Whether a declaration found in another module, or its overload `chosen`, is
-/// a function or method, whose docs open with its signature
-fn is_callable(target: &Target<'_>, chosen: Option<u32>) -> bool {
-    match *target {
-        Target::Source(module, _) => {
-            let kind = chosen_node(target, chosen)
-                .and_then(|(_, id)| module.unit.node(id))
-                .map(|node| node.kind());
-            matches!(
-                kind,
-                Some(Kind::Function { .. } | Kind::Method { .. } | Kind::SpecialMethod { .. })
-            )
-        }
-        Target::Bundled(ref module, ref item) => {
-            let entries = doc_index::lookup(module, item);
-            !entries.is_empty()
-                && entries
-                    .iter()
-                    .all(|entry| matches!(entry.kind, "function" | "method"))
         }
     }
 }
@@ -1479,11 +1560,13 @@ fn check_document(
                 true => uri.clone(),
                 false => Uri::from_file_path(check.path(source_id))?,
             };
+            let name = check.name(source_id);
             let module = lookup::Module {
                 uri,
+                name: name.clone(),
                 unit: source.clone(),
             };
-            Some((check.name(source_id), module))
+            Some((name, module))
         })
         .collect();
     let name = check.name(id);
@@ -2132,7 +2215,7 @@ fn project(
                                 .or_insert_with(|| Decl {
                                     name_range: index.range_from_span(&def),
                                     uses: Vec::new(),
-                                    hover: hovers.get(&id).cloned(),
+                                    hover: hovers.get(&id).cloned().unwrap_or_default(),
                                 })
                                 .uses
                                 .push(range);
@@ -2153,7 +2236,7 @@ fn project(
                                 .or_insert_with(|| Decl {
                                     name_range: range,
                                     uses: Vec::new(),
-                                    hover: hovers.get(&id).cloned(),
+                                    hover: hovers.get(&id).cloned().unwrap_or_default(),
                                 })
                                 .uses
                                 .push(range);
@@ -2552,41 +2635,62 @@ impl LanguageServer for Backend {
             })
         });
         let analyzed = document.analyzed();
+        // A module has no node of its own, so the check's is the path through
+        // it, which says nothing about the module
+        let module = reference.is_some_and(|(_, id, _)| {
+            let kind = document.unit.node(id).map(|node| node.kind());
+            matches!(
+                kind,
+                Some(Kind::ImportModule { .. } | Kind::PreludeModule { .. })
+            )
+        });
         let (checked, (targets, chosen)) =
             match (analyzed.as_deref(), index.offset_from_position(pos)) {
                 (Some(analyzed), Some(offset)) => (
-                    document.checked_at(analyzed, offset, referenced),
+                    (!module)
+                        .then(|| document.checked_at(analyzed, offset, referenced))
+                        .flatten(),
                     document.targets(analyzed, offset, reference.map(|(_, id, _)| id)),
                 ),
                 _ => (None, (Vec::new(), None)),
             };
         // What a check found has its own docs, each union alternative's in
-        // turn; any other reference's were rendered with the document
+        // turn; any other reference's were described with the document
+        let own = analyzed.as_deref().map(|analyzed| &analyzed.name[..]);
         let found: Vec<_> = targets
             .iter()
-            .filter_map(|target| target_hover(target, chosen))
+            .map(|target| target_hover(target, chosen, own))
             .collect();
-        // Their docs open with the signatures, which say what the checked type
-        // would
-        let signatures = !found.is_empty()
-            && found.len() == targets.len()
-            && targets.iter().all(|target| is_callable(target, chosen));
-        let docs = (!found.is_empty())
-            .then(|| found.join("\n\n---\n\n"))
-            .or_else(|| reference.and_then(|(_, _, decl)| decl.hover.clone()));
+        let (docs, complete) = match found.iter().any(|docs| !docs.is_empty()) {
+            true => {
+                let complete = found.iter().all(|docs| !docs.is_empty());
+                (found.into_iter().flatten().collect(), complete)
+            }
+            false => {
+                let docs = reference.map(|(_, _, decl)| decl.hover.clone());
+                (docs.unwrap_or_default(), true)
+            }
+        };
+        // Signatures say what the checked type would
+        let signatures = complete
+            && !docs.is_empty()
+            && docs.iter().all(|doc| matches!(doc.shape, Shape::Signature));
+        let render = |typed| {
+            let docs: Vec<_> = docs.iter().filter_map(|doc| doc.render(typed)).collect();
+            (!docs.is_empty()).then(|| docs.join("\n\n---\n\n"))
+        };
         let reference = reference.map(|(range, ..)| range);
-        let (range, value) = match (checked, docs) {
-            (None, None) => return Ok(None),
-            (None, Some(markdown)) => match reference {
-                Some(range) => (range, markdown),
-                None => return Ok(None),
+        let (range, value) = match checked {
+            None => match (reference, render(false)) {
+                (Some(range), Some(markdown)) => (range, markdown),
+                _ => return Ok(None),
             },
-            (Some((span, lines)), docs) => {
+            Some((span, lines)) => {
                 let typed = format!("```dolang\n{}\n```", lines.join("\n"));
                 let range = reference.unwrap_or_else(|| {
                     index.range_from_offsets(span.start as usize, span.end as usize)
                 });
-                match docs {
+                match render(!signatures) {
                     Some(markdown) if signatures => (range, markdown),
                     Some(markdown) => (range, format!("{typed}\n\n---\n\n{markdown}")),
                     None => (range, typed),
@@ -3280,19 +3384,22 @@ mod tests {
         let getter_hover = hover_at(&mut harness, uri.clone(), 28, 11).await.unwrap();
         assert_eq!(
             getter_hover.contents,
-            markdown("```dolang\n#[getter] pub def area _self -> Int\n```")
+            markdown("```dolang\n#[getter] pub def area _self -> Int\n```\n\n*in class `Shape`*")
         );
 
         let field_hover = hover_at(&mut harness, uri.clone(), 4, 13).await.unwrap();
         assert_eq!(
             field_hover.contents,
-            markdown("```dolang\npub field count @Int\n```\n\nThe count.")
+            markdown("```dolang\npub field count @ Int\n```\n\n*in class `Widget`*\n\nThe count.")
         );
 
         let method_hover = hover_at(&mut harness, uri.clone(), 7, 11).await.unwrap();
         assert_eq!(
             method_hover.contents,
-            markdown("```dolang\npub def get[U] self -> Int\n```\n\nGets the count.")
+            markdown(concat!(
+                "```dolang\npub def get[U] self -> Int\n```\n\n",
+                "*in class `Widget`*\n\nGets the count."
+            ))
         );
 
         let function_hover = hover_at(&mut harness, uri.clone(), 22, 8).await.unwrap();
@@ -3300,7 +3407,7 @@ mod tests {
             function_hover.contents,
             markdown(concat!(
                 "```dolang\n",
-                "pub def build[T, :K, ...R] value @ Int :mode = fast ...rest -> Widget\n",
+                "pub def build[T, :K, ...R] value@Int :mode = … ...rest -> Widget\n",
                 "```\n\n",
                 "Builds one."
             ))
@@ -3315,7 +3422,7 @@ mod tests {
         let local_hover = hover_at(&mut harness, uri.clone(), 18, 3).await.unwrap();
         assert_eq!(
             local_hover.contents,
-            markdown("```dolang\nlet local @Int\n```")
+            markdown("```dolang\nlet local @ Int\n```")
         );
 
         assert!(hover_at(&mut harness, uri, 0, 3).await.is_none());
@@ -3340,7 +3447,7 @@ mod tests {
                 kind: MarkupKind::Markdown,
                 value: concat!(
                     "```dolang\ndef echo ...args -> nil\n```\n\n",
-                    "Writes to standard output."
+                    "*in module `term`*\n\nWrites to standard output."
                 )
                 .to_owned(),
             })
@@ -3414,18 +3521,24 @@ mod tests {
         let mut harness = Harness::checking(Duration::from_millis(50));
         harness.initialize(vec![PositionEncodingKind::UTF16]).await;
         let uri: Uri = "file:///checked-hover.dol".parse().unwrap();
-        harness.open(uri.clone(), "let x = 1\nlet y = x\n", 1).await;
-        let unchecked = hover_text(&mut harness, uri.clone(), 0, 4).await.unwrap();
+        let text = "let w = 0\n# The x\nlet x = 1\nlet y = x\n";
+        harness.open(uri.clone(), text, 1).await;
+        let unchecked = hover_text(&mut harness, uri.clone(), 2, 4).await.unwrap();
+        assert_eq!(unchecked, "```dolang\nlet x\n```\n\nThe x");
         harness.next_publish().await;
 
-        let typed = |docs: &str| format!("```dolang\nx @ std.Int\n```\n\n---\n\n{docs}");
+        // The type says what `let x` would, so only the doc comment follows
+        let typed = "```dolang\nx @ std.Int\n```\n\n---\n\nThe x";
         // The binding and the use
-        let bound = hover_text(&mut harness, uri.clone(), 0, 4).await.unwrap();
-        assert_eq!(bound, typed(&unchecked));
-        let read = hover_text(&mut harness, uri.clone(), 1, 8).await.unwrap();
-        assert_eq!(read, typed(&unchecked));
+        let bound = hover_text(&mut harness, uri.clone(), 2, 4).await.unwrap();
+        assert_eq!(bound, typed);
+        let read = hover_text(&mut harness, uri.clone(), 3, 8).await.unwrap();
+        assert_eq!(read, typed);
+        // Without a doc comment, the type is all there is
+        let y = hover_text(&mut harness, uri.clone(), 3, 4).await.unwrap();
+        assert_eq!(y, "```dolang\ny @ std.Int\n```");
         // A keyword has no node
-        assert_eq!(hover_text(&mut harness, uri, 1, 1).await, None);
+        assert_eq!(hover_text(&mut harness, uri, 3, 1).await, None);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -3492,6 +3605,9 @@ def uses b @ Box n @ Int
                 .trim_end()
                 .to_owned()
         };
+        // A class's signature says what its type would
+        let class = hover_text(&mut harness, uri.clone(), 0, 7).await;
+        assert_eq!(class.unwrap(), "```dolang\nclass Box\n```");
         // A field's type at the use
         assert_eq!(
             typed(&mut harness, 11, 14).await,
@@ -4511,6 +4627,11 @@ f 1
             "{hover}"
         );
         assert!(hover.ends_with("Doubles its argument"), "{hover}");
+        assert!(hover.contains("\n\n*in module `a`*\n\n"), "{hover}");
+        // The module in a path, not the item the path names, has its source's
+        // opening comment
+        let module = hover_text(&mut harness, main.clone(), 4, 0).await;
+        assert_eq!(module.unwrap(), "```dolang\nmodule a\n```\n\nA module");
 
         // The next check sees an edit move the item
         harness.open(a.clone(), &format!("\n{a_text}"), 1).await;
@@ -4643,6 +4764,20 @@ pub def area d @ a.D
             let hover = hover_text(&mut harness, main.clone(), line, character).await;
             let hover = hover.unwrap();
             assert!(hover.ends_with(doc), "at {line}:{character}: {hover}");
+        }
+        // Where each is declared: a member by its class, qualified by its
+        // module when that isn't this one
+        for (line, character, note) in [
+            (13, 4, Some("in class `a.B`")),
+            (15, 4, Some("in module `a`")),
+            (11, 4, Some("in class `Local`")),
+            (14, 2, None),
+        ] {
+            let hover = hover_text(&mut harness, main.clone(), line, character).await;
+            let hover = hover.unwrap();
+            let found = hover.lines().find_map(|line| line.strip_prefix("*in "));
+            let found = found.map(|note| format!("in {}", note.trim_end_matches('*')));
+            assert_eq!(found.as_deref(), note, "at {line}:{character}: {hover}");
         }
         // A getter is used as a field, which its declaration says
         let found = definition(&mut harness, &main, 19, 4).await;

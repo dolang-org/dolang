@@ -35,7 +35,8 @@ merged with the checker's, but only while the stored document still has the
 stamp it checked. The check also keeps the checker's analysis, which the applier
 attaches to that stored document; a saved unit's kept check comes with its
 analysis. Hover asks the analysis what the checker concluded at the cursor, and
-for a variable shows its name and type above the declaration's doc text.
+for a variable shows its name and type above the declaration's doc comment,
+without its `let` label.
 
 The check also keeps the units of the modules it read from source, keyed by the
 checker's name for each, with the document's own. Go to definition and hover on
@@ -48,9 +49,13 @@ judgment, on the member for a method call and on the whole call for a function
 call, gives the `@def` it chose, which the lookup finds among the
 implementation's siblings in source order. A module the check read from a
 bundled typelib has no source, so hover falls back to the static doc index and
-go to definition to the import. When every declaration found is a function or
-method, hover shows only their docs, whose signatures stand in for the checked
-type.
+go to definition to the import. Hover on a module read from source shows the
+comment opening it. When every declaration found is a function,
+method or class, here or in another module, hover shows only their docs, whose
+signatures stand in for the checked type. A declaration's docs note where it is
+declared: its class, qualified by its module outside the document's own, or the
+other module whose top level declares it. One signature form serves source and
+the doc index (`signature.rs`).
 Being the check's own units, they agree with its analysis, and an edit to a
 module reaches its importers with their next check.
 

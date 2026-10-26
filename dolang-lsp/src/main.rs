@@ -9,6 +9,7 @@ mod backend;
 mod doc_index;
 mod lookup;
 mod module_path;
+mod signature;
 mod typelib_index;
 mod workspace;
 
