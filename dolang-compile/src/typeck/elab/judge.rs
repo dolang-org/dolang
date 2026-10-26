@@ -41,6 +41,7 @@ pub(crate) const JUDGMENTS: &[&str] = &[
     "expected",
     "reached",
     "callee",
+    "item",
 ];
 
 fn variance(variance: Variance) -> &'static str {

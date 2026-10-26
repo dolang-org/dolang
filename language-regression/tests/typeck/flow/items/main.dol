@@ -1,0 +1,19 @@
+# The final pass judges the item a path through a module names: the module,
+# whatever it's imported as, and the item as written, without following a
+# re-export.
+
+import a
+import a: m
+import re
+
+let called = a.f(1)
+#            ^~~: item a.f
+let made = a.C()
+#          ^~~: item a.C
+let read = a.v
+#          ^~~: item a.v
+let aliased = m.f
+#             ^~~: item a.f
+let reexported = re.f
+#                ^~~~: item re.f
+let _ = [called, made, read, aliased, reexported]

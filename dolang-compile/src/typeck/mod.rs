@@ -394,7 +394,7 @@ fn tree(
     let db = r#type::Database::fork(layer);
     let judgments = (flow.facts.iter())
         .map(|&((span, role), seen)| {
-            let (mut decl, mut overload) = (None, None);
+            let (mut decl, mut overload, mut item) = (None, None, None);
             let name = match seen.detail {
                 flow::Detail::Var(var) => match cfg.var(var).origin {
                     cfg::Origin::Source(span) => Some(Cow::Borrowed(tables.text(unit, span))),
@@ -415,6 +415,12 @@ fn tree(
                     overload = Some(index);
                     None
                 }
+                flow::Detail::Item(module, name) => {
+                    let name = results.symbol(name);
+                    let module = tables.units[module.index()].name();
+                    item = Some((module.into_boxed_str(), Box::from(name)));
+                    Some(Cow::Borrowed(name))
+                }
                 flow::Detail::None => None,
             };
             let entry = analysis::Entry {
@@ -424,6 +430,7 @@ fn tree(
                 unassigned: seen.fact.unassigned,
                 decl,
                 overload,
+                item,
             };
             (span, entry)
         })
@@ -450,8 +457,10 @@ fn gather(
         let mut copier = results.copier(&db, copies);
         facts.extend((run.facts.into_iter()).map(|(key, mut seen)| {
             seen.fact.ty = copier.ty(seen.fact.ty);
-            if let flow::Detail::Member(member) = &mut seen.detail {
-                member.name = copier.symbol(member.name);
+            match &mut seen.detail {
+                flow::Detail::Member(member) => member.name = copier.symbol(member.name),
+                flow::Detail::Item(_, name) => *name = copier.symbol(*name),
+                _ => {}
             }
             (key, seen)
         }));
@@ -718,9 +727,14 @@ impl Check<'_> {
                     Role::Expected => "expected",
                     Role::Member => "reached",
                     Role::Callee => "callee",
+                    Role::Item => "item",
                 };
                 let value = match (judged.role(), judged.unassigned(), judged.none()) {
                     (Role::Member, ..) => format!("{ty}.{}", judged.name().unwrap_or("?")),
+                    (Role::Item, ..) => match judged.declaration() {
+                        Some(item) => format!("{}.{}", item.module(), item.name()),
+                        None => "?".to_owned(),
+                    },
                     (Role::Callee, ..) => match judged.overload() {
                         Some(index) => format!("overload {index}: {ty}"),
                         None => ty,

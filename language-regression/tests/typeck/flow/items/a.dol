@@ -1,0 +1,7 @@
+pub def f x @ Int -> Int
+  x
+
+pub class C
+  pub field n @ Int = 0
+
+pub let v @ Int = 1

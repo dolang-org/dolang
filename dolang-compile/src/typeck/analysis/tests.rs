@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc};
 
 use super::{Analysis, Entry, Tree, Types};
 use crate::{
-    Config, UnitId,
+    Config, Mode, UnitId,
     source::Span,
     typeck::{
         Builder, Role, Style,
@@ -28,6 +28,7 @@ fn analysis(spans: &[(u32, u32)]) -> Analysis {
                 unassigned: false,
                 decl: None,
                 overload: None,
+                item: None,
             };
             (span(start, end), entry)
         })
@@ -178,4 +179,29 @@ def run a @ A b @ B
     let callee = judged("(b)", Role::Callee);
     assert_eq!(callee.overload(), Some(1));
     assert!(callee.declaration().is_none());
+}
+
+#[test]
+fn items() {
+    let module = "pub def f x\n  x\n";
+    let script = "import a: m\nlet y = m.f(1)\n";
+    let mut config = Config::new();
+    config
+        .typecheck(true)
+        .mode(Mode::Module { name: "a".into() });
+    let module = config.unit(Path::new("a.dol"), module);
+    let mut config = Config::new();
+    config.typecheck(true);
+    let unit = config.unit(Path::new("test.dol"), script);
+    assert!(!module.failed && !unit.failed);
+    let mut builder = Builder::new();
+    builder.analysis(true);
+    builder.unit(&module).unwrap();
+    let id = builder.unit(&unit).unwrap();
+    let analysis = builder.check().into_analysis().unwrap();
+    // A path through a module names its item by the module's own name
+    let node = analysis.at(id, script.find("m.f").unwrap() as u32).unwrap();
+    let item = node.judgments().find(|judged| judged.role() == Role::Item);
+    let declaration = item.unwrap().declaration().unwrap();
+    assert_eq!((declaration.module(), declaration.name()), ("a", "f"));
 }
