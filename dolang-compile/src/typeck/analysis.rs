@@ -114,7 +114,7 @@ struct NodeData {
 /// One judgment at a node's span
 pub(crate) struct Entry {
     pub(crate) role: Role,
-    /// The variable's name, or the member's
+    /// The variable's name, the member's, or the item's
     pub(crate) name: Option<Box<str>>,
     pub(crate) ty: TypeId,
     pub(crate) unassigned: bool,
@@ -122,6 +122,8 @@ pub(crate) struct Entry {
     pub(crate) decl: Option<DeclId>,
     /// The overload a call chose
     pub(crate) overload: Option<u32>,
+    /// The module an item is named through, and the item's name
+    pub(crate) item: Option<Place>,
 }
 
 impl Tree {
@@ -239,10 +241,13 @@ impl<'a> Judged<'a> {
         self.entry.name.as_deref()
     }
 
-    /// The class declaring the member a member use reached
+    /// The class declaring the member a member use reached, or the item a path
+    /// through a module named, as that module exports it
     pub fn declaration(self) -> Option<Declaration<'a>> {
-        let decl = self.entry.decl?;
-        let (module, name) = self.analysis.places.get(decl.index())?.as_ref()?;
+        let (module, name) = match self.entry.decl {
+            Some(decl) => self.analysis.places.get(decl.index())?.as_ref()?,
+            None => self.entry.item.as_ref()?,
+        };
         Some(Declaration { module, name })
     }
 
@@ -284,7 +289,8 @@ impl<'a> Declaration<'a> {
         self.module
     }
 
-    /// Its name in its module, qualified by the declarations it's nested in
+    /// Its name in its module, qualified by the declarations it's nested in, or
+    /// the name its module exports it by
     pub fn name(self) -> &'a str {
         self.name
     }

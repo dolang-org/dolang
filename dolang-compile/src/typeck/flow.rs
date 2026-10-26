@@ -122,7 +122,7 @@ use super::{
     },
     r#type::{
         Argument, Copies, Database, DeclId, Element, Function, Intrinsic, Kind, Literal, MemberKey,
-        Multiplicity, SchemaItem, Shared, Type, TypeId, UnitId,
+        Multiplicity, SchemaItem, Shared, SymbolId, Type, TypeId, UnitId,
     },
 };
 use crate::{RestKind, source::Span};
@@ -184,6 +184,9 @@ pub enum Role {
     /// A call written in source, which sees the signature it reached,
     /// instantiated, and the overload it chose
     Callee,
+    /// A module's item, named by a path through the module, which sees the
+    /// item's value
+    Item,
 }
 
 /// What a reference, binding, expression, member use or call saw, joined over
@@ -206,6 +209,8 @@ pub(crate) enum Detail {
     /// The index of the overload a call chose among its function's `@def`
     /// signatures
     Overload(u32),
+    /// The module an item is named through, and the item's name
+    Item(UnitId, SymbolId),
 }
 
 impl Seen {
