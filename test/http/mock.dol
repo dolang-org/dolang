@@ -307,3 +307,55 @@ def reset_cancels_callbacks()
     let after = http.get (server.url / "/cb") status: :IGNORE:
     assert_eq $after.status 404
     assert_eq $calls [1]
+
+#[test]
+def unmatched_large_binary_body_gets_404()
+  http.mock.Server do |server|
+    let body = (b"".join((0..10001).map(do |_| b"\xff")))
+    let resp = http.post (server.url / "/none") :body status: :IGNORE:
+    assert_eq $resp.status 404
+    assert_eq (resp.text()) ""
+
+#[test]
+def respond_callback_can_call_its_own_server()
+  http.mock.Server do |server|
+    server.mock
+      - path: /inner
+        respond:
+          status: 200
+          body: inner
+      - path: /outer
+        respond: do |_req|
+          let inner = http.get (server.url / "/inner")
+          {status: 200, body: "outer:$(inner.text())"}
+      do |_handle|
+        let resp = http.get (server.url / "/outer")
+        assert_eq (resp.text()) "outer:inner"
+
+#[test]
+def requests_fail_after_close()
+  let server = http.mock.Server()
+  let url = server.url
+  let before = http.get (url / "/x") status: :IGNORE:
+  assert_eq $before.status 404
+  server.close()
+  assert_throws $http.Error do
+    http.get (url / "/x")
+
+#[test]
+def received_is_in_arrival_order()
+  http.mock.Server do |server|
+    server.mock
+      - path: /a
+        respond:
+          status: 200
+      - path: /b
+        respond:
+          status: 200
+      do |handle|
+        http.get (server.url / "/b")
+        http.get (server.url / "/a")
+        let requests = handle.received()
+        assert_eq $requests.len 2
+        assert ((str requests[0].url).ends_with "/b")
+        assert ((str requests[1].url).ends_with "/a")

@@ -10,7 +10,6 @@ import std:
 import test:
   - assert_eq
   - assert_throws
-  - skip
   - test
 import testlib.memio:
   - MemIo
@@ -133,8 +132,6 @@ def unreadable_stream_body_raises()
 
 #[test]
 def body_errors_fail_the_request()
-  # wiremock panics on the aborted body, which aborts release builds
-  skip "wiremock panics on aborted request bodies (#1368)"
   echoing do |url|
     assert_throws $ValueError str: "value error: read failed" do
       http.post $url body: (FailingIo b"unused")
