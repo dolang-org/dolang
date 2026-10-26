@@ -517,7 +517,7 @@ impl Prim {
                 })
             };
         }
-        let exponent = (exponent - 1023) as i32;
+        let exponent = exponent as i32 - 1023;
         if exponent > 127 {
             return Some(if f.is_sign_positive() {
                 Ordering::Less
