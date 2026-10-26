@@ -3082,4 +3082,4 @@ mod tests;
 
 pub(crate) use copy::Copies;
 pub(crate) use disjoint::NoAncestor;
-pub(crate) use render::{Collection, Names, Shown, Style};
+pub(crate) use render::{Collection, Labels, Names, Shown, Style};

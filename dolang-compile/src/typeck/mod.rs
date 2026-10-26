@@ -288,6 +288,18 @@ impl<'u, 's> Builder<'u, 's> {
             gathered.push(flow);
         }
         results.seal();
+        // Named now, so the results render without the units
+        let labels = (results.declarations())
+            .map(|(copy, _)| {
+                let original =
+                    (copies.origin(copy)).expect("every declaration in the results is a copy");
+                let name = r#type::Names::declaration(&tables, original).into_owned();
+                (
+                    name.into_boxed_str(),
+                    r#type::Names::collection(&tables, original),
+                )
+            })
+            .collect();
         let flows = (gathered.into_iter())
             .map(|flow| {
                 flow.map(|(facts, problems, unresolved)| flow::Results {
@@ -309,7 +321,7 @@ impl<'u, 's> Builder<'u, 's> {
             tables,
             shared,
             results,
-            copies,
+            labels,
             unresolved,
         }
     }
@@ -379,6 +391,7 @@ fn merge(
 const _: () = {
     const fn send<T: Send>() {}
     const fn sync<T: Sync>() {}
+    const fn owned<T: Send + 'static>() {}
     send::<UnitOutput>();
     sync::<elab::Tables<'_>>();
     // A unit's runs are analyzed on other threads than the one that lowered it
@@ -386,6 +399,9 @@ const _: () = {
     send::<flow::Results>();
     sync::<cfg::Ir>();
     sync::<flow::Layout>();
+    // A check's results outlive its units
+    owned::<r#type::Database>();
+    owned::<r#type::Labels>();
 };
 
 /// Check every unit with [`check_unit`], on a pool of `threads` threads, else the
@@ -510,9 +526,8 @@ pub struct Check<'u> {
     shared: Arc<r#type::Shared>,
     /// A database of the check's own, which flow's facts are copied into
     results: r#type::Database,
-    /// What was copied into `results`, which knows each copied declaration's
-    /// original
-    copies: r#type::Copies,
+    /// The names of the declarations in `results`
+    labels: r#type::Labels,
     /// Well-formedness checks the checker could not decide
     unresolved: Vec<elab::Unresolved>,
     /// Each unit's typing CFG, by [`UnitId`], for a unit checked from source
@@ -525,28 +540,6 @@ pub struct Check<'u> {
     /// What flow analysis concluded about each unit, by [`UnitId`], for a unit checked
     /// from source, its facts' types interned in `results`
     flows: Vec<Option<flow::Results>>,
-}
-
-/// Names the declarations copied into a check's results by their originals
-struct Copied<'a, 'u> {
-    tables: &'a elab::Tables<'u>,
-    copies: &'a r#type::Copies,
-}
-
-impl Copied<'_, '_> {
-    fn original(&self, copy: r#type::DeclId) -> r#type::DeclId {
-        (self.copies.origin(copy)).expect("every declaration in the results is a copy")
-    }
-}
-
-impl r#type::Names for Copied<'_, '_> {
-    fn declaration(&self, id: r#type::DeclId) -> std::borrow::Cow<'_, str> {
-        r#type::Names::declaration(self.tables, self.original(id))
-    }
-
-    fn collection(&self, id: r#type::DeclId) -> Option<r#type::Collection> {
-        r#type::Names::collection(self.tables, self.original(id))
-    }
 }
 
 /// The names of the judgments [`Check::judgments`] reports.
@@ -627,11 +620,7 @@ impl Check<'_> {
 
     /// A fact's type, interned in the results
     fn render_fact(&self, ty: r#type::TypeId) -> String {
-        let names = Copied {
-            tables: &self.tables,
-            copies: &self.copies,
-        };
-        self.results.render(ty, &names, r#type::Style::Full)
+        (self.results).render(ty, &self.labels, r#type::Style::Full)
     }
 
     /// Relate every type the database holds to itself and to top, interpreting each
