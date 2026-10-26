@@ -22,7 +22,8 @@ use tower_lsp_server::{
 
 use dolang_compile::{
     Config as CompileConfig, Context, ErrorKind, Kind, Mode, Node, NodeId, Token, Unit, UnitId,
-    diag, typeck,
+    diag, source,
+    typeck::{self, Style},
 };
 
 use crate::{
@@ -623,6 +624,24 @@ struct Document {
     decls: HashMap<NodeId, Decl>,
     symbols: Vec<DocumentSymbol>,
     patches: Vec<Patch>,
+    /// What the latest check of this projection concluded. A check of an
+    /// import's change replaces it with the same stamp.
+    analyzed: Mutex<Option<Arc<Analyzed>>>,
+}
+
+/// What a check concluded about a document
+struct Analyzed {
+    /// The document's unit in the check
+    unit: UnitId,
+    analysis: typeck::Analysis,
+}
+
+/// A document's check
+#[derive(Clone, Default)]
+struct Checked {
+    diagnostics: Vec<Diagnostic>,
+    /// `None` for a unit the checker can't take
+    analyzed: Option<Arc<Analyzed>>,
 }
 
 impl Document {
@@ -633,6 +652,23 @@ impl Document {
             return None;
         }
         Some((*range, self.decls.get(id)?))
+    }
+
+    /// The span of the innermost node the latest check judged at `offset`, and
+    /// the variable it reads or binds there with its type, if it has a name.
+    fn checked_at(&self, offset: usize) -> Option<(source::Span, String)> {
+        let analyzed = self
+            .analyzed
+            .lock()
+            .expect("analysis lock poisoned")
+            .clone()?;
+        let node = (analyzed.analysis).at(analyzed.unit, offset.try_into().ok()?)?;
+        let judged = node.judgments().find(|judged| judged.name().is_some())?;
+        let name = judged.name()?;
+        Some((
+            node.span(),
+            format!("{name} @ {}", judged.ty(Style::Reader)),
+        ))
     }
 
     /// The declaration named by the token under `pos`, if any.
@@ -738,12 +774,12 @@ enum Event {
         diagnostics: Vec<Diagnostic>,
         done: oneshot::Sender<Arc<Document>>,
     },
-    /// A check of the document's projection with the given stamp, with its
-    /// compile diagnostics
+    /// A check of the document's projection with the given stamp, its
+    /// diagnostics with the compile diagnostics
     Checked {
         uri: Uri,
         stamp: Stamp,
-        diagnostics: Vec<Diagnostic>,
+        checked: Checked,
     },
     Closed(Uri, u64),
 }
@@ -758,8 +794,8 @@ struct Open {
     encoding: PositionEncodingKind,
     /// The unit's compile diagnostics
     diagnostics: Vec<Diagnostic>,
-    /// The checker's diagnostics for the unit, once it has been checked
-    checked: Option<Vec<Diagnostic>>,
+    /// The unit's check, once it has been checked
+    checked: Option<Checked>,
 }
 
 /// Compiles documents off the event loop, on a thread of its own, and type
@@ -884,7 +920,7 @@ impl Worker {
             (unit, document, diagnostics)
         }));
         // The panic hook has logged the panic itself
-        let Ok((unit, document, diagnostics)) = projected else {
+        let Ok((unit, mut document, diagnostics)) = projected else {
             log::error!("failed to compile {}", path.display());
             return;
         };
@@ -892,7 +928,11 @@ impl Worker {
         // An unchanged unit keeps its check; a changed one waits for its edits
         // to settle, each edit pushing the check back
         let published = match (&checked, self.check_delay) {
-            (Some(checked), _) => [&diagnostics[..], checked].concat(),
+            (Some(checked), _) => {
+                *document.analyzed.get_mut().expect("analysis lock poisoned") =
+                    checked.analyzed.clone();
+                [&diagnostics[..], &checked.diagnostics].concat()
+            }
             (None, Some(delay)) => {
                 self.pending.insert(uri.clone(), Instant::now() + delay);
                 diagnostics.clone()
@@ -951,7 +991,10 @@ impl Worker {
             _ = self.events.send(Event::Checked {
                 uri,
                 stamp: open.stamp,
-                diagnostics: [&open.diagnostics[..], &checked].concat(),
+                checked: Checked {
+                    diagnostics: [&open.diagnostics[..], &checked.diagnostics].concat(),
+                    ..checked
+                },
             });
         }
         self.recheck(stale);
@@ -1000,12 +1043,12 @@ fn apply(documents: &Documents, uri: Uri, document: Arc<Document>) -> bool {
     true
 }
 
-/// Whether the stored projection of a document is the one with `stamp`.
-fn current(documents: &Documents, uri: &Uri, stamp: Stamp) -> bool {
+/// The stored projection of a document, if it is the one with `stamp`.
+fn current(documents: &Documents, uri: &Uri, stamp: Stamp) -> Option<Arc<Document>> {
     let documents = documents.lock().expect("documents lock poisoned");
-    documents
-        .get(uri)
-        .is_some_and(|document| document.stamp == stamp)
+    (documents.get(uri))
+        .filter(|document| document.stamp == stamp)
+        .cloned()
 }
 
 /// Applies the worker's events in order, publishing each stored projection's
@@ -1029,12 +1072,13 @@ async fn publish(client: Client, documents: Documents, mut events: UnboundedRece
             Event::Checked {
                 uri,
                 stamp,
-                diagnostics,
+                checked,
             } => {
                 // Unless a newer projection has replaced what was checked
-                if current(&documents, &uri, stamp) {
+                if let Some(document) = current(&documents, &uri, stamp) {
+                    *document.analyzed.lock().expect("analysis lock poisoned") = checked.analyzed;
                     client
-                        .publish_diagnostics(uri, diagnostics, stamp.version)
+                        .publish_diagnostics(uri, checked.diagnostics, stamp.version)
                         .await;
                 }
             }
@@ -1104,16 +1148,17 @@ pub(crate) fn compile_document(
 
 /// Type checks a document's unit against the modules it imports.
 ///
-/// Returns the checker's diagnostics located in the document, or `None` when the
-/// unit failed to compile and can't be checked.  An import `resolved` lacks is
-/// reported as not found.
+/// Returns the checker's diagnostics located in the document and its analysis,
+/// or `None` when the unit failed to compile and can't be checked.  An import
+/// `resolved` lacks is reported as not found.
 fn check_document(
     uri: &Uri,
     unit: &Unit<'static>,
     encoding: &PositionEncodingKind,
     resolved: &Resolved<'_>,
-) -> Option<Vec<Diagnostic>> {
+) -> Option<Checked> {
     let mut builder = typeck::Builder::new();
+    builder.analysis(true);
     // The shell's pipelines connect stages with `proc`'s pipes
     builder.pipes(("proc", "PipeSender"), ("proc", "PipeReceiver"));
     let id = match builder.unit(unit) {
@@ -1149,7 +1194,12 @@ fn check_document(
             convert_diag(&index, diag, relate, &mut diagnostics);
         }
     }
-    Some(diagnostics)
+    let analyzed =
+        (check.into_analysis()).map(|analysis| Arc::new(Analyzed { unit: id, analysis }));
+    Some(Checked {
+        diagnostics,
+        analyzed,
+    })
 }
 
 /// Related information for a span a checker diagnostic in the document `id`
@@ -1283,6 +1333,33 @@ impl<'a> DocumentIndex<'a> {
             unreachable!("unsupported position encoding")
         };
         Position::new(line, character)
+    }
+
+    /// The byte offset of `position`, or `None` past the end of its line or
+    /// the document.
+    fn offset_from_position(&self, position: &Position) -> Option<usize> {
+        let line_start = *self.line_starts.get(position.line as usize)?;
+        let line_end = (self.line_starts.get(position.line as usize + 1))
+            .map_or(self.content.len(), |&next| next - 1);
+        let line = &self.content[line_start..line_end];
+        let character = position.character as usize;
+        let within = if self.position_encoding == PositionEncodingKind::UTF8 {
+            line.is_char_boundary(character).then_some(character)
+        } else if self.position_encoding == PositionEncodingKind::UTF16 {
+            let mut units = 0;
+            (line.char_indices())
+                .map(|(offset, ch)| {
+                    let at = units;
+                    units += ch.len_utf16();
+                    (at, offset)
+                })
+                .chain(iter::once((line.encode_utf16().count(), line.len())))
+                .find(|&(at, _)| at == character)
+                .map(|(_, offset)| offset)
+        } else {
+            unreachable!("unsupported position encoding")
+        };
+        Some(line_start + within?)
     }
 
     fn range_from_offsets(&self, start: usize, end: usize) -> Range {
@@ -1830,6 +1907,7 @@ fn project(
         decls,
         symbols,
         patches,
+        analyzed: Mutex::new(None),
     };
     (document, diags)
 }
@@ -2139,16 +2217,32 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         let pos = &params.text_document_position_params.position;
-        let Some((range, decl)) = document.reference_at(pos) else {
-            return Ok(None);
-        };
-        let Some(markdown) = decl.hover.as_ref() else {
-            return Ok(None);
+        let reference = document.reference_at(pos);
+        let docs = reference.and_then(|(range, decl)| Some((range, decl.hover.as_ref()?)));
+        let index = DocumentIndex::new(document.unit.source(), self.position_encoding());
+        let checked = index
+            .offset_from_position(pos)
+            .and_then(|offset| document.checked_at(offset));
+        let (range, value) = match (checked, docs) {
+            (None, None) => return Ok(None),
+            (None, Some((range, markdown))) => (range, markdown.clone()),
+            (Some((span, label)), docs) => {
+                let typed = format!("```dolang\n{label}\n```");
+                match docs {
+                    Some((range, markdown)) => (range, format!("{typed}\n\n---\n\n{markdown}")),
+                    None => {
+                        let range = (reference.map(|(range, _)| range)).unwrap_or_else(|| {
+                            index.range_from_offsets(span.start as usize, span.end as usize)
+                        });
+                        (range, typed)
+                    }
+                }
+            }
         };
         Ok(Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
-                value: markdown.clone(),
+                value,
             }),
             range: Some(range),
         }))
@@ -2935,6 +3029,62 @@ mod tests {
             hover.range,
             Some(Range::new(Position::new(1, 10), Position::new(1, 15)))
         );
+    }
+
+    /// The markdown of a hover, or `None` without one.
+    async fn hover_text(
+        harness: &mut Harness,
+        uri: Uri,
+        line: u32,
+        character: u32,
+    ) -> Option<String> {
+        let hover = hover_at(harness, uri, line, character).await?;
+        let HoverContents::Markup(content) = hover.contents else {
+            panic!("expected markup: {:?}", hover.contents);
+        };
+        Some(content.value)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn hover_shows_the_checked_type_of_a_variable() {
+        let mut harness = Harness::checking(Duration::from_millis(50));
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///checked-hover.dol".parse().unwrap();
+        harness.open(uri.clone(), "let x = 1\nlet y = x\n", 1).await;
+        let unchecked = hover_text(&mut harness, uri.clone(), 0, 4).await.unwrap();
+        harness.next_publish().await;
+
+        let typed = |docs: &str| format!("```dolang\nx @ std.Int\n```\n\n---\n\n{docs}");
+        // The binding and the use
+        let bound = hover_text(&mut harness, uri.clone(), 0, 4).await.unwrap();
+        assert_eq!(bound, typed(&unchecked));
+        let read = hover_text(&mut harness, uri.clone(), 1, 8).await.unwrap();
+        assert_eq!(read, typed(&unchecked));
+        // A keyword has no node
+        assert_eq!(hover_text(&mut harness, uri, 1, 1).await, None);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn hover_shows_a_narrowed_type_in_a_branch() {
+        // Only `dodo lsp-test` builds with the bundled typelibs
+        if typelib_index::lookup("std").is_none() {
+            return;
+        }
+        let mut harness = Harness::checking(Duration::from_millis(50));
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///narrowed-hover.dol".parse().unwrap();
+        let text = "def f v @ (Int | Str)\n  if (type(v, Int))\n    echo $v\n";
+        harness.open(uri.clone(), text, 1).await;
+        harness.next_publish().await;
+
+        let typed = |hover: Option<String>| {
+            let hover = hover.unwrap();
+            hover.lines().nth(1).unwrap().to_owned()
+        };
+        let param = hover_text(&mut harness, uri.clone(), 0, 6).await;
+        assert_eq!(typed(param), "v @ std.Int | std.Str");
+        let narrowed = hover_text(&mut harness, uri, 2, 10).await;
+        assert_eq!(typed(narrowed), "v @ std.Int");
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -3762,8 +3912,8 @@ mod tests {
             version: Some(1),
             ..stored
         };
-        assert!(current(&backend.documents, &uri, stored));
-        assert!(!current(&backend.documents, &uri, older));
+        assert!(current(&backend.documents, &uri, stored).is_some());
+        assert!(current(&backend.documents, &uri, older).is_none());
     }
 
     #[tokio::test(flavor = "current_thread")]
