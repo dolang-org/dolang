@@ -27,6 +27,28 @@ pub(crate) trait Names {
     }
 }
 
+/// A declaration's name and the collection its applications are written as
+pub(crate) type Label = (Box<str>, Option<Collection>);
+
+/// The names of a database's declarations, owned, by [`DeclId`]
+pub(crate) struct Labels(Box<[Label]>);
+
+impl FromIterator<Label> for Labels {
+    fn from_iter<I: IntoIterator<Item = Label>>(iter: I) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
+
+impl Names for Labels {
+    fn declaration(&self, id: DeclId) -> Cow<'_, str> {
+        Cow::Borrowed(&self.0[id.index()].0)
+    }
+
+    fn collection(&self, id: DeclId) -> Option<Collection> {
+        self.0[id.index()].1
+    }
+}
+
 /// A class whose applications have a literal form
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Collection {
