@@ -1190,6 +1190,7 @@ dependencies = [
  "dolang-compile",
  "env_logger",
  "futures",
+ "libc",
  "log",
  "mimalloc",
  "serde",

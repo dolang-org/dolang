@@ -1,0 +1,3 @@
+# The module path `dodo typecheck-test` checks with
+[modules]
+path = ["dolang-shell-modules/lib", "*/stub"]

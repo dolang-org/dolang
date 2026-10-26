@@ -21,11 +21,11 @@ use tower_lsp_server::{
 };
 
 use dolang_compile::{
-    Config as CompileConfig, Context, ErrorKind, Kind, Node, NodeId, Token, Unit, UnitId, diag,
-    typeck,
+    Config as CompileConfig, Context, ErrorKind, Kind, Mode, Node, NodeId, Token, Unit, UnitId,
+    diag, typeck,
 };
 
-use crate::{doc_index, typelib_index};
+use crate::{doc_index, module_path::ModulePath, typelib_index};
 
 const TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
     SemanticTokenModifier::DEFAULT_LIBRARY,
@@ -36,6 +36,8 @@ const TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
 const CONFIG_FILE_NAME: &str = ".dolang-lsp.toml";
 /// How long a document's edits must settle before it is type checked
 const CHECK_DELAY: Duration = Duration::from_millis(300);
+/// The most module sources one check compiles from the module path
+const MAX_MODULES: usize = 512;
 
 const LEGEND_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::ENUM_MEMBER,
@@ -670,6 +672,7 @@ impl Import {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Settings {
     pub(crate) prelude: Vec<Import>,
+    pub(crate) modules: Option<ModulePath>,
 }
 
 #[derive(Debug, Default)]
@@ -744,6 +747,8 @@ enum Event {
 struct Open {
     stamp: Stamp,
     settings: Option<Arc<Settings>>,
+    /// The module the document is on its module path, or `None` for a script
+    module: Option<String>,
     unit: Arc<Unit<'static>>,
     encoding: PositionEncodingKind,
     /// The unit's compile diagnostics
@@ -767,6 +772,7 @@ struct Worker {
     /// When each document with an unchecked unit is due to be checked
     pending: HashMap<Uri, Instant>,
     typelibs: Typelibs,
+    sources: Sources,
 }
 
 impl Worker {
@@ -843,16 +849,28 @@ impl Worker {
         {
             return;
         }
+        let module = (settings.as_ref())
+            .and_then(|settings| settings.modules.as_ref())
+            .and_then(|modules| modules.module_of(&path));
         let cached = open
             .filter(|open| {
-                open.settings == settings && open.encoding == encoding && open.unit.source() == text
+                open.settings == settings
+                    && open.module == module
+                    && open.encoding == encoding
+                    && open.unit.source() == text
             })
             .map(|open| (open.unit.clone(), open.checked.clone()));
         let (cached, checked) = cached.unzip();
         let checked = checked.flatten();
         let projected = panic::catch_unwind(AssertUnwindSafe(|| {
-            let unit = cached
-                .unwrap_or_else(|| Arc::new(compile_document(&path, text, settings.as_deref())));
+            let unit = cached.unwrap_or_else(|| {
+                Arc::new(compile_document(
+                    &path,
+                    text,
+                    settings.as_deref(),
+                    module.as_deref(),
+                ))
+            });
             let (document, diagnostics) = project(&uri, stamp, unit.clone(), &encoding);
             (unit, document, diagnostics)
         }));
@@ -877,6 +895,7 @@ impl Worker {
             Open {
                 stamp,
                 settings,
+                module,
                 unit,
                 encoding,
                 diagnostics,
@@ -901,7 +920,18 @@ impl Worker {
         }
         let start = Instant::now();
         let checked = panic::catch_unwind(AssertUnwindSafe(|| {
-            check_document(&uri, &open.unit, &open.encoding, &mut self.typelibs)
+            let imports = Imports {
+                modules: (open.settings.as_ref()).and_then(|settings| settings.modules.as_ref()),
+                typelibs: &mut self.typelibs,
+                sources: &mut self.sources,
+            };
+            check_document(
+                &uri,
+                &open.unit,
+                open.module.as_deref(),
+                &open.encoding,
+                imports,
+            )
         }));
         log::debug!("checked {} in {:?}", uri.as_str(), start.elapsed());
         // The compile diagnostics already published are all there is to say
@@ -999,11 +1029,22 @@ async fn publish(client: Client, documents: Documents, mut events: UnboundedRece
     }
 }
 
-/// Compiles a document as the server projects it.
-fn compile_document(path: &Path, text: String, settings: Option<&Settings>) -> Unit<'static> {
+/// Compiles a document as the server projects it, as `module` if it is one.
+///
+/// A module has only the language's prelude; a script also has the configured one.
+fn compile_document(
+    path: &Path,
+    text: String,
+    settings: Option<&Settings>,
+    module: Option<&str>,
+) -> Unit<'static> {
     let mut config = CompileConfig::new();
     config.recover(true).document(true).typecheck(true);
-    if let Some(settings) = settings {
+    if let Some(module) = module {
+        config.mode(Mode::Module {
+            name: module.to_owned().into(),
+        });
+    } else if let Some(settings) = settings {
         let mut prelude = config.prelude();
         for import in settings.prelude.iter() {
             match import {
@@ -1044,45 +1085,116 @@ fn compile_document(path: &Path, text: String, settings: Option<&Settings>) -> U
 struct Typelibs(HashMap<String, Option<typeck::Typelib<'static>>>);
 
 impl Typelibs {
-    /// The typelibs of the bundled modules a unit imports, directly or through
-    /// other typelibs, each once.
-    fn imported_by(&mut self, unit: &Unit<'_>) -> Vec<&typeck::Typelib<'static>> {
-        let mut queue: Vec<String> = unit.imports().into_iter().map(str::to_owned).collect();
-        let mut seen = HashSet::new();
-        while let Some(name) = queue.pop() {
-            if seen.contains(&name) {
-                continue;
-            }
-            let typelib = self.0.entry(name.clone()).or_insert_with(|| {
-                let bytes = typelib_index::lookup(&name)?;
+    /// A bundled module's typelib, decoded the first time a check needs it.
+    fn get(&mut self, name: &str) -> Option<&typeck::Typelib<'static>> {
+        (self.0.entry(name.to_owned()))
+            .or_insert_with(|| {
+                let bytes = typelib_index::lookup(name)?;
                 typeck::Typelib::read(bytes)
                     .inspect_err(|err| log::error!("bundled typelib {name} is unreadable: {err}"))
                     .ok()
-            });
-            if let Some(typelib) = typelib {
-                queue.extend(typelib.imports().into_iter().map(str::to_owned));
-            }
-            seen.insert(name);
-        }
-        let mut found: Vec<_> = seen
-            .iter()
-            .filter_map(|name| self.0[name].as_ref())
-            .collect();
-        found.sort_by_key(|typelib| typelib.module());
-        found
+            })
+            .as_ref()
     }
 }
 
-/// Type checks a document's unit against the bundled typelibs it imports.
+/// The units compiled from module path sources, by canonical path, with the
+/// module each was compiled as.
+#[derive(Default)]
+struct Sources(HashMap<PathBuf, (String, Arc<Unit<'static>>)>);
+
+impl Sources {
+    /// A module's source compiled as the module, reusing the last unit for the
+    /// same text.
+    fn compile(&mut self, path: PathBuf, text: String, module: &str) -> Arc<Unit<'static>> {
+        if let Some((name, unit)) = self.0.get(&path)
+            && name == module
+            && unit.source() == text
+        {
+            return unit.clone();
+        }
+        let mut config = CompileConfig::new();
+        config
+            .mode(Mode::Module {
+                name: module.to_owned().into(),
+            })
+            .recover(true)
+            .typecheck(true);
+        let unit = Arc::new(config.unit(&path, text));
+        self.0.insert(path, (module.to_owned(), unit.clone()));
+        unit
+    }
+}
+
+/// Where a check finds the modules a document imports.
+struct Imports<'a> {
+    modules: Option<&'a ModulePath>,
+    typelibs: &'a mut Typelibs,
+    sources: &'a mut Sources,
+}
+
+impl Imports<'_> {
+    /// The sources and bundled typelibs of the modules a unit imports, directly
+    /// or through other modules, each once.  A module path source is preferred
+    /// to a bundled typelib, which is used only if the module path allows.
+    ///
+    /// `module` is the unit's own module, which nothing replaces.  The `proc`
+    /// module is always wanted, for the pipe types `strand` stands for.
+    fn resolve(
+        &mut self,
+        unit: &Unit<'_>,
+        module: Option<&str>,
+    ) -> (
+        Vec<(String, Arc<Unit<'static>>)>,
+        Vec<&typeck::Typelib<'static>>,
+    ) {
+        let mut queue: Vec<String> = unit.imports().into_iter().map(str::to_owned).collect();
+        queue.push("proc".to_owned());
+        let mut seen: HashSet<String> = module.map(str::to_owned).into_iter().collect();
+        let mut units = Vec::new();
+        let mut bundled = Vec::new();
+        while let Some(name) = queue.pop() {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            if let Some((path, text)) = self.modules.and_then(|modules| modules.open(&name)) {
+                if units.len() == MAX_MODULES {
+                    log::error!("a check needs more than {MAX_MODULES} module sources");
+                    continue;
+                }
+                let unit = self.sources.compile(path, text, &name);
+                queue.extend(unit.imports().into_iter().map(str::to_owned));
+                units.push((name, unit));
+                continue;
+            }
+            if self.modules.is_some_and(|modules| !modules.bundled) {
+                continue;
+            }
+            if let Some(typelib) = self.typelibs.get(&name) {
+                queue.extend(typelib.imports().into_iter().map(str::to_owned));
+                bundled.push(name);
+            }
+        }
+        let mut typelibs: Vec<_> = (bundled.iter())
+            .filter_map(|name| self.typelibs.0[name].as_ref())
+            .collect();
+        typelibs.sort_by_key(|typelib| typelib.module());
+        (units, typelibs)
+    }
+}
+
+/// Type checks a document's unit, as `module` if it is one, against the
+/// modules it imports.
 ///
 /// Returns the checker's diagnostics located in the document, or `None` when the
-/// unit failed to compile and can't be checked.  An import that isn't bundled is
-/// unknown to the checker, which says nothing about it.
+/// unit failed to compile and can't be checked.  An import found neither on the
+/// module path nor among the bundled typelibs is reported as not found.
 fn check_document(
     uri: &Uri,
     unit: &Unit<'static>,
+    module: Option<&str>,
     encoding: &PositionEncodingKind,
-    typelibs: &mut Typelibs,
+    mut imports: Imports<'_>,
 ) -> Option<Vec<Diagnostic>> {
     let mut builder = typeck::Builder::new();
     // The shell's pipelines connect stages with `proc`'s pipes
@@ -1095,7 +1207,17 @@ fn check_document(
             return None;
         }
     };
-    for typelib in typelibs.imported_by(unit) {
+    let (units, typelibs) = imports.resolve(unit, module);
+    for (name, source) in &units {
+        match builder.unit(source) {
+            // A source that failed to compile is left out, and imports of its
+            // module are reported as not found
+            Ok(_) => {}
+            Err(err) if matches!(err.kind(), ErrorKind::Fail) => {}
+            Err(err) => log::error!("cannot check against {name}: {err}"),
+        }
+    }
+    for typelib in typelibs {
         if let Err(err) = builder.typelib(typelib) {
             log::error!("cannot check against {}: {err}", typelib.module());
         }
@@ -1293,6 +1415,7 @@ impl Backend {
             check_delay,
             pending: HashMap::new(),
             typelibs: Typelibs::default(),
+            sources: Sources::default(),
         };
         // The thread exits once the backend drops its sender, and the applier
         // once the thread drops its own
@@ -1408,7 +1531,7 @@ impl Backend {
         mem::drop(guard);
 
         if let Some((config_dir, config)) = config_file {
-            let settings = match Self::read_settings(&config) {
+            let settings = match Self::read_settings(&config, &config_dir) {
                 Ok(settings) => settings,
                 Err(e) => {
                     log::error!("failed to load configuration {}: {}", config.display(), e);
@@ -1423,28 +1546,74 @@ impl Backend {
         Some(Arc::new(Self::default_settings(path)))
     }
 
-    fn read_settings(path: &Path) -> std::result::Result<Settings, String> {
+    fn read_settings(path: &Path, dir: &Path) -> std::result::Result<Settings, String> {
         let content = fs::read_to_string(path)
             .map_err(|e| format!("could not read {}: {e}", path.display()))?;
         let value = toml::from_str::<TomlValue>(&content)
             .map_err(|e| format!("invalid TOML in {}: {e}", path.display()))?;
-        Self::parse_settings_toml(&value)
+        Self::parse_settings_in(&value, dir)
     }
 
+    #[cfg(test)]
     fn parse_settings_toml(value: &TomlValue) -> std::result::Result<Settings, String> {
+        Self::parse_settings_in(value, Path::new("."))
+    }
+
+    /// Parses settings found in `dir`, which the module path is relative to.
+    fn parse_settings_in(value: &TomlValue, dir: &Path) -> std::result::Result<Settings, String> {
         let table = value
             .as_table()
             .ok_or_else(|| "settings are not a table as expected".to_owned())?;
-        let mut prelude = Vec::new();
+        let mut prelude = None;
+        let mut modules = None;
 
         for (key, value) in table {
             match key.as_str() {
-                "prelude" => Self::parse_prelude_table(value, &mut prelude)?,
+                "prelude" => Self::parse_prelude_table(value, prelude.insert(Vec::new()))?,
+                "modules" => modules = Some(Self::parse_modules_table(value, dir)?),
                 _ => return Err(format!("unexpected key in settings: {key}")),
             }
         }
 
-        Ok(Settings { prelude })
+        Ok(Settings {
+            prelude: prelude.unwrap_or_else(Self::default_prelude),
+            modules,
+        })
+    }
+
+    fn parse_modules_table(
+        value: &TomlValue,
+        dir: &Path,
+    ) -> std::result::Result<ModulePath, String> {
+        let table = value
+            .as_table()
+            .ok_or_else(|| "modules is not a table as expected".to_owned())?;
+        let mut path = Vec::new();
+        let mut bundled = true;
+
+        for (key, value) in table {
+            match key.as_str() {
+                "path" => {
+                    let entries = value
+                        .as_array()
+                        .ok_or_else(|| "modules.path is not an array as expected".to_owned())?;
+                    for entry in entries {
+                        let entry = entry.as_str().ok_or_else(|| {
+                            "modules.path entries are not strings as expected".to_owned()
+                        })?;
+                        path.push(entry.to_owned());
+                    }
+                }
+                "bundled" => {
+                    bundled = value
+                        .as_bool()
+                        .ok_or_else(|| "modules.bundled is not a boolean as expected".to_owned())?;
+                }
+                _ => return Err(format!("unexpected key in modules: {key}")),
+            }
+        }
+
+        ModulePath::load(dir, &path, bundled)
     }
 
     fn parse_prelude_table(
@@ -1540,7 +1709,15 @@ impl Backend {
     }
 
     fn default_settings(_path: &Path) -> Settings {
-        let prelude = vec![
+        Settings {
+            prelude: Self::default_prelude(),
+            modules: None,
+        }
+    }
+
+    /// The prelude of a script with no configured one: the shell's.
+    fn default_prelude() -> Vec<Import> {
+        vec![
             Import::Module("shell".into()),
             Import::Item("proc".into(), "run".into()),
             Import::Item("proc".into(), "sub".into()),
@@ -1549,8 +1726,7 @@ impl Backend {
             Import::Item("shell".into(), "exit".into()),
             Import::Item("term".into(), "echo".into()),
             Import::Item("term".into(), "print".into()),
-        ];
-        Settings { prelude }
+        ]
     }
 
     fn choose_position_encoding(params: &InitializeParams) -> PositionEncodingKind {
@@ -2080,6 +2256,7 @@ mod tests {
     use tower_lsp_server::ls_types::{notification::Notification as _, request::Request as _};
 
     use super::*;
+    use crate::module_path::tests::Directory;
 
     struct Harness {
         service: LspService<Backend>,
@@ -2459,6 +2636,7 @@ mod tests {
                 Path::new("m.dol"),
                 format!("def first items@{name}[Int] -> Int\n  items[0]\nfirst [1]\n"),
                 Some(&settings),
+                None,
             );
             assert!(unit.diagnostics().next().is_none());
             assert!(
@@ -2499,6 +2677,47 @@ mod tests {
             Backend::parse_settings_toml(&parse_toml("[prelude.shell]\necho = 1\n")).unwrap_err();
 
         assert!(error.contains("must be true or a string"));
+    }
+
+    #[test]
+    fn missing_prelude_is_the_default() {
+        let settings = Backend::parse_settings_toml(&parse_toml("")).unwrap();
+        assert_eq!(settings.prelude, Backend::default_prelude());
+        let settings = Backend::parse_settings_toml(&parse_toml("[prelude]\n")).unwrap();
+        assert_eq!(settings.prelude, []);
+    }
+
+    #[test]
+    fn parse_modules() {
+        let tree = Directory::new();
+        tree.write("lib/a.dol", "");
+        let value = parse_toml("[modules]\npath = [\"lib\", \"/abs\", \"../up\"]\n");
+        let settings = Backend::parse_settings_in(&value, &tree.0).unwrap();
+        // The rejected entries are logged; the rest applies
+        let modules = settings.modules.unwrap();
+        assert!(modules.bundled);
+        assert_eq!(
+            modules.module_of(&tree.0.join("lib/a.dol")).as_deref(),
+            Some("a")
+        );
+
+        let value = parse_toml("[modules]\nbundled = false\n");
+        let settings = Backend::parse_settings_in(&value, &tree.0).unwrap();
+        assert!(!settings.modules.unwrap().bundled);
+    }
+
+    #[test]
+    fn reject_invalid_modules() {
+        for (config, expected) in [
+            ("modules = 1", "not a table"),
+            ("[modules]\nother = 1", "unexpected key in modules: other"),
+            ("[modules]\npath = \"lib\"", "not an array"),
+            ("[modules]\npath = [1]", "not strings"),
+            ("[modules]\nbundled = \"no\"", "not a boolean"),
+        ] {
+            let error = Backend::parse_settings_toml(&parse_toml(config)).unwrap_err();
+            assert!(error.contains(expected), "{config}: {error}");
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -3373,7 +3592,7 @@ mod tests {
             version: Some(1),
             ..stored.stamp
         };
-        let unit = Arc::new(compile_document(path, older.to_owned(), None));
+        let unit = Arc::new(compile_document(path, older.to_owned(), None, None));
         let (document, _) = project(&uri, stale, unit, &PositionEncodingKind::UTF16);
         assert!(!apply(&backend.documents, uri.clone(), Arc::new(document)));
         let document = backend.document(&uri).await.unwrap();
@@ -3540,5 +3759,82 @@ mod tests {
         let import = Range::new(Position::new(0, 7), Position::new(0, 18));
         assert_eq!(reported, [(import, "module `not_bundled` not found")]);
         harness.quiet().await;
+    }
+
+    /// The diagnostics of a document's check, as range and message.
+    async fn checked(harness: &mut Harness, path: &Path, text: &str) -> Vec<(Range, String)> {
+        let uri = Uri::from_file_path(path).unwrap();
+        harness.open(uri, text, 1).await;
+        let checked = harness.next_publish().await;
+        (checked.diagnostics.into_iter())
+            .map(|diag| (diag.range, diag.message))
+            .collect()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn imports_resolve_on_the_module_path() {
+        // The modules import `std`, which only `dodo lsp-test` bundles
+        if typelib_index::lookup("std").is_none() {
+            return;
+        }
+        let tree = Directory::new();
+        tree.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = [\"lib\"]\n");
+        tree.write("lib/a.dol", "pub def f x@Int\n  x\n");
+        let mut harness = Harness::checking(Duration::from_millis(10));
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let reported = checked(
+            &mut harness,
+            &tree.0.join("main.dol"),
+            "import a\na.f \"s\"\n",
+        )
+        .await;
+        let [(range, _)] = &reported[..] else {
+            panic!("expected one diagnostic: {reported:#?}");
+        };
+        assert_eq!(*range, Range::new(Position::new(1, 4), Position::new(1, 7)));
+
+        // Without the module path the module is unknown
+        let other = Directory::new();
+        other.write(CONFIG_FILE_NAME, "[prelude]\n");
+        let reported = checked(&mut harness, &other.0.join("main.dol"), "import a\na.f 1\n").await;
+        let import = Range::new(Position::new(0, 7), Position::new(0, 8));
+        assert_eq!(reported, [(import, "module `a` not found".to_owned())]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn document_on_the_module_path_is_its_module() {
+        let tree = Directory::new();
+        tree.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = [\"lib\"]\n");
+        tree.write("lib/a.dol", "");
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        // A module can't return at top level; a script can
+        let text = "return 1\n";
+        let module = harness
+            .open(
+                Uri::from_file_path(tree.0.join("lib/a.dol")).unwrap(),
+                text,
+                1,
+            )
+            .await;
+        assert_eq!(module.diagnostics.len(), 1, "{:#?}", module.diagnostics);
+        let script = harness
+            .open(
+                Uri::from_file_path(tree.0.join("main.dol")).unwrap(),
+                text,
+                1,
+            )
+            .await;
+        assert_eq!(script.diagnostics, []);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn bundled_stub_checks_clean_with_the_repository_config() {
+        let std = Path::new(env!("CARGO_MANIFEST_DIR")).join("../dolang/stub/std.dol");
+        let std = std.canonicalize().unwrap();
+        let text = fs::read_to_string(&std).unwrap();
+        let mut harness = Harness::checking(Duration::from_millis(10));
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        assert_eq!(checked(&mut harness, &std, &text).await, []);
     }
 }
