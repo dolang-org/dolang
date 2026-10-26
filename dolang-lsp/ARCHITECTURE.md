@@ -25,19 +25,28 @@ worker, so the applier drops the document only after any projection still in
 flight.
 
 The worker also type checks each document once its edits have settled. A
-document's projection publishes its compile diagnostics at once, and schedules
-a check for a short delay later; each newer edit pushes the check back. The
-worker waits on its request channel with `recv_timeout` until the earliest
-check is due. A check has one source unit, the document's, checked as a script
-against the typelibs of the bundled modules it imports, directly or through
-other typelibs. An import that isn't bundled is unknown to the checker and
-draws no diagnostic. Resolving workspace modules waits on configuration that
-says what a source layout means. The check publishes the compile diagnostics
-again, merged with the checker's, but only while the stored document still has
-the stamp it checked. An unchanged unit, as on a save, keeps its check.
+document's projection publishes its compile diagnostics at once, and schedules a
+check for a short delay later; each newer edit pushes the check back. The worker
+waits on its request channel with `recv_timeout` until the earliest check is
+due. A check has the document's unit, compiled as its module if it lies under
+the configured module path and as a script otherwise. The worker resolves the
+modules it imports, directly or transitively, plus `proc` for the pipe types, as
+`compile check` does: a source on the module path first, compiled as that module
+and kept by canonical path until its text changes, then a bundled typelib unless
+the configuration turns them off. The document's own module is never looked up,
+so it replaces its bundled copy. An import found nowhere is reported as not
+found. The check publishes the compile diagnostics again, merged with the
+checker's, but only while the stored document still has the stamp it checked. An
+unchanged unit, as on a save, keeps its check.
 
-Configuration files are TOML files (`.dolang-lsp.toml`, searched upward) that
-currently provide static prelude imports for workspace-specific names.
+Configuration files are TOML files (`.dolang-lsp.toml`, the nearest ancestor
+wins) that provide static prelude imports and the module path. A
+configuration is untrusted, so `module_path` confines what it reads to the
+configuration's directory. Roots are canonicalized and contained when the
+configuration loads. Each module file is canonicalized, contained in its
+root's canonical path (rechecked at open), opened non-blocking, verified as a
+regular file on the open handle and read up to a size limit. A check compiles
+at most `MAX_MODULES` sources.
 
 `dodo install` uses the newly built `dolang` binary to regenerate typelibs
 from bundled-library sources, then sets `DOLANG_LSP_TYPELIB_DIR` for the LSP
