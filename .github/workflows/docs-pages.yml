@@ -72,7 +72,7 @@ jobs:
         run: dodo.run pages
 
       - name: Install browser for playground tests
-        run: run npm --prefix playground exec -- playwright install --with-deps chromium
+        run: run npm --prefix playground exec -- playwright install --only-shell chromium
 
       - name: Test playground
         run: dodo.run playground-test
