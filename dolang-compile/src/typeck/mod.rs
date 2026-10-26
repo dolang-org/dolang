@@ -1,5 +1,6 @@
 //! Static checking of a set of compilation units.
 
+mod analysis;
 pub(crate) mod cfg;
 #[cfg(test)]
 mod diagnostics;
@@ -22,6 +23,10 @@ use crate::{
     Error, ErrorInfo, Mode, Unit, UnitId,
     diag::{self, Diag, Severity},
 };
+
+pub use analysis::{Analysis, Judged, Node};
+pub use flow::Role;
+pub use r#type::Style;
 
 /// Write a module's typelib: its declarations as the checker reads them, without its
 /// source. Read it back with [`Typelib::read`].
@@ -117,6 +122,8 @@ pub struct Builder<'u, 's> {
     pipes: [(&'u str, &'u str); 2],
     /// The threads to check units on, if not rayon's global pool
     threads: Option<NonZeroUsize>,
+    /// Whether to give the check an [`Analysis`]
+    analysis: bool,
 }
 
 impl Default for Builder<'_, '_> {
@@ -132,6 +139,7 @@ impl<'u, 's> Builder<'u, 's> {
             modules: FxHashSet::default(),
             pipes: [("strand", "Sender"), ("strand", "Receiver")],
             threads: None,
+            analysis: false,
         }
     }
 
@@ -140,6 +148,14 @@ impl<'u, 's> Builder<'u, 's> {
     /// parallelism. The results don't depend on it.
     pub fn threads(&mut self, threads: NonZeroUsize) -> &mut Self {
         self.threads = Some(threads);
+        self
+    }
+
+    /// Give the check an [`Analysis`] of its units checked from source, which
+    /// [`Check::analysis`] borrows and [`Check::into_analysis`] takes. Defaults to
+    /// off, which costs nothing.
+    pub fn analysis(&mut self, enabled: bool) -> &mut Self {
+        self.analysis = enabled;
         self
     }
 
@@ -300,7 +316,7 @@ impl<'u, 's> Builder<'u, 's> {
                 )
             })
             .collect();
-        let flows = (gathered.into_iter())
+        let flows: Vec<_> = (gathered.into_iter())
             .map(|flow| {
                 flow.map(|(facts, problems, unresolved)| flow::Results {
                     facts: merge(&results, facts),
@@ -309,6 +325,20 @@ impl<'u, 's> Builder<'u, 's> {
                 })
             })
             .collect();
+        let types = Arc::new(analysis::Types {
+            db: results.share(),
+            labels,
+        });
+        let analysis = (self.analysis).then(|| {
+            let units = (flows.iter().zip(&cfgs).zip(&layers).enumerate())
+                .map(|(index, ((flow, cfg), layer))| {
+                    let unit = UnitId::from_index(index);
+                    let (flow, cfg, layer) = (flow.as_ref()?, cfg.as_ref()?, layer.as_ref()?);
+                    Some(tree(&tables, unit, flow, cfg, layer))
+                })
+                .collect();
+            Analysis::new(Arc::clone(&types), units)
+        });
         undecided::report(&tables.units, &unresolved, &mut diags);
         Check {
             cfgs,
@@ -320,8 +350,8 @@ impl<'u, 's> Builder<'u, 's> {
                 .collect(),
             tables,
             shared,
-            results,
-            labels,
+            types,
+            analysis,
             unresolved,
         }
     }
@@ -339,6 +369,34 @@ struct UnitOutput {
     runs: Vec<(r#type::Database, flow::Results)>,
 }
 
+/// A unit's judgments, each variable named by its unit's source
+fn tree(
+    tables: &elab::Tables<'_>,
+    unit: UnitId,
+    flow: &flow::Results,
+    cfg: &cfg::Ir,
+    layer: &Arc<r#type::Shared>,
+) -> analysis::Tree {
+    let db = r#type::Database::fork(layer);
+    let judgments = (flow.facts.iter())
+        .map(|(&(span, role), seen)| {
+            let name = seen.var.and_then(|var| match cfg.var(var).origin {
+                cfg::Origin::Source(span) => Some(tables.text(unit, span)),
+                cfg::Origin::Field(key) => Some(db.symbol(key.name)),
+                _ => None,
+            });
+            let entry = analysis::Entry {
+                role,
+                name: name.map(Box::from),
+                ty: seen.fact.ty,
+                unassigned: seen.fact.unassigned,
+            };
+            (span, entry)
+        })
+        .collect();
+    analysis::Tree::new(judgments)
+}
+
 /// A unit's flow runs' facts, copied into `results` through `copies`, then their
 /// problems and undecided checks, each run's in turn, in source order
 #[expect(clippy::type_complexity, reason = "taken apart by the caller")]
@@ -347,7 +405,7 @@ fn gather(
     results: &mut r#type::Database,
     copies: &mut r#type::Copies,
 ) -> (
-    Vec<(crate::source::Span, flow::Fact)>,
+    Vec<((crate::source::Span, flow::Role), flow::Seen)>,
     Vec<flow::Problem>,
     Vec<(crate::source::Span, solver::Residual)>,
 ) {
@@ -356,9 +414,9 @@ fn gather(
     let mut unresolved = Vec::new();
     for (db, mut run) in runs {
         let mut copier = results.copier(&db, copies);
-        facts.extend((run.facts.into_iter()).map(|(span, fact)| {
-            let ty = copier.ty(fact.ty);
-            (span, flow::Fact { ty, ..fact })
+        facts.extend((run.facts.into_iter()).map(|(key, mut seen)| {
+            seen.fact.ty = copier.ty(seen.fact.ty);
+            (key, seen)
         }));
         problems.append(&mut run.problems);
         unresolved.append(&mut run.unresolved);
@@ -367,22 +425,19 @@ fn gather(
     (facts, problems, unresolved)
 }
 
-/// Facts by span, joined where runs recorded facts at one span
+/// Facts by span and role, joined where runs recorded facts at one
 fn merge(
     db: &r#type::Database,
-    facts: Vec<(crate::source::Span, flow::Fact)>,
-) -> rustc_hash::FxHashMap<crate::source::Span, flow::Fact> {
+    facts: Vec<((crate::source::Span, flow::Role), flow::Seen)>,
+) -> rustc_hash::FxHashMap<(crate::source::Span, flow::Role), flow::Seen> {
     let gas = solver::Gas::default();
     let solver = solver::Solver::new(db, &gas);
     let mut merged = rustc_hash::FxHashMap::default();
-    for (span, fact) in facts {
+    for (key, seen) in facts {
         merged
-            .entry(span)
-            .and_modify(|old: &mut flow::Fact| {
-                old.ty = solver.lub(old.ty, fact.ty);
-                old.unassigned |= fact.unassigned;
-            })
-            .or_insert(fact);
+            .entry(key)
+            .and_modify(|old: &mut flow::Seen| old.join(seen, |old, new| solver.lub(old, new)))
+            .or_insert(seen);
     }
     merged
 }
@@ -400,8 +455,7 @@ const _: () = {
     sync::<cfg::Ir>();
     sync::<flow::Layout>();
     // A check's results outlive its units
-    owned::<r#type::Database>();
-    owned::<r#type::Labels>();
+    owned::<Analysis>();
 };
 
 /// Check every unit with [`check_unit`], on a pool of `threads` threads, else the
@@ -524,10 +578,12 @@ pub struct Check<'u> {
     tables: elab::Tables<'u>,
     /// The database every unit's fork is of
     shared: Arc<r#type::Shared>,
-    /// A database of the check's own, which flow's facts are copied into
-    results: r#type::Database,
-    /// The names of the declarations in `results`
-    labels: r#type::Labels,
+    /// A database of the check's own, which flow's facts are copied into, and the
+    /// names of its declarations
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
+    types: Arc<analysis::Types>,
+    /// What the check concluded about its units' spans, if the builder asked
+    analysis: Option<Analysis>,
     /// Well-formedness checks the checker could not decide
     unresolved: Vec<elab::Unresolved>,
     /// Each unit's typing CFG, by [`UnitId`], for a unit checked from source
@@ -538,7 +594,8 @@ pub struct Check<'u> {
     #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     layers: Vec<Option<Arc<r#type::Shared>>>,
     /// What flow analysis concluded about each unit, by [`UnitId`], for a unit checked
-    /// from source, its facts' types interned in `results`
+    /// from source, its facts' types interned in `types`
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     flows: Vec<Option<flow::Results>>,
 }
 
@@ -591,22 +648,37 @@ impl Check<'_> {
             .collect()
     }
 
-    /// The judgments about spans of `unit`, in source order.
+    /// What the check concluded about its units' spans, if the builder asked for it
+    /// with [`Builder::analysis`].
+    pub fn analysis(&self) -> Option<&Analysis> {
+        self.analysis.as_ref()
+    }
+
+    /// Take what the check concluded about its units' spans, if the builder asked
+    /// for it with [`Builder::analysis`].
+    pub fn into_analysis(self) -> Option<Analysis> {
+        self.analysis
+    }
+
+    /// The judgments about spans of `unit`, in source order. The check must have an
+    /// [`Analysis`].
     #[doc(hidden)]
     pub fn judgments(&self, unit: UnitId) -> Vec<Judgment> {
         let info = &self.tables.units[unit.index()];
         let db = &r#type::Database::fork(&self.shared);
         let mut judgments = self.tables.judgments(db, unit, &self.unresolved);
-        let facts = self.flows[unit.index()].iter().flat_map(|flow| &flow.facts);
-        judgments.extend(facts.map(|(&span, fact)| {
-            let ty = self.render_fact(fact.ty);
-            let value = match (fact.unassigned, fact.ty == self.results.bottom()) {
-                (false, _) => ty,
-                (true, true) => "unassigned".to_owned(),
-                (true, false) => format!("{ty} | unassigned"),
-            };
-            ("flow", span, value)
-        }));
+        let analysis = (self.analysis.as_ref()).expect("judgments are rendered from an analysis");
+        for node in analysis.nodes(unit) {
+            judgments.extend(node.judgments().map(|judged| {
+                let ty = judged.ty(Style::Full);
+                let value = match (judged.unassigned(), judged.none()) {
+                    (false, _) => ty,
+                    (true, true) => "unassigned".to_owned(),
+                    (true, false) => format!("{ty} | unassigned"),
+                };
+                ("flow", node.span(), value)
+            }));
+        }
         judgments.sort_by_key(|&(name, span, _)| (span.start, span.end, name));
         judgments
             .into_iter()
@@ -619,8 +691,9 @@ impl Check<'_> {
     }
 
     /// A fact's type, interned in the results
+    #[cfg(test)]
     fn render_fact(&self, ty: r#type::TypeId) -> String {
-        (self.results).render(ty, &self.labels, r#type::Style::Full)
+        self.types.render(ty, Style::Full)
     }
 
     /// Relate every type the database holds to itself and to top, interpreting each

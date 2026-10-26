@@ -96,6 +96,7 @@ fn judgments_do_not_depend_on_the_order_units_are_added() {
     );
     let judge = |units: [(&'static str, &crate::Unit<'_>); 2]| {
         let mut checker = typeck::Builder::new();
+        checker.analysis(true);
         let ids = units.map(|(_, unit)| checker.unit(unit).unwrap());
         let check = checker.check();
         check.smoke();
@@ -163,6 +164,7 @@ fn results_do_not_depend_on_threads() {
     // A pool of `threads` threads, else the global pool
     let check = |threads: Option<usize>| {
         let mut checker = typeck::Builder::new();
+        checker.analysis(true);
         if let Some(threads) = threads {
             checker.threads(threads.try_into().unwrap());
         }

@@ -309,6 +309,7 @@ impl Case {
 
     pub fn builder(&self) -> typeck::Builder<'_, '_> {
         let mut builder = typeck::Builder::new();
+        builder.analysis(true);
         if let Some([(sender_module, sender), (receiver_module, receiver)]) = &self.settings.pipes {
             builder.pipes((sender_module, sender), (receiver_module, receiver));
         }
@@ -464,6 +465,7 @@ fn from_typelibs(
         })
         .collect();
     let mut checker = typeck::Builder::new();
+    checker.analysis(true);
     if let Some([(sender_module, sender), (receiver_module, receiver)]) = &settings.pipes {
         checker.pipes((sender_module, sender), (receiver_module, receiver));
     }

@@ -131,12 +131,40 @@ use crate::{RestKind, source::Span};
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub(crate) struct Results {
     /// What each variable reference read and each binding bound, joined over every
-    /// context, by span
-    pub(crate) facts: FxHashMap<Span, Fact>,
+    /// context, by span and role
+    pub(crate) facts: FxHashMap<(Span, Role), Seen>,
     /// What the reporting pass diagnosed, each once
     pub(crate) problems: Vec<Problem>,
     /// The checks it couldn't decide, each once
     pub(crate) unresolved: Vec<(Span, Residual)>,
+}
+
+/// Whether a fact is what a variable reference read or what a binding bound
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Role {
+    /// A variable reference, which sees its variable's narrowed type
+    Read,
+    /// A binding, which sees the value it bound
+    Bind,
+}
+
+/// What a reference or binding saw, joined over every context
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Seen {
+    pub(crate) fact: Fact,
+    /// The variable it read or bound, when the variable has a name
+    pub(crate) var: Option<VarId>,
+}
+
+impl Seen {
+    /// Join what was seen at the same span and role
+    pub(crate) fn join(&mut self, other: Self, lub: impl FnOnce(TypeId, TypeId) -> TypeId) {
+        self.fact.ty = lub(self.fact.ty, other.fact.ty);
+        self.fact.unassigned |= other.fact.unassigned;
+        // A match's scrutinee is read through a variable without a name at the
+        // span of the one it was copied from
+        self.var = self.var.or(other.var);
+    }
 }
 
 /// What flow needs of a unit's graph before it sees any type, which each of its
@@ -741,23 +769,29 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
     }
 
-    /// Record what a reference or binding at `span` saw
-    fn record(&mut self, span: Span, fact: Fact) {
-        if span == Span::INVALID {
+    /// Record what a reference or binding of `var` at `span` saw
+    fn record(&mut self, span: Span, role: Role, var: VarId, fact: Fact) {
+        if span == Span::INVALID || !self.observing() {
             return;
         }
-        let Some(results) = &self.results else {
-            return;
+        let named = matches!(
+            self.ir.var(var).origin,
+            Origin::Source(_) | Origin::Field(_)
+        );
+        let mut seen = Seen {
+            fact,
+            var: named.then_some(var),
         };
-        let fact = match results.facts.get(&span) {
-            Some(old) => Fact {
-                ty: self.lub(old.ty, fact.ty),
-                unassigned: old.unassigned || fact.unassigned,
-            },
-            None => fact,
-        };
+        let key = (span, role);
+        if let Some(results) = &self.results
+            && let Some(&old) = results.facts.get(&key)
+        {
+            let new = seen;
+            seen = old;
+            seen.join(new, |old, new| self.lub(old, new));
+        }
         if let Some(results) = &mut self.results {
-            results.facts.insert(span, fact);
+            results.facts.insert(key, seen);
         }
     }
 
@@ -1625,7 +1659,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 ty,
                 unassigned: false,
             };
-            self.record(span, fact);
+            self.record(span, Role::Bind, var, fact);
         }
     }
 

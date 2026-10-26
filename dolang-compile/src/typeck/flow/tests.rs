@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::{Layout, Problem, Results, Tree};
+use super::{Layout, Problem, Results, Role, Tree};
 use crate::{
     Config,
     source::Span,
@@ -16,18 +16,31 @@ use crate::{
 /// order
 #[derive(Debug, PartialEq)]
 struct Rendered {
-    facts: Vec<((u32, u32), String, bool)>,
+    facts: Vec<RenderedFact>,
     problems: Vec<Problem>,
     unresolved: Vec<(Span, Residual)>,
+}
+
+/// A fact with its type rendered, ordered by span
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct RenderedFact {
+    span: (u32, u32),
+    role: Role,
+    ty: String,
+    unassigned: bool,
 }
 
 /// Each fact of `results` by span, its type rendered by `render`
 fn rendered(
     results: &Results,
     render: impl Fn(TypeId) -> String,
-) -> impl Iterator<Item = ((u32, u32), String, bool)> {
-    (results.facts.iter())
-        .map(move |(span, fact)| ((span.start, span.end), render(fact.ty), fact.unassigned))
+) -> impl Iterator<Item = RenderedFact> {
+    (results.facts.iter()).map(move |(&(span, role), seen)| RenderedFact {
+        span: (span.start, span.end),
+        role,
+        ty: render(seen.fact.ty),
+        unassigned: seen.fact.unassigned,
+    })
 }
 
 /// Analyze a unit's runs, each in queue order or in reverse, gathering
@@ -85,8 +98,8 @@ fn facts_named(check: &Check<'_>, unit: usize, name: &str) -> Vec<String> {
         .as_ref()
         .expect("a unit with source is analyzed");
     (flow.facts.iter())
-        .filter(|(span, _)| check.tables.text(UnitId::from_index(unit), **span) == name)
-        .map(|(_, fact)| check.render_fact(fact.ty))
+        .filter(|((span, _), _)| check.tables.text(UnitId::from_index(unit), *span) == name)
+        .map(|(_, seen)| check.render_fact(seen.fact.ty))
         .collect()
 }
 
