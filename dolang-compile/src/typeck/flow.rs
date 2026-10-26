@@ -130,13 +130,40 @@ use crate::{RestKind, source::Span};
 /// What flow concluded about a unit
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub(crate) struct Results {
-    /// What each variable reference read and each binding bound, joined over every
-    /// context, by span and role
-    pub(crate) facts: FxHashMap<(Span, Role), Seen>,
+    /// What each variable reference read and each binding bound. A run logs them
+    /// as the reporting pass sees them, once for each context; once collated (see
+    /// [`collate`]), they're sorted by span and role, one for each.
+    pub(crate) facts: Vec<((Span, Role), Seen)>,
     /// What the reporting pass diagnosed, each once
     pub(crate) problems: Vec<Problem>,
     /// The checks it couldn't decide, each once
     pub(crate) unresolved: Vec<(Span, Residual)>,
+}
+
+/// What [`Results::rewind`] restores
+pub(crate) struct Mark {
+    facts: usize,
+    problems: Vec<Problem>,
+    unresolved: Vec<(Span, Residual)>,
+}
+
+impl Results {
+    /// Where to rewind to. Facts are only appended, but a problem can be
+    /// amended in place.
+    pub(crate) fn mark(&self) -> Mark {
+        Mark {
+            facts: self.facts.len(),
+            problems: self.problems.clone(),
+            unresolved: self.unresolved.clone(),
+        }
+    }
+
+    /// Forget what was recorded since `mark`
+    pub(crate) fn rewind(&mut self, mark: Mark) {
+        self.facts.truncate(mark.facts);
+        self.problems = mark.problems;
+        self.unresolved = mark.unresolved;
+    }
 }
 
 /// Whether a fact is what a variable reference read or what a binding bound
@@ -342,6 +369,21 @@ pub(crate) fn sort(problems: &mut [Problem], unresolved: &mut [(Span, Residual)]
         (span.start, span.end)
     });
     unresolved.sort_by_key(|&(span, _)| (span.start, span.end));
+}
+
+/// Sort logged facts by span and role, joining those at the same span and role
+pub(crate) fn collate(
+    facts: &mut Vec<((Span, Role), Seen)>,
+    lub: impl Fn(TypeId, TypeId) -> TypeId,
+) {
+    facts.sort_by_key(|&((span, role), _)| (span.start, span.end, role));
+    facts.dedup_by(|(key, seen), (kept_key, kept)| {
+        let same = key == kept_key;
+        if same {
+            kept.join(*seen, &lub);
+        }
+        same
+    });
 }
 
 /// The type a variable is read as by functions that don't cache it, which every
@@ -778,20 +820,12 @@ impl<'a, 'u> Flow<'a, 'u> {
             self.ir.var(var).origin,
             Origin::Source(_) | Origin::Field(_)
         );
-        let mut seen = Seen {
+        let seen = Seen {
             fact,
             var: named.then_some(var),
         };
-        let key = (span, role);
-        if let Some(results) = &self.results
-            && let Some(&old) = results.facts.get(&key)
-        {
-            let new = seen;
-            seen = old;
-            seen.join(new, |old, new| self.lub(old, new));
-        }
         if let Some(results) = &mut self.results {
-            results.facts.insert(key, seen);
+            results.facts.push(((span, role), seen));
         }
     }
 

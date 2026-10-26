@@ -279,8 +279,8 @@ impl<'u, 's> Builder<'u, 's> {
         }
         #[cfg(feature = "debug")]
         trace::elab(&r#type::Database::fork(&shared), &tables, &unresolved);
-        // Each run's facts are copied into a database of the check's own, which
-        // copies what the check's base holds once
+        // Each run's logged facts are copied into a database of the check's own,
+        // which copies what the check's base holds once
         let mut results = r#type::Database::new();
         let mut copies = r#type::Copies::default();
         let mut cfgs = Vec::with_capacity(outputs.len());
@@ -379,7 +379,7 @@ fn tree(
 ) -> analysis::Tree {
     let db = r#type::Database::fork(layer);
     let judgments = (flow.facts.iter())
-        .map(|(&(span, role), seen)| {
+        .map(|&((span, role), seen)| {
             let name = seen.var.and_then(|var| match cfg.var(var).origin {
                 cfg::Origin::Source(span) => Some(tables.text(unit, span)),
                 cfg::Origin::Field(key) => Some(db.symbol(key.name)),
@@ -425,21 +425,15 @@ fn gather(
     (facts, problems, unresolved)
 }
 
-/// Facts by span and role, joined where runs recorded facts at one
+/// Facts by span and role, joined where runs logged facts at one
 fn merge(
     db: &r#type::Database,
-    facts: Vec<((crate::source::Span, flow::Role), flow::Seen)>,
-) -> rustc_hash::FxHashMap<(crate::source::Span, flow::Role), flow::Seen> {
+    mut facts: Vec<((crate::source::Span, flow::Role), flow::Seen)>,
+) -> Vec<((crate::source::Span, flow::Role), flow::Seen)> {
     let gas = solver::Gas::default();
     let solver = solver::Solver::new(db, &gas);
-    let mut merged = rustc_hash::FxHashMap::default();
-    for (key, seen) in facts {
-        merged
-            .entry(key)
-            .and_modify(|old: &mut flow::Seen| old.join(seen, |old, new| solver.lub(old, new)))
-            .or_insert(seen);
-    }
-    merged
+    flow::collate(&mut facts, |old, new| solver.lub(old, new));
+    facts
 }
 
 // Units are checked on other threads than the one that shares them
