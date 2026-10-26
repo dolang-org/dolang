@@ -173,6 +173,12 @@ def wasm_tool name
   let lock = toml.decode $str(Path("Cargo.lock").read())
   let package = lock["package"].find(do |package| package["name"] == "wasm-bindgen")
   let version = package["version"]
+  # Prefer a matching install on PATH, such as a prebuilt one CI provides.
+  let found = run[name].which()
+  if found
+    let output = sub do run $found --version
+    if (output.trim() == "$name $version")
+      return found
   let tools_dir = Path "target/wasm-bindgen/$version"
   run_cargo install wasm-bindgen-cli --version $version --locked --root $tools_dir
   let bin = (tools_dir / "bin" / name).absolute()
@@ -599,8 +605,12 @@ return $
     help: build and test the browser playground (requires Playwright Chromium)
     do |_|
       playground_build()
-      run_cargo clippy -p dolang-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
       dodo.show npm --prefix playground test
+
+  "wasm-lint":
+    help: check dolang-wasm for clippy warnings
+    do |_|
+      run_cargo clippy -p dolang-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
 
   "syntax-test":
     help: test TextMate and Vim highlighting (requires npm dependencies and Vim or Neovim)

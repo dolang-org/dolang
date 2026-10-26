@@ -60,14 +60,14 @@ Tests run Chromium headlessly; no display server is needed. On Fedora, install
 `nodejs24-full-i18n` alongside Node 24 for its ICU support.
 
 ```sh
-npm --prefix playground exec -- playwright install chromium
+npm --prefix playground exec -- playwright install --only-shell chromium
 dodo playground-test
 ```
 
-The task builds production assets, runs adapter tests as Wasm in Node via
-`wasm-bindgen-test`, checks Wasm Clippy, and tests the browser UI with
-Chromium. Use `dodo wasm-test` to run only the Rust adapter tests. Browser
-tests serve the same assets at both `/` and `/repo/playground/` to check
+The task builds production assets and tests the browser UI with Chromium.
+`dodo wasm-test` runs the Rust adapter tests as Wasm in Node via
+`wasm-bindgen-test`, and `dodo wasm-lint` checks the adapter with Clippy.
+Browser tests serve the same assets at both `/` and `/repo/playground/` to check
 relative worker and Wasm URLs.
 
 ## Protocol
