@@ -655,24 +655,29 @@ impl Document {
     }
 
     /// The span of the innermost node the latest check judged at `offset`, and
-    /// the variable it reads or binds there with its type, if it has a name.
-    fn checked_at(&self, offset: usize) -> Option<(source::Span, String)> {
+    /// the lines of what it concluded there. `reference` is the span of the
+    /// doc-index reference under the cursor, which names a node at just its
+    /// span that has no name of its own.
+    fn checked_at(
+        &self,
+        offset: usize,
+        reference: Option<source::Span>,
+    ) -> Option<(source::Span, Vec<String>)> {
         let analyzed = self
             .analyzed
             .lock()
             .expect("analysis lock poisoned")
             .clone()?;
         let node = (analyzed.analysis).at(analyzed.unit, offset.try_into().ok()?)?;
-        // A variable's own judgment; a member use's names the member, but its
-        // type is the declaring class
-        let judged = node
-            .judgments()
-            .find(|judged| matches!(judged.role(), Role::Read | Role::Bind))?;
-        let name = judged.name()?;
-        Some((
-            node.span(),
-            format!("{name} @ {}", judged.ty(Style::Reader)),
-        ))
+        let span = node.span();
+        let named = (reference == Some(span))
+            .then(|| {
+                self.unit
+                    .source()
+                    .get(span.start as usize..span.end as usize)
+            })
+            .flatten();
+        Some((span, label(node, named)?))
     }
 
     /// The declaration named by the token under `pos`, if any.
@@ -682,6 +687,59 @@ impl Document {
     fn decl_at(&self, pos: &Position) -> Option<&Decl> {
         self.reference_at(pos).map(|(_, decl)| decl)
     }
+}
+
+/// What hover shows of a node, a line each, from the first of:
+///
+/// - the variable it reads or binds;
+/// - the signatures a call reached, by its member's name for a method;
+/// - the type of the member a member use reached, by its name in its class;
+/// - its value, by `named` where given.
+fn label(node: typeck::Node<'_>, named: Option<&str>) -> Option<Vec<String>> {
+    let find = |role| node.judgments().find(|judged| judged.role() == role);
+    let typed = |name: Option<&str>, ty: String| match name {
+        Some(name) => format!("{name} @ {ty}"),
+        None => ty,
+    };
+    // A member use's own name is the member's, but its type is the declaring
+    // class
+    let variable = node
+        .judgments()
+        .find(|judged| matches!(judged.role(), Role::Read | Role::Bind));
+    if let Some(judged) = variable {
+        return Some(vec![typed(Some(judged.name()?), judged.ty(Style::Reader))]);
+    }
+    // A member by the class declaring it, as `m.Box.item`; a union receiver's
+    // reach one in each alternative's class
+    let members: Vec<_> = node
+        .judgments()
+        .filter(|judged| judged.role() == Role::Member)
+        .filter_map(|judged| {
+            let name = judged.name()?;
+            Some(match judged.declaration() {
+                Some(class) => format!("{}.{}.{name}", class.module(), class.name()),
+                None => name.to_owned(),
+            })
+        })
+        .collect();
+    let member = (!members.is_empty()).then(|| members.join(" | "));
+    let member = member.as_deref();
+    let callees: Vec<_> = node
+        .judgments()
+        .filter(|judged| judged.role() == Role::Callee)
+        .map(|judged| {
+            let line = typed(member, judged.ty(Style::Reader));
+            match judged.overload() {
+                Some(index) => format!("{line}  # overload {}", index + 1),
+                None => line,
+            }
+        })
+        .collect();
+    if !callees.is_empty() {
+        return Some(callees);
+    }
+    let value = find(Role::Value)?.ty(Style::Reader);
+    Some(vec![typed(member.or(named), value)])
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -2224,14 +2282,22 @@ impl LanguageServer for Backend {
         let reference = document.reference_at(pos);
         let docs = reference.and_then(|(range, decl)| Some((range, decl.hover.as_ref()?)));
         let index = DocumentIndex::new(document.unit.source(), self.position_encoding());
+        let referenced = reference.and_then(|(range, _)| {
+            let start = index.offset_from_position(&range.start)?;
+            let end = index.offset_from_position(&range.end)?;
+            Some(source::Span {
+                start: start.try_into().ok()?,
+                end: end.try_into().ok()?,
+            })
+        });
         let checked = index
             .offset_from_position(pos)
-            .and_then(|offset| document.checked_at(offset));
+            .and_then(|offset| document.checked_at(offset, referenced));
         let (range, value) = match (checked, docs) {
             (None, None) => return Ok(None),
             (None, Some((range, markdown))) => (range, markdown.clone()),
-            (Some((span, label)), docs) => {
-                let typed = format!("```dolang\n{label}\n```");
+            (Some((span, lines)), docs) => {
+                let typed = format!("```dolang\n{}\n```", lines.join("\n"));
                 match docs {
                     Some((range, markdown)) => (range, format!("{typed}\n\n---\n\n{markdown}")),
                     None => {
@@ -3089,6 +3155,68 @@ mod tests {
         assert_eq!(typed(param), "v @ std.Int | std.Str");
         let narrowed = hover_text(&mut harness, uri, 2, 10).await;
         assert_eq!(typed(narrowed), "v @ std.Int");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn hover_shows_members_calls_and_values() {
+        // Only `dodo lsp-test` builds with the bundled typelibs
+        if typelib_index::lookup("std").is_none() {
+            return;
+        }
+        let mut harness = Harness::checking(Duration::from_millis(50));
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///member-hover.dol".parse().unwrap();
+        let text = "\
+class Box
+  pub field item @ Int = 0
+  pub def doubled self -> Int
+    (self.item * 2)
+@def twice x @ Int -> Int
+@def twice x @ Str -> Str
+def twice x
+  x
+def pick[T] x @ T -> T
+  x
+def uses b @ Box n @ Int
+  let got = b.item
+  let method = b.doubled()
+  let overloaded = twice(\"s\")
+  let generic = pick $n
+  let sum = (n + 1)
+  [got, method, overloaded, generic, sum]
+";
+        harness.open(uri.clone(), text, 1).await;
+        harness.next_publish().await;
+
+        let typed = async |harness: &mut Harness, line, character| {
+            let hover = hover_text(harness, uri.clone(), line, character).await;
+            let hover = hover.unwrap();
+            let block = hover.split("```").nth(1).unwrap();
+            block
+                .strip_prefix("dolang\n")
+                .unwrap()
+                .trim_end()
+                .to_owned()
+        };
+        // A field's type at the use
+        assert_eq!(
+            typed(&mut harness, 11, 14).await,
+            "member-hover.Box.item @ std.Int"
+        );
+        // A method's signature, as the call instantiated it
+        assert_eq!(
+            typed(&mut harness, 12, 17).await,
+            "member-hover.Box.doubled @ (member-hover.Box) -> std.Int"
+        );
+        // The paren of a call to an overloaded function
+        assert_eq!(
+            typed(&mut harness, 13, 24).await,
+            "(std.Str) -> std.Str  # overload 2"
+        );
+        // The space of a juxtaposed call
+        assert_eq!(typed(&mut harness, 14, 20).await, "(std.Int) -> std.Int");
+        // An operator's value
+        assert_eq!(typed(&mut harness, 15, 15).await, "std.Int");
     }
 
     #[tokio::test(flavor = "current_thread")]
