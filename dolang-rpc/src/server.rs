@@ -929,7 +929,7 @@ pub struct CallContext<P: Protocol> {
 impl<P: Protocol> CallContext<P> {
     /// Takes this request's raw-byte trailer, if present.
     ///
-    /// The returned value implements [`AsyncRead`](tokio::io::AsyncRead).
+    /// The returned value implements [`AsyncRead`](futures::io::AsyncRead).
     /// Dropping it stops local consumption and immediately tells the peer to
     /// stop sending, as does responding while the context still holds it.
     ///
@@ -1263,8 +1263,8 @@ mod tests {
         (transport::AnySender, transport::AnyReceiver),
         (transport::AnySender, transport::AnyReceiver),
     ) {
-        let (a_write, a_read) = tokio::io::duplex(4096);
-        let (b_write, b_read) = tokio::io::duplex(4096);
+        let (a_write, a_read) = crate::tests::duplex(4096);
+        let (b_write, b_read) = crate::tests::duplex(4096);
         let (a_sender, _unused) = transport::generic_duplex(a_write);
         let (_unused, a_receiver) = transport::generic_duplex(b_read);
         let (b_sender, _unused) = transport::generic_duplex(b_write);

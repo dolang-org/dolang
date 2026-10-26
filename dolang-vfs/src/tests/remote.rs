@@ -20,10 +20,10 @@ use crate::{
 };
 #[cfg(windows)]
 use dolang_winterop::security::SecInfo;
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use futures::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 async fn connected_pair() -> (Vfs, tokio::task::JoinHandle<VfsResult<()>>) {
-    let (client_stream, server_stream) = tokio::io::duplex(1024 * 1024);
+    let (client_stream, server_stream) = super::duplex(1024 * 1024);
     // `Server::new` itself now runs the RPC handshake, so it must be driven
     // concurrently with the client's own construction below rather than
     // completed first — otherwise each side blocks waiting for the other.
@@ -32,9 +32,9 @@ async fn connected_pair() -> (Vfs, tokio::task::JoinHandle<VfsResult<()>>) {
 }
 
 async fn connected_split_pair() -> (Vfs, tokio::task::JoinHandle<VfsResult<()>>) {
-    let (client_stream, server_stream) = tokio::io::duplex(1024 * 1024);
-    let (client_reader, client_writer) = tokio::io::split(client_stream);
-    let (server_reader, server_writer) = tokio::io::split(server_stream);
+    let (client_stream, server_stream) = super::duplex(1024 * 1024);
+    let (client_reader, client_writer) = client_stream.split();
+    let (server_reader, server_writer) = server_stream.split();
     let task = tokio::spawn(async move {
         Server::new_split(server_reader, server_writer)
             .await
@@ -380,8 +380,8 @@ async fn opaque_pipe_transfers_bytes_and_reports_eof() {
     let (mut send, mut recv) = client.pipe(None).await.unwrap();
 
     send.write_all(b"remote pipe").await.unwrap();
-    send.shutdown().await.unwrap();
-    send.shutdown().await.unwrap();
+    send.close().await.unwrap();
+    send.close().await.unwrap();
 
     let mut data = Vec::new();
     recv.read_to_end(&mut data).await.unwrap();
@@ -398,9 +398,9 @@ async fn opaque_pipe_clones_have_independent_ownership() {
     let (mut send, mut recv) = client.pipe(None).await.unwrap();
     let mut clone = send.try_clone().await.unwrap();
 
-    send.shutdown().await.unwrap();
+    send.close().await.unwrap();
     clone.write_all(b"from clone").await.unwrap();
-    clone.shutdown().await.unwrap();
+    clone.close().await.unwrap();
 
     let mut data = Vec::new();
     recv.read_to_end(&mut data).await.unwrap();
@@ -1322,6 +1322,41 @@ async fn remote_relative_seeks_track_the_client_cursor() {
     // Seeking past the end is legal and reads as EOF.
     assert_eq!(file.seek(SeekFrom::End(16)).await.unwrap(), 26);
     assert_eq!(file.read(&mut oversized).await.unwrap(), 0);
+
+    file.close().await.unwrap();
+
+    stop_pair(client, server_task).await;
+}
+
+/// An end-relative seek waits on a round trip. Polling it again with the same
+/// position drives that query, and a different seek meanwhile is refused.
+#[tokio::test]
+async fn remote_end_seek_resumes_across_polls() {
+    let (client, server_task) = connected_pair().await;
+    let temp = tempdir().unwrap();
+    let path = crate::path::PathBuf::from_native(temp.path().join("cursor")).unwrap();
+
+    let mut options = client.open_options();
+    options.read(true).write(true).create(true).truncate(true);
+    let mut file = options.open(path.to_path()).await.unwrap();
+    file.write_all(b"0123456789").await.unwrap();
+    file.flush().await.unwrap();
+
+    // The server task cannot run during this poll, so the length query is
+    // still in flight afterwards.
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    let first = futures::io::AsyncSeek::poll_seek(
+        std::pin::Pin::new(&mut file),
+        &mut cx,
+        SeekFrom::End(-2),
+    );
+    assert!(first.is_pending());
+
+    assert!(file.seek(SeekFrom::Start(0)).await.is_err());
+    assert_eq!(file.seek(SeekFrom::End(-2)).await.unwrap(), 8);
+    let mut tail = Vec::new();
+    file.read_to_end(&mut tail).await.unwrap();
+    assert_eq!(tail, b"89");
 
     file.close().await.unwrap();
 

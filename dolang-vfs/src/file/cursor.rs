@@ -14,14 +14,15 @@
 use std::{
     fmt,
     future::Future,
-    io, mem,
+    io,
+    mem::{self, MaybeUninit},
     pin::Pin,
     sync::atomic::{AtomicU64, Ordering},
     task::{Context, Poll, ready},
 };
 
 use bytes::BytesMut;
-use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
+use futures::io::{AsyncRead, AsyncSeek, AsyncWrite};
 
 use super::{File, FileInner};
 use crate::{client, direct, error::Result};
@@ -47,15 +48,15 @@ where
     }
 }
 
-impl<D: AsyncRead + Unpin, C: AsyncRead + Unpin> AsyncRead for Either<D, C> {
-    fn poll_read(
-        self: Pin<&mut Self>,
+impl Either<direct::Body, client::Body> {
+    fn poll_read_uninit(
+        &mut self,
         cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        match self.get_mut() {
-            Self::Direct(body) => Pin::new(body).poll_read(cx, buf),
-            Self::Client(body) => Pin::new(body).poll_read(cx, buf),
+        buf: &mut [MaybeUninit<u8>],
+    ) -> Poll<io::Result<usize>> {
+        match self {
+            Self::Direct(body) => Poll::Ready(Ok(body.read_uninit(buf))),
+            Self::Client(body) => body.poll_read_uninit(cx, buf),
         }
     }
 }
@@ -279,13 +280,23 @@ impl File {
     }
 }
 
-impl AsyncRead for File {
-    fn poll_read(
-        self: Pin<&mut Self>,
+impl File {
+    /// Reads at the cursor into uninitialized storage, returning how many
+    /// bytes at its front were filled. Zero means end of file, unless `buf`
+    /// is empty.
+    ///
+    /// This is [`AsyncRead::poll_read`] without the requirement that `buf` be
+    /// initialized, so a caller reading into fresh memory need not zero it
+    /// first. The remote backend writes the reply straight into `buf`.
+    pub fn poll_read_uninit(
+        &mut self,
         cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        let (inner, cursor) = self.get_mut().parts();
+        buf: &mut [MaybeUninit<u8>],
+    ) -> Poll<io::Result<usize>> {
+        if buf.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
+        let (inner, cursor) = self.parts();
         let pos = inner.position();
         loop {
             match &mut cursor.op {
@@ -295,25 +306,23 @@ impl AsyncRead for File {
                     at,
                     delivered,
                 } => {
-                    if buf.remaining() == 0 {
-                        return Poll::Ready(Ok(()));
-                    }
-                    let before = buf.filled().len();
-                    if let Err(error) = ready!(Pin::new(body).poll_read(cx, buf)) {
-                        cursor.drop_body();
-                        return Poll::Ready(Err(error));
-                    }
-                    let read = buf.filled().len() - before;
+                    let read = match ready!(body.poll_read_uninit(cx, buf)) {
+                        Ok(read) => read,
+                        Err(error) => {
+                            cursor.drop_body();
+                            return Poll::Ready(Err(error));
+                        }
+                    };
                     if read > 0 {
                         *delivered = true;
                         *at += read as u64;
                         pos.store(*at, Ordering::Relaxed);
-                        return Poll::Ready(Ok(()));
+                        return Poll::Ready(Ok(read));
                     }
                     let end_of_file = !*delivered;
                     cursor.drop_body();
                     if end_of_file {
-                        return Poll::Ready(Ok(()));
+                        return Poll::Ready(Ok(0));
                     }
                 }
                 Op::Read(op, at) => {
@@ -327,16 +336,26 @@ impl AsyncRead for File {
                     };
                 }
                 Op::Idle => {
-                    if buf.remaining() == 0 {
-                        return Poll::Ready(Ok(()));
-                    }
                     let at = pos.load(Ordering::Relaxed);
-                    let op = inner.start_read(at, buf.remaining(), &mut cursor.scratch)?;
+                    let op = inner.start_read(at, buf.len(), &mut cursor.scratch)?;
                     cursor.op = Op::Read(op, at);
                 }
                 _ => return Poll::Ready(Err(in_progress("read polled"))),
             }
         }
+    }
+}
+
+impl AsyncRead for File {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        // SAFETY: `poll_read_uninit` only writes initialized bytes, so `buf`
+        // stays initialized.
+        let buf = unsafe { &mut *(buf as *mut [u8] as *mut [MaybeUninit<u8>]) };
+        self.get_mut().poll_read_uninit(cx, buf)
     }
 }
 
@@ -444,46 +463,54 @@ impl AsyncWrite for File {
         }
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    /// Only flushes: the file is closed by [`File::close`], or when dropped.
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         self.poll_flush(cx)
     }
 }
 
 impl AsyncSeek for File {
-    fn start_seek(self: Pin<&mut Self>, position: io::SeekFrom) -> io::Result<()> {
+    /// An end-relative seek has to ask for the file's length, so it may be
+    /// pending; polling again with the same `position` drives that query.
+    fn poll_seek(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        position: io::SeekFrom,
+    ) -> Poll<io::Result<u64>> {
         let (inner, cursor) = self.get_mut().parts();
-        cursor.drop_body();
-        if cursor.is_busy() {
-            return Err(in_progress("seek started"));
-        }
         let pos = inner.position();
-        match position {
-            // Both of these resolve locally: no syscall, and for the remote
-            // backend no round trip either.
-            io::SeekFrom::Start(offset) => pos.store(offset, Ordering::Relaxed),
-            io::SeekFrom::Current(delta) => {
-                pos.store(
-                    offset_delta(pos.load(Ordering::Relaxed), delta)?,
-                    Ordering::Relaxed,
-                );
+        loop {
+            match (&mut cursor.op, position) {
+                (Op::Size(op, delta), io::SeekFrom::End(requested)) if *delta == requested => {
+                    let result = ready!(Pin::new(op).poll(cx));
+                    cursor.op = Op::Idle;
+                    pos.store(offset_delta(result?, requested)?, Ordering::Relaxed);
+                    return Poll::Ready(Ok(pos.load(Ordering::Relaxed)));
+                }
+                _ => cursor.drop_body(),
             }
-            // Only an end-relative seek needs the file's current length, and
-            // that answer is stale the moment it is produced — as it is for
-            // `lseek(SEEK_END)` too.
-            io::SeekFrom::End(delta) => cursor.op = Op::Size(inner.start_size()?, delta),
+            if cursor.is_busy() {
+                return Poll::Ready(Err(in_progress("seek started")));
+            }
+            match position {
+                // Both of these resolve locally: no syscall, and for the remote
+                // backend no round trip either.
+                io::SeekFrom::Start(offset) => pos.store(offset, Ordering::Relaxed),
+                io::SeekFrom::Current(delta) => {
+                    pos.store(
+                        offset_delta(pos.load(Ordering::Relaxed), delta)?,
+                        Ordering::Relaxed,
+                    );
+                }
+                // Only an end-relative seek needs the file's current length,
+                // and that answer is stale the moment it is produced — as it
+                // is for `lseek(SEEK_END)` too.
+                io::SeekFrom::End(delta) => {
+                    cursor.op = Op::Size(inner.start_size()?, delta);
+                    continue;
+                }
+            }
+            return Poll::Ready(Ok(pos.load(Ordering::Relaxed)));
         }
-        Ok(())
-    }
-
-    fn poll_complete(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<u64>> {
-        let (inner, cursor) = self.get_mut().parts();
-        let pos = inner.position();
-        if let Op::Size(op, delta) = &mut cursor.op {
-            let delta = *delta;
-            let result = ready!(Pin::new(op).poll(cx));
-            cursor.op = Op::Idle;
-            pos.store(offset_delta(result?, delta)?, Ordering::Relaxed);
-        }
-        Poll::Ready(Ok(pos.load(Ordering::Relaxed)))
     }
 }

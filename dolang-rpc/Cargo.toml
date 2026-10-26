@@ -77,6 +77,11 @@ workspace = true
 features = ["macros", "rt-multi-thread", "time"]
 
 
+[dev-dependencies.tokio-util]
+version = "0.7"
+features = ["compat"]
+
+
 [dev-dependencies.criterion]
 workspace = true
 features = ["async_tokio"]

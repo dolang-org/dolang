@@ -57,6 +57,11 @@ optional = true
 workspace = true
 features = ["io-std", "io-util", "macros", "net", "rt", "signal"]
 
+[dependencies.tokio-util]
+version = "0.7"
+features = ["compat"]
+
+
 [dependencies.mimalloc]
 workspace = true
 

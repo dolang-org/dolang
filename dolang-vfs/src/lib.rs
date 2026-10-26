@@ -14,8 +14,8 @@ mod test_temp;
 
 use dolang_winterop::security::{SecDesc, Sid};
 use extension::VfsExtension;
+use futures::io::{AsyncRead, AsyncWrite};
 use std::collections::HashMap;
-use tokio::io::{AsyncRead, AsyncWrite};
 /// Remote VFS client implementation.
 mod client;
 /// Local-process VFS implementation.
@@ -46,8 +46,8 @@ mod windows;
 /// stdio trailer transfers).
 ///
 /// Each remote read or write turns into one round trip, so the buffer size
-/// sets how much data one round trip carries. `tokio::io::copy`'s built-in
-/// 8 KiB buffer makes that ratio disastrous for streaming; the copies here use
+/// sets how much data one round trip carries. A plain `copy`'s built-in 8 KiB
+/// buffer makes that ratio disastrous for streaming; the copies here use
 /// `copy_buf` over a buffer of this size instead. It matches the default
 /// `dolang-rpc` maximum fragment size and the runtime's
 /// `BYTE_STREAM_CHUNK_SIZE`, so a full buffer maps onto a single wire

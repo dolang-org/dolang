@@ -4,9 +4,9 @@ use std::sync::{
 };
 
 #[cfg(unix)]
-use std::{path::Path, time::Duration};
+use std::{io, path::Path, time::Duration};
 
-use std::process::Stdio;
+use std::{future::poll_fn, process::Stdio};
 
 use bytes::{Buf, BytesMut};
 #[cfg(unix)]
@@ -17,9 +17,9 @@ use dolang_rpc::{
     session::{Cite, Gift, OpaqueGuard, OpaqueResource},
 };
 use dolang_winterop::security::SecDesc;
+use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, copy_buf};
 #[cfg(unix)]
 use std::os::unix::io::OwnedFd;
-use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::NamedPipeClient;
 #[cfg(all(docsrs, not(windows)))]
@@ -197,9 +197,16 @@ async fn next_trailer_chunk(
     trailer: &mut dolang_rpc::trailer::TrailerRecv,
 ) -> Result<Option<BytesMut>> {
     let mut buf = BytesMut::with_capacity(STREAM_CHUNK_SIZE);
-    // Spare capacity is never zero while this loop runs, so `read_buf` fills
-    // the buffer rather than growing it.
-    while buf.len() < STREAM_CHUNK_SIZE && trailer.read_buf(&mut buf).await? != 0 {}
+    while buf.len() < STREAM_CHUNK_SIZE {
+        let want = STREAM_CHUNK_SIZE - buf.len();
+        let spare = &mut buf.spare_capacity_mut()[..want];
+        let read = poll_fn(|cx| trailer.poll_read_uninit(cx, spare)).await?;
+        if read == 0 {
+            break;
+        }
+        // SAFETY: the trailer initialized `read` bytes of the spare capacity.
+        unsafe { buf.set_len(buf.len() + read) };
+    }
     Ok((!buf.is_empty()).then_some(buf))
 }
 
@@ -1398,8 +1405,8 @@ impl Connection {
                 "stdio write request is missing its data trailer",
             )
         })?;
-        let mut trailer = io::BufReader::with_capacity(STREAM_CHUNK_SIZE, trailer);
-        let len = io::copy_buf(&mut trailer, &mut *stdio.stdio.lock().await).await?;
+        let mut trailer = BufReader::with_capacity(STREAM_CHUNK_SIZE, trailer);
+        let len = copy_buf(&mut trailer, &mut *stdio.stdio.lock().await).await?;
         usize::try_from(len).map_err(|_| {
             Error::new(
                 ErrorKind::InvalidData,
@@ -1443,11 +1450,11 @@ impl Connection {
         let mut send = context.respond_with_trailer(Ok(ResponseKind::StdioRecvRead));
         let copied = {
             let mut guard = stdio.stdio.lock().await;
-            let mut source = io::BufReader::with_capacity(
+            let mut source = BufReader::with_capacity(
                 len.clamp(1, STREAM_CHUNK_SIZE),
                 (&mut *guard).take(len as u64),
             );
-            io::copy_buf(&mut source, &mut send).await.is_ok()
+            copy_buf(&mut source, &mut send).await.is_ok()
         };
         // Released before the terminal fragment: the peer may hand the endpoint
         // to a child or close it as soon as the trailer ends, and both consume
@@ -2399,7 +2406,7 @@ mod tests {
 
     #[tokio::test]
     async fn remote_server_replies_without_serializing_a_handle() {
-        let (client_stream, server_stream) = tokio::io::duplex(4096);
+        let (client_stream, server_stream) = crate::tests::duplex(4096);
         let server =
             tokio::spawn(async move { Server::new(server_stream).await.unwrap().serve().await });
         let client = protocol::rpc_builder(None)

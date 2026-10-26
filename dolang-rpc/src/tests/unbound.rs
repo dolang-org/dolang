@@ -8,7 +8,7 @@ impl Protocol for Test {
 
 #[tokio::test]
 async fn unbound_client_and_server_negotiate_and_bind_to_matching_protocol() {
-    let (client_io, server_io) = tokio::io::duplex(4096);
+    let (client_io, server_io) = crate::tests::duplex(4096);
     let (client_result, server_result) = tokio::join!(
         Builder::new("test", &[1]).client(client_io),
         Builder::new("test", &[1]).server(server_io),
@@ -31,7 +31,7 @@ async fn unbound_client_and_server_negotiate_and_bind_to_matching_protocol() {
 
 #[tokio::test]
 async fn unbound_negotiate_selects_max_overlapping_app_protocol_version() {
-    let (client_io, server_io) = tokio::io::duplex(4096);
+    let (client_io, server_io) = crate::tests::duplex(4096);
     let (client_result, server_result) = tokio::join!(
         Builder::new("test", &[1, 2, 3]).client(client_io),
         Builder::new("test", &[2, 3, 4]).server(server_io),
@@ -44,7 +44,7 @@ async fn unbound_negotiate_selects_max_overlapping_app_protocol_version() {
 
 #[tokio::test]
 async fn unbound_negotiate_fails_on_mismatched_app_protocol_name() {
-    let (client_io, server_io) = tokio::io::duplex(4096);
+    let (client_io, server_io) = crate::tests::duplex(4096);
     let (client_result, server_result) = tokio::join!(
         Builder::new("test", &[1]).client(client_io),
         Builder::new("other", &[1]).server(server_io),
@@ -55,7 +55,7 @@ async fn unbound_negotiate_fails_on_mismatched_app_protocol_name() {
 
 #[tokio::test]
 async fn unbound_negotiate_fails_on_no_overlapping_app_protocol_version() {
-    let (client_io, server_io) = tokio::io::duplex(4096);
+    let (client_io, server_io) = crate::tests::duplex(4096);
     let (client_result, server_result) = tokio::join!(
         Builder::new("test", &[1]).client(client_io),
         Builder::new("test", &[2]).server(server_io),

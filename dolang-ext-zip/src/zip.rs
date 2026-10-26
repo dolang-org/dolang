@@ -28,7 +28,7 @@ use dolang::runtime::{
 };
 use futures_lite::io::{AsyncWriteExt as _, BufReader};
 use tokio::io::{AsyncRead as _, ReadBuf};
-use tokio_util::compat::{FuturesAsyncReadCompatExt as _, TokioAsyncReadCompatExt as _};
+use tokio_util::compat::FuturesAsyncReadCompatExt as _;
 
 use crate::global::Global;
 
@@ -1033,8 +1033,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             let handle = if let Some(path) = dolang_ext_shell::as_path(strand, &source) {
                 let file = dolang_ext_shell::open(strand, path.as_ref(), &mode)
                     .await
-                    .into_do_io(strand)?
-                    .compat();
+                    .into_do_io(strand)?;
                 if mode == "r" {
                     ByteHandle::read_seek(file)
                 } else {

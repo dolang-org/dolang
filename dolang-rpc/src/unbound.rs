@@ -14,7 +14,7 @@
 //! setters for individual size/concurrency limits, and a terminal method per
 //! transport shape (`client`/`client_split`/... or `server`/`server_split`/...).
 
-use tokio::io::{AsyncRead, AsyncWrite};
+use futures::io::{AsyncRead, AsyncWrite};
 
 #[cfg(unix)]
 use std::{os::unix::net::UnixStream, result};

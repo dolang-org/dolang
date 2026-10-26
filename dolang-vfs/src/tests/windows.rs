@@ -17,8 +17,8 @@ use crate::{
     server::Server,
     target::TargetInfo,
 };
+use futures::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
     net::windows::named_pipe::{ClientOptions, ServerOptions},
     task::JoinHandle,
 };

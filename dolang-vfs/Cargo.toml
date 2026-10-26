@@ -25,6 +25,10 @@ features = ["serde"]
 workspace = true
 
 
+[dependencies.futures]
+workspace = true
+
+
 [dependencies.tokio]
 workspace = true
 features = [
@@ -39,6 +43,11 @@ features = [
   "process",
   "time",
 ]
+
+
+[dependencies.tokio-util]
+version = "0.7"
+features = ["compat"]
 
 
 [dependencies.wax]
@@ -146,9 +155,6 @@ workspace = true
 workspace = true
 features = ["dir", "fs", "ioctl", "user", "socket"]
 
-
-[target.'cfg(unix)'.dev-dependencies.futures]
-workspace = true
 
 [[bench]]
 name = "remote_file"

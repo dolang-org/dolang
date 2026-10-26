@@ -27,7 +27,7 @@ pub @let Level = (:FASTEST: | :BEST: | :DEFAULT: | Int)
 #
 # Returned by [`decompress`](compress.decompress). Handing it to a function
 # that takes an [`Io`](io.Io) passes on the decompressed bytes, and the
-# stream reads as closed afterward.
+# stream stays open.
 pub class Decompressor: Io
   # The format being decompressed, as detected for `:AUTO:`.
   #[getter]
@@ -63,7 +63,7 @@ pub class Decompressor: Io
 #
 # Returned by [`compress`](compress.compress). Handing it to a function that
 # takes an [`Io`](io.Io) lets that function write through it, and the
-# stream reads as closed afterward.
+# stream stays open.
 pub class Compressor: Io
   # The format being written.
   #[getter]

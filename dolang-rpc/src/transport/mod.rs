@@ -5,12 +5,13 @@ use std::os::windows::io::OwnedHandle;
 use std::{
     future::poll_fn,
     io::{self, IoSlice},
+    mem::MaybeUninit,
     pin::Pin,
-    task::{Context, Poll},
+    task::{Context, Poll, ready},
 };
 
 use bytes::{Buf, BufMut};
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
+use futures::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 
 /// Bound on the number of `IoSlice`s gathered from a chained `Buf` for one
 /// vectored write attempt.
@@ -343,7 +344,7 @@ pub(crate) fn generic_duplex<T>(stream: T) -> (GenericSender, GenericReceiver)
 where
     T: AsyncRead + AsyncWrite + Send + 'static,
 {
-    let (reader, writer) = tokio::io::split(stream);
+    let (reader, writer) = stream.split();
     generic(reader, writer)
 }
 
@@ -361,7 +362,7 @@ impl Sender for GenericSender {
     }
 
     async fn shutdown(&mut self) -> io::Result<()> {
-        self.0.as_mut().shutdown().await
+        self.0.as_mut().close().await
     }
 }
 
@@ -383,20 +384,17 @@ impl RecvFrame for GenericRecv<'_> {
         cx: &mut Context<'_>,
         buffer: &mut B,
     ) -> Poll<io::Result<usize>> {
-        let chunk = buffer.chunk_mut();
-        let mut read_buf = ReadBuf::uninit(unsafe {
-            std::slice::from_raw_parts_mut(chunk.as_mut_ptr().cast(), chunk.len())
-        });
-        match self.0.0.as_mut().poll_read(cx, &mut read_buf) {
-            Poll::Ready(Ok(())) => {
-                let n = read_buf.filled().len();
-                // SAFETY: `poll_read` initialized the reported filled bytes.
-                unsafe { buffer.advance_mut(n) };
-                Poll::Ready(Ok(n))
-            }
-            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
-            Poll::Pending => Poll::Pending,
-        }
+        // futures-io reads only into initialized storage, so the chunk is
+        // zeroed first.
+        // SAFETY: only initialized bytes are written through the view.
+        let chunk = unsafe { buffer.chunk_mut().as_uninit_slice_mut() };
+        chunk.fill(MaybeUninit::new(0));
+        // SAFETY: every byte of `chunk` was just initialized.
+        let chunk = unsafe { &mut *(chunk as *mut [MaybeUninit<u8>] as *mut [u8]) };
+        let n = ready!(self.0.0.as_mut().poll_read(cx, chunk))?;
+        // SAFETY: the first `n` bytes of the chunk are initialized.
+        unsafe { buffer.advance_mut(n) };
+        Poll::Ready(Ok(n))
     }
 }
 
@@ -425,14 +423,14 @@ impl<'frame> SendFrame<'frame> for GenericSend<'frame> {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use tokio::io::AsyncReadExt;
+    use futures::io::AsyncReadExt;
 
     use super::*;
 
     #[tokio::test]
     #[should_panic(expected = "generic byte-stream transport does not support file descriptors")]
     async fn generic_send_rejects_file_descriptors() {
-        let (stream, _) = tokio::io::duplex(64);
+        let (stream, _) = crate::tests::duplex(64);
         let (mut sender, _) = generic_duplex(stream);
         let (fd, _) = std::os::unix::net::UnixStream::pair().unwrap();
         let fd = OwnedFd::from(fd);
@@ -441,14 +439,14 @@ mod tests {
 
     #[tokio::test]
     async fn generic_receiver_has_no_file_descriptors() {
-        let (stream, _) = tokio::io::duplex(64);
+        let (stream, _) = crate::tests::duplex(64);
         let (_, mut receiver) = generic_duplex(stream);
         assert!(receiver.recv().drain_fds().is_empty());
     }
 
     #[tokio::test]
     async fn generic_poll_write_once_writes_directly() {
-        let (stream, mut other) = tokio::io::duplex(64);
+        let (stream, mut other) = crate::tests::duplex(64);
         let (mut sender, _) = generic_duplex(stream);
         let mut send = sender.send();
         poll_fn(|cx| send.poll_write_once(cx, b"direct"))

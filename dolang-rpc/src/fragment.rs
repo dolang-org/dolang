@@ -2920,15 +2920,15 @@ mod tests {
 
     // --- Scheduler tests ---
 
-    use tokio::io::AsyncReadExt;
+    use futures::io::AsyncReadExt;
 
-    fn sender_pair() -> (AnySender, tokio::io::DuplexStream) {
-        let (a, b) = tokio::io::duplex(64 * 1024);
+    fn sender_pair() -> (AnySender, crate::tests::Duplex) {
+        let (a, b) = crate::tests::duplex(64 * 1024);
         let (sender, _receiver) = crate::transport::generic_duplex(a);
         (AnySender::Generic(sender), b)
     }
 
-    async fn read_wire_fragment(r: &mut tokio::io::DuplexStream) -> (Flags, Kind, u64, Vec<u8>) {
+    async fn read_wire_fragment(r: &mut crate::tests::Duplex) -> (Flags, Kind, u64, Vec<u8>) {
         let mut header_buf = [0u8; RawFragmentHeader::LEN];
         r.read_exact(&mut header_buf).await.unwrap();
         let (flags, kind, id, len) = RawFragmentHeader::decode(&header_buf).unwrap();
@@ -3302,7 +3302,7 @@ mod tests {
 
     #[tokio::test]
     async fn scheduler_discard_active_trailer_errors_writer_and_sends_ordinary_terminal_commit() {
-        use tokio::io::AsyncWriteExt;
+        use futures::io::AsyncWriteExt;
 
         let limits = Limits::default();
         let mut scheduler = new_scheduler(&limits);
@@ -3372,8 +3372,8 @@ mod tests {
     /// A connected pair of full duplex (sender + receiver) endpoints, unlike
     /// `sender_pair` which only wires up one direction.
     fn duplex_endpoint_pair(buffer: usize) -> ((AnySender, AnyReceiver), (AnySender, AnyReceiver)) {
-        let (a_to_b_write, a_to_b_read) = tokio::io::duplex(buffer);
-        let (b_to_a_write, b_to_a_read) = tokio::io::duplex(buffer);
+        let (a_to_b_write, a_to_b_read) = crate::tests::duplex(buffer);
+        let (b_to_a_write, b_to_a_read) = crate::tests::duplex(buffer);
         let (a_sender, _unused) = crate::transport::generic_duplex(a_to_b_write);
         let (_unused, a_receiver) = crate::transport::generic_duplex(b_to_a_read);
         let (b_sender, _unused) = crate::transport::generic_duplex(b_to_a_write);

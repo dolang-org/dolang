@@ -4,9 +4,10 @@ use dolang_vfs::{
     file::File as VfsFile,
     process::{ChildIn, ChildOut, Command, PipeRecv, PipeSend},
 };
-use futures::future::MaybeDone;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio_util::compat::{FuturesAsyncReadCompatExt as _, FuturesAsyncWriteCompatExt as _};
+use futures::{
+    future::MaybeDone,
+    io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, BufReader},
+};
 
 use dolang::runtime::object::fmt;
 
@@ -352,7 +353,7 @@ fn forward_input<'v, 's>(
     let reader = handle
         .into_read()
         .map_err(|_| Error::value(strand, MESSAGE))?;
-    Ok(Some(ChildIn::reader(reader.compat())))
+    Ok(Some(ChildIn::reader(reader)))
 }
 
 /// Returns `value`'s writer, if it is a stream.
@@ -367,7 +368,7 @@ fn forward_output<'v, 's>(
     let writer = handle
         .into_write()
         .map_err(|_| Error::value(strand, message))?;
-    Ok(Some(ChildOut::writer(writer.compat_write())))
+    Ok(Some(ChildOut::writer(writer)))
 }
 
 /// Replaces `slot`'s value with its iterator.

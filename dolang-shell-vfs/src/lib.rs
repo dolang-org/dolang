@@ -7,6 +7,7 @@ use std::{
 #[cfg(unix)]
 use std::{os::unix::fs::PermissionsExt, path::Path};
 use tokio::runtime::Builder;
+use tokio_util::compat::{TokioAsyncReadCompatExt as _, TokioAsyncWriteCompatExt as _};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 
@@ -315,7 +316,7 @@ fn serve_stdio() -> io::Result<()> {
         #[cfg(not(unix))]
         let (stdin, stdout) = (tokio::io::stdin(), tokio::io::stdout());
 
-        let server = Server::new_split(stdin, stdout)
+        let server = Server::new_split(stdin.compat(), stdout.compat_write())
             .await
             .map_err(dolang_vfs::error::Error::into_io_error)?;
         #[cfg(windows)]

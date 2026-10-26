@@ -1495,7 +1495,7 @@ mod tests {
         shared.handle_escrow.lock().unwrap().insert(0, Vec::new());
         shared.handle_escrow.lock().unwrap().insert(1, Vec::new());
 
-        let (dummy_write, _unused) = tokio::io::duplex(64);
+        let (dummy_write, _unused) = crate::tests::duplex(64);
         let (sender, _unused) = transport::generic_duplex(dummy_write);
         let (_unused_tx, outgoing_rx) = mpsc::unbounded_channel();
         let writer = SendDriver::<Test> {

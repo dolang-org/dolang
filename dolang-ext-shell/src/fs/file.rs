@@ -17,8 +17,7 @@ use dolang_util::{shared::Locked, utf8};
 use dolang_vfs::file::{
     CopyDest, CopyMode, File as VfsFile, FileLockBehavior, FileLockMode, FileLockRange, OpenOptions,
 };
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
-use tokio_util::compat::TokioAsyncReadCompatExt as _;
+use futures::io::{AsyncSeekExt as _, AsyncWriteExt as _};
 
 use dolang_vfs::path as vfs_path;
 
@@ -858,7 +857,7 @@ impl<'v> FileKind<'v> for RawFile {
 
     fn byte_handle(&self, caps: IoCaps) -> ByteHandle {
         let file = self.file.as_ref().expect("file is closed");
-        ByteHandle::with_caps(file.clone().compat(), caps)
+        ByteHandle::with_caps(file.clone(), caps)
     }
 
     /// Chunks, as one read returns them.
