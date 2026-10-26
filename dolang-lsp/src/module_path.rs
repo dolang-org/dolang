@@ -52,12 +52,42 @@ impl ModulePath {
         })
     }
 
+    /// The configuration's canonical directory.
+    pub(crate) fn base(&self) -> &Path {
+        &self.base
+    }
+
     /// The module a document at `path` is, if it is a source under a root.
     pub(crate) fn module_of(&self, path: &Path) -> Option<String> {
         if path.extension().is_none_or(|ext| ext != "dol") {
             return None;
         }
-        let path = path.canonicalize().ok()?;
+        self.name_of(&path.canonicalize().ok()?)
+    }
+
+    /// The module a file at `path` names, whether or not it still exists.
+    ///
+    /// Only the directories leading to it are resolved, so a deleted file, or
+    /// one in a deleted directory, is named by where it was.
+    pub(crate) fn module_at(&self, path: &Path) -> Option<String> {
+        if path.extension().is_none_or(|ext| ext != "dol") {
+            return None;
+        }
+        let (dir, rest) = path
+            .ancestors()
+            .skip(1)
+            .find_map(|dir| Some((dir.canonicalize().ok()?, path.strip_prefix(dir).ok()?)))?;
+        if !rest
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+        {
+            return None;
+        }
+        self.name_of(&dir.join(rest))
+    }
+
+    /// The module a canonical path under a root names.
+    fn name_of(&self, path: &Path) -> Option<String> {
         let rest = self
             .roots
             .iter()
@@ -347,6 +377,22 @@ pub(crate) mod tests {
         assert_eq!(path.open("a.b"), Some((nested, String::new())));
         assert_eq!(path.open("c"), Some((package, String::new())));
         assert_eq!(path.open("missing"), None);
+    }
+
+    #[test]
+    fn removed_files_are_named_by_where_they_were() {
+        let tree = Directory::new();
+        tree.dir("lib");
+        let path = load(&tree.0, &["lib"]);
+        let flat = tree.write("lib/a.dol", "");
+        assert_eq!(path.module_at(&flat).as_deref(), Some("a"));
+        fs::remove_file(&flat).unwrap();
+        assert_eq!(path.module_of(&flat), None);
+        assert_eq!(path.module_at(&flat).as_deref(), Some("a"));
+        let nested = tree.0.join("lib/b/c/mod.dol");
+        assert_eq!(path.module_at(&nested).as_deref(), Some("b.c"));
+        assert_eq!(path.module_at(&tree.0.join("x.dol")), None);
+        assert_eq!(path.module_at(&tree.0.join("lib/a.txt")), None);
     }
 
     #[test]
