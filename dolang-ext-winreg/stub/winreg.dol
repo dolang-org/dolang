@@ -181,7 +181,7 @@ pub @let AccessMaskSpec = (AccessMask | AccessRight | Iterable[AccessRight])
 # An open registry key.
 #
 # Returned by [`open`](winreg.open) and by `Key`'s own
-# [`open`](#open) and [`create`](#create).
+# [`open`](winreg.Key.open) and [`create`](winreg.Key.create).
 pub class Key
   # Closes the key.
   #
@@ -314,7 +314,7 @@ pub class Key
   # ```
   # let entry = env.get_value "TEMP"
   # if entry
-  #   echo "TEMP is a $entry.kind value: $entry.value"
+  #   echo "TEMP is a $(entry.kind) value: $(entry.value)"
   # else
   #   echo "TEMP is not set"
   # ```

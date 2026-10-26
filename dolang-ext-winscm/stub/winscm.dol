@@ -509,6 +509,10 @@ pub @let ServiceAccessMaskSpec = $
   | ServiceAccessRight
   | Iterable[ServiceAccessRight]
 
+# A service command line, given as a string, an executable path, or an iterable
+# of arguments.
+pub @let BinaryPathSpec = (Str | Path | Iterable[Str | Path])
+
 # Service types, given as a [`ServiceType`](winscm.ServiceType), one flag, or an
 # iterable of flags.
 pub @let ServiceTypeSpec = $
@@ -593,7 +597,7 @@ pub class ScManager
     # [`Str`](std.Str) values or absolute
     # [`fs.windows.Path`](fs.windows.Path) values; each element is quoted
     # with the Windows command-line rules.
-    :binary_path @ (Str | Path) = nil
+    :binary_path @ BinaryPathSpec = nil
     # Service type. Defaults to `:WIN32_OWN_PROCESS:`.
     :service_type @ ServiceTypeSpec = nil
     # Start type. Defaults to `:DEMAND_START:`.
@@ -622,7 +626,7 @@ pub class ScManager
     # Display name. Omit to pass `NULL` to Windows.
     :display_name @ Str = nil
     # Service executable path or command line. Omit to pass `NULL` to Windows.
-    :binary_path @ (Str | Path) = nil
+    :binary_path @ BinaryPathSpec = nil
     # Service type. Defaults to `:WIN32_OWN_PROCESS:`.
     :service_type @ ServiceTypeSpec = nil
     # Start type. Defaults to `:DEMAND_START:`.
@@ -754,7 +758,7 @@ pub class Service
     :error_control @ ErrorControl = nil
     # Service command line, taking the forms
     # [`create_service`](winscm.ScManager.create_service) accepts.
-    :binary_path @ (Str | Path) = nil
+    :binary_path @ BinaryPathSpec = nil
     # Load-order group.
     :load_order_group @ Str = nil
     # Service or load-order-group names this service depends on.

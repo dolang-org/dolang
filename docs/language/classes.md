@@ -69,6 +69,118 @@ class Counter
     self.#count
 ```
 
+## Creating Instances
+
+Call a class like a function to create an instance. Arguments are passed to
+`(init)`:
+
+```playground
+class Rectangle
+  pub field width = 0
+  pub field height = 0
+
+  def (init) self w h
+    self.width = w
+    self.height = h
+
+  pub def area self
+    (self.width * self.height)
+
+let r = Rectangle 10 20
+echo $r.area()   # 200
+echo $r.width    # 10
+```
+
+## Visibility
+
+By default, all fields and methods of a class are **private** — they can only
+be accessed from within the class's own methods. To make a field or method
+accessible from outside the class, declare it with `pub`:
+
+```
+class Counter
+  field count = 0        # private field
+
+  def (init) self start
+    self.#count = start
+
+  pub def increment self   # public method
+    self.#count = (self.#count + 1)
+
+  pub def value self       # public method
+    self.#count
+```
+
+A class itself may also be declared `pub` to make it part of a module's public
+API:
+
+```
+pub class Point
+  pub field x = 0
+  pub field y = 0
+
+  def (init) self x y
+    self.x = x
+    self.y = y
+```
+
+### Private Fields
+
+Fields declared without `pub` are private. Within the class, private fields are
+accessed using the `.#field` syntax:
+
+```
+class BankAccount
+  field balance = 0
+
+  def (init) self initial
+    self.#balance = initial
+
+  pub def deposit self amount
+    self.#balance = (self.#balance + amount)
+
+  pub def balance self
+    self.#balance
+```
+
+The `#` explicitly signals a private access. Using `.field` (without `#`) on
+`self` when the field is private produces a warning, and the compiler will
+suggest using `.#field` instead.
+
+Private access requires the method's first parameter as the receiver, or the
+class's own name anywhere inside the class. The receiver's name need not be
+`self`; class methods use their type-object parameter, and static methods,
+which have none, use the class's name. Receiver and class bindings cannot be
+reassigned, but their fields can be written. Aliases and other objects cannot
+be used with `.#`, even inside the same class. Nested functions may access
+private members through the captured receiver. A decorated class's name grants
+no private access, since the decorator may replace the class, unless every
+decorator is the prelude's [`final`](#final-classes) or
+[`mixable`](#disjoint-classes), which return the class they are
+given.
+
+### Private Methods
+
+Methods declared without `pub` are also private. Call them with `.#method()`
+syntax from within the class:
+
+```
+class Adder
+  field base = 0
+
+  def (init) self base
+    self.#base = base
+
+  def double_base self       # private helper
+    (self.#base * 2)
+
+  pub def add self x
+    (self.#double_base() + x)
+
+let a = Adder 5
+assert_eq $a.add(3) 13
+```
+
 ## Computed Fields with `getter` and `setter`
 
 Computed fields use decorators on methods:
@@ -98,6 +210,248 @@ assert_eq $cfg.port 9000
 See [Decorators](./decorators.md) for decorator syntax and evaluation order, and
 [`getter`](std.getter) / [`setter`](std.setter) for the
 decorators themselves.
+
+## Inheritance
+
+A class can inherit from one or more parents by listing them after a colon.
+Let's start with a base class:
+
+```
+class Animal
+  pub field name = nil
+  pub field species = "unknown"
+
+  def (init) self name species
+    self.name = name
+    self.species = species
+
+  pub def describe self
+    "$(self.name) is a $(self.species)"
+```
+
+A child class inherits all fields and methods from its parent. Methods can be
+overridden by redefining them. To call a parent method, use
+`Parent.method $self`:
+
+```
+class Dog: Animal
+  pub field breed = nil
+
+  def (init) self name breed
+    Animal.(init) $self $name dog
+    self.breed = breed
+
+  pub def describe self
+    "$(Animal.describe self) ($(self.breed))"
+```
+
+This results in the following behavior:
+
+```
+let rex = Dog "Rex" "German Shepherd"
+echo $rex.describe()           # Rex is a dog (German Shepherd)
+
+# Call a parent method directly
+echo $ Animal.describe $rex    # Rex is a dog
+```
+
+### Calling Parent Constructor
+
+Call the parent's `(init)` explicitly within a constructor body to initialize
+inherited fields. The first argument must be that constructor's receiver:
+
+```
+class Cat: Animal
+  pub field indoor = false
+
+  def (init) self name indoor
+    Animal.(init) $self $name cat
+    self.indoor = indoor
+```
+
+### Multiple Inheritance
+
+List multiple parents after the colon, separated by spaces. A class can't
+combine two ordinary unrelated parents, so the extra parents are marked
+[`mixable`](#disjoint-classes):
+
+```
+#[mixable]
+class Pet
+  pub def category self
+    "companion"
+
+class LoudDog: Animal Pet
+  pub def describe self
+    "$(Animal.describe self)! pet=$(Pet.category self)"
+```
+
+Superclass references may also be dotted names:
+
+```
+class LocalTool: tools.build.Tool
+  pub field root = "."
+```
+
+A superclass written with `@` exists only in types, and the class does not
+inherit from it. See [Protocols](type-declarations.md#protocols).
+
+### Vertical Supertypes
+
+Leave the colon's line empty to list supertypes on indented lines. A dedented
+`do` ends the list and introduces the class body:
+
+```
+class Derived[T]:
+  Base[T] @Readable[T]
+  - @Writable[T]
+do
+  pub field value @ T = nil
+```
+
+Undashed lines may contain several supertypes. A dash line contains exactly
+one; both styles may appear in the same list. The list must contain at least
+one supertype and has no keyed items. Protocols (`@class`) use the same layout,
+with all supertypes implicitly checker-only. A declaration without members may
+end at `do`.
+
+### Member Resolution Order
+
+- Earlier superclasses in the list win when the same member is defined multiple
+  times
+- A class's own members override inherited ones
+- This rule is recursive: each parent brings along its already-merged inherited
+  members.
+
+For example:
+
+```
+class A
+  pub def who self
+    A
+
+#[mixable]
+class B
+  pub def who self
+    B
+
+class C: A B
+
+assert_eq $(C().who()) $A
+```
+
+Swapping the parents changes the result:
+
+```
+class D: B A
+
+assert_eq $(D().who()) $B
+```
+
+### Inheriting from a Built-in Type
+
+A class may also inherit from a built-in type such as
+[`Str`](std.Str), [`RuntimeError`](std.RuntimeError), or
+[`term.Console`](term.Console). Such a supertype brings a
+representation of its own, which `(init)` must initialize by chaining:
+
+```
+class Tagged: Str
+  pub field tag = nil
+
+  def (init) self value tag
+    Str.(init) $self $value
+    self.tag = tag
+
+let t = Tagged "hello" :greeting:
+assert_eq (str t) "hello"
+assert_eq $t.len 5
+```
+
+The chained call gives the instance its inherited behavior: `Tagged` above gets
+`str`, `len`, comparison, and the rest from the `Str` it was initialized with.
+Skipping the call leaves that representation empty, and the constructor fails
+with `native supertypes not initialized` rather than producing a half-built
+object. A few types, such as [`AbortError`](std.AbortError), can't be
+subclassed at all.
+
+Overriding a special method takes precedence over the inherited one, so a
+subclass can keep the representation and still present itself differently:
+
+```
+class Quiet: Str
+  def (init) self value
+    Str.(init) $self $value
+
+  pub def (dbg) self
+    "<Quiet $(Str.(dbg) self)>"
+```
+
+### Final Classes
+
+The prelude's [`final`](std.final) decorator forbids subclasses of a class.
+Creating a class that inherits from a final class raises a
+[`TypeError`](std.TypeError), as does inheriting from `Nil`, `Bool`, or `Sym`,
+which are final:
+
+```
+#[final]
+class Point
+  pub field x y = 0
+
+class Point3: Point   # TypeError: cannot inherit from final type
+```
+
+`final` raises a [`StateError`](std.StateError) for a class that already has a
+subclass. Since a final class has no subclasses, the type checker treats its
+values as outside every class it doesn't inherit from, so a type test for such
+a class drops it (see [Narrowing](./type-checking.md#narrowing)).
+
+### Disjoint Classes
+
+Every class is disjoint unless it is decorated with the prelude's
+[`mixable`](std.mixable), and `Value` is disjoint. A class can't inherit from
+two disjoint classes neither of which inherits from the other; the type checker
+reports one that does. A mixable class takes the place of its nearest disjoint
+superclass, so subclasses of unrelated classes may share it:
+
+```
+#[mixable]
+class Named
+  pub field name = nil
+
+class Shape
+class Image
+class Square: Shape Named
+class Icon: Image Named
+
+class Tile: Square Image   # error: unrelated disjoint classes `Square` and `Image`
+```
+
+A diamond is allowed when every class in its middle is mixable. Classes whose
+nearest disjoint superclasses are unrelated have no instances in common, so a
+type test for one drops the other. `Iterable`, `Iter`, `Sinkable`, `Sink`,
+`Func`, and the error kinds below [`RuntimeError`](std.RuntimeError) are
+mixable. Only runtime supertypes count, and protocols are never disjoint. The
+runtime doesn't enforce the rule.
+
+## Type Inspection
+
+The `type` builtin works with classes:
+
+```
+let rex = Dog "Rex" "German Shepherd"
+
+# Get the type of a value (returns the type object)
+assert_eq (type rex) $Dog
+
+# Test if a value is an instance of a class
+assert (type rex Dog)       # true: rex is a Dog
+assert (type rex Animal)    # true: Dog inherits from Animal
+assert_not (type rex Cat)   # false: Dog is not a Cat
+```
+
+See [Basic Types](basic-types.md#type-inspection) for more on `type`.
 
 ## Class and Static Members
 
@@ -133,7 +487,7 @@ class Session
     Session()
 ```
 
-### Inheritance
+### Inheritance of Class Members
 
 `class` members are inherited; `static` members are not. Because both occupy
 the type object's namespace, a static shadows an inherited class member of the
@@ -225,352 +579,6 @@ Two type objects are equal when they stand for the same class, and they hash to
 match, so they work as dict keys. A type object is a subtype of
 [`Type`](std.Type), so `type Counter Type` holds.
 
-## Visibility
-
-By default, all fields and methods of a class are **private** — they can only
-be accessed from within the class's own methods. To make a field or method
-accessible from outside the class, declare it with `pub`:
-
-```
-class Counter
-  field count = 0        # private field
-
-  def (init) self start
-    self.#count = start
-
-  pub def increment self   # public method
-    self.#count = (self.#count + 1)
-
-  pub def value self       # public method
-    self.#count
-```
-
-A class itself may also be declared `pub` to make it part of a module's public
-API:
-
-```
-pub class Point
-  pub field x = 0
-  pub field y = 0
-
-  def (init) self x y
-    self.x = x
-    self.y = y
-```
-
-## Private Fields
-
-Private access requires the method's first parameter as the receiver, or the
-class's own name anywhere inside the class. The receiver's name need not be
-`self`; class methods use their type-object parameter, and static methods,
-which have none, use the class's name. Receiver and class bindings cannot be
-reassigned, but their fields can be written. Aliases and other objects cannot
-be used with `.#`, even inside the same class. Nested functions may access
-private members through the captured receiver. A decorated class's name grants
-no private access, since the decorator may replace the class, unless every
-decorator is the prelude's [`final`](#final-classes) or
-[`mixable`](#disjoint-classes), which return the class they are
-given.
-
-Fields declared without `pub` are private. Within the class, private fields are
-accessed using the `.#field` syntax:
-
-```
-class BankAccount
-  field balance = 0
-
-  def (init) self initial
-    self.#balance = initial
-
-  pub def deposit self amount
-    self.#balance = (self.#balance + amount)
-
-  pub def balance self
-    self.#balance
-```
-
-The `#` explicitly signals a private access. Using `.field` (without `#`) on
-`self` when the field is private produces a warning, and the compiler will
-suggest using `.#field` instead.
-
-### Private Methods
-
-Methods declared without `pub` are also private. Call them with `.#method()`
-syntax from within the class:
-
-```
-class Adder
-  field base = 0
-
-  def (init) self base
-    self.#base = base
-
-  def double_base self       # private helper
-    (self.#base * 2)
-
-  pub def add self x
-    (self.#double_base() + x)
-
-let a = Adder 5
-assert_eq $a.add(3) 13
-```
-
-## Creating Instances
-
-Call a class like a function to create an instance. Arguments are passed to
-`(init)`:
-
-```playground
-class Rectangle
-  pub field width = 0
-  pub field height = 0
-
-  def (init) self w h
-    self.width = w
-    self.height = h
-
-  pub def area self
-    (self.width * self.height)
-
-let r = Rectangle 10 20
-echo $r.area()   # 200
-echo $r.width    # 10
-```
-
-## Inheritance
-
-A class can inherit from one or more parents by listing them after a colon.
-Let's start with a base class:
-
-```
-class Animal
-  pub field name = nil
-  pub field species = "unknown"
-
-  def (init) self name species
-    self.name = name
-    self.species = species
-
-  pub def describe self
-    "$(self.name) is a $(self.species)"
-```
-
-A child class inherits all fields and methods from its parent. Methods can be
-overridden by redefining them. To call a parent method, use
-`Parent.method $self`:
-
-```
-class Dog: Animal
-  pub field breed = nil
-
-  def (init) self name breed
-    Animal.(init) $self $name dog
-    self.breed = breed
-
-  pub def description self
-    "$(Animal.describe self) ($(self.breed))"
-```
-
-This results in the following behavior:
-
-```
-let rex = Dog "Rex" "German Shepherd"
-echo $rex.describe()           # Rex is a dog (German Shepherd)
-
-# Call a parent method directly
-echo $ Animal.describe $rex    # Rex is a dog
-```
-
-### Multiple Inheritance
-
-List multiple parents after the colon, separated by spaces:
-
-```
-class LoudDog: Animal Pet
-  pub def describe self
-    "$(Animal.describe self)! pet=$(Pet.category self)"
-```
-
-Superclass references may also be dotted names:
-
-```
-class LocalTool: tools.build.Tool
-  pub field root = "."
-```
-
-A superclass written with `@` exists only in types, and the class does not
-inherit from it. See [Protocols](types.md#protocols).
-
-### Vertical Supertypes
-
-Leave the colon's line empty to list supertypes on indented lines. A dedented
-`do` ends the list and introduces the class body:
-
-```
-class Derived[T]:
-  Base[T] @Readable[T]
-  - @Writable[T]
-do
-  pub field value @ T = nil
-```
-
-Undashed lines may contain several supertypes. A dash line contains exactly
-one; both styles may appear in the same list. The list must contain at least
-one supertype and has no keyed items. Protocols (`@class`) use the same layout,
-with all supertypes implicitly checker-only. A declaration without members may
-end at `do`.
-
-### Member Resolution Order
-
-- Earlier superclasses in the list win when the same member is defined multiple
-  times
-- A class's own members override inherited ones
-- This rule is recursive: each parent brings along its already-merged inherited
-  members.
-
-For example:
-
-```
-class A
-  pub def who self
-    A
-
-class B
-  pub def who self
-    B
-
-class C: A B
-
-assert_eq $(C().who()) $A
-```
-
-Swapping the parents changes the result:
-
-```
-class D: B A
-
-assert_eq $(D().who()) B
-```
-
-### Calling Parent Constructor
-
-Call the parent's `(init)` explicitly within a constructor body to initialize
-inherited fields. The first argument must be that constructor's receiver:
-
-```
-class Cat: Animal
-  pub field indoor = false
-
-  def (init) self name indoor
-    Animal.(init) $self $name cat
-    self.indoor = indoor
-```
-
-### Inheriting from a Built-in Type
-
-A class may also inherit from a built-in type such as
-[`Str`](std.Str), [`RuntimeError`](std.RuntimeError), or
-[`term.Console`](term.Console). Such a supertype brings a
-representation of its own, which `(init)` must initialize by chaining:
-
-```
-class Tagged: Str
-  pub field tag = nil
-
-  def (init) self value tag
-    Str.(init) $self $value
-    self.tag = tag
-
-let t = Tagged "hello" :greeting:
-assert_eq (str t) "hello"
-assert_eq $t.len 5
-```
-
-The chained call gives the instance its inherited behavior: `Tagged` above gets
-`str`, `len`, comparison, and the rest from the `Str` it was initialized with.
-Skipping the call leaves that representation empty, and the constructor fails
-with `native supertypes not initialized` rather than producing a half-built
-object. A few types — [`AbortError`](std.AbortError) among them —
-are sealed and have no constructor to chain to.
-
-Overriding a special method takes precedence over the inherited one, so a
-subclass can keep the representation and still present itself differently:
-
-```
-class Quiet: Str
-  def (init) self value
-    Str.(init) $self $value
-
-  pub def (dbg) self
-    "<Quiet $(Str.(dbg) self)>"
-```
-
-### Final Classes
-
-The prelude's [`final`](std.final) decorator forbids subclasses of a class.
-Creating a class that inherits from a final class raises a
-[`TypeError`](std.TypeError), as does inheriting from `Nil`, `Bool`, or `Sym`,
-which are final:
-
-```
-#[final]
-class Point
-  pub field x y = 0
-
-class Point3: Point   # TypeError: cannot inherit from final type
-```
-
-`final` raises a [`StateError`](std.StateError) for a class that already has a
-subclass. Since a final class has no subclasses, the type checker treats its
-values as outside every class it doesn't inherit from, so a type test for such
-a class drops it (see [Narrowing](./type-checking.md#narrowing)).
-
-### Disjoint Classes
-
-Every class is disjoint unless it is decorated with the prelude's
-[`mixable`](std.mixable), and `Value` is disjoint. A class can't inherit from
-two disjoint classes neither of which inherits from the other; the type checker
-reports one that does. A mixable class takes the place of its nearest disjoint
-superclass, so subclasses of unrelated classes may share it:
-
-```
-#[mixable]
-class Named
-  pub field name = nil
-
-class Shape
-class Image
-class Square: Shape Named
-class Icon: Image Named
-
-class Tile: Square Image   # error: unrelated disjoint classes `Square` and `Image`
-```
-
-A diamond is allowed when every class in its middle is mixable. Classes whose
-nearest disjoint superclasses are unrelated have no instances in common, so a
-type test for one drops the other. `Iterable`, `Iter`, `Sinkable`, `Sink`,
-`Func`, and the error kinds below [`RuntimeError`](std.RuntimeError) are
-mixable. Only runtime supertypes count, and protocols are never disjoint. The
-runtime doesn't enforce the rule.
-
-## Type Inspection
-
-The `type` builtin works with classes:
-
-```
-let rex = Dog "Rex" "German Shepherd"
-
-# Get the type of a value (returns the type object)
-assert_eq (type rex) $Dog
-
-# Test if a value is an instance of a class
-assert (type rex Dog)       # true: rex is a Dog
-assert (type rex Animal)    # true: Dog inherits from Animal
-assert_not (type rex Cat)   # false: Dog is not a Cat
-```
-
-See [Basic Types](basic-types.md#type-inspection) for more on `type`.
-
 ## Operator Overloading
 
 Arithmetic, shift, bitwise, and comparison operators are dispatched to special
@@ -650,8 +658,8 @@ back to strict equality. When `(ne)` is absent, it negates `(eq)`; when
 `UnsupportedError` from the left method triggers the reflected method. Other
 errors propagate.
 
-**Ordering:** Defining `(lt)` and `(eq)` is sufficient for all four comparison
-operators. `<=`, `>`, and `>=` are derived automatically:
+Defining `(lt)` and `(eq)` is sufficient for all four comparison operators;
+`<=`, `>`, and `>=` are derived from them:
 
 ```playground
 #> import test:
@@ -793,9 +801,6 @@ Invoked when getting the next item from an iterator. Returns the next value,
 or throws `IterStop` when exhausted:
 
 ```
-import std:
-  - IterStop
-
 class Counter
   field current = 0
   field stop = 0
@@ -809,7 +814,7 @@ class Counter
 
   def (next) self
     if (self.#current >= self.#stop)
-      throw IterStop()
+      throw std.IterStop()
     let value = self.#current
     self.#current = (self.#current + 1)
     value
@@ -885,27 +890,24 @@ assert (bool nonzero)
 
 Called by `std.hash` and when an instance is used as a dictionary key. Must
 return an `Int`. If not defined, the hash is derived from the instance's
-identity (memory address), consistent with the default identity-based equality.
+identity, consistent with the default identity-based equality.
 
 `std.hash` accepts multiple values and hashes them all together in sequence,
 which makes it easy to combine fields:
 
 ```
-import std:
-  - hash
-
 def (hash) self
-  hash self.x self.y self.z
+  std.hash $self.x $self.y $self.z
 ```
 
-**Important:** if you define `(eq)`, you should also define `(hash)` so that
-equal objects produce the same hash:
+If you define `(eq)`, also define `(hash)` so that equal objects produce the
+same hash:
 
 ```playground
 #> import test:
 #>   - assert_eq
-import std:
-  - hash
+#> import std:
+#>   - hash
 
 class Point
   pub field x = 0
@@ -919,7 +921,7 @@ class Point
     (self.x == other.x && self.y == other.y)
 
   def (hash) self
-    (self.x * 31 + self.y)
+    hash $self.x $self.y
 
 let p1 = Point 3 4
 let p2 = Point 3 4
@@ -980,14 +982,14 @@ context). Must return a `Str`. Falls back to
 class Path
   pub field parts
 
-  def (init) self ...parts
+  def (init) self *parts
     self.parts = parts
 
   def (verbatim) self
-    self.parts.join("/")
+    "/".join(self.parts)
 
   def (str) self
-    "Path($(self.parts.join("/")))"
+    "Path($("/".join(self.parts)))"
 ```
 
 ### `(fmt)`: Formatted Conversion

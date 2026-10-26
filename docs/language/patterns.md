@@ -17,11 +17,10 @@ assert_eq $b 2
 ```
 
 By default, the pattern must exhaustively match the entire structure or an
-error will result. Use `...` to capture surplus items instead. The specified
-variable receives a structural rest that can be unpacked or spread again.
-Unpacking reads the source without advancing an iterator. In-memory iterators
-such as array, tuple, pair, view, split, and dict key/value iterators support
-this read-only operation; generic `map` and `filter` iterators do not.
+error will result. Use `...` to capture surplus items instead. The rest can be
+unpacked or spread again. Unpacking an iterator doesn't advance it, so only
+in-memory iterators such as array, tuple, pair, view, split, and dict key/value
+iterators can be unpacked; `map` and `filter` iterators cannot.
 
 ```
 let first ...rest = [1, 2, 3, 4]
@@ -71,29 +70,13 @@ assert_eq {...options} {color: "red"}
 
 `*` or `**` alone discards surplus items entirely.
 
-Source-backed rests are neither iterators nor iterable. Materialize a positional
+A rest unpacked from an array or iterator is an iterator, but other rests, such
+as one unpacked from a dictionary, are not iterable. Materialize a positional
 rest with `[...rest]` before iterating. Materialize a keyed or mixed rest with
-`Dict(rest)` or `Record(rest)`, then iterate the resulting container. A rest can
+`{...rest}`, `Dict(rest)` or `Record(rest)`, then iterate the result.
+`(...rest)` makes a tuple unless the parentheses also hold a static key, as in
+`(...rest, extra: 1)`, which makes a record. A rest can
 be unpacked and spread repeatedly; these operations do not consume it.
-
-### Non-symbol Keys
-
-`:key` and `key: name` match **symbol** keys. External inputs such as decoded
-JSON will typically have string keys. To match such keys, use a constant
-expression instead of a bare key:
-
-```playground
-#> import test:
-#>   - assert_eq
-import json
-
-let payload = json.decode r|
-  {"name": "Alice", "age": 30}
-
-let Dict("name": name "age": age) = payload
-assert_eq $name "Alice"
-assert_eq $age 30
-```
 
 ## `bind`
 
@@ -139,6 +122,21 @@ bind {foo: nil}
   :foo = 42
 # nil is a present value, not missing
 assert_eq $foo nil
+```
+
+## Patterns in `for`
+
+`for` matches each element against its pattern:
+
+```playground
+for k v = {name: "Alice", age: 30}
+  echo "$k: $v"
+
+for index value = [10, 20, 30].pairs()
+  echo "$index: $value"
+
+for :name :age = [{name: "Alice", age: 30}, {name: "Bob", age: 44}]
+  echo "$name is $age years old"
 ```
 
 ## Nested Patterns
@@ -209,72 +207,132 @@ let add = (do |(x1 y1) (x2 y2)| [x1 + x2, y1 + y2])
 A `def`'s parameters must be names, which its signature can annotate. Unpack
 them in the body instead.
 
-### Optional Sub-patterns
+## Conditional Matching
 
-`?` before a sub-pattern allows its item to be absent. When absent, every
-binding beneath it takes its default, at any depth. Defaults run in item order
-and may read earlier bindings:
-
-```playground
-#> import test:
-#>   - assert_eq
-let ?"settings": ("port": port = 80 "next": next = (port + 1)) ... = {}
-assert_eq $port 80
-assert_eq $next 81
-
-let first ?(second = 2) = [1]
-assert_eq $first 1
-assert_eq $second 2
-```
-
-When the item is present, its value must match the sub-pattern as usual. A
-present `nil` is not absent: unpacking it raises an error, including in a
-conditional pattern. `?()` accepts an absent item or an empty value.
-
-Each `?` applies only at its own level. Here `k` may be absent, but a present
-`k` must contain `j`; write `?j:` to make that inner item optional too:
+`let` and `bind` after `if` or `while` make the pattern match the condition.
+The bindings are in scope for the branch body when the pattern matches, and
+the else branch runs when it does not.
 
 ```
-let ?k: (j: (value = 0)) = data
+if let a b = [1, 2]
+  echo "matched $a $b"
+else
+  echo "no match"
 ```
 
-Every binding under `?` needs a default. In an alternative pattern, only the
-first alternative needs defaults: an absent item takes that alternative's
-defaults without testing or unpacking it.
-
-```playground
-#> import test:
-#>   - assert_eq
-let ?k: (Int(n = 0) | Str(n)) = {}
-assert_eq $n 0
-```
-
-Bindings on the absent path cannot be named rests; an anonymous `...` is
-allowed.
-`?` cannot precede a plain binding or `:key` shorthand: use a default instead,
-such as `x = 0` or `:key = 0`. Required positional items must precede optional
-ones.
-
-In vertical layout, `?` followed by a space marks an optional positional
-sub-pattern, while a touching `?` marks the item after it. `- ?(...)` also marks
-an optional positional item:
+`bind` takes the same vertical layout as its statement form, with `do`
+introducing the branch body. Because the pattern is vertical, it also supports
+default values:
 
 ```
-bind data
-  - first
-  ? - second = 2
-    - third = 3
-  ?settings:
-    :port = 80
-    ...
+if bind response
+  :status
+  :body = ""
+do
+  echo "$status $body"
+else
+  echo "unexpected shape"
 ```
 
-Lambda parameters use the same syntax, making that parameter optional in the
-lambda's signature:
+Both forms work with `while`, in which case the loop ends the first time the
+pattern fails to match:
 
 ```
-let port_of = do |?settings: (:port = 80)| port
+let i = 0
+while let a b = pairs.get(i)
+  echo "$a $b"
+  i = (i + 1)
 ```
+
+Both forms also work where `if` appears in
+[vertical layout](./vertical-layout.md), building arrays, dictionaries, or
+argument lists:
+
+```
+let parts = $
+  - always
+  if let a b = pair
+    - $a
+    - $b
+  else
+    - "no pair"
+```
+
+### What Counts as a Match
+
+A pattern takes the failure branch when an unpack has too few or too many
+positional items, a missing or unexpected key, or a type test or constant
+comparison fails. Other errors propagate as usual. In particular, trying to
+unpack a value that does not support it is an error:
+
+```
+# Branches: [1, 2] unpacks fine, but not into three elements
+if let a b c = [1, 2]
+  echo unreachable
+else
+  echo "wrong arity"
+
+# Raises: an int cannot be unpacked
+if let a b = 42
+  echo unreachable
+else
+  echo also-unreachable
+```
+
+A default supplies a missing element, so it turns what would otherwise be a
+mismatch into a match.
+
+A nested pattern matches only if every level does.
+
+### Binding a Single Name
+
+A pattern that is a bare identifier binds the scrutinee itself and branches on
+its truthiness without unpacking it:
+
+```
+if let value = lookup key
+  echo "found $value"
+else
+  echo "not found"
+```
+
+To match a sequence of exactly one item instead, write the item in parentheses:
+`if let (value) = items`.
+
+### `let` / `bind` with `else`
+
+A standalone `let` or `bind` can run an `else` block when its pattern does not
+match. The bindings remain in scope after the statement:
+
+```
+let k v = s.split "="
+else throw std.ValueError "expected KEY=VALUE: $s"
+echo "$k -> $v"
+
+bind response
+  :status
+  :body = ""
+else
+  return nil
+```
+
+Matching follows the same rules as `if let` and `if bind`, including the
+truthiness test for a single name. The new bindings are not in scope inside
+`else`; an existing outer name is still visible there.
+
+In a [strict](type-checking.md#strict-checking) file, `else` is how to
+destructure a value that may not match.
+
+The `else` body must diverge: return, throw, break, continue, or call something
+that does not return. Reaching its end raises `std.RuntimeError`, naming the
+`let` or `bind` statement. The type checker warns when it finds a path to that
+end.
+
+Write `else` on its own line at the statement's indentation, followed by an
+indented block or a single inline statement. `else if` is not accepted here;
+put an `if` inside an indented body instead. When the RHS of `let` is an `if`
+or `match`, its `else` belongs to that construct, and an additional `else`
+cannot be attached to the `let`.
 
 ## Constant Patterns
 
@@ -302,7 +360,7 @@ test for a lone name does not apply to constants.
 A mismatch takes a conditional pattern's failure branch. In a plain `let`,
 `bind`, or `for`, it raises `std.TypeError`. Constants cannot have annotations
 or defaults, and cannot be `def` parameters. Interpolated strings and other
-expressions that cannot be folded to constants are rejected.
+expressions that aren't constants are rejected.
 
 ## Type-Test Patterns
 
@@ -351,6 +409,25 @@ A failed class test raises `TypeError` in an ordinary binding or lambda
 parameter. In a conditional binding it takes the failure branch. A successful
 class test can capture a falsy value: `if let Bool(value) = false` succeeds and
 binds `false`. A subsequent inner pattern can still fail independently.
+
+## Non-symbol Keys
+
+`:key` and `key: name` match **symbol** keys. External inputs such as decoded
+JSON will typically have string keys. To match such keys, use a constant
+expression instead of a bare key:
+
+```playground
+#> import test:
+#>   - assert_eq
+import json
+
+let payload = json.decode r|
+  {"name": "Alice", "age": 30}
+
+let Dict("name": name "age": age) = payload
+assert_eq $name "Alice"
+assert_eq $age 30
+```
 
 ## Alternatives
 
@@ -420,132 +497,72 @@ it would alone. An error that is not a mismatch (see
 [What Counts as a Match](./patterns.md#what-counts-as-a-match)) propagates
 without trying later alternatives.
 
-## Conditional Matching
+## Optional Sub-patterns
 
-`let` and `bind` after `if` or `while` make the pattern match the condition.
-The bindings are in scope for the branch body when the pattern matches, and
-the else branch runs when it does not.
+`?` before a sub-pattern allows its item to be absent. When absent, every
+binding beneath it takes its default, at any depth. Defaults run in item order
+and may read earlier bindings:
 
-```
-if let a b = [1, 2]
-  echo "matched $a $b"
-else
-  echo "no match"
-```
+```playground
+#> import test:
+#>   - assert_eq
+let ?"settings": ("port": port = 80 "next": next = (port + 1)) ... = {}
+assert_eq $port 80
+assert_eq $next 81
 
-`bind` takes the same vertical layout as its statement form, with `do`
-introducing the branch body. Because the pattern is vertical, it also supports
-default values:
-
-```
-if bind response
-  :status
-  :body = ""
-do
-  echo "$status $body"
-else
-  echo "unexpected shape"
+let first ?(second = 2) = [1]
+assert_eq $first 1
+assert_eq $second 2
 ```
 
-Both forms work with `while`, in which case the loop ends the first time the
-pattern fails to match:
+When the item is present, its value must match the sub-pattern as usual. A
+present `nil` is not absent: unpacking it raises an error, including in a
+conditional pattern. `?()` accepts an absent item or an empty value.
+
+Each `?` applies only at its own level. Here `k` may be absent, but a present
+`k` must contain `j`; write `?j:` to make that inner item optional too:
 
 ```
-let i = 0
-while let a b = pairs.get(i)
-  echo "$a $b"
-  i = (i + 1)
+let ?k: (j: (value = 0)) = data
 ```
 
-Both forms also work where `if` appears in
-[vertical layout](./vertical-layout.md), building arrays, dictionaries, or
-argument lists:
+Every binding under `?` needs a default. In an alternative pattern, only the
+first alternative needs defaults: an absent item takes that alternative's
+defaults without testing or unpacking it.
 
-```
-let parts = $
-  - always
-  if let a b = pair
-    - $a
-    - $b
-  else
-    - "no pair"
+```playground
+#> import test:
+#>   - assert_eq
+let ?k: (Int(n = 0) | Str(n)) = {}
+assert_eq $n 0
 ```
 
-### `let` / `bind` with `else`
+Bindings on the absent path cannot be named rests; an anonymous `...` is
+allowed.
+`?` cannot precede a plain binding or `:key` shorthand: use a default instead,
+such as `x = 0` or `:key = 0`. Required positional items must precede optional
+ones.
 
-A standalone `let` or `bind` can run an `else` block when its pattern does not
-match. The bindings remain in scope after the statement:
-
-```
-let k v = s.split "="
-else throw std.ValueError "expected KEY=VALUE: $s"
-echo "$k -> $v"
-
-bind response
-  :status
-  :body = ""
-else
-  return nil
-```
-
-Matching follows the same rules as `if let` and `if bind`, including the
-truthiness test for a single name. The new bindings are not in scope inside
-`else`; an existing outer name is still visible there.
-
-In a [strict](type-checking.md#strict-checking) file, `else` is how to
-destructure a value that may not match.
-
-The `else` body must diverge: return, throw, break, continue, or call something
-that does not return. Reaching its end raises `std.RuntimeError`, naming the
-`let` or `bind` statement. The type checker warns when it finds a path to that
-end.
-
-Write `else` on its own line at the statement's indentation, followed by an
-indented block or a single inline statement. `else if` is not accepted here;
-put an `if` inside an indented body instead. When the RHS of `let` is an `if`
-or `match`, its `else` belongs to that construct, and an additional `else`
-cannot be attached to the `let`.
-
-### What Counts as a Match
-
-A pattern takes the failure branch when an unpack has too few or too many
-positional items, a missing or unexpected key, or a type test or constant
-comparison fails. Other errors propagate as usual. In particular, trying to
-unpack a value that does not support it is an error:
+In vertical layout, `?` followed by a space marks an optional positional
+sub-pattern, while a touching `?` marks the item after it. `- ?(...)` also marks
+an optional positional item:
 
 ```
-# Branches: [1, 2] unpacks fine, but not into three elements
-if let a b c = [1, 2]
-  echo unreachable
-else
-  echo "wrong arity"
-
-# Raises: an int cannot be unpacked
-if let a b = 42
-  echo unreachable
-else
-  echo also-unreachable
+bind data
+  - first
+  ? - second = 2
+    - third = 3
+  ?settings:
+    :port = 80
+    ...
 ```
 
-A default supplies a missing element, so it turns what would otherwise be a
-mismatch into a match.
-
-### Binding a Single Name
-
-A pattern that is a bare identifier binds the scrutinee itself and branches on
-its truthiness without unpacking it:
+Lambda parameters use the same syntax, making that parameter optional in the
+lambda's signature:
 
 ```
-if let value = lookup key
-  echo "found $value"
-else
-  echo "not found"
+let port_of = do |?settings: (:port = 80)| port
 ```
-
-To match a sequence of exactly one item instead, write the item in parentheses:
-`if let (value) = items`.
-
-A nested pattern matches only if every level does.
 
 ## `match`
 
@@ -673,19 +690,4 @@ def run step @ ((:cmd:, Str) | (:wait:, Int))
       # step is (:wait:, Int)
       let _ secs = step
       echo "wait $secs"
-```
-
-## Patterns in `for`
-
-`for` matches each element against its pattern:
-
-```playground
-for k v = {name: "Alice", age: 30}
-  echo "$k: $v"
-
-for index value = [10, 20, 30].pairs()
-  echo "$index: $value"
-
-for :name :age = [{name: "Alice", age: 30}, {name: "Bob", age: 44}]
-  echo "$name is $age years old"
 ```

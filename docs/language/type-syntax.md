@@ -30,8 +30,8 @@ dotted name must begin with an import.
 
 The compiler does not consider types when it warns about unused variables, so a
 binding named only in types is still reported as unused unless its name begins
-with `_`. A [checker-only import](./types.md#checker-only-imports) binds no
-runtime variable, so it is not reported.
+with `_`. A [checker-only import](./type-declarations.md#checker-only-imports)
+binds no runtime variable, so it is not reported.
 
 ## Constants
 
@@ -50,7 +50,7 @@ passed positionally, or `name: T`, passed by keyword:
 ```
 let names @ Array[Str] = []
 let index @ Dict[Str, Array[Int]] = {}
-let result @ Record[value: Int, error: Error | nil] = nil
+let result @ Record[value: Int, error: std.Error | nil] = (value: 1, error: nil)
 ```
 
 An argument may also [expand a schema](#expanding-schemas) into further
@@ -167,12 +167,14 @@ let positional @ Dict[{Str, *}] = {}
 
 ### Expanding Schemas
 
-`...S` among type arguments expands the schema `S` into further arguments.
-Expanding a type `T` rather than a schema is shorthand for `...{*T}`:
+`...S` among type arguments expands the schema `S` into further arguments. A
+schema is needed only for items that type arguments can't write directly, such
+as optional ones. Expanding a type `T` rather than a schema is shorthand for
+`...{*T}`:
 
 ```
 let row @ Tuple[...Str] = Tuple ["id", "name"]
-let open @ Record[...{name: Str, ...}] = nil
+let conn @ Record[...{host: Str, ?port: Int}] = (host: "db")
 ```
 
 ### Types as Schema Arguments
@@ -293,7 +295,7 @@ order among the others, but a list takes at most one of each:
 def collect count @ Int <Iter[Int] >Sink[Str] -> nil
   for value = strand.input()
     strand.put $ str $value
-let runner @ ((Int, <Iter[Int], >Sink[Str]) -> Int) = nil
+let runner @ ((Int, <Iter[Int], >Sink[Str]) -> Int) = (do |n| n)
 ```
 
 In a declaration the type is compact, as an annotation's is.
@@ -337,8 +339,8 @@ Schemas have no implicits, since an ambient channel is not data, and neither do
 ## Vertical Layout
 
 `$` followed by an indented body writes a schema in vertical layout, as in an
-[alias](./types.md#type-aliases). Positional items may be bin-packed on an
-undashed line. A dash introduces one positional item, and a keyed line
+[alias](./type-declarations.md#type-aliases). Positional items may be bin-packed
+on an undashed line. A dash introduces one positional item, and a keyed line
 introduces one keyed item. Quantifiers and inclusions have the same meaning as
 in `{}`.
 

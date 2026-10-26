@@ -135,6 +135,23 @@ needing to write it in those cases:
 
 In fact, using `$` unnecessarily in these contexts is a syntax error.
 
+## `$` as Low-Precedence Call
+
+The `$` operator serves as a low-precedence, right-associative function call
+operator. Everything to the right of `$` is passed as an argument:
+
+```
+# These are equivalent:
+echo (type (str (Range 10)))
+echo $ type $ str $ Range 10
+```
+
+This works in both statement and expression contexts:
+
+```
+let ty = (type $ str $ Range 10)
+```
+
 ## String Interpolation
 
 Quoted strings, here strings, and binary strings interpolate values with `$`,

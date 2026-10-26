@@ -114,11 +114,6 @@ connect port: 3000             # localhost:3000
 connect host: example.com      # example.com:8080
 ```
 
-A keyword that names a parameter binds its first occurrence, including one
-supplied through spreading. A `**` or `...` rest takes any repeats, and without
-one they raise [UnexpectedKeyError](std.UnexpectedKeyError). A rest keeps the
-keywords it takes in order, repeats included.
-
 Defaults are evaluated on every invocation of the function, so the following
 function always returns a fresh empty `array` if called with no arguments:
 
@@ -195,6 +190,14 @@ func ...kwargs
 # func name: "Alice" age: 30
 ```
 
+See [Spreading](./data-structures.md#spreading) for what each kind of value
+contributes.
+
+A keyword that names a parameter binds its first occurrence, including one
+supplied through spreading. A `**` or `...` rest takes any repeats, and without
+one they raise [UnexpectedKeyError](std.UnexpectedKeyError). A rest keeps the
+keywords it takes in order, repeats included.
+
 ### Vertical Parameter Layout
 
 Parameters in `def` can use vertical layout:
@@ -258,29 +261,26 @@ assert_eq ((do |x| x * 2) 5) 10
 
 A `for` in vertical layout builds collection items or call arguments; it is not
 a loop target. A `break` or `continue` in a `do` block inside one targets the
-enclosing statement loop, and is an error if there is none. A closure stored in
-a comprehension can run after the comprehension finishes, so its iteration
-cannot be a jump target.
+enclosing statement loop, and is an error if there is none.
 
 This allows natural flow control in callbacks and higher-order functions:
 
 ```
 def validate_record record
-  for field = ["id", "name", "email"]
-    record.get field else: do
+  for field = [:id:, :name:, :email:]
+    record.get $field else: do
       return {valid: false, missing: field}
   {valid: true}
 ```
 
-A non-local branch will only be effective for the duration of the statement
-that introduces its containing closure; after this it will propagate a runtime
-error. The compiler requires that a closure containing non-local branches be
-in argument position to reduce the likelihood of this sort of error:
+A non-local branch works only while the statement that creates its block is
+running; after that, it raises an error. A block containing one must therefore
+be passed directly as an argument:
 
 ```
 # Valid: closure is passed as an argument
 def validate record
-  record.get "name" else: do
+  record.get :name: else: do
     return false
   true
 
@@ -288,7 +288,7 @@ def validate record
 def bad_example()
   # Compiler will reject this line
   let closure = do return false
-  record.get "name" else: $closure
+  record.get :name: else: $closure
 ```
 
 ## Public Functions

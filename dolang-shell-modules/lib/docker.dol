@@ -124,14 +124,14 @@ do -> Container
     if (restart != nil)
       :restart
 
-# Runs a function in a temporary Docker container.
+# Runs a block in a temporary Docker container.
 #
 # Program execution and filesystem access are redirected for the duration of
-# the function.
+# the block.
 pub def with[R]
   # Image name or ID.
   image @ Str
-  # Function to run.
+  # Block to run.
   func @ (() -> R)
   # Container working directory.
   :cd @ (Str | Path) = nil

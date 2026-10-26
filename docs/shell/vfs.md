@@ -100,7 +100,7 @@ returns to the interpreter's original host context:
 ```
 remote.with do
   let remote_name = sub do run hostname
-  with_host do
+  shell.with_host do
     echo "remote: $remote_name"
     echo "local: $(sub do run hostname)"
 ```

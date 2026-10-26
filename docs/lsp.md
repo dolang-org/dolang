@@ -1,7 +1,7 @@
 # LSP Guide
 
-The `dolang-lsp` crate provides a Language Server Protocol server for Do,
-enabling IDE features in any LSP-compatible editor.
+`dolang-lsp` is a Language Server Protocol server for Do, providing IDE
+features in any LSP-compatible editor.
 
 ## Supported Features
 
@@ -11,6 +11,9 @@ enabling IDE features in any LSP-compatible editor.
   `defaultLibrary` modifier for prelude bindings, and the `static` modifier for
   a field a `#[class]` or `#[static]` decorator scopes to its class
 - **Diagnostics**: Compile-time errors and warnings reported in real time
+- **Quick fixes**: Code actions that apply a diagnostic's suggested fix
+- **Hover**: The signature and doc comment of the name under the cursor,
+  including imported and prelude names
 - **Go to definition**: Jump to the definition of variables and functions
 - **Document symbols**: The outline of a file -- classes, functions, methods,
   fields, bindings and imports, nested under whatever declares them
@@ -45,7 +48,7 @@ named `.dolang-lsp.toml`. This file contains static settings.
 
 The primary use of the config file is to specify the prelude -- the set of
 imports that the LSP assumes are available in scope. This tells the LSP what
-names exist so it can provide accurate diagnostics and completions.
+names exist so it can provide accurate diagnostics and hover text.
 
 The file may contain a `prelude` table describing what to import.
 

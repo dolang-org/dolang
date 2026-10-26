@@ -37,7 +37,8 @@ catch err
 ```
 
 The result of a `try` statement is the result of the body on success, or the
-result of the executed catch handler if an error was caught:
+result of the executed catch handler if an error was caught. Like `if`, a `try`
+can be the right-hand side of `let` or an assignment:
 
 ```
 let result = try
@@ -68,42 +69,6 @@ catch err
 Typed handlers use subtype matching, so a handler for a parent class will catch
 errors of any child class. The catch-all handler (without a type) must be last
 and catches any error not matched by a preceding handler.
-
-### Subclassing Error Types
-
-A module that wants callers to be able to catch its failures specifically can
-define its own error class. Inherit from the closest `std` error type and chain
-to its constructor, passing up the message the error should display:
-
-```
-import std:
-  - RuntimeError
-  - ValueError
-
-class NoDomainError: RuntimeError
-  pub field name = nil
-
-  def (init) self name
-    RuntimeError.(init) $self "domain does not exist: $name"
-    self.name = name
-```
-
-The chained call is what gives the instance its string form, so the subclass
-needs no `(str)` of its own. Subtype matching then works the whole way up the
-chain — a handler for the specific type, for the `std` type it inherits from, or
-for [`Error`](std.Error) will all catch it:
-
-```
-try
-  throw NoDomainError "guest0"
-catch NoDomainError: err
-  echo "missing: $(err.name)"
-```
-
-Inherit from the type that describes the failure — `ValueError` for a malformed
-value, `RuntimeError` when nothing more specific fits. Every `std` error type is
-subclassable except [`AbortError`](std.AbortError) and
-[`BytecodeError`](std.BytecodeError), which are sealed.
 
 ### Finally
 
@@ -142,14 +107,39 @@ finally
   disconnect()
 ```
 
-### Try as Right-Hand Side
+## Subclassing Error Types
 
-`try` can be used on the right-hand side of `let` and assignment, just like
-`if`:
+A module that wants callers to be able to catch its failures specifically can
+define its own error class. Inherit from the closest `std` error type and chain
+to its constructor, passing up the message the error should display:
 
 ```
-let value = try
-  parse $dangerous_input
-catch _
-  "fallback"
+import std:
+  - RuntimeError
+  - ValueError
+
+class NoDomainError: RuntimeError
+  pub field name = nil
+
+  def (init) self name
+    RuntimeError.(init) $self "domain does not exist: $name"
+    self.name = name
 ```
+
+The chained call is what gives the instance its string form, so the subclass
+needs no `(str)` of its own. Subtype matching then works the whole way up the
+chain — a handler for the specific type, for the `std` type it inherits from, or
+for [`Error`](std.Error) will all catch it:
+
+```
+try
+  throw NoDomainError "guest0"
+catch NoDomainError: err
+  echo "missing: $(err.name)"
+```
+
+Inherit from the type that describes the failure — `ValueError` for a malformed
+value, `RuntimeError` when nothing more specific fits. Every `std` error type is
+subclassable except [`AbortError`](std.AbortError) and
+[`BytecodeError`](std.BytecodeError), which can be neither subclassed nor
+constructed.

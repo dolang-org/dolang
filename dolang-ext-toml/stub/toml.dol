@@ -42,8 +42,8 @@ pub @let EncodeValue = $
 #
 # ## Errors
 #
-# `ValueError` if the input is invalid TOML or uses TOML datetime, date, or
-# time values, which are not mapped by this module yet.
+# [`ValueError`](std.ValueError) if the input is invalid TOML or contains a
+# datetime, date, or time value, which this module does not support.
 #
 # ## Example
 #

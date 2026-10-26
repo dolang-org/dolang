@@ -97,7 +97,7 @@ def parse_location value @ (Str | Url | Path) -> (Url | Path)
 
 def require_http url @ Url -> Url
   if !(url.scheme == "http" || url.scheme == "https")
-    throw std.ValueError "unsupported URL scheme: $url.scheme"
+    throw std.ValueError "unsupported URL scheme: $(url.scheme)"
   url
 
 def default_app() -> Str
@@ -973,11 +973,11 @@ do -> (Array[Placed], Dict[Str, Placed])
   for item = entries
     let parts = item.parts
     if (parts.len < count)
-      throw std.ValueError "archive path has fewer than $count components: $item.raw"
+      throw std.ValueError "archive path has fewer than $count components: $(item.raw)"
     let output_parts = parts[count..]
     if (output_parts.len == 0)
       if (item.kind != :DIR:)
-        throw std.ValueError "stripping removes archive entry path: $item.raw"
+        throw std.ValueError "stripping removes archive entry path: $(item.raw)"
     else
       let output = (record_path output_parts)
       if (outputs.contains output)
@@ -1032,7 +1032,7 @@ def create_directories root@Path placed@Array[Placed] -> nil
 
 def apply_metadata path@Path item@Placed -> nil
   if !path.exists()
-    throw std.ValueError "archive entry was not extracted: $item.output"
+    throw std.ValueError "archive entry was not extracted: $(item.output)"
   let modified = item.mtime
   let mode = item.mode
   if (sys.os_info().family != :WINDOWS: && mode != nil)
@@ -1198,7 +1198,7 @@ class ZipUnpack
                     65536
                   let chunk = (entry.read amount)
                   if (chunk.len == 0)
-                    throw std.ValueError "truncated ZIP entry: $item.raw"
+                    throw std.ValueError "truncated ZIP entry: $(item.raw)"
                   file.write $chunk
                   indicator.delta $chunk.len
                   remaining = (remaining - chunk.len)

@@ -16,23 +16,22 @@ import time:
 # An open ZIP archive.
 #
 # Returned by [`open`](zip.open). Only one file can be open at a time
-# within an archive; opening a second one while another is open raises a
-# concurrency error.
+# within an archive; opening a second one while another is open raises
+# [`ConcurrencyError`](std.ConcurrencyError).
 pub class Archive
   # Immutable array-like view of [`Entry`](zip.Entry) objects for every entry
   # in the archive.
   #
   # Available in read mode only; reading it on an archive opened in write mode
-  # raises a runtime error. A view obtained before the archive is closed
-  # reports an empty length afterward rather than erroring, since `len` cannot
-  # itself raise an error.
+  # raises [`RuntimeError`](std.RuntimeError). A view obtained before the
+  # archive is closed is empty afterward.
   #
   # ## Example
   #
   # ```
   # open "archive.zip" do |archive|
   #   for entry = archive.entries
-  #     echo "Found: $entry.name"
+  #     echo "Found: $(entry.name)"
   #
   #   let entries = [...archive.entries]
   #   echo "Total files: $(entries.len)"
@@ -82,7 +81,7 @@ pub class Archive
   # content and so have no use for a write handle.
   #
   # `mode`, `size`, and `compression` apply to entries being created; passing
-  # any of them in read mode is an error.
+  # any of them in read mode raises [`TypeError`](std.TypeError).
   #
   # ## Example
   #
@@ -113,11 +112,8 @@ pub class Archive
     :mode @ Int = nil
     # Expected uncompressed size.
     #
-    # The writer reserves space for an entry's ZIP64 size fields in its local
-    # file header before any data is written, and patches the real sizes in
-    # afterward. A field that was not reserved cannot appear later, so an
-    # entry that turns out to exceed 4 GiB fails when it is closed unless
-    # `size` announced it up front. Pass the uncompressed size whenever it is
+    # An entry larger than 4 GiB fails when it is closed unless `size`
+    # announced that it would be. Pass the uncompressed size whenever it is
     # known; it is a hint, and the actual sizes are what end up recorded.
     :size @ Int = nil
     # Compression method. Defaults to `:DEFLATE:`.
@@ -224,7 +220,8 @@ pub class Entry
   #
   # ## Errors
   #
-  # Raises a concurrency error if another file is already open in the archive.
+  # [`ConcurrencyError`](std.ConcurrencyError) if another file is already open
+  # in the archive.
   @def open self -> File
 
   # Opens the entry for reading and calls `block` with it. The file is closed
@@ -232,7 +229,8 @@ pub class Entry
   #
   # ## Errors
   #
-  # Raises a concurrency error if another file is already open in the archive.
+  # [`ConcurrencyError`](std.ConcurrencyError) if another file is already open
+  # in the archive.
   #
   # ## Example
   #
@@ -289,7 +287,7 @@ pub class File: Io
   #
   # ## Errors
   #
-  # Raises a runtime error if called on a file opened in write mode.
+  # [`StateError`](std.StateError) if the file was opened in write mode.
   #
   # ## Example
   #
@@ -315,7 +313,7 @@ pub class File: Io
   #
   # ## Errors
   #
-  # Raises a runtime error if called on a file opened in read mode.
+  # [`StateError`](std.StateError) if the file was opened in read mode.
   #
   # ## Example
   #
@@ -377,7 +375,7 @@ do -> Archive
 # ```
 # open "archive.zip" do |archive|
 #   for entry = archive.entries
-#     echo "Entry: $entry.name"
+#     echo "Entry: $(entry.name)"
 # ```
 @def open[R]
   # Path to the ZIP archive, or a seekable stream holding it.

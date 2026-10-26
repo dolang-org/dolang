@@ -372,7 +372,7 @@ pub class Writer
 # ```
 # read "archive.tar.gz" do |archive|
 #   for entry = archive
-#     echo "$entry.path: $entry.size bytes"
+#     echo "$(entry.path): $(entry.size) bytes"
 # ```
 pub def read[R]
   # Archive input.

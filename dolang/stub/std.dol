@@ -14,8 +14,8 @@ pub @let Union[...Ts] = ...
 pub @let Never = Union[]
 
 # The unchecked type. Unlike [`Value`](std.Value), which admits every value but
-# allows few operations without narrowing, `Unknown` is consistent with every
-# type in both directions, so the checker accepts any use of it. A
+# allows few operations without narrowing, `Unknown` converts to and from every
+# type, so the checker accepts any use of it. A
 # [strict](../../language/type-checking.md#strict-checking) file may write it to leave
 # one declaration unchecked.
 pub @let Unknown = ...
@@ -42,14 +42,14 @@ pub @let Entries[S @ {...}] = ...
 # admit is an error.
 pub @let IndexItem[S @ {...}, K] = ...
 
-# The meet of the values of the items of `S` that a key selects, which a write at
-# a key of type `K` must fit. `AssignItem[{a: Int, b: Str}, :a:]` is `Int`, and
+# The values that fit every item of `S` that a key selects, which a write at a
+# key of type `K` must fit. `AssignItem[{a: Int, b: Str}, :a:]` is `Int`, and
 # a value fits `AssignItem[{a: Int, b: Str}, (:a: | :b:)]` if it fits both `Int`
 # and `Str`. A key `S` doesn't admit is an error.
 pub @let AssignItem[S @ {...}, K] = ...
 
-# The meet of the values of the items of `S` that a key selects, as in
-# `AssignItem`, which an added value at a key of type `K` must fit. Each item
+# The values that fit every item of `S` that a key selects, as in
+# `AssignItem`, which a value added at a key of type `K` must fit. Each item
 # selected must be keyed and admit repetition: `InsertItem[{*(Str): Int}, Str]`
 # is `Int`, but `InsertItem[{a: Int}, :a:]` is an error.
 pub @let InsertItem[S @ {...}, K] = ...
@@ -84,13 +84,10 @@ pub @let MutFields[T] = ...
 # As an iterator it ends immediately; as a sink it discards every value.
 pub let null @ Null = ...
 
-#
 # Creates an array from positional arguments.
-#
 pub def array[T] ...values @ T -> Array[T]
   ...
 
-#
 # Converts a value to [`Bool`](std.Bool) according to its truthiness.
 #
 # ## Example
@@ -102,19 +99,14 @@ pub def array[T] ...values @ T -> Array[T]
 # assert_eq (bool "") false
 # assert_eq (bool "hello") true
 # ```
-#
 pub def bool value @ Value -> Bool
   ...
 
-#
 # Converts a value to its debug representation. Shows internal structure (e.g.
 # quotes strings, shows type tags).
-#
-#
 pub def dbg value @ Value -> Str
   ...
 
-#
 # Creates a dictionary from positional and key arguments.
 #
 # Positional arguments receive incrementing integer keys starting at `0`.
@@ -122,16 +114,14 @@ pub def dbg value @ Value -> Str
 # other key types; use a [horizontal dictionary
 # literal](../../language/data-structures.md#literals) or [vertical
 # data](../../language/vertical-layout.md#vertical-data) instead.
-#
 pub def dict[...Ts] ...pairs @ Ts -> Dict[Ts]
   ...
 
-#
 # Makes a proxy for a value's public fields and properties.
 #
 # Indexing the proxy with a member's symbol reads or sets the member, and
 # unpacking or spreading it reads members by key, so a value without its own
-# [`(unpack)`](../../language/classes.md#unpack-destructuring) can be
+# [`(unpack)`](../../language/classes.md#unpack-pattern-unpacking) can be
 # destructured through `fields`. Iterating it gives `(key, value)` pairs. A
 # member is read when the proxy is indexed, unpacked, spread or iterated, not
 # when it is made.
@@ -154,12 +144,11 @@ pub def dict[...Ts] ...pairs @ Ts -> Dict[Ts]
 pub def fields[T] value @ T -> FieldProxy[Fields[T], MutFields[T]]
   ...
 
-#
 # Decorator forbidding subclasses of a class.
 #
-# A class that inherits from a final class fails to be created. The type checker
-# takes a final class's values to be outside every class that isn't one of its
-# supertypes.
+# A class that inherits from a final class fails to be created. Since a final
+# class has no subclasses, the type checker knows that its instances belong to
+# no class other than its supertypes.
 #
 # ```
 # #[final]
@@ -176,15 +165,14 @@ pub def fields[T] value @ T -> FieldProxy[Fields[T], MutFields[T]]
 pub def final[T] cls @ Type[T] -> Type[T]
   ...
 
-#
 # Decorator letting a class be combined with classes unrelated to it.
 #
 # A class is disjoint unless it is mixable, and no class can inherit from two
 # disjoint classes neither of which inherits from the other. A mixable class
 # takes the place of its nearest disjoint superclass, so subclasses of unrelated
 # disjoint classes may share it as a superclass. The type checker reports a
-# class that breaks the rule, and takes classes below unrelated disjoint classes
-# to have no instances in common. See
+# class that breaks this rule, and relies on it to know that unrelated disjoint
+# classes share no instances. See
 # [Disjoint Classes](../../language/classes.md#disjoint-classes).
 #
 # ```
@@ -207,7 +195,6 @@ pub def final[T] cls @ Type[T] -> Type[T]
 pub def mixable[T] cls @ Type[T] -> Type[T]
   ...
 
-#
 # Coerces or parses a value as a [`Float`](std.Float).
 #
 # ## Errors
@@ -216,13 +203,10 @@ pub def mixable[T] cls @ Type[T] -> Type[T]
 # | --- | --- |
 # | [`ValueError`](std.ValueError) | The string is empty or malformed. |
 # | [`TypeError`](std.TypeError) | The value cannot be converted. |
-#
 pub def float value @ (Num | Str) -> Float
   ...
 
-#
 # Makes a field getter from a function of the object read.
-#
 #
 # ## Example
 #
@@ -234,7 +218,6 @@ pub def float value @ (Num | Str) -> Float
 #   pub def port obj
 #     obj.#port
 # ```
-#
 @def getter[T, R]
   # Function called for field reads.
   func @ ((T, <Value, >Value) -> R)
@@ -251,7 +234,6 @@ do -> StaticGetter[R]
 pub def getter func @ Func -> (Getter[Value, Value] | StaticGetter[Value])
   ...
 
-#
 # Returns a hash code computed over all supplied values in sequence. Passing
 # multiple values is useful for combining fields in a `(hash)` implementation:
 #
@@ -260,10 +242,8 @@ pub def getter func @ Func -> (Getter[Value, Value] | StaticGetter[Value])
 #   hash $self.x $self.y $self.z
 # ```
 #
-# Hash codes are stable for unchanged values within a VM, but may differ
-# between VM instances. Do not persist them as stable identifiers.
-#
-#
+# An unchanged value keeps its hash code while a program runs, but the code
+# may differ between runs, so don't store hash codes as identifiers.
 pub def hash
   # Values to hash.
   *values @ Value
@@ -303,12 +283,10 @@ pub def int
 do -> Int
   ...
 
-#
 # Creates a record from positional and key arguments.
 #
 # Positional arguments become positional items, and key arguments become
 # symbol-keyed items.
-#
 #
 # ## Example
 #
@@ -316,27 +294,25 @@ do -> Int
 # let r = record name: Alice age: 30
 # echo $r[:name:]  # Alice
 # ```
-#
 pub def record[...Ts]
   # Positional and key field values.
   ...args @ Ts
 do -> Record[...Ts]
   ...
 
-#
 # Makes a field setter from a function of the object assigned and its new
 # value.
-#
 #
 # ## Example
 #
 # ```
 # class Config
+#   field port = 8080
+#
 #   #[setter]
 #   pub def port obj value
-#     obj.#_port = value
+#     obj.#port = value
 # ```
-#
 @def setter[T, V]
   # Function called for field writes.
   func @ ((T, V, <Value, >Value) -> nil)
@@ -353,13 +329,10 @@ do -> StaticSetter[V]
 pub def setter func @ Func -> (Setter[Value, Value] | StaticSetter[Value])
   ...
 
-#
 # Returns the general-purpose [`Str`](std.Str) representation of a value.
-#
 pub def str value @ Value -> Str
   ...
 
-#
 # Creates a [`Struct`](std.Struct) from positional and key arguments.
 #
 # ```
@@ -370,25 +343,20 @@ pub def str value @ Value -> Str
 # ## Errors
 #
 # Raises [`ValueError`](std.ValueError) when a key is repeated.
-#
 pub def struct[...Ts]
   # Positional and key item values.
   ...items @ Ts
 do -> Struct[Ts]
   ...
 
-#
 # Interns a string as a [`Sym`](std.Sym).
-#
 pub def sym
   # Value to intern.
   value @ (Str | Sym)
 do -> Sym
   ...
 
-#
 # Creates a tuple from positional arguments.
-#
 pub def tuple[*Ts] *values@Ts -> Tuple[...Ts]
   ...
 
@@ -401,9 +369,7 @@ pub def tuple[*Ts] *values@Ts -> Tuple[...Ts]
 # ```
 @def type[T] value @ T -> Type[T]
 
-#
 # Tests whether `value` is an instance of `type`.
-#
 #
 # ## Example
 #
@@ -416,18 +382,15 @@ pub def tuple[*Ts] *values@Ts -> Tuple[...Ts]
 pub def type value@Value *type@Type[Value] -> (Type[Value] | Bool)
   ...
 
-#
 # Converts a value to its verbatim representation. Preserves the literal textual
 # form of values where possible, which is useful for passing values as
 # command-line arguments to external programs.
-#
 pub def verbatim value @ Value -> Str
   ...
 
 # The following types are declared out of alphabetical order because many
 # other types in this module reference them as supertypes.
 
-#
 # The abstract base type for all errors. All error types in `std` inherit
 # from `Error`, so it can be used as a catch-all in typed `catch` handlers.
 #
@@ -437,10 +400,8 @@ pub def verbatim value @ Value -> Str
 pub class Error
 
 
-#
 # Supertype of ordinary catchable runtime failures, and a generic runtime error
 # in its own right when no more specific type applies.
-#
 #
 # ## Subclassing
 #
@@ -464,11 +425,8 @@ pub class Error
 #
 # See [Error handling](../../language/error-handling.md#subclassing-error-types).
 pub class RuntimeError: Error
-  #
-  #
   # Builds a runtime error carrying `message` verbatim — unlike the more specific
   # types, it adds no prefix of its own.
-  #
   pub def (init)
     self
     # the error's complete string form
@@ -546,11 +504,11 @@ pub @class Spread[S @ {...}]
 
 
 # A value that implements the
-# [`(unpack)`](../../language/classes.md#unpack-destructuring) protocol,
+# [`(unpack)`](../../language/classes.md#unpack-pattern-unpacking) protocol,
 # destructuring as the items in `S` without changing the receiver.
 #
-# A captured rest is a `Rest` with its remaining schema in place of `S`. By
-# default, a rest only spreads as the remaining schema.
+# A `...` pattern captures the remaining items as a `Rest`, with the schema of
+# those items in place of `S`. By default, the rest can only be spread.
 pub @class Unpack[S @ {...}, :Rest @ Spread[S] = Spread[S]]: Spread[S]
   field schema @Phantom[...S]
   field rest @Phantom[Rest]
@@ -711,33 +669,53 @@ pub @class MutSeq[T]: AssignSeq[T]
   pub def clear self
 
 
-#
 # Abstract type for iterable values, whose instances have the methods below.
 # Arrays, dicts, and ranges are `Iterable`; a [`Record`](std.Record), or a
 # class that only implements [`(iter)`](std.BaseIterable), is not.
-#
 #[mixable]
 pub class Iterable[T]: @BaseIterable[T]
   # Returns an iterator over the value.
   pub def iter self -> Iter[T]
     ...
 
-  # Tests whether every item is truthy, or satisfies `pred`.
+  # Tests whether every item is truthy, or satisfies `pred`. An empty iterable
+  # passes.
   pub def all self pred @ ((T) -> Value) = nil -> Bool
     ...
 
-  # Tests whether any item is truthy, or satisfies `pred`.
+  # Tests whether any item is truthy, or satisfies `pred`. An empty iterable
+  # fails.
   pub def any self pred @ ((T) -> Value) = nil -> Bool
     ...
 
-  # Returns an iterator followed by the additional iterables.
+  # Returns an iterator over the items, followed by the items of each additional
+  # iterable.
   pub def chain[*Us] self *values @ ...Iterable[Us] -> Iter[Union[T, ...Us]]
     ...
 
   @def chomp self @ Iterable[Str] -> Iter[Str]
   @def chomp self @ Iterable[Bin] -> Iter[Bin]
 
-  # Returns an iterator with one trailing line terminator removed from each item.
+  # Returns an iterator with one trailing line terminator (`\r\n` or `\n`)
+  # removed from each item, if present.
+  #
+  # Distinct from [`Str.trim_end`](std.Str.trim_end), which is about whitespace
+  # generally and takes an optional character set. `chomp` is about a line
+  # terminator specifically and takes nothing.
+  #
+  # ## Errors
+  #
+  # Getting an item raises [`TypeError`](std.TypeError) if it is neither a `Str`
+  # nor a `Bin`.
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq [...["a\n", "b\r\n", "c"].chomp()] ["a", "b", "c"]
+  #
+  # for line = shell.stdin.chomp()
+  #   echo "got $line"
+  # ```
   pub def chomp self -> Iter[Str | Bin]
     ...
 
@@ -745,18 +723,42 @@ pub class Iterable[T]: @BaseIterable[T]
   @def crimp self@Iterable[Bin] terminator@(Str | Bin) = nil -> Iter[Bin]
 
   # Returns an iterator with a line terminator appended to each item.
+  #
+  # The inverse of [`chomp`](std.Iterable.chomp), and the usual way to terminate
+  # values on their way into a byte stream. The terminator is appended
+  # **unconditionally**: an item that already ends in one gets a second.
+  #
+  # ## Errors
+  #
+  # Raises [`TypeError`](std.TypeError) for an item, or a terminator, that is
+  # neither a `Str` nor a `Bin`, or if a `Bin` terminator would leave a `Str` item
+  # invalid UTF-8.
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq [...["a", "b"].crimp()] ["a\n", "b\n"]
+  # assert_eq [...["a"].crimp("\r\n")] ["a\r\n"]
+  #
+  # run cmd stdin: (["one", "two"].crimp())
+  # ```
   pub def crimp self terminator@(Str | Bin) = nil -> Iter[Str | Bin]
     ...
 
-  # Returns an iterator of `[index, value]` tuples.
+  # Returns an iterator of `(index, value)` tuples, counting from `0`.
   pub def enumerate self -> Iter[Tuple[Int, T]]
     ...
 
-  # Returns an iterator of values for which `pred` is truthy.
+  # Returns an iterator of the items for which `pred` is truthy.
   pub def filter self pred @ ((T, <Value, >Value) -> Value) -> Iter[T]
     ...
 
-  # Returns the first value for which `pred` is truthy.
+  # Returns the first item for which `pred` is truthy.
+  #
+  # ## Errors
+  #
+  # Raises [`RuntimeError`](std.RuntimeError) if no item matches and there is
+  # no `default` or `else`.
   pub def find[D = T]
     self
     pred @ ((T) -> Value)
@@ -765,7 +767,8 @@ pub class Iterable[T]: @BaseIterable[T]
   do -> (T | D)
     ...
 
-  # Accumulates a value left-to-right with `func`.
+  # Accumulates a value left to right, calling `func` with the accumulated value
+  # and each item. Returns `init` if there are no items.
   pub def fold[A] self init@A func@((A, T) -> A) -> A
     ...
 
@@ -788,22 +791,39 @@ pub class Iterable[T]: @BaseIterable[T]
     ...
 
   # Returns the largest item.
+  #
+  # ## Errors
+  #
+  # Raises [`IterStop`](std.IterStop) if there are no items and no `default`.
   pub def max[D = T] self :default @ D = nil -> (T | D)
     ...
 
   # Returns the smallest item.
+  #
+  # ## Errors
+  #
+  # Raises [`IterStop`](std.IterStop) if there are no items and no `default`.
   pub def min[D = T] self :default @ D = nil -> (T | D)
     ...
 
   # Returns an iterator that discards the first `n` items.
+  #
+  # ## Errors
+  #
+  # Raises [`ValueError`](std.ValueError) if `n` is negative.
   pub def skip self n @ Int -> Iter[T]
     ...
 
   # Returns an iterator yielding at most `n` items.
+  #
+  # ## Errors
+  #
+  # Raises [`ValueError`](std.ValueError) if `n` is negative.
   pub def take self n @ Int -> Iter[T]
     ...
 
-  # Returns an iterator of tuples across this and additional iterables.
+  # Returns an iterator of tuples across this and additional iterables, which
+  # stops at the end of the shortest.
   pub def zip[*Us] self *values @ ...Iterable[Us] -> Iter[Tuple[T, ...Us]]
     ...
 
@@ -812,11 +832,9 @@ pub class Iterable[T]: @BaseIterable[T]
     ...
 
 
-#
 # Abstract type for values that sinks can be obtained from, whose instances have
 # the methods below. An [`Array`](std.Array) is `Sinkable`; a class that only
 # implements [`(sink)`](std.BaseSinkable) is not.
-#
 #[mixable]
 pub class Sinkable[T]: @BaseSinkable[T]
   # Returns a sink over the value.
@@ -830,54 +848,13 @@ pub class Sinkable[T]: @BaseSinkable[T]
   @def prechomp self @ Sinkable[Str] -> Sink[Str]
   @def prechomp self @ Sinkable[Bin] -> Sink[Bin]
 
-  # Returns a sink that removes one trailing line terminator from each value.
-  pub def prechomp self -> Sink[T]
-    ...
-
-  @def precrimp self@Sinkable[Str] terminator@(Str | Bin) = nil -> Sink[Str]
-  @def precrimp self@Sinkable[Bin] terminator@(Str | Bin) = nil -> Sink[Bin]
-
-  # Returns a sink that appends a line terminator to each value.
-  pub def precrimp self terminator@(Str | Bin) = nil -> Sink[T]
-    ...
-
-  # Returns a sink that writes only values for which `pred` is truthy.
-  pub def prefilter[U @ T] self pred @ ((U, <Value, >Value) -> Value) -> Sink[U]
-    ...
-
-  # Returns a sink that transforms each value with `func` before writing it.
-  pub def premap[U] self func @ ((U, <Value, >Value) -> T) -> Sink[U]
-    ...
-
-  # Returns a sink that writes to the value.
-  pub def (sink) self -> Sink[T]
-    ...
-
-
-#
-# Abstract type for sinks, whose instances have the methods below. Built-in
-# sinks are `Sink`; a class that only implements [`(put)`](std.BaseSink) is not.
-#
-# `Sink` is not constructible directly.
-#
-# ```
-# assert_eq (type $ [].sink()) $Sink
-# ```
-#
-#[mixable]
-pub class Sink[T]: Sinkable[T] @BaseSink[T]
-  @def prechomp self @ Sink[Str] -> Sink[Str]
-  @def prechomp self @ Sink[Bin] -> Sink[Bin]
-
-  #
-  #
-  # Creates a wrapper `Sink` which removes a trailing line terminator (`\n` or
-  # `\r\n`) from each item, if present, before it is written.
+  # Returns a sink that removes one trailing line terminator (`\n` or `\r\n`)
+  # from each value, if present, before writing it.
   #
   # ## Errors
   #
-  # Putting an item raises [`TypeError`](std.TypeError) if it is neither
-  # neither a `Str` nor a `Bin`.
+  # Putting a value raises [`TypeError`](std.TypeError) if it is neither a
+  # `Str` nor a `Bin`.
   #
   # ## Example
   #
@@ -887,17 +864,15 @@ pub class Sink[T]: Sinkable[T] @BaseSink[T]
   # out.put "line\n"
   # assert_eq $acc ["line"]
   # ```
-  #
   pub def prechomp self -> Sink[T]
     ...
 
-  @def precrimp self@Sink[Str] terminator@(Str | Bin) = nil -> Sink[Str]
-  @def precrimp self@Sink[Bin] terminator@(Str | Bin) = nil -> Sink[Bin]
+  @def precrimp self@Sinkable[Str] terminator@(Str | Bin) = nil -> Sink[Str]
+  @def precrimp self@Sinkable[Bin] terminator@(Str | Bin) = nil -> Sink[Bin]
 
-  #
-  # Creates a wrapper `Sink` that appends a terminator to each value before it is
-  # written. The append is unconditional, so an item that already ends in one gets
-  # a second.
+  # Returns a sink that appends a line terminator to each value before writing
+  # it. The append is unconditional, so a value that already ends in one gets a
+  # second.
   #
   # ## Errors
   #
@@ -915,12 +890,10 @@ pub class Sink[T]: Sinkable[T] @BaseSink[T]
   # open $path w do |file|
   #   file.precrimp(shell.line_ending()).put "native"
   # ```
-  #
   pub def precrimp self terminator@(Str | Bin) = nil -> Sink[T]
     ...
 
-  #
-  # Wraps the sink so only values for which `pred` is truthy are written.
+  # Returns a sink that writes only the values for which `pred` is truthy.
   #
   # Because each wrapper transforms values on the way in, the outermost wrapper
   # sees a value first — the reverse of an iterator chain.
@@ -934,18 +907,16 @@ pub class Sink[T]: Sinkable[T] @BaseSink[T]
   # out.put 2
   # assert_eq $acc [2]
   # ```
-  #
   pub def prefilter[U @ T] self pred @ ((U, <Value, >Value) -> Value) -> Sink[U]
     ...
 
+  # Returns a sink that transforms each value with `func` before writing it.
   #
-  # Wraps the sink so each value is transformed before it is written.
-  #
-  # The `pre` prefix marks the direction: unlike [`Iter.map`](std.Iter.map),
-  # which transforms values on their way *out*, `premap` transforms values on their
-  # way *into* the sink. A value that is both [`Iterable`](std.Iterable) and
-  # [`Sinkable`](std.Sinkable) — an [`Array`](std.Array), say — therefore offers
-  # `map` and `premap` as separate methods running in opposite directions.
+  # The `pre` prefix marks the direction: unlike [`map`](std.Iterable.map),
+  # which transforms values on their way *out*, `premap` transforms values on
+  # their way *into* the sink. A value that is both [`Iterable`](std.Iterable)
+  # and `Sinkable` — an [`Array`](std.Array), say — therefore offers `map` and
+  # `premap` as separate methods running in opposite directions.
   #
   # ## Example
   #
@@ -955,13 +926,49 @@ pub class Sink[T]: Sinkable[T] @BaseSink[T]
   # out.put 3
   # assert_eq $acc [6]
   # ```
-  #
   pub def premap[U] self func @ ((U, <Value, >Value) -> T) -> Sink[U]
     ...
 
-  #
+  # Returns a sink that writes to the value.
+  pub def (sink) self -> Sink[T]
+    ...
+
+
+# Abstract type for sinks, whose instances have the methods below. Built-in
+# sinks are `Sink`; a class that only implements [`(put)`](std.BaseSink) is not.
+#
+# `Sink` is not constructible directly.
+#
+# ```
+# assert_eq (type $ [].sink()) $Sink
+# ```
+#[mixable]
+pub class Sink[T]: Sinkable[T] @BaseSink[T]
+  @def prechomp self @ Sink[Str] -> Sink[Str]
+  @def prechomp self @ Sink[Bin] -> Sink[Bin]
+
+  # Returns a sink that removes one trailing line terminator from each value
+  # before writing it, as [`Sinkable.prechomp`](std.Sinkable.prechomp) does.
+  pub def prechomp self -> Sink[T]
+    ...
+
+  @def precrimp self@Sink[Str] terminator@(Str | Bin) = nil -> Sink[Str]
+  @def precrimp self@Sink[Bin] terminator@(Str | Bin) = nil -> Sink[Bin]
+
+  # Returns a sink that appends a line terminator to each value before writing
+  # it, as [`Sinkable.precrimp`](std.Sinkable.precrimp) does.
+  pub def precrimp self terminator@(Str | Bin) = nil -> Sink[T]
+    ...
+
+  # Returns a sink that writes only the values for which `pred` is truthy.
+  pub def prefilter[U @ T] self pred @ ((U, <Value, >Value) -> Value) -> Sink[U]
+    ...
+
+  # Returns a sink that transforms each value with `func` before writing it.
+  pub def premap[U] self func @ ((U, <Value, >Value) -> T) -> Sink[U]
+    ...
+
   # Writes a value to the sink.
-  #
   pub def put self value @ T
     ...
 
@@ -982,23 +989,18 @@ pub class AbortError: Error
 # it requires an actual array. It is `Array` at runtime; the view neither
 # prevents mutation through another reference nor takes a snapshot.
 pub class BaseArray[T]: Iterable[T] @Unpack[T, Rest: UnpackIter[T]] @Seq[T]
-  #
   # Returns the number of elements.
-  #
   #
   # ## Example
   #
   # ```
   # assert_eq $[1, 2, 3].len 3
   # ```
-  #
   #[getter]
   pub def len self -> Int
     ...
 
-  #
   # Tests whether the array contains the given element (by equality).
-  #
   #
   # ## Example
   #
@@ -1009,7 +1011,6 @@ pub class BaseArray[T]: Iterable[T] @Unpack[T, Rest: UnpackIter[T]] @Seq[T]
   # assert (!arr.contains 4)
   # assert (![].contains 1)
   # ```
-  #
   pub def contains
     self
     # the value to check
@@ -1017,20 +1018,15 @@ pub class BaseArray[T]: Iterable[T] @Unpack[T, Rest: UnpackIter[T]] @Seq[T]
   do -> Bool
     ...
 
-  #
   # Returns a shallow copy of the array. Contents are *not* copied recursively.
-  #
   #
   # When inherited by a Do subclass, `copy()` calls the subclass constructor with
   # the source array as a single positional argument.
-  #
   pub def copy self -> BaseArray[T]
     ...
 
-  #
   # Retrieves the value at the given index. Returns `nil` if out of bounds and no
   # alternative is provided. Negative indexes count from the end.
-  #
   #
   # ## Example
   #
@@ -1041,7 +1037,6 @@ pub class BaseArray[T]: Iterable[T] @Unpack[T, Rest: UnpackIter[T]] @Seq[T]
   # assert_eq (arr.get 5 default: "missing") "missing"
   # assert_eq (arr.get 5 else: do "computed") "computed"
   # ```
-  #
   pub def get[D = nil]
     self
     # the index to access
@@ -1055,9 +1050,7 @@ pub class BaseArray[T]: Iterable[T] @Unpack[T, Rest: UnpackIter[T]] @Seq[T]
   pub def iter self -> UnpackIter[T]
     ...
 
-  #
-  # Returns an iterator yielding `[index, value]` pairs.
-  #
+  # Returns an iterator yielding `(index, value)` pairs.
   #
   # ## Example
   #
@@ -1068,13 +1061,13 @@ pub class BaseArray[T]: Iterable[T] @Unpack[T, Rest: UnpackIter[T]] @Seq[T]
   # # 1: 20
   # # 2: 30
   # ```
-  #
   pub def pairs self -> UnpackIter[Tuple[Int, T]]
     ...
 
   @def (index)[K] self key@K -> IndexItem[{*T}, K]
   @def (index) self range@Range[Int] -> BaseArray[T]
 
+  # Returns an element, or a new array for a slice.
   #
   # ```
   # let arr = [10, 20, 30]
@@ -1082,7 +1075,8 @@ pub class BaseArray[T]: Iterable[T] @Unpack[T, Rest: UnpackIter[T]] @Seq[T]
   # assert_eq $arr[-1] 30
   # ```
   #
-  # Out-of-bounds access raises an error; use `get` if you wish to avoid this.
+  # An index out of bounds raises [`IndexError`](std.IndexError); `get` returns
+  # a default instead.
   #
   # Arrays also accept [`Range`](std.Range) values for slicing:
   #
@@ -1098,18 +1092,17 @@ pub class BaseArray[T]: Iterable[T] @Unpack[T, Rest: UnpackIter[T]] @Seq[T]
   # assert_eq $arr[Range nil nil -1] [3, 2, 1, 0]
   # ```
   #
-  # Slice indexing returns a new array.
   # Omitted `start` means `0`, omitted `end` means the array length, and negative
   # `start` and `end` values count from the end. Negative steps reverse the slice.
-  #
   pub def (index)[K] self key@K -> IndexItem[{*T}, K]
     ...
 
+  # Returns an iterator over the elements.
+  #
   # ```
   # for value = [1, 2, 3]
   #   echo $value
   # ```
-  #
   pub def (iter) self -> UnpackIter[T]
     ...
 
@@ -1133,15 +1126,11 @@ pub class BaseArray[T]: Iterable[T] @Unpack[T, Rest: UnpackIter[T]] @Seq[T]
 # The element type is invariant. Use [`BaseArray`](std.BaseArray) for a
 # covariant read view, or [`Seq`](std.Seq) to accept other sequences too.
 pub class Array[T]: BaseArray[T] Sinkable[T] @MutSeq[T]
-  #
-  #
   # Builds an array from one iterable. The lowercase `array` factory instead
   # collects its positional arguments verbatim.
-  #
   pub def (init) self iterable @ Iterable[T]
     ...
 
-  #
   # Removes all elements from the array.
   #
   # ```
@@ -1149,16 +1138,13 @@ pub class Array[T]: BaseArray[T] Sinkable[T] @MutSeq[T]
   # arr.clear()
   # assert_eq $arr.len 0
   # ```
-  #
   pub def clear self
     ...
 
-  #
   # Indicates whether an element was removed. Deletes the element at `index` if it exists.
   # Negative indexes count from the end.
   #
   # Out-of-bounds indexes are ignored.
-  #
   #
   # ## Example
   #
@@ -1169,11 +1155,9 @@ pub class Array[T]: BaseArray[T] Sinkable[T] @MutSeq[T]
   # assert (!(arr.delete 99))
   # assert_eq $arr [10]
   # ```
-  #
   pub def delete self index @ Int -> Bool
     ...
 
-  #
   # Inserts one or more values at the specified index, shifting existing elements.
   # Negative indexes count from the end; `-1` inserts before the last element.
   #
@@ -1186,7 +1170,6 @@ pub class Array[T]: BaseArray[T] Sinkable[T] @MutSeq[T]
   # arr.insert -1 99
   # assert_eq $arr [1, 42, 2, 99, 3]
   # ```
-  #
   pub def insert
     self
     # the position to insert at
@@ -1196,11 +1179,13 @@ pub class Array[T]: BaseArray[T] Sinkable[T] @MutSeq[T]
   do
     ...
 
-  #
   # Removes and returns the last element, or the element at `index` if provided.
-  # Raises an error if the selected element does not exist and no alternative is
-  # provided. Negative indexes count from the end.
+  # Negative indexes count from the end.
   #
+  # ## Errors
+  #
+  # Raises [`IndexError`](std.IndexError) if the element does not exist and
+  # there is no `default` or `else`.
   #
   # ## Example
   #
@@ -1213,7 +1198,6 @@ pub class Array[T]: BaseArray[T] Sinkable[T] @MutSeq[T]
   # let empty = []
   # assert_eq (empty.pop default: "none") "none"
   # ```
-  #
   pub def pop[D = Never]
     self
     # optional index to remove; defaults to the last element
@@ -1223,7 +1207,6 @@ pub class Array[T]: BaseArray[T] Sinkable[T] @MutSeq[T]
   do -> (T | D)
     ...
 
-  #
   # Appends one or more values to the end of the array.
   #
   # ## Example
@@ -1233,7 +1216,6 @@ pub class Array[T]: BaseArray[T] Sinkable[T] @MutSeq[T]
   # arr.push 3
   # assert_eq $arr [1, 2, 3]
   # ```
-  #
   pub def push
     self
     # values to append
@@ -1241,7 +1223,6 @@ pub class Array[T]: BaseArray[T] Sinkable[T] @MutSeq[T]
   do
     ...
 
-  #
   # Sorts the array in place.
   #
   # ## Example
@@ -1256,7 +1237,6 @@ pub class Array[T]: BaseArray[T] Sinkable[T] @MutSeq[T]
   # arr.sort reverse: true
   # assert_eq $arr ["cc", "bbb", "a"]
   # ```
-  #
   pub def sort
     self
     :key @ ((T) -> Value) = nil
@@ -1278,6 +1258,7 @@ pub class Array[T]: BaseArray[T] Sinkable[T] @MutSeq[T]
   @def (assign)[K] self key@K value@AssignItem[{*T}, K]
   @def (assign) self range@Range[Int] value@(BaseArray[T] | Tuple[...T])
 
+  # Replaces an element, or the elements of a slice.
   #
   # ```
   # let arr = [0, 1, 2, 3]
@@ -1288,17 +1269,15 @@ pub class Array[T]: BaseArray[T] Sinkable[T] @MutSeq[T]
   # assert_eq $arr [0, 4, 5, 9, 9, 3]
   # ```
   #
-  # The replacement must be an [`Array`](std.Array) or a
-  # [`Tuple`](std.Tuple) — a sequence whose length is already settled. Anything
-  # else, including a [`Range`](std.Range), an iterator, or a lone value, is a
-  # type error rather than being drained or wrapped. Stepped slices are read-only;
-  # assignment with a non-unity step is rejected.
-  #
+  # A slice's replacement must be an [`Array`](std.Array) or a
+  # [`Tuple`](std.Tuple), and its length may differ from the slice's. Any other
+  # value, including a [`Range`](std.Range) or an iterator, raises
+  # [`TypeError`](std.TypeError). A slice with a step other than 1 can't be
+  # assigned and raises [`IndexError`](std.IndexError).
   pub def (assign)[K] self key@K value@AssignItem[{*T}, K]
     ...
 
 
-#
 # Binary data; an immutable sequence of bytes.
 pub class Bin: @Index[Range[Int], Bin]
   # Accepts binary data or copies the UTF-8 bytes of a string.
@@ -1316,9 +1295,7 @@ pub class Bin: @Index[Range[Int], Bin]
   do
     ...
 
-  #
   # Returns the byte length of the binary data.
-  #
   #
   # ## Example
   #
@@ -1326,18 +1303,17 @@ pub class Bin: @Index[Range[Int], Bin]
   # assert_eq (b"hello".len) 5
   # assert_eq (b"".len) 0
   # ```
-  #
   #[getter]
   pub def len self -> Int
     ...
 
-  #
-  #
   # Removes one trailing line terminator.
   #
-  # One complete terminator — `\r\n` or `\n`, never a lone `\r` — and nothing else.
-  # Data without one is returned unchanged.
-  #
+  # One complete terminator — `\r\n` or `\n`, never a lone `\r` — and nothing
+  # else. Data without one is returned unchanged. Distinct from
+  # [`trim_end`](std.Bin.trim_end), which strips whitespace generally.
+  # [`Iterable.chomp`](std.Iterable.chomp) does the same to each item of an
+  # iterable.
   #
   # ## Example
   #
@@ -1345,17 +1321,10 @@ pub class Bin: @Index[Range[Int], Bin]
   # assert_eq (b"line\n".chomp()) b"line"
   # assert_eq (b"line\r\n".chomp()) b"line"
   # ```
-  #
-  # [`Iter.chomp`](std.Iter.chomp) lifts this over an iterator — it is exactly
-  # `.map do |x| x.chomp()`, with the mapping done inline. Distinct from
-  # [`trim_end`](#trim_end-chars), which strips whitespace generally.
-  #
   pub def chomp self -> Bin
     ...
 
-  #
   # Tests whether the binary data contains the given bytes.
-  #
   #
   # ## Example
   #
@@ -1365,7 +1334,6 @@ pub class Bin: @Index[Range[Int], Bin]
   # assert (!(b"hello".contains b"world"))
   # assert (b"hello".contains b"")
   # ```
-  #
   pub def contains
     self
     # the bytes to find
@@ -1373,16 +1341,13 @@ pub class Bin: @Index[Range[Int], Bin]
   do -> Bool
     ...
 
-  #
   # Tests whether the binary data ends with the given suffix.
-  #
   #
   # ## Example
   #
   # ```
   # assert (b"hello".ends_with b"lo")
   # ```
-  #
   pub def ends_with
     self
     # the suffix bytes
@@ -1390,16 +1355,13 @@ pub class Bin: @Index[Range[Int], Bin]
   do -> Bool
     ...
 
-  #
   # Joins values from an input source using this binary data as a separator.
-  #
   #
   # ## Example
   #
   # ```
   # assert_eq (b",".join [b"a", b"b", b"c"]) b"a,b,c"
   # ```
-  #
   pub def join
     self
     # iterable to join; uses the default input when omitted
@@ -1407,10 +1369,8 @@ pub class Bin: @Index[Range[Int], Bin]
   do -> Bin
     ...
 
-  #
   # Like `split`, but yields segments in **right-to-left** order. Mirrors
   # [`str.rsplit`](std.Str.rsplit).
-  #
   #
   # ## Example
   #
@@ -1418,7 +1378,6 @@ pub class Bin: @Index[Range[Int], Bin]
   # assert_eq [...b"a,b,c".rsplit b","] [b"c", b"b", b"a"]
   # assert_eq [...b"a,b,c".rsplit b"," limit: 1] [b"c", b"a,b"]
   # ```
-  #
   pub def rsplit
     self
     # the delimiter bytes
@@ -1428,14 +1387,12 @@ pub class Bin: @Index[Range[Int], Bin]
   do -> UnpackIter[Bin]
     ...
 
-  #
   # Splits the binary data by the delimiter, returning an iterator that yields
   # segments in **left-to-right** order.
   #
   # The optional `limit` works identically to
   # [`str.split`](std.Str.split): positive splits from the
   # left, negative splits from the right (but still yields left-to-right).
-  #
   #
   # ## Example
   #
@@ -1446,7 +1403,6 @@ pub class Bin: @Index[Range[Int], Bin]
   # assert_eq $base b"archive.tar"
   # assert_eq $ext b"gz"
   # ```
-  #
   pub def split
     self
     # the delimiter bytes
@@ -1456,9 +1412,7 @@ pub class Bin: @Index[Range[Int], Bin]
   do -> UnpackIter[Bin]
     ...
 
-  #
   # Tests whether the binary data starts with the given prefix.
-  #
   #
   # ## Example
   #
@@ -1466,7 +1420,6 @@ pub class Bin: @Index[Range[Int], Bin]
   # assert (b"hello".starts_with b"he")
   # assert (!(b"hello".starts_with b"lo"))
   # ```
-  #
   pub def starts_with
     self
     # the prefix bytes
@@ -1474,9 +1427,7 @@ pub class Bin: @Index[Range[Int], Bin]
   do -> Bool
     ...
 
-  #
   # Removes bytes (or specified characters) from both ends.
-  #
   #
   # ## Example
   #
@@ -1486,16 +1437,13 @@ pub class Bin: @Index[Range[Int], Bin]
   # assert_eq (b"xyhelloyx".trim [b"x", b"y"]) b"hello"
   # assert_eq (b"\x00\xffdata\xff\x00".trim b"\x00\xff") b"data"
   # ```
-  #
   pub def trim
     self
     chars @ (Bin | Iterable[Bin]) = nil
   do -> Bin
     ...
 
-  #
   # Removes bytes (or specified characters) from the end.
-  #
   #
   # ## Example
   #
@@ -1503,16 +1451,13 @@ pub class Bin: @Index[Range[Int], Bin]
   # assert_eq (b"  hello  ".trim_end()) b"  hello"
   # assert_eq (b"xxhelloxx".trim_end b"x") b"xxhello"
   # ```
-  #
   pub def trim_end
     self
     chars @ (Bin | Iterable[Bin]) = nil
   do -> Bin
     ...
 
-  #
   # Removes bytes (or specified characters) from the start.
-  #
   #
   # ## Example
   #
@@ -1520,14 +1465,12 @@ pub class Bin: @Index[Range[Int], Bin]
   # assert_eq (b"  hello  ".trim_start()) b"hello  "
   # assert_eq (b"xxhelloxx".trim_start b"x") b"helloxx"
   # ```
-  #
   pub def trim_start
     self
     chars @ (Bin | Iterable[Bin]) = nil
   do -> Bin
     ...
 
-  #
   # Returns an immutable view of the binary data's byte values.
   #
   # The view retains the binary data without copying it. It supports `len`,
@@ -1536,21 +1479,17 @@ pub class Bin: @Index[Range[Int], Bin]
   # independent, mutable arrays of integers. Use `[...bytes.unpack()]` to copy
   # the whole view into a mutable array.
   #
-  #
   # ## Example
   #
   # ```
   # let bytes = b"hello"
   # assert_eq [...bytes.unpack()] [104, 101, 108, 108, 111]
   # ```
-  #
   pub def unpack self -> Seq[Int]
     ...
 
-  #
   # Returns the binary data with the prefix removed if it matches, otherwise
   # returns the original data.
-  #
   #
   # ## Example
   #
@@ -1558,7 +1497,6 @@ pub class Bin: @Index[Range[Int], Bin]
   # assert_eq (b"hello".without_prefix b"he") b"llo"
   # assert_eq (b"hello".without_prefix b"xx") b"hello"
   # ```
-  #
   pub def without_prefix
     self
     # the prefix to remove
@@ -1566,17 +1504,14 @@ pub class Bin: @Index[Range[Int], Bin]
   do -> Bin
     ...
 
-  #
   # Returns the binary data with the suffix removed if it matches, otherwise returns
   # the original data.
-  #
   #
   # ## Example
   #
   # ```
   # assert_eq (b"hello".without_suffix b"lo") b"hel"
   # ```
-  #
   pub def without_suffix
     self
     # the suffix to remove
@@ -1584,8 +1519,7 @@ pub class Bin: @Index[Range[Int], Bin]
   do -> Bin
     ...
 
-  #
-  # Binary data accepts [`Range`](std.Range) values for slicing by byte position:
+  # Returns the bytes in a range as a new binary value.
   #
   # ```
   # assert_eq (b"abcd"[1..3]) b"bc"
@@ -1597,25 +1531,20 @@ pub class Bin: @Index[Range[Int], Bin]
   # assert_eq (b"abcd"[Range nil nil -1]) b"dcba"
   # ```
   #
-  # This returns a new binary value. Slice boundaries must be in bounds. Omitted
-  # `start` means `0`, omitted `end` means the binary length, and negative
-  # endpoints count from the end. Negative steps reverse the slice.
-  #
-  # Indexes the value.
+  # The range must lie within the value. Omitted `start` means `0`, omitted `end`
+  # means the binary length, and negative endpoints count from the end. Negative
+  # steps reverse the slice.
   pub def (index) self range@Range[Int] -> Bin
     ...
 
-  #
   # Packs an array of integers (0-255) into binary data.
-  #
   #
   # ## Example
   #
   # ```
-  # let bytes = bin.pack [104, 101, 108, 108, 111]
+  # let bytes = Bin.pack [104, 101, 108, 108, 111]
   # assert_eq $bytes b"hello"
   # ```
-  #
   #[class]
   pub def pack
     self
@@ -1625,7 +1554,6 @@ pub class Bin: @Index[Range[Int], Bin]
     ...
 
 
-#
 # Mutable byte buffer; the mutable counterpart to [`Bin`](std.Bin).
 #
 # A buffer is an [`Io`](io.Io) that only writes, appending what it is given, so
@@ -1638,10 +1566,7 @@ pub class Bin: @Index[Range[Int], Bin]
 # ```
 #
 # To read, overwrite or seek within a buffer, use an [`io.Cursor`](io.Cursor).
-#
 pub class BinBuf: @Index[Int] @Assign[Int] Io
-  #
-  #
   # Builds a buffer, optionally seeded with the contents of existing binary data.
   #
   # ## Example
@@ -1650,7 +1575,6 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   # let buf = BinBuf(b"hello")
   # assert_eq $buf.len 5
   # ```
-  #
   pub def (init)
     self
     # initial contents
@@ -1658,7 +1582,6 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   do
     ...
 
-  #
   # Returns the byte length of the buffer's current contents.
   #
   # ## Example
@@ -1666,12 +1589,10 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   # ```
   # assert_eq (BinBuf(b"hello").len) 5
   # ```
-  #
   #[getter]
   pub def len self -> Int
     ...
 
-  #
   # Appends `value` to the buffer. `Str`/`Bin` input is copied byte-for-byte
   # (round-tripping non-UTF-8 bytes exactly); anything else is converted the
   # same way [`str`](std.str) would convert it, written directly
@@ -1686,7 +1607,6 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   # buf.append 42
   # assert_eq $buf.freeze() b"foobar42"
   # ```
-  #
   pub def append
     self
     # value to append
@@ -1694,7 +1614,6 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   do
     ...
 
-  #
   # Empties the buffer, retaining its allocated capacity.
   #
   # ```
@@ -1704,20 +1623,16 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   # buf.append b"x"
   # assert_eq $buf.freeze() b"x"
   # ```
-  #
   pub def clear self
     ...
 
-  #
   # Tests whether the buffer's contents contain the given bytes.
-  #
   #
   # ## Example
   #
   # ```
   # assert (BinBuf(b"foobar").contains b"oob")
   # ```
-  #
   pub def contains
     self
     # the bytes to find
@@ -1725,10 +1640,8 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   do -> Bool
     ...
 
-  #
   # Returns an iterator that removes and yields up to `size` bytes at a time
   # from the front of the buffer as it's consumed.
-  #
   #
   # ## Example
   #
@@ -1738,32 +1651,24 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   # assert_eq $buf.len 0
   # ```
   #
-  # Draining never shifts the buffer's remaining contents proportionally to
-  # their length: consumed bytes are dropped by advancing an internal cursor,
-  # not by copying the tail down on every chunk. Other mutating methods (and
-  # `freeze`) settle this cursor transparently before they run, so indices
-  # passed to them are always relative to the buffer's current (undrained)
-  # content. Multiple `drain` iterators created from the same buffer share this
-  # cursor, so they interleave draining the same content rather than each
-  # redraining it independently.
-  #
+  # Draining doesn't move the remaining contents for each chunk, so its cost
+  # grows with the bytes drained, not with what is left. Indexes given to other
+  # methods count from the start of what remains. Several `drain` iterators over
+  # one buffer take turns removing from the same content.
   pub def drain
     self
-    # maximum bytes per chunk (defaults to 512 KiB)
+    # Maximum bytes per chunk; 512 KiB when omitted.
     size @ Int = nil
   do -> Iter[Bin]
     ...
 
-  #
   # Tests whether the buffer's contents end with the given suffix.
-  #
   #
   # ## Example
   #
   # ```
   # assert (BinBuf(b"foobar").ends_with b"bar")
   # ```
-  #
   pub def ends_with
     self
     # the suffix bytes
@@ -1771,7 +1676,6 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   do -> Bool
     ...
 
-  #
   # Appends the raw bytes of `value`, which must be a [`Str`](std.Str) or
   # [`Bin`](std.Bin).
   #
@@ -1782,18 +1686,15 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   # buf.extend b"bar"
   # assert_eq $buf.freeze() b"foobar"
   # ```
-  #
   pub def extend
     self
     value @ (Bin | Str)
   do
     ...
 
-  #
   # Converts the buffer's current contents into an immutable [`Bin`](std.Bin)
   # in place, without copying, and empties the buffer. The buffer stays usable
   # afterward, and the returned value is unaffected by later mutation.
-  #
   #
   # ## Example
   #
@@ -1805,7 +1706,6 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   # buf.append b"def"
   # assert_eq $frozen b"abc"
   # ```
-  #
   pub def freeze self -> Bin
     ...
 
@@ -1853,7 +1753,6 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   pub def flush self
     ...
 
-  #
   # Inserts `value` at the given byte index, shifting the rest of the buffer
   # right in place. `value` may be a single byte value, or a `Str`/`Bin` slice.
   #
@@ -1865,7 +1764,6 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   # buf.insert 0 65
   # assert_eq $buf.freeze() b"AfooXYZbar"
   # ```
-  #
   pub def insert
     self
     # insertion point
@@ -1875,7 +1773,6 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   do
     ...
 
-  #
   # Appends one or more raw byte values to the buffer.
   #
   # ## Example
@@ -1885,7 +1782,6 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   # buf.push 104 105
   # assert_eq $buf.freeze() b"hi"
   # ```
-  #
   pub def push
     self
     # byte values (0-255) to append
@@ -1893,12 +1789,10 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   do
     ...
 
-  #
   # Removes and returns a byte or a range of bytes, shifting the rest of the
-  # buffer left in place. An [`Int`](std) index removes and returns a
+  # buffer left in place. An [`Int`](std.Int) index removes and returns a
   # single byte; a [`Range`](std.Range) removes and returns a [`Bin`](std.Bin)
   # of the removed bytes.
-  #
   #
   # ## Example
   #
@@ -1911,23 +1805,19 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   # assert_eq (buf2.remove (1..3)) b"oo"
   # assert_eq $buf2.freeze() b"fbar"
   # ```
-  #
   pub def remove
     self
     index_or_range @ (Int | Range[Int])
   do -> (Int | Bin)
     ...
 
-  #
   # Tests whether the buffer's contents start with the given prefix.
-  #
   #
   # ## Example
   #
   # ```
   # assert (BinBuf(b"foobar").starts_with b"foo")
   # ```
-  #
   pub def starts_with
     self
     # the prefix bytes
@@ -1935,7 +1825,6 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   do -> Bool
     ...
 
-  #
   # Shrinks the buffer to `len` bytes, discarding anything past that point.
   #
   # ## Example
@@ -1945,7 +1834,6 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   # buf.truncate 3
   # assert_eq $buf.freeze() b"foo"
   # ```
-  #
   pub def truncate
     self
     # new length
@@ -1953,7 +1841,6 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   do
     ...
 
-  #
   # Unlike `StrBuf`, `BinBuf` supports both scalar and range indexing and
   # indexing:
   #
@@ -1984,45 +1871,34 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
     ...
 
 
-#
 # Boolean values: `true` and `false`.
-#
 #[final]
 pub class Bool
   # Accepts an existing boolean.
   pub def (init) self
     ...
 
-  #
   # Converts to a boolean.
   pub def (bool) self -> Bool
     ...
 
 
-#
 # Raised on bytecode verification errors.
 #
-# `BytecodeError` is sealed: it is raised only by bytecode verification, and can
-# be neither constructed nor subclassed.
-#
+# Only bytecode verification raises `BytecodeError`; it can be neither
+# constructed nor subclassed.
 #[mixable]
 pub class BytecodeError: RuntimeError
 
-#
 # Raised when a strand is canceled. During `finally` blocks, cancellation is
 # masked so cleanup can complete. See
 # [Concurrency](../../language/concurrency.md) for details.
-#
 pub class CanceledError: Error
-  #
-  #
   # Builds an error reporting that a strand was canceled.
-  #
   pub def (init) self
     ...
 
 
-#
 # Decorator placing a class member in the type-object namespace, where subclasses
 # inherit it.
 #
@@ -2048,15 +1924,10 @@ pub class CanceledError: Error
 # for the full semantics.
 pub let class @ Value = ...
 
-#
 # Raised on compilation errors.
-#
 #[mixable]
 pub class CompileError: RuntimeError
-  #
-  #
   # Builds an error reporting a compilation failure.
-  #
   pub def (init)
     self
     # description of the compilation failure
@@ -2065,15 +1936,10 @@ pub class CompileError: RuntimeError
     ...
 
 
-#
 # Raised when a concurrent access violation is detected.
-#
 #[mixable]
 pub class ConcurrencyError: RuntimeError
-  #
-  #
   # Builds an error reporting a conflicting concurrent operation.
-  #
   pub def (init)
     self
     # detail appended to the generic message
@@ -2082,15 +1948,10 @@ pub class ConcurrencyError: RuntimeError
     ...
 
 
-#
 # Raised when a cyclic module dependency is detected.
-#
 #[mixable]
 pub class CyclicImportError: RuntimeError
-  #
-  #
   # Builds an error naming the module at which an import cycle was detected.
-  #
   pub def (init)
     self
     # the module at which the cycle was detected
@@ -2099,32 +1960,25 @@ pub class CyclicImportError: RuntimeError
     ...
 
 
-#
 # The read-only half of a [`Dict`](std.Dict), whose items it holds covariantly:
 # a `Dict[{a: Int}]` is a `BaseDict[{a: (Int | Str)}]`. A parameter that only
 # reads a dict takes a `BaseDict`, so it accepts dicts with narrower items.
 #
 # `BaseDict` is `Dict` at runtime, so only a dict is a `BaseDict`.
-#
 pub class BaseDict[S @ {...}]:
   @Map[S] @Index[S] @Spread[S]
   @Unpack[S, Rest: Unpack[S]]
   Iterable[Entries[S]]
 do
-  #
   # Returns the number of key-value pairs (counting each value in a multi-map
   # separately).
-  #
-  #
   #[getter]
   pub def len self -> Int
     ...
 
-  #
   # Tests whether the dictionary contains the given key. If a value is provided,
   # tests whether any value associated with that key matches the given value
   # (multi-map aware).
-  #
   #
   # ## Example
   #
@@ -2143,7 +1997,6 @@ do
   # assert (d.contains :a: 3)
   # assert (!d.contains :a: 2)
   # ```
-  #
   pub def contains
     self
     # the key to check
@@ -2153,35 +2006,27 @@ do
   do -> Bool
     ...
 
-  #
   # Returns a shallow copy of the dictionary.
   #
   # Insertion order and multiple per-key values are preserved. Keys and
   # values are *not* copied recursively.
   #
-  #
   # When inherited by a Do subclass, `copy()` calls the subclass constructor with
   # the source dict as a single positional argument.
-  #
   pub def copy self -> BaseDict[S]
     ...
 
-  #
   # Returns a count derived from the dictionary's multi-map structure.
   #
   # With no `key`, it returns the number of distinct keys. With a `key`, it returns
   # the number of values associated with that key.
   #
   # Missing keys return `0`.
-  #
-  #
   pub def count self key @ Value = nil -> Int
     ...
 
-  #
   # Retrieves the value for a key. Returns `nil` if the key is missing and no
   # alternative is provided. Negative `instance` indexes count from the end.
-  #
   #
   # ## Example
   #
@@ -2191,7 +2036,6 @@ do
   # assert_eq ({name: "Alice", name: "Bob"}.get :name: -1) "Bob"
   # assert_eq (d.get :missing: default: "unknown") "unknown"
   # ```
-  #
   pub def get[K, D = nil]
     self
     # the key to look up
@@ -2203,26 +2047,20 @@ do
   do -> (IndexItem[S, K] | D)
     ...
 
-  #
   # Returns an iterator of keys. Each distinct key is yielded exactly once, in the
   # order its first pair was inserted.
   #
-  # If duplicate-key iteration is needed, use [`pairs`](#pairs) instead.
-  #
-  #
+  # To visit each value of a repeated key, use
+  # [`pairs`](std.BaseDict.pairs) instead.
   pub def keys self -> UnpackIter[Keys[S]]
     ...
 
-  #
-  # Returns an iterator yielding `[key, value]` pairs, the same as ordinary
-  # iteration. This method is present to allow uniform key/value iteration
-  # over both [`Dict`](std.Dict) and [`Array`](std.Array).
-  #
-  #
+  # Returns an iterator yielding `(key, value)` pairs, the same as ordinary
+  # iteration, so that a [`Dict`](std.Dict) and an [`Array`](std.Array) can be
+  # iterated by key and value alike.
   pub def pairs self -> Iter[Entries[S]]
     ...
 
-  #
   # Returns an iterator of values. With no argument, it yields all stored values in
   # pair insertion order. With a `key`, it yields only the values associated with
   # that key, in that key's insertion order.
@@ -2233,16 +2071,16 @@ do
   pub def values self key @ Value = nil -> UnpackIter[Values[S]]
     ...
 
+  # Returns the value of a key, the last one if it is repeated.
   #
   # ```
   # let d = {name: "Alice"}
   # assert_eq $d[:name:] "Alice"
   # ```
   #
-  # A missing key raises an error.
+  # A missing key raises [`IndexError`](std.IndexError).
   #
   # [`Range`](std.Range) values are treated as ordinary keys, not as slices.
-  #
   pub def (index)[K] self key@K -> IndexItem[S, K]
     ...
 
@@ -2250,13 +2088,12 @@ do
   pub def (spread) self -> Spread[S]
     ...
 
-  # Iterating over a dictionary yields `[key, value]` pairs:
+  # Iterating over a dictionary yields `(key, value)` pairs:
   #
   # ```
   # for pair = {a: 1, b: 2}
   #   echo $pair
   # ```
-  #
   pub def (iter) self -> Iter[Entries[S]]
     ...
 
@@ -2269,12 +2106,10 @@ do
     ...
 
 
-#
 # Dictionaries are **ordered**, mutable key-value mappings. They preserve
 # insertion order and are **multi-maps**: a single key can have multiple values.
 #
 # Keys can be any hashable type.
-#
 #
 # ## Ordering
 #
@@ -2295,10 +2130,7 @@ do
 # - **`get`** and **`pop`** accept an `instance` parameter to access specific
 #   values by their position (0-indexed) among values for that key; negative
 #   instance indexes count from the end
-#
 pub class Dict[S @ {...}]: BaseDict[S] @MutMap[S] @Assign[S]
-  #
-  #
   # Builds a dictionary by spreading one source, as `{...source}` does.
   #
   # Spreading an array gives positional items, so an array of pairs is not a
@@ -2311,13 +2143,11 @@ pub class Dict[S @ {...}]: BaseDict[S] @MutMap[S] @Assign[S]
   #
   # The lowercase `dict` factory instead assigns integer keys to positional
   # arguments and symbol keys to key arguments.
-  #
   pub def (init) self source @ Spread[S]
     ...
 
   @def clear self @ Dict[Clearable[S]]
 
-  #
   # Removes all key-value pairs.
   #
   # ```
@@ -2325,7 +2155,6 @@ pub class Dict[S @ {...}]: BaseDict[S] @MutMap[S] @Assign[S]
   # d.clear()
   # assert_eq $d.len 0
   # ```
-  #
   pub def clear self
     ...
 
@@ -2336,9 +2165,7 @@ pub class Dict[S @ {...}]: BaseDict[S] @MutMap[S] @Assign[S]
 
   @def delete[K] self @ Dict[Deletable[S, K]] key @ K -> Bool
 
-  #
   # Indicates whether any values were removed. Removes all values for the key.
-  #
   #
   # ## Example
   #
@@ -2348,7 +2175,6 @@ pub class Dict[S @ {...}]: BaseDict[S] @MutMap[S] @Assign[S]
   # assert (!(d.delete :missing:))
   # assert_eq $d.len 1
   # ```
-  #
   pub def delete
     self
     # the key to remove
@@ -2356,10 +2182,8 @@ pub class Dict[S @ {...}]: BaseDict[S] @MutMap[S] @Assign[S]
   do -> Bool
     ...
 
-  #
   # Adds a key-value pair. Does **not** remove existing values for the same key
   # (multi-map insert).
-  #
   pub def insert[K]
     self
     # the key
@@ -2377,12 +2201,15 @@ pub class Dict[S @ {...}]: BaseDict[S] @MutMap[S] @Assign[S]
     :else @ (() -> D) = nil
   do -> (IndexItem[S, K] | D)
 
+  # Removes and returns a value for a key.
   #
-  # Removes and returns a value for a key. Raises an error if the key is missing
-  # and no alternative is provided. Supports `instance` for multi-map access to
-  # remove a specific value by its position among values for that key. Negative
-  # `instance` indexes count from the end.
+  # `instance` selects one of a repeated key's values by position; negative
+  # positions count from the end.
   #
+  # ## Errors
+  #
+  # Raises [`IndexError`](std.IndexError) if the key is missing and there is no
+  # `default` or `else`.
   #
   # ## Example
   #
@@ -2397,7 +2224,6 @@ pub class Dict[S @ {...}]: BaseDict[S] @MutMap[S] @Assign[S]
   # # Pop specific instance
   # assert_eq (d.pop "multi" 0) "second"
   # ```
-  #
   pub def pop[K, D = Never]
     self
     # the key to remove
@@ -2419,15 +2245,10 @@ pub class Dict[S @ {...}]: BaseDict[S] @MutMap[S] @Assign[S]
     ...
 
 
-#
 # Raised when accessing a nonexistent field on an object.
-#
 #[mixable]
 pub class FieldError: RuntimeError
-  #
-  #
   # Builds an error naming a field that does not exist.
-  #
   pub def (init)
     self
     # the field that does not exist
@@ -2436,9 +2257,7 @@ pub class FieldError: RuntimeError
     ...
 
 
-#
 # Abstract supertype for numeric values.
-#
 pub class Num
   # Returns the magnitude of the value.
   #
@@ -2521,7 +2340,6 @@ pub class Num
 #
 # Rounding preserves signed zero and rounds halfway cases away from zero.
 # `signum` returns NaN for NaN and distinguishes positive and negative zero.
-#
 pub class Float: Num
   # Difference between `1.0` and the next greater representable value.
   #[static]
@@ -2535,6 +2353,7 @@ pub class Float: Num
   #[static]
   pub field NAN @ Float = ...
 
+  # Converts a number to a float.
   #
   # `Float` accepts a float or an integer that can be represented exactly.
   #
@@ -2548,7 +2367,6 @@ pub class Float: Num
   # assert_eq (float "3.14") 3.14
   # assert_eq (float true) 1.0
   # ```
-  #
   pub def (init) self
     ...
 
@@ -2613,7 +2431,6 @@ pub @let FmtKind = $
   | :EXP:
   | :FIXED:
 
-#
 # `Func` is the abstract supertype of function values.
 #
 # In a type, `Func` is any function. A class that declares `(call)` names
@@ -2622,7 +2439,6 @@ pub @let FmtKind = $
 #[mixable]
 pub class Func
 
-#
 # An unbound interpolation in a [`Fmt`](std.Fmt).
 #
 # A [`FmtValue`](std.FmtValue) already carries a value. A `FmtParam` carries
@@ -2634,7 +2450,7 @@ pub class Func
 # [`FmtSpec`](std.FmtSpec). Calling it with new keyword options returns a new
 # `FmtParam` naming the same parameter.
 pub class FmtParam: Func
-  #
+  # Creates a parameter named by a position or a symbol.
   #
   # ## Errors
   #
@@ -2649,7 +2465,6 @@ pub class FmtParam: Func
   # assert_eq $hole.name :user:
   # assert_eq $hole.width 8
   # ```
-  #
   pub def (init)
     self
     name @ (Int | Sym)
@@ -2665,14 +2480,11 @@ pub class FmtParam: Func
   do
     ...
 
-  #
   # The parameter named by this position, as an `Int` or a `Sym`.
-  #
   #[getter]
   pub def name self -> (Int | Sym)
     ...
 
-  #
   # The text the parameter was written as, or nil. A `${#...}` in a
   # [`t"..."`](../../language/strings.md#formatted-sequences) records the
   # whole interpolation, sigil and delimiters included.
@@ -2681,16 +2493,13 @@ pub class FmtParam: Func
   # let seq = t"a=${#0:>3}"
   # assert_eq $seq[1].source r"${#0:>3}"
   # ```
-  #
   #[getter]
   pub def source self -> (Str | nil)
     ...
 
-  #
   # Returns a new `FmtParam` naming the same parameter with the supplied options
-  # merged. Positional arguments are not accepted. The result is synthetic rather
-  # than source-derived, so its [`source`](#source) is nil.
-  #
+  # merged. Positional arguments are not accepted. The result wasn't written in
+  # source, so its [`source`](std.FmtParam.source) is nil.
   pub def (call)
     self
     # Padding fill
@@ -2711,20 +2520,18 @@ pub class FmtParam: Func
     ...
 
   # Two parameters are equal when they name the same parameter under the same
-  # specification and record the same [`source`](#source).
+  # specification and record the same [`source`](std.FmtParam.source).
   pub def (eq) self other @ Value -> Bool
     ...
 
 
-#
 # Stores reusable formatting options.
 #
 # `FmtSpec` values are immutable. Calling one returns a new specification with
 # the supplied options overridden, or a bound [`FmtValue`](std.FmtValue) when
 # given a positional value.
-#
 pub class FmtSpec: Func
-  #
+  # Creates a specification from formatting options.
   #
   # ## Example
   #
@@ -2732,7 +2539,6 @@ pub class FmtSpec: Func
   # let money = FmtSpec precision: 2 kind: :FIXED:
   # assert_eq "$(money 1.5)/$(money 2.25)" "1.50/2.25"
   # ```
-  #
   pub def (init)
     self
     # Padding fill
@@ -2752,52 +2558,39 @@ pub class FmtSpec: Func
   do
     ...
 
-  #
   # The fill character, `:ZERO:` for numeric zero padding, or nil for spaces.
-  #
   #[getter]
   pub def fill self -> (FmtFill | nil)
     ...
 
-  #
   # `:LEFT:`, `:RIGHT:`, `:CENTER:`, or nil for the formatted value's default.
-  #
   #[getter]
   pub def align self -> (FmtAlign | nil)
     ...
 
-  #
   # `:PLUS:`, `:SPACE:`, or nil to show only negative signs.
-  #
   #[getter]
   pub def sign self -> (FmtSign | nil)
     ...
 
-  #
   # The minimum width in extended grapheme clusters, or nil when unset. A value
   # may measure itself differently: [`term.Text`](term.Text) measures
   # terminal cells.
-  #
   #[getter]
   pub def width self -> (Int | nil)
     ...
 
-  #
   # The numeric precision or maximum number of extended grapheme clusters,
   # depending on the formatted value, or nil when unset.
-  #
   #[getter]
   pub def precision self -> (Int | nil)
     ...
 
-  #
   # Whether alternate formatting is enabled.
-  #
   #[getter]
   pub def alt self -> Bool
     ...
 
-  #
   # The requested representation, or nil to inherit the surrounding conversion.
   #
   # | Kind         | Representation     | Conversion |
@@ -2814,12 +2607,10 @@ pub class FmtSpec: Func
   #
   # The Conversion column gives the equivalent character in a [formatted
   # interpolation](../../language/strings.md#formatted-interpolation).
-  #
   #[getter]
   pub def kind self -> (FmtKind | nil)
     ...
 
-  #
   # Returns a new specification, or a bound [`FmtValue`](std.FmtValue) when
   # `value` is provided. Omitted options retain their current values; nil resets
   # an option.
@@ -2827,7 +2618,6 @@ pub class FmtSpec: Func
   # Binding a [`FmtValue`](std.FmtValue) nests it: the inner specification
   # renders the value and this one lays that rendering out. See
   # [Sequencing](std.FmtValue.sequencing).
-  #
   @def (call)
     self
     # Padding fill
@@ -2869,9 +2659,7 @@ pub class FmtSpec: Func
   pub def (call) self ...args @ Value -> FmtValue[Value]
     ...
 
-  #
   # Applies fill, alignment, width, and truncation to a string.
-  #
   #
   # ## Example
   #
@@ -2887,7 +2675,6 @@ pub class FmtSpec: Func
     ...
 
 
-#
 # Binds a value to reusable formatting options.
 #
 # A [formatted
@@ -2899,7 +2686,6 @@ pub class FmtSpec: Func
 # [`FmtSpec`](std.FmtSpec), but is a distinct type rather than a subtype of
 # it. Calling it with new keyword options returns a new `FmtValue` retaining
 # the original value.
-#
 #
 # ## Sequencing {: #std.FmtValue.sequencing }
 #
@@ -2939,7 +2725,7 @@ pub class FmtSpec: Func
 # uses display formatting. `str` and `dbg` supply display and debug formatting,
 # respectively. An explicit `kind` overrides the surrounding operation.
 pub class FmtValue[T]: Func
-  #
+  # Binds a value to formatting options.
   #
   # ## Example
   #
@@ -2947,7 +2733,6 @@ pub class FmtValue[T]: Func
   # let money = FmtValue 1.5 precision: 2 kind: :FIXED:
   # assert_eq (str money) "1.50"
   # ```
-  #
   pub def (init)
     self
     # Value to bind
@@ -2971,10 +2756,8 @@ pub class FmtValue[T]: Func
   do
     ...
 
-  #
   # The bound value, one level down. It is itself a `FmtValue` when this one
   # binds another.
-  #
   #[getter]
   pub def value self -> T
     ...
@@ -3014,7 +2797,6 @@ pub class FmtValue[T]: Func
   pub def kind self -> (FmtKind | nil)
     ...
 
-  #
   # The text the value was written as, or nil. Formatted interpolation records
   # the whole interpolation including its sigil and delimiters, so a consumer can
   # reproduce the form it was written in.
@@ -3023,16 +2805,13 @@ pub class FmtValue[T]: Func
   # let sourced = FmtValue 42 width: 4 source: r"${x:>4}"
   # assert_eq $sourced.source r"${x:>4}"
   # ```
-  #
   #[getter]
   pub def source self -> (Str | nil)
     ...
 
-  #
   # Returns a new `FmtValue` with the supplied options merged. Positional
-  # arguments are not accepted. The result is synthetic rather than
-  # source-derived, so its [`source`](#source) is nil.
-  #
+  # arguments are not accepted. The result wasn't written in source, so its
+  # [`source`](std.FmtValue.source) is nil.
   pub def (call)
     self
     # Padding fill
@@ -3053,8 +2832,7 @@ pub class FmtValue[T]: Func
     ...
 
   # Two bindings are equal when they bind equal values to the same specification
-  # and record the same [`source`](#source). `source` is readable and `dbg`
-  # renders through it, so bindings that differ in it are distinguishable.
+  # and record the same [`source`](std.FmtValue.source).
   pub def (eq) self other @ Value -> Bool
     ...
 
@@ -3063,20 +2841,18 @@ pub class FmtValue[T]: Func
 # unbound parameter.
 pub @let FmtSegment[V] = (Str | FmtValue[V] | FmtParam)
 
-#
 # Preserves literal text, bound interpolations, and unbound parameters from a
 # [`t"..."` string](../../language/strings.md#formatted-sequences).
 #
-# `V` is the union of the interpolated value types; `S` describes the required
-# hole bindings. Templates are immutable: `V` is covariant, and the binding
-# schema `S` is contravariant.
-# `S` admits positional items and integer or symbol keys.
+# `V` is the union of the interpolated values' types, and `S` is the schema of
+# the arguments that [`format`](std.Fmt.format) needs to fill the sequence's
+# parameters, by position or by name. Since a sequence is immutable, one whose
+# values have narrower types can stand in for one whose values are wider.
 #
 # Every segment is a [`Str`](std.Str) of literal text, a
 # [`FmtValue`](std.FmtValue) interpolation, or a [`FmtParam`](std.FmtParam)
 # still waiting to be filled. This type behaves like an immutable array:
 # indexable, iterable, spreadable, and destructurable.
-#
 #
 # ## Trust {: #std.Fmt.trust }
 #
@@ -3087,15 +2863,23 @@ pub @let FmtSegment[V] = (Str | FmtValue[V] | FmtParam)
 # quoted. [`sqlite`](sqlite) is a prime example, as it relies on
 # this guarantee to exclude SQL injection vulnerabilities.
 #
-# Toward that end, **no conversion implicitly expands a sequence.** `str` and
-# plain interpolation (`"$seq"`, `"${seq}"`, `"${seq:s}"`) raise a
-# [`TypeError`](std.TypeError); `verbatim` and `dbg` give the source form
-# This avoids accidental expansion before the sequences reaches its consumer
-# for safe structural quoting or binding of interpolations.
-# [`format()`](std.Fmt.format) must be used to explicitly expand a sequence.
+# Toward that end, **no conversion implicitly expands a sequence**, so it can't
+# be expanded by accident before it reaches its consumer. `str` and plain
+# interpolation (`"$seq"`, `"${seq}"`, `"${seq:s}"`) raise a
+# [`TypeError`](std.TypeError). `dbg` and `verbatim`, and so the `!` conversion
+# and command arguments, give the source form, reconstructed from the literal
+# text and each interpolation's [`source`](std.FmtValue.source). An interpolation built at runtime has no
+# source, so its bound value's debug form stands in.
+# [`format()`](std.Fmt.format) is the only expansion.
+#
+# ```
+# let count = 3
+# assert_eq (dbg t"n=${count:03d}") r#"t"n=${count:03d}""#
+# assert_eq (verbatim t"n=${count:03d}") (dbg t"n=${count:03d}")
+# ```
 #
 # **Building a sequence yourself must uphold this guarantee.** The
-# [constructor](#fmt-segments) accepts whatever segments it is given, so a
+# [constructor](std.Fmt.(init)) accepts whatever segments it is given, so a
 # `Str` built from untrusted input would subsequently be treated as trusted.
 # Programmatic construction of `Fmt` must be done with care.
 #
@@ -3108,22 +2892,6 @@ pub @let FmtSegment[V] = (Str | FmtValue[V] | FmtParam)
 #
 # # Danger: untrusted input is treated as a trusted string literal
 # let injected = Fmt ["select * from users where name = ", name]
-# ```
-#
-#
-# `dbg` gives the source form, reconstructed from the literal text and each
-# interpolation's [`source`](std.FmtValue.source). An interpolation built at
-# runtime has no source, so its bound value's debug form stands in.
-#
-# `verbatim` — and with it the `!` conversion and command-argument position —
-# gives the same source form, since that is what the sequence was written as.
-# `str` and the display conversion raise a [`TypeError`](std.TypeError).
-# [`format()`](std.Fmt.format) is the only expansion. See [Trust](std.Fmt.trust).
-#
-# ```
-# let count = 3
-# assert_eq (dbg t"n=${count:03d}") r#"t"n=${count:03d}""#
-# assert_eq (verbatim t"n=${count:03d}") (dbg t"n=${count:03d}")
 # ```
 #
 # ## Example
@@ -3145,13 +2913,11 @@ pub @let FmtSegment[V] = (Str | FmtValue[V] | FmtParam)
 pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[FmtSegment[V]] @Spread[FmtSegment[V]] @Unpack[FmtSegment[V], Rest: UnpackIter[FmtSegment[V]]]
   field schema @ Phantom[((...S) -> nil)]
 
-  #
-  #
   # Builds a sequence from an iterable of segments.
   #
   # Writing a `t"..."` is the usual way to get one; the constructor is for
-  # assembling a sequence at runtime. Its hole schema remains unknown to the
-  # checker.
+  # assembling a sequence at runtime. The type checker doesn't know which
+  # parameters the result has.
   #
   # ## Errors
   #
@@ -3166,25 +2932,21 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[FmtSegment[V]] @Spread[Fm
   # assert_eq $built.len 3
   # assert_eq $built.format() "a=42;"
   # ```
-  #
   pub def (init) self segments @ Iterable[FmtSegment[V]]
     ...
 
-  #
   # The number of segments.
   #
   # ```
   # let greeting = t"hello $name!"
   # assert_eq $greeting.len 3
   # ```
-  #
   #[getter]
   pub def len self -> Int
     ...
 
   @def format[B @ {*Value, **Value}] self @ Fmt[V, B] ...bindings @ B -> Str
 
-  #
   # Expands the sequence and returns the result: literal text as it stands, and
   # each interpolation through its own specification. This is the only way to get
   # the expansion — see [Trust](std.Fmt.trust).
@@ -3192,14 +2954,13 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[FmtSegment[V]] @Spread[Fm
   # Given arguments, it fills the [parameters](std.FmtParam) first. Positional
   # argument *i* fills `${#i}`, and a keyword argument fills `${#name}`:
   #
-  # - Holes inside a bound `Fmt` are filled too, depth first. Names are never
-  #   renumbered, so a nested `${#0}` is filled by argument `0` as well. The
-  #   checker tracks only the outer holes, so bindings for nested holes may
-  #   be reported as unused.
+  # - Holes inside a bound `Fmt` are filled too, depth first, by the same
+  #   arguments: a nested `${#0}` is filled by argument `0` as well. The type
+  #   checker sees only the outer holes, so it may report an argument for a
+  #   nested hole as unused.
   # - A filled hole keeps the parameter's specification and
   #   [`source`](std.FmtParam.source).
   # - A hole left unfilled, or an argument no hole consumed, is an error.
-  #
   #
   # ## Errors
   #
@@ -3219,12 +2980,10 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[FmtSegment[V]] @Spread[Fm
   # let stmt = t"select * from t where a = ${#0} and c = ${#name}"
   # assert_eq $stmt.format(1, name: "n") "select * from t where a = 1 and c = n"
   # ```
-  #
   pub def format self ...bindings @ Value -> Str
     ...
 
-  #
-  # `seq[i]` returns segment `i`: a [`Str`](std.Str) of literal text, a
+  # Returns a segment: a [`Str`](std.Str) of literal text, a
   # [`FmtValue`](std.FmtValue), or a [`FmtParam`](std.FmtParam).
   #
   # ```
@@ -3234,15 +2993,13 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[FmtSegment[V]] @Spread[Fm
   # ```
   #
   # Assigning to a segment raises an [`ImmutableError`](std.ImmutableError).
-  #
   @def (index)[K] self key@K -> IndexItem[{*FmtSegment[V]}, K]
   @def (index) self range@Range[Int] -> Seq[FmtSegment[V]]
   pub def (index)[K] self key@K -> IndexItem[{*FmtSegment[V]}, K]
     ...
 
-  #
-  # Iterating yields the segments in order, so a consumer can decide what to do
-  # with each.
+  # Returns an iterator over the segments in order, so a consumer can decide
+  # what to do with each.
   #
   # ```
   # for segment = greeting
@@ -3253,35 +3010,19 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[FmtSegment[V]] @Spread[Fm
   # [`term`](term.Text.sequences) walks a sequence segment by segment rather
   # than converting it, which is what lets styling interpolated into one survive
   # to the terminal.
-  #
   pub def (iter) self -> UnpackIter[FmtSegment[V]]
     ...
 
-  #
   # Two sequences are equal when their segments are. How a sequence was assembled
   # does not show. The text each interpolation records does: a segment carries its
   # [`source`](std.FmtValue.source), so `t"$name"` and `t"${name}"` are not
   # equal.
-  #
   pub def (eq) self other @ Value -> Bool
     ...
 
-  #
-  # `dbg` gives the source form, reconstructed from the literal text and each
-  # interpolation's [`source`](std.FmtValue.source). An interpolation built at
-  # runtime has no source, so its bound value's debug form stands in.
-  #
-  # `verbatim` — and with it the `!` conversion and command-argument position —
-  # gives the same source form, since that is what the sequence was written as.
-  # `str` and the display conversion raise a [`TypeError`](std.TypeError).
-  # [`format()`](std.Fmt.format) is the only expansion. See [Trust](std.Fmt.trust).
-  #
-  # ```
-  # let count = 3
-  # assert_eq (dbg t"n=${count:03d}") r#"t"n=${count:03d}""#
-  # assert_eq (verbatim t"n=${count:03d}") (dbg t"n=${count:03d}")
-  # ```
-  #
+  # Formats the sequence's source form for `dbg` and `verbatim`. Display
+  # formatting raises [`TypeError`](std.TypeError); see
+  # [Trust](std.Fmt.trust).
   pub def (fmt) self spec @ FmtSpec -> Str
     ...
 
@@ -3300,39 +3041,27 @@ pub class Module: @Spread[Tuple[Sym, Value]]
   pub def (spread) self -> Spread[Tuple[Sym, Value]]
     ...
 
-#
 # What [`getter`](std.getter) makes from a function of the object read.
 #
 # A class member holding one is a computed field: reading `obj.name` calls the
 # function with `obj`. A decorator that wraps a getter's function returns this
 # type by calling `getter` itself.
-#
 pub @class Getter[T, R]
   field func @Phantom[(T -> R)]
 
 
-#
 # Raised when attempting to mutate an immutable value.
-#
 #[mixable]
 pub class ImmutableError: RuntimeError
-  #
-  #
   # Builds an error reporting an attempt to mutate an immutable object.
-  #
   pub def (init) self
     ...
 
 
-#
 # Raised when a module import fails (e.g. module not found).
-#
 #[mixable]
 pub class ImportError: RuntimeError
-  #
-  #
   # Builds an error naming a module that could not be found.
-  #
   pub def (init)
     self
     # the module that could not be found
@@ -3341,25 +3070,18 @@ pub class ImportError: RuntimeError
     ...
 
 
-#
 # Raised when accessing an array or other indexed collection with an out-of-bounds
 # index.
-#
 #[mixable]
 pub class IndexError: RuntimeError
-  #
-  #
   # Builds an error reporting an out-of-range or otherwise invalid index.
-  #
   pub def (init) self
     ...
 
 
-#
 # 128-bit signed integers.
 #
 # The rounding methods return the receiver unchanged.
-#
 pub class Int: Num
   # Smallest representable integer.
   #[static]
@@ -3369,6 +3091,7 @@ pub class Int: Num
   #[static]
   pub field MAX @ Int = ...
 
+  # Converts a value to an integer.
   #
   # `Int` accepts an integer, a boolean, or an integral float. It rejects
   # fractional floats and interpretive conversions such as parsing strings.
@@ -3384,7 +3107,6 @@ pub class Int: Num
   # assert_eq (int "42") 42
   # assert_eq (int 3.14) 3
   # ```
-  #
   pub def (init) self
     ...
 
@@ -3451,14 +3173,11 @@ pub class Int: Num
 # internally by the iteration protocol and can be caught in `try`/`catch`
 # statements.
 pub class IterStop: Error
-  #
-  #
   # Builds the signal that an iterator is exhausted.
   pub def (init) self
     ...
 
 
-#
 # Abstract type for iterators, whose instances have the methods below. Built-in
 # iterators are `Iter`; a class that only implements [`(next)`](std.BaseIter)
 # is not.
@@ -3469,124 +3188,53 @@ pub class IterStop: Error
 # ```
 # assert_eq (type $ [1, 2, 3].iter()) $Iter
 # ```
-#
 #[mixable]
 pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
-  #
-  #
-  # Returns `true` if every yielded value is truthy.
-  #
-  # When `pred` is provided, it tests `pred(value)` instead.
-  #
-  # Empty iterators return `true`.
-  #
+  # Consumes the iterator and tests whether every value is truthy, or satisfies
+  # `pred`, as [`Iterable.all`](std.Iterable.all) does.
   pub def all self pred @ ((T) -> Value) = nil -> Bool
     ...
 
-  #
-  # Returns `true` if any yielded value is truthy.
-  #
-  # When `pred` is provided, it tests `pred(value)` instead.
-  #
-  # Empty iterators return `false`.
-  #
+  # Consumes the iterator and tests whether any value is truthy, or satisfies
+  # `pred`, as [`Iterable.any`](std.Iterable.any) does.
   pub def any self pred @ ((T) -> Value) = nil -> Bool
     ...
 
-  #
-  # Returns an iterator that yields this iterator followed by each additional
-  # iterable in sequence.
-  #
+  # Returns an iterator that yields this iterator's values followed by those of
+  # each additional iterable.
   pub def chain[*Us] self *values @ ...Iterable[Us] -> Iter[Union[T, ...Us]]
     ...
 
   @def chomp self @ Iter[Str] -> Iter[Str]
   @def chomp self @ Iter[Bin] -> Iter[Bin]
 
-  #
-  # Creates a wrapper `Iter` which removes one trailing line terminator (`\r\n` or
-  # `\n`) from each item, if present.
-  #
-  # ## Errors
-  #
-  # Getting an item raises [`TypeError`](std.TypeError) if the underlying
-  # `Iter` yields neither a `Str` nor a `Bin`.
-  #
-  # ## Example
-  #
-  # ```
-  # assert_eq [...["a\n", "b\r\n", "c"].chomp()] ["a", "b", "c"]
-  #
-  # for line = shell.stdin.chomp()
-  #   echo "got $line"
-  # ```
-  #
-  # Distinct from [`Str.trim_end`](std.Str), which is about whitespace generally
-  # and takes an optional character set. `chomp` is about a line terminator
-  # specifically and takes nothing.
-  #
+  # Returns an iterator with one trailing line terminator removed from each
+  # value, as [`Iterable.chomp`](std.Iterable.chomp) does.
   pub def chomp self -> Iter[Str | Bin]
     ...
 
-  #
-  # Consumes the iterator and returns the number of yielded values.
-  #
+  # Consumes the iterator and returns the number of values it yielded.
   pub def count self -> Int
     ...
 
   @def crimp self@Iter[Str] terminator@(Str | Bin) = nil -> Iter[Str]
   @def crimp self@Iter[Bin] terminator@(Str | Bin) = nil -> Iter[Bin]
 
-  #
-  # Creates a wrapper `Iter` which appends a line terminator to each item.
-  #
-  # The inverse of [`chomp`](#chomp), and the usual way to terminate values on
-  # their way into a byte stream.
-  #
-  # The terminator is appended **unconditionally**: an item that already ends in
-  # one gets a second.
-  #
-  # ## Errors
-  #
-  # Raises [`TypeError`](std.TypeError) for an item, or a terminator, that is
-  # neither a `Str` nor a `Bin`, or if a `Bin` terminator would leave a `Str` item
-  # invalid UTF-8.
-  #
-  # ## Example
-  #
-  # ```
-  # assert_eq [...["a", "b"].crimp()] ["a\n", "b\n"]
-  # assert_eq [...["a"].crimp("\r\n")] ["a\r\n"]
-  #
-  # run cmd stdin: (["one", "two"].crimp())
-  # ```
-  #
+  # Returns an iterator with a line terminator appended to each value, as
+  # [`Iterable.crimp`](std.Iterable.crimp) does.
   pub def crimp self terminator@(Str | Bin) = nil -> Iter[Str | Bin]
     ...
 
-  #
-  # Returns an iterator that yields `[index, value]` tuples.
-  #
-  # The first index is `0`.
-  #
+  # Returns an iterator of `(index, value)` tuples, counting from `0`.
   pub def enumerate self -> Iter[Tuple[Int, T]]
     ...
 
-  #
-  # Creates a wrapper `Iter` which yields each `value` from the wrapper iterator
-  # only if `pred(value)` is truthy.
-  #
+  # Returns an iterator of the values for which `pred` is truthy.
   pub def filter self pred @ ((T, <Value, >Value) -> Value) -> Iter[T]
     ...
 
-  #
-  # Consumes the iterator and returns the first value where `pred(value)` is truthy.
-  #
-  # ## Errors
-  #
-  # Raises [`RuntimeError`](std.RuntimeError) if no value matches and
-  # no fallback is provided.
-  #
+  # Consumes values up to and including the first for which `pred` is truthy,
+  # and returns it, as [`Iterable.find`](std.Iterable.find) does.
   pub def find[D = T]
     self
     pred @ ((T) -> Value)
@@ -3595,17 +3243,13 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   do -> (T | D)
     ...
 
-  #
-  # Consumes the iterator left-to-right, repeatedly applying `func(acc, value)`.
-  #
-  # Returns `init` unchanged if the iterator is empty.
-  #
+  # Consumes the iterator, accumulating a value as
+  # [`Iterable.fold`](std.Iterable.fold) does.
   pub def fold[A] self init@A func@((A, T) -> A) -> A
     ...
 
   @def kv[K, V] self @ Iter[Unpack[{K, V}]] -> Spread[K, V]
 
-  #
   # Adapts the remaining elements for keyed spreading.
   #
   # Each element must unpack into exactly two values without being consumed.
@@ -3615,47 +3259,29 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   # let entries = [("x", 1), ("y", 2)].iter()
   # assert_eq {...entries.kv()} {"x": 1, "y": 2}
   # ```
-  #
   pub def kv self -> Spread[{...}]
     ...
 
-  #
-  # Creates a wrapper `Iter` which yields `func(value)` for each `value` yielded by
-  # the wrapper iterator.
-  #
+  # Returns an iterator that maps each value through `func`.
   pub def map[U] self func @ ((T, <Value, >Value) -> U) -> Iter[U]
     ...
 
-  #
-  # Consumes the iterator and returns the maximum yielded value.
-  #
-  # ## Errors
-  #
-  # Raises [`IterStop`](std.IterStop) if the iterator is empty and no
-  # `default:` is provided.
-  #
+  # Consumes the iterator and returns the largest value, as
+  # [`Iterable.max`](std.Iterable.max) does.
   pub def max[D = T] self :default @ D = nil -> (T | D)
     ...
 
-  #
-  # Consumes the iterator and returns the minimum yielded value.
-  #
-  # ## Errors
-  #
-  # Raises [`IterStop`](std.IterStop) if the iterator is empty and no
-  # `default:` is provided.
-  #
+  # Consumes the iterator and returns the smallest value, as
+  # [`Iterable.min`](std.Iterable.min) does.
   pub def min[D = T] self :default @ D = nil -> (T | D)
     ...
 
-  #
   # Returns the next value from the iterator.
   #
   # ## Errors
   #
-  # Raises [`IterStop`](std.IterStop) when exhausted and no fallback
-  # is provided.
-  #
+  # Raises [`IterStop`](std.IterStop) when exhausted and there is no `default`
+  # or `else`.
   pub def next[D = T]
     self
     :default @ D = nil
@@ -3663,36 +3289,18 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   do -> (T | D)
     ...
 
-  #
-  # Returns an iterator that discards the first `n` values, then yields the rest.
-  #
-  # ## Errors
-  #
-  # | Exception                        | Condition           |
-  # | -------------------------------- | ------------------- |
-  # | [`TypeError`](std.TypeError)   | `n` is not an `Int` |
-  # | [`ValueError`](std.ValueError) | `n` is negative     |
-  #
+  # Returns an iterator that discards the first `n` values, then yields the
+  # rest, as [`Iterable.skip`](std.Iterable.skip) does.
   pub def skip self n @ Int -> Iter[T]
     ...
 
-  #
-  # Returns an iterator that yields at most `n` values.
-  #
-  # ## Errors
-  #
-  # | Exception                        | Condition           |
-  # | -------------------------------- | ------------------- |
-  # | [`TypeError`](std.TypeError)   | `n` is not an `Int` |
-  # | [`ValueError`](std.ValueError) | `n` is negative     |
-  #
+  # Returns an iterator that yields at most `n` values, as
+  # [`Iterable.take`](std.Iterable.take) does.
   pub def take self n @ Int -> Iter[T]
     ...
 
-  #
-  # Returns an iterator that yields one tuple for each step across this iterator
-  # and the additional iterables.
-  # The zipped iterator stops as soon as any input is exhausted.
+  # Returns an iterator of tuples across this iterator and the additional
+  # iterables, which stops at the end of the shortest.
   pub def zip[*Us] self *values @ ...Iterable[Us] -> Iter[Tuple[T, ...Us]]
     ...
 
@@ -3733,15 +3341,10 @@ pub @class UnpackIter[T]: Iter[T] Unpack[T, Rest: UnpackIter[T]]
   pub def (iter) self -> UnpackIter[T]
 
 
-#
 # Raised when a required key argument is not provided.
-#
 #[mixable]
 pub class MissingKeyError: RuntimeError
-  #
-  #
   # Builds an error naming a missing key item.
-  #
   pub def (init)
     self
     # the missing key
@@ -3750,15 +3353,10 @@ pub class MissingKeyError: RuntimeError
     ...
 
 
-#
 # Raised when a required positional argument is not provided.
-#
 #[mixable]
 pub class MissingPosError: RuntimeError
-  #
-  #
   # Builds an error naming a missing positional item.
-  #
   pub def (init)
     self
     # zero-based position of the missing item
@@ -3767,15 +3365,12 @@ pub class MissingPosError: RuntimeError
     ...
 
 
-#
 # The type object for the `nil` value.
 #
 # `Nil` is not constructible directly.
-#
 #[final]
 pub class Nil
 
-#
 # Acts as an empty iterator and a sink that discards every value.
 #
 # The [`std.null`](std.null) singleton is the only `Null` value. Use it to
@@ -3784,7 +3379,6 @@ pub class Nil
 # ```
 # run tool stdin: $null stdout: $null
 # ```
-#
 pub class Null: Iter[Never] @UnpackIter[Never] Sink[Value]
   # Ends the iteration immediately without yielding a value.
   pub def (next) self -> Never
@@ -3807,22 +3401,17 @@ pub class Null: Iter[Never] @UnpackIter[Never] Sink[Value]
     ...
 
 
-#
 # Raised on integer overflow.
-#
 #[mixable]
 pub class OverflowError: RuntimeError
-  #
-  #
   # Builds an error reporting numeric overflow.
-  #
   pub def (init) self
     ...
 
 
-#
 # Describes a numeric interval for iteration and slicing.
 pub class Range[T @ Num]: Iterable[T] @Spread[T]
+  # Creates a range from `start` to `end`, counting by `step`.
   #
   # ```
   # let bounded = (1..5)
@@ -3831,39 +3420,29 @@ pub class Range[T @ Num]: Iterable[T] @Spread[T]
   # let all = (..)
   # ```
   #
-  # `a..b` is half-open: it includes `a` and excludes `b`.
-  #
-  # Open-ended forms keep the missing endpoint as `nil` internally.
-  #
+  # `a..b` is half-open: it includes `a` and excludes `b`. An omitted endpoint
+  # is `nil`.
   pub def (init) self start@(T|nil) = nil end@(T|nil) = nil step@(T|nil) = nil
     ...
 
-  #
   # The ending value (exclusive), or `nil` for open-end ranges.
-  #
   #[getter]
   pub def end self -> (T | nil)
     ...
 
-  #
   # The starting value, or `nil` for open-start ranges.
-  #
   #[getter]
   pub def start self -> (T | nil)
     ...
 
-  #
   # The step size, or `nil` when unset.
-  #
   #[getter]
   pub def step self -> (T | nil)
     ...
 
-  #
   # Tests whether the given value is within the Range interval. For increasing
   # ranges (start < end), checks if value is in \[start, end). For decreasing
   # ranges (start > end), checks if value is in (end, start].
-  #
   #
   # ## Example
   #
@@ -3898,7 +3477,6 @@ pub class Range[T @ Num]: Iterable[T] @Spread[T]
     ...
 
 
-#
 # Stores an immutable sequence of positional items and symbol-keyed items.
 #
 # Records keep their items in order, and a key may repeat. A lookup finds the
@@ -3919,8 +3497,6 @@ pub class Range[T @ Num]: Iterable[T] @Spread[T]
 # let updated = old.with status: ready
 # ```
 pub class Record[...Ts]: Iterable[Entries[Ts]] @Index[Ts] @Spread[Ts] @Unpack[Ts, Rest: Unpack[Ts]]
-  #
-  #
   # Builds a record from one spreadable source of key-value pairs.
   #
   # ```
@@ -3942,9 +3518,7 @@ pub class Record[...Ts]: Iterable[Entries[Ts]] @Index[Ts] @Spread[Ts] @Unpack[Ts
   pub def (init) self source @ Spread[Ts]
     ...
 
-  #
   # Gets the value for a symbol or position, with an optional default.
-  #
   pub def get[D = nil]
     self
     key @ (Int | Sym)
@@ -3965,7 +3539,8 @@ pub class Record[...Ts]: Iterable[Entries[Ts]] @Index[Ts] @Spread[Ts] @Unpack[Ts
   # assert_eq (r.with status: ready) (status: "ready", name: "Alice")
   # ```
   #
-  # The result annotation does not yet describe which keys changed.
+  # The result is typed as a plain [`Record`](std.Record), so the type checker
+  # doesn't know its keys.
   #
   # ## Errors
   #
@@ -3976,8 +3551,9 @@ pub class Record[...Ts]: Iterable[Entries[Ts]] @Index[Ts] @Spread[Ts] @Unpack[Ts
   # Removes all occurrences of the keys in a new record.
   #
   # Missing and repeated keys are harmless. Remaining items keep their relative
-  # order, and the original is unchanged. Only symbol keys can be removed.
-  # The result annotation does not yet describe which keys were removed.
+  # order, and the original is unchanged. Only symbol keys can be removed. The
+  # result is typed as a plain [`Record`](std.Record), so the type checker
+  # doesn't know its keys.
   #
   # ```
   # let r = record name: Alice status: ready debug: true
@@ -3993,14 +3569,12 @@ pub class Record[...Ts]: Iterable[Entries[Ts]] @Index[Ts] @Spread[Ts] @Unpack[Ts
   pub def without self *keys@Sym -> Record
     ...
 
-  #
   # Number of items, counting each instance of a repeated key.
-  #
   #[getter]
   pub def len self -> Int
     ...
 
-  # Iterates record items as `[key, value]` pairs in order. A positional item's
+  # Iterates record items as `(key, value)` pairs in order. A positional item's
   # key is its position.
   pub def (iter) self -> UnpackIter[Entries[Ts]]
     ...
@@ -4018,29 +3592,20 @@ pub class Record[...Ts]: Iterable[Entries[Ts]] @Index[Ts] @Spread[Ts] @Unpack[Ts
     ...
 
 
-#
 # Sets are ordered, mutable collections with unique membership semantics.
 #
 # Iteration preserves insertion order. Reinserting an existing value is a no-op
 # and does not move it to the end.
-#
 pub class Set[T]: Iterable[T] @Spread[T]
-  #
-  #
   # Builds a set, from one iterable if given.
-  #
   pub def (init) self iterable @ Iterable[T] = nil
     ...
 
-  #
   # Returns the number of members.
-  #
-  #
   #[getter]
   pub def len self -> Int
     ...
 
-  #
   # Adds `value` if it is not already present.
   #
   # ## Example
@@ -4051,7 +3616,6 @@ pub class Set[T]: Iterable[T] @Spread[T]
   # s.add 2
   # assert_eq [...s] [1, 2, 3]
   # ```
-  #
   pub def add
     self
     # the value to insert
@@ -4059,7 +3623,6 @@ pub class Set[T]: Iterable[T] @Spread[T]
   do
     ...
 
-  #
   # Removes all members.
   #
   # ```
@@ -4067,14 +3630,10 @@ pub class Set[T]: Iterable[T] @Spread[T]
   # s.clear()
   # assert_eq $s.len 0
   # ```
-  #
   pub def clear self
     ...
 
-  #
   # Tests whether the Set contains `value`.
-  #
-  #
   pub def contains
     self
     # the value to test
@@ -4082,19 +3641,13 @@ pub class Set[T]: Iterable[T] @Spread[T]
   do -> Bool
     ...
 
-  #
   # Returns a shallow copy of the Set.
   #
   # Insertion order is preserved. Contained values are *not* recursively copied.
-  #
-  #
   pub def copy self -> Set[T]
     ...
 
-  #
   # Indicates whether a value was removed. Removes `value` if present.
-  #
-  #
   pub def delete
     self
     # the value to remove
@@ -4102,11 +3655,8 @@ pub class Set[T]: Iterable[T] @Spread[T]
   do -> Bool
     ...
 
-  #
   # Returns a new Set containing members from the receiver that are not present in
   # `other`.
-  #
-  #
   pub def diff[U]
     self
     # other Set
@@ -4114,11 +3664,8 @@ pub class Set[T]: Iterable[T] @Spread[T]
   do -> Set[T]
     ...
 
-  #
   # Returns a new Set containing members that are present in both sets, in
   # the receiver's insertion order.
-  #
-  #
   pub def intersect[U]
     self
     # other Set
@@ -4126,10 +3673,7 @@ pub class Set[T]: Iterable[T] @Spread[T]
   do -> Set[T]
     ...
 
-  #
   # Returns `true` when every member of the receiver is present in `other`.
-  #
-  #
   pub def is_subset[U]
     self
     # other Set
@@ -4137,10 +3681,7 @@ pub class Set[T]: Iterable[T] @Spread[T]
   do -> Bool
     ...
 
-  #
   # Returns `true` when every member of `other` is present in the receiver.
-  #
-  #
   pub def is_superset[U]
     self
     # other Set
@@ -4148,11 +3689,8 @@ pub class Set[T]: Iterable[T] @Spread[T]
   do -> Bool
     ...
 
-  #
   # Returns a new Set containing members present in exactly one of the two
   # sets.
-  #
-  #
   pub def sym_diff[U]
     self
     # other Set
@@ -4160,11 +3698,8 @@ pub class Set[T]: Iterable[T] @Spread[T]
   do -> Set[Union[T, U]]
     ...
 
-  #
   # Returns a new Set containing all members from `self`, then first-seen members
   # from `other`.
-  #
-  #
   pub def union[U]
     self
     # other Set
@@ -4172,7 +3707,6 @@ pub class Set[T]: Iterable[T] @Spread[T]
   do -> Set[Union[T, U]]
     ...
 
-  #
   # Iterates values in insertion order:
   #
   # ```
@@ -4188,24 +3722,18 @@ pub class Set[T]: Iterable[T] @Spread[T]
     ...
 
 
-#
 # What [`setter`](std.setter) makes from a function of the object assigned and
 # its new value.
 #
 # A class member holding one is a computed field: `obj.name = value` calls the
 # function with `obj` and `value`. A decorator that wraps a setter's function
 # returns this type by calling `setter` itself.
-#
 pub @class Setter[T, V]
   field func @Phantom[((T, V) -> nil)]
 
 
-#
 # Error raised to signal that a sink has been closed.
-#
 pub class SinkStop: Error
-  #
-  #
   # Builds the signal that a sink has been closed.
   #
   # ## Example
@@ -4217,16 +3745,11 @@ pub class SinkStop: Error
     ...
 
 
-#
 # Raised when an operation is invalid for the current object or runtime state,
 # such as using a closed handle or stale reference.
-#
 #[mixable]
 pub class StateError: RuntimeError
-  #
-  #
   # Builds an error reporting an operation attempted in the wrong state.
-  #
   pub def (init)
     self
     # description of the invalid state
@@ -4235,23 +3758,18 @@ pub class StateError: RuntimeError
     ...
 
 
-#
 # What [`getter`](std.getter) makes from a function with no parameters, the
 # getter of a static computed field.
-#
 pub @class StaticGetter[R]
   field func @Phantom[(() -> R)]
 
 
-#
 # What [`setter`](std.setter) makes from a function of only the new value, the
 # setter of a static computed field.
-#
 pub @class StaticSetter[V]
   field func @Phantom[(V -> nil)]
 
 
-#
 # Decorator placing a class member in the type-object namespace without making it
 # inheritable.
 #
@@ -4282,12 +3800,8 @@ pub @class StaticSetter[V]
 # for the full semantics.
 pub let static @ Value = ...
 
-#
 # Strings are immutable sequences of UTF-8 bytes.
-#
 pub class Str: @Index[Range[Int], Str]
-  #
-  #
   # Accepts a string or decodes UTF-8 binary data. The lowercase `str` function
   # instead returns the general-purpose textual representation of any value.
   #
@@ -4295,13 +3809,10 @@ pub class Str: @Index[Range[Int], Str]
   # assert_eq (Str b"hello") "hello"
   # assert_eq (str 42) "42"
   # ```
-  #
   pub def (init) self value @ Value
     ...
 
-  #
   # Returns the byte length of the string.
-  #
   #
   # ## Example
   #
@@ -4309,12 +3820,10 @@ pub class Str: @Index[Range[Int], Str]
   # assert_eq $"hello".len 5
   # assert_eq $"".len 0
   # ```
-  #
   #[getter]
   pub def len self -> Int
     ...
 
-  #
   # Iterates over the string's Unicode scalar values.
   #
   # Destructuring reads from the current position without advancing the iterator.
@@ -4344,9 +3853,7 @@ pub class Str: @Index[Range[Int], Str]
   pub def scalar_bounds self -> UnpackIter[Int]
     ...
 
-  #
   # Returns the Unicode scalar value encoded by a single-scalar string.
-  #
   #
   # ## Errors
   #
@@ -4359,16 +3866,16 @@ pub class Str: @Index[Range[Int], Str]
   # assert_eq ("A".scalar()) 65
   # assert_eq ("😀".scalar()) 128512
   # ```
-  #
   pub def scalar self -> Int
     ...
 
-  #
   # Removes one trailing line terminator.
   #
-  # One complete terminator — `\r\n` or `\n`, never a lone `\r` — and nothing else.
-  # A string without one is returned unchanged.
-  #
+  # One complete terminator — `\r\n` or `\n`, never a lone `\r` — and nothing
+  # else. A string without one is returned unchanged. Distinct from
+  # [`trim_end`](std.Str.trim_end), which is about whitespace generally and takes
+  # an optional character set. [`Iterable.chomp`](std.Iterable.chomp) does the
+  # same to each item of an iterable.
   #
   # ## Example
   #
@@ -4376,25 +3883,13 @@ pub class Str: @Index[Range[Int], Str]
   # assert_eq ("line\n".chomp()) "line"
   # assert_eq ("line\r\n".chomp()) "line"
   # assert_eq ("line".chomp()) "line"
-  # ```
-  #
-  # Distinct from [`trim_end`](#trim_end-chars), which is about whitespace
-  # generally and takes an optional character set:
-  #
-  # ```
   # assert_eq ("z  \n".chomp()) "z  "
   # assert_eq ("z  \n".trim_end()) "z"
   # ```
-  #
-  # [`Iter.chomp`](std.Iter.chomp) lifts this over an iterator — it is exactly
-  # `.map do |x| x.chomp()`, with the mapping done inline.
-  #
   pub def chomp self -> Str
     ...
 
-  #
   # Tests whether the string contains the given substring.
-  #
   #
   # ## Example
   #
@@ -4404,7 +3899,6 @@ pub class Str: @Index[Range[Int], Str]
   # assert (!"foobar".contains "baz")
   # assert ("foobar".contains "")  # empty string is always contained
   # ```
-  #
   pub def contains
     self
     # the substring to find
@@ -4412,16 +3906,13 @@ pub class Str: @Index[Range[Int], Str]
   do -> Bool
     ...
 
-  #
   # Tests whether the string ends with the given suffix.
-  #
   #
   # ## Example
   #
   # ```
   # assert ("foobar".ends_with "bar")
   # ```
-  #
   pub def ends_with
     self
     # the suffix string
@@ -4429,7 +3920,6 @@ pub class Str: @Index[Range[Int], Str]
   do -> Bool
     ...
 
-  #
   # Iterates over the string's extended grapheme clusters.
   #
   # Keeps combining sequences and emoji sequences together. Destructuring reads
@@ -4460,16 +3950,13 @@ pub class Str: @Index[Range[Int], Str]
   pub def grapheme_bounds self -> UnpackIter[Int]
     ...
 
-  #
   # Joins values from an input source using this string as a separator.
-  #
   #
   # ## Example
   #
   # ```
   # assert_eq (",".join ["a", "b", "c"]) "a,b,c"
   # ```
-  #
   pub def join
     self
     # iterable to join; uses the default input when omitted
@@ -4477,9 +3964,7 @@ pub class Str: @Index[Range[Int], Str]
   do -> Str
     ...
 
-  #
   # Returns the string converted to lowercase.
-  #
   #
   # ## Example
   #
@@ -4487,13 +3972,10 @@ pub class Str: @Index[Range[Int], Str]
   # assert_eq ("HELLO".lower()) "hello"
   # assert_eq ("Hello World".lower()) "hello world"
   # ```
-  #
   pub def lower self -> Str
     ...
 
-  #
   # Returns the string repeated `count` times.
-  #
   #
   # ## Example
   #
@@ -4501,7 +3983,6 @@ pub class Str: @Index[Range[Int], Str]
   # assert_eq ("ab".repeat 3) "ababab"
   # assert_eq ("ab".repeat 0) ""
   # ```
-  #
   pub def repeat
     self
     # non-negative repetition count
@@ -4509,10 +3990,8 @@ pub class Str: @Index[Range[Int], Str]
   do -> Str
     ...
 
-  #
   # Returns a new string with all non-overlapping occurrences of `from` replaced
   # with `to`.
-  #
   #
   # ## Example
   #
@@ -4521,7 +4000,6 @@ pub class Str: @Index[Range[Int], Str]
   # assert_eq ("banana".replace "na" "") "ba"
   # assert_eq ("abc".replace "" "-") "-a-b-c-"
   # ```
-  #
   pub def replace
     self
     # substring to replace
@@ -4531,10 +4009,8 @@ pub class Str: @Index[Range[Int], Str]
   do -> Str
     ...
 
-  #
   # Like `split`, but yields segments in **right-to-left** order (rightmost segment
   # first).
-  #
   #
   # ## Example
   #
@@ -4545,7 +4021,6 @@ pub class Str: @Index[Range[Int], Str]
   # # Negative limit: split from the left, yield right-to-left
   # assert_eq [..."a,b,c".rsplit "," limit: -1] ["b,c", "a"]
   # ```
-  #
   pub def rsplit
     self
     # the delimiter string
@@ -4561,10 +4036,8 @@ pub class Str: @Index[Range[Int], Str]
   do -> UnpackIter[Str]
     ...
 
-  #
   # Splits the string by the delimiter, returning an iterator that yields segments
   # in **left-to-right** order.
-  #
   #
   # ## Example
   #
@@ -4579,7 +4052,6 @@ pub class Str: @Index[Range[Int], Str]
   # assert_eq $base "archive.tar"
   # assert_eq $ext "gz"
   # ```
-  #
   pub def split
     self
     # the delimiter string
@@ -4596,9 +4068,7 @@ pub class Str: @Index[Range[Int], Str]
   do -> UnpackIter[Str]
     ...
 
-  #
   # Tests whether the string starts with the given prefix.
-  #
   #
   # ## Example
   #
@@ -4606,7 +4076,6 @@ pub class Str: @Index[Range[Int], Str]
   # assert ("foobar".starts_with "foo")
   # assert (!("foobar".starts_with "bar"))
   # ```
-  #
   pub def starts_with
     self
     # the prefix string
@@ -4614,9 +4083,7 @@ pub class Str: @Index[Range[Int], Str]
   do -> Bool
     ...
 
-  #
   # Removes whitespace (or specified characters) from both ends.
-  #
   #
   # ## Example
   #
@@ -4625,16 +4092,13 @@ pub class Str: @Index[Range[Int], Str]
   # assert_eq ("xxhelloxx".trim "x") "hello"
   # assert_eq ("xyhelloyx".trim ["x", "y"]) "hello"
   # ```
-  #
   pub def trim
     self
     chars @ (Str | Iterable[Str]) = nil
   do -> Str
     ...
 
-  #
   # Removes whitespace (or specified characters) from the end.
-  #
   #
   # ## Example
   #
@@ -4642,16 +4106,13 @@ pub class Str: @Index[Range[Int], Str]
   # assert_eq ("  hello  ".trim_end()) "  hello"
   # assert_eq ("xxhelloxx".trim_end "x") "xxhello"
   # ```
-  #
   pub def trim_end
     self
     chars @ (Str | Iterable[Str]) = nil
   do -> Str
     ...
 
-  #
   # Removes whitespace (or specified characters) from the start.
-  #
   #
   # ## Example
   #
@@ -4659,16 +4120,13 @@ pub class Str: @Index[Range[Int], Str]
   # assert_eq ("  hello  ".trim_start()) "hello  "
   # assert_eq ("xxhelloxx".trim_start "x") "helloxx"
   # ```
-  #
   pub def trim_start
     self
     chars @ (Str | Iterable[Str]) = nil
   do -> Str
     ...
 
-  #
   # Returns the string converted to uppercase.
-  #
   #
   # ## Example
   #
@@ -4676,14 +4134,11 @@ pub class Str: @Index[Range[Int], Str]
   # assert_eq ("hello".upper()) "HELLO"
   # assert_eq ("Hello World".upper()) "HELLO WORLD"
   # ```
-  #
   pub def upper self -> Str
     ...
 
-  #
   # Returns the string with the prefix removed if it matches, otherwise returns
   # the original string.
-  #
   #
   # ## Example
   #
@@ -4691,7 +4146,6 @@ pub class Str: @Index[Range[Int], Str]
   # assert_eq ("foobar".without_prefix "foo") "bar"
   # assert_eq ("foobar".without_prefix "baz") "foobar"
   # ```
-  #
   pub def without_prefix
     self
     # the prefix to remove
@@ -4699,17 +4153,14 @@ pub class Str: @Index[Range[Int], Str]
   do -> Str
     ...
 
-  #
   # Returns the string with the suffix removed if it matches, otherwise returns
   # the original string.
-  #
   #
   # ## Example
   #
   # ```
   # assert_eq ("foobar".without_suffix "bar") "foo"
   # ```
-  #
   pub def without_suffix
     self
     # the suffix to remove
@@ -4717,8 +4168,7 @@ pub class Str: @Index[Range[Int], Str]
   do -> Str
     ...
 
-  #
-  # Strings accept [`Range`](std.Range) values for slicing by byte position:
+  # Returns the bytes in a range as a new string.
   #
   # ```
   # assert_eq $"abcd"[1..3] "bc"
@@ -4728,26 +4178,20 @@ pub class Str: @Index[Range[Int], Str]
   # assert_eq $"foobar"[-3..] "bar"
   # ```
   #
-  # This returns a new string. Slice boundaries must still fall on valid UTF-8
-  # boundaries. Omitted `start` means `0`, omitted `end` means the string length,
-  # and negative endpoints count from the end.
-  # Indexes the value.
+  # The range must lie within the string, and its endpoints must fall on UTF-8
+  # character boundaries. Omitted `start` means `0`, omitted `end` means the
+  # string length, and negative endpoints count from the end.
   pub def (index) self range@Range[Int] -> Str
     ...
 
-  # Returns an iterator.
-  pub def (iter) self -> Iter[Str]
-    ...
 
-
-#
 # Mutable UTF-8 string buffer; the mutable counterpart to [`Str`](std.Str).
 #
 # `StrBuf` is a [sink](std.Sink), so it can be the target of a pipeline, of
-# [`strand.put`](strand), or of a
+# [`strand.put`](strand.put), or of a
 # [`run`](../../shell/external-programs.md#redirecting-io) redirect. `put` is
-# [`append`](#append-value): the value's string form goes in verbatim, with no
-# line terminator added.
+# [`append`](std.StrBuf.append): the value's string form goes in verbatim, with
+# no line terminator added.
 #
 # ```
 # let buf = StrBuf()
@@ -4768,10 +4212,7 @@ pub class Str: @Index[Range[Int], Str]
 # A `StrBuf` is not an [`Io`](io.Io), since bytes written in pieces can split a
 # character. An [`io.Cursor`](io.Cursor) over it takes bytes from anything that
 # writes to a stream, holding back a split character until it is complete.
-#
 pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
-  #
-  #
   # Builds a buffer, optionally seeded with the contents of an existing string.
   #
   # ## Example
@@ -4780,7 +4221,6 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   # let buf = StrBuf("hello")
   # assert_eq $buf.len 5
   # ```
-  #
   pub def (init)
     self
     # initial contents
@@ -4788,21 +4228,17 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   do
     ...
 
-  #
   # Returns the byte length of the buffer's current contents.
-  #
   #
   # ## Example
   #
   # ```
   # assert_eq (StrBuf("hello").len) 5
   # ```
-  #
   #[getter]
   pub def len self -> Int
     ...
 
-  #
   # Appends `value` to the buffer. `Str` input is copied byte-for-byte; anything
   # else is converted the same way [`str`](std.str) would convert
   # it, written directly into the buffer.
@@ -4815,7 +4251,6 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   # buf.append 42
   # assert_eq $buf.freeze() "foo42"
   # ```
-  #
   pub def append
     self
     # value to append
@@ -4823,7 +4258,6 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   do
     ...
 
-  #
   # Empties the buffer, retaining its allocated capacity.
   #
   # ```
@@ -4833,20 +4267,16 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   # buf.append "x"
   # assert_eq $buf.freeze() "x"
   # ```
-  #
   pub def clear self
     ...
 
-  #
   # Tests whether the buffer's contents contain the given substring.
-  #
   #
   # ## Example
   #
   # ```
   # assert (StrBuf("foobar").contains "oob")
   # ```
-  #
   pub def contains
     self
     # the substring to find
@@ -4854,7 +4284,6 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   do -> Bool
     ...
 
-  #
   # Returns an iterator that removes and yields up to `size` bytes at a time
   # from the front of the buffer as it's consumed.
   #
@@ -4862,7 +4291,6 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   # boundary, unless that would produce an empty chunk (`size` smaller than the
   # first remaining code point), in which case it rounds up instead so every
   # chunk yielded is non-empty.
-  #
   #
   # ## Example
   #
@@ -4872,32 +4300,24 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   # assert_eq $buf.len 0
   # ```
   #
-  # Draining never shifts the buffer's remaining contents proportionally to
-  # their length: consumed bytes are dropped by advancing an internal cursor,
-  # not by copying the tail down on every chunk. Other mutating methods (and
-  # `freeze`) settle this cursor transparently before they run, so indices
-  # passed to them are always relative to the buffer's current (undrained)
-  # content. Multiple `drain` iterators created from the same buffer share this
-  # cursor, so they interleave draining the same content rather than each
-  # redraining it independently.
-  #
+  # Draining doesn't move the remaining contents for each chunk, so its cost
+  # grows with the bytes drained, not with what is left. Indexes given to other
+  # methods count from the start of what remains. Several `drain` iterators over
+  # one buffer take turns removing from the same content.
   pub def drain
     self
-    # maximum bytes per chunk (defaults to 512 KiB)
+    # Maximum bytes per chunk; 512 KiB when omitted.
     size @ Int = nil
   do -> Iter[Str]
     ...
 
-  #
   # Tests whether the buffer's contents end with the given suffix.
-  #
   #
   # ## Example
   #
   # ```
   # assert (StrBuf("foobar").ends_with "bar")
   # ```
-  #
   pub def ends_with
     self
     # the suffix string
@@ -4905,7 +4325,6 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   do -> Bool
     ...
 
-  #
   # Appends the raw bytes of `value`, which must be a [`Str`](std.Str).
   #
   # ## Example
@@ -4915,7 +4334,6 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   # buf.extend "bar"
   # assert_eq $buf.freeze() "foobar"
   # ```
-  #
   pub def extend
     self
     # string to append
@@ -4923,11 +4341,9 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   do
     ...
 
-  #
   # Converts the buffer's current contents into an immutable [`Str`](std.Str)
   # in place, without copying, and empties the buffer. The buffer stays usable
   # afterward, and the returned string is unaffected by later mutation.
-  #
   #
   # ## Example
   #
@@ -4939,11 +4355,9 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   # buf.append "def"
   # assert_eq $frozen "abc"
   # ```
-  #
   pub def freeze self -> Str
     ...
 
-  #
   # Inserts `value` at the given byte index, shifting the rest of the buffer
   # right in place.
   #
@@ -4954,7 +4368,6 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   # buf.insert 3 "XYZ"
   # assert_eq $buf.freeze() "fooXYZbar"
   # ```
-  #
   pub def insert
     self
     # insertion point; must fall on a UTF-8 boundary
@@ -4964,10 +4377,8 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   do
     ...
 
-  #
   # Removes and returns the substring covered by `range`, shifting the rest of
   # the buffer left in place.
-  #
   #
   # ## Example
   #
@@ -4979,7 +4390,6 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   #
   # Unlike `insert`, `remove` only accepts a range — a scalar index would remove
   # a single UTF-8 code unit, which is rarely a useful result.
-  #
   pub def remove
     self
     # byte range to remove; must fall on UTF-8 boundaries
@@ -4987,16 +4397,13 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   do -> Str
     ...
 
-  #
   # Tests whether the buffer's contents start with the given prefix.
-  #
   #
   # ## Example
   #
   # ```
   # assert (StrBuf("foobar").starts_with "foo")
   # ```
-  #
   pub def starts_with
     self
     # the prefix string
@@ -5004,7 +4411,6 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   do -> Bool
     ...
 
-  #
   # Shrinks the buffer to `len` bytes, discarding anything past that point.
   #
   # ## Example
@@ -5014,7 +4420,6 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   # buf.truncate 3
   # assert_eq $buf.freeze() "foo"
   # ```
-  #
   pub def truncate
     self
     # new length; must fall on a UTF-8 boundary
@@ -5022,9 +4427,10 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   do
     ...
 
+  # Returns the text in a range as a new string.
   #
-  # `StrBuf` supports only range indexing and assignment, matching `Str` — a
-  # single UTF-8 code unit is rarely a useful result on its own:
+  # Like `Str`, `StrBuf` supports only range indexing and assignment, since a
+  # single byte is rarely useful on its own.
   #
   # ```
   # let buf = StrBuf("foobar")
@@ -5033,14 +4439,13 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   # assert_eq $buf.freeze() "fXYZbar"
   # ```
   #
-  # Range assignment may grow or shrink the buffer: the replacement doesn't need
-  # to be the same length as the range it replaces. Both the range and the
-  # assigned value's boundaries must land on UTF-8 code point boundaries.
-  #
+  # The range's endpoints must fall on UTF-8 character boundaries.
   pub def (index) self range@Range[Int] -> Str
     ...
 
-  # Assigns through an index.
+  # Replaces the text in a range. The replacement may differ in length from the
+  # range, growing or shrinking the buffer. The range's endpoints must fall on
+  # UTF-8 character boundaries.
   pub def (assign) self range@Range[Int] value@Str
     ...
 
@@ -5048,15 +4453,12 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
     ...
 
 
-#
 # A read-only view of a [`Struct`](std.Struct), covariant in its schema: a
 # `Struct[{a: Int}]` is a `BaseStruct[{a: (Int | Str)}]`. A parameter that only
 # reads a struct takes a `BaseStruct`, so it accepts structs with narrower items.
 #
 # `BaseStruct` is `Struct` at runtime, so only a struct is a `BaseStruct`.
-#
 pub class BaseStruct[S @ {...}]: @BaseIterable[Entries[S]] @Index[S] @Spread[S] @Unpack[S, Rest: Unpack[S]]
-  #
   # Gets the value for a symbol or position, with an optional default.
   #
   # ```
@@ -5064,7 +4466,6 @@ pub class BaseStruct[S @ {...}]: @BaseIterable[Entries[S]] @Index[S] @Spread[S] 
   # assert_eq (Struct.get s :name:) Alice
   # assert_eq (Struct.get s :port: default: 22) 22
   # ```
-  #
   #[class]
   pub def get[T @ {...}, K, D = nil]
     self
@@ -5075,7 +4476,6 @@ pub class BaseStruct[S @ {...}]: @BaseIterable[Entries[S]] @Index[S] @Spread[S] 
   do -> (IndexItem[T, K] | D)
     ...
 
-  #
   # Tests whether a struct has an item for a symbol or position.
   #
   # ```
@@ -5083,7 +4483,6 @@ pub class BaseStruct[S @ {...}]: @BaseIterable[Entries[S]] @Index[S] @Spread[S] 
   # assert (Struct.contains s :name:)
   # assert (!Struct.contains(s, :port:))
   # ```
-  #
   #[class]
   pub def contains self target @ BaseStruct[{...}] key @ (Int | Sym) -> Bool
     ...
@@ -5104,7 +4503,7 @@ pub class BaseStruct[S @ {...}]: @BaseIterable[Entries[S]] @Index[S] @Spread[S] 
   pub def (index)[K] self key@K -> IndexItem[S, K]
     ...
 
-  # Iterates items as `[key, value]` pairs in order. A positional item's key is
+  # Iterates items as `(key, value)` pairs in order. A positional item's key is
   # its position.
   pub def (iter) self -> UnpackIter[Entries[S]]
     ...
@@ -5118,7 +4517,6 @@ pub class BaseStruct[S @ {...}]: @BaseIterable[Entries[S]] @Index[S] @Spread[S] 
     ...
 
 
-#
 # A mutable sequence of positional and symbol-keyed items, whose plain names are
 # its keyed items. A struct has no methods of its own, so `s.name` reads the item
 # keyed `:name:` and `s.name = value` replaces or adds it. Calling `s.name args`
@@ -5135,11 +4533,9 @@ pub class BaseStruct[S @ {...}]: @BaseIterable[Entries[S]] @Index[S] @Spread[S] 
 # [`get`](std.BaseStruct.get) take the struct as their first argument, so they
 # can't collide with an item.
 #
-# The schema `S` types each item, so reading or writing a name the schema lacks
-# is an error.
-#
+# The schema `S` types each item, so the type checker reports reading or
+# writing a name the schema lacks.
 pub class Struct[S @ {...}]: BaseStruct[S] @Assign[S]
-  #
   # Builds a struct from one spreadable source of key-value pairs.
   #
   # ```
@@ -5174,10 +4570,8 @@ pub class Struct[S @ {...}]: BaseStruct[S] @Assign[S]
     ...
 
 
-#
 # Symbols are interned identifiers used for dictionary keys and enum-like
 # values.
-#
 #
 # ## Creating Symbols
 #
@@ -5227,26 +4621,19 @@ pub class Sym
     ...
 
 
-#
-# Raised when a strand times out. Timeout is cooperative and is observed at
-# suspend or interrupt-check points.
-#
+# Raised when a strand times out. As with cancellation, a strand raises it the
+# next time it suspends.
 #[mixable]
 pub class TimedOutError: RuntimeError
-  #
-  #
   # Builds an error reporting that a strand timed out.
-  #
   pub def (init) self
     ...
 
 
-#
 # Tuples are immutable, ordered sequences of values. They are produced by
 # certain operations such as iterating over key-value pairs. The `Tuple` type
 # object is in the prelude, so `Tuple(iterable)` is available without an
 # explicit import.
-#
 pub class Tuple[*Ts]:
   - @Spread[Ts]
   - @Unpack[Ts, Rest: Unpack[Ts]]
@@ -5254,8 +4641,6 @@ pub class Tuple[*Ts]:
   - @Index[Ts]
   - @Seq[Union[...Ts]]
 do
-  #
-  #
   # Builds a tuple from an iterable.
   #
   # The lowercase `tuple` factory instead collects its positional arguments
@@ -5271,7 +4656,6 @@ do
   #   # each pair is a tuple
   #   echo "$k: $v"
   # ```
-  #
   @def (init)[T]
     self @ Tuple[...T]
     # values to collect
@@ -5281,18 +4665,12 @@ do
   pub def (init) self iterable @ Value
     ...
 
-  #
   # Returns the number of elements.
-  #
-  #
   #[getter]
   pub def len self -> Int
     ...
 
-  #
   # Tests whether the tuple contains the given element (by equality).
-  #
-  #
   pub def contains
     self
     # the value to check
@@ -5300,19 +4678,13 @@ do
   do -> Bool
     ...
 
-  #
   # Returns a shallow copy of the tuple. Because tuples are immutable, the
   # returned copy may be the same object.
-  #
-  #
   pub def copy self -> Tuple[...Ts]
     ...
 
-  #
   # Retrieves the value at the given index. Returns `nil` if out of bounds and no
   # alternative is provided. Negative indexes count from the end.
-  #
-  #
   pub def get[D = nil]
     self
     # the index to access
@@ -5326,16 +4698,14 @@ do
   pub def iter self -> UnpackIter[Union[...Ts]]
     ...
 
-  #
-  # Returns an iterator yielding `[index, value]` pairs.
-  #
-  #
+  # Returns an iterator yielding `(index, value)` pairs.
   pub def pairs self -> UnpackIter[Tuple[Int, Value]]
     ...
 
   @def (index)[K] self key@K -> IndexItem[Ts, K]
   @def (index) self range@Range[Int] -> Tuple[...Union[...Ts]]
 
+  # Returns an element, or a new tuple for a slice.
   #
   # ```
   # let pair = {name: "Alice"}.pairs().next()
@@ -5345,8 +4715,6 @@ do
   # ```
   #
   # Tuples are immutable; indexed assignment is not supported.
-  #
-  # Tuples also accept [`Range`](std.Range) values for slicing:
   #
   # ```
   # let tup = Tuple [0, 1, 2, 3]
@@ -5358,9 +4726,8 @@ do
   # assert_eq $tup[Range nil nil -1] (tuple 3 2 1 0)
   # ```
   #
-  # Slice indexing returns a new tuple. Omitted `start` means `0`, omitted `end`
-  # means the tuple length, and negative endpoints count from the end. Negative
-  # steps reverse the slice.
+  # Omitted `start` means `0`, omitted `end` means the tuple length, and negative
+  # endpoints count from the end. Negative steps reverse the slice.
   pub def (index)[K] self key@K -> IndexItem[{*Union[...Ts]}, K]
     ...
 
@@ -5382,15 +4749,10 @@ do
     ...
 
 
-#
 # Raised when an operation receives a value of the wrong type.
-#
 #[mixable]
 pub class TypeError: RuntimeError
-  #
-  #
   # Builds an error reporting a value of the wrong type.
-  #
   pub def (init)
     self
     # description of the mismatch
@@ -5399,21 +4761,15 @@ pub class TypeError: RuntimeError
     ...
 
 
-#
 # The type of a class whose instances are `T`. `Type` is the type of all types
 # and cannot be constructed directly.
 pub class Type[T]: Func
   field instance @ Phantom[T]
 
-#
 # Raised when a key argument is unexpected or repeats a named parameter.
-#
 #[mixable]
 pub class UnexpectedKeyError: RuntimeError
-  #
-  #
   # Builds an error naming an unexpected key item.
-  #
   pub def (init)
     self
     # the unexpected key
@@ -5422,15 +4778,10 @@ pub class UnexpectedKeyError: RuntimeError
     ...
 
 
-#
 # Raised when an unexpected positional argument is passed.
-#
 #[mixable]
 pub class UnexpectedPosError: RuntimeError
-  #
-  #
   # Builds an error naming an unexpected positional item.
-  #
   pub def (init)
     self
     # zero-based position of the unexpected item
@@ -5439,29 +4790,19 @@ pub class UnexpectedPosError: RuntimeError
     ...
 
 
-#
 # Raised when an unsupported operation is attempted.
-#
 #[mixable]
 pub class UnsupportedError: RuntimeError
-  #
-  #
   # Builds an error reporting that an operation is not supported.
-  #
   pub def (init) self
     ...
 
 
-#
 # Raised when a value has an acceptable type but invalid contents, range, or
 # meaning for the operation.
-#
 #[mixable]
 pub class ValueError: RuntimeError
-  #
-  #
   # Builds an error reporting a value of the right type but unusable contents.
-  #
   pub def (init)
     self
     # description of the problem with the value
@@ -5470,7 +4811,6 @@ pub class ValueError: RuntimeError
     ...
 
 
-#
 # `Value` is the abstract supertype of all values.
 #
 # `Value` is not constructible directly. Every value has its members, and a
@@ -5508,14 +4848,9 @@ pub class Value
   pub def (verbatim) self -> Str
     ...
 
-#
 # Raised on integer division or modulo by zero.
-#
 #[mixable]
 pub class ZeroDivError: RuntimeError
-  #
-  #
   # Builds an error reporting division by an integer zero.
-  #
   pub def (init) self
     ...

@@ -198,8 +198,6 @@ class Operation
 # ## Example
 #
 # ```
-# import exec
-#
 # exec.run "./tool.dol"
 # exec.run "./tool.dol" app: "my-tool"
 # exec.run "./tool.dol" inject: {answer: 42}
@@ -245,8 +243,6 @@ do -> Value
 # ## Example
 #
 # ```
-# import exec
-#
 # let mod = exec.module "./lib/build.dol"
 # mod.main()
 #

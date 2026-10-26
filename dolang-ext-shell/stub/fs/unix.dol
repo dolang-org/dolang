@@ -218,7 +218,6 @@ pub class Path: fs.Path
 # Unix directory entries.
 pub class DirEntry: fs.DirEntry
   # The inode number of the entry.
-  #
   #[getter]
   pub def ino self -> Int
     ...
@@ -236,7 +235,6 @@ pub class FsMetadata: fs.FsMetadata
     ...
 
   # Free data blocks available to unprivileged users.
-  #
   #[getter]
   pub def blocks_available self -> Int
     ...
@@ -252,7 +250,6 @@ pub class FsMetadata: fs.FsMetadata
     ...
 
   # Free file nodes available to unprivileged users.
-  #
   #[getter]
   pub def files_available self -> Int
     ...
@@ -409,7 +406,6 @@ pub class Metadata: fs.Metadata
     ...
 
   # Whether the reparse-point attribute is set.
-  #
   #[getter]
   pub def reparse_point self -> (Bool | nil)
     ...

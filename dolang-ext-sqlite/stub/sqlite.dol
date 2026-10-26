@@ -61,8 +61,8 @@ pub class Busy: Error
 # An open database connection.
 #
 # Returned by [`open`](sqlite.open). A connection may only be used by one
-# strand at a time; concurrent access from another strand raises a concurrency
-# error.
+# strand at a time; concurrent access from another strand raises
+# [`ConcurrencyError`](std.ConcurrencyError).
 #
 # ## Busy retry {: #sqlite.Connection.busy-retry }
 #
@@ -72,8 +72,8 @@ pub class Busy: Error
 # a small random jitter, until it reaches `max_wait`. Passing `retries: 0`
 # disables retrying, so [`Busy`](sqlite.Busy) surfaces to the caller instead.
 #
-# Statements inside a transaction are not retried individually -- the
-# transaction is retried as a whole.
+# Inside a transaction, the whole transaction is retried instead; see
+# [`transaction`](sqlite.Connection.transaction).
 #
 # ## Example
 #
@@ -126,10 +126,7 @@ pub class Connection
   # ```
   pub def execute[S @ {*SqlValue, **SqlValue}]
     self
-    # SQL template. A [`Str`](std.Str) raises,
-    # because a `Str` cannot say which of its text is data. Only the literal
-    # text becomes SQL; an interpolated value is bound as a parameter, so it
-    # is data whatever it looks like. See [Parameter
+    # SQL template. See [Parameter
     # Binding](sqlite.Statement.parameter-binding).
     sql @ Fmt[SqlValue, S]
     # Values filling the template's `${#...}` parameters.
@@ -182,10 +179,9 @@ pub class Connection
   # raises. Call [`Transaction.commit`](sqlite.Transaction.commit) or
   # [`Transaction.rollback`](sqlite.Transaction.rollback) to finish it early.
   #
-  # A busy error inside the transaction raises immediately rather than
-  # retrying the failing statement: a rolled-back transaction has to start
-  # over anyway. The block is rolled back and re-invoked until it succeeds, is
-  # explicitly rolled back, or the connection's retry limit is exhausted.
+  # A statement that hits a busy error inside the block is not retried on its
+  # own. Instead the transaction is rolled back and the block runs again, with
+  # the same backoff and limit as [busy retry](sqlite.Connection.busy-retry).
   #
   # ## Example
   #
@@ -273,7 +269,8 @@ pub class Connection
 #
 # Only one query can be active on a statement at a time. Starting another
 # query, or executing the statement, invalidates the iterator the previous
-# [`query`](#query) returned, which then raises a concurrency error on use.
+# [`query`](sqlite.Statement.query) returned, which then raises
+# [`ConcurrencyError`](std.ConcurrencyError) on use.
 #
 # ```
 # open "mydb.sqlite" do |conn|
@@ -361,12 +358,13 @@ pub class Statement[S @ {*SqlValue, **SqlValue}]
 #
 # A row is a window onto the statement's current step, not a copy of it, so
 # only the most recently yielded row is valid; using an earlier one after the
-# iterator advances raises a concurrency error. Reusing or closing the
-# statement, or closing the connection, invalidates every row it yielded.
+# iterator advances raises [`ConcurrencyError`](std.ConcurrencyError). Reusing
+# or closing the statement, or closing the connection, invalidates every row it
+# yielded.
 #
 # Spreading is the exception: `[...stmt.query()]` yields rows that own copies
-# of their column values, so they survive the iterator advancing. Invalidating
-# the statement still invalidates them.
+# of their column values, so they survive the iterator advancing, though not
+# the statement being reused or closed.
 #
 # ```
 # # Valid only within the body of each step
@@ -406,8 +404,7 @@ pub class Row: @Index[Int | Str, Value] @Unpack[{...}, Rest: RowRest]
   #
   # ## Errors
   #
-  # Raises an index error when no column matches, and a type error when the
-  # key is neither an [`Int`](std.Int) nor a [`Str`](std.Str).
+  # [`IndexError`](std.IndexError) when no column matches.
   #
   # ## Example
   #

@@ -1,4 +1,6 @@
 # dolang: strict
+# Run commands or block-scoped operations inside a
+# [Toolbx](https://containertoolbx.org/) container.
 import _vfs proc time
   fs:
     - @Path
@@ -9,11 +11,24 @@ import _vfs proc time
   strand:
     - pipeline
 
+# Runs a command inside a toolbox container.
+#
+# ## Example
+#
+# ```
+# toolbx.run dnf list --installed name: fedora-toolbox-41
+# ```
 pub def run
+  # Program to run.
   cmd @ (Str | Path)
+  # Toolbox container. Defaults to the default toolbox.
   :name @ Str = nil
+  # Working directory in the container.
   :cd @ (Str | Path) = nil
+  # Environment overrides. `nil` unsets a variable, and `:INHERIT:` copies it
+  # from the calling context.
   :env @ BaseDict[Str | Sym, Value] = {}
+  # Arguments passed verbatim to `cmd`.
   *args @ Value
   <Iter[Value]
   >Sink[Str]
@@ -23,13 +38,25 @@ do -> nil
       --container $name
     -- env ...(_vfs.env_args cd env) $cmd ...args
 
-# Run a function inside a toolbox container.
+# Runs `block` inside a toolbox container.
 #
-# The block sees the toolbox filesystem and process environment.
+# Filesystem access, spawned programs, and environment use the toolbox for the
+# duration of the block.
+#
+# ## Example
+#
+# ```
+# toolbx.with do run dnf list --installed
+# ```
 pub def with[R]
+  # Block to run.
   block @ (() -> R)
+  # Toolbox container. Defaults to the default toolbox.
   :name @ Str = nil
+  # Initial working directory in the container.
   :cd @ (Str | Path) = nil
+  # Initial environment overrides. `nil` unsets a variable, and `:INHERIT:`
+  # copies it from the calling context.
   :env @ BaseDict[Str | Sym, Value] = {}
 do -> R
   let socket = "$(runtime_dir())/toolbox-vfs-$name"

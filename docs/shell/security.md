@@ -156,21 +156,29 @@ other way, returning which kind (`:UID:` or `:GID:`) the UUID resolved to
 alongside the id itself, since a bare UUID doesn't say which it is:
 
 ```
-import security.macos
-import security.unix: id
+import fs
+import security.macos:
+  - Acl
+  - Ace
+  - Mask
+  - uuid_for_uid
+  - id_for_uuid
+import security.unix:
+  - id
 
-let owner = security.macos.uuid_for_uid id().euid
+let owner = uuid_for_uid $id().euid
+let read = Mask(:READ_DATA:, :READ_ATTRIBUTES:, :READ_SECURITY:)
 let access = Acl $
   $ Ace.allow $owner mask: $read
 fs.set_acl config.ini $access
 
-let kind id = security.macos.id_for_uuid owner
+let kind id = id_for_uuid $owner
 echo "$kind $id"  # UID 501
 ```
 
 [`security.unix.user_name`](security.unix.user_name) and
 [`group_name`](security.unix.group_name) also accept a
-UUID directly on macOS, resolving it internally, so an ACE principal can be
+UUID directly on macOS, so an ACE principal can be
 turned into a name without a separate `id_for_uuid` call.
 
 ## Windows Access Tokens

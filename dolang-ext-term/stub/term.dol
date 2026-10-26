@@ -358,8 +358,8 @@ pub class Style: Func
 #
 # Nested `Text` values are flattened when composed, and an ANSI reset code in a
 # nested value restores the enclosing style. Terminal output functions render
-# `Text` with ANSI styling when stderr is a terminal and as plain text
-# otherwise.
+# `Text` with ANSI styling when the console
+# [can style](term.Console.can_style) and as plain text otherwise.
 #
 # ## Formatting {: #term.Text.formatting }
 #
@@ -373,11 +373,9 @@ pub class Style: Func
 # with every other `str` conversion: `"${label:6}"` is laid out in cells and
 # plain.
 #
-# The console is where the layout and the styling arrive together. Given a
-# [`FmtValue`](std.FmtValue) bound to a `Text`,
-# [`echo`](term.echo), [`print`](term.print),
-# [`text`](term.text) and a [`Style`](term.Style) apply the layout to the
-# encoded form themselves, in the same terminal cells, and keep the styling:
+# To keep the styling, pass a [`FmtValue`](std.FmtValue) bound to the `Text`
+# to [`echo`](term.echo), [`print`](term.print), [`text`](term.text) or a
+# [`Style`](term.Style). They lay it out in terminal cells themselves:
 #
 # ```
 # let label = text("界a", fg: :RED:)
@@ -385,15 +383,15 @@ pub class Style: Func
 # echo "${label:6}"                      # padded and plain
 # ```
 #
-# A specification asking for a debug or numeric rendering is no longer a
-# request for terminal presentation, and is sanitized like any other value.
+# A specification for a debug or numeric rendering drops the styling and
+# renders the `Text` like any other value.
 #
 # ## Sequences {: #term.Text.sequences }
 #
-# A `"..."` concatenates its interpolations as it is built, so a `Text` among
-# them is already flattened to its content by the time the console sees the
-# result. A [`t"..."`](std.Fmt) keeps them apart, and the console renders
-# each one for itself -- so styling survives interpolation, at any depth:
+# A `"..."` string converts its interpolations as it is built, so a `Text` in
+# one loses its styling. A [`t"..."`](std.Fmt) keeps them apart, and the
+# output functions render each one separately, so styling survives
+# interpolation at any depth:
 #
 # ```
 # let label = text("界a", fg: :RED:)
@@ -404,26 +402,17 @@ pub class Style: Func
 # echo t"<${framed:>12}>"      # each level lays out what the one inside rendered
 # ```
 #
-# Expanding a sequence this way is the console's own decision, not a
-# conversion: no conversion expands one, which is what stops a sequence from
-# arriving at a consumer already flattened. See
-# [Trust](std.Fmt.trust).
+# Only the output functions expand a sequence this way; converting one to a
+# string still drops the styling. Each segment is rendered as a separate
+# argument would be, so the rules above apply to it unchanged.
 #
-# Each segment is taken exactly as an argument in its own right would be, so
-# the rules above apply to it unchanged: a `Text` keeps its styling, a
-# specification asking for a debug or numeric rendering is sanitized, and
-# everything else is converted -- [`verbatim`](std) in argument
-# position, `str` inside a `Text` -- and sanitized.
-#
-# The exception is a [`FmtParam`](std.FmtParam). A parameter printed on its
-# own is just a name and shows itself as such, but a hole means nothing to the
-# console, so one inside a sequence raises a
+# A sequence containing a [`FmtParam`](std.FmtParam) hole raises a
 # [`ValueError`](std.ValueError).
 #
 # ## Example
 #
 # ```
-# let label = term.text ERROR fg: :RED: bold: true
+# let label = text ERROR fg: :RED: bold: true
 # echo $label " request failed"
 #
 # # Preserve ANSI escapes for a file or another process.
@@ -561,7 +550,8 @@ do -> R
 
 # Prints arguments separated by spaces, followed by a newline.
 #
-# Ordinary values are sanitized; [`Text`](term.Text) arguments retain their
+# Ordinary values are sanitized: escape sequences and control characters other
+# than newline and tab are removed. [`Text`](term.Text) arguments retain their
 # styling, as does a [`FmtValue`](std.FmtValue) bound to one -- see
 # [Formatting](term.Text.formatting). A [`Fmt`](std.Fmt) is expanded
 # segment by segment, so styling interpolated into one survives -- see
@@ -621,8 +611,8 @@ do -> Text
 # Prints concatenated values without separators or a trailing newline.
 #
 # Also accepts the [style options](term.style-options), for which
-# `:INHERIT:` is a no-op here. Styling is omitted when stderr is not a
-# terminal.
+# `:INHERIT:` is a no-op here. Styling is omitted when the console
+# [can't style](term.Console.can_style).
 #
 # ## Example
 #

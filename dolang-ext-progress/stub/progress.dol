@@ -132,7 +132,7 @@ pub @let Units = $
 # ```
 #
 # The [`Indicator`](progress.Indicator) is only valid inside its callback.
-# Using it after the callback returns raises a runtime error.
+# Using it after the callback returns raises [`StateError`](std.StateError).
 pub def show[R]
   # Total value. The indicator starts in bar mode
   # when given and in spinner mode otherwise; the mode changes with `total`.

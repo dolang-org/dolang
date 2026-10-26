@@ -38,7 +38,7 @@ pub class DateTime
   #
   # | Exception        | Condition                                           |
   # | ---------------- | --------------------------------------------------- |
-  # | `TypeError`      | Neither argument was given, or one has a wrong type |
+  # | `TypeError`      | Neither argument was given                          |
   # | `OverflowError`  | The combined timestamp does not fit                 |
   #
   # ## Example
@@ -68,10 +68,8 @@ pub class DateTime
   #
   # ## Errors
   #
-  # | Exception      | Condition                                |
-  # | -------------- | ---------------------------------------- |
-  # | `TypeError`    | `text` is not a [`Str`](std.Str)   |
-  # | `RuntimeError` | The input is not a valid RFC 3339 string |
+  # [`RuntimeError`](std.RuntimeError) if the input is not a valid RFC 3339
+  # string.
   #
   # ## Example
   #
@@ -159,10 +157,8 @@ pub class Date
   #
   # ## Errors
   #
-  # | Exception    | Condition                                                        |
-  # | ------------ | ---------------------------------------------------------------- |
-  # | `TypeError`  | An argument has the wrong type                                   |
-  # | `ValueError` | The month is out of range, or the components are not a real date |
+  # [`ValueError`](std.ValueError) if the month is out of range, or the
+  # components are not a real date.
   #
   # ## Example
   #
@@ -187,10 +183,8 @@ pub class Date
   #
   # ## Errors
   #
-  # | Exception    | Condition                                        |
-  # | ------------ | ------------------------------------------------ |
-  # | `TypeError`  | `text` is not a [`Str`](std.Str)           |
-  # | `ValueError` | The input is not a valid `YYYY-MM-DD` date       |
+  # [`ValueError`](std.ValueError) if the input is not a valid `YYYY-MM-DD`
+  # date.
   #[class]
   pub def parse_rfc
     self
@@ -231,10 +225,8 @@ pub class Date
   #
   # ## Errors
   #
-  # | Exception       | Condition                                  |
-  # | --------------- | ------------------------------------------ |
-  # | `TypeError`     | `days` is not an [`Int`](std.Int)    |
-  # | `OverflowError` | The result is outside the supported range  |
+  # [`OverflowError`](std.OverflowError) if the result is outside the
+  # supported range.
   #
   # ## Example
   #
@@ -252,10 +244,8 @@ pub class Date
   #
   # ## Errors
   #
-  # | Exception       | Condition                                  |
-  # | --------------- | ------------------------------------------ |
-  # | `TypeError`     | `days` is not an [`Int`](std.Int)    |
-  # | `OverflowError` | The result is outside the supported range  |
+  # [`OverflowError`](std.OverflowError) if the result is outside the
+  # supported range.
   pub def sub_days
     self
     # Days to subtract. May be negative.
@@ -473,10 +463,8 @@ pub class Duration
 #
 # ## Errors
 #
-# | Exception       | Condition                                     |
-# | --------------- | --------------------------------------------- |
-# | `TypeError`     | `duration` is not a duration or number        |
-# | `RuntimeError`  | The duration is negative, or a non-finite float |
+# [`RuntimeError`](std.RuntimeError) if the duration is negative, or a
+# non-finite float.
 #
 # ## Example
 #
@@ -493,16 +481,15 @@ do
 
 # Runs a block under a scoped timeout.
 #
-# When the duration elapses, the block's strand is interrupted. The interrupt is
-# delivered at the next suspend or interrupt-check point, so a block that never
-# reaches one runs to completion regardless. The timeout is scoped: it is torn
-# down when the block returns, however it exits.
+# When the duration elapses, the block's strand is interrupted. The interrupt
+# arrives when the block next waits, as for I/O or [`sleep`](time.sleep), so a
+# block that computes without waiting may run to completion. The timeout ends when
+# the block does, however it exits.
 #
 # ## Errors
 #
 # | Exception                                    | Condition                                          |
 # | -------------------------------------------- | -------------------------------------------------- |
-# | `TypeError`                                  | `duration` is not a duration or number             |
 # | `RuntimeError`                               | The duration is negative, or a non-finite float    |
 # | [`TimedOutError`](std.TimedOutError) | The timeout elapsed before the block completed     |
 #

@@ -22,10 +22,7 @@ pub @let DecodeValue = Bin
 #
 # ## Errors
 #
-# | Exception    | Condition                                                               |
-# | ------------ | ----------------------------------------------------------------------- |
-# | `TypeError`  | `text` is not a string or binary, or an option has the wrong type       |
-# | `ValueError` | The input is not valid base64, or `alphabet` is not a recognized symbol |
+# [`ValueError`](std.ValueError) if the input is not valid base64.
 #
 # ## Example
 #
@@ -55,13 +52,6 @@ do -> DecodeValue
   ...
 
 # Encodes a string or binary value as base64 text.
-#
-# ## Errors
-#
-# | Exception    | Condition                                                         |
-# | ------------ | ----------------------------------------------------------------- |
-# | `TypeError`  | `data` is not a string or binary, or an option has the wrong type |
-# | `ValueError` | `alphabet` is not a recognized symbol                             |
 #
 # ## Example
 #

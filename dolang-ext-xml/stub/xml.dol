@@ -7,10 +7,10 @@ import std:
 # A child of an XML element.
 pub @let Node = (Element | Comment | Str)
 
-# A parentless XML element.
+# An XML element: a name, attributes, and children.
 #
-# Elements can be shared or inserted into different trees. Serialization derives
-# namespace declarations from each node rather than from parent pointers.
+# An element has no link to a parent, so the same element can appear in several
+# trees.
 #
 # Attribute keys are local-name strings or `(namespace_uri, local_name)`
 # tuples. Tuple namespaces are URIs, not prefixes. Serialization uses a prefix
@@ -18,18 +18,16 @@ pub @let Node = (Element | Comment | Str)
 # and otherwise makes an element's namespace the default or generates a prefix.
 #
 # Changes are checked as they are made, so any tree without a cycle can be
-# serialized inside a document. Setting an invalid name, an empty namespace, or the `xmlns`
-# namespace raises `ValueError`, as does adding text or an attribute value
-# containing a character XML forbids. Adding a child other than an `Element`, `Comment`, or `Str` raises `TypeError`.
+# serialized inside a document. Setting an invalid name, an empty namespace, or
+# the `xmlns` namespace raises `ValueError`, as does adding text or an attribute
+# value containing a character XML forbids.
 pub class Element: @Index[{*(Str | (Str, Str)): Str, *Node}] @Assign[Str | (Str, Str), Str] @Spread[Node]
   # Creates an element, optionally with attributes and children.
   #
   # ## Errors
   #
-  # | Exception | Condition |
-  # | --- | --- |
-  # | `TypeError` | An attribute dict has an invalid key type or a value other than a `Str`, or a child is not an `Element`, `Comment`, or `Str`. |
-  # | `ValueError` | A name, string, or namespace declaration is invalid, or two attributes have the same expanded name. |
+  # [`ValueError`](std.ValueError) if a name, string, or namespace declaration
+  # is invalid, or two attributes have the same expanded name.
   #
   # ## Example
   #

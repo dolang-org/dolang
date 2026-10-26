@@ -9,6 +9,17 @@
 #
 # Exactly one of `image`, `bundle`, and `installer` is required.
 #
+# ### `image` {: #libvirt.create-image }
+#
+# A cloud image, such as a distribution's generic qcow2 image, optionally
+# compressed with gzip, xz, or zstd. It is unpacked once into the `app`'s data
+# directory and backs the disk of every domain created from it, so the image
+# itself is never modified. `os` is required.
+#
+# On first boot, cloud-init creates the guest user and applies `init`.
+# `create` then installs the Do build and waits for cloud-init to finish before
+# running any steps.
+#
 # ### `bundle` {: #libvirt.create-bundle }
 #
 # A bundle produced by [`Domain.export`](libvirt.Domain.export): a ZIP holding
@@ -2179,7 +2190,11 @@ do -> DomainImpl
 
 # References a libvirt domain by name and connection URI.
 #
-# Domains returned by `create` carry connection metadata used by `with`.
+# A domain made by [`create`](libvirt.create) records in its definition how to
+# reach the guest, so [`with`](libvirt.Domain.with) and
+# [`export`](libvirt.Domain.export) work on it, including after
+# [`attach`](libvirt.attach) in a later run. Other domains support only the
+# remaining methods.
 pub class Domain
   # Everything the domain can actually be asked to do. The members below are
   # the ones that are API; the rest of `DomainImpl` is `create`'s scaffolding.
@@ -2220,9 +2235,8 @@ pub class Domain
   pub def shutdown self
     self.#impl.shutdown()
 
-  # Asks the guest to reboot, without waiting for it to come back: what "back"
-  # means is the caller's probe, not the domain's state, which never leaves
-  # `:RUNNING:` across a reboot.
+  # Asks the guest to reboot without waiting for it to come back. The state
+  # stays `:RUNNING:` across a reboot.
   pub def reboot self
     self.#impl.reboot()
 
@@ -2244,10 +2258,10 @@ pub class Domain
   #
   # ## Errors
   #
-  # | Error        | Condition |
-  # | ------------ | -------------------------------------------------------- |
-  # | `StateError` | The domain is not shut off, or did not shut down cleanly and `force:` was not given |
-  # | `ValueError` | The domain has no `dolang:vm` metadata, does not have exactly one file-backed disk, or the destination is unusable |
+  # | Exception                      | Condition                                                                                                       |
+  # | ------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+  # | [`StateError`](std.StateError) | The domain is not shut off, or did not shut down cleanly and `force:` was not given                             |
+  # | [`ValueError`](std.ValueError) | The domain was not made by `create`, does not have exactly one file-backed disk, or the destination is unusable |
   #
   # ## Example
   #
@@ -2290,7 +2304,10 @@ pub class Domain
   do
     self.#impl.download $source $destination
 
-  # Undefines the domain and removes a validated managed overlay.
+  # Undefines the domain.
+  #
+  # For a domain made by [`create`](libvirt.create), this also removes the
+  # files `create` made for it.
   pub def undefine self
     self.#impl.undefine()
 
@@ -2298,9 +2315,9 @@ pub class Domain
   #
   # ## Errors
   #
-  # | Error        | Condition                     |
-  # | ------------ | ----------------------------- |
-  # | `ValueError` | The domain is not running     |
+  # | Exception                      | Condition                                                 |
+  # | ------------------------------ | --------------------------------------------------------- |
+  # | [`ValueError`](std.ValueError) | The domain was not made by `create`, or it is not running |
   #
   # ## Example
   #
@@ -3496,11 +3513,12 @@ class BundleSource: Source
 #
 # ## Errors
 #
-# | Exception      | Condition                                                            |
-# | -------------- | ----------------------------------------------------------------------- |
-# | `ValueError`   | None or more than one of `image`, `bundle`, and `installer` are given, `os` is omitted with `image`, an argument is given that `bundle` already answers or that the guest's provisioning method cannot act on, `arch` is not the host's, the bundle was exported from another `app`, or a domain named `name` already exists |
-# | `RuntimeError` | No forwarded SSH port could be allocated, or a host program the requested configuration needs is not on `PATH` |
-# | `TimedOutError` | The guest was not reachable within `wait_timeout` |
+# | Exception                            | Condition                                                                                                                                                                                                                                                                                                                    |
+# | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+# | [`ValueError`](std.ValueError)       | None or more than one of `image`, `bundle`, and `installer` are given, `os` is omitted with `image`, an argument is given that `bundle` already answers or that the guest's provisioning method cannot act on, `arch` is not the host's, the bundle was exported from another `app`, or a domain named `name` already exists |
+# | [`RuntimeError`](std.RuntimeError)   | No forwarded SSH port could be allocated, or a host program the requested configuration needs is not on `PATH`                                                                                                                                                                                                               |
+# | [`TimedOutError`](std.TimedOutError) | The guest was not reachable within `wait_timeout`                                                                                                                                                                                                                                                                            |
+# | [`StateError`](std.StateError)       | A step left the guest shut down or otherwise not running                                                                                                                                                                                                                                                                     |
 #
 # ## Example
 #
@@ -3573,12 +3591,10 @@ do -> R
 # Provisions a domain, shuts it down cleanly, exports it as a bundle, and
 # tears it down.
 #
-# This is the minting half of the gold-image workflow: `build` produces the
-# bundle, and `create bundle:` consumes it. Keeping the two passes separate is
-# the point — a caller that provisions on a cache miss and restores on a hit
-# would otherwise run its real work against two different guests, one of them
-# freshly cloud-inited, and only discover the divergence on the rarer path.
-# Build the bundle in its own pass and always start from it.
+# With [`create`](libvirt.create) `bundle:`, this makes up the gold-image
+# workflow. Build the bundle in its own pass and start every domain from it,
+# rather than provisioning on a cache miss and restoring on a hit, which runs
+# later work against two different guests.
 #
 # Preparation is the caller's to specify through the same `init:`, `add:`, and
 # `run:` arguments `create` takes; `run:` in particular is where

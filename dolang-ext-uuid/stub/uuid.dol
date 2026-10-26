@@ -100,7 +100,7 @@ pub class Guid
   # ```
   pub def (init)
     self
-    # GUID text, native packet, or `Guid`.
+    # GUID text, binary form, or `Guid`.
     value @ (Str | Bin | Guid)
   do
     ...
@@ -110,7 +110,7 @@ pub class Guid
   pub def generate self -> Guid
     ...
 
-  # The raw 16-byte native Windows in-memory GUID packet.
+  # The 16-byte binary form Windows uses for a GUID.
   #[getter]
   pub def bytes self -> Bin
     ...

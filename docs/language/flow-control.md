@@ -34,6 +34,42 @@ else
   echo F
 ```
 
+### `if` in `let` and Assignments
+
+`if` statements can be the right-hand side of `let` bindings and assignments:
+
+```
+let max = if (a > b)
+  a
+else
+  b
+
+let msg = if (count == 0)
+  "empty"
+else if (count == 1)
+  "one"
+else
+  "many"
+
+# Also works with assignment
+result = if error
+  get_error_message $error
+else
+  data
+```
+
+An `if` gives the result of the branch that runs, or `nil` if no branch runs:
+
+```
+let value = if true
+  42
+# value == 42
+
+value = if false
+  1
+# value == nil
+```
+
 ### `if let` / `if bind`
 
 A `let` or `bind` pattern after `if` makes the pattern match the condition.
@@ -80,42 +116,6 @@ echo "$k -> $v"
 throw, break, continue, or otherwise never return; falling through raises
 `std.RuntimeError`. See [Patterns](./patterns.md#let-bind-with-else) for scope
 and matching rules.
-
-### `if` in `let` and Assignments
-
-`if` statements can be the right-hand side of `let` bindings and assignments:
-
-```
-let max = if (a > b)
-  a
-else
-  b
-
-let msg = if (count == 0)
-  "empty"
-else if (count == 1)
-  "one"
-else
-  "many"
-
-# Also works with assignment
-result = if error
-  get_error_message $error
-else
-  data
-```
-
-An `if` gives the result of the branch that runs, or `nil` if no branch runs:
-
-```
-let value = if true
-  42
-# value == 42
-
-value = if false
-  1
-# value == nil
-```
 
 ### `match`
 
@@ -172,7 +172,7 @@ for i = Range 5
   echo $i
 ```
 
-Dictionaries iterate as `[key, value]` pairs. Use a pattern to unpack them:
+Dictionaries iterate as `(key, value)` tuples. Use a pattern to unpack them:
 
 ```
 for k v = {name: "Alice", age: 30}
@@ -199,7 +199,7 @@ for i = Range 100
 ```
 def find_incomplete configs
   for config = configs
-    config.get "host" else: do
+    config.get :host: else: do
       break
     process $config
   "done"
@@ -220,7 +220,7 @@ for i = Range 10
 
 ```
 for item = items
-  let id = item.get id else: do
+  let id = item.get :id: else: do
     continue
   echo "Processing $id"
 ```
@@ -249,13 +249,13 @@ assert_eq $result 3
 
 ```
 def validate_record record
-  for field = ["id", "name", "email"]
-    record.get field else: do
+  for field = [:id:, :name:, :email:]
+    record.get $field else: do
       return {valid: false, missing: field}
   {valid: true}
 
 let result = validate_record {name: "Alice", email: "alice@example.com"}
-# Returns: {valid: false, missing: "id"}
+# Returns: {valid: false, missing: :id:}
 ```
 
 ### `throw`

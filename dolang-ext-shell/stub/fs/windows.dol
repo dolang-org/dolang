@@ -356,7 +356,6 @@ pub class FsMetadata: fs.FsMetadata
     ...
 
   # Maximum path component length for the volume.
-  #
   #[getter]
   pub def component_length_max self -> Int
     ...
@@ -389,7 +388,6 @@ pub class Metadata: fs.Metadata
     ...
 
   # Whether the reparse-point attribute is set.
-  #
   #[getter]
   pub def reparse_point self -> Bool
     ...

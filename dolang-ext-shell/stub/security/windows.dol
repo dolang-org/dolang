@@ -46,7 +46,7 @@ import
 # | `:OWNER_RIGHTS:`                        | `S-1-3-4`      | `OW` | Owner rights                        |
 # | `:DIALUP:`                              | `S-1-5-1`      |      | Dialup                              |
 # | `:NETWORK:`                             | `S-1-5-2`      | `NU` | Network logon                       |
-# | `:BATCH:`                               | `S-1-5-3`      | `BU` | Batch logon                         |
+# | `:BATCH:`                               | `S-1-5-3`      |      | Batch logon                         |
 # | `:INTERACTIVE:`                         | `S-1-5-4`      | `IU` | Interactive logon                   |
 # | `:SERVICE:`                             | `S-1-5-6`      | `SU` | Service logon                       |
 # | `:ANONYMOUS:`                           | `S-1-5-7`      | `AN` | Anonymous logon                     |
@@ -115,7 +115,7 @@ pub @let WellKnownSid = $
   | :HIGH_LABEL:
   | :SYSTEM_LABEL:
 
-# A SID, built or spelled as its canonical string, its native packet, or a
+# A SID, built or spelled as its canonical string, its binary form, or a
 # well-known SID.
 pub @let SidSpec = (Sid | Str | Bin | WellKnownSid)
 
@@ -274,7 +274,7 @@ pub @let AceSpec = $
       ?successful: Bool
       ?failed: Bool
 
-# An ACL, built or given as its entries in packet order.
+# An ACL, built or given as its entries in order.
 #
 # A dictionary holds the entries positionally and may add a `revision:` key.
 #
@@ -332,8 +332,8 @@ pub @let SecDescOptions[S = SidSpec, A = AclSpec] = $
   # Resource-manager control byte, or `nil` to clear it
   ?rm_control: (Int | nil)
 
-# A security descriptor, built, given as a self-relative packet, or given as a
-# dictionary of [`SecDescOptions`](security.windows.SecDescOptions).
+# A security descriptor, built, given in self-relative binary form, or given as
+# a dictionary of [`SecDescOptions`](security.windows.SecDescOptions).
 pub @let SecDescSpec = $
   | SecDesc
   | Bin
@@ -713,7 +713,7 @@ pub class Sid
   # `ValueError` for a malformed representation.
   pub def (init)
     self
-    # Canonical string, native packet, or well-known SID.
+    # Canonical string, binary form, or well-known SID.
     value @ (Str | Bin | WellKnownSid)
   do
     ...
@@ -749,7 +749,7 @@ pub class Sid
   pub def lookup self -> SidName
     ...
 
-  # Returns the native Windows packet representation.
+  # Returns the binary form Windows uses.
   #
   # ## Example
   #
@@ -777,7 +777,7 @@ pub class SidName
   #[class]
   pub def lookup
     self
-    # Account name, or a SID as a `Sid`, native packet, or well-known SID.
+    # Account name, or a SID as a `Sid`, binary form, or well-known SID.
     value @ (Str | Sid | Bin | WellKnownSid)
   do -> SidName
     ...
@@ -814,7 +814,7 @@ pub class SidName
   pub def sid self -> Sid
     ...
 
-# Inspects the header and native packet of a Windows access-control entry.
+# A Windows access-control entry, with its header and binary form.
 #
 # An entry can also be written as an [`AceSpec`](security.windows.AceSpec)
 # wherever one is accepted.
@@ -854,7 +854,7 @@ pub class Ace
   pub def object_inherit self -> Bool
     ...
 
-  # Declared entry packet size.
+  # Size of the entry's binary form, as its header declares.
   #[getter]
   pub def size self -> Int
     ...
@@ -869,8 +869,8 @@ pub class Ace
   pub def type_code self -> Int
     ...
 
-  # Returns the exact native entry packet, including application or unknown
-  # data.
+  # Returns the entry's binary form exactly, including application or
+  # unknown data.
   pub def to_bin self -> Bin
     ...
 
@@ -1031,7 +1031,7 @@ pub class Acl
   # `ValueError` if revision 2 is given with an object entry.
   pub def (init)
     self
-    # Entries in packet order.
+    # Entries, in order.
     aces @ Iterable[Ace]
     # Native ACL revision.
     :revision @ (AclRevision | Int) = nil
@@ -1048,12 +1048,12 @@ pub class Acl
   pub def revision self -> (AclRevision | Int)
     ...
 
-  # Declared ACL packet size.
+  # Size of the ACL's binary form, as its header declares.
   #[getter]
   pub def size self -> Int
     ...
 
-  # Returns the exact native ACL packet.
+  # Returns the ACL's binary form exactly.
   pub def to_bin self -> Bin
     ...
 
@@ -1065,14 +1065,14 @@ pub class Acl
 # Component getters and their control flags raise `FieldError` when the
 # component was not requested. Loaded but absent components return `nil`.
 pub class SecDesc
-  # Parses a self-relative security descriptor packet.
+  # Parses a security descriptor in self-relative binary form.
   #
   # ## Errors
   #
-  # `ValueError` if the packet is malformed or not self-relative.
+  # `ValueError` if `packet` is malformed or not self-relative.
   @def (init)
     self
-    # Native self-relative packet.
+    # Self-relative binary form.
     packet @ Bin
   do
 
@@ -1140,8 +1140,8 @@ pub class SecDesc
 
   # The components that are present.
   #
-  # A descriptor parsed from a self-relative packet has all four components
-  # marked, because the packet carries no separate mask. One read from an
+  # A descriptor parsed from binary form has all four components marked,
+  # because the binary form carries no separate mask. One read from an
   # object may have fewer, depending on what was queried.
   #[getter]
   pub def mask self -> SecInfo
@@ -1208,7 +1208,7 @@ pub class SecDesc
   pub def sacl_protected self -> Bool
     ...
 
-  # Returns a canonical self-relative security descriptor packet.
+  # Returns the descriptor in canonical self-relative binary form.
   pub def to_bin self -> Bin
     ...
 
@@ -1370,7 +1370,7 @@ do -> Ace
 pub def acl
   # Native ACL revision. Defaults to the lowest revision the entries allow.
   :revision @ (AclRevision | Int) = nil
-  # Entries in packet order, spread with `...` to pass a collection.
+  # Entries, in order, spread with `...` to pass a collection.
   ...aces @ AceSpec
 do -> Acl
   ...

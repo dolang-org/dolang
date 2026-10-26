@@ -4,7 +4,7 @@
 # ## Usage
 #
 # ```
-# let source = "let x = 1 + 2"
+# let source = "let x = (1 + 2)"
 # let unit = compile "example.dol" $source
 # let bytecode = unit.emit()
 # ```
@@ -47,8 +47,7 @@ pub @let Prelude = $
 # A staged compilation unit.
 #
 # Provides diagnostics and document nodes for one source file before emitting
-# bytecode. A unit borrows and pins the source passed to
-# [`compile`](compile.compile).
+# bytecode.
 #
 # ## Example
 #
@@ -160,10 +159,8 @@ pub class Typelib
   #
   # ## Errors
   #
-  # | Exception    | Condition                                           |
-  # | ------------ | --------------------------------------------------- |
-  # | `TypeError`  | `bytes` is not `Bin`                                |
-  # | `ValueError` | `bytes` is malformed, or from another version of Do |
+  # [`ValueError`](std.ValueError) if `bytes` is malformed, or from another
+  # version of Do.
   pub def (init)
     self
     # Bytes from [`Unit.typelib`](compile.Unit.typelib).
@@ -223,10 +220,6 @@ pub class Node
 
   # The span of the comment block documenting the node, or `nil` where none
   # attaches.
-  #
-  # Every node answers, rather than only the kinds that can be documented:
-  # which of them those are is the compiler's determination, and a consumer
-  # that has to know it in advance gains nothing.
   #[getter]
   pub def doc self -> (Span | nil)
     ...
@@ -941,13 +934,14 @@ pub class Patch
   pub def sub self -> Str
     ...
 
-# A diagnostic location within an optional input unit.
+# Where part of a diagnostic applies: a span, and which unit it is in.
 #
-# A nil unit denotes the caller's local source. Unit indices belong to one input
-# collection; they are not persistent identities across collections.
-# Locations compare and hash by unit index and span.
+# A diagnostic from [`check`](compile.check) may point into any of the units
+# checked together. A unit index is meaningful only within the check that
+# produced it. Locations compare and hash by unit index and span.
 pub class SourceSpan
-  # Zero-based unit index, or nil for a local diagnostic.
+  # Zero-based index of the unit among those checked together, or `nil` for a
+  # location in the unit that reported the diagnostic.
   #[getter]
   pub def unit self -> (Int | nil)
     ...
@@ -999,11 +993,7 @@ pub class Pos
 #
 # ## Errors
 #
-# | Exception    | Condition                          |
-# | ------------ | ---------------------------------- |
-# | `TypeError`  | `source` is not `Str`              |
-# | `TypeError`  | `module` is present but not `Str`  |
-# | `ValueError` | `prelude` is malformed             |
+# [`ValueError`](std.ValueError) if `prelude` is malformed.
 #
 # ## Example
 #
@@ -1084,9 +1074,10 @@ do -> Unit
 # Its declarations are checked, but not its bodies, and a diagnostic in it is
 # located by line and column, without its source.
 #
-# The pipes `strand` gives pipeline and stream stages are checked as
-# [`proc.PipeSender`](proc.PipeSender) and
-# [`proc.PipeReceiver`](proc.PipeReceiver), which the shell's pipelines use.
+# [`strand.PipeSender`](strand.PipeSender) and
+# [`strand.PipeReceiver`](strand.PipeReceiver) are checked as the shell's
+# pipes, [`proc.PipeSender`](proc.PipeSender) and
+# [`proc.PipeReceiver`](proc.PipeReceiver).
 #
 # ## Errors
 #
@@ -1094,7 +1085,7 @@ do -> Unit
 # | ------------------ | --------------------------------------------------- |
 # | `ValueError`       | A unit was compiled without `typecheck: true`       |
 # | `ValueError`       | Two units are compiled as the same module           |
-# | `std.StateError`   | A unit was emitted, or a typelib is given twice     |
+# | `StateError`       | A unit was emitted, or a typelib is given twice     |
 #
 # ## Example
 #
