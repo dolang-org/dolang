@@ -51,6 +51,12 @@ assert     (0 < max)
 assert     (0 <= max)
 assert_not (0 > max)
 assert_not (0 >= max)
+# Int/Float comparisons below magnitude 1
+assert_ne  0.5 0
+assert     (0.5 > 0)
+assert     (-0.5 < 0)
+assert     (0.5 < 1)
+assert     (-0.5 > -1)
 # Boolean equality
 assert_not (true == false)
 assert_not (false == true)

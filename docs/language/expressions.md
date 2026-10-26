@@ -100,8 +100,12 @@ assert_eq $arr[2..] [2, 3]
 assert_eq $arr[..] [0, 1, 2, 3]
 ```
 
-Bounded ranges are iterable. `a..` is also iterable and unbounded. `..b` and
-`..` are not iterable because they have no starting value.
+Ranges are iterable. A missing start counts from 0, and `a..` and `..` are
+unbounded.
+
+Iteration counts up by 1 unless [`Range`](std.Range) is given a step. A range
+whose end lies on the wrong side of its start is empty, so `5..1` has no
+values. Count down with a negative step: `Range 5 1 -1` yields 5, 4, 3, 2.
 
 ## Compact Expressions
 
