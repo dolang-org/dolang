@@ -454,8 +454,10 @@ const _: () = {
     send::<flow::Results>();
     sync::<cfg::Ir>();
     sync::<flow::Layout>();
-    // A check's results outlive its units
+    // A check's results outlive its units, and are shared among the threads
+    // that query them
     owned::<Analysis>();
+    sync::<Analysis>();
 };
 
 /// Check every unit with [`check_unit`], on a pool of `threads` threads, else the

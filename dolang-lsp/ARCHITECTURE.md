@@ -32,7 +32,10 @@ due. A check has the document's unit, compiled as its module if it lies under
 the configured module path and as a script otherwise. The unchanged unit of a
 save keeps its check. The check publishes the compile diagnostics again,
 merged with the checker's, but only while the stored document still has the
-stamp it checked.
+stamp it checked. The check also keeps the checker's analysis, which the applier
+attaches to that stored document; a saved unit's kept check comes with its
+analysis. Hover asks the analysis what the checker concluded at the cursor, and
+for a variable shows its name and type above the declaration's doc text.
 
 A check resolves imports through the workspace (`workspace.rs`), which holds a
 store for each module path, plus one shared by configurations without one. A
