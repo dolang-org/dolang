@@ -25,7 +25,11 @@ use dolang_compile::{
     diag, typeck,
 };
 
-use crate::{doc_index, module_path::ModulePath, typelib_index};
+use crate::{
+    doc_index,
+    module_path::ModulePath,
+    workspace::{Resolved, Workspace},
+};
 
 const TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
     SemanticTokenModifier::DEFAULT_LIBRARY,
@@ -37,8 +41,6 @@ const CONFIG_FILE_NAME: &str = ".dolang-lsp.toml";
 /// How long a document's edits must settle before it is type checked
 const CHECK_DELAY: Duration = Duration::from_millis(300);
 /// The most module sources one check compiles from the module path
-const MAX_MODULES: usize = 512;
-
 const LEGEND_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::ENUM_MEMBER,
     SemanticTokenType::OPERATOR,
@@ -614,7 +616,6 @@ impl Stamp {
 struct Document {
     stamp: Stamp,
     /// The unit the projection came from, which holds the document's source
-    #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     unit: Arc<Unit<'static>>,
     tokens: Vec<SemanticToken>,
     /// Token range to the declaration it names, sorted by range start
@@ -672,7 +673,7 @@ impl Import {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Settings {
     pub(crate) prelude: Vec<Import>,
-    pub(crate) modules: Option<ModulePath>,
+    pub(crate) modules: Option<Arc<ModulePath>>,
 }
 
 #[derive(Debug, Default)]
@@ -680,6 +681,8 @@ struct Config {
     root: Option<PathBuf>,
     workspaces: Vec<PathBuf>,
     settings: HashMap<PathBuf, Arc<Settings>>,
+    /// Whether the client lets the server register file watchers
+    watch: bool,
 }
 
 type Documents = Arc<Mutex<HashMap<Uri, Arc<Document>>>>;
@@ -724,6 +727,8 @@ enum Request {
     Compile(Job),
     /// The document closed in the given epoch
     Close(Uri, u64),
+    /// Module sources on disk changed
+    Files(Vec<PathBuf>),
 }
 
 enum Event {
@@ -771,8 +776,7 @@ struct Worker {
     check_delay: Option<Duration>,
     /// When each document with an unchecked unit is due to be checked
     pending: HashMap<Uri, Instant>,
-    typelibs: Typelibs,
-    sources: Sources,
+    workspace: Workspace,
 }
 
 impl Worker {
@@ -815,6 +819,7 @@ impl Worker {
                             later.uri == *uri && later.stamp.is_some_and(|later| later >= *stamp)
                         }
                         Request::Close(later, epoch) => later == uri && stamp.epoch <= *epoch,
+                        Request::Files(_) => false,
                     }),
                     _ => false,
                 })
@@ -824,6 +829,10 @@ impl Worker {
                     Request::Compile(_) if superseded => {}
                     Request::Compile(job) => self.compile(job),
                     Request::Close(uri, epoch) => self.close(uri, epoch),
+                    Request::Files(paths) => {
+                        let stale = self.workspace.files(&paths);
+                        self.recheck(stale);
+                    }
                 }
             }
         }
@@ -890,6 +899,8 @@ impl Worker {
             }
             (None, None) => diagnostics.clone(),
         };
+        let stale =
+            (self.workspace).update(&uri, &path, settings.as_deref(), module.as_deref(), &unit);
         self.open.insert(
             uri.clone(),
             Open {
@@ -902,6 +913,7 @@ impl Worker {
                 checked,
             },
         );
+        self.recheck(stale);
         _ = self.events.send(Event::Projected {
             uri,
             document,
@@ -919,27 +931,21 @@ impl Worker {
             return;
         }
         let start = Instant::now();
+        let workspace = &mut self.workspace;
         let checked = panic::catch_unwind(AssertUnwindSafe(|| {
-            let imports = Imports {
-                modules: (open.settings.as_ref()).and_then(|settings| settings.modules.as_ref()),
-                typelibs: &mut self.typelibs,
-                sources: &mut self.sources,
-            };
-            check_document(
-                &uri,
-                &open.unit,
-                open.module.as_deref(),
-                &open.encoding,
-                imports,
-            )
+            let resolved = workspace.resolve(&uri)?;
+            let checked = check_document(&uri, &open.unit, &open.encoding, &resolved);
+            Some((checked, resolved.stale))
         }));
         log::debug!("checked {} in {:?}", uri.as_str(), start.elapsed());
         // The compile diagnostics already published are all there is to say
         // about a unit the checker can't take
-        let checked = checked.unwrap_or_else(|_| {
-            log::error!("failed to check {}", uri.as_str());
-            None
-        });
+        let (checked, stale) = checked
+            .unwrap_or_else(|_| {
+                log::error!("failed to check {}", uri.as_str());
+                None
+            })
+            .unwrap_or_default();
         open.checked = Some(checked.clone().unwrap_or_default());
         if let Some(checked) = checked {
             _ = self.events.send(Event::Checked {
@@ -947,6 +953,20 @@ impl Worker {
                 stamp: open.stamp,
                 diagnostics: [&open.diagnostics[..], &checked].concat(),
             });
+        }
+        self.recheck(stale);
+    }
+
+    /// Schedules checks of open documents whose checks a change made stale.
+    fn recheck(&mut self, stale: HashSet<Uri>) {
+        for uri in stale {
+            let Some(open) = self.open.get_mut(&uri) else {
+                continue;
+            };
+            open.checked = None;
+            if let Some(delay) = self.check_delay {
+                self.pending.insert(uri, Instant::now() + delay);
+            }
         }
     }
 
@@ -958,6 +978,8 @@ impl Worker {
         {
             self.open.remove(&uri);
             self.pending.remove(&uri);
+            let stale = self.workspace.close(&uri);
+            self.recheck(stale);
         }
         let closed = self.closed.entry(uri.clone()).or_default();
         *closed = (*closed).max(epoch);
@@ -1032,7 +1054,7 @@ async fn publish(client: Client, documents: Documents, mut events: UnboundedRece
 /// Compiles a document as the server projects it, as `module` if it is one.
 ///
 /// A module has only the language's prelude; a script also has the configured one.
-fn compile_document(
+pub(crate) fn compile_document(
     path: &Path,
     text: String,
     settings: Option<&Settings>,
@@ -1080,121 +1102,16 @@ fn compile_document(
     config.unit(path, text)
 }
 
-/// The bundled typelibs, decoded as checks first need them.
-#[derive(Default)]
-struct Typelibs(HashMap<String, Option<typeck::Typelib<'static>>>);
-
-impl Typelibs {
-    /// A bundled module's typelib, decoded the first time a check needs it.
-    fn get(&mut self, name: &str) -> Option<&typeck::Typelib<'static>> {
-        (self.0.entry(name.to_owned()))
-            .or_insert_with(|| {
-                let bytes = typelib_index::lookup(name)?;
-                typeck::Typelib::read(bytes)
-                    .inspect_err(|err| log::error!("bundled typelib {name} is unreadable: {err}"))
-                    .ok()
-            })
-            .as_ref()
-    }
-}
-
-/// The units compiled from module path sources, by canonical path, with the
-/// module each was compiled as.
-#[derive(Default)]
-struct Sources(HashMap<PathBuf, (String, Arc<Unit<'static>>)>);
-
-impl Sources {
-    /// A module's source compiled as the module, reusing the last unit for the
-    /// same text.
-    fn compile(&mut self, path: PathBuf, text: String, module: &str) -> Arc<Unit<'static>> {
-        if let Some((name, unit)) = self.0.get(&path)
-            && name == module
-            && unit.source() == text
-        {
-            return unit.clone();
-        }
-        let mut config = CompileConfig::new();
-        config
-            .mode(Mode::Module {
-                name: module.to_owned().into(),
-            })
-            .recover(true)
-            .typecheck(true);
-        let unit = Arc::new(config.unit(&path, text));
-        self.0.insert(path, (module.to_owned(), unit.clone()));
-        unit
-    }
-}
-
-/// Where a check finds the modules a document imports.
-struct Imports<'a> {
-    modules: Option<&'a ModulePath>,
-    typelibs: &'a mut Typelibs,
-    sources: &'a mut Sources,
-}
-
-impl Imports<'_> {
-    /// The sources and bundled typelibs of the modules a unit imports, directly
-    /// or through other modules, each once.  A module path source is preferred
-    /// to a bundled typelib, which is used only if the module path allows.
-    ///
-    /// `module` is the unit's own module, which nothing replaces.  The `proc`
-    /// module is always wanted, for the pipe types `strand` stands for.
-    fn resolve(
-        &mut self,
-        unit: &Unit<'_>,
-        module: Option<&str>,
-    ) -> (
-        Vec<(String, Arc<Unit<'static>>)>,
-        Vec<&typeck::Typelib<'static>>,
-    ) {
-        let mut queue: Vec<String> = unit.imports().into_iter().map(str::to_owned).collect();
-        queue.push("proc".to_owned());
-        let mut seen: HashSet<String> = module.map(str::to_owned).into_iter().collect();
-        let mut units = Vec::new();
-        let mut bundled = Vec::new();
-        while let Some(name) = queue.pop() {
-            if !seen.insert(name.clone()) {
-                continue;
-            }
-            if let Some((path, text)) = self.modules.and_then(|modules| modules.open(&name)) {
-                if units.len() == MAX_MODULES {
-                    log::error!("a check needs more than {MAX_MODULES} module sources");
-                    continue;
-                }
-                let unit = self.sources.compile(path, text, &name);
-                queue.extend(unit.imports().into_iter().map(str::to_owned));
-                units.push((name, unit));
-                continue;
-            }
-            if self.modules.is_some_and(|modules| !modules.bundled) {
-                continue;
-            }
-            if let Some(typelib) = self.typelibs.get(&name) {
-                queue.extend(typelib.imports().into_iter().map(str::to_owned));
-                bundled.push(name);
-            }
-        }
-        let mut typelibs: Vec<_> = (bundled.iter())
-            .filter_map(|name| self.typelibs.0[name].as_ref())
-            .collect();
-        typelibs.sort_by_key(|typelib| typelib.module());
-        (units, typelibs)
-    }
-}
-
-/// Type checks a document's unit, as `module` if it is one, against the
-/// modules it imports.
+/// Type checks a document's unit against the modules it imports.
 ///
 /// Returns the checker's diagnostics located in the document, or `None` when the
-/// unit failed to compile and can't be checked.  An import found neither on the
-/// module path nor among the bundled typelibs is reported as not found.
+/// unit failed to compile and can't be checked.  An import `resolved` lacks is
+/// reported as not found.
 fn check_document(
     uri: &Uri,
     unit: &Unit<'static>,
-    module: Option<&str>,
     encoding: &PositionEncodingKind,
-    mut imports: Imports<'_>,
+    resolved: &Resolved<'_>,
 ) -> Option<Vec<Diagnostic>> {
     let mut builder = typeck::Builder::new();
     // The shell's pipelines connect stages with `proc`'s pipes
@@ -1207,8 +1124,7 @@ fn check_document(
             return None;
         }
     };
-    let (units, typelibs) = imports.resolve(unit, module);
-    for (name, source) in &units {
+    for (name, source) in &resolved.units {
         match builder.unit(source) {
             // A source that failed to compile is left out, and imports of its
             // module are reported as not found
@@ -1217,7 +1133,7 @@ fn check_document(
             Err(err) => log::error!("cannot check against {name}: {err}"),
         }
     }
-    for typelib in typelibs {
+    for &typelib in &resolved.typelibs {
         if let Err(err) = builder.typelib(typelib) {
             log::error!("cannot check against {}: {err}", typelib.module());
         }
@@ -1414,8 +1330,7 @@ impl Backend {
             closed: HashMap::new(),
             check_delay,
             pending: HashMap::new(),
-            typelibs: Typelibs::default(),
-            sources: Sources::default(),
+            workspace: Workspace::default(),
         };
         // The thread exits once the backend drops its sender, and the applier
         // once the thread drops its own
@@ -1512,6 +1427,37 @@ impl Backend {
         }
     }
 
+    /// Rereads the configurations in `dirs`, resubmitting the open documents
+    /// under them so each finds the configuration it now has.
+    async fn reconfigure(&self, dirs: &[PathBuf]) {
+        {
+            let mut guard = self.config.lock().await;
+            for dir in dirs {
+                guard.settings.remove(dir);
+            }
+        }
+        // An edit already past its settings lookup has its revision by now, so
+        // the newest revision of each is what to compile again
+        let revisions: Vec<_> = {
+            let epochs = self.epochs.lock().expect("epochs lock poisoned");
+            (epochs.revisions.iter())
+                .filter(|(uri, _)| {
+                    uri_to_file_path(uri)
+                        .is_some_and(|path| dirs.iter().any(|dir| path.starts_with(dir)))
+                })
+                .map(|(uri, (_, revision))| (uri.clone(), revision.clone()))
+                .collect()
+        };
+        for (uri, revision) in revisions {
+            let Ok(document) = revision.await else {
+                continue;
+            };
+            let (done, _) = oneshot::channel();
+            let text = document.unit.source().to_owned();
+            self.submit(uri, text, Some(document.stamp), done).await;
+        }
+    }
+
     async fn find_settings(&self, path: &Path) -> Option<Arc<Settings>> {
         let guard = self.config.lock().await;
         let mut cur = path.parent();
@@ -1570,7 +1516,7 @@ impl Backend {
         for (key, value) in table {
             match key.as_str() {
                 "prelude" => Self::parse_prelude_table(value, prelude.insert(Vec::new()))?,
-                "modules" => modules = Some(Self::parse_modules_table(value, dir)?),
+                "modules" => modules = Some(Arc::new(Self::parse_modules_table(value, dir)?)),
                 _ => return Err(format!("unexpected key in settings: {key}")),
             }
         }
@@ -1914,6 +1860,10 @@ impl LanguageServer for Backend {
             for workspace in guard.workspaces.iter() {
                 log::info!("workspace: {}", workspace.display())
             }
+            guard.watch = (params.capabilities.workspace.as_ref())
+                .and_then(|workspace| workspace.did_change_watched_files.as_ref())
+                .and_then(|watched| watched.dynamic_registration)
+                .unwrap_or(false);
         }
         *self
             .position_encoding
@@ -1974,6 +1924,27 @@ impl LanguageServer for Backend {
                 ..Default::default()
             },
         })
+    }
+
+    async fn initialized(&self, _: InitializedParams) {
+        if !self.config.lock().await.watch {
+            return;
+        }
+        let watchers = ["**/*.dol", "**/.dolang-lsp.toml"].map(|pattern| FileSystemWatcher {
+            glob_pattern: GlobPattern::String(pattern.to_owned()),
+            kind: None,
+        });
+        let options = DidChangeWatchedFilesRegistrationOptions {
+            watchers: watchers.into(),
+        };
+        let registration = Registration {
+            id: "watched-files".to_owned(),
+            method: "workspace/didChangeWatchedFiles".to_owned(),
+            register_options: Some(serde_json::to_value(options).expect("options serialize")),
+        };
+        if let Err(err) = self.client.register_capability(vec![registration]).await {
+            log::error!("failed to watch files: {err}");
+        }
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
@@ -2112,7 +2083,29 @@ impl LanguageServer for Backend {
         log::debug!("change workspace: {params:?}")
     }
 
-    async fn did_change_watched_files(&self, _: DidChangeWatchedFilesParams) {}
+    async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
+        let mut sources = Vec::new();
+        let mut configs = Vec::new();
+        for event in params.changes {
+            let Some(path) = uri_to_file_path(&event.uri).map(Cow::into_owned) else {
+                continue;
+            };
+            if path
+                .file_name()
+                .is_some_and(|name| name == CONFIG_FILE_NAME)
+            {
+                configs.extend(path.parent().map(Path::to_owned));
+            } else if is_dolang_source(&path) {
+                sources.push(path);
+            }
+        }
+        if !sources.is_empty() && self.worker.send(Request::Files(sources)).is_err() {
+            log::error!("the compile worker has exited");
+        }
+        if !configs.is_empty() {
+            self.reconfigure(&configs).await;
+        }
+    }
 
     async fn goto_definition(
         &self,
@@ -2256,7 +2249,7 @@ mod tests {
     use tower_lsp_server::ls_types::{notification::Notification as _, request::Request as _};
 
     use super::*;
-    use crate::module_path::tests::Directory;
+    use crate::{module_path::tests::Directory, typelib_index};
 
     struct Harness {
         service: LspService<Backend>,
@@ -2395,6 +2388,36 @@ mod tests {
                 },
             )
             .await;
+        }
+
+        async fn close(&mut self, uri: Uri) {
+            self.send_notification::<notification::DidCloseTextDocument>(
+                DidCloseTextDocumentParams {
+                    text_document: TextDocumentIdentifier { uri },
+                },
+            )
+            .await;
+        }
+
+        async fn watched(&mut self, changes: &[(&Path, FileChangeType)]) {
+            let changes = (changes.iter())
+                .map(|&(path, typ)| FileEvent::new(Uri::from_file_path(path).unwrap(), typ))
+                .collect();
+            self.send_notification::<notification::DidChangeWatchedFiles>(
+                DidChangeWatchedFilesParams { changes },
+            )
+            .await;
+        }
+
+        /// The next diagnostics the server publishes for `uri`, passing over
+        /// those of other documents.
+        async fn next_publish_for(&mut self, uri: &Uri) -> PublishDiagnosticsParams {
+            loop {
+                let published = self.next_publish().await;
+                if published.uri == *uri {
+                    return published;
+                }
+            }
         }
 
         /// Asserts the server sends the client nothing more for a while.
@@ -3799,6 +3822,178 @@ mod tests {
         let reported = checked(&mut harness, &other.0.join("main.dol"), "import a\na.f 1\n").await;
         let import = Range::new(Position::new(0, 7), Position::new(0, 8));
         assert_eq!(reported, [(import, "module `a` not found".to_owned())]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn importers_check_against_open_buffers() {
+        // The modules import `std`, which only `dodo lsp-test` bundles
+        if typelib_index::lookup("std").is_none() {
+            return;
+        }
+        let tree = Directory::new();
+        tree.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = [\"lib\"]\n");
+        tree.write("lib/a.dol", "import b\npub def g x@b.T\n  x\n");
+        let b = Uri::from_file_path(tree.write("lib/b.dol", "pub @let T = Int\n")).unwrap();
+        let main = Uri::from_file_path(tree.0.join("main.dol")).unwrap();
+        let mut harness = Harness::checking(Duration::from_millis(10));
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        harness.open(main.clone(), "import a\na.g \"s\"\n", 1).await;
+        let checked = harness.next_publish_for(&main).await;
+        assert_eq!(checked.diagnostics.len(), 1, "{:#?}", checked.diagnostics);
+
+        // Through `a`, which is only on disk, to `b`'s buffer
+        harness.open(b.clone(), "pub @let T = Str\n", 1).await;
+        let checked = harness.next_publish_for(&main).await;
+        assert_eq!(checked.diagnostics, []);
+        harness.change(b.clone(), "pub @let T = Int\n", 2).await;
+        let checked = harness.next_publish_for(&main).await;
+        assert_eq!(checked.diagnostics.len(), 1, "{:#?}", checked.diagnostics);
+        harness.change(b.clone(), "pub @let T = Str\n", 3).await;
+        let checked = harness.next_publish_for(&main).await;
+        assert_eq!(checked.diagnostics, []);
+
+        // Back to the file
+        harness.close(b).await;
+        let checked = harness.next_publish_for(&main).await;
+        assert_eq!(checked.diagnostics.len(), 1, "{:#?}", checked.diagnostics);
+        harness.quiet().await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn disk_changes_recheck_importers() {
+        // The modules import `std`, which only `dodo lsp-test` bundles
+        if typelib_index::lookup("std").is_none() {
+            return;
+        }
+        let tree = Directory::new();
+        tree.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = [\"lib\"]\n");
+        let a = tree.write("lib/a.dol", "pub def f x@Int\n  x\n");
+        let main = Uri::from_file_path(tree.0.join("main.dol")).unwrap();
+        let mut harness = Harness::checking(Duration::from_millis(10));
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        harness.open(main.clone(), "import a\na.f \"s\"\n", 1).await;
+        let checked = harness.next_publish_for(&main).await;
+        assert_eq!(checked.diagnostics.len(), 1, "{:#?}", checked.diagnostics);
+
+        tree.write("lib/a.dol", "pub def f x@Str\n  x\n");
+        harness.watched(&[(&a, FileChangeType::CHANGED)]).await;
+        let checked = harness.next_publish_for(&main).await;
+        assert_eq!(checked.diagnostics, []);
+
+        fs::remove_file(&a).unwrap();
+        harness.watched(&[(&a, FileChangeType::DELETED)]).await;
+        let checked = harness.next_publish_for(&main).await;
+        let messages: Vec<_> = (checked.diagnostics.iter())
+            .map(|diagnostic| &diagnostic.message[..])
+            .collect();
+        assert_eq!(messages, ["module `a` not found"]);
+
+        tree.write("lib/a.dol", "pub def f x@Str\n  x\n");
+        harness.watched(&[(&a, FileChangeType::CREATED)]).await;
+        let checked = harness.next_publish_for(&main).await;
+        assert_eq!(checked.diagnostics, []);
+
+        // An open buffer of the module stands in for its file
+        let buffer = Uri::from_file_path(&a).unwrap();
+        harness
+            .open(buffer.clone(), "pub def f x@Str\n  x\n", 1)
+            .await;
+        // Its check, and its importer's against the buffer
+        let mut checked = [harness.next_publish().await, harness.next_publish().await];
+        checked.sort_by_key(|published| published.uri == main);
+        assert_eq!(
+            checked.map(|published| (published.uri, published.diagnostics)),
+            [(buffer, vec![]), (main, vec![])]
+        );
+        tree.write("lib/a.dol", "pub def f x@Int\n  x\n");
+        harness.watched(&[(&a, FileChangeType::CHANGED)]).await;
+        harness.quiet().await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn config_changes_resolve_documents_again() {
+        // The modules import `std`, which only `dodo lsp-test` bundles
+        if typelib_index::lookup("std").is_none() {
+            return;
+        }
+        let tree = Directory::new();
+        let config = tree.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = [\"one\"]\n");
+        tree.write("one/a.dol", "pub def f x@Str\n  x\n");
+        tree.write("two/a.dol", "pub def f x@Int\n  x\n");
+        let main = Uri::from_file_path(tree.0.join("main.dol")).unwrap();
+        let mut harness = Harness::checking(Duration::from_millis(10));
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        harness.open(main.clone(), "import a\na.f \"s\"\n", 1).await;
+        let checked = harness.next_publish_for(&main).await;
+        assert_eq!(checked.diagnostics, []);
+
+        tree.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = [\"two\"]\n");
+        harness.watched(&[(&config, FileChangeType::CHANGED)]).await;
+        // Compiled again, then checked against the new module path
+        let projected = harness.next_publish_for(&main).await;
+        assert_eq!(projected.diagnostics, []);
+        let checked = harness.next_publish_for(&main).await;
+        assert_eq!(checked.diagnostics.len(), 1, "{:#?}", checked.diagnostics);
+        harness.quiet().await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn file_watchers_register_when_the_client_allows() {
+        let mut harness = Harness::new();
+        harness
+            .send_request::<request::Initialize>(InitializeParams {
+                capabilities: ClientCapabilities {
+                    workspace: Some(WorkspaceClientCapabilities {
+                        did_change_watched_files: Some(DidChangeWatchedFilesClientCapabilities {
+                            dynamic_registration: Some(true),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .await;
+        let initialized = harness.service.ready().await.unwrap().call(
+            Request::build(notification::Initialized::METHOD)
+                .params(json!({}))
+                .finish(),
+        );
+        let client = async {
+            let request = tokio::time::timeout(Duration::from_secs(1), harness.socket.next())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(request.method(), request::RegisterCapability::METHOD);
+            let params: RegistrationParams =
+                serde_json::from_value(request.params().cloned().unwrap()).unwrap();
+            let [registration] = &params.registrations[..] else {
+                panic!("expected one registration: {params:#?}");
+            };
+            assert_eq!(
+                registration.method,
+                notification::DidChangeWatchedFiles::METHOD
+            );
+            let options: DidChangeWatchedFilesRegistrationOptions =
+                serde_json::from_value(registration.register_options.clone().unwrap()).unwrap();
+            let patterns: Vec<_> = (options.watchers.iter())
+                .map(|watcher| watcher.glob_pattern.clone())
+                .collect();
+            assert_eq!(
+                patterns,
+                ["**/*.dol", "**/.dolang-lsp.toml"]
+                    .map(|pattern| GlobPattern::String(pattern.into()))
+            );
+            let id = request.id().cloned().unwrap();
+            harness
+                .socket
+                .send(Response::from_ok(id, Value::Null))
+                .await
+                .unwrap();
+        };
+        let (response, ()) = tokio::join!(initialized, client);
+        assert!(response.unwrap().is_none());
     }
 
     #[tokio::test(flavor = "current_thread")]

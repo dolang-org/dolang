@@ -29,15 +29,40 @@ document's projection publishes its compile diagnostics at once, and schedules a
 check for a short delay later; each newer edit pushes the check back. The worker
 waits on its request channel with `recv_timeout` until the earliest check is
 due. A check has the document's unit, compiled as its module if it lies under
-the configured module path and as a script otherwise. The worker resolves the
-modules it imports, directly or transitively, plus `proc` for the pipe types, as
-`compile check` does: a source on the module path first, compiled as that module
-and kept by canonical path until its text changes, then a bundled typelib unless
-the configuration turns them off. The document's own module is never looked up,
-so it replaces its bundled copy. An import found nowhere is reported as not
-found. The check publishes the compile diagnostics again, merged with the
-checker's, but only while the stored document still has the stamp it checked. An
-unchanged unit, as on a save, keeps its check.
+the configured module path and as a script otherwise. The unchanged unit of a
+save keeps its check. The check publishes the compile diagnostics again,
+merged with the checker's, but only while the stored document still has the
+stamp it checked.
+
+A check resolves imports through the workspace (`workspace.rs`), which holds a
+store for each module path, plus one shared by configurations without one. A
+store answers what a module is now. An open document that is the module comes
+first, so importers see the client's buffer. Open documents are matched to
+modules by each store's module path, not by URI. Next is a source on the
+module path, then a bundled typelib unless the configuration turns them off.
+An import found nowhere is reported as not found. A check resolves the modules
+the document imports, directly or transitively, plus `proc` for the pipe
+types, as `compile check` does. The document's own module is never looked up,
+so it replaces its bundled copy. Each module's unit is kept until its text
+changes.
+
+A store records each module's imports, and those of the open documents checked
+through it, by name, whether or not the import resolved. Opening, editing or
+closing a document that is a module, a watched file changing on disk, or a check
+finding a module changed on disk, invalidates the module. Every open document
+that imports it, directly or transitively, is then checked again once the change
+settles. Only checks need redoing, since a unit doesn't depend on what it
+imports. A store is dropped once no open document checks through it.
+
+When the client allows it, the server registers watchers for `.dol` sources
+and configuration files. A source event invalidates the module the file names
+in each store, by where it is, so a deleted file is named too. A module held
+by an open document ignores its file. A configuration event drops that
+directory's cached settings and compiles the open documents under it again.
+Each one then finds its configuration anew, nearer ones included, and a store
+whose module path changed is rebuilt. Wildcard roots expand only when a
+configuration loads, so a new directory they match waits for the next
+configuration event.
 
 Configuration files are TOML files (`.dolang-lsp.toml`, the nearest ancestor
 wins) that provide static prelude imports and the module path. A

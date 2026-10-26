@@ -9,6 +9,7 @@ mod backend;
 mod doc_index;
 mod module_path;
 mod typelib_index;
+mod workspace;
 
 #[cfg(not(asan))]
 #[global_allocator]
