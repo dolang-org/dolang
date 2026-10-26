@@ -23,7 +23,7 @@ use tower_lsp_server::{
 use dolang_compile::{
     Config as CompileConfig, Context, ErrorKind, Kind, Mode, Node, NodeId, Token, Unit, UnitId,
     diag, source,
-    typeck::{self, Style},
+    typeck::{self, Role, Style},
 };
 
 use crate::{
@@ -663,7 +663,11 @@ impl Document {
             .expect("analysis lock poisoned")
             .clone()?;
         let node = (analyzed.analysis).at(analyzed.unit, offset.try_into().ok()?)?;
-        let judged = node.judgments().find(|judged| judged.name().is_some())?;
+        // A variable's own judgment; a member use's names the member, but its
+        // type is the declaring class
+        let judged = node
+            .judgments()
+            .find(|judged| matches!(judged.role(), Role::Read | Role::Bind))?;
         let name = judged.name()?;
         Some((
             node.span(),

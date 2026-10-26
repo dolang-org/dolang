@@ -121,7 +121,7 @@ use super::{
         Gas, NarrowTarget, Outcome, Provenance, Residual, Solver, Status, Verdicts, Widening,
     },
     r#type::{
-        Argument, Copies, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
+        Argument, Copies, Database, DeclId, Element, Function, Intrinsic, Kind, Literal, MemberKey,
         Multiplicity, SchemaItem, Shared, Type, TypeId, UnitId,
     },
 };
@@ -178,24 +178,63 @@ pub enum Role {
     /// The type an expression was evaluated against, where one was expected of
     /// it
     Expected,
+    /// A member use written in source, which sees the class declaring the
+    /// member it reached; a union receiver's reaches one in each alternative
+    Member,
+    /// A call written in source, which sees the signature it reached,
+    /// instantiated, and the overload it chose
+    Callee,
 }
 
-/// What a reference, binding or expression saw, joined over every context
+/// What a reference, binding, expression, member use or call saw, joined over
+/// every context. A member use's type is its class's declaration, and a call's
+/// is the signature it reached.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Seen {
     pub(crate) fact: Fact,
-    /// The variable it read or bound, when the variable has a name
-    pub(crate) var: Option<VarId>,
+    pub(crate) detail: Detail,
+}
+
+/// What else a fact says, by its role
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Detail {
+    None,
+    /// The variable a reference read or a binding bound, when it has a name
+    Var(VarId),
+    /// The key of the member a member use reached
+    Member(MemberKey),
+    /// The index of the overload a call chose among its function's `@def`
+    /// signatures
+    Overload(u32),
 }
 
 impl Seen {
+    /// What an expression saw of type `ty`
+    pub(crate) fn ty(ty: TypeId) -> Self {
+        Self {
+            fact: Fact {
+                ty,
+                unassigned: false,
+            },
+            detail: Detail::None,
+        }
+    }
+
+    /// What keeps it apart from what else has its span and role: a member use's
+    /// class and member and a call's signature and overload don't join
+    fn apart(&self, role: Role) -> Option<(TypeId, Detail)> {
+        matches!(role, Role::Member | Role::Callee).then_some((self.fact.ty, self.detail))
+    }
+
     /// Join what was seen at the same span and role
     pub(crate) fn join(&mut self, other: Self, lub: impl FnOnce(TypeId, TypeId) -> TypeId) {
         self.fact.ty = lub(self.fact.ty, other.fact.ty);
         self.fact.unassigned |= other.fact.unassigned;
         // A match's scrutinee is read through a variable without a name at the
         // span of the one it was copied from
-        self.var = self.var.or(other.var);
+        if self.detail == Detail::None {
+            self.detail = other.detail;
+        }
     }
 }
 
@@ -383,14 +422,16 @@ pub(crate) fn sort(problems: &mut [Problem], unresolved: &mut [(Span, Residual)]
     unresolved.sort_by_key(|&(span, _)| (span.start, span.end));
 }
 
-/// Sort logged facts by span and role, joining those at the same span and role
+/// Sort logged facts by span and role, joining those at the same span and role,
+/// except what [`Seen::apart`] keeps apart
 pub(crate) fn collate(
     facts: &mut Vec<((Span, Role), Seen)>,
     lub: impl Fn(TypeId, TypeId) -> TypeId,
 ) {
-    facts.sort_by_key(|&((span, role), _)| (span.start, span.end, role));
-    facts.dedup_by(|(key, seen), (kept_key, kept)| {
-        let same = key == kept_key;
+    facts.sort_by_key(|&((span, role), seen)| (span.start, span.end, role, seen.apart(role)));
+    facts.dedup_by(|((span, role), seen), ((kept_span, kept_role), kept)| {
+        let same =
+            (*span, *role) == (*kept_span, *kept_role) && seen.apart(*role) == kept.apart(*role);
         if same {
             kept.join(*seen, &lub);
         }
@@ -834,7 +875,11 @@ impl<'a, 'u> Flow<'a, 'u> {
         );
         let seen = Seen {
             fact,
-            var: named.then_some(var),
+            detail: if named {
+                Detail::Var(var)
+            } else {
+                Detail::None
+            },
         };
         self.log(span, role, seen);
     }

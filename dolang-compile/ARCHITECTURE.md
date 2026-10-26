@@ -1163,8 +1163,16 @@ When the check was asked for an analysis, it appends to a log, once for each
 context, what each variable reference and binding saw, and each source
 expression's value and the type expected of it, if any. An argument held back
 or a `do` block passed to a call is typed by the call's rule, so its value is
-logged once the rule's final run is solved. The `flow`, `value` and `expected`
-judgments report the log after joining. A trial that checks whether a value
+logged once the rule's final run is solved. A member use written in source
+also logs the class declaring the member it reached, once for each alternative
+of a union receiver. A call written in source logs the signature it reached,
+instantiated, and the index of the overload it chose among its function's
+`@def` signatures. The solver finds both by following the call's derivations
+to the call that relates its arguments to a function's parameters. Implicit
+uses, such as an operator's special member, a getter, or a `for`'s `(iter)`,
+log neither. These entries are kept apart rather than joined. The `flow`,
+`value`, `expected`, `reached` and `callee` judgments report the log after
+joining. A trial that checks whether a value
 fits truncates the log back to its length before the trial. The
 pass reports each problem once per span: contradicted rules,
 values that don't fit a local's annotation or a function's declared result, and

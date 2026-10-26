@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 
 use crate::source::Span;
 
-use super::{At, Fact, Flow, Results, Role, Seen, State, problem::Problem, rule::passed_signature};
+use super::{At, Flow, Results, Role, Seen, State, problem::Problem, rule::passed_signature};
 use crate::typeck::{
     cfg::{Expr, ExprKind, FuncId, FuncKind},
     elab::{Designated, Referent, Tables, Target},
@@ -103,16 +103,9 @@ impl Flow<'_, '_> {
                     | ExprKind::Error
             )
         {
-            let seen = |ty| Seen {
-                fact: Fact {
-                    ty,
-                    unassigned: false,
-                },
-                var: None,
-            };
-            self.log(expr.span, Role::Value, seen(ty));
+            self.log(expr.span, Role::Value, Seen::ty(ty));
             if let Some(expected) = expected {
-                self.log(expr.span, Role::Expected, seen(expected));
+                self.log(expr.span, Role::Expected, Seen::ty(expected));
             }
         }
         ty

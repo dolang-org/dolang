@@ -179,7 +179,8 @@ impl Copier<'_> {
         copy
     }
 
-    fn symbol(&mut self, name: SymbolId) -> SymbolId {
+    /// A symbol's copy
+    pub(crate) fn symbol(&mut self, name: SymbolId) -> SymbolId {
         if self
             .shared
             .is_some_and(|(_, symbols)| name.index() < symbols)

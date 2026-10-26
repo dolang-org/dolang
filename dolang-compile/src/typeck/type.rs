@@ -774,7 +774,7 @@ pub(crate) enum Scope {
 /// parentheses, apart from an ordinary member of the same name. A private member
 /// is named apart from public ones, as the runtime names it by a symbol of its
 /// class's own.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct MemberKey {
     pub(crate) name: SymbolId,
     pub(crate) special: bool,

@@ -39,6 +39,8 @@ pub(crate) const JUDGMENTS: &[&str] = &[
     "flow",
     "value",
     "expected",
+    "reached",
+    "callee",
 ];
 
 fn variance(variance: Variance) -> &'static str {
@@ -328,6 +330,17 @@ impl Tables<'_> {
             Head::Structural => "structural".to_owned(),
             Head::Error => "error".to_owned(),
         }
+    }
+
+    /// Where a declaration is: its unit's module name, and its name in the
+    /// module, qualified by the declarations it is nested in. `None` for a
+    /// database declaration of a signature.
+    pub(crate) fn place(&self, id: DeclId) -> Option<(String, String)> {
+        let unit = self.decls.get(id.index())?.unit;
+        let module = self.unit_name(unit);
+        let mut name = self.qualified(id);
+        name.drain(..=module.len());
+        Some((module, name))
     }
 
     /// A declaration's name, qualified by its unit and the declarations it is

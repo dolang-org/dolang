@@ -2496,6 +2496,12 @@ impl<'db> Solver<'db> {
             .collect()
     }
 
+    /// The obligation a constraint judges. Unlike the constraint's ID, it
+    /// keeps its ID when a fork is absorbed.
+    pub(crate) fn obligation(&self, id: ConstraintId) -> ObligationId {
+        self.roots[id.0].obligation
+    }
+
     #[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
     pub(crate) fn provenance(&self, id: ConstraintId) -> &Provenance {
         &self.roots[id.0].provenance
