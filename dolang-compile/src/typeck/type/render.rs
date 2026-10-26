@@ -64,7 +64,7 @@ pub(crate) enum Collection {
 
 /// What a rendered type shows
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Style {
+pub enum Style {
     /// Everything, as interned
     Full,
     /// As a reader would write it: a rigid by its binder's name, an omitted

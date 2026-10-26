@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 
 use crate::source::Span;
 
-use super::{At, Flow, State, problem::Problem, rule::passed_signature};
+use super::{At, Flow, Role, State, problem::Problem, rule::passed_signature};
 use crate::typeck::{
     cfg::{Expr, ExprKind, FuncId, FuncKind},
     elab::{Designated, Referent, Tables, Target},
@@ -56,7 +56,7 @@ impl Flow<'_, '_> {
             }
             &ExprKind::Var(var) => {
                 let fact = self.read(at, state, var);
-                self.record(expr.span, fact);
+                self.record(expr.span, Role::Read, var, fact);
                 if fact.unassigned && self.observing() && expr.span != Span::INVALID {
                     self.problem(Problem::Unassigned {
                         span: expr.span,
