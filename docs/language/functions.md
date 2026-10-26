@@ -114,11 +114,6 @@ connect port: 3000             # localhost:3000
 connect host: example.com      # example.com:8080
 ```
 
-A keyword that names a parameter binds its first occurrence, including one
-supplied through spreading. A `**` or `...` rest takes any repeats, and without
-one they raise [UnexpectedKeyError](std.UnexpectedKeyError). A rest keeps the
-keywords it takes in order, repeats included.
-
 Defaults are evaluated on every invocation of the function, so the following
 function always returns a fresh empty `array` if called with no arguments:
 
@@ -194,6 +189,14 @@ func ...kwargs
 # equivalent to:
 # func name: "Alice" age: 30
 ```
+
+See [Spreading](./data-structures.md#spreading) for what each kind of value
+contributes.
+
+A keyword that names a parameter binds its first occurrence, including one
+supplied through spreading. A `**` or `...` rest takes any repeats, and without
+one they raise [UnexpectedKeyError](std.UnexpectedKeyError). A rest keeps the
+keywords it takes in order, repeats included.
 
 ### Vertical Parameter Layout
 

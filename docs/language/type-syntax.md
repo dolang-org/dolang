@@ -30,8 +30,8 @@ dotted name must begin with an import.
 
 The compiler does not consider types when it warns about unused variables, so a
 binding named only in types is still reported as unused unless its name begins
-with `_`. A [checker-only import](./types.md#checker-only-imports) binds no
-runtime variable, so it is not reported.
+with `_`. A [checker-only import](./type-declarations.md#checker-only-imports)
+binds no runtime variable, so it is not reported.
 
 ## Constants
 
@@ -339,8 +339,8 @@ Schemas have no implicits, since an ambient channel is not data, and neither do
 ## Vertical Layout
 
 `$` followed by an indented body writes a schema in vertical layout, as in an
-[alias](./types.md#type-aliases). Positional items may be bin-packed on an
-undashed line. A dash introduces one positional item, and a keyed line
+[alias](./type-declarations.md#type-aliases). Positional items may be bin-packed
+on an undashed line. A dash introduces one positional item, and a keyed line
 introduces one keyed item. Quantifiers and inclusions have the same meaning as
 in `{}`.
 

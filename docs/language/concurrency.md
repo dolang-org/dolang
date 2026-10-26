@@ -155,6 +155,22 @@ assert_eq $result [6, 8, 10]
 Each stage runs in its own strand, with implicit channels connecting output to
 input.
 
+## Built-in Pipeline Stages
+
+Several functions are designed to work as pipeline stages:
+
+- [`strand.from`](strand.from) - emits values from an
+  iterable
+- [`strand.where`](strand.where) - filters values by a
+  predicate
+- [`strand.each`](strand.each) - transforms values
+- [`strand.map`](strand.map) -
+  transforms values concurrently
+- [`strand.pool`](strand.pool) - runs scoped
+  workers and discards their results
+- [`strand.collect`](strand.collect) - gathers values
+  into a collection
+
 ## Channel Communication
 
 ### `channel`
@@ -205,22 +221,6 @@ s.join()
 Inside the function, the strand reads from input with `strand.next()` and writes
 to output with `put` — the same as any pipeline stage. Pipeline stage
 functions like `each` and `where` work unchanged.
-
-## Built-in Pipeline Stages
-
-Several functions are designed to work as pipeline stages:
-
-- [`strand.from`](strand.from) - emits values from an
-  iterable
-- [`strand.where`](strand.where) - filters values by a
-  predicate
-- [`strand.each`](strand.each) - transforms values
-- [`strand.map`](strand.map) -
-  transforms values concurrently
-- [`strand.pool`](strand.pool) - runs scoped
-  workers and discards their results
-- [`strand.collect`](strand.collect) - gathers values
-  into a collection
 
 ## Error Handling
 

@@ -13,9 +13,8 @@ let arr = [1, 2, 3]
 let mixed = [1, "hello", true, nil]
 ```
 
-### Spreading
-
-Use `...` to splice an iterable into an array literal:
+`...` splices another collection or an iterator into the literal; see
+[Spreading](#spreading):
 
 ```
 let extras = [4, 5, 6]
@@ -24,6 +23,35 @@ assert_eq $all [1, 2, 3, 4, 5, 6]
 ```
 
 See the [Array API](std.Array) for methods.
+
+## Tuples (`Tuple`)
+
+Tuples are immutable, ordered sequences of values.
+
+Comma-separated items within parentheses construct a tuple. A single item needs
+a trailing comma to distinguish it from mere grouping:
+
+```
+let tup = (1, "two", true)
+assert_eq $tup[1] two
+let empty = ()
+let single = (1,)
+```
+
+Spread a sequence into a tuple with `...`:
+
+```
+let rest = [2, 3]
+assert_eq (1, ...rest) (Tuple [1, 2, 3])
+```
+
+The `Tuple` type object also builds a tuple from an iterable:
+
+```
+let tup = Tuple [1, 2, 3]
+```
+
+See the [Tuple API](std.Tuple) for details.
 
 ## Dictionaries (`Dict`)
 
@@ -94,32 +122,6 @@ specific cases:
 
 See the [Dict API](std.Dict) for details.
 
-### Spreading
-
-Spread a dictionary directly to preserve its keys:
-
-```
-let base = {name: "Alice"}
-let extended = {...base, age: 30}
-```
-
-Use `kv()` when you want an iterable of pairs to spread as key/value entries:
-
-```
-let entries = [("x", 1), ("y", 2)]
-let dict = {...entries.kv()}
-```
-
-Spreading dicts preserves duplicate keys and order. Spreading any `Iter`,
-including a dict or record pair iterator, inserts its elements positionally.
-The adapter returned by `kv()` emits keyed entries in every spread context.
-It supports spreading only: it cannot be iterated or used with iterator methods.
-A keyed spread into an array or tuple raises an error.
-
-Converting a dict or record directly to an array or tuple still produces
-key/value pairs. An `Iterable` without spread support must first be converted
-to an iterator with `iter()`.
-
 ## Records (`Record`)
 
 Records are immutable sequences of positional items and symbol-keyed items,
@@ -165,25 +167,6 @@ that name, and a `**` or `...` rest takes the later ones in order. Without a
 rest, the repeats raise [UnexpectedKeyError](std.UnexpectedKeyError).
 
 See the [Record API](std.Record) for details.
-
-## Sets (`Set`)
-
-Sets are ordered, mutable collections with unique membership semantics.
-
-Sets do not have a dedicated literal syntax. Construct them with the `Set` type
-object from any iterable:
-
-```
-let empty = Set()
-let s = Set [3, 1, 2, 1]
-assert_eq [...s] [3, 1, 2]
-```
-
-Iteration preserves insertion order. Adding an existing value is a no-op and
-does not move it to the end.
-
-See the [Set API](std.Set) for methods such as `add`, `contains`,
-`union`, and `diff`.
 
 ## Structs (`Struct`)
 
@@ -236,31 +219,61 @@ takes a `BaseStruct`, which accepts structs with narrower items, as
 
 See the [Struct API](std.Struct) for details.
 
-## Tuples (`Tuple`)
+## Sets (`Set`)
 
-Tuples are immutable, ordered sequences of values.
+Sets are ordered, mutable collections with unique membership semantics.
 
-Comma-separated items within parentheses construct a tuple. A single item needs
-a trailing comma to distinguish it from mere grouping:
-
-```
-let tup = (1, "two", true)
-assert_eq $tup[1] two
-let empty = ()
-let single = (1,)
-```
-
-Spread a sequence into a tuple with `...`:
+Sets do not have a dedicated literal syntax. Construct them with the `Set` type
+object from any iterable:
 
 ```
-let rest = [2, 3]
-assert_eq (1, ...rest) (Tuple [1, 2, 3])
+let empty = Set()
+let s = Set [3, 1, 2, 1]
+assert_eq [...s] [3, 1, 2]
 ```
 
-The `Tuple` type object also builds a tuple from an iterable:
+Iteration preserves insertion order. Adding an existing value is a no-op and
+does not move it to the end.
+
+See the [Set API](std.Set) for methods such as `add`, `contains`,
+`union`, and `diff`.
+
+## Spreading
+
+`...` spreads a value into an array, tuple, dictionary, or record literal, or
+into a call's arguments. What it contributes depends on both the value and the
+context:
+
+| Context              | Spread input                          | Behavior                                                                          |
+| -------------------- | ------------------------------------- | --------------------------------------------------------------------------------- |
+| Arguments            | Array, tuple, set, [`Iter`](std.Iter) | Positional arguments, including pair elements                                     |
+| Arguments            | Dict, record, struct                  | Mixed arguments: sequential integer keys are positional, symbol keys are keywords |
+| Array or tuple       | Array, tuple, set, [`Iter`](std.Iter) | Positional elements                                                               |
+| Array or tuple       | Dict, record, struct                  | Key/value pairs                                                                   |
+| Dictionary or record | Array, tuple, set, [`Iter`](std.Iter) | Elements assigned incrementing positional keys                                    |
+| Dictionary or record | Dict, record, struct                  | Preserves keyed and positional entries                                            |
+| Any                  | `kv()` adapter                        | Keyed entries; arrays and tuples reject them                                      |
+
+Spread a dictionary directly to preserve its keys:
 
 ```
-let tup = Tuple [1, 2, 3]
+let base = {name: "Alice"}
+let extended = {...base, age: 30}
 ```
 
-See the [Tuple API](std.Tuple) for details.
+Spreading dicts preserves duplicate keys and order. Spreading any `Iter`,
+including a dict or record pair iterator, inserts its elements positionally.
+
+Use `kv()` when you want an iterable of pairs to spread as key/value entries:
+
+```
+let entries = [("x", 1), ("y", 2)]
+let dict = {...entries.kv()}
+```
+
+The adapter returned by `kv()` emits keyed entries in every spread context.
+It supports spreading only: it cannot be iterated or used with iterator methods.
+A keyed spread into an array or tuple raises an error.
+
+An `Iterable` without spread support must first be converted to an iterator
+with `iter()`. A rest bound by a pattern can be spread repeatedly.

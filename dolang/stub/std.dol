@@ -121,7 +121,7 @@ pub def dict[...Ts] ...pairs @ Ts -> Dict[Ts]
 #
 # Indexing the proxy with a member's symbol reads or sets the member, and
 # unpacking or spreading it reads members by key, so a value without its own
-# [`(unpack)`](../../language/classes.md#unpack-destructuring) can be
+# [`(unpack)`](../../language/classes.md#unpack-pattern-unpacking) can be
 # destructured through `fields`. Iterating it gives `(key, value)` pairs. A
 # member is read when the proxy is indexed, unpacked, spread or iterated, not
 # when it is made.
@@ -504,7 +504,7 @@ pub @class Spread[S @ {...}]
 
 
 # A value that implements the
-# [`(unpack)`](../../language/classes.md#unpack-destructuring) protocol,
+# [`(unpack)`](../../language/classes.md#unpack-pattern-unpacking) protocol,
 # destructuring as the items in `S` without changing the receiver.
 #
 # A `...` pattern captures the remaining items as a `Rest`, with the schema of

@@ -69,161 +69,27 @@ class Counter
     self.#count
 ```
 
-## Computed Fields with `getter` and `setter`
+## Creating Instances
 
-Computed fields use decorators on methods:
-
-```
-class Config
-  field port = 8080
-
-  #[getter]
-  pub def port obj
-    obj.#port
-
-  #[setter]
-  pub def port obj value
-    obj.#port = value
-```
-
-Reads and writes still use ordinary field syntax:
-
-```
-let cfg = Config()
-assert_eq $cfg.port 8080
-cfg.port = 9000
-assert_eq $cfg.port 9000
-```
-
-See [Decorators](./decorators.md) for decorator syntax and evaluation order, and
-[`getter`](std.getter) / [`setter`](std.setter) for the
-decorators themselves.
-
-## Class and Static Members
-
-Members marked `#[class]` or `#[static]` live on the type object rather than on
-instances. Reach them through the class, not through an instance:
-
-```
-class Counter
-  #[class]
-  pub field count = 0
-
-  #[class]
-  pub def bump cls
-    cls.count = (cls.count + 1)
-    cls.count
-
-assert_eq $Counter.count 0
-assert_eq $Counter.bump() 1
-```
-
-A class method receives the class it was reached through as its first
-parameter, the way an instance method receives `self`. A static member takes
-only its own arguments, and names its class to reach it:
-
-```
-class Session
-  #[static]
-  field opened = 0
-
-  #[static]
-  pub def open()
-    Session.#opened = (Session.#opened + 1)
-    Session()
-```
-
-### Inheritance
-
-`class` members are inherited; `static` members are not. Because both occupy
-the type object's namespace, a static shadows an inherited class member of the
-same name without propagating that shadowing any further.
-
-Each class gets its own storage for a class field, seeded from the declared
-initializer. A subclass therefore starts from the default rather than sharing
-the parent's cell, and a non-constant initializer runs once per class:
-
-```
-class Derived: Counter
-
-assert_eq $Counter.bump() 2
-assert_eq $Derived.count 0
-assert_eq $Derived.bump() 1
-assert_eq $Counter.count 2
-```
-
-Class and static members are a separate namespace from instance members, so a
-class field and an instance field may share a name. Two members of the same
-name in the type namespace — a `class` and a `static`, say — collide, and the
-class fails to build.
-
-### `(call)` as a Class or Static Member
-
-`(call)` is the only special method that may be a class or static member. As an
-instance method it allows instances to be called; as a class or static member it
-replaces what happens when the *class* is called.
-
-Declaring it `static` gives a class a factory that subclasses do not inherit,
-so the factory can construct a subtype without re-entering itself:
+Call a class like a function to create an instance. Arguments are passed to
+`(init)`:
 
 ```playground
-class Shape
-  pub field kind = ""
+class Rectangle
+  pub field width = 0
+  pub field height = 0
 
-  def (init) self kind
-    self.kind = kind
+  def (init) self w h
+    self.width = w
+    self.height = h
 
-  #[static]
-  pub def (call) kind
-    echo "building $kind"
-    Type.(call) $Shape $kind
+  pub def area self
+    (self.width * self.height)
 
-class Circle: Shape
-
-Shape "round"     # prints "building round"
-Circle "arc"      # no factory: Circle did not inherit it
+let r = Rectangle 10 20
+echo $r.area()   # 200
+echo $r.width    # 10
 ```
-
-`Type.(call)` performs the default instantiation the override replaced. It is
-the ordinary unbound-method idiom — a class is an instance of `Type`, so this
-invokes `Type`'s implementation rather than the receiver's override, exactly as
-`Animal.(init) $self $name` calls a parent constructor.
-
-The type checker accepts `Type.(call)` only with a class's own name, such as
-`Shape`, as its first argument: a value of type `Type[Shape]` may hold a
-subclass, whose `(init)` takes other arguments. A class with a `(call)` may be
-passed only inside its own body, so the factory can't be bypassed elsewhere.
-A class-level `(call)` that ends in `Type.(call)` therefore names its own class
-rather than its receiver, and each subclass that builds itself overrides it.
-
-### Unbound Class Methods
-
-`Class.method` binds the class, so `Counter.bump()` always passes `Counter`.
-`type(Class)` returns the class's type object, whose namespace holds the
-class-level methods unbound, letting one class's implementation run against
-another:
-
-```
-assert_eq (type(Counter).bump(Derived)) 2
-```
-
-A static member has no receiver to rebind, so `type(C).name` and `C.name` are
-the same function.
-
-Reading or calling `C.name` finds an instance method first, unbound, before a
-class or static member of the same name, which is then reachable only through
-`type(C)`. Instance fields and properties aren't reached through the class and
-hide nothing. Assigning `C.name = value` reaches only class and static members.
-
-Type-object accessors also take an explicit receiver:
-`C.(get)(instance, :field:)` and `C.(set)(instance, :field:, value)` address
-instance members. To address a class object's own fields, use
-`type(C).(get)(C, :field:)` and
-`type(C).(set)(C, :field:, value)`.
-
-Two type objects are equal when they stand for the same class, and they hash to
-match, so they work as dict keys. A type object is a subtype of
-[`Type`](std.Type), so `type Counter Type` holds.
 
 ## Visibility
 
@@ -258,19 +124,7 @@ pub class Point
     self.y = y
 ```
 
-## Private Fields
-
-Private access requires the method's first parameter as the receiver, or the
-class's own name anywhere inside the class. The receiver's name need not be
-`self`; class methods use their type-object parameter, and static methods,
-which have none, use the class's name. Receiver and class bindings cannot be
-reassigned, but their fields can be written. Aliases and other objects cannot
-be used with `.#`, even inside the same class. Nested functions may access
-private members through the captured receiver. A decorated class's name grants
-no private access, since the decorator may replace the class, unless every
-decorator is the prelude's [`final`](#final-classes) or
-[`mixable`](#disjoint-classes), which return the class they are
-given.
+### Private Fields
 
 Fields declared without `pub` are private. Within the class, private fields are
 accessed using the `.#field` syntax:
@@ -292,6 +146,18 @@ class BankAccount
 The `#` explicitly signals a private access. Using `.field` (without `#`) on
 `self` when the field is private produces a warning, and the compiler will
 suggest using `.#field` instead.
+
+Private access requires the method's first parameter as the receiver, or the
+class's own name anywhere inside the class. The receiver's name need not be
+`self`; class methods use their type-object parameter, and static methods,
+which have none, use the class's name. Receiver and class bindings cannot be
+reassigned, but their fields can be written. Aliases and other objects cannot
+be used with `.#`, even inside the same class. Nested functions may access
+private members through the captured receiver. A decorated class's name grants
+no private access, since the decorator may replace the class, unless every
+decorator is the prelude's [`final`](#final-classes) or
+[`mixable`](#disjoint-classes), which return the class they are
+given.
 
 ### Private Methods
 
@@ -315,27 +181,35 @@ let a = Adder 5
 assert_eq $a.add(3) 13
 ```
 
-## Creating Instances
+## Computed Fields with `getter` and `setter`
 
-Call a class like a function to create an instance. Arguments are passed to
-`(init)`:
+Computed fields use decorators on methods:
 
-```playground
-class Rectangle
-  pub field width = 0
-  pub field height = 0
-
-  def (init) self w h
-    self.width = w
-    self.height = h
-
-  pub def area self
-    (self.width * self.height)
-
-let r = Rectangle 10 20
-echo $r.area()   # 200
-echo $r.width    # 10
 ```
+class Config
+  field port = 8080
+
+  #[getter]
+  pub def port obj
+    obj.#port
+
+  #[setter]
+  pub def port obj value
+    obj.#port = value
+```
+
+Reads and writes still use ordinary field syntax:
+
+```
+let cfg = Config()
+assert_eq $cfg.port 8080
+cfg.port = 9000
+assert_eq $cfg.port 9000
+```
+
+See [Decorators](./decorators.md) for decorator syntax and evaluation order, and
+[`getter`](std.getter) / [`setter`](std.setter) for the
+decorators themselves.
 
 ## Inheritance
 
@@ -381,6 +255,20 @@ echo $rex.describe()           # Rex is a dog (German Shepherd)
 echo $ Animal.describe $rex    # Rex is a dog
 ```
 
+### Calling Parent Constructor
+
+Call the parent's `(init)` explicitly within a constructor body to initialize
+inherited fields. The first argument must be that constructor's receiver:
+
+```
+class Cat: Animal
+  pub field indoor = false
+
+  def (init) self name indoor
+    Animal.(init) $self $name cat
+    self.indoor = indoor
+```
+
 ### Multiple Inheritance
 
 List multiple parents after the colon, separated by spaces. A class can't
@@ -406,7 +294,7 @@ class LocalTool: tools.build.Tool
 ```
 
 A superclass written with `@` exists only in types, and the class does not
-inherit from it. See [Protocols](types.md#protocols).
+inherit from it. See [Protocols](type-declarations.md#protocols).
 
 ### Vertical Supertypes
 
@@ -458,20 +346,6 @@ Swapping the parents changes the result:
 class D: B A
 
 assert_eq $(D().who()) $B
-```
-
-### Calling Parent Constructor
-
-Call the parent's `(init)` explicitly within a constructor body to initialize
-inherited fields. The first argument must be that constructor's receiver:
-
-```
-class Cat: Animal
-  pub field indoor = false
-
-  def (init) self name indoor
-    Animal.(init) $self $name cat
-    self.indoor = indoor
 ```
 
 ### Inheriting from a Built-in Type
@@ -578,6 +452,132 @@ assert_not (type rex Cat)   # false: Dog is not a Cat
 ```
 
 See [Basic Types](basic-types.md#type-inspection) for more on `type`.
+
+## Class and Static Members
+
+Members marked `#[class]` or `#[static]` live on the type object rather than on
+instances. Reach them through the class, not through an instance:
+
+```
+class Counter
+  #[class]
+  pub field count = 0
+
+  #[class]
+  pub def bump cls
+    cls.count = (cls.count + 1)
+    cls.count
+
+assert_eq $Counter.count 0
+assert_eq $Counter.bump() 1
+```
+
+A class method receives the class it was reached through as its first
+parameter, the way an instance method receives `self`. A static member takes
+only its own arguments, and names its class to reach it:
+
+```
+class Session
+  #[static]
+  field opened = 0
+
+  #[static]
+  pub def open()
+    Session.#opened = (Session.#opened + 1)
+    Session()
+```
+
+### Inheritance of Class Members
+
+`class` members are inherited; `static` members are not. Because both occupy
+the type object's namespace, a static shadows an inherited class member of the
+same name without propagating that shadowing any further.
+
+Each class gets its own storage for a class field, seeded from the declared
+initializer. A subclass therefore starts from the default rather than sharing
+the parent's cell, and a non-constant initializer runs once per class:
+
+```
+class Derived: Counter
+
+assert_eq $Counter.bump() 2
+assert_eq $Derived.count 0
+assert_eq $Derived.bump() 1
+assert_eq $Counter.count 2
+```
+
+Class and static members are a separate namespace from instance members, so a
+class field and an instance field may share a name. Two members of the same
+name in the type namespace — a `class` and a `static`, say — collide, and the
+class fails to build.
+
+### `(call)` as a Class or Static Member
+
+`(call)` is the only special method that may be a class or static member. As an
+instance method it allows instances to be called; as a class or static member it
+replaces what happens when the *class* is called.
+
+Declaring it `static` gives a class a factory that subclasses do not inherit,
+so the factory can construct a subtype without re-entering itself:
+
+```playground
+class Shape
+  pub field kind = ""
+
+  def (init) self kind
+    self.kind = kind
+
+  #[static]
+  pub def (call) kind
+    echo "building $kind"
+    Type.(call) $Shape $kind
+
+class Circle: Shape
+
+Shape "round"     # prints "building round"
+Circle "arc"      # no factory: Circle did not inherit it
+```
+
+`Type.(call)` performs the default instantiation the override replaced. It is
+the ordinary unbound-method idiom — a class is an instance of `Type`, so this
+invokes `Type`'s implementation rather than the receiver's override, exactly as
+`Animal.(init) $self $name` calls a parent constructor.
+
+The type checker accepts `Type.(call)` only with a class's own name, such as
+`Shape`, as its first argument: a value of type `Type[Shape]` may hold a
+subclass, whose `(init)` takes other arguments. A class with a `(call)` may be
+passed only inside its own body, so the factory can't be bypassed elsewhere.
+A class-level `(call)` that ends in `Type.(call)` therefore names its own class
+rather than its receiver, and each subclass that builds itself overrides it.
+
+### Unbound Class Methods
+
+`Class.method` binds the class, so `Counter.bump()` always passes `Counter`.
+`type(Class)` returns the class's type object, whose namespace holds the
+class-level methods unbound, letting one class's implementation run against
+another:
+
+```
+assert_eq (type(Counter).bump(Derived)) 2
+```
+
+A static member has no receiver to rebind, so `type(C).name` and `C.name` are
+the same function.
+
+Reading or calling `C.name` finds an instance method first, unbound, before a
+class or static member of the same name, which is then reachable only through
+`type(C)`. Instance fields and properties aren't reached through the class and
+hide nothing. Assigning `C.name = value` reaches only class and static members.
+
+Type-object accessors also take an explicit receiver:
+`C.(get)(instance, :field:)` and `C.(set)(instance, :field:, value)` address
+instance members. To address a class object's own fields, use
+`type(C).(get)(C, :field:)` and
+`type(C).(set)(C, :field:, value)`.
+
+Two type objects are equal when they stand for the same class, and they hash to
+match, so they work as dict keys. A type object is a subtype of
+[`Type`](std.Type), so `type Counter Type` holds.
 
 ## Operator Overloading
 

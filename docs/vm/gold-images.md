@@ -42,23 +42,6 @@ A bundle may be a local path or an HTTP(S) URL — it is fetched and cached like
 any other download, and the [artifact spec](./provisioning.md#artifact-specs)'s
 `digest:` pins it.
 
-## The Bundle Format
-
-A bundle is a ZIP, conventionally named with a `.dolvm` extension.
-
-| Member          | Contents                                                                                                                                              |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `manifest.json` | Format version, `app`, `os`, `arch`, guest user, VFS command path, memory, vCPUs, the machine profile, and each member's name, size and BLAKE3 digest |
-| `disk.qcow2`    | The flattened disk image                                                                                                                              |
-| `nvram.bin`     | The UEFI variable store, for a guest that has one                                                                                                     |
-| `tpm.tar`       | The vTPM state directory, for a guest that has one                                                                                                    |
-
-The disk image is already compressed (`qemu-img convert -c`), so the ZIP
-stores it uncompressed, and it stays compressed in the image store after
-extraction. Its BLAKE3 digest is checked again when it is extracted. The
-manifest also embeds the domain XML for reference; importing a bundle uses
-the structured fields, not the XML.
-
 ## Preparing For Export
 
 Prior to exporting the guest, it's best to remove anything
@@ -131,14 +114,7 @@ run defrag "C:" /L
 run C:\Windows\System32\Sysprep\sysprep.exe /generalize /oobe /quit
 ```
 
-## Clean Shutdown
-
-`export` refuses a domain that did not reach `:SHUTOFF:` through a guest
-shutdown. `force: true` overrides this, but should be used with care.
-
-## Windows Image
-
-`sysprep` is the caller's as well, and generalizing is effectively terminal:
+Generalizing with `sysprep` is left to the caller, and is effectively terminal:
 `sysprep /generalize /oobe` leaves a guest that comes up in OOBE on its next
 boot, where `sshd` does not return, so a `reboot` after one only waits until it
 times out. Run it with `/quit` rather than `/shutdown` and let `build` perform
@@ -155,3 +131,25 @@ libvirt.build ./windows-gold.dolvm
 
 The bundle carries the account named by `user:` and the password generated for
 it, unless an action removes or disables the account before generalizing.
+
+## Clean Shutdown
+
+`export` refuses a domain that did not reach `:SHUTOFF:` through a guest
+shutdown. `force: true` overrides this, but should be used with care.
+
+## The Bundle Format
+
+A bundle is a ZIP, conventionally named with a `.dolvm` extension.
+
+| Member          | Contents                                                                                                                                              |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `manifest.json` | Format version, `app`, `os`, `arch`, guest user, VFS command path, memory, vCPUs, the machine profile, and each member's name, size and BLAKE3 digest |
+| `disk.qcow2`    | The flattened disk image                                                                                                                              |
+| `nvram.bin`     | The UEFI variable store, for a guest that has one                                                                                                     |
+| `tpm.tar`       | The vTPM state directory, for a guest that has one                                                                                                    |
+
+The disk image is already compressed (`qemu-img convert -c`), so the ZIP
+stores it uncompressed, and it stays compressed in the image store after
+extraction. Its BLAKE3 digest is checked again when it is extracted. The
+manifest also embeds the domain XML for reference; importing a bundle uses
+the structured fields, not the XML.

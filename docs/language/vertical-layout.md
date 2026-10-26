@@ -35,6 +35,20 @@ copy_file
 
 A key's colon must be followed by whitespace or an indented block.
 
+## Line Items
+
+Items that span the line (after `-` or `key:`) are treated like ordinary
+command arguments, except that whitespace is preserved literally instead being
+a separator. There is also a special form: `$` followed by a space interprets
+the remainder of the line as a full command statement, with the value being its
+result.
+
+```
+some_func
+  key1: $ command arg1 arg2
+  key2: $ comannd arg3 arg4
+```
+
 ## Bin-packing
 
 Positional arguments may continue to be laid out horizontally in the vertical
@@ -130,20 +144,6 @@ my_func
 Note that bin-packing is not supported in nested items unless explicitly
 introduced via `$`.
 
-## Line Items
-
-Items that span the line (after `-` or `key:`) are treated like ordinary
-command arguments, except that whitespace is preserved literally instead being
-a separator. There is also a special form: `$` followed by a space interprets
-the remainder of the line as a full command statement, with the value being its
-result.
-
-```
-some_func
-  key1: $ command arg1 arg2
-  key2: $ comannd arg3 arg4
-```
-
 ## `for` in Vertical Layout
 
 Within vertical layout, `for` generates variadic items or arguments
@@ -212,23 +212,10 @@ let all = $
 assert_eq $all [1, 2, 3, 4, 5, 6]
 ```
 
-The behavior of the spread depends on the context:
-
-| Context              | Spread input       | Behavior                                                                          |
-| -------------------- | ------------------ | --------------------------------------------------------------------------------- |
-| Arguments            | [`Iter`](std.Iter) | Positional arguments, including pair elements                                     |
-| Arguments            | Dict or Record     | Mixed arguments: sequential integer keys are positional, symbol keys are keywords |
-| Array or tuple       | [`Iter`](std.Iter) | Positional elements                                                               |
-| Array or tuple       | Dict or Record     | Key/value pairs                                                                   |
-| Dictionary or record | [`Iter`](std.Iter) | Elements assigned incrementing positional keys                                    |
-| Dictionary or record | Dict or Record     | Preserves keyed and positional entries                                            |
-| Any                  | `kv()` adapter     | Keyed entries; arrays and tuples reject them                                      |
-
-`Iterable` alone does not support spreading. Use `iter()` explicitly. A rest
-bound by a pattern can be spread repeatedly.
-
 Note that a dictionary is only produced if at least one static key exists in
-addition to any spreads; otherwise, an array results.
+addition to any spreads; otherwise, an array results. See
+[Spreading](./data-structures.md#spreading) for what each kind of value
+contributes.
 
 ## Class Supertypes
 

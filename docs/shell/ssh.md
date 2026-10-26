@@ -35,64 +35,14 @@ standard error.
 `--cd`, `--set`, and `--unset` overrides followed by `--stdio`; custom launchers
 must pass through or interpret those trailing `dolang-vfs` arguments.
 
-`ssh.with` stops the VFS session when the block returns or throws. Prefer it to
-constructing a stream-backed `Vfs` manually.
+When the block returns, throws, or is canceled, `ssh.with` stops the VFS and
+waits for the SSH stream to finish. Connection failure raises an error and
+invalidates files and other handles opened through that session. Prefer
+`ssh.with` to constructing a stream-backed `Vfs` manually.
 
-## Running a Script over SSH
-
-The bundled `ssh` entrypoint compiles a local script and runs it with an SSH
-VFS context:
-
-```
-dolang -m ssh --batch --user builder build.example.com build.dol release
-```
-
-The destination and script follow the SSH options. Every argument after the
-script path is passed through unchanged, including arguments beginning with
-`-`. Inside the target script, `shell.program` is the script path and
-`shell.args` contains only those trailing arguments.
-
-`-m` runs a bundled entrypoint over the connection instead of a local script,
-using the same `-m NAME` spelling as the top-level command line:
-
-```
-dolang -m ssh --batch build.example.com -m test tests/
-```
-
-The entrypoint sees its own name as `shell.program`, so it behaves as it would
-when run directly.
-
-The entrypoint accepts the connection options documented below using
-hyphenated command-line names, such as `--identity`, `--jump`,
-`--connect-timeout`, and `--host-key accept-new`. Repeated identities and jump
-hosts preserve their order.
-
-Use `--command` with a shell-quoted string to replace the remote VFS launcher:
-
-```
-dolang -m ssh --command "sudo -n /opt/dolang-vfs" host script.dol
-```
-
-The string is split into arguments locally; it is not run through a remote
-shell. `--cd` selects the initial remote directory. Remote environment
-overrides may be repeated:
-
-```
-dolang -m ssh \
-  --env MODE=release \
-  --env HOME \
-  --unset-env DEBUG \
-  host script.dol
-```
-
-`NAME=VALUE` sets a value, while a bare `NAME` inherits its local value.
-`--unset-env` takes precedence when the same name is also passed with
-`--env`. `--no-login-env` skips the login environment import described below,
-and `--login-shell` names the shell to import it from. Run
-`dolang -m ssh --help` for the complete option list.
-
-Authentication is delegated to the user's `ssh` executable, configuration,
-agent, and credential providers. Do does not replace or weaken that setup.
+`ssh.with` uses `ssh -T`, so it does not allocate a remote terminal. External
+programs can use captured output, redirection, and pipes, but programs that
+require an interactive TTY are not supported through this helper.
 
 ## Connection Options
 
@@ -110,12 +60,15 @@ agent, and credential providers. Do does not replace or weaken that setup.
 - `host_key:` accepts `:DEFAULT:`, `:STRICT:`, or `:ACCEPT_NEW:`.
 - `known_hosts:` selects a known-hosts file instead of the user's default.
 - `command:` replaces the remote VFS command when it is installed elsewhere.
-- `login_env:` controls the login environment import described below.
+- `login_env:` controls the [login environment](#login-environment) import.
 
 SSH configuration continues to supply settings not represented by these
 options. Use `:STRICT:` for hosts whose keys have already been provisioned;
 `:ACCEPT_NEW:` trusts a host on first use but still rejects a changed key.
 The default policy is the user's normal SSH host-key policy.
+
+Authentication is delegated to the user's `ssh` executable, configuration,
+agent, and credential providers. Do does not replace or weaken that setup.
 
 ## Login Environment
 
@@ -144,14 +97,6 @@ pass without knowing which operating system will answer:
 ssh.with build.example.com login_env: /bin/zsh do
   run cargo build --release
 ```
-
-`ssh.with` uses `ssh -T`, so it does not allocate a remote terminal. External
-programs can use captured output, redirection, and pipes, but programs that
-require an interactive TTY are not supported through this helper.
-
-When the block returns, throws, or is canceled, `ssh.with` stops the VFS and
-waits for the SSH stream to finish. Connection failure raises an error and
-invalidates files and other handles opened through that session.
 
 ## Remote Argument Encoding
 
@@ -196,3 +141,56 @@ Windows hosts is not supported in this manner.
 The SSH server and remote `dolang-vfs` execute with the selected SSH account's
 authority. Treat access to that account and its VFS stream as access to all
 operations available to that identity.
+
+## Running a Script over SSH
+
+The bundled `ssh` entrypoint compiles a local script and runs it with an SSH
+VFS context:
+
+```
+dolang -m ssh --batch --user builder build.example.com build.dol release
+```
+
+The destination and script follow the SSH options. Every argument after the
+script path is passed through unchanged, including arguments beginning with
+`-`. Inside the target script, `shell.program` is the script path and
+`shell.args` contains only those trailing arguments.
+
+`-m` runs a bundled entrypoint over the connection instead of a local script,
+using the same `-m NAME` spelling as the top-level command line:
+
+```
+dolang -m ssh --batch build.example.com -m test tests/
+```
+
+The entrypoint sees its own name as `shell.program`, so it behaves as it would
+when run directly.
+
+The entrypoint accepts the [connection options](#connection-options) using
+hyphenated command-line names, such as `--identity`, `--jump`,
+`--connect-timeout`, and `--host-key accept-new`. Repeated identities and jump
+hosts preserve their order.
+
+Use `--command` with a shell-quoted string to replace the remote VFS launcher:
+
+```
+dolang -m ssh --command "sudo -n /opt/dolang-vfs" host script.dol
+```
+
+The string is split into arguments locally; it is not run through a remote
+shell. `--cd` selects the initial remote directory. Remote environment
+overrides may be repeated:
+
+```
+dolang -m ssh \
+  --env MODE=release \
+  --env HOME \
+  --unset-env DEBUG \
+  host script.dol
+```
+
+`NAME=VALUE` sets a value, while a bare `NAME` inherits its local value.
+`--unset-env` takes precedence when the same name is also passed with `--env`.
+`--no-login-env` skips the [login environment](#login-environment) import, and
+`--login-shell` names the shell to import it from. Run `dolang -m ssh --help`
+for the complete option list.

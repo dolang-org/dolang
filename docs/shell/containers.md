@@ -7,7 +7,9 @@ container, while the interpreter remains on the host.
 
 ## Running in a Container
 
-Use `docker.with` or `podman.with` to run a block targeting a fresh container:
+`docker.run` and `podman.run` run a single command in a temporary container,
+while `docker.with` and `podman.with` run a Do block with a temporary container
+as a VFS target:
 
 ```
 import podman systemd
@@ -133,10 +135,6 @@ finally
 
 See the [`docker`](docker) and
 [`podman`](podman) references for the complete interfaces.
-
-`docker.run` and `podman.run` run a single command in a temporary container,
-while `docker.with` and `podman.with` run a Do block with a temporary container
-as a VFS target.
 
 `Container` objects inspect and change the lifecycle of existing containers.
 `Container.with` runs a block with a running container as its VFS target. It

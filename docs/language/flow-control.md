@@ -34,6 +34,42 @@ else
   echo F
 ```
 
+### `if` in `let` and Assignments
+
+`if` statements can be the right-hand side of `let` bindings and assignments:
+
+```
+let max = if (a > b)
+  a
+else
+  b
+
+let msg = if (count == 0)
+  "empty"
+else if (count == 1)
+  "one"
+else
+  "many"
+
+# Also works with assignment
+result = if error
+  get_error_message $error
+else
+  data
+```
+
+An `if` gives the result of the branch that runs, or `nil` if no branch runs:
+
+```
+let value = if true
+  42
+# value == 42
+
+value = if false
+  1
+# value == nil
+```
+
 ### `if let` / `if bind`
 
 A `let` or `bind` pattern after `if` makes the pattern match the condition.
@@ -80,42 +116,6 @@ echo "$k -> $v"
 throw, break, continue, or otherwise never return; falling through raises
 `std.RuntimeError`. See [Patterns](./patterns.md#let-bind-with-else) for scope
 and matching rules.
-
-### `if` in `let` and Assignments
-
-`if` statements can be the right-hand side of `let` bindings and assignments:
-
-```
-let max = if (a > b)
-  a
-else
-  b
-
-let msg = if (count == 0)
-  "empty"
-else if (count == 1)
-  "one"
-else
-  "many"
-
-# Also works with assignment
-result = if error
-  get_error_message $error
-else
-  data
-```
-
-An `if` gives the result of the branch that runs, or `nil` if no branch runs:
-
-```
-let value = if true
-  42
-# value == 42
-
-value = if false
-  1
-# value == nil
-```
 
 ### `match`
 
