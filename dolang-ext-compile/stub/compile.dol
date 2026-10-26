@@ -4,7 +4,7 @@
 # ## Usage
 #
 # ```
-# let source = "let x = 1 + 2"
+# let source = "let x = (1 + 2)"
 # let unit = compile "example.dol" $source
 # let bytecode = unit.emit()
 # ```

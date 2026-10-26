@@ -246,7 +246,7 @@ Strip mode works the same way:
 ```
 let pattern = r|-
   ^\d+\.\d+$
-# pattern == "^\d+\.\d+$"
+# pattern == r"^\d+\.\d+$"
 ```
 
 All the same indentation rules apply as for regular here strings.

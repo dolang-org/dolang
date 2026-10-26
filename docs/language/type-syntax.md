@@ -50,7 +50,7 @@ passed positionally, or `name: T`, passed by keyword:
 ```
 let names @ Array[Str] = []
 let index @ Dict[Str, Array[Int]] = {}
-let result @ Record[value: Int, error: Error | nil] = nil
+let result @ Record[value: Int, error: std.Error | nil] = (value: 1, error: nil)
 ```
 
 An argument may also [expand a schema](#expanding-schemas) into further
@@ -167,12 +167,14 @@ let positional @ Dict[{Str, *}] = {}
 
 ### Expanding Schemas
 
-`...S` among type arguments expands the schema `S` into further arguments.
-Expanding a type `T` rather than a schema is shorthand for `...{*T}`:
+`...S` among type arguments expands the schema `S` into further arguments. A
+schema is needed only for items that type arguments can't write directly, such
+as optional ones. Expanding a type `T` rather than a schema is shorthand for
+`...{*T}`:
 
 ```
 let row @ Tuple[...Str] = Tuple ["id", "name"]
-let open @ Record[...{name: Str, ...}] = nil
+let conn @ Record[...{host: Str, ?port: Int}] = (host: "db")
 ```
 
 ### Types as Schema Arguments
@@ -293,7 +295,7 @@ order among the others, but a list takes at most one of each:
 def collect count @ Int <Iter[Int] >Sink[Str] -> nil
   for value = strand.input()
     strand.put $ str $value
-let runner @ ((Int, <Iter[Int], >Sink[Str]) -> Int) = nil
+let runner @ ((Int, <Iter[Int], >Sink[Str]) -> Int) = (do |n| n)
 ```
 
 In a declaration the type is compact, as an annotation's is.

@@ -2685,7 +2685,7 @@ do -> (Path | nil)
 #   file.open w do |f|
 #     f.write "Hello, World!"
 # finally
-#   remove_dir $dir all: true
+#   remove $dir all: true
 # ```
 pub def create_temp_dir
   # Parent directory. Defaults

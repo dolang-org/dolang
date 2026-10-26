@@ -496,12 +496,10 @@ pub class ArchiveError: RuntimeError
 # Raised when an image reference cannot be found.
 #
 # ```
-# import docker
-#
 # try
-#   docker.image "nonexistent:latest"
-# catch docker.NoImageError: e
-#   echo "not found: $e.ref"
+#   image "nonexistent:latest"
+# catch NoImageError: e
+#   echo "not found: $(e.ref)"
 # ```
 #[final]
 pub class NoImageError: RuntimeError

@@ -32,7 +32,7 @@ pub class Archive
   # ```
   # open "archive.zip" do |archive|
   #   for entry = archive.entries
-  #     echo "Found: $entry.name"
+  #     echo "Found: $(entry.name)"
   #
   #   let entries = [...archive.entries]
   #   echo "Total files: $(entries.len)"
@@ -377,7 +377,7 @@ do -> Archive
 # ```
 # open "archive.zip" do |archive|
 #   for entry = archive.entries
-#     echo "Entry: $entry.name"
+#     echo "Entry: $(entry.name)"
 # ```
 @def open[R]
   # Path to the ZIP archive, or a seekable stream holding it.

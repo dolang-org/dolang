@@ -36,7 +36,7 @@ import fs:
 
 podman.with ubuntu:24.04 do
   let release = Path("/etc/os-release").read_str()
-  with_host do Path("release.txt").write $release
+  shell.with_host do Path("release.txt").write $release
 ```
 
 ## Building Images

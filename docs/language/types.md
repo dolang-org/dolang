@@ -167,7 +167,7 @@ def apply[R, *Ps, **Ks] func@((*Ps, **Ks) -> R) *args@Ps **kw@Ks -> R
 expressions. Variadic binders cannot have defaults.
 
 ```
-def lookup[K @ Hashable, V = nil] key@K -> V
+def lookup[K @ (Str | Sym), V = nil] key@K -> V
   nil
 ```
 
@@ -249,7 +249,9 @@ runtime:
 
 ```
 import @geometry
-let point @ geometry.Point = nil
+
+def draw point @ geometry.Point
+  echo $point
 ```
 
 `@import` makes every module and item in the statement checker-only. Individual
@@ -263,7 +265,8 @@ let point @ geometry.Point = nil
     - Shape
     Vector: Offset
 
-let point @ g.Point = nil
+def draw point @ g.Point
+  echo $point
 ```
 
 ## Overloads

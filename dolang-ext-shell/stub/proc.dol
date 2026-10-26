@@ -541,10 +541,10 @@ pub class Status
 # for info = enumerate()
 #   echo "$(info.pid) $(info.name)"
 #
-# # `unix_id` is a Unix-only field, so this is a Unix-only search
-# let mine = $
+# # `unix_id` is `nil` on non-Unix targets
+# let root_owned = $
 #   for info = enumerate()
-#     if (info.unix_id.uid == uid)
+#     if (info.unix_id && info.unix_id.uid == 0)
 #       - $info
 # ```
 pub def enumerate() -> Iter[Info]

@@ -332,9 +332,11 @@ do -> Record[...Ts]
 #
 # ```
 # class Config
+#   field port = 8080
+#
 #   #[setter]
 #   pub def port obj value
-#     obj.#_port = value
+#     obj.#port = value
 # ```
 #
 @def setter[T, V]
@@ -1612,7 +1614,7 @@ pub class Bin: @Index[Range[Int], Bin]
   # ## Example
   #
   # ```
-  # let bytes = bin.pack [104, 101, 108, 108, 111]
+  # let bytes = Bin.pack [104, 101, 108, 108, 111]
   # assert_eq $bytes b"hello"
   # ```
   #

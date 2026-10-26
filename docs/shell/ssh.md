@@ -150,7 +150,7 @@ pass without knowing which operating system will answer:
 
 ```
 ssh.with build.example.com login_env: /bin/zsh do
-  cargo build --release
+  run cargo build --release
 ```
 
 `ssh.with` uses `ssh -T`, so it does not allocate a remote terminal. External

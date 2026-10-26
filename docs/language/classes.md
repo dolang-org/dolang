@@ -367,7 +367,7 @@ class Dog: Animal
     Animal.(init) $self $name dog
     self.breed = breed
 
-  pub def description self
+  pub def describe self
     "$(Animal.describe self) ($(self.breed))"
 ```
 
@@ -383,9 +383,16 @@ echo $ Animal.describe $rex    # Rex is a dog
 
 ### Multiple Inheritance
 
-List multiple parents after the colon, separated by spaces:
+List multiple parents after the colon, separated by spaces. A class can't
+combine two ordinary unrelated parents, so the extra parents are marked
+[`mixable`](#disjoint-classes):
 
 ```
+#[mixable]
+class Pet
+  pub def category self
+    "companion"
+
 class LoudDog: Animal Pet
   pub def describe self
     "$(Animal.describe self)! pet=$(Pet.category self)"
@@ -435,6 +442,7 @@ class A
   pub def who self
     A
 
+#[mixable]
 class B
   pub def who self
     B
@@ -449,7 +457,7 @@ Swapping the parents changes the result:
 ```
 class D: B A
 
-assert_eq $(D().who()) B
+assert_eq $(D().who()) $B
 ```
 
 ### Calling Parent Constructor
@@ -895,7 +903,7 @@ import std:
   - hash
 
 def (hash) self
-  hash self.x self.y self.z
+  hash $self.x $self.y $self.z
 ```
 
 **Important:** if you define `(eq)`, you should also define `(hash)` so that
@@ -919,7 +927,7 @@ class Point
     (self.x == other.x && self.y == other.y)
 
   def (hash) self
-    (self.x * 31 + self.y)
+    hash $self.x $self.y
 
 let p1 = Point 3 4
 let p2 = Point 3 4
@@ -980,14 +988,14 @@ context). Must return a `Str`. Falls back to
 class Path
   pub field parts
 
-  def (init) self ...parts
+  def (init) self *parts
     self.parts = parts
 
   def (verbatim) self
-    self.parts.join("/")
+    "/".join(self.parts)
 
   def (str) self
-    "Path($(self.parts.join("/")))"
+    "Path($("/".join(self.parts)))"
 ```
 
 ### `(fmt)`: Formatted Conversion

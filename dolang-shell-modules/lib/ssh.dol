@@ -49,7 +49,7 @@ import _ssh
 #   host_key: :STRICT:
 #   do
 #     checkout.remove all: true ignore: true
-#     checkout.parent.mkdir all: true
+#     checkout.parent.create_dir all: true
 #     git clone https://github.com/example/project.git $checkout
 #     cd $checkout do
 #       cargo build --release

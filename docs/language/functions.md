@@ -266,8 +266,8 @@ This allows natural flow control in callbacks and higher-order functions:
 
 ```
 def validate_record record
-  for field = ["id", "name", "email"]
-    record.get field else: do
+  for field = [:id:, :name:, :email:]
+    record.get $field else: do
       return {valid: false, missing: field}
   {valid: true}
 ```
@@ -280,7 +280,7 @@ in argument position to reduce the likelihood of this sort of error:
 ```
 # Valid: closure is passed as an argument
 def validate record
-  record.get "name" else: do
+  record.get :name: else: do
     return false
   true
 
@@ -288,7 +288,7 @@ def validate record
 def bad_example()
   # Compiler will reject this line
   let closure = do return false
-  record.get "name" else: $closure
+  record.get :name: else: $closure
 ```
 
 ## Public Functions

@@ -157,14 +157,15 @@ alongside the id itself, since a bare UUID doesn't say which it is:
 
 ```
 import security.macos
-import security.unix: id
+import security.unix:
+  - id
 
 let owner = security.macos.uuid_for_uid id().euid
 let access = Acl $
   $ Ace.allow $owner mask: $read
 fs.set_acl config.ini $access
 
-let kind id = security.macos.id_for_uuid owner
+let kind id = security.macos.id_for_uuid $owner
 echo "$kind $id"  # UID 501
 ```
 

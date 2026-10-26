@@ -199,7 +199,7 @@ for i = Range 100
 ```
 def find_incomplete configs
   for config = configs
-    config.get "host" else: do
+    config.get :host: else: do
       break
     process $config
   "done"
@@ -220,7 +220,7 @@ for i = Range 10
 
 ```
 for item = items
-  let id = item.get id else: do
+  let id = item.get :id: else: do
     continue
   echo "Processing $id"
 ```
@@ -249,13 +249,13 @@ assert_eq $result 3
 
 ```
 def validate_record record
-  for field = ["id", "name", "email"]
-    record.get field else: do
+  for field = [:id:, :name:, :email:]
+    record.get $field else: do
       return {valid: false, missing: field}
   {valid: true}
 
 let result = validate_record {name: "Alice", email: "alice@example.com"}
-# Returns: {valid: false, missing: "id"}
+# Returns: {valid: false, missing: :id:}
 ```
 
 ### `throw`

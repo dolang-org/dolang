@@ -314,7 +314,7 @@ pub class Key
   # ```
   # let entry = env.get_value "TEMP"
   # if entry
-  #   echo "TEMP is a $entry.kind value: $entry.value"
+  #   echo "TEMP is a $(entry.kind) value: $(entry.value)"
   # else
   #   echo "TEMP is not set"
   # ```
