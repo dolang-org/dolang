@@ -1,0 +1,40 @@
+# The final pass judges each expression's value, and the type expected of it
+# where there is one.
+
+pub class Box
+  pub field item @ Int = 0
+
+  pub def doubled self -> Int
+    (self.item * 2)
+
+pub def pick[T] x @ T -> T
+  x
+
+pub def label s @ Str -> Str
+  s
+
+pub def apply[T, U] x @ T f @ (T -> U) -> U
+  f(x)
+
+pub def values b @ Box n @ Int
+  let call = pick(n)
+  #          ^~~~~~~: value std.Int
+  let got = b.item
+  #         ^~~~~~: value std.Int
+  let method = b.doubled()
+  #            ^~~~~~~~~~~: value std.Int
+  # An operand
+  let sum = (pick(n) + b.item)
+  #          ^~~~~~~: value std.Int
+  # An argument, against its parameter
+  let named = label("a")
+  #                 ^~~: value "a"
+  #                 ^~~: expected std.Str
+  # A `do` block's instantiated function type
+  let applied = apply(n, do |x| x * 2)
+  #                      ^~~~~~~~~~~~: value (std.Int, <m.values.#0, >m.values.#1) -> std.Int
+  # Arguments held back for their call's parameters
+  let nested = pick([pick(n)])
+  #                 ^~~~~~~~~: value [std.Int]
+  #                  ^~~~~~~: value std.Int
+  let _ = [call, got, method, sum, named, applied, nested]

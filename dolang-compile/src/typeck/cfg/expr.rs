@@ -14,6 +14,10 @@ use crate::{
 pub(crate) struct Expr {
     pub(crate) kind: ExprKind,
     pub(crate) span: Span,
+    /// Whether lowering made it up rather than lowering a source expression, as a
+    /// statement's `nil` value or a flag is: spanned for diagnostics, but not
+    /// judged there
+    pub(crate) synthetic: bool,
 }
 
 pub(crate) enum ExprKind {

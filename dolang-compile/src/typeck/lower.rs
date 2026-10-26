@@ -250,7 +250,7 @@ impl<'t, 'u> Lower<'t, 'u> {
 }
 
 /// Where lowering is: the function, lexical frame and control context that new
-/// blocks and jumps are made in
+/// blocks and jumps are synthetic in
 #[derive(Clone)]
 struct Ctx<'u> {
     func: FuncId,
@@ -410,9 +410,23 @@ impl<'u> Scope<'_, '_, 'u> {
 }
 
 fn expr(kind: ExprKind, span: Span) -> Expr {
-    Expr { kind, span }
+    Expr {
+        kind,
+        span,
+        synthetic: false,
+    }
 }
 
+/// An expression lowering makes up, spanned at source it doesn't stand for
+fn synthetic(kind: ExprKind, span: Span) -> Expr {
+    Expr {
+        kind,
+        span,
+        synthetic: true,
+    }
+}
+
+/// A statement's value, or a field's, where it has none
 fn nil(span: Span) -> Expr {
-    expr(ExprKind::Literal(Literal::Nil), span)
+    synthetic(ExprKind::Literal(Literal::Nil), span)
 }

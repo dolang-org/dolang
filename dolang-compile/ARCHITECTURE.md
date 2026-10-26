@@ -1153,12 +1153,19 @@ Rounds repeat until no block is undecided.
 Lowering copies a variable's value into a statement's destination, such as a
 function's result, as `ExprKind::Copy`, which flow reads without recording it as
 a reference.
+Expressions lowering makes up, such as a statement's `nil` value, a flag, or the
+test of a constant pattern, are marked `synthetic`: they keep a source span for
+diagnostics, but flow doesn't judge them there.
 
 Once the rounds end, a final pass reruns every block over its final state,
 defaulting any rule it leaves undecided, as the last run of a marked block did.
-It appends what each variable reference and binding saw to a log, once for each
-context, which the `flow` judgment reports after joining; a trial that checks
-whether a value fits truncates the log back to its length before the trial. The
+When the check was asked for an analysis, it appends to a log, once for each
+context, what each variable reference and binding saw, and each source
+expression's value and the type expected of it, if any. An argument held back
+or a `do` block passed to a call is typed by the call's rule, so its value is
+logged once the rule's final run is solved. The `flow`, `value` and `expected`
+judgments report the log after joining. A trial that checks whether a value
+fits truncates the log back to its length before the trial. The
 pass reports each problem once per span: contradicted rules,
 values that don't fit a local's annotation or a function's declared result, and
 reads that may be unassigned. Checks the solver can't decide join

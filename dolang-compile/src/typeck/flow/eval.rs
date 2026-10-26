@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 
 use crate::source::Span;
 
-use super::{At, Flow, Results, Role, State, problem::Problem, rule::passed_signature};
+use super::{At, Fact, Flow, Results, Role, Seen, State, problem::Problem, rule::passed_signature};
 use crate::typeck::{
     cfg::{Expr, ExprKind, FuncId, FuncKind},
     elab::{Designated, Referent, Tables, Target},
@@ -29,7 +29,9 @@ impl Flow<'_, '_> {
 
     /// An expression's type, where a type is expected of it that the fixed point
     /// can't revise: a local's annotation, or the parameter of a callee known from
-    /// its signature alone. The expression's rule may solve toward it.
+    /// its signature alone. The expression's rule may solve toward it. A source
+    /// expression's type and expectation are logged, except a variable reference,
+    /// which logs what it read, and an operand, whose span its push logged.
     pub(super) fn expect(
         &mut self,
         at: At,
@@ -39,7 +41,7 @@ impl Flow<'_, '_> {
         expected: Option<TypeId>,
     ) -> TypeId {
         let unknown = self.db.unknown();
-        match &expr.kind {
+        let ty = match &expr.kind {
             ExprKind::Literal(literal) => self.literal(literal),
             ExprKind::Float => self.designated_type(Designated::Float),
             ExprKind::Bin => self.designated_type(Designated::Bin),
@@ -90,7 +92,30 @@ impl Flow<'_, '_> {
             ExprKind::Operand => operands.pop_front().expect("an operand for each hole"),
             ExprKind::Never => self.db.bottom(),
             ExprKind::Namespace | ExprKind::Error => unknown,
+        };
+        if !expr.synthetic
+            && !matches!(
+                expr.kind,
+                ExprKind::Var(_)
+                    | ExprKind::Copy(_)
+                    | ExprKind::Operand
+                    | ExprKind::Namespace
+                    | ExprKind::Error
+            )
+        {
+            let seen = |ty| Seen {
+                fact: Fact {
+                    ty,
+                    unassigned: false,
+                },
+                var: None,
+            };
+            self.log(expr.span, Role::Value, seen(ty));
+            if let Some(expected) = expected {
+                self.log(expr.span, Role::Expected, seen(expected));
+            }
         }
+        ty
     }
 
     /// A cast's type, unless its value never arrives. A checked cast gives its value

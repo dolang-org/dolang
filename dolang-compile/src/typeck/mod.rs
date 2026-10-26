@@ -264,7 +264,7 @@ impl<'u, 's> Builder<'u, 's> {
         // Every later pass runs in a fork per unit, so no unit's results depend on
         // what another interned
         let shared = db.share();
-        let mut outputs = check_units(&shared, &tables, self.threads);
+        let mut outputs = check_units(&shared, &tables, self.threads, self.analysis);
         // Gather each kind of output across units, in the order the passes ran
         let mut unresolved = Vec::new();
         for output in &mut outputs {
@@ -455,11 +455,13 @@ const _: () = {
 };
 
 /// Check every unit with [`check_unit`], on a pool of `threads` threads, else the
-/// global pool, giving their outputs by [`UnitId`]
+/// global pool, giving their outputs by [`UnitId`]. Flow logs facts only for an
+/// `analysis`.
 fn check_units(
     shared: &Arc<r#type::Shared>,
     tables: &elab::Tables<'_>,
     threads: Option<NonZeroUsize>,
+    analysis: bool,
 ) -> Vec<UnitOutput> {
     let count = tables.units.len();
     let mut slots: Vec<Option<UnitOutput>> = (0..count).map(|_| None).collect();
@@ -476,7 +478,7 @@ fn check_units(
     let run = || {
         rayon::scope_fifo(|scope| {
             for (unit, slot) in work {
-                scope.spawn_fifo(move |_| *slot = Some(check_unit(shared, tables, unit)));
+                scope.spawn_fifo(move |_| *slot = Some(check_unit(shared, tables, unit, analysis)));
             }
         })
     };
@@ -502,8 +504,14 @@ fn check_units(
 }
 
 /// Check a unit with source, its declarations and bodies, in a new fork of
-/// `shared`; a typelib's were checked with its source
-fn check_unit(shared: &Arc<r#type::Shared>, tables: &elab::Tables<'_>, unit: UnitId) -> UnitOutput {
+/// `shared`; a typelib's were checked with its source. Flow logs facts only for
+/// an `analysis`.
+fn check_unit(
+    shared: &Arc<r#type::Shared>,
+    tables: &elab::Tables<'_>,
+    unit: UnitId,
+    analysis: bool,
+) -> UnitOutput {
     // A fork of its own, so that what it interns isn't in the layer
     let db = r#type::Database::fork(shared);
     let source = tables.units[unit.index()].source;
@@ -535,7 +543,7 @@ fn check_unit(shared: &Arc<r#type::Shared>, tables: &elab::Tables<'_>, unit: Uni
             }
             let layer = db.share();
             let layout = flow::Layout::new(&ir);
-            let runs = flow::analyze(&ir, &layout, &ir.runs(), &layer, tables);
+            let runs = flow::analyze(&ir, &layout, &ir.runs(), &layer, tables, analysis);
             (Some(ir), Some(layer), runs)
         }
         None => (None, None, Vec::new()),
@@ -667,12 +675,17 @@ impl Check<'_> {
         for node in analysis.nodes(unit) {
             judgments.extend(node.judgments().map(|judged| {
                 let ty = judged.ty(Style::Full);
+                let name = match judged.role() {
+                    Role::Read | Role::Bind => "flow",
+                    Role::Value => "value",
+                    Role::Expected => "expected",
+                };
                 let value = match (judged.unassigned(), judged.none()) {
                     (false, _) => ty,
                     (true, true) => "unassigned".to_owned(),
                     (true, false) => format!("{ty} | unassigned"),
                 };
-                ("flow", node.span(), value)
+                (name, node.span(), value)
             }));
         }
         judgments.sort_by_key(|&(name, span, _)| (span.start, span.end, name));

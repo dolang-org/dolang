@@ -5,6 +5,7 @@ use std::{mem, rc::Rc};
 use super::{
     Scope, expr,
     scope::{Entry, Frame, Spelled},
+    synthetic,
 };
 use crate::{
     ast::{
@@ -176,7 +177,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 ast::Expr::Escape(char, _) => text.push(*char),
                 node => {
                     if !text.is_empty() {
-                        parts.push(expr(str_literal(&mem::take(&mut text)), span));
+                        parts.push(synthetic(str_literal(&mem::take(&mut text)), span));
                     }
                     parts.push(interp(self, node));
                 }
@@ -192,7 +193,7 @@ impl<'u> Scope<'_, '_, 'u> {
             return str_literal(&text);
         }
         if !text.is_empty() {
-            parts.push(expr(str_literal(&text), span));
+            parts.push(synthetic(str_literal(&text), span));
         }
         ExprKind::Concat(parts.into())
     }
@@ -211,11 +212,11 @@ impl<'u> Scope<'_, '_, 'u> {
                         precision: None,
                     },
                 };
-                expr(kind, node.span())
+                synthetic(kind, node.span())
             }
         });
         if !text.is_empty() {
-            parts.push(expr(str_literal(&text), span));
+            parts.push(synthetic(str_literal(&text), span));
         }
         ExprKind::Fmt(parts.into())
     }
@@ -236,7 +237,7 @@ impl<'u> Scope<'_, '_, 'u> {
         for node in nodes {
             if constant(node) {
                 if !run {
-                    parts.push(expr(ExprKind::Bin, span));
+                    parts.push(synthetic(ExprKind::Bin, span));
                 }
                 run = true;
             } else {
@@ -417,7 +418,10 @@ impl<'u> Scope<'_, '_, 'u> {
             args,
         };
         let result = self.temporary(expr(call, span));
-        self.assign(flag, expr(ExprKind::Literal(Literal::Bool(true)), span));
+        self.assign(
+            flag,
+            synthetic(ExprKind::Literal(Literal::Bool(true)), span),
+        );
         ExprKind::Copy(result)
     }
 

@@ -38,7 +38,7 @@ use dolang_util::mono::MonoVec;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
-    At, Flow, State,
+    At, Fact, Flow, Role, Seen, State,
     member::CallTarget,
     problem::{Misfit, Problem},
     state::Group,
@@ -105,6 +105,11 @@ struct Rule<'s, 'a, 'p> {
     /// ends the path, and unless it may not occur, means the whole isn't
     /// produced
     calls: Vec<(Term, Span, bool)>,
+    /// Whether it's made for a final pass that logs facts
+    logging: bool,
+    /// The `do` blocks and arguments held back that it types, by the variable
+    /// standing for each one's value and its span, which the final pass logs
+    values: Vec<(Term, Span)>,
     /// Whether what it makes is held back in a `for`, so it may occur zero
     /// times
     repeated: bool,
@@ -118,14 +123,24 @@ struct Rule<'s, 'a, 'p> {
     seeded: bool,
     /// The arguments held back that an earlier make of the run found exactly,
     /// passed closed (see [`Flow::decide`])
-    exact: &'s [(*const Prepared, TypeId)],
+    exact: &'s [Found],
     /// The arguments held back that it finds exactly: solved, or with only
     /// solved types below them, without a check of their own left undecided
     /// or a `do` block
-    found: Vec<(*const Prepared, TypeId)>,
+    found: Vec<Found>,
     /// Whether a `do` block's result is left to a variable even once it's known,
     /// so that choosing a fresh dict's schema doesn't depend on it
     blind: bool,
+}
+
+/// An argument held back that a make of a rule found exactly (see
+/// [`Flow::decide`])
+struct Found {
+    prepared: *const Prepared,
+    ty: TypeId,
+    /// What the arguments held back in it were found to be, by span, which
+    /// passing it closed leaves untyped
+    values: Vec<(TypeId, Span)>,
 }
 
 /// An argument held back, with the variable standing for it
@@ -148,6 +163,8 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
             pending: Vec::new(),
             held: Vec::new(),
             calls: Vec::new(),
+            logging: false,
+            values: Vec::new(),
             repeated: false,
             defaulting: false,
             seed: true,
@@ -174,8 +191,9 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
         self.solver.closed(ty)
     }
 
-    /// A `do` block's function type, with a fresh variable in each hole
-    fn lambda(&mut self, lambda: &Lambda) -> Term {
+    /// A `do` block's function type, with a fresh variable in each hole, its
+    /// value at `span`
+    fn lambda(&mut self, lambda: &Lambda, span: Span) -> Term {
         let (ty, holes) = match (self.blind, &lambda.blinded) {
             (true, Some((ty, holes))) => (*ty, holes),
             _ => (lambda.ty, &lambda.holes),
@@ -206,18 +224,31 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
         if let Some(twin) = twin {
             self.solver.blind(term, twin);
         }
+        if self.logging {
+            self.values.push((term, span));
+        }
         term
     }
 
     /// A fresh variable standing for an argument held back, above what it's
     /// known to be already
     fn hold(&mut self, prepared: &'p Prepared, repeated: bool) -> Term {
-        if let Some(&(_, ty)) =
-            (self.exact.iter()).find(|&&(found, _)| std::ptr::eq(found, prepared))
+        if let Some(found) =
+            (self.exact.iter()).find(|found| std::ptr::eq(found.prepared, prepared))
         {
-            return self.closed(ty);
+            let term = self.closed(found.ty);
+            if self.logging {
+                self.values.extend(prepared.span().map(|span| (term, span)));
+                for &(ty, span) in &found.values {
+                    self.values.push((self.closed(ty), span));
+                }
+            }
+            return term;
         }
         let term = self.solver.infer();
+        if self.logging {
+            self.values.extend(prepared.span().map(|span| (term, span)));
+        }
         self.held.push(Held {
             prepared,
             term,
@@ -290,8 +321,8 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
                     Value::Pair(key, ty) => {
                         joined.keyed(rule, rule.db.regular(key), Part::Closed(ty))
                     }
-                    Value::Lambda(key, ref lambda, _) => {
-                        let term = Part::Term(rule.lambda(lambda));
+                    Value::Lambda(key, ref lambda, span) => {
+                        let term = Part::Term(rule.lambda(lambda, span));
                         match key {
                             Some(key) => joined.keyed(rule, symbol(key), term),
                             None => joined.positional.add(rule, term),
@@ -335,7 +366,7 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
                     vec![(multiplicity, argument, fallback)]
                 }
                 Value::Lambda(key, ref lambda, span) => {
-                    let term = rule.lambda(lambda);
+                    let term = rule.lambda(lambda, span);
                     let argument = match key {
                         Some(key) => CallArgument::Keyword(key, term),
                         None => CallArgument::Positional(term),
@@ -412,6 +443,7 @@ struct Run<'g> {
     passed: Vec<(VarId, Term)>,
     pending: Vec<Term>,
     calls: Vec<(Term, Span, bool)>,
+    values: Vec<(Term, Span)>,
     outcomes: Vec<Outcome>,
     /// How many of the checks are the rule's own, ahead of what's expected of
     /// it and its sub-rules'
@@ -503,6 +535,16 @@ enum Prepared {
 }
 
 impl Prepared {
+    /// Its span, if its value is left to the rule it's held back in; a template's
+    /// is known when it's evaluated
+    fn span(&self) -> Option<Span> {
+        match self {
+            Prepared::Call { call, .. } => Some(call.span),
+            Prepared::Collection(collection) => Some(collection.span),
+            Prepared::Fmt(_) => None,
+        }
+    }
+
     /// Its type, if it's known before its expectation is
     fn preview(&self) -> Option<TypeId> {
         match *self {
@@ -979,6 +1021,7 @@ impl<'a> Flow<'a, '_> {
                 let mut solver = self.solver(gas);
                 let mut rule = Rule {
                     defaulting: default,
+                    logging: self.logging && self.observing(),
                     seed,
                     exact: &exact,
                     ..Rule::new(&mut solver, self.db, gas)
@@ -999,6 +1042,7 @@ impl<'a> Flow<'a, '_> {
                     passed,
                     pending,
                     calls,
+                    values,
                     found,
                     seeded,
                     ..
@@ -1028,6 +1072,7 @@ impl<'a> Flow<'a, '_> {
                     passed,
                     pending,
                     calls,
+                    values,
                     outcomes,
                     own,
                     rejected,
@@ -1110,6 +1155,7 @@ impl<'a> Flow<'a, '_> {
             passed,
             pending,
             calls,
+            values: held,
             outcomes,
             ..
         } = run;
@@ -1128,6 +1174,14 @@ impl<'a> Flow<'a, '_> {
             .collect();
         if self.observing() {
             self.blame(&solver, &checks, &outcomes[..checks.len()]);
+            for (term, span) in held {
+                let ty = solver.reify(term).unwrap_or(self.db.unknown());
+                let fact = Fact {
+                    ty,
+                    unassigned: false,
+                };
+                self.log(span, Role::Value, Seen { fact, var: None });
+            }
         } else {
             for (var, ty) in self::passed(&mut solver, self.db, &results, &passed, &pending) {
                 self.join(var, ty);
@@ -1985,6 +2039,7 @@ impl<'a> Flow<'a, '_> {
     fn sub_rule<'p>(&self, rule: &mut Rule<'_, '_, 'p>, held: Held<'p>, expected: Option<Term>) {
         let (db, gas) = (rule.db, rule.gas);
         let lengths = (rule.checks.len(), rule.passed.len(), rule.pending.len());
+        let logged = rule.values.len();
         let delta = {
             let mut fork = rule.solver.fork(gas);
             let mut sub = Rule {
@@ -1992,6 +2047,8 @@ impl<'a> Flow<'a, '_> {
                 passed: std::mem::take(&mut rule.passed),
                 pending: std::mem::take(&mut rule.pending),
                 calls: std::mem::take(&mut rule.calls),
+                logging: rule.logging,
+                values: std::mem::take(&mut rule.values),
                 found: std::mem::take(&mut rule.found),
                 repeated: held.repeated,
                 defaulting: rule.defaulting,
@@ -2067,7 +2124,19 @@ impl<'a> Flow<'a, '_> {
                     && exact != db.bottom()
                     && (sub.passed.len(), sub.pending.len()) == (lengths.1, lengths.2)
                 {
-                    sub.found.push((held.prepared, exact));
+                    let values = (sub.values[logged..].iter())
+                        .filter_map(|&(term, span)| {
+                            let ty = (sub.solver.reify(term))
+                                .or_else(|_| sub.solver.reify_found(term))
+                                .ok()?;
+                            Some((ty, span))
+                        })
+                        .collect();
+                    sub.found.push(Found {
+                        prepared: held.prepared,
+                        ty: exact,
+                        values,
+                    });
                 }
             }
             let Rule {
@@ -2075,6 +2144,7 @@ impl<'a> Flow<'a, '_> {
                 passed,
                 pending,
                 calls,
+                values,
                 found,
                 seeded,
                 ..
@@ -2084,9 +2154,10 @@ impl<'a> Flow<'a, '_> {
                 rule.passed,
                 rule.pending,
                 rule.calls,
+                rule.values,
                 rule.found,
                 rule.seeded,
-            ) = (checks, passed, pending, calls, found, seeded);
+            ) = (checks, passed, pending, calls, values, found, seeded);
             fork.commit()
         };
         rule.solver.absorb(delta);
@@ -3043,7 +3114,7 @@ impl<'a> Flow<'a, '_> {
             return self.lambda(at, func, span);
         };
         self.conclude(at, span, None, |_, rule| {
-            let term = rule.lambda(&lambda);
+            let term = rule.lambda(&lambda, span);
             rule.constrain(term, rule.closed(expected), Check::Quiet);
             vec![term]
         })[0]
@@ -3868,8 +3939,8 @@ fn collection_constraint<'p>(
             for placed in &values.values {
                 match placed.value {
                     Value::Pos(ty, _) => rule.constrain(rule.closed(ty), element, Check::Quiet),
-                    Value::Lambda(key, ref lambda, _) => {
-                        let term = rule.lambda(lambda);
+                    Value::Lambda(key, ref lambda, span) => {
+                        let term = rule.lambda(lambda, span);
                         let element = match key {
                             Some(_) => rule.closed(unknown),
                             None => element,
@@ -3950,8 +4021,8 @@ fn collection_constraint<'p>(
                     Value::Pos(ty, _) => rule.constrain(rule.closed(ty), positional, Check::Quiet),
                     Value::Key(name, ty, _) => entry(rule, symbol(name), rule.closed(ty)),
                     Value::Pair(key_type, ty) => entry(rule, key_type, rule.closed(ty)),
-                    Value::Lambda(key, ref lambda, _) => {
-                        let term = rule.lambda(lambda);
+                    Value::Lambda(key, ref lambda, span) => {
+                        let term = rule.lambda(lambda, span);
                         match key {
                             Some(key) => entry(rule, symbol(key), term),
                             None => rule.constrain(term, positional, Check::Quiet),
@@ -3980,8 +4051,8 @@ fn collection_constraint<'p>(
             let mut elements = Vec::new();
             for placed in &values.values {
                 match placed.value {
-                    Value::Lambda(key, ref lambda, _) => {
-                        elements.push((key, rule.lambda(lambda), Kind::Type));
+                    Value::Lambda(key, ref lambda, span) => {
+                        elements.push((key, rule.lambda(lambda, span), Kind::Type));
                     }
                     Value::Pos(ty, _) => {
                         let var = rule.solver.infer();
