@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 
 use crate::source::Span;
 
-use super::{At, Flow, Role, State, problem::Problem, rule::passed_signature};
+use super::{At, Flow, Results, Role, State, problem::Problem, rule::passed_signature};
 use crate::typeck::{
     cfg::{Expr, ExprKind, FuncId, FuncKind},
     elab::{Designated, Referent, Tables, Target},
@@ -144,11 +144,14 @@ impl Flow<'_, '_> {
         value: &Expr,
         ty: TypeId,
     ) -> bool {
-        let saved = (self.results.clone(), self.diverged);
+        let (mark, diverged) = (self.results.as_ref().map(Results::mark), self.diverged);
         let mut operands = operands.iter().take(super::holes(value)).copied().collect();
         let found = self.expect(at, &mut state.clone(), &mut operands, value, Some(ty));
         let fits = found != self.db.bottom() && self.below(found, ty);
-        (self.results, self.diverged) = saved;
+        if let (Some(results), Some(mark)) = (&mut self.results, mark) {
+            results.rewind(mark);
+        }
+        self.diverged = diverged;
         fits
     }
 

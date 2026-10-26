@@ -1,13 +1,13 @@
 use std::path::Path;
 
-use super::{Layout, Problem, Results, Role, Tree};
+use super::{Layout, Problem, Results, Role, Tree, collate};
 use crate::{
     Config,
     source::Span,
     typeck::{
         Builder, Check,
         cfg::{BlockId, FuncKind, Ir, Origin, Terminal},
-        solver::Residual,
+        solver::{Gas, Residual, Solver},
         r#type::{TypeId, UnitId},
     },
 };
@@ -35,7 +35,7 @@ fn rendered(
     results: &Results,
     render: impl Fn(TypeId) -> String,
 ) -> impl Iterator<Item = RenderedFact> {
-    (results.facts.iter()).map(move |(&(span, role), seen)| RenderedFact {
+    (results.facts.iter()).map(move |&((span, role), seen)| RenderedFact {
         span: (span.start, span.end),
         role,
         ty: render(seen.fact.ty),
@@ -58,10 +58,14 @@ fn analyze(check: &Check<'_>, unit: usize, reversed: bool) -> Rendered {
     let mut facts = Vec::new();
     let mut problems = Vec::new();
     let mut unresolved = Vec::new();
-    for (db, results) in &outputs {
-        facts.extend(rendered(results, |ty| check.tables.render_type(db, ty)));
-        problems.extend(results.problems.iter().cloned());
-        unresolved.extend(results.unresolved.iter().copied());
+    for (db, mut results) in outputs {
+        // Joined within the run, as a check joins them
+        let gas = Gas::default();
+        let solver = Solver::new(&db, &gas);
+        collate(&mut results.facts, |old, new| solver.lub(old, new));
+        facts.extend(rendered(&results, |ty| check.tables.render_type(&db, ty)));
+        problems.append(&mut results.problems);
+        unresolved.append(&mut results.unresolved);
     }
     facts.sort();
     super::sort(&mut problems, &mut unresolved);

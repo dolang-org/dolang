@@ -984,7 +984,9 @@ each run is a rayon task with a fork of the layer. A run's inherited types are
 copied from its parent's fork. Once every unit is checked, each run's facts are
 copied, in unit and run order, into a standalone results database that the
 `Check` keeps, through one `Copies` memo, which keeps each copied declaration's
-original for rendering. Problems and undecided checks are gathered in run order
+original for rendering. The copied facts are sorted by span and role, and those
+at the same span and role are joined: types by least upper bound, and
+unassigned if either is. Problems and undecided checks are gathered in run order
 and stably sorted by span, so nothing depends on which run finishes first.
 
 Checking rules (`flow/rule.rs`) are solved by a fresh solver on each run, and
@@ -1154,8 +1156,10 @@ a reference.
 
 Once the rounds end, a final pass reruns every block over its final state,
 defaulting any rule it leaves undecided, as the last run of a marked block did.
-It records what each variable reference and binding saw, which the `flow`
-judgment reports, and reports each problem once per span: contradicted rules,
+It appends what each variable reference and binding saw to a log, once for each
+context, which the `flow` judgment reports after joining; a trial that checks
+whether a value fits truncates the log back to its length before the trial. The
+pass reports each problem once per span: contradicted rules,
 values that don't fit a local's annotation or a function's declared result, and
 reads that may be unassigned. Checks the solver can't decide join
 `Check::undecided`.
