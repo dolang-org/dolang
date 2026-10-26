@@ -37,6 +37,23 @@ attaches to that stored document; a saved unit's kept check comes with its
 analysis. Hover asks the analysis what the checker concluded at the cursor, and
 for a variable shows its name and type above the declaration's doc text.
 
+The check also keeps the units of the modules it read from source, keyed by the
+checker's name for each, with the document's own. Go to definition and hover on
+an item of another module look it up there (`lookup.rs`): an item imported by
+name, from its import's node, or a path such as `a.f`, from the analysis's
+`Item` judgment. A `pub import` re-export is followed to the module declaring
+the item. A member use's `Member` judgments name the class declaring each
+member it reached, one per class of a union receiver. A call's `Callee`
+judgment, on the member for a method call and on the whole call for a function
+call, gives the `@def` it chose, which the lookup finds among the
+implementation's siblings in source order. A module the check read from a
+bundled typelib has no source, so hover falls back to the static doc index and
+go to definition to the import. When every declaration found is a function or
+method, hover shows only their docs, whose signatures stand in for the checked
+type.
+Being the check's own units, they agree with its analysis, and an edit to a
+module reaches its importers with their next check.
+
 A check resolves imports through the workspace (`workspace.rs`), which holds a
 store for each module path, plus one shared by configurations without one. A
 store answers what a module is now. An open document that is the module comes

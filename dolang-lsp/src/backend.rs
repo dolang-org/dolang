@@ -28,6 +28,7 @@ use dolang_compile::{
 
 use crate::{
     doc_index,
+    lookup::{self, Modules, Target},
     module_path::ModulePath,
     workspace::{Resolved, Workspace},
 };
@@ -224,7 +225,7 @@ fn symbol_kind(kind: &Kind<'_>, content: &str) -> Option<SymbolKind> {
     })
 }
 
-fn span_text<'a>(content: &'a str, span: &diag::Span) -> &'a str {
+pub(crate) fn span_text<'a>(content: &'a str, span: &diag::Span) -> &'a str {
     &content[span.start().byte_offset()..span.end().byte_offset()]
 }
 
@@ -337,6 +338,35 @@ fn declaration_label(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<Strin
             .filter_map(|child| parameter_label(content, unit, *child))
             .collect::<Vec<_>>()
     };
+    // Only the decorators the type checker designates say anything about the
+    // declaration, and only when they are `std`'s
+    let designated = |items: &[&str]| -> String {
+        children
+            .iter()
+            .filter_map(|child| {
+                let Kind::Decorator {
+                    target: Some(target),
+                } = unit.node(*child)?.kind()
+                else {
+                    return None;
+                };
+                let item = match unit.node(target)?.kind() {
+                    Kind::PreludeItem {
+                        module: "std",
+                        item,
+                        ..
+                    } => item,
+                    Kind::ImportItem { module, item, .. }
+                        if span_text(content, &module) == "std" =>
+                    {
+                        span_text(content, &item)
+                    }
+                    _ => return None,
+                };
+                items.contains(&item).then(|| format!("#[{item}] "))
+            })
+            .collect()
+    };
     let label = match kind {
         Kind::Class {
             is_pub, type_only, ..
@@ -348,24 +378,7 @@ fn declaration_label(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<Strin
                 .filter_map(|child| child.span())
                 .map(|span| span_text(content, &span))
                 .collect::<Vec<_>>();
-            // Only the decorators the type checker designates say anything
-            // about the class, and only when they are the prelude's
-            let decorators: String = children
-                .iter()
-                .filter_map(|child| match unit.node(*child)?.kind() {
-                    Kind::Decorator {
-                        target: Some(target),
-                    } => match unit.node(target)?.kind() {
-                        Kind::PreludeItem {
-                            module: "std",
-                            item: item @ ("final" | "mixable"),
-                            ..
-                        } => Some(format!("#[{item}] ")),
-                        _ => None,
-                    },
-                    _ => None,
-                })
-                .collect();
+            let decorators = designated(&["final", "mixable"]);
             format!(
                 "{decorators}{}{}class {name}{}",
                 if is_pub { "pub " } else { "" },
@@ -388,8 +401,13 @@ fn declaration_label(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<Strin
                     ..
                 }
             );
+            // A getter or setter is used as a field, not called
+            let decorators = match kind {
+                Kind::Method { .. } => designated(&["getter", "setter"]),
+                _ => String::new(),
+            };
             format!(
-                "{}{}def {name}{}{}",
+                "{decorators}{}{}def {name}{}{}",
                 if is_pub && !at { "pub " } else { "" },
                 if at { "@" } else { "" },
                 if params.is_empty() {
@@ -445,6 +463,11 @@ fn external_hover(kind: Kind<'_>, content: &str) -> Option<String> {
         Kind::PreludeItem { module, item, .. } => (module, item),
         _ => return None,
     };
+    bundled_hover(module, item)
+}
+
+/// Hover text for an item of a bundled module, from the static doc index
+fn bundled_hover(module: &str, item: &str) -> Option<String> {
     let entries = doc_index::lookup(module, item);
     if entries.is_empty() {
         return None;
@@ -479,17 +502,21 @@ fn render_external_hover(entry: &doc_index::DocEntry) -> String {
 fn build_hovers(unit: &Unit<'_>, content: &str) -> HashMap<NodeId, String> {
     unit.nodes()
         .filter_map(|(id, node)| {
-            if let Some(markdown) = external_hover(node.kind(), content) {
-                return Some((id, markdown));
-            }
-            let label = declaration_label(content, unit, id)?;
-            let doc = node.doc().map(|span| normalize_doc(content, &span));
-            Some((
-                id,
-                render_hover_markdown(&label, doc.as_deref().unwrap_or("")),
-            ))
+            let markdown =
+                external_hover(node.kind(), content).or_else(|| local_hover(unit, content, id))?;
+            Some((id, markdown))
         })
         .collect()
+}
+
+/// Hover text for a declaration in a unit: its signature and doc comment
+fn local_hover(unit: &Unit<'_>, content: &str, id: NodeId) -> Option<String> {
+    let label = declaration_label(content, unit, id)?;
+    let doc = unit
+        .node(id)?
+        .doc()
+        .map(|span| normalize_doc(content, &span));
+    Some(render_hover_markdown(&label, doc.as_deref().unwrap_or("")))
 }
 
 /// Assemble the document outline from the node table.
@@ -633,7 +660,11 @@ struct Document {
 struct Analyzed {
     /// The document's unit in the check
     unit: UnitId,
+    /// The document's module name in the check
+    name: String,
     analysis: typeck::Analysis,
+    /// The document and the modules the check read from source
+    modules: Modules,
 }
 
 /// A document's check
@@ -645,13 +676,22 @@ struct Checked {
 }
 
 impl Document {
-    fn reference_at(&self, pos: &Position) -> Option<(Range, &Decl)> {
+    /// The token under `pos` naming a declaration, and the declaration
+    fn reference_at(&self, pos: &Position) -> Option<(Range, NodeId, &Decl)> {
         let end = self.refs.partition_point(|(range, _)| &range.start <= pos);
         let (range, id) = self.refs.get(end.checked_sub(1)?)?;
         if &range.end <= pos {
             return None;
         }
-        Some((*range, self.decls.get(id)?))
+        Some((*range, *id, self.decls.get(id)?))
+    }
+
+    /// What the latest check concluded, if it has been checked
+    fn analyzed(&self) -> Option<Arc<Analyzed>> {
+        self.analyzed
+            .lock()
+            .expect("analysis lock poisoned")
+            .clone()
     }
 
     /// The span of the innermost node the latest check judged at `offset`, and
@@ -660,15 +700,13 @@ impl Document {
     /// span that has no name of its own.
     fn checked_at(
         &self,
+        analyzed: &Analyzed,
         offset: usize,
         reference: Option<source::Span>,
     ) -> Option<(source::Span, Vec<String>)> {
-        let analyzed = self
-            .analyzed
-            .lock()
-            .expect("analysis lock poisoned")
-            .clone()?;
-        let node = (analyzed.analysis).at(analyzed.unit, offset.try_into().ok()?)?;
+        let node = analyzed
+            .analysis
+            .at(analyzed.unit, offset.try_into().ok()?)?;
         let span = node.span();
         let named = (reference == Some(span))
             .then(|| {
@@ -685,7 +723,181 @@ impl Document {
     /// `refs` is sorted by where each token starts, so the only candidate is
     /// the last one starting at or before the position.
     fn decl_at(&self, pos: &Position) -> Option<&Decl> {
-        self.reference_at(pos).map(|(_, decl)| decl)
+        self.reference_at(pos).map(|(_, _, decl)| decl)
+    }
+
+    /// The declarations the name at `offset` stands for in the modules the
+    /// check read from source, and the overload a call of it chose. That's an
+    /// item imported from a module, as the reference `id` names it; a function
+    /// declared here, when a call chose one of its overloads; the members a
+    /// member use reached, one for each class of a union receiver; or the
+    /// item a path through a module names.
+    fn targets<'a>(
+        &self,
+        analyzed: &'a Analyzed,
+        offset: usize,
+        reference: Option<NodeId>,
+    ) -> (Vec<Target<'a>>, Option<u32>) {
+        let modules = &analyzed.modules;
+        let node = offset
+            .try_into()
+            .ok()
+            .and_then(|offset| analyzed.analysis.at(analyzed.unit, offset));
+        let chosen = node.and_then(chosen);
+        let found = match reference {
+            Some(id) => {
+                let content = self.unit.source();
+                let target = match self.unit.node(id).map(|node| node.kind()) {
+                    Some(Kind::ImportItem { module, item, .. }) => lookup::item(
+                        modules,
+                        span_text(content, &module),
+                        span_text(content, &item),
+                    ),
+                    Some(Kind::PreludeItem { module, item, .. }) => {
+                        lookup::item(modules, module, item)
+                    }
+                    Some(Kind::Function { .. }) if chosen.is_some() => modules
+                        .get(&analyzed.name)
+                        .map(|module| Target::Source(module, id)),
+                    _ => None,
+                };
+                target.into_iter().collect()
+            }
+            None => node
+                .map(|node| node_targets(modules, node))
+                .unwrap_or_default(),
+        };
+        // A union receiver's calls each chose their own
+        let chosen = chosen.filter(|_| found.len() == 1);
+        (found, chosen)
+    }
+}
+
+/// What the analysis `node` names: the members a member use reached, or else
+/// the item a path through a module names
+fn node_targets<'a>(modules: &'a Modules, node: typeck::Node<'_>) -> Vec<Target<'a>> {
+    let members: Vec<_> = node
+        .judgments()
+        .filter(|judged| judged.role() == Role::Member)
+        .filter_map(|judged| {
+            let class = judged.declaration()?;
+            lookup::member(modules, class.module(), class.name(), judged.name()?)
+        })
+        .collect();
+    if !members.is_empty() {
+        return members;
+    }
+    let item = node.judgments().find(|judged| judged.role() == Role::Item);
+    let item = item.and_then(|judged| judged.declaration());
+    item.and_then(|item| lookup::item(modules, item.module(), item.name()))
+        .into_iter()
+        .collect()
+}
+
+/// The overload chosen by the call of what `node` names. A method call is
+/// judged at its member, and a function call at the whole call, which starts
+/// where its callee does. A union receiver's call reaches several.
+fn chosen(node: typeck::Node<'_>) -> Option<u32> {
+    let start = node.span().start;
+    let callees = node
+        .ancestors()
+        .take_while(|ancestor| ancestor.span().start == start)
+        .map(|ancestor| {
+            let callees = ancestor.judgments();
+            callees
+                .filter(|judged| judged.role() == Role::Callee)
+                .collect::<Vec<_>>()
+        })
+        .find(|callees| !callees.is_empty())?;
+    match callees[..] {
+        [callee] => callee.overload(),
+        _ => None,
+    }
+}
+
+/// The declaration a target names, or for an overloaded function or method,
+/// the overload `chosen`
+fn chosen_node<'m>(
+    target: &Target<'m>,
+    chosen: Option<u32>,
+) -> Option<(&'m lookup::Module, NodeId)> {
+    let Target::Source(module, id) = *target else {
+        return None;
+    };
+    let id = match chosen {
+        Some(index) => lookup::overload(&module.unit, id, index),
+        None => id,
+    };
+    Some((module, id))
+}
+
+/// Where a declaration found in a module's source is, as `encoding` counts
+fn location(
+    target: &Target<'_>,
+    chosen: Option<u32>,
+    encoding: PositionEncodingKind,
+) -> Option<Location> {
+    let (module, id) = chosen_node(target, chosen)?;
+    let unit = &module.unit;
+    let span = unit.node(id)?.definition()?;
+    let index = DocumentIndex::new(unit.source(), encoding);
+    Some(Location::new(
+        module.uri.clone(),
+        index.range_from_span(&span),
+    ))
+}
+
+/// What hover shows of a declaration found in another module, or of the
+/// overload `chosen` of it. An overload with no doc comment of its own has its
+/// implementation's.
+fn target_hover(target: &Target<'_>, chosen: Option<u32>) -> Option<String> {
+    match *target {
+        Target::Source(module, implementation) => {
+            let (_, id) = chosen_node(target, chosen)?;
+            let unit = &module.unit;
+            let content = unit.source();
+            let label = declaration_label(content, unit, id)?;
+            let doc = unit
+                .node(id)?
+                .doc()
+                .or_else(|| unit.node(implementation)?.doc())
+                .map(|span| normalize_doc(content, &span));
+            Some(render_hover_markdown(&label, doc.as_deref().unwrap_or("")))
+        }
+        Target::Bundled(ref module, ref item) => {
+            let entries = doc_index::lookup(module, item);
+            // The index describes each overload in turn
+            let entry = chosen
+                .filter(|_| entries.len() > 1)
+                .and_then(|index| entries.get(usize::try_from(index).ok()?));
+            match entry {
+                Some(entry) => Some(render_external_hover(entry)),
+                None => bundled_hover(module, item),
+            }
+        }
+    }
+}
+
+/// Whether a declaration found in another module, or its overload `chosen`, is
+/// a function or method, whose docs open with its signature
+fn is_callable(target: &Target<'_>, chosen: Option<u32>) -> bool {
+    match *target {
+        Target::Source(module, _) => {
+            let kind = chosen_node(target, chosen)
+                .and_then(|(_, id)| module.unit.node(id))
+                .map(|node| node.kind());
+            matches!(
+                kind,
+                Some(Kind::Function { .. } | Kind::Method { .. } | Kind::SpecialMethod { .. })
+            )
+        }
+        Target::Bundled(ref module, ref item) => {
+            let entries = doc_index::lookup(module, item);
+            !entries.is_empty()
+                && entries
+                    .iter()
+                    .all(|entry| matches!(entry.kind, "function" | "method"))
+        }
     }
 }
 
@@ -694,6 +906,7 @@ impl Document {
 /// - the variable it reads or binds;
 /// - the signatures a call reached, by its member's name for a method;
 /// - the type of the member a member use reached, by its name in its class;
+/// - the type of the item a path through a module names, by its module;
 /// - its value, by `named` where given.
 fn label(node: typeck::Node<'_>, named: Option<&str>) -> Option<Vec<String>> {
     let find = |role| node.judgments().find(|judged| judged.role() == role);
@@ -722,7 +935,11 @@ fn label(node: typeck::Node<'_>, named: Option<&str>) -> Option<Vec<String>> {
             })
         })
         .collect();
-    let member = (!members.is_empty()).then(|| members.join(" | "));
+    // An item by the module exporting it, as `m.f`
+    let item = find(Role::Item)
+        .and_then(|judged| judged.declaration())
+        .map(|item| format!("{}.{}", item.module(), item.name()));
+    let member = (!members.is_empty()).then(|| members.join(" | ")).or(item);
     let member = member.as_deref();
     let callees: Vec<_> = node
         .judgments()
@@ -742,7 +959,7 @@ fn label(node: typeck::Node<'_>, named: Option<&str>) -> Option<Vec<String>> {
     Some(vec![typed(member.or(named), value)])
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Import {
     Module(String),
     ModuleAs(String, String),
@@ -971,12 +1188,10 @@ impl Worker {
         let checked = checked.flatten();
         let projected = panic::catch_unwind(AssertUnwindSafe(|| {
             let unit = cached.unwrap_or_else(|| {
-                Arc::new(compile_document(
-                    &path,
-                    text,
-                    settings.as_deref(),
-                    module.as_deref(),
-                ))
+                let prelude = settings
+                    .as_deref()
+                    .map_or(&[][..], |settings| &settings.prelude);
+                Arc::new(compile_document(&path, text, prelude, module.as_deref()))
             });
             let (document, diagnostics) = project(&uri, stamp, unit.clone(), &encoding);
             (unit, document, diagnostics)
@@ -1002,7 +1217,8 @@ impl Worker {
             (None, None) => diagnostics.clone(),
         };
         let stale =
-            (self.workspace).update(&uri, &path, settings.as_deref(), module.as_deref(), &unit);
+            self.workspace
+                .update(&uri, &path, settings.as_deref(), module.as_deref(), &unit);
         self.open.insert(
             uri.clone(),
             Open {
@@ -1157,13 +1373,13 @@ async fn publish(client: Client, documents: Documents, mut events: UnboundedRece
     }
 }
 
-/// Compiles a document as the server projects it, as `module` if it is one.
-///
-/// A module has only the language's prelude; a script also has the configured one.
+/// Compiles a document as the server projects it, as `module` if it is one,
+/// with the configured prelude `imports`. The shell compiles a module under its
+/// prelude as it does a script.
 pub(crate) fn compile_document(
     path: &Path,
     text: String,
-    settings: Option<&Settings>,
+    imports: &[Import],
     module: Option<&str>,
 ) -> Unit<'static> {
     let mut config = CompileConfig::new();
@@ -1172,36 +1388,35 @@ pub(crate) fn compile_document(
         config.mode(Mode::Module {
             name: module.to_owned().into(),
         });
-    } else if let Some(settings) = settings {
-        let mut prelude = config.prelude();
-        for import in settings.prelude.iter() {
-            match import {
-                Import::Module(module) => {
-                    prelude = prelude.import_module(module.clone());
-                }
-                Import::TypeItem(module, item) => {
-                    prelude = prelude
-                        .import_items(module.clone())
-                        .type_item(item.clone())
-                        .commit();
-                }
-                Import::TypeItemAs(module, item, bind) => {
-                    prelude = prelude
-                        .import_items(module.clone())
-                        .type_item_with_name(item.clone(), bind.clone())
-                        .commit();
-                }
-                Import::Item(module, item) => {
-                    let items = prelude.import_items(module.clone());
-                    prelude = items.item(item.clone()).commit();
-                }
-                Import::ModuleAs(module, bind) => {
-                    prelude = prelude.import_module_with_name(module.clone(), bind.clone());
-                }
-                Import::ItemAs(module, item, bind) => {
-                    let items = prelude.import_items(module.clone());
-                    prelude = items.item_with_name(item.clone(), bind.clone()).commit();
-                }
+    }
+    let mut prelude = config.prelude();
+    for import in imports {
+        match import {
+            Import::Module(module) => {
+                prelude = prelude.import_module(module.clone());
+            }
+            Import::TypeItem(module, item) => {
+                prelude = prelude
+                    .import_items(module.clone())
+                    .type_item(item.clone())
+                    .commit();
+            }
+            Import::TypeItemAs(module, item, bind) => {
+                prelude = prelude
+                    .import_items(module.clone())
+                    .type_item_with_name(item.clone(), bind.clone())
+                    .commit();
+            }
+            Import::Item(module, item) => {
+                let items = prelude.import_items(module.clone());
+                prelude = items.item(item.clone()).commit();
+            }
+            Import::ModuleAs(module, bind) => {
+                prelude = prelude.import_module_with_name(module.clone(), bind.clone());
+            }
+            Import::ItemAs(module, item, bind) => {
+                let items = prelude.import_items(module.clone());
+                prelude = items.item_with_name(item.clone(), bind.clone()).commit();
             }
         }
     }
@@ -1215,7 +1430,7 @@ pub(crate) fn compile_document(
 /// `resolved` lacks is reported as not found.
 fn check_document(
     uri: &Uri,
-    unit: &Unit<'static>,
+    unit: &Arc<Unit<'static>>,
     encoding: &PositionEncodingKind,
     resolved: &Resolved<'_>,
 ) -> Option<Checked> {
@@ -1231,11 +1446,12 @@ fn check_document(
             return None;
         }
     };
+    let mut sources = vec![(id, unit)];
     for (name, source) in &resolved.units {
         match builder.unit(source) {
             // A source that failed to compile is left out, and imports of its
             // module are reported as not found
-            Ok(_) => {}
+            Ok(source_id) => sources.push((source_id, source)),
             Err(err) if matches!(err.kind(), ErrorKind::Fail) => {}
             Err(err) => log::error!("cannot check against {name}: {err}"),
         }
@@ -1256,8 +1472,29 @@ fn check_document(
             convert_diag(&index, diag, relate, &mut diagnostics);
         }
     }
-    let analyzed =
-        (check.into_analysis()).map(|analysis| Arc::new(Analyzed { unit: id, analysis }));
+    let modules = sources
+        .into_iter()
+        .filter_map(|(source_id, source)| {
+            let uri = match source_id == id {
+                true => uri.clone(),
+                false => Uri::from_file_path(check.path(source_id))?,
+            };
+            let module = lookup::Module {
+                uri,
+                unit: source.clone(),
+            };
+            Some((check.name(source_id), module))
+        })
+        .collect();
+    let name = check.name(id);
+    let analyzed = check.into_analysis().map(|analysis| {
+        Arc::new(Analyzed {
+            unit: id,
+            name,
+            analysis,
+            modules,
+        })
+    });
     Some(Checked {
         diagnostics,
         analyzed,
@@ -2258,7 +2495,32 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         let pos = &params.text_document_position_params.position;
-        let Some(decl) = document.decl_at(pos) else {
+        let encoding = self.position_encoding();
+        let reference = document.reference_at(pos);
+        let index = DocumentIndex::new(document.unit.source(), encoding.clone());
+        let analyzed = document.analyzed();
+        let mut found: Vec<Location> = Vec::new();
+        if let (Some(analyzed), Some(offset)) =
+            (analyzed.as_deref(), index.offset_from_position(pos))
+        {
+            let (targets, chosen) =
+                document.targets(analyzed, offset, reference.map(|(_, id, _)| id));
+            for target in &targets {
+                let Some(location) = location(target, chosen, encoding.clone()) else {
+                    continue;
+                };
+                if !found.contains(&location) {
+                    found.push(location);
+                }
+            }
+        }
+        match found.len() {
+            0 => {}
+            1 => return Ok(found.pop().map(GotoDefinitionResponse::Scalar)),
+            _ => return Ok(Some(GotoDefinitionResponse::Array(found))),
+        }
+        // A name declared here, or in a module with no source
+        let Some((_, _, decl)) = reference else {
             return Ok(None);
         };
         Ok(Some(GotoDefinitionResponse::Scalar(Location {
@@ -2280,9 +2542,8 @@ impl LanguageServer for Backend {
         };
         let pos = &params.text_document_position_params.position;
         let reference = document.reference_at(pos);
-        let docs = reference.and_then(|(range, decl)| Some((range, decl.hover.as_ref()?)));
         let index = DocumentIndex::new(document.unit.source(), self.position_encoding());
-        let referenced = reference.and_then(|(range, _)| {
+        let referenced = reference.and_then(|(range, ..)| {
             let start = index.offset_from_position(&range.start)?;
             let end = index.offset_from_position(&range.end)?;
             Some(source::Span {
@@ -2290,22 +2551,45 @@ impl LanguageServer for Backend {
                 end: end.try_into().ok()?,
             })
         });
-        let checked = index
-            .offset_from_position(pos)
-            .and_then(|offset| document.checked_at(offset, referenced));
+        let analyzed = document.analyzed();
+        let (checked, (targets, chosen)) =
+            match (analyzed.as_deref(), index.offset_from_position(pos)) {
+                (Some(analyzed), Some(offset)) => (
+                    document.checked_at(analyzed, offset, referenced),
+                    document.targets(analyzed, offset, reference.map(|(_, id, _)| id)),
+                ),
+                _ => (None, (Vec::new(), None)),
+            };
+        // What a check found has its own docs, each union alternative's in
+        // turn; any other reference's were rendered with the document
+        let found: Vec<_> = targets
+            .iter()
+            .filter_map(|target| target_hover(target, chosen))
+            .collect();
+        // Their docs open with the signatures, which say what the checked type
+        // would
+        let signatures = !found.is_empty()
+            && found.len() == targets.len()
+            && targets.iter().all(|target| is_callable(target, chosen));
+        let docs = (!found.is_empty())
+            .then(|| found.join("\n\n---\n\n"))
+            .or_else(|| reference.and_then(|(_, _, decl)| decl.hover.clone()));
+        let reference = reference.map(|(range, ..)| range);
         let (range, value) = match (checked, docs) {
             (None, None) => return Ok(None),
-            (None, Some((range, markdown))) => (range, markdown.clone()),
+            (None, Some(markdown)) => match reference {
+                Some(range) => (range, markdown),
+                None => return Ok(None),
+            },
             (Some((span, lines)), docs) => {
                 let typed = format!("```dolang\n{}\n```", lines.join("\n"));
+                let range = reference.unwrap_or_else(|| {
+                    index.range_from_offsets(span.start as usize, span.end as usize)
+                });
                 match docs {
-                    Some((range, markdown)) => (range, format!("{typed}\n\n---\n\n{markdown}")),
-                    None => {
-                        let range = (reference.map(|(range, _)| range)).unwrap_or_else(|| {
-                            index.range_from_offsets(span.start as usize, span.end as usize)
-                        });
-                        (range, typed)
-                    }
+                    Some(markdown) if signatures => (range, markdown),
+                    Some(markdown) => (range, format!("{typed}\n\n---\n\n{markdown}")),
+                    None => (range, typed),
                 }
             }
         };
@@ -2822,7 +3106,7 @@ mod tests {
             let unit = compile_document(
                 Path::new("m.dol"),
                 format!("def first items@{name}[Int] -> Int\n  items[0]\nfirst [1]\n"),
-                Some(&settings),
+                &settings.prelude,
                 None,
             );
             assert!(unit.diagnostics().next().is_none());
@@ -2967,6 +3251,10 @@ mod tests {
             "\n",
             "#[final]\n",
             "pub class Leaf\n",
+            "pub class Shape\n",
+            "  #[getter]\n",
+            "  pub def area _self -> Int\n",
+            "    1\n",
         );
         harness.open(uri.clone(), source, 1).await;
 
@@ -2987,6 +3275,12 @@ mod tests {
         assert_eq!(
             final_hover.contents,
             markdown("```dolang\n#[final] pub class Leaf\n```")
+        );
+
+        let getter_hover = hover_at(&mut harness, uri.clone(), 28, 11).await.unwrap();
+        assert_eq!(
+            getter_hover.contents,
+            markdown("```dolang\n#[getter] pub def area _self -> Int\n```")
         );
 
         let field_hover = hover_at(&mut harness, uri.clone(), 4, 13).await.unwrap();
@@ -3203,10 +3497,10 @@ def uses b @ Box n @ Int
             typed(&mut harness, 11, 14).await,
             "member-hover.Box.item @ std.Int"
         );
-        // A method's signature, as the call instantiated it
+        // A method found by the check is its declared signature
         assert_eq!(
             typed(&mut harness, 12, 17).await,
-            "member-hover.Box.doubled @ (member-hover.Box) -> std.Int"
+            "pub def doubled self -> Int"
         );
         // The paren of a call to an overloaded function
         assert_eq!(
@@ -3897,7 +4191,7 @@ def uses b @ Box n @ Int
             version: Some(1),
             ..stored.stamp
         };
-        let unit = Arc::new(compile_document(path, older.to_owned(), None, None));
+        let unit = Arc::new(compile_document(path, older.to_owned(), &[], None));
         let (document, _) = project(&uri, stale, unit, &PositionEncodingKind::UTF16);
         assert!(!apply(&backend.documents, uri.clone(), Arc::new(document)));
         let document = backend.document(&uri).await.unwrap();
@@ -4138,6 +4432,223 @@ def uses b @ Box n @ Int
         harness.close(b).await;
         let checked = harness.next_publish_for(&main).await;
         assert_eq!(checked.diagnostics.len(), 1, "{:#?}", checked.diagnostics);
+        harness.quiet().await;
+    }
+
+    /// Where go to definition at a position goes
+    async fn definition(
+        harness: &mut Harness,
+        uri: &Uri,
+        line: u32,
+        character: u32,
+    ) -> Option<GotoDefinitionResponse> {
+        harness
+            .send_request::<request::GotoDefinition>(GotoDefinitionParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position: Position::new(line, character),
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            })
+            .await
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn definitions_and_docs_of_module_items() {
+        // The modules import `std`, which only `dodo lsp-test` bundles
+        if typelib_index::lookup("std").is_none() {
+            return;
+        }
+        let tree = Directory::new();
+        tree.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = [\"lib\"]\n");
+        let a_text = "# A module\n\n# Doubles its argument\npub def f x @ Int -> Int\n  (x * 2)\n";
+        let a = Uri::from_file_path(tree.write("lib/a.dol", a_text)).unwrap();
+        tree.write("lib/re.dol", "pub import a:\n  - f\n");
+        let main = Uri::from_file_path(tree.0.join("main.dol")).unwrap();
+        let text = "\
+import a
+import re
+import a:
+  - f
+a.f 1
+re.f 1
+f 1
+";
+        let mut harness = Harness::checking(Duration::from_millis(10));
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        harness.open(main.clone(), text, 1).await;
+        let checked = harness.next_publish_for(&main).await;
+        assert_eq!(checked.diagnostics, []);
+
+        let at = |line| {
+            let range = Range::new(Position::new(line, 8), Position::new(line, 9));
+            Some(GotoDefinitionResponse::Scalar(Location::new(
+                a.clone(),
+                range,
+            )))
+        };
+        // A path through the module, through a re-export, an imported item's
+        // use, and the import itself
+        for (line, character) in [(4, 2), (5, 3), (6, 0), (3, 4)] {
+            let found = definition(&mut harness, &main, line, character).await;
+            assert_eq!(found, at(3), "at {line}:{character}");
+        }
+        // The module's name is still its import
+        let module = definition(&mut harness, &main, 4, 0).await;
+        let import = Range::new(Position::new(0, 7), Position::new(0, 8));
+        assert_eq!(
+            module,
+            Some(GotoDefinitionResponse::Scalar(Location::new(
+                main.clone(),
+                import
+            )))
+        );
+        let hover = hover_text(&mut harness, main.clone(), 4, 2).await.unwrap();
+        // A function's docs open with its signature, in place of its type
+        assert!(
+            hover.starts_with("```dolang\npub def f x @ Int -> Int\n```"),
+            "{hover}"
+        );
+        assert!(hover.ends_with("Doubles its argument"), "{hover}");
+
+        // The next check sees an edit move the item
+        harness.open(a.clone(), &format!("\n{a_text}"), 1).await;
+        harness.next_publish_for(&main).await;
+        let found = definition(&mut harness, &main, 4, 2).await;
+        assert_eq!(found, at(4));
+        harness.quiet().await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn modules_have_the_configured_prelude() {
+        // The prelude's modules are bundled only by `dodo lsp-test`
+        if typelib_index::lookup("term").is_none() {
+            return;
+        }
+        let tree = Directory::new();
+        // No `[prelude]` table, so the shell's
+        tree.write(CONFIG_FILE_NAME, "[modules]\npath = [\"lib\"]\n");
+        tree.write("lib/a.dol", "pub def f x @ Int\n  echo $x\n");
+        let main = Uri::from_file_path(tree.0.join("main.dol")).unwrap();
+        let mut harness = Harness::checking(Duration::from_millis(10));
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        harness.open(main.clone(), "import a\na.f 1\n", 1).await;
+        let checked = harness.next_publish_for(&main).await;
+        assert_eq!(checked.diagnostics, []);
+        harness.quiet().await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn definitions_and_docs_of_members_and_overloads() {
+        // The modules import `std`, which only `dodo lsp-test` bundles
+        if typelib_index::lookup("std").is_none() {
+            return;
+        }
+        let tree = Directory::new();
+        tree.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = [\"lib\"]\n");
+        let a_text = "\
+# A module
+
+pub class B
+  # Its size
+  pub field size = 0
+  @def scale self x @ Int -> Int
+  @def scale self x @ Str -> Str
+  # Scales anything
+  pub def scale self x
+    x
+pub class C: B
+  pub def grow self
+    nil
+# Doubles a number
+@def g x @ Int -> Int
+# Doubles a string
+@def g x @ Str -> Str
+pub def g x
+  (x + x)
+import std:
+  - getter
+pub class D
+  # Its area
+  #[getter]
+  pub def area _self -> Int
+    1
+";
+        let a = Uri::from_file_path(tree.write("lib/a.dol", a_text)).unwrap();
+        let main = Uri::from_file_path(tree.0.join("main.dol")).unwrap();
+        let text = "\
+import a
+pub class Local
+  pub def grow _self
+    nil
+# Twice a number
+@def twice x @ Int -> Int
+@def twice x @ Str -> Str
+# Twice anything
+def twice x
+  (x + x)
+pub def run l @ Local b @ a.B u @ (Local | a.C)
+  l.grow()
+  u.grow()
+  b.scale(\"s\")
+  twice(\"s\")
+  a.g(1)
+pub def size c @ a.C
+  c.size
+pub def area d @ a.D
+  d.area
+";
+        let mut harness = Harness::checking(Duration::from_millis(10));
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        harness.open(main.clone(), text, 1).await;
+        let checked = harness.next_publish_for(&main).await;
+        assert_eq!(checked.diagnostics, []);
+
+        let at = |uri: &Uri, line, start, end| {
+            let range = Range::new(Position::new(line, start), Position::new(line, end));
+            Location::new(uri.clone(), range)
+        };
+        let scalar = |location| Some(GotoDefinitionResponse::Scalar(location));
+        // A member here, an inherited one in `a`, and a union receiver's in
+        // each class
+        let found = definition(&mut harness, &main, 11, 4).await;
+        assert_eq!(found, scalar(at(&main, 2, 10, 14)));
+        let found = definition(&mut harness, &main, 17, 4).await;
+        assert_eq!(found, scalar(at(&a, 4, 12, 16)));
+        let Some(GotoDefinitionResponse::Array(mut found)) =
+            definition(&mut harness, &main, 12, 4).await
+        else {
+            panic!("expected a definition in each class");
+        };
+        found.sort_by_key(|location| location.uri == a);
+        assert_eq!(found, [at(&main, 2, 10, 14), at(&a, 11, 10, 14)]);
+        // The overload a call chose, of a method, a function here, and a
+        // function in `a`
+        let found = definition(&mut harness, &main, 13, 4).await;
+        assert_eq!(found, scalar(at(&a, 6, 7, 12)));
+        let found = definition(&mut harness, &main, 14, 2).await;
+        assert_eq!(found, scalar(at(&main, 6, 5, 10)));
+        let found = definition(&mut harness, &main, 15, 4).await;
+        assert_eq!(found, scalar(at(&a, 14, 5, 6)));
+
+        // An overload without docs has its implementation's
+        for (line, character, doc) in [
+            (17, 4, "Its size"),
+            (13, 4, "Scales anything"),
+            (14, 2, "Twice anything"),
+            (15, 4, "Doubles a number"),
+            (19, 4, "Its area"),
+        ] {
+            let hover = hover_text(&mut harness, main.clone(), line, character).await;
+            let hover = hover.unwrap();
+            assert!(hover.ends_with(doc), "at {line}:{character}: {hover}");
+        }
+        // A getter is used as a field, which its declaration says
+        let found = definition(&mut harness, &main, 19, 4).await;
+        assert_eq!(found, scalar(at(&a, 24, 10, 14)));
+        let hover = hover_text(&mut harness, main.clone(), 19, 4).await.unwrap();
+        assert!(hover.contains("#[getter] pub def area"), "{hover}");
         harness.quiet().await;
     }
 
