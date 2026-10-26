@@ -155,7 +155,7 @@ pub class Args[R, I, O]: @Unpack[Sym, Value]
 # Public: error type
 # ===========================================================================
 
-# Error thrown when argument parsing fails.
+# Raised when argument parsing fails.
 pub class Error
   # Description of the specific problem, such as `unknown option: --foo`.
   pub field message @ Str = nil
@@ -171,7 +171,7 @@ pub class Error
   pub def (str) self
     self.message
 
-# Help requested during argument parsing.
+# Raised by [`with`](args.with) when help is requested and `exit` is `false`.
 pub class Help
   # Rendered help text.
   pub field message @ Str = nil
@@ -725,7 +725,9 @@ do -> Args[R, I, O]
 
 # Parses arguments and calls the matched handler with the result.
 #
-# Suited to a script's top level.
+# Suited to a script's top level. By default, requested help is printed and
+# the script exits with status 0; a parse error is printed with its hint and
+# the script exits with status 1.
 #
 # ## Returns
 #
@@ -733,12 +735,11 @@ do -> Args[R, I, O]
 #
 # ## Errors
 #
-# | Exception                      | Condition                                                         |
-# | ------------------------------ | ----------------------------------------------------------------- |
-# | [`Error`](args.Error)          | As for [`parse`](args.parse), or no command where one is required |
-# | [`ValueError`](std.ValueError) | The matched command has no handler                                |
-#
-# `Error` is printed and exits rather than raised, unless `exit` is `false`.
+# | Exception                      | Condition                                                                             |
+# | ------------------------------ | ------------------------------------------------------------------------------------- |
+# | [`Error`](args.Error)          | With `exit: false`: as for [`parse`](args.parse), or no command where one is required |
+# | [`Help`](args.Help)            | With `exit: false`: help was requested                                                |
+# | [`ValueError`](std.ValueError) | The matched command has no handler                                                    |
 #
 # ## Example
 #

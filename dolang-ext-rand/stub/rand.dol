@@ -5,10 +5,8 @@
 #
 # ## Errors
 #
-# | Exception    | Condition                               |
-# | ------------ | --------------------------------------- |
-# | `TypeError`  | Either argument is not an integer       |
-# | `ValueError` | `end <= 0`, or `end <= start` if given  |
+# [`ValueError`](std.ValueError) if `end <= 0`, or `end <= start` when both
+# are given.
 #
 # ## Example
 #
@@ -30,7 +28,7 @@ do -> Int
 #
 # ## Errors
 #
-# `TypeError` if `collection` is not an array. `ValueError` if it is empty.
+# [`ValueError`](std.ValueError) if `collection` is empty.
 #
 # ## Example
 #
@@ -45,10 +43,6 @@ do -> T
   ...
 
 # Shuffles an array in place using a uniform Fisher-Yates pass.
-#
-# ## Errors
-#
-# `TypeError` if `array` is not an array.
 #
 # ## Example
 #
@@ -73,8 +67,7 @@ do
 #
 # ## Errors
 #
-# `TypeError` if `len` is not an integer or `alphabet` is not a string.
-# `ValueError` if `len` is negative or `alphabet` is empty.
+# [`ValueError`](std.ValueError) if `len` is negative or `alphabet` is empty.
 #
 # ## Example
 #

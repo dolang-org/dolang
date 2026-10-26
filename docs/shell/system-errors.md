@@ -3,11 +3,10 @@
 System and I/O failures raise [`sys.Error`](sys.Error) or one of its
 categorized subclasses.
 
-Every stable portable I/O category has a corresponding subclass. This makes
-common network, filesystem, resource, data, and control-flow failures catchable
-without inspecting platform-specific codes. [`sys.Error`](sys.Error)
-remains their catch-all superclass and represents failures without a portable
-classification.
+The subclasses cover common network, filesystem, resource, data, and
+control-flow failures, so a script can catch them without inspecting
+platform-specific codes. A failure that fits none of them raises
+[`sys.Error`](sys.Error) itself.
 
 ## Catching Categorized Failures
 
@@ -32,7 +31,7 @@ available. Otherwise it is one of:
 - [`sys.macos.Errno`](sys.macos.Errno)
 - [`sys.windows.WinError`](sys.windows.WinError)
 
-All three extend [`sys.ErrorCode`](sys.ErrorCode). The `.value`
+Each extends [`sys.ErrorCode`](sys.ErrorCode). The `.value`
 field is the raw integer value; string conversion returns the native symbolic
 name when known:
 
@@ -62,10 +61,10 @@ class ServiceError: sys.Error
 throw ServiceError "service failed" $sys.linux.Errno.EIO
 ```
 
-Errors reflect the current VFS target, not the shell host. A Linux host
-operating through a Windows VFS receives `sys.windows.WinError` codes; a Windows
-interpreter operating on Linux receives `Errno`.
+Errors reflect the current [VFS](./vfs.md) target, not the shell host. A Linux
+host operating through a Windows VFS receives `sys.windows.WinError` codes; a
+Windows interpreter operating on Linux receives `Errno`.
 
-Internal transport or protocol failures can occur before a target operation
-returns. They still raise `sys.Error`, but may not contain a native code, or may
-contain a code for the host system rather than the target.
+A failure in the connection to a remote target, rather than in the operation
+itself, still raises `sys.Error`, but its code may be `nil` or may come from
+the host system rather than the target.

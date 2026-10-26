@@ -89,11 +89,7 @@ pub class Url
   pub def scheme self -> Str
     ...
 
-  # Immutable array-like view of decoded path segments.
-  #
-  # ## Returns
-  #
-  # [`Iter`](std.Iter) of [`Str`](std.Str) values.
+  # The decoded path segments, as a read-only view.
   #
   # ## Example
   #

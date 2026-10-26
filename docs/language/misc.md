@@ -37,7 +37,7 @@ func $
   - 3
 ```
 
-## String Representations: `Str`, `dbg`, and `std.verbatim`
+## String Representations: `str`, `dbg`, and `std.verbatim`
 
 Do has three builtins for converting values to strings, each serving a
 different purpose:

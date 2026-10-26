@@ -2,21 +2,35 @@
 #
 # Concurrency primitives.
 #
+# Every strand has a current input, which it reads values from, and a current
+# output, which it writes values to. A new strand starts with its creator's.
+# Functions here that read or write without being given a source or
+# destination, such as [`next`](strand.next) and [`put`](strand.put), use
+# them. [`pipeline`](strand.pipeline) connects each stage's output to the next
+# stage's input, and [`redirect`](strand.redirect) replaces them for the
+# duration of a call. In the shell, a program's input and output start as its
+# standard input and output.
 
+# The sending end of a pipe between strands, as a
+# [`stream`](strand.stream) strand's output. In the shell, this is
+# [`proc.PipeSender`](proc.PipeSender); otherwise it is a
+# [`Sender`](strand.Sender).
 pub @let PipeSender[I] = ...
 
+# The receiving end of a pipe between strands, as a
+# [`stream`](strand.stream) strand's input. In the shell, this is
+# [`proc.PipeReceiver`](proc.PipeReceiver); otherwise it is a
+# [`Receiver`](strand.Receiver).
 pub @let PipeReceiver[I] = ...
 
 # Stores a strand-local value.
 pub class Key[T]
-  #
   # Creates a strand-local key. An initial value is returned in a strand until
   # that strand sets the key. Without one, the initial value is `nil`.
   #
   # ```
   # let key = strand.Key 0
   # ```
-  #
   @def (init)[U] self @ Key[U | nil]
 
   @def (init) self value @ T
@@ -28,7 +42,6 @@ pub class Key[T]
   do
     ...
 
-  #
   # Gets or sets the value associated with this key in the current strand.
   #
   # Returns the initial value when the key has not been set in the current
@@ -80,36 +93,30 @@ pub class Key[T]
   do -> R
     ...
 
-
-#
 # Receives values from a channel. As an [`Iter`](std.Iter), it can be used
 # with `for` or `next()`.
 #
-# Receivers are returned by [`channel`](strand). Once the channel is closed
-# and drained, `next()` raises `IterStop`; a sender error is re-raised after any
+# Receivers are returned by [`channel`](strand.channel). Once the channel is
+# closed and drained, `next()` raises `IterStop`; a sender error is re-raised after any
 # buffered values are drained.
 pub class Receiver[T]: std.Iter[T]
-  #
   # Closes the receiver. This prevents any more values from being sent and
   # wakes up any waiting senders.
   pub def close self
     ...
 
-
 # Limits concurrent entry into application-defined scopes.
 pub class Resource
-  #
   # Creates a resource with `count` concurrent reservations.
   #
   # Raises [`ValueError`](std.ValueError) if `count` is zero.
   pub def (init)
     self
-    # maximum concurrent admissions
+    # Maximum number of concurrent reservations.
     count @ Int
   do
     ...
 
-  #
   # Runs `block` while holding one reservation.
   #
   # Entering the same resource again in the same strand is reentrant. Scoped child
@@ -122,7 +129,6 @@ pub class Resource
   # Resources limit admission only and must not be used to protect critical-section
   # invariants.
   #
-  #
   # ## Example
   #
   # ```
@@ -131,15 +137,14 @@ pub class Resource
   # ```
   pub def with[R]
     self
-    # scoped work to execute
+    # Work to run while holding the reservation.
     block @ (() -> R)
   do -> R
     ...
 
-
 # Sends values into a channel. As a [`Sink`](std.Sink), it accepts `put`.
 #
-# Senders are returned by [`channel`](strand).
+# Senders are returned by [`channel`](strand.channel).
 pub class Sender[T]: std.Sink[T]
   # Sends a value, waiting while the channel's buffer is full.
   #
@@ -156,13 +161,11 @@ pub class Sender[T]: std.Sink[T]
   do
     ...
 
+  # Closes the sender, signaling the end of values to the receiver.
   #
-  # Closes the sender, signaling EOF to receivers. After closing:
-  #
-  # - Sends will fail
-  # - Receivers will eventually see no more values
-  # - If `error` is provided, the receiver re-raises it from `.next()` once any
-  #   buffered values have been drained
+  # Later sends raise [`StateError`](std.StateError). The receiver stops after
+  # it drains any buffered values; if `error` is given, it raises `error`
+  # instead of stopping.
   #
   # ## Example
   #
@@ -170,48 +173,40 @@ pub class Sender[T]: std.Sink[T]
   # send.close()
   # send.close "boom"
   # ```
-  #
   pub def close
     self
-    # Optional error value to propagate
+    # Error for the receiver to raise.
     error @ Value = nil
-    # Optional backtrace for that error
+    # Backtrace to report with `error`.
     :backtrace @ Backtrace = nil
   do
     ...
 
-
 # Handles a background strand created by [`spawn`](strand.spawn).
 pub class Strand[R]
-  #
   # Whether the strand has completed execution.
-  #
   #[getter]
   pub def done self -> Bool
     ...
 
+  # Cancels the strand.
   #
-  # Requests cancellation of the strand, causing a `Canceled` error to be raised
-  # if the strand is suspended and on all subsequent suspension attempts.
-  #
+  # The strand raises [`CanceledError`](std.CanceledError) at once if it is
+  # suspended, and otherwise the next time it suspends. Cancellation is
+  # permanent: each later attempt to suspend raises it again.
   pub def cancel self
     ...
 
+  # Waits until the strand completes and returns its result.
   #
-  # Waits until the strand completes and returns its result. If the strand
-  # terminates normally, returns the value returned by the function. If the strand
-  # exited with an error, this method re-raises it.
-  #
+  # If the strand exited with an error, re-raises it.
   pub def join self -> R
     ...
 
-  #
-  # Waits until the strand completes. Unlike [`join()`](#join), this method does
-  # not return the strand's return value or re-raise any error. Use this when you
-  # only care that the strand finished, not what it returned.
+  # Waits until the strand completes, without returning its result or
+  # re-raising its error as [`join`](strand.Strand.join) does.
   pub def wait self
     ...
-
 
 # A [`Strand`](strand.Strand) with channel-backed input and output, created by
 # [`stream`](strand.stream).
@@ -220,34 +215,26 @@ pub class Strand[R]
 # ordinary shutdown after input closes.
 pub class Stream[R, I, O]: Iterable[I] Sinkable[O]
   # Whether the strand has completed execution.
-  #
   #[getter]
   pub def done self -> Bool
     ...
 
-  #
-  # Requests cancellation of the strand, causing a `Canceled` error to be raised
-  # at the strand's next suspension point.
-  #
+  # Cancels the strand, as [`Strand.cancel`](strand.Strand.cancel) does.
   pub def cancel self
     ...
 
+  # Closes both channels, then waits for the strand to complete and returns its
+  # result.
   #
-  # Closes both channels, then waits for the strand to complete. If the strand
-  # exited normally, returns its result. If the strand exited with an error,
-  # re-raises it.
-  #
-  # Closing the channels before waiting prevents deadlock when the strand is
-  # blocked waiting for input or waiting for a consumer to read its output.
-  #
+  # If the strand exited with an error, re-raises it. Closing the channels first
+  # keeps the wait from deadlocking on a strand that is waiting for more input or
+  # for its output to be read.
   pub def join self -> R
     ...
 
-  #
-  # Waits for the strand to complete. Unlike [`join()`](#join), this method does
-  # not close the channels, does not return the strand's result, and does not
-  # re-raise any error.
-  #
+  # Waits for the strand to complete. Unlike [`join`](strand.Stream.join), this
+  # does not close the channels, return the strand's result, or re-raise its
+  # error.
   pub def wait self
     ...
 
@@ -305,7 +292,7 @@ pub def error_backtrace() -> Backtrace
 
 # Creates a channel for communication between strands.
 pub def channel[T]
-  # Buffer capacity (default: 1, unbuffered)
+  # Number of values the channel holds before a send waits; 1 when omitted.
   buffer @ Int = nil
 do -> Tuple[Sender[T], Receiver[T]]
   ...
@@ -322,7 +309,7 @@ pub def collect ...args @ Value -> Value
 # Transforms each value of the strand-local input and writes the result to the
 # strand-local output.
 pub def each[I, O]
-  # a function that transforms a single value
+  # Function that transforms one value.
   func @ ((I, <Value, >Value) -> O)
   < Iter[I]
   > Sink[O]
@@ -331,14 +318,14 @@ do
 
 # Runs blocks concurrently and returns their results in block order.
 pub def fork[*Rs]
-  # functions to execute concurrently
+  # Functions to run concurrently.
   *blocks @ ...(() -> Rs)
 do -> Tuple[...Rs]
   ...
 
 # Writes the values of an iterable to the strand-local output.
 pub def from[O]
-  # an iterable to emit values from
+  # Values to write.
   value @ Iterable[O]
   > Sink[O]
 do
@@ -352,9 +339,9 @@ pub def input[I] <I -> I
 # writing results to the strand-local output.
 # The function sees `std.null` as input and output.
 @def map[I, O]
-  # number of worker strands
+  # Number of worker strands.
   count @ Int
-  # function applied to each input value
+  # Function applied to each input value.
   func @ ((I, <Value, >Value) -> O)
   < Iter[I]
   > Sink[O]
@@ -363,11 +350,11 @@ do -> nil
 # Applies a function concurrently to values pulled from an iterable, writing
 # results to the strand-local output.
 @def map[I, O]
-  # number of worker strands
+  # Number of worker strands.
   count @ Int
-  # function applied to each input value
+  # Function applied to each input value.
   func @ ((I, >Value) -> O)
-  # source
+  # Values to process.
   :input @ Iterable[I]
   > Sink[O]
 do -> nil
@@ -375,11 +362,11 @@ do -> nil
 # Applies a function concurrently to values from the strand-local input,
 # writing results to a sink.
 @def map[I, O]
-  # number of worker strands
+  # Number of worker strands.
   count @ Int
-  # function applied to each input value
+  # Function applied to each input value.
   func @ ((I, <Value) -> O)
-  # destination
+  # Sink to write results to.
   :output @ Sinkable[O]
   < Iter[I]
 do -> nil
@@ -387,13 +374,13 @@ do -> nil
 # Applies a function concurrently to values pulled from an iterable, writing
 # results to a sink.
 @def map[I, O]
-  # number of worker strands
+  # Number of worker strands.
   count @ Int
-  # function applied to each input value
+  # Function applied to each input value.
   func @ (I -> O)
-  # source
+  # Values to process.
   :input @ Iterable[I]
-  # destination
+  # Sink to write results to.
   :output @ Sinkable[O]
 do -> nil
 
@@ -425,45 +412,46 @@ pub def output[O] >O -> O
 # Connects pipeline stages and runs them concurrently, returning the last
 # stage's result.
 @def pipeline[R]
-  # override strand-local input for the first stage
+  # Input for the first stage, in place of the strand-local input.
   :input @ Iterable[Value] = nil
-  # pipeline stages
+  # Pipeline stages, each reading the previous stage's output.
   ...stages @ ((<Iter[std.Unknown], >Sink[std.Unknown]) -> Value)
-  # final stage
+  # Final stage.
   final @ ((<Iter[std.Unknown]) -> R)
 do -> R
 
 # Connects pipeline stages and runs them concurrently, writing the last stage's
 # output to a sink and returning its result.
 @def pipeline[R, O]
-  # override strand-local input for the first stage
+  # Input for the first stage, in place of the strand-local input.
   :input @ Iterable[Value] = nil
-  # override strand-local output for the last stage
+  # Output for the last stage, in place of the strand-local output.
   :output @ Sinkable[O]
-  # pipeline stages
+  # Pipeline stages, each reading the previous stage's output.
   ...stages @ ((<Iter[std.Unknown], >Sink[std.Unknown]) -> Value)
-  # final stage
+  # Final stage.
   final @ ((<Iter[std.Unknown], >Sink[O]) -> R)
 do -> R
 
 pub def pipeline ...args @ Value -> Value
   ...
 
-# Runs a function over an iterator with a fixed number of scoped workers.
+# Runs a function over the items of an iterable with a fixed number of scoped
+# workers.
 @def pool[T]
-  # number of worker strands
+  # Number of worker strands.
   count @ Int
-  # iterable of items
+  # Items to process.
   input @ Iterable[T]
-  # function applied to each input value
+  # Function applied to each input value.
   func @ ((T) -> nil)
 do -> nil
 
 # Runs a function over the strand-local input with a fixed number of scoped workers.
 @def pool[T]
-  # number of worker strands
+  # Number of worker strands.
   count @ Int
-  # function applied to each input value
+  # Function applied to each input value.
   func @ ((T, <Value) -> nil)
   < Iter[T]
 do -> nil
@@ -491,44 +479,45 @@ pub def put[T] value@T >Sink[T]
 # assert_eq $doubled [2, 4, 6]
 # ```
 @def redirect[R, I, O]
-  # replacement for the strand-local input
+  # Replacement for the strand-local input.
   :input @ Iterable[I]
-  # replacement for the strand-local output
+  # Replacement for the strand-local output.
   :output @ Sinkable[O]
-  # function to call
+  # Function to call.
   block @ ((<Iter[I], >Sink[O]) -> R)
 do -> R
 
 # Calls a function with the strand-local input replaced, returning its result.
 @def redirect[R, I]
-  # replacement for the strand-local input
+  # Replacement for the strand-local input.
   :input @ Iterable[I]
-  # function to call
+  # Function to call.
   block @ ((<Iter[I]) -> R)
 do -> R
 
 # Calls a function with the strand-local output replaced, returning its result.
 @def redirect[R, O]
-  # replacement for the strand-local output
+  # Replacement for the strand-local output.
   :output @ Sinkable[O]
-  # function to call
+  # Function to call.
   block @ ((>Sink[O]) -> R)
 do -> R
 
 # Calls a function, returning its result.
 @def redirect[R]
-  # function to call
+  # Function to call.
   block @ (() -> R)
 do -> R
 
 pub def redirect ...args @ Value -> Value
   ...
 
-# Calls a function with strand-local input and output installed verbatim.
+# Calls a function with the strand-local input and output set to the given
+# values as they are.
 #
-# Unlike [`redirect`](strand.redirect), this does not call `(iter)` or `(sink)`
-# on the supplied values. The block sees their exact types; reading or writing
-# them requires the corresponding channel operations.
+# Unlike [`redirect`](strand.redirect), this does not convert the values with
+# `(iter)` or `(sink)`, so it can restore an input or output saved with
+# [`input`](strand.input) or [`output`](strand.output) exactly.
 #
 # The previous input and output are restored when `block` returns or raises.
 # Omitted channels are unchanged.
@@ -543,21 +532,21 @@ pub def redirect ...args @ Value -> Value
 #     with_io input: $saved_input do block()
 # ```
 @def with_io[R, I, O]
-  # replacement for the strand-local input
+  # Replacement for the strand-local input.
   :input @ I
-  # replacement for the strand-local output
+  # Replacement for the strand-local output.
   :output @ O
-  # function to call
+  # Function to call.
   block @ ((<I, >O) -> R)
 do -> R
 
-# Calls a function with the strand-local input installed verbatim.
+# Calls a function with the strand-local input set to the given value as it is.
 @def with_io[R, I]
   :input @ I
   block @ ((<I) -> R)
 do -> R
 
-# Calls a function with the strand-local output installed verbatim.
+# Calls a function with the strand-local output set to the given value as it is.
 @def with_io[R, O]
   :output @ O
   block @ ((>O) -> R)
@@ -571,14 +560,14 @@ pub def with_io ...args @ Value -> Value
 
 # Runs a function in a background strand.
 pub def spawn[R]
-  # the function to execute
+  # Function to run.
   func @ (() -> R)
 do -> Strand[R]
   ...
 
 # Runs a function in a background strand with channel-backed endpoints.
 pub def stream[R, I = Value, O = Value]
-  # the function to execute
+  # Function to run.
   func @ ((<PipeReceiver[I], >PipeSender[O]) -> R)
 do -> Stream[R, O, I]
   ...

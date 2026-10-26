@@ -52,7 +52,8 @@ pub class ParseError: ValueError
 pub class Patch
   # Source path of the patch as a [`Path`](fs.Path).
   #
-  # Present for delete, modify, move, and copy operations.
+  # Present for delete, modify, move, and copy operations; reading it for a
+  # create raises [`FieldError`](std.FieldError).
   #
   # ## Example
   #
@@ -66,7 +67,8 @@ pub class Patch
 
   # Target path of the patch as a [`Path`](fs.Path).
   #
-  # Present for create, modify, move, and copy operations.
+  # Present for create, modify, move, and copy operations; reading it for a
+  # delete raises [`FieldError`](std.FieldError).
   #
   # ## Example
   #
@@ -100,11 +102,8 @@ pub class Patch
   #
   # ## Errors
   #
-  # | Exception                       | Condition                                                      |
-  # | ------------------------------- | -------------------------------------------------------------- |
-  # | [`ApplyError`](patch.ApplyError) | The patch does not apply cleanly                               |
-  # | [`ApplyError`](patch.ApplyError) | A text result is not valid UTF-8                               |
-  # | `TypeError`                     | `base` is not [`Str`](std.Str) or [`Bin`](std.Bin) |
+  # [`ApplyError`](patch.ApplyError) if the patch does not apply cleanly, or a
+  # text result is not valid UTF-8.
   #
   # ## Example
   #
@@ -158,10 +157,8 @@ do -> DecodeValue
 #
 # ## Errors
 #
-# | Exception   | Condition                                                                       |
-# | ----------- | ------------------------------------------------------------------------------- |
-# | `TypeError` | `before` and `after` are not both text or both binary                           |
-# | `TypeError` | `source` or `target` is not a [`Path`](fs.Path) or [`Str`](std.Str) |
+# [`TypeError`](std.TypeError) if `before` and `after` are not both text or
+# both binary.
 #
 # ## Example
 #

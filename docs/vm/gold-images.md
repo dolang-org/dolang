@@ -53,17 +53,11 @@ A bundle is a ZIP, conventionally named with a `.dolvm` extension.
 | `nvram.bin`     | The UEFI variable store, for a guest that has one                                                                                                     |
 | `tpm.tar`       | The vTPM state directory, for a guest that has one                                                                                                    |
 
-The disk is `STORE`d because `qemu-img convert -c` has already compressed it —
-with zstd by default, and in parallel, which takes a ninth of the time zlib does
-for the same size. Compressing the qcow2 rather than the ZIP entry keeps the
-image compressed in the store it is extracted into, where it backs however many
-domains are laid over it; storing it in the ZIP also leaves it a contiguous byte
-range that extraction copies out directly. Its BLAKE3 digest is recorded because
-a ZIP entry's CRC32 is a corruption check rather than an integrity property, and
-the disk is verified again when it is extracted into the image store, where the
-bundle's own digest no longer covers it. The manifest also embeds the domain XML
-this module generated, as an informational escape hatch; the structured fields
-are what reconstitution actually uses.
+The disk image is already compressed (`qemu-img convert -c`), so the ZIP
+stores it uncompressed, and it stays compressed in the image store after
+extraction. Its BLAKE3 digest is checked again when it is extracted. The
+manifest also embeds the domain XML for reference; importing a bundle uses
+the structured fields, not the XML.
 
 ## Preparing For Export
 

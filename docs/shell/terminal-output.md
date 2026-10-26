@@ -37,14 +37,14 @@ assert_eq $greeting "Hello, Alice!"
 
 ## Child Process Output
 
-The main strand's implicit output is set once at startup: to
-[`term.default`](term.default) if stdout is a terminal, or to
-[`shell.stdout`](shell.Stdout) otherwise. A child process launched
-with no `stdout:` override inherits whichever one is current, so it follows
-console/terminal interception — `progress` indicators,
-[`term.capture`](term.capture) — only
-when stdout was a terminal to begin with. An omitted `stderr:` always defaults
-to `term.default`.
+A child process launched without `stdout:` writes to the strand's output. In the
+main strand, when stdout is a terminal, that is [`term.default`](term.default),
+which forwards to whatever [`term.output()`](term.output) currently is, so the
+child's output is captured by [`term.capture`](term.capture) and coordinates
+with `progress` indicators. Otherwise it is [`shell.stdout`](shell.Stdout), and
+the child writes directly to the process's stdout.
+
+A child process launched without `stderr:` always writes to `term.output()`.
 
 ## Styled Text
 
@@ -96,12 +96,10 @@ including hyperlinks, are removed.
 
 ## Styling Control
 
-`echo` and `print` style their output when the console they are writing to says
-it can. That answer is the console's
-[`can_style`](term.Console.can_style) — a property of the destination,
-not a global.
+`echo` and `print` style their output when the console they write to reports
+[`can_style`](term.Console.can_style).
 
-For the host console, it is the process-wide policy:
+For the host console, this follows a process-wide policy:
 
 1. If `DOLANG_CONSOLE` sets `style`, that value wins outright — `FORCE_COLOR`
    and `NO_COLOR` are not consulted at all. See
@@ -111,9 +109,8 @@ For the host console, it is the process-wide policy:
 3. Otherwise, a non-empty `NO_COLOR` disables styling.
 4. Otherwise, styling follows stderr terminal detection.
 
-For a [`capture`](term.capture) it is
-`false` unless asked for, which is what keeps a test asserting on `echo`ed text
-behaving the same piped and on a developer's terminal:
+Text captured with [`term.sub`](term.sub) is unstyled unless `can_style: true`
+is passed, so it is the same whether or not the script runs on a terminal:
 
 ```
 # Plain, on a terminal or not.
@@ -123,14 +120,14 @@ assert_eq (term.sub do echo $warning) "warning"
 term.sub can_style: true do echo $warning
 ```
 
-Because it is the *installed* console that is consulted,
-`term.console.can_style` still reports the process-wide policy from inside a
-capture — naming it pins to the host, the same as for writes.
+[`term.console`](term.console) always refers to the host console, so
+`term.console.can_style` reports the process-wide policy even inside a capture.
+Use `term.output().can_style` for the console that `echo` writes to.
 
 ## Terminal Detection and Dimensions
 
-[`term.console.is_tty`](term.Console.is_tty) is the determinative
-test for whether stderr is usable as a terminal. It is `false` while an
+[`term.console.is_tty`](term.Console.is_tty) reports whether the host console
+is usable as a terminal. It is `false` while an
 extension such as `progress` has taken the terminal over, during which
 `geometry()` still reports the real terminal's size.
 

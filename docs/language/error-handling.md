@@ -37,7 +37,8 @@ catch err
 ```
 
 The result of a `try` statement is the result of the body on success, or the
-result of the executed catch handler if an error was caught:
+result of the executed catch handler if an error was caught. Like `if`, a `try`
+can be the right-hand side of `let` or an assignment:
 
 ```
 let result = try
@@ -103,7 +104,8 @@ catch NoDomainError: err
 Inherit from the type that describes the failure — `ValueError` for a malformed
 value, `RuntimeError` when nothing more specific fits. Every `std` error type is
 subclassable except [`AbortError`](std.AbortError) and
-[`BytecodeError`](std.BytecodeError), which are sealed.
+[`BytecodeError`](std.BytecodeError), which can be neither subclassed nor
+constructed.
 
 ### Finally
 
@@ -140,16 +142,4 @@ catch err
   nil
 finally
   disconnect()
-```
-
-### Try as Right-Hand Side
-
-`try` can be used on the right-hand side of `let` and assignment, just like
-`if`:
-
-```
-let value = try
-  parse $dangerous_input
-catch _
-  "fallback"
 ```

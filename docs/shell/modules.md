@@ -20,6 +20,8 @@ Modules are resolved in this order:
     | macOS    | `~/Library/Application Support/dolang/site/`        |
     | Windows  | `%APPDATA%\dolang\site\`                            |
 
+3. Modules bundled with `dolang`
+
 For example, `dolang --module-path ./lib --module-path ../shared script.dol`
 searches `./lib`, then `../shared`, then the site directory.
 

@@ -1,5 +1,5 @@
 # Mock HTTP server, for testing code that makes requests through the
-# [`http`](http) module.
+# [`http`](../http/index.md) module.
 #
 # A [`Server`](http.mock.Server) binds a random local port; registering a mock on it
 # makes one matcher/response pair live, and the request under test goes over a

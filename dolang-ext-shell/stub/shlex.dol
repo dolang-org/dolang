@@ -59,10 +59,8 @@ do -> Str
 #
 # ## Errors
 #
-# | Exception      | Condition                                                     |
-# | -------------- | ------------------------------------------------------------- |
-# | `TypeError`    | `string` is not a [`Str`](std.Str)                       |
-# | `RuntimeError` | Raised during iteration if the line is malformed              |
+# [`RuntimeError`](std.RuntimeError) during iteration if the line is
+# malformed.
 #
 # ## Example
 #

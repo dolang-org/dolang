@@ -55,9 +55,9 @@ cd build do
 
 ## Redirecting I/O
 
-Without explicit redirects, a program's stdin/stdout is connected to the
-current strand's input `Iter` and output `Sink`, while stderr is connected to
-the current [console](term.Console). Use `stdin:`, `stdout:`, and
+Without explicit redirects, a program's stdin/stdout is connected to the current
+strand's input `Iter` and output `Sink`, while stderr is connected to the
+current console, [`term.output()`](term.output). Use `stdin:`, `stdout:`, and
 `stderr:` to replace those connections for one invocation.
 
 Each redirect accepts a path, an [`io.Io`](io.Io) stream, or an `Iter`/`Sink`.

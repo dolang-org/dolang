@@ -278,9 +278,9 @@ pub class PipeSender[T]: std.Sink[T]
   #
   # ## Errors
   #
-  # | Exception                           | Condition                                       |
-  # | ----------------------------------- | ----------------------------------------------- |
-  # | [`TypeError`](std.TypeError) | `backtrace` is not a `strand.Backtrace`         |
+  # | Exception                    | Condition                               |
+  # | ---------------------------- | --------------------------------------- |
+  # | [`TypeError`](std.TypeError) | `backtrace` is not a `strand.Backtrace` |
   pub def close
     self
     # Error value to propagate to the receiver.
@@ -309,9 +309,9 @@ pub class Proc
   #
   # ## Errors
   #
-  # | Exception                                          | Condition           |
-  # | -------------------------------------------------- | ------------------- |
-  # | [`sys.UnsupportedError`](sys.Error)          | The target is Windows |
+  # | Exception                                      | Condition             |
+  # | ---------------------------------------------- | --------------------- |
+  # | [`sys.UnsupportedError`](sys.UnsupportedError) | The target is Windows |
   #
   # ## Example
   #
@@ -558,9 +558,9 @@ pub def enumerate() -> Iter[Info]
 #
 # ## Errors
 #
-# | Exception                              | Condition       |
-# | -------------------------------------- | --------------- |
-# | [`sys.NotFoundError`](sys.Error) | No such process |
+# | Exception                                | Condition       |
+# | ---------------------------------------- | --------------- |
+# | [`sys.NotFoundError`](sys.NotFoundError) | No such process |
 #
 # ## Example
 #
@@ -587,10 +587,10 @@ do -> Info
 #
 # ## Errors
 #
-# | Exception                                      | Condition                                |
-# | ---------------------------------------------- | ---------------------------------------- |
-# | [`sys.NotFoundError`](sys.Error)         | No such process, or the PID was recycled |
-# | [`sys.PermissionDeniedError`](sys.Error) | The caller may not open the process      |
+# | Exception                                                | Condition                                |
+# | -------------------------------------------------------- | ---------------------------------------- |
+# | [`sys.NotFoundError`](sys.NotFoundError)                 | No such process, or the PID was recycled |
+# | [`sys.PermissionDeniedError`](sys.PermissionDeniedError) | The caller may not open the process      |
 #
 # ## Example
 #

@@ -160,8 +160,8 @@ The number of `#` characters must match on both sides of the string.
 ## Here Strings
 
 Here strings are multi-line string literals introduced by `|` (or `|-`). Like
-quoted strings, they support `$` interpolation and `\$` escaping, but span
-multiple indented lines instead of a pair of delimiters.
+quoted strings, they support interpolation and the same escape sequences, but
+span multiple indented lines instead of a pair of delimiters.
 
 ```
 let doc = |
@@ -360,12 +360,13 @@ assert_eq $stmt[1].name 0
 assert_eq $stmt[3].name :name:
 ```
 
-A number is a name that happens to be an integer: it is never renumbered, so
-`${#0}` means parameter `0` even in a sequence pasted inside another.
+A number names a hole directly rather than counting holes, so `${#0}` is
+parameter `0` wherever it appears, including in a sequence interpolated into
+another.
 
-[`format()`](std.Fmt.format) is the reference implementation of holes: it
-fills them from its arguments before expanding, and raises an error for a hole
-left unfilled.
+[`format()`](std.Fmt.format) fills holes from its arguments, numbered holes
+from positional arguments and named holes from keyword arguments, and raises an
+error for a hole left unfilled.
 
 ```playground
 #> import test:

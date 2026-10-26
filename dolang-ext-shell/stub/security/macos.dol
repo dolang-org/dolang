@@ -142,10 +142,9 @@ pub class Flags: Iterable[FlagBit]
 
 # Immutable macOS extended access-control entry.
 #
-# Unlike NFSv4 or POSIX.1e ACL entries, macOS resolves every principal (owning
-# user, owning group, well-known accounts, or an arbitrary user/group) to a
-# UUID before it reaches the file's ACL, so there is no separate qualifier
-# enum: [`principal`](security.macos.Ace.principal) is always a
+# Unlike NFSv4 or POSIX.1e ACL entries, a macOS entry names every principal,
+# including the owning user and group, by UUID:
+# [`principal`](security.macos.Ace.principal) is always a
 # [`uuid.Uuid`](uuid.Uuid).
 #
 # The class methods below require a built `uuid.Uuid`, [`Mask`](security.macos.Mask), and

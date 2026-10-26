@@ -72,9 +72,9 @@ statements with nothing interesting to return.
 
 ## Symbols (`Sym`)
 
-Globally canonical identifiers that are more efficient to hash and compare than
-`Str`. Used for literal dictionary keys, key arguments in variadic argument
-packs, object fields, ad-hoc enumerated constants, etc.
+Identifiers that compare and hash faster than strings, since each name has
+exactly one symbol. Bare dictionary keys, keyword argument names, and field
+names are symbols, and symbols serve as ad-hoc enumerated constants.
 
 ```
 let value = some_dict[:key:]

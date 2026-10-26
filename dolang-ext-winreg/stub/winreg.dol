@@ -181,7 +181,7 @@ pub @let AccessMaskSpec = (AccessMask | AccessRight | Iterable[AccessRight])
 # An open registry key.
 #
 # Returned by [`open`](winreg.open) and by `Key`'s own
-# [`open`](#open) and [`create`](#create).
+# [`open`](winreg.Key.open) and [`create`](winreg.Key.create).
 pub class Key
   # Closes the key.
   #

@@ -184,11 +184,11 @@ on as `Tuple[...Ts]`.
 ### Mapped Rests
 
 A leading `...` after a rest binding's `@` maps a type over a schema binder,
-giving each collected argument its own type. Here each thunk returns the
+giving each collected argument its own type. Here each block returns the
 corresponding item of `Rs`:
 
 ```
-def fork[*Rs] *thunks @ ...(() -> Rs) -> Tuple[...Rs]
+def fork[*Rs] *blocks @ ...(() -> Rs) -> Tuple[...Rs]
   ...
 ```
 
@@ -288,10 +288,10 @@ its implementation is. A method, including a special method such as `(init)`,
 takes overloads in its class body the same way, and so does a protocol's
 method.
 
-A method's overload may specialize its receiver to the instances it applies to.
-The class's binders in the overload take the arguments the receiver reaches the
-class with, so `shout` below returns `Str`. An implementation's receiver
-annotation can't narrow the class this way.
+A method's overload may annotate its receiver with a narrower type, so that it
+applies only to those instances. The class's binders in the overload then stand
+for the receiver's type arguments, so `shout` below returns `Str`. An
+implementation's receiver annotation can't narrow the class this way.
 
 ```
 class Box[T]

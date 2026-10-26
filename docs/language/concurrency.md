@@ -51,7 +51,7 @@ let worker = spawn do
   echo "Running in background"
   42
 
-echo "Main thread continues"
+echo "Main strand continues"
 
 let result = worker.join()
 echo "Got result: $result"
@@ -73,8 +73,6 @@ multiple blocks concurrently and returns their results as a tuple:
 ```playground
 #> import test:
 #>   - assert_eq
-import strand
-
 let results = fork
   - do 42
   - do "hello"
@@ -145,8 +143,6 @@ function connects multiple stages into a data processing pipeline:
 ```playground
 #> import test:
 #>   - assert_eq
-import strand
-
 let result = pipeline
   do strand.from [1, 2, 3, 4, 5]
   do strand.where do |x| (x > 2)
@@ -167,8 +163,6 @@ The [`strand.channel`](strand.channel) function creates a
 sender/receiver pair for communicating between strands:
 
 ```playground
-import strand
-
 let send recv = strand.channel()
 
 let worker = strand.spawn do
@@ -199,8 +193,6 @@ and threading channels.
 ```playground
 #> import test:
 #>   - assert_eq
-import strand
-
 let s = stream do strand.each do |x| (x * 2)
 let input = s.sink()
 let output = s.iter()
@@ -237,10 +229,9 @@ When a strand exits with an error:
 - If you call [`join`](strand.Strand.join), the error is
   re-raised
 - In `fork` and `pipeline` strands, all sibling strands are canceled.
-  After all strands complete, an arbitrary error among all failed strands is
-  re-raised. Errors that were not caused by sibling cancellation (e.g.
-  `CanceledError`, or `IterStop` and `SinkStop` errors in pipelines) are
-  prioritized.
+  After all strands complete, one of their errors is re-raised, in preference
+  to the errors the cancellation itself causes: `CanceledError`, and in
+  pipelines `IterStop` and `SinkStop` from closed stages.
 
 ## Cancellation
 

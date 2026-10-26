@@ -156,12 +156,12 @@ pub @let ContainerStatus = $
 # | Key      | Value                                         | Meaning                              |
 # | -------- | --------------------------------------------- | ------------------------------------ |
 # | `tag`    | `Str`                                         | Apply an output image tag            |
-# | `run`    | `() -> nil`                                   | Run a function inside the container  |
+# | `run`    | `() -> nil`                                   | Run a block inside the container     |
 # | `add`    | [`AddSpec`](_container.dockman.AddSpec)       | Add a file to the image              |
 # | `patch`  | [`PatchSpec`](_container.dockman.PatchSpec)   | Apply a patch inside the image       |
 # | `commit` | `Str`                                         | Commit a layer with a message        |
 #
-# A `run` function has the strand input and output of the build's caller.
+# A `run` block has the strand input and output of the build's caller.
 pub @let BuildSteps[I, O] = $
   *tag: Str
   *run: ((<I, >O) -> nil)
@@ -1939,13 +1939,13 @@ pub class Container
 
   # Runs `func` in this running container through a VFS context.
   #
-  # A matching `dolang-vfs` helper is copied to a session-specific path under
-  # `/tmp` and launched with the container runtime's `exec` command. The helper
-  # is removed after the VFS connection starts when the container user has
-  # permission to do so.
+  # Filesystem access, spawned programs, environment, and working directory use
+  # the container for the duration of `func`. A `dolang-vfs` helper is copied
+  # into the container's `/tmp` and removed once the connection starts, if the
+  # container user may remove it.
   pub def with[R]
     self
-    # Function to run.
+    # Block to run.
     func @ (() -> R)
     # Initial working directory.
     :cd @ (Str | Path) = nil

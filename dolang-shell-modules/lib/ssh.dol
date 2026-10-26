@@ -24,21 +24,15 @@ import _ssh
 #
 # ## Errors
 #
-# | Error                                          | Condition                                    |
-# | ----------------------------------------------- | --------------------------------------------- |
-# | [`proc.Error`](proc.Error)                 | SSH exits unsuccessfully                     |
-# | [`sys.Error`](sys.Error)                   | SSH or the remote VFS cannot be contacted    |
-# | [`ValueError`](std.ValueError)             | `host_key` is not a supported policy         |
-# | [`UnexpectedKeyError`](std.UnexpectedKeyError) | An unrecognized keyword option is passed |
-# | [`UnexpectedPosError`](std.UnexpectedPosError) | An unexpected positional argument is passed |
+# | Exception                      | Condition                                 |
+# | ------------------------------ | ----------------------------------------- |
+# | [`proc.Error`](proc.Error)     | SSH exits unsuccessfully                  |
+# | [`sys.Error`](sys.Error)       | SSH or the remote VFS cannot be contacted |
+# | [`ValueError`](std.ValueError) | `host_key` is not a supported policy      |
 #
 # ## Example
 #
 # ```
-# import proc:
-#   - git
-#   - cargo
-#
 # let checkout = Path /srv/build/project
 #
 # ssh.with build.example.com
@@ -50,9 +44,9 @@ import _ssh
 #   do
 #     checkout.remove all: true ignore: true
 #     checkout.parent.create_dir all: true
-#     git clone https://github.com/example/project.git $checkout
+#     run git clone https://github.com/example/project.git $checkout
 #     cd $checkout do
-#       cargo build --release
+#       run cargo build --release
 # ```
 pub def with[R]
   # SSH destination.

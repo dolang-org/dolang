@@ -1,7 +1,7 @@
 # Do Language
 
 Do is a scripting language for cross-platform CI/CD, DevOps, and automation. It
-combines shell-like commands and indentation-oriented data declartion with
+combines shell-like commands and indentation-oriented data declaration with
 ordinary functions, structured concurrency, and remote-capable system APIs.
 
 !!! warning "Experimental Language"
@@ -32,7 +32,7 @@ ssh.with build.example.com do inspect_target()
 ```
 
 Contexts compose, so a local interpreter can enter an SSH host and then a
-container on that host. APIs that are not VFS-forwaded continue to run in the
+container on that host. APIs that are not VFS-forwarded continue to run in the
 interpreter process.
 
 ## Language at a Glance

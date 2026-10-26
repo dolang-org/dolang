@@ -224,8 +224,8 @@ The behavior of the spread depends on the context:
 | Dictionary or record | Dict or Record     | Preserves keyed and positional entries                                            |
 | Any                  | `kv()` adapter     | Keyed entries; arrays and tuples reject them                                      |
 
-`Iterable` alone does not support spreading. Use `iter()` explicitly. Structural
-rests support repeated spreading without advancing their source.
+`Iterable` alone does not support spreading. Use `iter()` explicitly. A rest
+bound by a pattern can be spread repeatedly.
 
 Note that a dictionary is only produced if at least one static key exists in
 addition to any spreads; otherwise, an array results.

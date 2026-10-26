@@ -1,29 +1,17 @@
 # dolang: strict
-import
-  io:
-    - @Io
-  json:
-    @DecodeValue: JsonDecodeValue
-    @EncodeValue: JsonEncodeValue
-  std:
-    - RuntimeError
-  time:
-    - @DateTime
-  url:
-    - @Url
-
 # HTTP client.
 #
-# The module-level request functions -- [`get`](#get), [`post`](#post) and the
-# rest -- each make one request through a fresh stateless client. Anything that
-# has to persist across requests (cookies, a proxy, TLS material) belongs on a
-# [`Client`](http.Client), whose methods take the same arguments.
+# The module-level request functions -- [`get`](http.get),
+# [`post`](http.post) and the rest -- each make one request through a fresh
+# stateless client. Anything that has to persist across requests (cookies, a
+# proxy, TLS material) belongs on a [`Client`](http.Client), whose methods take
+# the same arguments.
 #
 # Every URL argument accepts either a plain [`Str`](std.Str) or a
 # [`url.Url`](url.Url).
 #
 # ```
-# let data = http.get https://api.example.com/users
+# let data = get https://api.example.com/users
 #   query: {page: 1}
 #   headers: {authorization: "Bearer $token"}
 # ```
@@ -40,6 +28,19 @@ import
 # - The [`Client`](http.Client) options `unix_socket`, `proxy`, `cookies`,
 #   `ca_cert`, `identity`, `password` and `invalid_certs` raise
 #   [`RuntimeError`](std.RuntimeError).
+
+import
+  io:
+    - @Io
+  json:
+    @DecodeValue: JsonDecodeValue
+    @EncodeValue: JsonEncodeValue
+  std:
+    - RuntimeError
+  time:
+    - @DateTime
+  url:
+    - @Url
 
 # A transport or protocol failure.
 #
@@ -127,8 +128,6 @@ pub class Status: Error
     ...
 
   # The saved body excerpt, parsed as JSON.
-  #
-  # Available when the extension is built with its `json` feature.
   pub def json self -> JsonDecodeValue
     ...
 
@@ -163,7 +162,8 @@ pub class Event
 #
 # A response may hold an open connection while its body is still pending, so it
 # owns a resource until it is closed. Every method that reads the body whole --
-# [`body`](#body), [`text`](#text), [`json`](#json) -- consumes the response and
+# [`body`](http.Response.body), [`text`](http.Response.text),
+# [`json`](http.Response.json) -- consumes the response and
 # closes it; the streaming methods hand ownership of the body to the iterator
 # they return. Once closed, most methods raise.
 #
@@ -222,8 +222,6 @@ pub class Response
     ...
 
   # Reads the whole body and parses it as JSON.
-  #
-  # Available when the extension is built with its `json` feature.
   #
   # ## Errors
   #
@@ -363,7 +361,7 @@ pub @let BodyOptions = $
 #
 # A client's methods are named for HTTP verbs -- `get`, `head`, `post`, `put`,
 # `patch`, `delete`, `options`, `trace`, `connect` -- and take the arguments
-# documented on [`get`](#get) and [`post`](#post).
+# documented on [`get`](http.get) and [`post`](http.post).
 #
 # ## Request options {: #http.Client.request-options }
 #
@@ -425,11 +423,11 @@ pub @let BodyOptions = $
 # Builds a `multipart/form-data` body from an iterable of part specs. Mutually
 # exclusive with `body`, `json` and `lines`.
 #
-# Each part needs `name` and either `body` or -- when the extension is built
-# with its `json` feature -- `json`. `filename` and `content_type` are
-# optional; a `json` part's `content_type` defaults to `application/json`.
+# Each part needs `name` and either `body` or `json`. `filename` and
+# `content_type` are optional; a `json` part's `content_type` defaults to
+# `application/json`.
 #
-# A part `body` accepts what [`body`](#http.Client.body) does.
+# A part `body` accepts what [`body`](./Client.md#http.Client.body) does.
 #
 # The `content-type` header, boundary included, is set automatically. Do not
 # set it yourself on a multipart request.

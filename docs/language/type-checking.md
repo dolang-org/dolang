@@ -6,11 +6,11 @@ executing the script; see
 [Checking Scripts](../shell/index.md#checking-scripts).
 
 Checking is gradual: unknown information leaves operations unchecked rather than
-making every unannotated program an error. An imported module with neither
-source nor a bundled type library is unknown to the checker. Where a non-strict
-file uses a form the checker doesn't handle, it leaves that code unchecked
-without a diagnostic, so a successful result is not a guarantee that every
-operation has been checked.
+making every unannotated program an error. Importing a module that has neither
+source nor a bundled type library is an error, and uses of that module are left
+unchecked. Where a non-strict file uses a form the checker doesn't handle, it
+leaves that code unchecked without a diagnostic, so a successful result is not a
+guarantee that every operation has been checked.
 
 ## Inference
 
@@ -75,9 +75,8 @@ def size p @ ((:text:, Str) | (:count:, Int)) -> Int
     v
 ```
 
-A copy of a linked variable shares its link. Reassigning a variable, or
-unpacking it with another pattern, ends its link; so does unpacking the same
-value again.
+A copy of a linked variable is narrowed along with it. Reassigning a variable,
+or unpacking it or the original value again, breaks its link.
 
 Reassignment replaces the local's current type, and branches join it again. A
 variable assigned by a closure is never narrowed; copy such a variable to a
@@ -93,23 +92,19 @@ checked as implicit parameters.
 
 ### Unions
 
-A value fits a union when it fits one of the members. A mismatch with every
-member is an error, except that the check is left undecided when the value's
-class inherits from more than one generic member's class, such as
-`BaseArray[Int]` and `BaseArray[Str]`. A value may fit several applications of
-a generic class together without fitting any one of them: every
-`(Int | Str,)` is an `(Int,)` or a `(Str,)`.
+A value fits a union when it fits one of the members, and a mismatch with every
+member is an error. The checker can't verify a value whose class inherits from
+more than one member's generic class, such as `BaseArray[Int]` and
+`BaseArray[Str]`: such a value may fit the members together without fitting any
+one of them, as every `(Int | Str,)` is an `(Int,)` or a `(Str,)`.
 
 ### Recursive Types
 
-Recursive types fit each other when their structures do. While the checker
-compares `A` with `B`, it assumes that `A` fits `B` wherever the comparison
-meets the same pair again. So `List[Int]` fits `List[Num]` for
-`@let List[T] = (nil | (T, List[T]))` when `Int` fits `Num`, and two aliases
-with the same structure fit each other. A comparison that would hold only
-because a type has no values, as for `@let Endless = (Endless, Int)`, is not
-proven. Neither is a comparison where which member of a union fits depends
-on which member fits elsewhere.
+Recursive types fit each other when their structures do. For
+`@let List[T] = (nil | (T, List[T]))`, `List[Int]` fits `List[Int | Str]`
+because `Int` fits `Int | Str`, and two aliases with the same structure fit each
+other. A comparison that would hold only because a type has no values, as for
+`@let Endless = (Endless, Int)`, is not proven.
 
 ### Generic Variance
 
@@ -154,11 +149,11 @@ measure $Shape
 measure $Circle
 ```
 
-Since a `Type[Shape]` may hold a subclass's object, only the class's name
-constructs through `(init)`, including where a function is expected, and
-reaches static members, which subclasses don't inherit. A `Type[Shape]` is
-called only through a `#[class]` `(call)`. A class method's unannotated first
-parameter is `Type` of its class.
+A `Type[Shape]` may hold a subclass's object, so it neither constructs through
+`(init)` nor reaches static members, which subclasses don't inherit. Only the
+name `Shape` does both, including when it's passed where a function is
+expected. A `Type[Shape]` can be called only through a `#[class]` `(call)`
+method. A class method's unannotated first parameter is `Type` of its class.
 
 ## Strict Checking
 

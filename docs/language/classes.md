@@ -498,8 +498,8 @@ The chained call gives the instance its inherited behavior: `Tagged` above gets
 `str`, `len`, comparison, and the rest from the `Str` it was initialized with.
 Skipping the call leaves that representation empty, and the constructor fails
 with `native supertypes not initialized` rather than producing a half-built
-object. A few types — [`AbortError`](std.AbortError) among them —
-are sealed and have no constructor to chain to.
+object. A few types, such as [`AbortError`](std.AbortError), can't be
+subclassed at all.
 
 Overriding a special method takes precedence over the inherited one, so a
 subclass can keep the representation and still present itself differently:
@@ -658,8 +658,8 @@ back to strict equality. When `(ne)` is absent, it negates `(eq)`; when
 `UnsupportedError` from the left method triggers the reflected method. Other
 errors propagate.
 
-**Ordering:** Defining `(lt)` and `(eq)` is sufficient for all four comparison
-operators. `<=`, `>`, and `>=` are derived automatically:
+Defining `(lt)` and `(eq)` is sufficient for all four comparison operators;
+`<=`, `>`, and `>=` are derived from them:
 
 ```playground
 #> import test:
@@ -801,9 +801,6 @@ Invoked when getting the next item from an iterator. Returns the next value,
 or throws `IterStop` when exhausted:
 
 ```
-import std:
-  - IterStop
-
 class Counter
   field current = 0
   field stop = 0
@@ -817,7 +814,7 @@ class Counter
 
   def (next) self
     if (self.#current >= self.#stop)
-      throw IterStop()
+      throw std.IterStop()
     let value = self.#current
     self.#current = (self.#current + 1)
     value
@@ -893,27 +890,24 @@ assert (bool nonzero)
 
 Called by `std.hash` and when an instance is used as a dictionary key. Must
 return an `Int`. If not defined, the hash is derived from the instance's
-identity (memory address), consistent with the default identity-based equality.
+identity, consistent with the default identity-based equality.
 
 `std.hash` accepts multiple values and hashes them all together in sequence,
 which makes it easy to combine fields:
 
 ```
-import std:
-  - hash
-
 def (hash) self
-  hash $self.x $self.y $self.z
+  std.hash $self.x $self.y $self.z
 ```
 
-**Important:** if you define `(eq)`, you should also define `(hash)` so that
-equal objects produce the same hash:
+If you define `(eq)`, also define `(hash)` so that equal objects produce the
+same hash:
 
 ```playground
 #> import test:
 #>   - assert_eq
-import std:
-  - hash
+#> import std:
+#>   - hash
 
 class Point
   pub field x = 0

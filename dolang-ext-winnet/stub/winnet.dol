@@ -8,17 +8,17 @@
 #
 # ## Domain join {: #winnet.domain-join }
 #
-# [`join_domain`](#join_domain), [`unjoin_domain`](#unjoin_domain),
-# [`rename_machine`](#rename_machine) and
-# [`apply_offline_join`](#apply_offline_join) change how the machine is
+# [`join_domain`](winnet.join_domain), [`unjoin_domain`](winnet.unjoin_domain),
+# [`rename_machine`](winnet.rename_machine) and
+# [`apply_offline_join`](winnet.apply_offline_join) change how the machine is
 # identified on the network. **Every one of them takes effect only after the
 # machine is restarted**, so a provisioning script must sequence a reboot
 # before the change is usable. None of them return a status; use
-# [`join_status`](#join_status) to read the recorded membership.
+# [`join_status`](winnet.join_status) to read the recorded membership.
 #
-# [`provision_computer`](#provision_computer) and
-# [`apply_offline_join`](#apply_offline_join) split a join in two: the first
-# runs where a domain controller is reachable and mints a blob, the second
+# [`provision_computer`](winnet.provision_computer) and
+# [`apply_offline_join`](winnet.apply_offline_join) split a join in two: the
+# first runs where a domain controller is reachable and mints a blob, the second
 # applies that blob to a Windows installation that has never talked to the
 # domain. This is the path for image-based and first-boot provisioning, where
 # the online join would need network, a reachable domain controller and
@@ -466,7 +466,7 @@ pub class Share
     :comment @ (Str | nil) = nil
     # Connection limit. `nil` is unlimited.
     :max_uses @ (Int | nil) = nil
-    # Security descriptor, self-relative packet, or declarative descriptor.
+    # Security descriptor, its self-relative binary form, or a declarative one.
     :sec_desc @ (SecDesc | Bin | Dict[{...}]) = nil
   do -> ShareInfo
     ...
@@ -891,7 +891,7 @@ pub def create_share
   :special @ Bool = nil
   # Mark the share temporary.
   :temporary @ Bool = nil
-  # Security descriptor, self-relative packet, or declarative descriptor.
+  # Security descriptor, its self-relative binary form, or a declarative one.
   # Defaults to the one Windows supplies.
   :sec_desc @ (SecDesc | Bin | Dict[{...}]) = nil
 do -> Share

@@ -119,28 +119,20 @@ The default policy is the user's normal SSH host-key policy.
 
 ## Login Environment
 
-SSH runs the remote command through a non-login shell, so typically nothing in
-the account's profile has run when the VFS starts. Tools installed under e.g.
-`~/.local/bin` are typically missing from `PATH` as a result.
+SSH runs the remote command through a non-login shell, so nothing in the
+account's profile has run when the VFS starts. Tools installed under
+`~/.local/bin`, for example, are usually missing from `PATH` as a result. The
+remote VFS imports the missing environment before running anything.
 
-The remote VFS therefore reconstructs the missing environment before serving
-requests. How it does so depends on the target.
+On Unix hosts, it runs the account's login shell from the passwd database and
+imports the environment that the shell's profile sets up.
 
-On Unix hosts it runs the shell from the remote passwd database as a login
-shell, which re-executes the VFS binary in a probe mode that reports the
-resulting environment over a dedicated pipe. The shell is launched as a login
-shell by prefixing its `argv[0]` with `-`, with the command to launch passed
-via `-c`. It is confined to its own process group, which is terminated once
-the environment has been read.
-
-On Windows, the OpenSSH server constructs the command environment by
-concatenating `PATH` from applicable HKCU/HKLM registry keys and inheriting the
-rest from the `sshd` service account, so a remote command inherits
-`LocalSystem`'s `TEMP`, `USERPROFILE` and `APPDATA`, and never sees user
-variables such as `CARGO_HOME`. The VFS reads the machine and user environment
-keys from the registry itself, resolves `USERPROFILE`, `APPDATA`, and
-`LOCALAPPDATA` from the known folders of its own token, and expands
-`REG_EXPAND_SZ` values against those. `PATH` is left as `sshd` composed it.
+On Windows hosts, the OpenSSH server gives remote commands the environment of
+the `sshd` service account, apart from `PATH`: `TEMP`, `USERPROFILE` and
+`APPDATA` point into the service account's profile, and user variables such as
+`CARGO_HOME` are missing. The VFS replaces these with the account's own
+machine and user environment variables and profile folders. `PATH` stays as
+`sshd` set it.
 
 `env:` overrides are applied after the import, so they always win. Pass
 `login_env: false` for hosts whose profiles are slow or broken, or a path to
@@ -163,17 +155,12 @@ invalidates files and other handles opened through that session.
 
 ## Remote Argument Encoding
 
-`ssh` joins the command it is given with spaces and hands the result to the
-remote account's shell, which splits it again. There is no quoting style which
-is reliable for both Unix and Windows hosts. The VFS helper therefore accepts a
-`-base64` form of every option that carries a value (`--cd-base64`,
-`--set-base64`, `--unset-base64`, `--login-env-base64=`). The values of `cd:`,
-`env:`, and `login_env:` are sent that way whenever they contain anything
-requiring quoting. Values that cannot be misparsed are sent as-is, so an
-ordinary command line stays legible in `ps`.
+The values of `cd:`, `env:`, and `login_env:` reach the remote VFS unchanged,
+whatever characters they contain and whichever operating system the host runs.
 
-`command:` is exempt: it is a remote command line you are writing directly, so
-it is passed through untouched and any quoting in it is yours to supply.
+`command:` is different: it is a remote command line you write yourself, and it
+is passed to the remote shell as written, so any quoting it needs is yours to
+supply.
 
 ## Cross-Platform Targets
 

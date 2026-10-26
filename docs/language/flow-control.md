@@ -172,7 +172,7 @@ for i = Range 5
   echo $i
 ```
 
-Dictionaries iterate as `[key, value]` pairs. Use a pattern to unpack them:
+Dictionaries iterate as `(key, value)` tuples. Use a pattern to unpack them:
 
 ```
 for k v = {name: "Alice", age: 30}

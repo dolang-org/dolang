@@ -30,10 +30,7 @@ pub class ImportHandler
 #
 # ## Errors
 #
-# | Exception     | Condition                       |
-# | ------------- | ------------------------------- |
-# | `TypeError`   | `name` is not `Str`             |
-# | `ImportError` | No global importer accepts name |
+# [`ImportError`](std.ImportError) if no global importer accepts `name`.
 #
 # ## Example
 #
@@ -103,13 +100,6 @@ do -> ImportHandler
 # ## Returns
 #
 # The result of executing the bytecode.
-#
-# ## Errors
-#
-# | Exception   | Condition                                |
-# | ----------- | ---------------------------------------- |
-# | `TypeError` | `bytecode` is not `Bin`                  |
-# | Various     | Bytecode verification or execution fails |
 #
 # ## Example
 #

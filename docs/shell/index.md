@@ -1,8 +1,8 @@
 # Overview
 
-The `dolang-shell` crate provides the `dolang` script executor and REPL for
-the Do language. It extends the core language with shell-oriented features like
-process spawning, environment variable access, and file I/O.
+`dolang` runs Do scripts and provides an interactive REPL. It extends the core
+language with shell-oriented features like process spawning, environment
+variable access, and file I/O.
 
 ## Running Scripts
 

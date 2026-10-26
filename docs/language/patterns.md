@@ -17,11 +17,10 @@ assert_eq $b 2
 ```
 
 By default, the pattern must exhaustively match the entire structure or an
-error will result. Use `...` to capture surplus items instead. The specified
-variable receives a structural rest that can be unpacked or spread again.
-Unpacking reads the source without advancing an iterator. In-memory iterators
-such as array, tuple, pair, view, split, and dict key/value iterators support
-this read-only operation; generic `map` and `filter` iterators do not.
+error will result. Use `...` to capture surplus items instead. The rest can be
+unpacked or spread again. Unpacking an iterator doesn't advance it, so only
+in-memory iterators such as array, tuple, pair, view, split, and dict key/value
+iterators can be unpacked; `map` and `filter` iterators cannot.
 
 ```
 let first ...rest = [1, 2, 3, 4]
@@ -71,9 +70,12 @@ assert_eq {...options} {color: "red"}
 
 `*` or `**` alone discards surplus items entirely.
 
-Source-backed rests are neither iterators nor iterable. Materialize a positional
+A rest unpacked from an array or iterator is an iterator, but other rests, such
+as one unpacked from a dictionary, are not iterable. Materialize a positional
 rest with `[...rest]` before iterating. Materialize a keyed or mixed rest with
-`Dict(rest)` or `Record(rest)`, then iterate the resulting container. A rest can
+`{...rest}`, `Dict(rest)` or `Record(rest)`, then iterate the result.
+`(...rest)` makes a tuple unless the parentheses also hold a static key, as in
+`(...rest, extra: 1)`, which makes a record. A rest can
 be unpacked and spread repeatedly; these operations do not consume it.
 
 ### Non-symbol Keys
@@ -302,7 +304,7 @@ test for a lone name does not apply to constants.
 A mismatch takes a conditional pattern's failure branch. In a plain `let`,
 `bind`, or `for`, it raises `std.TypeError`. Constants cannot have annotations
 or defaults, and cannot be `def` parameters. Interpolated strings and other
-expressions that cannot be folded to constants are rejected.
+expressions that aren't constants are rejected.
 
 ## Type-Test Patterns
 

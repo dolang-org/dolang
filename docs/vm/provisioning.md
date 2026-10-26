@@ -30,7 +30,7 @@ let guest = libvirt.create
 echo $guest.name
 ```
 
-A later process can recover the `Guest` object by name.
+A later process can recover the [`Domain`](libvirt.Domain) by name.
 
 ```
 let guest = libvirt.attach freebsd-build
@@ -39,8 +39,8 @@ guest.with do
 ```
 
 Call `.destroy()` to force-stop a running guest and `.undefine()` to unregister
-it. For guests created by this module, `undefine` also removes the ephemeral
-overlay after validating the ownership metadata embedded in the guest XML.
+it. For guests created by this module, `undefine` also removes the guest's
+disk overlay.
 
 ## Actions
 
@@ -206,4 +206,4 @@ when run directly.
 
 Setting the environment variable `DOLANG_LIBVIRT_KEEP_FAILED` leaves the
 **libvirt** domain and its work directory in place for inspection
-after a failed `dolang.create` or related operation.
+after a failed `libvirt.create` or related operation.

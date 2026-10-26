@@ -166,15 +166,14 @@ pub class BaseFile: Io
   #
   # The lock is exclusive unless `shared` is true. It is released before the
   # method returns, including when the block raises an error or is canceled.
-  # Release runs with interruption masked and may wait indefinitely.
   #
   # Locks are mandatory on Windows, where they prevent conflicting file access.
   # On Unix they are advisory and affect only programs that cooperate through
   # file locking.
   #
-  # Native blocking acquisition cannot be canceled. Canceling the strand may
-  # leave a blocking worker waiting for a conflicting lock and delay shutdown.
-  # Use [`try_lock`](fs.BaseFile.try_lock) for bounded or cancellable waiting.
+  # Waiting for a conflicting lock cannot be canceled, and a canceled strand
+  # may delay the program's exit until the lock is acquired. Use
+  # [`try_lock`](fs.BaseFile.try_lock) for bounded or cancellable waiting.
   #
   # Overlapping active lock ranges on the same file are unsupported, including
   # identical shared ranges.
@@ -400,8 +399,9 @@ pub class BaseFile: Io
   # Gets selected parts of the Windows security descriptor through this file's
   # existing handle.
   #
-  # The operation raises a permission error if the file was opened without the
-  # necessary Windows access rights. Other platforms raise
+  # The operation raises
+  # [`sys.PermissionDeniedError`](sys.PermissionDeniedError) if the file was
+  # opened without the necessary Windows access rights. Other platforms raise
   # [`sys.UnsupportedError`](sys.UnsupportedError).
   pub def sec_desc
     self
@@ -421,9 +421,10 @@ pub class BaseFile: Io
   # Applies the components selected by a security descriptor's `mask` through
   # this file's existing handle.
   #
-  # The operation raises a permission error if the file was opened without the
-  # necessary Windows access rights. Windows may normalize the resulting
-  # descriptor. Other platforms raise
+  # The operation raises
+  # [`sys.PermissionDeniedError`](sys.PermissionDeniedError) if the file was
+  # opened without the necessary Windows access rights. Windows may normalize
+  # the resulting descriptor. Other platforms raise
   # [`sys.UnsupportedError`](sys.UnsupportedError).
   pub def update_sec_desc
     self
@@ -763,7 +764,7 @@ pub class FileLock
 
   # Releases the lock before the surrounding scope exits.
   #
-  # Repeated calls have no effect. Release runs with interruption masked.
+  # Repeated calls have no effect.
   pub def release self
     ...
 
@@ -835,7 +836,8 @@ pub class Metadata
   pub def accessed self -> DateTime
     ...
 
-  # Creation or status-change time.
+  # Creation time on Windows. On Unix, the time the file's metadata last
+  # changed, which is not its creation time.
   #[getter]
   pub def created self -> DateTime
     ...
@@ -1641,8 +1643,8 @@ do -> Int
 #
 # This attempts to copy data in the most efficient manner possible:
 #
-# - If both handles are from the same VFS domain, all copying occurs
-#   target-side rather than being relayed.
+# - If both handles belong to the same [VFS](../../shell/vfs.md) target, the
+#   data is copied there without passing through the interpreter.
 # - Copy-on-write cloning of blocks/extents will be used by default if the
 #   platform, filesystem, handle pair, and data size and alignment meet
 #   relevant requirements.
@@ -1745,7 +1747,7 @@ pub def copy_data
   # with [`UnsupportedError`](sys.UnsupportedError) when the filesystem,
   # file pair, or range cannot be cloned. Append destinations cannot guarantee
   # cloning, so they also reject `:REQUIRE:`. macOS does not support range
-  # clones, nor do copies between different VFS domains, and thus `:REQUIRE:`
+  # clones, nor do copies between different VFS targets, and thus `:REQUIRE:`
   # always fails.
   #
   # ### Sparsity
@@ -1783,11 +1785,9 @@ do
 # The file must already exist — unlike [`set_size`](fs.set_size), this does not
 # create it.
 #
-# Flushing the contents says nothing about the directory entry naming the file,
-# which is a separate inode with its own flush. Nor is it a substitute for the
-# guarantee on a filesystem with delayed allocation or write cancellation,
-# where data written to a file that is removed before it is flushed may never
-# be written at all.
+# This flushes only the file. The directory entry that names it is flushed
+# separately, so a newly created or renamed file may still be missing after a
+# crash.
 #
 # ## Example
 #

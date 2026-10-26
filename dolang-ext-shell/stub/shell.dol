@@ -160,7 +160,7 @@ pub class Stdout: Io
     ...
 
   # Accepts values as a [sink](std.Sink), so this handle can be the
-  # target of a pipeline or of [`strand.put`](strand).
+  # target of a pipeline or of [`strand.put`](strand.put).
   #
   # A value contributes exactly its own bytes and nothing else: no line ending
   # is appended and none is translated. `put` differs from
@@ -328,12 +328,10 @@ pub class Vfs
   #
   # This can cross an existing VFS connection, such as a connection from WSL to
   # its Windows host. The target resolves its own executable; callers cannot
-  # select another program. When the executable is `dolang.exe`, `--vfs` is
-  # inserted to select its VFS entrypoint; a standalone `dolang-vfs.exe` is
-  # launched directly.
+  # select another program.
   #
-  # Windows displays a User Account Control prompt, and cancelling it raises a
-  # system error.
+  # Windows displays a User Account Control prompt, and cancelling it raises
+  # [`sys.PermissionDeniedError`](sys.PermissionDeniedError).
   #
   # Windows does not reliably allow the elevated process to use console handles
   # from the non-elevated caller, so console programs using inherited terminal
@@ -370,9 +368,9 @@ pub class Vfs
   # - External programs run through the VFS daemon
   # - [`env`](shell.env) reads and writes that context's environment
   # - [`cd`](shell.cd) changes that context's working directory
-  # - [`fs`](fs) operations use that context's filesystem view
-  # - [`sys`](sys) reports that context's operating system and CPU
-  # - [`security`](security) reports that context's identity
+  # - [`fs`](../fs/index.md) operations use that context's filesystem view
+  # - [`sys`](../sys/index.md) reports that context's operating system and CPU
+  # - [`security`](../security/index.md) reports that context's identity
   #
   # Everything else stays in the interpreter process unless its documentation
   # says otherwise -- network clients and native resources especially.
@@ -458,7 +456,7 @@ do -> Never
 #
 # ## Returns
 #
-# Never returns; raises an interrupt error that unwinds the interpreter.
+# Never returns. The exit unwinds the interpreter, and `catch` cannot stop it.
 pub def exit
   # Exit status. Defaults to `0`.
   code @ Int = nil
@@ -468,15 +466,10 @@ do -> Never
 # Returns the line ending native to the current [`Vfs`](shell.Vfs) target:
 # `"\r\n"` on Windows, `"\n"` elsewhere.
 #
-# This is a function rather than a value because the answer follows the VFS
-# target, so it is a question about the current context rather than a constant
-# of the module. Values are never terminated implicitly, so a script that wants
-# native endings asks for them by name.
-#
 # ## Example
 #
 # ```
-# run cmd stdout: (lines.precrimp(shell.line_ending()))
+# run cmd stdout: (lines.precrimp(line_ending()))
 # ```
 pub def line_ending() -> Str
   ...

@@ -3,6 +3,15 @@
 Do is a dynamically-typed scripting language with indentation-based syntax.
 Block structure is determined by indentation (typically 2 spaces).
 
+Examples in this guide check results with `assert` and `assert_eq` from the
+`test` module. To run one on its own, import them first:
+
+```
+import test:
+  - assert
+  - assert_eq
+```
+
 ## Syntactic Levels
 
 Do has three broad syntactic levels that determine how code is parsed:

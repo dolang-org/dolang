@@ -1,4 +1,17 @@
 # Utilities for writing and running test suites.
+#
+# `dolang -m test` runs the tests under its path arguments with
+# [`run`](test.run). Its `--jobs`, `--module-jobs` and `--timeout` options set
+# the keywords of the same names, and `--no-capture` turns off `capture`.
+#
+# `--filter` takes a glob matched against `module/name`, where `module` is the
+# test file's path without its extension. The repeatable `--tags` option splits
+# each occurrence on commas: alternatives in one occurrence are ORed, while
+# occurrences are ANDed. Prefix a tag with `!` to require its absence.
+# Matching is exact and case-sensitive.
+#
+# `--tags !windows,!macos` means “not Windows OR not macOS.” Use
+# `--tags !windows --tags !macos` to exclude both.
 import _shell compile load progress strand term
   fs:
     - Path
@@ -297,7 +310,7 @@ class Fixture: Func
   def (str) self
     str $self.#func
 
-# Defines a test fixture.  `wrap` should be a function which accepts a block
+# Defines a test fixture. `wrap` should be a function which accepts a block
 # and invokes it with surrounding setup and teardown logic. `wrap` receives
 # any trailing keyword parameters supplied by `parametrize` (or by an outer
 # fixture) after `block` and should forward them to `block` — typically via
@@ -408,8 +421,8 @@ do
 #
 # Because decorators apply bottom-to-top, axes accumulate in
 # closest-to-`def`-first order (axes from one decorator are ordered as
-# written); this only affects generated case names
-# (`$base_name/$axis1=$v/$axis2=$v/...`), not correctness.
+# written); this affects only the generated case names
+# (`$base_name/$axis1=$v/$axis2=$v/...`).
 #
 # ## Example
 #
@@ -489,10 +502,10 @@ pub class Assert: std.RuntimeError
         "assertion failed"
     self.message = message
 
-# Exception thrown to skip a test case.
+# Raised to skip a test case.
 #
-# Throw this (or call `skip()`) from a test function to mark it as skipped
-# rather than failed.
+# Raise it from a test function, or call [`skip`](test.skip), to mark the test
+# as skipped rather than failed.
 pub class Skip: std.RuntimeError
   # Skip message, or `nil` if none was given.
   pub field message @ (Str | nil) = nil
@@ -512,7 +525,7 @@ pub def skip
 do
   throw Skip $msg
 
-# Exception thrown to omit a test case from the report.
+# Raised to omit a test case from the report.
 pub class Ignore: std.RuntimeError
   # Ignore message, or `nil` if none was given.
   pub field message @ (Str | nil) = nil
@@ -647,21 +660,13 @@ do
     else
       throw Assert "${value:?} @ $(type value) <: $expected"
 
-# Discovers and runs tests under the trailing file and directory paths.
+# Discovers and runs tests under the given files and directories.
 #
-# The bundled `dolang -m test` command retains `--filter` glob matching against
-# `module/name`. Its repeatable `--tags` option splits each occurrence on
-# commas: alternatives in one occurrence are ORed, while occurrences are
-# ANDed. Prefix a tag with `!` to require its absence. Matching is exact and
-# case-sensitive.
-#
-# `--tags !windows,!macos` means “not Windows OR not macOS.” Use
-# `--tags !windows --tags !macos` to exclude both.
+# A directory is searched recursively for `.dol` files.
 #
 # ## Returns
 #
-# Returns zero when all selected tests pass, or one when any module or test
-# fails.
+# Zero when all selected tests pass, or one when any module or test fails.
 pub def run
   # Maximum concurrent tests.
   :jobs @ Int = 8

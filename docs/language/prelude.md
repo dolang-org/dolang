@@ -9,37 +9,49 @@ Embedded runtimes may provide a different additional prelude.
 
 ## `std`
 
-| Name                   | Description                        |
-| ---------------------- | ---------------------------------- |
-| [`Array`](std.Array)   | [`Array`](std.Array) type          |
-| [`array`](std.array)   | Variadic array factory             |
-| [`Bin`](std.Bin)       | [`Bin`](std.Bin) type              |
-| [`Bool`](std.Bool)     | [`Bool`](std.Bool) type            |
-| [`bool`](std.bool)     | Truthiness coercion                |
-| [`class`](std.class)   | Inherited class member decorator   |
-| [`dbg`](std.dbg)       | Debug representation               |
-| [`Dict`](std.Dict)     | [`Dict`](std.Dict) type            |
-| [`dict`](std.dict)     | Variadic dictionary factory        |
-| [`Float`](std.Float)   | [`Float`](std.Float) type          |
-| [`float`](std.float)   | Numeric coercion and parsing       |
-| [`Func`](std.Func)     | [`Func`](std.Func) type            |
-| [`getter`](std.getter) | Class field getter decorator       |
-| [`Int`](std.Int)       | [`Int`](std.Int) type              |
-| [`int`](std.int)       | Integer coercion and parsing       |
-| [`Range`](std.Range)   | [`Range`](std.Range) type          |
-| [`Record`](std.Record) | [`Record`](std.Record) type        |
-| [`record`](std.record) | Variadic record factory            |
-| [`Set`](std.Set)       | [`Set`](std.Set) type              |
-| [`setter`](std.setter) | Class field setter decorator       |
-| [`static`](std.static) | Uninherited class member decorator |
-| [`Str`](std.Str)       | [`Str`](std.Str) type              |
-| [`str`](std.str)       | Textual representation             |
-| [`Sym`](std.Sym)       | [`Sym`](std.Sym) type              |
-| [`sym`](std.sym)       | Symbol interning                   |
-| [`Tuple`](std.Tuple)   | [`Tuple`](std.Tuple) type          |
-| [`tuple`](std.tuple)   | Variadic tuple factory             |
-| [`Type`](std.Type)     | [`Type`](std.Type) type            |
-| [`type`](std.type)     | Type query and test function       |
+| Name                       | Description                                           |
+| -------------------------- | ----------------------------------------------------- |
+| [`Array`](std.Array)       | [`Array`](std.Array) type                             |
+| [`array`](std.array)       | Variadic array factory                                |
+| [`Bin`](std.Bin)           | [`Bin`](std.Bin) type                                 |
+| [`BinBuf`](std.BinBuf)     | Mutable byte buffer                                   |
+| [`Bool`](std.Bool)         | [`Bool`](std.Bool) type                               |
+| [`bool`](std.bool)         | Truthiness coercion                                   |
+| [`class`](std.class)       | Inherited class member decorator                      |
+| [`dbg`](std.dbg)           | Debug representation                                  |
+| [`Dict`](std.Dict)         | [`Dict`](std.Dict) type                               |
+| [`dict`](std.dict)         | Variadic dictionary factory                           |
+| [`fields`](std.fields)     | Proxy for a value's public fields                     |
+| [`final`](std.final)       | Decorator forbidding subclasses                       |
+| [`Float`](std.Float)       | [`Float`](std.Float) type                             |
+| [`float`](std.float)       | Numeric coercion and parsing                          |
+| [`Func`](std.Func)         | [`Func`](std.Func) type                               |
+| [`getter`](std.getter)     | Class field getter decorator                          |
+| [`Int`](std.Int)           | [`Int`](std.Int) type                                 |
+| [`int`](std.int)           | Integer coercion and parsing                          |
+| [`Iter`](std.Iter)         | Iterator type                                         |
+| [`Iterable`](std.Iterable) | Iterable value type                                   |
+| [`mixable`](std.mixable)   | Decorator allowing combination with unrelated classes |
+| [`Range`](std.Range)       | [`Range`](std.Range) type                             |
+| [`Record`](std.Record)     | [`Record`](std.Record) type                           |
+| [`record`](std.record)     | Variadic record factory                               |
+| [`Set`](std.Set)           | [`Set`](std.Set) type                                 |
+| [`setter`](std.setter)     | Class field setter decorator                          |
+| [`Sink`](std.Sink)         | Sink type                                             |
+| [`Sinkable`](std.Sinkable) | Type of values that provide sinks                     |
+| [`static`](std.static)     | Uninherited class member decorator                    |
+| [`Str`](std.Str)           | [`Str`](std.Str) type                                 |
+| [`str`](std.str)           | Textual representation                                |
+| [`StrBuf`](std.StrBuf)     | Mutable string buffer                                 |
+| [`Struct`](std.Struct)     | [`Struct`](std.Struct) type                           |
+| [`struct`](std.struct)     | Variadic struct factory                               |
+| [`Sym`](std.Sym)           | [`Sym`](std.Sym) type                                 |
+| [`sym`](std.sym)           | Symbol interning                                      |
+| [`Tuple`](std.Tuple)       | [`Tuple`](std.Tuple) type                             |
+| [`tuple`](std.tuple)       | Variadic tuple factory                                |
+| [`Type`](std.Type)         | [`Type`](std.Type) type                               |
+| [`type`](std.type)         | Type query and test function                          |
+| [`Value`](std.Value)       | Supertype of all values                               |
 
 ## Checker-only names from `std`
 
