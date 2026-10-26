@@ -31,7 +31,7 @@ use tokio_stream::StreamExt;
 use tokio_tar::{Archive, Builder as TarBuilder, Entries, Entry, EntryType, Header};
 use tokio_util::compat::{
     Compat, FuturesAsyncReadCompatExt as _, FuturesAsyncWriteCompatExt as _,
-    TokioAsyncReadCompatExt as _, TokioAsyncWriteCompatExt as _,
+    TokioAsyncWriteCompatExt as _,
 };
 
 use crate::global::Global;
@@ -1050,9 +1050,9 @@ async fn endpoint_handle<'v, 's>(
             .await
             .into_do_io(strand)?;
         return Ok(if write {
-            ByteHandle::write(file.compat_write())
+            ByteHandle::write(file)
         } else {
-            ByteHandle::read(file.compat())
+            ByteHandle::read(file)
         });
     }
     dolang::runtime::io::get(strand, endpoint, |strand, caps| {

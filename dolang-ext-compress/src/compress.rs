@@ -28,7 +28,7 @@ use dolang::runtime::{
 };
 use futures_lite::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::io::{AsyncRead as TokioAsyncRead, ReadBuf};
-use tokio_util::compat::{FuturesAsyncReadCompatExt as _, TokioAsyncReadCompatExt as _};
+use tokio_util::compat::FuturesAsyncReadCompatExt as _;
 
 use crate::global::Global;
 
@@ -253,8 +253,7 @@ async fn endpoint_handle<'v, 's>(
         let mode = if write { "w" } else { "r" };
         let file = dolang_ext_shell::open(strand, path.as_ref(), mode)
             .await
-            .into_do_io(strand)?
-            .compat();
+            .into_do_io(strand)?;
         return Ok(if write {
             ByteHandle::write(file)
         } else {

@@ -15,8 +15,8 @@ use crate::{
     server::CallContext,
     session::{Gift, OpaqueResource},
 };
+use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// `Server<P>`/`Client<P>` are only ever reachable via `UnboundServer`/
 /// `UnboundClient`, which mandate an application-protocol descriptor. Tests
@@ -77,14 +77,13 @@ impl<R: AsyncRead + Unpin> AsyncRead for HoldEof<R> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
         if self.eof {
             return Poll::Pending;
         }
-        let filled = buf.filled().len();
         match Pin::new(&mut self.inner).poll_read(cx, buf) {
-            Poll::Ready(Ok(())) if buf.filled().len() == filled => {
+            Poll::Ready(Ok(0)) if !buf.is_empty() => {
                 self.eof = true;
                 Poll::Pending
             }
@@ -107,8 +106,8 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for ShortWriter<W> {
         Pin::new(&mut self.inner).poll_flush(cx)
     }
 
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.inner).poll_shutdown(cx)
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_close(cx)
     }
 }
 
@@ -135,7 +134,7 @@ struct Response(u32);
 
 #[tokio::test]
 async fn multiplexes_out_of_order_calls() {
-    let (client_io, server_io) = tokio::io::duplex(4096);
+    let (client_io, server_io) = crate::tests::duplex(4096);
     // `UnboundServer` construction performs a real handshake, so it must run
     // concurrently with the client's own construction below (one spawned,
     // one awaited directly) rather than sequentially.
@@ -169,7 +168,7 @@ async fn multiplexes_out_of_order_calls() {
 
 #[tokio::test]
 async fn concurrent_call_limit_withholds_requests_until_a_terminal_response() {
-    let (client_io, server_io) = tokio::io::duplex(4096);
+    let (client_io, server_io) = crate::tests::duplex(4096);
     let dispatched = Arc::new(AtomicUsize::new(0));
     let first_started = Arc::new(tokio::sync::Notify::new());
     let server_dispatched = dispatched.clone();
@@ -247,7 +246,7 @@ async fn a_request_that_fails_to_encode_does_not_hold_its_call_slot() {
     // which call that is depends on the limit, so the bound goes around the
     // whole test rather than around any one call.
     tokio::time::timeout(Duration::from_secs(5), async {
-        let (client_io, server_io) = tokio::io::duplex(4096);
+        let (client_io, server_io) = crate::tests::duplex(4096);
         tokio::spawn(async move {
             builder()
                 .server(server_io)
@@ -281,7 +280,7 @@ async fn a_request_that_fails_to_encode_does_not_hold_its_call_slot() {
 
 #[tokio::test]
 async fn cancelling_a_call_waiting_for_admission_never_dispatches_it() {
-    let (client_io, server_io) = tokio::io::duplex(4096);
+    let (client_io, server_io) = crate::tests::duplex(4096);
     let dispatched = Arc::new(AtomicUsize::new(0));
     let first_started = Arc::new(tokio::sync::Notify::new());
     let server_dispatched = dispatched.clone();
@@ -318,9 +317,9 @@ async fn cancelling_a_call_waiting_for_admission_never_dispatches_it() {
 
 #[tokio::test]
 async fn split_transport_round_trip() {
-    let (client_io, server_io) = tokio::io::duplex(4096);
-    let (client_reader, client_writer) = tokio::io::split(client_io);
-    let (server_reader, server_writer) = tokio::io::split(server_io);
+    let (client_io, server_io) = crate::tests::duplex(4096);
+    let (client_reader, client_writer) = futures::io::AsyncReadExt::split(client_io);
+    let (server_reader, server_writer) = futures::io::AsyncReadExt::split(server_io);
     let server = tokio::spawn(async move {
         builder()
             .server_split(server_reader, server_writer)
@@ -361,7 +360,7 @@ async fn split_transport_round_trip() {
 
 #[tokio::test]
 async fn unguarded_cancellation_aborts_handler() {
-    let (client_io, server_io) = tokio::io::duplex(4096);
+    let (client_io, server_io) = crate::tests::duplex(4096);
     let dropped = Arc::new(AtomicBool::new(false));
     let server_dropped = dropped.clone();
     tokio::spawn(async move {
@@ -394,7 +393,7 @@ async fn unguarded_cancellation_aborts_handler() {
 
 #[tokio::test]
 async fn guarded_cancellation_returns_normal_response() {
-    let (client_io, server_io) = tokio::io::duplex(4096);
+    let (client_io, server_io) = crate::tests::duplex(4096);
     tokio::spawn(async move {
         builder()
             .server(server_io)
@@ -419,7 +418,7 @@ async fn guarded_cancellation_returns_normal_response() {
 
 #[tokio::test]
 async fn disconnect_fails_pending_calls() {
-    let (client_io, server_io) = tokio::io::duplex(64);
+    let (client_io, server_io) = crate::tests::duplex(64);
     // A real server is needed so the client's construction handshake has a
     // peer to negotiate with; its handler never responds, so the pending
     // call is still outstanding when the connection drops.
@@ -445,7 +444,7 @@ async fn disconnect_fails_pending_calls() {
 
 #[tokio::test]
 async fn calls_issued_after_disconnect_fail_immediately() {
-    let (client_io, server_io) = tokio::io::duplex(64);
+    let (client_io, server_io) = crate::tests::duplex(64);
     let server = tokio::spawn(async move {
         builder()
             .server(server_io)
@@ -479,7 +478,7 @@ async fn calls_issued_after_disconnect_fail_immediately() {
 
 #[tokio::test]
 async fn abort_stops_tasks_and_fails_pending_calls() {
-    let (client_io, peer_io) = tokio::io::duplex(64);
+    let (client_io, peer_io) = crate::tests::duplex(64);
     // Kept running (not aborted) for the whole test: its output remains open,
     // proving that `Client::abort` does not wait for peer EOF.
     let _server = tokio::spawn(async move {
@@ -503,15 +502,15 @@ async fn abort_stops_tasks_and_fails_pending_calls() {
 
 #[tokio::test]
 async fn close_drains_output_then_waits_for_peer_eof() {
-    let (client_reader, mut proxy_output) = tokio::io::duplex(4096);
-    let (mut proxy_input, client_writer) = tokio::io::duplex(4096);
-    let (server_reader, mut proxy_to_server) = tokio::io::duplex(4096);
-    let (mut proxy_from_server, server_writer) = tokio::io::duplex(4096);
+    let (client_reader, mut proxy_output) = crate::tests::duplex(4096);
+    let (mut proxy_input, client_writer) = crate::tests::duplex(4096);
+    let (server_reader, mut proxy_to_server) = crate::tests::duplex(4096);
+    let (mut proxy_from_server, server_writer) = crate::tests::duplex(4096);
 
     let (input_eof_tx, input_eof_rx) = tokio::sync::oneshot::channel();
     let input_relay = tokio::spawn(async move {
-        tokio::io::copy(&mut proxy_input, &mut proxy_to_server).await?;
-        proxy_to_server.shutdown().await?;
+        futures::io::copy(&mut proxy_input, &mut proxy_to_server).await?;
+        proxy_to_server.close().await?;
         let _ = input_eof_tx.send(());
         io::Result::Ok(())
     });
@@ -519,10 +518,10 @@ async fn close_drains_output_then_waits_for_peer_eof() {
     let (output_eof_tx, output_eof_rx) = tokio::sync::oneshot::channel();
     let (release_output_tx, release_output_rx) = tokio::sync::oneshot::channel();
     let output_relay = tokio::spawn(async move {
-        tokio::io::copy(&mut proxy_from_server, &mut proxy_output).await?;
+        futures::io::copy(&mut proxy_from_server, &mut proxy_output).await?;
         let _ = output_eof_tx.send(());
         let _ = release_output_rx.await;
-        proxy_output.shutdown().await?;
+        proxy_output.close().await?;
         io::Result::Ok(())
     });
 
@@ -579,8 +578,8 @@ async fn close_drains_output_then_waits_for_peer_eof() {
 
 #[tokio::test]
 async fn abort_from_another_clone_interrupts_close_waiting_for_eof() {
-    let (client_reader, server_writer) = tokio::io::duplex(4096);
-    let (server_reader, client_writer) = tokio::io::duplex(4096);
+    let (client_reader, server_writer) = crate::tests::duplex(4096);
+    let (server_reader, client_writer) = crate::tests::duplex(4096);
     let server = tokio::spawn(async move {
         builder()
             .server_split(server_reader, server_writer)
@@ -630,7 +629,7 @@ async fn abort_from_another_clone_interrupts_close_waiting_for_eof() {
 
 #[tokio::test]
 async fn server_shutdown_drains_outstanding_requests() {
-    let (client_io, server_io) = tokio::io::duplex(4096);
+    let (client_io, server_io) = crate::tests::duplex(4096);
     let delay_started = Arc::new(tokio::sync::Notify::new());
     let server_delay_started = delay_started.clone();
     let server = tokio::spawn(async move {
@@ -670,7 +669,7 @@ async fn server_shutdown_drains_outstanding_requests() {
 #[tokio::test]
 async fn interleaves_large_and_small_messages_round_robin() {
     let make = || builder().max_fragment_size(256);
-    let (client_io, server_io) = tokio::io::duplex(4096);
+    let (client_io, server_io) = crate::tests::duplex(4096);
     tokio::spawn(async move {
         make()
             .server(server_io)
@@ -699,7 +698,7 @@ async fn interleaves_large_and_small_messages_round_robin() {
 #[tokio::test]
 async fn bounded_concurrency_limits_simultaneous_large_transfers() {
     let make = || builder().max_fragment_size(256).max_concurrent_calls(2);
-    let (client_io, server_io) = tokio::io::duplex(8192);
+    let (client_io, server_io) = crate::tests::duplex(8192);
     tokio::spawn(async move {
         make()
             .server(server_io)
@@ -740,7 +739,7 @@ async fn cancel_during_fragment_transmission_completes_without_hanging() {
     // the client writer and server reader tasks, spreading a large
     // transfer out over many scheduling points so cancellation reliably
     // lands mid-transmission rather than before or after it entirely.
-    let (client_io, server_io) = tokio::io::duplex(64);
+    let (client_io, server_io) = crate::tests::duplex(64);
     tokio::spawn(async move {
         make()
             .server(server_io)
@@ -767,7 +766,7 @@ async fn cancel_during_fragment_transmission_completes_without_hanging() {
 #[tokio::test]
 async fn resource_limits_enforced_end_to_end() {
     let make = || builder().max_payload_size(16);
-    let (client_io, server_io) = tokio::io::duplex(4096);
+    let (client_io, server_io) = crate::tests::duplex(4096);
     tokio::spawn(async move {
         make()
             .server(server_io)
@@ -815,7 +814,7 @@ async fn trailer_echo_handler(mut context: CallContext<Test>, request: Request) 
 #[tokio::test]
 async fn request_and_response_trailers_round_trip_absent_empty_single_and_multi_fragment() {
     let make = || builder().max_fragment_size(8);
-    let (client_io, server_io) = tokio::io::duplex(65536);
+    let (client_io, server_io) = crate::tests::duplex(65536);
     tokio::spawn(async move {
         make()
             .server(server_io)
@@ -881,8 +880,8 @@ async fn request_and_response_trailers_round_trip_absent_empty_single_and_multi_
 
 #[tokio::test]
 async fn short_transport_write_stages_and_flushes_the_fragment_suffix() {
-    let (client_io, server_io) = tokio::io::duplex(4096);
-    let (client_reader, client_writer) = tokio::io::split(client_io);
+    let (client_io, server_io) = crate::tests::duplex(4096);
+    let (client_reader, client_writer) = futures::io::AsyncReadExt::split(client_io);
     tokio::spawn(async move {
         builder()
             .server(server_io)
@@ -953,7 +952,7 @@ async fn trailer_call_cancelled_mid_transmission_completes_without_hanging() {
     // A tiny duplex buffer forces many small read/write handoffs, spreading
     // the trailer transfer out over many scheduling points so cancellation
     // spreads trailer transmission across scheduling points.
-    let (client_io, server_io) = tokio::io::duplex(64);
+    let (client_io, server_io) = crate::tests::duplex(64);
     tokio::spawn(async move {
         make()
             .server(server_io)
@@ -992,7 +991,7 @@ async fn trailer_call_cancelled_mid_transmission_completes_without_hanging() {
 
 #[tokio::test]
 async fn trailer_call_cancelled_after_full_transmission_falls_back_to_ordinary_cancel() {
-    let (client_io, server_io) = tokio::io::duplex(4096);
+    let (client_io, server_io) = crate::tests::duplex(4096);
     tokio::spawn(async move {
         builder()
             .server(server_io)
@@ -1030,7 +1029,7 @@ async fn trailer_call_cancelled_after_full_transmission_falls_back_to_ordinary_c
 #[tokio::test]
 async fn unread_request_trailer_stops_a_credit_parked_sender_promptly() {
     let make = || builder().trailer_session_window(16).max_fragment_size(64);
-    let (client_io, server_io) = tokio::io::duplex(4096);
+    let (client_io, server_io) = crate::tests::duplex(4096);
     tokio::spawn(async move {
         make()
             .server(server_io)
@@ -1065,7 +1064,7 @@ async fn unread_request_trailer_stops_a_credit_parked_sender_promptly() {
 #[tokio::test]
 async fn server_discarding_a_request_trailer_errors_the_writer_but_response_still_completes() {
     let make = || builder().max_fragment_size(8);
-    let (client_io, server_io) = tokio::io::duplex(64);
+    let (client_io, server_io) = crate::tests::duplex(64);
     tokio::spawn(async move {
         make()
             .server(server_io)
@@ -1101,7 +1100,7 @@ async fn server_discarding_a_request_trailer_errors_the_writer_but_response_stil
 #[tokio::test]
 async fn client_discarding_a_response_trailer_errors_the_servers_writer() {
     let make = || builder().max_fragment_size(8);
-    let (client_io, server_io) = tokio::io::duplex(64);
+    let (client_io, server_io) = crate::tests::duplex(64);
     let write_error = Arc::new(Mutex::new(None));
     let server_write_error = write_error.clone();
     tokio::spawn(async move {
@@ -1521,7 +1520,7 @@ where
 /// on would look like an optimization and would silently reintroduce the leak.
 #[tokio::test]
 async fn a_cancelled_call_releases_the_gift_in_its_response() {
-    let (client_io, server_io) = tokio::io::duplex(4096);
+    let (client_io, server_io) = crate::tests::duplex(4096);
     let dropped = Arc::new(AtomicBool::new(false));
     let guarded = Arc::new(tokio::sync::Notify::new());
     let respond_now = Arc::new(tokio::sync::Notify::new());
@@ -1550,7 +1549,7 @@ async fn a_cancelled_call_releases_the_gift_in_its_response() {
 /// actually done with it, and die once the caller drops it.
 #[tokio::test]
 async fn a_claimed_gift_lives_exactly_as_long_as_the_caller_holds_it() {
-    let (client_io, server_io) = tokio::io::duplex(4096);
+    let (client_io, server_io) = crate::tests::duplex(4096);
     let dropped = Arc::new(AtomicBool::new(false));
     let guarded = Arc::new(tokio::sync::Notify::new());
     let respond_now = Arc::new(tokio::sync::Notify::new());
@@ -1601,7 +1600,7 @@ fn dropping_a_claimed_gift_outside_a_runtime_does_not_panic() {
         .build()
         .unwrap();
     let (endpoint, client, server) = runtime.block_on(async {
-        let (client_io, server_io) = tokio::io::duplex(4096);
+        let (client_io, server_io) = crate::tests::duplex(4096);
         let guarded = Arc::new(tokio::sync::Notify::new());
         let respond_now = Arc::new(tokio::sync::Notify::new());
         let server = serve_gifts(
@@ -1635,7 +1634,7 @@ async fn large_trailer_streams_through_a_small_pool_with_an_ordinary_consumer() 
             .trailer_credit_interval(1024)
             .max_fragment_size(1024)
     };
-    let (client_io, server_io) = tokio::io::duplex(8192);
+    let (client_io, server_io) = crate::tests::duplex(8192);
     tokio::spawn(async move {
         make()
             .server(server_io)
@@ -1674,7 +1673,7 @@ async fn manual_release_gates_the_sender() {
             .trailer_credit_interval(1024)
             .max_fragment_size(256)
     };
-    let (client_io, server_io) = tokio::io::duplex(8192);
+    let (client_io, server_io) = crate::tests::duplex(8192);
     // Set once the handler has read a window's worth without releasing.
     let gate = Arc::new(tokio::sync::Notify::new());
     let server_gate = gate.clone();
@@ -1755,7 +1754,7 @@ async fn a_stalled_trailer_does_not_block_an_unrelated_one_given_pool_headroom()
             .trailer_session_window(1024 * 1024)
             .max_fragment_size(256)
     };
-    let (client_io, server_io) = tokio::io::duplex(8192);
+    let (client_io, server_io) = crate::tests::duplex(8192);
     tokio::spawn(async move {
         make()
             .server(server_io)
@@ -1818,7 +1817,7 @@ async fn many_concurrent_long_lived_trailers_all_progress() {
             .trailer_credit_interval(4096)
             .max_fragment_size(512)
     };
-    let (client_io, server_io) = tokio::io::duplex(16384);
+    let (client_io, server_io) = crate::tests::duplex(16384);
     tokio::spawn(async move {
         make()
             .server(server_io)
@@ -1875,8 +1874,8 @@ async fn trailer_sink_handler(mut context: CallContext<Test>, request: Request) 
     match request {
         Request::TrailerRoundTrip(value) => {
             if let Some(mut trailer) = context.trailer() {
-                let mut sink = tokio::io::sink();
-                tokio::io::copy(&mut trailer, &mut sink).await.unwrap();
+                let mut sink = futures::io::sink();
+                futures::io::copy(&mut trailer, &mut sink).await.unwrap();
             }
             context.respond(Response(value));
         }
@@ -1900,7 +1899,7 @@ async fn one_way_trailers_below_the_coalescing_threshold_do_not_leak_session_cre
             .trailer_session_window(64 * 1024)
             .trailer_credit_interval(32 * 1024)
     };
-    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    let (client_io, server_io) = crate::tests::duplex(64 * 1024);
     tokio::spawn(async move {
         make()
             .server(server_io)
@@ -1944,7 +1943,7 @@ async fn sequential_trailers_do_not_leak_session_credit() {
             .trailer_credit_interval(16 * 1024)
             .max_fragment_size(4096)
     };
-    let (client_io, server_io) = tokio::io::duplex(8192);
+    let (client_io, server_io) = crate::tests::duplex(8192);
     tokio::spawn(async move {
         make()
             .server(server_io)
@@ -1986,7 +1985,7 @@ async fn sequential_trailers_do_not_leak_session_credit() {
 #[tokio::test]
 async fn a_detached_request_trailer_keeps_streaming_after_the_response() {
     let make = || builder().max_fragment_size(8);
-    let (client_io, server_io) = tokio::io::duplex(64);
+    let (client_io, server_io) = crate::tests::duplex(64);
     tokio::spawn(async move {
         make()
             .server(server_io)
@@ -2082,7 +2081,7 @@ async fn quota_rounds<F>(make: fn() -> Builder, rounds: usize, round_trip: F)
 where
     F: AsyncFn(&Client<Test>),
 {
-    let (client_io, server_io) = tokio::io::duplex(8192);
+    let (client_io, server_io) = crate::tests::duplex(8192);
     tokio::spawn(async move {
         make()
             .server(server_io)
@@ -2185,7 +2184,7 @@ async fn extracted_payload_credit_releases_when_it_is_dropped() {
 /// without the early release the second call could never be admitted.
 #[tokio::test]
 async fn releasing_early_lets_a_pending_call_stop_holding_its_quota() {
-    let (client_io, server_io) = tokio::io::duplex(8192);
+    let (client_io, server_io) = crate::tests::duplex(8192);
     let (pending_tx, mut pending) = tokio::sync::mpsc::unbounded_channel();
     tokio::spawn(async move {
         quota_builder()
@@ -2239,7 +2238,7 @@ async fn concurrent_uploads_do_not_deadlock_payload_quota_against_trailer_credit
             .trailer_session_window(POOL)
             .max_fragment_size(4096)
     };
-    let (client_io, server_io) = tokio::io::duplex(8192);
+    let (client_io, server_io) = crate::tests::duplex(8192);
     tokio::spawn(async move {
         make()
             .server(server_io)
@@ -2292,7 +2291,7 @@ async fn concurrent_uploads_do_not_deadlock_payload_quota_against_trailer_credit
 /// queued a few at a time.
 #[tokio::test]
 async fn many_small_calls_are_admitted_concurrently() {
-    let (client_io, server_io) = tokio::io::duplex(65536);
+    let (client_io, server_io) = crate::tests::duplex(65536);
     tokio::spawn(async move {
         builder()
             .server(server_io)
@@ -2351,14 +2350,14 @@ impl Protocol for DrainProtocol {
 /// when the drain begins.
 const DRAIN_CALLS: usize = 3;
 
-async fn drain_client(io: tokio::io::DuplexStream) -> Client<DrainProtocol> {
+async fn drain_client(io: crate::tests::Duplex) -> Client<DrainProtocol> {
     quota_builder().client(io).await.unwrap().bind()
 }
 
 /// Spawns a server whose `Big` handler answers with a payload too large for
 /// two to share the session's payload quota, and whose `Shutdown` handler
 /// requests a graceful drain.
-fn drain_server(io: tokio::io::DuplexStream) -> tokio::task::JoinHandle<Result<(), Error>> {
+fn drain_server(io: crate::tests::Duplex) -> tokio::task::JoinHandle<Result<(), Error>> {
     drain_server_holding(io, Arc::new(tokio::sync::Notify::new()))
 }
 
@@ -2366,7 +2365,7 @@ fn drain_server(io: tokio::io::DuplexStream) -> tokio::task::JoinHandle<Result<(
 /// how a test keeps a call outstanding, and therefore the drain unsealed, for
 /// as long as it needs.
 fn drain_server_holding(
-    io: tokio::io::DuplexStream,
+    io: crate::tests::Duplex,
     hold: Arc<tokio::sync::Notify>,
 ) -> tokio::task::JoinHandle<Result<(), Error>> {
     tokio::spawn(async move {
@@ -2396,7 +2395,7 @@ fn drain_server_holding(
 
 #[tokio::test]
 async fn graceful_shutdown_delivers_responses_blocked_on_payload_quota() {
-    let (client_io, server_io) = tokio::io::duplex(8192);
+    let (client_io, server_io) = crate::tests::duplex(8192);
     let server = drain_server(server_io);
     let client = drain_client(client_io).await;
 
@@ -2433,7 +2432,7 @@ async fn graceful_shutdown_delivers_responses_blocked_on_payload_quota() {
 
 #[tokio::test]
 async fn graceful_shutdown_waits_for_the_client_transport_to_close() {
-    let (client_io, server_io) = tokio::io::duplex(8192);
+    let (client_io, server_io) = crate::tests::duplex(8192);
     let mut server = drain_server(server_io);
     let client = drain_client(client_io).await;
 
@@ -2467,7 +2466,7 @@ async fn a_lost_peer_does_not_hang_a_send_blocked_on_payload_quota() {
     // start rather than draining it. A regression here is a hang, not a
     // wrong answer, so the bound goes around the whole session.
     tokio::time::timeout(Duration::from_secs(5), async {
-        let (client_io, server_io) = tokio::io::duplex(8192);
+        let (client_io, server_io) = crate::tests::duplex(8192);
         let server = drain_server(server_io);
         let client = drain_client(client_io).await;
         let calls: Vec<_> = (0..DRAIN_CALLS)
@@ -2488,7 +2487,7 @@ async fn a_lost_peer_does_not_hang_a_send_blocked_on_payload_quota() {
 
 #[tokio::test]
 async fn a_drain_refuses_new_calls_but_finishes_the_ones_it_has() {
-    let (client_io, server_io) = tokio::io::duplex(8192);
+    let (client_io, server_io) = crate::tests::duplex(8192);
     let hold = Arc::new(tokio::sync::Notify::new());
     let server = drain_server_holding(server_io, hold.clone());
     let client = drain_client(client_io).await;

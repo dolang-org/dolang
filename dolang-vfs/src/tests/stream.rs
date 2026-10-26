@@ -7,10 +7,8 @@ use std::{
     task::{Context, Poll},
 };
 
-use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf},
-    task::JoinHandle,
-};
+use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite};
+use tokio::task::JoinHandle;
 
 use crate::{
     Vfs,
@@ -25,8 +23,8 @@ impl AsyncRead for Broken {
     fn poll_read(
         self: Pin<&mut Self>,
         _cx: &mut Context<'_>,
-        _buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
+        _buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
         Poll::Ready(Err(io::Error::other("broken stream")))
     }
 }
@@ -44,7 +42,7 @@ impl AsyncWrite for Broken {
         Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Poll::Ready(Ok(()))
     }
 }
@@ -79,7 +77,7 @@ async fn run(
 
 async fn check_streams(vfs: &Vfs) {
     // A reader feeds the child and a writer takes its output.
-    let (writer, mut output) = tokio::io::duplex(1024);
+    let (writer, mut output) = super::duplex(1024);
     let (success, error) = run(
         vfs,
         "cat",
@@ -107,7 +105,7 @@ async fn check_streams(vfs: &Vfs) {
     let (success, error) = run(
         vfs,
         "head -c1 >/dev/null",
-        Some(ChildIn::reader(tokio::io::repeat(b'x'))),
+        Some(ChildIn::reader(futures::io::repeat(b'x'))),
         None,
     )
     .await;

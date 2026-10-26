@@ -639,10 +639,10 @@ async fn direct_open_options_round_trip() {
         .open(typed(&path))
         .await
         .unwrap();
-    tokio::io::AsyncWriteExt::write_all(&mut file, b"hello")
+    futures::io::AsyncWriteExt::write_all(&mut file, b"hello")
         .await
         .unwrap();
-    tokio::io::AsyncWriteExt::flush(&mut file).await.unwrap();
+    futures::io::AsyncWriteExt::flush(&mut file).await.unwrap();
     drop(file);
 
     let contents = tokio::fs::read_to_string(&path).await.unwrap();
@@ -670,12 +670,12 @@ async fn direct_streams_a_non_seekable_file() {
         .await
         .unwrap();
 
-    tokio::io::AsyncWriteExt::write_all(&mut file, b"through the pipe")
+    futures::io::AsyncWriteExt::write_all(&mut file, b"through the pipe")
         .await
         .unwrap();
 
     let mut buf = [0u8; 16];
-    tokio::io::AsyncReadExt::read_exact(&mut file, &mut buf)
+    futures::io::AsyncReadExt::read_exact(&mut file, &mut buf)
         .await
         .unwrap();
     assert_eq!(&buf, b"through the pipe");
@@ -702,7 +702,7 @@ async fn direct_positional_io_ignores_the_cursor() {
 
     // Move the stream cursor somewhere unrelated first.
     assert_eq!(
-        tokio::io::AsyncSeekExt::seek(&mut file, io::SeekFrom::Start(7))
+        futures::io::AsyncSeekExt::seek(&mut file, io::SeekFrom::Start(7))
             .await
             .unwrap(),
         7
@@ -721,7 +721,7 @@ async fn direct_positional_io_ignores_the_cursor() {
 
     // The cursor is exactly where the seek left it.
     assert_eq!(
-        tokio::io::AsyncSeekExt::stream_position(&mut file)
+        futures::io::AsyncSeekExt::stream_position(&mut file)
             .await
             .unwrap(),
         7
@@ -870,24 +870,24 @@ async fn clones_share_the_position() {
     let mut options = direct.open_options();
     let mut file = options.read(true).open(typed(&path)).await.unwrap();
     let mut buf = [0u8; 2];
-    tokio::io::AsyncReadExt::read_exact(&mut file, &mut buf)
+    futures::io::AsyncReadExt::read_exact(&mut file, &mut buf)
         .await
         .unwrap();
 
     let mut clone = file.clone();
-    tokio::io::AsyncReadExt::read_exact(&mut clone, &mut buf)
+    futures::io::AsyncReadExt::read_exact(&mut clone, &mut buf)
         .await
         .unwrap();
     assert_eq!(&buf, b"cd");
-    tokio::io::AsyncReadExt::read_exact(&mut file, &mut buf)
+    futures::io::AsyncReadExt::read_exact(&mut file, &mut buf)
         .await
         .unwrap();
     assert_eq!(&buf, b"ef");
 
-    tokio::io::AsyncSeekExt::seek(&mut clone, io::SeekFrom::Start(1))
+    futures::io::AsyncSeekExt::seek(&mut clone, io::SeekFrom::Start(1))
         .await
         .unwrap();
-    tokio::io::AsyncReadExt::read_exact(&mut file, &mut buf)
+    futures::io::AsyncReadExt::read_exact(&mut file, &mut buf)
         .await
         .unwrap();
     assert_eq!(&buf, b"bc");
@@ -910,17 +910,17 @@ async fn read_ahead_is_dropped_when_a_clone_moves_the_cursor() {
     // deliver, the cursor is past the end and the seek below still decides
     // what comes next.
     let mut whole = [0u8; 6];
-    let mut whole = tokio::io::ReadBuf::new(&mut whole);
+
     let waker = std::task::Waker::noop();
     let mut cx = std::task::Context::from_waker(waker);
-    let _ = tokio::io::AsyncRead::poll_read(std::pin::Pin::new(&mut file), &mut cx, &mut whole);
-    tokio::io::AsyncWriteExt::flush(&mut file).await.unwrap();
+    let _ = futures::io::AsyncRead::poll_read(std::pin::Pin::new(&mut file), &mut cx, &mut whole);
+    futures::io::AsyncWriteExt::flush(&mut file).await.unwrap();
 
-    tokio::io::AsyncSeekExt::seek(&mut clone, io::SeekFrom::Start(1))
+    futures::io::AsyncSeekExt::seek(&mut clone, io::SeekFrom::Start(1))
         .await
         .unwrap();
     let mut buf = [0u8; 2];
-    tokio::io::AsyncReadExt::read_exact(&mut file, &mut buf)
+    futures::io::AsyncReadExt::read_exact(&mut file, &mut buf)
         .await
         .unwrap();
     assert_eq!(&buf, b"bc");
@@ -945,11 +945,11 @@ async fn closing_a_clone_closes_the_file() {
 
     let closed = |error: io::Error| crate::error::Error::from(error).kind();
     let mut buf = [0u8; 2];
-    let error = tokio::io::AsyncReadExt::read(&mut file, &mut buf)
+    let error = futures::io::AsyncReadExt::read(&mut file, &mut buf)
         .await
         .unwrap_err();
     assert_eq!(closed(error), ErrorKind::Closed);
-    let error = tokio::io::AsyncWriteExt::write(&mut file, b"x")
+    let error = futures::io::AsyncWriteExt::write(&mut file, b"x")
         .await
         .unwrap_err();
     assert_eq!(closed(error), ErrorKind::Closed);
@@ -1004,7 +1004,7 @@ async fn clones_share_locks_and_any_close_releases_them() {
 #[cfg(unix)]
 #[tokio::test]
 async fn a_child_moves_the_output_cursor() {
-    use tokio::io::{AsyncSeekExt as _, AsyncWriteExt as _};
+    use futures::io::{AsyncSeekExt as _, AsyncWriteExt as _};
 
     let direct = Vfs::direct().unwrap();
     let dir = tempdir().unwrap();
@@ -1034,7 +1034,7 @@ async fn a_child_moves_the_output_cursor() {
 #[cfg(unix)]
 #[tokio::test]
 async fn a_child_moves_the_input_cursor() {
-    use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
+    use futures::io::{AsyncReadExt as _, AsyncSeekExt as _};
 
     let direct = Vfs::direct().unwrap();
     let dir = tempdir().unwrap();
@@ -1068,7 +1068,7 @@ async fn a_child_moves_the_input_cursor() {
 #[cfg(unix)]
 #[tokio::test]
 async fn a_child_appends_to_an_append_mode_file() {
-    use tokio::io::AsyncWriteExt as _;
+    use futures::io::AsyncWriteExt as _;
 
     let direct = Vfs::direct().unwrap();
     let dir = tempdir().unwrap();

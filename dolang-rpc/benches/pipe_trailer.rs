@@ -18,8 +18,9 @@ use std::sync::Arc;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use dolang_rpc::{Builder, Protocol, client::Client, server::CallContext};
+use futures::io::{AsyncReadExt, AsyncWriteExt};
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio_util::compat::{TokioAsyncReadCompatExt as _, TokioAsyncWriteCompatExt as _};
 
 use support::native_pipe;
 
@@ -58,7 +59,7 @@ async fn build_client(
         Builder::new(APP_PROTOCOL.0, APP_PROTOCOL.1)
             .trailer_credit_interval(trailer_len.max(1))
             .max_fragment_size(FRAGMENT_SIZE)
-            .server_split(server_recv, server_send)
+            .server_split(server_recv.compat(), server_send.compat_write())
             .await
             .unwrap()
             .bind::<BenchProtocol>()
@@ -81,7 +82,7 @@ async fn build_client(
     let client = Builder::new(APP_PROTOCOL.0, APP_PROTOCOL.1)
         .trailer_credit_interval(trailer_len.max(1))
         .max_fragment_size(FRAGMENT_SIZE)
-        .client_split(client_recv, client_send)
+        .client_split(client_recv.compat(), client_send.compat_write())
         .await
         .unwrap()
         .bind::<BenchProtocol>();

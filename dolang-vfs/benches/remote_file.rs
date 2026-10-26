@@ -33,11 +33,12 @@ mod bench {
 
     use criterion::{BenchmarkId, Criterion, Throughput};
     use dolang_vfs::{Vfs, server::Server};
+    use futures::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
         net::unix::pipe,
         runtime::{Builder, Runtime},
     };
+    use tokio_util::compat::{TokioAsyncReadCompatExt as _, TokioAsyncWriteCompatExt as _};
 
     /// Matches the buffer `dolang-ext-shell` requests for its remote VFS
     /// subprocess transport (`REMOTE_VFS_PIPE_BUFFER_SIZE`).
@@ -89,7 +90,7 @@ mod bench {
                 let send = pipe::Sender::from_owned_fd(server_send).unwrap();
                 // Ends once the benchmark drops the client and its end of
                 // the pipes closes; not a real failure.
-                if let Ok(server) = Server::new_split(recv, send).await {
+                if let Ok(server) = Server::new_split(recv.compat(), send.compat_write()).await {
                     let _ = server.serve().await;
                 }
             });
@@ -98,7 +99,9 @@ mod bench {
         rt.block_on(async move {
             let recv = pipe::Receiver::from_owned_fd(client_recv).unwrap();
             let send = pipe::Sender::from_owned_fd(client_send).unwrap();
-            Vfs::new_split(recv, send).await.unwrap()
+            Vfs::new_split(recv.compat(), send.compat_write())
+                .await
+                .unwrap()
         })
     }
 

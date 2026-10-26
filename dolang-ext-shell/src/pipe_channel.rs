@@ -10,7 +10,7 @@ use std::{
 };
 
 use dolang_vfs::process::{PipeRecv, PipeSend};
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use futures::io::{AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 
 use dolang::runtime::{
     AllocExt, Error, Instance, Object, Output, Result, Slot, State, Strand, Value,

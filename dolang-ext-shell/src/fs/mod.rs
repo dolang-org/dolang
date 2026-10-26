@@ -6,6 +6,7 @@ use dolang::runtime::{
     value::{BinEmbryo, View},
     vm::Register,
 };
+use dolang_vfs::file::File as VfsFile;
 use dolang_vfs::path as vfs_path;
 use dolang_vfs::{
     error::ErrorKind as VfsErrorKind,
@@ -14,14 +15,16 @@ use dolang_vfs::{
     security::{Acl as VfsAnyAcl, AclKind as VfsAclKind},
 };
 use dolang_winterop::security::{SecDesc, SecInfo};
+use futures::io::{AsyncBufRead, AsyncWriteExt as _};
 use std::{
     future::poll_fn,
     io::{self, ErrorKind},
     mem::MaybeUninit,
     pin::Pin,
     str,
+    task::{Context, Poll, ready},
 };
-use tokio::io::{AsyncRead, AsyncWriteExt, ReadBuf};
+use tokio_util::compat::Compat;
 
 use rand::{RngExt, distr::Alphanumeric};
 
@@ -198,18 +201,64 @@ use glob::{GlobIter, GlobIterAnnex};
 
 use dolang::runtime::Value;
 
+/// A reader that fills uninitialized storage, so reads into fresh arena memory
+/// need not zero it first.
+pub(crate) trait ReadSpare {
+    /// Reads into `spare`, returning how many bytes at its front were filled.
+    fn poll_read_spare(
+        &mut self,
+        cx: &mut Context<'_>,
+        spare: &mut [MaybeUninit<u8>],
+    ) -> Poll<io::Result<usize>>;
+}
+
+impl ReadSpare for VfsFile {
+    fn poll_read_spare(
+        &mut self,
+        cx: &mut Context<'_>,
+        spare: &mut [MaybeUninit<u8>],
+    ) -> Poll<io::Result<usize>> {
+        self.poll_read_uninit(cx, spare)
+    }
+}
+
+impl<T: tokio::io::AsyncBufRead + Unpin> ReadSpare for Compat<T> {
+    fn poll_read_spare(
+        &mut self,
+        cx: &mut Context<'_>,
+        spare: &mut [MaybeUninit<u8>],
+    ) -> Poll<io::Result<usize>> {
+        poll_read_buffered(Pin::new(self), cx, spare)
+    }
+}
+
+/// Copies buffered bytes into `spare`, refilling the buffer first if it is
+/// empty.
+pub(crate) fn poll_read_buffered(
+    mut reader: Pin<&mut impl AsyncBufRead>,
+    cx: &mut Context<'_>,
+    spare: &mut [MaybeUninit<u8>],
+) -> Poll<io::Result<usize>> {
+    if spare.is_empty() {
+        return Poll::Ready(Ok(0));
+    }
+    let avail = ready!(reader.as_mut().poll_fill_buf(cx))?;
+    let n = avail.len().min(spare.len());
+    spare[..n].write_copy_of_slice(&avail[..n]);
+    reader.consume(n);
+    Poll::Ready(Ok(n))
+}
+
 pub(crate) async fn read_into_spare(
-    reader: &mut (impl AsyncRead + Unpin),
+    reader: &mut impl ReadSpare,
     spare: &mut [MaybeUninit<u8>],
 ) -> io::Result<usize> {
-    let mut buf = ReadBuf::uninit(spare);
-    poll_fn(|cx| Pin::new(&mut *reader).poll_read(cx, &mut buf)).await?;
-    Ok(buf.filled().len())
+    poll_fn(|cx| reader.poll_read_spare(cx, spare)).await
 }
 
 pub(crate) async fn read_all<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    reader: &mut (impl AsyncRead + Unpin),
+    reader: &mut impl ReadSpare,
     embryo: &mut BinEmbryo<'v>,
 ) -> Result<'v, 's, ()> {
     loop {

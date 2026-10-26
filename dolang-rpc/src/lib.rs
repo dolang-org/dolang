@@ -9,6 +9,7 @@
 //! ```no_run
 //! use dolang_rpc::{Builder, Protocol, server::CallContext};
 //! use serde::{Deserialize, Serialize};
+//! use tokio_util::compat::TokioAsyncReadCompatExt as _;
 //!
 //! #[derive(Deserialize, Serialize)]
 //! enum Request { Ping }
@@ -23,8 +24,8 @@
 //! async fn run() -> Result<(), Box<dyn std::error::Error>> {
 //!     let (client_io, server_io) = tokio::io::duplex(16 * 1024);
 //!     let (client, server) = tokio::try_join!(
-//!         Builder::new("example", &[1]).client(client_io),
-//!         Builder::new("example", &[1]).server(server_io),
+//!         Builder::new("example", &[1]).client(client_io.compat()),
+//!         Builder::new("example", &[1]).server(server_io.compat()),
 //!     )?;
 //!
 //!     let server = async {

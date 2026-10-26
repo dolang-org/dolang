@@ -214,7 +214,7 @@ impl<'v> Object<'v> for Stdin {
                 let global = strand.state::<Tag>();
                 let mut stdin = global.stdio.stdin.clone();
                 let mut reader = stdin.lock().await.into_sys(strand)?;
-                read_raw(reader.get_mut(), size, strand, out).await
+                read_raw(&mut *reader, size, strand, out).await
             })
             .method("lines", async move |_this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
@@ -295,8 +295,8 @@ impl<'v> Object<'v> for Stdin {
             let mut stdin = global.stdio.stdin.clone();
             let mut reader = stdin.lock().await.into_sys(strand)?;
             let read = match mode {
-                IoMode::Line => read_value(reader.get_mut(), mode, strand, &mut out).await,
-                IoMode::Chunk => read_chunk_value(reader.get_mut(), chunk, strand, &mut out).await,
+                IoMode::Line => read_value(&mut *reader, mode, strand, &mut out).await,
+                IoMode::Chunk => read_chunk_value(&mut *reader, chunk, strand, &mut out).await,
             };
             read.map_err(|err| err.into_sys(strand))?
         };

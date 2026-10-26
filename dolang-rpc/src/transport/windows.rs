@@ -447,7 +447,7 @@ mod tests {
 
     #[tokio::test]
     async fn put_handle_on_generic_transport_reports_unsupported_instead_of_panicking() {
-        let (stream, _) = tokio::io::duplex(64);
+        let (stream, _) = crate::tests::duplex(64);
         let (sender, _) = super::super::generic_duplex(stream);
         let any = AnySender::Generic(sender);
         let mut encode = EncodeHandles::new(&any, 1);
@@ -459,7 +459,7 @@ mod tests {
 
     #[tokio::test]
     async fn duplicate_peer_handle_on_generic_transport_reports_unsupported_instead_of_panicking() {
-        let (stream, _) = tokio::io::duplex(64);
+        let (stream, _) = crate::tests::duplex(64);
         let (_, receiver) = super::super::generic_duplex(stream);
         let any = super::super::AnyReceiver::Generic(receiver);
         let err = any.duplicate_peer_handle(0).unwrap_err();

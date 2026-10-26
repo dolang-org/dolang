@@ -18,9 +18,6 @@ use std::{
 use dolang::runtime::{BYTE_STREAM_CHUNK_SIZE, Strand, value::BinEmbryo};
 use dolang_vfs::file::File as VfsFile;
 use futures::io::{AsyncBufRead, AsyncRead, AsyncSeek, AsyncWrite};
-use tokio::io::{
-    AsyncRead as TokioRead, AsyncSeek as TokioSeek, AsyncWrite as TokioWrite, ReadBuf,
-};
 
 use crate::fs::read_into_spare;
 
@@ -34,8 +31,6 @@ pub(crate) struct FileBuf {
     buf: Vec<u8>,
     pos: usize,
     writing: bool,
-    /// A seek on `file` was started and has not completed.
-    seeking: bool,
 }
 
 /// Reads up to `want` bytes from `file` straight into `out`'s spare capacity.
@@ -64,7 +59,6 @@ impl FileBuf {
             buf: Vec::new(),
             pos: 0,
             writing: false,
-            seeking: false,
         }
     }
 
@@ -112,15 +106,10 @@ impl FileBuf {
         }
     }
 
-    /// Seeks the file, finishing a seek an earlier poll started instead of starting another.
+    /// Seeks the file. Polling again with the same `pos` finishes a seek an earlier poll
+    /// left pending instead of starting another.
     fn poll_seek_file(&mut self, cx: &mut Context<'_>, pos: SeekFrom) -> Poll<io::Result<u64>> {
-        if !self.seeking {
-            Pin::new(&mut self.file).start_seek(pos)?;
-            self.seeking = true;
-        }
-        let res = ready!(Pin::new(&mut self.file).poll_complete(cx));
-        self.seeking = false;
-        Poll::Ready(res)
+        Pin::new(&mut self.file).poll_seek(cx, pos)
     }
 
     fn poll_flush_buf(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -259,15 +248,11 @@ impl FileBuf {
         if self.unread() == 0 {
             ready!(self.poll_flush_buf(cx))?;
             self.buf.resize(CAPACITY, 0);
-            let mut read = ReadBuf::new(&mut self.buf);
-            match Pin::new(&mut self.file).poll_read(cx, &mut read) {
-                Poll::Ready(Ok(())) => {
-                    let n = read.filled().len();
-                    self.buf.truncate(n);
-                }
+            match Pin::new(&mut self.file).poll_read(cx, &mut self.buf) {
+                Poll::Ready(Ok(n)) => self.buf.truncate(n),
                 res => {
                     self.buf.clear();
-                    return res.map_ok(|()| 0);
+                    return res;
                 }
             }
         }
@@ -284,9 +269,7 @@ impl AsyncRead for FileBuf {
         let this = self.get_mut();
         if this.unread() == 0 && buf.len() >= CAPACITY {
             ready!(this.poll_flush_buf(cx))?;
-            let mut read = ReadBuf::new(buf);
-            ready!(Pin::new(&mut this.file).poll_read(cx, &mut read))?;
-            return Poll::Ready(Ok(read.filled().len()));
+            return Pin::new(&mut this.file).poll_read(cx, buf);
         }
         let avail = ready!(this.poll_fill(cx))?;
         let n = avail.min(buf.len());

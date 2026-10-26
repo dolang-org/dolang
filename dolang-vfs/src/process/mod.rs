@@ -3,14 +3,15 @@ use std::{
     io::{self, IoSlice},
     pin::Pin,
     process::Stdio,
-    task::{Context, Poll},
+    task::{Context, Poll, ready},
     time::Duration,
 };
 
 use dolang_rpc::handle::DefaultHandle;
+use futures::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use serde::{Deserialize, Serialize};
 use tokio::{
-    io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf},
+    io::{AsyncRead as TokioRead, AsyncWrite as TokioWrite, ReadBuf},
     task::{JoinError, JoinHandle},
 };
 
@@ -173,7 +174,7 @@ pub enum ChildOut {
     File(File),
     /// A stream, copied from a pipe while the child runs.
     ///
-    /// The stream is shut down once the child's output ends, and
+    /// The stream is closed once the child's output ends, and
     /// [`Child::wait`] waits for that. An error the copy met is reported by
     /// [`Child::relay_error`].
     Writer(Box<dyn AsyncWrite + Send + Unpin>),
@@ -969,7 +970,7 @@ pub(crate) struct NativePipeRecv {
     ready: Option<(Vec<u8>, usize)>,
 }
 
-/// Pumps bytes from `src` to `dst` until EOF or error, then shuts `dst` down,
+/// Pumps bytes from `src` to `dst` until EOF or error, then closes `dst`,
 /// returning the first error.
 pub(crate) async fn relay<R, W>(src: R, mut dst: W) -> io::Result<()>
 where
@@ -977,10 +978,10 @@ where
     W: AsyncWrite + Unpin,
 {
     let mut src = BufReader::with_capacity(STREAM_CHUNK_SIZE, src);
-    let copied = tokio::io::copy_buf(&mut src, &mut dst).await;
-    let shutdown = dst.shutdown().await;
+    let copied = futures::io::copy_buf(&mut src, &mut dst).await;
+    let closed = dst.close().await;
     copied?;
-    shutdown
+    closed
 }
 
 /// Creates a native OS pipe, optionally hinting a kernel buffer size.
@@ -1233,7 +1234,7 @@ impl AsyncWrite for PipeSend {
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         match &mut self.0 {
-            PipeSendInner::Native(native) => Pin::new(native).poll_write(cx, buf),
+            PipeSendInner::Native(native) => TokioWrite::poll_write(Pin::new(native), cx, buf),
             PipeSendInner::Remote(remote) => Pin::new(remote).poll_write(cx, buf),
         }
     }
@@ -1244,29 +1245,24 @@ impl AsyncWrite for PipeSend {
         bufs: &[IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
         match &mut self.0 {
-            PipeSendInner::Native(native) => Pin::new(native).poll_write_vectored(cx, bufs),
+            PipeSendInner::Native(native) => {
+                TokioWrite::poll_write_vectored(Pin::new(native), cx, bufs)
+            }
             PipeSendInner::Remote(remote) => Pin::new(remote).poll_write_vectored(cx, bufs),
-        }
-    }
-
-    fn is_write_vectored(&self) -> bool {
-        match &self.0 {
-            PipeSendInner::Native(native) => native.is_write_vectored(),
-            PipeSendInner::Remote(remote) => remote.is_write_vectored(),
         }
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match &mut self.0 {
-            PipeSendInner::Native(native) => Pin::new(native).poll_flush(cx),
+            PipeSendInner::Native(native) => TokioWrite::poll_flush(Pin::new(native), cx),
             PipeSendInner::Remote(remote) => Pin::new(remote).poll_flush(cx),
         }
     }
 
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match &mut self.0 {
-            PipeSendInner::Native(native) => Pin::new(native).poll_shutdown(cx),
-            PipeSendInner::Remote(remote) => Pin::new(remote).poll_shutdown(cx),
+            PipeSendInner::Native(native) => TokioWrite::poll_shutdown(Pin::new(native), cx),
+            PipeSendInner::Remote(remote) => Pin::new(remote).poll_close(cx),
         }
     }
 }
@@ -1275,17 +1271,21 @@ impl AsyncRead for PipeRecv {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
         match &mut self.0 {
-            PipeRecvInner::Native(native) => Pin::new(native).poll_read(cx, buf),
+            PipeRecvInner::Native(native) => {
+                let mut buf = ReadBuf::new(buf);
+                ready!(TokioRead::poll_read(Pin::new(native), cx, &mut buf))?;
+                Poll::Ready(Ok(buf.filled().len()))
+            }
             PipeRecvInner::Remote(remote) => Pin::new(remote).poll_read(cx, buf),
         }
     }
 }
 
 #[cfg(windows)]
-impl AsyncWrite for NativePipeSend {
+impl TokioWrite for NativePipeSend {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -1356,7 +1356,7 @@ impl AsyncWrite for NativePipeSend {
 }
 
 #[cfg(windows)]
-impl AsyncRead for NativePipeRecv {
+impl TokioRead for NativePipeRecv {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,

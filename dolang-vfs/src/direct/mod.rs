@@ -17,12 +17,7 @@ use std::os::fd::AsFd;
 #[cfg(windows)]
 use std::os::windows::io::AsHandle;
 
-use tokio::{
-    fs,
-    io::{AsyncRead, ReadBuf},
-    process::Command as TokioCommand,
-    sync::Mutex,
-};
+use tokio::{fs, process::Command as TokioCommand, sync::Mutex};
 
 use wax::{
     Glob, Program as _,
@@ -291,16 +286,14 @@ impl Body {
     }
 }
 
-impl AsyncRead for Body {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        let take = (self.buf.len() - self.pos).min(buf.remaining());
-        buf.put_slice(&self.buf[self.pos..self.pos + take]);
+impl Body {
+    /// Copies the next bytes into `buf`, returning how many. Zero means the
+    /// body is exhausted.
+    pub(crate) fn read_uninit(&mut self, buf: &mut [mem::MaybeUninit<u8>]) -> usize {
+        let take = (self.buf.len() - self.pos).min(buf.len());
+        buf[..take].write_copy_of_slice(&self.buf[self.pos..self.pos + take]);
         self.pos += take;
-        Poll::Ready(Ok(()))
+        take
     }
 }
 

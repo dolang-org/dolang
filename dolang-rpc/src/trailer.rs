@@ -3,13 +3,14 @@
 use std::{
     io::{self, IoSlice},
     marker::PhantomData,
+    mem::MaybeUninit,
     pin::Pin,
     sync::{Arc, Mutex, MutexGuard},
     task::{Context, Poll, Waker},
 };
 
-use bytes::{Buf, BufMut, BytesMut, buf::UninitSlice};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use bytes::{Buf, BufMut, BytesMut};
+use futures::io::{AsyncRead, AsyncWrite};
 
 use crate::{
     Limits,
@@ -526,7 +527,7 @@ impl<T> TrailerSend<T> {
     /// Commits the trailer and returns the associated handle.
     ///
     /// This does not wait for buffered trailer bytes to reach the peer. Use
-    /// [`AsyncWriteExt::shutdown`](tokio::io::AsyncWriteExt::shutdown) first
+    /// [`AsyncWriteExt::close`](futures::io::AsyncWriteExt::close) first
     /// when that ordering matters to the caller.
     pub fn finish(mut self) -> T {
         SendShared::finish(&self.shared);
@@ -735,7 +736,7 @@ impl<T: Unpin> AsyncWrite for TrailerSend<T> {
         SendShared::poll_flush(&self.get_mut().shared, cx)
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
         SendShared::finish(&this.shared);
         SendShared::poll_flush(&this.shared, cx)
@@ -1272,7 +1273,7 @@ impl TrailerRecv {
     /// # Deadlocks
     ///
     /// Never attempt to receive multiple chunks or a fixed amount of data
-    /// (e.g. via [`AsyncReadExt::read_exact`](::tokio::io::AsyncReadExt::read_exact))
+    /// (e.g. via [`AsyncReadExt::read_exact`](futures::io::AsyncReadExt::read_exact))
     /// between credit releases, or a deadlock may result.
     ///
     /// # Panics
@@ -1303,17 +1304,21 @@ impl TrailerRecv {
     }
 }
 
-impl AsyncRead for TrailerRecv {
-    fn poll_read(
-        self: Pin<&mut Self>,
+impl TrailerRecv {
+    /// Reads into storage that need not be initialized, as
+    /// [`AsyncRead::poll_read`] does into storage that is.
+    ///
+    /// Only initialized bytes are written, at the front of `buf`; the count
+    /// is returned, and zero means the trailer has ended.
+    pub fn poll_read_uninit(
+        &mut self,
         cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        let this = self.get_mut();
-        if buf.remaining() == 0 {
-            return Poll::Ready(Ok(()));
+        mut buf: &mut [MaybeUninit<u8>],
+    ) -> Poll<io::Result<usize>> {
+        if buf.is_empty() {
+            return Poll::Ready(Ok(0));
         }
-        let mut inner = lock(&this.shared);
+        let mut inner = lock(&self.shared);
         inner.reader_waker.take();
         // Bytes the driver already pulled off the wire on our behalf (see
         // `RecvState::Draining` below) always go out first, ahead of even a
@@ -1330,7 +1335,7 @@ impl AsyncRead for TrailerRecv {
         // These are two genuinely independent facts, so `stage` has to be
         // checked directly rather than folded into `state`.
         if !inner.stage.is_empty() {
-            let n = buf.remaining().min(inner.stage.len());
+            let n = buf.len().min(inner.stage.len());
             buf.put_slice(&inner.stage[..n]);
             let _ = inner.stage.split_to(n);
             // One of the two points where bytes actually reach the
@@ -1338,15 +1343,15 @@ impl AsyncRead for TrailerRecv {
             // them. Drop the guard first: the sink is never called under the
             // mutex.
             drop(inner);
-            RecvShared::retire_and_emit(&this.shared, n);
-            return Poll::Ready(Ok(()));
+            RecvShared::retire_and_emit(&self.shared, n);
+            return Poll::Ready(Ok(n));
         }
         match inner.state {
             RecvState::Failed => {
                 let (kind, message) = inner.error.clone().expect("error set for Failed");
                 Poll::Ready(Err(io::Error::new(kind, message)))
             }
-            RecvState::Eof => Poll::Ready(Ok(())),
+            RecvState::Eof => Poll::Ready(Ok(0)),
             RecvState::Idle | RecvState::Fragment => {
                 inner.state = if inner.state == RecvState::Idle {
                     RecvState::Demand
@@ -1384,9 +1389,7 @@ impl AsyncRead for TrailerRecv {
                 // Zero-copy path: read directly into the caller's buffer.
                 // Both states guarantee a live token and `remaining > 0`
                 // (set together by `grant`).
-                let before = buf.filled().len();
-                let mut adapter = ReadBufMut(buf);
-                let mut limited = (&mut adapter).limit(inner.remaining);
+                let mut limited = (&mut buf).limit(inner.remaining);
                 let result = inner
                     .token
                     .as_mut()
@@ -1423,9 +1426,8 @@ impl AsyncRead for TrailerRecv {
                         drop(inner);
                         wake(driver);
                         // The other delivery point; see the `stage` branch.
-                        RecvShared::retire_and_emit(&this.shared, n);
-                        debug_assert_eq!(buf.filled().len() - before, n);
-                        Poll::Ready(Ok(()))
+                        RecvShared::retire_and_emit(&self.shared, n);
+                        Poll::Ready(Ok(n))
                     }
                     Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
                     Poll::Pending => {
@@ -1442,31 +1444,21 @@ impl AsyncRead for TrailerRecv {
     }
 }
 
-impl Drop for TrailerRecv {
-    fn drop(&mut self) {
-        RecvShared::discard(&self.shared);
+impl AsyncRead for TrailerRecv {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        // SAFETY: `poll_read_uninit` writes only initialized bytes.
+        let buf = unsafe { &mut *(buf as *mut [u8] as *mut [MaybeUninit<u8>]) };
+        self.get_mut().poll_read_uninit(cx, buf)
     }
 }
 
-struct ReadBufMut<'a, 'b>(&'a mut ReadBuf<'b>);
-
-unsafe impl BufMut for ReadBufMut<'_, '_> {
-    fn remaining_mut(&self) -> usize {
-        self.0.remaining()
-    }
-
-    unsafe fn advance_mut(&mut self, cnt: usize) {
-        // SAFETY: delegated to the caller of this unsafe method.
-        unsafe { self.0.assume_init(cnt) };
-        self.0.advance(cnt);
-    }
-
-    fn chunk_mut(&mut self) -> &mut UninitSlice {
-        // SAFETY: `BufMut` exposes this region only as uninitialized storage.
-        let unfilled = unsafe { self.0.unfilled_mut() };
-        // SAFETY: `UninitSlice` has the same representation as a slice of
-        // `MaybeUninit<u8>` and cannot initialize beyond this region.
-        unsafe { UninitSlice::from_raw_parts_mut(unfilled.as_mut_ptr().cast(), unfilled.len()) }
+impl Drop for TrailerRecv {
+    fn drop(&mut self) {
+        RecvShared::discard(&self.shared);
     }
 }
 
@@ -1556,13 +1548,8 @@ mod tests {
     }
 
     fn poll_read_once(trailer: &mut TrailerRecv, output: &mut [u8]) -> Poll<io::Result<usize>> {
-        let mut read = ReadBuf::new(output);
         let mut cx = Context::from_waker(Waker::noop());
-        match Pin::new(trailer).poll_read(&mut cx, &mut read) {
-            Poll::Ready(Ok(())) => Poll::Ready(Ok(read.filled().len())),
-            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
-            Poll::Pending => Poll::Pending,
-        }
+        Pin::new(trailer).poll_read(&mut cx, output)
     }
 
     struct CappedSink {
@@ -1605,7 +1592,7 @@ mod tests {
             Poll::Ready(Ok(()))
         }
 
-        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
             Poll::Ready(Ok(()))
         }
     }
@@ -1657,7 +1644,7 @@ mod tests {
             ..unbounded_limits()
         })
         .0;
-        let (_, receiver) = generic(tokio::io::empty(), tokio::io::sink());
+        let (_, receiver) = generic(futures::io::empty(), futures::io::sink());
         let mut receiver = AnyReceiver::Generic(receiver);
         let lease = unsafe { RecvShared::grant(&undemanded, receiver.recv(), 4) };
         assert_eq!(undemanded.lock().unwrap().state, RecvState::Unclaimed);
@@ -1673,7 +1660,7 @@ mod tests {
         let mut output = [0; 4];
         assert!(poll_read_once(&mut trailer, &mut output).is_pending());
         assert_eq!(demanded.lock().unwrap().state, RecvState::Demand);
-        let (_, receiver) = generic(tokio::io::empty(), tokio::io::sink());
+        let (_, receiver) = generic(futures::io::empty(), futures::io::sink());
         let mut receiver = AnyReceiver::Generic(receiver);
         let lease = unsafe { RecvShared::grant(&demanded, receiver.recv(), 4) };
         assert_eq!(demanded.lock().unwrap().state, RecvState::Draining);
@@ -1689,7 +1676,7 @@ mod tests {
         })
         .0;
         let mut trailer = TrailerRecv::new(shared.clone());
-        let (_, receiver) = generic(tokio::io::empty(), tokio::io::sink());
+        let (_, receiver) = generic(futures::io::empty(), futures::io::sink());
         let mut receiver = AnyReceiver::Generic(receiver);
         let lease = unsafe { RecvShared::grant(&shared, receiver.recv(), 0) };
         assert_eq!(shared.lock().unwrap().state, RecvState::Fragment);
@@ -1703,7 +1690,7 @@ mod tests {
 
     #[tokio::test]
     async fn unclaimed_large_receive_falls_back_to_driver_draining() {
-        use tokio::io::AsyncWriteExt;
+        use futures::io::AsyncWriteExt;
 
         let shared = recv_shared(Limits {
             trailer_recv_copy_threshold: 0,
@@ -1711,9 +1698,9 @@ mod tests {
             ..unbounded_limits()
         })
         .0;
-        let (mut writer, reader) = tokio::io::duplex(16);
+        let (mut writer, reader) = crate::tests::duplex(16);
         writer.write_all(b"data").await.unwrap();
-        let (_, receiver) = generic(reader, tokio::io::sink());
+        let (_, receiver) = generic(reader, futures::io::sink());
         let mut receiver = AnyReceiver::Generic(receiver);
         let lease = unsafe { RecvShared::grant(&shared, receiver.recv(), 4) };
         assert_eq!(shared.lock().unwrap().state, RecvState::Unclaimed);
@@ -1726,7 +1713,7 @@ mod tests {
 
     #[tokio::test]
     async fn demanded_large_receive_can_claim_the_grant_directly() {
-        use tokio::io::AsyncWriteExt;
+        use futures::io::AsyncWriteExt;
 
         let shared = recv_shared(Limits {
             trailer_recv_copy_threshold: 0,
@@ -1738,9 +1725,9 @@ mod tests {
         let mut output = [0; 4];
         assert!(poll_read_once(&mut trailer, &mut output).is_pending());
 
-        let (mut writer, reader) = tokio::io::duplex(16);
+        let (mut writer, reader) = crate::tests::duplex(16);
         writer.write_all(b"data").await.unwrap();
-        let (_, receiver) = generic(reader, tokio::io::sink());
+        let (_, receiver) = generic(reader, futures::io::sink());
         let mut receiver = AnyReceiver::Generic(receiver);
         let lease = unsafe { RecvShared::grant(&shared, receiver.recv(), 4) };
         assert_eq!(shared.lock().unwrap().state, RecvState::Unclaimed);
@@ -1758,7 +1745,7 @@ mod tests {
     async fn abandoned_fragment_flushes_only_its_real_staged_suffix() {
         let output = Arc::new(Mutex::new(Vec::new()));
         let (sender, _) = generic(
-            tokio::io::empty(),
+            futures::io::empty(),
             CappedSink {
                 bytes: output.clone(),
                 max_write: 16,
@@ -1809,7 +1796,7 @@ mod tests {
     async fn partial_header_and_payload_share_the_stage_buffer() {
         let output = Arc::new(Mutex::new(Vec::new()));
         let (sender, _) = generic(
-            tokio::io::empty(),
+            futures::io::empty(),
             CappedSink {
                 bytes: output.clone(),
                 max_write: 5,
@@ -1848,7 +1835,7 @@ mod tests {
 
     #[tokio::test]
     async fn finish_releases_an_unused_live_grant() {
-        let (sender, _) = generic(tokio::io::empty(), tokio::io::sink());
+        let (sender, _) = generic(futures::io::empty(), futures::io::sink());
         let mut sender = AnySender::Generic(sender);
         let shared = send_shared(unbounded_limits());
         let lease = unsafe { SendShared::grant(&shared, sender.send(), 1024) };
@@ -1896,7 +1883,7 @@ mod tests {
 
     #[tokio::test]
     async fn exhausted_credit_parks_the_writer_until_credit_arrives() {
-        let (sender, _) = generic(tokio::io::empty(), tokio::io::sink());
+        let (sender, _) = generic(futures::io::empty(), futures::io::sink());
         let mut sender = AnySender::Generic(sender);
         let session = Arc::new(SessionWindow::new(4));
         let shared = SendShared::new(Kind::Request, 1, &zero_copy_limits(), session.clone());
@@ -1943,7 +1930,7 @@ mod tests {
     /// floors it at 1.
     #[tokio::test]
     async fn pool_below_fragment_size_still_makes_progress() {
-        let (sender, _) = generic(tokio::io::empty(), tokio::io::sink());
+        let (sender, _) = generic(futures::io::empty(), futures::io::sink());
         let mut sender = AnySender::Generic(sender);
         let session = Arc::new(SessionWindow::new(3));
         let limits = Limits {
@@ -1975,7 +1962,7 @@ mod tests {
     /// it — the cross-trailer coupling that comes with a single pool.
     #[tokio::test]
     async fn one_trailer_exhausting_the_pool_parks_another() {
-        let (sender, _) = generic(tokio::io::empty(), tokio::io::sink());
+        let (sender, _) = generic(futures::io::empty(), futures::io::sink());
         let mut sender = AnySender::Generic(sender);
         let session = Arc::new(SessionWindow::new(4));
         let limits = zero_copy_limits();
@@ -2024,7 +2011,7 @@ mod tests {
     /// transfer would shrink the connection's capacity permanently.
     #[tokio::test]
     async fn aborting_a_trailer_returns_its_session_debt() {
-        let (sender, _) = generic(tokio::io::empty(), tokio::io::sink());
+        let (sender, _) = generic(futures::io::empty(), futures::io::sink());
         let mut sender = AnySender::Generic(sender);
         let session = Arc::new(SessionWindow::new(64));
         let shared = SendShared::new(Kind::Request, 1, &zero_copy_limits(), session.clone());

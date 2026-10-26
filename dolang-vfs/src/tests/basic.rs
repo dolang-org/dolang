@@ -368,7 +368,7 @@ async fn fd_passing() {
 /// A host file passed natively follows the child, read back on this side.
 #[tokio::test]
 async fn a_passed_file_follows_the_child() {
-    use tokio::io::{AsyncSeekExt as _, AsyncWriteExt as _};
+    use futures::io::{AsyncSeekExt as _, AsyncWriteExt as _};
 
     let dir = tempdir().unwrap();
     let socket_path = dir.path().join("test.sock");

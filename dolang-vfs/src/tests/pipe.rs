@@ -1,8 +1,8 @@
 use std::process::Stdio;
 
 use crate::Vfs;
+use futures::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
     process::Command,
     time::{Duration, Instant, sleep},
 };

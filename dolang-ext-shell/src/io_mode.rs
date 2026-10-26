@@ -1,6 +1,10 @@
 use crate::global::Tag;
 
-use std::io::{self, IoSlice};
+use std::{
+    future::poll_fn,
+    io::{self, IoSlice},
+    pin::Pin,
+};
 
 use dolang::runtime::{
     Arg, Args, BYTE_STREAM_CHUNK_SIZE, Error, Output, Result, Slot, Strand, Value,
@@ -8,12 +12,11 @@ use dolang::runtime::{
     value::{BinEmbryo, PinBin, PinStr, View},
 };
 use dolang_vfs::target::OperatingSystem;
-use futures::AsyncWriteExt as _;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead};
+use futures::io::{AsyncBufRead, AsyncBufReadExt as _, AsyncWriteExt as _};
 
 use crate::{
     error::ResultExt as _,
-    fs::{read_all, read_into_spare},
+    fs::{ReadSpare, poll_read_buffered, read_all, read_into_spare},
 };
 
 /// How a byte stream is quantized into values.
@@ -80,7 +83,8 @@ where
     let mut chunk = BinEmbryo::new_with_capacity(strand, size);
     let spare = chunk.spare_capacity_mut();
     let len = spare.len().min(size);
-    let len = read_into_spare(reader, &mut spare[..len]).await?;
+    let spare = &mut spare[..len];
+    let len = poll_fn(|cx| poll_read_buffered(Pin::new(&mut *reader), cx, spare)).await?;
     if len == 0 {
         return Ok(false);
     }
@@ -120,7 +124,7 @@ where
             line.extend(strand, &available[..consumed]);
             (consumed, newline.is_some())
         };
-        reader.consume(consumed);
+        reader.consume_unpin(consumed);
 
         if complete {
             line.finish_str(strand, out).map_err(invalid_utf8)?;
@@ -172,7 +176,7 @@ pub(crate) async fn read_raw<'v, 'a, 's, R>(
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()>
 where
-    R: AsyncRead + Unpin,
+    R: ReadSpare,
 {
     let mut buf = BinEmbryo::new();
     match size {

@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     fmt,
-    future::Future,
+    future::{Future, poll_fn},
     io::{self, IsTerminal},
     mem,
     pin::Pin,
@@ -38,10 +38,9 @@ use tokio::net::UnixStream;
 use tokio::net::windows::named_pipe::NamedPipeServer;
 #[cfg(all(docsrs, not(windows)))]
 struct NamedPipeServer;
-use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf},
-    task::JoinHandle,
-};
+use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::task::JoinHandle;
+use tokio_util::compat::{TokioAsyncReadCompatExt as _, TokioAsyncWriteCompatExt as _};
 
 use crate::{
     MAX_FILE_READ, STREAM_CHUNK_SIZE, SessionMode, Vfs, client, direct,
@@ -470,7 +469,7 @@ impl Future for ReadOp {
 
 /// The data trailer of a cursor read.
 ///
-/// This reads the trailer straight into the caller's `ReadBuf`, which for the
+/// This reads the trailer straight into the caller's buffer, which for the
 /// Do-side `fs.File` is arena memory the collector adopts without a copy. Do
 /// not "simplify" the cursor path by delegating to a positional `read_at`:
 /// that would land the data in an owned `BytesMut` first and cost a
@@ -480,15 +479,15 @@ pub(crate) struct Body {
     remaining: usize,
 }
 
-impl AsyncRead for Body {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
+impl Body {
+    /// Reads the next bytes into `buf`, returning how many. Zero means the
+    /// trailer is exhausted.
+    pub(crate) fn poll_read_uninit(
+        &mut self,
         cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        let before = buf.filled().len();
-        ready!(Pin::new(&mut self.recv).poll_read(cx, buf))?;
-        let read = buf.filled().len() - before;
+        buf: &mut [mem::MaybeUninit<u8>],
+    ) -> Poll<io::Result<usize>> {
+        let read = ready!(self.recv.poll_read_uninit(cx, buf))?;
         if read > self.remaining {
             return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -496,7 +495,7 @@ impl AsyncRead for Body {
             )));
         }
         self.remaining -= read;
-        Poll::Ready(Ok(()))
+        Poll::Ready(Ok(read))
     }
 }
 
@@ -694,14 +693,16 @@ impl File {
                 let mut trailer = Self::begin_read(client, file, offset, len).await?;
                 let mut remaining = len;
                 while remaining > 0 {
-                    // `read_buf` writes into the spare capacity and only grows
-                    // the buffer once that is exhausted, which the loop
-                    // condition prevents, so the transfer stays inside what was
-                    // asked for.
-                    let read = trailer.read_buf(dst).await?;
+                    // The loop condition keeps the spare capacity from running
+                    // out, so the transfer stays inside what was asked for.
+                    let spare = &mut dst.spare_capacity_mut()[..remaining];
+                    let read = poll_fn(|cx| trailer.poll_read_uninit(cx, spare)).await?;
                     if read == 0 {
                         return Ok(());
                     }
+                    // SAFETY: the trailer initialized `read` bytes of the
+                    // spare capacity.
+                    unsafe { dst.set_len(dst.len() + read) };
                     remaining -= read;
                 }
                 Self::finish_read(&mut trailer).await
@@ -758,17 +759,18 @@ impl File {
                 return Ok(0);
             }
             let mut trailer = Self::begin_read(client, file, offset, len).await?;
-            let mut dst = ReadBuf::uninit(&mut buf[..len]);
-            while dst.remaining() > 0 {
-                let before = dst.filled().len();
-                trailer.read_buf(&mut dst).await?;
-                if dst.filled().len() == before {
+            let mut filled = 0;
+            while filled < len {
+                let read =
+                    poll_fn(|cx| trailer.poll_read_uninit(cx, &mut buf[filled..len])).await?;
+                if read == 0 {
                     // End of the reply, short of what was asked for.
-                    return Ok(before);
+                    return Ok(filled);
                 }
+                filled += read;
             }
             Self::finish_read(&mut trailer).await?;
-            Ok(dst.filled().len())
+            Ok(filled)
         }
     }
 
@@ -1655,8 +1657,8 @@ struct PendingTrailerRead {
 
 /// A writable standard-stream endpoint owned by a remote VFS session.
 ///
-/// This implements [`AsyncWrite`]. Shutting it down
-/// closes the corresponding remote endpoint.
+/// This implements [`AsyncWrite`]. Closing it closes the corresponding remote
+/// endpoint.
 pub struct RemotePipeSend {
     client: Client,
     stdio: Option<Gift<StdioSendMarker>>,
@@ -1814,7 +1816,7 @@ impl AsyncWrite for RemotePipeSend {
         )))
     }
 
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         if self.pending.is_none() {
             match self.as_mut().poll_flush(cx) {
                 Poll::Pending => return Poll::Pending,
@@ -1858,19 +1860,17 @@ impl AsyncRead for RemotePipeRecv {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
         loop {
             if let Some(body) = self.read_body.as_mut() {
-                let before = buf.filled().len();
                 match Pin::new(&mut body.recv).poll_read(cx, buf) {
                     Poll::Pending => return Poll::Pending,
                     Poll::Ready(Err(error)) => {
                         self.read_body = None;
                         return Poll::Ready(Err(error));
                     }
-                    Poll::Ready(Ok(())) => {
-                        let read = buf.filled().len() - before;
+                    Poll::Ready(Ok(read)) => {
                         if read > body.remaining {
                             self.read_body = None;
                             return Poll::Ready(Err(io::Error::new(
@@ -1881,27 +1881,27 @@ impl AsyncRead for RemotePipeRecv {
                         body.remaining -= read;
                         body.read += read;
                         if read > 0 {
-                            return Poll::Ready(Ok(()));
+                            return Poll::Ready(Ok(read));
                         }
                         let empty = body.read == 0;
                         self.read_body = None;
                         if empty {
-                            return Poll::Ready(Ok(()));
+                            return Poll::Ready(Ok(0));
                         }
                         continue;
                     }
                 }
             }
             if self.pending.is_none() {
-                if buf.remaining() == 0 {
-                    return Poll::Ready(Ok(()));
+                if buf.is_empty() {
+                    return Poll::Ready(Ok(0));
                 }
                 let Some(stdio) = &self.stdio else {
-                    return Poll::Ready(Ok(()));
+                    return Poll::Ready(Ok(0));
                 };
                 self.pending = Some(self.client.call(RequestKind::StdioRecvRead {
                     stdio: stdio.cite(),
-                    len: buf.remaining(),
+                    len: buf.len(),
                 }));
             }
             match Pin::new(self.pending.as_mut().unwrap()).poll(cx) {
@@ -1917,7 +1917,7 @@ impl AsyncRead for RemotePipeRecv {
                                     "stdio read response is missing its data trailer",
                                 )));
                             };
-                            let requested = buf.remaining();
+                            let requested = buf.len();
                             self.read_body = Some(PendingTrailerRead {
                                 recv: data,
                                 remaining: requested,
@@ -2198,9 +2198,9 @@ impl<'a> Command<'a> {
 }
 
 async fn relay_stdin(mut send: PipeSend) {
-    let mut stdin = BufReader::with_capacity(STREAM_CHUNK_SIZE, tokio::io::stdin());
-    let _ = tokio::io::copy_buf(&mut stdin, &mut send).await;
-    let _ = send.shutdown().await;
+    let mut stdin = BufReader::with_capacity(STREAM_CHUNK_SIZE, tokio::io::stdin().compat());
+    let _ = futures::io::copy_buf(&mut stdin, &mut send).await;
+    let _ = send.close().await;
 }
 
 async fn relay_output<W>(recv: PipeRecv, mut output: W)
@@ -2208,7 +2208,7 @@ where
     W: AsyncWrite + Unpin,
 {
     let mut recv = BufReader::with_capacity(STREAM_CHUNK_SIZE, recv);
-    let _ = tokio::io::copy_buf(&mut recv, &mut output).await;
+    let _ = futures::io::copy_buf(&mut recv, &mut output).await;
     let _ = output.flush().await;
 }
 
@@ -2219,8 +2219,12 @@ impl PreparedRelays {
             .outputs
             .into_iter()
             .map(|(recv, output)| match output {
-                HostOutput::Stdout => tokio::spawn(relay_output(recv, tokio::io::stdout())),
-                HostOutput::Stderr => tokio::spawn(relay_output(recv, tokio::io::stderr())),
+                HostOutput::Stdout => {
+                    tokio::spawn(relay_output(recv, tokio::io::stdout().compat_write()))
+                }
+                HostOutput::Stderr => {
+                    tokio::spawn(relay_output(recv, tokio::io::stderr().compat_write()))
+                }
             })
             .collect();
         ClientRelays { stdin, outputs }
@@ -3304,7 +3308,7 @@ mod tests {
 
     #[tokio::test]
     async fn child_wait_caches_wire_error() {
-        let (client_stream, server_stream) = tokio::io::duplex(1024 * 1024);
+        let (client_stream, server_stream) = crate::tests::duplex(1024 * 1024);
         let server =
             tokio::spawn(async move { Server::new(server_stream).await.unwrap().serve().await });
         let client = Client::new(client_stream).await.unwrap();
