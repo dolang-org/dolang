@@ -676,6 +676,12 @@ impl Check<'_> {
         self.tables.units[unit.index()].path
     }
 
+    /// The module name of a checked unit, as an [`Analysis`] names the modules
+    /// declarations are in. A script is named by its file stem.
+    pub fn name(&self, unit: UnitId) -> String {
+        self.tables.units[unit.index()].name()
+    }
+
     /// Whether every well-formedness check passed. See [`Check`].
     pub fn validated(&self) -> bool {
         (self.diagnostics.iter()).all(|diag| diag.severity() != Severity::Error)

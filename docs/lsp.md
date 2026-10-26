@@ -14,16 +14,21 @@ features in any LSP-compatible editor.
 - **Quick fixes**: Code actions that apply a diagnostic's suggested fix
 - **Hover**: The signature and doc comment of the name under the cursor,
   including imported and prelude names
-- **Go to definition**: Jump to the definition of variables and functions
+- **Go to definition**: Jump to the definition of variables and functions,
+  of an item of a module on the module path, by its import or by a path such
+  as `a.f`, and of the member a use such as `x.size` reaches. A call of an
+  overloaded function or method jumps to the `@def` it chose, and a member of a
+  union lists the declaration in each class.
 - **Document symbols**: The outline of a file -- classes, functions, methods,
   fields, bindings and imports, nested under whatever declares them
 - **Find references and highlight**: Every use of the name under the cursor,
   for the "find all references" command and for highlighting occurrences as
   the cursor moves
 
-Both references and go-to-definition are limited to the current file, and
-resolve names the compiler resolves: a field access such as `self.count` is
-dynamic, so only the field's declaration is reported.
+References are limited to the current file, and resolve names the compiler
+resolves: a field access such as `self.count` is dynamic, so only the field's
+declaration is reported. Go to definition reaches members, overloads and other
+modules once the file has been type checked.
 
 ## Running the LSP
 
@@ -110,10 +115,10 @@ one of them is module `a.b`. A `*` matches any run of characters within one
 path component, except a leading `.`; matches are taken in name order.
 
 A file under the module path is checked as its module, in place of the bundled
-module of the same name, and has only the core language prelude. Other files
-are scripts. An import is found on the module path first, then among the
-bundled modules. Set `bundled = false` to leave the bundled modules out, as
-`--no-bundled` does.
+module of the same name. Other files are scripts. Modules and scripts both have
+the configured prelude, as the shell compiles both under its own. An import is
+found on the module path first, then among the bundled modules. Set
+`bundled = false` to leave the bundled modules out, as `--no-bundled` does.
 
 A configuration may come from any repository an editor opens, so the server
 reads only inside the configuration's directory:

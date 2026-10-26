@@ -21,7 +21,7 @@ use dolang_compile::{Unit, typeck};
 use tower_lsp_server::ls_types::Uri;
 
 use crate::{
-    backend::{Settings, compile_document},
+    backend::{Import, Settings, compile_document},
     module_path::ModulePath,
     typelib_index,
 };
@@ -54,6 +54,9 @@ struct Opened {
 /// The modules one configuration sees.
 struct Store {
     modules: Option<Arc<ModulePath>>,
+    /// The prelude its module sources are compiled with, which is its
+    /// configuration's. A store with no module path compiles none.
+    prelude: Vec<Import>,
     /// The open documents that are each module here, the most recent last
     buffers: HashMap<String, Vec<Uri>>,
     /// What each module resolved to when last looked up
@@ -111,6 +114,10 @@ impl Workspace {
     ) -> HashSet<Uri> {
         let modules = settings.and_then(|settings| settings.modules.clone());
         let key = modules.as_ref().map(|modules| modules.base().to_owned());
+        let prelude = match (settings, &modules) {
+            (Some(settings), Some(_)) => settings.prelude.clone(),
+            _ => Vec::new(),
+        };
         let opened = Opened {
             path: path.to_owned(),
             store: key.clone(),
@@ -133,14 +140,14 @@ impl Workspace {
         if self
             .stores
             .get(&key)
-            .is_none_or(|store| store.modules != modules)
+            .is_none_or(|store| store.modules != modules || store.prelude != prelude)
         {
             // A new configuration, or one that changed: everything it saw may
             // have changed
             if let Some(old) = self.stores.remove(&key) {
                 stale.extend(old.documents());
             }
-            let store = Store::new(modules, &self.documents);
+            let store = Store::new(modules, prelude, &self.documents);
             self.stores.insert(key.clone(), store);
         }
         let store = self.stores.get_mut(&key).expect("just ensured");
@@ -259,9 +266,14 @@ impl Workspace {
 
 impl Store {
     /// A store for `modules`, with the open documents that are its modules.
-    fn new(modules: Option<Arc<ModulePath>>, documents: &HashMap<Uri, Opened>) -> Self {
+    fn new(
+        modules: Option<Arc<ModulePath>>,
+        prelude: Vec<Import>,
+        documents: &HashMap<Uri, Opened>,
+    ) -> Self {
         let mut store = Self {
             modules,
+            prelude,
             buffers: HashMap::new(),
             entries: HashMap::new(),
             importers: HashMap::new(),
@@ -350,12 +362,15 @@ impl Store {
             Found::Buffer(opened) => Origin::Source(Arc::new(compile_document(
                 &opened.path,
                 opened.unit.source().to_owned(),
-                None,
+                &self.prelude,
                 Some(name),
             ))),
-            Found::File(path, text) => {
-                Origin::Source(Arc::new(compile_document(&path, text, None, Some(name))))
-            }
+            Found::File(path, text) => Origin::Source(Arc::new(compile_document(
+                &path,
+                text,
+                &self.prelude,
+                Some(name),
+            ))),
             Found::Bundled => Origin::Bundled,
             Found::Missing => Origin::Missing,
         };

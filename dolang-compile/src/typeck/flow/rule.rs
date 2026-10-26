@@ -270,8 +270,10 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
     /// A fresh variable standing for an argument held back, above what it's
     /// known to be already
     fn hold(&mut self, prepared: &'p Prepared, repeated: bool) -> Term {
-        if let Some(found) =
-            (self.exact.iter()).find(|found| std::ptr::eq(found.prepared, prepared))
+        if let Some(found) = self
+            .exact
+            .iter()
+            .find(|found| std::ptr::eq(found.prepared, prepared))
         {
             let term = self.closed(found.ty);
             if self.logging {
