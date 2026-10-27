@@ -33,7 +33,7 @@ pub def constructions()
   let _ = Pack()
   #   ^: flow m.Pack[...Value]
   let _ = Keyed()
-  #   ^: flow m.Keyed[...Value, ...{*(std.Sym): Value}]
+  #   ^: flow m.Keyed[...Value, ...{**Value}]
   let _ = Box "a"
   #   ^: flow m.Box[std.Int]
   let _ = Box [1]

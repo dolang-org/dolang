@@ -166,7 +166,7 @@ pub def database conn @ Connection
   #    |
   #    = note: `{typo: 2}` may be missing `id: Unknown`
   conn.execute t"SELECT ${#id}" id: [1]
-  # error: expected `{*sqlite.SqlValue, *(std.Sym): sqlite.SqlValue}`, found `{id: [std.Int]}`
+  # error: expected `{*sqlite.SqlValue, **sqlite.SqlValue}`, found `{id: [std.Int]}`
   #   --> main.dol:LL:LL
   #    |
   # LL |   conn.execute t"SELECT ${#id}" id: [1]

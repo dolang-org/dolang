@@ -14,9 +14,9 @@ pub def decayed()
 # LL |   kinds $d
 #    |          ^
 #    |
-#    = note: `{*(std.Sym): std.Str | std.Sym}` may be missing `kind: :a: | :b:`
+#    = note: `{**std.Str | std.Sym}` may be missing `kind: :a: | :b:`
 #    = note: `std.Str | std.Sym` does not fit `:a: | :b:`
-#    = note: in `{*(std.Sym): std.Str | std.Sym}`
+#    = note: in `{**std.Str | std.Sym}`
 
 pub def items()
   kinds {kind: :c:, name: 1}

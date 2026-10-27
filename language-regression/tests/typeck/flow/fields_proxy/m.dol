@@ -157,7 +157,7 @@ pub def invariant_writes _p @ FieldProxy[{**Value}, {?x: (Int | Str), ?y: Str}]
 pub def variance p @ Point
   covariant_reads $ fields(p)
   invariant_writes $ fields(p)
-# error: expected `std.FieldProxy[{*(std.Sym): Value}, {?x: std.Int | std.Str, ?y: std.Str}]`, found `std.FieldProxy[{x: std.Int, y: std.Str, label: std.Str}, {?x: std.Int, ?y: std.Str}]`
+# error: expected `std.FieldProxy[{**Value}, {?x: std.Int | std.Str, ?y: std.Str}]`, found `std.FieldProxy[{x: std.Int, y: std.Str, label: std.Str}, {?x: std.Int, ?y: std.Str}]`
 #   --> m.dol:LL:LL
 #    |
 # LL |   invariant_writes $ fields(p)

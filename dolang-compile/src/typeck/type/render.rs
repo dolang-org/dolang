@@ -842,6 +842,16 @@ impl Renderer<'_> {
 
     fn item(&self, item: &SchemaItem, naming: Naming<'_>, out: &mut String) {
         let db = self.db;
+        // `*(Sym): V` is written as its shorthand, the only spelling a
+        // function's parameters accept
+        if let (Multiplicity::Repeated, &Element::Keyed { key, value }) =
+            (&item.multiplicity, &item.element)
+            && Some(key) == db.intrinsic(Intrinsic::Sym)
+        {
+            out.push_str("**");
+            self.render_into(value, naming, out);
+            return;
+        }
         out.push_str(match item.multiplicity {
             Multiplicity::Required => "",
             Multiplicity::Optional => "?",

@@ -48,7 +48,7 @@ pub def held p @ :a:
 pub def dicts t @ (Int, Str)
   let mixed = {1, foo: false, 2, bar: nil}
   let _ = mixed
-  #       ^~~~~: flow {*std.Int, *(std.Sym): std.Bool | std.Nil}
+  #       ^~~~~: flow {*std.Int, **std.Bool | std.Nil}
   let positional = {1, 2}
   let _ = positional
   #       ^~~~~~~~~~: flow std.Dict[std.Int]
@@ -57,7 +57,7 @@ pub def dicts t @ (Int, Str)
   #       ^~~~~: flow std.Dict[std.Int, std.Str]
   let spread = {...t, a: 1}
   let _ = spread
-  #       ^~~~~~: flow {*std.Int | std.Str, *(std.Sym): std.Int}
+  #       ^~~~~~: flow {*std.Int | std.Str, **std.Int}
   bind {1, foo: false, 2, bar: nil}
     a b
     :foo :bar

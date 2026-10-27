@@ -98,7 +98,7 @@ pub def domain d @ Dict[Sym, Int] -> nil
   # LL |   let foo: _foo ... = d
   #    |                       ^
   #    |
-  #    = note: it unpacks as `{*(std.Sym): std.Int}`, which may have no item keyed `:foo:`
+  #    = note: it unpacks as `{**std.Int}`, which may have no item keyed `:foo:`
   nil
 
 pub def loops pairs @ Array[Array[Str]] tuples @ Array[(Str, Str)] -> nil

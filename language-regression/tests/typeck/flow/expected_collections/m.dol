@@ -34,6 +34,6 @@ pub def decayed()
 # LL |   one $d
 #    |        ^
 #    |
-#    = note: `{*(std.Sym): std.Str | std.Sym}` may be missing `type: :BIND: | :CACHE:`
+#    = note: `{**std.Str | std.Sym}` may be missing `type: :BIND: | :CACHE:`
 #    = note: `std.Str | std.Sym` does not fit `:BIND: | :CACHE:`
-#    = note: in `{*(std.Sym): std.Str | std.Sym}`
+#    = note: in `{**std.Str | std.Sym}`

@@ -8,7 +8,7 @@ use std::{cmp::Reverse, iter, sync::Arc};
 
 use super::{
     flow::Role,
-    r#type::{Database, DeclId, Labels, Shared, Style, TypeId},
+    r#type::{Database, DeclId, Labels, Shared, Style, Type, TypeId},
 };
 use crate::{UnitId, source::Span};
 
@@ -22,6 +22,22 @@ pub(crate) struct Types {
 impl Types {
     pub(crate) fn render(&self, ty: TypeId, style: Style) -> String {
         Database::fork(&self.db).render(ty, &self.labels, style)
+    }
+
+    /// `ty` as an annotation writes it, parenthesized unless it's compact
+    pub(crate) fn annotation(&self, ty: TypeId, style: Style) -> String {
+        let db = Database::fork(&self.db);
+        let rendered = db.render(ty, &self.labels, style);
+        let compact = match db.ty(ty) {
+            Type::Union(members) => members.len() < 2,
+            Type::Function(_) | Type::Quantified { .. } | Type::Overloaded { .. } => false,
+            _ => true,
+        };
+        if compact {
+            rendered
+        } else {
+            format!("({rendered})")
+        }
     }
 }
 
@@ -268,6 +284,12 @@ impl<'a> Judged<'a> {
     /// sees no type.
     pub fn ty(self, style: Style) -> String {
         self.analysis.types.render(self.entry.ty, style)
+    }
+
+    /// Its type as [`ty`](Self::ty) shows it, parenthesized where an
+    /// annotation would need it to be
+    pub fn annotation(self, style: Style) -> String {
+        self.analysis.types.annotation(self.entry.ty, style)
     }
 
     /// Whether it saw no value at all

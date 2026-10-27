@@ -59,4 +59,4 @@ pub def domain_first r @ Unpack[{**Str, key: Int}]
   let _ = key
   #       ^~~: flow std.Int | std.Str
   let _ = rest
-  #       ^~~~: flow std.Spread[{*(std.Sym): std.Str, ?key: std.Int}]
+  #       ^~~~: flow std.Spread[{**std.Str, ?key: std.Int}]

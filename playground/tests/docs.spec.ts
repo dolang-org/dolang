@@ -20,18 +20,23 @@ test('signatures include annotated types', () => {
     params: [{ kind: 'pos', name: 'point', type: name('Point') }, { kind: 'key', name: 'limit', optional: true }],
     returns: { kind: 'union', members: [name('Int'), name('nil')] },
   };
-  expect(label('m', place)).toBe('def place[T, :K, ...R] point@Point :limit = … -> (Int | nil)');
-  expect(label('m', { kind: 'field', name: 'x', type: name('Int') })).toBe('field x @ Int');
-  expect(label('m', { kind: 'class', name: 'Box', binders: [{ kind: 'pos', name: 'T' }] })).toBe('class Box[T]');
+  expect(label('m', place)).toBe('# module m\ndef place[T, :K, ...R] point@Point :limit = ... -> (Int | nil)\n  ...');
+  const box: Entity = { kind: 'class', name: 'Box', binders: [{ kind: 'pos', name: 'T' }] };
+  expect(label('m', box)).toBe('# module m\nclass Box[T]');
+  // A member is in its class
+  expect(label('m', { kind: 'field', name: 'x', type: name('Int') }, box))
+    .toBe('# module m\nclass Box[T]\n  field x @ Int');
   expect(label('m', { kind: 'class', name: 'Sym', decorators: ['final', 'mixable'] }))
-    .toBe('#[final] #[mixable] class Sym');
+    .toBe('# module m\n#[final]\n#[mixable]\nclass Sym');
+  expect(label('m', { kind: 'module', name: 'm' })).toBe('import m');
+  expect(label('m', { kind: 'value', name: 'args' })).toBe('# module m\nlet args = ...');
   // A spread rest's element type keeps its parentheses
   const fork: Entity = {
     kind: 'function',
     name: 'fork',
     params: [{ kind: 'mixed_rest', name: 'thunks', type_spread: true, type: { kind: 'func', params: [], ret: name('Rs') } }],
   };
-  expect(label('m', fork)).toBe('def fork ...thunks @ ...(() -> Rs)');
+  expect(label('m', fork)).toBe('# module m\ndef fork ...thunks @ ...(() -> Rs)\n  ...');
 });
 
 test('prose drops playground markup and manual anchors', () => {
@@ -79,11 +84,12 @@ test('lookup follows re-exports, members and overloads', async () => {
     },
   ]);
   expect(await docs.describe({ module: 'a', item: '' }))
-    .toEqual([{ label: 'module a', note: undefined, prose: 'Module a.', shape: 'other' }]);
+    .toEqual([{ label: 'import a', prose: 'Module a.', shape: 'other' }]);
   expect(await docs.describe({ module: 'a', item: 'Thing' }))
-    .toEqual([{ label: 'class Thing', note: 'in module `a`', prose: 'An inner thing.', shape: 'signature' }]);
-  expect(await docs.describe({ module: 'a', item: 'Thing.(init)' }))
-    .toEqual([{ label: 'def (init) self', note: 'in class `a.Thing`', prose: 'Makes one.', shape: 'signature' }]);
+    .toEqual([{ label: '# module a\nclass Thing', prose: 'An inner thing.', shape: 'signature' }]);
+  expect(await docs.describe({ module: 'a', item: 'Thing.(init)' })).toEqual([{
+    label: '# module a\nclass Thing\n  def (init) self\n    ...', prose: 'Makes one.', shape: 'signature',
+  }]);
   expect(await docs.describe({ module: 'a', item: 'Thing.hidden' })).toEqual([]);
   expect(await docs.describe({ module: 'a', item: 'Loop' })).toEqual([]);
   expect(await docs.describe({ module: 'a', item: 'Gone' })).toEqual([]);
@@ -91,8 +97,9 @@ test('lookup follows re-exports, members and overloads', async () => {
   expect(await docs.describe({ module: 'missing', item: 'x' })).toEqual([]);
   const labels = async (overload?: number) =>
     (await docs.describe({ module: 'b', item: 'f', overload })).map(described => described.label);
-  expect(await labels()).toEqual(['def f x @ Int', 'def f x @ Str', 'def f x']);
-  expect(await labels(1)).toEqual(['def f x @ Str']);
+  const f = (param: string) => `# module b\ndef f ${param}\n  ...`;
+  expect(await labels()).toEqual([f('x @ Int'), f('x @ Str'), f('x')]);
+  expect(await labels(1)).toEqual([f('x @ Str')]);
 });
 
 test('links go to API pages beside the playground', () => {

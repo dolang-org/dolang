@@ -6,10 +6,8 @@ import type { Declaration, Hover, Param, Signature, TypeLine } from './protocol'
 
 /** One declaration's docs, as hover shows them */
 export interface Described {
-  /** Its signature */
+  /** Its signature, in its class and noted with its module */
   label: string;
-  /** Where it's declared, as "in module `m`" or "in class `m.C`" */
-  note?: string;
   /** Its doc comment, as Markdown */
   prose: string;
   shape: 'signature' | 'value' | 'other';
@@ -28,29 +26,44 @@ const width = 80;
 function param(param: Param, at: string): string {
   let text = param.head;
   if (param.type !== undefined) text += at + param.type;
-  if (param.default) text += ' = …';
+  if (param.default) text += ' = ...';
   return text;
 }
 const alone = (p: Param) => param(p, ' @ ');
 
+// `Param::binding`: the parameter as a `let` binds it, without its default
+const paramBinding = (p: Param) => `${binding(`let ${p.head}`, p.type)} = ...`;
+
 // `signature::def`: `prefix`, then the parameters and return type, vertical
-// when too wide for one line
-function def(prefix: string, params: Param[], returns?: string): string {
+// when too wide for one line, and a `...` body when it has a `body`
+function def(prefix: string, params: Param[], returns: string | undefined, body: boolean): string {
   const arrow = returns === undefined ? '' : ` -> ${returns}`;
   const line = params.length === 0 ? `${prefix}${arrow}`
     : params.length === 1 ? `${prefix} ${alone(params[0])}${arrow}`
     : `${prefix} ${params.map(p => param(p, '@')).join(' ')}${arrow}`;
-  if ([...line].length <= width) return line;
-  return `${prefix}${params.map(p => `\n  ${alone(p)}`).join('')}\ndo${arrow}`;
+  // Decorators are lines of their own
+  const text = [...line.slice(line.lastIndexOf('\n') + 1)].length <= width ? line
+    : `${prefix}${params.map(p => `\n  ${alone(p)}`).join('')}\ndo${arrow}`;
+  return body ? `${text}\n  ...` : text;
 }
 
 // `signature::binding`
 const binding = (binding: string, type?: string) => type === undefined ? binding : `${binding} @ ${type}`;
 
+/**
+ * `signature::member`: `label` in the class whose header is `header`, if it's
+ * a member, and noted as in `module` when that's given.
+ */
+export function member(module: string | undefined, header: string | undefined, label: string): string {
+  const noted = module === undefined ? '' : `# module ${module}\n`;
+  if (header === undefined) return `${noted}${label}`;
+  return `${noted}${header}${label.split('\n').map(line => `\n  ${line}`).join('')}`;
+}
+
 /** A declaration's signature, as `declaration_label` writes it. */
 export function signature(signature: Signature): string {
   const pub = (is: boolean) => is ? 'pub ' : '';
-  const decorators = (items: string[]) => items.map(item => `#[${item}] `).join('');
+  const decorators = (items: string[]) => items.map(item => `#[${item}]\n`).join('');
   const named = (name: string, binders: string[]) => binders.length ? `${name}[${binders.join(', ')}]` : name;
   switch (signature.form) {
     case 'class': {
@@ -61,32 +74,37 @@ export function signature(signature: Signature): string {
     case 'def': {
       const at = signature.typeOnly ? '@' : '';
       const prefix = `${decorators(signature.decorators)}${pub(signature.pub)}${at}def ${named(signature.name, signature.binders)}`;
-      return def(prefix, signature.params, signature.returns);
+      return def(prefix, signature.params, signature.returns, signature.body);
     }
     case 'field':
+      return binding(`${pub(signature.pub)}field ${signature.name}`, signature.type);
     case 'let':
-      return binding(`${pub(signature.pub)}${signature.form} ${signature.name}`, signature.type);
+      return `${binding(`${pub(signature.pub)}let ${signature.name}`, signature.type)} = ...`;
     case 'param':
-      return alone(signature.param);
+      return paramBinding(signature.param);
   }
 }
 
-// `Described::render`: a fenced label, where it's declared, then its doc
-// comment. Below a `typed` block, a value's label repeats it, so only its doc
-// comment is left, and nothing when it has none.
+// `Described::render`: a fenced label, then its doc comment. Below a `typed`
+// block, a value's label repeats it, so only its doc comment is left, and
+// nothing when it has none.
 function render(described: Described, typed: boolean): string | undefined {
   if (typed && described.shape === 'value') return described.prose || undefined;
   const fence = described.label.includes('```') ? '````' : '```';
   let markdown = `${fence}dolang\n${described.label}\n${fence}`;
-  if (described.note) markdown += `\n\n*${described.note}*`;
   if (described.prose) markdown += `\n\n${described.prose}`;
   return markdown;
 }
 
-// `label`'s lines: a name and its type, and the overload a call chose
+// `signature::typed`: a line of what the check concluded. A qualified name
+// binds its last part, and is kept in a comment.
 function typeLine(line: TypeLine): string {
-  const typed = line.name === undefined ? line.type : `${line.name} @ ${line.type}`;
-  return line.overload === undefined ? typed : `${typed}  # overload ${line.overload + 1}`;
+  const name = line.name === undefined ? '_' : line.name.slice(line.name.lastIndexOf('.') + 1);
+  const notes = [];
+  if (line.name?.includes('.')) notes.push(line.name);
+  if (line.overload !== undefined) notes.push(`overload ${line.overload + 1}`);
+  const typed = `let ${name} @ ${line.type} = ...`;
+  return notes.length ? `${typed}  # ${notes.join(', ')}` : typed;
 }
 
 /**
@@ -96,8 +114,7 @@ function typeLine(line: TypeLine): string {
 export function markdown(hover: Hover, bundled: Bundled): string | undefined {
   const found = hover.declarations.map(declaration => declaration.kind === 'local'
     ? [{
-      label: signature(declaration.signature),
-      note: declaration.note,
+      label: member(undefined, declaration.class, signature(declaration.signature)),
       prose: declaration.doc,
       shape: declaration.shape,
     }]
