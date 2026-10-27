@@ -1,10 +1,10 @@
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
-    fs, iter, mem,
+    iter, mem,
     panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, RwLock, mpsc},
+    sync::{Arc, Mutex, MutexGuard, RwLock, Weak, mpsc},
     thread,
     time::{Duration, Instant},
 };
@@ -15,7 +15,6 @@ use tokio::sync::{
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
     oneshot,
 };
-use toml::{Table, Value as TomlValue};
 use tower_lsp_server::{
     Client, ClientSocket, LanguageServer, LspService, jsonrpc::Result, ls_types::*,
 };
@@ -29,9 +28,9 @@ use dolang_compile::{
 use crate::{
     doc_index,
     lookup::{self, Modules, Target},
-    module_path::ModulePath,
+    settings::{CONFIG_FILE_NAME, Import},
     signature,
-    workspace::{Resolved, Workspace},
+    workspace::{Check, Member, Round, Workspace, Workspaces},
 };
 
 const TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
@@ -40,7 +39,6 @@ const TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
     SemanticTokenModifier::DEFINITION,
     SemanticTokenModifier::STATIC,
 ];
-const CONFIG_FILE_NAME: &str = ".dolang-lsp.toml";
 /// How long a document's edits must settle before it is type checked
 const CHECK_DELAY: Duration = Duration::from_millis(300);
 /// The most module sources one check compiles from the module path
@@ -699,41 +697,25 @@ struct Decl {
     hover: Vec<Described>,
 }
 
-/// Orders the projections of one document.
-///
-/// Handlers run concurrently, so edits can reach the worker out of order; the
-/// client's version says which is newer.  Each open starts a new epoch, so a
-/// reopened document outranks whatever its previous session left in flight.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct Stamp {
-    epoch: u64,
-    version: Option<i32>,
-}
-
-impl Stamp {
-    /// A document saved without being opened.
-    const UNOPENED: Self = Self {
-        epoch: 0,
-        version: None,
-    };
-}
-
-/// What the worker made of one version of a document.
+/// What the worker made of one revision of a document.
 ///
 /// A newer projection replaces the whole document, so handlers hold an `Arc`
 /// of one rather than a lock.
 struct Document {
-    stamp: Stamp,
-    /// The unit the projection came from, which holds the document's source
+    /// The revision it projects
+    member: Arc<Member>,
+    /// The revision's unit, which holds the document's source
     unit: Arc<Unit<'static>>,
+    /// The unit's compile diagnostics
+    diagnostics: Vec<Diagnostic>,
     tokens: Vec<SemanticToken>,
     /// Token range to the declaration it names, sorted by range start
     refs: Vec<(Range, NodeId)>,
     decls: HashMap<NodeId, Decl>,
     symbols: Vec<DocumentSymbol>,
     patches: Vec<Patch>,
-    /// What the latest check of this projection concluded. A check of an
-    /// import's change replaces it with the same stamp.
+    /// What the latest check of its revision concluded. A check after an
+    /// import's change replaces it.
     analyzed: Mutex<Option<Arc<Analyzed>>>,
 }
 
@@ -743,14 +725,15 @@ struct Analyzed {
     unit: UnitId,
     /// The document's module name in the check
     name: String,
-    analysis: typeck::Analysis,
-    /// The document and the modules the check read from source
-    modules: Modules,
+    /// What the check concluded about all its units
+    analysis: Arc<typeck::Analysis>,
+    /// The modules the check read from source
+    modules: Arc<Modules>,
 }
 
 /// A document's check
 #[derive(Clone, Default)]
-struct Checked {
+pub(crate) struct Checked {
     diagnostics: Vec<Diagnostic>,
     /// `None` for a unit the checker can't take
     analyzed: Option<Arc<Analyzed>>,
@@ -1040,91 +1023,84 @@ fn label(node: typeck::Node<'_>, named: Option<&str>) -> Option<Vec<String>> {
     Some(vec![typed(member.or(named), value)])
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Import {
-    Module(String),
-    ModuleAs(String, String),
-    Item(String, String),
-    ItemAs(String, String, String),
-    TypeItem(String, String),
-    TypeItemAs(String, String, String),
-}
-
-impl Import {
-    fn item(module: &str, item: &str, bind: Option<&str>) -> std::result::Result<Self, String> {
-        let type_only = item.starts_with('@');
-        let item = if type_only { &item[1..] } else { item };
-        if type_only && item.is_empty() {
-            return Err("type-only prelude item name cannot be empty".into());
-        }
-        Ok(match (type_only, bind) {
-            (false, None) => Self::Item(module.into(), item.into()),
-            (false, Some(bind)) => Self::ItemAs(module.into(), item.into(), bind.into()),
-            (true, None) => Self::TypeItem(module.into(), item.into()),
-            (true, Some(bind)) => Self::TypeItemAs(module.into(), item.into(), bind.into()),
-        })
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Settings {
-    pub(crate) prelude: Vec<Import>,
-    pub(crate) modules: Option<Arc<ModulePath>>,
-}
-
 #[derive(Debug, Default)]
 struct Config {
     root: Option<PathBuf>,
     workspaces: Vec<PathBuf>,
-    settings: HashMap<PathBuf, Arc<Settings>>,
     /// Whether the client lets the server register file watchers
     watch: bool,
 }
 
-type Documents = Arc<Mutex<HashMap<Uri, Arc<Document>>>>;
-
-/// The epoch of each open document, and the last one handed out.
+/// The documents the client has open, and the workspaces they keep alive.
 #[derive(Default)]
-struct Epochs {
-    last: u64,
-    open: HashMap<Uri, u64>,
-    /// The newest revision of each open document
-    revisions: HashMap<Uri, (Stamp, Revision)>,
+struct Documents {
+    handles: HashMap<Uri, Handle>,
+    workspaces: Workspaces,
+}
+
+/// A document the client has open.
+struct Handle {
+    workspace: Arc<Workspace>,
+    path: PathBuf,
+    encoding: PositionEncodingKind,
+    /// Its current revision, the one its workspace holds
+    member: Arc<Member>,
+    /// The projection of `member`, once the worker has made it
+    revision: Revision,
+    /// The last projection published, for requests to fall back on
+    projected: Option<Arc<Document>>,
 }
 
 /// A document's projection of one revision of its text, once the worker has
 /// made it, or an error if the worker passed over the revision.
 type Revision = Shared<oneshot::Receiver<Arc<Document>>>;
 
+impl Documents {
+    /// Stores the projection of a document's current revision, returning
+    /// whether it is that.
+    fn project(&mut self, uri: &Uri, document: &Arc<Document>) -> bool {
+        match self.handles.get_mut(uri) {
+            Some(handle) if Arc::ptr_eq(&handle.member, &document.member) => {
+                handle.projected = Some(document.clone());
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The stored projection a check of `member` belongs to, unless a newer
+    /// revision has replaced it.
+    fn checked(&self, uri: &Uri, member: &Arc<Member>) -> Option<Arc<Document>> {
+        let handle = self.handles.get(uri)?;
+        let document = handle.projected.as_ref()?;
+        (Arc::ptr_eq(&handle.member, member) && Arc::ptr_eq(&document.member, member))
+            .then(|| document.clone())
+    }
+}
+
 pub(crate) struct Backend {
-    documents: Documents,
-    epochs: Mutex<Epochs>,
+    documents: Arc<Mutex<Documents>>,
     worker: mpsc::Sender<Request>,
     client: Client,
     config: AsyncMutex<Config>,
     position_encoding: RwLock<PositionEncodingKind>,
 }
 
-/// A document's text to compile, from an open, an edit or a save.
+/// A revision of an open document to compile and project.
 struct Job {
     uri: Uri,
-    path: PathBuf,
-    text: String,
-    /// A save has none, and takes the document's latest
-    stamp: Option<Stamp>,
-    settings: Option<Arc<Settings>>,
+    workspace: Arc<Workspace>,
+    member: Arc<Member>,
     encoding: PositionEncodingKind,
-    /// Given the projection once it is stored and its diagnostics published,
-    /// and dropped if the worker passes over the job
+    /// Given the projection once it is published, and dropped if the worker
+    /// passes over the revision
     done: oneshot::Sender<Arc<Document>>,
 }
 
 enum Request {
     Compile(Job),
-    /// The document closed in the given epoch
-    Close(Uri, u64),
-    /// Module sources on disk changed
-    Files(Vec<PathBuf>),
+    /// A workspace whose table changed, to check once it settles
+    Due(Arc<Workspace>),
 }
 
 enum Event {
@@ -1134,68 +1110,50 @@ enum Event {
         diagnostics: Vec<Diagnostic>,
         done: oneshot::Sender<Arc<Document>>,
     },
-    /// A check of the document's projection with the given stamp, its
-    /// diagnostics with the compile diagnostics
+    /// A check of a revision
     Checked {
         uri: Uri,
-        stamp: Stamp,
+        member: Arc<Member>,
         checked: Checked,
     },
-    Closed(Uri, u64),
-}
-
-/// The unit the worker last compiled for a document.
-struct Open {
-    stamp: Stamp,
-    settings: Option<Arc<Settings>>,
-    /// The module the document is on its module path, or `None` for a script
-    module: Option<String>,
-    unit: Arc<Unit<'static>>,
-    encoding: PositionEncodingKind,
-    /// The unit's compile diagnostics
-    diagnostics: Vec<Diagnostic>,
-    /// The unit's check, once it has been checked
-    checked: Option<Checked>,
 }
 
 /// Compiles documents off the event loop, on a thread of its own, and type
-/// checks them once their edits settle.
+/// checks their workspaces once their tables settle.
 ///
-/// Projections and checks go to the applier task, which stores projections and
-/// publishes diagnostics in the order the worker made them.
+/// Projections and checks go to the applier task, which publishes those of
+/// current revisions in the order the worker made them.
 struct Worker {
     events: UnboundedSender<Event>,
-    open: HashMap<Uri, Open>,
-    /// The epoch each document last closed in; older work for it is dropped
-    closed: HashMap<Uri, u64>,
-    /// How long edits must settle before a check, or `None` not to check
+    documents: Arc<Mutex<Documents>>,
+    /// How long a workspace's table must settle before a check, or `None` not
+    /// to check
     check_delay: Option<Duration>,
-    /// When each document with an unchecked unit is due to be checked
-    pending: HashMap<Uri, Instant>,
-    workspace: Workspace,
+    /// When each workspace whose table changed is due to be checked
+    pending: Vec<(Weak<Workspace>, Instant)>,
 }
 
 impl Worker {
     fn run(mut self, requests: mpsc::Receiver<Request>) {
         loop {
-            // Few documents are open, so a scan finds the next check soon enough
-            let due = self
-                .pending
-                .iter()
-                .min_by_key(|(_, deadline)| **deadline)
-                .map(|(uri, deadline)| (uri.clone(), *deadline));
+            // Few workspaces are live, so a scan finds the next check soon enough
+            let due = (self.pending.iter().enumerate())
+                .min_by_key(|(_, (_, deadline))| *deadline)
+                .map(|(at, (_, deadline))| (at, *deadline));
             let first = match due {
                 None => match requests.recv() {
                     Ok(first) => first,
                     Err(mpsc::RecvError) => break,
                 },
-                Some((uri, deadline)) => {
+                Some((at, deadline)) => {
                     match requests.recv_timeout(deadline.saturating_duration_since(Instant::now()))
                     {
                         Ok(first) => first,
                         Err(mpsc::RecvTimeoutError::Timeout) => {
-                            self.pending.remove(&uri);
-                            self.check(uri);
+                            let (workspace, _) = self.pending.swap_remove(at);
+                            if let Some(workspace) = workspace.upgrade() {
+                                self.check(&workspace);
+                            }
                             continue;
                         }
                         Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -1203,216 +1161,135 @@ impl Worker {
                 }
             };
             let batch: Vec<_> = iter::once(first).chain(requests.try_iter()).collect();
-            // Only the newest edit of each document is worth compiling
+            // Only the newest revision of each document is worth compiling
             let superseded: Vec<bool> = (0..batch.len())
                 .map(|i| match &batch[i] {
-                    Request::Compile(Job {
-                        uri,
-                        stamp: Some(stamp),
-                        ..
-                    }) => batch[i + 1..].iter().any(|later| match later {
-                        Request::Compile(later) => {
-                            later.uri == *uri && later.stamp.is_some_and(|later| later >= *stamp)
-                        }
-                        Request::Close(later, epoch) => later == uri && stamp.epoch <= *epoch,
-                        Request::Files(_) => false,
+                    Request::Compile(job) => batch[i + 1..].iter().any(|later| match later {
+                        Request::Compile(later) => later.uri == job.uri,
+                        Request::Due(_) => false,
                     }),
-                    _ => false,
+                    Request::Due(_) => false,
                 })
                 .collect();
             for (request, superseded) in batch.into_iter().zip(superseded) {
                 match request {
-                    Request::Compile(_) if superseded => {}
+                    Request::Compile(job) if superseded => self.due(&job.workspace),
                     Request::Compile(job) => self.compile(job),
-                    Request::Close(uri, epoch) => self.close(uri, epoch),
-                    Request::Files(paths) => {
-                        let stale = self.workspace.files(&paths);
-                        self.recheck(stale);
-                    }
+                    Request::Due(workspace) => self.due(&workspace),
                 }
             }
+        }
+    }
+
+    /// Puts a workspace's check off until its table settles again.
+    fn due(&mut self, workspace: &Arc<Workspace>) {
+        let Some(delay) = self.check_delay else {
+            return;
+        };
+        let deadline = Instant::now() + delay;
+        let pending = (self.pending.iter_mut())
+            .find(|(pending, _)| pending.as_ptr() == Arc::as_ptr(workspace));
+        match pending {
+            Some((_, pending)) => *pending = deadline,
+            None => self.pending.push((Arc::downgrade(workspace), deadline)),
         }
     }
 
     fn compile(&mut self, job: Job) {
         let Job {
             uri,
-            path,
-            text,
-            stamp,
-            settings,
+            workspace,
+            member,
             encoding,
             done,
         } = job;
-        let open = self.open.get(&uri);
-        let stamp = stamp.unwrap_or_else(|| open.map_or(Stamp::UNOPENED, |open| open.stamp));
-        if self
-            .closed
-            .get(&uri)
-            .is_some_and(|&epoch| stamp.epoch <= epoch)
-            || open.is_some_and(|open| stamp < open.stamp)
-        {
+        self.due(&workspace);
+        if !workspace.current(&member) {
             return;
         }
-        let module = (settings.as_ref())
-            .and_then(|settings| settings.modules.as_ref())
-            .and_then(|modules| modules.module_of(&path));
-        let cached = open
-            .filter(|open| {
-                open.settings == settings
-                    && open.module == module
-                    && open.encoding == encoding
-                    && open.unit.source() == text
-            })
-            .map(|open| (open.unit.clone(), open.checked.clone()));
-        let (cached, checked) = cached.unzip();
-        let checked = checked.flatten();
         let projected = panic::catch_unwind(AssertUnwindSafe(|| {
-            let unit = cached.unwrap_or_else(|| {
-                let prelude = settings
-                    .as_deref()
-                    .map_or(&[][..], |settings| &settings.prelude);
-                Arc::new(compile_document(&path, text, prelude, module.as_deref()))
-            });
-            let (document, diagnostics) = project(&uri, stamp, unit.clone(), &encoding);
-            (unit, document, diagnostics)
+            let unit = workspace.unit(&member);
+            project(&uri, member.clone(), unit, &encoding)
         }));
         // The panic hook has logged the panic itself
-        let Ok((unit, mut document, diagnostics)) = projected else {
-            log::error!("failed to compile {}", path.display());
+        let Ok(mut document) = projected else {
+            log::error!("failed to compile {}", uri.as_str());
             return;
         };
-        self.closed.remove(&uri);
-        // An unchanged unit keeps its check; a changed one waits for its edits
-        // to settle, each edit pushing the check back
-        let published = match (&checked, self.check_delay) {
-            (Some(checked), _) => {
+        // The same text keeps its check until the workspace's is done
+        let diagnostics = match member.checked() {
+            Some(checked) => {
                 *document.analyzed.get_mut().expect("analysis lock poisoned") =
                     checked.analyzed.clone();
-                [&diagnostics[..], &checked.diagnostics].concat()
+                [&document.diagnostics[..], &checked.diagnostics].concat()
             }
-            (None, Some(delay)) => {
-                self.pending.insert(uri.clone(), Instant::now() + delay);
-                diagnostics.clone()
-            }
-            (None, None) => diagnostics.clone(),
+            None => document.diagnostics.clone(),
         };
-        let stale =
-            self.workspace
-                .update(&uri, &path, settings.as_deref(), module.as_deref(), &unit);
-        self.open.insert(
-            uri.clone(),
-            Open {
-                stamp,
-                settings,
-                module,
-                unit,
-                encoding,
-                diagnostics,
-                checked,
-            },
-        );
-        self.recheck(stale);
         _ = self.events.send(Event::Projected {
             uri,
             document,
-            diagnostics: published,
+            diagnostics,
             done,
         });
     }
 
-    /// Checks a document whose check is due, if it is still open and unchecked.
-    fn check(&mut self, uri: Uri) {
-        let Some(open) = self.open.get_mut(&uri) else {
-            return;
-        };
-        if open.checked.is_some() {
-            return;
-        }
+    /// Checks a workspace whose table has settled.
+    fn check(&mut self, workspace: &Arc<Workspace>) {
         let start = Instant::now();
-        let workspace = &mut self.workspace;
-        let checked = panic::catch_unwind(AssertUnwindSafe(|| {
-            let resolved = workspace.resolve(&uri)?;
-            let checked = check_document(&uri, &open.unit, &open.encoding, &resolved);
-            Some((checked, resolved.stale))
-        }));
-        log::debug!("checked {} in {:?}", uri.as_str(), start.elapsed());
-        // The compile diagnostics already published are all there is to say
-        // about a unit the checker can't take
-        let (checked, stale) = checked
-            .unwrap_or_else(|_| {
-                log::error!("failed to check {}", uri.as_str());
-                None
-            })
-            .unwrap_or_default();
-        open.checked = Some(checked.clone().unwrap_or_default());
-        if let Some(checked) = checked {
-            _ = self.events.send(Event::Checked {
-                uri,
-                stamp: open.stamp,
-                checked: Checked {
-                    diagnostics: [&open.diagnostics[..], &checked.diagnostics].concat(),
-                    ..checked
-                },
-            });
+        let round = panic::catch_unwind(AssertUnwindSafe(|| workspace.prepare()));
+        let checks = match round {
+            Ok(Round::Checks(checks)) => checks,
+            // Its table changed, which puts the check off again
+            Ok(Round::Changed) => return self.due(workspace),
+            Err(_) => {
+                log::error!("failed to prepare a check");
+                return;
+            }
+        };
+        if checks.is_empty() {
+            return;
         }
-        self.recheck(stale);
-    }
-
-    /// Schedules checks of open documents whose checks a change made stale.
-    fn recheck(&mut self, stale: HashSet<Uri>) {
-        for uri in stale {
-            let Some(open) = self.open.get_mut(&uri) else {
+        let encodings: HashMap<Uri, PositionEncodingKind> = {
+            let documents = self.documents.lock().expect("documents lock poisoned");
+            (documents.handles.iter())
+                .map(|(uri, handle)| (uri.clone(), handle.encoding.clone()))
+                .collect()
+        };
+        for check in checks {
+            let checked = panic::catch_unwind(AssertUnwindSafe(|| {
+                check_units(workspace, &check, &encodings)
+            }));
+            let Ok(checked) = checked else {
+                log::error!("failed to check");
                 continue;
             };
-            open.checked = None;
-            if let Some(delay) = self.check_delay {
-                self.pending.insert(uri, Instant::now() + delay);
+            for member in workspace.settle(check, checked) {
+                // The compile diagnostics already published are all there is
+                // to say about a unit the checker can't take
+                if let Some(uri) = member.uri()
+                    && let Some(checked) = member.checked()
+                    && checked.analyzed.is_some()
+                {
+                    let uri = uri.clone();
+                    _ = (self.events).send(Event::Checked {
+                        uri,
+                        member,
+                        checked,
+                    });
+                }
             }
         }
-    }
-
-    fn close(&mut self, uri: Uri, epoch: u64) {
-        if self
-            .open
-            .get(&uri)
-            .is_some_and(|open| open.stamp.epoch <= epoch)
-        {
-            self.open.remove(&uri);
-            self.pending.remove(&uri);
-            let stale = self.workspace.close(&uri);
-            self.recheck(stale);
-        }
-        let closed = self.closed.entry(uri.clone()).or_default();
-        *closed = (*closed).max(epoch);
-        _ = self.events.send(Event::Closed(uri, epoch));
+        log::debug!("checked a workspace in {:?}", start.elapsed());
     }
 }
 
-/// Stores a projection unless the document already has a newer one.
-fn apply(documents: &Documents, uri: Uri, document: Arc<Document>) -> bool {
-    let mut documents = documents.lock().expect("documents lock poisoned");
-    if documents
-        .get(&uri)
-        .is_some_and(|stored| stored.stamp > document.stamp)
-    {
-        return false;
-    }
-    documents.insert(uri, document);
-    true
-}
-
-/// The stored projection of a document, if it is the one with `stamp`.
-fn current(documents: &Documents, uri: &Uri, stamp: Stamp) -> Option<Arc<Document>> {
-    let documents = documents.lock().expect("documents lock poisoned");
-    (documents.get(uri))
-        .filter(|document| document.stamp == stamp)
-        .cloned()
-}
-
-/// Applies the worker's events in order, publishing each stored projection's
-/// diagnostics.
-async fn publish(client: Client, documents: Documents, mut events: UnboundedReceiver<Event>) {
+/// Publishes what the worker made of current revisions, in order.
+async fn publish(
+    client: Client,
+    documents: Arc<Mutex<Documents>>,
+    mut events: UnboundedReceiver<Event>,
+) {
+    let lock = || documents.lock().expect("documents lock poisoned");
     while let Some(event) = events.recv().await {
         match event {
             Event::Projected {
@@ -1422,32 +1299,24 @@ async fn publish(client: Client, documents: Documents, mut events: UnboundedRece
                 done,
             } => {
                 let document = Arc::new(document);
-                let version = document.stamp.version;
-                if apply(&documents, uri.clone(), document.clone()) {
+                let version = document.member.version();
+                if lock().project(&uri, &document) {
                     client.publish_diagnostics(uri, diagnostics, version).await;
                 }
                 _ = done.send(document);
             }
             Event::Checked {
                 uri,
-                stamp,
+                member,
                 checked,
             } => {
-                // Unless a newer projection has replaced what was checked
-                if let Some(document) = current(&documents, &uri, stamp) {
+                let document = lock().checked(&uri, &member);
+                if let Some(document) = document {
                     *document.analyzed.lock().expect("analysis lock poisoned") = checked.analyzed;
-                    client
-                        .publish_diagnostics(uri, checked.diagnostics, stamp.version)
+                    let diagnostics = [&document.diagnostics[..], &checked.diagnostics].concat();
+                    (client)
+                        .publish_diagnostics(uri, diagnostics, member.version())
                         .await;
-                }
-            }
-            Event::Closed(uri, epoch) => {
-                let mut documents = documents.lock().expect("documents lock poisoned");
-                if documents
-                    .get(&uri)
-                    .is_some_and(|document| document.stamp.epoch <= epoch)
-                {
-                    documents.remove(&uri);
                 }
             }
         }
@@ -1504,84 +1373,105 @@ pub(crate) fn compile_document(
     config.unit(path, text)
 }
 
-/// Type checks a document's unit against the modules it imports.
+/// Type checks a workspace's members together, against the bundled typelibs
+/// of the rest of what they import.
 ///
-/// Returns the checker's diagnostics located in the document and its analysis,
-/// or `None` when the unit failed to compile and can't be checked.  An import
-/// `resolved` lacks is reported as not found.
-fn check_document(
-    uri: &Uri,
-    unit: &Arc<Unit<'static>>,
-    encoding: &PositionEncodingKind,
-    resolved: &Resolved<'_>,
-) -> Option<Checked> {
+/// Gives each member the checker's diagnostics located in it, if the client
+/// has it open, and the check's analysis, or no analysis when its unit failed
+/// to compile and can't be checked.  A module neither a member nor bundled is
+/// reported as not found.
+fn check_units(
+    workspace: &Workspace,
+    check: &Check,
+    encodings: &HashMap<Uri, PositionEncodingKind>,
+) -> Vec<Checked> {
+    let units: Vec<_> = (check.members().iter())
+        .map(|member| workspace.unit(member))
+        .collect();
     let mut builder = typeck::Builder::new();
     builder.analysis(true);
     // The shell's pipelines connect stages with `proc`'s pipes
     builder.pipes(("proc", "PipeSender"), ("proc", "PipeReceiver"));
-    let id = match builder.unit(unit) {
-        Ok(id) => id,
-        Err(err) if matches!(err.kind(), ErrorKind::Fail) => return None,
-        Err(err) => {
-            log::error!("cannot check {}: {err}", uri.as_str());
-            return None;
-        }
-    };
-    let mut sources = vec![(id, unit)];
-    for (name, source) in &resolved.units {
-        match builder.unit(source) {
+    let ids: Vec<_> = (check.members().iter().zip(&units))
+        .map(|(member, unit)| match builder.unit(unit) {
+            Ok(id) => Some(id),
             // A source that failed to compile is left out, and imports of its
             // module are reported as not found
-            Ok(source_id) => sources.push((source_id, source)),
-            Err(err) if matches!(err.kind(), ErrorKind::Fail) => {}
-            Err(err) => log::error!("cannot check against {name}: {err}"),
-        }
-    }
-    for &typelib in &resolved.typelibs {
+            Err(err) if matches!(err.kind(), ErrorKind::Fail) => None,
+            Err(err) => {
+                log::error!("cannot check {}: {err}", member.path().display());
+                None
+            }
+        })
+        .collect();
+    for typelib in check.typelibs() {
         if let Err(err) = builder.typelib(typelib) {
             log::error!("cannot check against {}: {err}", typelib.module());
         }
     }
-    let check = builder.check();
-    let index = DocumentIndex::new(unit.source(), encoding.clone());
-    let mut diagnostics = Vec::new();
-    for diag in check.diagnostics() {
-        if diag.span().unit() == Some(id) {
+    let checked = builder.check();
+    let at: HashMap<UnitId, usize> = (ids.iter().enumerate())
+        .filter_map(|(at, id)| Some(((*id)?, at)))
+        .collect();
+    // Where each member's diagnostics are located, if the client has it open
+    let documents: Vec<_> = (check.members().iter().zip(&units))
+        .map(|(member, unit)| {
+            let uri = member.uri()?;
+            let encoding = encodings.get(uri).cloned();
+            let encoding = encoding.unwrap_or(PositionEncodingKind::UTF16);
+            let index = DocumentIndex::new(unit.source(), encoding);
+            Some((uri, index))
+        })
+        .collect();
+    let mut diagnostics = vec![Vec::new(); units.len()];
+    for diag in checked.diagnostics() {
+        let Some((id, &at)) = (diag.span().unit()).and_then(|id| Some((id, at.get(&id)?))) else {
+            continue;
+        };
+        if let Some((uri, index)) = &documents[at] {
             let relate = |range, span: &diag::SourceSpan, message: String| {
-                relate_checked(uri, &index, &check, id, range, span, message)
+                relate_checked(uri, index, &checked, id, range, span, message)
             };
-            convert_diag(&index, diag, relate, &mut diagnostics);
+            convert_diag(index, diag, relate, &mut diagnostics[at]);
         }
     }
-    let modules = sources
-        .into_iter()
-        .filter_map(|(source_id, source)| {
-            let uri = match source_id == id {
-                true => uri.clone(),
-                false => Uri::from_file_path(check.path(source_id))?,
+    let names: Vec<_> = (ids.iter())
+        .map(|id| id.map(|id| checked.name(id)))
+        .collect();
+    let modules: Modules = (check.members().iter().zip(&units).zip(&ids))
+        .filter_map(|((member, unit), id)| {
+            let id = (*id)?;
+            let uri = match member.uri() {
+                Some(uri) => uri.clone(),
+                None => Uri::from_file_path(checked.path(id))?,
             };
-            let name = check.name(source_id);
+            let name = checked.name(id);
             let module = lookup::Module {
                 uri,
                 name: name.clone(),
-                unit: source.clone(),
+                unit: unit.clone(),
             };
             Some((name, module))
         })
         .collect();
-    let name = check.name(id);
-    let analyzed = check.into_analysis().map(|analysis| {
-        Arc::new(Analyzed {
-            unit: id,
-            name,
-            analysis,
-            modules,
+    let modules = Arc::new(modules);
+    let analysis = checked.into_analysis().map(Arc::new);
+    (ids.into_iter().zip(names).zip(diagnostics))
+        .map(|((id, name), diagnostics)| {
+            let analyzed = (id.zip(name).zip(analysis.as_ref())).map(|((unit, name), analysis)| {
+                Arc::new(Analyzed {
+                    unit,
+                    name,
+                    analysis: analysis.clone(),
+                    modules: modules.clone(),
+                })
+            });
+            Checked {
+                diagnostics,
+                analyzed,
+            }
         })
-    });
-    Some(Checked {
-        diagnostics,
-        analyzed,
-    })
+        .collect()
 }
 
 /// Related information for a span a checker diagnostic in the document `id`
@@ -1780,16 +1670,14 @@ impl Backend {
     /// A backend that type checks documents once their edits have settled for
     /// `check_delay`, or never.
     fn with_check_delay(client: Client, check_delay: Option<Duration>) -> Self {
-        let documents = Documents::default();
+        let documents = Arc::<Mutex<Documents>>::default();
         let (worker, requests) = mpsc::channel();
         let (events, applied) = unbounded_channel();
         let worker_state = Worker {
             events,
-            open: HashMap::new(),
-            closed: HashMap::new(),
+            documents: documents.clone(),
             check_delay,
-            pending: HashMap::new(),
-            workspace: Workspace::default(),
+            pending: Vec::new(),
         };
         // The thread exits once the backend drops its sender, and the applier
         // once the thread drops its own
@@ -1801,7 +1689,6 @@ impl Backend {
         tokio::spawn(publish(client.clone(), documents.clone(), applied));
         Self {
             documents,
-            epochs: Default::default(),
             worker,
             client,
             config: Default::default(),
@@ -1815,323 +1702,56 @@ impl Backend {
     /// A request's positions refer to the text the client last sent, so
     /// answering from an older projection would misplace them.
     async fn document(&self, uri: &Uri) -> Option<Arc<Document>> {
-        let revision = {
-            let epochs = self.epochs.lock().expect("epochs lock poisoned");
-            epochs
-                .revisions
-                .get(uri)
-                .map(|(_, revision)| revision.clone())
-        };
-        if let Some(revision) = revision
-            && let Ok(document) = revision.await
-        {
+        let revision = self.documents().handles.get(uri)?.revision.clone();
+        if let Ok(document) = revision.await {
             return Some(document);
         }
         // The worker passed over the revision, superseded or failing to
-        // compile it, so the last projection stored is the best there is
-        let documents = self.documents.lock().expect("documents lock poisoned");
-        documents.get(uri).cloned()
+        // compile it, so the last projection published is the best there is
+        self.documents().handles.get(uri)?.projected.clone()
     }
 
-    /// Makes a revision the newest of an open document unless a newer one has
-    /// arrived first, returning the sender to go with its job.
-    fn revise(&self, uri: &Uri, stamp: Stamp) -> oneshot::Sender<Arc<Document>> {
-        let (done, revision) = oneshot::channel();
-        let mut epochs = self.epochs.lock().expect("epochs lock poisoned");
-        if epochs.open.contains_key(uri)
-            && epochs
-                .revisions
-                .get(uri)
-                .is_none_or(|(newest, _)| *newest < stamp)
-        {
-            epochs
-                .revisions
-                .insert(uri.clone(), (stamp, revision.shared()));
-        }
-        done
+    fn documents(&self) -> MutexGuard<'_, Documents> {
+        self.documents.lock().expect("documents lock poisoned")
     }
 
-    /// The epoch a document was opened in, or 0 if it is not open.
-    fn epoch(&self, uri: &Uri) -> u64 {
-        let epochs = self.epochs.lock().expect("epochs lock poisoned");
-        epochs.open.get(uri).copied().unwrap_or(0)
-    }
-
-    /// Sends a document's text to the worker.
-    async fn submit(
+    /// Sends a document's new revision to the worker, returning its future
+    /// projection.
+    fn submit(
         &self,
-        uri: Uri,
-        text: String,
-        stamp: Option<Stamp>,
-        done: oneshot::Sender<Arc<Document>>,
-    ) {
-        let Some(path) = uri_to_file_path(&uri).map(Cow::into_owned) else {
-            return;
-        };
-        if !is_dolang_source(&path) {
-            return;
-        }
-        let settings = self.find_settings(&path).await;
-        let job = Job {
-            uri,
-            path,
-            text,
-            stamp,
-            settings,
-            encoding: self.position_encoding(),
+        uri: &Uri,
+        workspace: &Arc<Workspace>,
+        member: &Arc<Member>,
+        encoding: &PositionEncodingKind,
+    ) -> Revision {
+        let (done, revision) = oneshot::channel();
+        self.send(Request::Compile(Job {
+            uri: uri.clone(),
+            workspace: workspace.clone(),
+            member: member.clone(),
+            encoding: encoding.clone(),
             done,
-        };
-        if self.worker.send(Request::Compile(job)).is_err() {
+        }));
+        revision.shared()
+    }
+
+    /// Makes `text` the current revision of an open document as `version`,
+    /// unless the client has sent a newer one, returning its future
+    /// projection.
+    fn revise(&self, uri: &Uri, version: i32, text: String) -> Option<Revision> {
+        let mut documents = self.documents();
+        let handle = documents.handles.get_mut(uri)?;
+        let path = handle.path.clone();
+        let member = handle.workspace.revise(uri.clone(), path, version, text)?;
+        handle.revision = self.submit(uri, &handle.workspace, &member, &handle.encoding);
+        handle.member = member;
+        Some(handle.revision.clone())
+    }
+
+    fn send(&self, request: Request) {
+        if self.worker.send(request).is_err() {
             log::error!("the compile worker has exited");
         }
-    }
-
-    /// Rereads the configurations in `dirs`, resubmitting the open documents
-    /// under them so each finds the configuration it now has.
-    async fn reconfigure(&self, dirs: &[PathBuf]) {
-        {
-            let mut guard = self.config.lock().await;
-            for dir in dirs {
-                guard.settings.remove(dir);
-            }
-        }
-        // An edit already past its settings lookup has its revision by now, so
-        // the newest revision of each is what to compile again
-        let revisions: Vec<_> = {
-            let epochs = self.epochs.lock().expect("epochs lock poisoned");
-            (epochs.revisions.iter())
-                .filter(|(uri, _)| {
-                    uri_to_file_path(uri)
-                        .is_some_and(|path| dirs.iter().any(|dir| path.starts_with(dir)))
-                })
-                .map(|(uri, (_, revision))| (uri.clone(), revision.clone()))
-                .collect()
-        };
-        for (uri, revision) in revisions {
-            let Ok(document) = revision.await else {
-                continue;
-            };
-            let (done, _) = oneshot::channel();
-            let text = document.unit.source().to_owned();
-            self.submit(uri, text, Some(document.stamp), done).await;
-        }
-    }
-
-    async fn find_settings(&self, path: &Path) -> Option<Arc<Settings>> {
-        let guard = self.config.lock().await;
-        let mut cur = path.parent();
-        let mut config_file = None;
-
-        while let Some(dir) = cur {
-            cur = dir.parent();
-            if let Some(settings) = guard.settings.get(dir) {
-                return Some(settings.clone());
-            }
-            let candidate = dir.join(CONFIG_FILE_NAME);
-            if candidate.is_file() {
-                config_file = Some((dir.to_owned(), candidate));
-                break;
-            }
-        }
-        mem::drop(guard);
-
-        if let Some((config_dir, config)) = config_file {
-            let settings = match Self::read_settings(&config, &config_dir) {
-                Ok(settings) => settings,
-                Err(e) => {
-                    log::error!("failed to load configuration {}: {}", config.display(), e);
-                    return None;
-                }
-            };
-            let settings = Arc::new(settings);
-            let mut guard = self.config.lock().await;
-            guard.settings.insert(config_dir, settings.clone());
-            return Some(settings);
-        }
-        Some(Arc::new(Self::default_settings(path)))
-    }
-
-    fn read_settings(path: &Path, dir: &Path) -> std::result::Result<Settings, String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("could not read {}: {e}", path.display()))?;
-        let value = toml::from_str::<TomlValue>(&content)
-            .map_err(|e| format!("invalid TOML in {}: {e}", path.display()))?;
-        Self::parse_settings_in(&value, dir)
-    }
-
-    #[cfg(test)]
-    fn parse_settings_toml(value: &TomlValue) -> std::result::Result<Settings, String> {
-        Self::parse_settings_in(value, Path::new("."))
-    }
-
-    /// Parses settings found in `dir`, which the module path is relative to.
-    fn parse_settings_in(value: &TomlValue, dir: &Path) -> std::result::Result<Settings, String> {
-        let table = value
-            .as_table()
-            .ok_or_else(|| "settings are not a table as expected".to_owned())?;
-        let mut prelude = None;
-        let mut modules = None;
-
-        for (key, value) in table {
-            match key.as_str() {
-                "prelude" => Self::parse_prelude_table(value, prelude.insert(Vec::new()))?,
-                "modules" => modules = Some(Arc::new(Self::parse_modules_table(value, dir)?)),
-                _ => return Err(format!("unexpected key in settings: {key}")),
-            }
-        }
-
-        Ok(Settings {
-            prelude: prelude.unwrap_or_else(Self::default_prelude),
-            modules,
-        })
-    }
-
-    fn parse_modules_table(
-        value: &TomlValue,
-        dir: &Path,
-    ) -> std::result::Result<ModulePath, String> {
-        let table = value
-            .as_table()
-            .ok_or_else(|| "modules is not a table as expected".to_owned())?;
-        let mut path = Vec::new();
-        let mut bundled = true;
-
-        for (key, value) in table {
-            match key.as_str() {
-                "path" => {
-                    let entries = value
-                        .as_array()
-                        .ok_or_else(|| "modules.path is not an array as expected".to_owned())?;
-                    for entry in entries {
-                        let entry = entry.as_str().ok_or_else(|| {
-                            "modules.path entries are not strings as expected".to_owned()
-                        })?;
-                        path.push(entry.to_owned());
-                    }
-                }
-                "bundled" => {
-                    bundled = value
-                        .as_bool()
-                        .ok_or_else(|| "modules.bundled is not a boolean as expected".to_owned())?;
-                }
-                _ => return Err(format!("unexpected key in modules: {key}")),
-            }
-        }
-
-        ModulePath::load(dir, &path, bundled)
-    }
-
-    fn parse_prelude_table(
-        value: &TomlValue,
-        prelude: &mut Vec<Import>,
-    ) -> std::result::Result<(), String> {
-        let table = value
-            .as_table()
-            .ok_or_else(|| "prelude is not a table as expected".to_owned())?;
-
-        for (module, value) in table {
-            Self::parse_prelude_entry(module, value, prelude)?;
-        }
-
-        Ok(())
-    }
-
-    fn parse_prelude_entry(
-        module: &str,
-        value: &TomlValue,
-        prelude: &mut Vec<Import>,
-    ) -> std::result::Result<(), String> {
-        match value {
-            TomlValue::Boolean(true) => prelude.push(Import::Module(module.to_owned())),
-            TomlValue::Boolean(false) => {
-                return Err(format!("prelude entry for {module} cannot be false"));
-            }
-            TomlValue::String(bind) => {
-                prelude.push(Import::ModuleAs(module.to_owned(), bind.clone()));
-            }
-            TomlValue::Array(items) => {
-                for item in items {
-                    let item = item.as_str().ok_or_else(|| {
-                        format!("prelude array for {module} must contain only strings")
-                    })?;
-                    prelude.push(Import::item(module, item, None)?);
-                }
-            }
-            TomlValue::Table(table) => Self::parse_prelude_descriptor(module, table, prelude)?,
-            _ => {
-                return Err(format!(
-                    "prelude entry for {module} must be true, a string, an array, or a table"
-                ));
-            }
-        }
-
-        Ok(())
-    }
-
-    fn parse_prelude_descriptor(
-        module: &str,
-        table: &Table,
-        prelude: &mut Vec<Import>,
-    ) -> std::result::Result<(), String> {
-        for (key, value) in table {
-            if key == "mod" {
-                match value {
-                    TomlValue::Boolean(true) => prelude.push(Import::Module(module.to_owned())),
-                    TomlValue::Boolean(false) => {
-                        return Err(format!("descriptor entry {module}.mod cannot be false"));
-                    }
-                    TomlValue::String(bind) => {
-                        prelude.push(Import::ModuleAs(module.to_owned(), bind.clone()));
-                    }
-                    _ => {
-                        return Err(format!(
-                            "descriptor entry {module}.mod must be true or a string"
-                        ));
-                    }
-                }
-                continue;
-            }
-
-            match value {
-                TomlValue::Boolean(true) => {
-                    prelude.push(Import::item(module, key, None)?);
-                }
-                TomlValue::Boolean(false) => {
-                    return Err(format!("descriptor entry {module}.{key} cannot be false"));
-                }
-                TomlValue::String(bind) => {
-                    prelude.push(Import::item(module, key, Some(bind))?);
-                }
-                _ => {
-                    return Err(format!(
-                        "descriptor entry {module}.{key} must be true or a string"
-                    ));
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn default_settings(_path: &Path) -> Settings {
-        Settings {
-            prelude: Self::default_prelude(),
-            modules: None,
-        }
-    }
-
-    /// The prelude of a script with no configured one: the shell's.
-    fn default_prelude() -> Vec<Import> {
-        vec![
-            Import::Module("shell".into()),
-            Import::Item("proc".into(), "run".into()),
-            Import::Item("proc".into(), "sub".into()),
-            Import::Item("shell".into(), "cd".into()),
-            Import::Item("shell".into(), "env".into()),
-            Import::Item("shell".into(), "exit".into()),
-            Import::Item("term".into(), "echo".into()),
-            Import::Item("term".into(), "print".into()),
-        ]
     }
 
     fn choose_position_encoding(params: &InitializeParams) -> PositionEncodingKind {
@@ -2158,10 +1778,10 @@ impl Backend {
 /// Projects a compiled document into what requests answer from.
 fn project(
     uri: &Uri,
-    stamp: Stamp,
+    member: Arc<Member>,
     unit: Arc<Unit<'static>>,
     encoding: &PositionEncodingKind,
-) -> (Document, Vec<Diagnostic>) {
+) -> Document {
     let mut diags = Vec::new();
     let mut tokens = Vec::new();
     let mut refs = Vec::new();
@@ -2281,17 +1901,17 @@ fn project(
         })
         .collect();
 
-    let document = Document {
-        stamp,
+    Document {
+        member,
         unit,
+        diagnostics: diags,
         tokens,
         refs,
         decls,
         symbols,
         patches,
         analyzed: Mutex::new(None),
-    };
-    (document, diags)
+    }
 }
 
 impl LanguageServer for Backend {
@@ -2407,52 +2027,59 @@ impl LanguageServer for Backend {
         }
     }
 
+    // Opening, changing and closing a document update the tables before
+    // their first `await`, so they apply in the order the client sent them
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let TextDocumentItem {
             uri, text, version, ..
         } = params.text_document;
-        let epoch = {
-            let mut epochs = self.epochs.lock().expect("epochs lock poisoned");
-            epochs.last += 1;
-            let epoch = epochs.last;
-            epochs.open.insert(uri.clone(), epoch);
-            epoch
+        let Some(path) = source_path(&uri) else {
+            return;
         };
-        let stamp = Stamp {
-            epoch,
-            version: Some(version),
-        };
-        let done = self.revise(&uri, stamp);
-        self.submit(uri, text, Some(stamp), done).await
+        let encoding = self.position_encoding();
+        let mut documents = self.documents();
+        // Opened again without a close, it starts over
+        if let Some(old) = documents.handles.remove(&uri) {
+            old.workspace.close(&old.path);
+            self.send(Request::Due(old.workspace));
+        }
+        let workspace = documents.workspaces.open(&path);
+        // Unless another URI has a newer version of the same file open
+        if let Some(member) = workspace.revise(uri.clone(), path.clone(), version, text) {
+            let revision = self.submit(&uri, &workspace, &member, &encoding);
+            let handle = Handle {
+                workspace,
+                path,
+                encoding,
+                member,
+                revision,
+                projected: None,
+            };
+            documents.handles.insert(uri, handle);
+        }
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        let uri = params.text_document.uri;
-        let stamp = Stamp {
-            epoch: self.epoch(&uri),
-            version: Some(params.text_document.version),
-        };
+        let VersionedTextDocumentIdentifier { uri, version } = params.text_document;
         let text = params.content_changes.into_iter().next().unwrap().text;
-        let done = self.revise(&uri, stamp);
-        self.submit(uri, text, Some(stamp), done).await
+        self.revise(&uri, version, text);
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
-        let Some(path) = uri_to_file_path(&params.text_document.uri) else {
+        let uri = params.text_document.uri;
+        let Some(text) = params.text else {
             return;
         };
-        if !is_dolang_source(&path) {
+        // The saved text, as the version the document is at
+        let version =
+            (self.documents().handles.get(&uri)).and_then(|handle| handle.member.version());
+        let Some(saved) = version.and_then(|version| self.revise(&uri, version, text)) else {
             return;
-        }
-        if let Some(text) = params.text {
-            let (done, stored) = oneshot::channel();
-            self.submit(params.text_document.uri, text, None, done)
-                .await;
-            // Refresh once the saved text's tokens are stored, or the worker
-            // has passed over it
-            _ = stored.await;
-            _ = self.client.semantic_tokens_refresh().await;
-        }
+        };
+        // Refresh once the saved text's tokens are published, or the worker
+        // has passed over it
+        _ = saved.await;
+        _ = self.client.semantic_tokens_refresh().await;
     }
 
     async fn semantic_tokens_full(
@@ -2522,16 +2149,10 @@ impl LanguageServer for Backend {
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        let uri = params.text_document.uri;
-        let epoch = {
-            let mut epochs = self.epochs.lock().expect("epochs lock poisoned");
-            epochs.revisions.remove(&uri);
-            epochs.open.remove(&uri).unwrap_or(0)
-        };
-        // Through the worker, so the document is dropped after any projection
-        // still on its way
-        if self.worker.send(Request::Close(uri, epoch)).is_err() {
-            log::error!("the compile worker has exited");
+        let handle = self.documents().handles.remove(&params.text_document.uri);
+        if let Some(handle) = handle {
+            handle.workspace.close(&handle.path);
+            self.send(Request::Due(handle.workspace));
         }
     }
 
@@ -2544,7 +2165,6 @@ impl LanguageServer for Backend {
     }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
-        let mut sources = Vec::new();
         let mut configs = Vec::new();
         for event in params.changes {
             let Some(path) = uri_to_file_path(&event.uri).map(Cow::into_owned) else {
@@ -2555,15 +2175,39 @@ impl LanguageServer for Backend {
                 .is_some_and(|name| name == CONFIG_FILE_NAME)
             {
                 configs.extend(path.parent().map(Path::to_owned));
-            } else if is_dolang_source(&path) {
-                sources.push(path);
             }
         }
-        if !sources.is_empty() && self.worker.send(Request::Files(sources)).is_err() {
-            log::error!("the compile worker has exited");
+        let mut documents = self.documents();
+        let Documents {
+            handles,
+            workspaces,
+        } = &mut *documents;
+        // A check looks at the files its workspace loaded or looked for
+        for workspace in workspaces.live() {
+            self.send(Request::Due(workspace));
         }
-        if !configs.is_empty() {
-            self.reconfigure(&configs).await;
+        // A changed configuration moves the documents of the workspaces it
+        // affects to the workspaces they have now
+        for dir in &configs {
+            workspaces.retire(dir);
+        }
+        for (uri, handle) in handles {
+            if workspaces.current(&handle.workspace) {
+                continue;
+            }
+            handle.workspace.close(&handle.path);
+            let workspace = workspaces.open(&handle.path);
+            let (path, member) = (handle.path.clone(), &handle.member);
+            let (Some(version), Some(text)) = (member.version(), member.text()) else {
+                continue;
+            };
+            let text = text.to_owned();
+            let Some(member) = workspace.revise(uri.clone(), path, version, text) else {
+                continue;
+            };
+            handle.revision = self.submit(uri, &workspace, &member, &handle.encoding);
+            handle.workspace = workspace;
+            handle.member = member;
         }
     }
 
@@ -2774,6 +2418,12 @@ fn uri_to_file_path(uri: &Uri) -> Option<Cow<'_, Path>> {
         .and_then(|()| uri.to_file_path())
 }
 
+/// The path of a document the server compiles.
+fn source_path(uri: &Uri) -> Option<PathBuf> {
+    let path = uri_to_file_path(uri)?;
+    is_dolang_source(&path).then(|| path.into_owned())
+}
+
 fn is_dolang_source(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|ext| ext.to_str()),
@@ -2790,7 +2440,7 @@ fn range_contains_position(range: Range, position: Position) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{fs, time::Duration};
 
     use futures::{SinkExt, StreamExt};
     use serde::{Serialize, de::DeserializeOwned};
@@ -2990,10 +2640,6 @@ mod tests {
         }
     }
 
-    fn parse_toml(input: &str) -> TomlValue {
-        toml::from_str(input).unwrap()
-    }
-
     /// Undo the delta encoding so a token can be named by where it starts.
     fn absolute_tokens(data: &[SemanticToken]) -> Vec<((u32, u32), u32, u32)> {
         let mut absolute = Vec::new();
@@ -3114,185 +2760,6 @@ mod tests {
             normalize_doc_text("  # Summary.  \n  #\n  #   indented"),
             "Summary.\n\n  indented"
         );
-    }
-
-    #[test]
-    fn parse_module_import() {
-        let settings =
-            Backend::parse_settings_toml(&parse_toml("[prelude]\nshell = true\n")).unwrap();
-
-        assert_eq!(settings.prelude, vec![Import::Module("shell".to_owned())]);
-    }
-
-    #[test]
-    fn parse_item_alias() {
-        let settings =
-            Backend::parse_settings_toml(&parse_toml("[prelude.proc]\nrun = true\n")).unwrap();
-
-        assert_eq!(
-            settings.prelude,
-            vec![Import::Item("proc".to_owned(), "run".to_owned())]
-        );
-    }
-
-    #[test]
-    fn parse_item_array() {
-        let settings = Backend::parse_settings_toml(&parse_toml(
-            "[prelude]\nregression = [\"assert\", \"log\"]\n",
-        ))
-        .unwrap();
-
-        assert_eq!(
-            settings.prelude,
-            vec![
-                Import::Item("regression".to_owned(), "assert".to_owned()),
-                Import::Item("regression".to_owned(), "log".to_owned()),
-            ]
-        );
-    }
-
-    #[test]
-    fn parse_descriptor_table_with_mod_and_items() {
-        let settings =
-            Backend::parse_settings_toml(&parse_toml("[prelude.proc]\nmod = true\nsub = true\n"))
-                .unwrap();
-
-        assert_eq!(
-            settings.prelude,
-            vec![
-                Import::Module("proc".to_owned()),
-                Import::Item("proc".to_owned(), "sub".to_owned()),
-            ]
-        );
-    }
-
-    #[test]
-    fn parse_type_only_prelude_items() {
-        let settings = Backend::parse_settings_toml(&parse_toml(
-            "[prelude]\nstd = [\"@Never\"]\n[prelude.custom]\n\"@Seq\" = \"Sequence\"\n\"@Index\" = true\n",
-        )).unwrap();
-        assert!(
-            settings
-                .prelude
-                .contains(&Import::TypeItem("std".into(), "Never".into()))
-        );
-        assert!(
-            settings
-                .prelude
-                .contains(&Import::TypeItem("custom".into(), "Index".into()))
-        );
-        assert!(settings.prelude.contains(&Import::TypeItemAs(
-            "custom".into(),
-            "Seq".into(),
-            "Sequence".into()
-        )));
-        for config in ["[prelude]\nstd = [\"@\"]", "[prelude.std]\n\"@\" = \"Bad\""] {
-            assert!(
-                Backend::parse_settings_toml(&parse_toml(config))
-                    .unwrap_err()
-                    .contains("cannot be empty")
-            );
-        }
-    }
-
-    #[test]
-    fn configured_type_only_items_resolve_to_prelude_nodes() {
-        for config in [
-            "[prelude]\nstd = [\"@Seq\"]",
-            "[prelude.std]\n\"@Seq\" = \"Sequence\"",
-        ] {
-            let settings = Backend::parse_settings_toml(&parse_toml(config)).unwrap();
-            let name = if config.contains("Sequence") {
-                "Sequence"
-            } else {
-                "Seq"
-            };
-            let unit = compile_document(
-                Path::new("m.dol"),
-                format!("def first items@{name}[Int] -> Int\n  items[0]\nfirst [1]\n"),
-                &settings.prelude,
-                None,
-            );
-            assert!(unit.diagnostics().next().is_none());
-            assert!(
-                unit.nodes()
-                    .any(|(_, node)| matches!(node.kind(), Kind::PreludeItem {
-                module: "std", item: "Seq", name: bind, type_only: true,
-            } if bind == name))
-            );
-        }
-    }
-
-    #[test]
-    fn reject_unknown_top_level_key() {
-        let error = Backend::parse_settings_toml(&parse_toml("other = true\n")).unwrap_err();
-
-        assert!(error.contains("unexpected key in settings"));
-    }
-
-    #[test]
-    fn reject_false_module_value() {
-        let error =
-            Backend::parse_settings_toml(&parse_toml("[prelude]\nshell = false\n")).unwrap_err();
-
-        assert!(error.contains("cannot be false"));
-    }
-
-    #[test]
-    fn reject_non_string_array_item() {
-        let error = Backend::parse_settings_toml(&parse_toml("[prelude]\nshell = [\"echo\", 1]\n"))
-            .unwrap_err();
-
-        assert!(error.contains("must contain only strings"));
-    }
-
-    #[test]
-    fn reject_invalid_descriptor_value() {
-        let error =
-            Backend::parse_settings_toml(&parse_toml("[prelude.shell]\necho = 1\n")).unwrap_err();
-
-        assert!(error.contains("must be true or a string"));
-    }
-
-    #[test]
-    fn missing_prelude_is_the_default() {
-        let settings = Backend::parse_settings_toml(&parse_toml("")).unwrap();
-        assert_eq!(settings.prelude, Backend::default_prelude());
-        let settings = Backend::parse_settings_toml(&parse_toml("[prelude]\n")).unwrap();
-        assert_eq!(settings.prelude, []);
-    }
-
-    #[test]
-    fn parse_modules() {
-        let tree = Directory::new();
-        tree.write("lib/a.dol", "");
-        let value = parse_toml("[modules]\npath = [\"lib\", \"/abs\", \"../up\"]\n");
-        let settings = Backend::parse_settings_in(&value, &tree.0).unwrap();
-        // The rejected entries are logged; the rest applies
-        let modules = settings.modules.unwrap();
-        assert!(modules.bundled);
-        assert_eq!(
-            modules.module_of(&tree.0.join("lib/a.dol")).as_deref(),
-            Some("a")
-        );
-
-        let value = parse_toml("[modules]\nbundled = false\n");
-        let settings = Backend::parse_settings_in(&value, &tree.0).unwrap();
-        assert!(!settings.modules.unwrap().bundled);
-    }
-
-    #[test]
-    fn reject_invalid_modules() {
-        for (config, expected) in [
-            ("modules = 1", "not a table"),
-            ("[modules]\nother = 1", "unexpected key in modules: other"),
-            ("[modules]\npath = \"lib\"", "not an array"),
-            ("[modules]\npath = [1]", "not strings"),
-            ("[modules]\nbundled = \"no\"", "not a boolean"),
-        ] {
-            let error = Backend::parse_settings_toml(&parse_toml(config)).unwrap_err();
-            assert!(error.contains(expected), "{config}: {error}");
-        }
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -4296,25 +3763,29 @@ def uses b @ Box n @ Int
         let mut harness = Harness::new();
         harness.initialize(vec![PositionEncodingKind::UTF16]).await;
         let uri: Uri = "file:///stale-test.dol".parse().unwrap();
-        let path = Path::new("/stale-test.dol");
-        let newer = "let newer = 1\n";
         let older = "# older\nlet older = 1\n";
-        harness.open(uri.clone(), newer, 2).await;
+        let newer = "let newer = 1\n";
+        harness.open(uri.clone(), older, 1).await;
+        let stale = harness.service.inner().document(&uri).await.unwrap();
+        harness.change(uri.clone(), newer, 2).await;
+        harness.next_publish().await;
 
+        // A projection of the revision the edit replaced isn't stored
         let backend = harness.service.inner();
         let stored = backend.document(&uri).await.unwrap();
-        let stale = Stamp {
-            version: Some(1),
-            ..stored.stamp
-        };
-        let unit = Arc::new(compile_document(path, older.to_owned(), &[], None));
-        let (document, _) = project(&uri, stale, unit, &PositionEncodingKind::UTF16);
-        assert!(!apply(&backend.documents, uri.clone(), Arc::new(document)));
+        let unit = stale.unit.clone();
+        let document = project(
+            &uri,
+            stale.member.clone(),
+            unit,
+            &PositionEncodingKind::UTF16,
+        );
+        assert!(!backend.documents().project(&uri, &Arc::new(document)));
         let document = backend.document(&uri).await.unwrap();
         assert_eq!(document.unit.source(), newer);
         assert_eq!(document.tokens, stored.tokens);
 
-        // Reopening starts a new epoch, which outranks every earlier version
+        // Reopening starts over, whatever versions came before
         let reopened = harness.open(uri.clone(), older, 1).await;
         assert_eq!(reopened.version, Some(1));
         let document = harness.service.inner().document(&uri).await.unwrap();
@@ -4352,11 +3823,7 @@ def uses b @ Box n @ Int
                 },
             })
             .await;
-        // The worker handles requests in order, so once a later document is
-        // published the close has been applied
-        let other: Uri = "file:///open-test.dol".parse().unwrap();
-        harness.open(other, "let b = 2\n", 1).await;
-
+        // Applied before the handler returns
         let tokens = harness
             .send_request::<request::SemanticTokensFullRequest>(SemanticTokensParams {
                 work_done_progress_params: Default::default(),
@@ -4449,13 +3916,14 @@ def uses b @ Box n @ Int
         harness.open(uri.clone(), "let a = 1\n", 2).await;
 
         let backend = harness.service.inner();
-        let stored = backend.document(&uri).await.unwrap().stamp;
-        let older = Stamp {
-            version: Some(1),
-            ..stored
-        };
-        assert!(current(&backend.documents, &uri, stored).is_some());
-        assert!(current(&backend.documents, &uri, older).is_none());
+        let member = backend.document(&uri).await.unwrap().member.clone();
+        assert!((backend.documents().checked(&uri, &member)).is_some());
+
+        // Superseded by an edit
+        harness.change(uri.clone(), "let b = 2\n", 3).await;
+        harness.next_publish().await;
+        let backend = harness.service.inner();
+        assert!(backend.documents().checked(&uri, &member).is_none());
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -4551,6 +4019,33 @@ def uses b @ Box n @ Int
         harness.quiet().await;
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn documents_sharing_modules_are_checked_together() {
+        // The modules import `std`, which only `dodo lsp-test` bundles
+        if typelib_index::lookup("std").is_none() {
+            return;
+        }
+        let tree = Directory::new();
+        tree.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = [\"lib\"]\n");
+        tree.write("lib/a.dol", "pub def f x@Int\n  x\n");
+        let one = Uri::from_file_path(tree.0.join("one.dol")).unwrap();
+        let two = Uri::from_file_path(tree.0.join("two.dol")).unwrap();
+        let mut harness = Harness::checking(Duration::from_millis(200));
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        harness.open(one.clone(), "import a\na.f \"s\"\n", 1).await;
+        harness.open(two.clone(), "import a\na.f 1\n", 1).await;
+        let mut checked = [harness.next_publish().await, harness.next_publish().await]
+            .map(|published| (published.uri, published.diagnostics.len()));
+        checked.sort_by_key(|(uri, _)| *uri == two);
+        assert_eq!(checked, [(one.clone(), 1), (two.clone(), 0)]);
+
+        let backend = harness.service.inner();
+        let analyzed = async |uri| backend.document(uri).await.unwrap().analyzed().unwrap();
+        let (one, two) = (analyzed(&one).await, analyzed(&two).await);
+        assert!(Arc::ptr_eq(&one.analysis, &two.analysis));
+        harness.quiet().await;
+    }
+
     /// Where go to definition at a position goes
     async fn definition(
         harness: &mut Harness,
@@ -4633,9 +4128,12 @@ f 1
         let module = hover_text(&mut harness, main.clone(), 4, 0).await;
         assert_eq!(module.unwrap(), "```dolang\nmodule a\n```\n\nA module");
 
-        // The next check sees an edit move the item
+        // The next check sees an edit move the item, checking both
         harness.open(a.clone(), &format!("\n{a_text}"), 1).await;
-        harness.next_publish_for(&main).await;
+        let mut checked = [harness.next_publish().await, harness.next_publish().await]
+            .map(|published| published.uri);
+        checked.sort_by_key(|uri| *uri == main);
+        assert_eq!(checked, [a.clone(), main.clone()]);
         let found = definition(&mut harness, &main, 4, 2).await;
         assert_eq!(found, at(4));
         harness.quiet().await;
@@ -4824,7 +4322,7 @@ pub def area d @ a.D
         // An open buffer of the module stands in for its file
         let buffer = Uri::from_file_path(&a).unwrap();
         harness
-            .open(buffer.clone(), "pub def f x@Str\n  x\n", 1)
+            .open(buffer.clone(), "# buffer\npub def f x@Str\n  x\n", 1)
             .await;
         // Its check, and its importer's against the buffer
         let mut checked = [harness.next_publish().await, harness.next_publish().await];

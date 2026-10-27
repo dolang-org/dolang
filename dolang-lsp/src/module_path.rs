@@ -11,12 +11,29 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read},
     path::{Component, Path, PathBuf},
+    time::SystemTime,
 };
 
 /// The most roots a configuration's wildcards may expand to
 const MAX_ROOTS: usize = 256;
 /// The largest module source read from a root
 const MAX_MODULE_BYTES: u64 = 4 << 20;
+
+/// When a file was last modified, and its size: what tells a change to it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Stamp {
+    modified: Option<SystemTime>,
+    len: u64,
+}
+
+impl Stamp {
+    fn of(meta: &fs::Metadata) -> Self {
+        Self {
+            modified: meta.modified().ok(),
+            len: meta.len(),
+        }
+    }
+}
 
 /// The directories searched for modules, in order, all under `base`.
 #[derive(Debug, PartialEq, Eq)]
@@ -52,38 +69,12 @@ impl ModulePath {
         })
     }
 
-    /// The configuration's canonical directory.
-    pub(crate) fn base(&self) -> &Path {
-        &self.base
-    }
-
     /// The module a document at `path` is, if it is a source under a root.
     pub(crate) fn module_of(&self, path: &Path) -> Option<String> {
         if path.extension().is_none_or(|ext| ext != "dol") {
             return None;
         }
         self.name_of(&path.canonicalize().ok()?)
-    }
-
-    /// The module a file at `path` names, whether or not it still exists.
-    ///
-    /// Only the directories leading to it are resolved, so a deleted file, or
-    /// one in a deleted directory, is named by where it was.
-    pub(crate) fn module_at(&self, path: &Path) -> Option<String> {
-        if path.extension().is_none_or(|ext| ext != "dol") {
-            return None;
-        }
-        let (dir, rest) = path
-            .ancestors()
-            .skip(1)
-            .find_map(|dir| Some((dir.canonicalize().ok()?, path.strip_prefix(dir).ok()?)))?;
-        if !rest
-            .components()
-            .all(|component| matches!(component, Component::Normal(_)))
-        {
-            return None;
-        }
-        self.name_of(&dir.join(rest))
     }
 
     /// The module a canonical path under a root names.
@@ -102,10 +93,26 @@ impl ModulePath {
         (!parts.is_empty() && parts.iter().all(|part| is_name(part))).then(|| parts.join("."))
     }
 
-    /// The path and text of a module's source, from the first root that has
-    /// it as `a/b.dol` or `a/b/mod.dol`.  A candidate that escapes its root,
-    /// isn't a regular file or is too large is logged and passed over.
-    pub(crate) fn open(&self, module: &str) -> Option<(PathBuf, String)> {
+    /// The path, stamp and text of a module's source, from the first root
+    /// that has it as `a/b.dol` or `a/b/mod.dol`.  A candidate that escapes
+    /// its root, isn't a regular file or is too large is logged and passed
+    /// over.
+    pub(crate) fn open(&self, module: &str) -> Option<(PathBuf, Stamp, String)> {
+        self.find(module, read_contained)
+    }
+
+    /// The path and stamp of the source `open` would read, without reading it.
+    pub(crate) fn locate(&self, module: &str) -> Option<(PathBuf, Stamp)> {
+        self.find(module, stat_contained)
+    }
+
+    /// What `found` makes of the first candidate for a module's source that
+    /// exists.
+    fn find<T>(
+        &self,
+        module: &str,
+        found: impl Fn(&Path, &Path) -> Result<Option<T>, String>,
+    ) -> Option<T> {
         let parts: Vec<&str> = module.split('.').collect();
         if !parts.iter().all(|part| is_name(part)) {
             log::error!("module name `{module}` can't name a file");
@@ -131,7 +138,7 @@ impl ModulePath {
                 root.join(&relative).join("mod.dol"),
             ];
             for candidate in candidates {
-                match read_contained(&root, &candidate) {
+                match found(&root, &candidate) {
                     Ok(Some(found)) => return Some(found),
                     Ok(None) => {}
                     Err(err) => {
@@ -223,21 +230,31 @@ fn contained(base: &Path, path: &Path) -> Result<PathBuf, String> {
     }
 }
 
-/// Reads `path` if it exists, as a regular file under `root`.
-fn read_contained(root: &Path, path: &Path) -> Result<Option<(PathBuf, String)>, String> {
+/// The canonical path and stamp of `path` if it exists, as a regular file
+/// under `root`.
+fn stat_contained(root: &Path, path: &Path) -> Result<Option<(PathBuf, Stamp)>, String> {
     if fs::symlink_metadata(path).is_err() {
         return Ok(None);
     }
     let canonical = contained(root, path)?;
-    // Opening a FIFO or device could block or read without end
-    if !fs::metadata(&canonical).is_ok_and(|meta| meta.is_file()) {
-        return Err("not a regular file".into());
+    match fs::metadata(&canonical) {
+        Ok(meta) if meta.is_file() => Ok(Some((canonical, Stamp::of(&meta)))),
+        _ => Err("not a regular file".into()),
     }
+}
+
+/// Reads `path` if it exists, as a regular file under `root`.
+fn read_contained(root: &Path, path: &Path) -> Result<Option<(PathBuf, Stamp, String)>, String> {
+    let Some((canonical, _)) = stat_contained(root, path)? else {
+        return Ok(None);
+    };
+    // Opening a FIFO or device could block or read without end
     let file = open_nonblocking(&canonical).map_err(|err| err.to_string())?;
     // It may have been swapped since it was resolved
-    if !file.metadata().is_ok_and(|meta| meta.is_file()) {
-        return Err("not a regular file".into());
-    }
+    let stamp = match file.metadata() {
+        Ok(meta) if meta.is_file() => Stamp::of(&meta),
+        _ => return Err("not a regular file".into()),
+    };
     let mut text = String::new();
     file.take(MAX_MODULE_BYTES + 1)
         .read_to_string(&mut text)
@@ -245,7 +262,7 @@ fn read_contained(root: &Path, path: &Path) -> Result<Option<(PathBuf, String)>,
     if text.len() as u64 > MAX_MODULE_BYTES {
         return Err(format!("larger than {MAX_MODULE_BYTES} bytes"));
     }
-    Ok(Some((canonical, text)))
+    Ok(Some((canonical, stamp, text)))
 }
 
 fn open_nonblocking(path: &Path) -> io::Result<File> {
@@ -329,6 +346,11 @@ pub(crate) mod tests {
         }
     }
 
+    /// The path and text of a module's source.
+    fn opened(path: &ModulePath, module: &str) -> Option<(PathBuf, String)> {
+        (path.open(module)).map(|(path, _, text)| (path, text))
+    }
+
     fn load(dir: &Path, entries: &[&str]) -> ModulePath {
         let entries: Vec<String> = entries.iter().map(|&entry| entry.into()).collect();
         ModulePath::load(dir, &entries, true).unwrap()
@@ -374,25 +396,9 @@ pub(crate) mod tests {
         assert_eq!(path.module_of(&outside), None);
         assert_eq!(path.module_of(&odd), None);
 
-        assert_eq!(path.open("a.b"), Some((nested, String::new())));
-        assert_eq!(path.open("c"), Some((package, String::new())));
+        assert_eq!(opened(&path, "a.b"), Some((nested, String::new())));
+        assert_eq!(opened(&path, "c"), Some((package, String::new())));
         assert_eq!(path.open("missing"), None);
-    }
-
-    #[test]
-    fn removed_files_are_named_by_where_they_were() {
-        let tree = Directory::new();
-        tree.dir("lib");
-        let path = load(&tree.0, &["lib"]);
-        let flat = tree.write("lib/a.dol", "");
-        assert_eq!(path.module_at(&flat).as_deref(), Some("a"));
-        fs::remove_file(&flat).unwrap();
-        assert_eq!(path.module_of(&flat), None);
-        assert_eq!(path.module_at(&flat).as_deref(), Some("a"));
-        let nested = tree.0.join("lib/b/c/mod.dol");
-        assert_eq!(path.module_at(&nested).as_deref(), Some("b.c"));
-        assert_eq!(path.module_at(&tree.0.join("x.dol")), None);
-        assert_eq!(path.module_at(&tree.0.join("lib/a.txt")), None);
     }
 
     #[test]
@@ -401,7 +407,7 @@ pub(crate) mod tests {
         let first = tree.write("one/m.dol", "1");
         tree.write("two/m.dol", "2");
         let path = load(&tree.0, &["one", "two"]);
-        assert_eq!(path.open("m"), Some((first, "1".into())));
+        assert_eq!(opened(&path, "m"), Some((first, "1".into())));
     }
 
     #[test]
