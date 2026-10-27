@@ -1,6 +1,7 @@
 mod analysis;
 mod asserts;
 mod host;
+mod hover;
 mod typelibs;
 
 use dolang::{
@@ -180,9 +181,17 @@ impl Analyzed {
         serde_wasm_bindgen::to_value(&self.0.diagnostics()).map_err(Into::into)
     }
 
-    /// Type checks the source, reporting the checker's diagnostics.
-    pub fn check(&self) -> Result<JsValue, JsValue> {
+    /// Type checks the source, reporting the checker's diagnostics, and keeps
+    /// what it concluded for hover.
+    pub fn check(&mut self) -> Result<JsValue, JsValue> {
         serde_wasm_bindgen::to_value(&self.0.check()).map_err(Into::into)
+    }
+
+    /// What hover shows at the UTF-16 offsets `from` to `to`, a position when
+    /// they're equal, or `undefined` for nothing there. Before `check`, only
+    /// what the source declares.
+    pub fn hover(&self, from: usize, to: usize) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&self.0.hover(from, to)).map_err(Into::into)
     }
 }
 

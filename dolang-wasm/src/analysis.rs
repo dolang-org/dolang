@@ -1,12 +1,16 @@
 //! Playground-local adaptation of the LSP's semantic classification and type
 //! checking.
-use crate::typelibs::typelibs;
+use crate::{
+    hover::{self, Checked, Hover, Reference},
+    typelibs::typelibs,
+};
 use dolang::compile::{
     Context, Diag, ErrorKind, Kind, NodeId, Severity, Span, Token, Unit, UnitId, typeck,
 };
+use dolang_util::utf16::Offsets;
 use serde::Serialize;
 use std::{
-    cell::RefCell,
+    cell::{OnceCell, RefCell},
     collections::{HashMap, HashSet},
     path::Path,
 };
@@ -31,26 +35,12 @@ pub(crate) struct Diagnostic {
     pub message: String,
 }
 
-// Index by UTF-8 byte offset; all positions exposed to the editor are UTF-16.
-struct Offsets(Vec<usize>);
-impl Offsets {
-    fn new(source: &str) -> Self {
-        let mut map = vec![0; source.len() + 1];
-        let mut utf16 = 0;
-        for (byte, ch) in source.char_indices() {
-            map[byte..byte + ch.len_utf8()].fill(utf16);
-            utf16 += ch.len_utf16();
-        }
-        map[source.len()] = utf16;
-        Self(map)
-    }
-    fn range(&self, span: &Span) -> (usize, usize) {
-        let last = self.0.len() - 1;
-        (
-            self.0[span.start().byte_offset().min(last)],
-            self.0[span.end().byte_offset().min(last)],
-        )
-    }
+/// A span's UTF-16 range; all positions exposed to the editor are UTF-16.
+fn range(offsets: &Offsets, span: &Span) -> (usize, usize) {
+    (
+        offsets.utf16(span.start().byte_offset()),
+        offsets.utf16(span.end().byte_offset()),
+    )
 }
 
 /// Converts a diagnostic located in the source, appending it and its
@@ -64,7 +54,7 @@ fn convert(
     foreign: impl Fn(&dolang::compile::SourceSpan) -> Option<String>,
     out: &mut Vec<Diagnostic>,
 ) {
-    let (from, to) = offsets.range(&diag.span().span());
+    let (from, to) = range(offsets, &diag.span().span());
     let mut message = diag.message().to_string();
     for note in diag.notes() {
         message.push_str(&format!("\n{}", note.message()));
@@ -89,7 +79,7 @@ fn convert(
         // diagnostic's own range
         let (range, message) = match foreign(&span) {
             Some(location) => ((from, to), format!("{location}: {message}")),
-            None => (offsets.range(&span.span()), message),
+            None => (range(offsets, &span.span()), message),
         };
         out.push(Diagnostic {
             from: range.0,
@@ -100,15 +90,14 @@ fn convert(
     }
 }
 
-fn diagnostics(unit: &Unit<'_>) -> Vec<Diagnostic> {
-    let offsets = Offsets::new(unit.source());
+fn diagnostics(unit: &Unit<'_>, offsets: &Offsets) -> Vec<Diagnostic> {
     let mut result = Vec::new();
     for diag in unit.diagnostics() {
         assert!(
             diag.span().unit().is_none(),
             "playground diagnostics must be local"
         );
-        convert(&offsets, &diag, |_| None, &mut result);
+        convert(offsets, &diag, |_| None, &mut result);
     }
     result
 }
@@ -146,24 +135,33 @@ fn imported_by<'t>(
 /// A playground source, compiled for highlighting and checking.
 pub(crate) struct Analyzed {
     unit: Unit<'static>,
+    offsets: Offsets,
+    /// The tokens naming declarations, once hover needs them
+    refs: OnceCell<Vec<Reference>>,
+    /// What the check concluded, once checked
+    checked: Option<Checked>,
 }
 
 impl Analyzed {
     pub(crate) fn new(source: String) -> Self {
         let mut config = super::config();
         config.recover(true).document(true).typecheck(true);
+        let unit = config.unit(Path::new("playground.dol"), source);
         Self {
-            unit: config.unit(Path::new("playground.dol"), source),
+            offsets: Offsets::new(unit.source()),
+            unit,
+            refs: OnceCell::new(),
+            checked: None,
         }
     }
 
     /// The source's tokens, classified for highlighting, in source order.
     pub(crate) fn tokens(&self) -> Vec<TokenRange> {
         let unit = &self.unit;
-        let offsets = Offsets::new(unit.source());
+        let offsets = &self.offsets;
         let mut tokens = Vec::new();
         unit.tokens(&mut |token, span: Span, node: Option<NodeId>, context| {
-            let (from, to) = offsets.range(&span);
+            let (from, to) = range(offsets, &span);
             if from == to {
                 return;
             }
@@ -184,21 +182,24 @@ impl Analyzed {
 
     /// The compiler's diagnostics.
     pub(crate) fn diagnostics(&self) -> Vec<Diagnostic> {
-        diagnostics(&self.unit)
+        diagnostics(&self.unit, &self.offsets)
     }
 
     /// Type checks the source against the bundled typelibs it imports,
-    /// returning the diagnostics located in it.
+    /// returning the diagnostics located in it, and keeps what the check
+    /// concluded for hover.
     ///
     /// A source that failed to compile can't be checked and has none.  An
     /// import that isn't bundled is reported once, at the import.
-    pub(crate) fn check(&self) -> Vec<Diagnostic> {
+    pub(crate) fn check(&mut self) -> Vec<Diagnostic> {
         let unit = &self.unit;
-        TYPELIBS.with_borrow_mut(|cache| {
+        let offsets = &self.offsets;
+        let (result, checked) = TYPELIBS.with_borrow_mut(|cache| {
             let mut builder = typeck::Builder::new();
+            builder.analysis(true);
             let id = match builder.unit(unit) {
                 Ok(id) => id,
-                Err(err) if matches!(err.kind(), ErrorKind::Fail) => return Vec::new(),
+                Err(err) if matches!(err.kind(), ErrorKind::Fail) => return (Vec::new(), None),
                 Err(err) => panic!("cannot check the playground's unit: {err}"),
             };
             for typelib in imported_by(cache, unit) {
@@ -207,16 +208,38 @@ impl Analyzed {
                     .expect("bundled typelibs check together");
             }
             let check = builder.check();
-            let offsets = Offsets::new(unit.source());
             let mut result = Vec::new();
             for diag in check.diagnostics() {
                 if diag.span().unit() == Some(id) {
                     let foreign = |span: &dolang::compile::SourceSpan| foreign(&check, id, span);
-                    convert(&offsets, diag, foreign, &mut result);
+                    convert(offsets, diag, foreign, &mut result);
                 }
             }
-            result
-        })
+            let name = check.name(id);
+            let checked = check.into_analysis().map(|analysis| Checked {
+                unit: id,
+                name,
+                analysis,
+            });
+            (result, checked)
+        });
+        self.checked = checked;
+        result
+    }
+
+    /// What hover shows at the UTF-16 offsets `from` to `to`: a position when
+    /// they're equal, else a range. Before a check, only what the source
+    /// declares.
+    pub(crate) fn hover(&self, from: usize, to: usize) -> Option<Hover> {
+        let refs = self.refs.get_or_init(|| hover::references(&self.unit));
+        hover::hover(
+            &self.unit,
+            &self.offsets,
+            refs,
+            self.checked.as_ref(),
+            from,
+            to,
+        )
     }
 }
 
@@ -403,7 +426,7 @@ pub mod tests {
     #[wasm_bindgen_test]
     fn type_error_is_reported() {
         let source = "# é 😀\nlet x @ Int = \"a\"\necho $x";
-        let analyzed = Analyzed::new(source.to_owned());
+        let mut analyzed = Analyzed::new(source.to_owned());
         assert!(analyzed.diagnostics().is_empty());
         let checked = analyzed.check();
         let error = checked
