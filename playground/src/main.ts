@@ -1,9 +1,9 @@
 import { EditorState, StateEffect, StateField } from '@codemirror/state';
-import { Decoration, EditorView, keymap, lineNumbers, type DecorationSet } from '@codemirror/view';
+import { Decoration, EditorView, hoverTooltip, keymap, lineNumbers, type DecorationSet, type Tooltip } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { setDiagnostics } from '@codemirror/lint';
 import { AnsiUp } from 'ansi_up';
-import type { AnalysisReply, AnalysisRequest, Diagnostic, PageCall, RunReply, RunRequest, TokenRange } from './protocol';
+import type { AnalysisReply, AnalysisRequest, Diagnostic, HoverTip, PageCall, RunReply, RunRequest, TokenRange } from './protocol';
 import { examples } from './examples';
 import { decodeSource, encodeSource } from './share';
 import './style.css';
@@ -46,6 +46,8 @@ let analysisVersion: number | undefined;
 let compileDiagnostics: Diagnostic[] = [];
 // The source version whose analysis made the analysis worker fail.
 let failedAnalysis: number | undefined;
+// Hover requests awaiting the analysis worker, by request id.
+const hovers = new Map<number, (tip: HoverTip | undefined) => void>();
 let activeRun: number | undefined;
 let stopping = false;
 let stopTimer: ReturnType<typeof setTimeout> | undefined;
@@ -100,6 +102,30 @@ function requestAnalysis() {
 function scheduleAnalysis() {
   clearTimeout(timer);
   timer = setTimeout(requestAnalysis, 200);
+}
+// Gives up on pending hovers, whose answers would be for replaced text.
+function dropHovers() {
+  for (const resolve of hovers.values()) resolve(undefined);
+  hovers.clear();
+}
+// Asks the analysis worker what hover shows at `pos`, analyzing the current
+// version first if its analysis is still waiting for edits to settle.
+function hover(pos: number): Promise<Tooltip | null> {
+  if (!analysis.ready || version === failedAnalysis) return Promise.resolve(null);
+  if (analysisVersion !== version) requestAnalysis();
+  const id = ++requestId;
+  const tip = new Promise<HoverTip | undefined>(resolve => hovers.set(id, resolve));
+  postAnalysis({ type: 'hover', id, version, pos });
+  return tip.then(tip => tip ? {
+    pos: tip.from,
+    end: tip.to,
+    create() {
+      const dom = document.createElement('div');
+      dom.className = 'hover';
+      dom.innerHTML = tip.html;
+      return { dom };
+    },
+  } : null);
 }
 function setError(message: string) {
   element('error').textContent = message;
@@ -174,6 +200,7 @@ function start<R extends AnalysisReply | RunReply>(slot: Slot, worker: Worker, h
 }
 function failLoad(message: string) {
   setError(message);
+  dropHovers();
   clearTimeout(timer);
   for (const slot of [analysis, runner]) {
     slot.worker?.terminate();
@@ -186,6 +213,7 @@ function failLoad(message: string) {
   controls();
 }
 function startAnalysisWorker() {
+  dropHovers();
   start<AnalysisReply>(analysis, new Worker(new URL('./analysis-worker.ts', import.meta.url), { type: 'module' }), {
     ready: requestAnalysis,
     crash(message) {
@@ -195,6 +223,11 @@ function startAnalysisWorker() {
       startAnalysisWorker();
     },
     reply(reply) {
+      if (reply.type === 'hover') {
+        hovers.get(reply.id)?.(reply.version === version ? reply.value : undefined);
+        hovers.delete(reply.id);
+        return;
+      }
       if (reply.type !== 'analysis' && reply.type !== 'checked') return;
       if (reply.version !== version || reply.id !== latestAnalysis) return;
       if (reply.type === 'analysis') {
@@ -297,6 +330,7 @@ async function init() {
     state: EditorState.create({
       doc,
       extensions: [lineNumbers(), history(), highlights, EditorView.lineWrapping,
+        hoverTooltip((_, pos) => hover(pos), { hideOnChange: true }),
         EditorView.theme({
           '.cm-gutters': { backgroundColor: '#1d202d', color: '#7f88a4', border: 'none' },
           '.cm-content': { padding: '1rem 0' },
@@ -306,6 +340,7 @@ async function init() {
         EditorView.updateListener.of(update => {
           if (update.docChanged) {
             version++;
+            dropHovers();
             element('diagnostics').replaceChildren();
             element('diagnostics-section').hidden = true;
             delete element('diagnostics-section').dataset.checked;

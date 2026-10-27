@@ -91,11 +91,16 @@ export type HostArgs<M extends keyof Host> =
   Host[M] extends (...args: [...infer A, AbortSignal]) => unknown ? A : never;
 export type PageCall = { [M in PageMethod]: { method: M; args: HostArgs<M> } }[PageMethod];
 type Lifecycle = { type: 'ready' } | { type: 'failure'; message: string };
-export type AnalysisRequest = { type: 'analyze'; id: number; version: number; source: string };
+export type AnalysisRequest =
+  | { type: 'analyze'; id: number; version: number; source: string }
+  | { type: 'hover'; id: number; version: number; pos: number };
+/** A hover tooltip's range and HTML */
+export interface HoverTip { from: number; to: number; html: string }
 export type AnalysisReply =
   | Lifecycle
   | { type: 'analysis'; id: number; version: number; value: Analysis }
-  | { type: 'checked'; id: number; version: number; diagnostics: Diagnostic[] };
+  | { type: 'checked'; id: number; version: number; diagnostics: Diagnostic[] }
+  | { type: 'hover'; id: number; version: number; value?: HoverTip };
 export type RunRequest =
   | { type: 'run'; id: number; version: number; source: string }
   | { type: 'cancel'; id: number }

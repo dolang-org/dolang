@@ -12,10 +12,12 @@
     "@codemirror/lint": "^6.8.0",
     "@codemirror/state": "^6.5.0",
     "@codemirror/view": "^6.38.0",
-    "ansi_up": "^6.0.6"
+    "ansi_up": "^6.0.6",
+    "markdown-it": "^14.3.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",
+    "@types/markdown-it": "^14.2.0",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0",
     "vite": "^7.3.7"

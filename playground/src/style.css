@@ -29,6 +29,13 @@ button:disabled { opacity: .4; cursor: default; }
 .cm-editor.cm-focused::after { content: ""; position: absolute; inset: 0; border: 2px solid #7185e7; pointer-events: none; z-index: 201; }
 .cm-selectionBackground, .cm-focused .cm-selectionBackground { background: #3b4569 !important; }
 .cm-tooltip { background: #252938; border: 1px solid #7185e7; color: #e6e8f0; }
+.cm-tooltip .hover { max-width: min(70ch, calc(100vw - 32px)); max-height: min(24rem, 60vh); overflow: auto; padding: .5rem .75rem; font: 13px/1.5 system-ui, sans-serif; }
+.hover > :first-child { margin-top: 0; }
+.hover > :last-child { margin-bottom: 0; }
+.hover p { margin: .5rem 0; }
+.hover pre { white-space: pre; overflow-x: auto; overflow-wrap: normal; padding: 0; margin: .5rem 0; min-height: 0; font-size: 13px; line-height: 1.5; }
+.hover code { font-family: "JetBrains Mono", ui-monospace, monospace; }
+.hover hr { border: 0; border-top: 1px solid #363b50; margin: .5rem 0; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 0 1rem; font: 14px/1.6 "JetBrains Mono", ui-monospace, monospace; min-height: 1.6em; }
 #output { height: var(--panel-height); margin: 0; padding-top: 1rem; padding-bottom: 1rem; overflow-y: auto; line-height: 1.4; font-variant-ligatures: none; }
 h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; margin: 1.3rem 1rem .5rem; color: #a3a9bf; }
