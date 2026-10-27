@@ -1410,6 +1410,7 @@ dependencies = [
  "dolang-ext-uuid",
  "dolang-ext-xml",
  "dolang-ext-yaml",
+ "dolang-private-util",
  "dolang-shell-modules",
  "futures",
  "getrandom 0.4.2",

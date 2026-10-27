@@ -254,6 +254,42 @@ pub def extract_doc_json spec out_dir
     let :name :path = job
     spec.dolang -m compile extract --doc --strict --module $name $path stdout: (out_dir / "$name.json")
 
+# The playground's hover docs (see playground/src/docs.ts), written to
+# `out_dir`: the doc projection of each stub module as `modules/<name>.json`,
+# with `test` from the playground's own stub, and `pages.json`, naming each
+# public module's classes that get their own docs/api page, for resolving
+# cross-references into the site. Pages are laid out from every module, as
+# for mkdocs, since a link can point anywhere on the site. The `lib/` modules
+# need the shell, which the playground lacks, so their docs aren't shipped.
+pub def extract_playground_docs spec out_dir
+  let json_dir = (spec.target_dir / "playground-doc-json").absolute()
+  extract_doc_json $spec $json_dir
+  let modules = $
+    for doc = json_dir.glob("*.json").map do |p| (json.decode(str(p.read()))["doc"])
+      $doc["module"]: $doc
+  let pages = {}
+  for name document = modules
+    if private_doc_module(name)
+      continue
+    let classes = []
+    for entry = module_classes $modules $name $document["entities"]
+      classes.push $entry[0]
+    pages[name] = classes
+  out_dir.remove all: true ignore: true
+  let modules_dir = (out_dir / "modules")
+  modules_dir.create_dir all: true
+  (out_dir / "pages.json").write $json.encode(pages)
+  let stub = Path "dolang-shell-modules/stub"
+  for path = stub.glob "**/*.dol"
+    let name = dol_module_name $path $stub
+    (modules_dir / "$name.json").write $json.encode(modules[name])
+  let test = (spec.target_dir / "playground-test-doc.json").absolute()
+  spec.dolang -m compile extract --doc --strict --module test
+    dolang-shell-modules/wasm/stub/test.dol
+    stdout: $test
+  let test_doc = json.decode(str(test.read()))["doc"]
+  (modules_dir / "test.json").write $json.encode(test_doc)
+
 # Regenerates every bundled library's typelib for the LSP build. Keep private
 # modules too: public declarations may refer to them.
 pub def extract_typelibs spec out_dir

@@ -16,5 +16,6 @@ __pycache__
 # Browser playground build products
 /playground/node_modules/
 /playground/pkg/
+/playground/public/
 /playground/test-results/
 /playground/playwright-report/

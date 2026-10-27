@@ -197,7 +197,10 @@ def wasm_test()
   env CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: $runner do
     run_cargo test -p dolang-wasm --target wasm32-unknown-unknown --lib --locked
 
+# Vite copies the hover docs from `playground/public/` with the page.
 def playground_build()
+  native.cargo build --bin dolang
+  docgen().extract_playground_docs $native $Path("playground/public/docs").absolute()
   wasm_build()
   dodo.show npm --prefix playground ci
   dodo.show npm --prefix playground run build

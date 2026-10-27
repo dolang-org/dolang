@@ -328,3 +328,111 @@ test('type checking waits for edits to settle', async ({ page }) => {
   const checked = replies.filter(reply => reply.type === 'checked').length;
   expect(checked).toBeLessThan(analyses.length);
 });
+
+// Moves the mouse onto the character at `pos` and returns the hover tooltip.
+async function hoverAt(page: Page, pos: number) {
+  const view = await page.waitForFunction(() =>
+    (window as { playground?: { view: EditorView } }).playground?.view as EditorView);
+  const { x, y } = await view.evaluate((view, pos) => {
+    const start = view.coordsAtPos(pos, 1)!;
+    const end = view.coordsAtPos(pos + 1, -1)!;
+    return { x: (start.left + end.right) / 2, y: (start.top + start.bottom) / 2 };
+  }, pos);
+  await page.mouse.move(0, 0);
+  await page.mouse.move(x, y);
+  return page.locator('.cm-tooltip-hover');
+}
+
+test('hover shows checked types before the check delay ends', async ({ page }) => {
+  const text = 'let n = 2\necho $n';
+  await source(page, text);
+  const tip = await hoverAt(page, text.length - 1);
+  await expect(tip).toHaveText('n @ std.Int');
+});
+
+test('hover shows a local function signature and doc comment', async ({ page }) => {
+  const text = 'let n = 2\n# Doubles a *number*.\ndef double x@Int -> Int\n  (x * 2)\ndouble $n';
+  await source(page, text);
+  const tip = await hoverAt(page, text.lastIndexOf('double') + 1);
+  await expect(tip.locator('pre')).toHaveText('def double x @ Int -> Int');
+  await expect(tip.locator('em')).toHaveText('number');
+  await expect(tip).toContainText('Doubles a number.');
+  // Its signature says what the checked type would
+  await expect(tip).not.toContainText('std.Int');
+});
+
+test('hover shows a prelude function signature and doc', async ({ page }) => {
+  await source(page, 'echo hi');
+  const tip = await hoverAt(page, 1);
+  await expect(tip.locator('pre').first()).toHaveText('def echo ...args @ Value');
+  await expect(tip.locator('em').first()).toHaveText('in module term');
+  await expect(tip).toContainText('Prints arguments separated by spaces');
+  // Its signature says what the checked type would
+  await expect(tip).not.toContainText('term.echo @');
+  // Cross-references go to the API docs beside the playground, apart from it
+  const text = tip.locator('a', { hasText: 'Text' }).first();
+  await expect(text).toHaveAttribute('href', '../api/term/Text/#term.Text');
+  await expect(text).toHaveAttribute('target', '_blank');
+});
+
+test('hover on an overloaded bundled call shows the chosen overload', async ({ page }) => {
+  await source(page, 'echo (int "ff" base: 16)');
+  const tip = await hoverAt(page, 7);
+  await expect(tip.locator('pre')).toHaveText('def int value@Str :base@Int -> Int');
+});
+
+test('hover shows a method of a bundled class', async ({ page }) => {
+  const text = 'echo ("hi".upper())';
+  await source(page, text);
+  const tip = await hoverAt(page, text.indexOf('upper') + 1);
+  await expect(tip.locator('pre').first()).toHaveText(/^def upper/);
+  await expect(tip.locator('em').first()).toHaveText('in class std.Str');
+  await expect(tip).toContainText('Returns the string converted to uppercase.');
+});
+
+test('hover escapes markup and refuses unsafe links in doc comments', async ({ page }) => {
+  const text = 'let x = 1\n# A <b>value</b> <img src=x onerror="document.body.dataset.hacked = 1">.\nlet z = x\necho $z';
+  await source(page, text);
+  const tip = await hoverAt(page, text.indexOf('let z') + 4);
+  await expect(tip).toContainText('A <b>value</b> <img src=x onerror="document.body.dataset.hacked = 1">.');
+  await expect(tip.locator('b, img')).toHaveCount(0);
+  await expect(page.locator('body')).not.toHaveAttribute('data-hacked');
+  const linking = 'let x = 1\n# A [link](javascript:alert(1)).\nlet y = x\necho $y';
+  await source(page, linking);
+  const linked = await hoverAt(page, linking.length - 1);
+  await expect(linked).toContainText('link');
+  await expect(linked.locator('a[href^="javascript"]')).toHaveCount(0);
+});
+
+test('an edit drops a shown or pending hover', async ({ page }) => {
+  await page.addInitScript(() => {
+    const Original = Worker;
+    window.Worker = class extends Original {
+      override set onmessage(handler: ((this: Worker, event: MessageEvent) => unknown) | null) {
+        super.onmessage = event => {
+          if (event.data.type === 'hover' && document.documentElement.dataset.holdHover) {
+            // Deliver the answer after the edit that replaces its text.
+            setTimeout(() => handler?.call(this, event), 1000);
+            document.documentElement.dataset.heldHover = 'yes';
+          } else {
+            handler?.call(this, event);
+          }
+        };
+      }
+    };
+  });
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeEnabled();
+  const text = 'let n = 2\necho $n';
+  await source(page, text);
+  const tip = await hoverAt(page, text.length - 1);
+  await expect(tip).toHaveText('n @ std.Int');
+  await source(page, `${text}\n`);
+  await expect(tip).toHaveCount(0);
+  await page.evaluate(() => { document.documentElement.dataset.holdHover = 'yes'; });
+  await hoverAt(page, text.length - 1);
+  await expect(page.locator('html')).toHaveAttribute('data-held-hover', 'yes');
+  await source(page, 'let s = "a"\necho $s');
+  await page.waitForTimeout(1100);
+  await expect(tip).toHaveCount(0);
+});
