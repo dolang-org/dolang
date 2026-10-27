@@ -1,7 +1,7 @@
 import init, { Analyzed } from '../pkg/dolang_wasm.js';
 import wasmUrl from '../pkg/dolang_wasm_bg.wasm?url';
-import type { AnalysisReply, AnalysisRequest, Diagnostic, Hover } from './protocol';
-import { html, markdown, type BundledKey, type Described } from './hover';
+import type { AnalysisReply, AnalysisRequest, Diagnostic, Hover, TokenRange } from './protocol';
+import { html, markdown, spans, type BundledKey, type Described } from './hover';
 import { Docs, link, type ModuleJson, type Pages } from './docs';
 
 // How long edits must settle before the source is type checked, as in the LSP.
@@ -59,6 +59,17 @@ function analyze(id: number, version: number, source: string) {
   checkTimer = setTimeout(() => check(entry), checkDelayMs);
 }
 
+// A fence in hover, highlighted as the editor highlights source
+function highlight(code: string): string {
+  const analyzed = new Analyzed(code);
+  try {
+    const tokens: TokenRange[] = analyzed.tokens();
+    return spans(code, tokens);
+  } finally {
+    analyzed.free();
+  }
+}
+
 // A hover for a replaced version gets no answer; the page has given up on it.
 // One while a check is pending checks now, so it shows checked types. Bundled
 // docs may have to be fetched, and a later analysis can free `analyzed` by
@@ -76,7 +87,7 @@ async function hover(id: number, version: number, pos: number) {
   const text = markdown(found, key => bundled.get(key) ?? []);
   const resolved = await pages;
   const value = text === undefined ? undefined
-    : { from: found.from, to: found.to, html: html(text, href => link(href, resolved)) };
+    : { from: found.from, to: found.to, html: html(text, href => link(href, resolved), highlight) };
   reply({ type: 'hover', id, version, value });
 }
 
