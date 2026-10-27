@@ -2,7 +2,7 @@
 // hover markdown (`backend.rs`: `Backend::hover`, `Described`,
 // `declaration_label`; `signature.rs`), then rendered to HTML.
 import MarkdownIt from 'markdown-it';
-import type { Declaration, Hover, Param, Signature, TypeLine } from './protocol';
+import type { Declaration, Hover, Param, Signature, TokenRange, TypeLine } from './protocol';
 
 /** One declaration's docs, as hover shows them */
 export interface Described {
@@ -142,8 +142,16 @@ export function markdown(hover: Hover, bundled: Bundled): string | undefined {
  * without it, only web links stay. Links open apart from the playground, so
  * following one doesn't lose the edit.
  */
-export function html(markdown: string, link?: (href: string) => string | undefined): string {
-  const md = new MarkdownIt({ html: false });
+export function html(
+  markdown: string,
+  link?: (href: string) => string | undefined,
+  highlight?: (code: string) => string | undefined,
+): string {
+  // An untagged fence is Do, as in the API docs
+  const md = new MarkdownIt({
+    html: false,
+    highlight: (code, lang) => (highlight && ['', 'dolang'].includes(lang) ? highlight(code) : undefined) ?? '',
+  });
   md.core.ruler.push('doc_links', state => {
     for (const block of state.tokens) {
       if (!block.children) continue;
@@ -168,4 +176,23 @@ export function html(markdown: string, link?: (href: string) => string | undefin
     }
   });
   return md.render(markdown);
+}
+
+const escape = (text: string) =>
+  text.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+
+/**
+ * `code` as HTML, with each of its `tokens` in a span of the class the editor
+ * gives its kind. Tokens are in source order, at UTF-16 offsets.
+ */
+export function spans(code: string, tokens: TokenRange[]): string {
+  let out = '';
+  let at = 0;
+  for (const { from, to, kind } of tokens) {
+    if (from < at) continue;
+    out += escape(code.slice(at, from));
+    out += `<span class="token-${escape(kind)}">${escape(code.slice(from, to))}</span>`;
+    at = to;
+  }
+  return out + escape(code.slice(at));
 }

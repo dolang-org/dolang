@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   Docs, label, link, removeManualAnchors, removePlaygroundMarkup, type Entity, type ModuleJson, type Pages,
 } from '../src/docs';
-import { html } from '../src/hover';
+import { html, spans } from '../src/hover';
 
 const fixture = (modules: ModuleJson[]) =>
   new Docs(async name => modules.find(module => module.module === name));
@@ -149,4 +149,30 @@ test('every shipped entity describes, and its links resolve', async () => {
   }
   expect(count).toBeGreaterThan(1000);
   expect(unresolved).toEqual([]);
+});
+
+test('highlighted code escapes text and keeps UTF-16 offsets', () => {
+  const code = 'echo "😀" <b> & x';
+  const tokens = [
+    { from: 0, to: 4, kind: 'function' },
+    { from: 5, to: 9, kind: 'string' },
+    { from: 16, to: 17, kind: 'variable' },
+  ];
+  expect(spans(code, tokens)).toBe(
+    '<span class="token-function">echo</span> <span class="token-string">&quot;😀&quot;</span>'
+      + ' &lt;b&gt; &amp; <span class="token-variable">x</span>',
+  );
+});
+
+test('only Do fences are highlighted', () => {
+  const fenced: string[] = [];
+  const highlight = (code: string) => {
+    fenced.push(code);
+    return `<span class="token-keyword">${code.trim()}</span>`;
+  };
+  const text = html('```dolang\nlet\n```\n\n```\ndef\n```\n\n```json\n{}\n```', undefined, highlight);
+  expect(fenced).toEqual(['let\n', 'def\n']);
+  expect(text).toContain('<code class="language-dolang"><span class="token-keyword">let</span>');
+  expect(text).toContain('<code><span class="token-keyword">def</span>');
+  expect(text).toContain('<code class="language-json">{}');
 });

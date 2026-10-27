@@ -348,6 +348,8 @@ test('hover shows checked types before the check delay ends', async ({ page }) =
   await source(page, text);
   const tip = await hoverAt(page, text.length - 1);
   await expect(tip).toHaveText('let n @ std.Int = ...');
+  // Its fence is highlighted as source is
+  await expect(tip.locator('pre .token-keyword')).toHaveText('let');
 });
 
 test('hover shows a local function signature and doc comment', async ({ page }) => {
@@ -355,6 +357,7 @@ test('hover shows a local function signature and doc comment', async ({ page }) 
   await source(page, text);
   const tip = await hoverAt(page, text.lastIndexOf('double') + 1);
   await expect(tip.locator('pre')).toHaveText('def double x @ Int -> Int\n  ...');
+  await expect(tip.locator('pre .token-keyword').first()).toHaveText('def');
   await expect(tip.locator('em')).toHaveText('number');
   await expect(tip).toContainText('Doubles a number.');
   // Its signature says what the checked type would
