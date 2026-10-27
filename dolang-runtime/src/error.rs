@@ -26,8 +26,6 @@ use crate::{
     vm::Vm,
 };
 
-use dolang_bytecode as bytecode;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 /// Category of execution error
@@ -694,7 +692,10 @@ impl<'v, 's> Error<'v, 's> {
         Self::new_info(strand.inner, Boxed::CyclicImport(name.into()))
     }
 
-    pub(crate) fn bytecode(strand: &mut Strand<'v, 's>, err: bytecode::Error) -> Self {
+    pub(crate) fn bytecode(
+        strand: &mut Strand<'v, 's>,
+        err: impl Into<Box<dyn error::Error>>,
+    ) -> Self {
         Self::new_info(strand.inner, Boxed::Bytecode(err.into()))
     }
 

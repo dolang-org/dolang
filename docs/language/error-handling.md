@@ -140,6 +140,5 @@ catch NoDomainError: err
 
 Inherit from the type that describes the failure — `ValueError` for a malformed
 value, `RuntimeError` when nothing more specific fits. Every `std` error type is
-subclassable except [`AbortError`](std.AbortError) and
-[`BytecodeError`](std.BytecodeError), which can be neither subclassed nor
-constructed.
+subclassable except [`AbortError`](std.AbortError), which can be neither
+subclassed nor constructed.

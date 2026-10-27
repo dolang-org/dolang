@@ -1490,7 +1490,7 @@ impl Bytecode {
     ) -> Result<'v, 's, ()> {
         let loaded = strand
             .load_bytecode(self, importer)
-            .map_err(|e| Error::bytecode(strand, e))?;
+            .map_err(|e| Error::bytecode(strand, e.to_string()))?;
         let mut frame = unsafe { CallFrame::new(loaded, 0, None, None) };
         strand
             .run(strand.inner, &mut frame, Slot::from_output(&mut out))

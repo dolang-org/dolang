@@ -440,7 +440,12 @@ fn construct<'v, 's>(
             let msg = expect_string(strand, &msg)?;
             Error::compile(strand, msg)
         }
-        ErrorKind::Bytecode | ErrorKind::Abort => {
+        ErrorKind::Bytecode => {
+            let ([msg], []) = unpack!(strand, args, 1, 0)?;
+            let msg = expect_string(strand, &msg)?;
+            Error::bytecode(strand, msg)
+        }
+        ErrorKind::Abort => {
             return Err(Error::type_error(
                 strand,
                 format!("{} is not instantiable", variant_name(kind)),
@@ -464,11 +469,11 @@ fn construct<'v, 's>(
 
 /// Whether a variant type has a constructor, and so can be subclassed.
 ///
-/// `Abort` and `Bytecode` are sealed: `Abort` carries native content nothing in
-/// Do can supply, and letting either be subclassed would let a script mint
-/// values that [`Error::catchable`] reports as uncatchable.
+/// `Abort` is sealed: it carries native content nothing in Do can supply, and
+/// letting it be subclassed would let a script mint values that
+/// [`Error::catchable`] reports as uncatchable.
 fn is_constructible(kind: ErrorKind) -> bool {
-    !matches!(kind, ErrorKind::Bytecode | ErrorKind::Abort)
+    !matches!(kind, ErrorKind::Abort)
 }
 
 fn variant_singleton<'v>(strand: &Strand<'v, '_>, kind: ErrorKind) -> &'v Value<'v> {
