@@ -1884,11 +1884,16 @@ pub class Bool
 
 
 # Raised on bytecode verification errors.
-#
-# Only bytecode verification raises `BytecodeError`; it can be neither
-# constructed nor subclassed.
 #[mixable]
 pub class BytecodeError: RuntimeError
+  # Builds an error reporting a bytecode verification failure.
+  pub def (init)
+    self
+    # description of the verification failure
+    message @ Str
+  do
+    ...
+
 
 # Raised when a strand is canceled. During `finally` blocks, cancellation is
 # masked so cleanup can complete. See
