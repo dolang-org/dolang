@@ -3,40 +3,53 @@
 LSP server for Do using `tower-lsp-server` and `tokio`. Document state
 recompiles on every change to provide diagnostics and semantic tokens.
 
-Compilation runs on a dedicated worker thread, so handlers never block the
-event loop. Handlers send the worker each document's text. Each open or edit
-starts a revision, a shared future of its `Document`, which replaces the
-document's newest revision unless a newer one arrived first. A request awaits
-the newest revision, since its positions refer to the text the client last
-sent; ordering requests after edits is left to the client. If the worker passes
-over a revision, superseded or failing to compile it, the request answers from
-the last stored `Document`. The worker keeps the
-`Unit<'static>` it last compiled for each open document, reusing it when the
-text and settings are unchanged. It projects each unit into a `Document`
-holding the unit (whose source is the document's text), semantic tokens,
-references, declarations, symbols and quick fixes. An applier task stores each
-`Document`, replacing the old one whole, then publishes its diagnostics.
+Documents live in workspaces (`workspace.rs`). A workspace is a root: the
+directory of the nearest `.dolang-lsp.toml` above a document, or else the
+document's own directory, with the settings found there. Its members are the
+documents in it open for any reason: in the client, or as a module a check
+imports. A member is one revision of its document, an `Arc` that new text
+replaces in the workspace's table; whoever holds an older one keeps it, and can
+tell it is no longer current. The workspace's lock guards only reading and
+changing that table: files are read, and members compiled and checked, outside
+it. The backend's only state is a handle for each open document, which keeps
+its workspace alive, and the table of live workspaces.
 
-tower-lsp-server runs handlers concurrently, so edits can reach the worker out
-of order. Each piece of work carries a stamp: an epoch, which each open of the
-document advances, and the client's version. The worker and the applier drop
-anything older than what they already hold. A close also goes through the
-worker, so the applier drops the document only after any projection still in
-flight.
+Opening, editing, saving and closing a document update the handle and the
+workspace before the handler's first `await`, so they apply in the order the
+client sent them. Edits can still arrive out of order, so a member the client
+has open replaces another only if its version isn't older. A reopen starts
+over, whatever versions came before. A save is a revision at the document's
+current version.
 
-The worker also type checks each document once its edits have settled. A
-document's projection publishes its compile diagnostics at once, and schedules a
-check for a short delay later; each newer edit pushes the check back. The worker
-waits on its request channel with `recv_timeout` until the earliest check is
-due. A check has the document's unit, compiled as its module if it lies under
-the configured module path and as a script otherwise. The unchanged unit of a
-save keeps its check. The check publishes the compile diagnostics again,
-merged with the checker's, but only while the stored document still has the
-stamp it checked. The check also keeps the checker's analysis, which the applier
-attaches to that stored document; a saved unit's kept check comes with its
-analysis. Hover asks the analysis what the checker concluded at the cursor, and
-for a variable shows its name and type above the declaration's doc comment,
-without its `let` label.
+Compilation runs on a dedicated worker thread, so handlers never block the event
+loop on it. Handlers send the worker each new member, along with the sender of a
+shared future of its `Document`. A request awaits the current member's future,
+since its positions refer to the text the client last sent; ordering requests
+after edits is left to the client. If the worker passes over a member,
+superseded or failing to compile it, the request answers from the last published
+`Document`. A member with the same text as the one it replaces keeps its
+`Unit<'static>`, and its check if the client had it open too. The worker
+projects each unit into a `Document` holding the unit (whose source is the
+document's text), semantic tokens, references, declarations, symbols and quick
+fixes. An applier task publishes a `Document`'s diagnostics, and keeps it on the
+handle, only if its member is still the current one.
+
+The worker also type checks each workspace once its table has settled. A
+document's projection publishes its compile diagnostics at once, along with a
+check its unit kept. Every change to a workspace's table, from a handler or a
+file on disk, puts its check off for a short delay; the worker waits on its
+request channel with `recv_timeout` until the earliest check is due. A check
+is of the members whose checks aren't valid, not of the open ones: opening a
+document only decides whether its check is published. Their units, compiled as
+modules if they lie under the configured module path and as scripts otherwise,
+are checked together with the closure of their imports, in one checker run, so
+documents that share modules share a check. Each member gets the checker's
+diagnostics located in it and the run's analysis. An open one's check
+publishes the compile diagnostics again, merged with the checker's, if its
+member is still current, and the applier attaches the analysis to that stored
+document. Hover asks the analysis what the checker concluded at the cursor,
+and for a variable shows its name and type above the declaration's doc
+comment, without its `let` label.
 
 The check also keeps the units of the modules it read from source, keyed by the
 checker's name for each, with the document's own. Go to definition and hover on
@@ -59,33 +72,46 @@ the doc index (`signature.rs`).
 Being the check's own units, they agree with its analysis, and an edit to a
 module reaches its importers with their next check.
 
-A check resolves imports through the workspace (`workspace.rs`), which holds a
-store for each module path, plus one shared by configurations without one. A
-store answers what a module is now. An open document that is the module comes
-first, so importers see the client's buffer. Open documents are matched to
-modules by each store's module path, not by URI. Next is a source on the
-module path, then a bundled typelib unless the configuration turns them off.
-An import found nowhere is reported as not found. A check resolves the modules
-the document imports, directly or transitively, plus `proc` for the pipe
-types, as `compile check` does. The document's own module is never looked up,
-so it replaces its bundled copy. Each module's unit is kept until its text
-changes.
+A check looks modules up in its workspace's table. A member the client has
+open as the module comes first, so importers see the client's buffer, then one
+loaded from disk; of several, the one at the least path. Open documents are
+matched to modules by the workspace's module path, not by URI. A buffer under a
+nested configuration is a member of that configuration's workspace only, so an
+enclosing workspace whose module path reaches it reads its file. A module the
+table lacks is read from the module path and becomes a loaded member, unless
+the client opened the module meanwhile, whose buffer stands in for it. Next is
+a bundled typelib unless the configuration turns them off. An import found
+nowhere is reported as not found. A check gathers the modules its members
+import, directly or transitively, plus `proc` for the pipe types, as `compile
+check` does, loading modules until the set stops growing. Each member stands
+for its own module, so it replaces its bundled copy. A buffer of a module that
+another buffer of the same module stands in for is checked on its own.
 
-A store records each module's imports, and those of the open documents checked
-through it, by name, whether or not the import resolved. Opening, editing or
-closing a document that is a module, a watched file changing on disk, or a check
-finding a module changed on disk, invalidates the module. Every open document
-that imports it, directly or transitively, is then checked again once the change
-settles. Only checks need redoing, since a unit doesn't depend on what it
-imports. A store is dropped once no open document checks through it.
+A member's check records, for each module in its closure, what it looked up to:
+a member, held weakly, a bundled typelib, or nothing. The check is valid while
+each of them still looks up the same. Validity is derived, so a change to the
+table needs no bookkeeping beyond the change: replacing a member invalidates
+whatever was checked against it, and nothing else. A check is stored only on
+members still current when it finishes, and one checked against a module
+replaced meanwhile is invalid on arrival and checked again. Before gathering, a
+check compares each loaded member's file with the modification time and size it
+was read at, and looks again for the modules checks found missing or bundled. A
+change replaces, loads or drops loaded members, and puts the check off until the
+table settles. A check whose gathered members were replaced meanwhile is
+abandoned. First, though, a check drops the loaded members that no open
+document's latest check reached, looking each module that check found up again
+by name, so what replaced it stays. A revision not checked yet holds what its
+earlier revision's check reached. A module only an edit imports may be dropped
+and loaded again, which costs only the read. A workspace is dropped once no open
+document is in it.
 
 When the client allows it, the server registers watchers for `.dol` sources
-and configuration files. A source event invalidates the module the file names
-in each store, by where it is, so a deleted file is named too. A module held
-by an open document ignores its file. A configuration event drops that
-directory's cached settings and compiles the open documents under it again.
-Each one then finds its configuration anew, nearer ones included, and a store
-whose module path changed is rebuilt. Wildcard roots expand only when a
+and configuration files. A source event puts every live workspace's check off,
+and the check's look at the disk finds what changed. A module held by an open
+document ignores its file. A configuration event in a
+directory retires the workspaces at, above and under it, and moves their open
+documents to the workspaces they find now, nearer configurations included,
+where they are compiled and checked again. Wildcard roots expand only when a
 configuration loads, so a new directory they match waits for the next
 configuration event.
 
