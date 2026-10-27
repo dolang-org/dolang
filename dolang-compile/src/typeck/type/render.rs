@@ -128,13 +128,15 @@ impl Database {
         style: Style,
     ) -> String {
         let sources = &self.declaration(decl).binders;
-        let mut declared: Vec<String> = (sources.iter())
+        let mut declared: Vec<String> = sources
+            .iter()
             .map(|binder| self.symbol(binder.name).to_owned())
             .collect();
         match self.ty(ty) {
             Type::Quantified { binders, body } => {
                 if binders.len() < declared.len() {
-                    let lifted = (sources.iter())
+                    let lifted = sources
+                        .iter()
                         .take_while(|binder| binder.origin == BinderOrigin::Lifted)
                         .count();
                     if binders.len() + lifted != declared.len() {
@@ -357,7 +359,8 @@ impl Renderer<'_> {
                 // A keyword binder's argument is named, and trailing arguments equal
                 // to their binders' defaults are left out
                 let mut shown = args.len();
-                if let Some(given) = (args.iter())
+                if let Some(given) = args
+                    .iter()
                     .map(|arg| match *arg {
                         Argument::Positional(ty) => Some(ty),
                         _ => None,
@@ -373,7 +376,10 @@ impl Renderer<'_> {
                 }
                 // The argument for a lone positional schema binder is written as its
                 // only item's element when that item repeats
-                let mut positional = (binders.iter().enumerate().skip(lifted))
+                let mut positional = binders
+                    .iter()
+                    .enumerate()
+                    .skip(lifted)
                     .filter(|(_, binder)| !matches!(binder.binding, Binding::Keyword(_)));
                 let schema = match (positional.next(), positional.next()) {
                     (Some((index, binder)), None)
@@ -461,7 +467,8 @@ impl Renderer<'_> {
                     out.push_str("Never");
                 }
                 // Members are interned in ID order, which isn't stable across runs
-                let mut rendered: Vec<String> = (members.iter())
+                let mut rendered: Vec<String> = members
+                    .iter()
                     .map(|member| {
                         let mut out = String::new();
                         match member {
@@ -595,7 +602,9 @@ impl Renderer<'_> {
         let offset = binders.len() - declared.len();
         let mut next = 1;
         let mut listed = Vec::new();
-        let names = (binders.iter().enumerate())
+        let names = binders
+            .iter()
+            .enumerate()
             .map(|(slot, binder)| {
                 let name = match binder.binding {
                     Binding::Implicit => return None,
@@ -687,7 +696,9 @@ impl Renderer<'_> {
         let Some(items) = self.flat(arg) else {
             return false;
         };
-        let keyed = (items.iter()).any(|item| matches!(item.element, Element::Keyed { .. }));
+        let keyed = items
+            .iter()
+            .any(|item| matches!(item.element, Element::Keyed { .. }));
         let (open, close) = match collection {
             Collection::Array => unreachable!(),
             Collection::Tuple => match *items {
@@ -796,7 +807,8 @@ impl Renderer<'_> {
     fn pattern(&self, packs: &[TypeId], pattern: TypeId, naming: Naming<'_>, out: &mut String) {
         let group = Group {
             depth: naming.depth + 1,
-            names: (packs.iter())
+            names: packs
+                .iter()
                 .map(|&pack| {
                     let mut out = String::new();
                     self.render_into(pack, naming, &mut out);

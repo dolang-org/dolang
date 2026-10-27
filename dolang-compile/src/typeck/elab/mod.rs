@@ -153,7 +153,8 @@ impl<'u> Tables<'u> {
 
     /// The declaration designated `role`, if it is checked
     pub(crate) fn designated_decl(&self, role: Designated) -> Option<DeclId> {
-        (self.designated.iter())
+        self.designated
+            .iter()
             .find(|&(_, &designated)| designated == role)
             .map(|(&decl, _)| decl)
     }

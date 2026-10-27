@@ -72,7 +72,8 @@ fn compile<'a>(source: &'a str, mode: Mode<'a>) -> Unit<'a> {
     let mut config = Config::new();
     config.typecheck(true).mode(mode);
     let unit = config.unit(Path::new("lib.dol"), source);
-    let diags: Vec<_> = (unit.diagnostics())
+    let diags: Vec<_> = unit
+        .diagnostics()
         .map(|diag| diag.message().to_string())
         .collect();
     assert!(!unit.failed, "the fixture doesn't compile: {diags:?}");
@@ -136,7 +137,8 @@ pub let limit @ Tag = \"Tag\"
     assert!(strings.contains(&"tab\there"));
     // Each is written once, in the string table
     for text in ["Tag", "strings", "lib.dol", "limit"] {
-        let count = (bytes.windows(text.len()))
+        let count = bytes
+            .windows(text.len())
             .filter(|window| *window == text.as_bytes())
             .count();
         assert_eq!(count, 1, "`{text}` is written {count} times");
@@ -153,7 +155,8 @@ fn checks_against_typelib() {
     let from_source = builder.check();
     let script_unit =
         |diag: &&crate::diag::Diag| diag.span().unit().map(|unit| unit.index()) == Some(1);
-    let expected: Vec<_> = (from_source.diagnostics())
+    let expected: Vec<_> = from_source
+        .diagnostics()
         .filter(script_unit)
         .map(|diag| diag.message().to_string())
         .collect();
@@ -250,13 +253,17 @@ fn exported_variables() {
     let bytes = typelib();
     let harvest = read(&bytes).unwrap();
     let annotated = |name: &str| {
-        let export = (harvest.exports.iter())
+        let export = harvest
+            .exports
+            .iter()
             .find(|export| harvest.strings[export.name.index()] == name)
             .expect("the name is exported");
         let Target::Local(Referent::Value(value)) = export.target else {
             panic!("`{name}` is exported as a variable");
         };
-        (harvest.values.iter())
+        harvest
+            .values
+            .iter()
             .find(|listed| listed.span == value.span)
             .is_some_and(|listed| listed.annot.is_some())
     };
@@ -315,13 +322,15 @@ def private_def()
     let bytes = typeck::typelib(&compile(source, Mode::Module { name: "lib".into() })).unwrap();
     let harvest = read(&bytes).unwrap();
     let text = |name: Option<Name>| &*harvest.strings[name.unwrap().text.index()];
-    let decls: Vec<_> = (harvest.decls.iter()).map(|decl| text(decl.name)).collect();
+    let decls: Vec<_> = harvest.decls.iter().map(|decl| text(decl.name)).collect();
     // The special `(init)` stays whatever its visibility
     assert_eq!(decls, ["Open", "init", "get"]);
     let DeclNode::Class(open) = &harvest.decls[0].node else {
         panic!("`Open` is a class");
     };
-    let fields: Vec<_> = (open.members.iter())
+    let fields: Vec<_> = open
+        .members
+        .iter()
         .filter_map(|member| match member {
             Member::Field(field) => Some(text(field.names.first().copied())),
             Member::Method { .. } => None,
@@ -391,7 +400,8 @@ let _g @ G = 1
 /// Check the units together, returning each diagnostic with the index of the unit
 /// it is in, and its line and column.
 fn located(units: &[&Unit<'_>], typelibs: &[&[u8]]) -> Vec<(usize, u32, u32, String)> {
-    let typelibs: Vec<_> = (typelibs.iter())
+    let typelibs: Vec<_> = typelibs
+        .iter()
         .map(|bytes| Typelib::read(bytes).unwrap())
         .collect();
     let mut builder = Builder::new();

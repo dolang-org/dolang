@@ -138,8 +138,10 @@ impl<'u> Scope<'_, '_, 'u> {
     fn prelude(&mut self, receiver: Option<VarId>) {
         let init = self.ctx.init.clone().expect("lowering an `(init)`");
         let mut fields = FxHashMap::default();
-        let final_ =
-            (self.ctx.class).is_some_and(|class| self.lower.db.declaration(class).source.is_final);
+        let final_ = self
+            .ctx
+            .class
+            .is_some_and(|class| self.lower.db.declaration(class).source.is_final);
         for member in &init.ast.body.members {
             let ClassMember::Field(field) = member else {
                 continue;
@@ -181,7 +183,9 @@ impl<'u> Scope<'_, '_, 'u> {
         // Each superclass with an `(init)` is initialized only by calling it
         let mut supers = Vec::new();
         for class in self.checked_supers(init.ast) {
-            let var = (self.graph()).alloc_var(self.ctx.func, Origin::Super(class), None);
+            let var = self
+                .graph()
+                .alloc_var(self.ctx.func, Origin::Super(class), None);
             self.graph().var_mut(var).flags.insert(VarFlags::BOTTOM);
             self.assign(
                 var,
@@ -267,7 +271,9 @@ impl<'u> Scope<'_, '_, 'u> {
                 var
             })
         };
-        let params = (func.params.iter())
+        let params = func
+            .params
+            .iter()
             .map(|param| {
                 slot(matches!(
                     param,
@@ -690,7 +696,11 @@ impl<'u> Scope<'_, '_, 'u> {
     }
 
     fn pattern_class(&self, test: &ast::TypePattern) -> Option<DeclId> {
-        match (self.lower.tables).written(self.lower.unit, test.class.ident.span) {
+        match self
+            .lower
+            .tables
+            .written(self.lower.unit, test.class.ident.span)
+        {
             Some(Referent::Decl(decl))
                 if self.lower.tables.decls[decl.index()].kind == DeclKind::Class =>
             {
@@ -1010,7 +1020,8 @@ impl<'u> Scope<'_, '_, 'u> {
 
     /// A pattern's items, adding the sub-patterns they leave to match to `nested`
     fn pattern_items(&mut self, items: &'u [PatItem], nested: &mut Nested<'u>) -> Vec<PatternItem> {
-        (items.iter())
+        items
+            .iter()
             .map(|item| self.pattern_item(item, nested))
             .collect()
     }
@@ -1563,7 +1574,7 @@ impl<'u> Scope<'_, '_, 'u> {
         let graph = self.graph();
         let id = self.created(FuncKind::Decl(decl));
         if let Some(receiver) = self.ctx.init.as_ref().and_then(|init| init.receiver) {
-            (self.lower.captures.borrow_mut()).push(Capture {
+            self.lower.captures.borrow_mut().push(Capture {
                 block: self.bb,
                 func: id,
                 receiver,
@@ -1610,7 +1621,7 @@ impl<'u> Scope<'_, '_, 'u> {
     /// with the class
     fn default_init_value(&self, class: &'u Class, decl: DeclId) {
         let id = self.created(FuncKind::DefaultInit(decl));
-        let frame = (self.lower).frame(
+        let frame = self.lower.frame(
             id,
             Some(self.ctx.frame.clone()),
             &[],
@@ -1634,7 +1645,8 @@ impl<'u> Scope<'_, '_, 'u> {
     /// Apply decorators to a value, the last one written first. The decorators are
     /// evaluated first, in order, as the tree has it.
     fn decorate(&mut self, decorators: &'u [Decorator], value: Expr) -> Expr {
-        let decorators: Vec<_> = (decorators.iter())
+        let decorators: Vec<_> = decorators
+            .iter()
             .map(|decorator| (self.expr(&decorator.expr), decorator.open_span))
             .collect();
         decorators
@@ -1654,7 +1666,9 @@ impl<'u> Scope<'_, '_, 'u> {
         let id = self.function_value(decl, &def.func, false, self.ctx.class, None, def.ident.span);
         let value = expr(ExprKind::Lambda(id), def.ident.span);
         let value = self.decorate(&def.decorators, value);
-        let declared = (def.decorators.is_empty())
+        let declared = def
+            .decorators
+            .is_empty()
             .then(|| {
                 self.declared(decl, || {
                     function_value(self.lower.db, self.lower.tables, decl)
@@ -1813,7 +1827,8 @@ fn mismatch(var: VarId, pattern: &Pattern) -> Option<Assume> {
     let Pattern::Unpack { items, .. } = pattern else {
         return None;
     };
-    let items = (items.iter())
+    let items = items
+        .iter()
         .map(|item| {
             let key = match item.key {
                 PatternKey::Pos => PatternKey::Pos,

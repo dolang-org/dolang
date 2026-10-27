@@ -1137,7 +1137,10 @@ impl Worker {
     fn run(mut self, requests: mpsc::Receiver<Request>) {
         loop {
             // Few workspaces are live, so a scan finds the next check soon enough
-            let due = (self.pending.iter().enumerate())
+            let due = self
+                .pending
+                .iter()
+                .enumerate()
                 .min_by_key(|(_, (_, deadline))| *deadline)
                 .map(|(at, (_, deadline))| (at, *deadline));
             let first = match due {
@@ -1187,7 +1190,9 @@ impl Worker {
             return;
         };
         let deadline = Instant::now() + delay;
-        let pending = (self.pending.iter_mut())
+        let pending = self
+            .pending
+            .iter_mut()
             .find(|(pending, _)| pending.as_ptr() == Arc::as_ptr(workspace));
         match pending {
             Some((_, pending)) => *pending = deadline,
@@ -1251,7 +1256,9 @@ impl Worker {
         }
         let encodings: HashMap<Uri, PositionEncodingKind> = {
             let documents = self.documents.lock().expect("documents lock poisoned");
-            (documents.handles.iter())
+            documents
+                .handles
+                .iter()
                 .map(|(uri, handle)| (uri.clone(), handle.encoding.clone()))
                 .collect()
         };
@@ -1271,7 +1278,7 @@ impl Worker {
                     && checked.analyzed.is_some()
                 {
                     let uri = uri.clone();
-                    _ = (self.events).send(Event::Checked {
+                    _ = self.events.send(Event::Checked {
                         uri,
                         member,
                         checked,
@@ -1314,7 +1321,7 @@ async fn publish(
                 if let Some(document) = document {
                     *document.analyzed.lock().expect("analysis lock poisoned") = checked.analyzed;
                     let diagnostics = [&document.diagnostics[..], &checked.diagnostics].concat();
-                    (client)
+                    client
                         .publish_diagnostics(uri, diagnostics, member.version())
                         .await;
                 }
@@ -1385,14 +1392,19 @@ fn check_units(
     check: &Check,
     encodings: &HashMap<Uri, PositionEncodingKind>,
 ) -> Vec<Checked> {
-    let units: Vec<_> = (check.members().iter())
+    let units: Vec<_> = check
+        .members()
+        .iter()
         .map(|member| workspace.unit(member))
         .collect();
     let mut builder = typeck::Builder::new();
     builder.analysis(true);
     // The shell's pipelines connect stages with `proc`'s pipes
     builder.pipes(("proc", "PipeSender"), ("proc", "PipeReceiver"));
-    let ids: Vec<_> = (check.members().iter().zip(&units))
+    let ids: Vec<_> = check
+        .members()
+        .iter()
+        .zip(&units)
         .map(|(member, unit)| match builder.unit(unit) {
             Ok(id) => Some(id),
             // A source that failed to compile is left out, and imports of its
@@ -1410,11 +1422,16 @@ fn check_units(
         }
     }
     let checked = builder.check();
-    let at: HashMap<UnitId, usize> = (ids.iter().enumerate())
+    let at: HashMap<UnitId, usize> = ids
+        .iter()
+        .enumerate()
         .filter_map(|(at, id)| Some(((*id)?, at)))
         .collect();
     // Where each member's diagnostics are located, if the client has it open
-    let documents: Vec<_> = (check.members().iter().zip(&units))
+    let documents: Vec<_> = check
+        .members()
+        .iter()
+        .zip(&units)
         .map(|(member, unit)| {
             let uri = member.uri()?;
             let encoding = encodings.get(uri).cloned();
@@ -1425,7 +1442,7 @@ fn check_units(
         .collect();
     let mut diagnostics = vec![Vec::new(); units.len()];
     for diag in checked.diagnostics() {
-        let Some((id, &at)) = (diag.span().unit()).and_then(|id| Some((id, at.get(&id)?))) else {
+        let Some((id, &at)) = diag.span().unit().and_then(|id| Some((id, at.get(&id)?))) else {
             continue;
         };
         if let Some((uri, index)) = &documents[at] {
@@ -1435,10 +1452,12 @@ fn check_units(
             convert_diag(index, diag, relate, &mut diagnostics[at]);
         }
     }
-    let names: Vec<_> = (ids.iter())
-        .map(|id| id.map(|id| checked.name(id)))
-        .collect();
-    let modules: Modules = (check.members().iter().zip(&units).zip(&ids))
+    let names: Vec<_> = ids.iter().map(|id| id.map(|id| checked.name(id))).collect();
+    let modules: Modules = check
+        .members()
+        .iter()
+        .zip(&units)
+        .zip(&ids)
         .filter_map(|((member, unit), id)| {
             let id = (*id)?;
             let uri = match member.uri() {
@@ -1456,16 +1475,21 @@ fn check_units(
         .collect();
     let modules = Arc::new(modules);
     let analysis = checked.into_analysis().map(Arc::new);
-    (ids.into_iter().zip(names).zip(diagnostics))
+    ids.into_iter()
+        .zip(names)
+        .zip(diagnostics)
         .map(|((id, name), diagnostics)| {
-            let analyzed = (id.zip(name).zip(analysis.as_ref())).map(|((unit, name), analysis)| {
-                Arc::new(Analyzed {
-                    unit,
-                    name,
-                    analysis: analysis.clone(),
-                    modules: modules.clone(),
-                })
-            });
+            let analyzed = id
+                .zip(name)
+                .zip(analysis.as_ref())
+                .map(|((unit, name), analysis)| {
+                    Arc::new(Analyzed {
+                        unit,
+                        name,
+                        analysis: analysis.clone(),
+                        modules: modules.clone(),
+                    })
+                });
             Checked {
                 diagnostics,
                 analyzed,
@@ -1611,7 +1635,9 @@ impl<'a> DocumentIndex<'a> {
     /// the document.
     fn offset_from_position(&self, position: &Position) -> Option<usize> {
         let line_start = *self.line_starts.get(position.line as usize)?;
-        let line_end = (self.line_starts.get(position.line as usize + 1))
+        let line_end = self
+            .line_starts
+            .get(position.line as usize + 1)
             .map_or(self.content.len(), |&next| next - 1);
         let line = &self.content[line_start..line_end];
         let character = position.character as usize;
@@ -1619,7 +1645,7 @@ impl<'a> DocumentIndex<'a> {
             line.is_char_boundary(character).then_some(character)
         } else if self.position_encoding == PositionEncodingKind::UTF16 {
             let mut units = 0;
-            (line.char_indices())
+            line.char_indices()
                 .map(|(offset, ch)| {
                     let at = units;
                     units += ch.len_utf16();
@@ -1940,7 +1966,10 @@ impl LanguageServer for Backend {
             for workspace in guard.workspaces.iter() {
                 log::info!("workspace: {}", workspace.display())
             }
-            guard.watch = (params.capabilities.workspace.as_ref())
+            guard.watch = params
+                .capabilities
+                .workspace
+                .as_ref()
                 .and_then(|workspace| workspace.did_change_watched_files.as_ref())
                 .and_then(|watched| watched.dynamic_registration)
                 .unwrap_or(false);
@@ -2071,8 +2100,11 @@ impl LanguageServer for Backend {
             return;
         };
         // The saved text, as the version the document is at
-        let version =
-            (self.documents().handles.get(&uri)).and_then(|handle| handle.member.version());
+        let version = self
+            .documents()
+            .handles
+            .get(&uri)
+            .and_then(|handle| handle.member.version());
         let Some(saved) = version.and_then(|version| self.revise(&uri, version, text)) else {
             return;
         };
@@ -2602,7 +2634,8 @@ mod tests {
         }
 
         async fn watched(&mut self, changes: &[(&Path, FileChangeType)]) {
-            let changes = (changes.iter())
+            let changes = changes
+                .iter()
                 .map(|&(path, typ)| FileEvent::new(Uri::from_file_path(path).unwrap(), typ))
                 .collect();
             self.send_notification::<notification::DidChangeWatchedFiles>(
@@ -3917,7 +3950,7 @@ def uses b @ Box n @ Int
 
         let backend = harness.service.inner();
         let member = backend.document(&uri).await.unwrap().member.clone();
-        assert!((backend.documents().checked(&uri, &member)).is_some());
+        assert!(backend.documents().checked(&uri, &member).is_some());
 
         // Superseded by an edit
         harness.change(uri.clone(), "let b = 2\n", 3).await;
@@ -3936,7 +3969,9 @@ def uses b @ Box n @ Int
 
         // Once, at the import; the use recovers
         let checked = harness.next_publish().await;
-        let reported: Vec<_> = (checked.diagnostics.iter())
+        let reported: Vec<_> = checked
+            .diagnostics
+            .iter()
             .map(|diag| (diag.range, diag.message.as_str()))
             .collect();
         let import = Range::new(Position::new(0, 7), Position::new(0, 18));
@@ -3949,7 +3984,9 @@ def uses b @ Box n @ Int
         let uri = Uri::from_file_path(path).unwrap();
         harness.open(uri, text, 1).await;
         let checked = harness.next_publish().await;
-        (checked.diagnostics.into_iter())
+        checked
+            .diagnostics
+            .into_iter()
             .map(|diag| (diag.range, diag.message))
             .collect()
     }
@@ -4309,7 +4346,9 @@ pub def area d @ a.D
         fs::remove_file(&a).unwrap();
         harness.watched(&[(&a, FileChangeType::DELETED)]).await;
         let checked = harness.next_publish_for(&main).await;
-        let messages: Vec<_> = (checked.diagnostics.iter())
+        let messages: Vec<_> = checked
+            .diagnostics
+            .iter()
             .map(|diagnostic| &diagnostic.message[..])
             .collect();
         assert_eq!(messages, ["module `a` not found"]);
@@ -4403,7 +4442,9 @@ pub def area d @ a.D
             );
             let options: DidChangeWatchedFilesRegistrationOptions =
                 serde_json::from_value(registration.register_options.clone().unwrap()).unwrap();
-            let patterns: Vec<_> = (options.watchers.iter())
+            let patterns: Vec<_> = options
+                .watchers
+                .iter()
                 .map(|watcher| watcher.glob_pattern.clone())
                 .collect();
             assert_eq!(

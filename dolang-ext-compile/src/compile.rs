@@ -851,7 +851,8 @@ fn check_units<'v, 's>(
                     }
                 }
                 let check = builder.check();
-                let paths: Vec<String> = (ids.into_iter())
+                let paths: Vec<String> = ids
+                    .into_iter()
                     .map(|id| check.path(id).to_string_lossy().into_owned())
                     .collect();
                 let diags: Vec<Diag> = check.diagnostics().cloned().collect();
@@ -1269,7 +1270,9 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let imports: Vec<String> = {
                     let borrow = this.borrow(strand)?;
-                    let unit = (borrow.unit.as_ref())
+                    let unit = borrow
+                        .unit
+                        .as_ref()
                         .ok_or_else(|| Error::state_error(strand, "unit was emitted"))?;
                     unit.imports().into_iter().map(str::to_owned).collect()
                 };
@@ -1281,7 +1284,9 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let typelib = {
                     let borrow = this.borrow(strand)?;
-                    let unit = (borrow.unit.as_ref())
+                    let unit = borrow
+                        .unit
+                        .as_ref()
                         .ok_or_else(|| Error::state_error(strand, "unit was emitted"))?;
                     compile::typeck::typelib(unit)
                 };

@@ -148,10 +148,14 @@ impl Tables<'_> {
             judgments.push(("captured", name, value));
         }
         // A supertype's arguments are written outside any signature
-        let sites = (self.sites.iter())
+        let sites = self
+            .sites
+            .iter()
             .filter(|site| site.unit == unit)
             .map(|site| (site.ambient, &site.ty));
-        let supers = (self.decls.iter())
+        let supers = self
+            .decls
+            .iter()
             .filter(|decl| decl.unit == unit)
             .filter_map(|decl| match &decl.node {
                 DeclNode::Class(class) => Some(&class.supers),
@@ -367,7 +371,10 @@ impl Tables<'_> {
         if id.index() < self.decls.len() {
             return self.qualified(id);
         }
-        let sig = (self.sig_decls.iter()).find(|&(_, &declaration)| declaration == id);
+        let sig = self
+            .sig_decls
+            .iter()
+            .find(|&(_, &declaration)| declaration == id);
         match sig {
             Some((&(decl, sig), _)) => format!("{}#{sig}", self.qualified(decl)),
             None => unreachable!("every database declaration is a declaration's or a signature's"),

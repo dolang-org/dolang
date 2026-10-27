@@ -35,12 +35,15 @@ fn rendered(
     results: &Results,
     render: impl Fn(TypeId) -> String,
 ) -> impl Iterator<Item = RenderedFact> {
-    (results.facts.iter()).map(move |&((span, role), seen)| RenderedFact {
-        span: (span.start, span.end),
-        role,
-        ty: render(seen.fact.ty),
-        unassigned: seen.fact.unassigned,
-    })
+    results
+        .facts
+        .iter()
+        .map(move |&((span, role), seen)| RenderedFact {
+            span: (span.start, span.end),
+            role,
+            ty: render(seen.fact.ty),
+            unassigned: seen.fact.unassigned,
+        })
 }
 
 /// Analyze a unit's runs, each in queue order or in reverse, gathering
@@ -102,7 +105,8 @@ fn facts_named(check: &Check<'_>, unit: usize, name: &str) -> Vec<String> {
     let flow = check.flows[unit]
         .as_ref()
         .expect("a unit with source is analyzed");
-    (flow.facts.iter())
+    flow.facts
+        .iter()
         .filter(|((span, role), _)| {
             matches!(role, Role::Read | Role::Bind)
                 && check.tables.text(UnitId::from_index(unit), *span) == name
@@ -483,17 +487,20 @@ fn live_at(
         .as_ref()
         .expect("a unit with source is lowered");
     let layout = Layout::new(ir);
-    let (id, _) = (ir.funcs())
+    let (id, _) = ir
+        .funcs()
         .find(|(_, data)| match data.kind {
             FuncKind::Decl(decl) => check.tables.qualified(decl).ends_with(&format!(".{func}")),
             _ => false,
         })
         .expect("the function is lowered");
     let vars = &layout.vars[id.index()];
-    let blocks: Vec<Vec<String>> = (ir.blocks())
+    let blocks: Vec<Vec<String>> = ir
+        .blocks()
         .filter(|&(block, data)| data.func == id && select(ir, &layout, block))
         .map(|(block, _)| {
-            (layout.live[block.index()].iter_ones())
+            layout.live[block.index()]
+                .iter_ones()
                 .filter_map(|slot| match ir.var(vars[slot]).origin {
                     Origin::Source(span) => Some(check.tables.text(layout.unit, span).to_owned()),
                     _ => None,

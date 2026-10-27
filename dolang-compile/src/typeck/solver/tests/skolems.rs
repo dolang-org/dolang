@@ -3,7 +3,11 @@ use super::*;
 /// Whether any obligation's current premises include `step`
 fn uses(s: &Solver<'_>, step: &Step) -> bool {
     (0..s.obligation_count()).any(|id| {
-        (s.progress(ObligationId(id)).active.borrow().iter()).any(|(_, found)| found == step)
+        s.progress(ObligationId(id))
+            .active
+            .borrow()
+            .iter()
+            .any(|(_, found)| found == step)
     })
 }
 
@@ -190,7 +194,9 @@ fn quantified_actuals_are_instantiated_inside_the_skolems_scope() {
     assert_ne!(scope, ScopeId(0));
     assert_eq!(s.variable(InferVarId(0)).scope, scope);
     // `A` takes `T` from below
-    let lower: Vec<_> = (s.bounds(InferVarId(0)).lower())
+    let lower: Vec<_> = s
+        .bounds(InferVarId(0))
+        .lower()
         .map(|term| s.resolve(term).unwrap())
         .collect();
     assert_eq!(lower, [Term::Skolem(SkolemId(0))]);

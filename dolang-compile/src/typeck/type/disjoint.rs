@@ -96,10 +96,16 @@ impl Database {
             return Err(NoAncestor::Unknown);
         }
         let mut candidates = Vec::with_capacity(declaration.supertypes.len());
-        for supertype in (declaration.supertypes.iter()).filter(|supertype| supertype.runtime) {
+        for supertype in declaration
+            .supertypes
+            .iter()
+            .filter(|supertype| supertype.runtime)
+        {
             let ancestor = match self.supertype_decl(supertype.ty)? {
                 // A supertype's incoherence is reported where it's declared
-                Some(head) => (self.nearest(head, memo, path)).map_err(|_| NoAncestor::Unknown)?,
+                Some(head) => self
+                    .nearest(head, memo, path)
+                    .map_err(|_| NoAncestor::Unknown)?,
                 None => None,
             };
             if !candidates.contains(&ancestor) {
@@ -114,10 +120,12 @@ impl Database {
             (None, Some(_)) => false,
             (Some(from), Some(to)) => self.reaches_decl(from, to),
         };
-        let Some(&nearest) = (candidates.iter())
+        let Some(&nearest) = candidates
+            .iter()
             .find(|&&candidate| candidates.iter().all(|&other| reaches(candidate, other)))
         else {
-            let (first, second) = (candidates.iter())
+            let (first, second) = candidates
+                .iter()
                 .enumerate()
                 .find_map(|(index, &first)| {
                     candidates[index + 1..]
@@ -161,7 +169,8 @@ impl Database {
             }
             let supertypes = &self.declaration(decl).supertypes;
             stack.extend(
-                (supertypes.iter())
+                supertypes
+                    .iter()
                     .filter_map(|supertype| self.supertype_decl(supertype.ty).ok().flatten()),
             );
         }

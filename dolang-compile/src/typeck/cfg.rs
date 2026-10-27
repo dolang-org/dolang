@@ -194,7 +194,10 @@ pub(crate) struct Signature {
 impl Signature {
     /// Its variables
     pub(crate) fn vars(&self) -> impl Iterator<Item = VarId> {
-        let vars: Vec<VarId> = (self.params.iter().copied())
+        let vars: Vec<VarId> = self
+            .params
+            .iter()
+            .copied()
             .chain([self.input, self.output, self.result])
             .flatten()
             .collect();
@@ -614,11 +617,17 @@ impl Ir {
     }
 
     pub(crate) fn funcs(&self) -> impl Iterator<Item = (FuncId, &Func)> {
-        (self.funcs.iter().enumerate()).map(|(index, func)| (FuncId::from_index(index), func))
+        self.funcs
+            .iter()
+            .enumerate()
+            .map(|(index, func)| (FuncId::from_index(index), func))
     }
 
     pub(crate) fn blocks(&self) -> impl Iterator<Item = (BlockId, &Block)> {
-        (self.blocks.iter().enumerate()).map(|(index, block)| (BlockId::from_index(index), block))
+        self.blocks
+            .iter()
+            .enumerate()
+            .map(|(index, block)| (BlockId::from_index(index), block))
     }
 }
 

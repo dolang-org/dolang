@@ -2839,7 +2839,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             && matches!(self.params.mode, Mode::Module { .. } | Mode::Repl)
             && scope.has_upvars()
         {
-            let captured = (block.vars.iter()).filter(|v| v.flags.contains(VarFlags::CAPTURED));
+            let captured = block
+                .vars
+                .iter()
+                .filter(|v| v.flags.contains(VarFlags::CAPTURED));
             let module = sig::Pack::new(captured.map(|v| {
                 if v.flags.contains(VarFlags::EXPORTED) {
                     sig::Arg::Key(v.sym)
@@ -3793,8 +3796,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             }
         }
         for (depth, var) in canon.iter().enumerate() {
-            let at =
-                (stack.iter().position(|slot| *slot == Some(*var))).expect("a canonical variable");
+            let at = stack
+                .iter()
+                .position(|slot| *slot == Some(*var))
+                .expect("a canonical variable");
             if at != depth {
                 self.block.insts.push(Inst(InstInfo::Swap(depth, at), span));
                 stack.swap(depth, at);

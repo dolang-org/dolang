@@ -75,14 +75,16 @@ impl Solver<'_> {
                 if let &[overload] = &overloads[..] {
                     return through(view.child(overload), Step::Overload(0));
                 }
-                let calls: Vec<Call> = (overloads.iter())
+                let calls: Vec<Call> = overloads
+                    .iter()
                     .map(|&ty| Call {
                         callee: view.child(ty),
                         ..call
                     })
                     .collect();
                 // Only what's passed chooses, as its twin says it
-                let selections = (calls.iter())
+                let selections = calls
+                    .iter()
                     .map(|&call| Call {
                         arguments: self.twin(call.arguments),
                         result: self.closed(self.db.top()),
@@ -123,8 +125,10 @@ impl Solver<'_> {
             // A literal is called as its class
             Type::Literal(literal) => {
                 let intrinsic = literal.intrinsic();
-                let backing =
-                    (self.db.intrinsic(intrinsic)).ok_or(Residual::MissingIntrinsic(intrinsic))?;
+                let backing = self
+                    .db
+                    .intrinsic(intrinsic)
+                    .ok_or(Residual::MissingIntrinsic(intrinsic))?;
                 through(self.closed(backing), Step::IntrinsicBacking(intrinsic))
             }
             _ => Err(Residual::Unsupported("these structural types").into()),
@@ -186,7 +190,8 @@ impl Solver<'_> {
             .filter_map(|(own, given)| match self.db.ty(own?) {
                 &Type::Bound { reference, .. }
                     if reference.depth == 0
-                        && (binders.get(usize::from(reference.slot)))
+                        && binders
+                            .get(usize::from(reference.slot))
                             .is_some_and(|binder| binder.binding == Binding::Implicit) =>
                 {
                     Some((usize::from(reference.slot), channel(given)))
@@ -257,7 +262,8 @@ impl Solver<'_> {
             true => signatures.implementation.into_iter().collect(),
             false => signatures.overloads,
         };
-        let calls = (signatures.into_iter())
+        let calls = signatures
+            .into_iter()
             .map(|callee| Call { callee, ..call })
             .collect();
         let none = Issue::Contradiction(Contradiction::NoOverload);

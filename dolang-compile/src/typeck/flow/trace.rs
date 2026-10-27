@@ -35,7 +35,8 @@ impl Flow<'_, '_> {
         let mut out = format!("b{} of f{} {name}", block.index(), func.index());
         let tags = self.contexts.tags(ctx);
         if !tags.is_empty() {
-            let tags: Vec<String> = (tags.iter())
+            let tags: Vec<String> = tags
+                .iter()
                 .map(|tag| match tag {
                     Tag::Goto(target) => format!("goto b{}", target.index()),
                     Tag::Rethrow => "rethrow".to_owned(),
@@ -52,7 +53,9 @@ impl Flow<'_, '_> {
     pub(super) fn render_state(&self, block: BlockId, state: &State) -> String {
         let data = self.ir.block(block);
         let bottom = self.db.bottom();
-        let mut parts: Vec<String> = (self.layout.vars[data.func.index()].iter().zip(&state.vars))
+        let mut parts: Vec<String> = self.layout.vars[data.func.index()]
+            .iter()
+            .zip(&state.vars)
             .enumerate()
             .map(|(index, (&var, slot))| {
                 let escaped = data.escaped.get(index).is_some_and(|bit| *bit);
@@ -70,7 +73,9 @@ impl Flow<'_, '_> {
             })
             .collect();
         if !state.stack.is_empty() {
-            let stack: Vec<String> = (state.stack.iter())
+            let stack: Vec<String> = state
+                .stack
+                .iter()
                 .map(|operand| format!("{}{}", self.show(operand.ty), show_link(operand.link)))
                 .collect();
             parts.push(format!("stack [{}]", stack.join(", ")));
@@ -79,7 +84,9 @@ impl Flow<'_, '_> {
             if group.columns.is_empty() {
                 continue;
             }
-            let columns: Vec<String> = (group.columns.iter())
+            let columns: Vec<String> = group
+                .columns
+                .iter()
                 .map(|column| {
                     let entries: Vec<String> = column.iter().map(|&ty| self.show(ty)).collect();
                     format!("[{}]", entries.join(", "))

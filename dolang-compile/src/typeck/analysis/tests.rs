@@ -19,7 +19,9 @@ fn analysis(spans: &[(u32, u32)]) -> Analysis {
     let mut db = Database::new();
     db.seal();
     let ty = db.bottom();
-    let judgments = (spans.iter().enumerate())
+    let judgments = spans
+        .iter()
+        .enumerate()
         .map(|(index, &(start, end))| {
             let entry = Entry {
                 role: Role::Read,
@@ -43,7 +45,9 @@ fn analysis(spans: &[(u32, u32)]) -> Analysis {
 
 /// The names of the node at `offset` and its ancestors, innermost first
 fn chain(analysis: &Analysis, offset: u32) -> Vec<String> {
-    (analysis.at(UnitId::from_index(0), offset).into_iter())
+    analysis
+        .at(UnitId::from_index(0), offset)
+        .into_iter()
         .flat_map(|node| node.ancestors())
         .flat_map(|node| {
             node.judgments()
@@ -59,7 +63,8 @@ fn nested() {
     assert_eq!(chain(&analysis, 4), ["2", "3", "1"]);
     assert_eq!(chain(&analysis, 9), ["0", "3", "1"]);
     assert_eq!(chain(&analysis, 15), ["1"]);
-    let spans: Vec<_> = (analysis.nodes(UnitId::from_index(0)))
+    let spans: Vec<_> = analysis
+        .nodes(UnitId::from_index(0))
         .map(|node| (node.span().start, node.span().end))
         .collect();
     assert_eq!(spans, [(0, 20), (2, 12), (4, 6), (8, 10)]);

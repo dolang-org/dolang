@@ -83,7 +83,8 @@ impl ModulePath {
             .roots
             .iter()
             .find_map(|root| path.strip_prefix(root).ok())?;
-        let mut parts: Vec<&str> = (rest.components())
+        let mut parts: Vec<&str> = rest
+            .components()
             .map(|component| component.as_os_str().to_str())
             .collect::<Option<_>>()?;
         let last = parts.pop()?;
@@ -182,7 +183,8 @@ fn expand(base: &Path, entry: &str, roots: &mut Vec<PathBuf>) -> Result<(), Stri
             let Ok(listing) = fs::read_dir(&dir) else {
                 continue;
             };
-            let mut names: Vec<_> = (listing.flatten())
+            let mut names: Vec<_> = listing
+                .flatten()
                 .filter_map(|entry| entry.file_name().into_string().ok())
                 .filter(|name| wildcard(pattern, name))
                 .collect();
@@ -348,7 +350,7 @@ pub(crate) mod tests {
 
     /// The path and text of a module's source.
     fn opened(path: &ModulePath, module: &str) -> Option<(PathBuf, String)> {
-        (path.open(module)).map(|(path, _, text)| (path, text))
+        path.open(module).map(|(path, _, text)| (path, text))
     }
 
     fn load(dir: &Path, entries: &[&str]) -> ModulePath {

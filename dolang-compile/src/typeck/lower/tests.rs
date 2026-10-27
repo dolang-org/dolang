@@ -87,7 +87,9 @@ fn creation(ir: &Ir, func: FuncId) -> Option<(BlockId, usize)> {
 fn capture(ir: &Ir, func: FuncId) -> (BlockId, usize) {
     ir.blocks()
         .find_map(|(id, block)| {
-            (block.steps.iter())
+            block
+                .steps
+                .iter()
                 .position(|step| matches!(step, Step::Capture(funcs) if funcs.contains(&func)))
                 .map(|index| (id, index))
         })
@@ -148,11 +150,10 @@ let ys = $
     - (do i)
 ",
         |ir| {
-            let (id, _) = (ir.funcs())
-                .find(|(_, func)| func.parent.is_some())
-                .unwrap();
+            let (id, _) = ir.funcs().find(|(_, func)| func.parent.is_some()).unwrap();
             let (block, _) = capture(ir, id);
-            let body = (ir.blocks())
+            let body = ir
+                .blocks()
                 .find_map(|(_, block)| match block.terminal {
                     Terminal::Next { body, .. } => Some(body),
                     _ => None,
@@ -181,7 +182,8 @@ class A
     g()
 ",
         |ir| {
-            let members: Vec<_> = (ir.funcs())
+            let members: Vec<_> = ir
+                .funcs()
                 .filter(|(_, func)| func.parent.is_some())
                 .filter(|&(id, _)| creation(ir, id).is_none())
                 .map(|(id, _)| id)
@@ -210,11 +212,13 @@ let outer = do
   inner
 ",
         |ir| {
-            let outer = (ir.funcs())
+            let outer = ir
+                .funcs()
                 .find(|(_, func)| func.parent.is_some_and(|p| ir.func(p).parent.is_none()))
                 .map(|(id, _)| id)
                 .unwrap();
-            let inner = (ir.funcs())
+            let inner = ir
+                .funcs()
                 .find(|(_, func)| func.parent == Some(outer))
                 .map(|(_, func)| func)
                 .unwrap();
@@ -246,16 +250,22 @@ let outer = do
                 Some(Step::Cache(vars)) => vars.clone(),
                 _ => Vec::new(),
             };
-            let outer = (ir.funcs())
+            let outer = ir
+                .funcs()
                 .find(|(_, func)| func.parent.is_some_and(|p| ir.func(p).parent.is_none()))
                 .map(|(id, _)| id)
                 .unwrap();
-            let inner = (ir.funcs())
+            let inner = ir
+                .funcs()
                 .find(|(_, func)| func.parent == Some(outer))
                 .map(|(id, _)| id)
                 .unwrap();
             let volatile = |var: &VarId| ir.var(*var).flags.contains(VarFlags::VOLATILE);
-            let stable: Vec<_> = (ir.func(outer).escapes.iter().copied())
+            let stable: Vec<_> = ir
+                .func(outer)
+                .escapes
+                .iter()
+                .copied()
                 .filter(|var| !volatile(var))
                 .collect();
             assert!(cached(outer).is_empty());
@@ -278,10 +288,10 @@ for i = [1]
   let w = i
 ";
     lower_with(source, |ir| {
-        let (_, top) = (ir.funcs())
-            .find(|(_, func)| func.parent.is_none())
-            .unwrap();
-        let mut hoisted: Vec<_> = (top.vars.iter())
+        let (_, top) = ir.funcs().find(|(_, func)| func.parent.is_none()).unwrap();
+        let mut hoisted: Vec<_> = top
+            .vars
+            .iter()
             .filter_map(|&var| {
                 let var = ir.var(var);
                 let Origin::Source(span) = var.origin else {
@@ -324,14 +334,14 @@ for j = [1, 2]
   j = 3
 ";
     lower_with(source, |ir| {
-        let (_, top) = (ir.funcs())
-            .find(|(_, func)| func.parent.is_none())
-            .unwrap();
+        let (_, top) = ir.funcs().find(|(_, func)| func.parent.is_none()).unwrap();
         let name = |var: VarId| match ir.var(var).origin {
             Origin::Source(span) => Some(&source[span.start as usize..span.end as usize]),
             _ => None,
         };
-        let mut uncached: Vec<_> = (top.vars.iter())
+        let mut uncached: Vec<_> = top
+            .vars
+            .iter()
             .filter(|&&var| ir.var(var).flags.contains(VarFlags::INTERPROCEDURAL))
             .filter_map(|&var| Some((name(var)?, ir.var(var).flags.contains(VarFlags::UNCACHED))))
             .collect();
@@ -340,7 +350,8 @@ for j = [1, 2]
             uncached,
             [("a", true), ("b", false), ("i", false), ("j", true)]
         );
-        let (_, f) = (ir.funcs())
+        let (_, f) = ir
+            .funcs()
             .find(|(_, func)| func.captures.iter().any(|&var| name(var) == Some("a")))
             .unwrap();
         let Some(Step::Cache(cached)) = ir.block(f.entry).steps.first() else {
@@ -380,7 +391,7 @@ fn named(ir: &Ir, source: &str, name: &str) -> FuncId {
 
 /// The module's top-level function
 fn module(ir: &Ir) -> FuncId {
-    (ir.funcs())
+    ir.funcs()
         .find(|(_, func)| func.parent.is_none())
         .map(|(id, _)| id)
         .unwrap()
@@ -388,7 +399,8 @@ fn module(ir: &Ir) -> FuncId {
 
 /// The names of variables, by their source spans
 fn names<'s>(ir: &Ir, source: &'s str, vars: &[VarId]) -> Vec<&'s str> {
-    let mut names: Vec<_> = (vars.iter())
+    let mut names: Vec<_> = vars
+        .iter()
         .filter_map(|&var| match ir.var(var).origin {
             Origin::Source(span) => Some(&source[span.start as usize..span.end as usize]),
             _ => None,
@@ -419,7 +431,8 @@ let f = do
         let [top, a, b] = &runs[..] else {
             panic!("three runs: {runs:?}");
         };
-        let block = (ir.funcs())
+        let block = ir
+            .funcs()
             .find(|(_, func)| func.signature.is_some())
             .map(|(id, _)| id)
             .unwrap();

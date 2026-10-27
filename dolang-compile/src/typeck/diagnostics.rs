@@ -174,10 +174,12 @@ fn results_do_not_depend_on_threads() {
         let diagnostics: Vec<String> = check
             .diagnostics()
             .map(|diag| {
-                let annotations: Vec<_> = (diag.annotations())
+                let annotations: Vec<_> = diag
+                    .annotations()
                     .map(|annotation| (annotation.span(), annotation.message().to_string()))
                     .collect();
-                let notes: Vec<_> = (diag.notes())
+                let notes: Vec<_> = diag
+                    .notes()
                     .map(|note| note.message().to_string())
                     .collect();
                 format!(
@@ -191,7 +193,9 @@ fn results_do_not_depend_on_threads() {
         let judgments: Vec<Vec<String>> = ids
             .iter()
             .map(|&id| {
-                (check.judgments(id).into_iter())
+                check
+                    .judgments(id)
+                    .into_iter()
                     .map(|judgment| {
                         format!("{} {:?} {}", judgment.name, judgment.span, judgment.value)
                     })
@@ -240,12 +244,14 @@ fn unit_source_round_trips() {
 fn repl_reassigns_only_prelude_items() {
     let refused = |source: &str| {
         let mut config = config(Mode::Repl);
-        (config.prelude().import_module("std"))
+        config
+            .prelude()
+            .import_module("std")
             .import_items("env")
             .item("count")
             .commit();
         let unit = config.unit(Path::new("repl.dol"), source);
-        (unit.diagnostics())
+        unit.diagnostics()
             .any(|diag| diag.message().to_string() == "imported bindings cannot be reassigned")
     };
     // The REPL threads its environment through the prelude's items
@@ -261,7 +267,7 @@ fn owned_unit_is_shared_between_threads() {
         name: String::from("m").into(),
     };
     let messages = |unit: &Unit<'_>| {
-        (unit.diagnostics())
+        unit.diagnostics()
             .map(|diag| diag.message().to_string())
             .collect::<Vec<_>>()
     };

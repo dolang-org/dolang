@@ -270,7 +270,8 @@ fn shared_reductions_preserve_each_root_and_dependency() {
         let leaf = s.relation(*diagnostic.path.last().unwrap());
         assert_eq!(leaf.sides(), Some((s.closed(a), s.closed(b))));
         assert!(
-            (s.dependencies(diagnostic.path[0]).iter())
+            s.dependencies(diagnostic.path[0])
+                .iter()
                 .any(|edge| edge.obligation == diagnostic.path[1] && edge.step == Step::Return)
         );
     }

@@ -2291,7 +2291,9 @@ fn copies_remap_symbols_and_declarations() {
             kind: Kind::Type,
         }
     );
-    let names: Vec<_> = (into.overloads(f_copy).iter())
+    let names: Vec<_> = into
+        .overloads(f_copy)
+        .iter()
         .map(|&id| Named(&into).declaration(id).into_owned())
         .collect();
     assert_eq!(names, ["g", "h"]);

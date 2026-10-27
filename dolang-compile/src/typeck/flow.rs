@@ -263,11 +263,17 @@ impl Layout {
         let mut slots = FxHashMap::default();
         let mut vars = Vec::new();
         for (id, func) in ir.funcs() {
-            let cached = (ir.block(func.entry).steps.first()).and_then(|step| match step {
-                Step::Cache(vars) => Some(&vars[..]),
-                _ => None,
-            });
-            let func_vars: Box<[VarId]> = (func.vars.iter())
+            let cached = ir
+                .block(func.entry)
+                .steps
+                .first()
+                .and_then(|step| match step {
+                    Step::Cache(vars) => Some(&vars[..]),
+                    _ => None,
+                });
+            let func_vars: Box<[VarId]> = func
+                .vars
+                .iter()
                 .chain(cached.into_iter().flatten())
                 .copied()
                 .collect();
@@ -276,7 +282,8 @@ impl Layout {
             }
             vars.push(func_vars);
         }
-        let unit = (ir.funcs())
+        let unit = ir
+            .funcs()
             .find_map(|(_, func)| match func.kind {
                 FuncKind::Module(unit) => Some(unit),
                 FuncKind::Decl(_) | FuncKind::DefaultInit(_) => None,
@@ -351,9 +358,11 @@ impl<'a, 'u> Tree<'a, 'u> {
     fn finish(self) -> Vec<(Database, Results)> {
         let root = Database::fork(self.layer);
         rayon::scope(|scope| self.run(scope, RunId::module(), root, FxHashMap::default()));
-        (self.outputs.into_iter())
+        self.outputs
+            .into_iter()
             .map(|output| {
-                (output.into_inner())
+                output
+                    .into_inner()
                     .expect("no run panicked")
                     .expect("every run is analyzed")
             })
@@ -407,7 +416,9 @@ impl<'a, 'u> Tree<'a, 'u> {
         let mut db = Database::fork(self.layer);
         let mut copies = Copies::default();
         let mut copier = db.copier(parent, &mut copies);
-        let inherited = (self.runs[child.index()].inherited.iter())
+        let inherited = self.runs[child.index()]
+            .inherited
+            .iter()
             .map(|&var| {
                 let ty = types.get(&var).copied().unwrap_or(parent.bottom());
                 (var, copier.ty(ty))
@@ -615,7 +626,8 @@ impl<'a, 'u> Flow<'a, 'u> {
         for &id in &self.run.funcs {
             let func = self.ir.func(id);
             // A cached capture is loaded before it's read
-            let vars = (self.layout.vars[id.index()].iter())
+            let vars = self.layout.vars[id.index()]
+                .iter()
                 .map(|&var| {
                     let data = self.ir.var(var);
                     VarState {
@@ -664,7 +676,10 @@ impl<'a, 'u> Flow<'a, 'u> {
                 }
                 break;
             }
-            let marked: Vec<_> = (self.unsettled.iter().copied())
+            let marked: Vec<_> = self
+                .unsettled
+                .iter()
+                .copied()
                 .filter(|&(block, _)| {
                     earliest.get(&self.ir.block(block).func)
                         == Some(&self.layout.blocks.rank[block.index()])
@@ -672,7 +687,8 @@ impl<'a, 'u> Flow<'a, 'u> {
                 .collect();
             trace!(
                 "defaulting round: {}",
-                (marked.iter())
+                marked
+                    .iter()
                     .map(|&(block, ctx)| self.place(block, ctx))
                     .collect::<Vec<_>>()
                     .join("; ")
@@ -691,7 +707,9 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
         let mut results = self.results.take().expect("recorded by the final pass");
         sort(&mut results.problems, &mut results.unresolved);
-        let accumulators = (self.accumulators.into_iter())
+        let accumulators = self
+            .accumulators
+            .into_iter()
             .map(|(var, accumulator)| (var, accumulator.ty))
             .collect();
         (results, accumulators)
@@ -954,13 +972,19 @@ impl<'a, 'u> Flow<'a, 'u> {
                 link: self.same((old.ty, old.link), (new.ty, new.link)),
             });
         }
-        let stack = (old.stack.iter().zip(&state.stack))
+        let stack = old
+            .stack
+            .iter()
+            .zip(&state.stack)
             .map(|(old, new)| Operand {
                 ty: self.lub(old.ty, new.ty),
                 link: self.same((old.ty, old.link), (new.ty, new.link)),
             })
             .collect();
-        let groups = (old.groups.iter().zip(&state.groups))
+        let groups = old
+            .groups
+            .iter()
+            .zip(&state.groups)
             .map(|(old, new)| self.join_groups(old, new))
             .collect();
         let mut joined = State {
@@ -1007,7 +1031,10 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// correlate through until an unpack replaces it
     fn unlinked_groups(state: &mut State) {
         let mut linked = vec![false; state.groups.len()];
-        let links = (state.vars.iter().map(|var| var.link))
+        let links = state
+            .vars
+            .iter()
+            .map(|var| var.link)
             .chain(state.stack.iter().map(|operand| operand.link))
             .flatten();
         for link in links {
@@ -1146,10 +1173,16 @@ impl<'a, 'u> Flow<'a, 'u> {
         };
         let [input, output] = [unknown; 2];
         let ir = self.ir;
-        let vars: Vec<(VarId, TypeId)> = (self.run.funcs.iter())
+        let vars: Vec<(VarId, TypeId)> = self
+            .run
+            .funcs
+            .iter()
             .filter_map(|&id| ir.func(id).signature.as_ref())
             .flat_map(|signature| {
-                (signature.params.iter().map(|&var| (var, unknown)))
+                signature
+                    .params
+                    .iter()
+                    .map(|&var| (var, unknown))
                     .chain([(signature.input, input), (signature.output, output)])
                     .filter_map(|(var, ty)| Some((var?, ty)))
             })
@@ -1174,7 +1207,10 @@ impl<'a, 'u> Flow<'a, 'u> {
     }
 
     fn run(&mut self, block: BlockId, ctx: CtxId) {
-        let Some(mut state) = (self.states.get(&(block, ctx))).map(|entry| entry.state.clone())
+        let Some(mut state) = self
+            .states
+            .get(&(block, ctx))
+            .map(|entry| entry.state.clone())
         else {
             return;
         };
@@ -1251,7 +1287,9 @@ impl<'a, 'u> Flow<'a, 'u> {
             None => Some(data.terminal.span()),
         };
         let span = span.or_else(|| {
-            (data.steps[index + 1..].iter().map(step_span))
+            data.steps[index + 1..]
+                .iter()
+                .map(step_span)
                 .chain([data.terminal.span()])
                 .find(|&span| span != Span::INVALID)
         });
@@ -1338,8 +1376,11 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let mut operands = Self::operands(state, count + holes(value));
                 match *target {
                     Target::Var { var, .. } => {
-                        let expected =
-                            (self.ir.var(var).annotation).or_else(|| self.result_annotation(var));
+                        let expected = self
+                            .ir
+                            .var(var)
+                            .annotation
+                            .or_else(|| self.result_annotation(var));
                         let ty = self.expect(at, state, &mut operands, value, expected);
                         if self.diverged.is_some() {
                             return false;
@@ -1697,7 +1738,9 @@ impl<'a, 'u> Flow<'a, 'u> {
                     if slot.link == link {
                         let gas = Gas::default();
                         let solver = self.solver(&gas);
-                        let whole = (state.groups[group.index()].columns.iter())
+                        let whole = state.groups[group.index()]
+                            .columns
+                            .iter()
                             .fold(self.db.bottom(), |joined, column| {
                                 solver.lub(joined, column[items.len()])
                             });
@@ -1778,10 +1821,14 @@ impl<'a, 'u> Flow<'a, 'u> {
         let Pattern::Unpack { items, .. } = &func.params else {
             unreachable!("parameters are a pattern of items")
         };
-        let declared = (self.declared_params(at.func, items))
+        let declared = self
+            .declared_params(at.func, items)
             .unwrap_or_else(|| vec![self.db.unknown(); items.len()]);
         let types: Vec<TypeId> = match &func.signature {
-            Some(signature) => (signature.params.iter().zip(declared))
+            Some(signature) => signature
+                .params
+                .iter()
+                .zip(declared)
                 .map(|(&slot, declared)| match slot {
                     Some(var) => self.joined(var, at),
                     None => declared,
@@ -1807,7 +1854,8 @@ impl<'a, 'u> Flow<'a, 'u> {
             _ => None,
         };
         let Some(shares) = shares else {
-            let types = (params.iter())
+            let types = params
+                .iter()
                 .map(|param| match param.var.map(|var| self.ir.var(var).origin) {
                     Some(Origin::Source(span)) => {
                         self.gap(span, "a parameter its declared type doesn't line up with")
@@ -1817,7 +1865,9 @@ impl<'a, 'u> Flow<'a, 'u> {
                 .collect();
             return Some(types);
         };
-        let types = (params.iter().zip(shares))
+        let types = params
+            .iter()
+            .zip(shares)
             .map(|(param, share)| match (&param.key, share) {
                 (&PatternKey::Rest(kind), items) => self.rest_type(kind, items),
                 (_, [item]) => match item.element {
@@ -1997,10 +2047,12 @@ impl<'a, 'u> Flow<'a, 'u> {
             link.group.index(),
             link.row
         );
-        let rows = (group.columns.first()).map_or(0, |column| column.len());
+        let rows = group.columns.first().map_or(0, |column| column.len());
         let rows: Vec<TypeId> = (0..rows)
             .map(|row| {
-                (group.columns.iter())
+                group
+                    .columns
+                    .iter()
                     .fold(bottom, |joined, column| solver.lub(joined, column[row]))
             })
             .collect();
@@ -2249,7 +2301,9 @@ fn declared_function(db: &Database, tables: &Tables<'_>, decl: DeclId) -> Option
 
 /// Why a check couldn't be decided
 fn residual(outcome: &Outcome) -> Residual {
-    (outcome.diagnostics.iter())
+    outcome
+        .diagnostics
+        .iter()
         .find_map(|diagnostic| match diagnostic.issue {
             super::solver::Issue::Residual(residual) => Some(residual),
             super::solver::Issue::Contradiction(_) => None,
@@ -2381,7 +2435,8 @@ fn shares<'i>(params: &[PatternItem], items: &'i [SchemaItem]) -> Option<Vec<&'i
             && !matches!(first.element, Element::Include(_));
         let len = match param.key {
             PatternKey::Rest(_) if matches!(first.element, Element::Include(_)) => 1,
-            PatternKey::Rest(kind) => (items[start..].iter())
+            PatternKey::Rest(kind) => items[start..]
+                .iter()
                 .take_while(|item| {
                     item.multiplicity == Multiplicity::Repeated
                         && match item.element {

@@ -111,9 +111,15 @@ fn encode(harvest: Harvest<'_>) -> Vec<u8> {
             StrId::from_index(strings.len() - 1)
         }
     };
-    let module = intern((harvest.info.module).expect("only a module's typelib is written"));
+    let module = intern(
+        harvest
+            .info
+            .module
+            .expect("only a module's typelib is written"),
+    );
     let path = intern(&*path);
-    let mut lines: Vec<(u32, u32)> = (kept_spans(&harvest).into_iter())
+    let mut lines: Vec<(u32, u32)> = kept_spans(&harvest)
+        .into_iter()
         .filter(|&span| span != Span::INVALID)
         .flat_map(|span| [span.start, span.end])
         .map(|offset| {
@@ -163,7 +169,9 @@ pub(crate) fn read(bytes: &[u8]) -> Result<(Harvest<'_>, Vec<&str>), Invalid> {
     ) else {
         return Err(Invalid::Malformed("an ID is out of range"));
     };
-    let mut imports: Vec<&str> = (content.modules.iter())
+    let mut imports: Vec<&str> = content
+        .modules
+        .iter()
         .filter_map(|module| strings.get(module.name.index()).copied())
         .collect();
     imports.sort_unstable();
@@ -206,7 +214,9 @@ fn validate(harvest: &mut Harvest<'_>) -> Result<(), &'static str> {
         return Err("an ID is out of range");
     }
     let strings = &harvest.strings;
-    let mut names: Vec<&str> = (harvest.exports.iter())
+    let mut names: Vec<&str> = harvest
+        .exports
+        .iter()
         .map(|export| &*strings[export.name.index()])
         .collect();
     names.sort_unstable();
@@ -378,7 +388,8 @@ fn validate(harvest: &mut Harvest<'_>) -> Result<(), &'static str> {
                 }
                 class.decorators.iter().collect()
             }
-            DeclNode::Methods(methods) => (methods.iter())
+            DeclNode::Methods(methods) => methods
+                .iter()
                 .flat_map(|method| &method.decorators)
                 .collect(),
             DeclNode::Alias(_) | DeclNode::Defs(_) | DeclNode::Closure(_) => Vec::new(),
@@ -455,7 +466,10 @@ fn kept_spans(harvest: &Harvest<'_>) -> Vec<Span> {
             DeclNode::Closure(closure) => signature(&mut spans, &[], &closure.sig),
         }
     }
-    let targets = (harvest.exports.iter().map(|export| export.target))
+    let targets = harvest
+        .exports
+        .iter()
+        .map(|export| export.target)
         .chain(harvest.links.iter().map(|link| link.base));
     for target in targets {
         if let Target::Local(Referent::Value(value)) = target {

@@ -221,7 +221,10 @@ impl Solver<'_> {
             }
         }
         let mapped = |shape: &Shape, paired: &dyn Fn(usize) -> bool| {
-            (shape.opaque.iter().enumerate())
+            shape
+                .opaque
+                .iter()
+                .enumerate()
                 .any(|(index, o)| matches!(o.opacity, Opacity::Mapped(_)) && !paired(index))
         };
         if mapped(&a, &|i| pairs.iter().any(|&(x, _)| x == i))
@@ -847,7 +850,8 @@ impl Solver<'_> {
             return Err(Issue::Contradiction(Contradiction::MappedPacks));
         }
         for index in 0..first.positional.len() {
-            let atoms: Vec<Atom> = (flattened.iter())
+            let atoms: Vec<Atom> = flattened
+                .iter()
                 .map(|inner| match inner.positional[index] {
                     Slot::Atom(atom) => atom,
                     Slot::Opaque(_) => unreachable!("no pack has an opaque"),
@@ -891,7 +895,10 @@ impl Solver<'_> {
             kind: Kind::Schema,
         });
         // The pack's group is outside the pattern's own
-        let pattern = (self.db.shift(pattern, 1, 1)).expect("inserting a group removes none");
+        let pattern = self
+            .db
+            .shift(pattern, 1, 1)
+            .expect("inserting a group removes none");
         let map = self.db.intern(Type::Map {
             packs: vec![reference].into(),
             pattern,
@@ -936,7 +943,11 @@ impl Solver<'_> {
             unreachable!("both are mappings")
         };
         let mut exposed = true;
-        for pack in (xs.iter().map(|&x| a.child(x))).chain(ys.iter().map(|&y| b.child(y))) {
+        for pack in xs
+            .iter()
+            .map(|&x| a.child(x))
+            .chain(ys.iter().map(|&y| b.child(y)))
+        {
             exposed = matches!(self.head(pack)?,
                 Head::Structural(view) if matches!(self.db.ty(view.ty), Type::Schema(_)));
             if !exposed {
@@ -1261,9 +1272,12 @@ impl Solver<'_> {
                 && xs.iter().zip(&counts).enumerate().any(|(i, (x, &count))| {
                     x.multiplicity == Multiplicity::Optional
                         && count == 0
-                        && (xs[i + 1..].iter().zip(&counts[i + 1..])).any(|(later, &count)| {
-                            later.multiplicity != Multiplicity::Required && count > 0
-                        })
+                        && xs[i + 1..]
+                            .iter()
+                            .zip(&counts[i + 1..])
+                            .any(|(later, &count)| {
+                                later.multiplicity != Multiplicity::Required && count > 0
+                            })
                 });
             if unbound {
                 if advance(&mut digits) {
@@ -1585,7 +1599,9 @@ impl Solver<'_> {
                     self.derive(obligation, x.value, domain.value, Step::Item(x.item));
                 }
                 [_, _, ..]
-                    if (domains.iter()).all(|d| d.multiplicity == Multiplicity::Repeated) =>
+                    if domains
+                        .iter()
+                        .all(|d| d.multiplicity == Multiplicity::Repeated) =>
                 {
                     self.owners(x, &domains, open_expected, obligation)?;
                 }
@@ -1688,7 +1704,8 @@ impl Solver<'_> {
         open_expected: bool,
         obligation: ObligationId,
     ) -> Result<(), Issue> {
-        let keys: Vec<TypeId> = (domains.iter())
+        let keys: Vec<TypeId> = domains
+            .iter()
             .map(|domain| self.reify(domain.key))
             .collect::<Result<_, _>>()?;
         for member in self.union_members(self.reify(x.key)?) {

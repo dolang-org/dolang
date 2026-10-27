@@ -206,7 +206,9 @@ fn missing_params(tables: &Tables<'_>, decl: DeclId, sig: usize, diags: &mut Vec
 /// Diagnose the exported variables a strict unit checked from source leaves
 /// unannotated
 fn missing_values(tables: &Tables<'_>, diags: &mut Vec<UnitDiag>) {
-    let mut missing: Vec<UnitSpan> = (tables.values.iter())
+    let mut missing: Vec<UnitSpan> = tables
+        .values
+        .iter()
         .filter(|&(value, site)| {
             let unit = &tables.units[value.unit.index()];
             site.is_none() && unit.strict && unit.source.is_some()
@@ -311,11 +313,14 @@ fn decorator_designation(tables: &Tables<'_>, decorator: &Decorator) -> Option<D
 /// which returns the class it is given after marking it, and `mark` is one of
 /// them. Without decorators, a class has no mark.
 pub(crate) fn decorated(tables: &Tables<'_>, class: &Class, mark: Designated) -> bool {
-    let designations = (class.decorators.iter())
+    let designations = class
+        .decorators
+        .iter()
         .map(|decorator| decorator_designation(tables, decorator))
         .collect::<Vec<_>>();
     designations.contains(&Some(mark))
-        && (designations.iter())
+        && designations
+            .iter()
             .all(|designation| matches!(designation, Some(Designated::Final | Designated::Mixable)))
 }
 
@@ -383,7 +388,9 @@ fn missing_intrinsics(tables: &Tables<'_>, diags: &mut Vec<UnitDiag>) {
             continue;
         }
         let unit = UnitId::from_index(index);
-        let declared: Vec<&str> = (tables.decls.iter())
+        let declared: Vec<&str> = tables
+            .decls
+            .iter()
             .filter(|decl| decl.unit == unit && decl.outer.is_none())
             .filter_map(|decl| decl.name.map(|name| tables.name(unit, name)))
             .collect();

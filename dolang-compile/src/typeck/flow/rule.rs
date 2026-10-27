@@ -235,7 +235,8 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
             (true, Some((ty, holes))) => (*ty, holes),
             _ => (lambda.ty, &lambda.holes),
         };
-        let group: Vec<Term> = (holes.iter())
+        let group: Vec<Term> = holes
+            .iter()
             .map(|&hole| {
                 let term = self.solver.infer();
                 match hole {
@@ -312,7 +313,9 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
         let rule = self;
         // A spread's schema is the least its value spreads as, solved before the
         // rest, which can't show that an unsolved schema supplies what's expected
-        let spreads: Vec<Term> = (values.values.iter())
+        let spreads: Vec<Term> = values
+            .values
+            .iter()
             .filter_map(|placed| match placed.value {
                 Value::Spread(ty, span) => {
                     let schema = rule.solver.infer_kind(Kind::Schema, Rest::All);
@@ -335,7 +338,7 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
         }
         let mut spreads = solved.into_iter();
         let unknown_schema = rule.db.unknown_of(Kind::Schema);
-        let mut groups: Vec<Option<Joined>> = (values.groups.iter()).map(|_| None).collect();
+        let mut groups: Vec<Option<Joined>> = values.groups.iter().map(|_| None).collect();
         // Each argument, or a group whose arguments go where its first item is
         let mut entries = Vec::new();
         let symbol = |key| rule.db.intern(Type::Literal(Literal::Sym(key)));
@@ -425,7 +428,8 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
                     };
                     vec![(multiplicity, argument, span)]
                 }
-                Value::Spread(_, span) => (flat.into_iter())
+                Value::Spread(_, span) => flat
+                    .into_iter()
                     .map(|(multiplicity, atom)| {
                         let argument = match atom {
                             Atom::Positional(ty) => CallArgument::Positional(rule.closed(ty)),
@@ -498,7 +502,9 @@ struct Run<'g> {
 impl Run<'_> {
     /// Whether any of the first `count` checks has `status`
     fn any(&self, count: usize, status: Status) -> bool {
-        (self.outcomes[..count].iter()).any(|outcome| outcome.status == status)
+        self.outcomes[..count]
+            .iter()
+            .any(|outcome| outcome.status == status)
     }
 }
 
@@ -703,7 +709,7 @@ struct Values {
 
 impl Values {
     fn lambdas(&self) -> impl Iterator<Item = &Lambda> {
-        (self.values.iter()).filter_map(|placed| match &placed.value {
+        self.values.iter().filter_map(|placed| match &placed.value {
             Value::Lambda(_, lambda, _) => Some(lambda),
             _ => None,
         })
@@ -840,7 +846,9 @@ impl Joined {
 
     /// Its repeated arguments
     fn arguments(&self, rule: &mut Rule<'_, '_, '_>) -> Vec<CallArgument> {
-        let mut arguments: Vec<_> = (self.positional.term(rule))
+        let mut arguments: Vec<_> = self
+            .positional
+            .term(rule)
             .map(CallArgument::Positional)
             .into_iter()
             .collect();
@@ -926,7 +934,9 @@ pub(super) fn passed_signature(
         return None;
     };
     // A rest can give several schema items, and every other parameter one
-    let mut singles = (pattern.iter().zip(&signature.params))
+    let mut singles = pattern
+        .iter()
+        .zip(&signature.params)
         .filter(|(item, _)| !matches!(item.key, PatternKey::Rest(_)))
         .map(|(_, &var)| var);
     let mut schema = Vec::with_capacity(items.len());
@@ -1148,7 +1158,9 @@ impl<'a> Flow<'a, '_> {
         let contradicted = run.any(run.checks.len(), Status::Contradicted);
         // A check left unresolved may be decided by defaulting
         let unresolved = run.any(run.checks.len(), Status::Unresolved);
-        let reified: Option<Vec<TypeId>> = (run.results.iter())
+        let reified: Option<Vec<TypeId>> = run
+            .results
+            .iter()
             .map(|&term| run.solver.reify(term).ok())
             .collect();
         let (mut values, decided): (Vec<TypeId>, bool) = match reified {
@@ -1159,7 +1171,9 @@ impl<'a> Flow<'a, '_> {
                 while unseed(&run, &mut seeds) {
                     run = make(true, seeds);
                 }
-                let reified: Vec<_> = (run.results.iter())
+                let reified: Vec<_> = run
+                    .results
+                    .iter()
                     .map(|&term| run.solver.reify(term).ok())
                     .collect();
                 // A strict unit's defaulting leaves what nothing determines
@@ -1173,7 +1187,11 @@ impl<'a> Flow<'a, '_> {
                         _ => {}
                     }
                 }
-                let mut open = (run.results.iter().zip(&reified)).filter(|(_, ty)| ty.is_none());
+                let mut open = run
+                    .results
+                    .iter()
+                    .zip(&reified)
+                    .filter(|(_, ty)| ty.is_none());
                 empty |= open.clone().any(|(&term, _)| run.solver.holds_fresh(term));
                 if !others {
                     let what = match (empty, open.next().is_some()) {
@@ -1185,7 +1203,8 @@ impl<'a> Flow<'a, '_> {
                         self.gap(span, what);
                     }
                 }
-                let values = (reified.into_iter())
+                let values = reified
+                    .into_iter()
                     .map(|ty| ty.unwrap_or(self.db.unknown()))
                     .collect();
                 (values, decided && run.pending.is_empty())
@@ -1216,7 +1235,9 @@ impl<'a> Flow<'a, '_> {
                 }
             }
         }
-        let chosen = (values.iter().zip(&results))
+        let chosen = values
+            .iter()
+            .zip(&results)
             .map(|(&ty, &term)| ty == bottom && chosen(&solver, term))
             .collect();
         if self.observing() {
@@ -1275,7 +1296,8 @@ impl<'a> Flow<'a, '_> {
                     // The callee, or the value that doesn't fit, as what's found
                     // of it if an argument held back in it is left unsolved
                     let checked = relation.checked();
-                    let actual = (solver.reify(checked))
+                    let actual = solver
+                        .reify(checked)
                         .or_else(|_| solver.reify_found(checked))
                         .ok();
                     let problems: Vec<Problem> = match check {
@@ -1327,7 +1349,8 @@ impl<'a> Flow<'a, '_> {
                                     notes.push(note);
                                 }
                             }
-                            let expected = (relation.sides())
+                            let expected = relation
+                                .sides()
                                 .and_then(|(_, expected)| solver.reify(expected).ok());
                             let (found, expected) = match (actual, expected) {
                                 (Some(found), Some(expected)) => {
@@ -1370,7 +1393,8 @@ impl<'a> Flow<'a, '_> {
     ) -> Vec<String> {
         let mut notes = Vec::new();
         for rejection in solver.rejections(overloaded).iter() {
-            let overload = (rejection.overload)
+            let overload = rejection
+                .overload
                 .map(|ty| self.overload(solver, overloaded, rejection.index, ty));
             let mut problems = Vec::new();
             for cause in &rejection.contradictions {
@@ -1419,19 +1443,26 @@ impl<'a> Flow<'a, '_> {
         };
         // What chooses: the arguments' twin and the ambient channels
         let selection = [Some(solver.twin(call.arguments)), call.input, call.output];
-        let gradual = (selection.into_iter().flatten())
-            .any(|term| (solver.reify(term)).map_or(true, |ty| self.db.contains_unknown(ty)));
+        let gradual = selection.into_iter().flatten().any(|term| {
+            solver
+                .reify(term)
+                .map_or(true, |ty| self.db.contains_unknown(ty))
+        });
         if gradual {
             return Some(None);
         }
         let overloads = match solver.reify(call.callee).map(|ty| self.db.ty(ty)) {
             Ok(Type::Overloaded { overloads, .. }) => overloads.clone(),
-            Ok(&Type::Decl(decl)) => (self.db.overloads(decl).iter())
+            Ok(&Type::Decl(decl)) => self
+                .db
+                .overloads(decl)
+                .iter()
                 .map(|&overload| self.db.declaration(overload).ty)
                 .collect(),
             _ => return Some(None),
         };
-        let survivors = (possible.into_iter())
+        let survivors = possible
+            .into_iter()
             .filter_map(|index| Some((index, *overloads.get(index)?)))
             .map(|(index, overload)| self.overload(solver, overloaded, index, overload))
             .collect();
@@ -1454,7 +1485,9 @@ impl<'a> Flow<'a, '_> {
             _ => None,
         };
         match function.and_then(|function| self.db.overloads(function).get(index)) {
-            Some(&decl) => (self.db).render_declared(decl, ty, &self.names(), Style::Reader),
+            Some(&decl) => self
+                .db
+                .render_declared(decl, ty, &self.names(), Style::Reader),
             None => self.shown(ty),
         }
     }
@@ -1516,7 +1549,8 @@ impl<'a> Flow<'a, '_> {
                     root += 1;
                 }
                 // What's found of an argument held back that's left unsolved
-                let Some((Some(found), expected)) = (path[root].sides)
+                let Some((Some(found), expected)) = path[root]
+                    .sides
                     .map(|(found, expected)| (found.or(path[root].found), expected))
                 else {
                     return fallback;
@@ -1536,7 +1570,8 @@ impl<'a> Flow<'a, '_> {
                 };
                 // What fails may lie deeper than the argument's own relation, as
                 // in a binder's bound its type solves
-                let causes = (self.cause(path, &steps, root, contradiction))
+                let causes = self
+                    .cause(path, &steps, root, contradiction)
                     .into_iter()
                     .collect();
                 Problem::Argument {
@@ -1575,7 +1610,8 @@ impl<'a> Flow<'a, '_> {
             end -= 1;
         }
         // Whether each obligation's expected side is the found one
-        let reversed: Vec<bool> = (steps[start..end - 1].iter())
+        let reversed: Vec<bool> = steps[start..end - 1]
+            .iter()
             .scan(false, |reversed, step| {
                 *reversed ^= step.reverses();
                 Some(*reversed)
@@ -1722,7 +1758,8 @@ impl<'a> Flow<'a, '_> {
     ) -> Vec<CallTarget> {
         let mut alternatives = Vec::new();
         let mut targets = if self.expand(callee.0, &mut alternatives) {
-            (alternatives.into_iter())
+            alternatives
+                .into_iter()
                 .map(|alternative| match alternative {
                     Some(ty) => self.call_target((ty, callee.1), span),
                     None => {
@@ -1834,8 +1871,10 @@ impl<'a> Flow<'a, '_> {
     ) -> TypeId {
         let (bottom, unknown) = (self.db.bottom(), self.db.unknown());
         let mut values = self.values(at, state, operands, call.args, None, true, true);
-        values.never |=
-            (targets.iter().flat_map(|target| &target.receivers)).any(|&(ty, _)| ty == bottom);
+        values.never |= targets
+            .iter()
+            .flat_map(|target| &target.receivers)
+            .any(|&(ty, _)| ty == bottom);
         if values.never {
             self.diverge(call.span, false);
             return bottom;
@@ -1952,7 +1991,9 @@ impl<'a> Flow<'a, '_> {
         };
         let mut alternatives = Vec::new();
         if self.expand(callee, &mut alternatives) {
-            (alternatives.into_iter()).all(|alternative| alternative.is_some_and(function))
+            alternatives
+                .into_iter()
+                .all(|alternative| alternative.is_some_and(function))
         } else {
             function(callee)
         }
@@ -1982,8 +2023,10 @@ impl<'a> Flow<'a, '_> {
                 };
                 match <[CallTarget; 1]>::try_from(targets) {
                     Ok([target]) => {
-                        let callee =
-                            (target.signature.callee(self.db)).unwrap_or(self.db.unknown());
+                        let callee = target
+                            .signature
+                            .callee(self.db)
+                            .unwrap_or(self.db.unknown());
                         let call = Call {
                             callee: target.member,
                             ..call
@@ -2076,7 +2119,9 @@ impl<'a> Flow<'a, '_> {
         }
         let solved = {
             let mut fork = rule.solver.fork(rule.gas);
-            let raised = (fork.raised(raisable)).unwrap_or_else(|_| fork.unresolved().collect());
+            let raised = fork
+                .raised(raisable)
+                .unwrap_or_else(|_| fork.unresolved().collect());
             default_where(&mut fork, |id| !raised.contains(&id), None);
             expectation(&fork, held, below).and_then(|expected| fork.reify(expected).ok())
         };
@@ -2147,7 +2192,10 @@ impl<'a> Flow<'a, '_> {
                 .then(|| {
                     sub.solver.reify(given).ok().or_else(|| match given {
                         Term::Infer(id)
-                            if (sub.solver.bounds(id).lower())
+                            if sub
+                                .solver
+                                .bounds(id)
+                                .lower()
                                 .all(|lower| sub.solver.reify(lower).is_ok()) =>
                         {
                             sub.solver.reify_found(given).ok()
@@ -2162,13 +2210,14 @@ impl<'a> Flow<'a, '_> {
                 // undecided, or it passes a `do` block values
                 let outcomes = sub.solver.solve();
                 let decided =
-                    (sub.checks[lengths.0..].iter().zip(&outcomes)).all(|(check, outcome)| {
-                        match outcome.status {
+                    sub.checks[lengths.0..]
+                        .iter()
+                        .zip(&outcomes)
+                        .all(|(check, outcome)| match outcome.status {
                             Status::Proven => true,
                             Status::Unresolved => matches!(check, Check::Quiet),
                             Status::Contradicted => false,
-                        }
-                    });
+                        });
                 if decided
                     && exact != db.bottom()
                     && (sub.passed.len(), sub.pending.len()) == (lengths.1, lengths.2)
@@ -2464,7 +2513,10 @@ impl<'a> Flow<'a, '_> {
                 }
                 &Item::Key(key, ref value) => {
                     let expected = gathering.params.and_then(|params| {
-                        (params.keyed.iter()).find_map(|&(name, ty)| (name == key).then_some(ty))
+                        params
+                            .keyed
+                            .iter()
+                            .find_map(|&(name, ty)| (name == key).then_some(ty))
                     });
                     let ty = match hold(gathering, place, expected, value) {
                         true => match self.prepare(at, state, operands, value) {
@@ -2558,7 +2610,9 @@ impl<'a> Flow<'a, '_> {
                     let [then, else_] = branches;
                     let arms = match self.alike(&then, &else_, span) {
                         Some(arms) => arms,
-                        None => (then.into_iter().chain(else_))
+                        None => then
+                            .into_iter()
+                            .chain(else_)
                             .map(|placed| Placed {
                                 multiplicity: Multiplicity::Optional.compose(placed.multiplicity),
                                 ..placed
@@ -2581,7 +2635,8 @@ impl<'a> Flow<'a, '_> {
         if then.len() != else_.len() {
             return None;
         }
-        (then.iter().zip(else_))
+        then.iter()
+            .zip(else_)
             .map(|(a, b)| {
                 let required = Multiplicity::Required;
                 if a.multiplicity != required || b.multiplicity != required {
@@ -2685,10 +2740,12 @@ impl<'a> Flow<'a, '_> {
         let ExprKind::Collection { kind, items, .. } = &expr.kind else {
             unreachable!("a collection")
         };
-        let params = (fresh.and_then(|fresh| fresh.array)).map(|(_, element)| Params {
-            rest: Some(element),
-            ..Params::default()
-        });
+        let params = fresh
+            .and_then(|fresh| fresh.array)
+            .map(|(_, element)| Params {
+                rest: Some(element),
+                ..Params::default()
+            });
         let (contextual, hold) = match fresh {
             Some(fresh) => (fresh.expected.is_some(), !fresh.candidates.is_empty()),
             None => (true, true),
@@ -2760,13 +2817,15 @@ impl<'a> Flow<'a, '_> {
         let mut seed = None;
         let shape = match kind {
             Collection::Array => {
-                seed = (expected.and_then(|expected| rule.solver.reify(expected).ok()))
+                seed = expected
+                    .and_then(|expected| rule.solver.reify(expected).ok())
                     .and_then(|expected| self.fresh_expected(class, Kind::Type, expected))
                     .map(|(ty, _)| rule.closed(ty));
                 Shape::Array
             }
             Collection::Dict => {
-                let candidates = (expected.map(|expected| self.candidates(rule, class, expected)))
+                let candidates = expected
+                    .map(|expected| self.candidates(rule, class, expected))
                     .unwrap_or_default();
                 match self.choose(rule, class, &candidates, values, span) {
                     Some(candidate) => {
@@ -2815,7 +2874,8 @@ impl<'a> Flow<'a, '_> {
         expected: Term,
     ) -> Vec<Candidate> {
         let closed = |ty: TypeId| {
-            (self.fresh_candidates(class, Kind::Schema, ty).into_iter())
+            self.fresh_candidates(class, Kind::Schema, ty)
+                .into_iter()
                 .map(|(ty, schema)| Candidate::Closed(ty, schema))
         };
         if let Ok(ty) = rule.solver.reify(expected) {
@@ -2826,7 +2886,10 @@ impl<'a> Flow<'a, '_> {
         if let Term::Infer(_) = expected {
             return Vec::new();
         }
-        let alternatives = (rule.solver.alternatives(expected)).unwrap_or_else(|| vec![expected]);
+        let alternatives = rule
+            .solver
+            .alternatives(expected)
+            .unwrap_or_else(|| vec![expected]);
         let mut candidates = Vec::new();
         for alternative in alternatives {
             let found: Vec<Candidate> = match rule.solver.reify(alternative) {
@@ -2852,7 +2915,11 @@ impl<'a> Flow<'a, '_> {
         let mut fork = rule.solver.fork(rule.gas);
         let (argument, ty) = applied_term(&mut fork, rule.db, class, Kind::Schema);
         fork.constrain(ty, alternative, Provenance::default());
-        if (fork.solve().iter()).any(|outcome| outcome.status == Status::Contradicted) {
+        if fork
+            .solve()
+            .iter()
+            .any(|outcome| outcome.status == Status::Contradicted)
+        {
             return false;
         }
         let Some(argument) = expectation(&fork, argument, |a, b| self.below(a, b)) else {
@@ -2953,7 +3020,9 @@ impl<'a> Flow<'a, '_> {
         let exact = probe.solver.arguments_schema(&arguments);
         probe.constrain(exact, schema, Check::Quiet);
         let contradicted = |outcomes: &[Outcome]| {
-            (outcomes.iter()).any(|outcome| outcome.status == Status::Contradicted)
+            outcomes
+                .iter()
+                .any(|outcome| outcome.status == Status::Contradicted)
         };
         let solver = probe.solver;
         !contradicted(&solver.solve()) && !contradicted(&default_own(solver, None))
@@ -3048,10 +3117,14 @@ impl<'a> Flow<'a, '_> {
             let mut solver = self.solver(&gas);
             let (argument, term) = applied_term(&mut solver, self.db, class, kind);
             solver.constrain(term, solver.closed(expected), Provenance::default());
-            if (solver.solve().iter()).any(|outcome| outcome.status == Status::Contradicted) {
+            if solver
+                .solve()
+                .iter()
+                .any(|outcome| outcome.status == Status::Contradicted)
+            {
                 return None;
             }
-            (expectation(&solver, argument, |a, b| self.below(a, b)))
+            expectation(&solver, argument, |a, b| self.below(a, b))
                 .and_then(|argument| solver.reify(argument).ok())
                 .filter(|&ty| !matches!(self.db.ty(ty), Type::Unknown(_)))
         };
@@ -3065,7 +3138,8 @@ impl<'a> Flow<'a, '_> {
                 arguments.push(argument);
             }
         }
-        (arguments.into_iter())
+        arguments
+            .into_iter()
             .map(|argument| {
                 let applied = self.db.intern(Type::Apply {
                     base: self.db.intern(Type::Decl(class)),
@@ -3244,7 +3318,8 @@ impl<'a> Flow<'a, '_> {
         operands: &mut VecDeque<TypeId>,
         parts: &[Expr],
     ) -> TypeId {
-        let values: Vec<_> = (parts.iter())
+        let values: Vec<_> = parts
+            .iter()
             .map(|part| (self.eval(at, state, operands, part), part.span))
             .collect();
         let bin = self.designated(Designated::Bin);
@@ -3503,7 +3578,9 @@ impl<'a> Flow<'a, '_> {
         // What's unpacked is what the value's `(unpack)` gives
         let each = self.send_special_each(at, state, value, "unpack", span);
         let value = match &each {
-            Some(each) => (each.iter()).fold(bottom, |joined, &(_, given)| self.lub(joined, given)),
+            Some(each) => each
+                .iter()
+                .fold(bottom, |joined, &(_, given)| self.lub(joined, given)),
             None => self.send_special(at, state, value, "unpack", span),
         };
         if value == bottom {
@@ -3589,14 +3666,17 @@ impl<'a> Flow<'a, '_> {
         }
         self.gap(span, "a pattern against a schema that can't be found");
         let types = self.conclude(at, span, None, |_, rule| {
-            let vars: Vec<Option<Term>> = (items.iter())
+            let vars: Vec<Option<Term>> = items
+                .iter()
                 .map(|item| match item.key {
                     PatternKey::Pos | PatternKey::Key(_) => Some(rule.solver.infer()),
                     PatternKey::ConstKey(_) | PatternKey::Rest(_) => None,
                 })
                 .collect();
             let target = rule.term(|holes| {
-                let mut schema: Vec<SchemaItem> = (items.iter().zip(&vars))
+                let mut schema: Vec<SchemaItem> = items
+                    .iter()
+                    .zip(&vars)
                     .filter_map(|(item, var)| {
                         let hole = holes.hole((*var)?, Kind::Type);
                         let element = match item.key {
@@ -3625,7 +3705,7 @@ impl<'a> Flow<'a, '_> {
                 holes.apply(unpack, vec![schema, unknown])
             });
             rule.constrain(rule.closed(value), target, check.clone());
-            (vars.into_iter())
+            vars.into_iter()
                 .map(|var| var.unwrap_or(rule.closed(unknown)))
                 .collect()
         });
@@ -3668,7 +3748,8 @@ impl<'a> Flow<'a, '_> {
             });
             columns.push(column.into_boxed_slice());
         }
-        let live = (columns.iter())
+        let live = columns
+            .iter()
             .filter(|column| column.iter().any(|&ty| ty != bottom))
             .count();
         match live {
@@ -3683,7 +3764,8 @@ fn item_order(items: &[PatternItem], pattern: &PatternShape, unpacked: &Unpacked
     let (positional, keyed) = unpacked.slots.split_at(pattern.positional.len());
     let (mut positional, mut keyed) = (positional.iter(), keyed.iter());
     let mut rests = unpacked.rests.iter();
-    (items.iter())
+    items
+        .iter()
         .map(|item| {
             let slot = match item.key {
                 PatternKey::Pos => positional.next(),
@@ -3721,7 +3803,8 @@ fn spread_into(
 
 /// The derivation steps along a path, leaving out any not recorded
 fn steps(path: &[Node]) -> Vec<Derivation> {
-    (path.iter().skip(1))
+    path.iter()
+        .skip(1)
         .filter_map(|node| node.step.clone())
         .collect()
 }
@@ -3730,7 +3813,8 @@ fn steps(path: &[Node]) -> Vec<Derivation> {
 /// argument, if any
 fn merge(problems: &mut Vec<Problem>, problem: Problem) {
     if let Problem::Argument { span, causes, .. } = &problem
-        && let Some(Problem::Argument { causes: notes, .. }) = (problems.iter_mut())
+        && let Some(Problem::Argument { causes: notes, .. }) = problems
+            .iter_mut()
             .find(|other| matches!(other, Problem::Argument { span: at, .. } if at == span))
     {
         for cause in causes {
@@ -3774,7 +3858,8 @@ fn passed(
     let parameters: Vec<Term> = passed.iter().map(|&(_, term)| term).collect();
     let roots = outputs(results, &parameters);
     default_all(solver, db, false, Some(&roots));
-    (passed.iter())
+    passed
+        .iter()
         .filter_map(|&(var, term)| solver.reify(term).ok().map(|ty| (var, ty)))
         .collect()
 }
@@ -3810,7 +3895,8 @@ fn default_all(
     }
     // Each round solves at least one variable; the limit only guards the solver
     for _ in 0..64 {
-        let bare: Vec<_> = (solver.unresolved())
+        let bare: Vec<_> = solver
+            .unresolved()
             .filter(|&id| solver.bounds(id).lower().next().is_none())
             .collect();
         if bare.is_empty() {
@@ -3869,9 +3955,7 @@ fn default_rounds(
     let mut outcomes = solver.solve();
     // Each round solves at least one variable; the limit only guards the solver
     for _ in 0..64 {
-        let unsolved: Vec<_> = (solver.unresolved())
-            .filter(|&id| keep(solver, id))
-            .collect();
+        let unsolved: Vec<_> = solver.unresolved().filter(|&id| keep(solver, id)).collect();
         // Defaults add bounds, so what's locked is found again each round
         let locked = roots.map(|roots| solver.locked(roots));
         let decays = |id| match &locked {
@@ -3884,7 +3968,9 @@ fn default_rounds(
         }
         // One variable breaks the cycle
         if !progress && open {
-            progress = (unsolved.iter()).any(|&id| solver.default_open(id, decays(id)).is_ok());
+            progress = unsolved
+                .iter()
+                .any(|&id| solver.default_open(id, decays(id)).is_ok());
         }
         if !progress {
             break;
@@ -3928,7 +4014,8 @@ fn call_constraint<'p>(
         input.map(|ty| rule.closed(ty)),
         output.map(|ty| rule.closed(ty)),
     );
-    let blinded: Vec<(Multiplicity, CallArgument)> = (arguments.iter())
+    let blinded: Vec<(Multiplicity, CallArgument)> = arguments
+        .iter()
         .map(|&(multiplicity, argument)| {
             let twin = |term| rule.solver.twin(term);
             let argument = match argument {
@@ -4140,7 +4227,8 @@ fn collection_constraint<'p>(
                 }
             }
             rule.term(|holes| {
-                let items = (elements.iter())
+                let items = elements
+                    .iter()
                     .map(|&(key, var, kind)| {
                         let hole = holes.hole(var, kind);
                         let element = match (key, kind) {
@@ -4221,7 +4309,9 @@ fn expectation(
         (Some(open), []) => Some(open),
         (Some(_), _) => None,
         (None, []) => last,
-        (None, closed) => (closed.iter().copied())
+        (None, closed) => closed
+            .iter()
+            .copied()
             .find(|&ty| closed.iter().all(|&other| other == ty || below(ty, other)))
             .map(|ty| solver.closed(ty)),
     }

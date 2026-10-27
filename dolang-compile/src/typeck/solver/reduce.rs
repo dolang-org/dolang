@@ -332,7 +332,7 @@ impl Solver<'_> {
                 }
                 UnionMember::IndexItem(schema, key) => match self.widened_key(key)? {
                     Some((key, step)) => {
-                        let projected = (self.db).intern(Type::Union(
+                        let projected = self.db.intern(Type::Union(
                             vec![UnionMember::IndexItem(schema, key)].into(),
                         ));
                         (view.child(projected), step)
@@ -405,7 +405,8 @@ impl Solver<'_> {
             return Ok(Continue(()));
         };
         self.conflicting(members)?;
-        let alternatives: Vec<Term> = (members.iter())
+        let alternatives: Vec<Term> = members
+            .iter()
             .map(|&member| match member {
                 UnionMember::Type(ty) => view.child(ty),
                 _ => view.child(self.db.intern(Type::Union(vec![member].into()))),
@@ -417,7 +418,7 @@ impl Solver<'_> {
         // An overloaded function's members are chosen among, as a call's are
         let overloaded = matches!(&j.a, Head::Structural(view)
             if matches!(self.db.ty(view.ty), Type::Overloaded { .. }));
-        let closed = (self.reify(j.actual).ok()).filter(|_| {
+        let closed = self.reify(j.actual).ok().filter(|_| {
             !tried && !overloaded && alternatives.iter().all(|&term| self.reify(term).is_ok())
         });
         match closed {
@@ -585,7 +586,8 @@ impl Solver<'_> {
                         && let Some(member) = self.start(expected)?
                         && !member.arguments.is_empty()
                     {
-                        match (class.as_ref())
+                        match class
+                            .as_ref()
                             .and_then(|class| self.reaches(class, member.declaration))
                         {
                             Some(false) => {}
@@ -670,10 +672,14 @@ impl Solver<'_> {
         literal: &Literal,
     ) -> Result<(), Issue> {
         let intrinsic = literal.intrinsic();
-        let backing =
-            (self.db.intrinsic(intrinsic)).ok_or(Residual::MissingIntrinsic(intrinsic))?;
+        let backing = self
+            .db
+            .intrinsic(intrinsic)
+            .ok_or(Residual::MissingIntrinsic(intrinsic))?;
         if let Type::Decl(class) = *self.db.ty(backing)
-            && (self.ancestor(nominal, class, &mut FxHashSet::default(), 0)?).is_none()
+            && self
+                .ancestor(nominal, class, &mut FxHashSet::default(), 0)?
+                .is_none()
         {
             return Err(Issue::Contradiction(Contradiction::Outside));
         }
@@ -740,15 +746,19 @@ impl Solver<'_> {
             // A literal is a function only if its class is
             (Type::Literal(literal), Type::Function(_)) => {
                 let intrinsic = literal.intrinsic();
-                let backing =
-                    (self.db.intrinsic(intrinsic)).ok_or(Residual::MissingIntrinsic(intrinsic))?;
+                let backing = self
+                    .db
+                    .intrinsic(intrinsic)
+                    .ok_or(Residual::MissingIntrinsic(intrinsic))?;
                 let step = Step::IntrinsicBacking(intrinsic);
                 self.derive(obligation, self.closed(backing), expected, step);
                 Ok(())
             }
             // A function is a literal only if its class is
             (Type::Function(_) | Type::Quantified { .. }, Type::Literal(_)) => {
-                let backing = (self.db.intrinsic(Intrinsic::Func))
+                let backing = self
+                    .db
+                    .intrinsic(Intrinsic::Func)
                     .ok_or(Residual::MissingIntrinsic(Intrinsic::Func))?;
                 let step = Step::IntrinsicBacking(Intrinsic::Func);
                 self.derive(obligation, self.closed(backing), expected, step);
@@ -792,7 +802,8 @@ impl Solver<'_> {
         if let Type::Quantified { binders, body } = self.db.ty(view.ty)
             && self.db.meta_of(*body).is_some()
         {
-            let unknowns: Vec<TypeId> = (binders.iter())
+            let unknowns: Vec<TypeId> = binders
+                .iter()
                 .map(|binder| self.db.unknown_of(binder.kind))
                 .collect();
             let applied = self.db.substitute(*body, &unknowns);
@@ -809,14 +820,18 @@ impl Solver<'_> {
         }
         let (class, intrinsic) = match self.db.ty(ty) {
             Type::Function(_) => {
-                let class = (self.db.func_class(view.ty))
+                let class = self
+                    .db
+                    .func_class(view.ty)
                     .ok_or(Residual::MissingIntrinsic(Intrinsic::Func))?;
                 (self.view(class, view.environment), Intrinsic::Func)
             }
             Type::Literal(literal) => {
                 let intrinsic = literal.intrinsic();
-                let backing =
-                    (self.db.intrinsic(intrinsic)).ok_or(Residual::MissingIntrinsic(intrinsic))?;
+                let backing = self
+                    .db
+                    .intrinsic(intrinsic)
+                    .ok_or(Residual::MissingIntrinsic(intrinsic))?;
                 (self.closed(backing), intrinsic)
             }
             _ => return Err(Residual::Unsupported("a structural type below a class").into()),
@@ -1001,8 +1016,9 @@ impl Solver<'_> {
     /// A contradiction if a union's projection has a schema whose keyed view has
     /// a key that may be a position's index (see [`Database::promoted`])
     pub(super) fn conflicting(&self, members: &[UnionMember]) -> Result<(), Issue> {
-        let conflict =
-            (members.iter()).any(|&member| matches!(self.db.project(member), Projected::Conflict));
+        let conflict = members
+            .iter()
+            .any(|&member| matches!(self.db.project(member), Projected::Conflict));
         match conflict {
             true => Err(Issue::Contradiction(Contradiction::Conflict)),
             false => Ok(()),
@@ -1171,7 +1187,9 @@ impl Solver<'_> {
                 let mut terms = vec![Term::View(view)];
                 terms.extend_from_slice(others);
                 let scope = self.scope(&terms)?;
-                let group: Vec<Term> = (binders.iter().enumerate())
+                let group: Vec<Term> = binders
+                    .iter()
+                    .enumerate()
                     .map(|(slot, binder)| {
                         let fixed = fixed.iter().find(|&&(at, _)| at == slot);
                         match (fixed, binder.binding) {
@@ -1244,7 +1262,8 @@ impl Solver<'_> {
             Some(environment) => environment,
             None => {
                 let scope = self.enter(self.scope(&[actual, Term::View(view)])?);
-                let group: Vec<Term> = (binders.iter())
+                let group: Vec<Term> = binders
+                    .iter()
                     .map(|binder| {
                         Term::Skolem(self.push_skolem(Skolem {
                             kind: binder.kind,

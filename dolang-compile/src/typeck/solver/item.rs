@@ -102,7 +102,8 @@ impl Solver<'_> {
         if !members.iter().any(|member| member.key().is_some()) {
             return Ok(None);
         }
-        let members = (members.iter())
+        let members = members
+            .iter()
             .map(|&member| match member {
                 UnionMember::IndexItem(schema, key) => {
                     Ok(UnionMember::Type(self.item(schema, key, false)?))
@@ -223,7 +224,9 @@ impl Solver<'_> {
     fn bounded_change(&self, schema: TypeId, key: Abstract, change: Change) -> Result<(), Issue> {
         let mut first = None;
         for (bound, _) in self.abstract_bounds(key) {
-            let checked = (self.reify(bound).map_err(Issue::from))
+            let checked = self
+                .reify(bound)
+                .map_err(Issue::from)
                 .and_then(|bound| self.changed(schema, bound, change));
             match checked {
                 Ok(()) => return Ok(()),
@@ -246,13 +249,19 @@ impl Solver<'_> {
             let first = self.db.intern(Type::Literal(Literal::Int(0)));
             return Err(Issue::Contradiction(Contradiction::Required(first)));
         }
-        let required = (promoted.keyed.iter())
+        let required = promoted
+            .keyed
+            .iter()
             .find(|&&(multiplicity, _, _)| multiplicity == Multiplicity::Required);
         if let Some(&(_, key, _)) = required {
             let key = self.db.regular(key);
             return Err(Issue::Contradiction(Contradiction::Required(key)));
         }
-        if (promoted.opaque.iter()).any(|&opaque| !matches!(self.db.ty(opaque), Type::Unknown(_))) {
+        if promoted
+            .opaque
+            .iter()
+            .any(|&opaque| !matches!(self.db.ty(opaque), Type::Unknown(_)))
+        {
             return Err(Residual::Unsupported("a schema including a schema not yet known").into());
         }
         Ok(())
@@ -343,7 +352,8 @@ impl Solver<'_> {
 
     /// The values of a schema's items a key selects
     fn selected(&self, schema: TypeId, key: TypeId) -> Result<Vec<TypeId>, Issue> {
-        (self.selected_items(schema, key)?.into_iter())
+        self.selected_items(schema, key)?
+            .into_iter()
             .map(|selected| match selected {
                 Selected::Item { value, .. } => Ok(value),
                 // A rigid key is known only by its bounds. Where each item one
@@ -387,7 +397,10 @@ impl Solver<'_> {
                 _ => Err(Residual::Unsupported("a schema including a schema not yet known").into()),
             };
         }
-        let mut literals: Vec<(TypeId, TypeId, Occurrence)> = (promoted.fixed.iter().enumerate())
+        let mut literals: Vec<(TypeId, TypeId, Occurrence)> = promoted
+            .fixed
+            .iter()
+            .enumerate()
             .map(|(i, &value)| {
                 (
                     self.db.intern(Type::Literal(Literal::Int(i as i128))),
@@ -402,8 +415,12 @@ impl Solver<'_> {
                 .db
                 .intrinsic(Intrinsic::Int)
                 .ok_or(Residual::MissingIntrinsic(Intrinsic::Int))?;
-            domains
-                .extend((promoted.varying.iter()).map(|&value| (int, value, Occurrence::Position)));
+            domains.extend(
+                promoted
+                    .varying
+                    .iter()
+                    .map(|&value| (int, value, Occurrence::Position)),
+            );
         }
         for &(multiplicity, key, value) in &promoted.keyed {
             let occurrence = Occurrence::Keyed(multiplicity);

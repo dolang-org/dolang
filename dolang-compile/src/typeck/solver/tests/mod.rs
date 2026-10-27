@@ -259,7 +259,8 @@ fn constrain_call(
     result: Term,
     input: Option<Term>,
 ) -> ConstraintId {
-    let args: Vec<_> = (args.iter())
+    let args: Vec<_> = args
+        .iter()
         .map(|&arg| (Multiplicity::Required, arg))
         .collect();
     let call = Call {
@@ -276,7 +277,8 @@ fn constrain_call(
 fn function_term(s: &Solver<'_>, params: &[Term], result: Term) -> Term {
     let mut group = Vec::new();
     let mut slot = |term| hole(s.db, &mut group, term, Kind::Type);
-    let params: Vec<_> = (params.iter())
+    let params: Vec<_> = params
+        .iter()
         .map(|&term| positional(Multiplicity::Required, slot(term)))
         .collect();
     let function = Function {

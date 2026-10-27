@@ -175,7 +175,9 @@ impl Solver<'_> {
             if self.is_unknown(&self.head(schema).ok()?) {
                 let schema = self.db.unknown_schema();
                 dynamic_rests.push(
-                    (pattern.rests.iter())
+                    pattern
+                        .rests
+                        .iter()
                         .map(|_| {
                             self.member_rest(&source, unpack, schema)
                                 .or_else(|| self.default_rest(unpack, schema))
@@ -194,7 +196,9 @@ impl Solver<'_> {
                 rejection = Some(Rejection { schema, reason });
             }
             if let Some(mut walk) = walk {
-                walk.rests = (pattern.rests.iter())
+                walk.rests = pattern
+                    .rests
+                    .iter()
                     .map(|&kind| {
                         let tail = walk.tail.schema(self.db, kind);
                         self.member_rest(&source, unpack, tail)
@@ -231,7 +235,10 @@ impl Solver<'_> {
             _ => self.join_tails(walks.iter().map(|walk| &walk.tail)),
         };
         let fallback = |schema| self.default_rest(unpack, schema).unwrap_or(unknown);
-        let rests = (pattern.rests.iter().enumerate())
+        let rests = pattern
+            .rests
+            .iter()
+            .enumerate()
             .map(|(index, &kind)| {
                 if dynamic_rests.is_empty() && walks.iter().all(|walk| walk.rests[index].is_none())
                 {
@@ -432,7 +439,9 @@ impl Solver<'_> {
         // Reified before the nested solver, which this one can't probe under
         let mut kept = Vec::new();
         for slot in 0..binders.len() {
-            let lifted = (declaration.binders.get(slot))
+            let lifted = declaration
+                .binders
+                .get(slot)
                 .is_some_and(|source| source.origin == BinderOrigin::Lifted);
             kept.push(
                 match (
@@ -476,7 +485,8 @@ impl Solver<'_> {
         // Literals in the tail stay as they are, so that the rest fits its bound
         loop {
             let unsolved: Vec<_> = nested.unresolved().collect();
-            let progress = (unsolved.into_iter())
+            let progress = unsolved
+                .into_iter()
                 .filter(|&id| nested.default_with(id, false).is_ok())
                 .count();
             if progress == 0 {
@@ -498,7 +508,8 @@ impl Solver<'_> {
     fn splice(&self, ty: TypeId) -> TypeId {
         match self.db.ty(ty) {
             Type::Apply { base, args, kind } => {
-                let args = (args.iter())
+                let args = args
+                    .iter()
                     .map(|arg| match *arg {
                         Argument::Positional(ty) => Argument::Positional(self.splice(ty)),
                         Argument::Keyword(name, ty) => Argument::Keyword(name, self.splice(ty)),
@@ -672,7 +683,7 @@ impl Solver<'_> {
         }
         for step in (0..slots).rev() {
             for state in forward[step].iter_ones() {
-                if (steps(state).iter()).any(|&(_, next)| alive[step + 1][next]) {
+                if steps(state).iter().any(|&(_, next)| alive[step + 1][next]) {
                     alive[step].set(state, true);
                 }
             }

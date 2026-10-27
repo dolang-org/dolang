@@ -237,7 +237,9 @@ impl<'u, 's> Builder<'u, 's> {
                 "units are allocated in order"
             );
         }
-        let harvests: Vec<elab::Harvest<'u>> = (self.units.into_iter())
+        let harvests: Vec<elab::Harvest<'u>> = self
+            .units
+            .into_iter()
             .map(|input| match input {
                 Input::Source(unit) => elab::harvest(unit),
                 Input::Typelib(harvest) => *harvest,
@@ -305,10 +307,12 @@ impl<'u, 's> Builder<'u, 's> {
         }
         results.seal();
         // Named now, so the results render without the units
-        let labels = (results.declarations())
+        let labels = results
+            .declarations()
             .map(|(copy, _)| {
-                let original =
-                    (copies.origin(copy)).expect("every declaration in the results is a copy");
+                let original = copies
+                    .origin(copy)
+                    .expect("every declaration in the results is a copy");
                 let name = r#type::Names::declaration(&tables, original).into_owned();
                 (
                     name.into_boxed_str(),
@@ -316,7 +320,8 @@ impl<'u, 's> Builder<'u, 's> {
                 )
             })
             .collect();
-        let flows: Vec<_> = (gathered.into_iter())
+        let flows: Vec<_> = gathered
+            .into_iter()
             .map(|flow| {
                 flow.map(|(facts, problems, unresolved)| flow::Results {
                     facts: merge(&results, facts),
@@ -329,9 +334,13 @@ impl<'u, 's> Builder<'u, 's> {
             db: results.share(),
             labels,
         });
-        let analysis = (self.analysis).then(|| {
+        let analysis = self.analysis.then(|| {
             let db = r#type::Database::fork(&types.db);
-            let units = (flows.iter().zip(&cfgs).zip(&layers).enumerate())
+            let units = flows
+                .iter()
+                .zip(&cfgs)
+                .zip(&layers)
+                .enumerate()
                 .map(|(index, ((flow, cfg), layer))| {
                     let unit = UnitId::from_index(index);
                     let (flow, cfg, layer) = (flow.as_ref()?, cfg.as_ref()?, layer.as_ref()?);
@@ -392,7 +401,9 @@ fn tree(
     layer: &Arc<r#type::Shared>,
 ) -> analysis::Tree {
     let db = r#type::Database::fork(layer);
-    let judgments = (flow.facts.iter())
+    let judgments = flow
+        .facts
+        .iter()
         .map(|&((span, role), seen)| {
             let (mut decl, mut overload, mut item) = (None, None, None);
             let name = match seen.detail {
@@ -455,7 +466,7 @@ fn gather(
     let mut unresolved = Vec::new();
     for (db, mut run) in runs {
         let mut copier = results.copier(&db, copies);
-        facts.extend((run.facts.into_iter()).map(|(key, mut seen)| {
+        facts.extend(run.facts.into_iter().map(|(key, mut seen)| {
             seen.fact.ty = copier.ty(seen.fact.ty);
             match &mut seen.detail {
                 flow::Detail::Member(member) => member.name = copier.symbol(member.name),
@@ -511,7 +522,9 @@ fn check_units(
 ) -> Vec<UnitOutput> {
     let count = tables.units.len();
     let mut slots: Vec<Option<UnitOutput>> = (0..count).map(|_| None).collect();
-    let mut work: Vec<_> = (slots.iter_mut().enumerate())
+    let mut work: Vec<_> = slots
+        .iter_mut()
+        .enumerate()
         .map(|(index, slot)| (UnitId::from_index(index), slot))
         .collect();
     // Largest first, so that no large unit starts last; typelibs have nothing of
@@ -544,7 +557,8 @@ fn check_units(
         // spawn
         _ => run(),
     }
-    (slots.into_iter())
+    slots
+        .into_iter()
         .map(|output| output.expect("every unit is checked"))
         .collect()
 }
@@ -684,7 +698,9 @@ impl Check<'_> {
 
     /// Whether every well-formedness check passed. See [`Check`].
     pub fn validated(&self) -> bool {
-        (self.diagnostics.iter()).all(|diag| diag.severity() != Severity::Error)
+        self.diagnostics
+            .iter()
+            .all(|diag| diag.severity() != Severity::Error)
     }
 
     /// The checks the checker could not decide, each with the kind of reason,
@@ -723,7 +739,10 @@ impl Check<'_> {
         let info = &self.tables.units[unit.index()];
         let db = &r#type::Database::fork(&self.shared);
         let mut judgments = self.tables.judgments(db, unit, &self.unresolved);
-        let analysis = (self.analysis.as_ref()).expect("judgments are rendered from an analysis");
+        let analysis = self
+            .analysis
+            .as_ref()
+            .expect("judgments are rendered from an analysis");
         for node in analysis.nodes(unit) {
             judgments.extend(node.judgments().map(|judged| {
                 let ty = judged.ty(Style::Full);

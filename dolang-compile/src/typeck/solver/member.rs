@@ -351,7 +351,9 @@ impl Solver<'_> {
                     continue;
                 }
                 Type::Function(_) => {
-                    let class = (self.db.func_class(view.ty))
+                    let class = self
+                        .db
+                        .func_class(view.ty)
                         .ok_or(Residual::MissingIntrinsic(Intrinsic::Func))?;
                     term = self.view(class, view.environment);
                     continue;
@@ -389,7 +391,7 @@ impl Solver<'_> {
         let canonical = declaration.source.kind.nominal()
             && own == binders
             && args.len() == binders.len()
-            && (args.iter().enumerate()).all(|(slot, arg)| match arg {
+            && args.iter().enumerate().all(|(slot, arg)| match arg {
                 Argument::Positional(arg) => matches!(
                     *self.db.ty(*arg),
                     Type::Bound { reference, .. } if reference == BoundRef::new(0, slot)
@@ -414,7 +416,9 @@ impl Solver<'_> {
             return lookup;
         }
         let lookup = self.lift_member(class, private, key, access);
-        (self.generic_members.borrow_mut()).insert(cached, lookup.clone());
+        self.generic_members
+            .borrow_mut()
+            .insert(cached, lookup.clone());
         lookup
     }
 
@@ -429,7 +433,9 @@ impl Solver<'_> {
         let Type::Quantified { binders, .. } = db.ty(db.declaration(class).ty) else {
             unreachable!("a generic class without binders")
         };
-        let args = (db.rigids(class).into_iter())
+        let args = db
+            .rigids(class)
+            .into_iter()
             .map(Argument::Positional)
             .collect();
         let object = db.meta(class, args);
@@ -462,7 +468,9 @@ impl Solver<'_> {
         };
         let signatures = |signatures: Signatures| -> Result<Signatures, Issue> {
             Ok(Signatures {
-                overloads: (signatures.overloads.into_iter())
+                overloads: signatures
+                    .overloads
+                    .into_iter()
                     .map(signature)
                     .collect::<Result<_, _>>()?,
                 implementation: signatures.implementation.map(signature).transpose()?,
@@ -471,7 +479,8 @@ impl Solver<'_> {
         };
         let kind = match found.kind {
             FoundKind::Field(ty) => {
-                let unknowns: Vec<_> = (binders.iter())
+                let unknowns: Vec<_> = binders
+                    .iter()
                     .map(|binder| db.unknown_of(binder.kind))
                     .collect();
                 let abstracted = abstracted(ty)?;

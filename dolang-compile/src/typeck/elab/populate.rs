@@ -160,7 +160,8 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
     // A supertype closing a cycle is dropped, so that the database's supertypes
     // stay acyclic and walking them can't revisit a declaration
     for (decl, ty) in populate.inheritance_cycles() {
-        let (_, declaration) = (declarations.iter_mut())
+        let (_, declaration) = declarations
+            .iter_mut()
             .find(|(id, _)| *id == decl)
             .expect("a class with supertypes is populated");
         let mut supertypes = declaration.supertypes.to_vec();
@@ -1602,7 +1603,9 @@ impl<'t, 'u> Populate<'t, 'u> {
                     Color::Gray => {
                         let unit = tables.decls[node].unit;
                         self.report(unit, InheritanceCycle(super_ref.head.span));
-                        let ty = (super_ref.interned.get())
+                        let ty = super_ref
+                            .interned
+                            .get()
                             .expect("population interns a supertype naming a class");
                         closing.push((DeclId::from_index(node), ty));
                     }

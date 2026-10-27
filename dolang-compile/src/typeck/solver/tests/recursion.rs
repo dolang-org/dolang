@@ -138,7 +138,9 @@ fn contradictions_under_an_assumption_contradict() {
     let outcome = check(&db, a, b);
     assert_eq!(outcome.status, Status::Contradicted);
     // Reported where Str <: Int is, past the arguments
-    let contradiction = (outcome.diagnostics.iter())
+    let contradiction = outcome
+        .diagnostics
+        .iter()
         .find(|d| matches!(d.issue, Issue::Contradiction(_)))
         .unwrap();
     assert!(contradiction.path.len() > 2, "{:?}", contradiction.path);

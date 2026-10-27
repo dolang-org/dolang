@@ -366,7 +366,9 @@ fn resolution_contradictions_retain_all_roots_and_assignment_paths() {
     let outcomes = s.solve();
     assert!(outcomes.iter().all(|o| o.status == Status::Contradicted));
     assert!((0..s.obligation_count()).any(|id| {
-        (s.dependencies(ObligationId(id)).iter()).any(|d| d.step == Step::Assignment)
+        s.dependencies(ObligationId(id))
+            .iter()
+            .any(|d| d.step == Step::Assignment)
     }));
     assert!(outcomes.iter().all(|o| {
         o.diagnostics
@@ -614,10 +616,10 @@ fn raised_variables_are_those_at_outputs() {
     let mut s = Solver::new(&db, &gas);
     let held = s.infer();
     let mut vars = Vec::new();
-    let cases = (cases
+    let cases = cases
         .into_iter()
-        .map(|(ty, raised)| (ty, Kind::Type, raised)))
-    .chain(projections);
+        .map(|(ty, raised)| (ty, Kind::Type, raised))
+        .chain(projections);
     for (ty, kind, raised) in cases {
         let v = s.infer_kind(kind, Rest::All);
         let e = s.intern_environment(s.empty_environment(), vec![v]);
@@ -676,10 +678,10 @@ fn locked_variables_are_those_a_literal_would_fix() {
     let mut s = Solver::new(&db, &gas);
     let result = s.infer();
     let mut vars = Vec::new();
-    let cases = (cases
+    let cases = cases
         .into_iter()
-        .map(|(ty, locked)| (ty, Kind::Type, locked)))
-    .chain(projections);
+        .map(|(ty, locked)| (ty, Kind::Type, locked))
+        .chain(projections);
     for (ty, kind, locked) in cases {
         let v = s.infer_kind(kind, Rest::All);
         let e = s.intern_environment(s.empty_environment(), vec![v]);

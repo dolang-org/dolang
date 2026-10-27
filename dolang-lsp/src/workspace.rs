@@ -71,7 +71,8 @@ impl Workspaces {
 
     /// Whether `workspace` is still the one its root opens.
     pub(crate) fn current(&self, workspace: &Arc<Workspace>) -> bool {
-        (self.table.get(&workspace.root))
+        self.table
+            .get(&workspace.root)
             .is_some_and(|live| live.as_ptr() == Arc::as_ptr(workspace))
     }
 
@@ -79,7 +80,8 @@ impl Workspaces {
     /// affect: its own, and those above and below it.  Their documents find
     /// their workspaces again when they next open one.
     pub(crate) fn retire(&mut self, dir: &Path) {
-        (self.table).retain(|root, _| !root.starts_with(dir) && !dir.starts_with(root));
+        self.table
+            .retain(|root, _| !root.starts_with(dir) && !dir.starts_with(root));
     }
 
     /// The live workspaces.
@@ -238,7 +240,9 @@ impl Member {
     /// The closure of its latest check, or else of an earlier revision's.
     fn deps(&self) -> Option<Deps> {
         let results = self.results();
-        (results.as_ref()).map_or(self.earlier.clone(), |results| Some(results.deps.clone()))
+        results
+            .as_ref()
+            .map_or(self.earlier.clone(), |results| Some(results.deps.clone()))
     }
 
     fn results(&self) -> MutexGuard<'_, Option<Results>> {
@@ -323,12 +327,14 @@ impl Workspace {
         {
             return None;
         }
-        let unit = (old.and_then(|old| old.unit.get()))
+        let unit = old
+            .and_then(|old| old.unit.get())
             .filter(|unit| unit.source() == text)
             .cloned();
         // A unit doesn't depend on its version, but a loaded member's check
         // isn't located in a document the client has open
-        let results = (old.filter(|old| unit.is_some() && old.uri().is_some()))
+        let results = old
+            .filter(|old| unit.is_some() && old.uri().is_some())
             .and_then(|old| old.results().clone());
         let member = Arc::new(Member {
             module,
@@ -344,7 +350,8 @@ impl Workspace {
 
     /// A member's unit, compiled the first time it is needed.
     pub(crate) fn unit(&self, member: &Member) -> Arc<Unit<'static>> {
-        (member.unit)
+        member
+            .unit
             .get_or_init(|| {
                 let Source::Open { text, .. } = &member.source else {
                     unreachable!("a loaded member is compiled when loaded");
@@ -395,13 +402,15 @@ impl Workspace {
             }
         }
         let whole = (!roots.is_empty()).then(|| self.gather(roots, true));
-        let checks: Vec<_> = (whole.into_iter())
+        let checks: Vec<_> = whole
+            .into_iter()
             .chain(shadowed.into_iter().map(|roots| self.gather(roots, false)))
             .collect();
         // A member replaced meanwhile makes the check moot, and its
         // replacement will be checked once the table settles
         let members = self.members();
-        let replaced = (checks.iter())
+        let replaced = checks
+            .iter()
             .flat_map(|check| &check.members)
             .any(|member| !current(&members, member));
         match replaced {
@@ -428,8 +437,9 @@ impl Workspace {
                 reached.extend(index.get(name.as_str()).map(|member| Arc::as_ptr(member)));
             }
         }
-        let (kept, dropped): (Vec<_>, Vec<_>) =
-            (snapshot.iter()).partition(|member| reached.contains(&Arc::as_ptr(member)));
+        let (kept, dropped): (Vec<_>, Vec<_>) = snapshot
+            .iter()
+            .partition(|member| reached.contains(&Arc::as_ptr(member)));
         if !dropped.is_empty() {
             let mut members = self.members();
             for member in dropped {
@@ -505,7 +515,10 @@ impl Workspace {
         let Some(results) = &*results else {
             return false;
         };
-        (results.deps.iter()).all(|(name, resolution)| self.resolve(index, name).same(resolution))
+        results
+            .deps
+            .iter()
+            .all(|(name, resolution)| self.resolve(index, name).same(resolution))
     }
 
     /// What a module name looks up to in `index`: a member, else its bundled
@@ -520,7 +533,8 @@ impl Workspace {
 
     /// A module's bundled typelib, if the module path allows.
     fn typelib(&self, name: &str) -> Option<Arc<typeck::Typelib<'static>>> {
-        (self.modules().is_none_or(|modules| modules.bundled))
+        self.modules()
+            .is_none_or(|modules| modules.bundled)
             .then(|| self.bundled.get(name))
             .flatten()
     }
@@ -533,7 +547,8 @@ impl Workspace {
     /// `whole`, else of the first root alone, whose own module another
     /// member stands for.
     fn gather(&self, roots: Vec<Arc<Member>>, whole: bool) -> Check {
-        let mut found: HashMap<String, Found> = (roots.iter())
+        let mut found: HashMap<String, Found> = roots
+            .iter()
             .filter_map(|root| Some((root.module.clone()?, Found::Member(root.clone()))))
             .collect();
         let mut queue: Vec<String> = Vec::new();
@@ -581,7 +596,9 @@ impl Workspace {
     /// the module path, loaded, else its bundled typelib.  A check `full`
     /// of sources reads no more.
     fn find(&self, name: &str, full: bool) -> Found {
-        let member = (self.members().values())
+        let member = self
+            .members()
+            .values()
             .filter(|member| member.module.as_deref() == Some(name))
             .min_by(|a, b| a.rank().cmp(&b.rank()))
             .cloned();
@@ -622,11 +639,14 @@ impl Workspace {
     pub(crate) fn settle(&self, check: Check, mut checked: Vec<Checked>) -> Vec<Arc<Member>> {
         let targets: Vec<_> = {
             let members = self.members();
-            (check.targets.into_iter())
+            check
+                .targets
+                .into_iter()
                 .filter(|(target, _)| current(&members, &check.members[*target]))
                 .collect()
         };
-        (targets.into_iter())
+        targets
+            .into_iter()
             .map(|(target, deps)| {
                 let member = &check.members[target];
                 let checked = std::mem::take(&mut checked[target]);
@@ -643,7 +663,9 @@ impl Workspace {
 
 /// Whether `member` is its document's current revision in `members`.
 fn current(members: &HashMap<PathBuf, Arc<Member>>, member: &Arc<Member>) -> bool {
-    (members.get(&member.path)).is_some_and(|current| Arc::ptr_eq(current, member))
+    members
+        .get(&member.path)
+        .is_some_and(|current| Arc::ptr_eq(current, member))
 }
 
 /// Makes a `loaded` member current, unless the client has a buffer of its
@@ -654,7 +676,8 @@ fn admit(
     loaded: Arc<Member>,
     replace: bool,
 ) -> Arc<Member> {
-    let open = (members.values())
+    let open = members
+        .values()
         .filter(|member| member.uri().is_some() && member.module == loaded.module)
         .min_by(|a, b| a.rank().cmp(&b.rank()));
     if let Some(open) = open {
@@ -710,7 +733,8 @@ impl Bundled {
     /// A bundled module's typelib, decoded the first time a check needs it.
     fn get(&self, name: &str) -> Option<Arc<typeck::Typelib<'static>>> {
         let mut typelibs = self.0.lock().expect("bundled lock poisoned");
-        (typelibs.entry(name.to_owned()))
+        typelibs
+            .entry(name.to_owned())
             .or_insert_with(|| {
                 let bytes = typelib_index::lookup(name)?;
                 typeck::Typelib::read(bytes)
@@ -745,11 +769,15 @@ mod tests {
 
     /// The paths of a check's members, sorted, and of the members it is of.
     fn paths(check: &Check) -> (Vec<&Path>, Vec<&Path>) {
-        let mut members: Vec<_> = (check.members.iter())
+        let mut members: Vec<_> = check
+            .members
+            .iter()
             .map(|member| member.path.as_path())
             .collect();
         members.sort();
-        let mut targets: Vec<_> = (check.targets.iter())
+        let mut targets: Vec<_> = check
+            .targets
+            .iter()
             .map(|(target, _)| check.members[*target].path.as_path())
             .collect();
         targets.sort();
@@ -759,7 +787,8 @@ mod tests {
     /// Settles what checking the workspace now makes of it.
     fn check(workspace: &Workspace) -> Vec<Arc<Member>> {
         let checks = prepare(workspace).expect("the table is settled");
-        (checks.into_iter())
+        checks
+            .into_iter()
             .flat_map(|check| {
                 let checked = vec![Checked::default(); check.members.len()];
                 workspace.settle(check, checked)
@@ -829,7 +858,8 @@ mod tests {
 
     /// The sorted paths of the members checking the workspace settles.
     fn check_paths(workspace: &Workspace) -> Vec<PathBuf> {
-        let mut paths: Vec<_> = (check(workspace).into_iter())
+        let mut paths: Vec<_> = check(workspace)
+            .into_iter()
             .map(|member| member.path.clone())
             .collect();
         paths.sort();
