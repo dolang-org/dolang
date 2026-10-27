@@ -55,6 +55,7 @@ pub(crate) struct TypeLine {
     /// reference whose value it is
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// The type, parenthesized where an annotation needs it to be
     #[serde(rename = "type")]
     pub ty: String,
     /// The overload a call chose, from 0
@@ -68,13 +69,14 @@ pub(crate) struct TypeLine {
 pub(crate) enum Declaration {
     /// One in the source
     Local {
-        /// `signature` for a function, method or class, whose signature says
-        /// what its checked type would; `value` for a variable or parameter,
-        /// whose checked type says all its signature does; else `other`
+        /// `signature` for a function, method, class or annotated field,
+        /// whose signature says what its checked type would; `value` for a
+        /// variable, parameter or unannotated field, whose checked type says
+        /// all its signature does; else `other`
         shape: &'static str,
-        /// Where it's declared, as "in class `C`", when in a class
+        /// The header of the class it's a member of, as `class C[T]`
         #[serde(skip_serializing_if = "Option::is_none")]
-        note: Option<String>,
+        class: Option<String>,
         /// Its doc comment, as Markdown
         doc: String,
         signature: Signature,
@@ -117,6 +119,8 @@ pub(crate) enum Signature {
         /// A method's `getter` or `setter`
         decorators: Vec<String>,
         params: Vec<Param>,
+        /// Whether it has a body, which a type-only declaration doesn't
+        body: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         returns: Option<String>,
     },
@@ -281,7 +285,7 @@ fn type_lines(node: typeck::Node<'_>, named: Option<&str>) -> Option<Vec<TypeLin
         return Some(vec![TypeLine {
             role: "variable",
             name: Some(judged.name()?.to_owned()),
-            ty: judged.ty(Style::Reader),
+            ty: judged.annotation(Style::Reader),
             overload: None,
         }]);
     }
@@ -309,7 +313,7 @@ fn type_lines(node: typeck::Node<'_>, named: Option<&str>) -> Option<Vec<TypeLin
         .map(|judged| TypeLine {
             role: "callee",
             name: member.clone(),
-            ty: judged.ty(Style::Reader),
+            ty: judged.annotation(Style::Reader),
             overload: judged.overload(),
         })
         .collect();
@@ -320,7 +324,7 @@ fn type_lines(node: typeck::Node<'_>, named: Option<&str>) -> Option<Vec<TypeLin
     Some(vec![TypeLine {
         role: "value",
         name: member.or(named.map(str::to_owned)),
-        ty: value.ty(Style::Reader),
+        ty: value.annotation(Style::Reader),
         overload: None,
     }])
 }
@@ -619,21 +623,29 @@ fn declared(unit: &Unit<'_>, id: NodeId) -> Vec<Declaration> {
 fn local(unit: &Unit<'_>, id: NodeId) -> Option<Declaration> {
     let signature = signature(unit, id)?;
     let node = unit.node(id)?;
-    let shape = match node.kind() {
-        Kind::Function { .. }
-        | Kind::Method { .. }
-        | Kind::SpecialMethod { .. }
-        | Kind::Class { .. } => "signature",
-        Kind::Bind { .. }
-        | Kind::PositionalParam { .. }
-        | Kind::KeyParam { .. }
-        | Kind::RestParam { .. }
-        | Kind::SelfParam { .. } => "value",
+    let shape = match (node.kind(), &signature) {
+        (
+            Kind::Function { .. }
+            | Kind::Method { .. }
+            | Kind::SpecialMethod { .. }
+            | Kind::Class { .. },
+            _,
+        )
+        | (Kind::Field { .. }, Signature::Field { ty: Some(_), .. }) => "signature",
+        (
+            Kind::Bind { .. }
+            | Kind::PositionalParam { .. }
+            | Kind::KeyParam { .. }
+            | Kind::RestParam { .. }
+            | Kind::SelfParam { .. }
+            | Kind::Field { .. },
+            _,
+        ) => "value",
         _ => "other",
     };
     Some(Declaration::Local {
         shape,
-        note: class_note(unit, id),
+        class: class_header(unit, id),
         doc: node
             .doc()
             .map(|span| normalize_doc(unit.source(), &span))
@@ -642,22 +654,31 @@ fn local(unit: &Unit<'_>, id: NodeId) -> Option<Declaration> {
     })
 }
 
-/// Where a declaration is, when in classes. A declaration in anything else,
-/// such as a function, gets no note.
-fn class_note(unit: &Unit<'_>, id: NodeId) -> Option<String> {
-    let root = unit.root()?;
-    let mut path = Vec::new();
-    let mut parent = unit.node(id)?.parent()?;
-    while parent != root {
-        let node = unit.node(parent)?;
-        let Kind::Class { name, .. } = node.kind() else {
-            return None;
-        };
-        path.push(span_text(unit.source(), &name));
-        parent = node.parent()?;
-    }
-    path.reverse();
-    (!path.is_empty()).then(|| format!("in class `{}`", path.join(".")))
+/// The header of the class a declaration is a member of, as `class C[T]`
+fn class_header(unit: &Unit<'_>, id: NodeId) -> Option<String> {
+    let source = unit.source();
+    let parent = unit.node(unit.node(id)?.parent()?)?;
+    let Kind::Class {
+        name, type_only, ..
+    } = parent.kind()
+    else {
+        return None;
+    };
+    let mut binders: Vec<_> = parent
+        .children()
+        .filter_map(|child| unit.node(child))
+        .filter(|child| matches!(child.kind(), Kind::Binder { .. }))
+        .filter_map(|child| child.span())
+        .collect();
+    binders.sort_by_key(|span| span.start().byte_offset());
+    let binders: Vec<_> = binders.iter().map(|span| one_line(source, span)).collect();
+    let binders = if binders.is_empty() {
+        String::new()
+    } else {
+        format!("[{}]", binders.join(", "))
+    };
+    let at = if type_only { "@" } else { "" };
+    Some(format!("{at}class {}{binders}", span_text(source, &name)))
 }
 
 fn span_text<'a>(source: &'a str, span: &Span) -> &'a str {
@@ -798,16 +819,31 @@ fn signature(unit: &Unit<'_>, id: NodeId) -> Option<Signature> {
                 .map(|span| span_text(source, span).to_owned())
                 .collect(),
         },
-        Kind::Function { is_pub, .. } | Kind::Method { is_pub, .. } => {
-            // Only a statement-level overload is always written with `@`; a
-            // protocol member is type-only without one
-            let type_only = matches!(
-                kind,
-                Kind::Function {
-                    type_only: true,
-                    ..
-                }
-            );
+        Kind::Function {
+            is_pub,
+            type_only: bodiless,
+            ..
+        }
+        | Kind::Method {
+            is_pub,
+            type_only: bodiless,
+            ..
+        } => {
+            // An overload is written with `@`, but a protocol's member is
+            // type-only without one
+            let protocol = node
+                .parent()
+                .and_then(|parent| unit.node(parent))
+                .is_some_and(|parent| {
+                    matches!(
+                        parent.kind(),
+                        Kind::Class {
+                            type_only: true,
+                            ..
+                        }
+                    )
+                });
+            let type_only = bodiless && !protocol;
             // A getter or setter is used as a field, not called
             let decorators = match kind {
                 Kind::Method { .. } => designated(&["getter", "setter"]),
@@ -820,16 +856,18 @@ fn signature(unit: &Unit<'_>, id: NodeId) -> Option<Signature> {
                 binders: binders(),
                 decorators,
                 params: params(),
+                body: !bodiless,
                 returns: ty(),
             }
         }
-        Kind::SpecialMethod { .. } => Signature::Def {
+        Kind::SpecialMethod { type_only, .. } => Signature::Def {
             is_pub: false,
             type_only: false,
             name,
             binders: binders(),
             decorators: Vec::new(),
             params: params(),
+            body: !type_only,
             returns: ty(),
         },
         Kind::Field { is_pub, .. } => Signature::Field {
@@ -943,7 +981,8 @@ mod tests {
         let [line] = &hover.types[..] else {
             panic!("{:?}", hover.types)
         };
-        assert_eq!(line.ty, "(std.Int) -> std.Int");
+        // Parenthesized, as an annotation needs it to be
+        assert_eq!(line.ty, "((std.Int) -> std.Int)");
         let [
             Declaration::Local {
                 shape: "signature",

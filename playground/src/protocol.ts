@@ -26,6 +26,7 @@ export interface TypeLine {
   role: 'variable' | 'callee' | 'value';
   /** The variable, the member or item as `m.C.member` or `m.item`, or the reference */
   name?: string;
+  /** Parenthesized where an annotation needs it to be */
   type: string;
   /** The overload a call chose, from 0 */
   overload?: number;
@@ -35,8 +36,8 @@ export type Declaration =
     kind: 'local';
     /** Whether its signature says what its checked type would, or its type says all its signature does */
     shape: 'signature' | 'value' | 'other';
-    /** Where it's declared, as "in class `C`" */
-    note?: string;
+    /** The header of the class it's a member of, as `class C[T]` */
+    class?: string;
     /** Its doc comment, as Markdown */
     doc: string;
     signature: Signature;
@@ -69,6 +70,8 @@ export type Signature =
     binders: string[];
     decorators: string[];
     params: Param[];
+    /** Whether it has a body, which a type-only declaration doesn't */
+    body: boolean;
     returns?: string;
   }
   | { form: 'field' | 'let'; pub: boolean; name: string; type?: string }

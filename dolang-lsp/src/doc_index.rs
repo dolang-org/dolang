@@ -93,37 +93,35 @@ pub(crate) fn lookup(module: &str, item: &str) -> &'static [DocEntry] {
     &ENTRIES[start..start + len]
 }
 
-/// A `def name args` / `class Name` / `let name` style signature.
+/// A `def name args` / `class Name` / `let name` style signature, noted with
+/// its module, and written in its class when it's a member.
 ///
 /// Reconstructed from the JSON's parameter names rather than quoted from
 /// source, since the JSON has no exact source span for a whole signature --
 /// this is an approximation, good enough for a hover title, not a promise
 /// that it matches the declaration verbatim.
 pub(crate) fn signature(entry: &DocEntry) -> String {
-    let short_name = entry
-        .item
-        .rsplit('.')
-        .next()
-        .filter(|name| !name.is_empty())
-        .unwrap_or(entry.module);
-    let binders = if entry.binders.is_empty() {
-        String::new()
-    } else {
-        format!("[{}]", entry.binders.join(", "))
+    let (class, short_name) = match entry.item.rsplit_once('.') {
+        Some((class, name)) => (Some(class), name),
+        None if entry.item.is_empty() => return format!("import {}", entry.module),
+        None => (None, entry.item),
     };
-    let name = format!("{short_name}{binders}");
-    match entry.kind {
-        "module" => format!("module {}", entry.module),
+    let named = |name: &str, binders: &[&str]| match binders {
+        [] => name.to_owned(),
+        _ => format!("{name}[{}]", binders.join(", ")),
+    };
+    let name = named(short_name, entry.binders);
+    let label = match entry.kind {
         "class" => {
             let decorators: String = entry
                 .decorators
                 .iter()
-                .map(|decorator| format!("#[{decorator}] "))
+                .map(|decorator| format!("#[{decorator}]\n"))
                 .collect();
             format!("{decorators}class {name}")
         }
         "field" => signature::binding(&format!("field {short_name}"), entry.type_),
-        "value" => format!("let {short_name}"),
+        "value" => signature::variable(&format!("let {short_name}"), None),
         "alias" => format!("@let {name} = {}", entry.type_.unwrap_or("...")),
         _ => {
             let params: Vec<_> = entry
@@ -139,9 +137,17 @@ pub(crate) fn signature(entry: &DocEntry) -> String {
                     default: param.optional,
                 })
                 .collect();
-            signature::def(&format!("def {name}"), &params, entry.type_)
+            signature::def(&format!("def {name}"), &params, entry.type_, true)
         }
-    }
+    };
+    // A class's header, with the binders its own entry gives
+    let class = class.map(|class| {
+        let binders = lookup(entry.module, class)
+            .first()
+            .map_or(&[][..], |owner| owner.binders);
+        format!("class {}", named(class, binders))
+    });
+    signature::member(Some(entry.module), class.as_deref(), &label)
 }
 
 #[cfg(test)]
@@ -181,10 +187,12 @@ mod tests {
             ],
             type_: Some("(Int | nil)"),
         };
+        let text = signature(&function);
         assert_eq!(
-            signature(&function),
-            "def place[T, :K, ...R] point@Point :limit = … -> (Int | nil)"
+            text,
+            "# module m\ndef place[T, :K, ...R] point@Point :limit = ... -> (Int | nil)\n  ..."
         );
+        signature::assert_parses(&text);
         let field = DocEntry {
             module: "m",
             item: "Point.x",
@@ -195,7 +203,9 @@ mod tests {
             params: &[],
             type_: Some("Int"),
         };
-        assert_eq!(signature(&field), "field x @ Int");
+        let text = signature(&field);
+        assert_eq!(text, "# module m\nclass Point\n  field x @ Int");
+        signature::assert_parses(&text);
 
         let class = DocEntry {
             module: "m",
@@ -207,7 +217,7 @@ mod tests {
             params: &[],
             type_: None,
         };
-        assert_eq!(signature(&class), "class Box[T]");
+        assert_eq!(signature(&class), "# module m\nclass Box[T]");
 
         let decorated = DocEntry {
             item: "Sym",
@@ -215,6 +225,21 @@ mod tests {
             decorators: &["final", "mixable"],
             ..class
         };
-        assert_eq!(signature(&decorated), "#[final] #[mixable] class Sym");
+        let text = signature(&decorated);
+        assert_eq!(text, "# module m\n#[final]\n#[mixable]\nclass Sym");
+        signature::assert_parses(&text);
+
+        let module = DocEntry {
+            item: "",
+            kind: "module",
+            ..class
+        };
+        assert_eq!(signature(&module), "import m");
+        let value = DocEntry {
+            item: "args",
+            kind: "value",
+            ..class
+        };
+        assert_eq!(signature(&value), "# module m\nlet args = ...");
     }
 }

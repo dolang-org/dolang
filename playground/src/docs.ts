@@ -5,7 +5,7 @@
 // (`signature`), and `src/backend.rs` (`Described::entry`, `bundled_hover`).
 // Links follow `docs/hooks/inline_autorefs_hook.py` and the mkdocstrings
 // handler's page layout.
-import { signature, type BundledKey, type Described } from './hover';
+import { member, signature, type BundledKey, type Described } from './hover';
 import type { Param } from './protocol';
 
 /** A module's doc projection, as `dolang -m compile extract --doc` writes it */
@@ -199,28 +199,36 @@ function param(param: ParamJson): Param {
   return { head, type: type || undefined, default: !!param.optional };
 }
 
-/** An entity's signature, as `doc_index::signature` writes it. */
-export function label(module: string, entity: Entity): string {
+// A name with its binders, as declared
+const named = (name: string, binders: string[]) => binders.length ? `${name}[${binders.join(', ')}]` : name;
+
+/**
+ * An entity's signature, as `doc_index::signature` writes it: noted with its
+ * module, and in `owner`, the class it's a member of, if any.
+ */
+export function label(module: string, entity: Entity, owner?: Entity): string {
+  if (entity.kind === 'module') return `import ${module}`;
   const binders = (entity.binders ?? []).map(binderText);
   const common = { pub: false, typeOnly: false, name: entity.name, binders };
   const type = entity.returns ?? entity.type;
   const typed = type ? typeText(type) : undefined;
-  switch (entity.kind) {
-    case 'module': return `module ${module}`;
-    case 'class':
-      return signature({ form: 'class', ...common, decorators: entity.decorators ?? [], supers: [] });
-    case 'field': return signature({ form: 'field', pub: false, name: entity.name, type: typed });
-    case 'alias': {
-      const name = binders.length ? `${entity.name}[${binders.join(', ')}]` : entity.name;
-      return `@let ${name} = ${typed ?? '...'}`;
+  const header = owner && `class ${named(owner.name, (owner.binders ?? []).map(binderText))}`;
+  const text = (() => {
+    switch (entity.kind) {
+      case 'class':
+        return signature({ form: 'class', ...common, decorators: entity.decorators ?? [], supers: [] });
+      case 'field': return signature({ form: 'field', pub: false, name: entity.name, type: typed });
+      case 'alias': return `@let ${named(entity.name, binders)} = ${typed ?? '...'}`;
+      case 'function':
+      case 'method':
+        return signature({
+          form: 'def', ...common, decorators: [], params: (entity.params ?? []).map(param), body: true,
+          returns: typed,
+        });
+      default: return signature({ form: 'let', pub: false, name: entity.name });
     }
-    case 'function':
-    case 'method':
-      return signature({
-        form: 'def', ...common, decorators: [], params: (entity.params ?? []).map(param), returns: typed,
-      });
-    default: return signature({ form: 'let', pub: false, name: entity.name });
-  }
+  })();
+  return member(module, header, text);
 }
 
 /** Removes mkdocs attribute-list anchors from heading lines (`remove_manual_anchors`). */
@@ -267,15 +275,18 @@ export function removePlaygroundMarkup(markdown: string): string {
 const prose = (doc?: string | null) => removePlaygroundMarkup(removeManualAnchors(doc ?? ''));
 
 // `Described::entry`
-function described(module: string, item: string, entity: Entity): Described {
-  const dot = item.indexOf('.');
-  const note = entity.kind === 'module' ? undefined
-    : dot >= 0 ? `in class \`${module}.${item.slice(0, dot)}\``
-    : `in module \`${module}\``;
+function described(module: string, { entity, owner }: Found): Described {
   const shape = ['function', 'method', 'class'].includes(entity.kind) ? 'signature'
+    : entity.kind === 'field' ? (entity.type ? 'signature' : 'value')
     : entity.kind === 'value' ? 'value'
     : 'other';
-  return { label: label(module, entity), note, prose: prose(entity.doc), shape };
+  return { label: label(module, entity, owner), prose: prose(entity.doc), shape };
+}
+
+/** A public entity an item names, and the class it's a member of, if any */
+interface Found {
+  entity: Entity;
+  owner?: Entity;
 }
 
 /** Bundled modules' docs, loaded a module at a time as hovers need them. */
@@ -309,18 +320,20 @@ export class Docs {
 
   // The public entities `item` names in `module`, each overload in turn: the
   // module's own for an empty `item`, and a class's members for `Class.member`
-  async #entities(module: string, item: string): Promise<Entity[]> {
+  async #entities(module: string, item: string): Promise<Found[]> {
     const json = await this.#module(module);
     if (!json) return [];
-    if (item === '') return [{ kind: 'module', name: module, doc: json.doc }];
+    if (item === '') return [{ entity: { kind: 'module', name: module, doc: json.doc } }];
     const dot = item.indexOf('.');
     const name = dot < 0 ? item : item.slice(0, dot);
     const found = (json.entities ?? []).filter(entity => entity.pub && entity.name === name);
     const resolved = (await Promise.all(found.map(entity => this.#resolve(module, entity))))
       .filter(entity => entity !== undefined);
-    if (dot < 0) return resolved;
+    if (dot < 0) return resolved.map(entity => ({ entity }));
     const member = item.slice(dot + 1);
-    return resolved.flatMap(owner => (owner.members ?? []).filter(m => m.pub && m.name === member));
+    return resolved.flatMap(owner => (owner.members ?? [])
+      .filter(m => m.pub && m.name === member)
+      .map(entity => ({ entity, owner })));
   }
 
   /**
@@ -330,7 +343,7 @@ export class Docs {
   async describe(key: BundledKey): Promise<Described[]> {
     const entities = await this.#entities(key.module, key.item);
     const chosen = entities.length > 1 && key.overload !== undefined ? entities[key.overload] : undefined;
-    return (chosen ? [chosen] : entities).map(entity => described(key.module, key.item, entity));
+    return (chosen ? [chosen] : entities).map(found => described(key.module, found));
   }
 }
 

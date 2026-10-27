@@ -347,14 +347,14 @@ test('hover shows checked types before the check delay ends', async ({ page }) =
   const text = 'let n = 2\necho $n';
   await source(page, text);
   const tip = await hoverAt(page, text.length - 1);
-  await expect(tip).toHaveText('n @ std.Int');
+  await expect(tip).toHaveText('let n @ std.Int = ...');
 });
 
 test('hover shows a local function signature and doc comment', async ({ page }) => {
   const text = 'let n = 2\n# Doubles a *number*.\ndef double x@Int -> Int\n  (x * 2)\ndouble $n';
   await source(page, text);
   const tip = await hoverAt(page, text.lastIndexOf('double') + 1);
-  await expect(tip.locator('pre')).toHaveText('def double x @ Int -> Int');
+  await expect(tip.locator('pre')).toHaveText('def double x @ Int -> Int\n  ...');
   await expect(tip.locator('em')).toHaveText('number');
   await expect(tip).toContainText('Doubles a number.');
   // Its signature says what the checked type would
@@ -364,8 +364,7 @@ test('hover shows a local function signature and doc comment', async ({ page }) 
 test('hover shows a prelude function signature and doc', async ({ page }) => {
   await source(page, 'echo hi');
   const tip = await hoverAt(page, 1);
-  await expect(tip.locator('pre').first()).toHaveText('def echo ...args @ Value');
-  await expect(tip.locator('em').first()).toHaveText('in module term');
+  await expect(tip.locator('pre').first()).toHaveText('# module term\ndef echo ...args @ Value\n  ...');
   await expect(tip).toContainText('Prints arguments separated by spaces');
   // Its signature says what the checked type would
   await expect(tip).not.toContainText('term.echo @');
@@ -378,15 +377,14 @@ test('hover shows a prelude function signature and doc', async ({ page }) => {
 test('hover on an overloaded bundled call shows the chosen overload', async ({ page }) => {
   await source(page, 'echo (int "ff" base: 16)');
   const tip = await hoverAt(page, 7);
-  await expect(tip.locator('pre')).toHaveText('def int value@Str :base@Int -> Int');
+  await expect(tip.locator('pre')).toHaveText('# module std\ndef int value@Str :base@Int -> Int\n  ...');
 });
 
 test('hover shows a method of a bundled class', async ({ page }) => {
   const text = 'echo ("hi".upper())';
   await source(page, text);
   const tip = await hoverAt(page, text.indexOf('upper') + 1);
-  await expect(tip.locator('pre').first()).toHaveText(/^def upper/);
-  await expect(tip.locator('em').first()).toHaveText('in class std.Str');
+  await expect(tip.locator('pre').first()).toHaveText(/^# module std\s+class Str\s+def upper/);
   await expect(tip).toContainText('Returns the string converted to uppercase.');
 });
 
@@ -426,7 +424,7 @@ test('an edit drops a shown or pending hover', async ({ page }) => {
   const text = 'let n = 2\necho $n';
   await source(page, text);
   const tip = await hoverAt(page, text.length - 1);
-  await expect(tip).toHaveText('n @ std.Int');
+  await expect(tip).toHaveText('let n @ std.Int = ...');
   await source(page, `${text}\n`);
   await expect(tip).toHaveCount(0);
   await page.evaluate(() => { document.documentElement.dataset.holdHover = 'yes'; });

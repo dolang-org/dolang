@@ -98,7 +98,7 @@ pub def rest()
     let _ = xs
     #       ^~: flow (*Value)
     let _ = kw
-    #       ^~: flow (*(std.Sym): Value)
+    #       ^~: flow (**Value)
     nil
   f 1 k: 2
 

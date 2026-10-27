@@ -292,10 +292,10 @@ pub def rests a @ Int *pos @ Int **kw @ Str
   let _ = pos
   #       ^~~: flow (*std.Int)
   let _ = kw
-  #       ^~: flow (*(std.Sym): std.Str)
+  #       ^~: flow (**std.Str)
   a
 
 pub def mixed ...all @ Int
   let _ = all
-  #       ^~~: flow (*std.Int, *(std.Sym): std.Int)
+  #       ^~~: flow (*std.Int, **std.Int)
   nil
