@@ -27,7 +27,3 @@ workspace = true
 
 [dependencies.dolang-ext-shell]
 workspace = true
-
-
-[build-dependencies.dolang-private-bundle]
-workspace = true

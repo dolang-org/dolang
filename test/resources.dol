@@ -14,7 +14,7 @@ def looks_up_module_bytecode()
 
 #[test]
 def looks_up_typelibs()
-  # From the shell's bundle, the facade, and native extensions.
+  # A bundled library, the core stub, and an extension's stub.
   for name = ["test", "std", "json"]
     assert_type $Bin (_shell.resource "dolang.typelib" name)
 

@@ -3,7 +3,6 @@ import sys admin dodo exec toml json proc shlex
     - Path
     - copy
     - create_dir
-    - glob
     - remove
     - with_temp_dir
     - symlink_file
@@ -294,7 +293,7 @@ def with_build_env spec block
     do block()
 
 def typecheck spec rest :all = false
-  let dirs = ["dolang-shell-modules/lib", ...glob("*/stub")]
+  let dirs = ["dolang-shell-modules/lib", "dolang-shell-modules/stub"]
   let sources = $
     if all
       for dir = dirs

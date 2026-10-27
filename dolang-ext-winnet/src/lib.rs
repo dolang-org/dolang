@@ -9,9 +9,3 @@ mod policy;
 mod rights;
 mod share;
 mod user;
-
-/// Resources bundled by this crate.
-pub static RESOURCES: &[dolang::resource::Resource] =
-    include!(concat!(env!("OUT_DIR"), "/resources.rs"));
-
-dolang::resources!(RESOURCES);

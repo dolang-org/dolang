@@ -106,9 +106,3 @@ pub fn coerce_duration<'v, 's>(
     let global = strand.try_state::<Tag>();
     time::coerce_duration(strand, global, value, context)
 }
-
-/// Resources bundled by this crate.
-pub static RESOURCES: &[dolang::resource::Resource] =
-    include!(concat!(env!("OUT_DIR"), "/resources.rs"));
-
-dolang::resources!(RESOURCES);

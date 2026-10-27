@@ -42,30 +42,31 @@ default = [
   "winnet",
 ]
 debug = ["dolang-shell-main/debug"]
-base64 = ["dep:dolang-ext-base64"]
+base64 = ["dep:dolang-ext-base64", "dolang-shell-modules/base64"]
 json = [
   "dep:dolang-ext-json",
   "dolang-ext-http?/json",
   "dolang-ext-http-mock?/json",
+  "dolang-shell-modules/json",
 ]
-regex = ["dep:dolang-ext-regex"]
-glob = ["dep:dolang-ext-glob"]
-url = ["dep:dolang-ext-url"]
-http = ["dep:dolang-ext-http", "url"]
-http_mock = ["dep:dolang-ext-http-mock", "url"]
-zip = ["dep:dolang-ext-zip"]
-tar = ["dep:dolang-ext-tar"]
-compress = ["dep:dolang-ext-compress"]
-sqlite = ["dep:dolang-ext-sqlite"]
-xml = ["dep:dolang-ext-xml"]
-yaml = ["dep:dolang-ext-yaml"]
-progress = ["dep:dolang-ext-progress"]
-rand = ["dep:dolang-ext-rand"]
-toml = ["dep:dolang-ext-toml"]
-patch = ["dep:dolang-ext-patch"]
-winreg = ["dep:dolang-ext-winreg", "dolang-shell-vfs/winreg"]
-winscm = ["dep:dolang-ext-winscm", "dolang-shell-vfs/winscm"]
-winnet = ["dep:dolang-ext-winnet", "dolang-shell-vfs/winnet"]
+regex = ["dep:dolang-ext-regex", "dolang-shell-modules/regex"]
+glob = ["dep:dolang-ext-glob", "dolang-shell-modules/glob"]
+url = ["dep:dolang-ext-url", "dolang-shell-modules/url"]
+http = ["dep:dolang-ext-http", "url", "dolang-shell-modules/http"]
+http_mock = ["dep:dolang-ext-http-mock", "url", "dolang-shell-modules/http_mock"]
+zip = ["dep:dolang-ext-zip", "dolang-shell-modules/zip"]
+tar = ["dep:dolang-ext-tar", "dolang-shell-modules/tar"]
+compress = ["dep:dolang-ext-compress", "dolang-shell-modules/compress"]
+sqlite = ["dep:dolang-ext-sqlite", "dolang-shell-modules/sqlite"]
+xml = ["dep:dolang-ext-xml", "dolang-shell-modules/xml"]
+yaml = ["dep:dolang-ext-yaml", "dolang-shell-modules/yaml"]
+progress = ["dep:dolang-ext-progress", "dolang-shell-modules/progress"]
+rand = ["dep:dolang-ext-rand", "dolang-shell-modules/rand"]
+toml = ["dep:dolang-ext-toml", "dolang-shell-modules/toml"]
+patch = ["dep:dolang-ext-patch", "dolang-shell-modules/patch"]
+winreg = ["dep:dolang-ext-winreg", "dolang-shell-vfs/winreg", "dolang-shell-modules/winreg"]
+winscm = ["dep:dolang-ext-winscm", "dolang-shell-vfs/winscm", "dolang-shell-modules/winscm"]
+winnet = ["dep:dolang-ext-winnet", "dolang-shell-vfs/winnet", "dolang-shell-modules/winnet"]
 
 
 [dependencies.dolang-shell-vfs]
@@ -82,6 +83,8 @@ workspace = true
 
 [dependencies.dolang-shell-modules]
 workspace = true
+# The extensions always linked; the optional ones forward their features.
+features = ["shell", "compile", "load", "digest", "uuid", "time", "term"]
 
 
 [dependencies.dolang]

@@ -8,14 +8,13 @@
 import json strand sys
   fs:
     - Path
-    - glob
 
 let MKDOCS_API_DIR = Path "docs/api"
 
 def doc_paths()
   $
     dolang-shell-modules/lib
-    ...(glob "*/stub")
+    dolang-shell-modules/stub
 
 # Module-name resolution for a .dol source under a search dir: `foo/bar.dol`
 # is module `foo.bar`; `foo/mod.dol` is module `foo`. This is also how

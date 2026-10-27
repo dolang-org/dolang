@@ -20,9 +20,10 @@ A `test` module provides the assertion functions of the shell's `test` module
 `assert_type`), so documentation examples that use them run unchanged.
 
 The adapter carries the typelibs of exactly these modules: std, `io`,
-`math`, `strand`, the extensions' stubs, and the `test` module's stub in
-`dolang-wasm/typelib/`. That directory is not named `stub/`, so the docs and
-the LSP don't pick it up as a second `test` module. Analysis type checks the
+`math`, `strand`, the extensions above, and `test`. They come from
+`dolang-shell-modules`, whose features select them. Its `wasm` feature adds the
+`test` module's stub, kept in `wasm/stub/` so the docs and the LSP don't pick it
+up as a second `test` module. Analysis type checks the
 source against the typelibs of the modules it imports, as the LSP does; an
 import of any other module is unknown to the checker.
 

@@ -407,7 +407,7 @@ fn templates_are_order_independent() {
         .mode(crate::Mode::Module { name: "std".into() });
     let std = config.unit(
         Path::new("std.dol"),
-        include_str!("../../../../dolang/stub/std.dol"),
+        include_str!("../../../../dolang-shell-modules/stub/std.dol"),
     );
     assert!(!std.failed);
     let source = r#"

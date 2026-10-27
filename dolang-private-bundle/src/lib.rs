@@ -1,6 +1,6 @@
 #![deny(warnings)]
 
-use std::{env, fs, io::Write, path::Path, path::PathBuf};
+use std::{collections::BTreeMap, fs, io::Write, path::Path, path::PathBuf};
 
 use dolang_compile::{Config, Mode, diag::Severity, typeck};
 
@@ -18,22 +18,33 @@ pub enum NameMode {
     Stem,
 }
 
-/// What to bundle from a tree of sources, and where.
+/// A tree of sources to bundle, and how to compile them.
+pub struct Root<'a> {
+    pub dir: &'a Path,
+    pub virtual_root: &'a str,
+    /// Prepares the compiler, e.g. with the prelude the sources run under.
+    pub configure: fn(&mut Config<'_>),
+    /// Whether the sources' bytecode is bundled, which requires [`Bundle::bytecode`].
+    pub bytecode: bool,
+    /// Whether to bundle a source, by its path relative to `dir`.
+    pub select: &'a dyn Fn(&Path) -> bool,
+}
+
+/// What to bundle from trees of sources, and where.
 ///
 /// Each output named here is written to `<out_dir>/<name>/`. A combined
 /// `<out_dir>/resources.rs` holds a `&[dolang::resource::Resource]` expression
 /// for the producing crate to include.
 pub struct Bundle<'a> {
-    pub source_root: &'a Path,
+    pub roots: &'a [Root<'a>],
     pub out_dir: &'a Path,
-    pub virtual_root: &'a str,
     pub compile_mode: CompileMode,
     pub name_mode: NameMode,
-    /// Prepares the compiler, e.g. with the prelude the sources run under.
-    pub configure: fn(&mut Config<'_>),
     /// The output for bytecode.
     pub bytecode: Option<&'a str>,
-    /// The output for typelibs, which requires `CompileMode::Module`.
+    /// The output for typelibs, which requires `CompileMode::Module`. Every
+    /// selected source has one, and each module a typelib imports must be bundled
+    /// too.
     pub typelibs: Option<&'a str>,
 }
 
@@ -70,23 +81,6 @@ fn derive_name(path: &Path, source_root: &Path, name_mode: NameMode) -> String {
         components.pop();
     }
     components.join(".")
-}
-
-/// Bundle the typelibs of a crate's `stub/` directory as resources.
-pub fn stub_typelibs() {
-    let manifest_dir = env::var_os("CARGO_MANIFEST_DIR").unwrap();
-    let out_dir = env::var_os("OUT_DIR").unwrap();
-    let package = env::var("CARGO_PKG_NAME").unwrap();
-    bundle(&Bundle {
-        source_root: &Path::new(&manifest_dir).join("stub"),
-        out_dir: Path::new(&out_dir),
-        virtual_root: &format!("{package}/stub"),
-        compile_mode: CompileMode::Module,
-        name_mode: NameMode::Module,
-        configure: |_| {},
-        bytecode: None,
-        typelibs: Some("typelibs"),
-    });
 }
 
 /// An output's artifact directory and resource namespace.
@@ -133,17 +127,37 @@ pub fn bundle(spec: &Bundle<'_>) {
     let mut table = fs::File::create(spec.out_dir.join("resources.rs")).unwrap();
     writeln!(table, "&[").unwrap();
 
-    let mut files = Vec::new();
-    walk_dol_files(spec.source_root, &mut files);
-    files.sort();
+    // Each selected source by module name, so a name is bundled once.
+    let mut sources = BTreeMap::new();
+    for root in spec.roots {
+        assert!(
+            !root.bytecode || spec.bytecode.is_some(),
+            "a root's bytecode needs an output"
+        );
+        let mut files = Vec::new();
+        walk_dol_files(root.dir, &mut files);
+        for path in files {
+            if !(root.select)(path.strip_prefix(root.dir).unwrap()) {
+                continue;
+            }
+            let name = derive_name(&path, root.dir, spec.name_mode);
+            if let Some((other, _)) = sources.insert(name.clone(), (path.clone(), root)) {
+                panic!(
+                    "{} and {} are both module {name}",
+                    other.display(),
+                    path.display()
+                );
+            }
+        }
+    }
 
-    for path in &files {
+    let mut imports = Vec::new();
+    for (name, (path, root)) in &sources {
         println!("cargo::rerun-if-changed={}", path.display());
 
-        let name = derive_name(path, spec.source_root, spec.name_mode);
         let source = fs::read_to_string(path).unwrap();
-        let relative = path.strip_prefix(spec.source_root).unwrap();
-        let compiler_path = Path::new(spec.virtual_root).join(relative);
+        let relative = path.strip_prefix(root.dir).unwrap();
+        let compiler_path = Path::new(root.virtual_root).join(relative);
 
         let mut config = Config::new();
         match spec.compile_mode {
@@ -153,7 +167,7 @@ pub fn bundle(spec: &Bundle<'_>) {
             CompileMode::Script => config.mode(Mode::Script),
         };
         config.typecheck(typelib_out.is_some());
-        (spec.configure)(&mut config);
+        (root.configure)(&mut config);
 
         let mut had_error = false;
         let mut had_warning = false;
@@ -180,14 +194,29 @@ pub fn bundle(spec: &Bundle<'_>) {
         if let Some(out) = &typelib_out {
             let typelib = typeck::typelib(&unit)
                 .unwrap_or_else(|err| panic!("no typelib for {}: {err}", compiler_path.display()));
-            out.add(&mut table, &name, "dolt", &typelib);
+            let read = typeck::Typelib::read(&typelib).unwrap();
+            imports.extend(
+                read.imports()
+                    .into_iter()
+                    .map(|import| (name, import.to_owned())),
+            );
+            out.add(&mut table, name, "dolt", &typelib);
         }
-        if let Some(out) = &bytecode_out {
+        if let Some(out) = &bytecode_out
+            && root.bytecode
+        {
             let mut bytecode = Vec::new();
             unit.emit(&mut bytecode)
                 .unwrap_or_else(|_| panic!("failed to compile {}", compiler_path.display()));
-            out.add(&mut table, &name, "dolc", &bytecode);
+            out.add(&mut table, name, "dolc", &bytecode);
         }
+    }
+
+    for (name, import) in imports {
+        assert!(
+            sources.contains_key(&import),
+            "{name} imports {import}, which isn't bundled"
+        );
     }
 
     writeln!(table, "]").unwrap();
