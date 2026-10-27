@@ -70,7 +70,8 @@ impl Harvest<'_> {
         for (decl, _) in self.decls.iter_mut().zip(decls).filter(|(_, keep)| **keep) {
             let decorators: Vec<_> = match &mut decl.node {
                 DeclNode::Class(class) => class.decorators.iter_mut().collect(),
-                DeclNode::Methods(methods) => (methods.iter_mut())
+                DeclNode::Methods(methods) => methods
+                    .iter_mut()
                     .flat_map(|method| &mut method.decorators)
                     .collect(),
                 DeclNode::Alias(_) | DeclNode::Defs(_) | DeclNode::Closure(_) => continue,
@@ -96,13 +97,17 @@ impl Harvest<'_> {
         }
         // Exported variables are on the surface, whether annotated or not
         self.values.visit(&mut used);
-        for (site, _) in (self.sites.iter_mut())
+        for (site, _) in self
+            .sites
+            .iter_mut()
             .zip(used.sites.clone())
             .filter(|(_, keep)| *keep)
         {
             site.ty.visit(&mut used);
         }
-        for (link, _) in (self.links.iter_mut())
+        for (link, _) in self
+            .links
+            .iter_mut()
             .zip(used.links.clone())
             .filter(|(_, keep)| *keep)
         {
@@ -117,7 +122,10 @@ impl Harvest<'_> {
             strs: numbering(&used.strs, StrId::from_index),
             links: numbering(&used.links, LinkId::from_index),
         };
-        let targets = (self.links.iter_mut().zip(&used.links))
+        let targets = self
+            .links
+            .iter_mut()
+            .zip(&used.links)
             .filter(|(_, keep)| **keep)
             .map(|(link, _)| &mut link.base)
             .chain(self.exports.iter_mut().map(|export| &mut export.target));

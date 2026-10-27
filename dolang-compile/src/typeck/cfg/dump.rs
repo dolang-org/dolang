@@ -127,7 +127,9 @@ impl Dump<'_, '_> {
                 self.var(out, var)?;
             }
         }
-        let bottom: Vec<_> = (func.vars.iter())
+        let bottom: Vec<_> = func
+            .vars
+            .iter()
             .filter(|&&var| self.ir.var(var).flags.contains(VarFlags::BOTTOM))
             .collect();
         if !bottom.is_empty() {

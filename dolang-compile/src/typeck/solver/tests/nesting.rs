@@ -51,7 +51,10 @@ fn what_a_child_solves_doesnt_reach_its_parent() {
         child.add_dependency(ObligationId(0), added, Step::Assignment);
         assert!(child.assignment(b).is_some());
         assert!(
-            (child.bounds(b).lower()).any(|bound| child.same(bound, child.closed(two)).unwrap())
+            child
+                .bounds(b)
+                .lower()
+                .any(|bound| child.same(bound, child.closed(two)).unwrap())
         );
         assert!(child.bounds(variable_id(fresh)).lower().next().is_some());
         assert!(child.obligation_count() > obligations);
@@ -227,13 +230,21 @@ fn a_committed_fork_is_absorbed() {
     assert!(s.has_environment(environment));
     assert!(s.obligation_count() > obligations);
     // Its bounds on the parent's variables, and its own, are the parent's now
-    assert!((s.bounds(b).lower()).any(|bound| s.same(bound, s.closed(two)).unwrap()));
+    assert!(
+        s.bounds(b)
+            .lower()
+            .any(|bound| s.same(bound, s.closed(two)).unwrap())
+    );
     assert!(s.bounds(fresh).lower().next().is_some());
     assert!(s.assignment(a).is_some());
     // Its constraints follow the parent's
     let outcomes = s.solve();
     assert_eq!(outcomes.len(), roots + 2);
-    assert!((outcomes.iter()).all(|outcome| outcome.status != Status::Contradicted));
+    assert!(
+        outcomes
+            .iter()
+            .all(|outcome| outcome.status != Status::Contradicted)
+    );
     // The parent can change, and nest again
     s.constrain(Term::Infer(b), s.closed(two), Provenance::default());
     s.nest(&gas, |child| {
@@ -279,7 +290,12 @@ fn a_fork_nested_in_a_fork_commits_into_it() {
         (variable_id(fresh), true)
     });
     assert!(outer.owns(fresh));
-    assert!((outer.bounds(b).lower()).any(|bound| outer.same(bound, outer.closed(two)).unwrap()));
+    assert!(
+        outer
+            .bounds(b)
+            .lower()
+            .any(|bound| outer.same(bound, outer.closed(two)).unwrap())
+    );
     drop(outer);
     assert_eq!(s.bounds(b).lower().count(), 0);
 }

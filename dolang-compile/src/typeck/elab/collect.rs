@@ -107,10 +107,10 @@ pub(crate) fn find_export<'e>(
     strings: &[Cow<'_, str>],
     name: &str,
 ) -> Option<&'e Export> {
-    (exports
+    exports
         .binary_search_by(|export| (*strings[export.name.index()]).cmp(name))
-        .ok())
-    .map(|index| &exports[index])
+        .ok()
+        .map(|index| &exports[index])
 }
 
 /// A module a unit imports
@@ -157,7 +157,9 @@ pub(crate) fn harvest<'u>(unit: &'u Unit<'u>) -> Harvest<'u> {
         let (module, used) = match import {
             PreludeImport::Items { module, items } => (
                 module,
-                (items.iter()).any(|item| (!item.type_only && !item.unused) || item.type_used),
+                items
+                    .iter()
+                    .any(|item| (!item.type_only && !item.unused) || item.type_used),
             ),
             PreludeImport::ModuleAsIs { module, unused, .. }
             | PreludeImport::ModuleRenamed { module, unused, .. } => (module, !unused),
@@ -173,7 +175,8 @@ pub(crate) fn harvest<'u>(unit: &'u Unit<'u>) -> Harvest<'u> {
         modules,
         ..
     } = walk;
-    let modules = (modules.into_iter())
+    let modules = modules
+        .into_iter()
         .map(|(name, span)| Module {
             name,
             span: span.unwrap_or_default(),
@@ -233,7 +236,9 @@ pub(crate) fn link<'u>(
         if harvest.info.source.is_some() {
             let (_, found) = harvest.interface();
             leaks.extend(
-                (found.iter()).map(|leak| (id, Diag::new(PrivateInInterface::new(&harvest, leak)))),
+                found
+                    .iter()
+                    .map(|leak| (id, Diag::new(PrivateInInterface::new(&harvest, leak)))),
             );
         }
         harvest.visit_ids(&mut Rebase {
@@ -254,7 +259,7 @@ pub(crate) fn link<'u>(
         sorted
             .sort_by(|a, b| harvest.strings[a.name.index()].cmp(&harvest.strings[b.name.index()]));
         exports[id.index()] = sorted;
-        values.extend((harvest.values.into_iter()).map(|value| {
+        values.extend(harvest.values.into_iter().map(|value| {
             (
                 UnitSpan {
                     unit: id,
@@ -272,13 +277,17 @@ pub(crate) fn link<'u>(
         .map(|info| info.expect("every unit is linked"))
         .collect();
 
-    let provided: FxHashMap<&str, UnitId> = (units.iter().enumerate())
+    let provided: FxHashMap<&str, UnitId> = units
+        .iter()
+        .enumerate()
         .filter_map(|(index, unit)| Some((unit.module?, UnitId::from_index(index))))
         .collect();
     let mut diags = Vec::new();
     // A module a unit imports is reported at its import, whether or not anything
     // names it
-    let resolved = (modules.iter().enumerate())
+    let resolved = modules
+        .iter()
+        .enumerate()
         .map(|(index, modules)| {
             let unit = UnitId::from_index(index);
             let mut order: Vec<_> = (0..modules.len()).collect();
@@ -1561,7 +1570,9 @@ impl<'u> Walk<'_, 'u> {
                     }
                     let annot = self.annot(&group, &field.ty, Role::Type);
                     members.push(surface::Member::Field(surface::Field {
-                        names: (field.fields.iter())
+                        names: field
+                            .fields
+                            .iter()
                             .map(|name| self.name(name.ident.span))
                             .collect(),
                         annot,
@@ -1779,11 +1790,15 @@ impl<'u> Walk<'_, 'u> {
             self.export(stmt, &mut exports, &mut annots);
         }
         // The root block's annotations, by the span of the type each writes
-        let sites: FxHashMap<Span, SiteId> = (self.sites.iter().enumerate())
+        let sites: FxHashMap<Span, SiteId> = self
+            .sites
+            .iter()
+            .enumerate()
             .filter(|(_, site)| site.owner.is_none() && site.role == Role::Type)
             .map(|(index, site)| (site.ty.span(), SiteId::from_index(index)))
             .collect();
-        let mut values: Vec<_> = (exports.iter())
+        let mut values: Vec<_> = exports
+            .iter()
             .filter_map(|export| match export.target {
                 Target::Local(Referent::Value(value)) => Some(value.span),
                 _ => None,

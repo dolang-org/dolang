@@ -266,17 +266,22 @@ impl Report for Problem {
 
     fn notes(&self) -> Vec<(NoteKind, String)> {
         match self {
-            Problem::Argument { causes, .. } => (causes.iter().flatten())
+            Problem::Argument { causes, .. } => causes
+                .iter()
+                .flatten()
                 .map(|note| (NoteKind::Info, note.clone()))
                 .collect(),
-            Problem::NoOverload { notes, .. } => (notes.iter())
+            Problem::NoOverload { notes, .. } => notes
+                .iter()
                 .map(|note| (NoteKind::Info, note.clone()))
                 .collect(),
-            Problem::MissingMember { reasons, .. } => (reasons.iter())
+            Problem::MissingMember { reasons, .. } => reasons
+                .iter()
                 .map(|reason| (NoteKind::Info, reason.clone()))
                 .collect(),
             Problem::Unguaranteed { note, .. } => vec![(NoteKind::Info, note.clone())],
-            Problem::AmbiguousCall { survivors, .. } => (survivors.iter())
+            Problem::AmbiguousCall { survivors, .. } => survivors
+                .iter()
                 .map(|survivor| (NoteKind::Info, format!("`{survivor}` accepts them")))
                 .collect(),
             _ => Vec::new(),

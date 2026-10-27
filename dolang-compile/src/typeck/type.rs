@@ -556,7 +556,8 @@ impl Type {
     /// `Deletable` schema
     pub(crate) fn keyed_projections(&self) -> Vec<(TypeId, TypeId)> {
         match self {
-            Self::Union(members) => (members.iter())
+            Self::Union(members) => members
+                .iter()
                 .filter_map(|member| Some((member.projected()?, member.key()?)))
                 .collect(),
             Self::Restricted {
@@ -1155,7 +1156,8 @@ impl Shared {
     }
 
     fn type_id(&self, ty: &Type) -> Option<TypeId> {
-        (self.parent.as_ref())
+        self.parent
+            .as_ref()
             .and_then(|parent| parent.type_id(ty))
             .or_else(|| {
                 let id = self.types.get(ty)?;
@@ -1171,7 +1173,8 @@ impl Shared {
     }
 
     fn symbol_id(&self, text: &str) -> Option<SymbolId> {
-        (self.parent.as_ref())
+        self.parent
+            .as_ref()
             .and_then(|parent| parent.symbol_id(text))
             .or_else(|| {
                 let id = self.symbols.get(text)?;
@@ -1182,7 +1185,9 @@ impl Shared {
     fn is_fresh_symbol(&self, id: SymbolId) -> bool {
         match &self.parent {
             Some(parent) if id.index() < parent.symbol_count => parent.is_fresh_symbol(id),
-            _ => (self.symbols).is_fresh(SymbolId::new(id.index() - self.symbol_offset())),
+            _ => self
+                .symbols
+                .is_fresh(SymbolId::new(id.index() - self.symbol_offset())),
         }
     }
 }
@@ -1415,7 +1420,8 @@ impl Database {
             "an overloaded function has overloads"
         );
         assert!(
-            (self.local_mut().overloads)
+            self.local_mut()
+                .overloads
                 .insert(id, overloads.into())
                 .is_none(),
             "overloads already set: {id:?}"
@@ -1582,7 +1588,9 @@ impl Database {
             let Some(declaration) = self.try_declaration(class) else {
                 continue;
             };
-            if (declaration.members.iter())
+            if declaration
+                .members
+                .iter()
                 .any(|(key, member)| *key == init && member.scope() == Scope::Instance)
             {
                 return true;
@@ -1926,7 +1934,8 @@ impl Database {
                 normalized.sort_unstable();
                 normalized.dedup();
                 // A fresh literal is its regular twin's, which is kept
-                let regular: Vec<TypeId> = (normalized.iter())
+                let regular: Vec<TypeId> = normalized
+                    .iter()
                     .filter_map(|member| match *member {
                         UnionMember::Type(id) if matches!(self.ty(id), Type::Literal(_)) => {
                             Some(id)
@@ -2020,7 +2029,7 @@ impl Database {
         .into_iter()
         .find(|&(intrinsic, _)| self.intrinsic(intrinsic) == Some(base))?
         .1;
-        (args.iter())
+        args.iter()
             .map(|arg| match *arg {
                 Argument::Positional(schema) | Argument::Expand(schema) => Some(member(schema)),
                 Argument::Keyword(..) => None,
@@ -2048,7 +2057,8 @@ impl Database {
             let Type::Schema(items) = self.ty(schema) else {
                 return Projected::Pending;
             };
-            return (items.iter())
+            return items
+                .iter()
                 .map(|item| match item.element {
                     Element::Positional(ty) => Some(UnionMember::Type(ty)),
                     Element::Include(inner) => Some(member.with(inner)),
@@ -2067,7 +2077,8 @@ impl Database {
             _ => return Projected::Pending,
         };
         if let UnionMember::Values(_) = member {
-            let members = (items.iter())
+            let members = items
+                .iter()
                 .map(|item| match item.element {
                     Element::Include(inner) => member.with(inner),
                     Element::Positional(ty) | Element::Keyed { value: ty, .. } => {
@@ -2102,7 +2113,10 @@ impl Database {
                 );
             }
             _ => {
-                let mut pairs: Vec<(TypeId, TypeId)> = (promoted.fixed.iter().enumerate())
+                let mut pairs: Vec<(TypeId, TypeId)> = promoted
+                    .fixed
+                    .iter()
+                    .enumerate()
                     .map(|(i, &value)| (index(i), value))
                     .collect();
                 if !promoted.varying.is_empty() {
@@ -2150,7 +2164,7 @@ impl Database {
         }
         let positions = !promoted.fixed.is_empty() || !promoted.varying.is_empty();
         let collides = |key| self.collides(key, promoted.fixed.len(), !promoted.varying.is_empty());
-        if (promoted.keyed.iter()).any(|&(_, key, _)| collides(key)) {
+        if promoted.keyed.iter().any(|&(_, key, _)| collides(key)) {
             return Promotion::Conflict;
         }
         if pending
@@ -2755,7 +2769,8 @@ impl Database {
                 body: self.decay_inner(*body, memo),
             }),
             Type::Union(members) => {
-                let members = (members.iter())
+                let members = members
+                    .iter()
                     .map(|member| member.with(self.decay_inner(member.id(), memo)))
                     .collect();
                 self.intern(Type::Union(members))

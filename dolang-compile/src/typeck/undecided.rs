@@ -30,7 +30,9 @@ struct Undecided {
 
 impl Undecided {
     fn internal(&self) -> bool {
-        (self.residuals.iter()).any(|residual| residual.class() == ResidualClass::Internal)
+        self.residuals
+            .iter()
+            .any(|residual| residual.class() == ResidualClass::Internal)
     }
 }
 
@@ -62,7 +64,8 @@ impl Report for Undecided {
                         clear the build directory); otherwise it is a checker bug";
             return vec![(NoteKind::Info, note.to_owned())];
         }
-        (self.residuals.iter())
+        self.residuals
+            .iter()
             .map(|residual| {
                 let note = match residual {
                     Residual::Unsupported(what) => format!("it doesn't handle {what}"),
@@ -95,7 +98,8 @@ impl Report for Undecided {
 /// Diagnose the checks in `unresolved` that a reader should see, one per span,
 /// skipping a span that `diags` already reports something at.
 pub(crate) fn report(units: &[UnitInfo<'_>], unresolved: &[Unresolved], diags: &mut Vec<UnitDiag>) {
-    let reported: FxHashSet<UnitSpan> = (diags.iter())
+    let reported: FxHashSet<UnitSpan> = diags
+        .iter()
         .map(|(unit, diag)| UnitSpan {
             unit: *unit,
             span: diag.span(),

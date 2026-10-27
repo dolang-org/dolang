@@ -90,7 +90,8 @@ impl<'db> Solver<'db> {
         step: fn(usize) -> Step,
         none: Issue,
     ) -> Result<(), Issue> {
-        let judgments = (terms.into_iter())
+        let judgments = terms
+            .into_iter()
             .map(|term| self.alternative(obligation, actual, term))
             .collect();
         self.choose_judgment(obligation, judgments, None, step, none)
@@ -106,7 +107,8 @@ impl<'db> Solver<'db> {
         step: fn(usize) -> Step,
         none: Issue,
     ) -> Result<(), Issue> {
-        let judgments = (terms.into_iter())
+        let judgments = terms
+            .into_iter()
             .map(|term| self.alternative(obligation, term, expected))
             .collect();
         self.choose_judgment(obligation, judgments, None, step, none)
@@ -123,7 +125,8 @@ impl<'db> Solver<'db> {
         step: fn(usize) -> Step,
         none: Issue,
     ) -> Result<(), Issue> {
-        let (judgments, selections) = (terms.into_iter())
+        let (judgments, selections) = terms
+            .into_iter()
             .map(|term| {
                 (
                     self.alternative(obligation, term, expected),
@@ -166,15 +169,15 @@ impl<'db> Solver<'db> {
     /// What trials found of each alternative of a judgment none of whose
     /// alternatives is possible
     pub(crate) fn rejections(&self, obligation: ObligationId) -> alias::Box<[Rejection]> {
-        (self.alternative_record(obligation, |record| record.rejections.clone()))
+        self.alternative_record(obligation, |record| record.rejections.clone())
             .unwrap_or_default()
     }
 
     /// The alternatives left possible of a judgment that's ambiguous
     pub(crate) fn possible(&self, obligation: ObligationId) -> Vec<usize> {
-        (self.alternative_record(obligation, |record| {
+        self.alternative_record(obligation, |record| {
             (record.verdict == Verdict::Ambiguous).then(|| record.possible.clone())
-        }))
+        })
         .flatten()
         .unwrap_or_default()
     }
@@ -263,7 +266,8 @@ impl<'db> Solver<'db> {
             }
             match self.head(view.child(ty)) {
                 Ok(Head::Nominal(nominal)) if !nominal.arguments.is_empty() => {
-                    match (class.as_ref())
+                    match class
+                        .as_ref()
                         .and_then(|class| self.reaches(class, nominal.declaration))
                     {
                         Some(false) => {}
@@ -293,7 +297,9 @@ impl<'db> Solver<'db> {
             return false;
         }
         let generation = self.generation.get();
-        let mut pending: Vec<ObligationId> = (self.alternative_ids(self.trials_from).into_iter())
+        let mut pending: Vec<ObligationId> = self
+            .alternative_ids(self.trials_from)
+            .into_iter()
             .filter(|&id| {
                 self.alternative_record(id, |record| {
                     matches!(record.verdict, Verdict::Untried | Verdict::Ambiguous)
@@ -356,23 +362,25 @@ impl<'db> Solver<'db> {
             }
             for &index in indexes {
                 let judgment = judgments[index];
-                let relation =
-                    match (selections.as_ref()).map_or(judgment, |selections| selections[index]) {
+                let relation = match selections
+                    .as_ref()
+                    .map_or(judgment, |selections| selections[index])
+                {
+                    Relation::Subtype {
+                        actual,
+                        expected,
+                        fill,
+                    } => {
+                        let resolved = self.resolve(actual)?;
+                        let actual = self.blinded(resolved).unwrap_or(actual);
                         Relation::Subtype {
                             actual,
                             expected,
                             fill,
-                        } => {
-                            let resolved = self.resolve(actual)?;
-                            let actual = self.blinded(resolved).unwrap_or(actual);
-                            Relation::Subtype {
-                                actual,
-                                expected,
-                                fill,
-                            }
                         }
-                        call => call,
-                    };
+                    }
+                    call => call,
+                };
                 let (status, free, fork, outcome) = self.trial(relation, owned)?;
                 match status {
                     Status::Contradicted => {

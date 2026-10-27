@@ -134,7 +134,10 @@ impl<'t, 'u> Lower<'t, 'u> {
             guards: RefCell::new(FxHashMap::default()),
             returns: RefCell::new(FxHashMap::default()),
             captures: RefCell::new(Vec::new()),
-            sites: (tables.sites.iter().enumerate())
+            sites: tables
+                .sites
+                .iter()
+                .enumerate()
                 .filter(|(_, site)| site.unit == unit)
                 .map(|(index, site)| (site.ty.span(), SiteId::from_index(index)))
                 .collect(),
@@ -183,7 +186,9 @@ impl<'t, 'u> Lower<'t, 'u> {
                 continue;
             }
             let mut block = self.graph.block_mut(capture.block);
-            let index = (block.steps.iter())
+            let index = block
+                .steps
+                .iter()
                 .position(
                     |step| matches!(step, Step::Capture(funcs) if funcs.contains(&capture.func)),
                 )

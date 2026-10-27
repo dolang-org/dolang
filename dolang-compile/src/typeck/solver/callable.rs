@@ -78,13 +78,17 @@ impl Solver<'_> {
             return constructor;
         }
         let constructor = self.construct(class, exact);
-        (self.constructors.borrow_mut()).insert((class, exact), constructor.clone());
+        self.constructors
+            .borrow_mut()
+            .insert((class, exact), constructor.clone());
         constructor
     }
 
     fn construct(&self, class: DeclId, exact: bool) -> Constructor {
         let db = self.db;
-        let rigids = (db.rigids(class).into_iter())
+        let rigids = db
+            .rigids(class)
+            .into_iter()
             .map(Argument::Positional)
             .collect();
         let object = db.meta(class, rigids);
@@ -133,7 +137,9 @@ impl Solver<'_> {
         if binders.is_empty() {
             return base;
         }
-        let args = (binders.iter().enumerate())
+        let args = binders
+            .iter()
+            .enumerate()
             .map(|(slot, binder)| {
                 Argument::Positional(db.intern(Type::Bound {
                     reference: BoundRef::new(0, slot),
@@ -157,7 +163,9 @@ impl Solver<'_> {
             return construction;
         }
         let construction = self.construct_default(class);
-        (self.default_constructions.borrow_mut()).insert(class, construction.clone());
+        self.default_constructions
+            .borrow_mut()
+            .insert(class, construction.clone());
         construction
     }
 
@@ -250,7 +258,9 @@ impl Solver<'_> {
     /// Signatures reified, or `None` if any doesn't reify
     pub(crate) fn reified(&self, signatures: &Signatures) -> Option<Signature> {
         let reify = |&term| self.reify(term).ok();
-        let overloads = (signatures.overloads.iter())
+        let overloads = signatures
+            .overloads
+            .iter()
             .map(reify)
             .collect::<Option<_>>()?;
         let implementation = match &signatures.implementation {
@@ -324,7 +334,9 @@ impl Solver<'_> {
             return self.object_signatures(class, false);
         }
         let key = self.call_key();
-        let func = (self.db.intrinsic(Intrinsic::Func))
+        let func = self
+            .db
+            .intrinsic(Intrinsic::Func)
             .ok_or(Residual::MissingIntrinsic(Intrinsic::Func))?;
         let &Type::Decl(func) = self.db.ty(func) else {
             return Err(Residual::MissingIntrinsic(Intrinsic::Func).into());
@@ -420,7 +432,10 @@ impl Solver<'_> {
             Some(self.view(ty, view.environment))
         };
         let unbound = || Residual::Unsupported("a method whose receiver mentions its own binders");
-        let overloads = (signatures.overloads.iter().copied())
+        let overloads = signatures
+            .overloads
+            .iter()
+            .copied()
             .map(bound)
             .collect::<Option<_>>()
             .ok_or_else(unbound)?;

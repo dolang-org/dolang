@@ -81,7 +81,11 @@ impl Split<'_> {
     fn run(&mut self, root: FuncId) -> RunId {
         let ir = self.ir;
         let id = RunId::from_index(self.runs.len());
-        let inherited = (ir.func(root).uses.iter().copied())
+        let inherited = ir
+            .func(root)
+            .uses
+            .iter()
+            .copied()
             .filter(|&var| !ir.var(var).flags.contains(VarFlags::EXPORTED))
             .collect();
         self.runs.push(Run {

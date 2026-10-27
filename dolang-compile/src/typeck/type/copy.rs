@@ -96,7 +96,8 @@ impl Database {
                 self.allocate_unit();
             }
         }
-        let intrinsics = (Intrinsic::ALL.into_iter())
+        let intrinsics = Intrinsic::ALL
+            .into_iter()
             .filter_map(|intrinsic| match *from.ty(from.intrinsic(intrinsic)?) {
                 Type::Decl(decl) => Some((decl, intrinsic)),
                 _ => None,
@@ -247,19 +248,25 @@ impl Copier<'_> {
             name: declaration.source.name.map(|name| self.symbol(name)),
             ..declaration.source.clone()
         };
-        let binders = (declaration.binders.iter())
+        let binders = declaration
+            .binders
+            .iter()
             .map(|binder| BinderSource {
                 name: self.symbol(binder.name),
                 ..binder.clone()
             })
             .collect();
-        let supertypes = (declaration.supertypes.iter())
+        let supertypes = declaration
+            .supertypes
+            .iter()
             .map(|supertype| Supertype {
                 ty: self.copy(supertype.ty),
                 ..*supertype
             })
             .collect();
-        let members = (declaration.members.iter())
+        let members = declaration
+            .members
+            .iter()
             .map(|(key, member)| {
                 let key = MemberKey {
                     name: self.symbol(key.name),

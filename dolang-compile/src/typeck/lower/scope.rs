@@ -342,7 +342,9 @@ impl<'u> Scope<'_, '_, 'u> {
             if !data.assigns.contains(&var) {
                 data.assigns.push(var);
             }
-            func = (data.parent).expect("a variable's owner encloses its assigners");
+            func = data
+                .parent
+                .expect("a variable's owner encloses its assigners");
         }
     }
 

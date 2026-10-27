@@ -538,7 +538,9 @@ impl Flow<'_, '_> {
         self.call_signature(at, state, &mut operands, signature, &leading, call);
         let probed = mem::replace(&mut self.results, saved).unwrap_or_default();
         let accessor = self.member_name(accessor);
-        (probed.problems.iter())
+        probed
+            .problems
+            .iter()
             .flat_map(|problem| {
                 let mut message = String::new();
                 problem.message(&mut message).expect("writing to a string");
@@ -806,7 +808,9 @@ impl Flow<'_, '_> {
             logs: false,
         };
         let member = self.special(name);
-        let given = (alternatives.into_iter().flatten())
+        let given = alternatives
+            .into_iter()
+            .flatten()
             .map(|alternative| {
                 let mut operands = VecDeque::new();
                 let targets = self.reached(
@@ -988,7 +992,9 @@ impl Flow<'_, '_> {
             Some(alternatives) => (Some(receiver), alternatives),
             None => (None, vec![Some(receiver)]),
         };
-        let resolved: Vec<_> = (alternatives.into_iter().flatten())
+        let resolved: Vec<_> = alternatives
+            .into_iter()
+            .flatten()
             .map(|ty| (ty, self.resolve(ty, member, Access::Class, span, true)))
             .collect();
         let field = |resolved: &Resolved| matches!(resolved, Resolved::Field(_));
@@ -1005,7 +1011,8 @@ impl Flow<'_, '_> {
         if resolved.iter().any(|(_, resolved)| accessor(resolved))
             && !resolved.iter().any(|(_, resolved)| field(resolved))
         {
-            let targets = (resolved.into_iter())
+            let targets = resolved
+                .into_iter()
                 .map(|(receiver, resolved)| {
                     let receiver = (receiver, object.span);
                     self.write_target(at, state, receiver, within, member, resolved, span)
@@ -1376,7 +1383,9 @@ impl Flow<'_, '_> {
             unreachable!("a range")
         };
         let bottom = self.db.bottom();
-        let bounds: Vec<_> = (bounds.iter().flatten())
+        let bounds: Vec<_> = bounds
+            .iter()
+            .flatten()
             .map(|bound| (self.eval(at, state, operands, bound), bound.span))
             .collect();
         if bounds.iter().any(|&(ty, _)| ty == bottom) {

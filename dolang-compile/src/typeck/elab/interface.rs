@@ -54,7 +54,9 @@ impl Harvest<'_> {
     /// supertypes and kept fields' types are its interface, as is an exported
     /// variable's annotation.
     pub(crate) fn interface(&self) -> (Kept, Vec<Leak>) {
-        let exported: FxHashSet<DeclId> = (self.exports.iter())
+        let exported: FxHashSet<DeclId> = self
+            .exports
+            .iter()
             .filter_map(|export| match export.target {
                 Target::Local(Referent::Decl(decl)) => Some(decl),
                 _ => None,
@@ -77,7 +79,8 @@ impl Harvest<'_> {
                                 // Overload signatures share their implementation's
                                 // visibility
                                 DeclNode::Methods(methods) => {
-                                    let primary = (methods.iter())
+                                    let primary = methods
+                                        .iter()
                                         .find(|method| !method.overload)
                                         .unwrap_or(&methods[0]);
                                     primary.public || primary.special.is_some()
@@ -302,7 +305,9 @@ impl PrivateInInterface {
                 format!("field `{}`", member(class, field))
             }
             User::Value(span) => {
-                let export = (harvest.exports.iter())
+                let export = harvest
+                    .exports
+                    .iter()
                     .find(|export| export.span == span)
                     .expect("an exported variable is exported");
                 format!(

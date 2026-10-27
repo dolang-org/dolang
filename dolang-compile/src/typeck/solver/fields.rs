@@ -85,7 +85,10 @@ impl Solver<'_> {
         SchemaItem {
             multiplicity: Multiplicity::Repeated,
             element: Element::Keyed {
-                key: (self.db.intrinsic(Intrinsic::Sym)).unwrap_or(self.db.unknown()),
+                key: self
+                    .db
+                    .intrinsic(Intrinsic::Sym)
+                    .unwrap_or(self.db.unknown()),
                 value,
             },
         }
@@ -134,7 +137,7 @@ impl Solver<'_> {
         access: FieldAccess,
     ) -> Result<Members, Issue> {
         fn find(members: &Members, name: SymbolId) -> Option<&(SymbolId, TypeId, bool)> {
-            (members.items.iter()).find(|&&(found, ..)| found == name)
+            members.items.iter().find(|&&(found, ..)| found == name)
         }
         let mut items = Vec::new();
         match access {
@@ -278,7 +281,8 @@ impl Solver<'_> {
                         let generic = "an accessor generic in what it reads or sets";
                         return Err(Residual::Unsupported(generic).into());
                     }
-                    let unknowns: Vec<_> = (binders.iter())
+                    let unknowns: Vec<_> = binders
+                        .iter()
                         .map(|binder| self.db.unknown_of(binder.kind))
                         .collect();
                     self.db.instantiate(value, &unknowns)

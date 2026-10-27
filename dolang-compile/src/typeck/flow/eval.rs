@@ -400,10 +400,15 @@ pub(crate) fn class_object(db: &Database, decl: DeclId) -> TypeId {
     }
     // An application gives a keyword or rest binder's argument in its slot, as
     // a positional binder's, but nothing fills an implicit one
-    if (binders.iter()).any(|binder| binder.binding == Binding::Implicit) {
+    if binders
+        .iter()
+        .any(|binder| binder.binding == Binding::Implicit)
+    {
         return db.unknown();
     }
-    let args = (binders.iter().enumerate())
+    let args = binders
+        .iter()
+        .enumerate()
         .map(|(slot, binder)| {
             Argument::Positional(db.intern(Type::Bound {
                 reference: BoundRef::new(0, slot),

@@ -388,7 +388,9 @@ impl<'u> Scope<'_, '_, 'u> {
             return None;
         };
         let class = self.super_decl(ident.span)?;
-        (init.supers.iter()).find_map(|&(decl, var)| (decl == class).then_some(var))
+        init.supers
+            .iter()
+            .find_map(|&(decl, var)| (decl == class).then_some(var))
     }
 
     /// A call of a superclass's `(init)`, which initializes it once it returns. It

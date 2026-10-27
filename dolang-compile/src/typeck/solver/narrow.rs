@@ -125,7 +125,10 @@ impl Solver<'_> {
     /// meets in the bottom type
     pub(crate) fn disjoint_types(&self, a: TypeId, b: TypeId) -> bool {
         let (a, b) = (self.exposed(a), self.exposed(b));
-        (a.iter()).all(|&a| (b.iter()).all(|&b| self.member_meet(a, b) == Some(self.db.bottom())))
+        a.iter().all(|&a| {
+            b.iter()
+                .all(|&b| self.member_meet(a, b) == Some(self.db.bottom()))
+        })
     }
 
     /// A fact met with `bound`, a closed type known to hold the same value on its
@@ -149,7 +152,8 @@ impl Solver<'_> {
     fn exposed(&self, ty: TypeId) -> Vec<TypeId> {
         let mut members = Vec::new();
         self.exposed_members(ty, &mut FxHashSet::default(), &mut members);
-        (members.into_iter())
+        members
+            .into_iter()
             .map(|member| match member {
                 UnionMember::Type(member) => member,
                 member => self.db.intern(Type::Union(vec![member].into())),
@@ -365,7 +369,9 @@ impl Solver<'_> {
         let Some(binders) = self.binders(class) else {
             return Some(base);
         };
-        let args = (binders.iter().enumerate())
+        let args = binders
+            .iter()
+            .enumerate()
             .map(|(slot, binder)| {
                 carried(slot)
                     .or_else(|| self.sound_argument(binder, binders))
@@ -386,7 +392,8 @@ impl Solver<'_> {
     fn sound_argument(&self, binder: &Binder, binders: &[Binder]) -> Option<TypeId> {
         match (binder.variance, binder.kind) {
             (Variance::Covariant, _) => {
-                let unknowns: Vec<_> = (binders.iter())
+                let unknowns: Vec<_> = binders
+                    .iter()
                     .map(|binder| self.db.unknown_of(binder.kind))
                     .collect();
                 let bound = match (self.db.binder_bound(binder, &unknowns), binder.kind) {
@@ -444,7 +451,9 @@ impl Solver<'_> {
                 .approximate(class, &|slot| carried[slot])
                 .unwrap_or(kept);
         }
-        let args = (binders.iter().zip(carried))
+        let args = binders
+            .iter()
+            .zip(carried)
             .map(|(binder, carried)| {
                 Argument::Positional(carried.unwrap_or_else(|| self.db.unknown_of(binder.kind)))
             })

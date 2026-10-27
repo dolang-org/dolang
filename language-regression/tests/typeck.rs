@@ -204,7 +204,8 @@ fn sources(case: &Path, settings: &Settings) -> Vec<Source> {
         config.document(true);
         let unit = config.unit(&source.path, source.text());
         queue.extend(
-            (unit.imports().into_iter())
+            unit.imports()
+                .into_iter()
                 .filter(|module| *module != "std" && find_repo_stub(module).is_some())
                 .map(str::to_owned),
         );
@@ -457,7 +458,8 @@ fn from_typelibs(
     if !exportable {
         return;
     }
-    let typelibs: Vec<Option<typeck::Typelib>> = (written.iter())
+    let typelibs: Vec<Option<typeck::Typelib>> = written
+        .iter()
         .map(|bytes| {
             bytes
                 .as_ref()
@@ -499,7 +501,9 @@ fn from_typelibs(
                 false => format!("{span:?} "),
             };
             let text = |message: &str| match module {
-                true => (message.split('`').enumerate())
+                true => message
+                    .split('`')
+                    .enumerate()
                     .map(|(index, part)| if index % 2 == 1 { "_" } else { part })
                     .collect::<Vec<_>>()
                     .join("`"),
@@ -540,7 +544,9 @@ fn from_typelibs(
         let [source_script, source_modules] = source;
         let [typelib_script, typelib_modules] = typelib;
         let mut rest = source_modules.iter();
-        let subsequence = (typelib_modules.iter()).all(|found| rest.any(|item| item == found));
+        let subsequence = typelib_modules
+            .iter()
+            .all(|found| rest.any(|item| item == found));
         if source_script != typelib_script || !subsequence {
             let _ = write!(
                 failures,
@@ -565,7 +571,9 @@ fn from_typelibs(
             continue;
         };
         let judgments = |check: &typeck::Check| -> Vec<String> {
-            (check.judgments(id).into_iter())
+            check
+                .judgments(id)
+                .into_iter()
                 .map(|judgment| format!("{} {:?} {}", judgment.name, judgment.span, judgment.value))
                 .collect()
         };

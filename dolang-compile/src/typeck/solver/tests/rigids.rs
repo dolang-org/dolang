@@ -305,7 +305,9 @@ fn item_projections_imply_rigid_key_bounds() {
     let outcome = solver.solve().remove(0);
     assert_eq!(outcome.status, Status::Proven, "{outcome:?}");
     assert!((0..solver.obligation_count()).any(|id| {
-        (solver.progress(ObligationId(id)).active)
+        solver
+            .progress(ObligationId(id))
+            .active
             .borrow()
             .iter()
             .any(|(_, step)| *step == Step::ImpliedBound)

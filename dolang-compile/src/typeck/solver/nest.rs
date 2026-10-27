@@ -235,7 +235,8 @@ impl<'db> Solver<'db> {
 
     /// The solver this one is nested in, if it's open
     fn open_parent(&self) -> Option<&'db Solver<'db>> {
-        (self.parent.as_ref())
+        self.parent
+            .as_ref()
             .filter(|parent| parent.nesting.is_open())
             .map(|parent| parent.solver)
     }
@@ -464,11 +465,17 @@ impl<'db> Solver<'db> {
     ) -> bool {
         let mut known = false;
         self.variable_layers(id, &mut |layer| {
-            known |= (layer.bounds.side(lower).get(&term))
+            known |= layer
+                .bounds
+                .side(lower)
+                .get(&term)
                 .is_some_and(|sources| sources.contains(&source));
         });
         !known
-            && (self.layer_mut(id).bounds.side(lower))
+            && self
+                .layer_mut(id)
+                .bounds
+                .side(lower)
                 .get_or_insert_with(&term, |term| (*term, MonoHashSet::default()))
                 .try_insert(source)
                 .is_ok()
@@ -535,7 +542,10 @@ impl<'db> Solver<'db> {
     /// The obligation judging a relation, reached guarded or not, if it's
     /// interned
     pub(super) fn interned(&self, key: &(Relation, bool)) -> Option<ObligationId> {
-        (self.obligation_index.get(key).copied()).or_else(|| self.open_parent()?.interned(key))
+        self.obligation_index
+            .get(key)
+            .copied()
+            .or_else(|| self.open_parent()?.interned(key))
     }
 
     /// Intern a new obligation
@@ -612,10 +622,13 @@ impl<'db> Solver<'db> {
     pub(super) fn add_dependency(&self, parent: ObligationId, child: ObligationId, step: Step) {
         let mut known = false;
         self.obligation_layers(parent, &mut |layer| {
-            known |= (layer.dependencies.iter()).any(|d| d.obligation == child && d.step == step);
+            known |= layer
+                .dependencies
+                .iter()
+                .any(|d| d.obligation == child && d.step == step);
         });
         if !known {
-            (self.progress_mut(parent).dependencies).push(Dependency {
+            self.progress_mut(parent).dependencies.push(Dependency {
                 obligation: child,
                 step,
             });
@@ -635,16 +648,18 @@ impl<'db> Solver<'db> {
     /// A substitution frame
     pub(super) fn frame(&self, id: EnvironmentId) -> &Environment {
         match id.0.checked_sub(self.bases.environments) {
-            Some(index) => {
-                (self.environments.get_by_index(index)).expect("an environment of this solver")
-            }
+            Some(index) => self
+                .environments
+                .get_by_index(index)
+                .expect("an environment of this solver"),
             None => self.outer().frame(id),
         }
     }
 
     /// A substitution frame's ID, if it's interned
     fn find_frame(&self, environment: &Environment) -> Option<EnvironmentId> {
-        (self.environments.get(environment))
+        self.environments
+            .get(environment)
             .map(|id| EnvironmentId(self.bases.environments + id.index()))
             .or_else(|| self.parent()?.find_frame(environment))
     }
@@ -703,7 +718,10 @@ impl<'db> Solver<'db> {
 
     /// The environment an obligation's instantiation created, if it has one
     pub(super) fn instantiation_of(&self, obligation: ObligationId) -> Option<EnvironmentId> {
-        (self.instantiations.borrow().get(&obligation).copied())
+        self.instantiations
+            .borrow()
+            .get(&obligation)
+            .copied()
             .or_else(|| self.open_parent()?.instantiation_of(obligation))
     }
 
@@ -721,7 +739,10 @@ impl<'db> Solver<'db> {
     /// The environment of skolems an obligation's skolemization created, if it
     /// has one
     pub(super) fn skolemization_of(&self, obligation: ObligationId) -> Option<EnvironmentId> {
-        (self.skolemizations.borrow().get(&obligation).copied())
+        self.skolemizations
+            .borrow()
+            .get(&obligation)
+            .copied()
             .or_else(|| self.open_parent()?.skolemization_of(obligation))
     }
 
@@ -784,10 +805,9 @@ impl<'db> Solver<'db> {
         self.writable();
         RefMut::map(self.alternatives.borrow_mut(), |records| {
             records.entry(obligation).or_insert_with(|| {
-                (self
-                    .enclosing()
-                    .alternative_record(obligation, Alternatives::clone))
-                .expect("a judgment with alternatives")
+                self.enclosing()
+                    .alternative_record(obligation, Alternatives::clone)
+                    .expect("a judgment with alternatives")
             })
         })
     }
@@ -795,14 +815,16 @@ impl<'db> Solver<'db> {
     /// The judgments from `from` on that have alternatives
     pub(super) fn alternative_ids(&self, from: usize) -> Vec<ObligationId> {
         let records = self.alternatives.borrow();
-        let mut ids: Vec<ObligationId> = (records.keys().copied())
-            .filter(|id| id.0 >= from)
-            .collect();
+        let mut ids: Vec<ObligationId> =
+            records.keys().copied().filter(|id| id.0 >= from).collect();
         if from < self.bases.obligations
             && let Some(parent) = self.open_parent()
         {
             ids.extend(
-                (parent.alternative_ids(from).into_iter()).filter(|id| !records.contains_key(id)),
+                parent
+                    .alternative_ids(from)
+                    .into_iter()
+                    .filter(|id| !records.contains_key(id)),
             );
         }
         ids
@@ -810,7 +832,10 @@ impl<'db> Solver<'db> {
 
     /// What trials judge in place of `term`, if anything (see [`Solver::blind`])
     pub(super) fn blinded(&self, term: Term) -> Option<Term> {
-        (self.blinded.get(&term).copied()).or_else(|| self.open_parent()?.blinded(term))
+        self.blinded
+            .get(&term)
+            .copied()
+            .or_else(|| self.open_parent()?.blinded(term))
     }
 }
 
@@ -1014,7 +1039,9 @@ impl<'db> Solver<'db> {
         if let Some(caches) = caches {
             self.rigid_bounds.get_mut().extend(caches.rigid_bounds);
             self.constructors.get_mut().extend(caches.constructors);
-            (self.default_constructions.get_mut()).extend(caches.default_constructions);
+            self.default_constructions
+                .get_mut()
+                .extend(caches.default_constructions);
             self.generic_members
                 .get_mut()
                 .extend(caches.generic_members);

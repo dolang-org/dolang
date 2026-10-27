@@ -30,7 +30,10 @@ impl Class {
         if self.binders.is_empty() {
             return self.ty;
         }
-        let args: Vec<_> = (self.binders.iter().enumerate())
+        let args: Vec<_> = self
+            .binders
+            .iter()
+            .enumerate()
             .map(|(slot, binder)| {
                 db.intern(Type::Bound {
                     reference: BoundRef::new(0, slot),
@@ -98,9 +101,7 @@ impl Class {
         result: TypeId,
     ) -> DeclId {
         let (id, _, source) = reserve(db, DeclKind::Function, "method");
-        let params: Vec<_> = (receiver.into_iter())
-            .chain(params.iter().copied())
-            .collect();
+        let params: Vec<_> = receiver.into_iter().chain(params.iter().copied()).collect();
         let binders = self.binders.iter().cloned().chain(own).collect();
         let ty = quantified(db, binders, function(db, &params, result));
         populate(db, id, source, ty, vec![]);

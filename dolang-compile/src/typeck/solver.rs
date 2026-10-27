@@ -978,7 +978,11 @@ impl<'db> Solver<'db> {
             unreachable!("a rigid of a declaration without binders")
         };
         let binder = &binders[usize::from(slot)];
-        let rigids = (self.groups.get(&decl).cloned()).unwrap_or_else(|| self.db.rigids(decl));
+        let rigids = self
+            .groups
+            .get(&decl)
+            .cloned()
+            .unwrap_or_else(|| self.db.rigids(decl));
         let (declared, step) = match binder.binding {
             Binding::Implicit if self.gradual && binder.bound.is_none() => {
                 (Some(self.db.unknown()), Step::ImplicitBound)
@@ -986,7 +990,10 @@ impl<'db> Solver<'db> {
             Binding::Implicit => (self.db.binder_bound(binder, &rigids), Step::ImplicitBound),
             _ => (self.db.binder_bound(binder, &rigids), Step::RigidBound),
         };
-        let implied = (self.db.implied_bounds(quantified).into_iter())
+        let implied = self
+            .db
+            .implied_bounds(quantified)
+            .into_iter()
             .filter(|&(implied, _)| implied == slot)
             .map(|(_, bound)| (self.db.substitute(bound, &rigids), Step::ImpliedBound));
         let bounds: Vec<_> = declared
@@ -1002,7 +1009,9 @@ impl<'db> Solver<'db> {
     /// bound: its binder's bound, then those its item projections imply
     fn abstract_bounds(&self, of: Abstract) -> Vec<(Term, Step)> {
         match of {
-            Abstract::Rigid(ty) => (self.rigid_bounds(ty).into_iter())
+            Abstract::Rigid(ty) => self
+                .rigid_bounds(ty)
+                .into_iter()
                 .map(|(bound, step)| (self.closed(bound), step))
                 .collect(),
             Abstract::Skolem(id) => {
@@ -1012,7 +1021,10 @@ impl<'db> Solver<'db> {
                     _ => Step::SkolemBound,
                 };
                 let declared = skolem.bound.get().map(|bound| (bound, step));
-                let implied = (skolem.implied.iter()).map(|&bound| (bound, Step::ImpliedBound));
+                let implied = skolem
+                    .implied
+                    .iter()
+                    .map(|&bound| (bound, Step::ImpliedBound));
                 declared.into_iter().chain(implied).collect()
             }
         }
@@ -1207,7 +1219,9 @@ impl<'db> Solver<'db> {
             Term::Skolem(id) => self.skolem(id).scope,
             Term::View(_) => unreachable!("a view is not a leaf"),
         };
-        Ok((leaves.iter().map(scope))
+        Ok(leaves
+            .iter()
+            .map(scope)
             .max_by_key(|&scope| self.extent(scope).depth)
             .unwrap_or(ScopeId(0)))
     }
@@ -1308,7 +1322,9 @@ impl<'db> Solver<'db> {
         let Ok(Head::Nominal(nominal)) = self.head(self.closed(ty)) else {
             return None;
         };
-        let arguments = (nominal.arguments.into_iter())
+        let arguments = nominal
+            .arguments
+            .into_iter()
             .map(|argument| self.reify(argument).ok())
             .collect::<Option<_>>()?;
         Some((nominal.declaration, arguments))
@@ -1338,10 +1354,13 @@ impl<'db> Solver<'db> {
             Term::Infer(id) => match self.assignment(id) {
                 Some(term) => self.reify_scoped(term, 0, depth + 1, found),
                 None if found => {
-                    let lower = (self.bounds(id).lower())
+                    let lower = self
+                        .bounds(id)
+                        .lower()
                         .map(|term| self.reify_scoped(term, 0, depth + 1, found))
                         .collect::<Result<Vec<_>, _>>()?;
-                    (self.join(self.variable(id).kind, &lower)).ok_or(Residual::Inference)
+                    self.join(self.variable(id).kind, &lower)
+                        .ok_or(Residual::Inference)
                 }
                 None => Err(Residual::Inference),
             },
@@ -1884,7 +1903,9 @@ impl<'db> Solver<'db> {
                 if self.same(lower, upper)?
                     && self.occurs(id, lower, 0, false, &mut FxHashSet::default(), 0)?
                 {
-                    for (_, sources) in (self.bound_sources(id, true).into_iter())
+                    for (_, sources) in self
+                        .bound_sources(id, true)
+                        .into_iter()
                         .chain(self.bound_sources(id, false))
                     {
                         for source in sources {
@@ -2009,8 +2030,10 @@ impl<'db> Solver<'db> {
                     _ => true,
                 })
         });
-        for (_, sources) in
-            (self.bound_sources(id, true).into_iter()).chain(self.bound_sources(id, false))
+        for (_, sources) in self
+            .bound_sources(id, true)
+            .into_iter()
+            .chain(self.bound_sources(id, false))
         {
             for source in sources {
                 self.add_support(id, source);
@@ -2219,7 +2242,9 @@ impl<'db> Solver<'db> {
                 // One between waits on fresh variables too, or it isn't left
                 // to this choice
                 if !self.variable(leaf).fresh {
-                    let lower: Vec<_> = (self.bounds(leaf).lower())
+                    let lower: Vec<_> = self
+                        .bounds(leaf)
+                        .lower()
                         .filter(|&term| self.reify(term).is_err())
                         .collect();
                     if lower.is_empty() {
@@ -2235,7 +2260,8 @@ impl<'db> Solver<'db> {
             return None;
         }
         let contradicted = |outcomes: Vec<Outcome>| -> Vec<ConstraintId> {
-            (outcomes.into_iter())
+            outcomes
+                .into_iter()
                 .filter(|outcome| outcome.status == Status::Contradicted)
                 .map(|outcome| outcome.constraint)
                 .collect()
@@ -2260,7 +2286,9 @@ impl<'db> Solver<'db> {
                 outcomes = fork.solve();
             }
             let kept = open.iter().all(|&term| fork.reify(term).is_ok())
-                && (contradicted(outcomes).iter()).all(|constraint| before.contains(constraint));
+                && contradicted(outcomes)
+                    .iter()
+                    .all(|constraint| before.contains(constraint));
             trace!(
                 fork,
                 "?{} least above fresh lower bounds := {}: {}",
@@ -2432,7 +2460,9 @@ impl<'db> Solver<'db> {
         match kind {
             Kind::Type => lower.iter().copied().reduce(|a, b| self.lub(a, b)),
             Kind::Schema => lower.iter().copied().find(|&top| {
-                (lower.iter()).all(|&ty| ty == top || self.probe(ty, top) == Ok(Status::Proven))
+                lower
+                    .iter()
+                    .all(|&ty| ty == top || self.probe(ty, top) == Ok(Status::Proven))
             }),
         }
     }
@@ -2443,7 +2473,8 @@ impl<'db> Solver<'db> {
     /// says.
     pub(crate) fn explain(&self, outcome: &Outcome) -> alias::Box<[Contradicted]> {
         let step = |parent: ObligationId, child: ObligationId| {
-            (self.dependencies(parent).into_iter())
+            self.dependencies(parent)
+                .into_iter()
                 .find(|dependency| dependency.obligation == child)
                 .map(|dependency| dependency.step)
         };
@@ -2452,7 +2483,9 @@ impl<'db> Solver<'db> {
                 .then(|| path[..path.len() - 1].to_vec()),
             _ => None,
         };
-        let contradictions: Vec<_> = (outcome.diagnostics.iter())
+        let contradictions: Vec<_> = outcome
+            .diagnostics
+            .iter()
             .filter_map(|diagnostic| match diagnostic.issue {
                 Issue::Contradiction(contradiction) => {
                     Some((diagnostic.path.clone(), contradiction))
@@ -2476,18 +2509,23 @@ impl<'db> Solver<'db> {
                 causes.push(cause);
             }
         }
-        (causes.into_iter())
+        causes
+            .into_iter()
             .map(|(path, contradiction)| Contradicted {
                 contradiction,
-                path: (path.iter().enumerate())
+                path: path
+                    .iter()
+                    .enumerate()
                     .map(|(index, &obligation)| Node {
                         step: index
                             .checked_sub(1)
                             .and_then(|parent| step(path[parent], obligation)),
-                        sides: (self.relation(obligation).sides()).map(|(actual, expected)| {
+                        sides: self.relation(obligation).sides().map(|(actual, expected)| {
                             (self.reify(actual).ok(), self.reify(expected).ok())
                         }),
-                        found: (self.relation(obligation).sides())
+                        found: self
+                            .relation(obligation)
+                            .sides()
                             .filter(|&(actual, _)| self.reify(actual).is_err())
                             .and_then(|(actual, _)| self.reify_found(actual).ok()),
                     })
@@ -2652,7 +2690,8 @@ impl<'db> Solver<'db> {
             && (self.guarded(parent) || self.guards(&step, self.relation(parent), relation));
         let child = self.enqueue(relation, guarded);
         if step != Step::BoundPropagation && step != Step::Assignment {
-            (self.progress_mut(parent).active)
+            self.progress_mut(parent)
+                .active
                 .borrow_mut()
                 .push((child, step.clone()));
         }
@@ -3184,7 +3223,10 @@ impl<'db> Solver<'db> {
     /// arguments
     fn metatype_reach(&self, nominal: &Nominal) -> Result<Term, Issue> {
         // The class's arguments are the environment's, in order
-        let args = (nominal.arguments.iter().enumerate())
+        let args = nominal
+            .arguments
+            .iter()
+            .enumerate()
             .map(|(slot, &argument)| {
                 Argument::Positional(self.db.intern(Type::Bound {
                     reference: BoundRef::new(0, slot),
@@ -3193,8 +3235,10 @@ impl<'db> Solver<'db> {
             })
             .collect();
         let meta = self.db.meta(nominal.declaration, args);
-        let widened =
-            (self.db.widen_meta(meta)).ok_or(Residual::MissingIntrinsic(Intrinsic::Type))?;
+        let widened = self
+            .db
+            .widen_meta(meta)
+            .ok_or(Residual::MissingIntrinsic(Intrinsic::Type))?;
         Ok(self.view(widened, nominal.environment))
     }
 
@@ -3335,7 +3379,7 @@ impl<'db> Solver<'db> {
         #[cfg(feature = "debug")]
         for (index, outcome) in outcomes.iter().enumerate() {
             // The first diagnostic that explains the status
-            let issue = (outcome.diagnostics.iter()).find_map(|diagnostic| {
+            let issue = outcome.diagnostics.iter().find_map(|diagnostic| {
                 match (outcome.status, diagnostic.issue) {
                     (Status::Contradicted, Issue::Contradiction(contradiction)) => {
                         Some(format!(" ({contradiction:?})"))
@@ -3492,7 +3536,9 @@ impl<'db> Solver<'db> {
         steps: &[Option<Step>],
         back: Option<&Step>,
     ) -> bool {
-        let edges = (cycle.iter().zip(cycle.iter().skip(1).chain(cycle.first())))
+        let edges = cycle
+            .iter()
+            .zip(cycle.iter().skip(1).chain(cycle.first()))
             .zip(steps.iter().map(Option::as_ref).chain([back]));
         cycle.iter().all(|&id| self.closed_relation(id))
             && edges.into_iter().any(|((&from, &to), step)| {
@@ -3575,7 +3621,9 @@ impl<'db> Solver<'db> {
             }
             stack.push((id, true, None));
             let premises = self.progress(id).active.borrow();
-            for dependency in (self.dependencies(id).into_iter())
+            for dependency in self
+                .dependencies(id)
+                .into_iter()
                 .filter(|d| premises.contains(&(d.obligation, d.step.clone())))
             {
                 stack.push((dependency.obligation, false, Some(dependency.step)));

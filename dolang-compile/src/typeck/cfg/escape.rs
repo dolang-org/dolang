@@ -117,11 +117,16 @@ impl Ir {
             block.escaped = entry;
         }
         for func in &mut self.funcs {
-            let cached: Vec<VarId> = (func.captures.iter().copied())
+            let cached: Vec<VarId> = func
+                .captures
+                .iter()
+                .copied()
                 .filter(|&var| cacheable(&self.vars[var.index()]))
                 .collect();
             if !cached.is_empty() {
-                (self.blocks[func.entry.index()].steps).insert(0, Step::Cache(cached));
+                self.blocks[func.entry.index()]
+                    .steps
+                    .insert(0, Step::Cache(cached));
             }
         }
     }
@@ -149,7 +154,8 @@ fn analyze(ir: &Ir) -> (Vec<BitBox>, Vec<VarId>) {
             ends.entry((data.func, depth)).or_default().push(target);
         }
     }
-    let mut entries: Vec<BitBox> = (ir.blocks())
+    let mut entries: Vec<BitBox> = ir
+        .blocks()
         .map(|(id, _)| bitbox![0; width(ir, id)])
         .collect();
     let mut uncached = Vec::new();

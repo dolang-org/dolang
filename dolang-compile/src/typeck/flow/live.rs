@@ -118,7 +118,7 @@ impl Collect<'_> {
             Step::Cache(vars) => vars.iter().for_each(|&var| self.write(var)),
             &Step::Escape { supers, .. } => {
                 let func = self.ir.func(self.func);
-                let supers = (func.supers.iter()).filter(|_| supers);
+                let supers = func.supers.iter().filter(|_| supers);
                 for &var in func.fields.iter().chain(supers) {
                     self.read(var);
                 }
@@ -213,7 +213,7 @@ pub(super) fn live(
     }
     let mut order: Vec<BlockId> = ir.blocks().map(|(id, _)| id).collect();
     order.sort_by_key(|block| Reverse(rank[block.index()]));
-    let mut live: Vec<BitBox> = (ir.blocks()).map(|(id, _)| bitbox![0; width(id)]).collect();
+    let mut live: Vec<BitBox> = ir.blocks().map(|(id, _)| bitbox![0; width(id)]).collect();
     let union = |into: &mut BitBox, from: &BitBox| {
         from.iter_ones().for_each(|slot| into.set(slot, true));
     };

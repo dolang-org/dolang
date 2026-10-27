@@ -1547,7 +1547,8 @@ impl<'s> Scope<'s> {
             return None;
         };
         let var = vars[*index.get(&sym)?].get().0;
-        (var.flags.contains(VarFlags::PATTERN_PENDING))
+        var.flags
+            .contains(VarFlags::PATTERN_PENDING)
             .then(|| var.origin.name())
             .flatten()
     }
@@ -1602,7 +1603,8 @@ impl<'s> Scope<'s> {
             Self::Nested { vars, parent, .. } => {
                 if res.depth == 0 {
                     let var = vars[res.index].get().0;
-                    (var.flags.contains(VarFlags::PATTERN_PENDING))
+                    var.flags
+                        .contains(VarFlags::PATTERN_PENDING)
                         .then(|| var.origin.name())
                         .flatten()
                 } else {
@@ -2493,7 +2495,9 @@ impl<'a> Elaborater<'a> {
             if current == 0 {
                 frame.first_span = pattern.span();
             } else {
-                let mut missing: Vec<_> = (frame.first.iter())
+                let mut missing: Vec<_> = frame
+                    .first
+                    .iter()
                     .filter(|(sym, _)| !frame.seen.contains_key(sym))
                     .map(|(_, &(_, binding))| binding)
                     .collect();
