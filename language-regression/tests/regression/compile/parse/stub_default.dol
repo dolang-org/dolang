@@ -1,0 +1,6 @@
+def f x = ...rest
+# error: `...` must be the whole default of a parameter
+#   --> stub_default.dol:LL:LL
+#    |
+# LL | def f x = ...rest
+#    |              ^^^^

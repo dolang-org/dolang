@@ -174,10 +174,10 @@ pub def diff
   after @ (Str | Bin)
   # Source filename for the
   # patch headers.
-  :source @ (Path | Str) = nil
+  :source @ (Path | Str) = ...
   # Target filename for the
   # patch headers.
-  :target @ (Path | Str) = nil
+  :target @ (Path | Str) = ...
 do -> Patch
   ...
 

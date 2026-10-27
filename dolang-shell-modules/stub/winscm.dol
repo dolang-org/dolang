@@ -554,7 +554,7 @@ pub class ScManager
     name @ Str
     # Rights the returned handle requests. Defaults to
     # `:SERVICE_QUERY_STATUS:`.
-    :access @ ServiceAccessMaskSpec = nil
+    :access @ ServiceAccessMaskSpec = ...
   do -> Service
 
   # Opens an existing service and calls `func` with it. The service handle is
@@ -565,7 +565,7 @@ pub class ScManager
     name @ Str
     # Rights the returned handle requests. Defaults to
     # `:SERVICE_QUERY_STATUS:`.
-    :access @ ServiceAccessMaskSpec = nil
+    :access @ ServiceAccessMaskSpec = ...
     # Called with the [`Service`](winscm.Service).
     func @ (Service -> R)
   do -> R
@@ -588,7 +588,7 @@ pub class ScManager
     # Service name.
     name @ Str
     # Display name. Omit to pass `NULL` to Windows.
-    :display_name @ Str = nil
+    :display_name @ Str = ...
     # Service executable path or command line. Omit to pass `NULL` to Windows.
     #
     # A [`Str`](std.Str) is passed to Windows verbatim. An absolute
@@ -597,24 +597,24 @@ pub class ScManager
     # [`Str`](std.Str) values or absolute
     # [`fs.windows.Path`](fs.windows.Path) values; each element is quoted
     # with the Windows command-line rules.
-    :binary_path @ BinaryPathSpec = nil
+    :binary_path @ BinaryPathSpec = ...
     # Service type. Defaults to `:WIN32_OWN_PROCESS:`.
-    :service_type @ ServiceTypeSpec = nil
+    :service_type @ ServiceTypeSpec = ...
     # Start type. Defaults to `:DEMAND_START:`.
-    :start_type @ StartType = nil
+    :start_type @ StartType = ...
     # Error control level. Defaults to `:NORMAL:`.
-    :error_control @ ErrorControl = nil
+    :error_control @ ErrorControl = ...
     # Rights the returned handle requests. Defaults to
     # `:SERVICE_QUERY_STATUS:`.
-    :access @ ServiceAccessMaskSpec = nil
+    :access @ ServiceAccessMaskSpec = ...
     # Load-order group.
-    :load_order_group @ Str = nil
+    :load_order_group @ Str = ...
     # Service or load-order-group names this service depends on.
-    :dependencies @ Iterable[Str] = nil
+    :dependencies @ Iterable[Str] = ...
     # Account the service runs as.
-    :service_start_name @ Str = nil
+    :service_start_name @ Str = ...
     # Password for `service_start_name`.
-    :password @ Str = nil
+    :password @ Str = ...
   do -> Service
 
   # Creates a service and calls `func` with it. The service handle is closed
@@ -624,26 +624,26 @@ pub class ScManager
     # Service name.
     name @ Str
     # Display name. Omit to pass `NULL` to Windows.
-    :display_name @ Str = nil
+    :display_name @ Str = ...
     # Service executable path or command line. Omit to pass `NULL` to Windows.
-    :binary_path @ BinaryPathSpec = nil
+    :binary_path @ BinaryPathSpec = ...
     # Service type. Defaults to `:WIN32_OWN_PROCESS:`.
-    :service_type @ ServiceTypeSpec = nil
+    :service_type @ ServiceTypeSpec = ...
     # Start type. Defaults to `:DEMAND_START:`.
-    :start_type @ StartType = nil
+    :start_type @ StartType = ...
     # Error control level. Defaults to `:NORMAL:`.
-    :error_control @ ErrorControl = nil
+    :error_control @ ErrorControl = ...
     # Rights the returned handle requests. Defaults to
     # `:SERVICE_QUERY_STATUS:`.
-    :access @ ServiceAccessMaskSpec = nil
+    :access @ ServiceAccessMaskSpec = ...
     # Load-order group.
-    :load_order_group @ Str = nil
+    :load_order_group @ Str = ...
     # Service or load-order-group names this service depends on.
-    :dependencies @ Iterable[Str] = nil
+    :dependencies @ Iterable[Str] = ...
     # Account the service runs as.
-    :service_start_name @ Str = nil
+    :service_start_name @ Str = ...
     # Password for `service_start_name`.
-    :password @ Str = nil
+    :password @ Str = ...
     # Called with the [`Service`](winscm.Service).
     func @ (Service -> R)
   do -> R
@@ -663,9 +663,9 @@ pub class ScManager
   pub def enumerate_services
     self
     # Types to include. Defaults to `:WIN32:`.
-    :service_type @ ServiceTypeSpec = nil
+    :service_type @ ServiceTypeSpec = ...
     # Which services to include. Defaults to `:ALL:`.
-    :state_filter @ StateFilter = nil
+    :state_filter @ StateFilter = ...
   do -> Iter[ServiceInfo]
     ...
 
@@ -751,24 +751,24 @@ pub class Service
   pub def update_config
     self
     # Service type flags.
-    :service_type @ ServiceTypeSpec = nil
+    :service_type @ ServiceTypeSpec = ...
     # Start type.
-    :start_type @ StartType = nil
+    :start_type @ StartType = ...
     # Error control level.
-    :error_control @ ErrorControl = nil
+    :error_control @ ErrorControl = ...
     # Service command line, taking the forms
     # [`create_service`](winscm.ScManager.create_service) accepts.
-    :binary_path @ BinaryPathSpec = nil
+    :binary_path @ BinaryPathSpec = ...
     # Load-order group.
-    :load_order_group @ Str = nil
+    :load_order_group @ Str = ...
     # Service or load-order-group names this service depends on.
-    :dependencies @ Iterable[Str] = nil
+    :dependencies @ Iterable[Str] = ...
     # Account the service runs as.
-    :service_start_name @ Str = nil
+    :service_start_name @ Str = ...
     # Password for `service_start_name`.
-    :password @ Str = nil
+    :password @ Str = ...
     # Display name.
-    :display_name @ Str = nil
+    :display_name @ Str = ...
   do
     ...
 
@@ -776,15 +776,15 @@ pub class Service
   pub def sec_desc
     self
     # Load the owner SID. Defaults to `true`.
-    :owner @ Bool = nil
+    :owner @ Bool = ...
     # Load the primary group SID. Defaults to
     # `true`.
-    :group @ Bool = nil
+    :group @ Bool = ...
     # Load the discretionary ACL. Defaults to
     # `true`.
-    :dacl @ Bool = nil
+    :dacl @ Bool = ...
     # Load the system ACL. Defaults to `false`.
-    :sacl @ Bool = nil
+    :sacl @ Bool = ...
   do -> SecDesc
     ...
 
@@ -792,7 +792,7 @@ pub class Service
   pub def update_sec_desc
     self
     # Descriptor to apply.
-    desc @ SecDescSpec = nil
+    desc @ SecDescSpec = ...
     # Components and control flags, instead of or alongside `desc`.
     ...options @ SecDescOptions
   do
@@ -939,14 +939,14 @@ pub class ServiceInfo
 # ```
 @def open
   # Rights the returned handle requests. Defaults to `:SC_MANAGER_CONNECT:`.
-  :access @ ManagerAccessMaskSpec = nil
+  :access @ ManagerAccessMaskSpec = ...
 do -> ScManager
 
 # Opens the local Service Control Manager and calls `func` with it. The
 # manager handle is closed when `func` returns.
 @def open[R]
   # Rights the returned handle requests. Defaults to `:SC_MANAGER_CONNECT:`.
-  :access @ ManagerAccessMaskSpec = nil
+  :access @ ManagerAccessMaskSpec = ...
   # Called with the [`ScManager`](winscm.ScManager).
   func @ (ScManager -> R)
 do -> R

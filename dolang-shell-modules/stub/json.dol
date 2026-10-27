@@ -98,6 +98,6 @@ pub def encode
   # The value to serialize.
   value @ EncodeValue
   # Spaces per level; one line when omitted.
-  :indent @ Int = nil
+  :indent @ Int = ...
 do -> Str
   ...

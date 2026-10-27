@@ -204,9 +204,9 @@ pub class Key
     # Path to the subkey, relative to this key.
     subpath @ Str
     # Registry view. Defaults to `:NATIVE:`.
-    :view @ RegistryView = nil
+    :view @ RegistryView = ...
     # Access rights. Defaults to `:READ:`.
-    :access @ AccessMaskSpec = nil
+    :access @ AccessMaskSpec = ...
   do -> Key
 
   # Creates or opens a subkey and calls `func` with it. The key is closed when
@@ -216,9 +216,9 @@ pub class Key
     # Path to the subkey, relative to this key.
     subpath @ Str
     # Registry view. Defaults to `:NATIVE:`.
-    :view @ RegistryView = nil
+    :view @ RegistryView = ...
     # Access rights. Defaults to `:READ:`.
-    :access @ AccessMaskSpec = nil
+    :access @ AccessMaskSpec = ...
     # Called with the new `Key`.
     func @ (Key -> R)
   do -> R
@@ -251,12 +251,12 @@ pub class Key
     # Path to the subkey, relative to this key.
     subpath @ Str
     # Registry view. Defaults to `:NATIVE:`.
-    :view @ RegistryView = nil
+    :view @ RegistryView = ...
     # Delete the subkey's values and descendants
     # too. Without it a subkey that has children is refused.
-    :all @ Bool = nil
+    :all @ Bool = ...
     # Treat a missing subkey as success.
-    :ignore @ Bool = nil
+    :ignore @ Bool = ...
   do
     ...
 
@@ -352,7 +352,7 @@ pub class Key
     link_subpath @ Str
     # Registry view used for both the target mapping and the destination.
     # Defaults to `:NATIVE:`.
-    :view @ RegistryView = nil
+    :view @ RegistryView = ...
   do
     ...
 
@@ -377,11 +377,11 @@ pub class Key
     # Path to the subkey, relative to this key.
     subpath @ Str
     # Registry view. Defaults to `:NATIVE:`.
-    :view @ RegistryView = nil
+    :view @ RegistryView = ...
     # Access rights. Defaults to `:READ:`.
-    :access @ AccessMaskSpec = nil
+    :access @ AccessMaskSpec = ...
     # Link resolution. Defaults to `:TARGET:`.
-    :resolve @ LinkResolution = nil
+    :resolve @ LinkResolution = ...
   do -> Key
 
   # Opens a subkey and calls `func` with it. The key is closed when `func`
@@ -391,11 +391,11 @@ pub class Key
     # Path to the subkey, relative to this key.
     subpath @ Str
     # Registry view. Defaults to `:NATIVE:`.
-    :view @ RegistryView = nil
+    :view @ RegistryView = ...
     # Access rights. Defaults to `:READ:`.
-    :access @ AccessMaskSpec = nil
+    :access @ AccessMaskSpec = ...
     # Link resolution. Defaults to `:TARGET:`.
-    :resolve @ LinkResolution = nil
+    :resolve @ LinkResolution = ...
     # Called with the `Key`.
     func @ (Key -> R)
   do -> R
@@ -426,7 +426,7 @@ pub class Key
     # Link path relative to this key.
     subpath @ Str
     # Registry view. Defaults to `:NATIVE:`.
-    :view @ RegistryView = nil
+    :view @ RegistryView = ...
   do -> LinkTarget
     ...
 
@@ -443,15 +443,15 @@ pub class Key
   pub def sec_desc
     self
     # Load the owner SID. Defaults to `true`.
-    :owner @ Bool = nil
+    :owner @ Bool = ...
     # Load the primary group SID. Defaults to
     # `true`.
-    :group @ Bool = nil
+    :group @ Bool = ...
     # Load the discretionary ACL. Defaults to
     # `true`.
-    :dacl @ Bool = nil
+    :dacl @ Bool = ...
     # Load the system ACL. Defaults to `false`.
-    :sacl @ Bool = nil
+    :sacl @ Bool = ...
   do -> SecDesc
     ...
 
@@ -493,7 +493,7 @@ pub class Key
     # Coercing a `Bool` into a DWORD or QWORD kind, whether existing or given
     # here, keeps that kind; reading it back returns an
     # [`Int`](std.Int).
-    :kind @ ValueKind = nil
+    :kind @ ValueKind = ...
   do
     ...
 
@@ -529,7 +529,7 @@ pub class Key
   pub def update_sec_desc
     self
     # Descriptor to apply.
-    desc @ SecDescSpec = nil
+    desc @ SecDescSpec = ...
     # Components and control flags, instead of or alongside `desc`.
     ...options @ SecDescOptions
   do
@@ -628,9 +628,9 @@ pub class Value
   # Registry root to open.
   root @ RegistryRoot
   # Registry view. Defaults to `:NATIVE:`.
-  :view @ RegistryView = nil
+  :view @ RegistryView = ...
   # Access rights. Defaults to `:READ:`.
-  :access @ AccessMaskSpec = nil
+  :access @ AccessMaskSpec = ...
 do -> Key
 
 # Opens a registry root and calls `func` with it. The key is closed when
@@ -639,9 +639,9 @@ do -> Key
   # Registry root to open.
   root @ RegistryRoot
   # Registry view. Defaults to `:NATIVE:`.
-  :view @ RegistryView = nil
+  :view @ RegistryView = ...
   # Access rights. Defaults to `:READ:`.
-  :access @ AccessMaskSpec = nil
+  :access @ AccessMaskSpec = ...
   # Called with the [`Key`](winreg.Key).
   func @ (Key -> R)
 do -> R

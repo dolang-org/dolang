@@ -198,7 +198,7 @@ pub class BaseFile: Io
     # [`FileLock`](fs.FileLock).
     func @ (FileLock -> R)
     # Acquire a shared rather than exclusive lock.
-    :shared @ Bool = nil
+    :shared @ Bool = ...
   do -> R
     ...
 
@@ -228,7 +228,7 @@ pub class BaseFile: Io
     # [`FileLock`](fs.FileLock).
     func @ (FileLock -> R)
     # Acquire a shared rather than exclusive lock.
-    :shared @ Bool = nil
+    :shared @ Bool = ...
   do -> R
     ...
 
@@ -254,7 +254,7 @@ pub class BaseFile: Io
     # `size` bytes are read however many transfers that takes; a shorter result
     # means the end of the file was reached, and reading entirely past the end
     # gives an empty result rather than an error.
-    size @ Int = nil
+    size @ Int = ...
     # Byte offset to read from. Without it, reads at
     # the cursor and advances it.
     #
@@ -266,7 +266,7 @@ pub class BaseFile: Io
     # be in flight on one handle at once — several strands can read different
     # regions of the same open file concurrently. Streaming reads still take
     # the handle exclusively, since they move the cursor.
-    :offset @ Int = nil
+    :offset @ Int = ...
   do -> Bin
     ...
 
@@ -313,7 +313,7 @@ pub class BaseFile: Io
     #
     # As with [`read`](fs.BaseFile.read), any number of positional writes may be
     # in flight on one handle at once.
-    :offset @ Int = nil
+    :offset @ Int = ...
     # Data to write. Strings
     # are written as UTF-8 text.
     *data @ (Str | Bin)
@@ -326,14 +326,14 @@ pub class BaseFile: Io
     # Handle to write to.
     dst @ BaseFile
     # Absolute byte region of the source.
-    :range @ Range[Int] = nil
+    :range @ Range[Int] = ...
     # Number of bytes to take from the source cursor.
-    :size @ Int = nil
+    :size @ Int = ...
     # Absolute byte offset in the destination.
-    :offset @ Int = nil
+    :offset @ Int = ...
     # How blocks should be shared between the source and destination. Defaults
     # to `:AUTO:`.
-    :clone @ CloneMode = nil
+    :clone @ CloneMode = ...
   do -> Int
     ...
 
@@ -367,7 +367,7 @@ pub class BaseFile: Io
     # Flush data only, skipping unneeded metadata.
     # See [`fs.sync`](fs.sync) for what this selects and what a flush
     # does and does not guarantee.
-    :data @ Bool = nil
+    :data @ Bool = ...
   do
     ...
 
@@ -406,15 +406,15 @@ pub class BaseFile: Io
   pub def sec_desc
     self
     # Load the owner SID. Defaults to `true`.
-    :owner @ Bool = nil
+    :owner @ Bool = ...
     # Load the primary group SID. Defaults to
     # `true`.
-    :group @ Bool = nil
+    :group @ Bool = ...
     # Load the discretionary ACL. Defaults to
     # `true`.
-    :dacl @ Bool = nil
+    :dacl @ Bool = ...
     # Load the system ACL. Defaults to `false`.
-    :sacl @ Bool = nil
+    :sacl @ Bool = ...
   do -> SecDesc
     ...
 
@@ -429,7 +429,7 @@ pub class BaseFile: Io
   pub def update_sec_desc
     self
     # Descriptor to apply.
-    desc @ SecDescSpec = nil
+    desc @ SecDescSpec = ...
     # Components and control flags, instead of or alongside `desc`.
     ...options @ SecDescOptions
   do
@@ -445,10 +445,10 @@ pub class BaseFile: Io
     self
     # ACL format to query. Defaults to
     # `:POSIX:`.
-    :kind @ (:POSIX: | :NFS4: | :MACOS:) = nil
+    :kind @ (:POSIX: | :NFS4: | :MACOS:) = ...
     # Query the directory's inheritable default
     # ACL.
-    :default @ Bool = nil
+    :default @ Bool = ...
   do -> (security.AnyAcl | nil)
     ...
 
@@ -463,10 +463,10 @@ pub class BaseFile: Io
     acl @ (security.AclSpec | nil)
     # Required for an untyped ACL
     # specification.
-    :kind @ (:POSIX: | :NFS4: | :MACOS:) = nil
+    :kind @ (:POSIX: | :NFS4: | :MACOS:) = ...
     # Update the directory's inheritable default
     # ACL.
-    :default @ Bool = nil
+    :default @ Bool = ...
   do
     ...
 
@@ -485,7 +485,7 @@ pub class BaseFile: Io
   pub def xattrs
     self
     # Namespace to query; `:ANY:` lists all namespaces.
-    :namespace @ (XattrNamespace | :ANY:) = nil
+    :namespace @ (XattrNamespace | :ANY:) = ...
   do -> Iter[XattrEntry]
     ...
 
@@ -503,7 +503,7 @@ pub class BaseFile: Io
     # or entry from [`xattrs`](fs.BaseFile.xattrs).
     name @ (Str | XattrEntry)
     # Namespace to query.
-    :namespace @ XattrNamespace = nil
+    :namespace @ XattrNamespace = ...
   do -> Bin
     ...
 
@@ -527,7 +527,7 @@ pub class BaseFile: Io
     # use UTF-8.
     value @ (Str | Bin)
     # Namespace to update.
-    :namespace @ XattrNamespace = nil
+    :namespace @ XattrNamespace = ...
   do
     ...
 
@@ -545,7 +545,7 @@ pub class BaseFile: Io
     # or entry from [`xattrs`](fs.BaseFile.xattrs).
     name @ (Str | XattrEntry)
     # Namespace to update.
-    :namespace @ XattrNamespace = nil
+    :namespace @ XattrNamespace = ...
   do
     ...
 
@@ -598,12 +598,12 @@ pub class BaseFile: Io
   pub def seek
     self
     # Byte offset relative to the current position.
-    offset @ Int = nil
+    offset @ Int = ...
     # Absolute byte offset from the start of the
     # file.
-    :start @ Int = nil
+    :start @ Int = ...
     # Byte offset relative to the end of the file.
-    :end @ Int = nil
+    :end @ Int = ...
   do -> Int
     ...
 
@@ -664,7 +664,7 @@ pub class File: Iter[Str] BaseFile
   pub def read_str
     self
     # Number of bytes to read. Without it, reads to the end of the file.
-    size @ Int = nil
+    size @ Int = ...
   do -> Str
     ...
 
@@ -1071,7 +1071,7 @@ pub class Path
     self
     # Base directory. Defaults
     # to the current working directory.
-    base @ (Str | Path) = nil
+    base @ (Str | Path) = ...
   do -> Path
     ...
 
@@ -1079,7 +1079,7 @@ pub class Path
   pub def shorten
     self
     # Base directory. Defaults to the current working directory.
-    base @ (Str | Path) = nil
+    base @ (Str | Path) = ...
   do -> Path
     ...
 
@@ -1091,9 +1091,9 @@ pub class Path
   @def open
     self
     # File access mode. Defaults to `"r"`.
-    mode @ OpenMode = nil
+    mode @ OpenMode = ...
     # Whether to buffer the file.
-    :buffer @ true = nil
+    :buffer @ true = ...
   do -> File
 
   # The method form of [`fs.open`](fs.open) with a block.
@@ -1102,7 +1102,7 @@ pub class Path
     # Block to run with the file; it is closed when the block returns.
     func @ (File -> R)
     # Whether to buffer the file.
-    :buffer @ true = nil
+    :buffer @ true = ...
   do -> R
 
   # The method form of [`fs.open`](fs.open) with a mode and a block.
@@ -1113,14 +1113,14 @@ pub class Path
     # Block to run with the file; it is closed when the block returns.
     func @ (File -> R)
     # Whether to buffer the file.
-    :buffer @ true = nil
+    :buffer @ true = ...
   do -> R
 
   # The method form of [`fs.open`](fs.open) for an unbuffered file.
   @def open
     self
     # File access mode. Defaults to `"r"`.
-    mode @ OpenMode = nil
+    mode @ OpenMode = ...
     # Opens an unbuffered [`RawFile`](fs.RawFile).
     :buffer @ false
   do -> RawFile
@@ -1186,7 +1186,7 @@ pub class Path
   pub def sync
     self
     # Flush data only, skipping unneeded metadata.
-    :data @ Bool = nil
+    :data @ Bool = ...
   do
     ...
 
@@ -1194,7 +1194,7 @@ pub class Path
   pub def metadata
     self
     # Resolution mode. Defaults to `:TARGET:`.
-    :resolve @ Resolve = nil
+    :resolve @ Resolve = ...
   do -> (UnixMetadata | WindowsMetadata)
     ...
 
@@ -1202,7 +1202,7 @@ pub class Path
   pub def fs_metadata
     self
     # Resolution mode. Defaults to `:TARGET:`.
-    :resolve @ Resolve = nil
+    :resolve @ Resolve = ...
   do -> (UnixFsMetadata | WindowsFsMetadata)
     ...
 
@@ -1211,40 +1211,40 @@ pub class Path
   pub def update_metadata
     self
     # Resolution mode. Defaults to `:TARGET:`.
-    :resolve @ Resolve = nil
-    :mode @ (Int | Mode) = nil
-    :owner @ (Int | Str | Sid) = nil
-    :group @ (Int | Str | Sid) = nil
-    :modified @ DateTime = nil
-    :accessed @ DateTime = nil
-    :created @ DateTime = nil
-    :readonly @ Bool = nil
-    :hidden @ Bool = nil
-    :system @ Bool = nil
-    :archive @ Bool = nil
-    :compressed @ Bool = nil
-    :sparse @ Bool = nil
-    :temporary @ Bool = nil
-    :offline @ Bool = nil
-    :not_content_indexed @ Bool = nil
-    :immutable @ Bool = nil
-    :append_only @ Bool = nil
-    :no_dump @ Bool = nil
-    :no_atime @ Bool = nil
-    :no_copy_on_write @ Bool = nil
-    :dir_sync @ Bool = nil
-    :casefold @ Bool = nil
-    :data_journaling @ Bool = nil
-    :no_compress @ Bool = nil
-    :project_inherit @ Bool = nil
-    :secure_delete @ Bool = nil
-    :sync @ Bool = nil
-    :no_tail_merge @ Bool = nil
-    :top_dir @ Bool = nil
-    :undelete @ Bool = nil
-    :direct_access @ Bool = nil
-    :extent_format @ Bool = nil
-    :opaque @ Bool = nil
+    :resolve @ Resolve = ...
+    :mode @ (Int | Mode) = ...
+    :owner @ (Int | Str | Sid) = ...
+    :group @ (Int | Str | Sid) = ...
+    :modified @ DateTime = ...
+    :accessed @ DateTime = ...
+    :created @ DateTime = ...
+    :readonly @ Bool = ...
+    :hidden @ Bool = ...
+    :system @ Bool = ...
+    :archive @ Bool = ...
+    :compressed @ Bool = ...
+    :sparse @ Bool = ...
+    :temporary @ Bool = ...
+    :offline @ Bool = ...
+    :not_content_indexed @ Bool = ...
+    :immutable @ Bool = ...
+    :append_only @ Bool = ...
+    :no_dump @ Bool = ...
+    :no_atime @ Bool = ...
+    :no_copy_on_write @ Bool = ...
+    :dir_sync @ Bool = ...
+    :casefold @ Bool = ...
+    :data_journaling @ Bool = ...
+    :no_compress @ Bool = ...
+    :project_inherit @ Bool = ...
+    :secure_delete @ Bool = ...
+    :sync @ Bool = ...
+    :no_tail_merge @ Bool = ...
+    :top_dir @ Bool = ...
+    :undelete @ Bool = ...
+    :direct_access @ Bool = ...
+    :extent_format @ Bool = ...
+    :opaque @ Bool = ...
   do
     ...
 
@@ -1262,9 +1262,9 @@ pub class Path
     pattern @ Str
     # Maximum directory depth to traverse. Defaults
     # to unlimited.
-    :max_depth @ Int = nil
+    :max_depth @ Int = ...
     # Resolution mode. Defaults to `:LINK:`.
-    :resolve @ Resolve = nil
+    :resolve @ Resolve = ...
   do -> UnpackIter[Path]
     ...
 
@@ -1272,7 +1272,7 @@ pub class Path
   pub def create_dir
     self
     # Create parent directories too.
-    :all @ Bool = nil
+    :all @ Bool = ...
   do
     ...
 
@@ -1280,9 +1280,9 @@ pub class Path
   pub def remove
     self
     # Remove directories recursively.
-    :all @ Bool = nil
+    :all @ Bool = ...
     # Treat a missing path as success.
-    :ignore @ Bool = nil
+    :ignore @ Bool = ...
   do
     ...
 
@@ -1290,10 +1290,10 @@ pub class Path
   pub def remove_dir
     self
     # Recursively prune empty directory subtrees.
-    :all @ Bool = nil
+    :all @ Bool = ...
     # Ignore missing directories and file-blocked
     # subtrees.
-    :ignore @ Bool = nil
+    :ignore @ Bool = ...
   do
     ...
 
@@ -1303,7 +1303,7 @@ pub class Path
     # Destination path.
     to @ (Str | Path)
     # Allow a recursive directory copy.
-    :all @ Bool = nil
+    :all @ Bool = ...
   do
     ...
 
@@ -1313,7 +1313,7 @@ pub class Path
     # Destination path.
     to @ (Str | Path)
     # Allow a recursive directory move.
-    :all @ Bool = nil
+    :all @ Bool = ...
   do
     ...
 
@@ -1323,7 +1323,7 @@ pub class Path
     # Destination path.
     to @ (Str | Path)
     # Whether to replace an existing destination.
-    :replace @ Bool = nil
+    :replace @ Bool = ...
   do
     ...
 
@@ -1346,12 +1346,12 @@ pub class Path
     self
     # ACL format to query. Defaults to
     # `:POSIX:`.
-    :kind @ (:POSIX: | :NFS4: | :MACOS:) = nil
+    :kind @ (:POSIX: | :NFS4: | :MACOS:) = ...
     # Query the directory's inheritable default
     # ACL.
-    :default @ Bool = nil
+    :default @ Bool = ...
     # Resolution mode. Defaults to `:TARGET:`.
-    :resolve @ Resolve = nil
+    :resolve @ Resolve = ...
   do -> (security.AnyAcl | nil)
     ...
 
@@ -1365,12 +1365,12 @@ pub class Path
     acl @ (security.AclSpec | nil)
     # Required for an untyped ACL
     # specification.
-    :kind @ (:POSIX: | :NFS4: | :MACOS:) = nil
+    :kind @ (:POSIX: | :NFS4: | :MACOS:) = ...
     # Update the directory's inheritable default
     # ACL.
-    :default @ Bool = nil
+    :default @ Bool = ...
     # Resolution mode. Defaults to `:TARGET:`.
-    :resolve @ Resolve = nil
+    :resolve @ Resolve = ...
   do
     ...
 
@@ -1378,9 +1378,9 @@ pub class Path
   pub def xattrs
     self
     # Namespace to query; `:ANY:` lists all namespaces.
-    :namespace @ (XattrNamespace | :ANY:) = nil
+    :namespace @ (XattrNamespace | :ANY:) = ...
     # Resolution mode. Defaults to `:TARGET:`.
-    :resolve @ Resolve = nil
+    :resolve @ Resolve = ...
   do -> Iter[XattrEntry]
     ...
 
@@ -1391,9 +1391,9 @@ pub class Path
     # or entry from [`xattrs`](fs.Path.xattrs).
     name @ (Str | XattrEntry)
     # Namespace to query.
-    :namespace @ XattrNamespace = nil
+    :namespace @ XattrNamespace = ...
     # Resolution mode. Defaults to `:TARGET:`.
-    :resolve @ Resolve = nil
+    :resolve @ Resolve = ...
   do -> Bin
     ...
 
@@ -1407,9 +1407,9 @@ pub class Path
     # use UTF-8.
     value @ (Str | Bin)
     # Namespace to update.
-    :namespace @ XattrNamespace = nil
+    :namespace @ XattrNamespace = ...
     # Resolution mode. Defaults to `:TARGET:`.
-    :resolve @ Resolve = nil
+    :resolve @ Resolve = ...
   do
     ...
 
@@ -1420,9 +1420,9 @@ pub class Path
     # or entry from [`xattrs`](fs.Path.xattrs).
     name @ (Str | XattrEntry)
     # Namespace to update.
-    :namespace @ XattrNamespace = nil
+    :namespace @ XattrNamespace = ...
     # Resolution mode. Defaults to `:TARGET:`.
-    :resolve @ Resolve = nil
+    :resolve @ Resolve = ...
   do
     ...
 
@@ -1480,9 +1480,9 @@ pub class XattrEntry
   # Path to the file to open.
   path @ (Str | Path)
   # File access mode. Defaults to `"r"`.
-  mode @ OpenMode = nil
+  mode @ OpenMode = ...
   # Whether to buffer the file.
-  :buffer @ true = nil
+  :buffer @ true = ...
 do -> File
 
 # Opens a file for reading and runs a block with it. The file is closed when
@@ -1498,7 +1498,7 @@ do -> File
   # Block to run with the file.
   func @ (File -> R)
   # Whether to buffer the file.
-  :buffer @ true = nil
+  :buffer @ true = ...
 do -> R
 
 # Opens a file with a mode and runs a block with it. The file is closed when
@@ -1516,7 +1516,7 @@ do -> R
   # Block to run with the file.
   func @ (File -> R)
   # Whether to buffer the file.
-  :buffer @ true = nil
+  :buffer @ true = ...
 do -> R
 
 # Opens an unbuffered file.
@@ -1530,7 +1530,7 @@ do -> R
   # Path to the file to open.
   path @ (Str | Path)
   # File access mode. Defaults to `"r"`.
-  mode @ OpenMode = nil
+  mode @ OpenMode = ...
   # Opens an unbuffered [`RawFile`](fs.RawFile).
   :buffer @ false
 do -> RawFile
@@ -1719,9 +1719,9 @@ pub def copy_data
   #
   # Using cursor-based source addressing advances the cursor by the amount
   # copied on success.
-  :range @ Range[Int] = nil
+  :range @ Range[Int] = ...
   # Number of bytes to take from the source cursor.
-  :size @ Int = nil
+  :size @ Int = ...
   # Absolute byte offset in the destination.
   #
   # ### Destination Addressing
@@ -1732,7 +1732,7 @@ pub def copy_data
   #
   # As expected, if the destination position would write past the current
   # end-of-file, the length of the file is extended.
-  :offset @ Int = nil
+  :offset @ Int = ...
   # How blocks should be shared between the source
   # and destination.
   #
@@ -1759,7 +1759,7 @@ pub def copy_data
   # unavailable the zeroes may consume physical storage. On Windows, a file
   # must be explicitly marked sparse to permit unallocated zero blocks; this
   # operation will not do so automatically.
-  :clone @ CloneMode = nil
+  :clone @ CloneMode = ...
 do -> Int
   ...
 
@@ -1804,7 +1804,7 @@ pub def sync
   # find the contents — notably the modification time — and so can avoid a
   # second write to the inode. A size change is still flushed either way.
   # Defaults to `false`.
-  :data @ Bool = nil
+  :data @ Bool = ...
 do
   ...
 
@@ -1840,7 +1840,7 @@ pub def metadata
   path @ (Str | Path)
   # Resolution mode. Defaults to
   # `:TARGET:`.
-  :resolve @ Resolve = nil
+  :resolve @ Resolve = ...
 do -> (UnixMetadata | WindowsMetadata)
   ...
 
@@ -1863,7 +1863,7 @@ pub def fs_metadata
   path @ (Str | Path)
   # Resolution mode. Defaults to
   # `:TARGET:`.
-  :resolve @ Resolve = nil
+  :resolve @ Resolve = ...
 do -> (UnixFsMetadata | WindowsFsMetadata)
   ...
 
@@ -1902,73 +1902,73 @@ do -> (UnixFsMetadata | WindowsFsMetadata)
 pub def update_metadata
   # Resolution mode. Defaults to
   # `:TARGET:`.
-  :resolve @ Resolve = nil
+  :resolve @ Resolve = ...
   # Unix permission mode.
-  :mode @ (Int | Mode) = nil
+  :mode @ (Int | Mode) = ...
   # Owner ID, name, or SID.
-  :owner @ (Int | Str | Sid) = nil
+  :owner @ (Int | Str | Sid) = ...
   # Group ID, name, or SID.
-  :group @ (Int | Str | Sid) = nil
+  :group @ (Int | Str | Sid) = ...
   # New modification time.
-  :modified @ DateTime = nil
+  :modified @ DateTime = ...
   # New access time.
-  :accessed @ DateTime = nil
+  :accessed @ DateTime = ...
   # New creation time. Windows only.
-  :created @ DateTime = nil
+  :created @ DateTime = ...
   # Readonly attribute. Windows.
-  :readonly @ Bool = nil
+  :readonly @ Bool = ...
   # Hidden attribute or flag.
-  :hidden @ Bool = nil
+  :hidden @ Bool = ...
   # System attribute. Windows.
-  :system @ Bool = nil
+  :system @ Bool = ...
   # Archive attribute. Windows.
-  :archive @ Bool = nil
+  :archive @ Bool = ...
   # Compressed flag.
-  :compressed @ Bool = nil
+  :compressed @ Bool = ...
   # Sparse attribute. Windows.
-  :sparse @ Bool = nil
+  :sparse @ Bool = ...
   # Temporary attribute. Windows.
-  :temporary @ Bool = nil
+  :temporary @ Bool = ...
   # Offline attribute. Windows.
-  :offline @ Bool = nil
+  :offline @ Bool = ...
   # Not-content-indexed attribute. Windows.
-  :not_content_indexed @ Bool = nil
+  :not_content_indexed @ Bool = ...
   # Immutable flag.
-  :immutable @ Bool = nil
+  :immutable @ Bool = ...
   # Append-only flag.
-  :append_only @ Bool = nil
+  :append_only @ Bool = ...
   # No-dump flag.
-  :no_dump @ Bool = nil
+  :no_dump @ Bool = ...
   # No-atime flag. Linux.
-  :no_atime @ Bool = nil
+  :no_atime @ Bool = ...
   # No-copy-on-write flag. Linux.
-  :no_copy_on_write @ Bool = nil
+  :no_copy_on_write @ Bool = ...
   # Synchronous-directory-updates flag. Linux.
-  :dir_sync @ Bool = nil
+  :dir_sync @ Bool = ...
   # Casefold flag. Linux.
-  :casefold @ Bool = nil
+  :casefold @ Bool = ...
   # Data-journaling flag. Linux.
-  :data_journaling @ Bool = nil
+  :data_journaling @ Bool = ...
   # Don't-compress flag. Linux.
-  :no_compress @ Bool = nil
+  :no_compress @ Bool = ...
   # Project-hierarchy flag. Linux.
-  :project_inherit @ Bool = nil
+  :project_inherit @ Bool = ...
   # Secure-deletion flag. Linux.
-  :secure_delete @ Bool = nil
+  :secure_delete @ Bool = ...
   # Synchronous-updates flag. Linux.
-  :sync @ Bool = nil
+  :sync @ Bool = ...
   # No-tail-merging flag. Linux.
-  :no_tail_merge @ Bool = nil
+  :no_tail_merge @ Bool = ...
   # Top-of-directory-hierarchy flag. Linux.
-  :top_dir @ Bool = nil
+  :top_dir @ Bool = ...
   # Undeletable flag. Linux.
-  :undelete @ Bool = nil
+  :undelete @ Bool = ...
   # Direct-access flag. Linux.
-  :direct_access @ Bool = nil
+  :direct_access @ Bool = ...
   # Extent-format flag. Linux.
-  :extent_format @ Bool = nil
+  :extent_format @ Bool = ...
   # Opaque flag. macOS.
-  :opaque @ Bool = nil
+  :opaque @ Bool = ...
   # Paths to update, in order.
   *paths @ (Str | Path)
 do
@@ -1998,12 +1998,12 @@ pub def acl
   path @ (Str | Path)
   # ACL format to query. Defaults to
   # `:POSIX:`.
-  :kind @ (:POSIX: | :NFS4: | :MACOS:) = nil
+  :kind @ (:POSIX: | :NFS4: | :MACOS:) = ...
   # Query the directory's inheritable default ACL.
-  :default @ Bool = nil
+  :default @ Bool = ...
   # Resolution mode. Defaults to
   # `:TARGET:`.
-  :resolve @ Resolve = nil
+  :resolve @ Resolve = ...
 do -> (security.AnyAcl | nil)
   ...
 
@@ -2033,12 +2033,12 @@ pub def set_acl
   acl @ (security.AclSpec | nil)
   # Required for an untyped ACL
   # specification.
-  :kind @ (:POSIX: | :NFS4: | :MACOS:) = nil
+  :kind @ (:POSIX: | :NFS4: | :MACOS:) = ...
   # Update the directory's inheritable default ACL.
-  :default @ Bool = nil
+  :default @ Bool = ...
   # Resolution mode. Defaults to
   # `:TARGET:`.
-  :resolve @ Resolve = nil
+  :resolve @ Resolve = ...
 do
   ...
 
@@ -2057,10 +2057,10 @@ pub def xattrs
   # Path to query.
   path @ (Str | Path)
   # Namespace to query; `:ANY:` lists all namespaces.
-  :namespace @ (XattrNamespace | :ANY:) = nil
+  :namespace @ (XattrNamespace | :ANY:) = ...
   # Resolution mode. Defaults to
   # `:TARGET:`.
-  :resolve @ Resolve = nil
+  :resolve @ Resolve = ...
 do -> Iter[XattrEntry]
   ...
 
@@ -2078,10 +2078,10 @@ pub def xattr
   # or entry from [`xattrs`](fs.xattrs).
   name @ (Str | XattrEntry)
   # Namespace to query.
-  :namespace @ XattrNamespace = nil
+  :namespace @ XattrNamespace = ...
   # Resolution mode. Defaults to
   # `:TARGET:`.
-  :resolve @ Resolve = nil
+  :resolve @ Resolve = ...
 do -> Bin
   ...
 
@@ -2106,10 +2106,10 @@ pub def set_xattr
   # use UTF-8.
   value @ (Str | Bin)
   # Namespace to update.
-  :namespace @ XattrNamespace = nil
+  :namespace @ XattrNamespace = ...
   # Resolution mode. Defaults to
   # `:TARGET:`.
-  :resolve @ Resolve = nil
+  :resolve @ Resolve = ...
 do
   ...
 
@@ -2127,10 +2127,10 @@ pub def remove_xattr
   # or entry from [`xattrs`](fs.xattrs).
   name @ (Str | XattrEntry)
   # Namespace to update.
-  :namespace @ XattrNamespace = nil
+  :namespace @ XattrNamespace = ...
   # Resolution mode. Defaults to
   # `:TARGET:`.
-  :resolve @ Resolve = nil
+  :resolve @ Resolve = ...
 do
   ...
 
@@ -2151,7 +2151,7 @@ pub def streams
   path @ (Str | Path)
   # Resolution mode. Defaults to
   # `:TARGET:`.
-  :resolve @ Resolve = nil
+  :resolve @ Resolve = ...
 do -> Iter[StreamEntry]
   ...
 
@@ -2202,9 +2202,9 @@ pub def glob
   pattern @ Str
   # Maximum directory depth to traverse. Defaults to
   # unlimited.
-  :max_depth @ Int = nil
+  :max_depth @ Int = ...
   # Resolution mode. Defaults to `:LINK:`.
-  :resolve @ Resolve = nil
+  :resolve @ Resolve = ...
 do -> UnpackIter[Path]
   ...
 
@@ -2221,7 +2221,7 @@ pub def create_dir
   # create.
   path @ (Str | Path)
   # Create parent directories too.
-  :all @ Bool = nil
+  :all @ Bool = ...
 do
   ...
 
@@ -2241,9 +2241,9 @@ do
 # ```
 pub def remove
   # Remove directories recursively.
-  :all @ Bool = nil
+  :all @ Bool = ...
   # Treat a missing path as success.
-  :ignore @ Bool = nil
+  :ignore @ Bool = ...
   # One or more paths to remove.
   *paths @ (Str | Path)
 do
@@ -2270,10 +2270,10 @@ do
 # ```
 pub def remove_dir
   # Recursively prune empty directory subtrees.
-  :all @ Bool = nil
+  :all @ Bool = ...
   # Ignore missing directories and file-blocked
   # subtrees.
-  :ignore @ Bool = nil
+  :ignore @ Bool = ...
   # One or more directories to
   # remove.
   *paths @ (Str | Path)
@@ -2297,7 +2297,7 @@ pub def copy
   # Destination path.
   to @ (Str | Path)
   # Allow a recursive directory copy.
-  :all @ Bool = nil
+  :all @ Bool = ...
 do
   ...
 
@@ -2320,7 +2320,7 @@ pub def move
   # Destination path.
   to @ (Str | Path)
   # Allow a recursive directory move.
-  :all @ Bool = nil
+  :all @ Bool = ...
 do
   ...
 
@@ -2347,7 +2347,7 @@ pub def rename
   # Destination path.
   to @ (Str | Path)
   # Whether to replace an existing destination.
-  :replace @ Bool = nil
+  :replace @ Bool = ...
 do
   ...
 
@@ -2557,7 +2557,7 @@ pub def relative
   path @ (Str | Path)
   # Base directory. Defaults to
   # the current working directory.
-  base @ (Str | Path) = nil
+  base @ (Str | Path) = ...
 do -> Path
   ...
 
@@ -2583,7 +2583,7 @@ pub def shorten
   # Path to shorten.
   path @ (Str | Path)
   # Base directory. Defaults to the current working directory.
-  base @ (Str | Path) = nil
+  base @ (Str | Path) = ...
 do -> Path
   ...
 
@@ -2633,7 +2633,7 @@ pub def cache_dir
   # | Non-macOS Unix | `(cache_dir() / "myapp")`           |
   # | macOS          | `(cache_dir() / "myapp")`           |
   # | Windows        | `(cache_dir() / "myapp" / "Cache")` |
-  :app @ Str = nil
+  :app @ Str = ...
 do -> Path
   ...
 
@@ -2647,7 +2647,7 @@ do -> Path
 pub def data_dir
   # Application name to scope the result to. Appends the name on Unix and
   # macOS, or the name followed by `data` on Windows.
-  :app @ Str = nil
+  :app @ Str = ...
 do -> Path
   ...
 
@@ -2657,7 +2657,7 @@ do -> Path
 # and `FOLDERID_LocalAppData` on Windows.
 pub def data_local_dir
   # Application name to scope the result to, as for [`data_dir`](fs.data_dir).
-  :app @ Str = nil
+  :app @ Str = ...
 do -> Path
   ...
 
@@ -2667,7 +2667,7 @@ do -> Path
 # Returns `nil` on macOS and Windows.
 pub def state_dir
   # Application name to append to the base directory.
-  :app @ Str = nil
+  :app @ Str = ...
 do -> (Path | nil)
   ...
 
@@ -2690,7 +2690,7 @@ do -> (Path | nil)
 pub def create_temp_dir
   # Parent directory. Defaults
   # to [`temp_dir()`](fs.temp_dir).
-  :parent @ (Str | Path) = nil
+  :parent @ (Str | Path) = ...
 do -> Path
   ...
 
@@ -2717,6 +2717,6 @@ pub def with_temp_dir[R]
   func @ (Path -> R)
   # Parent directory. Defaults
   # to [`temp_dir()`](fs.temp_dir).
-  :parent @ (Str | Path) = nil
+  :parent @ (Str | Path) = ...
 do -> R
   ...

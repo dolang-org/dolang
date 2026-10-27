@@ -20,3 +20,8 @@ do
 let f = do |?k: (a = 1)| a
 #           ^: operator
 dbg (f())
+
+# A `...` default raises when its argument is omitted.
+def g :limit = ...
+  #            ^~~: sigil
+  dbg $limit

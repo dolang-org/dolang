@@ -629,7 +629,7 @@ impl<'v> Vm<'v> {
         args: Args<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([], []) = unpack!(strand, args, 0, 0)?;
-        Err(Error::runtime(strand, "stub function called"))
+        Err(Error::runtime(strand, "stub expression evaluated"))
     }
 
     #[inline(never)]

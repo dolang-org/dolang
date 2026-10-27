@@ -10,7 +10,7 @@ pub def assert
   # Condition to test.
   cond @ Value
   # Message to add to the failure.
-  msg @ Str = nil
+  msg @ Str = ...
 do
   ...
 
@@ -23,7 +23,7 @@ pub def assert_not
   # Condition to test.
   cond @ Value
   # Message to add to the failure.
-  msg @ Str = nil
+  msg @ Str = ...
 do
   ...
 
@@ -38,7 +38,7 @@ pub def assert_eq
   # Expected value.
   right @ Value
   # Message to add to the failure.
-  msg @ Str = nil
+  msg @ Str = ...
 do
   ...
 
@@ -53,7 +53,7 @@ pub def assert_ne
   # Value it must differ from.
   right @ Value
   # Message to add to the failure.
-  msg @ Str = nil
+  msg @ Str = ...
 do
   ...
 
@@ -66,9 +66,9 @@ pub def assert_throws[E]
   # Error type expected, or a supertype of it.
   type @ Type[E]
   # Expected string form of the error.
-  :str @ Str = nil
+  :str @ Str = ...
   # Message to add to the failure.
-  :msg @ Str = nil
+  :msg @ Str = ...
   # Block to run.
   block @ (() -> Value)
 do -> E
@@ -85,6 +85,6 @@ pub def assert_type[T]
   # Value to test.
   value @ Value
   # Message to add to the failure.
-  msg @ Str = nil
+  msg @ Str = ...
 do
   ...

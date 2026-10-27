@@ -115,11 +115,11 @@ pub class Io: Sink[Value]
   pub def seek
     self
     # Byte offset relative to the current position.
-    offset @ Int = nil
+    offset @ Int = ...
     # Absolute byte offset from the start of the stream.
-    :start @ Int = nil
+    :start @ Int = ...
     # Byte offset relative to the end of the stream.
-    :end @ Int = nil
+    :end @ Int = ...
   do -> Int
     ...
 
@@ -183,8 +183,8 @@ pub class Io: Sink[Value]
   # per item.
   pub def chunks
     self
-    # Number of bytes to read per item.
-    size @ Int = 65536
+    # Number of bytes to read per item. 65536 by default.
+    size @ Int = ...
   do -> Iter[Bin]
     ...
 
@@ -251,7 +251,7 @@ pub class Buffered: Iter[Str] Io
   pub def read
     self
     # Number of bytes to read. Without it, reads to the end of the stream.
-    size @ Int = nil
+    size @ Int = ...
   do -> Bin
     ...
 
@@ -262,7 +262,7 @@ pub class Buffered: Iter[Str] Io
   pub def read_str
     self
     # Number of bytes to read. Without it, reads to the end of the stream.
-    size @ Int = nil
+    size @ Int = ...
   do -> Str
     ...
 
@@ -348,11 +348,11 @@ pub class Buffered: Iter[Str] Io
   pub def seek
     self
     # Byte offset relative to the current position.
-    offset @ Int = nil
+    offset @ Int = ...
     # Absolute byte offset from the start of the stream.
-    :start @ Int = nil
+    :start @ Int = ...
     # Byte offset relative to the end of the stream.
-    :end @ Int = nil
+    :end @ Int = ...
   do -> Int
     ...
 
@@ -388,8 +388,8 @@ pub class Concat: Io
     self
     # Items to read.
     items @ Iterable[Value]
-    # Bytes to follow every item.
-    :end @ (Str | Bin) = ""
+    # Bytes to follow every item. None by default.
+    :end @ (Str | Bin) = ...
   do
     ...
 
@@ -486,7 +486,7 @@ pub class Cursor: Io
     target @ (Str | Bin | BinBuf | StrBuf | Io)
     # Byte range of the window, such as `(offset..)` or
     # `(offset..(offset + size))`; the whole target when omitted.
-    range @ (Range[Int] | nil) = nil
+    range @ (Range[Int] | nil) = ...
   do
     ...
 
@@ -540,11 +540,11 @@ pub class Cursor: Io
   pub def seek
     self
     # Byte offset relative to the current position.
-    offset @ Int = nil
+    offset @ Int = ...
     # Byte offset from the start of the window.
-    :start @ Int = nil
+    :start @ Int = ...
     # Byte offset relative to the end of the window.
-    :end @ Int = nil
+    :end @ Int = ...
   do -> Int
     ...
 

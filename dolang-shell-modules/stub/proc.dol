@@ -284,9 +284,9 @@ pub class PipeSender[T]: std.Sink[T]
   pub def close
     self
     # Error value to propagate to the receiver.
-    error @ Value = nil
+    error @ Value = ...
     # Backtrace for `error`.
-    :backtrace @ strand.Backtrace = nil
+    :backtrace @ strand.Backtrace = ...
   do
     ...
 
@@ -401,14 +401,14 @@ pub class Program: Func
     self
     # Destination for standard error, or `:STDOUT:` to merge it with standard
     # output.
-    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
+    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = ...
     # Per-launch termination overrides: `signal`,
     # `grace` and `force`, as
     # [`with_policy`](proc.with_policy) takes them.
-    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
     # Output framing: [`Str`](std.Str) lines by default, or
     # [`Bin`](std.Bin) chunks with `:CHUNK:`.
-    :mode @ :LINE: = nil
+    :mode @ :LINE: = ...
     # Command-line arguments.
     *args @ Value
     < Iter[Value]
@@ -419,8 +419,8 @@ pub class Program: Func
   # as chunks.
   @def (call)
     self
-    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
-    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = ...
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
     :mode @ :CHUNK:
     *args @ Value
     < Iter[Value]
@@ -435,9 +435,9 @@ pub class Program: Func
     #
     # A stream receives the bytes as they are, whatever the `mode:`.
     :stdout @ (Path | Str | Sinkable[Str])
-    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
-    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
-    :mode @ :LINE: = nil
+    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = ...
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
+    :mode @ :LINE: = ...
     *args @ Value
     < Iter[Value]
   do -> nil
@@ -447,8 +447,8 @@ pub class Program: Func
   @def (call)
     self
     :stdout @ (Path | Str | Sinkable[Bin])
-    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
-    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = ...
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
     :mode @ :CHUNK:
     *args @ Value
     < Iter[Value]
@@ -462,9 +462,9 @@ pub class Program: Func
     #
     # A stream is read as bytes, even when it is also iterable.
     :stdin @ (Path | Str | Io | Iterable[Value])
-    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
-    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
-    :mode @ :LINE: = nil
+    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = ...
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
+    :mode @ :LINE: = ...
     *args @ Value
     > Sink[Str]
   do -> nil
@@ -474,8 +474,8 @@ pub class Program: Func
   @def (call)
     self
     :stdin @ (Path | Str | Io | Iterable[Value])
-    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
-    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = ...
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
     :mode @ :CHUNK:
     *args @ Value
     > Sink[Bin]
@@ -486,9 +486,9 @@ pub class Program: Func
     self
     :stdin @ (Path | Str | Io | Iterable[Value])
     :stdout @ (Path | Str | Sinkable[Str])
-    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
-    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
-    :mode @ :LINE: = nil
+    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = ...
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
+    :mode @ :LINE: = ...
     *args @ Value
   do -> nil
 
@@ -497,8 +497,8 @@ pub class Program: Func
     self
     :stdin @ (Path | Str | Io | Iterable[Value])
     :stdout @ (Path | Str | Sinkable[Bin])
-    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
-    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = ...
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
     :mode @ :CHUNK:
     *args @ Value
   do -> nil
@@ -579,7 +579,7 @@ pub def info
   # connection. Pair it with
   # [`shell.with_host`](shell.with_host) to reach this interpreter
   # while a target is selected.
-  pid @ Int = nil
+  pid @ Int = ...
 do -> Info
   ...
 
@@ -645,7 +645,7 @@ pub def sub[R]
   # Remove one trailing LF or CRLF. True by
   # default. This is a whole-capture strip, not a per-value one: it removes at
   # most one line ending, from the end of the finished string.
-  :chomp @ Bool = true
+  :chomp @ Bool = ...
 do -> Str
   ...
 
@@ -685,11 +685,11 @@ pub def with_policy[R]
   # Block to run.
   block @ (() -> R)
   # Unix signal. `:TERM:` by default.
-  :signal @ Signal = nil
+  :signal @ Signal = ...
   # Time before forced termination. Five seconds by default.
-  :grace @ (Duration | Int | Float) = nil
+  :grace @ (Duration | Int | Float) = ...
   # Force termination after the grace period.
-  :force @ Bool = nil
+  :force @ Bool = ...
 do -> R
   ...
 
@@ -721,14 +721,14 @@ pub @class Run: Func
     program @ (Str | Path)
     # Destination for standard error, or `:STDOUT:` to merge it with standard
     # output.
-    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
+    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = ...
     # Per-launch termination overrides: `signal`,
     # `grace` and `force`, as
     # [`with_policy`](proc.with_policy) takes them.
-    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
     # Output framing: [`Str`](std.Str) lines by default, or
     # [`Bin`](std.Bin) chunks with `:CHUNK:`.
-    :mode @ :LINE: = nil
+    :mode @ :LINE: = ...
     # Command-line arguments.
     *args @ Value
     < Iter[Value]
@@ -740,8 +740,8 @@ pub @class Run: Func
   @def (call)
     self
     program @ (Str | Path)
-    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
-    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = ...
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
     :mode @ :CHUNK:
     *args @ Value
     < Iter[Value]
@@ -757,9 +757,9 @@ pub @class Run: Func
     #
     # A stream receives the bytes as they are, whatever the `mode:`.
     :stdout @ (Path | Str | Sinkable[Str])
-    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
-    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
-    :mode @ :LINE: = nil
+    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = ...
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
+    :mode @ :LINE: = ...
     *args @ Value
     < Iter[Value]
   do -> nil
@@ -770,8 +770,8 @@ pub @class Run: Func
     self
     program @ (Str | Path)
     :stdout @ (Path | Str | Sinkable[Bin])
-    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
-    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = ...
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
     :mode @ :CHUNK:
     *args @ Value
     < Iter[Value]
@@ -786,9 +786,9 @@ pub @class Run: Func
     #
     # A stream is read as bytes, even when it is also iterable.
     :stdin @ (Path | Str | Io | Iterable[Value])
-    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
-    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
-    :mode @ :LINE: = nil
+    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = ...
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
+    :mode @ :LINE: = ...
     *args @ Value
     > Sink[Str]
   do -> nil
@@ -799,8 +799,8 @@ pub @class Run: Func
     self
     program @ (Str | Path)
     :stdin @ (Path | Str | Io | Iterable[Value])
-    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
-    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = ...
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
     :mode @ :CHUNK:
     *args @ Value
     > Sink[Bin]
@@ -812,9 +812,9 @@ pub @class Run: Func
     program @ (Str | Path)
     :stdin @ (Path | Str | Io | Iterable[Value])
     :stdout @ (Path | Str | Sinkable[Str])
-    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
-    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
-    :mode @ :LINE: = nil
+    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = ...
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
+    :mode @ :LINE: = ...
     *args @ Value
   do -> nil
 
@@ -824,8 +824,8 @@ pub @class Run: Func
     program @ (Str | Path)
     :stdin @ (Path | Str | Io | Iterable[Value])
     :stdout @ (Path | Str | Sinkable[Bin])
-    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
-    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = ...
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
     :mode @ :CHUNK:
     *args @ Value
   do -> nil

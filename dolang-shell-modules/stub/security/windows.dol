@@ -928,11 +928,11 @@ pub class CommonAce: QualifiedAce
     :qualifier @ AceQualifier
     :sid @ Sid
     :mask @ AccessMask
-    :flags @ AceFlags = nil
-    :callback @ Bool = nil
-    :application_data @ Bin = nil
-    :successful @ Bool = nil
-    :failed @ Bool = nil
+    :flags @ AceFlags = ...
+    :callback @ Bool = ...
+    :application_data @ Bin = ...
+    :successful @ Bool = ...
+    :failed @ Bool = ...
   do
     ...
 
@@ -963,13 +963,13 @@ pub class ObjectAce: QualifiedAce
     :qualifier @ AceQualifier
     :sid @ Sid
     :mask @ AccessMask
-    :flags @ AceFlags = nil
-    :callback @ Bool = nil
-    :application_data @ Bin = nil
-    :successful @ Bool = nil
-    :failed @ Bool = nil
-    :object_type @ Guid = nil
-    :inherited_object_type @ Guid = nil
+    :flags @ AceFlags = ...
+    :callback @ Bool = ...
+    :application_data @ Bin = ...
+    :successful @ Bool = ...
+    :failed @ Bool = ...
+    :object_type @ Guid = ...
+    :inherited_object_type @ Guid = ...
   do
     ...
 
@@ -1034,7 +1034,7 @@ pub class Acl
     # Entries, in order.
     aces @ Iterable[Ace]
     # Native ACL revision.
-    :revision @ (AclRevision | Int) = nil
+    :revision @ (AclRevision | Int) = ...
   do
     ...
 
@@ -1331,27 +1331,27 @@ pub class TokenInfo
 # ```
 pub def ace
   # Trustee of an access-allowed entry.
-  :allow @ SidSpec = nil
+  :allow @ SidSpec = ...
   # Trustee of an access-denied entry.
-  :deny @ SidSpec = nil
+  :deny @ SidSpec = ...
   # Trustee of a system-audit entry.
-  :audit @ SidSpec = nil
+  :audit @ SidSpec = ...
   # Access mask.
   :mask @ AccessMaskSpec
   # ACE header flags, other than the audit outcomes.
-  :flags @ AceFlagsSpec = nil
+  :flags @ AceFlagsSpec = ...
   # Object type, making this an object entry.
-  :object_type @ (Guid | Str | Bin) = nil
+  :object_type @ (Guid | Str | Bin) = ...
   # Inherited object type, making this an object entry.
-  :inherited_object_type @ (Guid | Str | Bin) = nil
+  :inherited_object_type @ (Guid | Str | Bin) = ...
   # Build a callback entry.
-  :callback @ Bool = nil
+  :callback @ Bool = ...
   # Trailing application data, zero-padded to 32-bit alignment.
-  :application_data @ Bin = nil
+  :application_data @ Bin = ...
   # Audit successful access.
-  :successful @ Bool = nil
+  :successful @ Bool = ...
   # Audit failed access.
-  :failed @ Bool = nil
+  :failed @ Bool = ...
 do -> Ace
   ...
 
@@ -1369,7 +1369,7 @@ do -> Ace
 # ```
 pub def acl
   # Native ACL revision. Defaults to the lowest revision the entries allow.
-  :revision @ (AclRevision | Int) = nil
+  :revision @ (AclRevision | Int) = ...
   # Entries, in order, spread with `...` to pass a collection.
   ...aces @ AceSpec
 do -> Acl
@@ -1400,7 +1400,7 @@ do -> Acl
 # ```
 pub def sec_desc
   # Descriptor to start from.
-  desc @ SecDescSpec = nil
+  desc @ SecDescSpec = ...
   # Components and control flags, amending `desc` if given.
   ...options @ SecDescOptions
 do -> SecDesc

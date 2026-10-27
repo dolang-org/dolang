@@ -49,8 +49,8 @@ pub class Stdin[T]: std.Iter[T] Io
   # ```
   pub def chunks
     self
-    # Most bytes per chunk.
-    size @ Int = 65536
+    # Most bytes per chunk. 65536 by default.
+    size @ Int = ...
   do -> Stdin[Bin]
     ...
 
@@ -73,7 +73,7 @@ pub class Stdin[T]: std.Iter[T] Io
   pub def read
     self
     # Maximum bytes to read. Unbounded when omitted.
-    size @ Int = nil
+    size @ Int = ...
   do -> Bin
     ...
 
@@ -319,7 +319,7 @@ pub class Vfs
     #
     # This authenticates the connection; it does not encrypt or
     # integrity-protect the session that follows.
-    :key @ (Str | Bin) = nil
+    :key @ (Str | Bin) = ...
   do -> Vfs
     ...
 
@@ -348,11 +348,11 @@ pub class Vfs
     self
     # Initial working directory. Defaults to the
     # calling strand's.
-    :cd @ (Str | Path) = nil
+    :cd @ (Str | Path) = ...
     # Environment overrides. Keys may be strings or
     # symbols; `nil` unsets a variable and `:INHERIT:` captures the calling
     # strand's current value.
-    :env @ BaseDict[Str | Sym, Value] = nil
+    :env @ BaseDict[Str | Sym, Value] = ...
   do -> Vfs
     ...
 
@@ -459,7 +459,7 @@ do -> Never
 # Never returns. The exit unwinds the interpreter, and `catch` cannot stop it.
 pub def exit
   # Exit status. Defaults to `0`.
-  code @ Int = nil
+  code @ Int = ...
 do -> Never
   ...
 
@@ -507,10 +507,10 @@ pub def with_override[R]
   # Arguments seen as
   # [`shell.args`](shell.args), converted with
   # [`verbatim`](std.verbatim).
-  :args @ Iterable[Value] = nil
+  :args @ Iterable[Value] = ...
   # Identity seen as
   # [`shell.program`](shell.program).
-  :program @ (Str | Path | nil) = nil
+  :program @ (Str | Path | nil) = ...
 do -> R
   ...
 

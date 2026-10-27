@@ -50,7 +50,7 @@ pub class Decompressor: Io
   pub def read
     self
     # Number of bytes to read; omit to read the rest of the stream.
-    size @ Int = nil
+    size @ Int = ...
   do -> Bin
     ...
 
@@ -115,8 +115,9 @@ pub class Compressor: Io
 @def decompress
   # Compressed input.
   source @ (Str | Path | Io)
-  # Format of the input. `:AUTO:` detects it from the leading bytes.
-  format @ (Format | :AUTO:) = :AUTO:
+  # Format of the input. `:AUTO:`, the default, detects it from the leading
+  # bytes.
+  format @ (Format | :AUTO:) = ...
 do -> Decompressor
 
 # Opens a decompressing stream over `source` and calls `func` with it. The
@@ -168,8 +169,8 @@ pub def decompress source @ (Str | Path | Io) ...options @ Value -> Value
   sink @ (Str | Path | Io)
   # Format to write.
   format @ Format
-  # Compression level.
-  :level @ Level = :DEFAULT:
+  # Compression level. `:DEFAULT:` by default.
+  :level @ Level = ...
 do -> Compressor
 
 # Opens a compressing stream into `sink` and calls `func` with it. The stream
@@ -186,8 +187,8 @@ do -> Compressor
   format @ Format
   # Called with the [`Compressor`](compress.Compressor).
   func @ (Compressor -> R)
-  # Compression level.
-  :level @ Level = :DEFAULT:
+  # Compression level. `:DEFAULT:` by default.
+  :level @ Level = ...
 do -> R
 
 pub def compress

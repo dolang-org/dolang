@@ -112,7 +112,7 @@ pub def run
   bytecode @ Bin
   # Program-specific module importer, called with the requested module name.
   # Input ends immediately and output is discarded while the importer runs.
-  :importer @ ((Str, <Value, >Value) -> Value) = nil
+  :importer @ ((Str, <Value, >Value) -> Value) = ...
   <Iter[Value]
   >Sink[Value]
 do -> Value

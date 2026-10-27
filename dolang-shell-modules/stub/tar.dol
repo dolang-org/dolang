@@ -222,18 +222,18 @@ pub class Writer
     # path.
     path @ (Str | Path)
     # Permission bits. Defaults to `0o755`.
-    :mode @ Int = nil
+    :mode @ Int = ...
     # Owner ID. Defaults to `0`.
-    :uid @ Int = nil
+    :uid @ Int = ...
     # Group ID. Defaults to `0`.
-    :gid @ Int = nil
+    :gid @ Int = ...
     # Modification time. Defaults to the
     # Unix epoch.
-    :mtime @ DateTime = nil
+    :mtime @ DateTime = ...
     # Owner name.
-    :owner_name @ Str = nil
+    :owner_name @ Str = ...
     # Group name.
-    :group_name @ Str = nil
+    :group_name @ Str = ...
   do
     ...
 
@@ -266,18 +266,18 @@ pub class Writer
     # Exact content size.
     :size @ Int
     # Permission bits. Defaults to `0o644`.
-    :mode @ Int = nil
+    :mode @ Int = ...
     # Owner ID. Defaults to `0`.
-    :uid @ Int = nil
+    :uid @ Int = ...
     # Group ID. Defaults to `0`.
-    :gid @ Int = nil
+    :gid @ Int = ...
     # Modification time. Defaults to the
     # Unix epoch.
-    :mtime @ DateTime = nil
+    :mtime @ DateTime = ...
     # Owner name.
-    :owner_name @ Str = nil
+    :owner_name @ Str = ...
     # Group name.
-    :group_name @ Str = nil
+    :group_name @ Str = ...
     # Entry writer scope, called with an
     # [`EntryWriter`](tar.EntryWriter).
     func @ (EntryWriter -> R)
@@ -302,18 +302,18 @@ pub class Writer
     # path.
     path @ (Str | Path)
     # Permission bits. Defaults to `0o644`.
-    :mode @ Int = nil
+    :mode @ Int = ...
     # Owner ID. Defaults to `0`.
-    :uid @ Int = nil
+    :uid @ Int = ...
     # Group ID. Defaults to `0`.
-    :gid @ Int = nil
+    :gid @ Int = ...
     # Modification time. Defaults to the
     # Unix epoch.
-    :mtime @ DateTime = nil
+    :mtime @ DateTime = ...
     # Owner name.
-    :owner_name @ Str = nil
+    :owner_name @ Str = ...
     # Group name.
-    :group_name @ Str = nil
+    :group_name @ Str = ...
   do
     ...
 
@@ -336,18 +336,18 @@ pub class Writer
     # path.
     path @ (Str | Path)
     # Permission bits. Defaults to `0o777`.
-    :mode @ Int = nil
+    :mode @ Int = ...
     # Owner ID. Defaults to `0`.
-    :uid @ Int = nil
+    :uid @ Int = ...
     # Group ID. Defaults to `0`.
-    :gid @ Int = nil
+    :gid @ Int = ...
     # Modification time. Defaults to the
     # Unix epoch.
-    :mtime @ DateTime = nil
+    :mtime @ DateTime = ...
     # Owner name.
-    :owner_name @ Str = nil
+    :owner_name @ Str = ...
     # Group name.
-    :group_name @ Str = nil
+    :group_name @ Str = ...
   do
     ...
 
@@ -412,7 +412,7 @@ pub def write[R]
   # zstd, and other extensions select no compression. Extension matching is
   # case-insensitive. An explicit `compression` overrides the path. An
   # [`Io`](io.Io) sink has no extension, so it defaults to no compression.
-  :compression @ (:NONE: | :GZIP: | :ZSTD:) = nil
+  :compression @ (:NONE: | :GZIP: | :ZSTD:) = ...
   # Writer scope, called with a [`Writer`](tar.Writer).
   func @ (Writer -> R)
 do -> R

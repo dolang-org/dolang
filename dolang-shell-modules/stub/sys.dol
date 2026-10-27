@@ -28,7 +28,7 @@ pub class Error: std.RuntimeError
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -136,7 +136,7 @@ pub class AddrInUseError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -148,7 +148,7 @@ pub class AddrNotAvailableError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -162,7 +162,7 @@ pub class AlreadyExistsError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -174,7 +174,7 @@ pub class ArgumentListTooLongError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -186,7 +186,7 @@ pub class BrokenPipeError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -198,7 +198,7 @@ pub class ConnectionAbortedError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -210,7 +210,7 @@ pub class ConnectionRefusedError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -222,7 +222,7 @@ pub class ConnectionResetError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -234,7 +234,7 @@ pub class CrossesDevicesError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -246,7 +246,7 @@ pub class DeadlockError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -258,7 +258,7 @@ pub class DirectoryNotEmptyError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -270,7 +270,7 @@ pub class ExecutableFileBusyError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -282,7 +282,7 @@ pub class FileTooLargeError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -294,7 +294,7 @@ pub class HostUnreachableError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -306,7 +306,7 @@ pub class InterruptedError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -318,7 +318,7 @@ pub class InvalidDataError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -330,7 +330,7 @@ pub class InvalidFilenameError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -343,7 +343,7 @@ pub class InvalidInputError: Error std.ValueError
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -355,7 +355,7 @@ pub class IsADirectoryError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -367,7 +367,7 @@ pub class NetworkDownError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -379,7 +379,7 @@ pub class NetworkUnreachableError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -391,7 +391,7 @@ pub class NotADirectoryError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -403,7 +403,7 @@ pub class NotConnectedError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -417,7 +417,7 @@ pub class NotFoundError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -429,7 +429,7 @@ pub class NotSeekableError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -441,7 +441,7 @@ pub class OutOfMemoryError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -454,7 +454,7 @@ pub class PermissionDeniedError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -466,7 +466,7 @@ pub class QuotaExceededError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -478,7 +478,7 @@ pub class ReadOnlyFilesystemError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -490,7 +490,7 @@ pub class ResourceBusyError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -502,7 +502,7 @@ pub class StaleNetworkFileHandleError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -514,7 +514,7 @@ pub class StorageFullError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -526,7 +526,7 @@ pub class TimedOutError: Error std.TimedOutError
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -538,7 +538,7 @@ pub class TooManyLinksError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -550,7 +550,7 @@ pub class UnexpectedEofError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -563,7 +563,7 @@ pub class UnsupportedError: Error std.UnsupportedError
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -575,7 +575,7 @@ pub class WouldBlockError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...
 
@@ -587,6 +587,6 @@ pub class WriteZeroError: Error
     # Error message.
     message @ Str
     # Underlying platform code.
-    :code @ ErrorCode = nil
+    :code @ ErrorCode = ...
   do
     ...

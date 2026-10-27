@@ -44,11 +44,11 @@ pub class Element: @Index[{*(Str | (Str, Str)): Str, *Node}] @Assign[Str | (Str,
     # Local element name.
     tag @ Str
     # Namespace URI.
-    :namespace @ Str = nil
+    :namespace @ Str = ...
     # Initial [`namespaces`](xml.Element.namespaces), with `Sym` or `Str` keys.
-    :namespaces @ BaseDict[Sym | Str, Str] = nil
+    :namespaces @ BaseDict[Sym | Str, Str] = ...
     # Attributes; bareword keys name unnamespaced attributes.
-    :attrs @ BaseDict[Sym | Str | (Str, Str), Str] = nil
+    :attrs @ BaseDict[Sym | Str | (Str, Str), Str] = ...
     # Children in document order.
     *items @ Node
   do

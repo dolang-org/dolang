@@ -92,33 +92,33 @@ pub class User
     self
     # New account name. Applied after every other
     # option.
-    :name @ Str = nil
+    :name @ Str = ...
     # Password to set.
-    :password @ Str = nil
+    :password @ Str = ...
     # Display name.
-    :full_name @ Str = nil
+    :full_name @ Str = ...
     # Administrative account comment.
-    :comment @ Str = nil
+    :comment @ Str = ...
     # User-facing account comment.
-    :user_comment @ Str = nil
+    :user_comment @ Str = ...
     # Home directory.
-    :home_dir @ Path = nil
+    :home_dir @ Path = ...
     # Drive designator assigned to the home directory
     # at logon, such as `"Z:"`.
-    :home_dir_drive @ Str = nil
+    :home_dir_drive @ Str = ...
     # Profile path.
-    :profile @ Path = nil
+    :profile @ Path = ...
     # Logon script path.
-    :script_path @ Path = nil
+    :script_path @ Path = ...
     # Expiration instant. `nil` means
     # the account never expires.
-    :account_expires @ (DateTime | nil) = nil
+    :account_expires @ (DateTime | nil) = ...
     # Whether the account is disabled.
-    :disabled @ Bool = nil
+    :disabled @ Bool = ...
     # Whether the password is exempt from expiry.
-    :password_never_expires @ Bool = nil
+    :password_never_expires @ Bool = ...
     # Whether the user may change the password.
-    :password_cannot_change @ Bool = nil
+    :password_cannot_change @ Bool = ...
   do -> UserInfo
     ...
 
@@ -297,9 +297,9 @@ pub class Group
   pub def update
     self
     # New group name.
-    :name @ Str = nil
+    :name @ Str = ...
     # Administrative comment. `nil` clears it.
-    :comment @ (Str | nil) = nil
+    :comment @ (Str | nil) = ...
   do -> GroupInfo
     ...
 
@@ -463,11 +463,11 @@ pub class Share
   pub def update
     self
     # Comment. `nil` clears it.
-    :comment @ (Str | nil) = nil
+    :comment @ (Str | nil) = ...
     # Connection limit. `nil` is unlimited.
-    :max_uses @ (Int | nil) = nil
+    :max_uses @ (Int | nil) = ...
     # Security descriptor, its self-relative binary form, or a declarative one.
-    :sec_desc @ (SecDesc | Bin | Dict[{...}]) = nil
+    :sec_desc @ (SecDesc | Bin | Dict[{...}]) = ...
   do -> ShareInfo
     ...
 
@@ -579,10 +579,10 @@ pub class Connection
     self
     # Disconnect even with open files or
     # directories on the connection. Defaults to `false`.
-    :force @ Bool = nil
+    :force @ Bool = ...
     # Remove credentials saved for the server.
     # Defaults to removing them for a persistent connection.
-    :forget_credentials @ Bool = nil
+    :forget_credentials @ Bool = ...
   do
     ...
 
@@ -767,25 +767,25 @@ pub def account_policy() -> AccountPolicy
 # The resulting policy.
 pub def update_account_policy
   # Minimum password length.
-  :min_password_length @ Int = nil
+  :min_password_length @ Int = ...
   # Maximum password age. `nil`
   # selects no limit, so passwords never expire.
-  :max_password_age @ (Duration | nil) = nil
+  :max_password_age @ (Duration | nil) = ...
   # Minimum password age.
-  :min_password_age @ Duration = nil
+  :min_password_age @ Duration = ...
   # Forced-logoff delay. `nil`
   # disables forced logoff.
-  :force_logoff @ (Duration | nil) = nil
+  :force_logoff @ (Duration | nil) = ...
   # Number of prior passwords retained.
-  :password_history_length @ Int = nil
+  :password_history_length @ Int = ...
   # Account lockout duration.
-  :lockout_duration @ Duration = nil
+  :lockout_duration @ Duration = ...
   # Failed-logon counter observation
   # window.
-  :lockout_observation_window @ Duration = nil
+  :lockout_observation_window @ Duration = ...
   # Failed logons allowed before lockout. Zero
   # disables lockout.
-  :lockout_threshold @ Int = nil
+  :lockout_threshold @ Int = ...
 do -> AccountPolicy
   ...
 
@@ -817,29 +817,29 @@ pub def create_user
   # Initial password.
   :password @ Str
   # Display name.
-  :full_name @ Str = nil
+  :full_name @ Str = ...
   # Administrative account comment.
-  :comment @ Str = nil
+  :comment @ Str = ...
   # User-facing account comment.
-  :user_comment @ Str = nil
+  :user_comment @ Str = ...
   # Home directory.
-  :home_dir @ Path = nil
+  :home_dir @ Path = ...
   # Drive designator assigned to the home directory
   # at logon, such as `"Z:"`.
-  :home_dir_drive @ Str = nil
+  :home_dir_drive @ Str = ...
   # Profile path.
-  :profile @ Path = nil
+  :profile @ Path = ...
   # Logon script path.
-  :script_path @ Path = nil
+  :script_path @ Path = ...
   # Expiration instant. `nil` means
   # the account never expires.
-  :account_expires @ (DateTime | nil) = nil
+  :account_expires @ (DateTime | nil) = ...
   # Whether the account is disabled.
-  :disabled @ Bool = nil
+  :disabled @ Bool = ...
   # Whether the password is exempt from expiry.
-  :password_never_expires @ Bool = nil
+  :password_never_expires @ Bool = ...
   # Whether the user may change the password.
-  :password_cannot_change @ Bool = nil
+  :password_cannot_change @ Bool = ...
 do -> User
   ...
 
@@ -859,7 +859,7 @@ pub def create_group
   # Group name.
   name @ Str
   # Administrative comment.
-  :comment @ Str = nil
+  :comment @ Str = ...
 do -> Group
   ...
 
@@ -882,18 +882,18 @@ pub def create_share
   # Local path to share.
   :path @ Path
   # Resource kind. Defaults to `:DISKTREE:`.
-  :kind @ ShareKind = nil
+  :kind @ ShareKind = ...
   # Comment.
-  :comment @ Str = nil
+  :comment @ Str = ...
   # Connection limit. Defaults to unlimited.
-  :max_uses @ Int = nil
+  :max_uses @ Int = ...
   # Mark the share special.
-  :special @ Bool = nil
+  :special @ Bool = ...
   # Mark the share temporary.
-  :temporary @ Bool = nil
+  :temporary @ Bool = ...
   # Security descriptor, its self-relative binary form, or a declarative one.
   # Defaults to the one Windows supplies.
-  :sec_desc @ (SecDesc | Bin | Dict[{...}]) = nil
+  :sec_desc @ (SecDesc | Bin | Dict[{...}]) = ...
 do -> Share
   ...
 
@@ -942,13 +942,13 @@ do -> Share
   # `r"\\server\share"`.
   remote @ Str
   # Local device to redirect, such as `"Z:"`.
-  :local @ Str = nil
+  :local @ Str = ...
   # Account to authenticate as.
-  :user @ Str = nil
+  :user @ Str = ...
   # Password for `user`.
-  :password @ Str = nil
+  :password @ Str = ...
   # Resource kind.
-  :kind @ ConnectionKind = nil
+  :kind @ ConnectionKind = ...
   # Record the connection so it is restored at
   # logon.
   #
@@ -956,7 +956,7 @@ do -> Share
   # remembers connections that redirect one. Asking for `persistent` without
   # `local` raises [`ValueError`](std.ValueError) rather than silently
   # producing a mapping that disappears at the next logon.
-  :persistent @ Bool = nil
+  :persistent @ Bool = ...
   # Override whether credentials are saved for the
   # server.
   #
@@ -968,7 +968,7 @@ do -> Share
   # Saved credentials are per-account, the same way the connection itself is,
   # so a connection provisioned for a service account must be made under that
   # account to be restored for it.
-  :save_credentials @ Bool = nil
+  :save_credentials @ Bool = ...
 do -> Connection
 
 # Connects to a network resource and calls `func` with the connection, which is
@@ -978,19 +978,19 @@ do -> Connection
   # `r"\\server\share"`.
   remote @ Str
   # Local device to redirect, such as `"Z:"`.
-  :local @ Str = nil
+  :local @ Str = ...
   # Account to authenticate as.
-  :user @ Str = nil
+  :user @ Str = ...
   # Password for `user`.
-  :password @ Str = nil
+  :password @ Str = ...
   # Resource kind.
-  :kind @ ConnectionKind = nil
+  :kind @ ConnectionKind = ...
   # Record the connection so it is restored at
   # logon.
-  :persistent @ Bool = nil
+  :persistent @ Bool = ...
   # Override whether credentials are saved for the
   # server.
-  :save_credentials @ Bool = nil
+  :save_credentials @ Bool = ...
   # Called with the [`Connection`](winnet.Connection).
   func @ (Connection -> R)
 do -> R
@@ -1070,42 +1070,42 @@ pub def join_domain
   # Domain to join.
   domain @ Str
   # Organizational unit for the computer account.
-  :ou @ Str = nil
+  :ou @ Str = ...
   # Domain account authorized to join, such as
   # `"CORP\\joiner"`. Must be given together with `password`; omit both to use
   # the caller's own credentials.
-  :account @ Str = nil
+  :account @ Str = ...
   # Password for `account`.
-  :password @ Str = nil
+  :password @ Str = ...
   # Password of a pre-created computer account, used
   # instead of `account` and `password`.
-  :machine_password @ Str = nil
+  :machine_password @ Str = ...
   # Create the computer account as part of the
   # join.
-  :create_account @ Bool = nil
+  :create_account @ Bool = ...
   # Proceed even if already joined to a domain.
-  :join_if_joined @ Bool = nil
+  :join_if_joined @ Bool = ...
   # Perform an unsecured join.
-  :unsecure @ Bool = nil
+  :unsecure @ Bool = ...
   # Defer setting the service principal name until
   # a later rename.
-  :defer_spn @ Bool = nil
+  :defer_spn @ Bool = ...
   # Force the service principal name to be set.
-  :force_spn @ Bool = nil
+  :force_spn @ Bool = ...
   # Join using a domain controller account.
-  :dc_account @ Bool = nil
+  :dc_account @ Bool = ...
   # Join under a rename that has not taken effect
   # yet.
-  :with_new_name @ Bool = nil
+  :with_new_name @ Bool = ...
   # Join against a read-only domain controller.
-  :readonly @ Bool = nil
+  :readonly @ Bool = ...
   # Allow an ambiguous domain controller name.
-  :ambiguous_dc @ Bool = nil
+  :ambiguous_dc @ Bool = ...
   # Do not write the netlogon cache.
-  :no_netlogon_cache @ Bool = nil
+  :no_netlogon_cache @ Bool = ...
   # Fail rather than reuse an existing computer
   # account.
-  :no_account_reuse @ Bool = nil
+  :no_account_reuse @ Bool = ...
 do
   ...
 
@@ -1125,11 +1125,11 @@ pub def unjoin_domain
   # Domain account authorized to unjoin. Must be
   # given together with `password`; omit both to use the caller's own
   # credentials.
-  :account @ Str = nil
+  :account @ Str = ...
   # Password for `account`.
-  :password @ Str = nil
+  :password @ Str = ...
   # Disable the computer account in the domain.
-  :delete_account @ Bool = nil
+  :delete_account @ Bool = ...
 do
   ...
 
@@ -1143,12 +1143,12 @@ pub def rename_machine
   # Domain account authorized to rename. Must be
   # given together with `password`; omit both to use the caller's own
   # credentials.
-  :account @ Str = nil
+  :account @ Str = ...
   # Password for `account`.
-  :password @ Str = nil
+  :password @ Str = ...
   # Create the renamed computer account if it is
   # missing.
-  :create_account @ Bool = nil
+  :create_account @ Bool = ...
 do
   ...
 
@@ -1175,20 +1175,20 @@ pub def provision_computer
   # Computer name to provision.
   :machine @ Str
   # Organizational unit for the computer account.
-  :ou @ Str = nil
+  :ou @ Str = ...
   # Domain controller to provision against.
-  :dc @ Str = nil
+  :dc @ Str = ...
   # Reuse an existing computer account.
-  :reuse @ Bool = nil
+  :reuse @ Bool = ...
   # Use the default computer account password.
-  :default_password @ Bool = nil
+  :default_password @ Bool = ...
   # Skip searching for an existing account.
-  :skip_account_search @ Bool = nil
+  :skip_account_search @ Bool = ...
   # Include root CA certificates in the blob.
-  :root_ca_certs @ Bool = nil
+  :root_ca_certs @ Bool = ...
   # Support provisioning by a down-level privileged
   # user.
-  :downlevel_priv_support @ Bool = nil
+  :downlevel_priv_support @ Bool = ...
 do -> Bin
   ...
 
@@ -1214,6 +1214,6 @@ pub def apply_offline_join
   # offline image, or the running system's own when `online` is set.
   :windows_path @ Path
   # The target installation is the running system.
-  :online @ Bool = nil
+  :online @ Bool = ...
 do
   ...

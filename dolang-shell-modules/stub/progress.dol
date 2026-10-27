@@ -55,7 +55,7 @@ pub class Indicator
     self
     # Amount to adjust by. Positive values increment
     # and negative values decrement. Defaults to `1`.
-    n @ Int = nil
+    n @ Int = ...
   do
     ...
 
@@ -88,18 +88,18 @@ pub class Indicator
   pub def update
     self
     # New prefix icon.
-    :icon @ Str = nil
+    :icon @ Str = ...
     # New message text.
-    :message @ Str = nil
+    :message @ Str = ...
     # New total. `nil` switches to spinner mode.
-    :total @ (Int | nil) = nil
+    :total @ (Int | nil) = ...
     # Absolute position. Exclusive with `delta`.
-    :position @ Int = nil
+    :position @ Int = ...
     # Relative adjustment, positive or negative.
     # Exclusive with `position`.
-    :delta @ Int = nil
+    :delta @ Int = ...
     # New display units.
-    :units @ Units = nil
+    :units @ Units = ...
   do
     ...
 
@@ -136,18 +136,18 @@ pub @let Units = $
 pub def show[R]
   # Total value. The indicator starts in bar mode
   # when given and in spinner mode otherwise; the mode changes with `total`.
-  :total @ Int = nil
+  :total @ Int = ...
   # Initial message.
-  :message @ Str = nil
+  :message @ Str = ...
   # Prefix icon, such as `"📦"`.
-  :icon @ Str = nil
+  :icon @ Str = ...
   # Unit format.
   #
   # Units default to `:COUNT:` when `total` is given. With neither `total` nor
   # `units`, spinner mode shows only elapsed time.
-  :units @ Units = nil
+  :units @ Units = ...
   # Tick interval in seconds. Defaults to `0.08`.
-  :tick @ Float = nil
+  :tick @ Float = ...
   # Callback receiving an [`Indicator`](progress.Indicator).
   func @ (Indicator -> R)
 do -> R
@@ -180,9 +180,9 @@ do -> R
 # ```
 pub def steps
   # Overall message prefix.
-  :message @ Str = nil
+  :message @ Str = ...
   # Default icon. Defaults to `"●"`.
-  :icon @ Str = nil
+  :icon @ Str = ...
   # A step function or specification.
   #
   # A specification contains one positional function and accepts these keys:
@@ -332,10 +332,10 @@ pub @let Style = BaseDict $
 # ```
 pub def with[R]
   # Display style overrides.
-  :style @ Style = nil
+  :style @ Style = ...
   # Plain-mode rate limit in seconds. Defaults to `5`. Has no effect
   # when connected to a real terminal.
-  :interval @ Float = nil
+  :interval @ Float = ...
   # Callback taking no arguments.
   func @ (() -> R)
 do -> R

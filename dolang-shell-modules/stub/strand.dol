@@ -38,7 +38,7 @@ pub class Key[T]
   pub def (init)
     self
     # Value returned until this key is set in the current strand.
-    value @ (T | nil) = nil
+    value @ (T | nil) = ...
   do
     ...
 
@@ -176,9 +176,9 @@ pub class Sender[T]: std.Sink[T]
   pub def close
     self
     # Error for the receiver to raise.
-    error @ Value = nil
+    error @ Value = ...
     # Backtrace to report with `error`.
-    :backtrace @ Backtrace = nil
+    :backtrace @ Backtrace = ...
   do
     ...
 
@@ -293,7 +293,7 @@ pub def error_backtrace() -> Backtrace
 # Creates a channel for communication between strands.
 pub def channel[T]
   # Number of values the channel holds before a send waits; 1 when omitted.
-  buffer @ Int = nil
+  buffer @ Int = ...
 do -> Tuple[Sender[T], Receiver[T]]
   ...
 
@@ -413,7 +413,7 @@ pub def output[O] >O -> O
 # stage's result.
 @def pipeline[R]
   # Input for the first stage, in place of the strand-local input.
-  :input @ Iterable[Value] = nil
+  :input @ Iterable[Value] = ...
   # Pipeline stages, each reading the previous stage's output.
   ...stages @ ((<Iter[std.Unknown], >Sink[std.Unknown]) -> Value)
   # Final stage.
@@ -424,7 +424,7 @@ do -> R
 # output to a sink and returning its result.
 @def pipeline[R, O]
   # Input for the first stage, in place of the strand-local input.
-  :input @ Iterable[Value] = nil
+  :input @ Iterable[Value] = ...
   # Output for the last stage, in place of the strand-local output.
   :output @ Sinkable[O]
   # Pipeline stages, each reading the previous stage's output.
@@ -577,7 +577,7 @@ pub def throw
   # Value to raise.
   value @ Value
   # Backtrace to report instead of the current strand's calls.
-  :backtrace @ Backtrace = nil
+  :backtrace @ Backtrace = ...
 do -> Never
   ...
 

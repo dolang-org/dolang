@@ -20,7 +20,7 @@ pub def int
   # `end` is omitted.
   start @ Int
   # Exclusive upper bound.
-  end @ Int = nil
+  end @ Int = ...
 do -> Int
   ...
 
@@ -85,6 +85,6 @@ pub def string
   #
   # The alphabet is interpreted as characters, not raw UTF-8 bytes. When
   # omitted, it is `_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ`.
-  :alphabet @ Str = nil
+  :alphabet @ Str = ...
 do -> Str
   ...

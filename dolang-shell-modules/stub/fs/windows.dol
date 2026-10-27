@@ -99,10 +99,10 @@ pub class Path: fs.Path
   pub def normalize self -> Path
     ...
 
-  pub def relative self base @ (Str | fs.Path) = nil -> Path
+  pub def relative self base @ (Str | fs.Path) = ... -> Path
     ...
 
-  pub def shorten self base @ (Str | fs.Path) = nil -> Path
+  pub def shorten self base @ (Str | fs.Path) = ... -> Path
     ...
 
   pub def read_link self -> Path
@@ -111,8 +111,8 @@ pub class Path: fs.Path
   pub def glob
     self
     pattern @ Str
-    :max_depth @ Int = nil
-    :resolve @ fs.Resolve = nil
+    :max_depth @ Int = ...
+    :resolve @ fs.Resolve = ...
   do -> UnpackIter[Path]
     ...
 
@@ -203,17 +203,17 @@ pub class Path: fs.Path
   pub def sec_desc
     self
     # Load the owner SID. Defaults to `true`.
-    :owner @ Bool = nil
+    :owner @ Bool = ...
     # Load the primary group SID. Defaults to
     # `true`.
-    :group @ Bool = nil
+    :group @ Bool = ...
     # Load the discretionary ACL. Defaults to
     # `true`.
-    :dacl @ Bool = nil
+    :dacl @ Bool = ...
     # Load the system ACL. Defaults to `false`.
-    :sacl @ Bool = nil
+    :sacl @ Bool = ...
     # Resolution mode. Defaults to `:TARGET:`.
-    :resolve @ fs.Resolve = nil
+    :resolve @ fs.Resolve = ...
   do -> SecDesc
     ...
 
@@ -237,9 +237,9 @@ pub class Path: fs.Path
   pub def update_sec_desc
     self
     # Descriptor to apply.
-    desc @ SecDescSpec = nil
+    desc @ SecDescSpec = ...
     # Resolution mode. Defaults to `:TARGET:`.
-    :resolve @ fs.Resolve = nil
+    :resolve @ fs.Resolve = ...
     # Components and control flags, instead of or alongside `desc`.
     ...options @ SecDescOptions
   do
@@ -258,7 +258,7 @@ pub class Path: fs.Path
   pub def streams
     self
     # Resolution mode. Defaults to `:TARGET:`.
-    :resolve @ fs.Resolve = nil
+    :resolve @ fs.Resolve = ...
   do -> Iter[StreamEntry]
     ...
 
@@ -313,17 +313,17 @@ pub def sec_desc
   # Path to query.
   path @ (Str | Path)
   # Load the owner SID. Defaults to `true`.
-  :owner @ Bool = nil
+  :owner @ Bool = ...
   # Load the primary group SID. Defaults to
   # `true`.
-  :group @ Bool = nil
+  :group @ Bool = ...
   # Load the discretionary ACL. Defaults to
   # `true`.
-  :dacl @ Bool = nil
+  :dacl @ Bool = ...
   # Load the system ACL. Defaults to `false`.
-  :sacl @ Bool = nil
+  :sacl @ Bool = ...
   # Resolution mode. Defaults to `:TARGET:`.
-  :resolve @ fs.Resolve = nil
+  :resolve @ fs.Resolve = ...
 do -> SecDesc
   ...
 
@@ -332,9 +332,9 @@ pub def update_sec_desc
   # Path to update.
   path @ (Str | Path)
   # Descriptor to apply.
-  desc @ SecDescSpec = nil
+  desc @ SecDescSpec = ...
   # Resolution mode. Defaults to `:TARGET:`.
-  :resolve @ fs.Resolve = nil
+  :resolve @ fs.Resolve = ...
   # Components and control flags, instead of or alongside `desc`.
   ...options @ SecDescOptions
 do
