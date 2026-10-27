@@ -80,7 +80,7 @@ enabled for this initial build:
 git clone https://github.com/dolang-org/dolang.git
 cd dolang
 cargo run --bin dolang --no-default-features \
-  --features json,digest,base64,rand,regex -- \
+  --features json,toml,base64,rand,regex -- \
   -m dodo install --prefix <PREFIX>
 ```
 
