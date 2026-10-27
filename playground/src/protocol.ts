@@ -93,7 +93,9 @@ export type PageCall = { [M in PageMethod]: { method: M; args: HostArgs<M> } }[P
 type Lifecycle = { type: 'ready' } | { type: 'failure'; message: string };
 export type AnalysisRequest =
   | { type: 'analyze'; id: number; version: number; source: string }
-  | { type: 'hover'; id: number; version: number; pos: number };
+  | { type: 'hover'; id: number; version: number; pos: number }
+  /** Where the bundled modules' hover docs are, sent first */
+  | { type: 'docs'; url: string };
 /** A hover tooltip's range and HTML */
 export interface HoverTip { from: number; to: number; html: string }
 export type AnalysisReply =

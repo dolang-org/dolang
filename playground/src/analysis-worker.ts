@@ -1,7 +1,8 @@
 import init, { Analyzed } from '../pkg/dolang_wasm.js';
 import wasmUrl from '../pkg/dolang_wasm_bg.wasm?url';
 import type { AnalysisReply, AnalysisRequest, Diagnostic, Hover } from './protocol';
-import { html, markdown, type Bundled } from './hover';
+import { html, markdown, type BundledKey, type Described } from './hover';
+import { Docs, link, type ModuleJson, type Pages } from './docs';
 
 // How long edits must settle before the source is type checked, as in the LSP.
 const checkDelayMs = 300;
@@ -15,8 +16,22 @@ interface Entry { source: string; analyzed: Analyzed; id: number; version: numbe
 let current: Entry | undefined;
 let checkTimer: ReturnType<typeof setTimeout> | undefined;
 
-// Bundled items aren't described yet (#1434).
-const bundled: Bundled = () => [];
+// Bundled items' docs and the API pages their links go to, once the page says
+// where they are. Until then, bundled items are undescribed.
+let docs: Docs | undefined;
+let pages: Promise<Pages | undefined> = Promise.resolve(undefined);
+
+async function fetchJson<T>(url: URL): Promise<T | undefined> {
+  const response = await fetch(url);
+  return response.ok ? response.json() as Promise<T> : undefined;
+}
+
+// Nearly every hover needs the prelude, so it's fetched along with the pages
+function locateDocs(url: string) {
+  pages = fetchJson<Pages>(new URL('pages.json', url)).catch(() => undefined);
+  docs = new Docs(module => fetchJson<ModuleJson>(new URL(`modules/${encodeURIComponent(module)}.json`, url)));
+  void docs.describe({ module: 'std', item: '' });
+}
 
 function check(entry: Entry) {
   clearTimeout(checkTimer);
@@ -45,16 +60,23 @@ function analyze(id: number, version: number, source: string) {
 }
 
 // A hover for a replaced version gets no answer; the page has given up on it.
-// One while a check is pending checks now, so it shows checked types.
-function hover(id: number, version: number, pos: number) {
+// One while a check is pending checks now, so it shows checked types. Bundled
+// docs may have to be fetched, and a later analysis can free `analyzed` by
+// then, so it's read first.
+async function hover(id: number, version: number, pos: number) {
   const entry = current;
   if (entry?.version !== version) return;
   if (!entry.diagnostics) check(entry);
   const found: Hover | undefined = entry.analyzed.hover(pos, pos);
-  const text = found && markdown(found, bundled);
-  const value = found && text !== undefined
-    ? { from: found.from, to: found.to, html: html(text) }
-    : undefined;
+  if (!found) return reply({ type: 'hover', id, version });
+  const keys = found.declarations.filter(declaration => declaration.kind === 'bundled');
+  const described = await Promise.all(keys.map(key => docs?.describe(key) ?? []));
+  // `markdown` asks for each by the declaration itself
+  const bundled = new Map<BundledKey, Described[]>(keys.map((key, i) => [key, described[i]]));
+  const text = markdown(found, key => bundled.get(key) ?? []);
+  const resolved = await pages;
+  const value = text === undefined ? undefined
+    : { from: found.from, to: found.to, html: html(text, href => link(href, resolved)) };
   reply({ type: 'hover', id, version, value });
 }
 
@@ -67,6 +89,7 @@ self.onmessage = (event: MessageEvent<AnalysisRequest>) => {
   const request = event.data;
   loaded.then(() => {
     if (request.type === 'analyze') analyze(request.id, request.version, request.source);
-    else hover(request.id, request.version, request.pos);
+    else if (request.type === 'docs') locateDocs(request.url);
+    else return hover(request.id, request.version, request.pos);
   }).catch(error => reply({ type: 'failure', message: String(error) }));
 };

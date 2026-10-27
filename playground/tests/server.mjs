@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 const root = resolve(import.meta.dirname, '../../target/playground');
-const types = { '.html': 'text/html', '.js': 'text/javascript', '.wasm': 'application/wasm', '.css': 'text/css', '.png': 'image/png' };
+const types = { '.html': 'text/html', '.js': 'text/javascript', '.wasm': 'application/wasm', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json' };
 
 // Writes chunks with pauses so clients see them arrive separately.
 async function writeChunks(response, chunks) {

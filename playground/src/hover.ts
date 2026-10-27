@@ -121,8 +121,34 @@ export function markdown(hover: Hover, bundled: Bundled): string | undefined {
 /**
  * Renders hover Markdown to HTML. Raw HTML in doc comments is escaped and
  * unsafe link schemes are refused, since a shared link's doc comments are
- * someone else's.
+ * someone else's. `link` says where each link goes, or leaves it as text;
+ * without it, only web links stay. Links open apart from the playground, so
+ * following one doesn't lose the edit.
  */
-export function html(markdown: string): string {
-  return new MarkdownIt({ html: false }).render(markdown);
+export function html(markdown: string, link?: (href: string) => string | undefined): string {
+  const md = new MarkdownIt({ html: false });
+  md.core.ruler.push('doc_links', state => {
+    for (const block of state.tokens) {
+      if (!block.children) continue;
+      let unlinked = false;
+      block.children = block.children.filter(token => {
+        if (token.type === 'link_close' && unlinked) {
+          unlinked = false;
+          return false;
+        }
+        if (token.type !== 'link_open') return true;
+        const href = token.attrGet('href') ?? '';
+        const target = link ? link(href) : /^(https?|mailto):/i.test(href) ? href : undefined;
+        if (target === undefined) {
+          unlinked = true;
+          return false;
+        }
+        token.attrSet('href', target);
+        token.attrSet('target', '_blank');
+        token.attrSet('rel', 'noopener');
+        return true;
+      });
+    }
+  });
+  return md.render(markdown);
 }

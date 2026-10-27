@@ -361,11 +361,33 @@ test('hover shows a local function signature and doc comment', async ({ page }) 
   await expect(tip).not.toContainText('std.Int');
 });
 
-test('hover shows a prelude call type', async ({ page }) => {
+test('hover shows a prelude function signature and doc', async ({ page }) => {
   await source(page, 'echo hi');
   const tip = await hoverAt(page, 1);
-  await expect(tip).toContainText('term.echo @ (');
-  await expect(tip.locator('em')).toHaveCount(0);
+  await expect(tip.locator('pre').first()).toHaveText('def echo ...args @ Value');
+  await expect(tip.locator('em').first()).toHaveText('in module term');
+  await expect(tip).toContainText('Prints arguments separated by spaces');
+  // Its signature says what the checked type would
+  await expect(tip).not.toContainText('term.echo @');
+  // Cross-references go to the API docs beside the playground, apart from it
+  const text = tip.locator('a', { hasText: 'Text' }).first();
+  await expect(text).toHaveAttribute('href', '../api/term/Text/#term.Text');
+  await expect(text).toHaveAttribute('target', '_blank');
+});
+
+test('hover on an overloaded bundled call shows the chosen overload', async ({ page }) => {
+  await source(page, 'echo (int "ff" base: 16)');
+  const tip = await hoverAt(page, 7);
+  await expect(tip.locator('pre')).toHaveText('def int value@Str :base@Int -> Int');
+});
+
+test('hover shows a method of a bundled class', async ({ page }) => {
+  const text = 'echo ("hi".upper())';
+  await source(page, text);
+  const tip = await hoverAt(page, text.indexOf('upper') + 1);
+  await expect(tip.locator('pre').first()).toHaveText(/^def upper/);
+  await expect(tip.locator('em').first()).toHaveText('in class std.Str');
+  await expect(tip).toContainText('Returns the string converted to uppercase.');
 });
 
 test('hover escapes markup and refuses unsafe links in doc comments', async ({ page }) => {

@@ -240,6 +240,7 @@ function startAnalysisWorker() {
       }
     },
   });
+  postAnalysis({ type: 'docs', url: new URL('docs/', document.baseURI).href });
 }
 function replaceRunWorker(message = 'Loading…') {
   endStop();

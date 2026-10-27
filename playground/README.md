@@ -27,6 +27,12 @@ up as a second `test` module. Analysis type checks the
 source against the typelibs of the modules it imports, as the LSP does; an
 import of any other module is unknown to the checker.
 
+Hover shows checked types and doc comments as the LSP does. Docs of bundled
+items come from the doc JSON that `dodo` extracts into `docs/` beside the page,
+fetched a module at a time as hovers need them. Their cross-references link to
+`../api/`, where the documentation site serves its API pages beside the
+playground.
+
 The adapter installs the host console for `term`, so `echo`, `print`, and
 `term.console` write to the output panel. The console reports `can_style` as
 `true` and `is_tty` as `false`, and has no geometry. The page renders SGR
