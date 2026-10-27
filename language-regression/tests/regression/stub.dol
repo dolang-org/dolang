@@ -1,0 +1,97 @@
+let decorated = 0
+let defaults = 0
+
+def record func
+  decorated = (decorated + 1)
+  func
+
+def make_default()
+  defaults = (defaults + 1)
+  42
+
+#[record]
+def stub value = make_default() :key = value ...rest -> Int
+  ...
+
+assert_eq $decorated 1
+assert_throws $std.RuntimeError str: "stub expression evaluated" do stub()
+assert_eq $defaults 1
+assert_throws $std.RuntimeError str: "stub expression evaluated" do
+  stub 1 key: 2 extra: 3
+assert_eq $defaults 1
+
+def vertical
+  value = make_default()
+do
+  ...
+
+assert_throws $std.RuntimeError str: "stub expression evaluated" do vertical()
+assert_eq $defaults 2
+
+class Base
+  pub def value _self
+    42
+
+class Derived: Base
+  #[record]
+  pub def value _self
+    ...
+
+assert_eq $decorated 2
+assert_throws $std.RuntimeError str: "stub expression evaluated" do
+  (Derived()).value()
+
+def required value
+  ...
+
+assert_throws $std.RuntimeError str: "missing positional item: 0" do required()
+
+# A comment may precede the `...`
+def commented()
+  # Not written yet
+  ...
+
+assert_throws $std.RuntimeError str: "stub expression evaluated" do commented()
+
+# A `let` may stand in `...` for a value it doesn't write
+assert_throws $std.RuntimeError str: "stub expression evaluated" do
+  let _unwritten @ Int = ...
+
+# Field defaults are deferred until an instance is created.
+class StubFields
+  pub field left right @ Int = ... # supplied by a native implementation
+
+assert_throws $std.RuntimeError str: "stub expression evaluated" do StubFields()
+
+class StubField
+  pub field value @ Int = ...
+assert_throws $std.RuntimeError str: "stub expression evaluated" do StubField()
+
+# A parameter's default may be `...`, raised only when the argument is omitted
+def stub_defaults x = ... :key = ...
+  (x + key)
+
+assert_eq (stub_defaults 1 key: 2) 3
+assert_throws $std.RuntimeError str: "stub expression evaluated" do stub_defaults(key: 2)
+assert_throws $std.RuntimeError str: "stub expression evaluated" do stub_defaults 1
+
+def stub_vertical
+  :limit @ Int = ...
+do -> Int
+  limit
+
+assert_eq (stub_vertical limit: 5) 5
+assert_throws $std.RuntimeError str: "stub expression evaluated" do stub_vertical()
+
+let stub_lambda = (do |x = ...| x)
+assert_eq (stub_lambda 1) 1
+assert_throws $std.RuntimeError str: "stub expression evaluated" do stub_lambda()
+
+def stub_bind items
+  bind items
+    - first
+    - second = ...
+  (first + second)
+
+assert_eq (stub_bind [1, 2]) 3
+assert_throws $std.RuntimeError str: "stub expression evaluated" do stub_bind [1]

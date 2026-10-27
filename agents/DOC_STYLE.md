@@ -97,7 +97,7 @@ and a field's type, with names linked to their documentation:
   3.141592653589793`), and otherwise `...`, as in `pub let args @ Args = ...`.
   Fields whose values the native implementation supplies also use `...`, as in
   `pub field name @ Str = ...`. Protocol fields cannot have defaults.
-  Evaluating a `...` value raises an error, as calling a stub function does.
+  Evaluating a `...` value raises an error, as a `...` function body does.
 
 ### Links
 

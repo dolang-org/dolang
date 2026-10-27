@@ -12,8 +12,8 @@ use crate::{
     RestKind,
     ast::visit::Node,
     ast::{
-        Alternation, Annot, ClassSuper, Ident, Implicit, Implicits, PatBind, PatDefault, PatIdent,
-        PatItem, Pattern, TypePattern,
+        Alternation, Annot, ClassSuper, Expr, Ident, Implicit, Implicits, PatBind, PatDefault,
+        PatIdent, PatItem, Pattern, TypePattern,
     },
     lex::{Keyword, Mode, Op, Token, TokenInfo},
     source::Span,
@@ -1119,7 +1119,33 @@ impl Parser<'_> {
                 Some(token!(TokenInfo::Equal)) => {
                     let delim_span = self.advance();
                     self.expect(scope, &[ExpectKind::ArgSep])?;
-                    let expr = self.parse_expr(scope, ExprMode::Compact)?;
+                    let expr = if let Some(token!(TokenInfo::Ellipsis, span)) = self.peek()? {
+                        self.advance();
+                        match self.peek()? {
+                            None
+                            | Some(
+                                token!(
+                                    TokenInfo::ArgSep
+                                        | TokenInfo::StmtSep
+                                        | TokenInfo::Indent
+                                        | TokenInfo::Dedent
+                                        | TokenInfo::Comma
+                                        | TokenInfo::RightParen
+                                        | TokenInfo::Op(Op::Bar)
+                                ),
+                            ) => {}
+                            other => {
+                                return Err(self.syntax_error(
+                                    scope,
+                                    other,
+                                    "`...` must be the whole default of a parameter",
+                                ));
+                            }
+                        }
+                        Expr::Stub(span)
+                    } else {
+                        self.parse_expr(scope, ExprMode::Compact)?
+                    };
                     let fold = expr.fold(self.file);
                     Some(PatDefault {
                         delim_span,

@@ -39,6 +39,10 @@ pub def pattern xs @ Array[Int]
   let _ = b
   #       ^: flow nil | std.Int
 
+pub def stubbed :limit @ Int = ...
+  let _ = limit
+  #       ^~~~~: flow std.Int
+
 pub def wrong :n @ Int = "a"
   # error: default `"a"` does not fit the annotation `std.Int`, and isn't a `nil` or symbol sentinel
   #   --> m.dol:LL:LL
