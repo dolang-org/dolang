@@ -5,6 +5,8 @@
 //! item -- which has no declaration in this document to read a doc comment
 //! from.
 
+use crate::signature;
+
 #[cfg(test)]
 #[allow(dead_code)]
 #[path = "../build.rs"]
@@ -91,7 +93,7 @@ pub(crate) fn lookup(module: &str, item: &str) -> &'static [DocEntry] {
     &ENTRIES[start..start + len]
 }
 
-/// A one-line `def name args` / `class Name` / `let name` style signature.
+/// A `def name args` / `class Name` / `let name` style signature.
 ///
 /// Reconstructed from the JSON's parameter names rather than quoted from
 /// source, since the JSON has no exact source span for a whole signature --
@@ -110,7 +112,6 @@ pub(crate) fn signature(entry: &DocEntry) -> String {
         format!("[{}]", entry.binders.join(", "))
     };
     let name = format!("{short_name}{binders}");
-    let annot = |ty: Option<&str>| ty.map(|ty| format!(" @{ty}")).unwrap_or_default();
     match entry.kind {
         "module" => format!("module {}", entry.module),
         "class" => {
@@ -121,31 +122,24 @@ pub(crate) fn signature(entry: &DocEntry) -> String {
                 .collect();
             format!("{decorators}class {name}")
         }
-        "field" => format!("field {short_name}{}", annot(entry.type_)),
+        "field" => signature::binding(&format!("field {short_name}"), entry.type_),
         "value" => format!("let {short_name}"),
         "alias" => format!("@let {name} = {}", entry.type_.unwrap_or("...")),
         _ => {
-            let params: Vec<String> = entry
+            let params: Vec<_> = entry
                 .params
                 .iter()
-                .map(|param| {
-                    let name = if param.optional && !param.name.ends_with('?') {
-                        format!("{}?", param.name)
-                    } else {
-                        param.name.to_owned()
-                    };
-                    format!("{name}{}", annot(param.type_))
+                .map(|param| signature::Param {
+                    head: param
+                        .name
+                        .strip_suffix('?')
+                        .unwrap_or(param.name)
+                        .to_owned(),
+                    ty: param.type_.map(str::to_owned),
+                    default: param.optional,
                 })
                 .collect();
-            let returns = entry
-                .type_
-                .map(|ty| format!(" -> {ty}"))
-                .unwrap_or_default();
-            if params.is_empty() {
-                format!("def {name}{returns}")
-            } else {
-                format!("def {name} {}{returns}", params.join(" "))
-            }
+            signature::def(&format!("def {name}"), &params, entry.type_)
         }
     }
 }
@@ -189,7 +183,7 @@ mod tests {
         };
         assert_eq!(
             signature(&function),
-            "def place[T, :K, ...R] point @Point :limit? -> (Int | nil)"
+            "def place[T, :K, ...R] point@Point :limit = … -> (Int | nil)"
         );
         let field = DocEntry {
             module: "m",
@@ -201,7 +195,7 @@ mod tests {
             params: &[],
             type_: Some("Int"),
         };
-        assert_eq!(signature(&field), "field x @Int");
+        assert_eq!(signature(&field), "field x @ Int");
 
         let class = DocEntry {
             module: "m",

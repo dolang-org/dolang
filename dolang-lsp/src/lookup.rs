@@ -17,6 +17,8 @@ const MAX_HOPS: usize = 16;
 /// A module a check read from source
 pub(crate) struct Module {
     pub(crate) uri: Uri,
+    /// Its module name
+    pub(crate) name: String,
     pub(crate) unit: Arc<Unit<'static>>,
 }
 
@@ -200,6 +202,7 @@ mod tests {
                 let uri = format!("file://{path}").parse().unwrap();
                 let module = Module {
                     uri,
+                    name: name.to_owned(),
                     unit: Arc::new(unit),
                 };
                 (name.to_owned(), module)
