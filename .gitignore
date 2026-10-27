@@ -1,5 +1,6 @@
 /dolang-code/dist
 /dolang-code/node_modules
+/dolang-code/out
 /dolang-code/.vscode-test/
 /dolang-code/*.vsix
 /docs/api/
