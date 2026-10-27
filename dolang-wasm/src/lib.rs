@@ -159,18 +159,34 @@ pub async fn run(source: String, host: Host, signal: AbortSignal) -> Result<JsVa
     serde_wasm_bindgen::to_value(&execute(source, host, signal).await).map_err(Into::into)
 }
 
-/// Highlights `source` and reports its compiler diagnostics, keeping its unit
-/// for [`check`].
+/// A source compiled for highlighting and checking.
+///
+/// It lives in the wasm heap; JS should `free` one it no longer needs rather
+/// than wait for it to be collected.
 #[wasm_bindgen]
-pub fn analyze(source: &str) -> Result<JsValue, JsValue> {
-    serde_wasm_bindgen::to_value(&analysis::analyze(source)).map_err(Into::into)
-}
+pub struct Analyzed(analysis::Analyzed);
 
-/// Type checks the source [`analyze`] took last, reporting the checker's
-/// diagnostics.
 #[wasm_bindgen]
-pub fn check() -> Result<JsValue, JsValue> {
-    serde_wasm_bindgen::to_value(&analysis::check()).map_err(Into::into)
+impl Analyzed {
+    #[wasm_bindgen(constructor)]
+    pub fn new(source: String) -> Analyzed {
+        Analyzed(analysis::Analyzed::new(source))
+    }
+
+    /// The source's tokens, classified for highlighting.
+    pub fn tokens(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&self.0.tokens()).map_err(Into::into)
+    }
+
+    /// The compiler's diagnostics.
+    pub fn diagnostics(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&self.0.diagnostics()).map_err(Into::into)
+    }
+
+    /// Type checks the source, reporting the checker's diagnostics.
+    pub fn check(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&self.0.check()).map_err(Into::into)
+    }
 }
 
 #[cfg(all(test, target_family = "wasm"))]
