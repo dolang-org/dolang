@@ -46,7 +46,3 @@ workspace = true
 
 [dependencies.dolang-ext-time]
 workspace = true
-
-
-[build-dependencies.dolang-private-bundle]
-workspace = true

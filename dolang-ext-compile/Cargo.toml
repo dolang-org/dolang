@@ -30,7 +30,3 @@ optional = true
 [dependencies.console]
 workspace = true
 optional = true
-
-
-[build-dependencies.dolang-private-bundle]
-workspace = true

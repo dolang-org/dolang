@@ -802,7 +802,6 @@ name = "dolang"
 version = "0.1.1"
 dependencies = [
  "dolang-compile",
- "dolang-private-bundle",
  "dolang-runtime",
  "linkme",
 ]
@@ -838,7 +837,6 @@ version = "0.1.1"
 dependencies = [
  "base64",
  "dolang",
- "dolang-private-bundle",
 ]
 
 [[package]]
@@ -848,7 +846,6 @@ dependencies = [
  "annotate-snippets",
  "console",
  "dolang",
- "dolang-private-bundle",
 ]
 
 [[package]]
@@ -858,7 +855,6 @@ dependencies = [
  "async-compression",
  "dolang",
  "dolang-ext-shell",
- "dolang-private-bundle",
  "futures-lite",
  "tokio",
  "tokio-util",
@@ -871,7 +867,6 @@ dependencies = [
  "blake3",
  "digest",
  "dolang",
- "dolang-private-bundle",
  "md-5",
  "sha1",
  "sha2",
@@ -882,7 +877,6 @@ name = "dolang-ext-glob"
 version = "0.1.1"
 dependencies = [
  "dolang",
- "dolang-private-bundle",
  "wax",
 ]
 
@@ -895,7 +889,6 @@ dependencies = [
  "dolang-ext-json",
  "dolang-ext-time",
  "dolang-ext-url",
- "dolang-private-bundle",
  "futures",
  "httpdate",
  "reqwest",
@@ -912,7 +905,6 @@ dependencies = [
  "dolang-ext-json",
  "dolang-ext-time",
  "dolang-ext-url",
- "dolang-private-bundle",
  "futures",
  "http",
  "http-body-util",
@@ -930,7 +922,6 @@ name = "dolang-ext-json"
 version = "0.1.1"
 dependencies = [
  "dolang",
- "dolang-private-bundle",
  "serde",
  "serde_json",
 ]
@@ -940,7 +931,6 @@ name = "dolang-ext-load"
 version = "0.1.1"
 dependencies = [
  "dolang",
- "dolang-private-bundle",
 ]
 
 [[package]]
@@ -951,7 +941,6 @@ dependencies = [
  "diffy",
  "dolang",
  "dolang-ext-shell",
- "dolang-private-bundle",
 ]
 
 [[package]]
@@ -961,7 +950,6 @@ dependencies = [
  "dolang",
  "dolang-ext-shell",
  "dolang-ext-term",
- "dolang-private-bundle",
  "indicatif",
  "tokio",
  "unicode-width",
@@ -972,7 +960,6 @@ name = "dolang-ext-rand"
 version = "0.1.1"
 dependencies = [
  "dolang",
- "dolang-private-bundle",
  "rand",
 ]
 
@@ -981,7 +968,6 @@ name = "dolang-ext-regex"
 version = "0.1.1"
 dependencies = [
  "dolang",
- "dolang-private-bundle",
  "regex",
 ]
 
@@ -998,7 +984,6 @@ dependencies = [
  "dolang-ext-term",
  "dolang-ext-time",
  "dolang-ext-uuid",
- "dolang-private-bundle",
  "dolang-private-util",
  "dolang-vfs",
  "dolang-winterop",
@@ -1022,7 +1007,6 @@ dependencies = [
  "bitvec",
  "dolang",
  "dolang-ext-shell",
- "dolang-private-bundle",
  "dolang-vfs",
  "libc",
  "libsqlite3-sys",
@@ -1040,7 +1024,6 @@ dependencies = [
  "dolang",
  "dolang-ext-shell",
  "dolang-ext-time",
- "dolang-private-bundle",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -1051,7 +1034,6 @@ name = "dolang-ext-term"
 version = "0.1.1"
 dependencies = [
  "dolang",
- "dolang-private-bundle",
  "unicode-segmentation",
  "unicode-width",
 ]
@@ -1061,7 +1043,6 @@ name = "dolang-ext-time"
 version = "0.1.1"
 dependencies = [
  "dolang",
- "dolang-private-bundle",
  "futures",
  "gloo-timers",
  "time",
@@ -1074,7 +1055,6 @@ name = "dolang-ext-toml"
 version = "0.1.1"
 dependencies = [
  "dolang",
- "dolang-private-bundle",
  "serde",
  "toml",
 ]
@@ -1084,7 +1064,6 @@ name = "dolang-ext-url"
 version = "0.1.1"
 dependencies = [
  "dolang",
- "dolang-private-bundle",
  "percent-encoding",
  "url",
 ]
@@ -1094,7 +1073,6 @@ name = "dolang-ext-uuid"
 version = "0.1.1"
 dependencies = [
  "dolang",
- "dolang-private-bundle",
  "dolang-winterop",
  "uuid",
 ]
@@ -1106,7 +1084,6 @@ dependencies = [
  "dolang",
  "dolang-ext-shell",
  "dolang-ext-time",
- "dolang-private-bundle",
  "dolang-vfs",
  "dolang-vfs-winnet",
  "dolang-winterop",
@@ -1118,7 +1095,6 @@ version = "0.1.1"
 dependencies = [
  "dolang",
  "dolang-ext-shell",
- "dolang-private-bundle",
  "dolang-vfs",
  "dolang-vfs-winreg",
  "dolang-winterop",
@@ -1130,7 +1106,6 @@ version = "0.1.1"
 dependencies = [
  "dolang",
  "dolang-ext-shell",
- "dolang-private-bundle",
  "dolang-vfs",
  "dolang-vfs-winscm",
  "dolang-winterop",
@@ -1141,7 +1116,6 @@ name = "dolang-ext-xml"
 version = "0.1.1"
 dependencies = [
  "dolang",
- "dolang-private-bundle",
  "futures",
  "quick-xml",
 ]
@@ -1151,7 +1125,6 @@ name = "dolang-ext-yaml"
 version = "0.1.1"
 dependencies = [
  "dolang",
- "dolang-private-bundle",
  "ordered-float",
  "saphyr",
  "saphyr-parser",
@@ -1165,7 +1138,6 @@ dependencies = [
  "dolang",
  "dolang-ext-shell",
  "dolang-ext-time",
- "dolang-private-bundle",
  "futures-lite",
  "jiff",
  "tokio",
@@ -1332,6 +1304,7 @@ dependencies = [
  "dolang",
  "dolang-ext-shell",
  "dolang-private-bundle",
+ "wax",
 ]
 
 [[package]]
@@ -1437,7 +1410,7 @@ dependencies = [
  "dolang-ext-uuid",
  "dolang-ext-xml",
  "dolang-ext-yaml",
- "dolang-private-bundle",
+ "dolang-shell-modules",
  "futures",
  "getrandom 0.4.2",
  "js-sys",

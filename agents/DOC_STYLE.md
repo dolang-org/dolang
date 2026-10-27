@@ -17,7 +17,7 @@ Documented modules live in:
 
 - `dolang-shell-modules/lib/` — modules written in Do, documented where they are
   implemented.
-- `dolang/stub/` and `dolang-ext-*/stub/` — stubs for native modules. A
+- `dolang-shell-modules/stub/` — stubs for native modules. A
   stub declares a module's public API, with `...` as each body, to carry
   its documentation and type annotations. Keep it in step with the native
   module.

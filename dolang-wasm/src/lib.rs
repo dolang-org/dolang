@@ -3,9 +3,6 @@ mod asserts;
 mod host;
 mod typelibs;
 
-/// Resources bundled by this crate.
-pub use typelibs::RESOURCES;
-
 use dolang::{
     compile::Config,
     extension::Extension,

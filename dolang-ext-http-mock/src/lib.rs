@@ -8,9 +8,3 @@ mod extension;
 mod global;
 mod mock;
 mod serve;
-
-/// Resources bundled by this crate.
-pub static RESOURCES: &[dolang::resource::Resource] =
-    include!(concat!(env!("OUT_DIR"), "/resources.rs"));
-
-dolang::resources!(RESOURCES);

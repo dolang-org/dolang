@@ -162,9 +162,9 @@ dodo shell-test -- --tags parser test
 | `fuzz-bytecode`           | Regenerates the seed corpus and runs the bytecode fuzzer.                                                                          |
 
 `dodo typecheck-test` builds the checkout’s compiler and checks all modules
-under `dolang-shell-modules/lib` and every `*/stub` directory, including nested,
-private, and platform-specific modules. It requires zero diagnostics and a
-successful exit, and disables bundled typelib fallback. It runs first in
+under `dolang-shell-modules/lib` and `dolang-shell-modules/stub`, including
+nested, private, and platform-specific modules. It requires zero diagnostics and
+a successful exit, and disables bundled typelib fallback. It runs first in
 `dodo test` and gates release packaging in CI. Release CI uses
 `dodo typecheck-test --profile dist` to reuse the distribution build.
 

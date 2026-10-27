@@ -246,27 +246,9 @@ fn repo_stub(name: &str) -> (PathBuf, String) {
 
 /// Find a native module's stub, if it has one.
 fn find_repo_stub(name: &str) -> Option<(PathBuf, String)> {
-    let relative = format!("{}.dol", name.replace('.', "/"));
-    let mut dirs = vec!["dolang".to_owned()];
-    for entry in fs::read_dir(WORKSPACE).unwrap() {
-        let entry = entry.unwrap().file_name().into_string().unwrap();
-        if entry.starts_with("dolang-ext-") {
-            dirs.push(entry);
-        }
-    }
-    let mut found: Vec<_> = dirs
-        .into_iter()
-        .map(|dir| format!("{dir}/stub/{relative}"))
-        .filter(|file| Path::new(WORKSPACE).join(file).exists())
-        .collect();
-    match found.len() {
-        0 => None,
-        1 => {
-            let file = found.pop().unwrap();
-            Some((Path::new(WORKSPACE).join(&file), file))
-        }
-        _ => panic!("several repository stubs for module `{name}`: {found:?}"),
-    }
+    let file = format!("dolang-shell-modules/stub/{}.dol", name.replace('.', "/"));
+    let path = Path::new(WORKSPACE).join(&file);
+    path.exists().then_some((path, file))
 }
 
 /// Loaded inputs shared by correctness tests and benchmarks.

@@ -23,9 +23,46 @@ workspace = true
 
 [build-dependencies.dolang-ext-shell]
 workspace = true
+optional = true
 
+
+[build-dependencies.wax]
+workspace = true
+
+
+# Each extension's feature bundles its stub's typelib and the libraries that
+# need it; see the table in build.rs.
 [features]
 debug = ["dolang-private-bundle/debug"]
+base64 = []
+compile = []
+compress = []
+digest = []
+glob = []
+http = []
+http_mock = []
+json = []
+load = []
+patch = []
+progress = []
+rand = []
+regex = []
+shell = ["dep:dolang-ext-shell"]
+sqlite = []
+tar = []
+term = []
+time = []
+toml = []
+url = []
+uuid = []
+winnet = []
+winreg = []
+winscm = []
+xml = []
+yaml = []
+zip = []
+# The `test` module's stub for the playground, which provides `test` natively.
+wasm = []
 
 [dependencies.dolang]
 workspace = true

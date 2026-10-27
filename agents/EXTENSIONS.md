@@ -7,8 +7,15 @@ via `linkme`. An extension implements the `Extension` trait and calls
 - `extension.rs` — trait impl + `extension!` call
 - `global.rs` — global state holding `Type` handles
 - One or more implementation files — object types, module functions, etc.
-- `stub/<module>.dol` — the module's public API and its documentation (see
-  [API Reference](DOC_STYLE.md#api-reference))
+
+The module's public API and its documentation go in a stub,
+`dolang-shell-modules/stub/<module>.dol` (see
+[API Reference](DOC_STYLE.md#api-reference)). That crate bundles every typelib,
+so it can check each against its dependencies. Give it a feature for the
+extension, add a row to the table in its `build.rs` that selects the stub when
+the extension's feature and the features of everything the stub imports are
+enabled, and forward the feature from each crate that links the extension
+(`dolang-shell`, `dolang-wasm`).
 
 ## Extension Entry Point
 

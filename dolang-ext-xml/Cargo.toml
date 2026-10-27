@@ -19,7 +19,3 @@ workspace = true
 
 [dev-dependencies.futures]
 workspace = true
-
-
-[build-dependencies.dolang-private-bundle]
-workspace = true
