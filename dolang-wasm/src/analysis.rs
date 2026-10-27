@@ -12,8 +12,6 @@ use std::{
 };
 
 thread_local! {
-    /// The unit [`analyze`] compiled last, which [`check`] checks.
-    static ANALYZED: RefCell<Option<Unit<'static>>> = const { RefCell::new(None) };
     /// The bundled typelibs, decoded as checks first need them.
     static TYPELIBS: RefCell<HashMap<&'static str, typeck::Typelib<'static>>> =
         RefCell::new(HashMap::new());
@@ -31,11 +29,6 @@ pub(crate) struct Diagnostic {
     pub to: usize,
     pub severity: &'static str,
     pub message: String,
-}
-#[derive(Serialize)]
-pub(crate) struct Analysis {
-    pub tokens: Vec<TokenRange>,
-    pub diagnostics: Vec<Diagnostic>,
 }
 
 // Index by UTF-8 byte offset; all positions exposed to the editor are UTF-16.
@@ -107,7 +100,7 @@ fn convert(
     }
 }
 
-pub(crate) fn diagnostics(unit: &Unit<'_>) -> Vec<Diagnostic> {
+fn diagnostics(unit: &Unit<'_>) -> Vec<Diagnostic> {
     let offsets = Offsets::new(unit.source());
     let mut result = Vec::new();
     for diag in unit.diagnostics() {
@@ -150,16 +143,57 @@ fn imported_by<'t>(
     found
 }
 
-/// Type checks the unit [`analyze`] compiled last against the bundled typelibs
-/// it imports, returning the diagnostics located in it.
-///
-/// A unit that failed to compile can't be checked and has none.  An import that
-/// isn't bundled is reported once, at the import.
-pub(crate) fn check() -> Vec<Diagnostic> {
-    ANALYZED.with_borrow(|unit| {
-        let Some(unit) = unit else {
-            return Vec::new();
-        };
+/// A playground source, compiled for highlighting and checking.
+pub(crate) struct Analyzed {
+    unit: Unit<'static>,
+}
+
+impl Analyzed {
+    pub(crate) fn new(source: String) -> Self {
+        let mut config = super::config();
+        config.recover(true).document(true).typecheck(true);
+        Self {
+            unit: config.unit(Path::new("playground.dol"), source),
+        }
+    }
+
+    /// The source's tokens, classified for highlighting, in source order.
+    pub(crate) fn tokens(&self) -> Vec<TokenRange> {
+        let unit = &self.unit;
+        let offsets = Offsets::new(unit.source());
+        let mut tokens = Vec::new();
+        unit.tokens(&mut |token, span: Span, node: Option<NodeId>, context| {
+            let (from, to) = offsets.range(&span);
+            if from == to {
+                return;
+            }
+            // Unlike the LSP, which leaves `Token::Delim` (`(`, `-`, etc.) and
+            // `Token::Sigil` to the client's own syntax highlighting, the
+            // playground has nothing else to fall back on, so they must be
+            // classified here or they render unstyled.
+            let kind = node.and_then(|id| unit.node(id)).map(|node| node.kind());
+            tokens.push(TokenRange {
+                from,
+                to,
+                kind: classify_token(token, kind.as_ref(), context),
+            });
+        });
+        tokens.sort_by_key(|token| (token.from, token.to));
+        tokens
+    }
+
+    /// The compiler's diagnostics.
+    pub(crate) fn diagnostics(&self) -> Vec<Diagnostic> {
+        diagnostics(&self.unit)
+    }
+
+    /// Type checks the source against the bundled typelibs it imports,
+    /// returning the diagnostics located in it.
+    ///
+    /// A source that failed to compile can't be checked and has none.  An
+    /// import that isn't bundled is reported once, at the import.
+    pub(crate) fn check(&self) -> Vec<Diagnostic> {
+        let unit = &self.unit;
         TYPELIBS.with_borrow_mut(|cache| {
             let mut builder = typeck::Builder::new();
             let id = match builder.unit(unit) {
@@ -183,7 +217,7 @@ pub(crate) fn check() -> Vec<Diagnostic> {
             }
             result
         })
-    })
+    }
 }
 
 /// Where a span in a unit other than `id` lies, as `path:line:column`.
@@ -200,37 +234,6 @@ fn foreign(
         start.line_number(),
         start.column_number()
     ))
-}
-
-pub(crate) fn analyze(source: &str) -> Analysis {
-    let mut config = super::config();
-    config.recover(true).document(true).typecheck(true);
-    let unit = config.unit(Path::new("playground.dol"), source.to_owned());
-    let offsets = Offsets::new(source);
-    let mut tokens = Vec::new();
-    unit.tokens(&mut |token, span: Span, node: Option<NodeId>, context| {
-        let (from, to) = offsets.range(&span);
-        if from == to {
-            return;
-        }
-        // Unlike the LSP, which leaves `Token::Delim` (`(`, `-`, etc.) and
-        // `Token::Sigil` to the client's own syntax highlighting, the
-        // playground has nothing else to fall back on, so they must be
-        // classified here or they render unstyled.
-        let kind = node.and_then(|id| unit.node(id)).map(|node| node.kind());
-        tokens.push(TokenRange {
-            from,
-            to,
-            kind: classify_token(token, kind.as_ref(), context),
-        });
-    });
-    tokens.sort_by_key(|token| (token.from, token.to));
-    let diagnostics = diagnostics(&unit);
-    ANALYZED.set(Some(unit));
-    Analysis {
-        tokens,
-        diagnostics,
-    }
 }
 
 fn classify_token(token: Token, kind: Option<&Kind<'_>>, context: Context) -> &'static str {
@@ -305,17 +308,14 @@ pub mod tests {
     #[wasm_bindgen_test]
     fn unicode_and_recovery() {
         let source = "echo \"é e\u{301} 😀\"\nlet x = 42\nlet =";
-        let result = analyze(source);
-        assert!(!result.diagnostics.is_empty());
-        let number = result
-            .tokens
-            .iter()
-            .find(|token| token.kind == "number")
-            .unwrap();
+        let result = Analyzed::new(source.to_owned());
+        assert!(!result.diagnostics().is_empty());
+        let tokens = result.tokens();
+        let number = tokens.iter().find(|token| token.kind == "number").unwrap();
         let byte = source.find("42").unwrap();
         assert_eq!(number.from, source[..byte].encode_utf16().count());
         assert_eq!(number.to, number.from + 2);
-        for token in result.tokens {
+        for token in &tokens {
             assert!(token.from < token.to);
             assert!(token.to <= source.encode_utf16().count());
         }
@@ -324,10 +324,10 @@ pub mod tests {
     #[wasm_bindgen_test]
     fn names_follow_compiler_context() {
         let source = "class Widget\n  pub field x\ndef identity value\n  value\nlet w = Widget()\nidentity $w\n# comment\necho \"value: $w\"";
-        let result = analyze(source);
+        let result = Analyzed::new(source.to_owned());
         for kind in ["class", "function", "parameter", "comment", "string"] {
             assert!(
-                result.tokens.iter().any(|token| token.kind == kind),
+                result.tokens().iter().any(|token| token.kind == kind),
                 "{kind}"
             );
         }
@@ -336,10 +336,10 @@ pub mod tests {
     #[wasm_bindgen_test]
     fn type_syntax_has_distinct_highlights() {
         let source = "def first[T] value@T -> Array[T]\n  value";
-        let result = analyze(source);
+        let result = Analyzed::new(source.to_owned());
         for kind in ["annotation", "type", "type-parameter"] {
             assert!(
-                result.tokens.iter().any(|token| token.kind == kind),
+                result.tokens().iter().any(|token| token.kind == kind),
                 "{kind}"
             );
         }
@@ -351,10 +351,10 @@ pub mod tests {
         // playground has no other highlighting to fall back on for them, so
         // they must show up here.
         let source = "let x = (1 + 2)\nfoo\n  - 1\n";
-        let result = analyze(source);
+        let result = Analyzed::new(source.to_owned());
         assert!(
             result
-                .tokens
+                .tokens()
                 .iter()
                 .any(|token| token.kind == "punctuation")
         );
@@ -363,17 +363,13 @@ pub mod tests {
     #[wasm_bindgen_test]
     fn sigil_is_highlighted_distinctly_from_the_variable_it_introduces() {
         let source = "let x = 1\necho $x";
-        let result = analyze(source);
         let byte = source.rfind('$').unwrap();
         let from = source[..byte].encode_utf16().count();
-        let sigil = result
-            .tokens
-            .iter()
-            .find(|token| token.from == from)
-            .unwrap();
+        let tokens = Analyzed::new(source.to_owned()).tokens();
+        let sigil = tokens.iter().find(|token| token.from == from).unwrap();
         assert_eq!(sigil.kind, "sigil");
         assert_eq!(sigil.to, sigil.from + 1);
-        assert!(result.tokens.iter().any(|token| token.kind == "variable"));
+        assert!(tokens.iter().any(|token| token.kind == "variable"));
     }
 
     #[wasm_bindgen_test]
@@ -382,11 +378,10 @@ pub mod tests {
         let source = "let x = 1\necho \"$x and ${x:x}\"";
         let dollars: Vec<usize> = source.match_indices('$').map(|(byte, _)| byte).collect();
         assert_eq!(dollars.len(), 2);
-        let result = analyze(source);
+        let tokens = Analyzed::new(source.to_owned()).tokens();
         for byte in dollars {
             let from = source[..byte].encode_utf16().count();
-            let sigil = result
-                .tokens
+            let sigil = tokens
                 .iter()
                 .find(|token| token.from == from)
                 .unwrap_or_else(|| panic!("no token at byte {byte}"));
@@ -398,19 +393,19 @@ pub mod tests {
     #[wasm_bindgen_test]
     fn comments_at_eof_include_the_last_character() {
         for source in ["#", "# latest", "# é", "# 😀", "# e\u{301}"] {
-            let result = analyze(source);
-            assert_eq!(result.tokens.len(), 1);
-            assert_eq!(result.tokens[0].from, 0);
-            assert_eq!(result.tokens[0].to, source.encode_utf16().count());
+            let tokens = Analyzed::new(source.to_owned()).tokens();
+            assert_eq!(tokens.len(), 1);
+            assert_eq!(tokens[0].from, 0);
+            assert_eq!(tokens[0].to, source.encode_utf16().count());
         }
     }
 
     #[wasm_bindgen_test]
     fn type_error_is_reported() {
         let source = "# é 😀\nlet x @ Int = \"a\"\necho $x";
-        let result = analyze(source);
-        assert!(result.diagnostics.is_empty());
-        let checked = check();
+        let analyzed = Analyzed::new(source.to_owned());
+        assert!(analyzed.diagnostics().is_empty());
+        let checked = analyzed.check();
         let error = checked
             .iter()
             .find(|diag| diag.severity == "error")
@@ -430,8 +425,8 @@ pub mod tests {
     fn only_unbundled_imports_are_reported() {
         // `json` is bundled and `fs` is not
         let source = "import fs\nimport json\nfs.read_text (json.encode 1)";
-        analyze(source);
-        let reported: Vec<_> = check()
+        let reported: Vec<_> = Analyzed::new(source.to_owned())
+            .check()
             .into_iter()
             .map(|diag| (diag.from, diag.to, diag.message))
             .collect();
@@ -440,12 +435,12 @@ pub mod tests {
 
     #[wasm_bindgen_test]
     fn empty_source_and_eof_diagnostic() {
-        assert!(analyze("").tokens.is_empty());
-        let result = analyze("let x =");
-        assert!(!result.diagnostics.is_empty());
+        assert!(Analyzed::new(String::new()).tokens().is_empty());
+        let result = Analyzed::new("let x =".to_owned());
+        assert!(!result.diagnostics().is_empty());
         assert!(
             result
-                .diagnostics
+                .diagnostics()
                 .iter()
                 .all(|d| d.from <= d.to && d.to <= 7)
         );
