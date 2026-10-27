@@ -98,7 +98,7 @@ pub class Ace
   pub def user_obj
     self
     # Entry permissions. Defaults to empty.
-    permissions @ Permission = nil
+    permissions @ Permission = ...
   do -> Ace
     ...
 
@@ -109,7 +109,7 @@ pub class Ace
     # User ID.
     id @ Int
     # Entry permissions. Defaults to empty.
-    permissions @ Permission = nil
+    permissions @ Permission = ...
   do -> Ace
     ...
 
@@ -118,7 +118,7 @@ pub class Ace
   pub def group_obj
     self
     # Entry permissions. Defaults to empty.
-    permissions @ Permission = nil
+    permissions @ Permission = ...
   do -> Ace
     ...
 
@@ -129,7 +129,7 @@ pub class Ace
     # Group ID.
     id @ Int
     # Entry permissions. Defaults to empty.
-    permissions @ Permission = nil
+    permissions @ Permission = ...
   do -> Ace
     ...
 
@@ -138,7 +138,7 @@ pub class Ace
   pub def mask
     self
     # Entry permissions. Defaults to empty.
-    permissions @ Permission = nil
+    permissions @ Permission = ...
   do -> Ace
     ...
 
@@ -147,7 +147,7 @@ pub class Ace
   pub def other
     self
     # Entry permissions. Defaults to empty.
-    permissions @ Permission = nil
+    permissions @ Permission = ...
   do -> Ace
     ...
 
@@ -242,19 +242,19 @@ pub @let AclSpec = (Acl | Iterable[AceSpec])
 # ```
 pub def ace
   # Permissions for the file-owner entry.
-  :user_obj @ PermissionSpec = nil
+  :user_obj @ PermissionSpec = ...
   # User ID for a named-user entry.
-  :user @ Int = nil
+  :user @ Int = ...
   # Permissions for the file-group entry.
-  :group_obj @ PermissionSpec = nil
+  :group_obj @ PermissionSpec = ...
   # Group ID for a named-group entry.
-  :group @ Int = nil
+  :group @ Int = ...
   # Permissions for the effective-rights mask entry.
-  :mask @ PermissionSpec = nil
+  :mask @ PermissionSpec = ...
   # Permissions for the entry covering all other users.
-  :other @ PermissionSpec = nil
+  :other @ PermissionSpec = ...
   # Permissions for a `user:` or `group:` entry.
-  :permissions @ PermissionSpec = nil
+  :permissions @ PermissionSpec = ...
 do -> Ace
   ...
 

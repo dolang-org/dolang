@@ -4,22 +4,22 @@
 import strand:
   - @Backtrace
 
-pub def render_error error :backtrace @ Backtrace = nil -> term.Text
+pub def render_error error :backtrace @ Backtrace = ... -> term.Text
   ...
 
 # Compiles source, or reads and compiles a file when source is omitted.
 pub def compile
   path @ (Str | fs.Path)
-  source @ Str = nil
-  :mode @ (:SCRIPT: | :REPL: | Str) = :SCRIPT:
-  :prelude @ compiler.Prelude = nil
-  :strict @ Bool = nil
+  source @ Str = ...
+  :mode @ (:SCRIPT: | :REPL: | Str) = ...
+  :prelude @ compiler.Prelude = ...
+  :strict @ Bool = ...
 do -> Bin
   ...
 
 # Edits Do input with syntax highlighting and multiline validation.
 pub class Editor
-  pub def (init) self history_path @ (Str | fs.Path | nil) :prelude @ compiler.Prelude = nil
+  pub def (init) self history_path @ (Str | fs.Path | nil) :prelude @ compiler.Prelude = ...
     ...
 
   # Returns input, EOF, or an interrupted prompt.

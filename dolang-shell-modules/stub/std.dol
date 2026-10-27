@@ -279,7 +279,7 @@ pub def int
   value @ (Num | Str)
   # Base from 2 to 36, using digits `0-9` and letters `a-z` (in either case).
   # When supplied, the string contains raw digits: no prefix is stripped.
-  :base @ Int = nil
+  :base @ Int = ...
 do -> Int
   ...
 
@@ -527,19 +527,19 @@ do
   pub def len self -> Int
 
   # Tests for a key, or for a matching key and value.
-  pub def contains self key @ Value value @ Value = nil -> Bool
+  pub def contains self key @ Value value @ Value = ... -> Bool
 
   # Counts distinct keys, or the values of one key. Missing keys count as zero.
-  pub def count self key @ Value = nil -> Int
+  pub def count self key @ Value = ... -> Int
 
   # Reads an instance, defaulting to the last. Negative instances count backward.
   # Returns `nil` for a missing instance unless a fallback is supplied.
   pub def get[K, D = nil]
     self
     key @ K
-    instance @ Int = nil
-    :default @ D = nil
-    :else @ (() -> D) = nil
+    instance @ Int = ...
+    :default @ D = ...
+    :else @ (() -> D) = ...
   do -> (IndexItem[S, K] | D)
 
   # Yields each distinct key once.
@@ -548,7 +548,7 @@ do
   # Yields all values, or the values of one key.
   @def values self -> Iterable[Values[S]]
   @def values[K] self key @ K -> Iterable[IndexItem[S, K]]
-  pub def values self key @ Value = nil -> Iterable[Values[S]]
+  pub def values self key @ Value = ... -> Iterable[Values[S]]
 
   # Yields key-value pairs, as ordinary iteration does.
   pub def pairs self -> Iter[Entries[S]]
@@ -581,9 +581,9 @@ pub @class MutMap[S @ {...}]: AssignMap[S]
   @def pop[K, D = Never]
     self @ MutMap[Deletable[S, K]]
     key @ K
-    instance @ Int = nil
-    :default @ D = nil
-    :else @ (() -> D) = nil
+    instance @ Int = ...
+    :default @ D = ...
+    :else @ (() -> D) = ...
   do -> (IndexItem[S, K] | D)
 
   # Removes one instance, defaulting to the first. Negative instances count backward.
@@ -594,9 +594,9 @@ pub @class MutMap[S @ {...}]: AssignMap[S]
   pub def pop[K, D = Never]
     self
     key @ K
-    instance @ Int = nil
-    :default @ D = nil
-    :else @ (() -> D) = nil
+    instance @ Int = ...
+    :default @ D = ...
+    :else @ (() -> D) = ...
   do -> (IndexItem[S, K] | D)
 
   @def clear self @ MutMap[Clearable[S]]
@@ -650,12 +650,12 @@ pub @class MutSeq[T]: AssignSeq[T]
   pub def pop[D = Never]
     self
     # The position to remove. Negative indexes count from the end.
-    index @ Int = nil
+    index @ Int = ...
     # The value to return when the item does not exist.
-    :default @ D = nil
+    :default @ D = ...
     # A block whose result to return when the item does not exist and there is
     # no `default`.
-    :else @ (() -> D) = nil
+    :else @ (() -> D) = ...
   do -> (T | D)
 
   # Removes the item at `index` if it exists, returning whether it did.
@@ -680,12 +680,12 @@ pub class Iterable[T]: @BaseIterable[T]
 
   # Tests whether every item is truthy, or satisfies `pred`. An empty iterable
   # passes.
-  pub def all self pred @ ((T) -> Value) = nil -> Bool
+  pub def all self pred @ ((T) -> Value) = ... -> Bool
     ...
 
   # Tests whether any item is truthy, or satisfies `pred`. An empty iterable
   # fails.
-  pub def any self pred @ ((T) -> Value) = nil -> Bool
+  pub def any self pred @ ((T) -> Value) = ... -> Bool
     ...
 
   # Returns an iterator over the items, followed by the items of each additional
@@ -719,8 +719,8 @@ pub class Iterable[T]: @BaseIterable[T]
   pub def chomp self -> Iter[Str | Bin]
     ...
 
-  @def crimp self@Iterable[Str] terminator@(Str | Bin) = nil -> Iter[Str]
-  @def crimp self@Iterable[Bin] terminator@(Str | Bin) = nil -> Iter[Bin]
+  @def crimp self@Iterable[Str] terminator@(Str | Bin) = ... -> Iter[Str]
+  @def crimp self@Iterable[Bin] terminator@(Str | Bin) = ... -> Iter[Bin]
 
   # Returns an iterator with a line terminator appended to each item.
   #
@@ -742,7 +742,7 @@ pub class Iterable[T]: @BaseIterable[T]
   #
   # run cmd stdin: (["one", "two"].crimp())
   # ```
-  pub def crimp self terminator@(Str | Bin) = nil -> Iter[Str | Bin]
+  pub def crimp self terminator@(Str | Bin) = ... -> Iter[Str | Bin]
     ...
 
   # Returns an iterator of `(index, value)` tuples, counting from `0`.
@@ -762,8 +762,8 @@ pub class Iterable[T]: @BaseIterable[T]
   pub def find[D = T]
     self
     pred @ ((T) -> Value)
-    :default @ D = nil
-    :else @ (() -> D) = nil
+    :default @ D = ...
+    :else @ (() -> D) = ...
   do -> (T | D)
     ...
 
@@ -795,7 +795,7 @@ pub class Iterable[T]: @BaseIterable[T]
   # ## Errors
   #
   # Raises [`IterStop`](std.IterStop) if there are no items and no `default`.
-  pub def max[D = T] self :default @ D = nil -> (T | D)
+  pub def max[D = T] self :default @ D = ... -> (T | D)
     ...
 
   # Returns the smallest item.
@@ -803,7 +803,7 @@ pub class Iterable[T]: @BaseIterable[T]
   # ## Errors
   #
   # Raises [`IterStop`](std.IterStop) if there are no items and no `default`.
-  pub def min[D = T] self :default @ D = nil -> (T | D)
+  pub def min[D = T] self :default @ D = ... -> (T | D)
     ...
 
   # Returns an iterator that discards the first `n` items.
@@ -867,8 +867,8 @@ pub class Sinkable[T]: @BaseSinkable[T]
   pub def prechomp self -> Sink[T]
     ...
 
-  @def precrimp self@Sinkable[Str] terminator@(Str | Bin) = nil -> Sink[Str]
-  @def precrimp self@Sinkable[Bin] terminator@(Str | Bin) = nil -> Sink[Bin]
+  @def precrimp self@Sinkable[Str] terminator@(Str | Bin) = ... -> Sink[Str]
+  @def precrimp self@Sinkable[Bin] terminator@(Str | Bin) = ... -> Sink[Bin]
 
   # Returns a sink that appends a line terminator to each value before writing
   # it. The append is unconditional, so a value that already ends in one gets a
@@ -890,7 +890,7 @@ pub class Sinkable[T]: @BaseSinkable[T]
   # open $path w do |file|
   #   file.precrimp(shell.line_ending()).put "native"
   # ```
-  pub def precrimp self terminator@(Str | Bin) = nil -> Sink[T]
+  pub def precrimp self terminator@(Str | Bin) = ... -> Sink[T]
     ...
 
   # Returns a sink that writes only the values for which `pred` is truthy.
@@ -952,12 +952,12 @@ pub class Sink[T]: Sinkable[T] @BaseSink[T]
   pub def prechomp self -> Sink[T]
     ...
 
-  @def precrimp self@Sink[Str] terminator@(Str | Bin) = nil -> Sink[Str]
-  @def precrimp self@Sink[Bin] terminator@(Str | Bin) = nil -> Sink[Bin]
+  @def precrimp self@Sink[Str] terminator@(Str | Bin) = ... -> Sink[Str]
+  @def precrimp self@Sink[Bin] terminator@(Str | Bin) = ... -> Sink[Bin]
 
   # Returns a sink that appends a line terminator to each value before writing
   # it, as [`Sinkable.precrimp`](std.Sinkable.precrimp) does.
-  pub def precrimp self terminator@(Str | Bin) = nil -> Sink[T]
+  pub def precrimp self terminator@(Str | Bin) = ... -> Sink[T]
     ...
 
   # Returns a sink that writes only the values for which `pred` is truthy.
@@ -1041,8 +1041,8 @@ pub class BaseArray[T]: Iterable[T] @Unpack[T, Rest: UnpackIter[T]] @Seq[T]
     self
     # the index to access
     index @ Int
-    :default @ D = nil
-    :else @ (() -> D) = nil
+    :default @ D = ...
+    :else @ (() -> D) = ...
   do -> (T | D)
     ...
 
@@ -1201,9 +1201,9 @@ pub class Array[T]: BaseArray[T] Sinkable[T] @MutSeq[T]
   pub def pop[D = Never]
     self
     # optional index to remove; defaults to the last element
-    index @ Int = nil
-    :default @ D = nil
-    :else @ (() -> D) = nil
+    index @ Int = ...
+    :default @ D = ...
+    :else @ (() -> D) = ...
   do -> (T | D)
     ...
 
@@ -1239,8 +1239,8 @@ pub class Array[T]: BaseArray[T] Sinkable[T] @MutSeq[T]
   # ```
   pub def sort
     self
-    :key @ ((T) -> Value) = nil
-    :reverse @ Bool = nil
+    :key @ ((T) -> Value) = ...
+    :reverse @ Bool = ...
   do
     ...
 
@@ -1365,7 +1365,7 @@ pub class Bin: @Index[Range[Int], Bin]
   pub def join
     self
     # iterable to join; uses the default input when omitted
-    iter @ Iterable[Str | Bin] = nil
+    iter @ Iterable[Str | Bin] = ...
   do -> Bin
     ...
 
@@ -1383,7 +1383,7 @@ pub class Bin: @Index[Range[Int], Bin]
     # the delimiter bytes
     delimiter @ Bin
     # max splits; negative means split from left
-    :limit @ Int = nil
+    :limit @ Int = ...
   do -> UnpackIter[Bin]
     ...
 
@@ -1408,7 +1408,7 @@ pub class Bin: @Index[Range[Int], Bin]
     # the delimiter bytes
     delimiter @ Bin
     # max splits; negative means split from right
-    :limit @ Int = nil
+    :limit @ Int = ...
   do -> UnpackIter[Bin]
     ...
 
@@ -1439,7 +1439,7 @@ pub class Bin: @Index[Range[Int], Bin]
   # ```
   pub def trim
     self
-    chars @ (Bin | Iterable[Bin]) = nil
+    chars @ (Bin | Iterable[Bin]) = ...
   do -> Bin
     ...
 
@@ -1453,7 +1453,7 @@ pub class Bin: @Index[Range[Int], Bin]
   # ```
   pub def trim_end
     self
-    chars @ (Bin | Iterable[Bin]) = nil
+    chars @ (Bin | Iterable[Bin]) = ...
   do -> Bin
     ...
 
@@ -1467,7 +1467,7 @@ pub class Bin: @Index[Range[Int], Bin]
   # ```
   pub def trim_start
     self
-    chars @ (Bin | Iterable[Bin]) = nil
+    chars @ (Bin | Iterable[Bin]) = ...
   do -> Bin
     ...
 
@@ -1578,7 +1578,7 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   pub def (init)
     self
     # initial contents
-    initial @ Bin = nil
+    initial @ Bin = ...
   do
     ...
 
@@ -1658,7 +1658,7 @@ pub class BinBuf: @Index[Int] @Assign[Int] Io
   pub def drain
     self
     # Maximum bytes per chunk; 512 KiB when omitted.
-    size @ Int = nil
+    size @ Int = ...
   do -> Iter[Bin]
     ...
 
@@ -1948,7 +1948,7 @@ pub class ConcurrencyError: RuntimeError
   pub def (init)
     self
     # detail appended to the generic message
-    message @ Str = nil
+    message @ Str = ...
   do
     ...
 
@@ -2007,7 +2007,7 @@ do
     # the key to check
     key @ Value
     # optional value to check for (multi-map)
-    value @ Value = nil
+    value @ Value = ...
   do -> Bool
     ...
 
@@ -2027,7 +2027,7 @@ do
   # the number of values associated with that key.
   #
   # Missing keys return `0`.
-  pub def count self key @ Value = nil -> Int
+  pub def count self key @ Value = ... -> Int
     ...
 
   # Retrieves the value for a key. Returns `nil` if the key is missing and no
@@ -2046,9 +2046,9 @@ do
     # the key to look up
     key @ K
     # which value to retrieve when a key has multiple values (0-indexed; negative counts from end; default: last)
-    instance @ Int = nil
-    :default @ D = nil
-    :else @ (() -> D) = nil
+    instance @ Int = ...
+    :default @ D = ...
+    :else @ (() -> D) = ...
   do -> (IndexItem[S, K] | D)
     ...
 
@@ -2073,7 +2073,7 @@ do
   # Missing keys return an empty iterator.
   @def values self -> UnpackIter[Values[S]]
   @def values[K] self key@K -> UnpackIter[IndexItem[S, K]]
-  pub def values self key @ Value = nil -> UnpackIter[Values[S]]
+  pub def values self key @ Value = ... -> UnpackIter[Values[S]]
     ...
 
   # Returns the value of a key, the last one if it is repeated.
@@ -2201,9 +2201,9 @@ pub class Dict[S @ {...}]: BaseDict[S] @MutMap[S] @Assign[S]
   @def pop[K, D = Never]
     self @ Dict[Deletable[S, K]]
     key @ K
-    instance @ Int = nil
-    :default @ D = nil
-    :else @ (() -> D) = nil
+    instance @ Int = ...
+    :default @ D = ...
+    :else @ (() -> D) = ...
   do -> (IndexItem[S, K] | D)
 
   # Removes and returns a value for a key.
@@ -2234,9 +2234,9 @@ pub class Dict[S @ {...}]: BaseDict[S] @MutMap[S] @Assign[S]
     # the key to remove
     key @ K
     # which value to remove when a key has multiple values (0-indexed; negative counts from end; default: first)
-    instance @ Int = nil
-    :default @ D = nil
-    :else @ (() -> D) = nil
+    instance @ Int = ...
+    :default @ D = ...
+    :else @ (() -> D) = ...
   do -> (IndexItem[S, K] | D)
     ...
 
@@ -2473,15 +2473,15 @@ pub class FmtParam: Func
   pub def (init)
     self
     name @ (Int | Sym)
-    :fill @ FmtFill = nil
-    :align @ FmtAlign = nil
-    :sign @ FmtSign = nil
-    :width @ Int = nil
-    :precision @ Int = nil
-    :alt @ Bool = nil
-    :kind @ FmtKind = nil
+    :fill @ FmtFill = ...
+    :align @ FmtAlign = ...
+    :sign @ FmtSign = ...
+    :width @ Int = ...
+    :precision @ Int = ...
+    :alt @ Bool = ...
+    :kind @ FmtKind = ...
     # Interpolation as written in source
-    :source @ Str = nil
+    :source @ Str = ...
   do
     ...
 
@@ -2508,19 +2508,19 @@ pub class FmtParam: Func
   pub def (call)
     self
     # Padding fill
-    :fill @ (FmtFill | nil) = nil
+    :fill @ (FmtFill | nil) = ...
     # Alignment
-    :align @ (FmtAlign | nil) = nil
+    :align @ (FmtAlign | nil) = ...
     # Sign display
-    :sign @ (FmtSign | nil) = nil
+    :sign @ (FmtSign | nil) = ...
     # Minimum width in grapheme clusters
-    :width @ (Int | nil) = nil
+    :width @ (Int | nil) = ...
     # Numeric precision or maximum graphemes
-    :precision @ (Int | nil) = nil
+    :precision @ (Int | nil) = ...
     # Enables alternate formatting
-    :alt @ (Bool | nil) = nil
+    :alt @ (Bool | nil) = ...
     # Representation kind
-    :kind @ (FmtKind | nil) = nil
+    :kind @ (FmtKind | nil) = ...
   do -> FmtParam
     ...
 
@@ -2547,19 +2547,19 @@ pub class FmtSpec: Func
   pub def (init)
     self
     # Padding fill
-    :fill @ FmtFill = nil
+    :fill @ FmtFill = ...
     # Alignment
-    :align @ FmtAlign = nil
+    :align @ FmtAlign = ...
     # Sign display
-    :sign @ FmtSign = nil
+    :sign @ FmtSign = ...
     # Minimum width in grapheme clusters
-    :width @ Int = nil
+    :width @ Int = ...
     # Numeric precision or maximum graphemes
-    :precision @ Int = nil
+    :precision @ Int = ...
     # Enables alternate formatting
-    :alt @ Bool = nil
+    :alt @ Bool = ...
     # Representation kind
-    :kind @ FmtKind = nil
+    :kind @ FmtKind = ...
   do
     ...
 
@@ -2626,19 +2626,19 @@ pub class FmtSpec: Func
   @def (call)
     self
     # Padding fill
-    :fill @ (FmtFill | nil) = nil
+    :fill @ (FmtFill | nil) = ...
     # Alignment
-    :align @ (FmtAlign | nil) = nil
+    :align @ (FmtAlign | nil) = ...
     # Sign display
-    :sign @ (FmtSign | nil) = nil
+    :sign @ (FmtSign | nil) = ...
     # Minimum width in grapheme clusters
-    :width @ (Int | nil) = nil
+    :width @ (Int | nil) = ...
     # Numeric precision or maximum graphemes
-    :precision @ (Int | nil) = nil
+    :precision @ (Int | nil) = ...
     # Enables alternate formatting
-    :alt @ (Bool | nil) = nil
+    :alt @ (Bool | nil) = ...
     # Representation kind
-    :kind @ (FmtKind | nil) = nil
+    :kind @ (FmtKind | nil) = ...
   do -> FmtSpec
 
   @def (call)[T]
@@ -2646,19 +2646,19 @@ pub class FmtSpec: Func
     # value to bind
     value @ T
     # Padding fill
-    :fill @ (FmtFill | nil) = nil
+    :fill @ (FmtFill | nil) = ...
     # Alignment
-    :align @ (FmtAlign | nil) = nil
+    :align @ (FmtAlign | nil) = ...
     # Sign display
-    :sign @ (FmtSign | nil) = nil
+    :sign @ (FmtSign | nil) = ...
     # Minimum width in grapheme clusters
-    :width @ (Int | nil) = nil
+    :width @ (Int | nil) = ...
     # Numeric precision or maximum graphemes
-    :precision @ (Int | nil) = nil
+    :precision @ (Int | nil) = ...
     # Enables alternate formatting
-    :alt @ (Bool | nil) = nil
+    :alt @ (Bool | nil) = ...
     # Representation kind
-    :kind @ (FmtKind | nil) = nil
+    :kind @ (FmtKind | nil) = ...
   do -> FmtValue[T]
 
   pub def (call) self ...args @ Value -> FmtValue[Value]
@@ -2743,21 +2743,21 @@ pub class FmtValue[T]: Func
     # Value to bind
     value @ T
     # Padding fill
-    :fill @ FmtFill = nil
+    :fill @ FmtFill = ...
     # Alignment
-    :align @ FmtAlign = nil
+    :align @ FmtAlign = ...
     # Sign display
-    :sign @ FmtSign = nil
+    :sign @ FmtSign = ...
     # Minimum width in grapheme clusters
-    :width @ Int = nil
+    :width @ Int = ...
     # Numeric precision or maximum graphemes
-    :precision @ Int = nil
+    :precision @ Int = ...
     # Enables alternate formatting
-    :alt @ Bool = nil
+    :alt @ Bool = ...
     # Representation kind
-    :kind @ FmtKind = nil
+    :kind @ FmtKind = ...
     # Interpolation as written in source
-    :source @ Str = nil
+    :source @ Str = ...
   do
     ...
 
@@ -2820,19 +2820,19 @@ pub class FmtValue[T]: Func
   pub def (call)
     self
     # Padding fill
-    :fill @ (FmtFill | nil) = nil
+    :fill @ (FmtFill | nil) = ...
     # Alignment
-    :align @ (FmtAlign | nil) = nil
+    :align @ (FmtAlign | nil) = ...
     # Sign display
-    :sign @ (FmtSign | nil) = nil
+    :sign @ (FmtSign | nil) = ...
     # Minimum width in grapheme clusters
-    :width @ (Int | nil) = nil
+    :width @ (Int | nil) = ...
     # Numeric precision or maximum graphemes
-    :precision @ (Int | nil) = nil
+    :precision @ (Int | nil) = ...
     # Enables alternate formatting
-    :alt @ (Bool | nil) = nil
+    :alt @ (Bool | nil) = ...
     # Representation kind
-    :kind @ (FmtKind | nil) = nil
+    :kind @ (FmtKind | nil) = ...
   do -> FmtValue[T]
     ...
 
@@ -3197,12 +3197,12 @@ pub class IterStop: Error
 pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   # Consumes the iterator and tests whether every value is truthy, or satisfies
   # `pred`, as [`Iterable.all`](std.Iterable.all) does.
-  pub def all self pred @ ((T) -> Value) = nil -> Bool
+  pub def all self pred @ ((T) -> Value) = ... -> Bool
     ...
 
   # Consumes the iterator and tests whether any value is truthy, or satisfies
   # `pred`, as [`Iterable.any`](std.Iterable.any) does.
-  pub def any self pred @ ((T) -> Value) = nil -> Bool
+  pub def any self pred @ ((T) -> Value) = ... -> Bool
     ...
 
   # Returns an iterator that yields this iterator's values followed by those of
@@ -3222,12 +3222,12 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   pub def count self -> Int
     ...
 
-  @def crimp self@Iter[Str] terminator@(Str | Bin) = nil -> Iter[Str]
-  @def crimp self@Iter[Bin] terminator@(Str | Bin) = nil -> Iter[Bin]
+  @def crimp self@Iter[Str] terminator@(Str | Bin) = ... -> Iter[Str]
+  @def crimp self@Iter[Bin] terminator@(Str | Bin) = ... -> Iter[Bin]
 
   # Returns an iterator with a line terminator appended to each value, as
   # [`Iterable.crimp`](std.Iterable.crimp) does.
-  pub def crimp self terminator@(Str | Bin) = nil -> Iter[Str | Bin]
+  pub def crimp self terminator@(Str | Bin) = ... -> Iter[Str | Bin]
     ...
 
   # Returns an iterator of `(index, value)` tuples, counting from `0`.
@@ -3243,8 +3243,8 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   pub def find[D = T]
     self
     pred @ ((T) -> Value)
-    :default @ D = nil
-    :else @ (() -> D) = nil
+    :default @ D = ...
+    :else @ (() -> D) = ...
   do -> (T | D)
     ...
 
@@ -3273,12 +3273,12 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
 
   # Consumes the iterator and returns the largest value, as
   # [`Iterable.max`](std.Iterable.max) does.
-  pub def max[D = T] self :default @ D = nil -> (T | D)
+  pub def max[D = T] self :default @ D = ... -> (T | D)
     ...
 
   # Consumes the iterator and returns the smallest value, as
   # [`Iterable.min`](std.Iterable.min) does.
-  pub def min[D = T] self :default @ D = nil -> (T | D)
+  pub def min[D = T] self :default @ D = ... -> (T | D)
     ...
 
   # Returns the next value from the iterator.
@@ -3289,8 +3289,8 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   # or `else`.
   pub def next[D = T]
     self
-    :default @ D = nil
-    :else @ (() -> D) = nil
+    :default @ D = ...
+    :else @ (() -> D) = ...
   do -> (T | D)
     ...
 
@@ -3433,7 +3433,7 @@ pub class Range[T @ Num]: Iterable[T] @Spread[T]
   # its start for the step is empty: `5..1` has no values, while
   # `Range 5 1 -1` yields 5, 4, 3, 2. A range with no `end` iterates forever.
   # Iterating with a zero step raises [`ValueError`](std.ValueError).
-  pub def (init) self start@(T|nil) = nil end@(T|nil) = nil step@(T|nil) = nil
+  pub def (init) self start@(T|nil) = ... end@(T|nil) = ... step@(T|nil) = ...
     ...
 
   # The ending value (exclusive), or `nil` for open-end ranges.
@@ -3536,8 +3536,8 @@ pub class Record[...Ts]: Iterable[Entries[Ts]] @Index[Ts] @Spread[Ts] @Unpack[Ts
   pub def get[D = nil]
     self
     key @ (Int | Sym)
-    :default @ D = nil
-    :else @ (() -> D) = nil
+    :default @ D = ...
+    :else @ (() -> D) = ...
   do -> (Value | D)
     ...
 
@@ -3612,7 +3612,7 @@ pub class Record[...Ts]: Iterable[Entries[Ts]] @Index[Ts] @Spread[Ts] @Unpack[Ts
 # and does not move it to the end.
 pub class Set[T]: Iterable[T] @Spread[T]
   # Builds a set, from one iterable if given.
-  pub def (init) self iterable @ Iterable[T] = nil
+  pub def (init) self iterable @ Iterable[T] = ...
     ...
 
   # Returns the number of members.
@@ -3974,7 +3974,7 @@ pub class Str: @Index[Range[Int], Str]
   pub def join
     self
     # iterable to join; uses the default input when omitted
-    iter @ Iterable[Value] = nil
+    iter @ Iterable[Value] = ...
   do -> Str
     ...
 
@@ -4046,7 +4046,7 @@ pub class Str: @Index[Range[Int], Str]
     # - `limit: -N` splits at most N times from the **left**, but still yields
     #   segments right-to-left.
     # - Omitted splits fully with no limit.
-    :limit @ Int = nil
+    :limit @ Int = ...
   do -> UnpackIter[Str]
     ...
 
@@ -4078,7 +4078,7 @@ pub class Str: @Index[Range[Int], Str]
     #   yields segments left-to-right. This is useful for splitting off a known-length
     #   suffix such as a file extension.
     # - Omitted splits fully with no limit.
-    :limit @ Int = nil
+    :limit @ Int = ...
   do -> UnpackIter[Str]
     ...
 
@@ -4108,7 +4108,7 @@ pub class Str: @Index[Range[Int], Str]
   # ```
   pub def trim
     self
-    chars @ (Str | Iterable[Str]) = nil
+    chars @ (Str | Iterable[Str]) = ...
   do -> Str
     ...
 
@@ -4122,7 +4122,7 @@ pub class Str: @Index[Range[Int], Str]
   # ```
   pub def trim_end
     self
-    chars @ (Str | Iterable[Str]) = nil
+    chars @ (Str | Iterable[Str]) = ...
   do -> Str
     ...
 
@@ -4136,7 +4136,7 @@ pub class Str: @Index[Range[Int], Str]
   # ```
   pub def trim_start
     self
-    chars @ (Str | Iterable[Str]) = nil
+    chars @ (Str | Iterable[Str]) = ...
   do -> Str
     ...
 
@@ -4238,7 +4238,7 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   pub def (init)
     self
     # initial contents
-    initial @ Str = nil
+    initial @ Str = ...
   do
     ...
 
@@ -4321,7 +4321,7 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   pub def drain
     self
     # Maximum bytes per chunk; 512 KiB when omitted.
-    size @ Int = nil
+    size @ Int = ...
   do -> Iter[Str]
     ...
 
@@ -4485,8 +4485,8 @@ pub class BaseStruct[S @ {...}]: @BaseIterable[Entries[S]] @Index[S] @Spread[S] 
     self
     target @ BaseStruct[T]
     key @ K
-    :default @ D = nil
-    :else @ (() -> D) = nil
+    :default @ D = ...
+    :else @ (() -> D) = ...
   do -> (IndexItem[T, K] | D)
     ...
 
@@ -4703,8 +4703,8 @@ do
     self
     # the index to access
     index @ Int
-    :default @ D = nil
-    :else @ (() -> D) = nil
+    :default @ D = ...
+    :else @ (() -> D) = ...
   do -> (Union[...Ts] | D)
     ...
 

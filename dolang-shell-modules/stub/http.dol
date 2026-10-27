@@ -499,33 +499,33 @@ pub class Client: Func
     # This is **not** container-transparent: it connects to a socket on the
     # host running the Do process, not through the shell agent's container
     # filesystem and network translation.
-    :unix_socket @ Str = nil
+    :unix_socket @ Str = ...
     # Proxy for every
     # request made by this client.
     #
     # By default the client honors the system proxy environment
     # (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`). Passing `nil` explicitly
     # disables proxy detection entirely rather than selecting the default.
-    :proxy @ (Str | (Url | nil)) = nil
+    :proxy @ (Str | (Url | nil)) = ...
     # Give the client a cookie jar, so cookies it
     # receives are replayed on later requests.
     #
     # Cookie state belongs to the one client and is shared with nothing else,
     # the module-level request functions included.
-    :cookies @ Bool = nil
+    :cookies @ Bool = ...
     # PEM-encoded CA
     # certificate to add to the trust store.
-    :ca_cert @ (Str | Bin) = nil
+    :ca_cert @ (Str | Bin) = ...
     # PKCS#12/PFX client
     # certificate, for mutual TLS.
-    :identity @ (Str | Bin) = nil
+    :identity @ (Str | Bin) = ...
     # Password for `identity`. Defaults to empty.
     # Passing it without `identity` raises
     # [`ValueError`](std.ValueError).
-    :password @ Str = nil
+    :password @ Str = ...
     # Pass `:DANGER_ACCEPT:` to disable TLS certificate validation. This is
     # dangerous -- it defeats the point of TLS, so reserve it for testing.
-    :invalid_certs @ :DANGER_ACCEPT: = nil
+    :invalid_certs @ :DANGER_ACCEPT: = ...
   do -> Client
 
   # Builds a client and calls `func` with it. The client is closed when `func`
@@ -538,26 +538,26 @@ pub class Client: Func
     self
     # Path to a Unix domain socket to connect
     # through. Unix only.
-    :unix_socket @ Str = nil
+    :unix_socket @ Str = ...
     # Proxy for every
     # request made by this client.
-    :proxy @ (Str | (Url | nil)) = nil
+    :proxy @ (Str | (Url | nil)) = ...
     # Give the client a cookie jar, so cookies it
     # receives are replayed on later requests.
-    :cookies @ Bool = nil
+    :cookies @ Bool = ...
     # PEM-encoded CA
     # certificate to add to the trust store.
-    :ca_cert @ (Str | Bin) = nil
+    :ca_cert @ (Str | Bin) = ...
     # PKCS#12/PFX client
     # certificate, for mutual TLS.
-    :identity @ (Str | Bin) = nil
+    :identity @ (Str | Bin) = ...
     # Password for `identity`. Defaults to empty.
     # Passing it without `identity` raises
     # [`ValueError`](std.ValueError).
-    :password @ Str = nil
+    :password @ Str = ...
     # Pass `:DANGER_ACCEPT:` to disable TLS certificate validation. This is
     # dangerous -- it defeats the point of TLS, so reserve it for testing.
-    :invalid_certs @ :DANGER_ACCEPT: = nil
+    :invalid_certs @ :DANGER_ACCEPT: = ...
     # Called with the `Client`. Omit to receive the client instead.
     func @ (Client -> R)
   do -> R
@@ -568,13 +568,13 @@ pub class Client: Func
 
   pub def (init)
     self
-    :unix_socket @ Str = nil
-    :proxy @ (Str | (Url | nil)) = nil
-    :cookies @ Bool = nil
-    :ca_cert @ (Str | Bin) = nil
-    :identity @ (Str | Bin) = nil
-    :password @ Str = nil
-    :invalid_certs @ :DANGER_ACCEPT: = nil
+    :unix_socket @ Str = ...
+    :proxy @ (Str | (Url | nil)) = ...
+    :cookies @ Bool = ...
+    :ca_cert @ (Str | Bin) = ...
+    :identity @ (Str | Bin) = ...
+    :password @ Str = ...
+    :invalid_certs @ :DANGER_ACCEPT: = ...
   do
     ...
 

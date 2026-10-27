@@ -1040,10 +1040,10 @@ pub def compile
   # yields the value of the final expression or of an early return. In module
   # mode, running it yields a module object holding the exported bindings, or
   # the value of an early return.
-  :module @ Str = nil
+  :module @ Str = ...
   # Additional imports to bind before the source, in the shapes the LSP prelude
   # settings take.
-  :prelude @ Prelude = nil
+  :prelude @ Prelude = ...
   # Continue parsing after syntax errors. Defaults
   # to `false`.
   #
@@ -1051,15 +1051,15 @@ pub def compile
   # at the cost of a document that is missing whatever the compiler could not
   # read. Check [`Unit.diagnostics`](compile.Unit.diagnostics) before trusting
   # one.
-  :recover @ Bool = nil
+  :recover @ Bool = ...
   # Build document nodes. Defaults to `false`.
-  :document @ Bool = nil
+  :document @ Bool = ...
   # Prepare the unit for [`check`](compile.check). Defaults to `false`.
-  :typecheck @ Bool = nil
+  :typecheck @ Bool = ...
   # Check the unit strictly, overriding its `# dolang: strict` or
   # `# dolang: nostrict` directive. Defaults to what the directive says, or
   # `false` without one.
-  :strict @ Bool = nil
+  :strict @ Bool = ...
 do -> Unit
   ...
 

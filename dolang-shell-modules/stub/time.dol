@@ -54,10 +54,10 @@ pub class DateTime
     self
     # Seconds since the
     # Unix epoch.
-    seconds @ (Int | Float) = nil
+    seconds @ (Int | Float) = ...
     # Nanoseconds since the Unix epoch, or, when
     # `seconds` is also given, nanoseconds to add to it.
-    :nanos @ Int = nil
+    :nanos @ Int = ...
   do -> DateTime
     ...
 

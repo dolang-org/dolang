@@ -142,7 +142,7 @@ pub class Regex
     # - `limit: 0` — replace nothing, returning `haystack` unchanged.
     #
     # Negative limits are not supported.
-    :limit @ Int = nil
+    :limit @ Int = ...
   do -> Str
     ...
 
@@ -174,7 +174,7 @@ pub class Regex
     #   last element yielded is the unsplit left remainder.
     # - `limit: -N` (negative) — split at most N times from the **left**, but
     #   still yield segments right to left.
-    :limit @ Int = nil
+    :limit @ Int = ...
   do -> UnpackIter[Str]
     ...
 
@@ -222,7 +222,7 @@ pub class Regex
     # - `limit: -N` (negative) — split at most N times from the **right**, but
     #   still yield segments left to right. Useful for splitting off a
     #   known-length suffix.
-    :limit @ Int = nil
+    :limit @ Int = ...
   do -> UnpackIter[Str]
     ...
 

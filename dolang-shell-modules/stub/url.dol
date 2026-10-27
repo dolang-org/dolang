@@ -131,7 +131,7 @@ pub class Url
   pub def with_query
     self
     # Decoded key/value pairs.
-    pairs @ Iterable[Tuple[Value, Value]] = nil
+    pairs @ Iterable[Tuple[Value, Value]] = ...
     # Query values keyed by argument name.
     **keys @ Value
   do -> Url

@@ -65,7 +65,7 @@ pub def pull
   # Image name or ID.
   image @ Str
   # Registry to pull from; the configured default when omitted.
-  :registry @ Str = nil
+  :registry @ Str = ...
 do -> Image
   ...
 ```
@@ -76,8 +76,7 @@ Annotations supply the Type column, the return type after a signature heading,
 and a field's type, with names linked to their documentation:
 
 - Annotate what a caller may pass. A keyword to omit rather than pass `nil` is
-  still `:limit @ Int = nil`; a parameter that accepts `nil` is
-  `@ (Int | nil)`.
+  `:limit @ Int = ...`; a parameter that accepts `nil` is `@ (Int | nil)`.
 - A native property is a method marked `#[getter]`, with its type as the return
   type: `pub def len self -> Int`.
 - Name a type from another module with a type-only import item (`- @Iter`) when
@@ -98,6 +97,9 @@ and a field's type, with names linked to their documentation:
   Fields whose values the native implementation supplies also use `...`, as in
   `pub field name @ Str = ...`. Protocol fields cannot have defaults.
   Evaluating a `...` value raises an error, as a `...` function body does.
+- Write every parameter default as `...`. A default only makes the parameter
+  optional; state its value in the parameter's doc comment, as in "True by
+  default."
 
 ### Links
 

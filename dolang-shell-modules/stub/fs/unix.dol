@@ -198,10 +198,10 @@ pub class Path: fs.Path
   pub def normalize self -> Path
     ...
 
-  pub def relative self base @ (Str | fs.Path) = nil -> Path
+  pub def relative self base @ (Str | fs.Path) = ... -> Path
     ...
 
-  pub def shorten self base @ (Str | fs.Path) = nil -> Path
+  pub def shorten self base @ (Str | fs.Path) = ... -> Path
     ...
 
   pub def read_link self -> Path
@@ -210,8 +210,8 @@ pub class Path: fs.Path
   pub def glob
     self
     pattern @ Str
-    :max_depth @ Int = nil
-    :resolve @ fs.Resolve = nil
+    :max_depth @ Int = ...
+    :resolve @ fs.Resolve = ...
   do -> UnpackIter[Path]
     ...
 

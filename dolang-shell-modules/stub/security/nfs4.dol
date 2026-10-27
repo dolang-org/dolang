@@ -165,7 +165,7 @@ pub class Ace
     # Permission mask.
     :mask @ Mask
     # Inheritance/audit flags. Defaults to empty.
-    :flags @ Flags = nil
+    :flags @ Flags = ...
   do -> Ace
     ...
 
@@ -178,7 +178,7 @@ pub class Ace
     # Permission mask.
     :mask @ Mask
     # Inheritance/audit flags. Defaults to empty.
-    :flags @ Flags = nil
+    :flags @ Flags = ...
   do -> Ace
     ...
 
@@ -191,7 +191,7 @@ pub class Ace
     # Permission mask.
     :mask @ Mask
     # Inheritance/audit flags. Defaults to empty.
-    :flags @ Flags = nil
+    :flags @ Flags = ...
   do -> Ace
     ...
 
@@ -206,7 +206,7 @@ pub class Ace
     # Permission mask.
     :mask @ Mask
     # Inheritance/audit flags. Defaults to empty.
-    :flags @ Flags = nil
+    :flags @ Flags = ...
   do -> Ace
     ...
 
@@ -221,7 +221,7 @@ pub class Ace
     # Permission mask.
     :mask @ Mask
     # Inheritance/audit flags. Defaults to empty.
-    :flags @ Flags = nil
+    :flags @ Flags = ...
   do -> Ace
     ...
 
@@ -335,17 +335,17 @@ pub @let AclSpec = (Acl | Iterable[AceSpec])
 # ```
 pub def ace
   # Principal for an `:ALLOW:` entry.
-  :allow @ Principal = nil
+  :allow @ Principal = ...
   # Principal for a `:DENY:` entry.
-  :deny @ Principal = nil
+  :deny @ Principal = ...
   # Principal for an `:AUDIT:` entry.
-  :audit @ Principal = nil
+  :audit @ Principal = ...
   # Principal for an `:ALARM:` entry.
-  :alarm @ Principal = nil
+  :alarm @ Principal = ...
   # Permission mask.
   :mask @ MaskSpec
   # Inheritance/audit flags. Defaults to empty.
-  :flags @ FlagsSpec = nil
+  :flags @ FlagsSpec = ...
 do -> Ace
   ...
 

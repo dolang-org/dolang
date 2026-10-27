@@ -212,9 +212,9 @@ pub class Geometry
   pub def (init)
     self
     # Height in character cells, or `nil` if unknown.
-    :rows @ (Int | nil) = nil
+    :rows @ (Int | nil) = ...
     # Width in character cells, or `nil` if unknown.
-    :cols @ (Int | nil) = nil
+    :cols @ (Int | nil) = ...
   do
     ...
 
@@ -267,7 +267,7 @@ pub class IoConsole: Console
     # Stream to write to.
     io @ Io
     # Emit ANSI styling. Off by default.
-    :can_style @ Bool = false
+    :can_style @ Bool = ...
   do
     ...
 
@@ -438,7 +438,7 @@ pub class Text
     width @ Int
     # Suffix appended only when
     # truncating.
-    :suffix @ (Str | Text) = nil
+    :suffix @ (Str | Text) = ...
   do -> Text
     ...
 
@@ -642,9 +642,9 @@ pub def sub
   block @ (() -> Value)
   # Strip one trailing line ending, LF or CRLF.
   # True by default.
-  :chomp @ Bool = true
+  :chomp @ Bool = ...
   # Keep ANSI styling. False by default.
-  :can_style @ Bool = false
+  :can_style @ Bool = ...
 do -> Str
   ...
 

@@ -41,13 +41,13 @@ pub def decode
   # the standard alphabet otherwise. Input containing characters from both
   # alphabets is rejected. Input containing neither decodes identically under
   # both.
-  :alphabet @ (:STANDARD: | :URL: | :AUTO:) = nil
+  :alphabet @ (:STANDARD: | :URL: | :AUTO:) = ...
   # Required padding; default none.
   #
   # When `pad:` is omitted, canonical padding and any lesser amount — including
   # none — are accepted. `pad: true` requires canonical padding; `pad: false`
   # requires that padding be absent.
-  :pad @ Bool = nil
+  :pad @ Bool = ...
 do -> DecodeValue
   ...
 
@@ -71,12 +71,12 @@ pub def encode
   # Data to encode.
   data @ EncodeValue
   # Alphabet; default `:STANDARD:`.
-  :alphabet @ (:STANDARD: | :URL:) = nil
+  :alphabet @ (:STANDARD: | :URL:) = ...
   # Whether to emit padding; default depends on `alphabet:`.
   #
   # `pad:` defaults to `true` for `:STANDARD:` and `false` for `:URL:`, since
   # URL-safe base64 is conventionally unpadded (for example in JSON Web
   # Signatures, RFC 7515). Pass `pad:` explicitly to override.
-  :pad @ Bool = nil
+  :pad @ Bool = ...
 do -> Str
   ...

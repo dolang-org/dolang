@@ -69,7 +69,7 @@ pub class Archive
     # trailing `/` is added if missing.
     name @ Str
     # Unix permission bits. Defaults to `0`.
-    :mode @ Int = nil
+    :mode @ Int = ...
   do
     ...
 
@@ -109,15 +109,15 @@ pub class Archive
     name @ Str
     # Unix permission bits in write mode. Defaults
     # to `0`.
-    :mode @ Int = nil
+    :mode @ Int = ...
     # Expected uncompressed size.
     #
     # An entry larger than 4 GiB fails when it is closed unless `size`
     # announced that it would be. Pass the uncompressed size whenever it is
     # known; it is a hint, and the actual sizes are what end up recorded.
-    :size @ Int = nil
+    :size @ Int = ...
     # Compression method. Defaults to `:DEFLATE:`.
-    :compression @ (:STORED: | :DEFLATE: | :ZSTD:) = nil
+    :compression @ (:STORED: | :DEFLATE: | :ZSTD:) = ...
   do -> File
 
   # Opens a file within the archive and calls `func` with it. The file is
@@ -130,11 +130,11 @@ pub class Archive
     name @ Str
     # Unix permission bits in write mode. Defaults
     # to `0`.
-    :mode @ Int = nil
+    :mode @ Int = ...
     # Expected uncompressed size.
-    :size @ Int = nil
+    :size @ Int = ...
     # Compression method. Defaults to `:DEFLATE:`.
-    :compression @ (:STORED: | :DEFLATE: | :ZSTD:) = nil
+    :compression @ (:STORED: | :DEFLATE: | :ZSTD:) = ...
     # Called with the [`File`](zip.File).
     func @ (File -> R)
   do -> R
@@ -160,7 +160,7 @@ pub class Archive
     # Name of the symlink within the archive.
     name @ Str
     # Unix permission bits. Defaults to `0`.
-    :mode @ Int = nil
+    :mode @ Int = ...
   do
     ...
 
@@ -301,7 +301,7 @@ pub class File: Io
   pub def read
     self
     # Number of bytes to read; omit to read the rest of the entry.
-    size @ Int = nil
+    size @ Int = ...
   do -> Bin
     ...
 
@@ -366,7 +366,7 @@ pub @let OpenMode = $
   # Path to the ZIP archive, or a seekable stream holding it.
   source @ (Str | Path | Io)
   # Access mode. Defaults to `"r"`.
-  mode @ OpenMode = nil
+  mode @ OpenMode = ...
 do -> Archive
 
 # Opens a ZIP archive for reading and calls `func` with it. The archive is
