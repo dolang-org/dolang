@@ -1,11 +1,15 @@
 # dolang: strict
 # Digest algorithms.
 
+import io:
+  - @Io
+
 # Supertype for stateful digest handles.
 #
-# Putting a [`Str`](std.Str) or [`Bin`](std.Bin) value updates the digest
-# state with its bytes.
-pub class State: Sink[Str | Bin]
+# Putting a [`Str`](std.Str), [`Bin`](std.Bin) or [`Io`](io.Io) value
+# updates the digest state with its bytes, as [`update`](digest.State.update)
+# does.
+pub class State: Sink[Str | Bin | Io]
   # Returns the current digest bytes without consuming the handle.
   #
   # ## Returns
@@ -54,8 +58,8 @@ pub class State: Sink[Str | Bin]
   # ```
   pub def update
     self
-    # Input to hash.
-    data @ (Str | Bin)
+    # Input to hash. An [`Io`](io.Io) is read to its end and stays open.
+    data @ (Str | Bin | Io)
   do -> State
     ...
 
@@ -149,8 +153,8 @@ pub class Sha512: State
 #   6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85
 # ```
 pub def blake3
-  # Input to hash.
-  data @ (Str | Bin)
+  # Input to hash. An [`Io`](io.Io) is read to its end and stays open.
+  data @ (Str | Bin | Io)
 do -> Bin
   ...
 
@@ -168,8 +172,8 @@ do -> Bin
 #   900150983cd24fb0d6963f7d28e17f72
 # ```
 pub def md5
-  # Input to hash.
-  data @ (Str | Bin)
+  # Input to hash. An [`Io`](io.Io) is read to its end and stays open.
+  data @ (Str | Bin | Io)
 do -> Bin
   ...
 
@@ -187,8 +191,8 @@ do -> Bin
 #   a9993e364706816aba3e25717850c26c9cd0d89d
 # ```
 pub def sha1
-  # Input to hash.
-  data @ (Str | Bin)
+  # Input to hash. An [`Io`](io.Io) is read to its end and stays open.
+  data @ (Str | Bin | Io)
 do -> Bin
   ...
 
@@ -206,8 +210,8 @@ do -> Bin
 #   ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
 # ```
 pub def sha256
-  # Input to hash.
-  data @ (Str | Bin)
+  # Input to hash. An [`Io`](io.Io) is read to its end and stays open.
+  data @ (Str | Bin | Io)
 do -> Bin
   ...
 
@@ -225,7 +229,7 @@ do -> Bin
 #   ddaf35a193
 # ```
 pub def sha512
-  # Input to hash.
-  data @ (Str | Bin)
+  # Input to hash. An [`Io`](io.Io) is read to its end and stays open.
+  data @ (Str | Bin | Io)
 do -> Bin
   ...

@@ -1,11 +1,73 @@
 import digest
+  fs
+  io
+  strand:
+    - channel
+    - spawn
+  testlib.vfs:
+    - vfs
   test:
+    - assert
     - assert_eq
     - assert_type
     - assert_throws
     - test
   std:
+    - ConcurrencyError
     - TypeError
+    - ValueError
+
+let ALGORITHMS = $
+  - [digest.blake3, digest.Blake3]
+  - [digest.md5, digest.Md5]
+  - [digest.sha1, digest.Sha1]
+  - [digest.sha256, digest.Sha256]
+  - [digest.sha512, digest.Sha512]
+
+# A readable stream over `data` that returns at most 1000 bytes per read, and
+# calls `on_read` first when set.
+class Pieces: io.Io
+  pub field data pos
+  pub field on_read = nil
+
+  def (init) self data
+    self.data = data
+    self.pos = 0
+
+  #[getter]
+  pub def readable _self
+    true
+
+  pub def read self size
+    if self.on_read
+      self.on_read()
+    let end = (self.pos + size.min(1000))
+    if (end > self.data.len)
+      end = self.data.len
+    let chunk = (self.data[self.pos..end])
+    self.pos = end
+    chunk
+
+# A stream that only writes.
+class Drain: io.Io
+  #[getter]
+  pub def writable _self
+    true
+
+  pub def write _self *_data
+    0
+
+# Lines that together span more than two hash chunks.
+def lines() -> Array[Str]
+  $
+    for i = (0..120000)
+      - "line $i\n"
+
+def join items @ Array[Str] -> Bin
+  let out = BinBuf()
+  for item = items
+    out.extend $item
+  out.freeze()
 
 def test_state func ty expected_abc
   let state = ty()
@@ -73,10 +135,88 @@ def update_rejects_non_string_non_binary()
   let bad = digest.Blake3()
   let err = assert_throws $TypeError do
     bad.update 123
-  assert_eq (str err) "type error: expected Str or Bin"
+  assert_eq (str err) "type error: expected `Str`, `Bin`, or a byte I/O provider"
 
 #[test]
 def digest_functions_reject_non_string_non_binary()
   let md5_err = assert_throws $TypeError do
     digest.md5 123
-  assert_eq (str md5_err) "type error: expected Str or Bin"
+  assert_eq (str md5_err) "type error: expected `Str`, `Bin`, or a byte I/O provider"
+
+#[test]
+#[vfs]
+def hashes_open_files()
+  let data = b"file contents"
+  fs.Path("data.txt").write $data
+  for func ty = ALGORITHMS
+    for buffer = [true, false]
+      fs.open data.txt buffer: $buffer do |file|
+        assert_eq (func file) (func data)
+        assert_eq $file.read() b""
+        assert $file.readable
+      fs.open data.txt :buffer do |file|
+        let state = ty()
+        state.update $file
+        assert_eq (state.digest()) (func data)
+        assert $file.readable
+
+#[test]
+def hashes_do_streams()
+  let items = lines()
+  let data = join $items
+  for func ty = ALGORITHMS
+    let expected = ty()
+    for item = items
+      expected.update $item
+    let expected = expected.digest()
+
+    assert_eq (func data) $expected
+    assert_eq (func (str data)) $expected
+    assert_eq (func (Pieces data)) $expected
+    assert_eq (func (io.Cursor data)) $expected
+
+    let state = ty()
+    state.update (Pieces data)
+    assert_eq (state.digest()) $expected
+    let sink = ty()
+    sink.put (Pieces data)
+    assert_eq (sink.digest()) $expected
+
+#[test]
+def concurrent_update_is_rejected()
+  let state = digest.Sha256()
+  let stream = Pieces b"abc"
+  let errors = []
+  stream.on_read = do
+    if (errors.len == 0)
+      errors.push $ assert_throws $ConcurrencyError do state.update "x"
+  state.update $stream
+  assert_eq $errors.len 1
+  assert_eq (state.digest()) (digest.sha256 "abc")
+
+#[test]
+def unreadable_stream_is_rejected()
+  let err = assert_throws $ValueError do
+    digest.blake3 (Drain())
+  assert_eq (str err) "value error: data must be readable"
+  assert_throws $ValueError do digest.Md5().update (Drain())
+
+#[test]
+def canceled_update_keeps_state()
+  let data = join $lines()
+  let started_send started = channel()
+  let go_send go = channel()
+  let stream = Pieces $data
+  stream.on_read = do
+    if (stream.pos > 600000)
+      started_send.put true
+      go.next()
+  let state = digest.Blake3()
+  let worker = spawn do state.update $stream
+  started.next()
+  worker.cancel()
+  worker.wait()
+  go_send.close()
+  # The chunks hashed before the cancel stay in the state, which is usable.
+  assert (state.digest() != digest.blake3(b""))
+  state.update "more"
