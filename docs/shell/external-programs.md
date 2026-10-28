@@ -95,7 +95,7 @@ the output stream and the console.
 
 ## Capturing Output
 
-Use [`sub`](proc.sub) when the result should be one
+Use [`sub`](shell.sub) when the result should be one
 string. By default, it removes one trailing line ending from the completed
 capture:
 

@@ -213,10 +213,10 @@ fn default_prelude() -> Vec<Import> {
     vec![
         Import::Module("shell".into()),
         Import::Item("proc".into(), "run".into()),
-        Import::Item("proc".into(), "sub".into()),
         Import::Item("shell".into(), "cd".into()),
         Import::Item("shell".into(), "env".into()),
         Import::Item("shell".into(), "exit".into()),
+        Import::Item("shell".into(), "sub".into()),
         Import::Item("term".into(), "echo".into()),
         Import::Item("term".into(), "print".into()),
     ]
