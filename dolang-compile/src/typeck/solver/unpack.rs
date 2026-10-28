@@ -14,14 +14,16 @@
 //! with no possibility is impossible. A possible pattern may still fail to
 //! match a value, as `S` may admit other fillings too.
 //!
-//! A rest is `Unpack`'s `Rest` with the tail in place of `S`. The supertype edge
-//! that reaches `Unpack` is open over its declaring class's binders: matching
-//! its `S` against the tail solves them again, and its `Rest` is instantiated
-//! with the solution; a binder `S` doesn't mention keeps its argument. A rest
-//! that this doesn't give, or that isn't within `Rest`'s bound for the tail, is
-//! `Rest`'s default for the tail, which only spreads. Without binders to solve again, as for a value of an `Unpack` type
-//! itself, `Rest` carries over only where `S` is its own tail. So a class whose
-//! `Rest` depends on `S` has its `(unpack)` return its own type, not `Unpack`.
+//! A rest is `Unpack`'s `Pos` for a `*name` rest and its `Rest` otherwise, with
+//! the tail in place of `S`. The supertype edge that reaches `Unpack` is open
+//! over its declaring class's binders: matching its `S` against the tail solves
+//! them again, and the rest's argument is instantiated with the solution; a
+//! binder `S` doesn't mention keeps its argument. A rest that this doesn't give,
+//! or that isn't within its binder's bound for the tail, is the binder's default
+//! for the tail, which by default only spreads. Without binders to solve again,
+//! as for a value of an `Unpack` type itself, a rest carries over only where `S`
+//! is its own tail. So a class whose rests depend on `S` has its `(unpack)`
+//! return its own type, not `Unpack`.
 
 use std::ops::ControlFlow;
 
@@ -129,8 +131,12 @@ struct Atoms {
 enum Source {
     /// A supertype edge, with the class declaring it as reached
     Edge { owner: Nominal, supertype: TypeId },
-    /// The member's own `Unpack[S, Rest: R]`, by `S` and `R`
-    Applied { schema: TypeId, rest: TypeId },
+    /// The member's own `Unpack[S, Rest: R, Pos: P]`, by `S`, `R` and `P`
+    Applied {
+        schema: TypeId,
+        rest: TypeId,
+        pos: TypeId,
+    },
 }
 
 /// A lane's walk: its slots' types and its tail
@@ -146,6 +152,20 @@ struct Walk {
 
 /// A lane's walk, `None` if it's impossible, and why it may fail to match
 type LaneWalk = (Option<Lane>, Option<Reason>);
+
+/// `Unpack`'s `Rest` binder slot
+const REST_SLOT: usize = 1;
+
+/// `Unpack`'s `Pos` binder slot
+const POS_SLOT: usize = 2;
+
+/// The `Unpack` binder slot typing a rest of `kind`
+fn rest_slot(kind: RestKind) -> usize {
+    match kind {
+        RestKind::Pos => POS_SLOT,
+        RestKind::Mixed | RestKind::Key => REST_SLOT,
+    }
+}
 
 impl Solver<'_> {
     /// Walk `pattern` against the schemas `ty`'s members unpack as, through
@@ -178,9 +198,9 @@ impl Solver<'_> {
                     pattern
                         .rests
                         .iter()
-                        .map(|_| {
-                            self.member_rest(&source, unpack, schema)
-                                .or_else(|| self.default_rest(unpack, schema))
+                        .map(|&kind| {
+                            self.member_rest(&source, unpack, schema, kind)
+                                .or_else(|| self.default_rest(unpack, schema, kind))
                                 .unwrap_or(unknown)
                         })
                         .collect::<Vec<_>>(),
@@ -201,7 +221,7 @@ impl Solver<'_> {
                     .iter()
                     .map(|&kind| {
                         let tail = walk.tail.schema(self.db, kind);
-                        self.member_rest(&source, unpack, tail)
+                        self.member_rest(&source, unpack, tail, kind)
                     })
                     .collect();
                 walks.push(walk);
@@ -234,7 +254,7 @@ impl Solver<'_> {
             },
             _ => self.join_tails(walks.iter().map(|walk| &walk.tail)),
         };
-        let fallback = |schema| self.default_rest(unpack, schema).unwrap_or(unknown);
+        let fallback = |schema, kind| self.default_rest(unpack, schema, kind).unwrap_or(unknown);
         let rests = pattern
             .rests
             .iter()
@@ -242,12 +262,12 @@ impl Solver<'_> {
             .map(|(index, &kind)| {
                 if dynamic_rests.is_empty() && walks.iter().all(|walk| walk.rests[index].is_none())
                 {
-                    return fallback(joined.schema(self.db, kind));
+                    return fallback(joined.schema(self.db, kind), kind);
                 }
                 let mut rest = self.db.bottom();
                 for walk in &walks {
                     let member = walk.rests[index]
-                        .unwrap_or_else(|| fallback(walk.tail.schema(self.db, kind)));
+                        .unwrap_or_else(|| fallback(walk.tail.schema(self.db, kind), kind));
                     rest = self.lub(rest, member);
                 }
                 for dynamic in &dynamic_rests {
@@ -304,12 +324,13 @@ impl Solver<'_> {
             return Ok(None);
         };
         let (found, source) = if start.declaration == unpack {
-            let [schema, rest] = start.arguments[..] else {
+            let [schema, rest, pos] = start.arguments[..] else {
                 return Ok(None);
             };
             let source = Source::Applied {
                 schema: self.reify(schema)?,
                 rest: self.reify(rest)?,
+                pos: self.reify(pos)?,
             };
             (start, source)
         } else {
@@ -318,7 +339,7 @@ impl Solver<'_> {
                 None => return Ok(None),
             }
         };
-        let [schema, _] = found.arguments[..] else {
+        let [schema, ..] = found.arguments[..] else {
             return Ok(None);
         };
         Ok(Some((schema, source)))
@@ -378,43 +399,61 @@ impl Solver<'_> {
         Ok(None)
     }
 
-    /// A member's rest that leaves `tail`, if it's other than the default
-    fn member_rest(&self, source: &Source, unpack: DeclId, tail: TypeId) -> Option<TypeId> {
+    /// A member's rest of `kind` that leaves `tail`, if it's other than the default
+    fn member_rest(
+        &self,
+        source: &Source,
+        unpack: DeclId,
+        tail: TypeId,
+        kind: RestKind,
+    ) -> Option<TypeId> {
+        let slot = rest_slot(kind);
         let rest = match *source {
-            Source::Applied { schema, rest } => (schema == tail).then_some(rest)?,
+            Source::Applied { schema, rest, pos } => {
+                (schema == tail).then_some(if slot == POS_SLOT { pos } else { rest })?
+            }
             Source::Edge {
                 ref owner,
                 supertype,
-            } => self.resolve_rest(owner, supertype, tail).ok()??,
+            } => self.resolve_rest(owner, supertype, tail, slot).ok()??,
         };
-        let binder = self.rest_binder(unpack)?;
-        let expected = self.db.binder_bound(binder, &[tail, self.db.unknown()])?;
+        let binder = self.unpack_binders(unpack)?.get(slot)?;
+        let unknown = self.db.unknown();
+        let expected = self.db.binder_bound(binder, &[tail, unknown, unknown])?;
         (self.probe(rest, expected) == Ok(Status::Proven)).then_some(rest)
     }
 
-    /// `Unpack`'s `Rest` binder
-    fn rest_binder(&self, unpack: DeclId) -> Option<&Binder> {
+    /// `Unpack`'s binders
+    fn unpack_binders(&self, unpack: DeclId) -> Option<&[Binder]> {
         match self.db.ty(self.db.declaration(unpack).ty) {
-            Type::Quantified { binders, .. } => binders.get(1),
+            Type::Quantified { binders, .. } => Some(binders),
             _ => None,
         }
     }
 
-    /// The rest that leaves `tail` by default: `Rest`'s default with the tail in
-    /// place of `S`
-    fn default_rest(&self, unpack: DeclId, tail: TypeId) -> Option<TypeId> {
-        let default = self.rest_binder(unpack)?.default?;
-        Some(self.db.substitute(default, &[tail, self.db.unknown()]))
+    /// The rest of `kind` that leaves `tail` by default: its binder's default
+    /// with the tail in place of `S`, after the defaults of the binders before it
+    fn default_rest(&self, unpack: DeclId, tail: TypeId, kind: RestKind) -> Option<TypeId> {
+        let binders = self.unpack_binders(unpack)?;
+        let slot = rest_slot(kind);
+        let unknown = self.db.unknown();
+        let mut args = vec![tail, unknown, unknown];
+        for slot in REST_SLOT..=slot {
+            args[slot] = self.db.substitute(binders.get(slot)?.default?, &args);
+        }
+        Some(args[slot])
     }
 
-    /// The `Rest` of an edge to `Unpack` once its `S` is matched against `tail`,
-    /// solving the binders of the class declaring it again. Binders it is lifted
-    /// over keep their arguments. `None` if the match or the binders' bounds fail.
+    /// The rest at `argument` of an edge to `Unpack` once its `S` is matched against
+    /// `tail`, solving the binders of the class declaring it again. Binders it is
+    /// lifted over keep their arguments. `None` if the match or the binders'
+    /// bounds fail.
     fn resolve_rest(
         &self,
         owner: &Nominal,
         supertype: TypeId,
         tail: TypeId,
+        argument: usize,
     ) -> Result<Option<TypeId>, Issue> {
         let declaration = self.db.declaration(owner.declaration);
         let binders: &[Binder] = match self.db.ty(declaration.ty) {
@@ -471,7 +510,8 @@ impl Solver<'_> {
         let Head::Nominal(found) = nested.head(nested.view(supertype, environment))? else {
             return Ok(None);
         };
-        let [schema, rest] = found.arguments[..] else {
+        let (Some(&schema), Some(&rest)) = (found.arguments.first(), found.arguments.get(argument))
+        else {
             return Ok(None);
         };
         nested.constrain(nested.closed(tail), schema, Provenance::default());

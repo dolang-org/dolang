@@ -46,7 +46,7 @@ pub def keyed()
   let _ = b
   #       ^: flow std.Str
   let _ = p
-  #       ^: flow std.MapRest[{std.Int}]
+  #       ^: flow std.SeqRest[{std.Int}]
   let _ = k
   #       ^: flow std.MapRest[{c: std.Bool}]
 
@@ -89,17 +89,32 @@ pub def dict_rest d @ Dict[Str, Int]
   let _ = r
   #       ^: flow std.MapRest[std.Str, std.Int]
 
-# Rests iterate: a keyed rest as its entries or values, an array rest as its
-# elements.
+# Rests iterate: a keyed rest as its entries, an array rest as its elements.
 pub def iterated_rests d @ Dict[Str, Int] a @ Array[Int]
   let "a": _a ...r = d
   for e = r
     let _ = e
-    #       ^: flow (std.Str, std.Int) | std.Int
+    #       ^: flow (std.Str, std.Int)
   let _ ...ar = a
   for x = ar
     let _ = x
     #       ^: flow std.Int
+
+# A `*name` rest is `Unpack`'s `Pos`: a keyed source's iterates as its values
+pub def positional_rests d @ Dict[{Int, *Str, a: Bool}] ...cmd @ Str
+  let _x *p ** = d
+  let _ = p
+  #       ^: flow std.SeqRest[std.Str]
+  for v = p
+    let _ = v
+    #       ^: flow std.Str
+  let _prog *args ** = cmd
+  for arg = args
+    let _ = arg
+    #       ^~~: flow std.Str
+  let _ *t = (1, "a", true)
+  let _ = t
+  #       ^: flow (std.Str, std.Bool)
 
 pub def dynamic v
   let a ...r = v
@@ -116,6 +131,18 @@ pub def rows r @ Rows[Int]
   let _ ...rest = r
   let _ = rest
   #       ^~~~: flow m.Rows[std.Int]
+
+# A `*name` rest is the edge's `Pos`, and any other its `Rest`
+pub @class Cols[T]: Unpack[T, Rest: Cols[T], Pos: Rows[T]]
+  pub def first self -> T
+
+pub def cols c @ Cols[Int]
+  let _ *p = c
+  let _ = p
+  #       ^: flow m.Rows[std.Int]
+  let _ ...r = c
+  let _ = r
+  #       ^: flow m.Cols[std.Int]
 
 # A `Rest` the tail can't solve again falls back to the default
 pub @class Pairs[A, B]: Unpack[{A, B}, Rest: Pairs[A, B]]

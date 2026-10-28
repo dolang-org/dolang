@@ -173,6 +173,7 @@ def split_rest_unpack()
         let :a *rest **keys = row
         assert_eq $a 1
         assert_eq ([...rest]) ["two", 3.0]
+        assert_eq $rest.iter().count() 2
         assert_eq ([...keys]) []
 
       for row = stmt.query()

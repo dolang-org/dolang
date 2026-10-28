@@ -507,20 +507,22 @@ pub @class Spread[S @ {...}]
 # [`(unpack)`](../../language/classes.md#unpack-pattern-unpacking) protocol,
 # destructuring as the items in `S` without changing the receiver.
 #
-# A `...` pattern captures the remaining items as a `Rest`, with the schema of
-# those items in place of `S`. By default, the rest can only be spread.
-pub @class Unpack[S @ {...}, :Rest @ Spread[S] = Spread[S]]: Spread[S]
+# A pattern's rest captures the remaining items as a `Rest`, with the schema of
+# those items in place of `S`. By default, the rest can only be spread. A
+# `*name` rest is a `Pos` instead, which defaults to `Rest`.
+pub @class Unpack[S @ {...}, :Rest @ Spread[S] = Spread[S], :Pos @ Spread[S] = Rest]: Spread[S]
   field schema @Phantom[...S]
   field rest @Phantom[Rest]
+  field pos @Phantom[Pos]
 
   # Returns a value to destructure in place of this one.
-  pub def (unpack) self -> Unpack[S, Rest: Rest]
+  pub def (unpack) self -> Unpack[S, Rest: Rest, Pos: Pos]
 
 
 # Reads dictionary-like entries, including multiple values for a key.
 # Integer keys retain the positional structure described by `S`.
 pub @class Map[S @ {...}]:
-  Index[S] Spread[S] Unpack[S, Rest: MapRest[S]] Iterable[Entries[S]]
+  Index[S] Spread[S] Unpack[S, Rest: MapRest[S], Pos: SeqRest[S]] Iterable[Entries[S]]
 do
   # The number of pairs, counting repeated keys separately.
   #[getter]
@@ -1972,7 +1974,7 @@ pub class CyclicImportError: RuntimeError
 # `BaseDict` is `Dict` at runtime, so only a dict is a `BaseDict`.
 pub class BaseDict[S @ {...}]:
   @Map[S] @Index[S] @Spread[S]
-  @Unpack[S, Rest: MapRest[S]]
+  @Unpack[S, Rest: MapRest[S], Pos: SeqRest[S]]
   Iterable[Entries[S]]
 do
   # Returns the number of key-value pairs (counting each value in a multi-map
@@ -3346,18 +3348,18 @@ pub @class UnpackIter[T]: Iter[T] Unpack[T, Rest: UnpackIter[T]]
   pub def (iter) self -> UnpackIter[T]
 
 
-# The rest of a sequence that can be iterated again, such as an array's.
-# Iterating, spreading or unpacking it does not consume it, though changes to
-# the source may show through.
-pub @class SeqRest[T]: Iterable[T] Unpack[T, Rest: SeqRest[T]]
+# The rest of a sequence that can be iterated again, such as an array's, or the
+# `*name` rest of a dictionary. Iterating, spreading or unpacking it does not
+# consume it, though changes to the source may show through or raise.
+pub @class SeqRest[S @ {...}]: Iterable[Values[S]] Unpack[S, Rest: SeqRest[S]]
 
 
-# The rest of a keyed container, such as a dictionary's. Iterating a `*name`
-# rest yields its values; iterating any other rest yields its entries, the way
-# the source does. Iterating, spreading or unpacking it does not consume it,
-# though changes to the source may show through or raise.
+# The rest of a keyed container, such as a dictionary's, which iterates as its
+# entries. Its `*name` rest iterates as values. Iterating, spreading or
+# unpacking it does not consume it, though changes to the source may show
+# through or raise.
 pub @class MapRest[S @ {...}]:
-  Iterable[Values[S] | Entries[S]] Unpack[S, Rest: MapRest[S]]
+  Iterable[Entries[S]] Unpack[S, Rest: MapRest[S], Pos: SeqRest[S]]
 do
 
 
@@ -3525,7 +3527,10 @@ pub class Range[T @ Num]: Iterable[T] @Spread[T]
 # ```
 # let updated = old.with status: ready
 # ```
-pub class Record[...Ts]: Iterable[Entries[Ts]] @Index[Ts] @Spread[Ts] @Unpack[Ts, Rest: MapRest[Ts]]
+pub class Record[...Ts]:
+  Iterable[Entries[Ts]] @Index[Ts] @Spread[Ts]
+  - @Unpack[Ts, Rest: MapRest[Ts], Pos: SeqRest[Ts]]
+do
   # Builds a record from one spreadable source of key-value pairs.
   #
   # ```
@@ -4487,7 +4492,10 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
 # reads a struct takes a `BaseStruct`, so it accepts structs with narrower items.
 #
 # `BaseStruct` is `Struct` at runtime, so only a struct is a `BaseStruct`.
-pub class BaseStruct[S @ {...}]: @BaseIterable[Entries[S]] @Index[S] @Spread[S] @Unpack[S, Rest: MapRest[S]]
+pub class BaseStruct[S @ {...}]:
+  @BaseIterable[Entries[S]] @Index[S] @Spread[S]
+  - @Unpack[S, Rest: MapRest[S], Pos: SeqRest[S]]
+do
   # Gets the value for a symbol or position, with an optional default.
   #
   # ```
@@ -4665,7 +4673,7 @@ pub class TimedOutError: RuntimeError
 # explicit import.
 pub class Tuple[*Ts]:
   - @Spread[Ts]
-  - @Unpack[Ts, Rest: Unpack[Ts]]
+  - @Unpack[Ts, Rest: Unpack[Ts], Pos: Tuple[...Ts]]
   - Iterable[Union[...Ts]]
   - @Index[Ts]
   - @Seq[Union[...Ts]]
