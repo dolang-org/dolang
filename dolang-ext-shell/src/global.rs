@@ -48,7 +48,7 @@ use crate::{
     },
     local::Local,
     pipe_channel::{PipeReceiver, PipeSender},
-    proc::{Capture, Info as ProcInfo, Proc, Procs, Status as ProcStatus},
+    proc::{Info as ProcInfo, Proc, Procs, Status as ProcStatus},
     program::Program,
     security::{
         AccessMask, Ace, AceFlags, Acl, Identity, MacosAceFlags, MacosAceMask, MacosAceObject,
@@ -60,7 +60,7 @@ use crate::{
             ACE_PROCESS_TRUST_LABEL, ACE_QUALIFIED, ACE_RESOURCE_ATTRIBUTE, ACE_SCOPED_POLICY_ID,
         },
     },
-    shell::{Stderr, Stdin, Stdout, Vfs},
+    shell::{Capture, Stderr, Stdin, Stdout, Vfs},
     shell_args::ArgsData,
     sys::{CpuInfo, OsInfo},
 };
@@ -89,6 +89,7 @@ pub(crate) struct Global<'v> {
 
 pub(crate) struct Types<'v> {
     pub(crate) host_console: Type<'v, HostConsole>,
+    pub(crate) capture: Type<'v, Capture>,
 }
 
 pub(crate) struct Syms<'v> {
@@ -250,7 +251,10 @@ impl<'v> Global<'v> {
                 ansi,
                 console_override,
             },
-            types: Types { host_console },
+            types: Types {
+                host_console,
+                capture: builder.register_type(),
+            },
             syms: Syms {
                 chunk: builder.sym("CHUNK"),
                 line: builder.sym("LINE"),
@@ -737,7 +741,6 @@ pub(crate) struct ProcGlobal<'v> {
 
 pub(crate) struct ProcTypes<'v> {
     pub(crate) program: Type<'v, Program>,
-    pub(crate) capture: Type<'v, Capture>,
     pub(crate) proc_info: Type<'v, ProcInfo>,
     pub(crate) procs: Type<'v, Procs>,
     pub(crate) proc_handle: Type<'v, Proc>,
@@ -769,7 +772,6 @@ impl<'v> ProcGlobal<'v> {
             local,
             types: ProcTypes {
                 program: builder.register_type(),
-                capture: builder.register_type(),
                 proc_info: builder.register_type(),
                 procs: builder.register_type(),
                 proc_handle: builder.register_type(),

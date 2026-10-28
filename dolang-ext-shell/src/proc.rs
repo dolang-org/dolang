@@ -2,7 +2,7 @@ use dolang::{
     compile::Config,
     runtime::{
         Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call,
-        object::{TypeBuilder, fmt},
+        object::TypeBuilder,
         strand::Redirect,
         unpack,
         value::{Singleton, TypeObject, View},
@@ -14,7 +14,6 @@ use dolang_vfs::process::Signal;
 use crate::{
     error::ResultExt,
     global::{ErrorGlobal, PipeGlobal, ProcGlobal},
-    io_mode::{encode_value, strip_line_ending},
     local::TerminationPolicy,
     program,
 };
@@ -176,67 +175,6 @@ pub(crate) fn vfs_policy(policy: &TerminationPolicy) -> dolang_vfs::process::Ter
     dolang_vfs::process::TerminationPolicy::new(policy.signal, policy.grace, policy.force)
 }
 
-/// Capture output from a subprocess.
-pub(crate) struct Capture(String);
-
-impl Capture {
-    pub(crate) fn new() -> Self {
-        Self(String::new())
-    }
-
-    pub(crate) fn append(&mut self, value: &str) {
-        self.0.push_str(value);
-    }
-}
-
-impl Default for Capture {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<'v> Object<'v> for Capture {
-    const NAME: &'v str = "Capture";
-    const MODULE: &'v str = "proc";
-    type Annex = ();
-    type Type = ();
-    type TypeAnnex = ();
-
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder.supertype(TypeObject::Sink)
-    }
-
-    fn debug<'a, 's>(
-        _this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        fmt!(strand, w, "<capture>")
-    }
-
-    async fn sink<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
-        Ok(())
-    }
-
-    async fn put<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        value: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        let bytes = encode_value(strand, &value)?;
-        let value = std::str::from_utf8(&bytes)
-            .map_err(|_| Error::runtime(strand, "sub: captured invalid UTF-8"))?;
-        let mut capture = this.borrow_mut(strand)?;
-        capture.append(value);
-        Ok(())
-    }
-}
-
 /// Iterator over arguments decoded from a Windows process command line.
 struct WindowsArguments {
     arguments: Vec<String>,
@@ -283,7 +221,7 @@ pub(crate) fn configure_compiler<'a>(config: &mut Config<'a>) {
     config
         .prelude()
         .import_items("proc")
-        .items(["sub", "run"])
+        .items(["run"])
         .commit();
 }
 
@@ -293,9 +231,7 @@ pub(crate) fn configure_vm<'v>(
     errors: State<'v, ErrorGlobal<'v>>,
     pipes: State<'v, PipeGlobal<'v>>,
 ) {
-    let capture_ty = global.types.capture;
     let windows_arguments_ty = builder.register_type::<WindowsArguments>();
-    let chomp_sym = builder.sym("chomp");
     let run_ty = program::register_run_type(builder);
 
     builder
@@ -328,30 +264,6 @@ pub(crate) fn configure_vm<'v>(
                 .get(strand)
                 .replace_termination_policy(old_policy);
             result
-        })
-        .function_with_slots("sub", async move |strand, args, out, [mut cap, tmp]| {
-            let ([func], [chomp]) = unpack!(strand, args, 1, 0, chomp_sym = None)?;
-            let chomp = chomp
-                .map(|v| v.to_bool(strand))
-                .transpose()?
-                .unwrap_or(true);
-            capture_ty.create(strand, Capture::new(), &mut cap);
-            Redirect::new(strand)
-                .output(&cap)
-                .enter(async move |strand| call!(strand, func, tmp).await)
-                .await?;
-            capture_ty
-                .cast(&cap)
-                .unwrap()
-                .enter_sync(strand, |strand, inst| {
-                    let capture = inst.borrow(strand)?;
-                    let mut value = capture.0.as_str();
-                    if chomp {
-                        value = strip_line_ending(value)
-                    }
-                    Output::set(strand, out, value);
-                    Ok(())
-                })
         })
         .function_with_slots(
             "console",
@@ -447,4 +359,3 @@ pub(crate) fn configure_vm<'v>(
         })
         .commit();
 }
-use dolang::runtime::value::fmt::Format;

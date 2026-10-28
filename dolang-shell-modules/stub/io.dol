@@ -5,8 +5,8 @@
 #
 # `Io` is the common type of byte streams. A subclass defines the methods
 # below that it supports, and the capability getters report which those are.
-# One it does not define raises [`FieldError`](std.FieldError), and its
-# capabilities are `false` unless it overrides them.
+# One it does not define raises [`UnsupportedError`](std.UnsupportedError), and
+# its capabilities are `false` unless it overrides them.
 #
 # The helpers, such as [`read_all`](io.Io.read_all), are written in terms of
 # those methods. Reading text by size or by line needs read-ahead, so it is left

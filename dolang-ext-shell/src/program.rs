@@ -635,7 +635,7 @@ async fn output_pump<'v, 's, R>(
 where
     R: AsyncRead + Unpin,
 {
-    let global = strand.vm().state::<ProcTag>();
+    let global = strand.vm().state::<Tag>();
     if let Some(capture) = global.types.capture.cast(output) {
         let mut reader = reader;
         let mut value = String::new();

@@ -1250,6 +1250,23 @@ impl<'v> Protocol<'v> for Rest<'v> {
         }
         Ok(())
     }
+    async fn op_iter<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let pairs = this
+            .borrow(strand)?
+            .pairs
+            .iter()
+            .map(|(key, value)| (key.dup(), value.dup()))
+            .collect();
+        strand
+            .builtin_types()
+            .dict_view_iter
+            .create(strand, Iter { pairs, index: 0 }, out);
+        Ok(())
+    }
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1265,7 +1282,26 @@ impl<'v> Protocol<'v> for Rest<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, TypeObject::Value)
+        Output::set(strand, out, TypeObject::Iterable)
+    }
+
+    fn op_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::iterable_get(strand, &this, field, out)
+    }
+
+    async fn op_mcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::iterable_mcall(strand, &this, method, args, out).await
     }
 }
 

@@ -117,6 +117,7 @@ and objects.
 | [`exit`](shell.exit)       | Exit with a status code (default: 0)             |
 | [`cd`](shell.cd)           | Change directory; optionally run func in new dir |
 | [`env`](shell.env)         | Access environment variables                     |
+| [`sub`](shell.sub)         | Capture func's output as a string                |
 | Module as [`shell`](shell) | Shell context and control                        |
 
 ### `term`
@@ -128,7 +129,6 @@ and objects.
 
 ### `proc`
 
-| Name              | Description                       |
-| ----------------- | --------------------------------- |
-| [`sub`](proc.sub) | Capture func's output as a string |
-| [`run`](proc.run) | Run external programs             |
+| Name              | Description           |
+| ----------------- | --------------------- |
+| [`run`](proc.run) | Run external programs |

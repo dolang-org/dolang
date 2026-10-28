@@ -4,7 +4,8 @@ use crate::{
     typeck::solver::unpack::{Reason, Rejection, Unpacked},
 };
 
-/// A world with `Spread[S]`, `Unpack[S, :Rest @ Spread[S] = Spread[S]]`, and a few classes to
+/// A world with `Spread[S]`,
+/// `Unpack[S, :Rest @ Spread[S] = Spread[S], :Pos @ Spread[S] = Rest]`, and a few classes to
 /// put in schemas
 struct World {
     db: Database,
@@ -40,7 +41,12 @@ impl World {
             default: Some(apply(&db, spread, &[s])),
             variance: Variance::Covariant,
         };
-        let body = quantified(&db, vec![schema, rest], unpack);
+        let pos = Binder {
+            binding: Binding::Keyword(db.intern_symbol("Pos")),
+            default: Some(bound(&db, 1, Kind::Type)),
+            ..rest.clone()
+        };
+        let body = quantified(&db, vec![schema, rest, pos], unpack);
         let supertype = apply(&db, spread, &[s]);
         populate(&mut db, id, source, body, vec![supertype]);
         let int = int(&mut db);
@@ -84,8 +90,8 @@ impl World {
         nominal(&mut self.db, "C", vec![], vec![supertype])
     }
 
-    /// A class with `binders` whose only supertype is `Unpack[{items}, Rest: rest]`,
-    /// where `rest` is given the class itself
+    /// A class with `binders` whose only supertype is
+    /// `Unpack[{items}, Rest: rest, Pos: rest]`, where `rest` is given the class itself
     fn rest_class(
         &mut self,
         binders: Vec<Binder>,
@@ -95,7 +101,7 @@ impl World {
         let (id, class, source) = reserve(&mut self.db, DeclKind::Class, "R");
         let schema = self::items(&self.db, items);
         let rest = rest(&self.db, class);
-        let supertype = apply(&self.db, self.unpack, &[schema, rest]);
+        let supertype = apply(&self.db, self.unpack, &[schema, rest, rest]);
         let body = quantified(&self.db, binders, class);
         populate(&mut self.db, id, source, body, vec![supertype]);
         class
@@ -411,7 +417,7 @@ fn an_unpack_type_keeps_its_rest_only_for_its_own_tail() {
     let ints = vec![positional(Multiplicity::Repeated, int)];
     let rest = w.class(ints.clone());
     let schema = items(&w.db, ints.clone());
-    let homogeneous = apply(&w.db, w.unpack, &[schema, rest]);
+    let homogeneous = apply(&w.db, w.unpack, &[schema, rest, rest]);
     let walked = w.walk(homogeneous, &pattern(&[false], &[], true)).unwrap();
     assert_eq!(walked.rests, vec![rest]);
     let pair = vec![
@@ -419,10 +425,37 @@ fn an_unpack_type_keeps_its_rest_only_for_its_own_tail() {
         positional(Multiplicity::Required, str),
     ];
     let schema = items(&w.db, pair);
-    let fixed = apply(&w.db, w.unpack, &[schema, rest]);
+    let fixed = apply(&w.db, w.unpack, &[schema, rest, rest]);
     let walked = w.walk(fixed, &pattern(&[false], &[], true)).unwrap();
     let left = w.spread_of(vec![positional(Multiplicity::Required, str)]);
     assert_eq!(walked.rests, vec![left]);
+}
+
+#[test]
+fn a_positional_rest_takes_pos() {
+    let mut w = World::new();
+    let int = w.int;
+    let ints = vec![positional(Multiplicity::Repeated, int)];
+    let rest = w.class(ints.clone());
+    let pos = w.class(ints.clone());
+    let schema = items(&w.db, ints.clone());
+    let applied = apply(&w.db, w.unpack, &[schema, rest, pos]);
+    let declared = nominal(&mut w.db, "P", vec![], vec![applied]);
+    let star = PatternShape {
+        positional: vec![],
+        keyed: vec![],
+        rests: vec![RestKind::Pos],
+    };
+    for ty in [applied, declared] {
+        assert_eq!(w.walk(ty, &star).unwrap().rests, vec![pos]);
+        let walked = w.walk(ty, &pattern(&[], &[], true)).unwrap();
+        assert_eq!(walked.rests, vec![rest]);
+    }
+    // `Pos` defaults to `Rest`
+    let defaulted =
+        w.db.apply_defaults(w.unpack_decl(), &[schema, rest])
+            .unwrap();
+    assert_eq!(w.walk(defaulted, &star).unwrap().rests, vec![rest]);
 }
 
 #[test]

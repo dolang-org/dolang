@@ -6,7 +6,7 @@ use dolang_util::pairsort;
 
 use crate::{
     arg::{Arg, Args},
-    bytecode::Rest,
+    bytecode::Rest as RestKind,
     call,
     error::{Error, Result},
     gc::{Collect, arena::Visit},
@@ -178,6 +178,126 @@ impl<'v> Protocol<'v> for Iter<'v> {
     ) -> Result<'v, 's, ()> {
         iter::iter_mcall(strand, &this, method, args, out).await
     }
+}
+
+/// Rest of an array from `start`, which can be iterated, spread and unpacked
+/// repeatedly.
+pub(crate) struct Rest<'v> {
+    array: GcObj<'v, Array<'v>>,
+    start: usize,
+}
+
+unsafe impl<'v> Collect for Rest<'v> {
+    const CYCLIC: bool = true;
+    const IMMUTABLE: bool = true;
+    type Annex = ();
+
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        self.array.accept(visit)
+    }
+
+    fn clear(&mut self) {}
+}
+
+impl<'v> Protocol<'v> for Rest<'v> {
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) {
+        Output::set(strand, out, TypeObject::Iterable)
+    }
+
+    fn op_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::iterable_get(strand, &this, field, out)
+    }
+
+    async fn op_mcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::iterable_mcall(strand, &this, method, args, out).await
+    }
+
+    fn op_debug<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        crate::fmt!(strand, w, "<array rest>")
+    }
+
+    async fn op_iter<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let rest = this.get();
+        let iter = Iter {
+            array: rest.array.clone(),
+            index: rest.start,
+        };
+        strand.builtin_types().array_iter.create(strand, iter, out);
+        Ok(())
+    }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        let rest = this.get();
+        let borrow = rest
+            .array
+            .borrow()
+            .ok_or_else(|| Error::concurrency(strand))?;
+        let start = rest.start.min(borrow.inner.len());
+        for item in &borrow.inner[start..] {
+            let mut tmp = item.dup();
+            sink.positional(strand, Slot::new(&mut tmp))?;
+        }
+        Ok(())
+    }
+
+    async fn op_unpack<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        sig: &'a Unpack<'v, 'a>,
+        mut out: Slots<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let rest = this.get();
+        let borrow = rest
+            .array
+            .borrow()
+            .ok_or_else(|| Error::concurrency(strand))?;
+        let count = unpack_from(strand, sig, &mut out, &borrow, rest.start, false)?;
+        if let Some(i) = sig.pos_rest_slot() {
+            make_rest(strand, rest.array.clone(), rest.start + count, out.at(i));
+        }
+        sig.fill_empty_key_rest(strand, &mut out);
+        Ok(())
+    }
+}
+
+fn make_rest<'v>(
+    strand: &mut Strand<'v, '_>,
+    array: GcObj<'v, Array<'v>>,
+    start: usize,
+    out: Slot<'v, '_>,
+) {
+    strand
+        .builtin_types()
+        .array_rest
+        .create(strand, Rest { array, start }, out);
 }
 
 pub(crate) struct Sink<'v> {
@@ -1084,14 +1204,7 @@ impl<'v> Protocol<'v> for Array<'v> {
         let borrow = this.borrow(strand)?;
         let index = unpack_from(strand, sig, &mut out, &borrow, 0, false)?;
         if let Some(i) = sig.pos_rest_slot() {
-            strand.builtin_types().array_iter.create(
-                strand,
-                Iter {
-                    array: this.to_strong(),
-                    index,
-                },
-                out.at(i),
-            );
+            make_rest(strand, this.to_strong(), index, out.at(i));
         }
         sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
@@ -1134,7 +1247,7 @@ fn unpack_from<'v, 's>(
     if sig.required > len {
         return Err(Error::missing_positional(strand, sig.required));
     }
-    if pos_count < len && sig.pos_rest() == Rest::None {
+    if pos_count < len && sig.pos_rest() == RestKind::None {
         return Err(Error::unexpected_positional(strand, sig.required));
     }
     let min = pos_count.min(len);

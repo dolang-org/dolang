@@ -507,21 +507,42 @@ pub @class Spread[S @ {...}]
 # [`(unpack)`](../../language/classes.md#unpack-pattern-unpacking) protocol,
 # destructuring as the items in `S` without changing the receiver.
 #
-# A `...` pattern captures the remaining items as a `Rest`, with the schema of
-# those items in place of `S`. By default, the rest can only be spread.
-pub @class Unpack[S @ {...}, :Rest @ Spread[S] = Spread[S]]: Spread[S]
+# A pattern's rest captures the remaining items as a `Rest`, with the schema of
+# those items in place of `S`. By default, the rest can only be spread. A
+# `*name` rest is a `Pos` instead, which defaults to `Rest`.
+pub @class Unpack[S @ {...}, :Rest @ Spread[S] = Spread[S], :Pos @ Spread[S] = Rest]: Spread[S]
   field schema @Phantom[...S]
   field rest @Phantom[Rest]
+  field pos @Phantom[Pos]
 
   # Returns a value to destructure in place of this one.
-  pub def (unpack) self -> Unpack[S, Rest: Rest]
+  pub def (unpack) self -> Unpack[S, Rest: Rest, Pos: Pos]
+
+
+# Iterates as the values in `S`, and spreads and destructures as `S`, leaving
+# rests of the same kind. The core of a [`Seq`](std.Seq), and what a pattern's
+# rest of an array, or the `*name` rest of a dictionary, supports.
+#
+# Iterating, spreading or unpacking it does not consume it, though changes to
+# its source may show through or raise.
+pub @class BaseSeq[S @ {...}]: Iterable[Values[S]] Unpack[S, Rest: BaseSeq[S]]
+
+
+# Iterates as the entries in `S`, and spreads and destructures as `S`, leaving
+# rests of the same kind and `*name` rests that are a [`BaseSeq`](std.BaseSeq).
+# The core of a [`Map`](std.Map), and what a pattern's rest of a dictionary
+# supports.
+#
+# Iterating, spreading or unpacking it does not consume it, though changes to
+# its source may show through or raise.
+pub @class BaseMap[S @ {...}]:
+  Iterable[Entries[S]] Unpack[S, Rest: BaseMap[S], Pos: BaseSeq[S]]
+do
 
 
 # Reads dictionary-like entries, including multiple values for a key.
 # Integer keys retain the positional structure described by `S`.
-pub @class Map[S @ {...}]:
-  Index[S] Spread[S] Unpack[S, Rest: Unpack[S]] Iterable[Entries[S]]
-do
+pub @class Map[S @ {...}]: BaseMap[S] Index[S]
   # The number of pairs, counting repeated keys separately.
   #[getter]
   pub def len self -> Int
@@ -607,7 +628,7 @@ pub @class MutMap[S @ {...}]: AssignMap[S]
 
 # An iterable sequence of `T`, which integers index, slices, spreads, and
 # destructures.
-pub @class Seq[T]: Iterable[T] Index[T] Spread[T] Unpack[T, Rest: Unpack[T]]
+pub @class Seq[T]: BaseSeq[T] Index[T]
   # The number of items.
   #[getter]
   pub def len self -> Int
@@ -988,7 +1009,7 @@ pub class AbortError: Error
 # Use `BaseArray` for inputs that only read an array. Unlike [`Seq`](std.Seq),
 # it requires an actual array. It is `Array` at runtime; the view neither
 # prevents mutation through another reference nor takes a snapshot.
-pub class BaseArray[T]: Iterable[T] @Unpack[T, Rest: UnpackIter[T]] @Seq[T]
+pub class BaseArray[T]: Iterable[T] @Seq[T]
   # Returns the number of elements.
   #
   # ## Example
@@ -1113,7 +1134,7 @@ pub class BaseArray[T]: Iterable[T] @Unpack[T, Rest: UnpackIter[T]] @Seq[T]
   # assert_eq $a 1
   # assert_eq $b 2
   # ```
-  pub def (unpack) self -> Unpack[T, Rest: UnpackIter[T]]
+  pub def (unpack) self -> Unpack[T, Rest: BaseSeq[T]]
     ...
 
   # Spreads the items positionally.
@@ -1972,7 +1993,6 @@ pub class CyclicImportError: RuntimeError
 # `BaseDict` is `Dict` at runtime, so only a dict is a `BaseDict`.
 pub class BaseDict[S @ {...}]:
   @Map[S] @Index[S] @Spread[S]
-  @Unpack[S, Rest: Unpack[S]]
   Iterable[Entries[S]]
 do
   # Returns the number of key-value pairs (counting each value in a multi-map
@@ -2915,7 +2935,7 @@ pub @let FmtSegment[V] = (Str | FmtValue[V] | FmtParam)
 # assert_eq $segment.value $user
 # assert_eq $segment.width 8
 # ```
-pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[FmtSegment[V]] @Spread[FmtSegment[V]] @Unpack[FmtSegment[V], Rest: UnpackIter[FmtSegment[V]]]
+pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[FmtSegment[V]] @Spread[FmtSegment[V]] @Unpack[FmtSegment[V], Rest: BaseSeq[FmtSegment[V]]]
   field schema @ Phantom[((...S) -> nil)]
 
   # Builds a sequence from an iterable of segments.
@@ -3036,7 +3056,7 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[FmtSegment[V]] @Spread[Fm
     ...
 
   # Destructures the segments positionally.
-  pub def (unpack) self -> Unpack[FmtSegment[V], Rest: UnpackIter[FmtSegment[V]]]
+  pub def (unpack) self -> Unpack[FmtSegment[V], Rest: BaseSeq[FmtSegment[V]]]
     ...
 
 # A module object, produced by `import` or by loading a compiled module. Its
@@ -3510,7 +3530,9 @@ pub class Range[T @ Num]: Iterable[T] @Spread[T]
 # ```
 # let updated = old.with status: ready
 # ```
-pub class Record[...Ts]: Iterable[Entries[Ts]] @Index[Ts] @Spread[Ts] @Unpack[Ts, Rest: Unpack[Ts]]
+pub class Record[...Ts]:
+  Iterable[Entries[Ts]] @Index[Ts] @BaseMap[Ts]
+do
   # Builds a record from one spreadable source of key-value pairs.
   #
   # ```
@@ -4472,7 +4494,10 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
 # reads a struct takes a `BaseStruct`, so it accepts structs with narrower items.
 #
 # `BaseStruct` is `Struct` at runtime, so only a struct is a `BaseStruct`.
-pub class BaseStruct[S @ {...}]: @BaseIterable[Entries[S]] @Index[S] @Spread[S] @Unpack[S, Rest: Unpack[S]]
+pub class BaseStruct[S @ {...}]:
+  @BaseIterable[Entries[S]] @Index[S] @Spread[S]
+  - @Unpack[S, Rest: BaseMap[S], Pos: BaseSeq[S]]
+do
   # Gets the value for a symbol or position, with an optional default.
   #
   # ```
@@ -4650,7 +4675,7 @@ pub class TimedOutError: RuntimeError
 # explicit import.
 pub class Tuple[*Ts]:
   - @Spread[Ts]
-  - @Unpack[Ts, Rest: Unpack[Ts]]
+  - @Unpack[Ts, Rest: BaseSeq[Ts], Pos: Tuple[...Ts]]
   - Iterable[Union[...Ts]]
   - @Index[Ts]
   - @Seq[Union[...Ts]]

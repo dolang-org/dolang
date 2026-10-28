@@ -1,6 +1,7 @@
 import compress
 import io
 import shell
+import strand
 import term
 import fs:
   - open
@@ -392,3 +393,8 @@ def output_continues_after_a_child()
       run $shell.exe --no-cache $path err stderr: $file
       file.write "c\n"
     assert_eq $log.read_str() "a\nout\nb\nerr\nc\n"
+
+#[test]
+def sub_captures_the_output_stream()
+  assert_eq (shell.sub do strand.put "a\n") "a"
+  assert_eq (shell.sub chomp: false do strand.put "a\n") "a\n"

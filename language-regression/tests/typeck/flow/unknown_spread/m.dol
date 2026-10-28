@@ -29,7 +29,7 @@ pub def narrowed spec
           ...rest
         let _ = cmd
         let _ = rest
-        #       ^~~~: flow std.Unpack[Unknown{}]
+        #       ^~~~: flow std.BaseMap[Unknown{}]
         if (opt != nil)
           Opt name: $opt ...rest
         else if (flag != nil)

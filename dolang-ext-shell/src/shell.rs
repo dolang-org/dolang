@@ -31,7 +31,8 @@ use crate::{
     fs::path::{cast_path, create_path, path_from_value},
     global::{FsTag, Global, ProgramSource, ShellGlobal, ShellTag, Tag},
     io_mode::{
-        IoMode, encode_value, line_ending, read_chunk_value, read_raw, read_value, write_pieces,
+        IoMode, encode_value, line_ending, read_chunk_value, read_raw, read_value,
+        strip_line_ending, write_pieces,
     },
     local::{Local, ProgramOverride},
     pipe_channel,
@@ -853,12 +854,73 @@ fn bytes_from_value<'v, 's>(
     }
 }
 
+/// Capture output from a subprocess.
+pub(crate) struct Capture(String);
+
+impl Capture {
+    pub(crate) fn new() -> Self {
+        Self(String::new())
+    }
+
+    pub(crate) fn append(&mut self, value: &str) {
+        self.0.push_str(value);
+    }
+}
+
+impl Default for Capture {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<'v> Object<'v> for Capture {
+    const NAME: &'v str = "Capture";
+    const MODULE: &'v str = "shell";
+    type Annex = ();
+    type Type = ();
+    type TypeAnnex = ();
+
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder.supertype(TypeObject::Sink)
+    }
+
+    fn debug<'a, 's>(
+        _this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        fmt!(strand, w, "<capture>")
+    }
+
+    async fn sink<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Output::set(strand, out, this);
+        Ok(())
+    }
+
+    async fn put<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        value: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let bytes = encode_value(strand, &value)?;
+        let value = std::str::from_utf8(&bytes)
+            .map_err(|_| Error::runtime(strand, "sub: captured invalid UTF-8"))?;
+        let mut capture = this.borrow_mut(strand)?;
+        capture.append(value);
+        Ok(())
+    }
+}
+
 pub(crate) fn configure_compiler<'a>(config: &mut Config<'a>) {
     config
         .prelude()
         .import_module("shell")
         .import_items("shell")
-        .items(["exit", "env", "cd"])
+        .items(["exit", "env", "cd", "sub"])
         .commit();
 }
 
@@ -871,6 +933,8 @@ pub(crate) fn configure_vm<'v>(
     let args_ty = builder.register_type::<ShellArgs>();
     let args_sym = builder.sym("args");
     let program_sym = builder.sym("program");
+    let capture_ty = core.types.capture;
+    let chomp_sym = builder.sym("chomp");
 
     builder
         .module("shell")
@@ -1075,6 +1139,30 @@ pub(crate) fn configure_vm<'v>(
                 call!(strand, func, out).await
             })
             .await
+        })
+        .function_with_slots("sub", async move |strand, args, out, [mut cap, tmp]| {
+            let ([func], [chomp]) = unpack!(strand, args, 1, 0, chomp_sym = None)?;
+            let chomp = chomp
+                .map(|v| v.to_bool(strand))
+                .transpose()?
+                .unwrap_or(true);
+            capture_ty.create(strand, Capture::new(), &mut cap);
+            Redirect::new(strand)
+                .output(&cap)
+                .enter(async move |strand| call!(strand, func, tmp).await)
+                .await?;
+            capture_ty
+                .cast(&cap)
+                .unwrap()
+                .enter_sync(strand, |strand, inst| {
+                    let capture = inst.borrow(strand)?;
+                    let mut value = capture.0.as_str();
+                    if chomp {
+                        value = strip_line_ending(value)
+                    }
+                    Output::set(strand, out, value);
+                    Ok(())
+                })
         })
         .function("cd", async move |strand, mut args, out| {
             let dir = match args.next() {

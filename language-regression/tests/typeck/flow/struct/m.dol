@@ -96,7 +96,7 @@ pub def unpacking s @ Struct[{a: Int, b: Str}]
   let _ = a
   #       ^: flow std.Int
   let _ = rest
-  #       ^~~~: flow std.Unpack[{b: std.Str}]
+  #       ^~~~: flow std.BaseMap[{b: std.Str}]
   for k v = s
     let _ = k
     #       ^: flow :a: | :b:

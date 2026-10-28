@@ -432,6 +432,30 @@ do -> R
 pub def cd ...args @ Value -> Value
   ...
 
+# Captures the output of a block as a string.
+#
+# Everything written is captured as a byte stream, without line decoding or
+# normalization -- including values put into the strand's output, which
+# contribute exactly their own bytes. For the console counterpart, which
+# captures `echo` and `print` instead, use
+# [`term.sub`](term.sub).
+#
+# ## Example
+#
+# ```
+# let output = sub do run echo hello
+# assert_eq $output "hello"
+# ```
+pub def sub[R]
+  # Block whose output to capture.
+  block @ ((>std.Sink[std.Value]) -> R)
+  # Remove one trailing LF or CRLF. True by
+  # default. This is a whole-capture strip, not a per-value one: it removes at
+  # most one line ending, from the end of the finished string.
+  :chomp @ Bool = ...
+do -> Str
+  ...
+
 # Replaces the interpreter with an external program, after shell cleanup.
 #
 # The program is resolved using the scoped working directory and `PATH` before
@@ -517,7 +541,7 @@ do -> R
 # The type of [`args`](shell.args), an immutable sequence.
 #
 # Assigning to an index raises [`ImmutableError`](std.ImmutableError).
-pub @class Args: Unpack[Str, Rest: UnpackIter[Str]] Seq[Str]
+pub @class Args: Seq[Str]
   @def (index)[K] self key@K -> std.IndexItem[{*Str}, K]
   @def (index) self range@Range[Int] -> Array[Str]
 

@@ -234,8 +234,8 @@ impl<'v> Protocol<'v> for Io {
     }
 }
 
-/// Calls an `Io` helper on the stream that `args` start with. Any other method is the
-/// stream's own to define, so it raises as a missing field.
+/// Calls an `Io` helper on the stream that `args` start with. A stream method the stream
+/// does not define is unsupported, and any other method raises as a missing field.
 async fn helper_mcall<'v, 'a, 's>(
     strand: &'a mut Strand<'v, 's>,
     method: Sym<'v, 'a>,
@@ -306,12 +306,13 @@ async fn helper_mcall<'v, 'a, 's>(
             put(strand, &stream, &value).await
         }
         // The stream methods are the subclass's to define.
+        sym::READ | sym::WRITE | sym::SEEK | sym::CLOSE => Err(Error::not_supported(strand)),
         _ => Err(Error::field(strand, method)),
     }
 }
 
 /// Answers `Io`'s inherited members for a native receiver that forwards to `Io` by hand:
-/// the `Sink` methods and the helpers. Any other method raises as a missing field.
+/// the `Sink` methods and the helpers. Any other method raises as [`helper_mcall`] does.
 pub(crate) async fn recv_mcall<'v, 'a, 's>(
     strand: &'a mut Strand<'v, 's>,
     rcvr: impl Input<'v>,

@@ -73,12 +73,11 @@ sys = true
 regression = ["assert", "log"]
 
 [prelude.shell]
-echo = true
-env = true
+cd = true
+sub = true
 
 [prelude.proc]
 mod = true
-sub = true
 run = true
 ```
 

@@ -1,0 +1,66 @@
+# A rest iterates the way it spreads, and iterating it does not consume it.
+
+def collect rest
+  let out = []
+  for item = rest
+    out.push $item
+  out
+
+# A dict's `*` rest yields values; its `**` and `...` rests yield entries in
+# order, positional items keyed by index.
+let d = {1, 2, color: "red", 5: "x"}
+let _ *p **k = d
+assert_eq (collect p) [2]
+assert_eq (collect k) [(:color:, "red"), (5, "x")]
+assert_eq (collect k) [(:color:, "red"), (5, "x")]
+assert_eq {...k} {color: "red", 5: "x"}
+let _ ...r = d
+assert_eq (collect r) [(1, 2), (:color:, "red"), (5, "x")]
+assert_eq [...r] (collect r)
+
+# A dict rest fails once its dict changes, whether before or during iteration.
+let m = {a: 1, b: 2}
+let a: _ ...mr = m
+m.insert c 3
+assert_throws $std.ConcurrencyError str: "conflicting concurrent operation: collection was modified during iteration" do
+  collect $mr
+let m2 = {a: 1, b: 2, c: 3}
+let a: _ ...mr2 = m2
+assert_throws $std.ConcurrencyError do
+  for _ = mr2
+    m2.insert d 4
+
+# A record's `...` rest yields entries
+let _a _b ...rr = (1, 2, 3, color: "red")
+assert_eq (collect rr) [(2, 3), (:color:, "red")]
+assert_eq (collect rr) [(2, 3), (:color:, "red")]
+
+# An array's rest can be iterated, spread and unpacked repeatedly
+let _ ...ar = [1, 2, 3]
+assert_eq [...ar] [2, 3]
+assert_eq [...ar] [2, 3]
+assert_eq (collect ar) [2, 3]
+let x ...ar2 = ar
+assert_eq $x 2
+assert_eq [...ar2] [3]
+assert_eq [...ar] [2, 3]
+
+# The rest of an iterator is what is left of it, consumed like its source
+let _ ...ir = [1, 2, 3].iter()
+assert_eq [...ir] [2, 3]
+assert_eq [...ir] []
+
+# A template's rest can be spread repeatedly
+let _ ...fr = t"a$(1)b"
+let first = [...fr]
+assert_eq $first.len 2
+assert_eq [...fr] $first
+
+# A rest is an `Iterable`, with its methods
+for rest = [ar, fr, p, k, r, rr]
+  assert $ type $rest $std.Iterable
+assert $ar.all()
+assert_eq $ar.iter().count() 2
+assert_eq $r.iter().count() 3
+assert $rr.any()
+assert_eq [...p.map(do |v| v * 10)] [20]

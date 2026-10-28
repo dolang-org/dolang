@@ -2,7 +2,7 @@
 # `proc` overloads its calls on whether `stdin:` and `stdout:` are given and on
 # `mode:`, so a program touches only the channels it isn't redirected from.
 
-import std proc fs:
+import std proc shell fs:
   - @Path
 
 # Unredirected output is written as lines, which a def without `>` lacks
@@ -85,9 +85,9 @@ pub def proxy <Iter[Value] >Sink[Str] -> nil
   git status
   nil
 
-# `sub` gives its block an output of its own
+# `shell.sub` gives its block an output of its own
 pub def captures <Iter[Value] -> Str
-  proc.sub do proc.run echo x
+  shell.sub do proc.run echo x
 
 # `console` gives its block the console and no input
 pub def effect() -> nil

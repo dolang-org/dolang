@@ -627,7 +627,7 @@ do
 
 # Runs a block and returns its console output as a string.
 #
-# The console counterpart to [`proc.sub`](proc.sub), which captures
+# The console counterpart to [`shell.sub`](shell.sub), which captures
 # a strand's implicit output stream instead. Verbatim output is captured, which
 # must be valid UTF-8.
 #

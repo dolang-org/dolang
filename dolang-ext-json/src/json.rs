@@ -232,8 +232,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
     where
         E: de::Error,
     {
-        let value = i64::try_from(v).map_err(|_| de::Error::custom("numeric overflow"))?;
-        Output::set(self.0, &mut self.1, value);
+        Output::set(self.0, &mut self.1, i128::from(v));
         Ok(())
     }
 

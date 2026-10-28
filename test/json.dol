@@ -89,6 +89,8 @@ def symbols_as_strings()
 def numbers()
   assert_eq (decode "9223372036854775807") 9223372036854775807
   assert_eq (decode "-9223372036854775808") -9223372036854775808
+  assert_eq (decode "18446744073709551615") 18446744073709551615
+  assert (type (decode "18446744073709551616") Float)
 
   let err = assert_throws $RuntimeError do
     encode 170141183460469231731687303715884105727

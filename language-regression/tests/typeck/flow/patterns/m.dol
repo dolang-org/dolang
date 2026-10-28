@@ -11,7 +11,7 @@ pub def tuple_rest()
   let _ = a
   #       ^: flow std.Int
   let _ = r
-  #       ^: flow std.Unpack[{std.Str, std.Bool}]
+  #       ^: flow std.BaseSeq[{std.Str, std.Bool}]
   let xs = [...r]
   let _ = xs
   #       ^~: flow [std.Bool | std.Str]
@@ -21,7 +21,7 @@ pub def array_rest xs @ Array[Int]
   let _ = a
   #       ^: flow std.Int
   let _ = r
-  #       ^: flow std.UnpackIter[std.Int]
+  #       ^: flow std.BaseSeq[std.Int]
 
 pub def quantified source @ Unpack[{Int, ?Str, *Bool}]
   let a b = source
@@ -41,14 +41,14 @@ pub def keyed()
   let _ = a
   #       ^: flow std.Int
   let _ = r
-  #       ^: flow std.Unpack[{b: std.Str}]
+  #       ^: flow std.BaseMap[{b: std.Str}]
   let :b *p **k = (1, b: "x", c: true)
   let _ = b
   #       ^: flow std.Str
   let _ = p
-  #       ^: flow std.Unpack[{std.Int}]
+  #       ^: flow std.BaseSeq[{std.Int}]
   let _ = k
-  #       ^: flow std.Unpack[{c: std.Bool}]
+  #       ^: flow std.BaseMap[{c: std.Bool}]
 
 pub def const_keys d @ Dict[Str, Int]
   let "name": name = d
@@ -73,7 +73,7 @@ pub def unions c @ Bool
   let _ = x
   #       ^: flow std.Bool | std.Int
   let _ = r
-  #       ^: flow std.Unpack[{std.Str}] | std.Unpack[{}]
+  #       ^: flow std.BaseSeq[{std.Str}] | std.BaseSeq[{}]
 
 # An iterator's rest is an iterator of the same kind, and so is that rest's
 pub def iterators s @ Str
@@ -87,7 +87,51 @@ pub def iterators s @ Str
 pub def dict_rest d @ Dict[Str, Int]
   let "a": _a ...r = d
   let _ = r
-  #       ^: flow std.Unpack[std.Str, std.Int]
+  #       ^: flow std.BaseMap[std.Str, std.Int]
+
+# Rests iterate: a keyed rest as its entries, an array rest as its elements.
+pub def iterated_rests d @ Dict[Str, Int] a @ Array[Int]
+  let "a": _a ...r = d
+  for e = r
+    let _ = e
+    #       ^: flow (std.Str, std.Int)
+  let _ ...ar = a
+  for x = ar
+    let _ = x
+    #       ^: flow std.Int
+
+# A `*name` rest is `Unpack`'s `Pos`: a keyed source's iterates as its values
+pub def positional_rests d @ Dict[{Int, *Str, a: Bool}] ...cmd @ Str
+  let _x *p ** = d
+  let _ = p
+  #       ^: flow std.BaseSeq[std.Str]
+  for v = p
+    let _ = v
+    #       ^: flow std.Str
+  let _prog *args ** = cmd
+  for arg = args
+    let _ = arg
+    #       ^~~: flow std.Str
+  let _ *t = (1, "a", true)
+  let _ = t
+  #       ^: flow (std.Str, std.Bool)
+
+# Generic code can iterate a `Seq`'s or `Map`'s rests
+pub def protocol_rests s @ Seq[Int] m @ Map[{Int, a: Str}]
+  let _ ...sr = s
+  for x = sr
+    let _ = x
+    #       ^: flow std.Int
+  let *p **k = m
+  for v = p
+    let _ = v
+    #       ^: flow std.Int
+  for e = k
+    let _ = e
+    #       ^: flow (:a:, std.Str)
+  let _ ...mr = m
+  let _ = mr
+  #       ^~: flow std.BaseMap[{a: std.Str}]
 
 pub def dynamic v
   let a ...r = v
@@ -104,6 +148,18 @@ pub def rows r @ Rows[Int]
   let _ ...rest = r
   let _ = rest
   #       ^~~~: flow m.Rows[std.Int]
+
+# A `*name` rest is the edge's `Pos`, and any other its `Rest`
+pub @class Cols[T]: Unpack[T, Rest: Cols[T], Pos: Rows[T]]
+  pub def first self -> T
+
+pub def cols c @ Cols[Int]
+  let _ *p = c
+  let _ = p
+  #       ^: flow m.Rows[std.Int]
+  let _ ...r = c
+  let _ = r
+  #       ^: flow m.Cols[std.Int]
 
 # A `Rest` the tail can't solve again falls back to the default
 pub @class Pairs[A, B]: Unpack[{A, B}, Rest: Pairs[A, B]]

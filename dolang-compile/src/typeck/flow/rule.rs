@@ -3613,7 +3613,7 @@ impl<'a> Flow<'a, '_> {
                             },
                         ),
                     ]);
-                    holes.apply(unpack, vec![schema, unknown])
+                    holes.apply(unpack, vec![schema, unknown, unknown])
                 });
                 rule.constrain(rule.closed(value), target, check.clone());
                 Vec::new()
@@ -3702,7 +3702,7 @@ impl<'a> Flow<'a, '_> {
                     },
                 ));
                 let schema = holes.schema(schema);
-                holes.apply(unpack, vec![schema, unknown])
+                holes.apply(unpack, vec![schema, unknown, unknown])
             });
             rule.constrain(rule.closed(value), target, check.clone());
             vars.into_iter()
