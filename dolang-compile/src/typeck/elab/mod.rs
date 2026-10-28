@@ -47,7 +47,7 @@ pub(crate) use capture::captures;
 pub(crate) use collect::{Export, Harvest, Link, Module, Value, find_export, harvest, link};
 pub(crate) use ids::Ids;
 pub(crate) use interface::Kept;
-pub(crate) use judge::{JUDGMENTS, Scoped};
+pub(crate) use judge::Scoped;
 pub(crate) use kind::{Fill, kinds};
 pub(crate) use overrides::overrides;
 pub(crate) use populate::populate;
@@ -71,7 +71,7 @@ pub(crate) struct Tables<'u> {
     /// away; aliases are not, so `Pair[Int]` refers to the `Pair` alias.
     pub(crate) referents: Vec<Referent>,
     /// The link of each name a unit with source writes, by the span of its head, by
-    /// [`UnitId`]. Only lowering and judgments, which read syntax, look a name up.
+    /// [`UnitId`]. Only lowering and the analysis, which read syntax, look a name up.
     pub(crate) refs: Vec<FxHashMap<Span, LinkId>>,
     /// The unit providing each module of a unit's module table, by [`UnitId`] and
     /// [`ModuleId`], or `None` for a module no unit provides

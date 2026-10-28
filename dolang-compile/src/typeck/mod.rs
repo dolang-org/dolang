@@ -279,8 +279,6 @@ impl<'u, 's> Builder<'u, 's> {
             diags.append(&mut output.overrides.0);
             unresolved.append(&mut output.overrides.1);
         }
-        #[cfg(feature = "debug")]
-        trace::elab(&r#type::Database::fork(&shared), &tables);
         // Each run's logged facts are copied into a database of the check's own,
         // which copies what the check's base holds once
         let mut results = r#type::Database::new();
@@ -305,6 +303,20 @@ impl<'u, 's> Builder<'u, 's> {
             layers.push(output.layer);
             gathered.push(flow);
         }
+        // What elaboration concluded about each unit with source, copied in too
+        let elaborated: Vec<_> = {
+            let from = r#type::Database::fork(&shared);
+            let mut copier = results.copier(&from, &mut copies);
+            (0..tables.units.len())
+                .map(|index| {
+                    let unit = UnitId::from_index(index);
+                    match self.analysis && tables.units[index].source.is_some() {
+                        true => tables.entries(&from, &mut copier, unit),
+                        false => Vec::new(),
+                    }
+                })
+                .collect()
+        };
         results.seal();
         // Named now, so the results render without the units
         let labels = results
@@ -340,11 +352,12 @@ impl<'u, 's> Builder<'u, 's> {
                 .iter()
                 .zip(&cfgs)
                 .zip(&layers)
+                .zip(elaborated)
                 .enumerate()
-                .map(|(index, ((flow, cfg), layer))| {
+                .map(|(index, (((flow, cfg), layer), elaborated))| {
                     let unit = UnitId::from_index(index);
                     let (flow, cfg, layer) = (flow.as_ref()?, cfg.as_ref()?, layer.as_ref()?);
-                    Some(tree(&tables, &db, unit, flow, cfg, layer))
+                    Some(tree(&tables, &db, unit, flow, cfg, layer, elaborated))
                 })
                 .collect();
             // Placed now, so a member use's class is found without the units
@@ -360,6 +373,10 @@ impl<'u, 's> Builder<'u, 's> {
                 .collect();
             Analysis::new(Arc::clone(&types), units, places)
         });
+        #[cfg(feature = "debug")]
+        if let Some(analysis) = &analysis {
+            trace::elab(analysis, &tables);
+        }
         undecided::report(&tables.units, &unresolved, &mut diags);
         Check {
             cfgs,
@@ -391,7 +408,8 @@ struct UnitOutput {
 }
 
 /// A unit's judgments, each variable named by its unit's source, and each
-/// member by `results`, the check's own database its facts are interned in
+/// member by `results`, the check's own database its facts are interned in,
+/// with what elaboration concluded about the unit
 fn tree(
     tables: &elab::Tables<'_>,
     results: &r#type::Database,
@@ -399,6 +417,7 @@ fn tree(
     flow: &flow::Results,
     cfg: &cfg::Ir,
     layer: &Arc<r#type::Shared>,
+    elaborated: Vec<(crate::source::Span, analysis::Entry)>,
 ) -> analysis::Tree {
     let db = r#type::Database::fork(layer);
     let judgments = flow
@@ -442,9 +461,11 @@ fn tree(
                 decl,
                 overload,
                 item,
+                group: None,
             };
             (span, entry)
         })
+        .chain(elaborated)
         .collect();
     analysis::Tree::new(judgments)
 }
@@ -663,18 +684,6 @@ pub struct Check<'u> {
     flows: Vec<Option<flow::Results>>,
 }
 
-/// The names of the judgments [`Check::judgments`] reports.
-#[doc(hidden)]
-pub const JUDGMENTS: &[&str] = elab::JUDGMENTS;
-
-/// A fact the checker concluded about a span, for regression tests.
-#[doc(hidden)]
-pub struct Judgment {
-    pub name: &'static str,
-    pub span: diag::Span,
-    pub value: String,
-}
-
 impl Check<'_> {
     /// Iterate the type checker's diagnostics.
     ///
@@ -732,71 +741,10 @@ impl Check<'_> {
         self.analysis
     }
 
-    /// The judgments about spans of `unit`, in source order. The check must have an
-    /// [`Analysis`].
-    #[doc(hidden)]
-    pub fn judgments(&self, unit: UnitId) -> Vec<Judgment> {
-        let info = &self.tables.units[unit.index()];
-        let db = &r#type::Database::fork(&self.shared);
-        let mut judgments = self.tables.judgments(db, unit);
-        let analysis = self
-            .analysis
-            .as_ref()
-            .expect("judgments are rendered from an analysis");
-        for node in analysis.nodes(unit) {
-            judgments.extend(node.judgments().map(|judged| {
-                let ty = judged.ty(Style::Full);
-                let name = match judged.role() {
-                    Role::Read | Role::Bind => "flow",
-                    Role::Value => "value",
-                    Role::Expected => "expected",
-                    Role::Member => "reached",
-                    Role::Callee => "callee",
-                    Role::Item => "item",
-                };
-                let value = match (judged.role(), judged.unassigned(), judged.none()) {
-                    (Role::Member, ..) => format!("{ty}.{}", judged.name().unwrap_or("?")),
-                    (Role::Item, ..) => match judged.declaration() {
-                        Some(item) => format!("{}.{}", item.module(), item.name()),
-                        None => "?".to_owned(),
-                    },
-                    (Role::Callee, ..) => match judged.overload() {
-                        Some(index) => format!("overload {index}: {ty}"),
-                        None => ty,
-                    },
-                    (_, false, _) => ty,
-                    (_, true, true) => "unassigned".to_owned(),
-                    (_, true, false) => format!("{ty} | unassigned"),
-                };
-                (name, node.span(), value)
-            }));
-        }
-        judgments.sort_by_key(|&(name, span, _)| (span.start, span.end, name));
-        // A union's alternatives each reach a member, and a call is made once
-        // for each alternative of a union callee
-        judgments.dedup_by(|(name, span, value), (kept_name, kept_span, kept)| {
-            let same =
-                (*name, *span) == (*kept_name, *kept_span) && matches!(*name, "reached" | "callee");
-            if same {
-                kept.push_str(" | ");
-                kept.push_str(value);
-            }
-            same
-        });
-        judgments
-            .into_iter()
-            .map(|(name, span, value)| Judgment {
-                name,
-                span: report::resolve_span(unit, info, span).span(),
-                value,
-            })
-            .collect()
-    }
-
     /// A fact's type, interned in the results
     #[cfg(test)]
     fn render_fact(&self, ty: r#type::TypeId) -> String {
-        self.types.render(ty, Style::Full)
+        self.types.render(ty, &[], Style::Full)
     }
 
     /// Relate every type the database holds to itself and to top, interpreting each

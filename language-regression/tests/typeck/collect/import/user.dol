@@ -46,11 +46,9 @@ pub let acl @ security.nfs4.Acl = ...
 
 # A module no checked unit provides
 pub let thing @ Thing = nil
-#               ^~~~~: ref error
 
 # An item that is a re-exported module
 pub let module @ hubgeo = nil
-#                ^~~~~~: ref module geo
 # error: `hubgeo` is not a type
 #   --> user.dol:LL:LL
 #    |

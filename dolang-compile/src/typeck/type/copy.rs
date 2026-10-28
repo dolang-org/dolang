@@ -128,6 +128,15 @@ impl Copier<'_> {
         copy
     }
 
+    /// A declaration's copy, populated with every declaration it reaches
+    pub(crate) fn declaration(&mut self, decl: DeclId) -> DeclId {
+        let copy = self.decl(decl);
+        while let Some((decl, copy)) = self.pending.pop() {
+            self.populate(decl, copy);
+        }
+        copy
+    }
+
     fn copy(&mut self, ty: TypeId) -> TypeId {
         if self.shared.is_some_and(|(types, _)| ty.index() < types) {
             return ty;

@@ -4,11 +4,11 @@
 //! syntax tree they were copied from, so sorted by start ascending and end
 //! descending, each node's parent is the innermost node before it containing it.
 
-use std::{cmp::Reverse, iter, sync::Arc};
+use std::{cmp::Reverse, fmt::Write, iter, sync::Arc};
 
 use super::{
     flow::Role,
-    r#type::{Database, DeclId, Labels, Shared, Style, Type, TypeId},
+    r#type::{BinderOrigin, Database, DeclId, Labels, Shared, Style, Type, TypeId, Variance},
 };
 use crate::{UnitId, source::Span};
 
@@ -20,14 +20,16 @@ pub(crate) struct Types {
 }
 
 impl Types {
-    pub(crate) fn render(&self, ty: TypeId, style: Style) -> String {
-        Database::fork(&self.db).render(ty, &self.labels, style)
+    /// A type, with the binders of the group it's interpreted in named by
+    /// `binders`
+    pub(crate) fn render(&self, ty: TypeId, binders: &[String], style: Style) -> String {
+        Database::fork(&self.db).render_in(ty, binders, &self.labels, style)
     }
 
     /// `ty` as an annotation writes it, parenthesized unless it's compact
-    pub(crate) fn annotation(&self, ty: TypeId, style: Style) -> String {
+    pub(crate) fn annotation(&self, ty: TypeId, binders: &[String], style: Style) -> String {
         let db = Database::fork(&self.db);
-        let rendered = db.render(ty, &self.labels, style);
+        let rendered = db.render_in(ty, binders, &self.labels, style);
         let compact = match db.ty(ty) {
             Type::Union(members) => members.len() < 2,
             Type::Function(_) | Type::Quantified { .. } | Type::Overloaded { .. } => false,
@@ -38,6 +40,70 @@ impl Types {
         } else {
             format!("({rendered})")
         }
+    }
+
+    /// A declaration: its outer group's binders, each with its origin, name,
+    /// variance, bound and default, then a class's supertypes, an alias's
+    /// definition, or a function's type
+    pub(crate) fn declared(&self, decl: DeclId, style: Style) -> String {
+        let db = Database::fork(&self.db);
+        let declaration = db.declaration(decl);
+        let names: Vec<String> = declaration
+            .binders
+            .iter()
+            .map(|binder| match (binder.origin, db.symbol(binder.name)) {
+                (BinderOrigin::Implicit, "<") => "in".to_owned(),
+                (BinderOrigin::Implicit, _) => "out".to_owned(),
+                (_, name) => name.to_owned(),
+            })
+            .collect();
+        let render = |ty| db.render_in(ty, &names, &self.labels, style);
+        let mut out = String::new();
+        let body = match db.ty(declaration.ty) {
+            Type::Quantified { binders, body } => {
+                let slots: Vec<_> = binders
+                    .iter()
+                    .zip(declaration.binders.iter())
+                    .zip(&names)
+                    .map(|((binder, source), name)| {
+                        let lifted = match source.origin {
+                            BinderOrigin::Lifted => "^",
+                            BinderOrigin::Written | BinderOrigin::Implicit => "",
+                        };
+                        let variance = match binder.variance {
+                            Variance::Covariant => " +",
+                            Variance::Contravariant => " -",
+                            Variance::Invariant => "",
+                        };
+                        let mut slot = format!("{lifted}{name}{variance}");
+                        if let Some(bound) = binder.bound {
+                            let _ = write!(slot, " @ {}", render(bound));
+                        }
+                        if let Some(default) = binder.default {
+                            let _ = write!(slot, " = {}", render(default));
+                        }
+                        slot
+                    })
+                    .collect();
+                let _ = write!(out, "[{}] ", slots.join(", "));
+                *body
+            }
+            _ => declaration.ty,
+        };
+        if declaration.source.kind.nominal() {
+            out.push_str("nominal");
+            let supertypes: Vec<_> = declaration
+                .supertypes
+                .iter()
+                .map(|supertype| render(supertype.ty))
+                .collect();
+            if !supertypes.is_empty() {
+                let _ = write!(out, " <: {}", supertypes.join(", "));
+            }
+        } else {
+            out.push_str(&render(body));
+        }
+        out
     }
 }
 
@@ -140,6 +206,9 @@ pub(crate) struct Entry {
     pub(crate) overload: Option<u32>,
     /// The module an item is named through, and the item's name
     pub(crate) item: Option<Place>,
+    /// The names of the binders of the group an annotation's type is
+    /// interpreted in
+    pub(crate) group: Option<Arc<[String]>>,
 }
 
 impl Tree {
@@ -251,14 +320,16 @@ impl<'a> Judged<'a> {
         self.entry.role
     }
 
-    /// The name of the variable it reads or binds, if the variable has one, or
-    /// of the member a member use reached
+    /// The name of the variable it reads or binds, if the variable has one, of
+    /// the member a member use reached, or of the binder a reference refers to
     pub fn name(self) -> Option<&'a str> {
         self.entry.name.as_deref()
     }
 
-    /// The class declaring the member a member use reached, or the item a path
-    /// through a module named, as that module exports it
+    /// The class declaring the member a member use reached, the item a path
+    /// through a module named, as that module exports it, the declaration a
+    /// reference refers to, or a declaration's own place. `None` for a `@def`
+    /// signature's declaration.
     pub fn declaration(self) -> Option<Declaration<'a>> {
         let (module, name) = match self.entry.decl {
             Some(decl) => self.analysis.places.get(decl.index())?.as_ref()?,
@@ -280,20 +351,37 @@ impl<'a> Judged<'a> {
     }
 
     /// Its type, as `style` shows it: a member use's is the class declaring the
-    /// member, and a call's the signature it reached. A read no path assigns
-    /// sees no type.
+    /// member, a call's the signature it reached, and a reference's what it
+    /// refers to. A declaration's shows its binders, then a class's
+    /// supertypes, an alias's definition or a function's type, as
+    /// `[T +, U @ Bound] nominal <: Super[T]`. A read no path assigns sees no
+    /// type.
     pub fn ty(self, style: Style) -> String {
-        self.analysis.types.render(self.entry.ty, style)
+        let types = &self.analysis.types;
+        match (self.entry.role, self.entry.decl) {
+            (Role::Declaration, Some(decl)) => types.declared(decl, style),
+            _ => types.render(self.entry.ty, self.binders(), style),
+        }
     }
 
     /// Its type as [`ty`](Self::ty) shows it, parenthesized where an
     /// annotation would need it to be
     pub fn annotation(self, style: Style) -> String {
-        self.analysis.types.annotation(self.entry.ty, style)
+        match (self.entry.role, self.entry.decl) {
+            (Role::Declaration, Some(_)) => self.ty(style),
+            _ => self
+                .analysis
+                .types
+                .annotation(self.entry.ty, self.binders(), style),
+        }
     }
 
-    /// Whether it saw no value at all
-    pub(crate) fn none(self) -> bool {
+    fn binders(self) -> &'a [String] {
+        self.entry.group.as_deref().unwrap_or_default()
+    }
+
+    /// Whether it saw no value at all, as a read no path assigns doesn't
+    pub fn none(self) -> bool {
         self.entry.ty == Database::fork(&self.analysis.types.db).bottom()
     }
 }

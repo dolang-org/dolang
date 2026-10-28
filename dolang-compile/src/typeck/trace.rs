@@ -3,10 +3,7 @@
 
 use dolang_util::{debug_enabled, debug_eprintln};
 
-use super::{
-    elab::Tables,
-    r#type::{Database, UnitId},
-};
+use super::{Analysis, Role, Style, elab::Tables, r#type::UnitId};
 use crate::source::Span;
 
 impl Tables<'_> {
@@ -26,15 +23,24 @@ impl Tables<'_> {
     }
 }
 
-/// Trace what elaboration concluded about each unit's spans
-pub(super) fn elab(db: &Database, tables: &Tables<'_>) {
+/// Trace what elaboration concluded about each unit's spans, as the analysis
+/// has it
+pub(super) fn elab(analysis: &Analysis, tables: &Tables<'_>) {
     if !debug_enabled!("typeck.elab") {
         return;
     }
     for index in 0..tables.units.len() {
         let unit = UnitId::from_index(index);
-        for (name, span, value) in tables.judgments(db, unit) {
-            debug_eprintln!(topic: "typeck.elab", "{}: {name}: {value}", tables.locate(unit, span));
+        for node in analysis.nodes(unit) {
+            for judged in node.judgments() {
+                let role = judged.role();
+                if !matches!(role, Role::Reference | Role::Annotation | Role::Declaration) {
+                    continue;
+                }
+                let ty = judged.ty(Style::Full);
+                let location = tables.locate(unit, node.span());
+                debug_eprintln!(topic: "typeck.elab", "{location}: {role:?}: {ty}");
+            }
         }
     }
 }

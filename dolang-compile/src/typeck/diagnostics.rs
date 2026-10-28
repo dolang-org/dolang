@@ -105,14 +105,22 @@ fn judgments_do_not_depend_on_the_order_units_are_added() {
             .iter()
             .zip(ids)
             .flat_map(|(&(name, _), id)| {
-                check.judgments(id).into_iter().map(move |judgment| {
-                    (
-                        name,
-                        judgment.name,
-                        judgment.span.start().byte_offset(),
-                        judgment.span.end().byte_offset(),
-                        judgment.value,
-                    )
+                let analysis = check.analysis().unwrap();
+                analysis.nodes(id).flat_map(move |node| {
+                    node.judgments().map(move |judged| {
+                        let declaration = judged.declaration().map(|declaration| {
+                            format!("{}.{}", declaration.module(), declaration.name())
+                        });
+                        (
+                            name,
+                            node.span().start,
+                            node.span().end,
+                            judged.role(),
+                            judged.ty(typeck::Style::Full),
+                            judged.name().map(str::to_owned),
+                            declaration,
+                        )
+                    })
                 })
             })
             .collect();
@@ -193,11 +201,19 @@ fn results_do_not_depend_on_threads() {
         let judgments: Vec<Vec<String>> = ids
             .iter()
             .map(|&id| {
-                check
-                    .judgments(id)
-                    .into_iter()
-                    .map(|judgment| {
-                        format!("{} {:?} {}", judgment.name, judgment.span, judgment.value)
+                let analysis = check.analysis().unwrap();
+                analysis
+                    .nodes(id)
+                    .flat_map(|node| {
+                        node.judgments().map(move |judged| {
+                            format!(
+                                "{:?} {:?} {} {:?}",
+                                judged.role(),
+                                node.span(),
+                                judged.ty(typeck::Style::Full),
+                                judged.name()
+                            )
+                        })
                     })
                     .collect()
             })

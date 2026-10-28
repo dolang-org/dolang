@@ -43,7 +43,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use dolang::compile::{Config, ErrorKind, Mode, Severity, Span, UnitId, typeck};
+use dolang::compile::{Config, ErrorKind, Mode, Severity, UnitId, typeck};
 use dolang_private_test::{Directive, annotate};
 
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/typeck");
@@ -553,10 +553,12 @@ fn from_typelibs(
             continue;
         };
         let judgments = |check: &typeck::Check| -> Vec<String> {
-            check
-                .judgments(id)
+            judgments(check, id)
                 .into_iter()
-                .map(|judgment| format!("{} {:?} {}", judgment.name, judgment.span, judgment.value))
+                .map(|judgment| {
+                    let (start, end) = judgment.span;
+                    format!("{} {start}..{end} {}", judgment.name, judgment.value)
+                })
                 .collect()
         };
         compare(
@@ -566,6 +568,79 @@ fn from_typelibs(
             [judgments(&other), Vec::new()],
         );
     }
+}
+
+/// The judgments an annotation can name
+const JUDGMENTS: &[&str] = &[
+    "ref", "decl", "type", "flow", "value", "expected", "reached", "callee", "item",
+];
+
+/// A fact the checker concluded about a byte span of a unit
+struct Judgment {
+    name: &'static str,
+    span: (u32, u32),
+    value: String,
+}
+
+/// What the check's analysis concluded about `unit`'s spans, as annotations name
+/// it, in source order
+fn judgments(check: &typeck::Check, unit: UnitId) -> Vec<Judgment> {
+    use typeck::{Role, Style};
+
+    let analysis = check
+        .analysis()
+        .expect("cases are checked with an analysis");
+    let mut judgments = Vec::new();
+    for node in analysis.nodes(unit) {
+        let span = (node.span().start, node.span().end);
+        judgments.extend(node.judgments().map(|judged| {
+            let ty = judged.ty(Style::Full);
+            let name = match judged.role() {
+                Role::Read | Role::Bind => "flow",
+                Role::Value => "value",
+                Role::Expected => "expected",
+                Role::Member => "reached",
+                Role::Callee => "callee",
+                Role::Item => "item",
+                Role::Reference => "ref",
+                Role::Annotation => "type",
+                Role::Declaration => "decl",
+            };
+            let place = |judged: typeck::Judged<'_>| match judged.declaration() {
+                Some(item) => format!("{}.{}", item.module(), item.name()),
+                None => "?".to_owned(),
+            };
+            let value = match (judged.role(), judged.unassigned(), judged.none()) {
+                (Role::Member, ..) => format!("{ty}.{}", judged.name().unwrap_or("?")),
+                (Role::Item, ..) => place(judged),
+                (Role::Reference, ..) => match judged.name() {
+                    Some(binder) => format!("binder {binder}"),
+                    None => place(judged),
+                },
+                (Role::Callee, ..) => match judged.overload() {
+                    Some(index) => format!("overload {index}: {ty}"),
+                    None => ty,
+                },
+                (_, false, _) => ty,
+                (_, true, true) => "unassigned".to_owned(),
+                (_, true, false) => format!("{ty} | unassigned"),
+            };
+            Judgment { name, span, value }
+        }));
+    }
+    judgments.sort_by_key(|judgment| (judgment.span, judgment.name));
+    // A union's alternatives each reach a member, and a call is made once for
+    // each alternative of a union callee
+    judgments.dedup_by(|judgment, kept| {
+        let same = (judgment.name, judgment.span) == (kept.name, kept.span)
+            && matches!(judgment.name, "reached" | "callee");
+        if same {
+            kept.value.push_str(" | ");
+            kept.value.push_str(&judgment.value);
+        }
+        same
+    });
+    judgments
 }
 
 /// Check a case file's judgment annotations.
@@ -581,7 +656,14 @@ fn judge(source: &Source, id: Option<UnitId>, check: &typeck::Check, failures: &
             source.file
         );
     };
-    let judgments = check.judgments(id);
+    let judgments = judgments(check, id);
+    // The byte offset each line starts at
+    let starts: Vec<u32> = std::iter::once(0)
+        .chain(lines.iter().scan(0, |offset, line| {
+            *offset += line.len() as u32 + 1;
+            Some(*offset)
+        }))
+        .collect();
 
     for annotation in &annotations {
         let (name, value) = annotation
@@ -590,7 +672,7 @@ fn judge(source: &Source, id: Option<UnitId>, check: &typeck::Check, failures: &
             .map_or((annotation.payload.as_str(), ""), |(name, value)| {
                 (name, value.trim())
             });
-        if !typeck::JUDGMENTS.contains(&name) {
+        if !JUDGMENTS.contains(&name) {
             panic!(
                 "{}:{}: unknown judgment `{name}`",
                 source.file,
@@ -598,18 +680,15 @@ fn judge(source: &Source, id: Option<UnitId>, check: &typeck::Check, failures: &
             );
         }
         let target = annotate::target_line(&annotations, annotation, &lines);
-        let at = |span: &Span| {
-            span.start().line_offset() as usize == target
-                && span.end().line_offset() as usize == target
-        };
+        let line = (starts[target], starts[target] + lines[target].len() as u32);
+        let at = |judgment: &Judgment| line.0 <= judgment.span.0 && judgment.span.1 <= line.1;
+        let span = (
+            line.0 + annotation.start_col as u32,
+            line.0 + annotation.end_col as u32,
+        );
         let found: Vec<&str> = judgments
             .iter()
-            .filter(|judgment| {
-                judgment.name == name
-                    && at(&judgment.span)
-                    && judgment.span.start().column_offset() as usize == annotation.start_col
-                    && judgment.span.end().column_offset() as usize == annotation.end_col
-            })
+            .filter(|judgment| judgment.name == name && judgment.span == span)
             .map(|judgment| judgment.value.as_str())
             .collect();
         let report = match found.as_slice() {
@@ -617,14 +696,14 @@ fn judge(source: &Source, id: Option<UnitId>, check: &typeck::Check, failures: &
             [found] => format!("expected {name} {value}, found {name} {found}"),
             [] => {
                 let mut report = format!("no {name} judgment spans these columns exactly");
-                for judgment in judgments.iter().filter(|judgment| at(&judgment.span)) {
+                for judgment in judgments.iter().filter(|judgment| at(judgment)) {
                     let _ = write!(
                         report,
                         "\n      {} {} at columns {}-{}",
                         judgment.name,
                         judgment.value,
-                        judgment.span.start().column_offset() + 1,
-                        judgment.span.end().column_offset()
+                        judgment.span.0 - line.0 + 1,
+                        judgment.span.1 - line.0
                     );
                 }
                 report

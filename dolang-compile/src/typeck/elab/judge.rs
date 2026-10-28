@@ -1,58 +1,123 @@
-//! Judgments: the tables' facts about source spans, formatted for regression tests.
-//!
-//! A judgment names what the checker concluded at a span in terms a fixture can
-//! write down: qualified names rather than IDs.
+//! What elaboration concluded about source spans, for an analysis, and the
+//! names the tables give declarations.
 
-use std::{borrow::Cow, fmt::Write};
+use std::{borrow::Cow, sync::Arc};
+
+use rustc_hash::FxHashMap;
 
 use super::{Ambient, BinderRef, DeclNode, Designated, Referent, Tables};
 use crate::{
     source::Span,
-    typeck::r#type::{
-        BinderOrigin, Collection, Database, DeclId, Declaration, Intrinsic, Names, Style, Type,
-        TypeId, UnitId, Variance,
+    typeck::{
+        analysis::Entry,
+        flow::Role,
+        r#type::{
+            Collection, Copier, Database, DeclId, Intrinsic, Names, Style, Type, TypeId, UnitId,
+        },
     },
 };
 
-/// The judgments the tables record, by the name a fixture writes
-pub(crate) const JUDGMENTS: &[&str] = &[
-    "ref", "decl", "type", "flow", "value", "expected", "reached", "callee", "item",
-];
-
-/// A binder's variance, as a suffix of its name: nothing for invariant
-fn variance(variance: Variance) -> &'static str {
-    match variance {
-        Variance::Covariant => " +",
-        Variance::Contravariant => " -",
-        Variance::Invariant => "",
-    }
-}
-
 impl Tables<'_> {
-    /// Every judgment about spans of `unit`, in source order
-    pub(crate) fn judgments(
+    /// The analysis's entries for `unit`'s references, written types and
+    /// declarations, copied from `db` by `copier`. A reference to something other
+    /// than a declaration or a binder has none.
+    pub(crate) fn entries(
         &self,
         db: &Database,
+        copier: &mut Copier<'_>,
         unit: UnitId,
-    ) -> Vec<(&'static str, Span, String)> {
-        let mut judgments = Vec::new();
-        self.populated(db, unit, &mut judgments);
-        for (&head, &link) in &self.refs[unit.index()] {
-            let referent = &self.referents[link.index()];
-            judgments.push(("ref", head, self.referent(referent)));
+    ) -> Vec<(Span, Entry)> {
+        let entry = |role, ty| Entry {
+            role,
+            name: None,
+            ty,
+            unassigned: false,
+            decl: None,
+            overload: None,
+            item: None,
+            group: None,
+        };
+        let mut entries = Vec::new();
+        let declare = |entries: &mut Vec<_>, copier: &mut Copier<'_>, span, id: DeclId| {
+            let decl = Some(copier.declaration(id));
+            let ty = copier.ty(db.declaration(id).ty);
+            entries.push((
+                span,
+                Entry {
+                    decl,
+                    ..entry(Role::Declaration, ty)
+                },
+            ));
+        };
+        let mut sigs: Vec<_> = self.sig_decls.iter().collect();
+        sigs.sort_unstable();
+        for (&(id, sig), &db_id) in sigs {
+            let decl = &self.decls[id.index()];
+            if decl.unit != unit {
+                continue;
+            }
+            let span = match &decl.node {
+                DeclNode::Defs(defs) => defs[sig].name.span,
+                DeclNode::Methods(methods) => methods[sig].name.span,
+                _ => continue,
+            };
+            declare(&mut entries, copier, span, db_id);
         }
-        judgments.sort_by_key(|(name, span, _)| (span.start, span.end, *name));
-        judgments
-    }
-
-    fn referent(&self, referent: &Referent) -> String {
-        match referent {
-            Referent::Decl(id) => self.qualified(*id),
-            Referent::Binder(binder) => self.binder(*binder),
-            Referent::Module(unit) => format!("module {}", self.unit_name(*unit)),
-            Referent::Value(_) => "value".to_owned(),
-            Referent::Error => "error".to_owned(),
+        for (index, decl) in self.decls.iter().enumerate() {
+            if decl.unit != unit || !matches!(decl.node, DeclNode::Class(_) | DeclNode::Alias(_)) {
+                continue;
+            }
+            let span = decl.name_span().expect("a class or alias is named");
+            declare(&mut entries, copier, span, DeclId::from_index(index));
         }
+        let mut groups: FxHashMap<(DeclId, usize), Arc<[String]>> = FxHashMap::default();
+        for site in &self.sites {
+            if site.unit != unit {
+                continue;
+            }
+            let ty = site.interned.get().expect("population interns each site");
+            let group = site.group().map(|key| {
+                let names = groups.entry(key).or_insert_with(|| {
+                    self.groups[&key]
+                        .iter()
+                        .map(|binder| self.binder_name(*binder))
+                        .collect()
+                });
+                Arc::clone(names)
+            });
+            let ty = copier.ty(ty);
+            entries.push((
+                site.ty.span(),
+                Entry {
+                    group,
+                    ..entry(Role::Annotation, ty)
+                },
+            ));
+        }
+        let mut refs: Vec<_> = self.refs[unit.index()].iter().collect();
+        refs.sort_unstable_by_key(|&(head, _)| (head.start, head.end));
+        for (&head, &link) in refs {
+            let (decl, name, ty) = match self.referents[link.index()] {
+                Referent::Decl(id) => {
+                    let ty = copier.ty(db.intern(Type::Decl(id)));
+                    (Some(copier.declaration(id)), None, ty)
+                }
+                Referent::Binder(binder) => {
+                    let name = self.binder_name(binder).into_boxed_str();
+                    (None, Some(name), copier.ty(db.top()))
+                }
+                Referent::Module(_) | Referent::Value(_) | Referent::Error => continue,
+            };
+            entries.push((
+                head,
+                Entry {
+                    decl,
+                    name,
+                    ..entry(Role::Reference, ty)
+                },
+            ));
+        }
+        entries
     }
 
     /// Where a declaration is: its unit's module name, and its name in the
@@ -104,63 +169,13 @@ impl Tables<'_> {
         self.units[unit.index()].name()
     }
 
-    fn binder(&self, binder: BinderRef) -> String {
-        let unit = self.decls[binder.decl.index()].unit;
-        let name = self.binders(binder.decl, binder.sig)[binder.slot].name;
-        format!("binder {}", self.name(unit, name))
-    }
-
-    /// The judgments about what population interned
-    fn populated(
-        &self,
-        db: &Database,
-        unit: UnitId,
-        judgments: &mut Vec<(&'static str, Span, String)>,
-    ) {
-        for (&(id, sig), &db_id) in &self.sig_decls {
-            let decl = &self.decls[id.index()];
-            if decl.unit != unit {
-                continue;
-            }
-            let span = match &decl.node {
-                DeclNode::Defs(defs) => defs[sig].name.span,
-                DeclNode::Methods(methods) => methods[sig].name.span,
-                _ => continue,
-            };
-            let declaration = db.declaration(db_id);
-            let names = self.names(db, declaration);
-            judgments.push(("decl", span, self.decl(db, declaration, &names)));
-        }
-        for (index, decl) in self.decls.iter().enumerate() {
-            let id = DeclId::from_index(index);
-            if decl.unit != unit {
-                continue;
-            }
-            match &decl.node {
-                DeclNode::Class(_) | DeclNode::Alias(_) => {
-                    let declaration = db.declaration(id);
-                    let names = self.names(db, declaration);
-                    let span = decl.name_span().expect("a class or alias is named");
-                    judgments.push(("decl", span, self.decl(db, declaration, &names)));
-                }
-                DeclNode::Defs(_) | DeclNode::Methods(_) | DeclNode::Closure(_) => {}
-            }
-        }
-        for site in &self.sites {
-            if site.unit != unit {
-                continue;
-            }
-            let span = site.ty.span();
-            let ty = site.interned.get().expect("population interns each site");
-            let names = match site.group() {
-                Some(key) => self.groups[&key]
-                    .iter()
-                    .map(|binder| self.binder_name(*binder))
-                    .collect(),
-                None => Vec::new(),
-            };
-            judgments.push(("type", span, self.render(db, ty, &names)));
-        }
+    /// A closed type
+    #[cfg_attr(
+        not(any(test, feature = "debug")),
+        expect(dead_code, reason = "used by tests and traces")
+    )]
+    pub(crate) fn render_type(&self, db: &Database, ty: TypeId) -> String {
+        db.render(ty, self, Style::Full)
     }
 
     /// The name of a binder, or `in` or `out` for an implicit one
@@ -173,81 +188,6 @@ impl Tables<'_> {
                 _ => "out".to_owned(),
             },
         }
-    }
-
-    /// The names of a declaration's outer group
-    fn names(&self, db: &Database, declaration: &Declaration) -> Vec<String> {
-        declaration
-            .binders
-            .iter()
-            .map(|binder| match (binder.origin, db.symbol(binder.name)) {
-                (BinderOrigin::Implicit, "<") => "in".to_owned(),
-                (BinderOrigin::Implicit, _) => "out".to_owned(),
-                (_, name) => name.to_owned(),
-            })
-            .collect()
-    }
-
-    /// A declaration: its outer group's slots, each with its origin, name,
-    /// variance, bound and default, then a class's supertypes, an alias's definition,
-    /// or a function's type
-    fn decl(&self, db: &Database, declaration: &Declaration, names: &[String]) -> String {
-        let mut out = String::new();
-        let body = match db.ty(declaration.ty) {
-            Type::Quantified { binders, body } => {
-                let slots: Vec<_> = binders
-                    .iter()
-                    .zip(declaration.binders.iter())
-                    .zip(names)
-                    .map(|((binder, source), name)| {
-                        let lifted = match source.origin {
-                            BinderOrigin::Lifted => "^",
-                            BinderOrigin::Written | BinderOrigin::Implicit => "",
-                        };
-                        let mut slot = format!("{lifted}{name}{}", variance(binder.variance));
-                        if let Some(bound) = binder.bound {
-                            let _ = write!(slot, " @ {}", self.render(db, bound, names));
-                        }
-                        if let Some(default) = binder.default {
-                            let _ = write!(slot, " = {}", self.render(db, default, names));
-                        }
-                        slot
-                    })
-                    .collect();
-                let _ = write!(out, "[{}] ", slots.join(", "));
-                *body
-            }
-            _ => declaration.ty,
-        };
-        if declaration.source.kind.nominal() {
-            out.push_str("nominal");
-            let supertypes: Vec<_> = declaration
-                .supertypes
-                .iter()
-                .map(|supertype| self.render(db, supertype.ty, names))
-                .collect();
-            if !supertypes.is_empty() {
-                let _ = write!(out, " <: {}", supertypes.join(", "));
-            }
-        } else {
-            out.push_str(&self.render(db, body, names));
-        }
-        out
-    }
-
-    /// A closed type
-    #[cfg_attr(
-        not(any(test, feature = "debug")),
-        expect(dead_code, reason = "used by tests and traces")
-    )]
-    pub(crate) fn render_type(&self, db: &Database, ty: TypeId) -> String {
-        db.render(ty, self, Style::Full)
-    }
-
-    /// A type as interned, with the binders of the group it is interpreted in named
-    /// by `names`
-    fn render(&self, db: &Database, ty: TypeId, names: &[String]) -> String {
-        db.render_in(ty, names, self, Style::Full)
     }
 }
 
