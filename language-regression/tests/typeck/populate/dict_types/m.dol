@@ -55,7 +55,6 @@ pub @let Tree = (nil | {child: Tree})
 
 # A binder's bound and an alias's body stay schemas
 pub def keys[S @ {...}] table @ Dict[S] -> nil
-  #          ^: kind schema
   ...
 pub @let Shape = {a: Int}
 pub let shaped @ Dict[Shape] = ...

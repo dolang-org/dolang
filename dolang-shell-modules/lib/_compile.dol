@@ -30,16 +30,36 @@ pub def module_among file dirs
 pub def is_typelib file
   (file.ext == "dolt")
 
-pub def check
-  entries
-  :paths = []
-  :strict = false
+# Each entry's file and module: a typelib's own, a script's `nil`, or else where
+# it is under the first of `dirs`. An entry repeating a module is left out.
+pub def roots entries dirs :script = false
+  let seen = Set []
+  let roots = []
+  for entry = entries
+    let file = Path $entry
+    let module = if script
+      nil
+    else if is_typelib(file)
+      compile.Typelib(file.read()).module
+    else
+      module_among $file $dirs
+    if (module != nil)
+      if seen.contains(module)
+        continue
+      seen.add $module
+    roots.push [file, module]
+  roots
+
+# What to check `roots` with: their units and typelibs, and those of the modules
+# they import, found under `dirs` or bundled. A root's unit comes before any
+# found.
+pub def gather
+  roots
+  dirs
   :no_bundled = false
-  :undecided = false
   :script = false
   :prelude = {}
 do
-  let dirs = [...paths.map do |dir| (Path dir)]
   let units = []
   let typelibs = []
   let bundled = []
@@ -67,22 +87,11 @@ do
         seen.add $module
       queue $unit.imports()
 
-  # Every entry's module is known before any is compiled, so an import of one
-  # is met by the entry rather than found again
-  let roots = []
-  for entry = entries
-    let file = Path $entry
-    let module = if script
-      nil
-    else if is_typelib(file)
-      compile.Typelib(file.read()).module
-    else
-      module_among $file $dirs
-    if (module != nil)
-      if seen.contains(module)
-        continue
-      seen.add $module
-    roots.push [file, module]
+  # Every root's module is known before any is compiled, so an import of one
+  # is met by the root rather than found again
+  for root = roots
+    if (root[1] != nil)
+      seen.add $root[1]
   for root = roots
     add $root[0] $root[1]
   # `proc` holds the pipe types `strand`'s placeholders stand for
@@ -107,6 +116,20 @@ do
     let typelib = _shell.resource "dolang.typelib" $name
     if (typelib != nil)
       add_typelib $compile.Typelib(Bin(typelib)) $bundled
+  record :units :typelibs :bundled
+
+pub def check
+  entries
+  :paths = []
+  :strict = false
+  :no_bundled = false
+  :undecided = false
+  :script = false
+  :prelude = {}
+do
+  let dirs = [...paths.map do |dir| (Path dir)]
+  let found = roots $entries $dirs :script
+  let :units :typelibs :bundled = gather $found $dirs :no_bundled :script :prelude
 
   let counts = {diagnostics: 0, errors: 0, warnings: 0}
   let failed = false

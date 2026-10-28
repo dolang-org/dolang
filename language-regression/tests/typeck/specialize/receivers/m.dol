@@ -11,34 +11,33 @@ pub class Array[T]
 
 pub class Box[T]
   pub def get _self -> T
-    #     ^~~: decl (m.Box[T], <in, >out) -> T
+    #     ^~~: decl [^T +, in -, out -] (m.Box[T], <in, >out) -> T
     ...
 
   @def int _self @ Box[Int] -> T
-  #    ^~~: decl (m.Box[m.Int], <in, >out) -> m.Int
-  #    ^~~: quantifier ^T covariant, in contravariant, out contravariant
+  #    ^~~: decl [^T +, in -, out -] (m.Box[m.Int], <in, >out) -> m.Int
   pub def int _self -> T
     nil
 
   @def nested[U] _self @ Box[Array[U]] -> T
-  #    ^~~~~~: decl (m.Box[m.Array[U]], <in, >out) -> m.Array[U]
+  #    ^~~~~~: decl [^T +, U, in -, out -] (m.Box[m.Array[U]], <in, >out) -> m.Array[U]
   pub def nested _self -> T
     nil
 
   # Through the bound of a binder
   @def bounded[N @ Box[Int]] _self @ N -> T
-  #    ^~~~~~~: decl (N, <in, >out) -> m.Int
+  #    ^~~~~~~: decl [^T +, N @ m.Box[m.Int], in -, out -] (N, <in, >out) -> m.Int
   pub def bounded _self -> T
     nil
 
   # An implementation's receiver may be annotated with the class's own binders.
   pub def same _self @ Box[T] -> T
-    #     ^~~~: decl (m.Box[T], <in, >out) -> T
+    #     ^~~~: decl [^T +, in -, out -] (m.Box[T], <in, >out) -> T
     ...
 
   # An implementation that specializes keeps the unspecialized signature.
   pub def special _self @ Box[Int] -> T
-    #     ^~~~~~~: decl (m.Box[m.Int], <in, >out) -> T
+    #     ^~~~~~~: decl [^T +, in -, out -] (m.Box[m.Int], <in, >out) -> T
     # error: only an `@def` overload may specialize `self` to a `Box`
     #   --> m.dol:LL:LL
     #    |
@@ -48,7 +47,7 @@ pub class Box[T]
 
   # A receiver that doesn't reach its class keeps the unspecialized signature.
   pub def wrong _self @ Int -> T
-    #     ^~~~~: decl (m.Int, <in, >out) -> T
+    #     ^~~~~: decl [^T +, in -, out -] (m.Int, <in, >out) -> T
     # error: `self` must be a `Box` or a subtype of it
     #   --> m.dol:LL:LL
     #    |
@@ -69,5 +68,5 @@ pub class Box[T]
 # receiver may be a bound binder.
 pub class Real: Num
   pub def abs[N @ Real] _self @ N -> N
-    #     ^~~: decl (N, <in, >out) -> N
+    #     ^~~: decl [N + @ m.Real, in -, out -] (N, <in, >out) -> N
     ...

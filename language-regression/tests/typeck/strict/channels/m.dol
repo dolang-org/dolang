@@ -7,7 +7,7 @@ import lax
 
 # Writing or reading as something specific needs the channel annotated
 pub def writes()
-  #     ^~~~~~: sig (<#0, >#1) -> nil
+  #     ^~~~~~: decl [in -, out -] (<in, >out) -> nil
   put 1
   # error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
   #   --> m.dol:LL:LL
@@ -71,7 +71,7 @@ pub def opaque <Int >Str
 
 # A function type without its own channels takes the def's
 pub def each f @ ((Int) -> nil)
-  #                     ^~: ambient <m.each#0 >m.each#1
+  #              ^~~~~~~~~~~~~~: type (std.Int, <in, >out) -> nil
   f 1
 
 # A strict caller's own output is seen as `Value`, so a callee that writes

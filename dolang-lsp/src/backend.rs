@@ -1522,7 +1522,7 @@ fn check_units(
 fn relate_checked(
     uri: &Uri,
     index: &DocumentIndex<'_>,
-    check: &typeck::Check<'_>,
+    check: &typeck::Check,
     id: UnitId,
     range: Range,
     span: &diag::SourceSpan,

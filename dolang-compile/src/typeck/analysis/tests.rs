@@ -31,6 +31,7 @@ fn analysis(spans: &[(u32, u32)]) -> Analysis {
                 decl: None,
                 overload: None,
                 item: None,
+                group: None,
             };
             (span(start, end), entry)
         })

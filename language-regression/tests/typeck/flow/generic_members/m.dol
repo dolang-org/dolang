@@ -48,12 +48,3 @@ pub def tuples t @ (Str, nil)
 
 pub def fits data @ Dict[Str, Int]
   encode $data
-
-pub class Box[T]
-  pub def get _self -> T
-    ...
-
-# Every `Box[Int | Str]` may be a `Box[Int]` or a `Box[Str]`
-pub def split b @ Box[Int | Str]
-  let _ @ (Box[Int] | Box[Str]) = b
-  #                               ^: wf undecided Unsupported("a type that may be inside a union member")

@@ -187,6 +187,15 @@ pub enum Role {
     /// A module's item, named by a path through the module, which sees the
     /// item's value
     Item,
+    /// A name written in a type, by the span of its head, which refers to a
+    /// declaration or a binder
+    Reference,
+    /// A type written in source: an annotation, a return type, a bound or
+    /// default, an alias's definition or a supertype
+    Annotation,
+    /// A class's, alias's, def's or method's name, which sees the declaration:
+    /// one of a def's or method's `@def` signatures each sees its own
+    Declaration,
 }
 
 /// What a reference, binding, expression, member use or call saw, joined over

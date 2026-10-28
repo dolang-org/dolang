@@ -1210,6 +1210,24 @@ def check_accepts_well_typed_units()
   assert_type $Str $result.undecided()
 
 #[test]
+def check_writes_typelibs()
+  let source = |-
+    import a:
+      - Present
+    pub let present @ Present = Present()
+  let lib main = checked_units $source
+  let result = compile.check [lib, main] typelibs: true
+  let typelib = compile.Typelib $result.typelib(lib)
+  assert_eq $typelib.module a
+  assert $compile.check([typelib, main]).validated
+  # A script has none
+  assert_throws $std.CompileError do result.typelib $main
+  let other = compile.compile "other.dol" "" module: other typecheck: true
+  assert_throws $std.ValueError do result.typelib $other
+  let unasked = compile.check [lib, main]
+  assert_throws $std.ValueError do unasked.typelib $lib
+
+#[test]
 def check_reports_diagnostics_across_units()
   let source = |-
     import a:

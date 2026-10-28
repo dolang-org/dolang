@@ -43,8 +43,8 @@ pub struct Bundle<'a> {
     /// The output for bytecode.
     pub bytecode: Option<&'a str>,
     /// The output for typelibs, which requires `CompileMode::Module`. Every
-    /// selected source has one, and each module a typelib imports must be bundled
-    /// too.
+    /// selected source has one, written from a check of them all, which must
+    /// report nothing. Each module a typelib imports must be bundled too.
     pub typelibs: Option<&'a str>,
 }
 
@@ -151,14 +151,22 @@ pub fn bundle(spec: &Bundle<'_>) {
         }
     }
 
-    let mut imports = Vec::new();
-    for (name, (path, root)) in &sources {
-        println!("cargo::rerun-if-changed={}", path.display());
-
-        let source = fs::read_to_string(path).unwrap();
-        let relative = path.strip_prefix(root.dir).unwrap();
-        let compiler_path = Path::new(root.virtual_root).join(relative);
-
+    // Each source's path as the compiler sees it, and its text, which its unit
+    // borrows
+    let texts: Vec<(String, String)> = sources
+        .values()
+        .map(|(path, root)| {
+            println!("cargo::rerun-if-changed={}", path.display());
+            let relative = path.strip_prefix(root.dir).unwrap();
+            let compiler_path = Path::new(root.virtual_root).join(relative);
+            (
+                compiler_path.display().to_string(),
+                fs::read_to_string(path).unwrap(),
+            )
+        })
+        .collect();
+    let mut units = Vec::new();
+    for ((name, (_, root)), (compiler_path, source)) in sources.iter().zip(&texts) {
         let mut config = Config::new();
         match spec.compile_mode {
             CompileMode::Module => config.mode(Mode::Module {
@@ -171,52 +179,70 @@ pub fn bundle(spec: &Bundle<'_>) {
 
         let mut had_error = false;
         let mut had_warning = false;
-        let compiler_path_str = compiler_path.display().to_string();
-        let unit = config.unit(&compiler_path, source.as_str());
+        let unit = config.unit(Path::new(compiler_path), source.as_str());
         for diag in unit.diagnostics() {
             match diag.severity() {
                 Severity::Error => had_error = true,
                 Severity::Warning => had_warning = true,
                 _ => {}
             }
-            eprintln!(
-                "{}",
-                render::render_diag(&compiler_path_str, &source, &diag)
-            );
+            eprintln!("{}", render::render_diag(compiler_path, source, &diag));
         }
         if had_error {
-            panic!("compilation errors in {}", compiler_path.display());
+            panic!("compilation errors in {compiler_path}");
         }
         if had_warning {
-            panic!("compilation warnings in {}", compiler_path.display());
+            panic!("compilation warnings in {compiler_path}");
         }
+        units.push(unit);
+    }
 
-        if let Some(out) = &typelib_out {
-            let typelib = typeck::typelib(&unit)
-                .unwrap_or_else(|err| panic!("no typelib for {}: {err}", compiler_path.display()));
-            let read = typeck::Typelib::read(&typelib).unwrap();
-            imports.extend(
-                read.imports()
-                    .into_iter()
-                    .map(|import| (name, import.to_owned())),
-            );
-            out.add(&mut table, name, "dolt", &typelib);
+    // The modules are checked together, and each one's typelib written from the
+    // check. The shell's pipelines connect stages with `proc`'s pipes, as the
+    // checks that read the typelibs have them.
+    if let Some(out) = &typelib_out {
+        let mut builder = typeck::Builder::new();
+        builder
+            .typelibs(true)
+            .pipes(("proc", "PipeSender"), ("proc", "PipeReceiver"));
+        let ids: Vec<_> = units
+            .iter()
+            .map(|unit| builder.unit(unit).unwrap())
+            .collect();
+        let check = builder.check();
+        let mut failed = false;
+        for diag in check.diagnostics() {
+            let unit = diag
+                .span()
+                .unit()
+                .expect("checker diagnostics name their unit");
+            let (compiler_path, source) = &texts[ids.iter().position(|&id| id == unit).unwrap()];
+            eprintln!("{}", render::render_diag(compiler_path, source, diag));
+            failed |= matches!(diag.severity(), Severity::Error | Severity::Warning);
         }
-        if let Some(out) = &bytecode_out
-            && root.bytecode
-        {
-            let mut bytecode = Vec::new();
-            unit.emit(&mut bytecode)
-                .unwrap_or_else(|_| panic!("failed to compile {}", compiler_path.display()));
-            out.add(&mut table, name, "dolc", &bytecode);
+        if failed {
+            panic!("the bundled modules don't check");
+        }
+        for ((name, id), (compiler_path, _)) in sources.keys().zip(&ids).zip(&texts) {
+            let mut typelib = Vec::new();
+            check
+                .typelib(*id, &mut typelib)
+                .unwrap_or_else(|err| panic!("no typelib for {compiler_path}: {err}"));
+            out.add(&mut table, name, "dolt", &typelib);
         }
     }
 
-    for (name, import) in imports {
-        assert!(
-            sources.contains_key(&import),
-            "{name} imports {import}, which isn't bundled"
-        );
+    if let Some(out) = &bytecode_out {
+        for (((name, (_, root)), (compiler_path, _)), unit) in sources.iter().zip(&texts).zip(units)
+        {
+            if !root.bytecode {
+                continue;
+            }
+            let mut bytecode = Vec::new();
+            unit.emit(&mut bytecode)
+                .unwrap_or_else(|_| panic!("failed to compile {compiler_path}"));
+            out.add(&mut table, name, "dolc", &bytecode);
+        }
     }
 
     writeln!(table, "]").unwrap();

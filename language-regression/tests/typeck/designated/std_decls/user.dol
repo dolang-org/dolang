@@ -2,15 +2,24 @@
 
 import std:
   @Int: Integer
+@import other
 
 pub let count @ Integer = 0
 #               ^~~~~~~: ref std.Int
 
 # An omitted ambient channel is gradual: it is bounded by `Unknown`.
 pub def relay()
-  #     ^~~~~: quantifier in contravariant, out contravariant
+  #     ^~~~~: decl [in -, out -] (<in, >out) -> Unknown
   nil
 
 pub def drain <std.Iter[Integer]
-  #     ^~~~~: quantifier out contravariant
+  #     ^~~~~: decl [out -] (<std.Iter[std.Int], >out) -> Unknown
   nil
+
+# A lookalike in another module is not designated: a literal isn't one
+pub let lookalike @ other.Int = 0
+# error: `0` does not fit the annotation `other.Int`
+#   --> user.dol:LL:LL
+#    |
+# LL | pub let lookalike @ other.Int = 0
+#    |                                 ^

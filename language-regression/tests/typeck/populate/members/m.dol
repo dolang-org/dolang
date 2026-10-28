@@ -6,34 +6,45 @@ pub class Text
 
 pub class Counter[T]
   pub field count @ Num = ...
-  #         ^~~~~: member field instance pub m.Num
   field secret @ T = nil
-  #     ^~~~~~: member field instance private T
   pub field loose = nil
-  #         ^~~~~: member field instance pub Unknown
   #[class]
   pub field made = nil
-  #         ^~~~: member field class pub Unknown
 
   def (init) self x @ T
-    #  ^~~~: member method instance private m.Counter.init
-    #  ^~~~: decl (m.Counter[T], T, <in, >out) -> Unknown
+    #  ^~~~: decl [^T -, in -, out -] (m.Counter[T], T, <in, >out) -> Unknown
     self.#secret = x
 
+  pub def secret self
+    let secret = self.#secret
+    #   ^~~~~~: flow m.Counter.#0
+    secret
+
   @def pick _self x @ Num -> Num
-  #    ^~~~: member method instance pub m.Counter.pick
-  #    ^~~~: decl (m.Counter[T], m.Num, <in, >out) -> m.Num
+  #    ^~~~: decl [^T, in -, out -] (m.Counter[T], m.Num, <in, >out) -> m.Num
   @def pick _self x @ Text -> Text
-  #    ^~~~: decl (m.Counter[T], m.Text, <in, >out) -> m.Text
+  #    ^~~~: decl [^T, in -, out -] (m.Counter[T], m.Text, <in, >out) -> m.Text
   pub def pick _self x
-    #     ^~~~: decl (m.Counter[T], Unknown, <in, >out) -> Unknown
+    #     ^~~~: decl [^T, in -, out -] (m.Counter[T], Unknown, <in, >out) -> Unknown
     x
 
   #[static]
   pub def make x @ T -> Counter[T]
-    #     ^~~~: member method static pub m.Counter.make
-    #     ^~~~: decl (T, <in, >out) -> m.Counter[T]
+    #     ^~~~: decl [^T -, in -, out -] (T, <in, >out) -> m.Counter[T]
     Counter(x)
+
+pub def use c @ Counter[Text]
+  let count = c.count
+  #   ^~~~~: flow m.Num
+  let loose = c.loose
+  #   ^~~~~: flow Unknown
+  let made = Counter.made
+  #   ^~~~: flow Unknown
+  let made_counter = Counter.make(Text())
+  #   ^~~~~~~~~~~~: flow m.Counter[m.Text]
+  let secret = c.secret()
+  #   ^~~~~~: flow Unknown
+  [count, loose, made, made_counter, secret]
 
 # A closure's function types don't share its def's channels
 pub def run f @ (Num -> Num)
@@ -42,8 +53,8 @@ pub def run f @ (Num -> Num)
   [f, g]
 
 @def overload x @ Num -> Num
-#    ^~~~~~~~: decl (m.Num, <in, >out) -> m.Num
+#    ^~~~~~~~: decl [in -, out -] (m.Num, <in, >out) -> m.Num
 @def overload x @ Text -> Text
 pub def overload x
-  #     ^~~~~~~~: quantifier in contravariant, out contravariant
+  #     ^~~~~~~~: decl [in -, out -] (Unknown, <in, >out) -> Unknown
   x

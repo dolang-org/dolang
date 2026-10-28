@@ -6,11 +6,11 @@ import std:
   - @Phantom
 
 pub class Cell[T]
-  #            ^: variance invariant
+  #       ^~~~: decl [T] nominal
   pub field item @ T = ...
 
 pub class Getter[T]
-  #              ^: variance covariant
+  #       ^~~~~~: decl [T +] nominal
   field item @ T
 
   pub def (init) self item @ T
@@ -20,7 +20,7 @@ pub class Getter[T]
     self.#item
 
 pub class Setter[T]
-  #              ^: variance contravariant
+  #       ^~~~~~: decl [T -] nominal
   field item @ T
 
   pub def (init) self item @ T
@@ -30,7 +30,7 @@ pub class Setter[T]
     self.#item = item
 
 pub class Hidden[T]
-  #              ^: variance invariant
+  #       ^~~~~~: decl [T] nominal
   field item @ T
 
   pub def (init) self item @ T
@@ -40,26 +40,26 @@ pub class Hidden[T]
     self.#item = item
 
 pub class Hook[T]
-  #            ^: variance contravariant
+  #       ^~~~: decl [T -] nominal
   def (put) _self _value @ T
     nil
 
 pub class Out[T]
-  #           ^: variance covariant
+  #       ^~~: decl [T +] nominal
   field marker @ Phantom[T]
 
 pub class In[T]
-  #          ^: variance contravariant
+  #       ^~: decl [T -] nominal
   field marker @ Phantom[(T -> nil)]
 
 pub class Grouped[T]
-  #               ^: variance covariant
+  #       ^~~~~~~: decl [T +] nominal
   field marker @ (Phantom[T])
 
 pub class Nested[T]
-  #              ^: variance invariant
+  #       ^~~~~~: decl [T] nominal
   pub field marker @ Wrap[Phantom[T]] = ...
 
 pub @class Wrap[W]
-  #             ^: variance covariant
+  #        ^~~~: decl [W +] nominal
   pub def get self -> W

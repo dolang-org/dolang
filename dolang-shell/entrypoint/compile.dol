@@ -900,30 +900,60 @@ def check p
   let :entries :path :strict :no_bundled :undecided ... = p.check
   _compile.check $entries paths: $path :strict :no_bundled :undecided
 
-# Writes a module's typelib, by default beside its source as `.dolt`. The module
-# is named by `--module`, or by where its source is under a search directory.
+# Writes the typelibs of modules, checked together with the modules they import.
+# Each is written into `--output` as `<module>.dolt`, or a lone source's by
+# default beside it. A module is named by `--module`, or by where its source is
+# under a search directory.
 def typelib p
   import _compile:
+    - gather
+    - is_typelib
     - module_among
-  let :source :module :path :output ... = p.typelib
-  let file = Path $source
-  if (module == nil)
-    module = module_among $file [...path.map do |dir| (Path dir)]
-  if (module == nil)
-    throw args.Error "name the module with --module, or put its source under a --path directory"
-  let unit = compile.compile "$file" $file.read_str() module: $module typecheck: true
+  let :sources :module :path :output :no_bundled ... = p.typelib
+  let dirs = [...path.map do |dir| (Path dir)]
+  if (sources.len == 0)
+    throw args.Error "name a source to write the typelib of"
+  if (module != nil && sources.len > 1)
+    throw args.Error "--module names a lone source's module"
+  if (output == nil && sources.len > 1)
+    throw args.Error "name the directory to write typelibs into with --output"
+  let roots = []
+  for source = sources
+    let file = Path $source
+    if is_typelib(file)
+      throw args.Error "$source is already a typelib"
+    let named = (module != nil && module || module_among(file, dirs))
+    if (named == nil)
+      throw args.Error "name the module with --module, or put $source under a --path directory"
+    roots.push [file, named]
+  let :units :typelibs :bundled = gather $roots $dirs :no_bundled
+  let check = compile.check [...units, ...typelibs, ...bundled] typelibs: true
   let failed = false
-  for diag = unit.diagnostics()
+  def report diag
     if (diag.severity == :ERROR:)
       failed = true
     echo $diag.render()
+  for unit = units
+    for diag = unit.diagnostics()
+      report $diag
+  for diag = check.diagnostics
+    report $diag
   if failed
     shell.exit 1
-  let out = if (output == nil)
-    file.with_ext dolt
-  else
-    Path $output
-  out.write $unit.typelib()
+  if (output != nil && sources.len > 1)
+    Path(output).create_dir all: true
+  # Each root's unit comes first, in order
+  let index = 0
+  for root = roots
+    let file named = root
+    let out = if (output == nil)
+      file.with_ext dolt
+    else if (sources.len == 1)
+      Path $output
+    else
+      (Path(output) / "$named.dolt")
+    out.write $check.typelib(units[index])
+    index = (index + 1)
 
 args.with
   help: Describe a Do source file's compiler output as JSON.
@@ -966,18 +996,21 @@ args.with
     do |p|
       check $p
   - cmd: typelib
-    help: Write a module's typelib, its declarations for checking without its source.
+    help: Write modules' typelibs, their declarations for checking without their sources.
     - opt: module
       default: nil
-      help: The module's name; by default, from where the source is under a search directory
+      help: A lone source's module name; by default, from where each source is under a search directory
     - opt: path
       collect: true
-      help: Directory the source may be under, as `a/b.dol` for module `a.b`
+      help: Directory to search for sources' modules and those they import, as `a/b.dol` for module `a.b`, before the bundled typelibs
+    - flag: no-bundled
+      help: Disable bundled typelibs; an imported module must be found under a search directory
     - opt: output
       short: o
       default: nil
-      help: File to write; by default, the source's path with the extension `.dolt`
-    - arg: source
-      help: The module's source
+      help: Directory to write each typelib into as `<module>.dolt`, or for a lone source, the file to write; by default, a lone source's path with the extension `.dolt`
+    - arg: sources
+      collect: true
+      help: The modules' sources
     do |p|
       typelib $p

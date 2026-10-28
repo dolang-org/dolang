@@ -1,13 +1,13 @@
 # A tuple or record type varies as the `Tuple` or `Record` it stands for does.
 
 pub @let Pair[T] = (T, T)
-#             ^: variance covariant
+#        ^~~~: decl [T +] (T, T)
 pub @let Named[T] = (name: T, Int)
-#              ^: variance covariant
+#        ^~~~~: decl [T +] (name: T, std.Int)
 pub @let Callback[T] = ((T -> nil), Int)
-#                 ^: variance contravariant
+#        ^~~~~~~~: decl [T -] ((T, <Value, >Value) -> nil, std.Int)
 
 pub class Box[T]
-  #           ^: variance covariant
+  #       ^~~: decl [T +] nominal
   pub def pair self -> (T, T)
     ...

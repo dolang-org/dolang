@@ -2,45 +2,41 @@
 # least solution. A generic method's uses of its class's binders are its class's.
 
 pub @class List[T]
-  #             ^: variance covariant
+  #        ^~~~: decl [T +] nominal
   pub def head self -> T
   pub def tail self -> List[T]
 
 pub @class Ping[T]
-  #             ^: variance contravariant
+  #        ^~~~: decl [T -] nominal
   pub def pong self -> Pong[T]
 
 pub @class Pong[U]
-  #             ^: variance contravariant
+  #        ^~~~: decl [U -] nominal
   pub def ping self -> Ping[U]
   pub def put self x @ U
 
 pub @class Box[T]
-  #            ^: variance covariant
+  #        ^~~: decl [T +] nominal
   pub def get self -> T
   pub def map[U] self f @ (T -> U) -> Box[U]
-  #       ^~~: captured T covariant
-  #           ^: variance invariant
+  #       ^~~: decl [^T +, U, in, out] (m.Box[T], (T, <in, >out) -> U, <in, >out) -> m.Box[U]
 
 pub @class Bounded[T]
-  #                ^: variance contravariant
+  #        ^~~~~~~: decl [T -] nominal
   pub def put[U @ T] self x @ U
-  #       ^~~: captured T contravariant
-  #           ^: variance contravariant
+  #       ^~~: decl [^T -, U - @ T, in -, out -] (m.Bounded[T], U, <in, >out) -> Unknown
 
 # A bound of a binder's own group is a covariant position for it
 pub @class Pair[A, B @ Source[A]]
-  #             ^: variance covariant
-  #                ^: variance covariant
+  #        ^~~~: decl [A +, B + @ m.Source[A]] nominal
   pub def first self -> A
   pub def second self -> B
 
 pub @class Feed[A, B @ Bounded[A]]
-  #             ^: variance invariant
-  #                ^: variance covariant
+  #        ^~~~: decl [A, B + @ m.Bounded[A]] nominal
   pub def first self -> A
   pub def second self -> B
 
 pub @class Source[S]
-  #               ^: variance covariant
+  #        ^~~~~~: decl [S +] nominal
   pub def get self -> S

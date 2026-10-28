@@ -8,5 +8,4 @@ pub class Split[*Ts, U @ Num]
     ...
 
 pub def split[*Xs] x @ Split[...Xs, Num]
-  #                    ^~~~~~~~~~~~~~~~~: wf undecided GenericArguments
   x

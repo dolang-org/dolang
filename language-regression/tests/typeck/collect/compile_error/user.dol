@@ -12,6 +12,5 @@ import good:
   - @Found
 
 pub let lost @ Lost = nil
-#              ^~~~: ref error
 pub let found @ Found = ...
 #               ^~~~~: ref good.Found

@@ -2,5 +2,5 @@
 # dolang: strict nostrict
 
 pub def f x
-  #     ^: sig (x: Unknown, <#0, >#1) -> Unknown
+  #     ^: decl [in -, out -] (Unknown, <in, >out) -> Unknown
   x

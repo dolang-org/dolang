@@ -4,36 +4,34 @@
 pub class Num
 
 pub class Box[T, U]
-  #       ^~~: quantifier T invariant, U invariant
+  #       ^~~: decl [T, U] nominal
   pub field item @ T = ...
 
   pub def get self -> T
-    #     ^~~: quantifier ^T covariant, ^U invariant, in contravariant, out contravariant
-    #     ^~~: decl (m.Box[T, U], <in, >out) -> T
+    #     ^~~: decl [^T +, ^U, in -, out -] (m.Box[T, U], <in, >out) -> T
     self.item
 
   pub def map[V] _self _f @ (T -> V) -> Box[V, U]
-    #     ^~~: quantifier ^T covariant, ^U invariant, V invariant, in invariant, out invariant
+    #     ^~~: decl [^T +, ^U, V, in, out] (m.Box[T, U], (T, <in, >out) -> V, <in, >out) -> m.Box[V, U]
     #                       ^~~~~~~~: type (T, <in, >out) -> V
     #                                   ^~~~~~~~~: type m.Box[V, U]
     ...
 
 pub def outer[A, B] _a @ A _b @ B
   @let OnlyA = (A | nil)
-  #    ^~~~~: quantifier ^A covariant
-  #    ^~~~~: decl A | nil
+  #    ^~~~~: decl [^A +] A | nil
   @let Neither = Num
-  #    ^~~~~~~: quantifier none
+  #    ^~~~~~~: decl m.Num
   @let Local = (nil -> B)
-  #    ^~~~~: quantifier ^B covariant
+  #    ^~~~~: decl [^B +] (nil, <Value, >Value) -> B
   @let Via = Array[Local]
-  #    ^~~: quantifier ^B invariant
+  #    ^~~: decl [^B] [m.outer.Local[^B]]
   def uses_alias x @ OnlyA
-    # ^~~~~~~~~~: quantifier ^A contravariant, in contravariant, out contravariant
+    # ^~~~~~~~~~: decl [^A -, in -, out -] (m.outer.OnlyA[^A], <in, >out) -> Unknown
     #                ^~~~~: type m.outer.OnlyA[^A]
     x
   def body_only x
-    # ^~~~~~~~~: quantifier ^B invariant, in contravariant, out contravariant
+    # ^~~~~~~~~: decl [^B, in -, out -] (Unknown, <in, >out) -> Unknown
     let y @ B = x
     #       ^: type B
     y
@@ -45,13 +43,13 @@ pub def outer[A, B] _a @ A _b @ B
 pub class Bounded[T, U @ Box[T, Num]]
   pub field u @ U = ...
   pub def peek self -> U
-    #     ^~~~: quantifier ^T invariant, ^U @ m.Box[T, m.Num] covariant, in contravariant, out contravariant
+    #     ^~~~: decl [^T, ^U + @ m.Box[T, m.Num], in -, out -] (m.Bounded[T, U], <in, >out) -> U
     self.u
 
 pub def bounded[T, U @ Box[T, Num]] _u @ U
   @let Inner = U
-  #    ^~~~~: quantifier ^T invariant, ^U @ m.Box[T, m.Num] covariant
+  #    ^~~~~: decl [^T, ^U + @ m.Box[T, m.Num]] U
   def inner _u @ Inner -> U
-    # ^~~~~: quantifier ^T invariant, ^U @ m.Box[T, m.Num] invariant, in contravariant, out contravariant
+    # ^~~~~: decl [^T, ^U @ m.Box[T, m.Num], in -, out -] (m.bounded.Inner[^T, ^U], <in, >out) -> U
     _u
   inner

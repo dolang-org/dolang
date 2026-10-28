@@ -2,11 +2,11 @@
 # placeholder.
 
 pub @let PipeSender[I] = ...
-#        ^~~~~~~~~~: decl Unknown
+#        ^~~~~~~~~~: decl [I] Unknown
 # error: module `proc` has no export `PipeSender`
 #   --> strand.dol:LL:LL
 #    |
 # LL | pub @let PipeSender[I] = ...
 #    |          ^^^^^^^^^^
 pub @let PipeReceiver[I] = ...
-#        ^~~~~~~~~~~~: decl proc.PipeReceiver[I]
+#        ^~~~~~~~~~~~: decl [I +] proc.PipeReceiver[I]

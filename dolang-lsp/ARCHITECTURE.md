@@ -125,7 +125,8 @@ regular file on the open handle and read up to a size limit. A check compiles
 at most `MAX_MODULES` sources.
 
 `dodo install` uses the newly built `dolang` binary to regenerate typelibs
-from bundled-library sources, then sets `DOLANG_LSP_TYPELIB_DIR` for the LSP
+from bundled-library sources, checking them all together in one
+`compile typelib` run, then sets `DOLANG_LSP_TYPELIB_DIR` for the LSP
 build. The build script validates and embeds the directory's `.dolt` files.
 `typelib_index::lookup` returns a module's bytes for decoding with
 `dolang_compile::typeck::Typelib::read` and adding to the check builder.

@@ -3,18 +3,44 @@ use std::{
     path::Path,
 };
 
-use super::{Invalid, encode, kept_spans};
+use super::{Invalid, Surface, kept_spans};
 use crate::{
     Config, ErrorKind, Mode, Unit,
     source::Span,
     typeck::{
-        self, Builder, Typelib,
+        Builder, Typelib,
         elab::{
             DeclNode, Harvest, Referent, Target, Value,
             surface::{Member, Name, StrId, TypeExpr},
         },
     },
 };
+
+/// Encode a harvest that is already a module's surface.
+fn encode(harvest: Harvest<'_>) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    Surface::new(harvest).write(&mut bytes).unwrap();
+    bytes
+}
+
+/// Write a unit's typelib from a check of it with an empty module of each name in
+/// `imports`, and of `std`, which the prelude imports.
+fn write(unit: &Unit<'_>, imports: &[&str]) -> Result<Vec<u8>, crate::Error> {
+    let imported: Vec<_> = imports
+        .iter()
+        .chain(["std"].iter().filter(|_| !imports.contains(&"std")))
+        .map(|&name| compile("", Mode::Module { name: name.into() }))
+        .collect();
+    let mut builder = Builder::new();
+    builder.typelibs(true);
+    let id = builder.unit(unit)?;
+    for module in &imported {
+        builder.unit(module)?;
+    }
+    let mut bytes = Vec::new();
+    builder.check().typelib(id, &mut bytes)?;
+    Ok(bytes)
+}
 
 /// Read a typelib's harvest.
 fn read(bytes: &[u8]) -> Result<Harvest<'_>, Invalid> {
@@ -81,7 +107,7 @@ fn compile<'a>(source: &'a str, mode: Mode<'a>) -> Unit<'a> {
 }
 
 fn typelib() -> Vec<u8> {
-    typeck::typelib(&compile(MODULE, Mode::Module { name: "lib".into() })).unwrap()
+    write(&compile(MODULE, Mode::Module { name: "lib".into() }), &[]).unwrap()
 }
 
 /// Check the script against a typelib, returning the script's diagnostics.
@@ -126,7 +152,7 @@ pub let limit @ Tag = \"Tag\"
             name: "strings".into(),
         },
     );
-    let bytes = typeck::typelib(&unit).unwrap();
+    let bytes = write(&unit, &[]).unwrap();
     let harvest = read(&bytes).unwrap();
     let mut strings: Vec<&str> = harvest.strings.iter().map(|text| &**text).collect();
     strings.sort_unstable();
@@ -165,8 +191,57 @@ fn checks_against_typelib() {
 
 #[test]
 fn script_has_no_typelib() {
-    let error = typeck::typelib(&compile(SCRIPT, Mode::Script)).unwrap_err();
+    let error = write(&compile(SCRIPT, Mode::Script), &["lib"]).unwrap_err();
     assert!(matches!(error.kind(), ErrorKind::NotModule));
+}
+
+#[test]
+fn not_requested() {
+    let module = compile(MODULE, Mode::Module { name: "lib".into() });
+    let mut builder = Builder::new();
+    let id = builder.unit(&module).unwrap();
+    let error = builder.check().typelib(id, &mut Vec::new()).unwrap_err();
+    assert!(matches!(error.kind(), ErrorKind::NotRequested));
+}
+
+#[test]
+fn checked_from_typelib() {
+    let bytes = typelib();
+    let typelib = Typelib::read(&bytes).unwrap();
+    let mut builder = Builder::new();
+    builder.typelibs(true);
+    let id = builder.typelib(&typelib).unwrap();
+    let error = builder.check().typelib(id, &mut Vec::new()).unwrap_err();
+    assert!(matches!(error.kind(), ErrorKind::NoSource));
+}
+
+#[test]
+fn missing_import() {
+    let lib = compile(MISSING, Mode::Module { name: "lib".into() });
+    let error = write(&lib, &[]).unwrap_err();
+    assert!(matches!(error.kind(), ErrorKind::MissingImport));
+    assert_eq!(error.to_string(), "imported module `gone` was not checked");
+}
+
+/// The typelib is the same whatever else the check holds
+#[test]
+fn written_alone() {
+    let lib = compile(
+        "import dep\npub @let G = dep.Thing\n",
+        Mode::Module { name: "lib".into() },
+    );
+    let dep = compile("pub @class Thing\n", Mode::Module { name: "dep".into() });
+    let script = compile(SCRIPT, Mode::Script);
+    let mut builder = Builder::new();
+    builder.typelibs(true);
+    builder.unit(&script).unwrap();
+    builder.unit(&dep).unwrap();
+    let std = compile("pub @class Int\n", Mode::Module { name: "std".into() });
+    builder.unit(&std).unwrap();
+    let id = builder.unit(&lib).unwrap();
+    let mut bytes = Vec::new();
+    builder.check().typelib(id, &mut bytes).unwrap();
+    assert_eq!(bytes, write(&lib, &["dep"]).unwrap());
 }
 
 #[test]
@@ -192,7 +267,11 @@ pub def at p @ Point -> When
   nil
 pub let unused @ json.Value = nil
 ";
-    let bytes = typeck::typelib(&compile(source, Mode::Module { name: "lib".into() })).unwrap();
+    let bytes = write(
+        &compile(source, Mode::Module { name: "lib".into() }),
+        &["geometry", "json", "time", "uuid"],
+    )
+    .unwrap();
     let typelib = Typelib::read(&bytes).unwrap();
     assert_eq!(typelib.module(), "lib");
     assert_eq!(typelib.path(), Path::new("lib.dol"));
@@ -319,7 +398,11 @@ pub class Open[T]
 def private_def()
   ...
 ";
-    let bytes = typeck::typelib(&compile(source, Mode::Module { name: "lib".into() })).unwrap();
+    let bytes = write(
+        &compile(source, Mode::Module { name: "lib".into() }),
+        &["std"],
+    )
+    .unwrap();
     let harvest = read(&bytes).unwrap();
     let text = |name: Option<Name>| &*harvest.strings[name.unwrap().text.index()];
     let decls: Vec<_> = harvest.decls.iter().map(|decl| text(decl.name)).collect();
@@ -351,7 +434,7 @@ fn private_in_interface() {
     ] {
         let source = format!("{private}\n\npub def f x @ Private\n  x\n");
         let unit = compile(&source, Mode::Module { name: "lib".into() });
-        let error = typeck::typelib(&unit).unwrap_err();
+        let error = write(&unit, &[]).unwrap_err();
         assert!(
             matches!(error.kind(), ErrorKind::NotExportable),
             "`{private}` is not exportable"
@@ -436,7 +519,7 @@ fn missing_module() {
     // At the import, from source or typelib; the script recovers
     let expected = [(0, 1, 8, "module `gone` not found".to_owned())];
     assert_eq!(located(&[&lib, &script], &[]), expected);
-    let bytes = typeck::typelib(&lib).unwrap();
+    let bytes = write(&lib, &["gone"]).unwrap();
     assert_eq!(located(&[&script], &[&bytes]), expected);
 }
 
@@ -446,7 +529,7 @@ fn missing_export_of_dependency() {
         "import dep\npub @let G = dep.Thing\npub @let H = dep.Thing\n",
         Mode::Module { name: "lib".into() },
     );
-    let bytes = typeck::typelib(&lib).unwrap();
+    let bytes = write(&lib, &["dep"]).unwrap();
     // The dependency no longer exports what the typelib was written against
     let dep = compile("pub @class Other\n", Mode::Module { name: "dep".into() });
     let script = compile(RECOVERING, Mode::Script);
@@ -465,7 +548,7 @@ fn omits_reference_spans_and_spellings() {
     // `Alias` only spells a reference, and `Thing` is the item it imports
     let source = "import dep:\n  @Thing: Alias\npub @let G = Alias\npub @let H = Array[G]\n";
     let unit = compile(source, Mode::Module { name: "lib".into() });
-    let bytes = typeck::typelib(&unit).unwrap();
+    let bytes = write(&unit, &["dep"]).unwrap();
     let harvest = read(&bytes).unwrap();
     let strings: Vec<&str> = harvest.strings.iter().map(|text| &**text).collect();
     assert!(strings.contains(&"Thing"));
@@ -490,7 +573,7 @@ fn omits_reference_spans_and_spellings() {
 #[test]
 fn locates_kept_spans() {
     let unit = compile(MODULE, Mode::Module { name: "lib".into() });
-    let bytes = typeck::typelib(&unit).unwrap();
+    let bytes = write(&unit, &[]).unwrap();
     let harvest = read(&bytes).unwrap();
     // Declarations, binders, members and parameters, among others
     let spans = kept_spans(&harvest);
@@ -512,7 +595,7 @@ fn import_on_later_line() {
         "# A dependency\n\nimport dep\npub @let G = dep.Thing\n",
         Mode::Module { name: "lib".into() },
     );
-    let bytes = typeck::typelib(&lib).unwrap();
+    let bytes = write(&lib, &["dep"]).unwrap();
     let dep = compile("pub @class Other\n", Mode::Module { name: "dep".into() });
     let script = compile(RECOVERING, Mode::Script);
     let message = "module `dep` has no export `Thing`".to_owned();
@@ -525,7 +608,7 @@ fn omitted_span_at_first_line() {
         "import dep\n\npub @let G = dep.Thing[Int]\n",
         Mode::Module { name: "lib".into() },
     );
-    let bytes = typeck::typelib(&lib).unwrap();
+    let bytes = write(&lib, &["dep"]).unwrap();
     // The dependency's class no longer takes the argument the typelib applies
     let dep = compile("pub @class Thing\n", Mode::Module { name: "dep".into() });
     let script = compile(RECOVERING, Mode::Script);

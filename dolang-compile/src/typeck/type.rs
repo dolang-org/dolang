@@ -3095,7 +3095,7 @@ mod render;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use copy::Copies;
+pub(crate) use copy::{Copier, Copies};
 pub(crate) use disjoint::NoAncestor;
 pub use render::Style;
 pub(crate) use render::{Collection, Labels, Names, Shown};

@@ -2,7 +2,7 @@
 # placeholder is dynamic.
 
 pub @let PipeSender[I] = ...
-#        ^~~~~~~~~~: decl Unknown
+#        ^~~~~~~~~~: decl [I] Unknown
 # error: `strand.Plain` can't take the type arguments of `PipeSender`
 #   --> strand.dol:LL:LL
 #    |
@@ -12,7 +12,7 @@ pub @let PipeSender[I] = ...
 # LL | pub class Plain: Sink[Value]
 #    |           ----- declared here
 pub @let PipeReceiver[I] = ...
-#        ^~~~~~~~~~~~: decl Unknown
+#        ^~~~~~~~~~~~: decl [I] Unknown
 # error: `strand.Pair` can't take the type arguments of `PipeReceiver`
 #   --> strand.dol:LL:LL
 #    |

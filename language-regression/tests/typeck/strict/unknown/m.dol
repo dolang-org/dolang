@@ -78,7 +78,6 @@ pub class Over
 # taken as a value does
 pub def overloaded o @ Over
   let _ = o.pick
-  #       ^~~~~~: wf undecided Unsupported("an overloaded method as a value")
   # warning: the checker can't verify this
   #   --> m.dol:LL:LL
   #    |

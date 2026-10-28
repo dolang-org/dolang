@@ -30,7 +30,6 @@ pub let pair @ Pair[Int] = ...
 
 let count = 0
 pub let odd @ count = count
-#             ^~~~~: ref value
 # error: `count` is not a type
 #   --> m.dol:LL:LL
 #    |

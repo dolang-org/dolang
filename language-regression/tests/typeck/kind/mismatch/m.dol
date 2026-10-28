@@ -99,7 +99,6 @@ pub def unpatterned *thunks @ ...(() -> Int)
   thunks
 
 pub @let Loop = Loop2
-#        ^~~~: kind flexible type
 # error: alias refers to itself
 #   --> m.dol:LL:LL
 #    |
@@ -107,3 +106,4 @@ pub @let Loop = Loop2
 #    |          ^^^^
 pub @let Loop2 = Loop
 pub let looped @ Loop = nil
+pub let spread_looped @ ((...Loop) -> nil) = ...

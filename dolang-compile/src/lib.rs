@@ -97,6 +97,9 @@ enum ErrorInfo {
     Unresolved,
     NotModule,
     NotExportable,
+    NotRequested,
+    NoSource,
+    MissingImport(String),
     Typelib(typeck::typelib::Invalid),
 }
 
@@ -117,6 +120,13 @@ pub enum ErrorKind {
     /// A typelib was requested of a module whose public interface names private
     /// declarations.
     NotExportable,
+    /// A typelib was requested of a check whose builder wasn't asked for typelibs.
+    NotRequested,
+    /// A typelib was requested of a unit checked from its typelib.
+    NoSource,
+    /// A typelib was requested of a module that imports a module not checked with
+    /// it.
+    MissingImport,
     /// A typelib is malformed, or of a version this checker doesn't read.
     Typelib,
 }
@@ -135,6 +145,9 @@ impl Error {
             ErrorInfo::Unresolved => ErrorKind::Unresolved,
             ErrorInfo::NotModule => ErrorKind::NotModule,
             ErrorInfo::NotExportable => ErrorKind::NotExportable,
+            ErrorInfo::NotRequested => ErrorKind::NotRequested,
+            ErrorInfo::NoSource => ErrorKind::NoSource,
+            ErrorInfo::MissingImport(_) => ErrorKind::MissingImport,
             ErrorInfo::Typelib(_) => ErrorKind::Typelib,
         }
     }
@@ -163,6 +176,11 @@ impl Display for Error {
             ErrorInfo::Unresolved => "unit types were not resolved".fmt(f),
             ErrorInfo::NotModule => "only a module has a typelib".fmt(f),
             ErrorInfo::NotExportable => "the module's interface cannot be exported".fmt(f),
+            ErrorInfo::NotRequested => "the check was not asked for typelibs".fmt(f),
+            ErrorInfo::NoSource => "the unit was checked from its typelib".fmt(f),
+            ErrorInfo::MissingImport(name) => {
+                write!(f, "imported module `{name}` was not checked")
+            }
             ErrorInfo::Typelib(invalid) => invalid.fmt(f),
         }
     }
@@ -176,6 +194,9 @@ impl error::Error for Error {
             | ErrorInfo::Unresolved
             | ErrorInfo::NotModule
             | ErrorInfo::NotExportable
+            | ErrorInfo::NotRequested
+            | ErrorInfo::NoSource
+            | ErrorInfo::MissingImport(_)
             | ErrorInfo::Typelib(_) => None,
             ErrorInfo::Io(error) => Some(error),
         }

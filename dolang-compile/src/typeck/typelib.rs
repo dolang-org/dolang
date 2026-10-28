@@ -1,6 +1,8 @@
 //! Typelibs: a module's declarations as the checker reads them, without its source.
 //!
-//! A typelib holds the surface of a module's harvest, with the module's name, path
+//! A check that is asked to keeps the surface of each module it checks from source,
+//! which it writes as the module's typelib. A typelib holds the surface of a
+//! module's harvest, with the module's name, path
 //! and the lines its kept spans are on. It is a structural record of the module's
 //! interface: it keeps text that is part of the interface, not how a reference is
 //! spelled, and spans that locate definitions and imports, not those of written
@@ -12,15 +14,15 @@
 //! ID is local to the typelib, which is linked as any harvest is. All text is in
 //! the string table, each string once.
 
-use std::{borrow::Cow, fmt, path::Path};
+use std::{borrow::Cow, fmt, io, path::Path};
 
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 use super::{
     elab::{
-        BinderRef, Decl, DeclNode, Export, Harvest, Kept, Link, Module, Referent, Role, Site,
-        Target, UnitInfo, Value,
+        BinderRef, Decl, DeclNode, Export, Harvest, Link, Module, Referent, Role, Site, Target,
+        UnitInfo, Value,
         surface::{
             Binder, Decorator, LinkId, Member, ModuleId, ParamKind, Ref, Signature, SiteId, StrId,
         },
@@ -48,8 +50,10 @@ const HEADER: Header = Header {
     version: VERSION,
 };
 
+/// A typelib's content, its strings either borrowed from the bytes it was read
+/// from or owned by the check that keeps it
 #[derive(Serialize, Deserialize)]
-struct Content<'a> {
+struct Content<'a, S> {
     module: StrId,
     /// The module's path, which only locates its diagnostics
     path: StrId,
@@ -57,8 +61,7 @@ struct Content<'a> {
     lines: Vec<(u32, u32)>,
     /// Whether the module was checked strictly, which its signatures depend on
     strict: bool,
-    #[serde(borrow)]
-    strings: Vec<&'a str>,
+    strings: Vec<S>,
     decls: Vec<Decl<'a>>,
     sites: Vec<Site>,
     links: Vec<Link>,
@@ -94,56 +97,77 @@ impl fmt::Display for Invalid {
     }
 }
 
-/// Write the typelib of a module's harvest, given what its surface keeps. Its
-/// interface must name no private declaration.
-pub(crate) fn write(harvest: Harvest<'_>, kept: &Kept) -> Vec<u8> {
-    encode(harvest.surface(kept))
-}
+/// A module's surface, as its typelib holds it, owned so that it outlives the
+/// module's unit
+pub(crate) struct Surface(Content<'static, String>);
 
-/// Encode a harvest that is already a module's surface.
-fn encode(harvest: Harvest<'_>) -> Vec<u8> {
-    let path = harvest.info.path.to_string_lossy();
-    let mut strings: Vec<&str> = harvest.strings.iter().map(|text| &**text).collect();
-    let mut intern = |text| match strings.iter().position(|&other| other == text) {
-        Some(index) => StrId::from_index(index),
-        None => {
-            strings.push(text);
-            StrId::from_index(strings.len() - 1)
-        }
-    };
-    let module = intern(
-        harvest
-            .info
-            .module
-            .expect("only a module's typelib is written"),
-    );
-    let path = intern(&*path);
-    let mut lines: Vec<(u32, u32)> = kept_spans(&harvest)
-        .into_iter()
-        .filter(|&span| span != Span::INVALID)
-        .flat_map(|span| [span.start, span.end])
-        .map(|offset| {
-            let coord = harvest.info.coord(offset);
-            (coord.line, offset - coord.column)
+impl Surface {
+    /// Keep a harvest that is already a module's surface.
+    pub(crate) fn new(harvest: Harvest<'_>) -> Self {
+        let path = harvest.info.path.to_string_lossy();
+        let mut strings: Vec<String> = harvest
+            .strings
+            .iter()
+            .map(|text| text.to_string())
+            .collect();
+        let mut intern = |text: &str| match strings.iter().position(|other| other == text) {
+            Some(index) => StrId::from_index(index),
+            None => {
+                strings.push(text.to_owned());
+                StrId::from_index(strings.len() - 1)
+            }
+        };
+        let module = intern(
+            harvest
+                .info
+                .module
+                .expect("only a module's typelib is written"),
+        );
+        let path = intern(&path);
+        let mut lines: Vec<(u32, u32)> = kept_spans(&harvest)
+            .into_iter()
+            .filter(|&span| span != Span::INVALID)
+            .flat_map(|span| [span.start, span.end])
+            .map(|offset| {
+                let coord = harvest.info.coord(offset);
+                (coord.line, offset - coord.column)
+            })
+            .collect();
+        lines.sort_unstable();
+        lines.dedup();
+        let decls = harvest
+            .decls
+            .into_iter()
+            .map(|decl| Decl {
+                unit: decl.unit,
+                kind: decl.kind,
+                name: decl.name,
+                node: decl.node,
+                outer: decl.outer,
+                ast: None,
+            })
+            .collect();
+        Self(Content {
+            module,
+            path,
+            lines,
+            strict: harvest.info.strict,
+            strings,
+            decls,
+            sites: harvest.sites,
+            links: harvest.links,
+            exports: harvest.exports,
+            values: harvest.values,
+            modules: harvest.modules,
         })
-        .collect();
-    lines.sort_unstable();
-    lines.dedup();
-    let content = Content {
-        module,
-        path,
-        lines,
-        strict: harvest.info.strict,
-        strings,
-        decls: harvest.decls,
-        sites: harvest.sites,
-        links: harvest.links,
-        exports: harvest.exports,
-        values: harvest.values,
-        modules: harvest.modules,
-    };
-    let out = postcard::to_stdvec(&HEADER).expect("a header serializes");
-    postcard::to_extend(&content, out).expect("a harvest serializes")
+    }
+
+    /// Write the typelib.
+    pub(crate) fn write(&self, write: &mut dyn io::Write) -> io::Result<()> {
+        let out = postcard::to_stdvec(&HEADER).expect("a header serializes");
+        let out = postcard::to_extend(&self.0, out).expect("a surface serializes");
+        write.write_all(&out)
+    }
 }
 
 /// Read a typelib, checking that it is a module's surface. The names of the modules
@@ -157,7 +181,7 @@ pub(crate) fn read(bytes: &[u8]) -> Result<(Harvest<'_>, Vec<&str>), Invalid> {
     if header.version != VERSION {
         return Err(Invalid::Version(header.version));
     }
-    let (content, rest): (Content<'_>, _) =
+    let (content, rest): (Content<'_, &str>, _) =
         postcard::take_from_bytes(rest).map_err(Invalid::Decode)?;
     if !rest.is_empty() {
         return Err(Invalid::Malformed("trailing bytes"));

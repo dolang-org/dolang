@@ -16,35 +16,35 @@ import std:
   - @Spread
 
 pub @let IterableOf[T] = Iterable[T]
-#                   ^: variance covariant
+#        ^~~~~~~~~~: decl [T +] std.Iterable[T]
 pub @let IterOf[T] = Iter[T]
-#               ^: variance covariant
+#        ^~~~~~: decl [T +] std.Iter[T]
 pub @let SinkOf[T] = Sink[T]
-#               ^: variance contravariant
+#        ^~~~~~: decl [T -] std.Sink[T]
 pub @let SinkableOf[T] = Sinkable[T]
-#                   ^: variance contravariant
+#        ^~~~~~~~~~: decl [T -] std.Sinkable[T]
 pub @let SeqOf[T] = Seq[T]
-#              ^: variance covariant
+#        ^~~~~: decl [T +] std.Seq[T]
 pub @let BaseArrayOf[T] = BaseArray[T]
-#                    ^: variance covariant
+#        ^~~~~~~~~~~: decl [T +] std.BaseArray[T]
 pub @let ArrayOf[T] = Array[T]
-#                ^: variance invariant
+#        ^~~~~~~: decl [T] [T]
 pub @let TupleOf[T] = Tuple[T]
-#                ^: variance covariant
+#        ^~~~~~~: decl [T +] (T,)
 pub @let TypeOf[T] = Type[T]
-#               ^: variance covariant
+#        ^~~~~~: decl [T +] std.Type[T]
 pub @let UnionOf[T] = Union[T]
-#                ^: variance covariant
+#        ^~~~~~~: decl [T +] T
 pub @let IndexOf[S @ {...}] = Index[S]
-#                ^: variance covariant
+#        ^~~~~~~: decl [S + @ {*Value, *(Value): Value}] std.Index[S]
 pub @let AssignOf[S @ {...}] = Assign[S]
-#                 ^: variance invariant
+#        ^~~~~~~~: decl [S @ {*Value, *(Value): Value}] std.Assign[S]
 pub @let SpreadOf[S @ {...}] = Spread[S]
-#                 ^: variance covariant
+#        ^~~~~~~~: decl [S + @ {*Value, *(Value): Value}] std.Spread[S]
 pub @let DictOf[S @ {...}] = Dict[S]
-#               ^: variance invariant
+#        ^~~~~~: decl [S @ {*Value, *(Value): Value}] std.Dict[S]
 
 # An omitted ambient channel is bounded by the standard library's channels.
 pub def relay()
-  #     ^~~~~: quantifier in contravariant, out contravariant
+  #     ^~~~~: decl [in -, out -] (<in, >out) -> Unknown
   nil

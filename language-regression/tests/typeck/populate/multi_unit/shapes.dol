@@ -3,6 +3,6 @@ import geo:
   - @Boxes
 
 pub class Crate[T]: Box[T]
-  #       ^~~~~: decl nominal <: geo.Box[T]
+  #       ^~~~~: decl [T] nominal <: geo.Box[T]
   pub field extra @ Boxes[T] = ...
   #                 ^~~~~~~~: type geo.Boxes[T]

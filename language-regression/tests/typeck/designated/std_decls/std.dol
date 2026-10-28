@@ -1,61 +1,37 @@
 # The declarations of `std` the checker treats specially.
 
 pub class Value
-#         ^~~~~: designated top
 pub @let Never = Union[]
-#        ^~~~~: designated bottom
 pub @let Unknown = ...
-#        ^~~~~~~: designated dynamic
 pub @let Union[...Ts] = ...
-#        ^~~~~: designated intrinsic Union
-#                 ^~: variance covariant
+#        ^~~~~: decl [Ts +] nominal
 pub @let Phantom[...Ts] = ...
-#        ^~~~~~~: designated phantom
-#                   ^~: variance covariant
+#        ^~~~~~~: decl [Ts +] nominal
 pub @let Keys[S @ {...}] = ...
-#        ^~~~: designated intrinsic Keys
-#             ^: variance covariant
+#        ^~~~: decl [S + @ {*Value, *(Value): Value}] nominal
 pub @let Values[S @ {...}] = ...
-#        ^~~~~~: designated intrinsic Values
-#               ^: variance covariant
+#        ^~~~~~: decl [S + @ {*Value, *(Value): Value}] nominal
 pub @let Entries[S @ {...}] = ...
-#        ^~~~~~~: designated intrinsic Entries
-#                ^: variance covariant
+#        ^~~~~~~: decl [S + @ {*Value, *(Value): Value}] nominal
 pub @let IndexItem[S @ {...}, K] = ...
-#        ^~~~~~~~~: designated intrinsic IndexItem
-#                  ^: variance covariant
-#                             ^: variance covariant
+#        ^~~~~~~~~: decl [S + @ {*Value, *(Value): Value}, K +] nominal
 pub @let AssignItem[S @ {...}, K] = ...
-#        ^~~~~~~~~~: designated intrinsic AssignItem
-#                   ^: variance invariant
-#                              ^: variance contravariant
+#        ^~~~~~~~~~: decl [S @ {*Value, *(Value): Value}, K -] nominal
 pub @let InsertItem[S @ {...}, K] = ...
-#        ^~~~~~~~~~: designated intrinsic InsertItem
-#                   ^: variance invariant
-#                              ^: variance contravariant
+#        ^~~~~~~~~~: decl [S @ {*Value, *(Value): Value}, K -] nominal
 pub @let Deletable[S @ {...}, K] = ...
-#        ^~~~~~~~~: designated intrinsic Deletable
-#                  ^: variance invariant
-#                             ^: variance contravariant
+#        ^~~~~~~~~: decl [S @ {*Value, *(Value): Value}, K -] nominal
 pub @let Clearable[S @ {...}] = ...
-#        ^~~~~~~~~: designated intrinsic Clearable
-#                  ^: variance invariant
+#        ^~~~~~~~~: decl [S @ {*Value, *(Value): Value}] nominal
 pub @let Fields[T] = ...
-#        ^~~~~~: designated intrinsic Fields
-#               ^: variance covariant
+#        ^~~~~~: decl [T +] nominal
 pub @let MutFields[T] = ...
-#        ^~~~~~~~~: designated intrinsic MutFields
-#                  ^: variance contravariant
+#        ^~~~~~~~~: decl [T -] nominal
 pub class Func
-#         ^~~~: designated intrinsic Func
 pub class Int
-#         ^~~: designated intrinsic Int
 pub class Bool
-#         ^~~~: designated intrinsic Bool
 pub class Sym
-#         ^~~: designated intrinsic Sym
 pub class Nil
-#         ^~~: designated intrinsic Nil
 pub class Iter[T]
   pub def next self -> T
     ...
@@ -63,32 +39,20 @@ pub class Sink[T]
   pub def put self value @ T
     ...
 pub class Type[T]
-  #       ^~~~: designated intrinsic Type
   field instance @ Phantom[T]
 pub class Fmt
-#         ^~~: designated fmt
 pub class FmtValue
-#         ^~~~~~~~: designated fmt value
 pub class FmtParam
-#         ^~~~~~~~: designated fmt param
 pub class Float
-#         ^~~~~: designated float
 pub class Bin
-#         ^~~: designated bin
 pub class Array
-#         ^~~~~: designated array
 pub class BaseArray
 pub class Dict
-#         ^~~~: designated dict
 pub class BaseDict
 pub class Tuple
-#         ^~~~~: designated intrinsic Tuple
 pub class Record
-#         ^~~~~~: designated record
 pub class Range
-#         ^~~~~: designated range
 pub @class Spread
-#          ^~~~~~: designated spread
 pub class Unpack
 # error: the checker requires this to be a protocol
 #   --> std.dol:LL:LL
@@ -96,10 +60,8 @@ pub class Unpack
 # LL | pub class Unpack
 #    |           ^^^^^^
 pub def getter func
-  #     ^~~~~~: designated getter
   func
 pub def setter func
-  #     ^~~~~~: designated setter
   func
 pub @class Str
 # error: the checker requires this to be a class

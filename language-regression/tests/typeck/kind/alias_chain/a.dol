@@ -5,8 +5,16 @@ import y:
   - @Mid
 
 pub class Keyed[S @ Mid]
-  #             ^: kind schema
   pub field items @ ((...S) -> nil) = ...
+  pub field item @ S = ...
+# error: expected a type, found a schema
+#   --> a.dol:LL:LL
+#    |
+# LL | pub class Keyed[S @ Mid]
+#    |                 - declared here
+# LL |   pub field items @ ((...S) -> nil) = ...
+# LL |   pub field item @ S = ...
+#    |                    ^
 
 pub let bad @ Mid = nil
 # error: expected a type, found a schema

@@ -1,17 +1,17 @@
 # A dict type is used as `Dict` uses its schema.
 
 pub @let Spelled[T] = Dict[{a: T}]
-#                ^: variance invariant
+#        ^~~~~~~: decl [T] {a: T}
 pub @let Within[T] = Iter[{a: T}]
-#               ^: variance invariant
+#        ^~~~~~: decl [T] std.Iter[{a: T}]
 
 pub class Box[T]
-  #           ^: variance invariant
+  #       ^~~: decl [T] nominal
   pub def items self -> {a: T}
     ...
 
 # An alias's body is a schema, as its items use the binder
 pub @let Braced[T] = {a: T}
-#               ^: variance covariant
+#        ^~~~~~: decl [T +] {a: T}
 pub @let Items[T] = Tuple[...{T}]
-#              ^: variance covariant
+#        ^~~~~: decl [T +] (T,)
