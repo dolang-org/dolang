@@ -41,7 +41,8 @@ pub @let EncodeValue = $
 # | array     | `Array` |
 # | object    | `Dict`  |
 #
-# An integer too large for `Int` decodes as a `Float`.
+# An integer that fits neither a signed nor an unsigned 64-bit integer decodes
+# as a `Float`.
 #
 # ## Errors
 #

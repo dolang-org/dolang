@@ -17,9 +17,18 @@ assert_eq $empty.readable false
 assert_eq $empty.writable false
 assert_eq $empty.seekable false
 
-# Stream methods it does not define raise as missing fields
+# Stream methods it does not define are unsupported
+for call = [(do empty.read 1), (do empty.write "x"), (do empty.seek 0), (do empty.close())]
+  let unsupported = try
+    call()
+    false
+  catch error.UnsupportedError: _
+    true
+  assert $unsupported
+
+# Other undefined methods are missing fields
 let missing = try
-  empty.read 1
+  empty.frobnicate()
   false
 catch error.FieldError: _
   true

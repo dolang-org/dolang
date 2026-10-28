@@ -812,7 +812,7 @@ def host_console_is_an_io()
   assert (type term.console Io)
   assert_eq $term.console.writable true
   # The host console never closes stderr.
-  assert_throws $std.FieldError do term.console.close()
+  assert_throws $std.UnsupportedError do term.console.close()
 
 #[test]
 def native_consumers_write_to_a_console()

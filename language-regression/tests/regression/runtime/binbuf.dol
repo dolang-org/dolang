@@ -192,7 +192,8 @@ w3.put 1
 assert_eq $w3.freeze() b"ab1cd"
 
 # reading and seeking are not supported
-assert_throws $std.FieldError do BinBuf().read 1
+assert_throws $std.UnsupportedError do BinBuf().read 1
+assert_throws $std.UnsupportedError do BinBuf().seek 0
 
 # freeze_str checks UTF-8 only when freezing, so characters split across writes
 # survive
