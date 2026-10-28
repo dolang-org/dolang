@@ -83,6 +83,8 @@ const STD_TYPE_PRELUDE: &[&str] = &[
     "BaseSink",
     "UnpackIter",
     "UnpackIterable",
+    "SeqRest",
+    "MapRest",
     "BaseArray",
     "BaseDict",
 ];

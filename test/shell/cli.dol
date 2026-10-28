@@ -82,6 +82,17 @@ def flags_after_target_and_option_terminator_are_forwarded()
   assert_eq (code, out, err) (0, "", "")
 
 #[test]
+def args_rest_is_reusable()
+  with_temp_dir do |dir|
+    let script = (dir / "main.dol")
+    script.write r|
+      import shell
+      let _ ...rest = shell.args
+      shell.stdout.write "$(str([...rest])) $(str([...rest]))\n"
+    let code out err = invoke [str(script), "a", "b", "c"]
+    assert_eq (code, out, err) (0, "[\"b\", \"c\"] [\"b\", \"c\"]\n", "")
+
+#[test]
 def check_takes_precedence_over_compile()
   with_temp_dir do |dir|
     let script = (dir / "main.dol")

@@ -1,4 +1,4 @@
-use std::ffi::CStr;
+use std::{cell::Cell, ffi::CStr};
 
 use bitvec::slice::BitSlice;
 use dolang::runtime::{
@@ -720,6 +720,10 @@ impl<'v> Object<'v> for RowRest {
     type Type = ();
     type TypeAnnex = ();
 
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder.supertype(TypeObject::Iterable)
+    }
+
     async fn unpack<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -761,6 +765,146 @@ impl<'v> Object<'v> for RowRest {
                 context,
                 sink,
             )
+        })
+    }
+
+    async fn iter<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let annex = this.annex();
+        let global = annex.global;
+        global.types.row_rest_iter.create_with_annex(
+            strand,
+            RowRestIter,
+            RowRestIterAnnex {
+                global,
+                consumed: annex.consumed.clone(),
+                keyed: annex.keyed,
+                index: Cell::new(0),
+            },
+            Slot::reborrow(&mut out),
+        );
+        let borrow = this.borrow(strand)?;
+        let iter = global.types.row_rest_iter.cast(&out).unwrap();
+        iter.enter_sync(strand, |strand, iter| {
+            let mut iter = iter.borrow_mut_unwrap();
+            Output::set(
+                strand,
+                Mut::slot_mut::<0>(&mut iter),
+                Ref::slot::<0>(&borrow),
+            );
+        });
+        Ok(())
+    }
+}
+
+/// Iterator over the leftover columns of a [`RowRest`]: values, or if
+/// `keyed`, name/value pairs.
+pub(crate) struct RowRestIter;
+
+pub(crate) struct RowRestIterAnnex<'v> {
+    global: State<'v, Global<'v>>,
+    consumed: Box<[bool]>,
+    keyed: bool,
+    /// The next column to consider
+    index: Cell<usize>,
+}
+
+impl<'v> Object<'v> for RowRestIter {
+    const NAME: &'v str = "RowRestIter";
+    const MODULE: &'v str = "sqlite";
+    // Slot 0: the row
+    const SLOTS: usize = 1;
+    type Annex = RowRestIterAnnex<'v>;
+    type Type = ();
+    type TypeAnnex = ();
+
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder.supertype(TypeObject::Iter)
+    }
+
+    async fn iter<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Output::set(strand, out, this);
+        Ok(())
+    }
+
+    async fn unpack<'a, 's>(
+        _this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _unpack: Unpack<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Err(Error::not_supported(strand))
+    }
+
+    async fn spread<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        strand
+            .with_slots(async move |strand, [mut item]| {
+                while Self::next(this, strand, Slot::reborrow(&mut item)).await? {
+                    sink.positional(strand, Slot::reborrow(&mut item))?;
+                }
+                Ok(())
+            })
+            .await
+    }
+
+    async fn next<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        let annex = this.annex();
+        let borrow = this.borrow(strand)?;
+        let row = annex
+            .global
+            .types
+            .row
+            .cast(Ref::slot::<0>(&borrow))
+            .unwrap();
+        row.enter_sync(strand, |strand, row| {
+            with_stmt(strand, row, |strand, row_annex, stmt_annex, raw| {
+                let count = unsafe { sqlite3_column_count(raw) } as usize;
+                let mut index = annex.index.get();
+                while index < count && annex.consumed[index] {
+                    index += 1;
+                }
+                if index >= count {
+                    annex.index.set(index);
+                    return Ok(false);
+                }
+                strand.with_slots_sync(|strand, [mut key, mut value]| {
+                    let found = unsafe {
+                        get(
+                            strand,
+                            row_annex,
+                            stmt_annex,
+                            raw,
+                            index as i32,
+                            Slot::reborrow(&mut value),
+                        )?
+                    };
+                    debug_assert!(found);
+                    if annex.keyed {
+                        let name = unsafe { column_name(raw, index) };
+                        Output::set(strand, Slot::reborrow(&mut key), AsSym::new(&name));
+                        Output::set(strand, out, AsTuple::new([&key, &value]));
+                    } else {
+                        Output::set(strand, out, &value);
+                    }
+                    annex.index.set(index + 1);
+                    Ok(true)
+                })
+            })
         })
     }
 }

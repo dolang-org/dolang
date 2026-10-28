@@ -70,13 +70,27 @@ assert_eq {...options} {color: "red"}
 
 `*` or `**` alone discards surplus items entirely.
 
-A rest unpacked from an array or iterator is an iterator, but other rests, such
-as one unpacked from a dictionary, are not iterable. Materialize a positional
-rest with `[...rest]` before iterating. Materialize a keyed or mixed rest with
-`{...rest}`, `Dict(rest)` or `Record(rest)`, then iterate the result.
+A rest iterates the way it spreads. A `*` rest, or the rest of an array or
+other sequence, yields its values. A `**` rest, or a `...` rest of a dictionary
+or record, yields its entries as `(key, value)` tuples, with positional items
+keyed by index:
+
+```
+let _ *values **options = {1, 2, color: "red"}
+for value = values
+  assert_eq $value 2
+for key value = options
+  assert_eq (key, value) (:color:, "red")
+```
+
 `(...rest)` makes a tuple unless the parentheses also hold a static key, as in
-`(...rest, extra: 1)`, which makes a record. A rest can
-be unpacked and spread repeatedly; these operations do not consume it.
+`(...rest, extra: 1)`, which makes a record.
+
+Iterating, spreading or unpacking a rest does not consume it, so it can be read
+repeatedly. The rest of an iterator is the exception: it is what is left of that
+iterator, and reading it consumes it. A rest reads its source rather than a
+copy, so changing the source afterwards can change the rest or make reading it
+raise an error.
 
 ## `bind`
 

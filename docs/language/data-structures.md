@@ -276,4 +276,5 @@ It supports spreading only: it cannot be iterated or used with iterator methods.
 A keyed spread into an array or tuple raises an error.
 
 An `Iterable` without spread support must first be converted to an iterator
-with `iter()`. A rest bound by a pattern can be spread repeatedly.
+with `iter()`. A rest bound by a pattern can be spread repeatedly, unless it is
+the rest of an iterator.

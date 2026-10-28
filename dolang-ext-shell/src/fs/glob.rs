@@ -72,7 +72,7 @@ impl<'v> Object<'v> for GlobIter {
         unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let len = this.borrow(strand)?.paths.len();
-        ArrayView::unpack(this, GlobPaths { len }, strand, unpack)
+        ArrayView::unpack_iter(this, GlobPaths { len }, strand, unpack)
     }
 }
 

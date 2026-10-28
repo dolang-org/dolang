@@ -55,7 +55,7 @@ pub def read view @ BaseArray[Int]
   let _ = first
   #       ^~~~~: flow std.Int
   let _ = rest
-  #       ^~~~: flow std.UnpackIter[std.Int]
+  #       ^~~~: flow std.SeqRest[std.Int]
   for item = view
     let _ = item
     #       ^~~~: flow std.Int

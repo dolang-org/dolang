@@ -396,7 +396,7 @@ pub class Statement[S @ {*SqlValue, **SqlValue}]
 #
 # ```
 # let id :name :age ...rest = row
-# for value = [...rest]
+# for value = rest
 #   echo $ str value
 # ```
 pub class Row: @Index[Int | Str, Value] @Unpack[{...}, Rest: RowRest]
@@ -431,10 +431,10 @@ pub class Row: @Index[Int | Str, Value] @Unpack[{...}, Rest: RowRest]
 
 # Reads leftover columns without advancing a cursor.
 #
-# A positional rest spreads values; a keyed rest spreads name/value pairs
-# in sequences and keyed items in calls and dictionaries. Materialize with
-# `[...rest]` to iterate. Statement and row invalidation apply to the rest.
-pub @class RowRest: Unpack[{...}, Rest: RowRest]
+# A positional rest spreads and iterates values; a keyed rest iterates
+# name/value pairs and spreads them as pairs in sequences and keyed items in
+# calls and dictionaries. Statement and row invalidation apply to the rest.
+pub @class RowRest: Iterable[Value] Unpack[{...}, Rest: RowRest]
 
 
 # A database transaction in progress.

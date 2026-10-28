@@ -1458,7 +1458,26 @@ impl<'v> Protocol<'v> for Unpack<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, TypeObject::Value)
+        Output::set(strand, out, TypeObject::Iterable)
+    }
+
+    fn op_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::iterable_get(strand, &this, field, out)
+    }
+
+    async fn op_mcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::iterable_mcall(strand, &this, method, args, out).await
     }
 
     fn op_debug<'a, 's>(
@@ -1603,6 +1622,136 @@ impl<'v> Protocol<'v> for Unpack<'v> {
                 Dict::spread_key_value(strand, &mut next_pos, key, value, context, sink)?;
             }
         }
+    }
+
+    async fn op_iter<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let borrow = this.borrow(strand)?;
+        let iter = UnpackIter {
+            state: borrow.state.clone(),
+            epoch: borrow.epoch,
+            dict: borrow.dict.clone(),
+        };
+        strand
+            .builtin_types()
+            .dict_unpack_iter
+            .create(strand, iter, out);
+        Ok(())
+    }
+}
+
+// ── UnpackIter ──────────────────────────────────────────────────────
+
+/// Iterator over a dict rest: values for a `*name` rest, pairs otherwise.
+pub(crate) struct UnpackIter<'v> {
+    state: UnpackState<'v>,
+    epoch: u64,
+    dict: GcObj<'v, Dict<'v>>,
+}
+
+unsafe impl<'v> Collect for UnpackIter<'v> {
+    const CYCLIC: bool = true;
+    const IMMUTABLE: bool = false;
+    type Annex = ();
+
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        self.dict.accept(visit)
+    }
+
+    fn clear(&mut self) {}
+}
+
+impl<'v> Protocol<'v> for UnpackIter<'v> {
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) {
+        Output::set(strand, out, &strand.singletons().input_iter)
+    }
+
+    fn op_debug<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        crate::fmt!(strand, w, "<dict rest iterator>")
+    }
+
+    async fn op_iter<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Output::set(strand, out, &this);
+        Ok(())
+    }
+
+    async fn op_unpack<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _sig: &'a sig::Unpack<'v, 'a>,
+        _out: Slots<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Err(Error::not_supported(strand))
+    }
+
+    async fn op_next<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        let mut borrow = this.borrow_mut(strand)?;
+        let dict_obj = borrow.dict.clone();
+        let dict = dict_obj
+            .borrow()
+            .ok_or_else(|| Error::concurrency(strand))?;
+        if dict.epoch != borrow.epoch {
+            return Err(Error::concurrency_msg(
+                strand,
+                "collection was modified during iteration",
+            ));
+        }
+        let Some((key, value)) = borrow.state.next_pair(strand, &dict)? else {
+            return Ok(false);
+        };
+        if borrow.state.is_run() {
+            out.store(value);
+        } else {
+            out.store(Value::from_object(tuple::tuple(strand, [key, value])));
+        }
+        Ok(true)
+    }
+
+    fn op_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        iter::iter_get(strand, &this, field, out)
+    }
+
+    async fn op_mcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        iter::iter_mcall(strand, &this, method, args, out).await
+    }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::spread_iter(strand, this, sink).await
     }
 }
 

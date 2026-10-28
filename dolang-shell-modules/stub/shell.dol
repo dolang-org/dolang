@@ -541,7 +541,7 @@ do -> R
 # The type of [`args`](shell.args), an immutable sequence.
 #
 # Assigning to an index raises [`ImmutableError`](std.ImmutableError).
-pub @class Args: Unpack[Str, Rest: UnpackIter[Str]] Seq[Str]
+pub @class Args: Unpack[Str, Rest: SeqRest[Str]] Seq[Str]
   @def (index)[K] self key@K -> std.IndexItem[{*Str}, K]
   @def (index) self range@Range[Int] -> Array[Str]
 

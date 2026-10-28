@@ -21,7 +21,7 @@ pub def array_rest xs @ Array[Int]
   let _ = a
   #       ^: flow std.Int
   let _ = r
-  #       ^: flow std.UnpackIter[std.Int]
+  #       ^: flow std.SeqRest[std.Int]
 
 pub def quantified source @ Unpack[{Int, ?Str, *Bool}]
   let a b = source
@@ -41,14 +41,14 @@ pub def keyed()
   let _ = a
   #       ^: flow std.Int
   let _ = r
-  #       ^: flow std.Unpack[{b: std.Str}]
+  #       ^: flow std.MapRest[{b: std.Str}]
   let :b *p **k = (1, b: "x", c: true)
   let _ = b
   #       ^: flow std.Str
   let _ = p
-  #       ^: flow std.Unpack[{std.Int}]
+  #       ^: flow std.MapRest[{std.Int}]
   let _ = k
-  #       ^: flow std.Unpack[{c: std.Bool}]
+  #       ^: flow std.MapRest[{c: std.Bool}]
 
 pub def const_keys d @ Dict[Str, Int]
   let "name": name = d
@@ -87,7 +87,19 @@ pub def iterators s @ Str
 pub def dict_rest d @ Dict[Str, Int]
   let "a": _a ...r = d
   let _ = r
-  #       ^: flow std.Unpack[std.Str, std.Int]
+  #       ^: flow std.MapRest[std.Str, std.Int]
+
+# Rests iterate: a keyed rest as its entries or values, an array rest as its
+# elements.
+pub def iterated_rests d @ Dict[Str, Int] a @ Array[Int]
+  let "a": _a ...r = d
+  for e = r
+    let _ = e
+    #       ^: flow (std.Str, std.Int) | std.Int
+  let _ ...ar = a
+  for x = ar
+    let _ = x
+    #       ^: flow std.Int
 
 pub def dynamic v
   let a ...r = v
