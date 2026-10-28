@@ -41,7 +41,7 @@ pub def triple t @ Triple
   let _ = a
   #       ^: flow std.Int
   let _ = r
-  #       ^: flow std.Unpack[{std.Str, std.Bool}]
+  #       ^: flow std.BaseSeq[{std.Str, std.Bool}]
 
 # Without a declared protocol, a value spreads as its proxy
 pub class Options
