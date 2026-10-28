@@ -2,7 +2,7 @@
 # a binder with no use. A default is not a use.
 
 pub class Unused[T]
-  #              ^: variance invariant
+  #       ^~~~~~: decl [T] nominal
   pub field loose = nil
 # warning: unused binder
 #   --> m.dol:LL:LL
@@ -11,15 +11,15 @@ pub class Unused[T]
 #    |                  ^
 
 pub @class Itself[T]
-  #               ^: variance invariant
+  #        ^~~~~~: decl [T] nominal
   pub def me self -> Itself[T]
 
 pub @class Through[T]
-  #                ^: variance invariant
+  #        ^~~~~~~: decl [T] nominal
   pub def get self -> Unused[T]
 
 pub @class Defaulted[T]
-  #                  ^: variance covariant
+  #        ^~~~~~~~~: decl [T +] nominal
   pub def get self -> T
   pub def find[D = T] self -> D
-  #            ^: variance covariant
+  #       ^~~~: decl [^T, D + = T, in -, out -] (m.Defaulted[T], <in, >out) -> D

@@ -8,23 +8,23 @@ pub class Box[T]
     self.item = item
 
   pub def get self -> T
-    #     ^~~: sig (self: Self, <#0, >#1) -> T
+    #     ^~~: decl [^T +, in -, out -] (m.Box[T], <in, >out) -> T
     self.item
 
   pub def map[U] self f @ ((T) -> U) -> Box[U]
-    #     ^~~: sig (self: Self, f: ((T) -> U), <#1, >#2) -> Box[U]
-    #                          ^~: ambient <m.Box.map#1 >m.Box.map#2
+    #                     ^~~~~~~~~~: type (T, <in, >out) -> U
+    #     ^~~: decl [^T +, U, in, out] (m.Box[T], (T, <in, >out) -> U, <in, >out) -> m.Box[U]
     Box(f(self.item))
 
   pub def annotated self @ Box[T] -> T
-    #     ^~~~~~~~~: sig (self: Box[T], <#0, >#1) -> T
+    #     ^~~~~~~~~: decl [^T +, in -, out -] (m.Box[T], <in, >out) -> T
     self.item
 
   #[class]
   pub def make cls x
-    #     ^~~~: sig (cls: Type[Self], x: Unknown, <#0, >#1) -> Unknown
+    #     ^~~~: decl [^T, in -, out -] (std.Type[m.Box[T]], Unknown, <in, >out) -> Unknown
     ...
 
 pub @class Shape
   pub def area self -> Int
-  #       ^~~~: sig (self: Self, <#0, >#1) -> Int
+  #       ^~~~: decl [in -, out -] (m.Shape, <in, >out) -> std.Int

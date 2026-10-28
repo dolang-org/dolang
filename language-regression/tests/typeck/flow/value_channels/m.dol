@@ -2,23 +2,23 @@
 # omits, so a function of that type can neither read nor write.
 
 @let Callback = ((Int) -> nil)
-#                      ^~: ambient <Value >Value
+#               ^~~~~~~~~~~~~~: type (std.Int, <Value, >Value) -> nil
 
 pub class Holder
   pub field cb @ ((Int) -> nil) = do |_x| nil
-  #                     ^~: ambient <Value >Value
+  #              ^~~~~~~~~~~~~~: type (std.Int, <Value, >Value) -> nil
 
 pub class Box[T]
   pub field item @ T = ...
 
 pub class CallbackBox: Box[(Int) -> nil]
-#                                ^~: ambient <Value >Value
+#         ^~~~~~~~~~~: decl nominal <: m.Box[(std.Int, <Value, >Value) -> nil]
 
 pub def local()
   let _ = ((do |_x| nil) @ ((Int) -> nil))
-  #                               ^~: ambient <Value >Value
+  #                        ^~~~~~~~~~~~~~: type (std.Int, <Value, >Value) -> nil
   let g = do |f @ ((Int) -> nil)| f
-  #                      ^~: ambient <Value >Value
+  #               ^~~~~~~~~~~~~~: type (std.Int, <Value, >Value) -> nil
   g
 
 # A callback in a def's signature takes the def's channels, so it can't escape

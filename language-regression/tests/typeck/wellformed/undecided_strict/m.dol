@@ -8,7 +8,6 @@ pub class Split[*Ts, U @ Num]
   field items @ std.Phantom[...Ts, U] = ...
 
 pub def split[*Xs] _x @ Split[...Xs, Num]
-  #                     ^~~~~~~~~~~~~~~~~: wf undecided GenericArguments
   # warning: the checker can't verify this
   #   --> m.dol:LL:LL
   #    |

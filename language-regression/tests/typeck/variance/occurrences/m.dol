@@ -2,40 +2,34 @@
 # function type reverses what its parameters use.
 
 pub @class Source[T]
-  #               ^: variance covariant
+  #        ^~~~~~: decl [T +] nominal
   pub def get self -> T
 
 pub @class Target[T]
-  #               ^: variance contravariant
+  #        ^~~~~~: decl [T -] nominal
   pub def put self x @ T
 
 pub @class Both[T]
-  #             ^: variance invariant
+  #        ^~~~: decl [T] nominal
   pub def get self -> T
   pub def put self x @ T
 
 pub @class Each[T]
-  #             ^: variance covariant
+  #        ^~~~: decl [T +] nominal
   pub def each self f @ (T -> nil)
 
 pub @class Rests[P, K, S @ {*, **Value}]
-  #              ^: variance contravariant
-  #                 ^: variance contravariant
-  #                    ^: variance contravariant
+  #        ^~~~~: decl [P -, K -, S - @ {*Value, **Value}] nominal
   pub def take self *items @ P **named @ K ...pack @ S
 
 pub @class Keyed[K @ Sym, V]
-  #              ^: variance contravariant
-  #                       ^: variance contravariant
+  #        ^~~~~: decl [K - @ std.Sym, V -] nominal
   pub def take self ...pack @ {?(K): V}
 
 pub @class Shapes[A, B, C]
-  #               ^: variance covariant
-  #                  ^: variance contravariant
-  #                     ^: variance invariant
+  #        ^~~~~~: decl [A +, B -, C] nominal
   pub def get self -> (A | ((B) -> C) | ((C) -> nil))
 
 pub def pick[T, U] x @ T -> (T | U)
-  #          ^: variance invariant
-  #             ^: variance covariant
+  #     ^~~~: decl [T, U +, in -, out -] (T, <in, >out) -> T | U
   x

@@ -1348,8 +1348,7 @@ as `Unknown` of the kind its position requires, and an alias on a cycle gets an
 solver assumes. It is sealed but not validated until well-formedness is
 checked. `Check`'s hidden `smoke` method relates every type the database
 holds to itself and to top, to show that the solver judges it without
-panicking. The `quantifier`, `decl`, `member` and `type` judgments report what
-was interned.
+panicking. The `decl` and `type` judgments report what was interned.
 
 Sealing closes the set of declarations, but a declaration can still be retyped
 through `&mut Database`, which validates it as population does. Right after

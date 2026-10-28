@@ -2,17 +2,17 @@
 # type without channels in the signature takes the def's, using them in reverse.
 
 pub def plain _x
-  #     ^~~~~: variance <#0 contravariant >#1 contravariant
+  #     ^~~~~: decl [in -, out -] (Unknown, <in, >out) -> Unknown
   nil
 
 pub def takes _f @ (() -> nil)
-  #     ^~~~~: variance <#0 invariant >#1 invariant
+  #     ^~~~~: decl [in, out] ((<in, >out) -> nil, <in, >out) -> Unknown
   nil
 
 pub @class Reader[T]
-  #               ^: variance contravariant
+  #        ^~~~~~: decl [T -] nominal
   pub def read self <T
 
 pub @class Chan[T]
-  #             ^: variance invariant
+  #        ^~~~: decl [T] nominal
   pub def run self <T f @ (() -> nil)

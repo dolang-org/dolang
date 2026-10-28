@@ -5,219 +5,41 @@
 
 use std::{borrow::Cow, fmt::Write};
 
-use rustc_hash::FxHashMap;
-
-use super::{
-    Ambient, BinderRef, DeclNode, Designated, Head, KindOf, ParamTy, Referent, RestSlot, Slot,
-    Tables, Unresolved, sig,
-    surface::{Member as SourceMember, MemberScope, ParamKind, TypeExpr},
-};
+use super::{Ambient, BinderRef, DeclNode, Designated, Referent, Tables};
 use crate::{
-    RestKind,
     source::Span,
     typeck::r#type::{
-        BinderOrigin, Collection, Database, DeclId, Declaration, Intrinsic, Kind, Member, Names,
-        Scope, Style, Type, TypeId, UnitId, Variance,
+        BinderOrigin, Collection, Database, DeclId, Declaration, Intrinsic, Names, Style, Type,
+        TypeId, UnitId, Variance,
     },
 };
 
 /// The judgments the tables record, by the name a fixture writes
 pub(crate) const JUDGMENTS: &[&str] = &[
-    "ref",
-    "head",
-    "kind",
-    "sig",
-    "ambient",
-    "designated",
-    "variance",
-    "captured",
-    "quantifier",
-    "decl",
-    "member",
-    "type",
-    "wf",
-    "flow",
-    "value",
-    "expected",
-    "reached",
-    "callee",
-    "item",
+    "ref", "decl", "type", "flow", "value", "expected", "reached", "callee", "item",
 ];
 
+/// A binder's variance, as a suffix of its name: nothing for invariant
 fn variance(variance: Variance) -> &'static str {
     match variance {
-        Variance::Covariant => "covariant",
-        Variance::Contravariant => "contravariant",
-        Variance::Invariant => "invariant",
+        Variance::Covariant => " +",
+        Variance::Contravariant => " -",
+        Variance::Invariant => "",
     }
 }
 
 impl Tables<'_> {
-    /// Every judgment about spans of `unit`, in source order, including the
-    /// well-formedness checks left unresolved
+    /// Every judgment about spans of `unit`, in source order
     pub(crate) fn judgments(
         &self,
         db: &Database,
         unit: UnitId,
-        unresolved: &[Unresolved],
     ) -> Vec<(&'static str, Span, String)> {
         let mut judgments = Vec::new();
         self.populated(db, unit, &mut judgments);
         for (&head, &link) in &self.refs[unit.index()] {
             let referent = &self.referents[link.index()];
             judgments.push(("ref", head, self.referent(referent)));
-        }
-        for (id, head) in &self.aliases {
-            let decl = &self.decls[id.index()];
-            if decl.unit == unit
-                && let Some(name) = decl.name_span()
-            {
-                judgments.push(("head", name, self.head(head)));
-            }
-        }
-        for (binder, kind) in &self.binder_kinds {
-            let owner = &self.decls[binder.decl.index()];
-            if owner.unit == unit
-                && let Some(written) = self.binders(binder.decl, binder.sig).get(binder.slot)
-            {
-                judgments.push(("kind", written.name.span, self.kind(kind)));
-            }
-        }
-        for (id, kind) in &self.alias_kinds {
-            let decl = &self.decls[id.index()];
-            if decl.unit == unit
-                && let Some(name) = decl.name_span()
-            {
-                judgments.push(("kind", name, self.kind(kind)));
-            }
-        }
-        for (&(id, sig), completed) in &self.sigs {
-            let decl = &self.decls[id.index()];
-            if decl.unit == unit {
-                let name = match &decl.node {
-                    DeclNode::Defs(defs) => defs[sig].name.span,
-                    DeclNode::Methods(methods) => methods[sig].name.span,
-                    _ => unreachable!("only a def or method has a signature"),
-                };
-                judgments.push(("sig", name, self.sig(id, sig)));
-                let implicit: Vec<_> = [('<', completed.input), ('>', completed.output)]
-                    .into_iter()
-                    .filter_map(|(sigil, ambient)| match ambient {
-                        Ambient::Implicit(binder) => Some(format!(
-                            "{sigil}#{} {}",
-                            binder.slot,
-                            variance(self.variance[&binder])
-                        )),
-                        _ => None,
-                    })
-                    .collect();
-                if !implicit.is_empty() {
-                    judgments.push(("variance", name, implicit.join(" ")));
-                }
-            }
-        }
-        for (binder, &value) in &self.variance {
-            let owner = &self.decls[binder.decl.index()];
-            if owner.unit == unit
-                && let Some(written) = self.binders(binder.decl, binder.sig).get(binder.slot)
-            {
-                judgments.push(("variance", written.name.span, variance(value).to_owned()));
-            }
-        }
-        let mut captured: FxHashMap<DeclId, Vec<(BinderRef, Variance)>> = FxHashMap::default();
-        for (&(id, binder), &value) in &self.captured {
-            if self.decls[id.index()].unit == unit {
-                captured.entry(id).or_default().push((binder, value));
-            }
-        }
-        for (id, mut binders) in captured {
-            let Some(name) = self.decls[id.index()].name_span() else {
-                continue;
-            };
-            // Outer declarations are allocated first
-            binders.sort_by_key(|(binder, _)| (binder.decl, binder.sig, binder.slot));
-            let value = binders
-                .iter()
-                .map(|&(binder, value)| {
-                    let unit = self.decls[binder.decl.index()].unit;
-                    let name = self.binders(binder.decl, binder.sig)[binder.slot].name;
-                    format!("{} {}", self.name(unit, name), variance(value))
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            judgments.push(("captured", name, value));
-        }
-        // A supertype's arguments are written outside any signature
-        let sites = self
-            .sites
-            .iter()
-            .filter(|site| site.unit == unit)
-            .map(|site| (site.ambient, &site.ty));
-        let supers = self
-            .decls
-            .iter()
-            .filter(|decl| decl.unit == unit)
-            .filter_map(|decl| match &decl.node {
-                DeclNode::Class(class) => Some(&class.supers),
-                _ => None,
-            })
-            .flatten()
-            .flat_map(|super_ref| &super_ref.args)
-            .map(|arg| (None, arg.ty()));
-        for (ambient, ty) in sites.chain(supers) {
-            ty.each_node(&mut |ty| {
-                if let TypeExpr::Func {
-                    input,
-                    output,
-                    arrow_span,
-                    ..
-                } = ty
-                    && (input.is_none() || output.is_none())
-                {
-                    let written = [input.is_some(), output.is_some()];
-                    let [input, output] = sig::func_channels(self, ambient, written)
-                        .map(|ambient| self.ambient(ambient));
-                    judgments.push(("ambient", *arrow_span, format!("<{input} >{output}")));
-                }
-            });
-        }
-        for (id, designated) in &self.designated {
-            let decl = &self.decls[id.index()];
-            if decl.unit == unit
-                && let Some(name) = decl.name_span()
-            {
-                let value = match designated {
-                    Designated::Value => "top".to_owned(),
-                    Designated::Never => "bottom".to_owned(),
-                    Designated::Unknown => "dynamic".to_owned(),
-                    Designated::Phantom => "phantom".to_owned(),
-                    Designated::Getter => "getter".to_owned(),
-                    Designated::Setter => "setter".to_owned(),
-                    Designated::Final => "final".to_owned(),
-                    Designated::Mixable => "mixable".to_owned(),
-                    Designated::Fmt => "fmt".to_owned(),
-                    Designated::FmtValue => "fmt value".to_owned(),
-                    Designated::FmtParam => "fmt param".to_owned(),
-                    Designated::Float => "float".to_owned(),
-                    Designated::Bin => "bin".to_owned(),
-                    Designated::Array => "array".to_owned(),
-                    Designated::Dict => "dict".to_owned(),
-                    Designated::Record => "record".to_owned(),
-                    Designated::Range => "range".to_owned(),
-                    Designated::Spread => "spread".to_owned(),
-                    Designated::Unpack => "unpack".to_owned(),
-                    Designated::PipeSender => "pipe sender".to_owned(),
-                    Designated::PipeReceiver => "pipe receiver".to_owned(),
-                    Designated::Intrinsic(intrinsic) => format!("intrinsic {intrinsic:?}"),
-                };
-                judgments.push(("designated", name, value));
-            }
-        }
-        for unresolved in unresolved {
-            if unresolved.span.unit == unit {
-                let value = format!("undecided {:?}", unresolved.residual);
-                judgments.push(("wf", unresolved.span.span, value));
-            }
         }
         judgments.sort_by_key(|(name, span, _)| (span.start, span.end, *name));
         judgments
@@ -230,110 +52,6 @@ impl Tables<'_> {
             Referent::Module(unit) => format!("module {}", self.unit_name(*unit)),
             Referent::Value(_) => "value".to_owned(),
             Referent::Error => "error".to_owned(),
-        }
-    }
-
-    fn kind(&self, kind: &KindOf) -> String {
-        let name = match kind.kind {
-            Kind::Type => "type",
-            Kind::Schema => "schema",
-        };
-        match kind.flexible {
-            true => format!("flexible {name}"),
-            false => name.to_owned(),
-        }
-    }
-
-    /// A completed signature, with annotations in canonical form, omissions as the
-    /// types they default to, and implicit binders by slot
-    fn sig(&self, decl: DeclId, sig: usize) -> String {
-        let unit = self.decls[decl.index()].unit;
-        let func = self.decls[decl.index()].node.signature(sig);
-        let sig = &self.sigs[&(decl, sig)];
-        let text = |site| self.print(unit, self.site_ty(site));
-        let slot = |slot: &Slot| match *slot {
-            Slot::Annot(ty) => text(ty),
-            Slot::Unknown => "Unknown".to_owned(),
-            Slot::SelfType => "Self".to_owned(),
-            Slot::ObjectType => "Type[Self]".to_owned(),
-            Slot::Nil => "nil".to_owned(),
-        };
-        let mut out = String::from("(");
-        for (index, (param, ty)) in func.params.iter().zip(&sig.params).enumerate() {
-            if index != 0 {
-                out.push_str(", ");
-            }
-            // Only a rest or a sub-pattern is nameless
-            let spelled = match (param.name, &param.kind) {
-                (Some(name), _) => self.name(unit, name),
-                (None, ParamKind::Rest { .. }) => "",
-                (None, _) => "()",
-            };
-            let (name, optional) = match param.kind {
-                ParamKind::Pos => (spelled.to_owned(), param.default),
-                ParamKind::Key { .. } | ParamKind::ConstKey { .. } => {
-                    (format!(":{spelled}"), param.default)
-                }
-                ParamKind::Rest { kind, .. } => {
-                    let sigil = match kind {
-                        RestKind::Mixed => "...",
-                        RestKind::Pos => "*",
-                        RestKind::Key => "**",
-                    };
-                    (format!("{sigil}{spelled}"), false)
-                }
-            };
-            let ty = match ty {
-                ParamTy::Single(single) => slot(single),
-                ParamTy::Rest(RestSlot::Items(_, Slot::Unknown)) => "Unknown{}".to_owned(),
-                ParamTy::Rest(RestSlot::Items(kind, item)) => {
-                    let item = slot(item);
-                    match kind {
-                        RestKind::Mixed => format!("{{*{item}, **{item}}}"),
-                        RestKind::Pos => format!("{{*{item}}}"),
-                        RestKind::Key => format!("{{**{item}}}"),
-                    }
-                }
-                ParamTy::Rest(RestSlot::Pack(ty)) => text(*ty),
-                ParamTy::Rest(RestSlot::Pattern(ty)) => format!("...{}", text(*ty)),
-            };
-            let _ = write!(out, "{}{name}: {ty}", if optional { "?" } else { "" });
-        }
-        for (sigil, ambient) in [('<', sig.input), ('>', sig.output)] {
-            if !out.ends_with('(') {
-                out.push_str(", ");
-            }
-            match ambient {
-                Ambient::Implicit(binder) => {
-                    let _ = write!(out, "{sigil}#{}", binder.slot);
-                }
-                _ => {
-                    let _ = write!(out, "{sigil}{}", self.ambient(ambient));
-                }
-            }
-        }
-        out.push(')');
-        let _ = write!(out, " -> {}", slot(&sig.ret));
-        out
-    }
-
-    fn ambient(&self, ambient: Ambient) -> String {
-        match ambient {
-            Ambient::Written => "written".to_owned(),
-            Ambient::Implicit(binder) => {
-                format!("{}#{}", self.qualified(binder.decl), binder.slot)
-            }
-            Ambient::Of(decl, _) => format!("of {}", self.qualified(decl)),
-            Ambient::Value => "Value".to_owned(),
-        }
-    }
-
-    fn head(&self, head: &Head) -> String {
-        match head {
-            Head::Decl(id) => self.qualified(*id),
-            Head::Binder(binder) => self.binder(*binder),
-            Head::Structural => "structural".to_owned(),
-            Head::Error => "error".to_owned(),
         }
     }
 
@@ -411,7 +129,6 @@ impl Tables<'_> {
             };
             let declaration = db.declaration(db_id);
             let names = self.names(db, declaration);
-            judgments.push(("quantifier", span, self.quantifier(db, declaration, &names)));
             judgments.push(("decl", span, self.decl(db, declaration, &names)));
         }
         for (index, decl) in self.decls.iter().enumerate() {
@@ -420,43 +137,10 @@ impl Tables<'_> {
                 continue;
             }
             match &decl.node {
-                DeclNode::Class(class) => {
+                DeclNode::Class(_) | DeclNode::Alias(_) => {
                     let declaration = db.declaration(id);
                     let names = self.names(db, declaration);
-                    let span = decl.name_span().expect("a class is named");
-                    judgments.push(("quantifier", span, self.quantifier(db, declaration, &names)));
-                    judgments.push(("decl", span, self.decl(db, declaration, &names)));
-                    for (key, member) in declaration.members.iter() {
-                        // A method member is judged at its function's name, and a field at
-                        // the first field its key and namespace record
-                        let span = match member.decls().next() {
-                            Some(decl) => self.decls[decl.index()].name_span(),
-                            None => class.members.iter().find_map(|source| {
-                                let SourceMember::Field(field) = source else {
-                                    return None;
-                                };
-                                let instance = field.scope == MemberScope::Instance;
-                                field
-                                    .names
-                                    .iter()
-                                    .find(|&&name| {
-                                        self.name(unit, name) == db.symbol(key.name)
-                                            && !field.public == key.private
-                                            && instance == (member.scope() == Scope::Instance)
-                                    })
-                                    .map(|name| name.span)
-                            }),
-                        };
-                        if let Some(span) = span {
-                            judgments.push(("member", span, self.member(db, member, &names)));
-                        }
-                    }
-                }
-                DeclNode::Alias(_) => {
-                    let declaration = db.declaration(id);
-                    let names = self.names(db, declaration);
-                    let span = decl.name_span().expect("an alias is named");
-                    judgments.push(("quantifier", span, self.quantifier(db, declaration, &names)));
+                    let span = decl.name_span().expect("a class or alias is named");
                     judgments.push(("decl", span, self.decl(db, declaration, &names)));
                 }
                 DeclNode::Defs(_) | DeclNode::Methods(_) | DeclNode::Closure(_) => {}
@@ -504,83 +188,49 @@ impl Tables<'_> {
             .collect()
     }
 
-    /// A declaration's outer group: each slot's origin, name, bound and variance
-    fn quantifier(&self, db: &Database, declaration: &Declaration, names: &[String]) -> String {
-        let Type::Quantified { binders, .. } = db.ty(declaration.ty) else {
-            return "none".to_owned();
-        };
-        binders
-            .iter()
-            .zip(declaration.binders.iter())
-            .zip(names)
-            .map(|((binder, source), name)| {
-                let mut out = match source.origin {
-                    BinderOrigin::Lifted => format!("^{name}"),
-                    BinderOrigin::Written | BinderOrigin::Implicit => name.clone(),
-                };
-                if let Some(bound) = binder.bound {
-                    let _ = write!(out, " @ {}", self.render(db, bound, names));
-                }
-                if let Some(default) = binder.default {
-                    let _ = write!(out, " = {}", self.render(db, default, names));
-                }
-                let _ = write!(out, " {}", variance(binder.variance));
-                out
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-
-    /// A declaration's body: a class's supertypes, an alias's definition, or a
-    /// function's type
+    /// A declaration: its outer group's slots, each with its origin, name,
+    /// variance, bound and default, then a class's supertypes, an alias's definition,
+    /// or a function's type
     fn decl(&self, db: &Database, declaration: &Declaration, names: &[String]) -> String {
+        let mut out = String::new();
         let body = match db.ty(declaration.ty) {
-            Type::Quantified { body, .. } => *body,
+            Type::Quantified { binders, body } => {
+                let slots: Vec<_> = binders
+                    .iter()
+                    .zip(declaration.binders.iter())
+                    .zip(names)
+                    .map(|((binder, source), name)| {
+                        let lifted = match source.origin {
+                            BinderOrigin::Lifted => "^",
+                            BinderOrigin::Written | BinderOrigin::Implicit => "",
+                        };
+                        let mut slot = format!("{lifted}{name}{}", variance(binder.variance));
+                        if let Some(bound) = binder.bound {
+                            let _ = write!(slot, " @ {}", self.render(db, bound, names));
+                        }
+                        if let Some(default) = binder.default {
+                            let _ = write!(slot, " = {}", self.render(db, default, names));
+                        }
+                        slot
+                    })
+                    .collect();
+                let _ = write!(out, "[{}] ", slots.join(", "));
+                *body
+            }
             _ => declaration.ty,
         };
         if declaration.source.kind.nominal() {
+            out.push_str("nominal");
             let supertypes: Vec<_> = declaration
                 .supertypes
                 .iter()
                 .map(|supertype| self.render(db, supertype.ty, names))
                 .collect();
-            match supertypes.is_empty() {
-                true => "nominal".to_owned(),
-                false => format!("nominal <: {}", supertypes.join(", ")),
+            if !supertypes.is_empty() {
+                let _ = write!(out, " <: {}", supertypes.join(", "));
             }
         } else {
-            self.render(db, body, names)
-        }
-    }
-
-    fn member(&self, db: &Database, member: &Member, names: &[String]) -> String {
-        let what = match member {
-            Member::Field { .. } => "field",
-            Member::Method { .. } => "method",
-            Member::Property { .. } => "property",
-            Member::Decorated { .. } => "decorated",
-        };
-        let scope = match member.scope() {
-            Scope::Instance => "instance",
-            Scope::Class => "class",
-            Scope::Static => "static",
-        };
-        let visibility = if member.public() { "pub" } else { "private" };
-        let mut out = format!("{what} {scope} {visibility}");
-        match member {
-            Member::Field { ty, .. } => {
-                let _ = write!(out, " {}", self.render(db, *ty, names));
-            }
-            Member::Method { decl, .. } | Member::Decorated { decl, .. } => {
-                let _ = write!(out, " {}", self.qualified(*decl));
-            }
-            Member::Property { getter, setter, .. } => {
-                for (what, decl) in [("get", getter), ("set", setter)] {
-                    if let Some(decl) = decl {
-                        let _ = write!(out, " {what} {}", self.qualified(*decl));
-                    }
-                }
-            }
+            out.push_str(&self.render(db, body, names));
         }
         out
     }

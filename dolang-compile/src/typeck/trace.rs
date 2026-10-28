@@ -4,7 +4,7 @@
 use dolang_util::{debug_enabled, debug_eprintln};
 
 use super::{
-    elab::{Tables, Unresolved},
+    elab::Tables,
     r#type::{Database, UnitId},
 };
 use crate::source::Span;
@@ -27,15 +27,13 @@ impl Tables<'_> {
 }
 
 /// Trace what elaboration concluded about each unit's spans
-pub(super) fn elab(db: &Database, tables: &Tables<'_>, unresolved: &[Unresolved]) {
+pub(super) fn elab(db: &Database, tables: &Tables<'_>) {
     if !debug_enabled!("typeck.elab") {
         return;
     }
     for index in 0..tables.units.len() {
         let unit = UnitId::from_index(index);
-        // `typeck.wf` traces undecided checks
-        let judgments = tables.judgments(db, unit, unresolved);
-        for (name, span, value) in judgments.into_iter().filter(|&(name, ..)| name != "wf") {
+        for (name, span, value) in tables.judgments(db, unit) {
             debug_eprintln!(topic: "typeck.elab", "{}: {name}: {value}", tables.locate(unit, span));
         }
     }

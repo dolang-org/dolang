@@ -12,5 +12,5 @@
 
 # Too far down to count.
 pub def g x
-  #     ^: sig (x: Unknown, <#0, >#1) -> Unknown
+  #     ^: decl [in -, out -] (Unknown, <in, >out) -> Unknown
   x

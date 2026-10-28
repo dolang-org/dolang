@@ -9,7 +9,7 @@ def takes_int n @ Int -> Int
   n
 
 pub def dynamic x @ std.Unknown -> Int
-  #     ^~~~~~~: sig (x: std.Unknown, <#0, >#1) -> Int
+  #     ^~~~~~~: decl [in -, out -] (Unknown, <in, >out) -> std.Int
   let _ = x
   #       ^: flow Unknown
   let _ = x.anything
@@ -17,7 +17,7 @@ pub def dynamic x @ std.Unknown -> Int
   (x * 2)
 
 pub def bare y @ Unknown -> Unknown
-  #     ^~~~: sig (y: Unknown, <#0, >#1) -> Unknown
+  #     ^~~~: decl [in -, out -] (Unknown, <in, >out) -> Unknown
   y
 
 pub def caller() -> Str

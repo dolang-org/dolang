@@ -1,0 +1,18 @@
+# dolang: strict
+# Every `Box[Int | Str]` may be a `Box[Int]` or a `Box[Str]`, which the checker
+# can't verify
+
+pub class Box[T]
+  pub def get _self -> T
+    ...
+
+pub def split b @ Box[Int | Str]
+  let _ @ (Box[Int] | Box[Str]) = b
+  # warning: the checker can't verify this
+  #   --> split.dol:LL:LL
+  #    |
+  # LL |   let _ @ (Box[Int] | Box[Str]) = b
+  #    |                                   ^
+  #    |
+  #    = note: it doesn't handle a type that may be inside a union member
+  nil

@@ -59,7 +59,7 @@ pub @let Included = $
   ...Shape
 
 pub @let Generic[T] = Table $
-  #      ^~~~~~~: decl m.Table[{value: T}]
+  #      ^~~~~~~: decl [T] m.Table[{value: T}]
   value: T
 pub let generic @ Generic[Num] = ...
 

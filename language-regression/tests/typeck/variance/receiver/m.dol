@@ -2,7 +2,7 @@
 # method's unannotated one. A class method's annotated first parameter does.
 
 pub class Box[T]
-  #           ^: variance covariant
+  #       ^~~: decl [T +] nominal
   field item = nil
 
   pub def get self -> T
@@ -17,7 +17,7 @@ pub class Box[T]
     0
 
 pub class Made[T]
-  #            ^: variance contravariant
+  #       ^~~~: decl [T -] nominal
   #[class]
   pub def make _cls @ T
     nil

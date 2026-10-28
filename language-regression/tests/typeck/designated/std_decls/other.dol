@@ -2,6 +2,6 @@
 
 pub class Int
 pub @let Phantom[...Ts] = ...
-#                   ^~: variance invariant
+#        ^~~~~~~: decl [Ts] nominal
 pub @let PipeSender[I] = ...
-#                   ^: variance invariant
+#        ^~~~~~~~~~: decl [I] nominal

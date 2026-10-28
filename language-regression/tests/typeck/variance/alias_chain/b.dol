@@ -2,4 +2,4 @@ import c:
   - @Box
 
 pub @let Wrap[U] = Box[U]
-#             ^: variance covariant
+#        ^~~~: decl [U +] c.Box[U]

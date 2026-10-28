@@ -280,7 +280,7 @@ impl<'u, 's> Builder<'u, 's> {
             unresolved.append(&mut output.overrides.1);
         }
         #[cfg(feature = "debug")]
-        trace::elab(&r#type::Database::fork(&shared), &tables, &unresolved);
+        trace::elab(&r#type::Database::fork(&shared), &tables);
         // Each run's logged facts are copied into a database of the check's own,
         // which copies what the check's base holds once
         let mut results = r#type::Database::new();
@@ -738,7 +738,7 @@ impl Check<'_> {
     pub fn judgments(&self, unit: UnitId) -> Vec<Judgment> {
         let info = &self.tables.units[unit.index()];
         let db = &r#type::Database::fork(&self.shared);
-        let mut judgments = self.tables.judgments(db, unit, &self.unresolved);
+        let mut judgments = self.tables.judgments(db, unit);
         let analysis = self
             .analysis
             .as_ref()

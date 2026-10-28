@@ -5,23 +5,32 @@ import a:
   - @Prim
 
 pub @let Chain = Base
-#        ^~~~~: head a.Point
+#        ^~~~~: decl a.Base
 pub @let Opaque = Prim
-#        ^~~~~~: head a.Prim
+#        ^~~~~~: decl a.Prim
 pub @let Generic[T] = Array[T]
-#        ^~~~~~~: head std.Array
+#        ^~~~~~~: decl [T] [T]
 pub @let Param[T] = T
-#        ^~~~~: head binder T
+#        ^~~~~: decl [T +] T
 pub @let Union = (Int | Str)
-#        ^~~~~: head structural
+#        ^~~~~: decl std.Int | std.Str
 pub @let Loop = Loop2
-#        ^~~~: head error
+#        ^~~~: decl Unknown
 # error: alias refers to itself
 #   --> user.dol:LL:LL
 #    |
 # LL | pub @let Loop = Loop2
 #    |          ^^^^
 pub @let Loop2 = Loop
-#        ^~~~~: head error
+#        ^~~~~: decl Unknown
 pub @let Grouped = (Chain)
-#        ^~~~~~~: head a.Point
+#        ^~~~~~~: decl user.Chain
+
+# A type-only supertype requires the class its aliases lead to
+pub class Sub: @Chain
+#         ^~~: decl nominal <: user.Chain
+# error: `Chain` requires `Point`, which `Sub` does not inherit
+#   --> user.dol:LL:LL
+#    |
+# LL | pub class Sub: @Chain
+#    |                 ^^^^^

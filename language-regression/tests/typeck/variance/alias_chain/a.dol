@@ -5,15 +5,15 @@ import b:
   @Wrap: W
 
 pub @let Pair[T] = W[W[T]]
-#             ^: variance covariant
+#        ^~~~: decl [T +] b.Wrap[b.Wrap[T]]
 pub @let Flip[T] = W[(T -> nil)]
-#             ^: variance contravariant
+#        ^~~~: decl [T -] b.Wrap[(T, <Value, >Value) -> nil]
 pub @let Twice[T] = Flip[Flip[T]]
-#              ^: variance covariant
+#        ^~~~~: decl [T +] a.Flip[a.Flip[T]]
 pub @let Mixed[T] = W[(T -> T)]
-#              ^: variance invariant
+#        ^~~~~: decl [T] b.Wrap[(T, <Value, >Value) -> T]
 pub @let Loop[T] = Loop[T]
-#             ^: variance invariant
+#        ^~~~: decl [T] Unknown
 # error: alias refers to itself
 #   --> a.dol:LL:LL
 #    |

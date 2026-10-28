@@ -2,64 +2,64 @@
 # an implicit binder of its signature, whatever the def's visibility.
 
 pub def shown a @ Int b :k @ Str = "x" *rest **kw -> Int
-  #     ^~~~~: sig (a: Int, b: Unknown, ?:k: Str, *rest: Unknown{}, **kw: Unknown{}, <#0, >#1) -> Int
+  #     ^~~~~: decl [in -, out -] (std.Int, Unknown, ?k: std.Str, ...Unknown{}, ...Unknown{}, <in, >out) -> std.Int
   ...
 
 def hidden a @ Int b :k @ Str = "x" *rest **kw -> Int
-  # ^~~~~~: sig (a: Int, b: Unknown, ?:k: Str, *rest: Unknown{}, **kw: Unknown{}, <#0, >#1) -> Int
+  # ^~~~~~: decl [in -, out -] (std.Int, Unknown, ?k: std.Str, ...Unknown{}, ...Unknown{}, <in, >out) -> std.Int
   ...
 
 pub def mixed ...rest
-  #     ^~~~~: sig (...rest: Unknown{}, <#0, >#1) -> Unknown
+  #     ^~~~~: decl [in -, out -] (...Unknown{}, <in, >out) -> Unknown
   rest
 
 pub def generic[T] x @ T -> T
-  #     ^~~~~~~: sig (x: T, <#1, >#2) -> T
+  #     ^~~~~~~: decl [T, in -, out -] (T, <in, >out) -> T
   x
 
 pub def items *args @ Str **kw @ Int
-  #     ^~~~~: sig (*args: {*Str}, **kw: {**Int}, <#0, >#1) -> Unknown
+  #     ^~~~~: decl [in -, out -] (*std.Str, **std.Int, <in, >out) -> Unknown
   [args, kw]
 
 pub def packed[*Ps, **Ks] *args @ Ps **kw @ Ks
-  #     ^~~~~~: sig (*args: Ps, **kw: Ks, <#2, >#3) -> Unknown
+  #     ^~~~~~: decl [Ps -, Ks -, in -, out -] (...Ps, ...Ks, <in, >out) -> Unknown
   [args, kw]
 
 pub def fork[*Rs] *thunks @ ...(() -> Rs) -> Tuple[...Rs]
-  #     ^~~~: sig (*thunks: ...(() -> Rs), <#1, >#2) -> Tuple[...Rs]
-  #                                ^~: ambient <m.fork#1 >m.fork#2
+  #                            ^~~~~~~~~~: type {...(<in, >out) -> Rs}
+  #     ^~~~: decl [Rs, in, out] (...(<in, >out) -> Rs, <in, >out) -> std.Tuple[...Rs]
   ...
 
 pub def reads <Iter[Int] x
-  #     ^~~~~: sig (x: Unknown, <written, >#0) -> Unknown
+  #     ^~~~~: decl [out -] (Unknown, <std.Iter[std.Int], >out) -> Unknown
   x
 
 # A function type without its own channels in a def's signature shares the
 # def's; one in its body takes `Value`
 pub def each f @ ((Int) -> nil)
-  #                     ^~: ambient <m.each#0 >m.each#1
+  #              ^~~~~~~~~~~~~~: type (std.Int, <in, >out) -> nil
   let cb @ ((Int) -> nil) = do |_x| nil
-  #               ^~: ambient <Value >Value
+  #        ^~~~~~~~~~~~~~: type (std.Int, <Value, >Value) -> nil
   [f, cb]
 
 pub def pipe <Iter[Int] f @ (() -> nil)
-  #                             ^~: ambient <of m.pipe >m.pipe#0
+  #                         ^~~~~~~~~~~: type (<std.Iter[std.Int], >out) -> nil
   f
 
 pub def half f @ ((<Iter[Str]) -> nil)
-  #                            ^~: ambient <written >m.half#1
+  #              ^~~~~~~~~~~~~~~~~~~~~: type (<std.Iter[std.Str], >out) -> nil
   f
 
 # Outside any def, they are `Value`
 pub let handler @ (() -> nil) = do nil
-#                     ^~: ambient <Value >Value
+#                 ^~~~~~~~~~~: type (<Value, >Value) -> nil
 
 @def pick x @ Int -> Int
-#    ^~~~: sig (x: Int, <#0, >#1) -> Int
+#    ^~~~: decl [in -, out -] (std.Int, <in, >out) -> std.Int
 @def pick x @ Str -> Str
-#    ^~~~: sig (x: Str, <#0, >#1) -> Str
+#    ^~~~: decl [in -, out -] (std.Str, <in, >out) -> std.Str
 pub def pick x
-  #     ^~~~: sig (x: Unknown, <#0, >#1) -> Unknown
+  #     ^~~~: decl [in -, out -] (Unknown, <in, >out) -> Unknown
   x
 
 hidden 1 2

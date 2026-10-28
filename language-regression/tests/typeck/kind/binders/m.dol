@@ -9,40 +9,127 @@ import @ext
 #    |         ^^^
 
 pub class Plain[T]
-  #             ^: kind type
   pub field item @ T = ...
+  pub field items @ std.Phantom[((...T) -> nil)] = ...
+# error: expected a schema, found a type
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Plain[T]
+#    |                 - declared here
+# LL |   pub field item @ T = ...
+# LL |   pub field items @ std.Phantom[((...T) -> nil)] = ...
+#    |                                      ^
 
 pub class Bounded[S @ {...}]
-  #               ^: kind schema
   pub field items @ std.Phantom[((...S) -> nil)] = ...
+  pub field item @ S = ...
+# error: expected a type, found a schema
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Bounded[S @ {...}]
+#    |                   - declared here
+# LL |   pub field items @ std.Phantom[((...S) -> nil)] = ...
+# LL |   pub field item @ S = ...
+#    |                    ^
 
 pub class Chained[A @ {...}, B @ A]
-  #               ^: kind schema
-  #                          ^: kind schema
   pub field items @ std.Phantom[((...A, ...B) -> nil)] = ...
+  pub field a @ A = ...
+  # error: expected a type, found a schema
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub class Chained[A @ {...}, B @ A]
+  #    |                   - declared here
+  # LL |   pub field items @ std.Phantom[((...A, ...B) -> nil)] = ...
+  # LL |   pub field a @ A = ...
+  #    |                 ^
+  pub field b @ B = ...
+# error: expected a type, found a schema
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Chained[A @ {...}, B @ A]
+#    |                              - declared here
+# ...
+# LL |   pub field b @ B = ...
+#    |                 ^
 
 pub def rests[*P, **K, ...M, :Key] x @ ((...P, ...K, ...M) -> Key)
-  #            ^: kind schema
-  #                 ^: kind schema
-  #                       ^: kind schema
-  #                           ^~~: kind type
   x
+
+pub def misused[*P, **K, ...M, :Key] p @ P k @ K m @ M key @ ((...Key) -> nil)
+  # error: expected a type, found a schema
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def misused[*P, **K, ...M, :Key] p @ P k @ K m @ M key @ ((...Key) -> nil)
+  #    |                  - declared here         ^
+  # error: expected a type, found a schema
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def misused[*P, **K, ...M, :Key] p @ P k @ K m @ M key @ ((...Key) -> nil)
+  #    |                       - declared here          ^
+  # error: expected a type, found a schema
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def misused[*P, **K, ...M, :Key] p @ P k @ K m @ M key @ ((...Key) -> nil)
+  #    |                             - declared here          ^
+  # error: expected a schema, found a type
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def misused[*P, **K, ...M, :Key] p @ P k @ K m @ M key @ ((...Key) -> nil)
+  #    |                                 --- declared here                 ^^^
+  [p, k, m, key]
 
 # Bounds that only name each other determine nothing
-pub def cycle[U @ V, V @ U] x @ U y @ V
-  #           ^: kind type
-  #                  ^: kind type
-  [x, y]
+pub def cycle[U @ V, V @ U] x @ U y @ V f @ ((...U, ...V) -> nil)
+  # error: expected a schema, found a type
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def cycle[U @ V, V @ U] x @ U y @ V f @ ((...U, ...V) -> nil)
+  #    |               - declared here                    ^
+  # error: expected a schema, found a type
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def cycle[U @ V, V @ U] x @ U y @ V f @ ((...U, ...V) -> nil)
+  #    |                      - declared here                   ^
+  [x, y, f]
 
 # An external bound might have been either kind
-pub def outside[E @ ext.Thing] x @ E
-  #             ^: kind flexible type
-  x
+pub def outside[E @ ext.Thing] x @ E f @ ((...E) -> nil)
+  [x, f]
 
 pub @let Fields = {name: Str}
-#        ^~~~~~: kind schema
 pub @let Same = Fields
-#        ^~~~: kind schema
 pub @let Opaque[...Ts] = ...
-#        ^~~~~~: kind type
-#                  ^~: kind schema
+
+pub let fields @ Fields = nil
+# error: expected a type, found a schema
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @let Fields = {name: Str}
+#    |          ------ declared here
+# ...
+# LL | pub let fields @ Fields = nil
+#    |                  ^^^^^^
+#    |
+#    = help: for a dict with this schema, write `Dict[Fields]`
+pub let same @ Same = nil
+# error: expected a type, found a schema
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @let Same = Fields
+#    |          ---- declared here
+# ...
+# LL | pub let same @ Same = nil
+#    |                ^^^^
+#    |
+#    = help: for a dict with this schema, write `Dict[Same]`
+pub let opaque @ Opaque[Int, Str] = ...
+pub let spread_opaque @ ((...Opaque) -> nil) = ...
+# error: expected a schema, found a type
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @let Opaque[...Ts] = ...
+#    |          ------ declared here
+# ...
+# LL | pub let spread_opaque @ ((...Opaque) -> nil) = ...
+#    |                              ^^^^^^

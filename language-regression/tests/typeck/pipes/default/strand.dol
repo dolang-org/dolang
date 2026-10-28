@@ -2,13 +2,9 @@
 # their type arguments through.
 
 pub @let PipeSender[I] = ...
-#        ^~~~~~~~~~: designated pipe sender
-#        ^~~~~~~~~~: decl strand.Sender[I]
-#                   ^: variance contravariant
+#        ^~~~~~~~~~: decl [I -] strand.Sender[I]
 pub @let PipeReceiver[I] = ...
-#        ^~~~~~~~~~~~: designated pipe receiver
-#        ^~~~~~~~~~~~: decl strand.Receiver[I]
-#                     ^: variance covariant
+#        ^~~~~~~~~~~~: decl [I +] strand.Receiver[I]
 
 pub class Sender[T]: Sink[T]
 pub class Receiver[T]: Iter[T]

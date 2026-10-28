@@ -1,13 +1,9 @@
 # Nominated pipe types stand in for the placeholders.
 
 pub @let PipeSender[I] = ...
-#        ^~~~~~~~~~: designated pipe sender
-#        ^~~~~~~~~~: decl proc.PipeSender[I]
-#                   ^: variance contravariant
+#        ^~~~~~~~~~: decl [I -] proc.PipeSender[I]
 pub @let PipeReceiver[I] = ...
-#        ^~~~~~~~~~~~: designated pipe receiver
-#        ^~~~~~~~~~~~: decl proc.PipeReceiver[I]
-#                     ^: variance covariant
+#        ^~~~~~~~~~~~: decl [I +] proc.PipeReceiver[I]
 
 pub def stream[R, I, O]
   func @ ((<PipeReceiver[I], >PipeSender[O]) -> R)

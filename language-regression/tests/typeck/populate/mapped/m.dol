@@ -13,34 +13,34 @@ pub class Tuple[*Ts]
 pub @let Phantom[...Ts] = ...
 
 pub def fork[*Rs] *blocks @ ...(() -> Rs) -> Tuple[...Rs]
-  #     ^~~~: decl (...(<in, >out) -> Rs, <in, >out) -> m.Tuple[...Rs]
+  #     ^~~~: decl [Rs, in, out] (...(<in, >out) -> Rs, <in, >out) -> m.Tuple[...Rs]
   ...
 
 pub def mixed[...Us] ...values @ ...Box[Us]
-  #     ^~~~~: decl (...m.Box[Us], <in, >out) -> Unknown
+  #     ^~~~~: decl [Us, in -, out -] (...m.Box[Us], <in, >out) -> Unknown
   values
 
 pub def pairs[*As, *Bs] *values @ ...Pair[As, Bs]
-  #     ^~~~~: decl (...m.Pair[As, Bs], <in, >out) -> Unknown
+  #     ^~~~~: decl [As, Bs, in -, out -] (...m.Pair[As, Bs], <in, >out) -> Unknown
   values
 
 pub def twice[*Us] *values @ ...Pair[Us, Us]
-  #     ^~~~~: decl (...m.Pair[Us, Us], <in, >out) -> Unknown
+  #     ^~~~~: decl [Us, in -, out -] (...m.Pair[Us, Us], <in, >out) -> Unknown
   values
 
 pub def tagged[T, *Us] *values @ ...Pair[T, Us]
-  #     ^~~~~~: decl (...m.Pair[T, Us], <in, >out) -> Unknown
+  #     ^~~~~~: decl [T, Us, in -, out -] (...m.Pair[T, Us], <in, >out) -> Unknown
   values
 
 pub @let Known = {Num, ?Text, *Num, key: Text}
 pub def known *values @ ...Box[Known]
-  #     ^~~~~: decl (...m.Box[m.Known], <in, >out) -> Unknown
+  #     ^~~~~: decl [in -, out -] (...m.Box[m.Known], <in, >out) -> Unknown
   values
 
 # A pattern naming no pack expands over nothing known, and an erroneous name in
 # one that does is dynamic
 pub def unnamed *values @ ...Box[Nope]
-  #     ^~~~~~~: decl (...Unknown{}, <in, >out) -> Unknown
+  #     ^~~~~~~: decl [in -, out -] (...Unknown{}, <in, >out) -> Unknown
   # warning: unbound type name
   #   --> m.dol:LL:LL
   #    |
@@ -54,7 +54,7 @@ pub def unnamed *values @ ...Box[Nope]
   values
 
 pub def partly[*Us] *values @ ...Pair[Us, Nope]
-  #     ^~~~~~: decl (...m.Pair[Us, Unknown], <in, >out) -> Unknown
+  #     ^~~~~~: decl [Us, in -, out -] (...m.Pair[Us, Unknown], <in, >out) -> Unknown
   # warning: unbound type name
   #   --> m.dol:LL:LL
   #    |
