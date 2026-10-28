@@ -46,11 +46,12 @@ mod tests {
             config.typecheck(true);
             let path = PathBuf::from("fixture.dol");
             let unit = config.unit(&path, "pub let value = 1\n");
-            fs::write(
-                self.0.join(format!("{name}.dolt")),
-                typeck::typelib(&unit).unwrap(),
-            )
-            .unwrap();
+            let mut builder = typeck::Builder::new();
+            builder.typelibs(true);
+            let id = builder.unit(&unit).unwrap();
+            let mut typelib = Vec::new();
+            builder.check().typelib(id, &mut typelib).unwrap();
+            fs::write(self.0.join(format!("{name}.dolt")), typelib).unwrap();
         }
     }
 

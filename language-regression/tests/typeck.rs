@@ -17,7 +17,7 @@
 //! Only annotated spans are asserted.
 //!
 //! Each case is then checked again with every module supplied by its typelib (see
-//! [`typeck::typelib`]), as a library the interpreter bundles is.
+//! [`typeck::Check::typelib`]), as a library the interpreter bundles is.
 //! Everything reported for the script must be the same, and what is reported for the
 //! modules must be what was before, less what came of checking their bodies.
 //!
@@ -312,6 +312,7 @@ pub fn validate(case: &Case) {
     let units = case.compile();
 
     let mut checker = case.builder();
+    checker.typelibs(true);
     // The source each checked unit came from
     let mut checked: HashMap<UnitId, usize> = HashMap::new();
     let mut ids: Vec<Option<UnitId>> = Vec::new();
@@ -405,13 +406,14 @@ fn from_typelibs(
     // A unit that failed to compile is left out of both checks
     let mut written: Vec<Option<Vec<u8>>> = Vec::new();
     let mut exportable = true;
-    for (index, unit) in units.iter().enumerate() {
-        if !(ids[index].is_some() && sources[index].module.is_some()) {
+    for (index, id) in ids.iter().enumerate() {
+        let (Some(id), Some(_)) = (*id, &sources[index].module) else {
             written.push(None);
             continue;
-        }
-        match typeck::typelib(unit) {
-            Ok(bytes) => written.push(Some(bytes)),
+        };
+        let mut bytes = Vec::new();
+        match check.typelib(id, &mut bytes) {
+            Ok(()) => written.push(Some(bytes)),
             // A module whose interface names a private declaration has no typelib,
             // and its check from source says why
             Err(error) if matches!(error.kind(), ErrorKind::NotExportable) => {
@@ -427,6 +429,24 @@ fn from_typelibs(
                         failures,
                         "\n{}: no typelib, but no private declaration in its interface \
                          is reported",
+                        sources[index].file
+                    );
+                }
+                exportable = false;
+                written.push(None);
+            }
+            // Nor does a module importing one the case doesn't have, which its check
+            // from source reports as not found
+            Err(error) if matches!(error.kind(), ErrorKind::MissingImport) => {
+                let reported = check.diagnostics().any(|diag| {
+                    diag.severity() == Severity::Error
+                        && diag.span().unit() == ids[index]
+                        && diag.message().to_string().ends_with("` not found")
+                });
+                if !reported {
+                    let _ = write!(
+                        failures,
+                        "\n{}: no typelib, but no missing module is reported",
                         sources[index].file
                     );
                 }

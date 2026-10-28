@@ -128,18 +128,6 @@ pub class Unit
   pub def emit self -> Bin
     ...
 
-  # Returns the bytes of the module's typelib, which
-  # [`Typelib`](compile.Typelib) reads.
-  #
-  # ## Errors
-  #
-  # | Exception          | Condition                                                   |
-  # | ------------------ | ----------------------------------------------------------- |
-  # | `std.CompileError` | Compilation failed, the unit was compiled without `typecheck: true`, or it is not a module |
-  # | `std.StateError`   | The unit was emitted                                        |
-  pub def typelib self -> Bin
-    ...
-
 # A module's typelib: its declarations as [`check`](compile.check) reads them,
 # without its source.
 #
@@ -151,7 +139,8 @@ pub class Unit
 #
 # ```
 # let lib = compile "lib.dol" $lib_source module: lib typecheck: true
-# let typelib = Typelib $lib.typelib()
+# let result = check [lib] typelibs: true
+# let typelib = Typelib $result.typelib(lib)
 # echo $typelib.module ...typelib.imports()
 # ```
 pub class Typelib
@@ -163,7 +152,7 @@ pub class Typelib
   # version of Do.
   pub def (init)
     self
-    # Bytes from [`Unit.typelib`](compile.Unit.typelib).
+    # Bytes from [`Check.typelib`](compile.Check.typelib).
     bytes @ Bin
   do
     ...
@@ -1095,9 +1084,15 @@ do -> Unit
 # let result = check [lib, main]
 # for diag = result.diagnostics
 #   echo $diag.render()
-# let again = check [Typelib(lib.typelib()), main]
+# let written = check [lib, main] typelibs: true
+# let again = check [Typelib(written.typelib(lib)), main]
 # ```
-pub def check units @ Iterable[Unit | Typelib] -> Check
+pub def check
+  units @ Iterable[Unit | Typelib]
+  # Whether the result keeps what [`Check.typelib`](compile.Check.typelib)
+  # writes. False by default.
+  :typelibs @ Bool = ...
+do -> Check
   ...
 
 # The result of [`check`](compile.check).
@@ -1118,4 +1113,23 @@ pub class Check
   # Renders the checks the checker couldn't decide, grouped by the kind of
   # reason, for developing the checker. The format may change.
   pub def undecided self -> Str
+    ...
+
+  # Returns the bytes of a module's typelib, which [`Typelib`](compile.Typelib)
+  # reads.
+  #
+  # The typelib is written whatever the diagnostics say about the module's
+  # declarations.
+  #
+  # ## Errors
+  #
+  # | Exception          | Condition                                                   |
+  # | ------------------ | ----------------------------------------------------------- |
+  # | `std.ValueError`   | The check wasn't given `typelibs: true`, or `unit` wasn't checked |
+  # | `std.CompileError` | `unit` is a typelib or not a module, imports a module that wasn't checked with it, or has a private declaration in its public interface |
+  pub def typelib
+    self
+    # A unit given to [`check`](compile.check).
+    unit @ (Unit | Typelib)
+  do -> Bin
     ...

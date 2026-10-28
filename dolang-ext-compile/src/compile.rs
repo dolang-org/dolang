@@ -425,6 +425,9 @@ pub(crate) struct CheckAnnex {
     validated: bool,
     /// A rendering of the checks the checker couldn't decide
     undecided: String,
+    /// The check, if it was asked for typelibs, with the ID of each input it
+    /// accepted, in the order of `CHECK_INPUTS`
+    check: Option<(compile::typeck::Check, Vec<compile::UnitId>)>,
 }
 pub(crate) struct NodeIter {
     cursor: Option<compile::NodeId>,
@@ -506,6 +509,8 @@ const DIAG_PATCHES: usize = 2;
 const DIAG_SOURCE: usize = 3;
 
 const CHECK_DIAGNOSTICS: usize = 0;
+/// The inputs the checker accepted, by unit ID
+const CHECK_INPUTS: usize = 1;
 
 const TYPELIB_BYTES: usize = 0;
 
@@ -783,18 +788,28 @@ fn check_units<'v, 's>(
     global: State<'v, Global<'v>>,
     strand: &mut Strand<'v, 's>,
     units: &Value<'v>,
+    typelibs: bool,
     out: &mut Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     let units = units
         .as_array(strand)
         .expect("units are collected into an array");
     strand.with_slots_sync(
-        |strand, [mut item, mut taken_sources, mut sources, mut diagnostics]| {
+        |strand,
+         [
+            mut item,
+            mut taken_sources,
+            mut sources,
+            mut diagnostics,
+            mut inputs,
+        ]| {
             Output::set(strand, &mut taken_sources, Empty::Array);
             Output::set(strand, &mut sources, Empty::Array);
             Output::set(strand, &mut diagnostics, Empty::Array);
+            Output::set(strand, &mut inputs, Empty::Array);
             let taken_array = taken_sources.as_array(strand).unwrap();
             let sources_array = sources.as_array(strand).unwrap();
+            let inputs_array = inputs.as_array(strand).unwrap();
 
             // What is taken from each input, by its position in `units`. Its source
             // is at the same position in `taken_sources`, or nil for a typelib.
@@ -832,9 +847,10 @@ fn check_units<'v, 's>(
                 let mut builder = compile::typeck::Builder::new();
                 // The shell's pipelines connect stages with `proc`'s pipes
                 builder.pipes(("proc", "PipeSender"), ("proc", "PipeReceiver"));
+                builder.typelibs(typelibs);
                 // The units the checker accepted, by unit ID
                 let mut ids = Vec::new();
-                for (position, (_, input)) in taken.iter().enumerate() {
+                for (position, (index, input)) in taken.iter().enumerate() {
                     let added = match input {
                         Taken::Unit(unit) => builder.unit(unit),
                         Taken::Typelib(typelib) => builder.typelib(typelib),
@@ -843,6 +859,8 @@ fn check_units<'v, 's>(
                         Ok(id) => {
                             taken_array.get(strand, position, &mut item)?;
                             sources_array.push(strand, &*item)?;
+                            units.get(strand, *index, &mut item)?;
+                            inputs_array.push(strand, &*item)?;
                             ids.push(id);
                         }
                         // Its own diagnostics report it
@@ -852,12 +870,19 @@ fn check_units<'v, 's>(
                 }
                 let check = builder.check();
                 let paths: Vec<String> = ids
-                    .into_iter()
-                    .map(|id| check.path(id).to_string_lossy().into_owned())
+                    .iter()
+                    .map(|&id| check.path(id).to_string_lossy().into_owned())
                     .collect();
                 let diags: Vec<Diag> = check.diagnostics().cloned().collect();
                 let undecided = render_undecided(&paths, check.undecided());
-                Ok((paths, diags, check.validated(), undecided))
+                let validated = check.validated();
+                Ok((
+                    paths,
+                    diags,
+                    validated,
+                    undecided,
+                    typelibs.then_some((check, ids)),
+                ))
             });
 
             for (index, input) in taken {
@@ -876,7 +901,7 @@ fn check_units<'v, 's>(
                     }
                 }
             }
-            let (paths, diags, validated, undecided) = checked?;
+            let (paths, diags, validated, undecided, check) = checked?;
 
             let diagnostics_array = diagnostics.as_array(strand).unwrap();
             for diag in diags {
@@ -895,6 +920,7 @@ fn check_units<'v, 's>(
                 CheckAnnex {
                     validated,
                     undecided,
+                    check,
                 },
                 &mut *out,
             );
@@ -904,11 +930,13 @@ fn check_units<'v, 's>(
                 .cast(&*out)
                 .unwrap()
                 .enter_sync(strand, |strand, check| {
+                    let mut borrow = check.borrow_mut_unwrap();
                     Output::set(
                         strand,
-                        Mut::slot_mut::<CHECK_DIAGNOSTICS>(&mut check.borrow_mut_unwrap()),
+                        Mut::slot_mut::<CHECK_DIAGNOSTICS>(&mut borrow),
                         &*diagnostics,
                     );
+                    Output::set(strand, Mut::slot_mut::<CHECK_INPUTS>(&mut borrow), &*inputs);
                 });
             Ok(())
         },
@@ -1280,27 +1308,13 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 Output::set(strand, out, AsTuple::new(imports));
                 Ok(())
             })
-            .method("typelib", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
-                let typelib = {
-                    let borrow = this.borrow(strand)?;
-                    let unit = borrow
-                        .unit
-                        .as_ref()
-                        .ok_or_else(|| Error::state_error(strand, "unit was emitted"))?;
-                    compile::typeck::typelib(unit)
-                };
-                let typelib = typelib.map_err(|err| Error::compile(strand, err))?;
-                Output::set(strand, out, typelib.as_slice());
-                Ok(())
-            })
     }
 }
 
 impl<'v> Object<'v> for CheckObject {
     const NAME: &'v str = "Check";
     const MODULE: &'v str = "compile";
-    const SLOTS: usize = 1;
+    const SLOTS: usize = 2;
     type Annex = CheckAnnex;
     type Type = ();
     type TypeAnnex = ();
@@ -1321,6 +1335,44 @@ impl<'v> Object<'v> for CheckObject {
                 Output::set(strand, out, this.annex().undecided.as_str());
                 Ok(())
             })
+            .method_with_slots(
+                "typelib",
+                async move |this, strand, args, out, [mut item, mut inputs]| {
+                    let ([unit], []) = unpack!(strand, args, 1, 0)?;
+                    let Some((check, ids)) = &this.annex().check else {
+                        return Err(Error::value(strand, "the check was not asked for typelibs"));
+                    };
+                    let identity = |strand: &mut Strand<'v, '_>, value: &Value<'v>| match value
+                        .view(strand.vm())
+                    {
+                        View::Object(object) => Some(object.id().addr()),
+                        _ => None,
+                    };
+                    let wanted = identity(strand, &unit);
+                    {
+                        let borrow = this.borrow(strand)?;
+                        Output::set(strand, &mut inputs, Ref::slot::<CHECK_INPUTS>(&borrow));
+                    }
+                    let inputs = inputs.as_array(strand).unwrap();
+                    let mut found = None;
+                    for (index, &id) in ids.iter().enumerate() {
+                        inputs.get(strand, index, &mut item)?;
+                        if wanted.is_some() && identity(strand, &item) == wanted {
+                            found = Some(id);
+                            break;
+                        }
+                    }
+                    let Some(id) = found else {
+                        return Err(Error::value(strand, "the unit was not checked"));
+                    };
+                    let mut bytes = Vec::new();
+                    check
+                        .typelib(id, &mut bytes)
+                        .map_err(|err| Error::compile(strand, err))?;
+                    Output::set(strand, out, bytes.as_slice());
+                    Ok(())
+                },
+            )
     }
 }
 
@@ -2904,6 +2956,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
     let document = builder.sym("document");
     let typecheck = builder.sym("typecheck");
     let strict = builder.sym("strict");
+    let typelibs = builder.sym("typelibs");
 
     builder
         .module("compile")
@@ -3007,13 +3060,17 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .function_with_slots(
             "check",
             async move |strand, args, mut out, [mut iter, mut item, mut units]| {
-                let ([iterable], []) = unpack!(strand, args, 1, 0)?;
+                let ([iterable], [typelibs]) = unpack!(strand, args, 1, 0, typelibs = None)?;
+                let typelibs = typelibs
+                    .map(|value| value.to_bool(strand))
+                    .transpose()?
+                    .unwrap_or(false);
                 Output::set(strand, &mut units, Empty::Array);
                 iterable.iter(strand, &mut iter).await?;
                 while iter.next(strand, &mut item).await? {
                     units.as_array(strand).unwrap().push(strand, &*item)?;
                 }
-                check_units(global, strand, &units, &mut out)
+                check_units(global, strand, &units, typelibs, &mut out)
             },
         )
         .function("compile", async move |strand, args, mut out| {

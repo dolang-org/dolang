@@ -63,17 +63,27 @@ fn benchmarks(c: &mut Criterion) {
                             case.sources.iter().any(|s| s.module.is_none()),
                             "{path}: typelib benchmarks require main.dol"
                         );
+                        // Written by a check of every unit from source
+                        let mut builder = case.builder();
+                        builder.typelibs(true);
+                        let ids: Vec<_> = units
+                            .iter()
+                            .map(|unit| match builder.unit(unit) {
+                                Ok(id) => Some(id),
+                                Err(e) if matches!(e.kind(), ErrorKind::Fail) => None,
+                                Err(e) => panic!("{e}"),
+                            })
+                            .collect();
+                        let check = builder.check();
                         let bytes: Vec<_> = case
                             .sources
                             .iter()
-                            .zip(&units)
-                            .map(|(source, unit)| {
+                            .zip(&ids)
+                            .map(|(source, id)| {
                                 source.module.as_ref()?;
-                                match typeck::typelib(unit) {
-                                    Ok(bytes) => Some(bytes),
-                                    Err(e) if matches!(e.kind(), ErrorKind::Fail) => None,
-                                    Err(e) => panic!("{e}"),
-                                }
+                                let mut bytes = Vec::new();
+                                check.typelib((*id)?, &mut bytes).unwrap();
+                                Some(bytes)
                             })
                             .collect();
                         let libraries: Vec<_> = bytes

@@ -98,7 +98,7 @@ jobs:
           dodo.run lint-docs
           dodo.run wasm-lint
 
-      # Includes the required bundled-library typecheck-test gate.
+      # Includes the required typecheck-test gate.
       - name: Run tests
         run: dodo.run test --slow
 

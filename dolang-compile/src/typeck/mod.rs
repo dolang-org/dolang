@@ -15,7 +15,13 @@ pub(crate) mod r#type;
 pub(crate) mod typelib;
 mod undecided;
 
-use std::{borrow::Cow, num::NonZeroUsize, path::Path, sync::Arc};
+use std::{
+    borrow::Cow,
+    io::Write,
+    num::NonZeroUsize,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use rustc_hash::FxHashSet;
 
@@ -28,38 +34,7 @@ pub use analysis::{Analysis, Declaration, Judged, Node};
 pub use flow::Role;
 pub use r#type::Style;
 
-/// Write a module's typelib: its declarations as the checker reads them, without its
-/// source. Read it back with [`Typelib::read`].
-///
-/// The unit must have been compiled with [`Config::typecheck`](crate::Config::typecheck).
-///
-/// # Errors
-///
-/// | Kind | Condition |
-/// | ---- | --------- |
-/// | [`ErrorKind::Fail`](crate::ErrorKind::Fail) | The unit failed to compile |
-/// | [`ErrorKind::Unresolved`](crate::ErrorKind::Unresolved) | The unit was compiled without resolving types |
-/// | [`ErrorKind::NotModule`](crate::ErrorKind::NotModule) | The unit is not a module |
-/// | [`ErrorKind::NotExportable`](crate::ErrorKind::NotExportable) | The module's public interface names a private declaration, which its diagnostics report |
-pub fn typelib(unit: &Unit<'_>) -> Result<Vec<u8>, Error> {
-    if unit.failed {
-        return Err(Error(ErrorInfo::Fail));
-    }
-    if !unit.resolved {
-        return Err(Error(ErrorInfo::Unresolved));
-    }
-    let Mode::Module { .. } = unit.mode else {
-        return Err(Error(ErrorInfo::NotModule));
-    };
-    let harvest = elab::harvest(unit);
-    let (kept, leaks) = harvest.interface();
-    if !leaks.is_empty() {
-        return Err(Error(ErrorInfo::NotExportable));
-    }
-    Ok(typelib::write(harvest, &kept))
-}
-
-/// A module's typelib, as [`typelib`] wrote it, decoded and found to be one this
+/// A module's typelib, as [`Check::typelib`] wrote it, decoded and found to be one this
 /// checker reads. It borrows from the bytes it was read from.
 ///
 /// A unit checked against a typelib (see [`Builder::typelib`]) sees the same
@@ -124,6 +99,8 @@ pub struct Builder<'u, 's> {
     threads: Option<NonZeroUsize>,
     /// Whether to give the check an [`Analysis`]
     analysis: bool,
+    /// Whether the check keeps what it writes its modules' typelibs from
+    typelibs: bool,
 }
 
 impl Default for Builder<'_, '_> {
@@ -140,6 +117,7 @@ impl<'u, 's> Builder<'u, 's> {
             pipes: [("strand", "Sender"), ("strand", "Receiver")],
             threads: None,
             analysis: false,
+            typelibs: false,
         }
     }
 
@@ -156,6 +134,13 @@ impl<'u, 's> Builder<'u, 's> {
     /// off, which costs nothing.
     pub fn analysis(&mut self, enabled: bool) -> &mut Self {
         self.analysis = enabled;
+        self
+    }
+
+    /// Have the check keep the surface of each module it checks from source, which
+    /// [`Check::typelib`] writes. Defaults to off, which costs nothing.
+    pub fn typelibs(&mut self, enabled: bool) -> &mut Self {
+        self.typelibs = enabled;
         self
     }
 
@@ -228,7 +213,17 @@ impl<'u, 's> Builder<'u, 's> {
     ///
     /// Units are checked in a fixed order, modules by name and then scripts by path,
     /// whatever order they were added in.
-    pub fn check(self) -> Check<'u> {
+    pub fn check(self) -> Check {
+        self.run().0
+    }
+
+    /// Check the units, keeping the tables elaboration built
+    #[cfg(test)]
+    pub(crate) fn check_tables(self) -> (Check, elab::Tables<'u>) {
+        self.run()
+    }
+
+    fn run(self) -> (Check, elab::Tables<'u>) {
         let mut db = r#type::Database::new();
         for index in 0..self.units.len() {
             assert_eq!(
@@ -253,6 +248,7 @@ impl<'u, 's> Builder<'u, 's> {
                 None => (1, "", Some(info.path)),
             }
         });
+        let typelibs = self.typelibs.then(|| surfaces(&harvests));
         let (mut tables, mut diags) = elab::link(&mut db, harvests, &order, self.pipes);
         elab::kinds(&mut tables, &mut diags);
         elab::signatures(&mut tables, &mut diags);
@@ -378,7 +374,7 @@ impl<'u, 's> Builder<'u, 's> {
             trace::elab(analysis, &tables);
         }
         undecided::report(&tables.units, &unresolved, &mut diags);
-        Check {
+        let check = Check {
             cfgs,
             layers,
             flows,
@@ -386,13 +382,77 @@ impl<'u, 's> Builder<'u, 's> {
                 .iter()
                 .map(|(unit, diag)| diag.resolve(*unit, &tables.units[unit.index()]))
                 .collect(),
-            tables,
+            units: tables
+                .units
+                .iter()
+                .map(|info| Located {
+                    name: info.name(),
+                    path: info.path.to_owned(),
+                })
+                .collect(),
+            site_kinds: tables.site_kinds().collect(),
             shared,
             types,
             analysis,
-            unresolved,
-        }
+            undecided: unresolved
+                .iter()
+                .map(|unresolved| {
+                    let unit = unresolved.span.unit;
+                    let info = &tables.units[unit.index()];
+                    (
+                        format!("{:?}", unresolved.residual),
+                        report::resolve_span(unit, info, unresolved.span.span),
+                    )
+                })
+                .collect(),
+            typelibs,
+        };
+        (check, tables)
     }
+}
+
+/// Why a unit's typelib can't be written
+enum Unwritten {
+    /// The unit was checked from its typelib
+    NoSource,
+    NotModule,
+    /// The module imports this module, which wasn't checked with it
+    MissingImport(String),
+    /// The module's interface names a private declaration
+    NotExportable,
+}
+
+/// What each unit's typelib is written from, or why it has none: the surface of
+/// each module checked from source, all of whose imports are checked with it
+fn surfaces(harvests: &[elab::Harvest<'_>]) -> Vec<Result<typelib::Surface, Unwritten>> {
+    let modules: FxHashSet<&str> = harvests
+        .iter()
+        .filter_map(|harvest| harvest.info.module)
+        .collect();
+    harvests
+        .iter()
+        .map(|harvest| {
+            if harvest.info.source.is_none() {
+                return Err(Unwritten::NoSource);
+            }
+            if harvest.info.module.is_none() {
+                return Err(Unwritten::NotModule);
+            }
+            let missing = harvest
+                .modules
+                .iter()
+                .map(|module| &*harvest.strings[module.name.index()])
+                .find(|name| !modules.contains(name));
+            if let Some(name) = missing {
+                return Err(Unwritten::MissingImport(name.to_owned()));
+            }
+            let (kept, leaks) = harvest.interface();
+            if !leaks.is_empty() {
+                return Err(Unwritten::NotExportable);
+            }
+            Ok(typelib::Surface::new(harvest.clone().surface(&kept)))
+        })
+        .collect()
 }
 
 /// What checking a unit in forks of its own concludes
@@ -658,9 +718,13 @@ fn export_dot(ir: &cfg::Ir, db: &r#type::Database, info: &elab::UnitInfo) -> std
 /// declarations are usable for diagnostics and tooling, but checking code against
 /// them proves nothing. Units that could not
 /// be checked at all are refused by [`Builder::unit`].
-pub struct Check<'u> {
+pub struct Check {
     diagnostics: Vec<Diag>,
-    tables: elab::Tables<'u>,
+    /// Each unit's name and path, by [`UnitId`]
+    units: Vec<Located>,
+    /// Each written type, with the kinds of its binder group's binders, for
+    /// [`Check::smoke`]
+    site_kinds: Vec<(r#type::TypeId, Vec<r#type::Kind>)>,
     /// The database every unit's fork is of
     shared: Arc<r#type::Shared>,
     /// A database of the check's own, which flow's facts are copied into, and the
@@ -669,8 +733,11 @@ pub struct Check<'u> {
     types: Arc<analysis::Types>,
     /// What the check concluded about its units' spans, if the builder asked
     analysis: Option<Analysis>,
-    /// Well-formedness checks the checker could not decide
-    unresolved: Vec<elab::Unresolved>,
+    /// Well-formedness checks the checker could not decide, with the kind of reason
+    undecided: Vec<(String, diag::SourceSpan)>,
+    /// What each unit's typelib is written from, or why it has none, by [`UnitId`],
+    /// if the builder asked
+    typelibs: Option<Vec<Result<typelib::Surface, Unwritten>>>,
     /// Each unit's typing CFG, by [`UnitId`], for a unit checked from source
     #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     cfgs: Vec<Option<cfg::Ir>>,
@@ -684,7 +751,14 @@ pub struct Check<'u> {
     flows: Vec<Option<flow::Results>>,
 }
 
-impl Check<'_> {
+/// A checked unit's name and path
+struct Located {
+    /// A module's name, or a script's file stem
+    name: String,
+    path: PathBuf,
+}
+
+impl Check {
     /// Iterate the type checker's diagnostics.
     ///
     /// Every location names the unit it refers to. The units' own diagnostics
@@ -696,13 +770,13 @@ impl Check<'_> {
     /// The path of a checked unit: the one it was compiled with, or for a typelib,
     /// its module's when the typelib was written.
     pub fn path(&self, unit: UnitId) -> &Path {
-        self.tables.units[unit.index()].path
+        &self.units[unit.index()].path
     }
 
     /// The module name of a checked unit, as an [`Analysis`] names the modules
     /// declarations are in. A script is named by its file stem.
     pub fn name(&self, unit: UnitId) -> String {
-        self.tables.units[unit.index()].name()
+        self.units[unit.index()].name.clone()
     }
 
     /// Whether every well-formedness check passed. See [`Check`].
@@ -716,17 +790,39 @@ impl Check<'_> {
     /// for developing the checker. Reasons are internal and may change.
     #[doc(hidden)]
     pub fn undecided(&self) -> Vec<(String, diag::SourceSpan)> {
-        self.unresolved
-            .iter()
-            .map(|unresolved| {
-                let unit = unresolved.span.unit;
-                let info = &self.tables.units[unit.index()];
-                (
-                    format!("{:?}", unresolved.residual),
-                    report::resolve_span(unit, info, unresolved.span.span),
-                )
-            })
-            .collect()
+        self.undecided.clone()
+    }
+
+    /// Write a module's typelib: its declarations as the checker reads them, without
+    /// its source. Read it back with [`Typelib::read`].
+    ///
+    /// The typelib is written whatever the check's diagnostics, which report what
+    /// is wrong with the declarations it holds.
+    ///
+    /// # Errors
+    ///
+    /// | Kind | Condition |
+    /// | ---- | --------- |
+    /// | [`ErrorKind::NotRequested`](crate::ErrorKind::NotRequested) | The builder wasn't asked for typelibs with [`Builder::typelibs`] |
+    /// | [`ErrorKind::NoSource`](crate::ErrorKind::NoSource) | The unit was checked from its typelib |
+    /// | [`ErrorKind::NotModule`](crate::ErrorKind::NotModule) | The unit is not a module |
+    /// | [`ErrorKind::MissingImport`](crate::ErrorKind::MissingImport) | The module imports a module that wasn't checked with it |
+    /// | [`ErrorKind::NotExportable`](crate::ErrorKind::NotExportable) | The module's public interface names a private declaration, which the check's diagnostics report |
+    /// | [`ErrorKind::Io`](crate::ErrorKind::Io) | Writing failed |
+    pub fn typelib(&self, unit: UnitId, write: &mut dyn Write) -> Result<(), Error> {
+        let typelibs = self
+            .typelibs
+            .as_ref()
+            .ok_or(Error(ErrorInfo::NotRequested))?;
+        match &typelibs[unit.index()] {
+            Ok(surface) => Ok(surface.write(write)?),
+            Err(Unwritten::NoSource) => Err(Error(ErrorInfo::NoSource)),
+            Err(Unwritten::NotModule) => Err(Error(ErrorInfo::NotModule)),
+            Err(Unwritten::MissingImport(name)) => {
+                Err(Error(ErrorInfo::MissingImport(name.clone())))
+            }
+            Err(Unwritten::NotExportable) => Err(Error(ErrorInfo::NotExportable)),
+        }
     }
 
     /// What the check concluded about its units' spans, if the builder asked for it
@@ -790,8 +886,8 @@ impl Check<'_> {
                 }
             }
         }
-        for (ty, kinds) in self.tables.site_kinds() {
-            relate(&mut solver, ty, &kinds);
+        for (ty, kinds) in &self.site_kinds {
+            relate(&mut solver, *ty, kinds);
         }
         solver.solve();
         self.smoke_members();

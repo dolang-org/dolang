@@ -295,17 +295,20 @@ pub def extract_playground_docs spec out_dir
 pub def extract_typelibs spec out_dir
   let jobs = [...collect_doc_jobs()]
   let names = Set []
+  let paths = []
   for job = jobs
-    let :name ... = job
+    let :name :path = job
     if names.contains(name)
       throw "duplicate bundled module: $name"
     names.add $name
+    paths.push $path
   out_dir.remove all: true ignore: true
   out_dir.create_dir all: true
-  let workers = sys.cpu_info().logical_count
-  strand.pool $workers $jobs do |job|
-    let :name :path = job
-    spec.dolang -m compile typelib --module $name --output (out_dir / "$name.dolt") $path
+  # Checked together, each module named as `dol_module_name` names it
+  spec.dolang -m compile typelib --no-bundled --output $out_dir
+    for dir = doc_paths()
+      --path $dir
+    ...paths
 
 # Extracts the JSON cache and regenerates the docs/api page tree from it.
 #

@@ -245,7 +245,7 @@ impl Analyzed {
 
 /// Where a span in a unit other than `id` lies, as `path:line:column`.
 fn foreign(
-    check: &typeck::Check<'_>,
+    check: &typeck::Check,
     id: UnitId,
     span: &dolang::compile::SourceSpan,
 ) -> Option<String> {

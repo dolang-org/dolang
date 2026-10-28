@@ -1188,7 +1188,15 @@ type resolution without building the document index. Adding a unit returns its
 `UnitId`, which is meaningful only within that check; paths do not identify
 units. A module name may be added only once. `Builder::check` consumes the
 builder and returns a `Check`, which yields the type checker's diagnostics. The
-units' own diagnostics stay with the units.
+units' own diagnostics stay with the units. A `Check` borrows none of its units:
+it keeps each unit's name and path, and its diagnostics and undecided checks
+with their spans already resolved to lines and columns.
+
+A typelib is written from a check. With `Builder::typelibs`, the check keeps the
+surface of each module it checks from source, taken from its harvest before
+linking and with the lines of its kept spans, and `Check::typelib` writes it. A
+module importing a module the check doesn't have has none, since its typelib
+would hold an interface elaborated against the missing module.
 
 A `SourceSpan` is a span with an optional unit. A unit's own diagnostics have
 no unit and are relative to that unit. Type checker diagnostics name a unit in
@@ -1236,11 +1244,11 @@ diagnosed, and their names are erroneous. A missing module is reported at its
 import, and an import that fails otherwise once per link, at its first name, or
 in a typelib, which keeps no reference's span, at the import of its module.
 
-`Check` keeps the tables. Its hidden `judgments` method reports what they
-concluded about each span of a unit, such as a type name's referent or an
-alias's head, as text naming declarations by qualified name rather than by ID.
-The type-checking tests in `language-regression/tests/typeck` assert these with
-annotations in fixture source.
+`Check` drops the tables. An analysis reports what they concluded about each
+span of a unit: what a type name refers to, the type written there and each
+declaration's type. The type-checking tests in
+`language-regression/tests/typeck` assert these with annotations in fixture
+source.
 
 Kinds come from declarations only, never from uses. A variadic binder is a
 schema and a keyword binder a type; any other binder has its bound's kind, and a
