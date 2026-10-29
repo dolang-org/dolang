@@ -27,6 +27,26 @@ assert (!({2: "x"} < {1: "x"}))
 assert ({1: "x"} < {1: "y"})
 assert (!({1: "y"} < {1: "x"}))
 assert (!({1: "x"} < {1: "x"}))
+# ordering is lexicographic: the first differing item decides
+assert (!({a: 6, b: 2} < {a: 0, b: 14}))
+assert ({a: 0, b: 14} < {a: 6, b: 2})
+assert (!({b: 0} < {a: 9}))
+assert ({a: 9} < {b: 0})
+assert (!({a: 5} < {a: 1, b: 2}))
+assert ({a: 1} < {a: 1, b: 2})
+assert ({a: 0, b: 14} <= {a: 6, b: 2})
+assert (!({a: 6, b: 2} <= {a: 0, b: 14}))
+# holes left by deletion don't take part
+let h1 = {a: 1, x: 0, b: 9}
+h1.delete :x:
+let h2 = {a: 1, b: 2, y: 0}
+h2.delete :y:
+assert (!(h1 < h2))
+assert (h2 < h1)
+# the first unequal item decides, even when it can't be ordered
+let nan = (0.0 / 0.0)
+assert (!({a: nan, b: 0} < {a: 1, b: 1}))
+assert (!({a: 1, b: 1} < {a: nan, b: 0}))
 
 # indexing a missing key
 assert_throws $std.RuntimeError str: "index out of range or invalid" do {a: 1}["z"]

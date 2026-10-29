@@ -1969,23 +1969,15 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 }
                 let (l, subl) = (l.0.as_ref(), l.1);
                 let (r, subr) = (r.0.as_ref(), r.1);
-                if l.key.op_lt(strand, &r.key)?.to_bool(strand)? {
-                    return Ok(Value::TRUE);
-                }
-                if l.value
-                    .at(subl)
-                    .op_lt(strand, r.value.at(subr))?
-                    .to_bool(strand)?
-                {
-                    return Ok(Value::TRUE);
+                for (l, r) in [(&l.key, &r.key), (l.value.at(subl), r.value.at(subr))] {
+                    if !l.op_eq(strand, r)?.to_bool(strand)? {
+                        return Ok(Value::from_bool(l.op_lt(strand, r)?.to_bool(strand)?));
+                    }
                 }
                 i += 1;
                 j += 1;
             }
-            if right.table.len() > left.table.len() {
-                return Ok(Value::TRUE);
-            }
-            Ok(Value::FALSE)
+            Ok(Value::from_bool(right.table.len() > left.table.len()))
         }
     }
 

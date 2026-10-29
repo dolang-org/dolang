@@ -564,8 +564,6 @@ impl Prim {
             (Int(l), F64(r)) => Ok(ifop(*l, *r).into()),
             (F64(l), Int(r)) => Ok(fiop(*l, *r).into()),
             (Bool(l), Bool(r)) => Ok(iop(*l as i128, *r as i128).into()),
-            (Bool(l), F64(r)) => Ok(ifop(*l as i128, *r).into()),
-            (F64(l), Bool(r)) => Ok(fiop(*l, *r as i128).into()),
             _ => Err(Error::type_error(strand, "comparison of non-numeric type")),
         }
     }

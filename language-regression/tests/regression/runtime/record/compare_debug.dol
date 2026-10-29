@@ -22,3 +22,19 @@ assert (!((record(1)) < (record(1))))
 # indexing a missing key
 assert_throws $std.RuntimeError str: "index out of range or invalid" do (record(a: 1))[:z:]
 assert_throws $std.RuntimeError str: "index out of range or invalid" do (record(1))[5]
+
+# ordering is lexicographic: the first differing item decides
+assert_not ((a: 6, b: 2) < (a: 0, b: 14))
+assert     ((a: 0, b: 14) < (a: 6, b: 2))
+assert_not ((a: 1, b: 2) < (a: 1, b: 2))
+assert_not ((a: 5) < (a: 1, b: 2))
+assert     ((a: 1) < (a: 1, b: 2))
+
+# a key decides before its value, in either direction
+assert     ((a: 9) < (b: 0))
+assert_not ((b: 0) < (a: 9))
+
+# the first unequal item decides, even when it can't be ordered
+let nan = (0.0 / 0.0)
+assert_not ((a: nan, b: 0) < (a: 1, b: 1))
+assert_not ((a: 1, b: 1) < (a: nan, b: 0))

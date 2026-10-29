@@ -61,6 +61,15 @@ assert     (-0.5 > -1)
 assert_not (true == false)
 assert_not (false == true)
 assert     (true == true)
+# Boolean ordering: false < true, but no mixing with numbers
+assert     (false < true)
+assert_not (true < false)
+assert     (true <= true)
+assert     (true > false)
+assert_throws $std.TypeError do (true < 2)
+assert_throws $std.TypeError do (0 < true)
+assert_throws $std.TypeError do (true < 1.5)
+assert_throws $std.TypeError do (1.5 >= false)
 # String equality
 assert_eq  foo foo
 assert_ne  foo bar

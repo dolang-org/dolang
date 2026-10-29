@@ -1,0 +1,16 @@
+# Ordering is lexicographic: the first differing element decides
+assert_not ((6, 2) < (0, 14))
+assert     ((0, 14) < (6, 2))
+assert     ((1, 2) < (1, 3))
+assert_not ((1, 3) < (1, 2))
+assert_not ((1, 2) < (1, 2))
+
+# Unequal lengths: only a proper prefix is less
+assert_not ((5,) < (1, 2))
+assert     ((1, 2) < (5,))
+assert     ((1,) < (1, 2))
+
+# The first unequal pair decides, even when it can't be ordered
+let nan = (0.0 / 0.0)
+assert_not ((nan, 0) < (1, 1))
+assert_not ((1, 1) < (nan, 0))
