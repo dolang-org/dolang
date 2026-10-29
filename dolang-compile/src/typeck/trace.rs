@@ -9,7 +9,7 @@ use crate::source::Span;
 impl Tables<'_> {
     /// A span of `unit` as `path:line:column`
     pub(crate) fn locate(&self, unit: UnitId, span: Span) -> String {
-        let info = &self.units[unit.index()];
+        let info = self.info(unit);
         if span == Span::INVALID {
             return format!("{}:?", info.path.display());
         }
@@ -29,7 +29,7 @@ pub(super) fn elab(analysis: &Analysis, tables: &Tables<'_>) {
     if !debug_enabled!("typeck.elab") {
         return;
     }
-    for index in 0..tables.units.len() {
+    for index in 0..tables.shards.len() {
         let unit = UnitId::from_index(index);
         for node in analysis.nodes(unit) {
             for judged in node.judgments() {

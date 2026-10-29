@@ -1193,10 +1193,21 @@ it keeps each unit's name and path, and its diagnostics and undecided checks
 with their spans already resolved to lines and columns.
 
 A typelib is written from a check. With `Builder::typelibs`, the check keeps the
-surface of each module it checks from source, taken from its harvest before
-linking and with the lines of its kept spans, and `Check::typelib` writes it. A
-module importing a module the check doesn't have has none, since its typelib
-would hold an interface elaborated against the missing module.
+typelib of each module it checks from source, encoded from the module's shard
+once it is elaborated, with the lines of its kept spans, and `Check::typelib`
+writes it. A module importing a module the check doesn't have has none, since
+its typelib would hold an interface elaborated against the missing module. A
+typelib has a serialization form of its own, converted to and from the shard:
+encoding keeps only the module's surface and numbers its IDs anew, type
+expressions are interned in one table, and what can be derived from the rest is
+left out where it holds. The surface leaves out private fields, which can decide
+a class's variance, so the typelib records what elaboration concluded of each
+binder's variance as side facts, and a check that loads it takes them as given.
+A typelib whose module is or imports `strand` also records the pipe types the
+check nominated (see `Builder::pipes`), since those facts can depend on them: a
+builder nominating others rejects it, and a check without a recorded nominee's
+module reports it as not found. Reading one gives a shard and the facts it
+records, which are linked as any unit's are.
 
 A `SourceSpan` is a span with an optional unit. A unit's own diagnostics have
 no unit and are relative to that unit. Type checker diagnostics name a unit in
@@ -1243,6 +1254,17 @@ cycles, alias cycles and imports of names a checked module does not export are
 diagnosed, and their names are erroneous. A missing module is reported at its
 import, and an import that fails otherwise once per link, at its first name, or
 in a typelib, which keeps no reference's span, at the import of its module.
+
+Collection fills each unit's shard, and linking moves it and its facts to their
+place in the tables, filling in what only linking can tell. Each later pass
+records what it concludes about a unit's declarations, such as kinds,
+completed signatures, variance and binder groups, in that unit's facts. Only
+what crosses units is global: the database, the designated declarations and the
+pipe placeholders' nominees. Linking numbers each unit's declarations, sites
+and links in one contiguous range, in link order, so an ID's unit is found by a
+binary search over the ranges' bases. The database declarations of a function's
+signatures other than the one its own ID holds follow its unit's declarations
+in the same range.
 
 `Check` drops the tables. An analysis reports what they concluded about each
 span of a unit: what a type name refers to, the type written there and each
@@ -1324,9 +1346,11 @@ invariant. A type declared within a generic declaration takes the outer binders
 it is lifted over as implicit arguments. These equations are solved by a
 worklist for their least solution, which is unique whatever the order. A binder
 with no use, including one used only through itself, is then invariant, as is
-any use through it, and a second round propagates that. The `variance` judgment
-reports a binder's variance, and `captured` a nested declaration's outer
-binders.
+any use through it, and a second round propagates that. Only declarations
+checked from source are solved for: one loaded from a typelib takes the
+variances it records, which are the solution's, as fixed. The `variance`
+judgment reports a binder's variance, and `captured` a nested declaration's
+outer binders.
 
 Every declaration is closed. Before variance, the captures pass finds the outer
 binders each is lifted over: those it names anywhere, in its signature, members

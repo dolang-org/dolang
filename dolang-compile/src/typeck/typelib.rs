@@ -1,43 +1,45 @@
 //! Typelibs: a module's declarations as the checker reads them, without its source.
 //!
-//! A check that is asked to keeps the surface of each module it checks from source,
-//! which it writes as the module's typelib. A typelib holds the surface of a
-//! module's harvest, with the module's name, path
-//! and the lines its kept spans are on. It is a structural record of the module's
-//! interface: it keeps text that is part of the interface, not how a reference is
-//! spelled, and spans that locate definitions and imports, not those of written
-//! types. It is what elaboration starts from, not what it concludes, so a
-//! check that loads one elaborates the module's declarations again, as it would from
-//! source, but checks none of its bodies.
+//! A check that is asked to writes the typelib of each module it checks from
+//! source, once it has elaborated it. A typelib holds the surface of a module's
+//! shard, with the module's name, path and the lines its kept spans are on. It is a
+//! structural record of the module's interface: it keeps text that is part of the
+//! interface, not how a reference is spelled, and spans that locate definitions and
+//! imports, not those of written types. It is mostly what elaboration starts
+//! from, so a check that loads one elaborates the module's declarations again, as
+//! it would from source, but checks none of its bodies. What depends on what the
+//! typelib leaves out is recorded instead, as facts the check takes as given: the
+//! variance of each binder, which private members decide. Where those facts can
+//! depend on the types `strand`'s pipe placeholders stand for, the typelib records
+//! them too, and only a check that nominates the same types loads it.
 //!
-//! The format is postcard, after a header naming the format and its version. Every
-//! ID is local to the typelib, which is linked as any harvest is. All text is in
-//! the string table, each string once.
+//! The format is postcard, after a header naming the format and its version, of a
+//! form of its own (see [`wire`]) that is converted to and from the shard. Reading
+//! one gives a shard and the facts it records, which are linked as any unit's are.
+//! Every ID is local to the typelib. All text is in the string table, each string
+//! once, and each distinct type expression node is in the type table once.
 
-use std::{borrow::Cow, fmt, io, path::Path};
+use std::fmt;
 
-use rustc_hash::FxHashMap;
+use bitvec::slice::BitSlice;
 use serde::{Deserialize, Serialize};
 
 use super::{
     elab::{
-        BinderRef, Decl, DeclNode, Export, Harvest, Link, Module, Referent, Role, Site, Target,
-        UnitInfo, Value,
-        surface::{
-            Binder, Decorator, LinkId, Member, ModuleId, ParamKind, Ref, Signature, SiteId, StrId,
-        },
+        Bases, BinderRef, Decl, DeclNode, Facts, Referent, Role, Shard, Target,
+        surface::{Binder, Decorator, LinkId, Member, ModuleId, ParamKind, Ref, SiteId, StrId},
     },
     r#type::{DeclId, DeclKind, UnitId},
 };
-use crate::source::Span;
 
 #[cfg(test)]
 mod tests;
+mod wire;
 
 const MAGIC: [u8; 8] = *b"\xffdotypel";
 /// The format's version, which changes with any change to the format. It isn't 0,
 /// which the bytes after the magic of an older typelib would read as.
-const VERSION: u16 = 5;
+const VERSION: u16 = 7;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct Header {
@@ -49,26 +51,6 @@ const HEADER: Header = Header {
     magic: MAGIC,
     version: VERSION,
 };
-
-/// A typelib's content, its strings either borrowed from the bytes it was read
-/// from or owned by the check that keeps it
-#[derive(Serialize, Deserialize)]
-struct Content<'a, S> {
-    module: StrId,
-    /// The module's path, which only locates its diagnostics
-    path: StrId,
-    /// The number and start of each line holding a span the typelib keeps
-    lines: Vec<(u32, u32)>,
-    /// Whether the module was checked strictly, which its signatures depend on
-    strict: bool,
-    strings: Vec<S>,
-    decls: Vec<Decl<'a>>,
-    sites: Vec<Site>,
-    links: Vec<Link>,
-    exports: Vec<Export>,
-    values: Vec<Value>,
-    modules: Vec<Module>,
-}
 
 /// Why a typelib could not be read
 #[derive(Debug)]
@@ -97,82 +79,24 @@ impl fmt::Display for Invalid {
     }
 }
 
-/// A module's surface, as its typelib holds it, owned so that it outlives the
-/// module's unit
-pub(crate) struct Surface(Content<'static, String>);
-
-impl Surface {
-    /// Keep a harvest that is already a module's surface.
-    pub(crate) fn new(harvest: Harvest<'_>) -> Self {
-        let path = harvest.info.path.to_string_lossy();
-        let mut strings: Vec<String> = harvest
-            .strings
-            .iter()
-            .map(|text| text.to_string())
-            .collect();
-        let mut intern = |text: &str| match strings.iter().position(|other| other == text) {
-            Some(index) => StrId::from_index(index),
-            None => {
-                strings.push(text.to_owned());
-                StrId::from_index(strings.len() - 1)
-            }
-        };
-        let module = intern(
-            harvest
-                .info
-                .module
-                .expect("only a module's typelib is written"),
-        );
-        let path = intern(&path);
-        let mut lines: Vec<(u32, u32)> = kept_spans(&harvest)
-            .into_iter()
-            .filter(|&span| span != Span::INVALID)
-            .flat_map(|span| [span.start, span.end])
-            .map(|offset| {
-                let coord = harvest.info.coord(offset);
-                (coord.line, offset - coord.column)
-            })
-            .collect();
-        lines.sort_unstable();
-        lines.dedup();
-        let decls = harvest
-            .decls
-            .into_iter()
-            .map(|decl| Decl {
-                unit: decl.unit,
-                kind: decl.kind,
-                name: decl.name,
-                node: decl.node,
-                outer: decl.outer,
-                ast: None,
-            })
-            .collect();
-        Self(Content {
-            module,
-            path,
-            lines,
-            strict: harvest.info.strict,
-            strings,
-            decls,
-            sites: harvest.sites,
-            links: harvest.links,
-            exports: harvest.exports,
-            values: harvest.values,
-            modules: harvest.modules,
-        })
-    }
-
-    /// Write the typelib.
-    pub(crate) fn write(&self, write: &mut dyn io::Write) -> io::Result<()> {
-        let out = postcard::to_stdvec(&HEADER).expect("a header serializes");
-        let out = postcard::to_extend(&self.0, out).expect("a surface serializes");
-        write.write_all(&out)
-    }
+/// Write the typelib of what `kept` keeps of a module's shard, whose IDs start at
+/// `base`, with the facts concluded about it and the pipe nominations they depend
+/// on, if any.
+pub(crate) fn write(
+    shard: &Shard<'_>,
+    base: &Bases,
+    kept: &BitSlice,
+    facts: &Facts,
+    pipes: Option<[(&str, &str); 2]>,
+) -> Vec<u8> {
+    let (content, _) = wire::Encode::new(shard, base, kept, facts, pipes).content();
+    let out = postcard::to_stdvec(&HEADER).expect("a header serializes");
+    postcard::to_extend(&content, out).expect("a surface serializes")
 }
 
-/// Read a typelib, checking that it is a module's surface. The names of the modules
-/// it imports are listed with it, each once, in order.
-pub(crate) fn read(bytes: &[u8]) -> Result<(Harvest<'_>, Vec<&str>), Invalid> {
+/// Read a typelib, checking that it is a module's surface: its shard, not yet
+/// linked, and the facts it records.
+pub(crate) fn read(bytes: &[u8]) -> Result<(Shard<'_>, Facts), Invalid> {
     let (header, rest): (Header, _) =
         postcard::take_from_bytes(bytes).map_err(|_| Invalid::Header)?;
     if header.magic != MAGIC {
@@ -181,64 +105,40 @@ pub(crate) fn read(bytes: &[u8]) -> Result<(Harvest<'_>, Vec<&str>), Invalid> {
     if header.version != VERSION {
         return Err(Invalid::Version(header.version));
     }
-    let (content, rest): (Content<'_, &str>, _) =
+    let (content, rest): (wire::Content<&str>, _) =
         postcard::take_from_bytes(rest).map_err(Invalid::Decode)?;
     if !rest.is_empty() {
         return Err(Invalid::Malformed("trailing bytes"));
     }
-    let strings = content.strings;
-    let (Some(&module), Some(&path)) = (
-        strings.get(content.module.index()),
-        strings.get(content.path.index()),
-    ) else {
-        return Err(Invalid::Malformed("an ID is out of range"));
-    };
-    let mut imports: Vec<&str> = content
-        .modules
-        .iter()
-        .filter_map(|module| strings.get(module.name.index()).copied())
-        .collect();
-    imports.sort_unstable();
-    let mut harvest = Harvest {
-        info: UnitInfo {
-            module: Some(module),
-            path: Path::new(path),
-            lines: content.lines,
-            source: None,
-            strict: content.strict,
-        },
-        strings: strings.into_iter().map(Cow::Borrowed).collect(),
-        decls: content.decls,
-        sites: content.sites,
-        links: content.links,
-        refs: FxHashMap::default(),
-        exports: content.exports,
-        values: content.values,
-        modules: content.modules,
-    };
-    validate(&mut harvest).map_err(Invalid::Malformed)?;
-    Ok((harvest, imports))
+    let (mut shard, facts) = wire::decode(content).map_err(Invalid::Malformed)?;
+    validate(&mut shard).map_err(Invalid::Malformed)?;
+    // By name, to be found by name
+    let strings = &shard.strings;
+    shard
+        .exports
+        .sort_by(|a, b| strings[a.name.index()].cmp(&strings[b.name.index()]));
+    Ok((shard, facts))
 }
 
-/// Check what elaboration assumes of a harvest that collection guarantees.
-fn validate(harvest: &mut Harvest<'_>) -> Result<(), &'static str> {
-    if !(harvest.info.lines.windows(2)).all(|pair| pair[0].0 < pair[1].0 && pair[0].1 < pair[1].1) {
+/// Check what elaboration assumes of a shard that collection guarantees.
+fn validate(shard: &mut Shard<'_>) -> Result<(), &'static str> {
+    if !(shard.info.lines.windows(2)).all(|pair| pair[0].0 < pair[1].0 && pair[0].1 < pair[1].1) {
         return Err("the line table is out of order");
     }
     let mut ids = InRange {
-        decls: harvest.decls.len(),
-        sites: harvest.sites.len(),
-        strs: harvest.strings.len(),
-        links: harvest.links.len(),
-        modules: harvest.modules.len(),
+        decls: shard.decls.len(),
+        sites: shard.sites.len(),
+        strs: shard.strings.len(),
+        links: shard.links.len(),
+        modules: shard.modules.len(),
         ok: true,
     };
-    harvest.visit_ids(&mut ids);
+    shard.visit_ids(&mut ids);
     if !ids.ok {
         return Err("an ID is out of range");
     }
-    let strings = &harvest.strings;
-    let mut names: Vec<&str> = harvest
+    let strings = &shard.strings;
+    let mut names: Vec<&str> = shard
         .exports
         .iter()
         .map(|export| &*strings[export.name.index()])
@@ -247,13 +147,13 @@ fn validate(harvest: &mut Harvest<'_>) -> Result<(), &'static str> {
     if names.windows(2).any(|pair| pair[0] == pair[1]) {
         return Err("an export is repeated");
     }
-    if !(harvest.values.windows(2))
+    if !(shard.values.windows(2))
         .all(|pair| (pair[0].span.start, pair[0].span.end) < (pair[1].span.start, pair[1].span.end))
     {
         return Err("the exported variables are out of order");
     }
 
-    let decls = &harvest.decls;
+    let decls = &shard.decls;
     for (index, decl) in decls.iter().enumerate() {
         let shaped = match (decl.kind, &decl.node) {
             (DeclKind::Class | DeclKind::Protocol, DeclNode::Class(_)) => true,
@@ -296,7 +196,7 @@ fn validate(harvest: &mut Harvest<'_>) -> Result<(), &'static str> {
     }
 
     // Each site is written in one place on the surface, in the role that place gives it
-    let sites = &harvest.sites;
+    let sites = &shard.sites;
     let mut placed = vec![false; sites.len()];
     let mut place = |site: Option<SiteId>, role: Role| match site {
         Some(site) if placed[site.index()] || sites[site.index()].role != role => {
@@ -353,9 +253,9 @@ fn validate(harvest: &mut Harvest<'_>) -> Result<(), &'static str> {
     // Each exported variable is listed with its annotation, a type written at the
     // top level
     let mut listed = 0;
-    for export in &harvest.exports {
+    for export in &shard.exports {
         if let Target::Local(Referent::Value(value)) = export.target {
-            let values = &harvest.values;
+            let values = &shard.values;
             let Ok(index) = values
                 .binary_search_by_key(&(value.span.start, value.span.end), |value| {
                     (value.span.start, value.span.end)
@@ -371,7 +271,7 @@ fn validate(harvest: &mut Harvest<'_>) -> Result<(), &'static str> {
             listed += 1;
         }
     }
-    if listed != harvest.values.len() {
+    if listed != shard.values.len() {
         return Err("a listed variable is not exported");
     }
     if placed.contains(&false) {
@@ -424,7 +324,7 @@ fn validate(harvest: &mut Harvest<'_>) -> Result<(), &'static str> {
             }
         }
     }
-    let links = &harvest.links;
+    let links = &shard.links;
     let mut named = vec![false; links.len()];
     for (head, group) in heads {
         let Some(link) = head.link else {
@@ -440,70 +340,12 @@ fn validate(harvest: &mut Harvest<'_>) -> Result<(), &'static str> {
     if named.contains(&false) {
         return Err("a link is not on the surface");
     }
-    for export in &harvest.exports {
+    for export in &shard.exports {
         if let Target::Local(Referent::Binder(_)) = export.target {
             return Err("a binder is exported");
         }
     }
     Ok(())
-}
-
-/// The spans a typelib keeps: those of what a source can refer to, which locate
-/// definitions, and of the imports its failures are reported at
-fn kept_spans(harvest: &Harvest<'_>) -> Vec<Span> {
-    let mut spans = Vec::new();
-    let signature = |spans: &mut Vec<Span>, binders: &[Binder], sig: &Signature| {
-        spans.extend(binders.iter().map(|binder| binder.name.span));
-        for param in &sig.params {
-            spans.extend(param.name.map(|name| name.span));
-            if let ParamKind::Key { key } = param.kind {
-                spans.push(key.span);
-            }
-        }
-    };
-    for decl in &harvest.decls {
-        spans.extend(decl.name_span());
-        match &decl.node {
-            DeclNode::Class(class) => {
-                spans.extend(class.binders.iter().map(|binder| binder.name.span));
-                for member in &class.members {
-                    if let Member::Field(field) = member {
-                        spans.extend(field.names.iter().map(|name| name.span));
-                    }
-                }
-            }
-            DeclNode::Alias(alias) => {
-                spans.extend(alias.binders.iter().map(|binder| binder.name.span));
-            }
-            DeclNode::Defs(defs) => {
-                for def in defs {
-                    spans.push(def.name.span);
-                    signature(&mut spans, &def.binders, &def.sig);
-                }
-            }
-            DeclNode::Methods(methods) => {
-                for method in methods {
-                    spans.push(method.name.span);
-                    signature(&mut spans, &method.binders, &method.sig);
-                }
-            }
-            DeclNode::Closure(closure) => signature(&mut spans, &[], &closure.sig),
-        }
-    }
-    let targets = harvest
-        .exports
-        .iter()
-        .map(|export| export.target)
-        .chain(harvest.links.iter().map(|link| link.base));
-    for target in targets {
-        if let Target::Local(Referent::Value(value)) = target {
-            spans.push(value.span);
-        }
-    }
-    spans.extend(harvest.exports.iter().map(|export| export.span));
-    spans.extend(harvest.values.iter().map(|value| value.span));
-    spans.extend(harvest.modules.iter().map(|module| module.span));
-    spans
 }
 
 /// Whether `binder` is in scope in the binder group of a declaration signature
@@ -582,71 +424,5 @@ impl super::elab::Ids for InRange {
 
     fn module(&mut self, module: &mut ModuleId) {
         self.ok &= module.index() < self.modules;
-    }
-}
-
-/// Serialization of types the crate exposes, which have no serde impls of their own
-pub(crate) mod wire {
-    pub(crate) mod span {
-        use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-        use crate::source::Span;
-
-        pub(crate) fn serialize<S: Serializer>(span: &Span, s: S) -> Result<S::Ok, S::Error> {
-            (span.start, span.end).serialize(s)
-        }
-
-        pub(crate) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Span, D::Error> {
-            let (start, end) = Deserialize::deserialize(d)?;
-            Ok(Span { start, end })
-        }
-    }
-
-    /// A span a typelib omits, which reads as one that locates nothing
-    pub(crate) fn invalid() -> crate::source::Span {
-        crate::source::Span::INVALID
-    }
-
-    /// A span of a harvest's own unit, which is left implicit
-    pub(crate) mod local_span {
-        use serde::{Deserializer, Serializer};
-
-        use crate::typeck::{elab::local, r#type::UnitSpan};
-
-        pub(crate) fn serialize<S: Serializer>(span: &UnitSpan, s: S) -> Result<S::Ok, S::Error> {
-            debug_assert_eq!(span.unit, local(), "a harvest refers to its own unit");
-            super::span::serialize(&span.span, s)
-        }
-
-        pub(crate) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<UnitSpan, D::Error> {
-            Ok(UnitSpan {
-                unit: local(),
-                span: super::span::deserialize(d)?,
-            })
-        }
-    }
-
-    pub(crate) mod rest_kind {
-        use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
-
-        use crate::RestKind;
-
-        pub(crate) fn serialize<S: Serializer>(kind: &RestKind, s: S) -> Result<S::Ok, S::Error> {
-            let tag: u8 = match kind {
-                RestKind::Mixed => 0,
-                RestKind::Pos => 1,
-                RestKind::Key => 2,
-            };
-            tag.serialize(s)
-        }
-
-        pub(crate) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<RestKind, D::Error> {
-            match u8::deserialize(d)? {
-                0 => Ok(RestKind::Mixed),
-                1 => Ok(RestKind::Pos),
-                2 => Ok(RestKind::Key),
-                _ => Err(D::Error::custom("unknown rest kind")),
-            }
-        }
     }
 }

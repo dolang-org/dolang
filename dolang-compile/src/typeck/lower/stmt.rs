@@ -701,9 +701,7 @@ impl<'u> Scope<'_, '_, 'u> {
             .tables
             .written(self.lower.unit, test.class.ident.span)
         {
-            Some(Referent::Decl(decl))
-                if self.lower.tables.decls[decl.index()].kind == DeclKind::Class =>
-            {
+            Some(Referent::Decl(decl)) if self.lower.tables.decl(*decl).kind == DeclKind::Class => {
                 Some(*decl)
             }
             _ => None,
@@ -1682,7 +1680,7 @@ impl<'u> Scope<'_, '_, 'u> {
     /// it's lifted over an enclosing declaration's binders, which its value would
     /// need applied. Decorators replace the value, so their caller leaves it out.
     fn declared(&self, decl: DeclId, value: impl FnOnce() -> TypeId) -> Option<TypeId> {
-        let lifted = self.lower.tables.lifted.get(&decl);
+        let lifted = self.lower.tables.lifted(decl);
         lifted.is_none_or(|lifted| lifted.is_empty()).then(value)
     }
 

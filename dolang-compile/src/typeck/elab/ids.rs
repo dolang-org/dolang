@@ -1,21 +1,26 @@
-//! The IDs a harvest holds, of its unit, declarations, sites, strings, links and
-//! modules. They are
-//! visited in place: to move a harvest to where it is linked, to cut one down to its
-//! surface for a typelib, and to check one read from a typelib.
+//! The IDs a shard and its facts hold, of its unit, declarations, sites, strings,
+//! links and modules. They are visited in place: to move a shard to where it is
+//! linked, and to check one read from a typelib.
+
+use std::{hash::Hash, mem};
+
+use rustc_hash::FxHashMap;
 
 use super::{
-    BinderRef, Decl, DeclNode, Export, Harvest, Link, Module, Referent, Role, Site, Target, Value,
-    interface::Kept,
-    local,
+    Ambient, BinderRef, Decl, DeclNode, Export, Facts, Head, KindOf, Link, Module, ParamTy,
+    Referent, RestSlot, Role, Shard, Sig, Site, Slot, Target, Value, local,
     surface::{
         Binder, Class, ConstLit, Decorator, LinkId, Member, ModuleId, Name, Param, ParamKind, Ref,
         Signature, SiteId, StrId, Super, Symbol, TypeArg, TypeArgKind, TypeExpr, TypeKey,
         TypeParam,
     },
 };
-use crate::typeck::r#type::{DeclId, DeclKind, UnitId};
+use crate::{
+    source::Span,
+    typeck::r#type::{DeclId, UnitId, Variance},
+};
 
-/// What is done with each ID a harvest holds
+/// What is done with each ID a shard holds
 pub(crate) trait Ids {
     fn unit(&mut self, unit: &mut UnitId);
     fn decl(&mut self, decl: &mut DeclId);
@@ -25,8 +30,9 @@ pub(crate) trait Ids {
     fn module(&mut self, module: &mut ModuleId);
 }
 
-impl Harvest<'_> {
-    /// Visit every ID the harvest holds.
+impl Shard<'_> {
+    /// Visit every ID collection fills the shard with. What linking fills is empty
+    /// until then.
     pub(crate) fn visit_ids(&mut self, ids: &mut impl Ids) {
         self.decls.visit(ids);
         self.sites.visit(ids);
@@ -37,209 +43,40 @@ impl Harvest<'_> {
         self.exports.visit(ids);
         self.values.visit(ids);
         self.modules.visit(ids);
-    }
-
-    /// The harvest cut down to its surface: what a unit that imports it can see.
-    ///
-    /// The surface keeps what [`Harvest::interface`] says it does. Closures are left
-    /// out, along with everything declared within a def, method or closure, and the
-    /// sites, strings and links only they hold. A decorator naming a declaration left
-    /// out names nothing. The whole module table is kept, since a unit reports each
-    /// module it imports.
-    pub(crate) fn surface(mut self, kept: &Kept) -> Self {
-        let decls = &kept.decls;
-        for (index, decl) in self.decls.iter_mut().enumerate() {
-            let DeclNode::Class(class) = &mut decl.node else {
-                continue;
-            };
-            let class_id = DeclId::from_index(index);
-            let mut member = 0;
-            class.members.retain(|item| {
-                member += 1;
-                match item {
-                    Member::Field(_) => !kept.fields.contains(&(class_id, member - 1)),
-                    Member::Method { decl, .. } => decls[decl.index()],
-                }
-            });
+        for (module, item) in self.nominations.iter_mut().flatten() {
+            ids.str(module);
+            ids.str(item);
         }
-
-        let dropped = |target: &Target| match target {
-            Target::Local(Referent::Decl(decl)) => !decls[decl.index()],
-            _ => false,
-        };
-        for (decl, _) in self.decls.iter_mut().zip(decls).filter(|(_, keep)| **keep) {
-            let decorators: Vec<_> = match &mut decl.node {
-                DeclNode::Class(class) => class.decorators.iter_mut().collect(),
-                DeclNode::Methods(methods) => methods
-                    .iter_mut()
-                    .flat_map(|method| &mut method.decorators)
-                    .collect(),
-                DeclNode::Alias(_) | DeclNode::Defs(_) | DeclNode::Closure(_) => continue,
-            };
-            for decorator in decorators {
-                if let Decorator::Ident(name) = decorator
-                    && name
-                        .link
-                        .is_some_and(|link| dropped(&self.links[link.index()].base))
-                {
-                    name.link = None;
-                }
-            }
-        }
-
-        let mut used = Used {
-            sites: vec![false; self.sites.len()],
-            strs: vec![false; self.strings.len()],
-            links: vec![false; self.links.len()],
-        };
-        for (decl, _) in self.decls.iter_mut().zip(decls).filter(|(_, keep)| **keep) {
-            decl.visit(&mut used);
-        }
-        // Exported variables are on the surface, whether annotated or not
-        self.values.visit(&mut used);
-        for (site, _) in self
-            .sites
-            .iter_mut()
-            .zip(used.sites.clone())
-            .filter(|(_, keep)| *keep)
-        {
-            site.ty.visit(&mut used);
-        }
-        for (link, _) in self
-            .links
-            .iter_mut()
-            .zip(used.links.clone())
-            .filter(|(_, keep)| *keep)
-        {
-            link.visit(&mut used);
-        }
-        self.exports.visit(&mut used);
-        self.modules.visit(&mut used);
-
-        let mut renumber = Renumber {
-            decls: numbering(decls, DeclId::from_index),
-            sites: numbering(&used.sites, SiteId::from_index),
-            strs: numbering(&used.strs, StrId::from_index),
-            links: numbering(&used.links, LinkId::from_index),
-        };
-        let targets = self
-            .links
-            .iter_mut()
-            .zip(&used.links)
-            .filter(|(_, keep)| **keep)
-            .map(|(link, _)| &mut link.base)
-            .chain(self.exports.iter_mut().map(|export| &mut export.target));
-        for target in targets {
-            let Target::Local(referent) = target else {
-                continue;
-            };
-            let (decl, binder) = match referent {
-                Referent::Decl(decl) => (*decl, false),
-                Referent::Binder(binder) => (binder.decl, true),
-                _ => continue,
-            };
-            // A name the surface reads cannot reach into a body, nor name a type it
-            // leaves out. Any other declaration it names is not a type, as is
-            // diagnosed.
-            if renumber.decls[decl.index()].is_none() {
-                let kind = self.decls[decl.index()].kind;
-                debug_assert!(
-                    !binder && !(kind.nominal() || kind == DeclKind::Alias),
-                    "the surface names a type it leaves out"
-                );
-                *referent = Referent::Error;
-            }
-        }
-        self.decls = retain(self.decls, decls);
-        self.sites = retain(self.sites, &used.sites);
-        self.strings = retain(self.strings, &used.strs);
-        self.links = retain(self.links, &used.links);
-        // A typelib has no syntax to look a name up in
-        self.refs.clear();
-        self.visit_ids(&mut renumber);
-        self
     }
 }
 
-/// The new ID of each item kept, in order
-fn numbering<T>(keep: &[bool], id: impl Fn(usize) -> T) -> Vec<Option<T>> {
-    let mut next = 0;
-    keep.iter()
-        .map(|&keep| {
-            keep.then(|| {
-                next += 1;
-                id(next - 1)
-            })
-        })
-        .collect()
+impl Facts {
+    /// Visit every ID the facts hold.
+    pub(crate) fn visit_ids(&mut self, ids: &mut impl Ids) {
+        let Facts {
+            aliases,
+            binder_kinds,
+            alias_kinds,
+            sigs,
+            fields,
+            variance,
+            captured,
+            lifted,
+            groups,
+        } = self;
+        aliases.visit(ids);
+        binder_kinds.visit(ids);
+        alias_kinds.visit(ids);
+        sigs.visit(ids);
+        fields.visit(ids);
+        variance.visit(ids);
+        captured.visit(ids);
+        lifted.visit(ids);
+        groups.visit(ids);
+    }
 }
 
-fn retain<T>(items: Vec<T>, keep: &[bool]) -> Vec<T> {
-    items
-        .into_iter()
-        .zip(keep)
-        .filter_map(|(item, &keep)| keep.then_some(item))
-        .collect()
-}
-
-/// Finds the sites, strings and links a harvest's surface uses
-struct Used {
-    sites: Vec<bool>,
-    strs: Vec<bool>,
-    links: Vec<bool>,
-}
-
-impl Ids for Used {
-    fn unit(&mut self, _: &mut UnitId) {}
-
-    fn decl(&mut self, _: &mut DeclId) {}
-
-    fn site(&mut self, site: &mut SiteId) {
-        self.sites[site.index()] = true;
-    }
-
-    fn str(&mut self, id: &mut StrId) {
-        self.strs[id.index()] = true;
-    }
-
-    fn link(&mut self, link: &mut LinkId) {
-        self.links[link.index()] = true;
-    }
-
-    fn module(&mut self, _: &mut ModuleId) {}
-}
-
-/// Renumbers the IDs of a harvest cut down to its surface
-struct Renumber {
-    decls: Vec<Option<DeclId>>,
-    sites: Vec<Option<SiteId>>,
-    strs: Vec<Option<StrId>>,
-    links: Vec<Option<LinkId>>,
-}
-
-impl Ids for Renumber {
-    fn unit(&mut self, _: &mut UnitId) {}
-
-    fn decl(&mut self, decl: &mut DeclId) {
-        *decl = self.decls[decl.index()].expect("the surface keeps what it refers to");
-    }
-
-    fn site(&mut self, site: &mut SiteId) {
-        *site = self.sites[site.index()].expect("the surface keeps what it refers to");
-    }
-
-    fn str(&mut self, id: &mut StrId) {
-        *id = self.strs[id.index()].expect("the surface keeps what it refers to");
-    }
-
-    fn link(&mut self, link: &mut LinkId) {
-        *link = self.links[link.index()].expect("the surface keeps what it refers to");
-    }
-
-    fn module(&mut self, _: &mut ModuleId) {}
-}
-
-/// Moves a harvest's local unit, declarations, sites and links to where it is
+/// Moves a shard's local unit, declarations, sites and links to where it is
 /// linked. Strings and modules stay its own.
 pub(crate) struct Rebase {
     pub(crate) unit: UnitId,
@@ -253,7 +90,7 @@ pub(crate) struct Rebase {
 
 impl Ids for Rebase {
     fn unit(&mut self, unit: &mut UnitId) {
-        debug_assert_eq!(*unit, local(), "a harvest refers to its own unit");
+        debug_assert_eq!(*unit, local(), "a shard refers to its own unit");
         *unit = self.unit;
     }
 
@@ -298,6 +135,91 @@ impl<T: Visit> Visit for Option<T> {
 impl<T: Visit> Visit for Box<T> {
     fn visit(&mut self, ids: &mut impl Ids) {
         (**self).visit(ids);
+    }
+}
+
+/// A map whose keys may hold IDs, rebuilt with its keys visited
+impl<K: Visit + Eq + Hash, V: Visit> Visit for FxHashMap<K, V> {
+    fn visit(&mut self, ids: &mut impl Ids) {
+        *self = mem::take(self)
+            .into_iter()
+            .map(|(mut key, mut value)| {
+                key.visit(ids);
+                value.visit(ids);
+                (key, value)
+            })
+            .collect();
+    }
+}
+
+impl Visit for (DeclId, Span) {
+    fn visit(&mut self, ids: &mut impl Ids) {
+        ids.decl(&mut self.0);
+    }
+}
+
+impl Visit for (DeclId, BinderRef) {
+    fn visit(&mut self, ids: &mut impl Ids) {
+        ids.decl(&mut self.0);
+        self.1.visit(ids);
+    }
+}
+
+/// Something that holds no IDs
+macro_rules! no_ids {
+    ($($ty:ty),*) => {
+        $(impl Visit for $ty {
+            fn visit(&mut self, _: &mut impl Ids) {}
+        })*
+    };
+}
+
+no_ids!(KindOf, Variance);
+
+impl Visit for Head {
+    fn visit(&mut self, ids: &mut impl Ids) {
+        match self {
+            Head::Decl(decl) => decl.visit(ids),
+            Head::Binder(binder) => binder.visit(ids),
+            Head::Structural | Head::Error => {}
+        }
+    }
+}
+
+impl Visit for Slot {
+    fn visit(&mut self, ids: &mut impl Ids) {
+        match self {
+            Slot::Annot(site) => site.visit(ids),
+            Slot::Unknown | Slot::SelfType | Slot::ObjectType | Slot::Nil => {}
+        }
+    }
+}
+
+impl Visit for ParamTy {
+    fn visit(&mut self, ids: &mut impl Ids) {
+        match self {
+            ParamTy::Single(slot) | ParamTy::Rest(RestSlot::Items(_, slot)) => slot.visit(ids),
+            ParamTy::Rest(RestSlot::Pack(site) | RestSlot::Pattern(site)) => site.visit(ids),
+        }
+    }
+}
+
+impl Visit for Ambient {
+    fn visit(&mut self, ids: &mut impl Ids) {
+        match self {
+            Ambient::Implicit(binder) => binder.visit(ids),
+            Ambient::Of(decl, _) => ids.decl(decl),
+            Ambient::Written | Ambient::Value => {}
+        }
+    }
+}
+
+impl Visit for Sig {
+    fn visit(&mut self, ids: &mut impl Ids) {
+        self.params.visit(ids);
+        self.input.visit(ids);
+        self.output.visit(ids);
+        self.ret.visit(ids);
     }
 }
 

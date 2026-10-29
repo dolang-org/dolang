@@ -262,9 +262,7 @@ impl Flow<'_, '_> {
                     if decl == class {
                         return true;
                     }
-                    at = self.tables.decls[decl.index()]
-                        .outer
-                        .map(|(outer, _)| outer);
+                    at = self.tables.decl(decl).outer.map(|(outer, _)| outer);
                 }
             }
             func = data.parent;

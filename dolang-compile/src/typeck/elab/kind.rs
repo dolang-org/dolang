@@ -32,8 +32,7 @@ use crate::{
 /// against the kind its use requires.
 pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
     let mut infer = Infer::default();
-    for index in 0..tables.decls.len() {
-        let decl = DeclId::from_index(index);
+    for decl in tables.decl_ids() {
         for sig in 0..tables.sig_count(decl) {
             for (slot, binder) in tables.binders(decl, sig).iter().enumerate() {
                 let fixed = match binder.kind {
@@ -44,7 +43,7 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
                 infer.var(Var::Binder(BinderRef { decl, sig, slot }), fixed);
             }
         }
-        match tables.decls[index].kind {
+        match tables.decl(decl).kind {
             DeclKind::Alias => infer.var(Var::Alias(decl), None),
             DeclKind::OpaqueAlias => {
                 let kind = match sig::designation(tables, decl) {
@@ -67,8 +66,7 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
 
     // A positional binder takes its bound's kind, and an alias its body's. A variadic
     // binder's bound is either kind, bounding each item or the whole pack.
-    for index in 0..tables.decls.len() {
-        let decl = DeclId::from_index(index);
+    for decl in tables.decl_ids() {
         for sig in 0..tables.sig_count(decl) {
             for (slot, binder) in tables.binders(decl, sig).iter().enumerate() {
                 if let (BinderKind::Pos, Some(bound)) = (binder.kind, binder.bound) {
@@ -77,11 +75,11 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
                 }
             }
         }
-        if let DeclNode::Alias(alias) = &tables.decls[index].node
+        if let DeclNode::Alias(alias) = &tables.decl(decl).node
             && let Some(body) = alias.body
         {
             // An alias on a cycle has an erroneous head, already diagnosed
-            let term = match tables.aliases.get(&decl) {
+            let term = match tables.alias(decl) {
                 Some(Head::Error) => Term::Flexible,
                 _ => infer.synth(tables, tables.site_ty(body)),
             };
@@ -101,8 +99,11 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
             flexible: value.kind.is_none() && value.flexible,
         };
         match var {
-            Var::Binder(binder) => tables.binder_kinds.insert(binder, kind),
-            Var::Alias(decl) => tables.alias_kinds.insert(decl, kind),
+            Var::Binder(binder) => tables
+                .facts_mut(binder.decl)
+                .binder_kinds
+                .insert(binder, kind),
+            Var::Alias(decl) => tables.facts_mut(decl).alias_kinds.insert(decl, kind),
         };
     }
 
@@ -112,11 +113,11 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
         packs: None,
         diags,
     };
-    for site in &check.tables.sites {
+    for (_, site) in check.tables.sites() {
         check.site(site);
     }
-    for index in 0..check.tables.decls.len() {
-        let decl = &check.tables.decls[index];
+    for id in check.tables.decl_ids() {
+        let decl = check.tables.decl(id);
         if let DeclNode::Class(class) = &decl.node {
             check.unit = decl.unit;
             for super_ref in &class.supers {
@@ -204,7 +205,7 @@ impl Infer {
         match ty {
             TypeExpr::Group { ty, .. } => self.synth(tables, ty),
             TypeExpr::Name(head) => match tables.linked(head.link) {
-                Some(Referent::Decl(decl)) => match tables.decls[decl.index()].kind {
+                Some(Referent::Decl(decl)) => match tables.decl(*decl).kind {
                     DeclKind::Class | DeclKind::Protocol => Term::Known(Kind::Type),
                     DeclKind::Alias | DeclKind::OpaqueAlias => {
                         Term::Var(self.vars[&Var::Alias(*decl)])
@@ -223,7 +224,7 @@ impl Infer {
                     if matches!(
                         tables.linked(head.link),
                         Some(Referent::Decl(decl)) if matches!(
-                            tables.decls[decl.index()].kind,
+                            tables.decl(*decl).kind,
                             DeclKind::Alias | DeclKind::OpaqueAlias
                         )
                     ) =>
@@ -286,7 +287,12 @@ impl<'t> Check<'_, 't, '_> {
                 {
                     // A variadic binder's bound may bound each item or the whole pack
                     BinderKind::Rest(_) if matches!(site.role, Role::Bound(_)) => None,
-                    _ => Some(self.tables.binder_kinds[&binder].kind),
+                    _ => Some(
+                        self.tables
+                            .binder_kind(binder)
+                            .expect("every binder has a kind")
+                            .kind,
+                    ),
                 };
                 self.check(&site.ty, expected)
             }
@@ -311,14 +317,16 @@ impl<'t> Check<'_, 't, '_> {
         };
         match referent {
             Referent::Decl(decl) => {
-                let owner = &tables.decls[decl.index()];
+                let owner = tables.decl(*decl);
                 let name = owner.name_span().expect("a type declaration is named");
                 let kind = match owner.kind {
                     DeclKind::Class | DeclKind::Protocol => KindOf {
                         kind: Kind::Type,
                         flexible: false,
                     },
-                    DeclKind::Alias | DeclKind::OpaqueAlias => tables.alias_kinds[decl],
+                    DeclKind::Alias | DeclKind::OpaqueAlias => {
+                        tables.alias_kind(*decl).expect("every alias has a kind")
+                    }
                     DeclKind::Function | DeclKind::Closure | DeclKind::Annotation => {
                         return Named::NotAType;
                     }
@@ -326,9 +334,15 @@ impl<'t> Check<'_, 't, '_> {
                 Named::Generic(kind, owner.unit, name, *decl, tables.binders(*decl, 0))
             }
             Referent::Binder(binder) => {
-                let unit = tables.decls[binder.decl.index()].unit;
+                let unit = tables.decl(binder.decl).unit;
                 let name = tables.binders(binder.decl, binder.sig)[binder.slot].name;
-                Named::Kind(tables.binder_kinds[binder], unit, name.span)
+                Named::Kind(
+                    tables
+                        .binder_kind(*binder)
+                        .expect("every binder has a kind"),
+                    unit,
+                    name.span,
+                )
             }
             Referent::Module(_) | Referent::Value(_) => Named::NotAType,
             Referent::Error => Named::Unknown,
@@ -410,7 +424,7 @@ impl<'t> Check<'_, 't, '_> {
                         match named {
                             Named::Generic(kind, _, _, decl, binders)
                                 if matches!(
-                                    self.tables.decls[decl.index()].kind,
+                                    self.tables.decl(decl).kind,
                                     DeclKind::Alias | DeclKind::OpaqueAlias
                                 ) =>
                             {
@@ -525,9 +539,12 @@ impl<'t> Check<'_, 't, '_> {
         let mut reported = false;
         for (arg, fill) in args.iter().zip(tables.fill(self.unit, decl, args)) {
             let expected = match fill {
-                Fill::Binder(slot) => {
-                    Some(tables.binder_kinds[&BinderRef { decl, sig: 0, slot }].kind)
-                }
+                Fill::Binder(slot) => Some(
+                    tables
+                        .binder_kind(BinderRef { decl, sig: 0, slot })
+                        .expect("every binder has a kind")
+                        .kind,
+                ),
                 Fill::Item(_) => Some(Kind::Type),
                 Fill::Expand(_) | Fill::Unknown => None,
                 Fill::Excess => {
@@ -582,7 +599,9 @@ impl Tables<'_> {
             .enumerate()
             .filter(|(_, binder)| binder.kind != BinderKind::Key);
         let (slot, binder) = positional.next()?;
-        let kind = self.binder_kinds[&BinderRef { decl, sig: 0, slot }];
+        let kind = self
+            .binder_kind(BinderRef { decl, sig: 0, slot })
+            .expect("every binder has a kind");
         (positional.next().is_none()
             && binder.kind == BinderKind::Pos
             && kind.kind == Kind::Schema
@@ -595,7 +614,7 @@ impl Tables<'_> {
     /// arguments by name, with the [shorthand](Self::shorthand) for a schema.
     pub(crate) fn fill(&self, unit: UnitId, decl: DeclId, args: &[TypeArg]) -> Vec<Fill> {
         let binders = self.binders(decl, 0);
-        let owner = self.decls[decl.index()].unit;
+        let owner = self.decl(decl).unit;
         let keyword = |name| {
             let text = self.name(unit, name);
             binders.iter().position(|binder| {
@@ -689,12 +708,16 @@ impl Tables<'_> {
         match ty {
             TypeExpr::Group { ty, .. } => self.kind_of(ty),
             TypeExpr::Name(head) => match self.linked(head.link)? {
-                Referent::Decl(decl) => match self.decls[decl.index()].kind {
+                Referent::Decl(decl) => match self.decl(*decl).kind {
                     DeclKind::Class | DeclKind::Protocol => Some(Kind::Type),
-                    DeclKind::Alias | DeclKind::OpaqueAlias => known(&self.alias_kinds[decl]),
+                    DeclKind::Alias | DeclKind::OpaqueAlias => {
+                        known(&self.alias_kind(*decl).expect("every alias has a kind"))
+                    }
                     DeclKind::Function | DeclKind::Closure | DeclKind::Annotation => None,
                 },
-                Referent::Binder(binder) => known(&self.binder_kinds[binder]),
+                Referent::Binder(binder) => {
+                    known(&self.binder_kind(*binder).expect("every binder has a kind"))
+                }
                 _ => None,
             },
             // An application of an alias has its kind
@@ -703,7 +726,7 @@ impl Tables<'_> {
                     if matches!(
                         self.linked(head.link),
                         Some(Referent::Decl(decl)) if matches!(
-                            self.decls[decl.index()].kind,
+                            self.decl(*decl).kind,
                             DeclKind::Alias | DeclKind::OpaqueAlias
                         )
                     ) =>

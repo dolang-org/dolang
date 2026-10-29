@@ -42,10 +42,20 @@ pub struct Bundle<'a> {
     pub name_mode: NameMode,
     /// The output for bytecode.
     pub bytecode: Option<&'a str>,
-    /// The output for typelibs, which requires `CompileMode::Module`. Every
-    /// selected source has one, written from a check of them all, which must
-    /// report nothing. Each module a typelib imports must be bundled too.
-    pub typelibs: Option<&'a str>,
+    /// The typelibs, which require `CompileMode::Module`. Every selected source
+    /// has one, written from a check of them all, which must report nothing.
+    /// Each module a typelib imports must be bundled too.
+    pub typelibs: Option<Typelibs<'a>>,
+}
+
+/// Where to write typelibs, and what their check assumes
+pub struct Typelibs<'a> {
+    /// The output
+    pub name: &'a str,
+    /// The pipe types the check nominates, sender then receiver, each by module
+    /// and item (see `typeck::Builder::pipes`). The checks that read the typelibs
+    /// must nominate the same.
+    pub pipes: [(&'a str, &'a str); 2],
 }
 
 fn walk_dol_files(dir: &Path, files: &mut Vec<PathBuf>) {
@@ -121,9 +131,10 @@ pub fn bundle(spec: &Bundle<'_>) {
     let bytecode_out = spec
         .bytecode
         .map(|name| Output::new(spec.out_dir, name, bytecode_namespace));
-    let typelib_out = spec
-        .typelibs
-        .map(|name| Output::new(spec.out_dir, name, "dolang.typelib"));
+    let typelib_out = (spec.typelibs.as_ref()).map(|typelibs| {
+        let out = Output::new(spec.out_dir, typelibs.name, "dolang.typelib");
+        (out, typelibs.pipes)
+    });
     let mut table = fs::File::create(spec.out_dir.join("resources.rs")).unwrap();
     writeln!(table, "&[").unwrap();
 
@@ -198,13 +209,10 @@ pub fn bundle(spec: &Bundle<'_>) {
     }
 
     // The modules are checked together, and each one's typelib written from the
-    // check. The shell's pipelines connect stages with `proc`'s pipes, as the
-    // checks that read the typelibs have them.
-    if let Some(out) = &typelib_out {
+    // check
+    if let Some((out, [sender, receiver])) = &typelib_out {
         let mut builder = typeck::Builder::new();
-        builder
-            .typelibs(true)
-            .pipes(("proc", "PipeSender"), ("proc", "PipeReceiver"));
+        builder.typelibs(true).pipes(*sender, *receiver);
         let ids: Vec<_> = units
             .iter()
             .map(|unit| builder.unit(unit).unwrap())

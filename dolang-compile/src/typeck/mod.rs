@@ -42,9 +42,9 @@ pub use r#type::Style;
 /// are not checked. A typelib is read only by the version of the checker that wrote
 /// it.
 pub struct Typelib<'a> {
-    harvest: elab::Harvest<'a>,
-    /// The modules the module imports, each once, in order
-    imports: Vec<&'a str>,
+    shard: elab::Shard<'a>,
+    /// What the typelib records of elaboration's conclusions
+    facts: elab::Facts,
 }
 
 impl<'a> Typelib<'a> {
@@ -57,32 +57,40 @@ impl<'a> Typelib<'a> {
     /// | [`ErrorKind::Typelib`](crate::ErrorKind::Typelib) | The bytes are not a typelib this version of the checker reads |
     pub fn read(bytes: &'a [u8]) -> Result<Self, Error> {
         typelib::read(bytes)
-            .map(|(harvest, imports)| Self { harvest, imports })
+            .map(|(shard, facts)| Self { shard, facts })
             .map_err(|invalid| Error(ErrorInfo::Typelib(invalid)))
     }
 
     /// The module's name.
     pub fn module(&self) -> &'a str {
-        self.harvest.info.module.expect("a typelib is a module's")
+        self.shard.info.module.expect("a typelib is a module's")
     }
 
     /// The path of the module's source when the typelib was written, which locates
     /// its diagnostics.
     pub fn path(&self) -> &'a Path {
-        self.harvest.info.path
+        self.shard.info.path
     }
 
     /// The modules the module imports, each once, in order. A check finds them
     /// among its units, and reports a module it doesn't have as not found.
     pub fn imports(&self) -> Vec<&'a str> {
-        self.imports.clone()
+        let strings = &self.shard.strings;
+        let mut imports: Vec<&'a str> = (self.shard.modules.iter())
+            .map(|module| match &strings[module.name.index()] {
+                Cow::Borrowed(name) => *name,
+                Cow::Owned(_) => unreachable!("a typelib's strings borrow its bytes"),
+            })
+            .collect();
+        imports.sort_unstable();
+        imports
     }
 }
 
 /// A unit to check
 enum Input<'u, 's> {
     Source(&'u Unit<'s>),
-    Typelib(Box<elab::Harvest<'u>>),
+    Typelib(Box<(elab::Shard<'u>, elab::Facts)>),
 }
 
 /// Collects the units to check together.
@@ -137,7 +145,7 @@ impl<'u, 's> Builder<'u, 's> {
         self
     }
 
-    /// Have the check keep the surface of each module it checks from source, which
+    /// Have the check keep the typelib of each module it checks from source, which
     /// [`Check::typelib`] writes. Defaults to off, which costs nothing.
     pub fn typelibs(&mut self, enabled: bool) -> &mut Self {
         self.typelibs = enabled;
@@ -151,7 +159,18 @@ impl<'u, 's> Builder<'u, 's> {
     /// Each placeholder becomes an alias of its nominee applied to the
     /// placeholder's type arguments. A nominee whose module is not checked leaves
     /// the placeholder dynamic. Defaults to `strand.Sender` and `strand.Receiver`.
+    ///
+    /// A typelib whose module is or imports `strand` records the nominations of the
+    /// check that wrote it, which only a check nominating the same types loads.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a typelib was already added; nominate the pipes first.
     pub fn pipes(&mut self, sender: (&'u str, &'u str), receiver: (&'u str, &'u str)) -> &mut Self {
+        assert!(
+            !(self.units.iter()).any(|unit| matches!(unit, Input::Typelib(_))),
+            "pipes are nominated before typelibs are added"
+        );
         self.pipes = [sender, receiver];
         self
     }
@@ -185,7 +204,8 @@ impl<'u, 's> Builder<'u, 's> {
     /// number of checks.
     ///
     /// Its types' well-formedness and its classes' conformance to their
-    /// supertypes are not checked; that was done with its source.
+    /// supertypes are not checked; that was done with its source. Its binders'
+    /// variance is taken as the typelib records it.
     ///
     /// Diagnostics may locate spans of the module, by line and column; it has no
     /// source to show.
@@ -195,10 +215,20 @@ impl<'u, 's> Builder<'u, 's> {
     /// | Kind | Condition |
     /// | ---- | --------- |
     /// | [`ErrorKind::DuplicateModule`](crate::ErrorKind::DuplicateModule) | A module of the same name was already added |
+    /// | [`ErrorKind::Pipes`](crate::ErrorKind::Pipes) | The typelib was written by a check that nominated other pipes (see [`Builder::pipes`]) |
     pub fn typelib(&mut self, typelib: &Typelib<'u>) -> Result<UnitId, Error> {
+        let shard = &typelib.shard;
+        if let Some(nominations) = shard.nominations {
+            let text = |id: elab::surface::StrId| &*shard.strings[id.index()];
+            if nominations.map(|(module, item)| (text(module), text(item))) != self.pipes {
+                return Err(Error(ErrorInfo::Pipes(typelib.module().to_owned())));
+            }
+        }
         self.module(typelib.module())?;
-        self.units
-            .push(Input::Typelib(Box::new(typelib.harvest.clone())));
+        self.units.push(Input::Typelib(Box::new((
+            typelib.shard.clone(),
+            typelib.facts.clone(),
+        ))));
         Ok(UnitId::from_index(self.units.len() - 1))
     }
 
@@ -232,29 +262,30 @@ impl<'u, 's> Builder<'u, 's> {
                 "units are allocated in order"
             );
         }
-        let harvests: Vec<elab::Harvest<'u>> = self
+        let units: Vec<(elab::Shard<'u>, elab::Facts)> = self
             .units
             .into_iter()
             .map(|input| match input {
-                Input::Source(unit) => elab::harvest(unit),
-                Input::Typelib(harvest) => *harvest,
+                Input::Source(unit) => (elab::collect(unit), elab::Facts::default()),
+                Input::Typelib(typelib) => *typelib,
             })
             .collect();
-        let mut order: Vec<UnitId> = (0..harvests.len()).map(UnitId::from_index).collect();
+        let mut order: Vec<UnitId> = (0..units.len()).map(UnitId::from_index).collect();
         order.sort_by_key(|id| {
-            let info = &harvests[id.index()].info;
+            let info = &units[id.index()].0.info;
             match info.module {
                 Some(name) => (0, name, None),
                 None => (1, "", Some(info.path)),
             }
         });
-        let typelibs = self.typelibs.then(|| surfaces(&harvests));
-        let (mut tables, mut diags) = elab::link(&mut db, harvests, &order, self.pipes);
+        let (mut tables, mut diags) = elab::link(&mut db, units, &order, self.pipes);
+        elab::aliases(&mut tables, &mut diags);
         elab::kinds(&mut tables, &mut diags);
         elab::signatures(&mut tables, &mut diags);
         elab::captures(&mut tables);
         elab::variances(&mut tables);
         elab::populate(&mut db, &mut tables, &mut diags);
+        let typelibs = self.typelibs.then(|| typelibs(&tables, self.pipes));
         db.seal();
         elab::specialize(&mut db, &tables, &mut diags);
         let mut recursion = Vec::new();
@@ -303,10 +334,10 @@ impl<'u, 's> Builder<'u, 's> {
         let elaborated: Vec<_> = {
             let from = r#type::Database::fork(&shared);
             let mut copier = results.copier(&from, &mut copies);
-            (0..tables.units.len())
+            (0..tables.shards.len())
                 .map(|index| {
                     let unit = UnitId::from_index(index);
-                    match self.analysis && tables.units[index].source.is_some() {
+                    match self.analysis && tables.info(unit).source.is_some() {
                         true => tables.entries(&from, &mut copier, unit),
                         false => Vec::new(),
                     }
@@ -373,21 +404,21 @@ impl<'u, 's> Builder<'u, 's> {
         if let Some(analysis) = &analysis {
             trace::elab(analysis, &tables);
         }
-        undecided::report(&tables.units, &unresolved, &mut diags);
+        undecided::report(&tables, &unresolved, &mut diags);
         let check = Check {
             cfgs,
             layers,
             flows,
             diagnostics: diags
                 .iter()
-                .map(|(unit, diag)| diag.resolve(*unit, &tables.units[unit.index()]))
+                .map(|(unit, diag)| diag.resolve(*unit, tables.info(*unit)))
                 .collect(),
             units: tables
-                .units
+                .shards
                 .iter()
-                .map(|info| Located {
-                    name: info.name(),
-                    path: info.path.to_owned(),
+                .map(|shard| Located {
+                    name: shard.info.name(),
+                    path: shard.info.path.to_owned(),
                 })
                 .collect(),
             site_kinds: tables.site_kinds().collect(),
@@ -398,7 +429,7 @@ impl<'u, 's> Builder<'u, 's> {
                 .iter()
                 .map(|unresolved| {
                     let unit = unresolved.span.unit;
-                    let info = &tables.units[unit.index()];
+                    let info = tables.info(unit);
                     (
                         format!("{:?}", unresolved.residual),
                         report::resolve_span(unit, info, unresolved.span.span),
@@ -418,39 +449,75 @@ enum Unwritten {
     NotModule,
     /// The module imports this module, which wasn't checked with it
     MissingImport(String),
+    /// The module's facts depend on the pipes, and this module of a nominated
+    /// pipe type wasn't checked with it
+    MissingNominee(String),
     /// The module's interface names a private declaration
     NotExportable,
 }
 
-/// What each unit's typelib is written from, or why it has none: the surface of
-/// each module checked from source, all of whose imports are checked with it
-fn surfaces(harvests: &[elab::Harvest<'_>]) -> Vec<Result<typelib::Surface, Unwritten>> {
-    let modules: FxHashSet<&str> = harvests
-        .iter()
-        .filter_map(|harvest| harvest.info.module)
-        .collect();
-    harvests
-        .iter()
-        .map(|harvest| {
-            if harvest.info.source.is_none() {
+/// Each unit's typelib, or why it has none: the surface of each module checked
+/// from source, all of whose imports are checked with it
+fn typelibs(
+    tables: &elab::Tables<'_>,
+    pipes: [(&str, &str); 2],
+) -> Vec<Result<Vec<u8>, Unwritten>> {
+    // The units whose facts can depend on the pipes: the one declaring the
+    // placeholders, and those importing it, directly or not
+    let mut depends = vec![false; tables.shards.len()];
+    if let Some(&placeholder) = tables.pipes.keys().next() {
+        depends[tables.unit_of(placeholder).index()] = true;
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for (index, shard) in tables.shards.iter().enumerate() {
+                if !depends[index]
+                    && (shard.providers.iter())
+                        .flatten()
+                        .any(|p| depends[p.index()])
+                {
+                    depends[index] = true;
+                    changed = true;
+                }
+            }
+        }
+    }
+    // A nominee's module that isn't checked leaves its placeholder dynamic, which
+    // the facts would assume as a missing import's interface would be assumed
+    let unchecked = pipes.into_iter().find(|&(module, _)| {
+        !(tables.shards.iter()).any(|shard| shard.info.module == Some(module))
+    });
+    (tables.shards.iter().enumerate())
+        .map(|(index, shard)| {
+            if shard.info.source.is_none() {
                 return Err(Unwritten::NoSource);
             }
-            if harvest.info.module.is_none() {
+            if shard.info.module.is_none() {
                 return Err(Unwritten::NotModule);
             }
-            let missing = harvest
-                .modules
-                .iter()
-                .map(|module| &*harvest.strings[module.name.index()])
-                .find(|name| !modules.contains(name));
-            if let Some(name) = missing {
-                return Err(Unwritten::MissingImport(name.to_owned()));
+            let missing = (shard.modules.iter())
+                .zip(&shard.providers)
+                .find(|(_, provider)| provider.is_none());
+            if let Some((module, _)) = missing {
+                return Err(Unwritten::MissingImport(
+                    shard.strings[module.name.index()].to_string(),
+                ));
             }
-            let (kept, leaks) = harvest.interface();
-            if !leaks.is_empty() {
+            if let (true, Some((module, _))) = (depends[index], unchecked) {
+                return Err(Unwritten::MissingNominee(module.to_owned()));
+            }
+            let Some(kept) = &shard.kept else {
                 return Err(Unwritten::NotExportable);
-            }
-            Ok(typelib::Surface::new(harvest.clone().surface(&kept)))
+            };
+            let base = tables.base(UnitId::from_index(index));
+            let pipes = depends[index].then_some(pipes);
+            Ok(typelib::write(
+                shard,
+                base,
+                kept,
+                &tables.facts[index],
+                pipes,
+            ))
         })
         .collect()
 }
@@ -507,7 +574,7 @@ fn tree(
                 }
                 flow::Detail::Item(module, name) => {
                     let name = results.symbol(name);
-                    let module = tables.units[module.index()].name();
+                    let module = tables.info(module).name();
                     item = Some((module.into_boxed_str(), Box::from(name)));
                     Some(Cow::Borrowed(name))
                 }
@@ -601,7 +668,7 @@ fn check_units(
     threads: Option<NonZeroUsize>,
     analysis: bool,
 ) -> Vec<UnitOutput> {
-    let count = tables.units.len();
+    let count = tables.shards.len();
     let mut slots: Vec<Option<UnitOutput>> = (0..count).map(|_| None).collect();
     let mut work: Vec<_> = slots
         .iter_mut()
@@ -611,7 +678,7 @@ fn check_units(
     // Largest first, so that no large unit starts last; typelibs have nothing of
     // their own to check
     work.sort_by_key(|(unit, _)| {
-        let info = &tables.units[unit.index()];
+        let info = tables.info(*unit);
         std::cmp::Reverse(info.source.map_or(0, |source| source.file.newlines().len()))
     });
     // FIFO, so that the worker spawning the units takes them largest first too
@@ -655,7 +722,7 @@ fn check_unit(
 ) -> UnitOutput {
     // A fork of its own, so that what it interns isn't in the layer
     let db = r#type::Database::fork(shared);
-    let source = tables.units[unit.index()].source;
+    let source = tables.info(unit).source;
     // A typelib's well-formedness and overrides were checked with its source;
     // the solver copes with an ill-formed type, and a nonconforming member only
     // misleads checks against it
@@ -679,7 +746,7 @@ fn check_unit(
             #[cfg(debug_assertions)]
             ir.check_stack_depths();
             #[cfg(feature = "debug")]
-            if let Err(e) = export_dot(&ir, &db, &tables.units[unit.index()]) {
+            if let Err(e) = export_dot(&ir, &db, tables.info(unit)) {
                 dolang_util::debug_eprintln!(topic: "dot", "Typing CFG DOT export failed: {e}");
             }
             let layer = db.share();
@@ -735,9 +802,9 @@ pub struct Check {
     analysis: Option<Analysis>,
     /// Well-formedness checks the checker could not decide, with the kind of reason
     undecided: Vec<(String, diag::SourceSpan)>,
-    /// What each unit's typelib is written from, or why it has none, by [`UnitId`],
+    /// Each unit's typelib, or why it has none, by [`UnitId`],
     /// if the builder asked
-    typelibs: Option<Vec<Result<typelib::Surface, Unwritten>>>,
+    typelibs: Option<Vec<Result<Vec<u8>, Unwritten>>>,
     /// Each unit's typing CFG, by [`UnitId`], for a unit checked from source
     #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     cfgs: Vec<Option<cfg::Ir>>,
@@ -806,7 +873,7 @@ impl Check {
     /// | [`ErrorKind::NotRequested`](crate::ErrorKind::NotRequested) | The builder wasn't asked for typelibs with [`Builder::typelibs`] |
     /// | [`ErrorKind::NoSource`](crate::ErrorKind::NoSource) | The unit was checked from its typelib |
     /// | [`ErrorKind::NotModule`](crate::ErrorKind::NotModule) | The unit is not a module |
-    /// | [`ErrorKind::MissingImport`](crate::ErrorKind::MissingImport) | The module imports a module that wasn't checked with it |
+    /// | [`ErrorKind::MissingImport`](crate::ErrorKind::MissingImport) | The module imports a module that wasn't checked with it, or is or imports `strand` and the module of a nominated pipe type wasn't (see [`Builder::pipes`]) |
     /// | [`ErrorKind::NotExportable`](crate::ErrorKind::NotExportable) | The module's public interface names a private declaration, which the check's diagnostics report |
     /// | [`ErrorKind::Io`](crate::ErrorKind::Io) | Writing failed |
     pub fn typelib(&self, unit: UnitId, write: &mut dyn Write) -> Result<(), Error> {
@@ -815,11 +882,14 @@ impl Check {
             .as_ref()
             .ok_or(Error(ErrorInfo::NotRequested))?;
         match &typelibs[unit.index()] {
-            Ok(surface) => Ok(surface.write(write)?),
+            Ok(bytes) => Ok(write.write_all(bytes)?),
             Err(Unwritten::NoSource) => Err(Error(ErrorInfo::NoSource)),
             Err(Unwritten::NotModule) => Err(Error(ErrorInfo::NotModule)),
             Err(Unwritten::MissingImport(name)) => {
                 Err(Error(ErrorInfo::MissingImport(name.clone())))
+            }
+            Err(Unwritten::MissingNominee(name)) => {
+                Err(Error(ErrorInfo::MissingNominee(name.clone())))
             }
             Err(Unwritten::NotExportable) => Err(Error(ErrorInfo::NotExportable)),
         }

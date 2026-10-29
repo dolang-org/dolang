@@ -100,7 +100,9 @@ enum ErrorInfo {
     NotRequested,
     NoSource,
     MissingImport(String),
+    MissingNominee(String),
     Typelib(typeck::typelib::Invalid),
+    Pipes(String),
 }
 
 /// Kind of compilation error.
@@ -125,10 +127,13 @@ pub enum ErrorKind {
     /// A typelib was requested of a unit checked from its typelib.
     NoSource,
     /// A typelib was requested of a module that imports a module not checked with
-    /// it.
+    /// it, or that is or imports `strand` when the module of a pipe type the check
+    /// nominates wasn't checked with it.
     MissingImport,
     /// A typelib is malformed, or of a version this checker doesn't read.
     Typelib,
+    /// A typelib was written by a check that nominated other pipe types.
+    Pipes,
 }
 
 /// Compile error
@@ -147,8 +152,9 @@ impl Error {
             ErrorInfo::NotExportable => ErrorKind::NotExportable,
             ErrorInfo::NotRequested => ErrorKind::NotRequested,
             ErrorInfo::NoSource => ErrorKind::NoSource,
-            ErrorInfo::MissingImport(_) => ErrorKind::MissingImport,
+            ErrorInfo::MissingImport(_) | ErrorInfo::MissingNominee(_) => ErrorKind::MissingImport,
             ErrorInfo::Typelib(_) => ErrorKind::Typelib,
+            ErrorInfo::Pipes(_) => ErrorKind::Pipes,
         }
     }
 
@@ -181,7 +187,16 @@ impl Display for Error {
             ErrorInfo::MissingImport(name) => {
                 write!(f, "imported module `{name}` was not checked")
             }
+            ErrorInfo::MissingNominee(name) => {
+                write!(
+                    f,
+                    "module `{name}` of a nominated pipe type was not checked"
+                )
+            }
             ErrorInfo::Typelib(invalid) => invalid.fmt(f),
+            ErrorInfo::Pipes(module) => {
+                write!(f, "typelib of `{module}` was written with other pipe types")
+            }
         }
     }
 }
@@ -197,7 +212,9 @@ impl error::Error for Error {
             | ErrorInfo::NotRequested
             | ErrorInfo::NoSource
             | ErrorInfo::MissingImport(_)
-            | ErrorInfo::Typelib(_) => None,
+            | ErrorInfo::MissingNominee(_)
+            | ErrorInfo::Typelib(_)
+            | ErrorInfo::Pipes(_) => None,
             ErrorInfo::Io(error) => Some(error),
         }
     }

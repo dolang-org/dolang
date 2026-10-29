@@ -50,52 +50,39 @@ const MAX_TYPE_DEPTH: usize = 256;
 
 /// Lift and intern every declaration into `db`, which is left ready to seal.
 pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
-    let mut sig_decls = FxHashMap::default();
-    let mut overloads = Vec::new();
-    for index in 0..tables.decls.len() {
-        let id = DeclId::from_index(index);
+    // Without an implementation, which resolution reports, the first overload
+    // holds the function's own ID
+    for id in tables.decl_ids() {
         let count = tables.sig_count(id);
-        let primary = match &tables.decls[index].node {
-            DeclNode::Defs(defs) => defs.iter().position(|def| !def.type_only),
-            // A protocol member is type-only, but not an overload signature
-            DeclNode::Methods(methods) => methods.iter().position(|method| !method.overload),
-            _ => None,
-        };
-        // Without an implementation, which resolution reports, the first overload
-        // holds the function's own ID
-        let mut signatures = Vec::new();
-        for sig in 0..count {
-            let decl = if sig == primary.unwrap_or(0) {
-                id
-            } else {
-                db.allocate()
-            };
-            sig_decls.insert((id, sig), decl);
-            if Some(sig) != primary {
-                signatures.push(decl);
-            }
-        }
         if count > 1 {
-            overloads.push((id, signatures));
+            let primary = tables.decl(id).node.primary_sig();
+            let signatures = (0..count)
+                .filter(|&sig| Some(sig) != primary)
+                .map(|sig| {
+                    tables
+                        .sig_decl((id, sig))
+                        .expect("every signature is declared")
+                })
+                .collect();
+            db.set_overloads(id, signatures);
         }
-    }
-    for (id, all) in overloads {
-        db.set_overloads(id, all);
     }
 
     let mut groups = FxHashMap::default();
     let mut broken = FxHashSet::default();
-    for index in 0..tables.decls.len() {
-        let id = DeclId::from_index(index);
+    for id in tables.decl_ids() {
         for sig in 0..tables.sig_count(id) {
-            let mut group = tables.lifted[&id].clone();
+            let mut group = tables
+                .lifted(id)
+                .expect("every declaration is lifted")
+                .to_vec();
             let written = tables.binders(id, sig).len();
             group.extend((0..written).map(|slot| BinderRef {
                 decl: id,
                 sig,
                 slot,
             }));
-            if let Some(completed) = tables.sigs.get(&(id, sig)) {
+            if let Some(completed) = tables.sig(id, sig) {
                 for ambient in [completed.input, completed.output] {
                     if let Ambient::Implicit(binder) = ambient {
                         group.push(binder);
@@ -103,9 +90,8 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
                 }
             }
             if group.len() > MAX_BINDERS {
-                let decl = &tables.decls[index];
                 diags.push((
-                    decl.unit,
+                    tables.decl(id).unit,
                     Diag::new(TooManyBinders(sig_span(tables, id, sig))),
                 ));
                 broken.insert((id, sig));
@@ -137,8 +123,7 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
         pattern: None,
         supertype: false,
     };
-    for (index, site) in tables.sites.iter().enumerate() {
-        let id = SiteId::from_index(index);
+    for (id, site) in tables.sites() {
         let scope = populate.scope(site.group(), site.unit);
         let ty = match site.role {
             Role::Type => populate.site(scope, id, Kind::Type, 0),
@@ -149,13 +134,21 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
             Role::Pattern => populate.pattern(scope, id),
             Role::Bound(binder) => populate.bound(scope, binder, id),
             Role::Default(binder) => populate.site(scope, id, populate.kind(binder), 0),
-            Role::Alias(decl) => populate.site(scope, id, tables.alias_kinds[&decl].kind, 0),
+            Role::Alias(decl) => populate.site(
+                scope,
+                id,
+                tables
+                    .alias_kind(decl)
+                    .expect("every alias has a kind")
+                    .kind,
+                0,
+            ),
         };
         site.interned.set(ty);
     }
     let mut declarations = Vec::new();
-    for index in 0..tables.decls.len() {
-        populate.decl(DeclId::from_index(index), &sig_decls, &mut declarations);
+    for id in tables.decl_ids() {
+        populate.decl(id, &mut declarations);
     }
     // A supertype closing a cycle is dropped, so that the database's supertypes
     // stay acyclic and walking them can't revisit a declaration
@@ -175,26 +168,27 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
     for (id, declaration) in declarations {
         db.populate(id, declaration);
     }
-    tables.sig_decls = sig_decls;
-    tables.groups = groups;
+    for (key, group) in groups {
+        tables.facts_mut(key.0).groups.insert(key, group);
+    }
 }
 
 /// The name of signature `sig` of a named declaration
 fn sig_name(tables: &Tables<'_>, decl: DeclId, sig: usize) -> Name {
-    match &tables.decls[decl.index()].node {
+    match &tables.decl(decl).node {
         DeclNode::Defs(defs) => defs[sig].name,
         DeclNode::Methods(methods) => methods[sig].name,
         DeclNode::Closure(_) => unreachable!("a closure is not named"),
-        DeclNode::Class(_) | DeclNode::Alias(_) => tables.decls[decl.index()]
-            .name
-            .expect("a type declaration is named"),
+        DeclNode::Class(_) | DeclNode::Alias(_) => {
+            tables.decl(decl).name.expect("a type declaration is named")
+        }
     }
 }
 
 /// The span of the name of signature `sig` of a declaration, or where a closure
 /// begins
 fn sig_span(tables: &Tables<'_>, decl: DeclId, sig: usize) -> Span {
-    match &tables.decls[decl.index()].node {
+    match &tables.decl(decl).node {
         DeclNode::Closure(closure) => closure.span,
         _ => sig_name(tables, decl, sig).span,
     }
@@ -259,7 +253,7 @@ impl<'t, 'u> Populate<'t, 'u> {
 
     /// A site's type, and `group` as its function types are interpreted in
     fn enter<'g>(&self, group: Group<'g>, site: SiteId) -> (Group<'g>, &'t TypeExpr) {
-        let site = &self.tables.sites[site.index()];
+        let site = self.tables.site(site);
         let group = Group {
             ambient: site.ambient,
             ..group
@@ -274,7 +268,10 @@ impl<'t, 'u> Populate<'t, 'u> {
     }
 
     fn kind(&self, binder: BinderRef) -> Kind {
-        self.tables.binder_kinds[&binder].kind
+        self.tables
+            .binder_kind(binder)
+            .expect("every binder has a kind")
+            .kind
     }
 
     fn unknown(&self, kind: Kind) -> TypeId {
@@ -358,9 +355,13 @@ impl<'t, 'u> Populate<'t, 'u> {
         let tables = self.tables;
         self.pattern.as_ref()?;
         let kind = match tables.linked(head.link)? {
-            Referent::Binder(binder) => tables.binder_kinds[binder],
-            Referent::Decl(decl) => match tables.decls[decl.index()].kind {
-                DeclKind::Alias | DeclKind::OpaqueAlias => tables.alias_kinds[decl],
+            Referent::Binder(binder) => tables
+                .binder_kind(*binder)
+                .expect("every binder has a kind"),
+            Referent::Decl(decl) => match tables.decl(*decl).kind {
+                DeclKind::Alias | DeclKind::OpaqueAlias => {
+                    tables.alias_kind(*decl).expect("every alias has a kind")
+                }
                 _ => return None,
             },
             _ => return None,
@@ -559,7 +560,7 @@ impl<'t, 'u> Populate<'t, 'u> {
             }),
             TypeExpr::Name(head) => match tables.linked(head.link) {
                 Some(&Referent::Decl(decl)) => {
-                    let DeclNode::Alias(alias) = &tables.decls[decl.index()].node else {
+                    let DeclNode::Alias(alias) = &tables.decl(decl).node else {
                         return false;
                     };
                     let Some(body) = alias.body.filter(|_| !aliases.contains(&decl)) else {
@@ -612,7 +613,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                 }
                 self.expanding.push((decl, sig, index));
                 let owner = Group {
-                    unit: self.tables.decls[decl.index()].unit,
+                    unit: self.tables.decl(decl).unit,
                     ..group
                 };
                 let ty = self.site(owner, implicit, Kind::Type, depth);
@@ -731,9 +732,14 @@ impl<'t, 'u> Populate<'t, 'u> {
                 self.binder(group, binder)
             }
             Some(&Referent::Decl(decl)) => {
-                let result = match tables.decls[decl.index()].kind {
+                let result = match tables.decl(decl).kind {
                     DeclKind::Class | DeclKind::Protocol => Kind::Type,
-                    DeclKind::Alias | DeclKind::OpaqueAlias => tables.alias_kinds[&decl].kind,
+                    DeclKind::Alias | DeclKind::OpaqueAlias => {
+                        tables
+                            .alias_kind(decl)
+                            .expect("every alias has a kind")
+                            .kind
+                    }
                     DeclKind::Function | DeclKind::Closure | DeclKind::Annotation => {
                         return self.unknown(expected);
                     }
@@ -771,12 +777,19 @@ impl<'t, 'u> Populate<'t, 'u> {
         depth: usize,
     ) -> TypeId {
         let tables = self.tables;
-        let result = match tables.decls[decl.index()].kind {
+        let result = match tables.decl(decl).kind {
             DeclKind::Class | DeclKind::Protocol => Kind::Type,
-            _ => tables.alias_kinds[&decl].kind,
+            _ => {
+                tables
+                    .alias_kind(decl)
+                    .expect("every alias has a kind")
+                    .kind
+            }
         };
         let base = self.db.intern(Type::Decl(decl));
-        let full: Vec<_> = tables.lifted[&decl]
+        let full: Vec<_> = tables
+            .lifted(decl)
+            .expect("every declaration is lifted")
             .iter()
             .map(|&binder| self.binder(group, binder))
             .collect();
@@ -917,9 +930,14 @@ impl<'t, 'u> Populate<'t, 'u> {
         span: Span,
     ) -> TypeId {
         let tables = self.tables;
-        let result = match tables.decls[decl.index()].kind {
+        let result = match tables.decl(decl).kind {
             DeclKind::Class | DeclKind::Protocol => Kind::Type,
-            _ => tables.alias_kinds[&decl].kind,
+            _ => {
+                tables
+                    .alias_kind(decl)
+                    .expect("every alias has a kind")
+                    .kind
+            }
         };
         let written = tables.binders(decl, 0);
         let count = written.len();
@@ -946,7 +964,7 @@ impl<'t, 'u> Populate<'t, 'u> {
             full.push(ty);
         }
         if !missing.is_empty() {
-            let owner = tables.decls[decl.index()].unit;
+            let owner = tables.decl(decl).unit;
             let mut names = missing
                 .iter()
                 .take(3)
@@ -990,7 +1008,9 @@ impl<'t, 'u> Populate<'t, 'u> {
             given[filled] = Some(self.binder(group, binder));
         }
         let items = vec![None; given.len()];
-        let span = self.tables.decls[placeholder.index()]
+        let span = self
+            .tables
+            .decl(placeholder)
             .name_span()
             .expect("a designated declaration is named");
         self.complete(group, nominee, Vec::new(), given, items, span)
@@ -1020,7 +1040,7 @@ impl<'t, 'u> Populate<'t, 'u> {
             None => {}
         }
         self.defaults.insert(binder, None);
-        let unit = tables.decls[binder.decl.index()].unit;
+        let unit = tables.decl(binder.decl).unit;
         let group = self.scope(Some((binder.decl, binder.sig)), unit);
         let pattern = self.pattern.take();
         let ty = self.site(group, default, self.kind(binder), 0);
@@ -1035,7 +1055,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         let (group, ty) = self.enter(group, site);
         let kind = self.kind(binder);
         let written = &self.tables.binders(binder.decl, binder.sig)[binder.slot];
-        let unit = self.tables.decls[binder.decl.index()].unit;
+        let unit = self.tables.decl(binder.decl).unit;
         let group = Group { unit, ..group };
         match written.kind {
             BinderKind::Rest(rest) if self.tables.kind_of(ty) != Some(Kind::Schema) => {
@@ -1053,12 +1073,12 @@ impl<'t, 'u> Populate<'t, 'u> {
         if self.broken.contains(&key) {
             return (Vec::new(), Vec::new());
         }
-        let unit = tables.decls[key.0.index()].unit;
+        let unit = tables.decl(key.0).unit;
         let group = self.scope(Some(key), unit);
         let mut binders = Vec::new();
         let mut sources = Vec::new();
         for &binder in group.binders {
-            let owner = tables.decls[binder.decl.index()].unit;
+            let owner = tables.decl(binder.decl).unit;
             let span = |span| UnitSpan { unit: owner, span };
             let kind = self.kind(binder);
             let written = tables.binders(binder.decl, binder.sig).get(binder.slot);
@@ -1084,7 +1104,11 @@ impl<'t, 'u> Populate<'t, 'u> {
                     (name, written.name.span, binding)
                 }
                 None => {
-                    let sigil = match tables.sigs[&(binder.decl, binder.sig)].input {
+                    let sigil = match tables
+                        .sig(binder.decl, binder.sig)
+                        .expect("every def and method has a signature")
+                        .input
+                    {
                         Ambient::Implicit(input) if input == binder => "<",
                         _ => ">",
                     };
@@ -1108,11 +1132,14 @@ impl<'t, 'u> Populate<'t, 'u> {
             };
             let variance = match origin {
                 BinderOrigin::Lifted => tables
+                    .facts_of(key.0)
                     .captured
                     .get(&(key.0, binder))
                     .copied()
                     .unwrap_or(Variance::Invariant),
-                _ => tables.variance[&binder],
+                _ => tables
+                    .variance(binder)
+                    .expect("every binder has a variance"),
             };
             binders.push(Binder {
                 kind,
@@ -1143,7 +1170,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         body: TypeId,
     ) -> Declaration {
         let tables = self.tables;
-        let decl = &tables.decls[key.0.index()];
+        let decl = tables.decl(key.0);
         let (binders, sources) = self.binders(key);
         let name = decl.name.map(|_| {
             self.db
@@ -1171,14 +1198,9 @@ impl<'t, 'u> Populate<'t, 'u> {
         }
     }
 
-    fn decl(
-        &mut self,
-        id: DeclId,
-        sig_decls: &FxHashMap<(DeclId, usize), DeclId>,
-        out: &mut Vec<(DeclId, Declaration)>,
-    ) {
+    fn decl(&mut self, id: DeclId, out: &mut Vec<(DeclId, Declaration)>) {
         let tables = self.tables;
-        let decl = &tables.decls[id.index()];
+        let decl = tables.decl(id);
         let group = self.scope(Some((id, 0)), decl.unit);
         match &decl.node {
             DeclNode::Class(class) => {
@@ -1220,12 +1242,12 @@ impl<'t, 'u> Populate<'t, 'u> {
                 out.push((id, declaration));
             }
             DeclNode::Alias(alias) => {
-                let kind = tables.alias_kinds[&id].kind;
+                let kind = tables.alias_kind(id).expect("every alias has a kind").kind;
                 let body = match alias.body {
                     None if tables.pipes.contains_key(&id) => self.pipe(group, id),
                     None => self.db.intern(Type::Decl(id)),
                     // An alias on or reaching a cycle, already diagnosed
-                    Some(_) if tables.aliases.get(&id) == Some(&Head::Error) => self.unknown(kind),
+                    Some(_) if tables.alias(id) == Some(&Head::Error) => self.unknown(kind),
                     Some(body) => self.site(group, body, kind, 0),
                 };
                 // A pipe placeholder is transparent, standing for its nominee
@@ -1238,7 +1260,9 @@ impl<'t, 'u> Populate<'t, 'u> {
             DeclNode::Defs(_) | DeclNode::Methods(_) => {
                 for sig in 0..tables.sig_count(id) {
                     let group = self.scope(Some((id, sig)), decl.unit);
-                    let completed = &tables.sigs[&(id, sig)];
+                    let completed = tables
+                        .sig(id, sig)
+                        .expect("every def and method has a signature");
                     let func = sig::function(tables, id, sig);
                     let params = self.params(id, group, func, &completed.params);
                     let [input, output] = [
@@ -1262,7 +1286,10 @@ impl<'t, 'u> Populate<'t, 'u> {
                     }));
                     let declaration =
                         self.declaration((id, sig), DeclKind::Function, Kind::Type, body);
-                    out.push((sig_decls[&(id, sig)], declaration));
+                    let declared = tables
+                        .sig_decl((id, sig))
+                        .expect("every signature is declared");
+                    out.push((declared, declaration));
                 }
             }
             DeclNode::Closure(closure) => {
@@ -1317,9 +1344,7 @@ impl<'t, 'u> Populate<'t, 'u> {
     /// A method's class, applied to its own binders, which lead the method's group;
     /// `None` if either is broken
     fn own_instance(&self, id: DeclId, group: Group<'_>) -> Option<TypeId> {
-        let (class, _) = self.tables.decls[id.index()]
-            .outer
-            .expect("a method is in a class");
+        let (class, _) = self.tables.decl(id).outer.expect("a method is in a class");
         if group.broken || self.broken.contains(&(class, 0)) {
             return None;
         }
@@ -1384,11 +1409,8 @@ impl<'t, 'u> Populate<'t, 'u> {
                     // No call gives a `do` block's rest its items, so a strict
                     // unit's admits any
                     RestSlot::Items(kind, Slot::Unknown)
-                        if self.tables.units[group.unit.index()].strict
-                            && matches!(
-                                self.tables.decls[id.index()].node,
-                                DeclNode::Closure(_)
-                            ) =>
+                        if self.tables.info(group.unit).strict
+                            && matches!(self.tables.decl(id).node, DeclNode::Closure(_)) =>
                     {
                         items.extend(rest_items(*kind, self.db.top(), sym));
                     }
@@ -1424,7 +1446,8 @@ impl<'t, 'u> Populate<'t, 'u> {
         // A function's overload signatures share the scope, visibility and form of
         // its implementation
         let mut methods = FxHashMap::default();
-        for (index, decl) in tables.decls.iter().enumerate() {
+        for method in tables.unit_decl_ids(tables.unit_of(id)) {
+            let decl = tables.decl(method);
             if decl.outer == Some((id, 0))
                 && let DeclNode::Methods(ref found) = decl.node
             {
@@ -1432,7 +1455,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                     .iter()
                     .find(|method| !method.overload)
                     .unwrap_or(&found[0]);
-                methods.insert(primary.name.span, (DeclId::from_index(index), primary));
+                methods.insert(primary.name.span, (method, primary));
             }
         }
         // Instance members and type-object members are separate namespaces
@@ -1457,7 +1480,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                             continue;
                         };
                         entry.insert(members.len());
-                        let slot = tables.fields[&(id, name.span)];
+                        let slot = tables.field(id, name.span).expect("every field has a type");
                         let ty = self.slot(id, group, &slot);
                         members.push((
                             key,
@@ -1543,20 +1566,20 @@ impl<'t, 'u> Populate<'t, 'u> {
     fn inheritance_cycles(&mut self) -> Vec<(DeclId, TypeId)> {
         let mut closing = Vec::new();
         let tables = self.tables;
-        let count = tables.decls.len();
+        let count = tables.decl_id_count();
         let mut edges: Vec<Vec<(DeclId, &Super)>> = vec![Vec::new(); count];
-        for (index, decl) in tables.decls.iter().enumerate() {
-            let DeclNode::Class(class) = &decl.node else {
+        for id in tables.decl_ids() {
+            let DeclNode::Class(class) = &tables.decl(id).node else {
                 continue;
             };
             for super_ref in &class.supers {
                 let target = match tables.linked(super_ref.head.link) {
-                    Some(Referent::Decl(target)) => match tables.decls[target.index()].kind {
+                    Some(Referent::Decl(target)) => match tables.decl(*target).kind {
                         DeclKind::Class | DeclKind::Protocol => Some(*target),
-                        DeclKind::Alias => match tables.aliases.get(target) {
+                        DeclKind::Alias => match tables.alias(*target) {
                             Some(Head::Decl(found))
                                 if matches!(
-                                    tables.decls[found.index()].kind,
+                                    tables.decl(*found).kind,
                                     DeclKind::Class | DeclKind::Protocol
                                 ) =>
                             {
@@ -1569,7 +1592,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                     _ => None,
                 };
                 if let Some(target) = target {
-                    edges[index].push((target, super_ref));
+                    edges[id.index()].push((target, super_ref));
                 }
             }
         }
@@ -1601,7 +1624,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                         stack.push((target.index(), 0));
                     }
                     Color::Gray => {
-                        let unit = tables.decls[node].unit;
+                        let unit = tables.decl(DeclId::from_index(node)).unit;
                         self.report(unit, InheritanceCycle(super_ref.head.span));
                         let ty = super_ref
                             .interned

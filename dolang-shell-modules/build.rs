@@ -4,7 +4,7 @@ extern crate dolang_ext_shell;
 use std::{env, path::Path};
 
 use dolang::compile::Config;
-use dolang_private_bundle::{Bundle, CompileMode, NameMode, Root};
+use dolang_private_bundle::{Bundle, CompileMode, NameMode, Root, Typelibs};
 use wax::{Glob, Program as _};
 
 /// Sources to bundle when every feature in `when` is enabled, or disabled for a
@@ -250,6 +250,13 @@ fn main() {
         println!("cargo::rustc-cfg=provision");
     }
 
+    // The shell's pipelines connect stages with `proc`'s pipes, as the checks that
+    // read the typelibs have them. Without `proc`, as in wasm, a pipe is a channel.
+    let pipes = match selected(Path::new("stub/proc.dol")) {
+        true => [("proc", "PipeSender"), ("proc", "PipeReceiver")],
+        false => [("strand", "Sender"), ("strand", "Receiver")],
+    };
+
     dolang_private_bundle::bundle(&Bundle {
         roots: &[
             Root {
@@ -278,6 +285,9 @@ fn main() {
         compile_mode: CompileMode::Module,
         name_mode: NameMode::Module,
         bytecode: Some("bundled_modules"),
-        typelibs: Some("typelibs"),
+        typelibs: Some(Typelibs {
+            name: "typelibs",
+            pipes,
+        }),
     });
 }

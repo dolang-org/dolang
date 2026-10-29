@@ -435,6 +435,17 @@ fn from_typelibs(
                 exportable = false;
                 written.push(None);
             }
+            // Nor does a module whose facts depend on the pipes when the case doesn't
+            // have a nominee's module, which leaves its placeholder dynamic
+            Err(error)
+                if matches!(error.kind(), ErrorKind::MissingImport)
+                    && error
+                        .to_string()
+                        .ends_with("of a nominated pipe type was not checked") =>
+            {
+                exportable = false;
+                written.push(None);
+            }
             // Nor does a module importing one the case doesn't have, which its check
             // from source reports as not found
             Err(error) if matches!(error.kind(), ErrorKind::MissingImport) => {

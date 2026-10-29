@@ -44,18 +44,7 @@ use crate::source::Span;
 
 macro_rules! id {
     ($name:ident) => {
-        #[derive(
-            Clone,
-            Copy,
-            Debug,
-            PartialEq,
-            Eq,
-            PartialOrd,
-            Ord,
-            Hash,
-            serde::Serialize,
-            serde::Deserialize,
-        )]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub(crate) struct $name(NonZeroU32);
 
         impl $name {
@@ -842,7 +831,7 @@ impl Member {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DeclKind {
     Class,
     Protocol,
@@ -850,6 +839,7 @@ pub(crate) enum DeclKind {
     Alias,
     Function,
     Closure,
+    #[cfg_attr(not(test), expect(dead_code, reason = "declared by tests"))]
     Annotation,
 }
 

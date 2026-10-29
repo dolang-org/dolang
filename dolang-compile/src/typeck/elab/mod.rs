@@ -4,6 +4,7 @@
 //! [`surface`]), and the passes after it read only that and the common tables. Only
 //! lowering reads syntax trees again, for the bodies it lowers.
 
+mod alias;
 mod capture;
 mod collect;
 mod ids;
@@ -24,14 +25,13 @@ use std::{
     path::Path,
 };
 
+use bitvec::boxed::BitBox;
 use rustc_hash::FxHashMap;
-use serde::{Deserialize, Serialize};
 
 use super::report::{Annotation, Report};
 use super::r#type::{
     Database, DeclId, DeclKind, Intrinsic, Kind, Scope, TypeId, UnitId, UnitSpan, Variance,
 };
-use super::typelib::wire;
 use crate::{
     RestKind, Unit, ast,
     diag::{AnnotationKind, NoteKind, Severity},
@@ -43,8 +43,9 @@ use surface::{
 };
 
 pub(crate) use super::report::{Diag, UnitDiag};
+pub(crate) use alias::aliases;
 pub(crate) use capture::captures;
-pub(crate) use collect::{Export, Harvest, Link, Module, Value, find_export, harvest, link};
+pub(crate) use collect::{Export, Link, Module, Value, collect, find_export, link};
 pub(crate) use ids::Ids;
 pub(crate) use judge::Scoped;
 pub(crate) use kind::{Fill, kinds};
@@ -58,33 +59,102 @@ pub(crate) use wellformed::{Unresolved, recursion, wellformed};
 /// The names of `strand`'s pipe placeholders, sender first
 pub(crate) const PIPES: [&str; 2] = ["PipeSender", "PipeReceiver"];
 
-/// What collection learns of the checked units
+/// What collection learns of the checked units, and what elaboration concludes
+/// about their declarations.
+///
+/// Each unit has a [`Shard`] of its declarations and names, and the [`Facts`]
+/// elaboration concludes about its declarations. A unit's declarations, sites and
+/// links are each numbered in one contiguous range, so an ID's unit is found by a
+/// binary search over the ranges' bases. Only what crosses units is global.
 pub(crate) struct Tables<'u> {
-    /// The units, by [`UnitId`]
-    pub(crate) units: Vec<UnitInfo<'u>>,
-    /// Each unit's string table, by [`UnitId`]
-    pub(crate) strings: Vec<Vec<Cow<'u, str>>>,
-    /// Every declaration, by [`DeclId`]
+    /// What each unit was linked into, by [`UnitId`]
+    pub(crate) shards: Vec<Shard<'u>>,
+    /// What elaboration concludes about each unit's declarations, by [`UnitId`]
+    pub(crate) facts: Vec<Facts>,
+    /// The start of each unit's ranges, in the order the units were linked, which
+    /// is the order of their IDs
+    bases: Vec<Bases>,
+    /// The declarations of `std` and `strand` the checker treats specially
+    pub(crate) designated: FxHashMap<DeclId, Designated>,
+    /// What each of `strand`'s pipe placeholders nominates, by name, resolved where
+    /// the placeholder is exported
+    pub(crate) nominees: FxHashMap<&'static str, Referent>,
+    /// The type each designated pipe placeholder stands for, or `None` for a
+    /// nominee that isn't checked or can't stand for it
+    pub(crate) pipes: FxHashMap<DeclId, Option<DeclId>>,
+}
+
+/// What the checker knows of a unit's declarations and the names written in them.
+///
+/// Collection fills a shard from a unit's source, and a typelib decodes to one. It
+/// is local until it is linked: its unit is unit 0, and its declarations, sites and
+/// links are numbered from 0. Linking moves it to its unit and ranges, and fills
+/// what only linking can tell: `referents`, `providers`, `sig_decls`,
+/// `sig_owners` and `kept`, which are empty until then.
+#[derive(Clone)]
+pub(crate) struct Shard<'u> {
+    pub(crate) info: UnitInfo<'u>,
+    /// The unit's text, by [`StrId`]: each string once. Most borrow the unit's
+    /// source or typelib; a constant type's string is folded from it.
+    pub(crate) strings: Vec<Cow<'u, str>>,
+    /// The unit's declarations, from its base [`DeclId`]
     pub(crate) decls: Vec<Decl<'u>>,
-    /// What each link refers to, by [`LinkId`]. Imports and renames are chased
-    /// away; aliases are not, so `Pair[Int]` refers to the `Pair` alias.
+    /// Every type expression written in a declaration or annotation of the unit,
+    /// outermost only, from its base [`SiteId`]
+    pub(crate) sites: Vec<Site>,
+    /// What the unit's names refer to as far as the unit can tell, each once, from
+    /// its base [`LinkId`]
+    pub(crate) links: Vec<Link>,
+    /// What each of the unit's links refers to, from its base [`LinkId`]. Imports
+    /// and renames are chased away; aliases are not, so `Pair[Int]` refers to the
+    /// `Pair` alias.
     pub(crate) referents: Vec<Referent>,
-    /// The link of each name a unit with source writes, by the span of its head, by
-    /// [`UnitId`]. Only lowering and the analysis, which read syntax, look a name up.
-    pub(crate) refs: Vec<FxHashMap<Span, LinkId>>,
-    /// The unit providing each module of a unit's module table, by [`UnitId`] and
-    /// [`ModuleId`], or `None` for a module no unit provides
-    pub(crate) modules: Vec<Vec<Option<UnitId>>>,
+    /// The link of each name a unit with source writes, by the span of its head.
+    /// Only lowering and the analysis, which read syntax, look a name up.
+    pub(crate) refs: FxHashMap<Span, LinkId>,
+    /// The modules the unit imports, and the prelude modules it uses, by
+    /// [`ModuleId`]
+    pub(crate) modules: Vec<Module>,
+    /// The unit providing each module of the unit's module table, by [`ModuleId`],
+    /// or `None` for a module no unit provides
+    pub(crate) providers: Vec<Option<UnitId>>,
+    /// The unit's exports, sorted by name. Empty for a unit that is not a module.
+    pub(crate) exports: Vec<Export>,
+    /// Each exported variable, in the order of the spans of their names
+    pub(crate) values: Vec<Value>,
+    /// The database declaration of each def or method signature. A function's own
+    /// ID holds its implementation, or its first signature when it has none.
+    pub(crate) sig_decls: FxHashMap<(DeclId, usize), DeclId>,
+    /// The signature each of the unit's other database declarations is of. They
+    /// follow its declarations.
+    pub(crate) sig_owners: Vec<(DeclId, usize)>,
+    /// Whether a typelib of the unit keeps each of its declarations, by offset, for
+    /// a unit with source whose interface names no private declaration
+    pub(crate) kept: Option<BitBox>,
+    /// The types `strand`'s pipe placeholders stood for, each as its module and
+    /// item, when the facts a typelib records were concluded, if they depend on
+    /// them. `None` for a unit with source.
+    pub(crate) nominations: Option<[(StrId, StrId); 2]>,
+}
+
+impl Shard<'_> {
+    /// An exported variable, by the span of its name
+    pub(crate) fn value(&self, span: Span) -> Option<&Value> {
+        self.values
+            .binary_search_by_key(&(span.start, span.end), |value| {
+                (value.span.start, value.span.end)
+            })
+            .ok()
+            .map(|index| &self.values[index])
+    }
+}
+
+/// What elaboration concludes about one unit's declarations. A unit's facts start
+/// empty, or with what its typelib records.
+#[derive(Clone, Default)]
+pub(crate) struct Facts {
     /// The underlying head of each transparent alias
     pub(crate) aliases: FxHashMap<DeclId, Head>,
-    /// Each unit's exports, sorted by name. Empty for a unit that is not a module.
-    pub(crate) exports: Vec<Vec<Export>>,
-    /// Each exported variable, by its name, with the site of its annotation if it
-    /// has one
-    pub(crate) values: FxHashMap<UnitSpan, Option<SiteId>>,
-    /// Every type expression written in a declaration or annotation, outermost only,
-    /// by [`SiteId`]
-    pub(crate) sites: Vec<Site>,
     /// The kind of each binder, including the implicit binders of omitted ambient
     /// channels
     pub(crate) binder_kinds: FxHashMap<BinderRef, KindOf>,
@@ -94,14 +164,6 @@ pub(crate) struct Tables<'u> {
     pub(crate) sigs: FxHashMap<(DeclId, usize), Sig>,
     /// The type of each field, by its class and the span of its name
     pub(crate) fields: FxHashMap<(DeclId, Span), Slot>,
-    /// The declarations of `std` and `strand` the checker treats specially
-    pub(crate) designated: FxHashMap<DeclId, Designated>,
-    /// What each of `strand`'s pipe placeholders nominates, by name, resolved where
-    /// the placeholder is exported
-    pub(crate) nominees: FxHashMap<&'static str, Referent>,
-    /// The type each designated pipe placeholder stands for, or `None` for a
-    /// nominee that isn't checked or can't stand for it
-    pub(crate) pipes: FxHashMap<DeclId, Option<DeclId>>,
     /// The variance of each binder, including the implicit binders of omitted ambient
     /// channels
     pub(crate) variance: FxHashMap<BinderRef, Variance>,
@@ -111,37 +173,231 @@ pub(crate) struct Tables<'u> {
     /// The binders of enclosing declarations each declaration is lifted over, which
     /// lead its binder group, outermost first
     pub(crate) lifted: FxHashMap<DeclId, Vec<BinderRef>>,
-    /// The database declaration of each def or method signature. A function's own
-    /// ID holds its implementation, or its first signature when it has none.
-    pub(crate) sig_decls: FxHashMap<(DeclId, usize), DeclId>,
     /// The binder group of each declaration signature: the binders it is lifted
     /// over, its written binders, then its implicit binders
     pub(crate) groups: FxHashMap<(DeclId, usize), Vec<BinderRef>>,
 }
 
+/// Where a unit's ranges of IDs start
+#[derive(Clone, Copy)]
+pub(crate) struct Bases {
+    pub(crate) unit: UnitId,
+    /// Its declarations, then the database declarations of its signatures
+    pub(crate) decls: usize,
+    pub(crate) sites: usize,
+    pub(crate) links: usize,
+}
+
+impl Bases {
+    /// The bases of a shard that is not yet linked
+    pub(crate) fn local() -> Self {
+        Self {
+            unit: local(),
+            decls: 0,
+            sites: 0,
+            links: 0,
+        }
+    }
+}
+
 impl<'u> Tables<'u> {
+    /// The tables of linked shards and their facts, whose bases are in the order
+    /// they were linked
+    pub(crate) fn new(shards: Vec<Shard<'u>>, facts: Vec<Facts>, bases: Vec<Bases>) -> Self {
+        Self {
+            shards,
+            facts,
+            bases,
+            designated: FxHashMap::default(),
+            nominees: FxHashMap::default(),
+            pipes: FxHashMap::default(),
+        }
+    }
+
+    /// The bases of the unit whose range holds `index`, by `base`
+    fn bases(&self, index: usize, base: impl Fn(&Bases) -> usize) -> &Bases {
+        let at = self.bases.partition_point(|bases| base(bases) <= index);
+        &self.bases[at.checked_sub(1).expect("every ID is in a unit's range")]
+    }
+
+    /// The unit a declaration, or a signature's database declaration, is of
+    pub(crate) fn unit_of(&self, id: DeclId) -> UnitId {
+        self.bases(id.index(), |bases| bases.decls).unit
+    }
+
+    /// The shard of a unit
+    pub(crate) fn shard(&self, unit: UnitId) -> &Shard<'u> {
+        &self.shards[unit.index()]
+    }
+
+    /// What the checker knows of a unit
+    pub(crate) fn info(&self, unit: UnitId) -> &UnitInfo<'u> {
+        &self.shards[unit.index()].info
+    }
+
+    /// A declaration
+    pub(crate) fn decl(&self, id: DeclId) -> &Decl<'u> {
+        let bases = self.bases(id.index(), |bases| bases.decls);
+        &self.shards[bases.unit.index()].decls[id.index() - bases.decls]
+    }
+
+    /// A declaration, or `None` for a signature's database declaration
+    pub(crate) fn try_decl(&self, id: DeclId) -> Option<&Decl<'u>> {
+        let bases = self.bases(id.index(), |bases| bases.decls);
+        self.shards[bases.unit.index()]
+            .decls
+            .get(id.index() - bases.decls)
+    }
+
+    /// The def or method signature whose database declaration `id` is, unless it
+    /// is a declaration's own
+    pub(crate) fn sig_owner(&self, id: DeclId) -> Option<(DeclId, usize)> {
+        let bases = self.bases(id.index(), |bases| bases.decls);
+        let shard = &self.shards[bases.unit.index()];
+        let offset = id.index() - bases.decls;
+        offset
+            .checked_sub(shard.decls.len())
+            .map(|offset| shard.sig_owners[offset])
+    }
+
+    /// Every declaration, in order
+    pub(crate) fn decl_ids(&self) -> impl Iterator<Item = DeclId> + '_ {
+        self.bases.iter().flat_map(|bases| {
+            let count = self.shards[bases.unit.index()].decls.len();
+            (bases.decls..bases.decls + count).map(DeclId::from_index)
+        })
+    }
+
+    /// The number of declaration IDs, which number every unit's declarations and
+    /// the database declarations of their signatures
+    pub(crate) fn decl_id_count(&self) -> usize {
+        self.bases.last().map_or(0, |bases| {
+            let shard = &self.shards[bases.unit.index()];
+            bases.decls + shard.decls.len() + shard.sig_owners.len()
+        })
+    }
+
+    /// The IDs of a unit's declarations, in order
+    pub(crate) fn unit_decl_ids(&self, unit: UnitId) -> impl Iterator<Item = DeclId> + use<> {
+        let base = self.base(unit).decls;
+        (base..base + self.shards[unit.index()].decls.len()).map(DeclId::from_index)
+    }
+
+    /// A site
+    pub(crate) fn site(&self, id: SiteId) -> &Site {
+        let bases = self.bases(id.index(), |bases| bases.sites);
+        &self.shards[bases.unit.index()].sites[id.index() - bases.sites]
+    }
+
+    /// Every site, in order
+    pub(crate) fn sites(&self) -> impl Iterator<Item = (SiteId, &Site)> + '_ {
+        self.bases.iter().flat_map(|bases| {
+            let sites = &self.shards[bases.unit.index()].sites;
+            sites
+                .iter()
+                .enumerate()
+                .map(|(index, site)| (SiteId::from_index(bases.sites + index), site))
+        })
+    }
+
+    /// A unit's sites, in order
+    pub(crate) fn unit_sites(&self, unit: UnitId) -> impl Iterator<Item = (SiteId, &Site)> + '_ {
+        let base = self.base(unit).sites;
+        self.shards[unit.index()]
+            .sites
+            .iter()
+            .enumerate()
+            .map(move |(index, site)| (SiteId::from_index(base + index), site))
+    }
+
+    /// The bases of a unit
+    pub(crate) fn base(&self, unit: UnitId) -> &Bases {
+        self.bases
+            .iter()
+            .find(|bases| bases.unit == unit)
+            .expect("every unit is linked")
+    }
+
+    /// What a unit's declarations are concluded to be
+    pub(crate) fn facts_of(&self, id: DeclId) -> &Facts {
+        &self.facts[self.unit_of(id).index()]
+    }
+
+    /// What a unit's declarations are concluded to be, to add to
+    pub(crate) fn facts_mut(&mut self, id: DeclId) -> &mut Facts {
+        let unit = self.unit_of(id);
+        &mut self.facts[unit.index()]
+    }
+
+    /// The underlying head of a transparent alias
+    pub(crate) fn alias(&self, decl: DeclId) -> Option<&Head> {
+        self.facts_of(decl).aliases.get(&decl)
+    }
+
+    /// The kind of a binder
+    pub(crate) fn binder_kind(&self, binder: BinderRef) -> Option<KindOf> {
+        self.facts_of(binder.decl)
+            .binder_kinds
+            .get(&binder)
+            .copied()
+    }
+
+    /// The kind of an alias
+    pub(crate) fn alias_kind(&self, decl: DeclId) -> Option<KindOf> {
+        self.facts_of(decl).alias_kinds.get(&decl).copied()
+    }
+
+    /// The completed signature `sig` of a def or method
+    pub(crate) fn sig(&self, decl: DeclId, sig: usize) -> Option<&Sig> {
+        self.facts_of(decl).sigs.get(&(decl, sig))
+    }
+
+    /// The type of a class's field, by the span of its name
+    pub(crate) fn field(&self, class: DeclId, name: Span) -> Option<Slot> {
+        self.facts_of(class).fields.get(&(class, name)).copied()
+    }
+
+    /// The variance of a binder
+    pub(crate) fn variance(&self, binder: BinderRef) -> Option<Variance> {
+        self.facts_of(binder.decl).variance.get(&binder).copied()
+    }
+
+    /// The binders of enclosing declarations a declaration is lifted over
+    pub(crate) fn lifted(&self, decl: DeclId) -> Option<&[BinderRef]> {
+        self.facts_of(decl).lifted.get(&decl).map(Vec::as_slice)
+    }
+
+    /// The binder group of a declaration signature
+    pub(crate) fn group(&self, key: (DeclId, usize)) -> Option<&[BinderRef]> {
+        self.facts_of(key.0).groups.get(&key).map(Vec::as_slice)
+    }
+
+    /// The database declaration of a def or method signature
+    pub(crate) fn sig_decl(&self, key: (DeclId, usize)) -> Option<DeclId> {
+        self.shard(self.unit_of(key.0)).sig_decls.get(&key).copied()
+    }
+
     /// What a name refers to, given its link
     pub(crate) fn linked(&self, link: Option<LinkId>) -> Option<&Referent> {
-        link.map(|link| &self.referents[link.index()])
+        link.map(|link| {
+            let bases = self.bases(link.index(), |bases| bases.links);
+            &self.shards[bases.unit.index()].referents[link.index() - bases.links]
+        })
     }
 
     /// What a name written in a unit with source refers to, by the span of its head
     pub(crate) fn written(&self, unit: UnitId, head: Span) -> Option<&Referent> {
-        self.linked(self.refs[unit.index()].get(&head).copied())
+        self.linked(self.shards[unit.index()].refs.get(&head).copied())
     }
 
     /// The number of signatures of a declaration: its defs or methods, or 1
     pub(crate) fn sig_count(&self, decl: DeclId) -> usize {
-        match &self.decls[decl.index()].node {
-            DeclNode::Defs(defs) => defs.len(),
-            DeclNode::Methods(methods) => methods.len(),
-            DeclNode::Class(_) | DeclNode::Alias(_) | DeclNode::Closure(_) => 1,
-        }
+        self.decl(decl).node.sig_count()
     }
 
     /// The binders written for signature `sig` of a declaration
     pub(crate) fn binders(&self, decl: DeclId, sig: usize) -> &[Binder] {
-        match &self.decls[decl.index()].node {
+        match &self.decl(decl).node {
             DeclNode::Class(class) => &class.binders,
             DeclNode::Alias(alias) => &alias.binders,
             DeclNode::Defs(defs) => &defs[sig].binders,
@@ -160,7 +416,7 @@ impl<'u> Tables<'u> {
 
     /// Signature `sig` of a method declaration
     pub(crate) fn method(&self, decl: DeclId, sig: usize) -> &Method {
-        match &self.decls[decl.index()].node {
+        match &self.decl(decl).node {
             DeclNode::Methods(methods) => &methods[sig],
             _ => unreachable!("only a method declaration has methods"),
         }
@@ -169,12 +425,17 @@ impl<'u> Tables<'u> {
     /// Each written type as interned, with the kinds of the binders of the group it
     /// is interpreted in
     pub(crate) fn site_kinds(&self) -> impl Iterator<Item = (TypeId, Vec<Kind>)> + '_ {
-        self.sites.iter().map(|site| {
+        self.sites().map(|(_, site)| {
             let ty = site.interned.get().expect("population interns each site");
             let kinds = site.group().map_or_else(Vec::new, |key| {
-                self.groups[&key]
+                self.group(key)
+                    .expect("population groups each signature")
                     .iter()
-                    .map(|binder| self.binder_kinds[binder].kind)
+                    .map(|&binder| {
+                        self.binder_kind(binder)
+                            .expect("every binder has a kind")
+                            .kind
+                    })
                     .collect()
             });
             (ty, kinds)
@@ -185,23 +446,28 @@ impl<'u> Tables<'u> {
     /// binder of its group. A binder lifted from an enclosing declaration is that
     /// declaration's rigid, so a closure's types agree with its enclosing def's.
     pub(crate) fn group_rigids(&self, db: &Database, key: (DeclId, usize)) -> Vec<TypeId> {
-        let Some(group) = self.groups.get(&key) else {
+        let Some(group) = self.group(key) else {
             return Vec::new();
         };
         group
             .iter()
             .map(|binder| {
                 let owner = (binder.decl, binder.sig);
-                let slot = self.groups[&owner]
+                let slot = self
+                    .group(owner)
+                    .expect("a binder's declaration is grouped")
                     .iter()
                     .position(|other| other == binder)
                     .expect("a binder is in its own declaration's group");
-                let rigids = db.rigids(self.sig_decls[&owner]);
+                let rigids = db.rigids(self.sig_decl(owner).expect("every signature is declared"));
                 // A group too large to populate left its declaration without binders
-                rigids
-                    .get(slot)
-                    .copied()
-                    .unwrap_or_else(|| db.unknown_of(self.binder_kinds[binder].kind))
+                rigids.get(slot).copied().unwrap_or_else(|| {
+                    db.unknown_of(
+                        self.binder_kind(*binder)
+                            .expect("every binder has a kind")
+                            .kind,
+                    )
+                })
             })
             .collect()
     }
@@ -209,24 +475,20 @@ impl<'u> Tables<'u> {
     /// The signature whose database declaration a declaration's own ID holds: its
     /// implementation, or its first signature when it has none
     pub(crate) fn primary_sig(&self, decl: DeclId) -> usize {
-        (0..self.sig_count(decl))
-            .find(|&sig| self.sig_decls.get(&(decl, sig)) == Some(&decl))
-            .unwrap_or(0)
+        self.decl(decl).node.primary_sig().unwrap_or(0)
     }
 
     /// The export of `unit` named `name`
     pub(crate) fn export(&self, unit: UnitId, name: &str) -> Option<&Export> {
-        find_export(
-            &self.exports[unit.index()],
-            &self.strings[unit.index()],
-            name,
-        )
+        let shard = &self.shards[unit.index()];
+        find_export(&shard.exports, &shard.strings, name)
     }
 
     /// The source text of a span of a unit, for lowering and flow analysis, which
     /// read only units with source
     pub(crate) fn text(&self, unit: UnitId, span: Span) -> &'u str {
-        self.units[unit.index()]
+        self.shards[unit.index()]
+            .info
             .source
             .expect("only a unit with source is read as text")
             .file
@@ -234,7 +496,7 @@ impl<'u> Tables<'u> {
     }
 }
 
-/// The unit of a harvest that is not yet linked
+/// The unit of a shard that is not yet linked
 pub(crate) fn local() -> UnitId {
     UnitId::from_index(0)
 }
@@ -290,7 +552,7 @@ impl UnitInfo<'_> {
 /// declaration's defs or methods, and is 0 for any other declaration. The implicit
 /// binders of a signature's omitted ambient channels follow its written binders.
 /// Outer declarations are allocated first, so the order is outermost first.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct BinderRef {
     pub(crate) decl: DeclId,
     pub(crate) sig: usize,
@@ -298,10 +560,9 @@ pub(crate) struct BinderRef {
 }
 
 /// A type expression written in source, and how it is used
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct Site {
-    /// A harvest's own unit, which a typelib leaves implicit
-    #[serde(skip, default = "local")]
+    /// The shard's own unit, which a typelib leaves implicit
     pub(crate) unit: UnitId,
     pub(crate) ty: TypeExpr,
     pub(crate) role: Role,
@@ -312,7 +573,6 @@ pub(crate) struct Site {
     /// absent at a unit's top level
     pub(crate) owner: Option<(DeclId, usize)>,
     /// The type as interned in its group
-    #[serde(skip)]
     pub(crate) interned: Interned,
 }
 
@@ -327,7 +587,7 @@ impl Site {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Role {
     /// The annotation of a binding, or a return type or ambient channel: a type
     Type,
@@ -399,6 +659,7 @@ pub(crate) enum Ambient {
 }
 
 /// A def or method signature, completed with the defaults for what it omits
+#[derive(Clone)]
 pub(crate) struct Sig {
     /// Each parameter's type, by its index in the signature's parameters
     pub(crate) params: Vec<ParamTy>,
@@ -459,10 +720,9 @@ pub(crate) enum Designated {
 }
 
 /// A source declaration
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct Decl<'u> {
-    /// A harvest's own unit, which a typelib leaves implicit
-    #[serde(skip, default = "local")]
+    /// The shard's own unit, which a typelib leaves implicit
     pub(crate) unit: UnitId,
     pub(crate) kind: DeclKind,
     /// The declared name; absent for a closure
@@ -473,12 +733,11 @@ pub(crate) struct Decl<'u> {
     pub(crate) outer: Option<(DeclId, usize)>,
     /// The syntax the declaration was collected from, for lowering; absent for a
     /// unit checked without its source
-    #[serde(skip)]
     pub(crate) ast: Option<DeclAst<'u>>,
 }
 
 /// A declaration's surface
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) enum DeclNode {
     /// A class or protocol
     Class(Class),
@@ -511,6 +770,26 @@ impl Decl<'_> {
 }
 
 impl DeclNode {
+    /// The number of signatures: its defs or methods, or 1
+    pub(crate) fn sig_count(&self) -> usize {
+        match self {
+            DeclNode::Defs(defs) => defs.len(),
+            DeclNode::Methods(methods) => methods.len(),
+            DeclNode::Class(_) | DeclNode::Alias(_) | DeclNode::Closure(_) => 1,
+        }
+    }
+
+    /// The signature whose database declaration the declaration's own ID holds: a
+    /// def's or method's implementation, if it has one
+    pub(crate) fn primary_sig(&self) -> Option<usize> {
+        match self {
+            DeclNode::Defs(defs) => defs.iter().position(|def| !def.type_only),
+            // A protocol member is type-only, but not an overload signature
+            DeclNode::Methods(methods) => methods.iter().position(|method| !method.overload),
+            DeclNode::Class(_) | DeclNode::Alias(_) | DeclNode::Closure(_) => None,
+        }
+    }
+
     /// The signature of a def, method or closure
     pub(crate) fn signature(&self, sig: usize) -> &Signature {
         match self {
@@ -524,24 +803,22 @@ impl DeclNode {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Referent {
     Decl(DeclId),
     Binder(BinderRef),
     /// A binding that exists only at runtime, such as a `let` or a parameter
-    Value(#[serde(with = "wire::local_span")] UnitSpan),
+    Value(UnitSpan),
     /// Nothing, for a reason already diagnosed
     Error,
-    /// A checked module, reached by a name that is not dotted, which a harvest
-    /// names only once linked. Last, since serde numbers a skipped variant when
-    /// writing but not when reading.
-    #[serde(skip)]
+    /// A checked module, reached by a name that is not dotted, which a shard
+    /// names only once linked
     Module(UnitId),
 }
 
 /// What an unresolved name or export refers to. A module is one of its unit's
 /// module table.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Target {
     Local(Referent),
     /// An item of a module, by name

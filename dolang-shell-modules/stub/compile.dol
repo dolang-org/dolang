@@ -1126,7 +1126,7 @@ pub class Check
   # | Exception          | Condition                                                   |
   # | ------------------ | ----------------------------------------------------------- |
   # | `std.ValueError`   | The check wasn't given `typelibs: true`, or `unit` wasn't checked |
-  # | `std.CompileError` | `unit` is a typelib or not a module, imports a module that wasn't checked with it, or has a private declaration in its public interface |
+  # | `std.CompileError` | `unit` is a typelib or not a module, imports a module that wasn't checked with it, or has a private declaration in its public interface; a module that is or imports `strand` also needs `proc` |
   pub def typelib
     self
     # A unit given to [`check`](compile.check).
