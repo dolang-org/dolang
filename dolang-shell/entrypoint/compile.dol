@@ -222,6 +222,7 @@ def node_json id_to_index node
     :ret = nil
     :ty = nil
     :key_ty = nil
+    :quant = nil
     ...
   $
     kind: (KIND_NAMES.get (type node))
@@ -260,7 +261,7 @@ def node_json id_to_index node
     if (args != nil)
       args: (node_indices id_to_index args)
     if (type(node, compile.PosTypeItem) || type(node, compile.KeyTypeItem))
-      quant: (QUANTS.get node.quant)
+      quant: (quant && QUANTS.get(quant))
     if (items != nil)
       items: (node_indices id_to_index items)
     if (elem != nil)
@@ -458,13 +459,12 @@ class Document
         child.key
       else
         child.name
-      let implicit = type(child, compile.ImplicitParam)
       let ty = self.#type_of $child.id
       let param = $
         kind: (DECL_KINDS.get (type child))
         if (name != nil)
           name: (self.#text(name))
-        optional: (!type(child, compile.RestParam) && !implicit && child.default != nil)
+        optional: ((type(child, compile.PositionalParam) || type(child, compile.KeyParam)) && child.default != nil)
         if (type(child, compile.RestParam) && child.type_ellipsis != nil)
           type_spread: true
         doc: (self.#doc_of(child))
@@ -857,7 +857,9 @@ def serve_line line
   try
     # JSON object keys decode as `Str`, so the pattern below matches them as
     # quoted (`Str`) keys rather than bareword (`Sym`) ones.
-    bind json.decode(line)
+    let Dict(request) = json.decode(line)
+    else throw std.ValueError "expected a JSON object"
+    bind request
       "source": source
       "path": path = nil
       "module": module = nil
