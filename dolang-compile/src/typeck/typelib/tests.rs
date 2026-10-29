@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     panic::{self, AssertUnwindSafe},
     path::Path,
 };
@@ -8,18 +9,23 @@ use crate::{
     Config, ErrorKind, Mode, Unit,
     source::Span,
     typeck::{
-        Builder, Typelib,
+        Builder, Typelib, UnitId,
         elab::{
-            Bases, DeclNode, Referent, Shard, Target, Value,
-            surface::{Member, Name, ParamKind, TypeExpr},
+            Bases, BinderRef, DeclNode, Facts, Referent, Shard, Tables, Target, Value,
+            surface::{Member, Name, ParamKind, StrId, TypeExpr},
         },
+        r#type::Variance,
     },
 };
 
-/// Encode the surface of a shard that is not yet linked.
-fn encode(shard: Shard<'_>) -> Vec<u8> {
-    let (kept, _) = shard.interface(&Bases::local());
-    super::write(&shard, &Bases::local(), &kept)
+/// Encode the surface of a shard that is not yet linked, with its facts and the
+/// pipe nominations it records.
+fn encode(shard: Shard<'_>, facts: &Facts) -> Vec<u8> {
+    let (kept, _) = shard.interface();
+    let text = |id: StrId| &*shard.strings[id.index()];
+    let pipes =
+        (shard.nominations).map(|pipes| pipes.map(|(module, item)| (text(module), text(item))));
+    super::write(&shard, &Bases::local(), &kept, facts, pipes)
 }
 
 /// Write a unit's typelib from a check of it with an empty module of each name in
@@ -53,9 +59,9 @@ fn serialize(content: &wire::Content<&str>) -> Vec<u8> {
     postcard::to_extend(content, out).unwrap()
 }
 
-/// Read a typelib's shard.
-fn read(bytes: &[u8]) -> Result<Shard<'_>, Invalid> {
-    super::read(bytes).map(|(shard, _)| shard)
+/// Read a typelib's shard and the facts it records.
+fn read(bytes: &[u8]) -> Result<(Shard<'_>, Facts), Invalid> {
+    super::read(bytes)
 }
 
 const MODULE: &str = "
@@ -140,12 +146,12 @@ fn check(typelib: &[u8]) -> Result<Vec<String>, crate::Error> {
 #[test]
 fn round_trip() {
     let bytes = typelib();
-    let shard = read(&bytes).unwrap();
+    let (shard, facts) = read(&bytes).unwrap();
     assert!(
         shard.decls.iter().all(|decl| decl.name.is_some()),
         "the bodies' declarations are left out"
     );
-    assert_eq!(encode(shard), bytes);
+    assert_eq!(encode(shard, &facts), bytes);
 }
 
 #[test]
@@ -164,7 +170,7 @@ pub let limit @ Tag = \"Tag\"
         },
     );
     let bytes = write(&unit, &[]).unwrap();
-    let shard = read(&bytes).unwrap();
+    let (shard, _) = read(&bytes).unwrap();
     let mut strings: Vec<&str> = shard.strings.iter().map(|text| &**text).collect();
     strings.sort_unstable();
     assert!(
@@ -188,9 +194,9 @@ fn types_are_interned_once() {
     let bytes = write(&compile(source, Mode::Module { name: "lib".into() }), &[]).unwrap();
     // `Array`, `Int`, `Array[Int]` and `Str`, each once
     assert_eq!(content(&bytes).types.len(), 4);
-    let shard = read(&bytes).unwrap();
+    let (shard, facts) = read(&bytes).unwrap();
     assert_eq!(shard.sites.len(), 4);
-    assert_eq!(encode(shard), bytes);
+    assert_eq!(encode(shard, &facts), bytes);
 }
 
 #[test]
@@ -231,16 +237,16 @@ pub class C
   pub field b @ Int = 0
 ";
     let bytes = write(&compile(source, Mode::Module { name: "lib".into() }), &[]).unwrap();
-    let shard = read(&bytes).unwrap();
+    let (shard, facts) = read(&bytes).unwrap();
     assert_eq!(members(&shard, 0), [None, Some((1, 0)), None]);
-    assert_eq!(encode(shard), bytes);
+    assert_eq!(encode(shard, &facts), bytes);
 }
 
 /// What a typelib leaves to be derived is written where it can't be.
 #[test]
 fn underived_values_are_written() {
     let bytes = typelib();
-    let mut shard = read(&bytes).unwrap();
+    let (mut shard, facts) = read(&bytes).unwrap();
     let elsewhere = Span { start: 0, end: 1 };
     let (double, _) = (shard.decls.iter().enumerate())
         .find(|(_, decl)| matches!(decl.node, DeclNode::Defs(_)))
@@ -283,8 +289,8 @@ fn underived_values_are_written() {
     written.members.reverse();
     let order = members(&shard, class);
 
-    let bytes = encode(shard);
-    let shard = read(&bytes).unwrap();
+    let bytes = encode(shard, &facts);
+    let (shard, facts) = read(&bytes).unwrap();
     let DeclNode::Defs(defs) = &shard.decls[double].node else {
         panic!("`double` is a function");
     };
@@ -305,7 +311,7 @@ fn underived_values_are_written() {
         .collect();
     assert_eq!(keys, [key]);
     assert_eq!(members(&shard, class), order);
-    assert_eq!(encode(shard), bytes);
+    assert_eq!(encode(shard, &facts), bytes);
 }
 
 #[test]
@@ -462,9 +468,46 @@ fn out_of_range() {
 }
 
 #[test]
+fn malformed_facts() {
+    let bytes = typelib();
+    // `Box`, whose one signature has one binder
+    let mut corrupt = content(&bytes);
+    corrupt.facts[0].variance[0].pop();
+    assert!(matches!(
+        read(&serialize(&corrupt)),
+        Err(Invalid::Malformed("the variances are not one per binder"))
+    ));
+    let mut corrupt = content(&bytes);
+    corrupt.facts[0].variance.push(Vec::new());
+    assert!(matches!(
+        read(&serialize(&corrupt)),
+        Err(Invalid::Malformed(
+            "the variances are not one list per signature"
+        ))
+    ));
+    // `Box` is outermost, so it captures nothing
+    let mut corrupt = content(&bytes);
+    corrupt.facts[0]
+        .captured
+        .push(((0, 0, 0), wire::WireVariance::Covariant));
+    assert!(matches!(
+        read(&serialize(&corrupt)),
+        Err(Invalid::Malformed(
+            "a captured binder is not of an outer signature"
+        ))
+    ));
+    let mut corrupt = content(&bytes);
+    corrupt.facts.pop();
+    assert!(matches!(
+        read(&serialize(&corrupt)),
+        Err(Invalid::Malformed("the facts are not one per declaration"))
+    ));
+}
+
+#[test]
 fn exported_variables() {
     let bytes = typelib();
-    let shard = read(&bytes).unwrap();
+    let (shard, _) = read(&bytes).unwrap();
     let annotated = |name: &str| {
         let export = shard
             .exports
@@ -484,14 +527,14 @@ fn exported_variables() {
     assert!(!annotated("loose"));
     assert_eq!(shard.values.len(), 2);
 
-    let mut unlisted = read(&bytes).unwrap();
+    let (mut unlisted, facts) = read(&bytes).unwrap();
     unlisted.values.clear();
     assert!(matches!(
-        read(&encode(unlisted)),
+        read(&encode(unlisted, &facts)),
         Err(Invalid::Malformed("an exported variable is not listed"))
     ));
 
-    let mut stray = read(&bytes).unwrap();
+    let (mut stray, facts) = read(&bytes).unwrap();
     stray.values.insert(
         0,
         Value {
@@ -500,7 +543,7 @@ fn exported_variables() {
         },
     );
     assert!(matches!(
-        read(&encode(stray)),
+        read(&encode(stray, &facts)),
         Err(Invalid::Malformed("a listed variable is not exported"))
     ));
 }
@@ -537,7 +580,7 @@ def private_def()
         &["std"],
     )
     .unwrap();
-    let shard = read(&bytes).unwrap();
+    let (shard, facts) = read(&bytes).unwrap();
     let text = |name: Option<Name>| &*shard.strings[name.unwrap().text.index()];
     let decls: Vec<_> = shard.decls.iter().map(|decl| text(decl.name)).collect();
     // The special `(init)` stays whatever its visibility
@@ -553,9 +596,9 @@ def private_def()
             Member::Method { .. } => None,
         })
         .collect();
-    // A private `Phantom` field counts towards the class's variance
-    assert_eq!(fields, ["marker", "shown"]);
-    assert_eq!(encode(shard), bytes);
+    // What a private field decides, the class's variance, is recorded instead
+    assert_eq!(fields, ["shown"]);
+    assert_eq!(encode(shard, &facts), bytes);
 }
 
 #[test]
@@ -683,7 +726,7 @@ fn omits_reference_spans_and_spellings() {
     let source = "import dep:\n  @Thing: Alias\npub @let G = Alias\npub @let H = Array[G]\n";
     let unit = compile(source, Mode::Module { name: "lib".into() });
     let bytes = write(&unit, &["dep"]).unwrap();
-    let shard = read(&bytes).unwrap();
+    let (shard, _) = read(&bytes).unwrap();
     let strings: Vec<&str> = shard.strings.iter().map(|text| &**text).collect();
     assert!(strings.contains(&"Thing"));
     assert!(
@@ -708,10 +751,10 @@ fn omits_reference_spans_and_spellings() {
 fn locates_kept_spans() {
     let unit = compile(MODULE, Mode::Module { name: "lib".into() });
     let bytes = write(&unit, &[]).unwrap();
-    let shard = read(&bytes).unwrap();
+    let (shard, facts) = read(&bytes).unwrap();
     // Declarations, binders, members and parameters, among others
-    let (kept, _) = shard.interface(&Bases::local());
-    let (_, spans) = wire::Encode::new(&shard, &Bases::local(), &kept).content();
+    let (kept, _) = shard.interface();
+    let (_, spans) = wire::Encode::new(&shard, &Bases::local(), &kept, &facts, None).content();
     assert!(spans.len() > shard.decls.len());
     for span in spans {
         for offset in [span.start, span.end] {
@@ -752,4 +795,256 @@ fn omitted_span_at_first_line() {
     for (unit, line, column, message) in found {
         assert_eq!((unit, line, column), (0, 1, 1), "{message}");
     }
+}
+
+/// A `std` declaring `Phantom`, which variance counts
+const PHANTOM_STD: &str = "pub @let Phantom[T] = ...\npub @class Int\n";
+
+const VARIANT: &str = "
+import std:
+  - @Phantom
+
+pub class Out[T]
+  field marker @ Phantom[T]
+
+pub class In[T]
+  field sink @ T = ...
+
+  pub def put self x @ T
+    nil
+
+pub class Hidden[T]
+  field kept @ T = ...
+
+  def helper self -> T
+    ...
+
+pub class Outer[T]
+  pub def get self -> T
+    ...
+
+pub @let Fn[A, B] = (A -> B)
+
+pub def apply[T] f @ (T -> nil)
+  nil
+";
+
+/// The variance of each binder of a unit's declarations, and of each outer binder
+/// they use, by the declaration's name, signature and slot
+fn variances(
+    tables: &Tables<'_>,
+    unit: UnitId,
+) -> BTreeMap<(String, usize, usize, bool), Variance> {
+    let name = |decl| {
+        let text = tables.decl(decl).name.map(|name| name.text);
+        text.map_or("", |text| &*tables.shard(unit).strings[text.index()])
+    };
+    let mut found = BTreeMap::new();
+    for decl in tables.unit_decl_ids(unit) {
+        for sig in 0..tables.sig_count(decl) {
+            let mut slot = 0;
+            while let Some(variance) = tables.variance(BinderRef { decl, sig, slot }) {
+                found.insert((name(decl).to_owned(), sig, slot, false), variance);
+                slot += 1;
+            }
+        }
+    }
+    for (&(decl, binder), &variance) in &tables.facts[unit.index()].captured {
+        let key = (
+            format!("{}.{}", name(binder.decl), name(decl)),
+            binder.sig,
+            binder.slot,
+            true,
+        );
+        found.insert(key, variance);
+    }
+    found
+}
+
+#[test]
+fn variance_is_recorded() {
+    let std = compile(PHANTOM_STD, Mode::Module { name: "std".into() });
+    let lib = compile(VARIANT, Mode::Module { name: "lib".into() });
+    let mut builder = Builder::new();
+    builder.typelibs(true);
+    builder.unit(&std).unwrap();
+    let id = builder.unit(&lib).unwrap();
+    let (check, tables) = builder.check_tables();
+    let mut bytes = Vec::new();
+    check.typelib(id, &mut bytes).unwrap();
+    let mut from_source = variances(&tables, id);
+
+    let typelib = Typelib::read(&bytes).unwrap();
+    let mut builder = Builder::new();
+    builder.unit(&std).unwrap();
+    let id = builder.typelib(&typelib).unwrap();
+    let (_, tables) = builder.check_tables();
+    let from_typelib = variances(&tables, id);
+
+    // The private method isn't on the surface
+    from_source.retain(|(name, ..), _| !name.ends_with("helper"));
+    assert_eq!(from_typelib, from_source);
+    let of = |name: &str, slot| from_typelib[&(name.to_owned(), 0, slot, false)];
+    assert_eq!(of("Out", 0), Variance::Covariant);
+    assert_eq!(of("In", 0), Variance::Contravariant);
+    assert_eq!(of("Hidden", 0), Variance::Invariant);
+    assert_eq!(of("Fn", 0), Variance::Contravariant);
+    assert_eq!(of("Fn", 1), Variance::Covariant);
+    assert_eq!(
+        from_typelib[&("Outer.get".to_owned(), 0, 0, true)],
+        Variance::Covariant
+    );
+}
+
+const STRAND: &str = "pub @let PipeSender[I] = ...
+pub @let PipeReceiver[I] = ...
+";
+
+const PROC: &str = "pub class Sender[T]
+  pub def send self x @ T
+    nil
+pub class Receiver[T]
+  pub def recv self -> T
+    ...
+";
+
+const PIPES: [(&str, &str); 2] = [("proc", "Sender"), ("proc", "Receiver")];
+
+/// Write the typelibs of `strand`, `proc` and modules depending on them or not,
+/// with `PIPES` nominated
+fn piped() -> [Vec<u8>; 4] {
+    let units = [
+        compile(
+            STRAND,
+            Mode::Module {
+                name: "strand".into(),
+            },
+        ),
+        compile(
+            PROC,
+            Mode::Module {
+                name: "proc".into(),
+            },
+        ),
+        compile(
+            "import strand\npub @let P = strand.PipeSender[Int]\n",
+            Mode::Module { name: "dep".into() },
+        ),
+        compile(
+            "pub @let Q = Int\n",
+            Mode::Module {
+                name: "other".into(),
+            },
+        ),
+    ];
+    let std = compile("pub @class Int\n", Mode::Module { name: "std".into() });
+    let mut builder = Builder::new();
+    builder.typelibs(true).pipes(PIPES[0], PIPES[1]);
+    builder.unit(&std).unwrap();
+    let ids: Vec<_> = units
+        .iter()
+        .map(|unit| builder.unit(unit).unwrap())
+        .collect();
+    let check = builder.check();
+    let typelibs: Vec<_> = (ids.into_iter())
+        .map(|id| {
+            let mut bytes = Vec::new();
+            check.typelib(id, &mut bytes).unwrap();
+            bytes
+        })
+        .collect();
+    typelibs.try_into().unwrap()
+}
+
+#[test]
+fn records_pipes() {
+    let [strand, proc, dep, other] = piped();
+    let nominations = |bytes: &[u8]| {
+        let (shard, _) = read(bytes).unwrap();
+        let text = |id: StrId| shard.strings[id.index()].to_string();
+        (shard.nominations).map(|pipes| pipes.map(|(module, item)| (text(module), text(item))))
+    };
+    let expected = Some(PIPES.map(|(module, item)| (module.to_owned(), item.to_owned())));
+    assert_eq!(nominations(&strand), expected);
+    assert_eq!(nominations(&dep), expected);
+    assert_eq!(nominations(&proc), None);
+    assert_eq!(nominations(&other), None);
+}
+
+#[test]
+fn rejects_other_pipes() {
+    let [strand, ..] = piped();
+    let typelib = Typelib::read(&strand).unwrap();
+    let error = Builder::new().typelib(&typelib).unwrap_err();
+    assert!(matches!(error.kind(), ErrorKind::Pipes));
+    assert_eq!(
+        error.to_string(),
+        "typelib of `strand` was written with other pipe types"
+    );
+    let mut builder = Builder::new();
+    builder.pipes(PIPES[0], PIPES[1]);
+    builder.typelib(&typelib).unwrap();
+}
+
+#[test]
+#[should_panic = "pipes are nominated before typelibs are added"]
+fn pipes_before_typelibs() {
+    let bytes = typelib();
+    let typelib = Typelib::read(&bytes).unwrap();
+    let mut builder = Builder::new();
+    builder.typelib(&typelib).unwrap();
+    builder.pipes(PIPES[0], PIPES[1]);
+}
+
+#[test]
+fn recorded_nominee_not_found() {
+    let [strand, ..] = piped();
+    let typelib = Typelib::read(&strand).unwrap();
+    let std = compile("pub @class Int\n", Mode::Module { name: "std".into() });
+    let mut builder = Builder::new();
+    builder.pipes(PIPES[0], PIPES[1]);
+    builder.unit(&std).unwrap();
+    builder.typelib(&typelib).unwrap();
+    // The minimal `std` misses what the checker requires, which it reports too
+    let messages: Vec<_> = (builder.check().diagnostics())
+        .map(|diag| diag.message().to_string())
+        .filter(|message| message.ends_with("not found"))
+        .collect();
+    assert_eq!(
+        messages,
+        ["module `proc` not found", "module `proc` not found"]
+    );
+}
+
+#[test]
+fn missing_nominee() {
+    let strand = compile(
+        STRAND,
+        Mode::Module {
+            name: "strand".into(),
+        },
+    );
+    let other = compile(
+        "pub @let Q = Int\n",
+        Mode::Module {
+            name: "other".into(),
+        },
+    );
+    let std = compile("pub @class Int\n", Mode::Module { name: "std".into() });
+    let mut builder = Builder::new();
+    builder.typelibs(true).pipes(PIPES[0], PIPES[1]);
+    builder.unit(&std).unwrap();
+    let ids = [
+        builder.unit(&strand).unwrap(),
+        builder.unit(&other).unwrap(),
+    ];
+    let check = builder.check();
+    let error = check.typelib(ids[0], &mut Vec::new()).unwrap_err();
+    assert!(matches!(error.kind(), ErrorKind::MissingImport));
+    assert_eq!(
+        error.to_string(),
+        "module `proc` of a nominated pipe type was not checked"
+    );
+    // What doesn't depend on the pipes is written
+    check.typelib(ids[1], &mut Vec::new()).unwrap();
 }

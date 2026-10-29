@@ -5,9 +5,13 @@
 //! shard, with the module's name, path and the lines its kept spans are on. It is a
 //! structural record of the module's interface: it keeps text that is part of the
 //! interface, not how a reference is spelled, and spans that locate definitions and
-//! imports, not those of written types. It is what elaboration starts from, not
-//! what it concludes, so a check that loads one elaborates the module's
-//! declarations again, as it would from source, but checks none of its bodies.
+//! imports, not those of written types. It is mostly what elaboration starts
+//! from, so a check that loads one elaborates the module's declarations again, as
+//! it would from source, but checks none of its bodies. What depends on what the
+//! typelib leaves out is recorded instead, as facts the check takes as given: the
+//! variance of each binder, which private members decide. Where those facts can
+//! depend on the types `strand`'s pipe placeholders stand for, the typelib records
+//! them too, and only a check that nominates the same types loads it.
 //!
 //! The format is postcard, after a header naming the format and its version, of a
 //! form of its own (see [`wire`]) that is converted to and from the shard. Reading
@@ -17,11 +21,12 @@
 
 use std::fmt;
 
+use bitvec::slice::BitSlice;
 use serde::{Deserialize, Serialize};
 
 use super::{
     elab::{
-        Bases, BinderRef, Decl, DeclNode, Facts, Kept, Referent, Role, Shard, Target,
+        Bases, BinderRef, Decl, DeclNode, Facts, Referent, Role, Shard, Target,
         surface::{Binder, Decorator, LinkId, Member, ModuleId, ParamKind, Ref, SiteId, StrId},
     },
     r#type::{DeclId, DeclKind, UnitId},
@@ -34,7 +39,7 @@ mod wire;
 const MAGIC: [u8; 8] = *b"\xffdotypel";
 /// The format's version, which changes with any change to the format. It isn't 0,
 /// which the bytes after the magic of an older typelib would read as.
-const VERSION: u16 = 6;
+const VERSION: u16 = 7;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct Header {
@@ -75,9 +80,16 @@ impl fmt::Display for Invalid {
 }
 
 /// Write the typelib of what `kept` keeps of a module's shard, whose IDs start at
-/// `base`.
-pub(crate) fn write(shard: &Shard<'_>, base: &Bases, kept: &Kept) -> Vec<u8> {
-    let (content, _) = wire::Encode::new(shard, base, kept).content();
+/// `base`, with the facts concluded about it and the pipe nominations they depend
+/// on, if any.
+pub(crate) fn write(
+    shard: &Shard<'_>,
+    base: &Bases,
+    kept: &BitSlice,
+    facts: &Facts,
+    pipes: Option<[(&str, &str); 2]>,
+) -> Vec<u8> {
+    let (content, _) = wire::Encode::new(shard, base, kept, facts, pipes).content();
     let out = postcard::to_stdvec(&HEADER).expect("a header serializes");
     postcard::to_extend(&content, out).expect("a surface serializes")
 }
@@ -98,14 +110,14 @@ pub(crate) fn read(bytes: &[u8]) -> Result<(Shard<'_>, Facts), Invalid> {
     if !rest.is_empty() {
         return Err(Invalid::Malformed("trailing bytes"));
     }
-    let mut shard = wire::decode(content).map_err(Invalid::Malformed)?;
+    let (mut shard, facts) = wire::decode(content).map_err(Invalid::Malformed)?;
     validate(&mut shard).map_err(Invalid::Malformed)?;
     // By name, to be found by name
     let strings = &shard.strings;
     shard
         .exports
         .sort_by(|a, b| strings[a.name.index()].cmp(&strings[b.name.index()]));
-    Ok((shard, Facts::default()))
+    Ok((shard, facts))
 }
 
 /// Check what elaboration assumes of a shard that collection guarantees.

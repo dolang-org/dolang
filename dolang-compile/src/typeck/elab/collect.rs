@@ -10,9 +10,8 @@ use std::{borrow::Cow, collections::hash_map::Entry as MapEntry, iter};
 use rustc_hash::FxHashMap;
 
 use super::{
-    AliasCycle, Bases, BinderRef, Decl, DeclAst, DeclNode, Diag, Facts, Head, ImportCycle,
-    MissingExport, MissingModule, PIPES, Referent, Role, Shard, Site, Tables, Target, UnitDiag,
-    UnitInfo,
+    Bases, BinderRef, Decl, DeclAst, DeclNode, Diag, Facts, ImportCycle, MissingExport,
+    MissingModule, PIPES, Referent, Role, Shard, Site, Tables, Target, UnitDiag, UnitInfo,
     ids::Rebase,
     interface::PrivateInInterface,
     local,
@@ -171,6 +170,8 @@ pub(crate) fn collect<'u>(unit: &'u Unit<'u>) -> Shard<'u> {
         values,
         sig_decls: FxHashMap::default(),
         sig_owners: Vec::new(),
+        kept: None,
+        nominations: None,
     }
 }
 
@@ -198,12 +199,12 @@ pub(crate) fn link<'u>(
         // A typelib leaves out private declarations, so only a unit with source can
         // name one in its interface
         if shard.info.source.is_some() {
-            let local = Bases::local();
-            let (_, found) = shard.interface(&local);
+            let (kept, found) = shard.interface();
             leaks.extend(found.iter().map(|leak| {
-                let report = PrivateInInterface::new(&shard, &local, leak);
+                let report = PrivateInInterface::new(&shard, leak);
                 (id, Diag::new(report))
             }));
+            shard.kept = found.is_empty().then_some(kept);
         }
         let mut rebase = Rebase {
             unit: id,
@@ -285,27 +286,7 @@ pub(crate) fn link<'u>(
         }
         referents
     };
-    // Each nominee is resolved as if its placeholder imported it. A placeholder
-    // that isn't an opaque alias is diagnosed when designated.
-    let mut nominees = FxHashMap::default();
-    if let Some(&strand) = provided.get("strand") {
-        for (placeholder, (module, item)) in PIPES.into_iter().zip(pipes) {
-            if let Some(&Export {
-                span,
-                target: Target::Local(Referent::Decl(decl)),
-                ..
-            }) = fixup.tables.export(strand, placeholder)
-                && fixup.tables.decl(decl).kind == DeclKind::OpaqueAlias
-                // A nominee whose module isn't checked leaves its placeholder
-                // dynamic; no unit imports it
-                && let Some(&unit) = provided.get(module)
-            {
-                let site = UnitSpan { unit: strand, span };
-                let nominee = fixup.export(unit, item, site);
-                nominees.insert(placeholder, nominee);
-            }
-        }
-    }
+    let nominees = fixup.nominees(&provided, pipes);
     let mut diags = fixup.diags;
     diags.extend(leaks);
     tables.nominees = nominees;
@@ -313,23 +294,6 @@ pub(crate) fn link<'u>(
         shard.referents = referents;
     }
 
-    let mut aliases = Aliases {
-        tables: &tables,
-        heads: FxHashMap::default(),
-        diags: &mut diags,
-    };
-    // Every alias is followed in declaration order, so which one a cycle is reported
-    // at does not depend on which alias names it first
-    for id in tables.decl_ids() {
-        if tables.decl(id).kind == DeclKind::Alias {
-            aliases.head(id);
-        }
-    }
-    let heads = aliases.heads;
-    for (id, head) in heads {
-        let head = head.expect("every alias is finished");
-        tables.facts_mut(id).aliases.insert(id, head);
-    }
     (tables, diags)
 }
 
@@ -1875,6 +1839,46 @@ struct Fixup<'a, 'u> {
 }
 
 impl<'a, 'u> Fixup<'a, 'u> {
+    /// Resolve each nominee as if its placeholder imported it. A placeholder that
+    /// isn't an opaque alias is diagnosed when designated.
+    fn nominees(
+        &mut self,
+        provided: &FxHashMap<&str, UnitId>,
+        pipes: [(&'a str, &'a str); 2],
+    ) -> FxHashMap<&'static str, Referent> {
+        let mut nominees = FxHashMap::default();
+        let Some(&strand) = provided.get("strand") else {
+            return nominees;
+        };
+        let recorded = (self.tables.shards.iter()).any(|shard| shard.nominations.is_some());
+        for (placeholder, (module, item)) in PIPES.into_iter().zip(pipes) {
+            if let Some(&Export {
+                span,
+                target: Target::Local(Referent::Decl(decl)),
+                ..
+            }) = self.tables.export(strand, placeholder)
+                && self.tables.decl(decl).kind == DeclKind::OpaqueAlias
+            {
+                match provided.get(module) {
+                    Some(&unit) => {
+                        let site = UnitSpan { unit: strand, span };
+                        let nominee = self.export(unit, item, site);
+                        nominees.insert(placeholder, nominee);
+                    }
+                    // A nominee whose module isn't checked leaves its placeholder
+                    // dynamic; no unit imports it. A typelib's facts assume it.
+                    None if recorded => {
+                        let module = module.into();
+                        let missing = MissingModule { span, module };
+                        self.diags.push((strand, Diag::new(missing)));
+                    }
+                    None => {}
+                }
+            }
+        }
+        nominees
+    }
+
     fn diag(&mut self, unit: UnitId, info: impl super::Report + Send + 'static) {
         self.diags.push((unit, Diag::new(info)));
     }
@@ -1976,64 +1980,6 @@ impl<'a, 'u> Fixup<'a, 'u> {
         self.stack.pop();
         self.memo.insert((unit, item), referent);
         referent
-    }
-}
-
-/// The heads of transparent aliases, found by following each alias's chain
-struct Aliases<'a, 'u> {
-    tables: &'a Tables<'u>,
-    /// Each alias's head, or `None` while its chain is being followed
-    heads: FxHashMap<DeclId, Option<Head>>,
-    diags: &'a mut Vec<UnitDiag>,
-}
-
-impl Aliases<'_, '_> {
-    fn head(&mut self, id: DeclId) -> Head {
-        let decl = self.tables.decl(id);
-        match self.heads.get(&id) {
-            Some(Some(head)) => return head.clone(),
-            // Every alias on the cycle takes the error this returns, so it is
-            // reported once
-            Some(None) => {
-                let span = decl.name_span().expect("an alias is named");
-                self.diags.push((decl.unit, Diag::new(AliasCycle(span))));
-                return Head::Error;
-            }
-            None => {}
-        }
-        self.heads.insert(id, None);
-        let DeclNode::Alias(alias) = &decl.node else {
-            unreachable!("only an alias has a head")
-        };
-        let body = alias.body.expect("an opaque alias is not transparent");
-        let head = self.ty(&self.tables.site(body).ty);
-        self.heads.insert(id, Some(head.clone()));
-        head
-    }
-
-    fn ty(&mut self, ty: &TypeExpr) -> Head {
-        match ty {
-            TypeExpr::Group { ty, .. } => self.ty(ty),
-            TypeExpr::App { base, .. } => self.ty(base),
-            TypeExpr::Name(head) => match self.tables.linked(head.link) {
-                Some(Referent::Decl(decl)) if self.tables.decl(*decl).kind == DeclKind::Alias => {
-                    self.head(*decl)
-                }
-                Some(Referent::Decl(decl)) => Head::Decl(*decl),
-                Some(Referent::Binder(binder)) => Head::Binder(*binder),
-                Some(Referent::Module(_) | Referent::Value(_) | Referent::Error) | None => {
-                    Head::Error
-                }
-            },
-            TypeExpr::Const { .. }
-            | TypeExpr::Union { .. }
-            | TypeExpr::Func { .. }
-            | TypeExpr::Schema { .. }
-            | TypeExpr::Tuple { .. }
-            | TypeExpr::Record { .. }
-            | TypeExpr::Array { .. } => Head::Structural,
-            TypeExpr::Error { .. } => Head::Error,
-        }
     }
 }
 

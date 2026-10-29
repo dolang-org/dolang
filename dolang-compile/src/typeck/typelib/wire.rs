@@ -17,6 +17,7 @@
 
 use std::{borrow::Cow, mem, path::Path};
 
+use bitvec::slice::BitSlice;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
@@ -26,13 +27,13 @@ use crate::{
     source::Span,
     typeck::{
         elab::{
-            self, Bases, BinderRef, DeclNode, Kept, Referent, Role, Shard, UnitInfo, local,
+            self, Bases, BinderRef, DeclNode, Referent, Role, Shard, UnitInfo, local,
             surface::{
                 self, ConstLit, Decorator, LinkId, Member, MemberScope, ModuleId, ParamKind, Ref,
                 SiteId, StrId, Symbol, TypeArgKind, TypeExpr, TypeKey, TypeParam, TypeQuant,
             },
         },
-        r#type::{DeclId, DeclKind, UnitSpan},
+        r#type::{DeclId, DeclKind, UnitSpan, Variance},
     },
 };
 
@@ -51,11 +52,17 @@ pub(super) struct Content<S> {
     /// Each distinct type expression node, after its children
     pub(super) types: Vec<Type>,
     decls: Vec<Decl>,
+    /// What elaboration concluded about each declaration, in the same order
+    pub(super) facts: Vec<DeclFacts>,
     sites: Vec<Site>,
     links: Vec<Link>,
     exports: Vec<Export>,
     values: Vec<Value>,
     modules: Vec<Module>,
+    /// The types `strand`'s pipe placeholders stand for in the check that wrote
+    /// the typelib, each as its module and item, where the facts can depend on
+    /// them
+    pipes: Option<[(u32, u32); 2]>,
 }
 
 /// A span's start and end
@@ -81,6 +88,24 @@ struct Decl {
 }
 
 /// A declaration's node, which gives its kind. A closure is never on a surface.
+/// What elaboration concluded about a declaration, which a check loading the
+/// typelib takes as given
+#[derive(Serialize, Deserialize)]
+pub(super) struct DeclFacts {
+    /// The variance of each signature's binders, by slot: its written binders,
+    /// then the implicit binder of each ambient channel it omits
+    pub(super) variance: Vec<Vec<WireVariance>>,
+    /// The variance of each outer binder the declaration uses, by binder
+    pub(super) captured: Vec<(WireBinder, WireVariance)>,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+pub(super) enum WireVariance {
+    Invariant,
+    Covariant,
+    Contravariant,
+}
+
 #[derive(Serialize, Deserialize)]
 enum Node {
     Class(Class),
@@ -229,7 +254,7 @@ enum WireRole {
 }
 
 /// A binder: its declaration, signature and slot
-type WireBinder = (u32, u32, u32);
+pub(super) type WireBinder = (u32, u32, u32);
 
 #[derive(Serialize, Deserialize)]
 enum Ambient {
@@ -387,6 +412,42 @@ fn unspan((start, end): WireSpan) -> Span {
     Span { start, end }
 }
 
+fn variance(variance: Variance) -> WireVariance {
+    match variance {
+        Variance::Invariant => WireVariance::Invariant,
+        Variance::Covariant => WireVariance::Covariant,
+        Variance::Contravariant => WireVariance::Contravariant,
+    }
+}
+
+fn unvariance(variance: WireVariance) -> Variance {
+    match variance {
+        WireVariance::Invariant => Variance::Invariant,
+        WireVariance::Covariant => Variance::Covariant,
+        WireVariance::Contravariant => Variance::Contravariant,
+    }
+}
+
+/// The number of binders of a declaration's signature `sig`: its written binders,
+/// then the implicit binder of each ambient channel a def or method omits. `None`
+/// for a signature it doesn't have.
+fn slots(node: &DeclNode, sig: usize) -> Option<usize> {
+    let channels = |sig: &surface::Signature| {
+        usize::from(sig.input.is_none()) + usize::from(sig.output.is_none())
+    };
+    match node {
+        DeclNode::Class(class) if sig == 0 => Some(class.binders.len()),
+        DeclNode::Alias(alias) if sig == 0 => Some(alias.binders.len()),
+        DeclNode::Defs(defs) => defs
+            .get(sig)
+            .map(|def| def.binders.len() + channels(&def.sig)),
+        DeclNode::Methods(methods) => {
+            (methods.get(sig)).map(|method| method.binders.len() + channels(&method.sig))
+        }
+        _ => None,
+    }
+}
+
 fn rest(kind: RestKind) -> Rest {
     match kind {
         RestKind::Mixed => Rest::Mixed,
@@ -506,7 +567,9 @@ fn members<'d>(
 pub(super) struct Encode<'s, 'u> {
     shard: &'s Shard<'u>,
     base: &'s Bases,
-    kept: &'s Kept,
+    kept: &'s BitSlice,
+    facts: &'s elab::Facts,
+    pipes: Option<[(&'s str, &'s str); 2]>,
     /// The ID of each kept declaration, by its offset in the unit
     decls: Vec<Option<u32>>,
     /// The ID of each site met, by its offset in the unit
@@ -529,13 +592,20 @@ pub(super) struct Encode<'s, 'u> {
 }
 
 impl<'s, 'u> Encode<'s, 'u> {
-    /// An encoder of what `kept` keeps of a shard whose IDs start at `base`
-    pub(super) fn new(shard: &'s Shard<'u>, base: &'s Bases, kept: &'s Kept) -> Self {
+    /// An encoder of what `kept` keeps of a shard whose IDs start at `base`, with
+    /// the facts concluded about it and the pipe nominations they depend on, if any
+    pub(super) fn new(
+        shard: &'s Shard<'u>,
+        base: &'s Bases,
+        kept: &'s BitSlice,
+        facts: &'s elab::Facts,
+        pipes: Option<[(&'s str, &'s str); 2]>,
+    ) -> Self {
         let mut next = 0;
         let decls = kept
-            .decls
             .iter()
-            .map(|&keep| {
+            .by_vals()
+            .map(|keep| {
                 keep.then(|| {
                     next += 1;
                     next - 1
@@ -546,6 +616,8 @@ impl<'s, 'u> Encode<'s, 'u> {
             shard,
             base,
             kept,
+            facts,
+            pipes,
             decls,
             site_ids: vec![None; shard.sites.len()],
             sites: Vec::new(),
@@ -592,9 +664,10 @@ impl<'s, 'u> Encode<'s, 'u> {
         let module = self.text(info.module.expect("only a module's typelib is written"));
         let path = self.text(&info.path.to_string_lossy());
         let decls = (shard.decls.iter().enumerate())
-            .filter(|&(index, _)| self.kept.decls[index])
+            .filter(|&(index, _)| self.kept[index])
             .map(|(index, decl)| self.decl(DeclId::from_index(self.base.decls + index), decl))
             .collect();
+        let facts = self.decl_facts();
         let values = (shard.values.iter())
             .map(|value| Value {
                 span: self.span(value.span),
@@ -614,6 +687,9 @@ impl<'s, 'u> Encode<'s, 'u> {
                 span: self.span(module.span),
             })
             .collect();
+        let pipes = self
+            .pipes
+            .map(|pipes| pipes.map(|(module, item)| (self.text(module), self.text(item))));
         // A site meets links, which meet no sites
         let mut sites = Vec::new();
         while let Some(&(site, placed)) = self.sites.get(sites.len()) {
@@ -645,12 +721,53 @@ impl<'s, 'u> Encode<'s, 'u> {
             strings: mem::take(&mut self.strings),
             types: mem::take(&mut self.types),
             decls,
+            facts,
             sites,
             links,
             exports,
             values,
             modules,
+            pipes,
         }
+    }
+
+    /// The facts of each kept declaration
+    fn decl_facts(&self) -> Vec<DeclFacts> {
+        let mut captured: FxHashMap<DeclId, Vec<(WireBinder, WireVariance)>> = FxHashMap::default();
+        for (&(decl, binder), &found) in &self.facts.captured {
+            if self.decl_id(decl).is_some() {
+                let entry = (self.binder(binder), variance(found));
+                captured.entry(decl).or_default().push(entry);
+            }
+        }
+        (self.shard.decls.iter().enumerate())
+            .filter(|&(index, _)| self.kept[index])
+            .map(|(index, decl)| {
+                let id = DeclId::from_index(self.base.decls + index);
+                let variances = (0..decl.node.sig_count())
+                    .map(|sig| {
+                        let slots = slots(&decl.node, sig).expect("a kept signature has binders");
+                        (0..slots)
+                            .map(|slot| {
+                                let binder = BinderRef {
+                                    decl: id,
+                                    sig,
+                                    slot,
+                                };
+                                let found = self.facts.variance.get(&binder);
+                                variance(*found.expect("every binder has a variance"))
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let mut captured = captured.remove(&id).unwrap_or_default();
+                captured.sort_unstable_by_key(|&(binder, _)| binder);
+                DeclFacts {
+                    variance: variances,
+                    captured,
+                }
+            })
+            .collect()
     }
 
     /// A declaration's offset in the unit
@@ -809,13 +926,11 @@ impl<'s, 'u> Encode<'s, 'u> {
         outer: Option<(DeclId, usize)>,
         class: &surface::Class,
     ) -> Class {
-        let offset = self.offset(id);
-        let kept: Vec<&Member> = (class.members.iter().enumerate())
-            .filter(|&(index, member)| match member {
-                Member::Field(_) => !self.kept.fields.contains(&(offset, index)),
-                &Member::Method { decl, .. } => self.decl_id(decl).is_some(),
+        let kept: Vec<&Member> = (class.members.iter())
+            .filter(|member| match member {
+                Member::Field(field) => field.public,
+                &Member::Method { decl, .. } => self.decl_id(*decl).is_some(),
             })
-            .map(|(_, member)| member)
             .collect();
         let fields: Vec<_> = (kept.iter())
             .filter_map(|member| match member {
@@ -825,7 +940,7 @@ impl<'s, 'u> Encode<'s, 'u> {
             .collect();
         let shard = self.shard;
         let decls = (shard.decls.iter().enumerate())
-            .filter(|&(index, _)| self.kept.decls[index])
+            .filter(|&(index, _)| self.kept[index])
             .map(|(index, decl)| (DeclId::from_index(self.base.decls + index), decl));
         let derived = members(decls, id, fields.clone());
         let same = derived.len() == kept.len()
@@ -1101,9 +1216,10 @@ fn quant(quant: TypeQuant) -> Quant {
     }
 }
 
-/// Decode content into a shard that is not yet linked. IDs are checked only where
-/// decoding follows them; the shard is validated afterwards.
-pub(super) fn decode(content: Content<&str>) -> Result<Shard<'_>, &'static str> {
+/// Decode content into a shard that is not yet linked, and the facts it records.
+/// IDs are checked only where decoding follows them; the shard is validated
+/// afterwards.
+pub(super) fn decode(content: Content<&str>) -> Result<(Shard<'_>, elab::Facts), &'static str> {
     let Content {
         module,
         path,
@@ -1112,11 +1228,13 @@ pub(super) fn decode(content: Content<&str>) -> Result<Shard<'_>, &'static str> 
         strings,
         types,
         decls,
+        facts,
         sites,
         links,
         exports,
         values,
         modules,
+        pipes,
     } = content;
     let (Some(&module), Some(&path)) = (strings.get(module as usize), strings.get(path as usize))
     else {
@@ -1204,6 +1322,8 @@ pub(super) fn decode(content: Content<&str>) -> Result<Shard<'_>, &'static str> 
         }
     }
 
+    let facts = unfacts(&shard_decls, facts)?;
+
     let values: Vec<_> = values
         .into_iter()
         .map(|value| elab::Value {
@@ -1241,7 +1361,7 @@ pub(super) fn decode(content: Content<&str>) -> Result<Shard<'_>, &'static str> 
         shard_sites.push(decoded);
     }
 
-    Ok(Shard {
+    let shard = Shard {
         info: UnitInfo {
             module: Some(module),
             path: Path::new(path),
@@ -1282,7 +1402,65 @@ pub(super) fn decode(content: Content<&str>) -> Result<Shard<'_>, &'static str> 
         values,
         sig_decls: FxHashMap::default(),
         sig_owners: Vec::new(),
-    })
+        kept: None,
+        nominations: pipes.map(|pipes| {
+            pipes.map(|(module, item)| {
+                let str = |id: u32| StrId::from_index(id as usize);
+                (str(module), str(item))
+            })
+        }),
+    };
+    Ok((shard, facts))
+}
+
+/// The facts recorded of decoded declarations: a variance for each binder of each
+/// signature, and for outer binders only those of signatures they are nested in
+fn unfacts(decls: &[elab::Decl<'_>], facts: Vec<DeclFacts>) -> Result<elab::Facts, &'static str> {
+    if facts.len() != decls.len() {
+        return Err("the facts are not one per declaration");
+    }
+    let mut decoded = elab::Facts::default();
+    for (index, (decl, facts)) in decls.iter().zip(facts).enumerate() {
+        let id = DeclId::from_index(index);
+        if facts.variance.len() != decl.node.sig_count() {
+            return Err("the variances are not one list per signature");
+        }
+        for (sig, variances) in facts.variance.into_iter().enumerate() {
+            if Some(variances.len()) != slots(&decl.node, sig) {
+                return Err("the variances are not one per binder");
+            }
+            for (slot, found) in variances.into_iter().enumerate() {
+                let binder = BinderRef {
+                    decl: id,
+                    sig,
+                    slot,
+                };
+                decoded.variance.insert(binder, unvariance(found));
+            }
+        }
+        for (binder, found) in facts.captured {
+            let binder = unbinder(binder);
+            // An outer declaration is before the declarations nested in it
+            let (mut outer, mut before) = (decl.outer, index);
+            let enclosing = loop {
+                match outer {
+                    Some((at, sig)) if at.index() < before => {
+                        let node = &decls[at.index()].node;
+                        if (at, sig) == (binder.decl, binder.sig) {
+                            break slots(node, sig).is_some_and(|count| binder.slot < count);
+                        }
+                        (outer, before) = (decls[at.index()].outer, at.index());
+                    }
+                    _ => break false,
+                }
+            };
+            if !enclosing {
+                return Err("a captured binder is not of an outer signature");
+            }
+            decoded.captured.insert((id, binder), unvariance(found));
+        }
+    }
+    Ok(decoded)
 }
 
 /// Builds a shard's surface from its serialization form

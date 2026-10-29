@@ -1200,8 +1200,14 @@ its typelib would hold an interface elaborated against the missing module. A
 typelib has a serialization form of its own, converted to and from the shard:
 encoding keeps only the module's surface and numbers its IDs anew, type
 expressions are interned in one table, and what can be derived from the rest is
-left out where it holds. Reading one gives a shard and the facts it records,
-which are linked as any unit's are.
+left out where it holds. The surface leaves out private fields, which can decide
+a class's variance, so the typelib records what elaboration concluded of each
+binder's variance as side facts, and a check that loads it takes them as given.
+A typelib whose module is or imports `strand` also records the pipe types the
+check nominated (see `Builder::pipes`), since those facts can depend on them: a
+builder nominating others rejects it, and a check without a recorded nominee's
+module reports it as not found. Reading one gives a shard and the facts it
+records, which are linked as any unit's are.
 
 A `SourceSpan` is a span with an optional unit. A unit's own diagnostics have
 no unit and are relative to that unit. Type checker diagnostics name a unit in
@@ -1340,9 +1346,11 @@ invariant. A type declared within a generic declaration takes the outer binders
 it is lifted over as implicit arguments. These equations are solved by a
 worklist for their least solution, which is unique whatever the order. A binder
 with no use, including one used only through itself, is then invariant, as is
-any use through it, and a second round propagates that. The `variance` judgment
-reports a binder's variance, and `captured` a nested declaration's outer
-binders.
+any use through it, and a second round propagates that. Only declarations
+checked from source are solved for: one loaded from a typelib takes the
+variances it records, which are the solution's, as fixed. The `variance`
+judgment reports a binder's variance, and `captured` a nested declaration's
+outer binders.
 
 Every declaration is closed. Before variance, the captures pass finds the outer
 binders each is lifted over: those it names anywhere, in its signature, members

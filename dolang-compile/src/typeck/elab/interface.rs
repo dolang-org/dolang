@@ -3,11 +3,12 @@
 
 use std::fmt::{self, Write};
 
+use bitvec::{boxed::BitBox, slice::BitSlice, vec::BitVec};
 use rustc_hash::FxHashSet;
 
 use super::{
-    Bases, Decl, DeclNode, Link, Referent, Shard, Target,
-    surface::{Binder, Member, ModuleId, Name, Ref, Signature, SiteId, StrId, TypeExpr},
+    Decl, DeclNode, Link, Referent, Shard, Target,
+    surface::{Binder, Member, Name, Ref, Signature, SiteId, TypeExpr},
 };
 use crate::{
     diag::{NoteKind, Severity},
@@ -17,14 +18,6 @@ use crate::{
         r#type::{DeclId, DeclKind},
     },
 };
-
-/// What a shard's surface keeps
-pub(crate) struct Kept {
-    /// Whether each declaration is kept, by its offset in the unit
-    pub(crate) decls: Vec<bool>,
-    /// The fields left out, by their class's offset in the unit and member index
-    pub(crate) fields: FxHashSet<(usize, usize)>,
-}
 
 /// A private declaration named in the public interface
 pub(crate) struct Leak {
@@ -45,37 +38,33 @@ pub(crate) enum User {
 }
 
 impl Shard<'_> {
-    /// What the shard's surface keeps, and the private declarations its interface
-    /// names. The shard's IDs start at `base`.
+    /// Whether the shard's surface keeps each of its declarations, by offset, and
+    /// the private declarations its interface names. The shard is not linked yet.
     ///
     /// The surface keeps the module's exports and their public and special members,
-    /// and any private field whose type is a direct `Phantom` application, since it
-    /// counts towards its class's variance. A kept declaration's binders, signatures,
-    /// supertypes and kept fields' types are its interface, as is an exported
-    /// variable's annotation.
-    pub(crate) fn interface(&self, base: &Bases) -> (Kept, Vec<Leak>) {
+    /// but no private field: what a private field decides, its class's variance,
+    /// the typelib records. A kept declaration's binders, signatures, supertypes
+    /// and public fields' types are its interface, as is an exported variable's
+    /// annotation.
+    pub(crate) fn interface(&self) -> (BitBox, Vec<Leak>) {
         let exported: FxHashSet<usize> = self
             .exports
             .iter()
             .filter_map(|export| match export.target {
-                Target::Local(Referent::Decl(decl)) => Some(decl.index() - base.decls),
+                Target::Local(Referent::Decl(decl)) => Some(decl.index()),
                 _ => None,
             })
             .collect();
 
-        let mut kept = Kept {
-            decls: Vec::with_capacity(self.decls.len()),
-            fields: FxHashSet::default(),
-        };
+        let mut kept = BitVec::with_capacity(self.decls.len());
         for (index, decl) in self.decls.iter().enumerate() {
             // An outer declaration is allocated first
             let keep = decl.kind != DeclKind::Closure
                 && match decl.outer {
                     None => exported.contains(&index),
                     Some((outer, _)) => {
-                        let outer = outer.index() - base.decls;
-                        kept.decls[outer]
-                            && matches!(self.decls[outer].node, DeclNode::Class(_))
+                        kept[outer.index()]
+                            && matches!(self.decls[outer.index()].node, DeclNode::Class(_))
                             && match &decl.node {
                                 // Overload signatures share their implementation's
                                 // visibility
@@ -90,21 +79,19 @@ impl Shard<'_> {
                             }
                     }
                 };
-            kept.decls.push(keep);
+            kept.push(keep);
         }
 
         let mut walk = Walk {
             shard: self,
-            base,
-            kept: &kept.decls,
+            kept: &kept,
             leaks: Vec::new(),
         };
-        let mut dropped = FxHashSet::default();
         for (index, decl) in self.decls.iter().enumerate() {
-            if !kept.decls[index] {
+            if !kept[index] {
                 continue;
             }
-            let id = DeclId::from_index(base.decls + index);
+            let id = DeclId::from_index(index);
             let user = User::Decl(id);
             match &decl.node {
                 DeclNode::Class(class) => {
@@ -115,21 +102,13 @@ impl Shard<'_> {
                             walk.ty(arg.ty(), &user);
                         }
                     }
-                    for (member, field) in class.members.iter().enumerate() {
-                        let Member::Field(field) = field else {
-                            continue;
-                        };
-                        if field.public {
-                            // The names share the annotation, which the first stands for
-                            if let (Some(annot), Some(&name)) = (field.annot, field.names.first()) {
-                                walk.site(annot, &User::Field(id, name));
-                            }
-                        } else if let Some(annot) = field.annot
-                            && walk.phantom(&self.sites[annot.index() - base.sites].ty)
+                    for member in &class.members {
+                        // The names share the annotation, which the first stands for
+                        if let Member::Field(field) = member
+                            && field.public
+                            && let (Some(annot), Some(&name)) = (field.annot, field.names.first())
                         {
-                            walk.site(annot, &user);
-                        } else {
-                            dropped.insert((index, member));
+                            walk.site(annot, &User::Field(id, name));
                         }
                     }
                 }
@@ -160,16 +139,14 @@ impl Shard<'_> {
             }
         }
         let leaks = walk.leaks;
-        kept.fields = dropped;
-        (kept, leaks)
+        (kept.into_boxed_bitslice(), leaks)
     }
 }
 
 /// Finds the private declarations an interface names
 struct Walk<'h, 'u> {
     shard: &'h Shard<'u>,
-    base: &'h Bases,
-    kept: &'h [bool],
+    kept: &'h BitSlice,
     leaks: Vec<Leak>,
 }
 
@@ -190,7 +167,7 @@ impl Walk<'_, '_> {
     }
 
     fn site(&mut self, site: SiteId, user: &User) {
-        self.ty(&self.shard.sites[site.index() - self.base.sites].ty, user);
+        self.ty(&self.shard.sites[site.index()].ty, user);
     }
 
     fn ty(&mut self, ty: &TypeExpr, user: &User) {
@@ -198,12 +175,7 @@ impl Walk<'_, '_> {
     }
 
     fn link(&self, head: &Ref) -> Option<&Link> {
-        head.link
-            .map(|link| &self.shard.links[link.index() - self.base.links])
-    }
-
-    fn str(&self, id: StrId) -> &str {
-        &self.shard.strings[id.index()]
+        head.link.map(|link| &self.shard.links[link.index()])
     }
 
     fn name(&mut self, head: &Ref, user: &User) {
@@ -212,44 +184,14 @@ impl Walk<'_, '_> {
         };
         // A name that isn't a type is diagnosed as such, and the surface erases it
         if let (Target::Local(Referent::Decl(decl)), None) = (link.base, link.item)
-            && !self.kept[decl.index() - self.base.decls]
-            && is_type(self.shard.decls[decl.index() - self.base.decls].kind)
+            && !self.kept[decl.index()]
+            && is_type(self.shard.decls[decl.index()].kind)
         {
             self.leaks.push(Leak {
                 span: head.span,
                 private: decl,
                 user: *user,
             });
-        }
-    }
-
-    /// Whether a type is a direct application of std's `Phantom`, as variance
-    /// counts it
-    fn phantom(&self, ty: &TypeExpr) -> bool {
-        let TypeExpr::App { base, .. } = ty.ungrouped() else {
-            return false;
-        };
-        let TypeExpr::Name(head) = base.ungrouped() else {
-            return false;
-        };
-        let Some(link) = self.link(head) else {
-            return false;
-        };
-        let shard = self.shard;
-        let module = |module: ModuleId| self.str(shard.modules[module.index()].name);
-        match (link.base, link.item) {
-            (Target::Import { module: id, item }, None) | (Target::Module(id), Some(item)) => {
-                (module(id), self.str(item)) == ("std", "Phantom")
-            }
-            (Target::Local(Referent::Decl(decl)), None) => {
-                let decl = &shard.decls[decl.index() - self.base.decls];
-                shard.info.module == Some("std")
-                    && decl.outer.is_none()
-                    && decl
-                        .name
-                        .is_some_and(|name| shard.strings[name.text.index()] == "Phantom")
-            }
-            _ => false,
         }
     }
 }
@@ -279,9 +221,9 @@ pub(crate) struct PrivateInInterface {
 }
 
 impl PrivateInInterface {
-    /// The leak's report, for a shard whose IDs start at `base`
-    pub(crate) fn new(shard: &Shard<'_>, base: &Bases, leak: &Leak) -> Self {
-        let decl = |id: DeclId| &shard.decls[id.index() - base.decls];
+    /// The leak's report, for a shard that is not linked yet
+    pub(crate) fn new(shard: &Shard<'_>, leak: &Leak) -> Self {
+        let decl = |id: DeclId| &shard.decls[id.index()];
         let name = |id: DeclId| {
             decl(id)
                 .name

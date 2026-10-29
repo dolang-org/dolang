@@ -4,6 +4,7 @@
 //! [`surface`]), and the passes after it read only that and the common tables. Only
 //! lowering reads syntax trees again, for the bodies it lowers.
 
+mod alias;
 mod capture;
 mod collect;
 mod ids;
@@ -24,6 +25,7 @@ use std::{
     path::Path,
 };
 
+use bitvec::boxed::BitBox;
 use rustc_hash::FxHashMap;
 
 use super::report::{Annotation, Report};
@@ -41,10 +43,10 @@ use surface::{
 };
 
 pub(crate) use super::report::{Diag, UnitDiag};
+pub(crate) use alias::aliases;
 pub(crate) use capture::captures;
 pub(crate) use collect::{Export, Link, Module, Value, collect, find_export, link};
 pub(crate) use ids::Ids;
-pub(crate) use interface::Kept;
 pub(crate) use judge::Scoped;
 pub(crate) use kind::{Fill, kinds};
 pub(crate) use overrides::overrides;
@@ -87,8 +89,8 @@ pub(crate) struct Tables<'u> {
 /// Collection fills a shard from a unit's source, and a typelib decodes to one. It
 /// is local until it is linked: its unit is unit 0, and its declarations, sites and
 /// links are numbered from 0. Linking moves it to its unit and ranges, and fills
-/// what only linking can tell: `referents`, `providers`, `sig_decls` and
-/// `sig_owners`, which are empty until then.
+/// what only linking can tell: `referents`, `providers`, `sig_decls`,
+/// `sig_owners` and `kept`, which are empty until then.
 #[derive(Clone)]
 pub(crate) struct Shard<'u> {
     pub(crate) info: UnitInfo<'u>,
@@ -126,6 +128,13 @@ pub(crate) struct Shard<'u> {
     /// The signature each of the unit's other database declarations is of. They
     /// follow its declarations.
     pub(crate) sig_owners: Vec<(DeclId, usize)>,
+    /// Whether a typelib of the unit keeps each of its declarations, by offset, for
+    /// a unit with source whose interface names no private declaration
+    pub(crate) kept: Option<BitBox>,
+    /// The types `strand`'s pipe placeholders stood for, each as its module and
+    /// item, when the facts a typelib records were concluded, if they depend on
+    /// them. `None` for a unit with source.
+    pub(crate) nominations: Option<[(StrId, StrId); 2]>,
 }
 
 impl Shard<'_> {

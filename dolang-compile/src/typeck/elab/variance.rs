@@ -23,6 +23,10 @@
 //! arguments. Those equations are solved for their least solution, which does not
 //! depend on the order of declarations or units. A binder with no use, including
 //! one used only through itself, is invariant, and so is a use through it.
+//!
+//! A declaration loaded from a typelib takes the variances it records, which the
+//! private members it leaves out may decide. They are the least solution's, so
+//! only the declarations checked from source are solved for.
 
 use std::hash::Hash;
 
@@ -55,7 +59,11 @@ pub(crate) fn variances(tables: &mut Tables<'_>) {
         constraints: Vec::new(),
     };
     let mut own = Vec::new();
+    let mut fixed = FxHashMap::default();
     for decl in tables.decl_ids() {
+        if tables.info(tables.unit_of(decl)).source.is_none() {
+            continue;
+        }
         collect.decl(decl);
         for sig in 0..tables.sig_count(decl) {
             for slot in 0..tables.binders(decl, sig).len() {
@@ -71,8 +79,17 @@ pub(crate) fn variances(tables: &mut Tables<'_>) {
         }
     }
     let constraints = collect.constraints;
+    for (index, facts) in tables.facts.iter().enumerate() {
+        if tables.info(UnitId::from_index(index)).source.is_some() {
+            continue;
+        }
+        let recorded = (facts.variance.iter()).map(|(&binder, &v)| ((binder.decl, binder), v));
+        for (key, variance) in recorded.chain(facts.captured.iter().map(|(&k, &v)| (k, v))) {
+            fixed.insert(key, Use::of(variance));
+        }
+    }
 
-    let uses = solve(&constraints, &own);
+    let uses = solve(&constraints, &own, fixed);
     for &(decl, binder) in &own {
         let variance = uses
             .get(&(decl, binder))
@@ -83,7 +100,8 @@ pub(crate) fn variances(tables: &mut Tables<'_>) {
             .insert(binder, variance);
     }
     for (&(decl, binder), u) in &uses {
-        if decl != binder.decl && *u != Use::NONE {
+        let local = tables.info(tables.unit_of(decl)).source.is_some();
+        if local && decl != binder.decl && *u != Use::NONE {
             tables
                 .facts_mut(decl)
                 .captured
@@ -120,6 +138,15 @@ impl Use {
         }
     }
 
+    /// The use a variance concludes
+    fn of(variance: Variance) -> Use {
+        match variance {
+            Variance::Covariant => Use::CO,
+            Variance::Contravariant => Use::CONTRA,
+            Variance::Invariant => Use::BOTH,
+        }
+    }
+
     fn variance(self) -> Variance {
         match self {
             Use::CO => Variance::Covariant,
@@ -138,10 +165,16 @@ enum Source<K> {
     Join(K),
 }
 
-/// Solve for the least use of each key. A key of `own` still unused is then
+/// Solve for the least use of each key, given the solved use of each key of
+/// `fixed`, which no constraint targets. A key of `own` still unused is then
 /// invariant, as is a path through any unused key, so every change in the second
-/// round makes a key invariant and the solution is unique.
-fn solve<K: Copy + Eq + Hash>(constraints: &[(K, Source<K>)], own: &[K]) -> FxHashMap<K, Use> {
+/// round makes a key invariant and the solution is unique: a key fixed at its
+/// solved use reads the same as one solved for.
+fn solve<K: Copy + Eq + Hash>(
+    constraints: &[(K, Source<K>)],
+    own: &[K],
+    fixed: FxHashMap<K, Use>,
+) -> FxHashMap<K, Use> {
     let mut dependents: FxHashMap<K, Vec<usize>> = FxHashMap::default();
     for (index, (_, source)) in constraints.iter().enumerate() {
         match source {
@@ -154,7 +187,7 @@ fn solve<K: Copy + Eq + Hash>(constraints: &[(K, Source<K>)], own: &[K]) -> FxHa
         }
     }
 
-    let mut uses: FxHashMap<K, Use> = FxHashMap::default();
+    let mut uses = fixed;
     let run = |uses: &mut FxHashMap<K, Use>, mut pending: Vec<usize>, unused_invariant: bool| {
         while let Some(index) = pending.pop() {
             let (target, source) = &constraints[index];

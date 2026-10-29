@@ -194,18 +194,11 @@ pub class Methods
     #    = help: declare `O` with `pub`
     ...
 
-# A private field counts towards variance when it is a direct `Phantom`
+# Private members and declarations are not part of the interface, even a
+# `Phantom` field, which decides variance
 pub class Marked[T]
   field marker @ Phantom[(T, C)]
-# error: private class `C` in the public interface of class `Marked`
-#   --> m.dol:LL:LL
-#    |
-# LL |   field marker @ Phantom[(T, C)]
-#    |                              ^
-#    |
-#    = help: declare `C` with `pub`
 
-# Private members and declarations are not part of the interface
 pub class Members
   field hidden @ C = ...
 
