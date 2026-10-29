@@ -40,26 +40,26 @@ all slots are populated and converts the table to `alias::Box<[Declaration]>`,
 preventing further declaration or unit changes. Sealing twice panics. Kind
 checks involving empty slots are retained until sealing, including those from
 normalized-away nodes. Types and symbols can still be interned after sealing.
-Source spans pair a unit ID with byte offsets, and binder names/spans are
-parallel metadata for the definition's outer structural binder group, including
-whether each slot was lifted from an enclosing declaration, written, or an
-implicit ambient binder. A class or protocol also records its members by name:
-fields with their type, scope and visibility, and methods by their function
-declaration. A private member is named apart from public ones, as the runtime
-gives it a symbol of its class's own, and instance and type-object members are
-separate namespaces; otherwise the first member of a name wins. A method's
-decorators decide what it becomes. Only `class` and `static` mean something
-fixed by syntax; until decorator applications are evaluated, std's `getter` and
-`setter`, found by what their names resolve to, make a method half of a computed
-field's property, and any other decorator leaves a member of unknown type. Each
-implementation of a method name is a function of its own, so a getter and a
-setter are two. An overloaded function records its `@def` signatures, which are
-declarations of their own; its own ID is its implementation, and without one,
-which name resolution reports, its first `@def`. Unit IDs
-are allocated from a counter and checked when declarations are populated.
-Filenames and local symbol mappings belong to upper layers. Ordinary symbols are
-interned by spelling; callers can allocate fresh symbols separately when source
-identity must be preserved.
+Source spans pair a unit ID with a line, column and length, and binder
+names/spans are parallel metadata for the definition's outer structural binder
+group, including whether each slot was lifted from an enclosing declaration,
+written, or an implicit ambient binder. A class or protocol also records its
+members by name: fields with their type, scope and visibility, and methods by
+their function declaration. A private member is named apart from public ones, as
+the runtime gives it a symbol of its class's own, and instance and type-object
+members are separate namespaces; otherwise the first member of a name wins. A
+method's decorators decide what it becomes. Only `class` and `static` mean
+something fixed by syntax; until decorator applications are evaluated, std's
+`getter` and `setter`, found by what their names resolve to, make a method half
+of a computed field's property, and any other decorator leaves a member of
+unknown type. Each implementation of a method name is a function of its own, so
+a getter and a setter are two. An overloaded function records its `@def`
+signatures, which are declarations of their own; its own ID is its
+implementation, and without one, which name resolution reports, its first
+`@def`. Unit IDs are allocated from a counter and checked when declarations are
+populated. Filenames and local symbol mappings belong to upper layers. Ordinary
+symbols are interned by spelling; callers can allocate fresh symbols separately
+when source identity must be preserved.
 
 `TypeId` identifies a normalized structural expression in one database. Ordinary
 types such as `Int` and `Sym` are declaration references, not builtin nodes.
@@ -1194,9 +1194,11 @@ with their spans already resolved to lines and columns.
 
 A typelib is written from a check. With `Builder::typelibs`, the check keeps the
 typelib of each module it checks from source, encoded from the module's shard
-once it is elaborated, with the lines of its kept spans, and `Check::typelib`
-writes it. A typelib's spans and line starts are offsets in characters, not
-bytes, so a unit checked from one is located in characters without its source. A
+once it is elaborated, and `Check::typelib` writes it. Its spans are written as
+one stream, in the order its content holds them, each relative to the one before
+it: a name on the same line is a gap from where the last span ended, a span on
+another line a count of lines and a column relative to the first span on the
+last one's line, and a name's length is left out where it is the name's. A
 module importing a module the check doesn't have has none, since its typelib
 would hold an interface elaborated against the missing module. A typelib has a
 serialization form of its own, converted to and from the shard: encoding keeps
@@ -1217,6 +1219,17 @@ one). That is what editors locate by; UTF-16 positions and display widths are
 computed from the line's text by whoever has it. The length counts each line
 break a span crosses, so its end, and its bytes, are found only with the source:
 `Unit::end`, `Unit::byte_range` and `Unit::text`, through the unit's line table.
+
+The checker's surface holds the same spans: collection locates each span it
+copies from the syntax tree, so a unit checked from source and one checked from
+its typelib hold the same kind of span, and diagnostics raised from the surface
+are located already. Byte spans remain where the checker reads syntax or slices
+source: lowering, flow analysis and the links found by the spans of their heads.
+A problem found there is located when it is reported, and the analysis locates
+its judgments when the check builds it, so `typeck::Node::span` is a public span
+like any other and `Analysis::at` takes a position. Joining two spans of the
+surface needs the source, since a span's length counts the lines it crosses;
+only a unit with source has spans to join.
 
 A `SourceSpan` is a span with an optional unit. A unit's own diagnostics have
 no unit and are relative to that unit. Type checker diagnostics name a unit in
@@ -1252,8 +1265,8 @@ string table, each string once, which the surface refers to only by ID. A name
 on the surface holds only its link, so a diagnostic quotes it from the source,
 or in a typelib by what it refers to. Lowering, which reads syntax, finds a
 name's link by the span of its head. A typelib keeps a span only where it
-locates a definition or an import, with the lines those spans are on, and a
-diagnostic at any other span of a typelib is reported at its first line. Once
+locates a definition or an import, and a diagnostic at any other span of a
+typelib is reported at its first line. Once
 every unit is collected, each module table is resolved, and each link that goes
 through an import follows the exports of the units checked. Imports and renames
 are chased away but aliases are not, so `Pair[Int]` refers to the `Pair` alias.

@@ -34,6 +34,7 @@ use super::{
 };
 use crate::{
     ast::{Class, Function, Stmt},
+    diag,
     source::Span,
 };
 
@@ -77,7 +78,7 @@ struct Lower<'t, 'u> {
     /// continues to the exit
     returns: RefCell<FxHashMap<BlockId, BlockId>>,
     /// Each type written in the unit, by its span
-    sites: FxHashMap<Span, SiteId>,
+    sites: FxHashMap<diag::Span, SiteId>,
     /// The functions created in an `(init)`, which escape its receiver if they
     /// capture it
     captures: RefCell<Vec<Capture>>,

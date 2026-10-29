@@ -39,7 +39,7 @@ pub struct Pos {
 
 impl Pos {
     /// Construct a position from a zero-based line and column.
-    pub(crate) fn new(line: u32, column: u32) -> Self {
+    pub fn new(line: u32, column: u32) -> Self {
         Self { line, column }
     }
 
@@ -81,6 +81,9 @@ impl Span {
     const LINE_BITS: u32 = 24;
     const COLUMN_BITS: u32 = 20;
     const LEN_BITS: u32 = 20;
+
+    /// No span: where something a typelib omits would be
+    pub(crate) const INVALID: Span = Span(u64::MAX);
 
     /// Construct a span, clamping each field to its range.
     pub(crate) fn new(line: u32, column: u32, len: u32) -> Self {

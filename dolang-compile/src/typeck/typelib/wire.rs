@@ -11,20 +11,23 @@
 //!   among its members. Where a derivation doesn't hold, the value is written.
 //! - A declaration's kind is its node's, flags are packed into a byte, and an
 //!   optional ID is written as one more than the ID, or 0.
+//! - Spans are written apart from what holds them, as one stream (see
+//!   [`spans`](super::spans)), each relative to the one before it.
 //!
 //! Every ID is local to the unit. Declarations, sites and links keep their order;
 //! strings are numbered as the encoder first meets them, and each is written once.
 
-use std::{borrow::Cow, mem, path::Path};
+use std::{borrow::Cow, convert::Infallible, mem, path::Path};
 
 use bitvec::slice::BitSlice;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
+use super::spans;
 use crate::{
     RestKind,
     ast::SpecialMethod,
-    source::{self, Span},
+    diag::{Pos, Span},
     typeck::{
         elab::{
             self, Bases, BinderRef, DeclNode, Referent, Role, Shard, UnitInfo, local,
@@ -44,13 +47,12 @@ pub(super) struct Content<S> {
     pub(super) module: u32,
     /// The module's path, which only locates its diagnostics
     pub(super) path: u32,
-    /// The number and start of each line holding a span the typelib keeps. Spans
-    /// and line starts are offsets in characters, which locates them in characters
-    /// without the source.
-    pub(super) lines: Vec<(u32, u32)>,
     /// Whether the module was checked strictly, which its signatures depend on
     pub(super) strict: bool,
     pub(super) strings: Vec<S>,
+    /// Every span the content holds, in the order [`visit_spans`] visits them, as
+    /// [`spans`](super::spans) writes them
+    spans: Vec<u32>,
     /// Each distinct type expression node, after its children
     pub(super) types: Vec<Type>,
     decls: Vec<Decl>,
@@ -67,9 +69,6 @@ pub(super) struct Content<S> {
     pipes: Option<[(u32, u32); 2]>,
 }
 
-/// A span's start and end, in characters
-type WireSpan = (u32, u32);
-
 /// A declaration signature
 type Sig = (u32, u32);
 
@@ -78,7 +77,8 @@ type Opt = u32;
 
 #[derive(Serialize, Deserialize)]
 struct Name {
-    span: WireSpan,
+    #[serde(skip, default = "invalid")]
+    span: Span,
     text: u32,
 }
 
@@ -276,29 +276,38 @@ struct Link {
 enum WireTarget {
     Decl(u32),
     Binder(WireBinder),
-    Value(WireSpan),
+    Value {
+        #[serde(skip, default = "invalid")]
+        span: Span,
+    },
     Error,
-    Import { module: u32, item: u32 },
+    Import {
+        module: u32,
+        item: u32,
+    },
     Module(u32),
 }
 
 #[derive(Serialize, Deserialize)]
 struct Export {
     name: u32,
-    span: WireSpan,
+    #[serde(skip, default = "invalid")]
+    span: Span,
     target: WireTarget,
 }
 
 #[derive(Serialize, Deserialize)]
 struct Value {
-    span: WireSpan,
+    #[serde(skip, default = "invalid")]
+    span: Span,
     annot: Opt,
 }
 
 #[derive(Serialize, Deserialize)]
 struct Module {
     name: u32,
-    span: WireSpan,
+    #[serde(skip, default = "invalid")]
+    span: Span,
 }
 
 /// A type expression node, whose children are nodes of the table before it
@@ -410,8 +419,9 @@ fn index(id: usize) -> u32 {
     u32::try_from(id).expect("an ID fits in a u32")
 }
 
-fn unspan((start, end): WireSpan) -> Span {
-    Span { start, end }
+/// A span the stream fills in
+fn invalid() -> Span {
+    Span::INVALID
 }
 
 fn variance(variance: Variance) -> WireVariance {
@@ -541,10 +551,10 @@ fn members<'d>(
     class: DeclId,
     fields: Vec<surface::Field>,
 ) -> Vec<Member> {
-    let mut members: Vec<(u32, Member)> = fields
+    let mut members: Vec<(Pos, Member)> = fields
         .into_iter()
         .map(|field| {
-            let start = field.names.first().map_or(0, |name| name.span.start);
+            let start = (field.names.first()).map_or(Pos::new(0, 0), |name| name.span.start());
             (start, Member::Field(field))
         })
         .collect();
@@ -556,7 +566,7 @@ fn members<'d>(
             continue;
         };
         for (sig, method) in methods.iter().enumerate() {
-            members.push((method.name.span.start, Member::Method { decl, sig }));
+            members.push((method.name.span.start(), Member::Method { decl, sig }));
         }
     }
     members.sort_by_key(|(start, _)| *start);
@@ -589,13 +599,8 @@ pub(super) struct Encode<'s, 'u> {
     strings: Vec<String>,
     types: Vec<Type>,
     interned: FxHashMap<Type, u32>,
-    /// The offset in characters of each line's start, for a shard with source,
-    /// whose spans are in bytes
-    chars: Option<Vec<u32>>,
-    /// Every span written, as the shard has it
+    /// Every span written
     spans: Vec<Span>,
-    /// The number and start of each line holding a span written
-    lines: Vec<(u32, u32)>,
 }
 
 impl<'s, 'u> Encode<'s, 'u> {
@@ -635,12 +640,7 @@ impl<'s, 'u> Encode<'s, 'u> {
             strings: Vec::new(),
             types: Vec::new(),
             interned: FxHashMap::default(),
-            chars: shard
-                .info
-                .source
-                .map(|unit| line_chars(unit.file.content())),
             spans: Vec::new(),
-            lines: Vec::new(),
         }
     }
 
@@ -665,8 +665,14 @@ impl<'s, 'u> Encode<'s, 'u> {
         self.texts.clear();
         self.interned.clear();
         self.spans.clear();
-        self.lines.clear();
-        let content = self.pass();
+        let mut content = self.pass();
+        let mut writer = spans::Writer::default();
+        visit_spans(&mut content, |span, name| {
+            writer.push(*span, name);
+            Ok::<_, Infallible>(())
+        })
+        .unwrap_or_else(|never| match never {});
+        content.spans = writer.finish();
         (content, self.spans)
     }
 
@@ -716,15 +722,12 @@ impl<'s, 'u> Encode<'s, 'u> {
                 item: opt(link.item.map(|item| self.str(item) as usize)),
             });
         }
-        let mut lines = mem::take(&mut self.lines);
-        lines.sort_unstable();
-        lines.dedup();
         Content {
             module,
             path,
-            lines,
             strict: info.strict,
             strings: mem::take(&mut self.strings),
+            spans: Vec::new(),
             types: mem::take(&mut self.types),
             decls,
             facts,
@@ -810,26 +813,9 @@ impl<'s, 'u> Encode<'s, 'u> {
         )
     }
 
-    fn span(&mut self, span: Span) -> WireSpan {
+    fn span(&mut self, span: Span) -> Span {
         self.spans.push(span);
-        if span == Span::INVALID {
-            return (span.start, span.end);
-        }
-        let mut offset = |offset: u32| {
-            let info = &self.shard.info;
-            let coord = info.coord(offset);
-            let (start, column) = match (&self.chars, info.source) {
-                (Some(chars), Some(unit)) => {
-                    let line = (offset - coord.column) as usize;
-                    let prefix = &unit.file.content().as_bytes()[line..offset as usize];
-                    (chars[coord.line as usize], source::chars(prefix))
-                }
-                _ => (offset - coord.column, coord.column),
-            };
-            self.lines.push((coord.line, start));
-            start + column
-        };
-        (offset(span.start), offset(span.end))
+        span
     }
 
     fn name(&mut self, name: surface::Name) -> Name {
@@ -1135,7 +1121,9 @@ impl<'s, 'u> Encode<'s, 'u> {
             },
             elab::Target::Local(Referent::Value(value)) => {
                 debug_assert_eq!(value.unit, self.base.unit, "a shard refers to its own unit");
-                WireTarget::Value(self.span(value.span))
+                WireTarget::Value {
+                    span: self.span(value.span),
+                }
             }
             elab::Target::Local(Referent::Error) => WireTarget::Error,
             elab::Target::Local(Referent::Module(_)) => {
@@ -1231,17 +1219,115 @@ impl<'s, 'u> Encode<'s, 'u> {
     }
 }
 
-/// The offset in characters of the start of each line of `content`
-fn line_chars(content: &str) -> Vec<u32> {
-    let mut starts = vec![0];
-    let mut count = 0;
-    for ch in content.chars() {
-        count += 1;
-        if ch == '\n' {
-            starts.push(count);
+/// Visit every span `content` holds, with the text of the name each locates, if
+/// it locates one: the spans of the declarations' names, those of the values links
+/// and exports refer to, and those of the exports, the exported variables and the
+/// modules. Its order is the span stream's.
+fn visit_spans<S: AsRef<str>, E>(
+    content: &mut Content<S>,
+    visit: impl FnMut(&mut Span, Option<&str>) -> Result<(), E>,
+) -> Result<(), E> {
+    let Content {
+        strings,
+        decls,
+        links,
+        exports,
+        values,
+        modules,
+        ..
+    } = content;
+    let mut spans = Spans { strings, visit };
+    for decl in decls {
+        spans.decl(decl)?;
+    }
+    for link in links {
+        spans.target(&mut link.base)?;
+    }
+    for export in exports {
+        spans.span(&mut export.span, Some(export.name))?;
+        spans.target(&mut export.target)?;
+    }
+    for value in values {
+        spans.span(&mut value.span, None)?;
+    }
+    for module in modules {
+        spans.span(&mut module.span, Some(module.name))?;
+    }
+    Ok(())
+}
+
+/// Visits spans, with the strings their names' texts are
+struct Spans<'a, S, F> {
+    strings: &'a [S],
+    visit: F,
+}
+
+impl<S: AsRef<str>, E, F: FnMut(&mut Span, Option<&str>) -> Result<(), E>> Spans<'_, S, F> {
+    /// A span, of a name with text `text` if it locates one
+    fn span(&mut self, span: &mut Span, text: Option<u32>) -> Result<(), E> {
+        let name = text.and_then(|text| self.strings.get(text as usize));
+        (self.visit)(span, name.map(AsRef::as_ref))
+    }
+
+    fn name(&mut self, name: &mut Name) -> Result<(), E> {
+        self.span(&mut name.span, Some(name.text))
+    }
+
+    fn names<'n>(&mut self, names: impl IntoIterator<Item = &'n mut Name>) -> Result<(), E> {
+        names.into_iter().try_for_each(|name| self.name(name))
+    }
+
+    fn target(&mut self, target: &mut WireTarget) -> Result<(), E> {
+        match target {
+            WireTarget::Value { span } => self.span(span, None),
+            _ => Ok(()),
         }
     }
-    starts
+
+    fn decl(&mut self, decl: &mut Decl) -> Result<(), E> {
+        self.name(&mut decl.name)?;
+        match &mut decl.node {
+            Node::Class(class) | Node::Protocol(class) => {
+                self.binders(&mut class.binders)?;
+                match &mut class.members {
+                    Members::Derived(fields) => {
+                        self.names(fields.iter_mut().flat_map(|field| &mut field.names))
+                    }
+                    Members::Written(members) => {
+                        self.names(members.iter_mut().flat_map(|member| match member {
+                            WireMember::Field(field) => &mut field.names[..],
+                            WireMember::Method(_) => &mut [],
+                        }))
+                    }
+                }
+            }
+            Node::Alias { binders, .. } => self.binders(binders),
+            Node::Defs(defs) => defs.iter_mut().try_for_each(|def| {
+                self.names(&mut def.name)?;
+                self.binders(&mut def.binders)?;
+                self.sig(&mut def.sig)
+            }),
+            Node::Methods(methods) => methods.iter_mut().try_for_each(|method| {
+                self.names(&mut method.name)?;
+                self.binders(&mut method.binders)?;
+                self.sig(&mut method.sig)
+            }),
+        }
+    }
+
+    fn binders(&mut self, binders: &mut [Binder]) -> Result<(), E> {
+        self.names(binders.iter_mut().map(|binder| &mut binder.name))
+    }
+
+    fn sig(&mut self, sig: &mut Signature) -> Result<(), E> {
+        sig.params.iter_mut().try_for_each(|param| {
+            self.names(&mut param.name)?;
+            match &mut param.kind {
+                WireParamKind::Key(name) => self.names(name),
+                _ => Ok(()),
+            }
+        })
+    }
 }
 
 fn quant(quant: TypeQuant) -> Quant {
@@ -1255,13 +1341,20 @@ fn quant(quant: TypeQuant) -> Quant {
 /// Decode content into a shard that is not yet linked, and the facts it records.
 /// IDs are checked only where decoding follows them; the shard is validated
 /// afterwards.
-pub(super) fn decode(content: Content<&str>) -> Result<(Shard<'_>, elab::Facts), &'static str> {
+pub(super) fn decode(mut content: Content<&str>) -> Result<(Shard<'_>, elab::Facts), &'static str> {
+    let words = mem::take(&mut content.spans);
+    let mut reader = spans::Reader::new(&words);
+    visit_spans(&mut content, |span, name| {
+        *span = reader.next(name)?;
+        Ok(())
+    })?;
+    reader.finish()?;
     let Content {
         module,
         path,
-        lines,
         strict,
         strings,
+        spans: _,
         types,
         decls,
         facts,
@@ -1363,7 +1456,7 @@ pub(super) fn decode(content: Content<&str>) -> Result<(Shard<'_>, elab::Facts),
     let values: Vec<_> = values
         .into_iter()
         .map(|value| elab::Value {
-            span: unspan(value.span),
+            span: value.span,
             annot: unopt(value.annot).map(SiteId::from_index),
         })
         .collect();
@@ -1401,7 +1494,6 @@ pub(super) fn decode(content: Content<&str>) -> Result<(Shard<'_>, elab::Facts),
         info: UnitInfo {
             module: Some(module),
             path: Path::new(path),
-            lines,
             source: None,
             strict,
         },
@@ -1423,7 +1515,7 @@ pub(super) fn decode(content: Content<&str>) -> Result<(Shard<'_>, elab::Facts),
             .into_iter()
             .map(|module| elab::Module {
                 name: StrId::from_index(module.name as usize),
-                span: unspan(module.span),
+                span: module.span,
             })
             .collect(),
         providers: Vec::new(),
@@ -1431,7 +1523,7 @@ pub(super) fn decode(content: Content<&str>) -> Result<(Shard<'_>, elab::Facts),
             .into_iter()
             .map(|export| elab::Export {
                 name: StrId::from_index(export.name as usize),
-                span: unspan(export.span),
+                span: export.span,
                 target: untarget(export.target),
             })
             .collect(),
@@ -1777,7 +1869,7 @@ fn unbinder((decl, sig, slot): WireBinder) -> BinderRef {
 
 fn unname(name: Name) -> surface::Name {
     surface::Name {
-        span: unspan(name.span),
+        span: name.span,
         text: StrId::from_index(name.text as usize),
     }
 }
@@ -1839,9 +1931,9 @@ fn untarget(target: WireTarget) -> elab::Target {
             elab::Target::Local(Referent::Decl(DeclId::from_index(decl as usize)))
         }
         WireTarget::Binder(found) => elab::Target::Local(Referent::Binder(unbinder(found))),
-        WireTarget::Value(span) => elab::Target::Local(Referent::Value(UnitSpan {
+        WireTarget::Value { span } => elab::Target::Local(Referent::Value(UnitSpan {
             unit: local(),
-            span: unspan(span),
+            span,
         })),
         WireTarget::Error => elab::Target::Local(Referent::Error),
         WireTarget::Import { module, item } => elab::Target::Import {

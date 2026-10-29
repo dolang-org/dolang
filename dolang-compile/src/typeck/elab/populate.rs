@@ -32,8 +32,8 @@ use super::{
 use crate::{
     RestKind,
     ast::SpecialMethod,
+    diag::Span,
     diag::{NoteKind, Severity},
-    source::Span,
     typeck::report::Report,
     typeck::r#type::{
         Argument, Binder, BinderOrigin, BinderSource, Binding, BoundRef, Database, DeclId,

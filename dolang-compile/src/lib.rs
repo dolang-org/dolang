@@ -1529,6 +1529,25 @@ impl Unit<'_> {
         self.file.byte_range(span)
     }
 
+    /// The span of the bytes `range` of [`source`](Unit::source), the inverse of
+    /// [`byte_range`](Unit::byte_range).
+    ///
+    /// # Panics
+    ///
+    /// If `range` is out of bounds or doesn't fall on character boundaries.
+    pub fn locate(&self, range: Range<usize>) -> diag::Span {
+        let content = self.file.content();
+        assert!(
+            content.is_char_boundary(range.start) && content.is_char_boundary(range.end),
+            "a range of the source on character boundaries"
+        );
+        assert!(range.start <= range.end, "an ordered range");
+        self.file.locate(source::Span {
+            start: range.start as source::Offset,
+            end: range.end as source::Offset,
+        })
+    }
+
     /// The text of a span of this unit.
     pub fn text(&self, span: diag::Span) -> &str {
         &self.file.content()[self.file.byte_range(span)]

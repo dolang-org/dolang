@@ -197,7 +197,6 @@ pub(crate) fn hover(
     if end < start {
         return None;
     }
-    let source = unit.source();
     // The token under the position naming a declaration, or for a range, the
     // one it covers exactly
     let reference = refs
@@ -219,19 +218,18 @@ pub(crate) fn hover(
         )
     });
     let node = checked.and_then(|checked| {
-        let start = u32::try_from(start).ok()?;
-        let end = u32::try_from(end).ok()?;
+        let range = unit.locate(start..end);
+        let (start, end) = (range.start(), unit.end(range));
         let node = checked.analysis.at(checked.unit, start)?;
         node.ancestors()
-            .find(|node| node.span().start <= start && end <= node.span().end)
+            .find(|node| node.span().start() <= start && end <= node.end())
     });
     let types = node.filter(|_| !module).and_then(|node| {
         let span = node.span();
+        let range = unit.byte_range(span);
         let spans = reference.map(|reference| (reference.start, reference.end));
-        let named = (spans == Some((span.start as usize, span.end as usize)))
-            .then(|| source.get(span.start as usize..span.end as usize))
-            .flatten();
-        Some((span, type_lines(node, named)?))
+        let named = (spans == Some((range.start, range.end))).then(|| unit.text(span));
+        Some((range, type_lines(node, named)?))
     });
     let (targets, chosen) = match checked {
         Some(checked) => targets(unit, checked, node, reference.map(|reference| reference.id)),
@@ -257,10 +255,7 @@ pub(crate) fn hover(
     let ((start, end), types) = match types {
         None if declarations.is_empty() => return None,
         None => (reference?, Vec::new()),
-        Some((span, lines)) => (
-            reference.unwrap_or((span.start as usize, span.end as usize)),
-            lines,
-        ),
+        Some((range, lines)) => (reference.unwrap_or((range.start, range.end)), lines),
     };
     Some(Hover {
         from: offsets.utf16(start),
@@ -400,10 +395,10 @@ fn node_targets(unit: &Unit<'_>, own: &str, node: typeck::Node<'_>) -> Vec<Targe
 /// judged at its member, and a function call at the whole call, which starts
 /// where its callee does. A union receiver's call reaches several.
 fn chosen(node: typeck::Node<'_>) -> Option<u32> {
-    let start = node.span().start;
+    let start = node.span().start();
     let callees = node
         .ancestors()
-        .take_while(|ancestor| ancestor.span().start == start)
+        .take_while(|ancestor| ancestor.span().start() == start)
         .map(|ancestor| {
             let callees = ancestor.judgments();
             callees

@@ -43,7 +43,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use dolang::compile::{Config, ErrorKind, Mode, Severity, UnitId, typeck};
+use dolang::compile::{Config, ErrorKind, Mode, Pos, Severity, UnitId, typeck};
 use dolang_private_test::{Directive, annotate};
 
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/typeck");
@@ -590,7 +590,7 @@ fn from_typelibs(
             continue;
         };
         let judgments = |check: &typeck::Check| -> Vec<String> {
-            judgments(check, id)
+            judgments(check, id, source.text())
                 .into_iter()
                 .map(|judgment| {
                     let (start, end) = judgment.span;
@@ -621,7 +621,7 @@ struct Judgment {
 
 /// What the check's analysis concluded about `unit`'s spans, as annotations name
 /// it, in source order
-fn judgments(check: &typeck::Check, unit: UnitId) -> Vec<Judgment> {
+fn judgments(check: &typeck::Check, unit: UnitId, text: &str) -> Vec<Judgment> {
     use typeck::{Role, Style};
 
     let analysis = check
@@ -629,7 +629,7 @@ fn judgments(check: &typeck::Check, unit: UnitId) -> Vec<Judgment> {
         .expect("cases are checked with an analysis");
     let mut judgments = Vec::new();
     for node in analysis.nodes(unit) {
-        let span = (node.span().start, node.span().end);
+        let span = (byte(text, node.span().start()), byte(text, node.end()));
         judgments.extend(node.judgments().map(|judged| {
             let ty = judged.ty(Style::Full);
             let name = match judged.role() {
@@ -680,6 +680,20 @@ fn judgments(check: &typeck::Check, unit: UnitId) -> Vec<Judgment> {
     judgments
 }
 
+/// The byte offset of a position in `text`
+fn byte(text: &str, pos: Pos) -> u32 {
+    let mut lines = text.split_inclusive('\n');
+    let before: usize = (lines.by_ref())
+        .take(pos.line_offset() as usize)
+        .map(str::len)
+        .sum();
+    let line = lines.next().unwrap_or("");
+    let column = (line.char_indices())
+        .nth(pos.column_offset() as usize)
+        .map_or(line.len(), |(offset, _)| offset);
+    (before + column) as u32
+}
+
 /// Check a case file's judgment annotations.
 fn judge(source: &Source, id: Option<UnitId>, check: &typeck::Check, failures: &mut String) {
     let lines: Vec<&str> = source.text().split('\n').collect();
@@ -693,7 +707,7 @@ fn judge(source: &Source, id: Option<UnitId>, check: &typeck::Check, failures: &
             source.file
         );
     };
-    let judgments = judgments(check, id);
+    let judgments = judgments(check, id, source.text());
     // The byte offset each line starts at
     let starts: Vec<u32> = std::iter::once(0)
         .chain(lines.iter().scan(0, |offset, line| {

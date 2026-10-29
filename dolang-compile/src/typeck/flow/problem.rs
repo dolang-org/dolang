@@ -208,7 +208,7 @@ pub(crate) enum Misfit {
     Class,
 }
 
-impl Report for Problem {
+impl Report<Span> for Problem {
     fn span(&self) -> Span {
         match *self {
             Problem::FmtGap { span, .. }
@@ -253,7 +253,7 @@ impl Report for Problem {
         }
     }
 
-    fn annotations(&self) -> Vec<Annotation> {
+    fn annotations(&self) -> Vec<Annotation<Span>> {
         match *self {
             Problem::Unreachable { span, call } if span != call => vec![Annotation {
                 kind: AnnotationKind::Context,

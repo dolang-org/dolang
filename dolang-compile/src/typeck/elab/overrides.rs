@@ -25,7 +25,7 @@ use super::{
 };
 use crate::{
     ast::SpecialMethod,
-    source::Span,
+    diag::Span,
     typeck::{
         solver::{
             Found, FoundKind, Gas, Inheritance, Issue, Lookup, Masked, Provenance, Reach,

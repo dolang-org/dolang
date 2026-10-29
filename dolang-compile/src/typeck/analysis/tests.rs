@@ -3,18 +3,20 @@ use std::{path::Path, sync::Arc};
 use super::{Analysis, Entry, Tree, Types};
 use crate::{
     Config, Mode, UnitId,
-    source::Span,
+    diag::{Pos, Span},
     typeck::{
         Builder, Role, Style,
         r#type::{Database, Labels},
     },
 };
 
-fn span(start: u32, end: u32) -> Span {
-    Span { start, end }
+/// A position on the first line
+fn at(column: u32) -> Pos {
+    Pos::new(0, column)
 }
 
-/// An analysis of one unit with a judgment at each span, named by its index
+/// An analysis of one unit with a judgment at each span of the first line, by its
+/// columns, named by its index
 fn analysis(spans: &[(u32, u32)]) -> Analysis {
     let mut db = Database::new();
     db.seal();
@@ -33,7 +35,7 @@ fn analysis(spans: &[(u32, u32)]) -> Analysis {
                 item: None,
                 group: None,
             };
-            (span(start, end), entry)
+            (Span::new(0, start, end - start), at(start)..at(end), entry)
         })
         .collect();
     let types = Types {
@@ -44,10 +46,10 @@ fn analysis(spans: &[(u32, u32)]) -> Analysis {
     Analysis::new(Arc::new(types), units, [].into())
 }
 
-/// The names of the node at `offset` and its ancestors, innermost first
-fn chain(analysis: &Analysis, offset: u32) -> Vec<String> {
+/// The names of the node at `column` and its ancestors, innermost first
+fn chain(analysis: &Analysis, column: u32) -> Vec<String> {
     analysis
-        .at(UnitId::from_index(0), offset)
+        .at(UnitId::from_index(0), at(column))
         .into_iter()
         .flat_map(|node| node.ancestors())
         .flat_map(|node| {
@@ -66,7 +68,12 @@ fn nested() {
     assert_eq!(chain(&analysis, 15), ["1"]);
     let spans: Vec<_> = analysis
         .nodes(UnitId::from_index(0))
-        .map(|node| (node.span().start, node.span().end))
+        .map(|node| {
+            (
+                node.span().start().column_offset(),
+                node.end().column_offset(),
+            )
+        })
         .collect();
     assert_eq!(spans, [(0, 20), (2, 12), (4, 6), (8, 10)]);
 }
@@ -86,7 +93,7 @@ fn no_node() {
     assert!(chain(&analysis, 0).is_empty());
     assert!(chain(&analysis, 7).is_empty());
     assert!(chain(&analysis, 30).is_empty());
-    assert!(analysis.at(UnitId::from_index(1), 4).is_none());
+    assert!(analysis.at(UnitId::from_index(1), at(4)).is_none());
 }
 
 #[test]
@@ -100,7 +107,7 @@ fn shared_span() {
 fn enclosing() {
     let analysis = analysis(&[(0, 20), (2, 12), (4, 6), (8, 10)]);
     let name = |start, end| {
-        let node = analysis.enclosing(UnitId::from_index(0), span(start, end))?;
+        let node = analysis.enclosing(UnitId::from_index(0), at(start)..at(end))?;
         let judged = node.judgments().next().unwrap();
         Some(judged.name().unwrap().to_owned())
     };
@@ -126,7 +133,9 @@ fn checked() {
     let id = builder.unit(&unit).unwrap();
     let analysis = builder.check().into_analysis().unwrap();
     let judged = |offset: usize, role| {
-        let node = analysis.at(id, offset as u32).unwrap();
+        let node = analysis
+            .at(id, unit.locate(offset..offset).start())
+            .unwrap();
         let judged = node.judgments().find(|judged| judged.role() == role);
         let judged = judged.unwrap();
         (judged.name().map(str::to_owned), judged.ty(Style::Reader))
@@ -169,7 +178,10 @@ def run a @ A b @ B
     let id = builder.unit(&unit).unwrap();
     let analysis = builder.check().into_analysis().unwrap();
     let judged = |at: &str, role| {
-        let node = analysis.at(id, source.find(at).unwrap() as u32).unwrap();
+        let offset = source.find(at).unwrap();
+        let node = analysis
+            .at(id, unit.locate(offset..offset).start())
+            .unwrap();
         node.judgments()
             .find(|judged| judged.role() == role)
             .unwrap()
@@ -206,8 +218,32 @@ fn items() {
     let id = builder.unit(&unit).unwrap();
     let analysis = builder.check().into_analysis().unwrap();
     // A path through a module names its item by the module's own name
-    let node = analysis.at(id, script.find("m.f").unwrap() as u32).unwrap();
+    let offset = script.find("m.f").unwrap();
+    let node = analysis
+        .at(id, unit.locate(offset..offset).start())
+        .unwrap();
     let item = node.judgments().find(|judged| judged.role() == Role::Item);
     let declaration = item.unwrap().declaration().unwrap();
     assert_eq!((declaration.module(), declaration.name()), ("a", "f"));
+}
+
+#[test]
+fn after_non_ascii() {
+    // A read after a character of two bytes and a tab on its line
+    let source = "let s = 1\nlet t = (\"é\t\", s)\n";
+    let mut config = Config::new();
+    config.typecheck(true);
+    let unit = config.unit(Path::new("test.dol"), source);
+    assert!(!unit.failed);
+    let mut builder = Builder::new();
+    builder.analysis(true);
+    let id = builder.unit(&unit).unwrap();
+    let analysis = builder.check().into_analysis().unwrap();
+    let node = analysis.at(id, Pos::new(1, 15)).unwrap();
+    assert!(
+        node.judgments()
+            .any(|judged| judged.role() == Role::Read && judged.name() == Some("s"))
+    );
+    assert_eq!(unit.text(node.span()), "s");
+    assert_eq!(node.end(), Pos::new(1, 16));
 }

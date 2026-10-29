@@ -2,9 +2,8 @@
 //!
 //! A check that is asked to writes the typelib of each module it checks from
 //! source, once it has elaborated it. A typelib holds the surface of a module's
-//! shard, with the module's name, path and the lines its kept spans are on, which
-//! are offsets in characters rather than bytes, so they locate a column in
-//! characters without the source. It is a
+//! shard, with the module's name and path, its spans written compactly (see
+//! [`spans`]) as the lines and columns a unit with source holds. It is a
 //! structural record of the module's interface: it keeps text that is part of the
 //! interface, not how a reference is spelled, and spans that locate definitions and
 //! imports, not those of written types. It is mostly what elaboration starts
@@ -34,6 +33,7 @@ use super::{
     r#type::{DeclId, DeclKind, UnitId},
 };
 
+mod spans;
 #[cfg(test)]
 mod tests;
 mod wire;
@@ -41,7 +41,7 @@ mod wire;
 const MAGIC: [u8; 8] = *b"\xffdotypel";
 /// The format's version, which changes with any change to the format. It isn't 0,
 /// which the bytes after the magic of an older typelib would read as.
-const VERSION: u16 = 8;
+const VERSION: u16 = 9;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct Header {
@@ -124,9 +124,6 @@ pub(crate) fn read(bytes: &[u8]) -> Result<(Shard<'_>, Facts), Invalid> {
 
 /// Check what elaboration assumes of a shard that collection guarantees.
 fn validate(shard: &mut Shard<'_>) -> Result<(), &'static str> {
-    if !(shard.info.lines.windows(2)).all(|pair| pair[0].0 < pair[1].0 && pair[0].1 < pair[1].1) {
-        return Err("the line table is out of order");
-    }
     let mut ids = InRange {
         decls: shard.decls.len(),
         sites: shard.sites.len(),
@@ -149,9 +146,7 @@ fn validate(shard: &mut Shard<'_>) -> Result<(), &'static str> {
     if names.windows(2).any(|pair| pair[0] == pair[1]) {
         return Err("an export is repeated");
     }
-    if !(shard.values.windows(2))
-        .all(|pair| (pair[0].span.start, pair[0].span.end) < (pair[1].span.start, pair[1].span.end))
-    {
+    if !(shard.values.windows(2)).all(|pair| pair[0].span < pair[1].span) {
         return Err("the exported variables are out of order");
     }
 
@@ -258,11 +253,7 @@ fn validate(shard: &mut Shard<'_>) -> Result<(), &'static str> {
     for export in &shard.exports {
         if let Target::Local(Referent::Value(value)) = export.target {
             let values = &shard.values;
-            let Ok(index) = values
-                .binary_search_by_key(&(value.span.start, value.span.end), |value| {
-                    (value.span.start, value.span.end)
-                })
-            else {
+            let Ok(index) = values.binary_search_by_key(&value.span, |value| value.span) else {
                 return Err("an exported variable is not listed");
             };
             let annot = values[index].annot;

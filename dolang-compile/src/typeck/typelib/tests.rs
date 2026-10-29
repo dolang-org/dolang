@@ -9,7 +9,7 @@ use bitvec::slice::BitSlice;
 use super::{HEADER, Header, Invalid, wire};
 use crate::{
     Config, ErrorKind, Mode, Unit,
-    source::Span,
+    diag::Span,
     typeck::{
         Builder, Typelib, UnitId,
         elab::{
@@ -250,7 +250,7 @@ pub class C
 fn underived_values_are_written() {
     let bytes = typelib();
     let (mut shard, facts) = read(&bytes).unwrap();
-    let elsewhere = Span { start: 0, end: 1 };
+    let elsewhere = Span::new(0, 0, 1);
     let (double, _) = (shard.decls.iter().enumerate())
         .find(|(_, decl)| matches!(decl.node, DeclNode::Defs(_)))
         .expect("the module declares a function");
@@ -541,7 +541,7 @@ fn exported_variables() {
     stray.values.insert(
         0,
         Value {
-            span: Span::default(),
+            span: Span::new(0, 0, 0),
             annot: None,
         },
     );
@@ -768,7 +768,7 @@ fn locates_kept_spans() {
         let (_, spans) = wire::Encode::new(shard, base, kept, facts, None).content();
         (spans.into_iter())
             .filter(|&span| span != Span::INVALID)
-            .map(|span| resolve_span(id, &shard.info, span).span())
+            .map(|span| resolve_span(id, span).span())
             .collect::<Vec<_>>()
     };
     let shard = &tables.shards[id.index()];

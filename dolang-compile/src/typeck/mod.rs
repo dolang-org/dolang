@@ -317,11 +317,19 @@ impl<'u, 's> Builder<'u, 's> {
             let unit = UnitId::from_index(index);
             let flow = output.cfg.is_some().then(|| {
                 let (facts, problems, undecided) = gather(output.runs, &mut results, &mut copies);
+                let file = &tables
+                    .info(unit)
+                    .source
+                    .expect("a unit with flow has source")
+                    .file;
                 for problem in &problems {
-                    diags.push((unit, report::Diag::new(problem.clone())));
+                    diags.push((unit, report::Diag::located(problem, file)));
                 }
                 unresolved.extend(undecided.iter().map(|&(span, residual)| elab::Unresolved {
-                    span: r#type::UnitSpan { unit, span },
+                    span: r#type::UnitSpan {
+                        unit,
+                        span: file.locate(span),
+                    },
                     residual,
                 }));
                 (facts, problems, undecided)
@@ -411,7 +419,7 @@ impl<'u, 's> Builder<'u, 's> {
             flows,
             diagnostics: diags
                 .iter()
-                .map(|(unit, diag)| diag.resolve(*unit, tables.info(*unit)))
+                .map(|(unit, diag)| diag.resolve(*unit))
                 .collect(),
             units: tables
                 .shards
@@ -428,11 +436,10 @@ impl<'u, 's> Builder<'u, 's> {
             undecided: unresolved
                 .iter()
                 .map(|unresolved| {
-                    let unit = unresolved.span.unit;
-                    let info = tables.info(unit);
+                    let r#type::UnitSpan { unit, span } = unresolved.span;
                     (
                         format!("{:?}", unresolved.residual),
-                        report::resolve_span(unit, info, unresolved.span.span),
+                        report::resolve_span(unit, span),
                     )
                 })
                 .collect(),
@@ -544,9 +551,14 @@ fn tree(
     flow: &flow::Results,
     cfg: &cfg::Ir,
     layer: &Arc<r#type::Shared>,
-    elaborated: Vec<(crate::source::Span, analysis::Entry)>,
+    elaborated: Vec<(diag::Span, analysis::Entry)>,
 ) -> analysis::Tree {
     let db = r#type::Database::fork(layer);
+    let file = &tables
+        .info(unit)
+        .source
+        .expect("a unit judged has source")
+        .file;
     let judgments = flow
         .facts
         .iter()
@@ -590,9 +602,10 @@ fn tree(
                 item,
                 group: None,
             };
-            (span, entry)
+            (file.locate(span), entry)
         })
         .chain(elaborated)
+        .map(|(span, entry)| (span, span.start()..file.end(span), entry))
         .collect();
     analysis::Tree::new(judgments)
 }

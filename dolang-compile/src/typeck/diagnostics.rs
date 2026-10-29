@@ -113,8 +113,8 @@ fn judgments_do_not_depend_on_the_order_units_are_added() {
                         });
                         (
                             name,
-                            node.span().start,
-                            node.span().end,
+                            node.span(),
+                            node.end(),
                             judged.role(),
                             judged.ty(typeck::Style::Full),
                             judged.name().map(str::to_owned),

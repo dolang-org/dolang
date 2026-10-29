@@ -18,8 +18,8 @@ use super::{
     r#type::UnitSpan,
 };
 use crate::{
+    diag::Span,
     diag::{NoteKind, Severity},
-    source::Span,
 };
 
 /// The checks left undecided at a span, by why

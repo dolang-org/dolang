@@ -21,7 +21,7 @@ use tower_lsp_server::{
 
 use dolang_compile::{
     Config as CompileConfig, Context, ErrorKind, Kind, Mode, Node, NodeId, Token, Unit, UnitId,
-    diag, source,
+    diag,
     typeck::{self, Role, Style},
 };
 
@@ -768,20 +768,20 @@ impl Document {
         &self,
         analyzed: &Analyzed,
         offset: usize,
-        reference: Option<source::Span>,
-    ) -> Option<(source::Span, Vec<String>)> {
-        let node = analyzed
-            .analysis
-            .at(analyzed.unit, offset.try_into().ok()?)?;
+        reference: Option<diag::Span>,
+    ) -> Option<(diag::Span, Vec<String>)> {
+        let node = analyzed.analysis.at(analyzed.unit, self.pos(offset)?)?;
         let span = node.span();
-        let named = (reference == Some(span))
-            .then(|| {
-                self.unit
-                    .source()
-                    .get(span.start as usize..span.end as usize)
-            })
-            .flatten();
+        let named = (reference == Some(span)).then(|| self.unit.text(span));
         Some((span, label(node, named)?))
+    }
+
+    /// The position of the byte `offset` of the source
+    fn pos(&self, offset: usize) -> Option<diag::Pos> {
+        let source = self.unit.source();
+        source
+            .is_char_boundary(offset)
+            .then(|| self.unit.locate(offset..offset).start())
     }
 
     /// The declaration named by the token under `pos`, if any.
@@ -806,10 +806,9 @@ impl Document {
         reference: Option<NodeId>,
     ) -> (Vec<Target<'a>>, Option<u32>) {
         let modules = &analyzed.modules;
-        let node = offset
-            .try_into()
-            .ok()
-            .and_then(|offset| analyzed.analysis.at(analyzed.unit, offset));
+        let node = self
+            .pos(offset)
+            .and_then(|pos| analyzed.analysis.at(analyzed.unit, pos));
         let chosen = node.and_then(chosen);
         let found = match reference {
             Some(id) => {
@@ -869,10 +868,10 @@ fn node_targets<'a>(modules: &'a Modules, node: typeck::Node<'_>) -> Vec<Target<
 /// judged at its member, and a function call at the whole call, which starts
 /// where its callee does. A union receiver's call reaches several.
 fn chosen(node: typeck::Node<'_>) -> Option<u32> {
-    let start = node.span().start;
+    let start = node.span().start();
     let callees = node
         .ancestors()
-        .take_while(|ancestor| ancestor.span().start == start)
+        .take_while(|ancestor| ancestor.span().start() == start)
         .map(|ancestor| {
             let callees = ancestor.judgments();
             callees
@@ -2312,10 +2311,9 @@ impl LanguageServer for Backend {
         let referenced = reference.and_then(|(range, ..)| {
             let start = index.offset_from_position(&range.start)?;
             let end = index.offset_from_position(&range.end)?;
-            Some(source::Span {
-                start: start.try_into().ok()?,
-                end: end.try_into().ok()?,
-            })
+            let source = document.unit.source();
+            (source.is_char_boundary(start) && source.is_char_boundary(end) && start <= end)
+                .then(|| document.unit.locate(start..end))
         });
         let analyzed = document.analyzed();
         // A module has no node of its own, so the check's is the path through
@@ -2370,9 +2368,7 @@ impl LanguageServer for Backend {
             },
             Some((span, lines)) => {
                 let typed = format!("```dolang\n{}\n```", lines.join("\n"));
-                let range = reference.unwrap_or_else(|| {
-                    index.range_from_offsets(span.start as usize, span.end as usize)
-                });
+                let range = reference.unwrap_or_else(|| index.range_from_span(&span));
                 match render(!signatures) {
                     Some(markdown) if signatures => (range, markdown),
                     Some(markdown) => (range, format!("{typed}\n\n---\n\n{markdown}")),

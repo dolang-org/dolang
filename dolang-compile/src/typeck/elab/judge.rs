@@ -7,7 +7,7 @@ use rustc_hash::FxHashMap;
 
 use super::{Ambient, BinderRef, DeclNode, Designated, Referent, Tables};
 use crate::{
-    source::Span,
+    diag::Span,
     typeck::{
         analysis::Entry,
         flow::Role,
@@ -90,9 +90,15 @@ impl Tables<'_> {
                 },
             ));
         }
+        let file = &self
+            .info(unit)
+            .source
+            .expect("a unit judged has source")
+            .file;
         let mut refs: Vec<_> = shard.refs.iter().collect();
         refs.sort_unstable_by_key(|&(head, _)| (head.start, head.end));
         for (&head, &link) in refs {
+            let head = file.locate(head);
             let (decl, name, ty) = match *self.linked(Some(link)).expect("a link refers") {
                 Referent::Decl(id) => {
                     let ty = copier.ty(db.intern(Type::Decl(id)));
