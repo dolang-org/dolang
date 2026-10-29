@@ -16,8 +16,10 @@ impl<'u> Flow<'_, 'u> {
             let data = self.ir.func(id);
             if let Some(decl) = data.kind.scope() {
                 let key = (decl, tables.primary_sig(decl));
-                for binder in tables.groups.get(&key).into_iter().flatten() {
-                    let owner = tables.sig_decls[&(binder.decl, binder.sig)];
+                for binder in tables.group(key).into_iter().flatten() {
+                    let owner = tables
+                        .sig_decl((binder.decl, binder.sig))
+                        .expect("every signature is declared");
                     if !scope.contains(&owner) {
                         scope.push(owner);
                     }

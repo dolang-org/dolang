@@ -21,7 +21,7 @@ use crate::typeck::r#type::{DeclId, DeclKind, UnitId};
 
 /// Find the binders every declaration is lifted over.
 pub(crate) fn captures(tables: &mut Tables<'_>) {
-    let count = tables.decls.len();
+    let count = tables.decl_id_count();
     let mut needs = Needs {
         tables: &*tables,
         binders: vec![FxHashSet::default(); count],
@@ -30,7 +30,7 @@ pub(crate) fn captures(tables: &mut Tables<'_>) {
         ambient: None,
         expanding: Vec::new(),
     };
-    for site in &tables.sites {
+    for (_, site) in tables.sites() {
         needs.ambient = site.ambient;
         if let Some((decl, _)) = site.group() {
             needs.ty(decl.index(), site.unit, &site.ty);
@@ -43,9 +43,9 @@ pub(crate) fn captures(tables: &mut Tables<'_>) {
             needs.ty(node, site.unit, &site.ty);
         }
     }
-    for index in 0..count {
-        let id = DeclId::from_index(index);
-        let decl = &tables.decls[index];
+    for id in tables.decl_ids() {
+        let index = id.index();
+        let decl = tables.decl(id);
         if let Some((outer, _)) = decl.outer {
             needs.deps[outer.index()].push(id);
             // A method is lifted over its class's whole group
@@ -99,12 +99,16 @@ pub(crate) fn captures(tables: &mut Tables<'_>) {
 
     for (index, set) in binders.into_iter().take(count).enumerate() {
         let id = DeclId::from_index(index);
+        // A signature's database declaration is lifted with its declaration
+        let Some(decl) = tables.try_decl(id) else {
+            continue;
+        };
         let mut lifted: Vec<_> = set.into_iter().filter(|binder| binder.decl != id).collect();
         // BinderRef orders enclosing declarations first, then signature and slot;
         // these positions become the leading arguments of lifted declarations.
         lifted.sort_unstable();
-        if matches!(tables.decls[index].node, DeclNode::Class(_)) {
-            debug_assert!(tables.decls[index].outer.is_none());
+        if matches!(decl.node, DeclNode::Class(_)) {
+            debug_assert!(decl.outer.is_none());
             debug_assert!(
                 lifted.is_empty(),
                 "a top-level class captures outer binders"
@@ -116,18 +120,18 @@ pub(crate) fn captures(tables: &mut Tables<'_>) {
                 .all(|binder| encloses(tables, binder.decl, binder.sig, id)),
             "{id:?} captures a binder of a declaration that does not enclose it"
         );
-        tables.lifted.insert(id, lifted);
+        tables.facts_mut(id).lifted.insert(id, lifted);
     }
 }
 
 /// Whether the signature `sig` of `outer` encloses `decl`
 fn encloses(tables: &Tables<'_>, outer: DeclId, sig: usize, decl: DeclId) -> bool {
-    let mut at = tables.decls[decl.index()].outer;
+    let mut at = tables.decl(decl).outer;
     while let Some(found) = at {
         if found == (outer, sig) {
             return true;
         }
-        at = tables.decls[found.0.index()].outer;
+        at = tables.decl(found.0).outer;
     }
     false
 }
@@ -157,7 +161,7 @@ impl Needs<'_, '_> {
             }
             Some(&Referent::Decl(named))
                 if matches!(
-                    tables.decls[named.index()].kind,
+                    tables.decl(named).kind,
                     DeclKind::Alias | DeclKind::OpaqueAlias
                 ) =>
             {
@@ -231,7 +235,7 @@ impl Needs<'_, '_> {
                     return;
                 }
                 self.expanding.push((owner, sig, index));
-                let site = &self.tables.sites[implicit.index()];
+                let site = self.tables.site(implicit);
                 let outer = std::mem::replace(&mut self.ambient, site.ambient);
                 self.ty(node, site.unit, &site.ty);
                 self.ambient = outer;

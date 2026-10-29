@@ -47,17 +47,15 @@ pub(crate) fn overrides(
     diags: &mut Vec<UnitDiag>,
 ) -> Vec<Unresolved> {
     let mut unresolved = Vec::new();
-    for (index, decl) in tables.decls.iter().enumerate() {
+    for id in tables.unit_decl_ids(unit) {
+        let decl = tables.decl(id);
         let DeclNode::Class(class) = &decl.node else {
             continue;
         };
-        if decl.unit != unit {
-            continue;
-        }
         let mut check = Check {
             db,
             tables,
-            id: DeclId::from_index(index),
+            id,
             unit: decl.unit,
             class,
             diags: &mut *diags,
@@ -158,7 +156,7 @@ impl Check<'_, '_> {
                 }
             }
             Err(issue) => {
-                if let Some(span) = self.tables.decls[self.id.index()].name_span() {
+                if let Some(span) = self.tables.decl(self.id).name_span() {
                     self.undecided(span, issue);
                 }
             }
@@ -211,7 +209,7 @@ impl Check<'_, '_> {
         else {
             return;
         };
-        let Some(span) = self.tables.decls[self.id.index()].name_span() else {
+        let Some(span) = self.tables.decl(self.id).name_span() else {
             return;
         };
         let name = |decl: Option<DeclId>| decl.map_or("Value", |decl| self.name(decl)).to_owned();
@@ -337,7 +335,7 @@ impl Check<'_, '_> {
         if db.intrinsic(Intrinsic::Value).is_none() {
             return;
         }
-        let Some(name) = self.tables.decls[self.id.index()].name else {
+        let Some(name) = self.tables.decl(self.id).name else {
             return;
         };
         match solver.conformance(instance, solver.closed(db.top()), runtime) {

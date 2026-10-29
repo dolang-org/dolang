@@ -575,9 +575,9 @@ impl<'a, 'u> Flow<'a, 'u> {
         for id in run.funcs.iter().copied().chain(ancestors) {
             if let Some(decl) = ir.func(id).kind.scope() {
                 let key = (decl, tables.primary_sig(decl));
-                for binder in tables.groups.get(&key).into_iter().flatten() {
+                for binder in tables.group(key).into_iter().flatten() {
                     let key = (binder.decl, binder.sig);
-                    let owner = tables.sig_decls[&key];
+                    let owner = tables.sig_decl(key).expect("every signature is declared");
                     if !scope.iter().any(|(decl, _)| *decl == owner) {
                         scope.push((owner, tables.group_rigids(db, key)));
                     }
@@ -726,7 +726,7 @@ impl<'a, 'u> Flow<'a, 'u> {
 
     /// Whether the unit is strict, so the checker doesn't make up `Unknown` in it
     fn strict(&self) -> bool {
-        self.tables.units[self.unit.index()].strict
+        self.tables.info(self.unit).strict
     }
 
     /// Where the checker can't type a construct: a strict unit records the check

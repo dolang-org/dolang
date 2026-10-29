@@ -26,15 +26,15 @@ use crate::typeck::r#type::{DeclId, DeclKind, Intrinsic, Kind, Scope, UnitId, Un
 /// Complete every def and method signature, record every field's type, and find
 /// the designated declarations of `std`.
 pub(crate) fn signatures(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
-    for index in 0..tables.decls.len() {
-        let decl = DeclId::from_index(index);
-        match &tables.decls[index].node {
+    let decls: Vec<_> = tables.decl_ids().collect();
+    for decl in decls {
+        match &tables.decl(decl).node {
             DeclNode::Defs(_) | DeclNode::Methods(_) => {
                 for sig in 0..tables.sig_count(decl) {
                     let completed = complete(tables, decl, sig);
                     for ambient in [completed.input, completed.output] {
                         if let Ambient::Implicit(binder) = ambient {
-                            tables.binder_kinds.insert(
+                            tables.facts_mut(binder.decl).binder_kinds.insert(
                                 binder,
                                 KindOf {
                                     kind: Kind::Type,
@@ -43,13 +43,13 @@ pub(crate) fn signatures(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
                             );
                         }
                     }
-                    tables.sigs.insert((decl, sig), completed);
+                    tables.facts_mut(decl).sigs.insert((decl, sig), completed);
                     missing_params(tables, decl, sig, diags);
                 }
             }
             DeclNode::Class(class) => {
-                let unit = tables.decls[decl.index()].unit;
-                let strict = tables.units[unit.index()].strict;
+                let unit = tables.decl(decl).unit;
+                let strict = tables.info(unit).strict;
                 let mut fields = Vec::new();
                 for member in &class.members {
                     let Member::Field(field) = member else {
@@ -69,7 +69,7 @@ pub(crate) fn signatures(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
                         }
                     }
                 }
-                tables.fields.extend(fields);
+                tables.facts_mut(decl).fields.extend(fields);
             }
             DeclNode::Alias(_) | DeclNode::Closure(_) => {}
         }
@@ -95,7 +95,7 @@ pub(crate) fn signatures(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
 
 /// The signature of a def or method
 pub(crate) fn function<'t>(tables: &'t Tables<'_>, decl: DeclId, sig: usize) -> &'t Signature {
-    match &tables.decls[decl.index()].node {
+    match &tables.decl(decl).node {
         DeclNode::Defs(defs) => &defs[sig].sig,
         DeclNode::Methods(methods) => &methods[sig].sig,
         _ => unreachable!("only a def or method has a signature"),
@@ -139,12 +139,12 @@ pub(crate) fn func_channels(
 
 /// Whether a declaration is of a strict unit
 fn is_strict(tables: &Tables<'_>, decl: DeclId) -> bool {
-    tables.units[tables.decls[decl.index()].unit.index()].strict
+    tables.info(tables.decl(decl).unit).strict
 }
 
 fn complete(tables: &Tables<'_>, decl: DeclId, sig: usize) -> Sig {
     let func = function(tables, decl, sig);
-    let receiver = match &tables.decls[decl.index()].node {
+    let receiver = match &tables.decl(decl).node {
         DeclNode::Methods(methods) => match method_scope(&methods[sig]) {
             Scope::Static => None,
             scope => Some(scope),
@@ -175,8 +175,8 @@ fn missing_params(tables: &Tables<'_>, decl: DeclId, sig: usize, diags: &mut Vec
     if !is_strict(tables, decl) {
         return;
     }
-    let unit = tables.decls[decl.index()].unit;
-    let (name, receiver) = match &tables.decls[decl.index()].node {
+    let unit = tables.decl(decl).unit;
+    let (name, receiver) = match &tables.decl(decl).node {
         DeclNode::Defs(defs) => (defs[sig].name, false),
         DeclNode::Methods(methods) => (
             methods[sig].name,
@@ -207,13 +207,18 @@ fn missing_params(tables: &Tables<'_>, decl: DeclId, sig: usize, diags: &mut Vec
 /// unannotated
 fn missing_values(tables: &Tables<'_>, diags: &mut Vec<UnitDiag>) {
     let mut missing: Vec<UnitSpan> = tables
-        .values
+        .shards
         .iter()
-        .filter(|&(value, site)| {
-            let unit = &tables.units[value.unit.index()];
-            site.is_none() && unit.strict && unit.source.is_some()
+        .enumerate()
+        .filter(|(_, shard)| shard.info.strict && shard.info.source.is_some())
+        .flat_map(|(index, shard)| {
+            let unit = UnitId::from_index(index);
+            shard
+                .values
+                .iter()
+                .filter(|(_, site)| site.is_none())
+                .map(move |(&span, _)| UnitSpan { unit, span })
         })
-        .map(|(&value, _)| value)
         .collect();
     missing.sort_by_key(|value| (value.unit, value.span.start));
     for value in missing {
@@ -331,7 +336,7 @@ fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
     let Some((designated, expected)) = designation(tables, decl) else {
         return;
     };
-    let owner = &tables.decls[decl.index()];
+    let owner = tables.decl(decl);
     let name = owner.name.expect("a designated declaration is named");
     if owner.kind == expected {
         tables.designated.insert(decl, designated);
@@ -383,15 +388,15 @@ const INTRINSICS: [&str; 20] = [
 /// is reported: a typelib's was reported when it was checked, and with no `std`
 /// at all, everything it would declare is dynamic.
 fn missing_intrinsics(tables: &Tables<'_>, diags: &mut Vec<UnitDiag>) {
-    for (index, info) in tables.units.iter().enumerate() {
-        if info.module != Some("std") || info.source.is_none() {
+    for (index, shard) in tables.shards.iter().enumerate() {
+        if shard.info.module != Some("std") || shard.info.source.is_none() {
             continue;
         }
         let unit = UnitId::from_index(index);
-        let declared: Vec<&str> = tables
+        let declared: Vec<&str> = shard
             .decls
             .iter()
-            .filter(|decl| decl.unit == unit && decl.outer.is_none())
+            .filter(|decl| decl.outer.is_none())
             .filter_map(|decl| decl.name.map(|name| tables.name(unit, name)))
             .collect();
         for name in INTRINSICS {
@@ -412,8 +417,8 @@ fn missing_intrinsics(tables: &Tables<'_>, diags: &mut Vec<UnitDiag>) {
 /// name, and the kind of declaration it must be, before [`signatures`] records
 /// it
 pub(super) fn designation(tables: &Tables<'_>, decl: DeclId) -> Option<(Designated, DeclKind)> {
-    let owner = &tables.decls[decl.index()];
-    let module = tables.units[owner.unit.index()].module?;
+    let owner = tables.decl(decl);
+    let module = tables.info(owner.unit).module?;
     let name = owner.name.filter(|_| owner.outer.is_none())?;
     Some(match (module, tables.name(owner.unit, name)) {
         ("strand", "PipeSender") => (Designated::PipeSender, DeclKind::OpaqueAlias),
@@ -506,12 +511,12 @@ fn nominate(
     let Some(&Referent::Decl(nominee)) = tables.nominees.get(name) else {
         return None;
     };
-    let owner = &tables.decls[placeholder.index()];
-    let target = &tables.decls[nominee.index()];
+    let owner = tables.decl(placeholder);
+    let target = tables.decl(nominee);
     let span = owner
         .name_span()
         .expect("a designated declaration is named");
-    let described = match (tables.units[target.unit.index()].module, target.name) {
+    let described = match (tables.info(target.unit).module, target.name) {
         (Some(module), Some(item)) => {
             format!("{module}.{}", tables.name(target.unit, item))
         }
@@ -563,11 +568,13 @@ fn passes(tables: &Tables<'_>, placeholder: DeclId, nominee: DeclId) -> bool {
     written.iter().enumerate().all(|(slot, binder)| {
         if filled.contains(&slot) {
             binder.bound.is_none()
-                && tables.binder_kinds[&BinderRef {
-                    decl: nominee,
-                    sig: 0,
-                    slot,
-                }]
+                && tables
+                    .binder_kind(BinderRef {
+                        decl: nominee,
+                        sig: 0,
+                        slot,
+                    })
+                    .expect("every binder has a kind")
                     .kind
                     == Kind::Type
         } else {

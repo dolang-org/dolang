@@ -230,8 +230,7 @@ impl Flow<'_, '_> {
         };
         if self
             .tables
-            .lifted
-            .get(&decl)
+            .lifted(decl)
             .is_some_and(|lifted| !lifted.is_empty())
         {
             return self.gap(span, "a nested def's value in a generic declaration");
@@ -324,7 +323,7 @@ impl Flow<'_, '_> {
         if self.tables.export(unit, name).is_none() {
             self.problem(Problem::MissingExport {
                 span,
-                module: self.tables.units[unit.index()].name(),
+                module: self.tables.info(unit).name(),
                 item: name.to_owned(),
             });
         }
@@ -339,7 +338,7 @@ impl Flow<'_, '_> {
             match *target {
                 Target::Import { module, item } => {
                     name = self.tables.str(unit, item);
-                    unit = self.tables.modules[unit.index()][module.index()]?;
+                    unit = self.tables.shard(unit).modules[module.index()]?;
                 }
                 _ => return Some(target),
             }
@@ -350,9 +349,9 @@ impl Flow<'_, '_> {
     /// An exported variable's annotation, written at the top level, so with no
     /// binders to stand rigids in for
     fn variable(&self, value: &UnitSpan) -> TypeId {
-        match self.tables.values.get(value) {
+        match self.tables.shard(value.unit).values.get(&value.span) {
             Some(&Some(site)) => {
-                let site = &self.tables.sites[site.index()];
+                let site = self.tables.site(site);
                 site.interned.get().expect("population interns each site")
             }
             _ => self.db.unknown(),

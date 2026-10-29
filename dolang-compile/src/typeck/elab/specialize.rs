@@ -22,14 +22,16 @@ use crate::typeck::{
 /// Specialize every method with an annotated receiver.
 pub(crate) fn specialize(db: &mut Database, tables: &Tables<'_>, diags: &mut Vec<UnitDiag>) {
     let mut rewrites = Vec::new();
-    for (index, decl) in tables.decls.iter().enumerate() {
+    for id in tables.decl_ids() {
+        let decl = tables.decl(id);
         let DeclNode::Methods(methods) = &decl.node else {
             continue;
         };
-        let id = DeclId::from_index(index);
         let (class_id, _) = decl.outer.expect("a method is declared in a class");
         for (sig, written) in methods.iter().enumerate() {
-            let completed = &tables.sigs[&(id, sig)];
+            let completed = tables
+                .sig(id, sig)
+                .expect("every def and method has a signature");
             let Some(&ParamTy::Single(Slot::Annot(annot))) = completed
                 .params
                 .first()
@@ -37,12 +39,18 @@ pub(crate) fn specialize(db: &mut Database, tables: &Tables<'_>, diags: &mut Vec
             else {
                 continue;
             };
-            let method = tables.sig_decls[&(id, sig)];
+            let method = tables
+                .sig_decl((id, sig))
+                .expect("every signature is declared");
             let Some(receiver) = receiver(db, method) else {
                 continue;
             };
-            let group = &tables.groups[&(id, sig)];
-            let slots: Vec<usize> = tables.groups[&(class_id, 0)]
+            let group = tables
+                .group((id, sig))
+                .expect("population groups each signature");
+            let slots: Vec<usize> = tables
+                .group((class_id, 0))
+                .expect("population groups each signature")
                 .iter()
                 .map(|binder| {
                     group
@@ -53,7 +61,7 @@ pub(crate) fn specialize(db: &mut Database, tables: &Tables<'_>, diags: &mut Vec
                 .collect();
             let span = tables.site_ty(annot).span();
             let class = || {
-                let owner = &tables.decls[class_id.index()];
+                let owner = tables.decl(class_id);
                 let name = owner.name.map_or("", |name| tables.name(owner.unit, name));
                 name.to_owned()
             };

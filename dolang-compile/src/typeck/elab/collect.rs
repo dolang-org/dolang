@@ -11,8 +11,8 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AliasCycle, BinderRef, Decl, DeclAst, DeclNode, Diag, Head, ImportCycle, MissingExport,
-    MissingModule, PIPES, Referent, Role, Site, Tables, Target, UnitDiag, UnitInfo,
+    AliasCycle, Bases, BinderRef, Decl, DeclAst, DeclNode, Diag, Head, ImportCycle, MissingExport,
+    MissingModule, PIPES, Referent, Role, Shard, Site, Tables, Target, UnitDiag, UnitInfo,
     ids::Rebase,
     interface::PrivateInInterface,
     local,
@@ -217,15 +217,16 @@ pub(crate) fn link<'u>(
 ) -> (Tables<'u>, Vec<UnitDiag>) {
     let count = harvests.len();
     let mut harvests: Vec<_> = harvests.into_iter().map(Some).collect();
-    let mut units: Vec<Option<UnitInfo<'u>>> = (0..count).map(|_| None).collect();
-    let mut strings = vec![Vec::new(); count];
-    let mut exports = vec![Vec::new(); count];
-    let mut values = FxHashMap::default();
-    let mut decls = Vec::new();
-    let mut links = Vec::new();
-    let mut refs = vec![FxHashMap::default(); count];
-    let mut modules = vec![Vec::new(); count];
-    let mut sites = Vec::new();
+    let mut shards: Vec<Option<Shard<'u>>> = (0..count).map(|_| None).collect();
+    let mut bases = Vec::with_capacity(count);
+    let mut links = vec![Vec::new(); count];
+    let mut tables = vec![Vec::new(); count];
+    let mut next = Bases {
+        unit: local(),
+        decls: 0,
+        sites: 0,
+        links: 0,
+    };
     let mut leaks = Vec::new();
     for &id in order {
         let mut harvest = harvests[id.index()]
@@ -243,49 +244,72 @@ pub(crate) fn link<'u>(
         }
         harvest.visit_ids(&mut Rebase {
             unit: id,
-            decls: decls.len(),
-            sites: sites.len(),
-            links: links.len(),
+            decls: next.decls,
+            sites: next.sites,
+            links: next.links,
         });
+        bases.push(Bases { unit: id, ..next });
         for _ in 0..harvest.decls.len() {
             db.allocate();
         }
-        decls.extend(harvest.decls);
-        sites.extend(harvest.sites);
-        links.extend(harvest.links);
-        refs[id.index()] = harvest.refs;
+        // The database declarations of a function's signatures other than the one
+        // its own ID holds follow the unit's declarations
+        let mut sig_decls = FxHashMap::default();
+        let mut sig_owners = Vec::new();
+        for (index, decl) in harvest.decls.iter().enumerate() {
+            let decl_id = DeclId::from_index(next.decls + index);
+            let primary = decl.node.primary_sig().unwrap_or(0);
+            for sig in 0..decl.node.sig_count() {
+                let declaration = if sig == primary {
+                    decl_id
+                } else {
+                    sig_owners.push((decl_id, sig));
+                    db.allocate()
+                };
+                sig_decls.insert((decl_id, sig), declaration);
+            }
+        }
+        next.decls += harvest.decls.len() + sig_owners.len();
+        next.sites += harvest.sites.len();
+        next.links += harvest.links.len();
         // By name, to be found by name
         let mut sorted = harvest.exports;
         sorted
             .sort_by(|a, b| harvest.strings[a.name.index()].cmp(&harvest.strings[b.name.index()]));
-        exports[id.index()] = sorted;
-        values.extend(harvest.values.into_iter().map(|value| {
-            (
-                UnitSpan {
-                    unit: id,
-                    span: value.span,
-                },
-                value.annot,
-            )
-        }));
-        strings[id.index()] = harvest.strings;
-        modules[id.index()] = harvest.modules;
-        units[id.index()] = Some(harvest.info);
+        links[id.index()] = harvest.links;
+        tables[id.index()] = harvest.modules;
+        shards[id.index()] = Some(Shard {
+            info: harvest.info,
+            strings: harvest.strings,
+            decls: harvest.decls,
+            sites: harvest.sites,
+            referents: Vec::new(),
+            refs: harvest.refs,
+            modules: Vec::new(),
+            exports: sorted,
+            values: harvest
+                .values
+                .into_iter()
+                .map(|value| (value.span, value.annot))
+                .collect(),
+            sig_decls,
+            sig_owners,
+        });
     }
-    let units: Vec<UnitInfo<'u>> = units
+    let mut shards: Vec<Shard<'u>> = shards
         .into_iter()
-        .map(|info| info.expect("every unit is linked"))
+        .map(|shard| shard.expect("every unit is linked"))
         .collect();
 
-    let provided: FxHashMap<&str, UnitId> = units
+    let provided: FxHashMap<&str, UnitId> = shards
         .iter()
         .enumerate()
-        .filter_map(|(index, unit)| Some((unit.module?, UnitId::from_index(index))))
+        .filter_map(|(index, shard)| Some((shard.info.module?, UnitId::from_index(index))))
         .collect();
     let mut diags = Vec::new();
     // A module a unit imports is reported at its import, whether or not anything
     // names it
-    let resolved = modules
+    let resolved: Vec<_> = tables
         .iter()
         .enumerate()
         .map(|(index, modules)| {
@@ -295,7 +319,7 @@ pub(crate) fn link<'u>(
             let mut resolved = vec![None; modules.len()];
             for id in order {
                 let Module { name, span } = modules[id];
-                let name = &*strings[index][name.index()];
+                let name = &*shards[index].strings[name.index()];
                 resolved[id] = provided.get(name).copied();
                 if resolved[id].is_none() {
                     let module = name.into();
@@ -305,17 +329,29 @@ pub(crate) fn link<'u>(
             resolved
         })
         .collect();
+    let imports = tables;
+    for (shard, resolved) in shards.iter_mut().zip(resolved) {
+        shard.modules = resolved;
+    }
+    let mut tables = Tables::new(shards, bases);
     let mut fixup = Fixup {
-        units: &units,
-        strings: &strings,
-        modules: &modules,
-        resolved,
-        exports: &exports,
+        tables: &tables,
+        imports: &imports,
         memo: FxHashMap::default(),
         stack: Vec::new(),
         diags,
     };
-    let referents: Vec<_> = links.iter().map(|link| fixup.link(link)).collect();
+    // Each unit's links are resolved in the order the units were linked
+    let referents: Vec<Vec<Referent>> = {
+        let mut referents = vec![Vec::new(); count];
+        for &id in order {
+            referents[id.index()] = links[id.index()]
+                .iter()
+                .map(|link| fixup.link(link))
+                .collect();
+        }
+        referents
+    };
     // Each nominee is resolved as if its placeholder imported it. A placeholder
     // that isn't an opaque alias is diagnosed when designated.
     let mut nominees = FxHashMap::default();
@@ -325,8 +361,8 @@ pub(crate) fn link<'u>(
                 span,
                 target: Target::Local(Referent::Decl(decl)),
                 ..
-            }) = find_export(&exports[strand.index()], &strings[strand.index()], placeholder)
-                && decls[decl.index()].kind == DeclKind::OpaqueAlias
+            }) = fixup.tables.export(strand, placeholder)
+                && fixup.tables.decl(decl).kind == DeclKind::OpaqueAlias
                 // A nominee whose module isn't checked leaves its placeholder
                 // dynamic; no unit imports it
                 && let Some(&unit) = provided.get(module)
@@ -337,54 +373,30 @@ pub(crate) fn link<'u>(
             }
         }
     }
-    let modules = fixup.resolved;
     let mut diags = fixup.diags;
     diags.extend(leaks);
+    tables.nominees = nominees;
+    for (shard, referents) in tables.shards.iter_mut().zip(referents) {
+        shard.referents = referents;
+    }
 
     let mut aliases = Aliases {
-        decls: &decls,
-        sites: &sites,
-        referents: &referents,
+        tables: &tables,
         heads: FxHashMap::default(),
         diags: &mut diags,
     };
     // Every alias is followed in declaration order, so which one a cycle is reported
     // at does not depend on which alias names it first
-    for (index, decl) in decls.iter().enumerate() {
-        if decl.kind == DeclKind::Alias {
-            aliases.head(DeclId::from_index(index));
+    for id in tables.decl_ids() {
+        if tables.decl(id).kind == DeclKind::Alias {
+            aliases.head(id);
         }
     }
-    let aliases = aliases
-        .heads
-        .into_iter()
-        .map(|(id, head)| (id, head.expect("every alias is finished")))
-        .collect();
-
-    let tables = Tables {
-        units,
-        strings,
-        decls,
-        referents,
-        refs,
-        modules,
-        aliases,
-        exports,
-        values,
-        sites,
-        binder_kinds: FxHashMap::default(),
-        alias_kinds: FxHashMap::default(),
-        sigs: FxHashMap::default(),
-        fields: FxHashMap::default(),
-        designated: FxHashMap::default(),
-        nominees,
-        pipes: FxHashMap::default(),
-        variance: FxHashMap::default(),
-        captured: FxHashMap::default(),
-        lifted: FxHashMap::default(),
-        sig_decls: FxHashMap::default(),
-        groups: FxHashMap::default(),
-    };
+    let heads = aliases.heads;
+    for (id, head) in heads {
+        let head = head.expect("every alias is finished");
+        tables.facts_mut(id).aliases.insert(id, head);
+    }
     (tables, diags)
 }
 
@@ -1923,14 +1935,10 @@ fn pattern_names(pattern: &Pattern, f: &mut impl FnMut(&Ident, Option<&Annot>)) 
 
 /// Resolution of names that go through an import, once every unit is collected
 struct Fixup<'a, 'u> {
-    units: &'a [UnitInfo<'u>],
-    strings: &'a [Vec<Cow<'u, str>>],
+    /// The tables, whose links are not yet resolved
+    tables: &'a Tables<'u>,
     /// Each unit's module table
-    modules: &'a [Vec<Module>],
-    /// The unit providing each module of each unit's module table
-    resolved: Vec<Vec<Option<UnitId>>>,
-    /// Each unit's exports, by name
-    exports: &'a [Vec<Export>],
+    imports: &'a [Vec<Module>],
     memo: FxHashMap<(UnitId, &'a str), Referent>,
     /// The exports being resolved, outermost first
     stack: Vec<(UnitId, &'a str)>,
@@ -1943,13 +1951,11 @@ impl<'a, 'u> Fixup<'a, 'u> {
     }
 
     fn module_name(&self, unit: UnitId) -> &'u str {
-        self.units[unit.index()]
-            .module
-            .expect("only modules export")
+        self.tables.info(unit).module.expect("only modules export")
     }
 
     fn str(&self, unit: UnitId, id: StrId) -> &'a str {
-        &self.strings[unit.index()][id.index()]
+        self.tables.str(unit, id)
     }
 
     fn link(&mut self, link: &Link) -> Referent {
@@ -1974,9 +1980,9 @@ impl<'a, 'u> Fixup<'a, 'u> {
     fn site(&self, unit: UnitId, target: Target, span: Span) -> UnitSpan {
         let span = match target {
             Target::Import { module, .. } | Target::Module(module)
-                if self.units[unit.index()].source.is_none() =>
+                if self.tables.info(unit).source.is_none() =>
             {
-                self.modules[unit.index()][module.index()].span
+                self.imports[unit.index()][module.index()].span
             }
             _ => span,
         };
@@ -1988,17 +1994,19 @@ impl<'a, 'u> Fixup<'a, 'u> {
     fn target(&mut self, unit: UnitId, target: Target, span: Span) -> Referent {
         match target {
             Target::Local(referent) => referent,
-            Target::Module(module) => match self.resolved[unit.index()][module.index()] {
+            Target::Module(module) => match self.tables.shard(unit).modules[module.index()] {
                 Some(found) => Referent::Module(found),
                 None => Referent::Error,
             },
-            Target::Import { module, item } => match self.resolved[unit.index()][module.index()] {
-                Some(found) => {
-                    let site = self.site(unit, target, span);
-                    self.export(found, self.str(unit, item), site)
+            Target::Import { module, item } => {
+                match self.tables.shard(unit).modules[module.index()] {
+                    Some(found) => {
+                        let site = self.site(unit, target, span);
+                        self.export(found, self.str(unit, item), site)
+                    }
+                    None => Referent::Error,
                 }
-                None => Referent::Error,
-            },
+            }
         }
     }
 
@@ -2022,10 +2030,7 @@ impl<'a, 'u> Fixup<'a, 'u> {
             );
             return Referent::Error;
         }
-        let exports = &self.exports[unit.index()];
-        let Some(&Export { span, target, .. }) =
-            find_export(exports, &self.strings[unit.index()], item)
-        else {
+        let Some(&Export { span, target, .. }) = self.tables.export(unit, item) else {
             let module = self.module_name(unit).into();
             self.diag(
                 site.unit,
@@ -2047,9 +2052,7 @@ impl<'a, 'u> Fixup<'a, 'u> {
 
 /// The heads of transparent aliases, found by following each alias's chain
 struct Aliases<'a, 'u> {
-    decls: &'a [Decl<'u>],
-    sites: &'a [Site],
-    referents: &'a [Referent],
+    tables: &'a Tables<'u>,
     /// Each alias's head, or `None` while its chain is being followed
     heads: FxHashMap<DeclId, Option<Head>>,
     diags: &'a mut Vec<UnitDiag>,
@@ -2057,7 +2060,7 @@ struct Aliases<'a, 'u> {
 
 impl Aliases<'_, '_> {
     fn head(&mut self, id: DeclId) -> Head {
-        let decl = &self.decls[id.index()];
+        let decl = self.tables.decl(id);
         match self.heads.get(&id) {
             Some(Some(head)) => return head.clone(),
             // Every alias on the cycle takes the error this returns, so it is
@@ -2074,7 +2077,7 @@ impl Aliases<'_, '_> {
             unreachable!("only an alias has a head")
         };
         let body = alias.body.expect("an opaque alias is not transparent");
-        let head = self.ty(&self.sites[body.index()].ty);
+        let head = self.ty(&self.tables.site(body).ty);
         self.heads.insert(id, Some(head.clone()));
         head
     }
@@ -2083,8 +2086,8 @@ impl Aliases<'_, '_> {
         match ty {
             TypeExpr::Group { ty, .. } => self.ty(ty),
             TypeExpr::App { base, .. } => self.ty(base),
-            TypeExpr::Name(head) => match head.link.map(|link| &self.referents[link.index()]) {
-                Some(Referent::Decl(decl)) if self.decls[decl.index()].kind == DeclKind::Alias => {
+            TypeExpr::Name(head) => match self.tables.linked(head.link) {
+                Some(Referent::Decl(decl)) if self.tables.decl(*decl).kind == DeclKind::Alias => {
                     self.head(*decl)
                 }
                 Some(Referent::Decl(decl)) => Head::Decl(*decl),

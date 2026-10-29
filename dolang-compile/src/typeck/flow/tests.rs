@@ -398,17 +398,16 @@ def outer[T, U @ Array[T]] _u @ U
   middle
 ",
         |check| {
-            let (index, _) = check
+            let id = check
                 .tables
-                .decls
-                .iter()
-                .enumerate()
-                .find(|(_, decl)| {
+                .decl_ids()
+                .find(|&id| {
+                    let decl = check.tables.decl(id);
                     decl.name
                         .is_some_and(|name| check.tables.text(decl.unit, name.span) == "Capture")
                 })
                 .unwrap();
-            let lifted = &check.tables.lifted[&crate::typeck::r#type::DeclId::from_index(index)];
+            let lifted = check.tables.lifted(id).unwrap();
             // T is captured through U's bound, even though the alias names V first.
             assert_eq!(lifted.len(), 3);
             assert_eq!(

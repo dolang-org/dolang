@@ -56,18 +56,14 @@ pub(crate) fn wellformed(
         diags,
         unresolved: Vec::new(),
     };
-    for site in tables.sites.iter().filter(|site| site.unit == unit) {
+    for (_, site) in tables.unit_sites(unit) {
         if matches!(site.role, Role::Pattern) {
             continue;
         }
         let scope = site.group().map(|key| check.declaration(key));
         check.ty(site.unit, scope, &site.ty, false);
     }
-    for (index, decl) in tables.decls.iter().enumerate() {
-        if decl.unit != unit {
-            continue;
-        }
-        let id = DeclId::from_index(index);
+    for id in tables.unit_decl_ids(unit) {
         for sig in 0..tables.sig_count(id) {
             check.signature(id, sig);
         }
@@ -124,7 +120,9 @@ struct Check<'a, 'u> {
 impl Check<'_, '_> {
     /// The database declaration of a declaration signature
     fn declaration(&self, key: (DeclId, usize)) -> DeclId {
-        self.tables.sig_decls[&key]
+        self.tables
+            .sig_decl(key)
+            .expect("every signature is declared")
     }
 
     /// Relate two types interpreted in `scope`'s group, holding its binders rigid,
@@ -277,7 +275,7 @@ impl Check<'_, '_> {
         let Type::Quantified { binders, .. } = self.db.ty(declaration.ty) else {
             return false;
         };
-        let lifted = self.tables.lifted.get(&decl).map_or(0, Vec::len);
+        let lifted = self.tables.lifted(decl).map_or(0, <[_]>::len);
         let fills = self.tables.fill(unit, decl, written);
         for (slot, binder) in binders.iter().enumerate() {
             let Some(bound) = self.db.binder_bound(binder, &args) else {
@@ -313,7 +311,10 @@ impl Check<'_, '_> {
     /// A binder with its bound as written, such as `T @ Num` or `*Ts @ {*Value}`
     fn binder(&self, decl: DeclId, slot: usize, binder: &Binder) -> String {
         let source = &self.db.declaration(decl).binders[slot];
-        let written = self.tables.groups[&(decl, 0)][slot];
+        let written = self
+            .tables
+            .group((decl, 0))
+            .expect("population groups each signature")[slot];
         let written = self
             .tables
             .binders(written.decl, written.sig)
@@ -327,7 +328,7 @@ impl Check<'_, '_> {
         };
         let bound = match (written.and_then(|written| written.bound), binder.binding) {
             (Some(bound), _) => {
-                let site = &self.tables.sites[bound.index()];
+                let site = self.tables.site(bound);
                 self.tables.print(site.unit, &site.ty)
             }
             (None, Binding::Rest(Rest::Positional)) => "{*Value}".to_owned(),
@@ -362,7 +363,7 @@ impl Check<'_, '_> {
     /// or method's parameter keys and written channels
     fn signature(&mut self, id: DeclId, sig: usize) {
         let decl = self.declaration((id, sig));
-        if let DeclNode::Class(class) = &self.tables.decls[id.index()].node {
+        if let DeclNode::Class(class) = &self.tables.decl(id).node {
             self.supertypes(id, decl, class);
         }
         let declaration = self.db.declaration(decl);
@@ -398,7 +399,7 @@ impl Check<'_, '_> {
     /// Check a class's supertypes, which are applications with no type expression
     /// of their own
     fn supertypes(&mut self, id: DeclId, decl: DeclId, class: &Class) {
-        let unit = self.tables.decls[id.index()].unit;
+        let unit = self.tables.decl(id).unit;
         for super_ref in &class.supers {
             let span = super_ref.head.span;
             let phantom =
@@ -410,7 +411,7 @@ impl Check<'_, '_> {
     }
 
     fn function_signature(&mut self, id: DeclId, decl: DeclId, body: TypeId) {
-        if let DeclNode::Class(_) | DeclNode::Alias(_) = self.tables.decls[id.index()].node {
+        if let DeclNode::Class(_) | DeclNode::Alias(_) = self.tables.decl(id).node {
             return;
         }
         let Type::Function(function) = self.db.ty(body) else {
@@ -430,20 +431,21 @@ impl Check<'_, '_> {
         let mut rejected = Vec::new();
         let mut aliases: Vec<DeclId> = self
             .tables
-            .aliases
+            .facts
             .iter()
+            .flat_map(|facts| &facts.aliases)
             .filter(|(_, head)| !matches!(head, Head::Error))
             .map(|(&id, _)| id)
             .collect();
         aliases.sort_by_key(|id| id.index());
         let mut edges: FxHashMap<DeclId, Vec<DeclId>> = FxHashMap::default();
         for &id in &aliases {
-            let decl = &self.tables.decls[id.index()];
+            let decl = self.tables.decl(id);
             let targets = edges.entry(id).or_default();
             if let Some(body) = alias_body(self.tables, &decl.node) {
                 body.names(&mut |head| {
                     if let Some(Referent::Decl(target)) = self.tables.linked(head.link)
-                        && self.tables.aliases.contains_key(target)
+                        && self.tables.alias(*target).is_some()
                     {
                         targets.push(*target);
                     }
@@ -461,7 +463,7 @@ impl Check<'_, '_> {
             let members: FxHashSet<DeclId> = component.iter().copied().collect();
             let mut found = Vec::new();
             for &id in &component {
-                let decl = &self.tables.decls[id.index()];
+                let decl = self.tables.decl(id);
                 if let Some(body) = alias_body(self.tables, &decl.node) {
                     self.guarded(decl.unit, id, &members, body, false, &mut found);
                 }
@@ -544,7 +546,7 @@ impl Check<'_, '_> {
                     found,
                 );
                 let nominal = target.is_some_and(|target| {
-                    !self.tables.aliases.contains_key(&target)
+                    !self.tables.alias(target).is_some()
                         && self.db.declaration(target).source.kind.nominal()
                 });
                 for arg in args {
@@ -631,7 +633,11 @@ impl Check<'_, '_> {
     /// Whether a reference to `target` passes the referring alias's binders
     /// unchanged
     fn regular(&self, alias: DeclId, target: DeclId, app: Option<&TypeExpr>) -> bool {
-        let own = self.tables.groups[&(alias, 0)].len();
+        let own = self
+            .tables
+            .group((alias, 0))
+            .expect("population groups each signature")
+            .len();
         let args: Vec<TypeId> = match app {
             Some(app) => {
                 let TypeExpr::App { interned, .. } = app else {
@@ -660,8 +666,14 @@ impl Check<'_, '_> {
             }
             // A bare name passes only the binders the target is lifted over
             None => {
-                let group = &self.tables.groups[&(alias, 0)];
-                let Some(slots) = self.tables.groups[&(target, 0)]
+                let group = self
+                    .tables
+                    .group((alias, 0))
+                    .expect("population groups each signature");
+                let Some(slots) = self
+                    .tables
+                    .group((target, 0))
+                    .expect("population groups each signature")
                     .iter()
                     .map(|binder| group.iter().position(|b| b == binder))
                     .collect::<Option<Vec<_>>>()

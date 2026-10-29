@@ -12,7 +12,7 @@ use std::fmt::{self, Write};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
-    elab::{UnitInfo, Unresolved},
+    elab::{Tables, Unresolved},
     report::{Diag, Report, UnitDiag},
     solver::{Residual, ResidualClass},
     r#type::UnitSpan,
@@ -97,7 +97,7 @@ impl Report for Undecided {
 
 /// Diagnose the checks in `unresolved` that a reader should see, one per span,
 /// skipping a span that `diags` already reports something at.
-pub(crate) fn report(units: &[UnitInfo<'_>], unresolved: &[Unresolved], diags: &mut Vec<UnitDiag>) {
+pub(crate) fn report(tables: &Tables<'_>, unresolved: &[Unresolved], diags: &mut Vec<UnitDiag>) {
     let reported: FxHashSet<UnitSpan> = diags
         .iter()
         .map(|(unit, diag)| UnitSpan {
@@ -108,7 +108,7 @@ pub(crate) fn report(units: &[UnitInfo<'_>], unresolved: &[Unresolved], diags: &
     let mut groups: Vec<(UnitSpan, Vec<Residual>)> = Vec::new();
     let mut index: FxHashMap<UnitSpan, usize> = FxHashMap::default();
     for &Unresolved { span, residual } in unresolved {
-        let info = &units[span.unit.index()];
+        let info = tables.info(span.unit);
         if info.source.is_none()
             || span.span == Span::INVALID
             || reported.contains(&span)
@@ -130,7 +130,7 @@ pub(crate) fn report(units: &[UnitInfo<'_>], unresolved: &[Unresolved], diags: &
             span: span.span,
             residuals,
         };
-        if units[span.unit.index()].strict || undecided.internal() {
+        if tables.info(span.unit).strict || undecided.internal() {
             diags.push((span.unit, Diag::new(undecided)));
         }
     }

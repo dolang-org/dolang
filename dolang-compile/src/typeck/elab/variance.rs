@@ -55,14 +55,13 @@ pub(crate) fn variances(tables: &mut Tables<'_>) {
         constraints: Vec::new(),
     };
     let mut own = Vec::new();
-    for index in 0..tables.decls.len() {
-        let decl = DeclId::from_index(index);
+    for decl in tables.decl_ids() {
         collect.decl(decl);
         for sig in 0..tables.sig_count(decl) {
             for slot in 0..tables.binders(decl, sig).len() {
                 own.push((decl, BinderRef { decl, sig, slot }));
             }
-            if let Some(completed) = tables.sigs.get(&(decl, sig)) {
+            if let Some(completed) = tables.sig(decl, sig) {
                 for ambient in [completed.input, completed.output] {
                     if let Ambient::Implicit(binder) = ambient {
                         own.push((decl, binder));
@@ -78,11 +77,17 @@ pub(crate) fn variances(tables: &mut Tables<'_>) {
         let variance = uses
             .get(&(decl, binder))
             .map_or(Variance::Invariant, |u| u.variance());
-        tables.variance.insert(binder, variance);
+        tables
+            .facts_mut(binder.decl)
+            .variance
+            .insert(binder, variance);
     }
     for (&(decl, binder), u) in &uses {
         if decl != binder.decl && *u != Use::NONE {
-            tables.captured.insert((decl, binder), u.variance());
+            tables
+                .facts_mut(decl)
+                .captured
+                .insert((decl, binder), u.variance());
         }
     }
 }
@@ -212,7 +217,7 @@ struct Collect<'t, 'u> {
 impl<'t> Collect<'t, '_> {
     fn decl(&mut self, id: DeclId) {
         let tables = self.tables;
-        let decl = &tables.decls[id.index()];
+        let decl = tables.decl(id);
         self.decl = id;
         self.unit = decl.unit;
         for sig in 0..tables.sig_count(id) {
@@ -256,7 +261,7 @@ impl<'t> Collect<'t, '_> {
             DeclNode::Alias(alias) => {
                 // An alias on a cycle has an erroneous head, already diagnosed
                 if let Some(body) = alias.body
-                    && tables.aliases.get(&id) != Some(&Head::Error)
+                    && tables.alias(id) != Some(&Head::Error)
                 {
                     self.site(body, Use::CO);
                 }
@@ -284,7 +289,13 @@ impl<'t> Collect<'t, '_> {
                 sig: 0,
                 slot,
             });
-            for binder in tables.lifted[&class].iter().copied().chain(written) {
+            for binder in tables
+                .lifted(class)
+                .expect("every declaration is lifted")
+                .iter()
+                .copied()
+                .chain(written)
+            {
                 self.constraints
                     .push(((class, binder), Source::Join((id, binder))));
             }
@@ -361,7 +372,9 @@ impl<'t> Collect<'t, '_> {
 
     fn sig(&mut self, decl: DeclId, sig: usize) {
         let tables = self.tables;
-        let completed = &tables.sigs[&(decl, sig)];
+        let completed = tables
+            .sig(decl, sig)
+            .expect("every def and method has a signature");
         for (index, param) in completed.params.iter().enumerate() {
             // A receiver doesn't count, but a class method's annotated first
             // parameter does
@@ -405,7 +418,7 @@ impl<'t> Collect<'t, '_> {
     /// Walk a site, whose function types take its signature's channels.
     fn site(&mut self, site: SiteId, u: Use) {
         let tables = self.tables;
-        let site = &tables.sites[site.index()];
+        let site = tables.site(site);
         let outer = std::mem::replace(&mut self.ambient, site.ambient);
         self.ty(&site.ty, u);
         self.ambient = outer;
@@ -417,7 +430,7 @@ impl<'t> Collect<'t, '_> {
 
     fn is_type(&self, decl: DeclId) -> bool {
         matches!(
-            self.tables.decls[decl.index()].kind,
+            self.tables.decl(decl).kind,
             DeclKind::Class | DeclKind::Protocol | DeclKind::Alias | DeclKind::OpaqueAlias
         )
     }
@@ -464,7 +477,7 @@ impl<'t> Collect<'t, '_> {
     /// arguments.
     fn captures(&mut self, decl: DeclId, u: Use) {
         let tables = self.tables;
-        for &binder in &tables.lifted[&decl] {
+        for &binder in tables.lifted(decl).expect("every declaration is lifted") {
             self.path.push((decl, binder));
             self.uses(binder, u);
             self.path.pop();

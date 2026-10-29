@@ -303,10 +303,10 @@ impl<'u, 's> Builder<'u, 's> {
         let elaborated: Vec<_> = {
             let from = r#type::Database::fork(&shared);
             let mut copier = results.copier(&from, &mut copies);
-            (0..tables.units.len())
+            (0..tables.shards.len())
                 .map(|index| {
                     let unit = UnitId::from_index(index);
-                    match self.analysis && tables.units[index].source.is_some() {
+                    match self.analysis && tables.info(unit).source.is_some() {
                         true => tables.entries(&from, &mut copier, unit),
                         false => Vec::new(),
                     }
@@ -373,21 +373,21 @@ impl<'u, 's> Builder<'u, 's> {
         if let Some(analysis) = &analysis {
             trace::elab(analysis, &tables);
         }
-        undecided::report(&tables.units, &unresolved, &mut diags);
+        undecided::report(&tables, &unresolved, &mut diags);
         let check = Check {
             cfgs,
             layers,
             flows,
             diagnostics: diags
                 .iter()
-                .map(|(unit, diag)| diag.resolve(*unit, &tables.units[unit.index()]))
+                .map(|(unit, diag)| diag.resolve(*unit, tables.info(*unit)))
                 .collect(),
             units: tables
-                .units
+                .shards
                 .iter()
-                .map(|info| Located {
-                    name: info.name(),
-                    path: info.path.to_owned(),
+                .map(|shard| Located {
+                    name: shard.info.name(),
+                    path: shard.info.path.to_owned(),
                 })
                 .collect(),
             site_kinds: tables.site_kinds().collect(),
@@ -398,7 +398,7 @@ impl<'u, 's> Builder<'u, 's> {
                 .iter()
                 .map(|unresolved| {
                     let unit = unresolved.span.unit;
-                    let info = &tables.units[unit.index()];
+                    let info = tables.info(unit);
                     (
                         format!("{:?}", unresolved.residual),
                         report::resolve_span(unit, info, unresolved.span.span),
@@ -507,7 +507,7 @@ fn tree(
                 }
                 flow::Detail::Item(module, name) => {
                     let name = results.symbol(name);
-                    let module = tables.units[module.index()].name();
+                    let module = tables.info(module).name();
                     item = Some((module.into_boxed_str(), Box::from(name)));
                     Some(Cow::Borrowed(name))
                 }
@@ -601,7 +601,7 @@ fn check_units(
     threads: Option<NonZeroUsize>,
     analysis: bool,
 ) -> Vec<UnitOutput> {
-    let count = tables.units.len();
+    let count = tables.shards.len();
     let mut slots: Vec<Option<UnitOutput>> = (0..count).map(|_| None).collect();
     let mut work: Vec<_> = slots
         .iter_mut()
@@ -611,7 +611,7 @@ fn check_units(
     // Largest first, so that no large unit starts last; typelibs have nothing of
     // their own to check
     work.sort_by_key(|(unit, _)| {
-        let info = &tables.units[unit.index()];
+        let info = tables.info(*unit);
         std::cmp::Reverse(info.source.map_or(0, |source| source.file.newlines().len()))
     });
     // FIFO, so that the worker spawning the units takes them largest first too
@@ -655,7 +655,7 @@ fn check_unit(
 ) -> UnitOutput {
     // A fork of its own, so that what it interns isn't in the layer
     let db = r#type::Database::fork(shared);
-    let source = tables.units[unit.index()].source;
+    let source = tables.info(unit).source;
     // A typelib's well-formedness and overrides were checked with its source;
     // the solver copes with an ill-formed type, and a nonconforming member only
     // misleads checks against it
@@ -679,7 +679,7 @@ fn check_unit(
             #[cfg(debug_assertions)]
             ir.check_stack_depths();
             #[cfg(feature = "debug")]
-            if let Err(e) = export_dot(&ir, &db, &tables.units[unit.index()]) {
+            if let Err(e) = export_dot(&ir, &db, tables.info(unit)) {
                 dolang_util::debug_eprintln!(topic: "dot", "Typing CFG DOT export failed: {e}");
             }
             let layer = db.share();

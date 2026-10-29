@@ -1244,6 +1244,16 @@ diagnosed, and their names are erroneous. A missing module is reported at its
 import, and an import that fails otherwise once per link, at its first name, or
 in a typelib, which keeps no reference's span, at the import of its module.
 
+Linking moves each unit's harvest into its shard of the tables, and each later
+pass records what it concludes about a unit's declarations, such as kinds,
+completed signatures, variance and binder groups, in that unit's facts. Only
+what crosses units is global: the database, the designated declarations and the
+pipe placeholders' nominees. Linking numbers each unit's declarations, sites
+and links in one contiguous range, in link order, so an ID's unit is found by a
+binary search over the ranges' bases. The database declarations of a function's
+signatures other than the one its own ID holds follow its unit's declarations
+in the same range.
+
 `Check` drops the tables. An analysis reports what they concluded about each
 span of a unit: what a type name refers to, the type written there and each
 declaration's type. The type-checking tests in

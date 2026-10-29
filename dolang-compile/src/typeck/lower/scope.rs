@@ -113,7 +113,9 @@ impl<'u> Lower<'_, 'u> {
         if parent.is_none() {
             self.prelude(&mut entries);
         }
-        let unit = self.tables.units[self.unit.index()]
+        let unit = self
+            .tables
+            .info(self.unit)
             .source
             .expect("only a unit with source is lowered");
         let module = parent.is_none() && matches!(unit.mode, Mode::Module { .. });
@@ -209,7 +211,9 @@ impl<'u> Lower<'_, 'u> {
     }
 
     fn prelude(&self, entries: &mut [Option<Entry<'u>>]) {
-        let unit = self.tables.units[self.unit.index()]
+        let unit = self
+            .tables
+            .info(self.unit)
             .source
             .expect("only a unit with source is lowered");
         for import in &unit.prelude {
@@ -362,7 +366,7 @@ impl<'u> Scope<'_, '_, 'u> {
 
         let span = annot.ty.span();
         let lower = self.lower;
-        let site = &lower.tables.sites[lower.sites.get(&span)?.index()];
+        let site = lower.tables.site(*lower.sites.get(&span)?);
         let ty = site.interned.get()?;
         Some(match site.group() {
             Some(group) => lower

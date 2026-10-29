@@ -44,7 +44,7 @@ impl StrId {
     }
 }
 
-/// A site in [`Tables::sites`]
+/// A site of a shard's [`sites`](super::Shard::sites)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) struct SiteId(u32);
 
@@ -58,7 +58,7 @@ impl SiteId {
     }
 }
 
-/// An entry of [`Tables::referents`]: something a unit's names refer to, as
+/// An entry of a shard's [`referents`](super::Shard::referents): something a unit's names refer to, as
 /// collection resolved it
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) struct LinkId(u32);
@@ -586,7 +586,7 @@ pub(crate) struct Closure {
 impl<'u> Tables<'u> {
     /// A string of a unit's string table
     pub(crate) fn str(&self, unit: UnitId, id: StrId) -> &str {
-        &self.strings[unit.index()][id.index()]
+        &self.shards[unit.index()].strings[id.index()]
     }
 
     /// A name as written in `unit`
@@ -597,12 +597,12 @@ impl<'u> Tables<'u> {
     /// A name of `unit` as diagnostics quote it: as written in a unit with source,
     /// and otherwise by what it refers to
     pub(crate) fn quote(&self, unit: UnitId, name: Ref) -> String {
-        if self.units[unit.index()].source.is_some() {
+        if self.info(unit).source.is_some() {
             return self.text(unit, name.span).to_owned();
         }
         match self.linked(name.link) {
             Some(&Referent::Decl(decl)) => {
-                let decl_ref = &self.decls[decl.index()];
+                let decl_ref = self.decl(decl);
                 match decl_ref.name {
                     Some(declared) => self.name(decl_ref.unit, declared).to_owned(),
                     None => "?".to_owned(),
@@ -610,17 +610,17 @@ impl<'u> Tables<'u> {
             }
             Some(&Referent::Binder(binder)) => {
                 let written = &self.binders(binder.decl, binder.sig)[binder.slot];
-                let unit = self.decls[binder.decl.index()].unit;
+                let unit = self.decl(binder.decl).unit;
                 self.name(unit, written.name).to_owned()
             }
-            Some(&Referent::Module(module)) => self.units[module.index()].name(),
+            Some(&Referent::Module(module)) => self.info(module).name(),
             Some(Referent::Value(_) | Referent::Error) | None => "?".to_owned(),
         }
     }
 
     /// The type a site interns
     pub(crate) fn site_ty(&self, site: SiteId) -> &TypeExpr {
-        &self.sites[site.index()].ty
+        &self.site(site).ty
     }
 
     /// A type expression of `unit`, written in canonical form

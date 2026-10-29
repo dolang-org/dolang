@@ -41,7 +41,8 @@ use crate::{
 /// its entry function
 pub(crate) fn lower(tables: &Tables<'_>, db: &Database, unit: UnitId) -> Ir {
     let lower = Lower::new(tables, db, unit);
-    let root = &tables.units[unit.index()]
+    let root = &tables
+        .info(unit)
         .source
         .expect("only a unit with source is lowered")
         .ast
@@ -93,12 +94,8 @@ struct Capture {
 impl<'t, 'u> Lower<'t, 'u> {
     fn new(tables: &'t Tables<'u>, db: &'t Database, unit: UnitId) -> Self {
         let mut decls = FxHashMap::default();
-        for (index, decl) in tables.decls.iter().enumerate() {
-            if decl.unit != unit {
-                continue;
-            }
-            let id = DeclId::from_index(index);
-            let Some(ast) = &decl.ast else {
+        for id in tables.unit_decl_ids(unit) {
+            let Some(ast) = &tables.decl(id).ast else {
                 continue;
             };
             match ast {
@@ -118,10 +115,10 @@ impl<'t, 'u> Lower<'t, 'u> {
             }
         }
         let modules = tables
-            .units
+            .shards
             .iter()
             .enumerate()
-            .filter_map(|(index, unit)| Some((unit.module?, UnitId::from_index(index))))
+            .filter_map(|(index, shard)| Some((shard.info.module?, UnitId::from_index(index))))
             .collect();
         Self {
             tables,
@@ -135,11 +132,8 @@ impl<'t, 'u> Lower<'t, 'u> {
             returns: RefCell::new(FxHashMap::default()),
             captures: RefCell::new(Vec::new()),
             sites: tables
-                .sites
-                .iter()
-                .enumerate()
-                .filter(|(_, site)| site.unit == unit)
-                .map(|(index, site)| (site.ty.span(), SiteId::from_index(index)))
+                .unit_sites(unit)
+                .map(|(id, site)| (site.ty.span(), id))
                 .collect(),
         }
     }

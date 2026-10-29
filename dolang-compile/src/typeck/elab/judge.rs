@@ -49,36 +49,32 @@ impl Tables<'_> {
                 },
             ));
         };
-        let mut sigs: Vec<_> = self.sig_decls.iter().collect();
+        let shard = self.shard(unit);
+        let mut sigs: Vec<_> = shard.sig_decls.iter().collect();
         sigs.sort_unstable();
         for (&(id, sig), &db_id) in sigs {
-            let decl = &self.decls[id.index()];
-            if decl.unit != unit {
-                continue;
-            }
-            let span = match &decl.node {
+            let span = match &self.decl(id).node {
                 DeclNode::Defs(defs) => defs[sig].name.span,
                 DeclNode::Methods(methods) => methods[sig].name.span,
                 _ => continue,
             };
             declare(&mut entries, copier, span, db_id);
         }
-        for (index, decl) in self.decls.iter().enumerate() {
-            if decl.unit != unit || !matches!(decl.node, DeclNode::Class(_) | DeclNode::Alias(_)) {
+        for id in self.unit_decl_ids(unit) {
+            let decl = self.decl(id);
+            if !matches!(decl.node, DeclNode::Class(_) | DeclNode::Alias(_)) {
                 continue;
             }
             let span = decl.name_span().expect("a class or alias is named");
-            declare(&mut entries, copier, span, DeclId::from_index(index));
+            declare(&mut entries, copier, span, id);
         }
         let mut groups: FxHashMap<(DeclId, usize), Arc<[String]>> = FxHashMap::default();
-        for site in &self.sites {
-            if site.unit != unit {
-                continue;
-            }
+        for (_, site) in self.unit_sites(unit) {
             let ty = site.interned.get().expect("population interns each site");
             let group = site.group().map(|key| {
                 let names = groups.entry(key).or_insert_with(|| {
-                    self.groups[&key]
+                    self.group(key)
+                        .expect("population groups each signature")
                         .iter()
                         .map(|binder| self.binder_name(*binder))
                         .collect()
@@ -94,10 +90,10 @@ impl Tables<'_> {
                 },
             ));
         }
-        let mut refs: Vec<_> = self.refs[unit.index()].iter().collect();
+        let mut refs: Vec<_> = shard.refs.iter().collect();
         refs.sort_unstable_by_key(|&(head, _)| (head.start, head.end));
         for (&head, &link) in refs {
-            let (decl, name, ty) = match self.referents[link.index()] {
+            let (decl, name, ty) = match *self.linked(Some(link)).expect("a link refers") {
                 Referent::Decl(id) => {
                     let ty = copier.ty(db.intern(Type::Decl(id)));
                     (Some(copier.declaration(id)), None, ty)
@@ -124,7 +120,7 @@ impl Tables<'_> {
     /// module, qualified by the declarations it is nested in. `None` for a
     /// database declaration of a signature.
     pub(crate) fn place(&self, id: DeclId) -> Option<(String, String)> {
-        let unit = self.decls.get(id.index())?.unit;
+        let unit = self.try_decl(id)?.unit;
         let module = self.unit_name(unit);
         let mut name = self.qualified(id);
         name.drain(..=module.len());
@@ -134,7 +130,7 @@ impl Tables<'_> {
     /// A declaration's name, qualified by its unit and the declarations it is
     /// nested in
     pub(crate) fn qualified(&self, id: DeclId) -> String {
-        let decl = &self.decls[id.index()];
+        let decl = self.decl(id);
         let mut name = match decl.outer {
             Some((outer, _)) => self.qualified(outer),
             None => self.unit_name(decl.unit),
@@ -151,22 +147,15 @@ impl Tables<'_> {
     /// of the declarations of a def's or method's signatures, its name and the
     /// signature's index
     fn declared(&self, id: DeclId) -> String {
-        if id.index() < self.decls.len() {
-            return self.qualified(id);
-        }
-        let sig = self
-            .sig_decls
-            .iter()
-            .find(|&(_, &declaration)| declaration == id);
-        match sig {
-            Some((&(decl, sig), _)) => format!("{}#{sig}", self.qualified(decl)),
-            None => unreachable!("every database declaration is a declaration's or a signature's"),
+        match self.sig_owner(id) {
+            Some((decl, sig)) => format!("{}#{sig}", self.qualified(decl)),
+            None => self.qualified(id),
         }
     }
 
     /// A module's name, or a script's file stem
     fn unit_name(&self, unit: UnitId) -> String {
-        self.units[unit.index()].name()
+        self.info(unit).name()
     }
 
     /// A closed type
@@ -180,10 +169,14 @@ impl Tables<'_> {
 
     /// The name of a binder, or `in` or `out` for an implicit one
     fn binder_name(&self, binder: BinderRef) -> String {
-        let unit = self.decls[binder.decl.index()].unit;
+        let unit = self.decl(binder.decl).unit;
         match self.binders(binder.decl, binder.sig).get(binder.slot) {
             Some(written) => self.name(unit, written.name).to_owned(),
-            None => match self.sigs[&(binder.decl, binder.sig)].input {
+            None => match self
+                .sig(binder.decl, binder.sig)
+                .expect("a binder past the written ones is a signature's")
+                .input
+            {
                 Ambient::Implicit(input) if input == binder => "in".to_owned(),
                 _ => "out".to_owned(),
             },
