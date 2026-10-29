@@ -3,7 +3,7 @@ use std::{
     path::Path,
 };
 
-use super::{Invalid, Surface, kept_spans};
+use super::{Header, Invalid, Surface, kept_spans, wire};
 use crate::{
     Config, ErrorKind, Mode, Unit,
     source::Span,
@@ -11,7 +11,7 @@ use crate::{
         Builder, Typelib,
         elab::{
             DeclNode, Harvest, Referent, Target, Value,
-            surface::{Member, Name, StrId, TypeExpr},
+            surface::{Member, Name, ParamKind, StrId, TypeExpr},
         },
     },
 };
@@ -40,6 +40,12 @@ fn write(unit: &Unit<'_>, imports: &[&str]) -> Result<Vec<u8>, crate::Error> {
     let mut bytes = Vec::new();
     builder.check().typelib(id, &mut bytes)?;
     Ok(bytes)
+}
+
+/// A typelib's content as written
+fn content(bytes: &[u8]) -> wire::Content<&str> {
+    let (_, rest): (Header, _) = postcard::take_from_bytes(bytes).unwrap();
+    postcard::from_bytes(rest).unwrap()
 }
 
 /// Read a typelib's harvest.
@@ -169,6 +175,127 @@ pub let limit @ Tag = \"Tag\"
             .count();
         assert_eq!(count, 1, "`{text}` is written {count} times");
     }
+}
+
+#[test]
+fn types_are_interned_once() {
+    let source = "pub def f a @ Array[Int] b @ Array[Int] c @ Str -> Str\n  c\n";
+    let bytes = write(&compile(source, Mode::Module { name: "lib".into() }), &[]).unwrap();
+    // `Array`, `Int`, `Array[Int]` and `Str`, each once
+    assert_eq!(content(&bytes).types.len(), 4);
+    let harvest = read(&bytes).unwrap();
+    assert_eq!(harvest.sites.len(), 4);
+    assert_eq!(encode(harvest), bytes);
+}
+
+#[test]
+fn type_before_its_children() {
+    let bytes = typelib();
+    let mut content = content(&bytes);
+    content.types.reverse();
+    assert!(matches!(
+        wire::decode(content),
+        Err("a type refers to one after it")
+    ));
+}
+
+/// The members of a class, each method by its declaration and signature
+fn members(harvest: &Harvest<'_>, class: usize) -> Vec<Option<(usize, usize)>> {
+    let DeclNode::Class(class) = &harvest.decls[class].node else {
+        panic!("the declaration is a class");
+    };
+    class
+        .members
+        .iter()
+        .map(|member| match *member {
+            Member::Field(_) => None,
+            Member::Method { decl, sig } => Some((decl.index(), sig)),
+        })
+        .collect()
+}
+
+#[test]
+fn methods_keep_their_place_among_fields() {
+    let source = "
+pub class C
+  pub field a @ Int = 0
+
+  pub def m self -> Int
+    1
+
+  pub field b @ Int = 0
+";
+    let bytes = write(&compile(source, Mode::Module { name: "lib".into() }), &[]).unwrap();
+    let harvest = read(&bytes).unwrap();
+    assert_eq!(members(&harvest, 0), [None, Some((1, 0)), None]);
+    assert_eq!(encode(harvest), bytes);
+}
+
+/// What a typelib leaves to be derived is written where it can't be.
+#[test]
+fn underived_values_are_written() {
+    let bytes = typelib();
+    let mut harvest = read(&bytes).unwrap();
+    let elsewhere = Span { start: 0, end: 1 };
+    let (double, _) = (harvest.decls.iter().enumerate())
+        .find(|(_, decl)| matches!(decl.node, DeclNode::Defs(_)))
+        .expect("the module declares a function");
+    let DeclNode::Defs(defs) = &mut harvest.decls[double].node else {
+        unreachable!()
+    };
+    defs[0].name.span = elsewhere;
+    let def = defs[0].name;
+    // `double` has no binders for the site to name
+    let site = (harvest.sites.iter())
+        .position(|site| site.owner.is_some_and(|(decl, _)| decl.index() == double))
+        .expect("a site is in `double`'s signature");
+    harvest.sites[site].owner = None;
+    harvest.sites[site].ambient = None;
+    let mut key = None;
+    for decl in &mut harvest.decls {
+        let DeclNode::Defs(defs) = &mut decl.node else {
+            continue;
+        };
+        for param in defs.iter_mut().flat_map(|def| &mut def.sig.params) {
+            if let ParamKind::Key { key: written } = &mut param.kind {
+                written.span = elsewhere;
+                key = Some(*written);
+            }
+        }
+    }
+    let key = key.expect("a function takes a key");
+    let class = (harvest.decls.iter())
+        .position(|decl| matches!(decl.node, DeclNode::Class(_)))
+        .expect("the module declares a class");
+    let DeclNode::Class(written) = &mut harvest.decls[class].node else {
+        unreachable!()
+    };
+    written.members.reverse();
+    let order = members(&harvest, class);
+
+    let bytes = encode(harvest);
+    let harvest = read(&bytes).unwrap();
+    let DeclNode::Defs(defs) = &harvest.decls[double].node else {
+        panic!("`double` is a function");
+    };
+    assert_eq!(defs[0].name, def);
+    assert_eq!(harvest.sites[site].owner, None);
+    assert_eq!(harvest.sites[site].ambient, None);
+    let keys: Vec<_> = (harvest.decls.iter())
+        .filter_map(|decl| match &decl.node {
+            DeclNode::Defs(defs) => Some(defs),
+            _ => None,
+        })
+        .flatten()
+        .flat_map(|def| &def.sig.params)
+        .filter_map(|param| match param.kind {
+            ParamKind::Key { key } => Some(key),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(keys, [key]);
+    assert_eq!(members(&harvest, class), order);
+    assert_eq!(encode(harvest), bytes);
 }
 
 #[test]

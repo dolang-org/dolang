@@ -10,19 +10,19 @@
 //! check that loads one elaborates the module's declarations again, as it would from
 //! source, but checks none of its bodies.
 //!
-//! The format is postcard, after a header naming the format and its version. Every
+//! The format is postcard, after a header naming the format and its version, of a
+//! form of its own (see [`wire`]) that is converted to and from the harvest. Every
 //! ID is local to the typelib, which is linked as any harvest is. All text is in
-//! the string table, each string once.
+//! the string table, each string once, and each distinct type expression node is in
+//! the type table once.
 
-use std::{borrow::Cow, fmt, io, path::Path};
+use std::{fmt, io};
 
-use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 use super::{
     elab::{
-        BinderRef, Decl, DeclNode, Export, Harvest, Link, Module, Referent, Role, Site, Target,
-        UnitInfo, Value,
+        BinderRef, Decl, DeclNode, Harvest, Referent, Role, Target,
         surface::{
             Binder, Decorator, LinkId, Member, ModuleId, ParamKind, Ref, Signature, SiteId, StrId,
         },
@@ -33,11 +33,12 @@ use crate::source::Span;
 
 #[cfg(test)]
 mod tests;
+mod wire;
 
 const MAGIC: [u8; 8] = *b"\xffdotypel";
 /// The format's version, which changes with any change to the format. It isn't 0,
 /// which the bytes after the magic of an older typelib would read as.
-const VERSION: u16 = 5;
+const VERSION: u16 = 6;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct Header {
@@ -49,26 +50,6 @@ const HEADER: Header = Header {
     magic: MAGIC,
     version: VERSION,
 };
-
-/// A typelib's content, its strings either borrowed from the bytes it was read
-/// from or owned by the check that keeps it
-#[derive(Serialize, Deserialize)]
-struct Content<'a, S> {
-    module: StrId,
-    /// The module's path, which only locates its diagnostics
-    path: StrId,
-    /// The number and start of each line holding a span the typelib keeps
-    lines: Vec<(u32, u32)>,
-    /// Whether the module was checked strictly, which its signatures depend on
-    strict: bool,
-    strings: Vec<S>,
-    decls: Vec<Decl<'a>>,
-    sites: Vec<Site>,
-    links: Vec<Link>,
-    exports: Vec<Export>,
-    values: Vec<Value>,
-    modules: Vec<Module>,
-}
 
 /// Why a typelib could not be read
 #[derive(Debug)]
@@ -99,7 +80,7 @@ impl fmt::Display for Invalid {
 
 /// A module's surface, as its typelib holds it, owned so that it outlives the
 /// module's unit
-pub(crate) struct Surface(Content<'static, String>);
+pub(crate) struct Surface(wire::Content<String>);
 
 impl Surface {
     /// Keep a harvest that is already a module's surface.
@@ -135,31 +116,7 @@ impl Surface {
             .collect();
         lines.sort_unstable();
         lines.dedup();
-        let decls = harvest
-            .decls
-            .into_iter()
-            .map(|decl| Decl {
-                unit: decl.unit,
-                kind: decl.kind,
-                name: decl.name,
-                node: decl.node,
-                outer: decl.outer,
-                ast: None,
-            })
-            .collect();
-        Self(Content {
-            module,
-            path,
-            lines,
-            strict: harvest.info.strict,
-            strings,
-            decls,
-            sites: harvest.sites,
-            links: harvest.links,
-            exports: harvest.exports,
-            values: harvest.values,
-            modules: harvest.modules,
-        })
+        Self(wire::Encode::new(&harvest).content(module, path, lines, strings))
     }
 
     /// Write the typelib.
@@ -181,41 +138,13 @@ pub(crate) fn read(bytes: &[u8]) -> Result<(Harvest<'_>, Vec<&str>), Invalid> {
     if header.version != VERSION {
         return Err(Invalid::Version(header.version));
     }
-    let (content, rest): (Content<'_, &str>, _) =
+    let (content, rest): (wire::Content<&str>, _) =
         postcard::take_from_bytes(rest).map_err(Invalid::Decode)?;
     if !rest.is_empty() {
         return Err(Invalid::Malformed("trailing bytes"));
     }
-    let strings = content.strings;
-    let (Some(&module), Some(&path)) = (
-        strings.get(content.module.index()),
-        strings.get(content.path.index()),
-    ) else {
-        return Err(Invalid::Malformed("an ID is out of range"));
-    };
-    let mut imports: Vec<&str> = content
-        .modules
-        .iter()
-        .filter_map(|module| strings.get(module.name.index()).copied())
-        .collect();
-    imports.sort_unstable();
-    let mut harvest = Harvest {
-        info: UnitInfo {
-            module: Some(module),
-            path: Path::new(path),
-            lines: content.lines,
-            source: None,
-            strict: content.strict,
-        },
-        strings: strings.into_iter().map(Cow::Borrowed).collect(),
-        decls: content.decls,
-        sites: content.sites,
-        links: content.links,
-        refs: FxHashMap::default(),
-        exports: content.exports,
-        values: content.values,
-        modules: content.modules,
-    };
+    let imports = content.imports();
+    let mut harvest = wire::decode(content).map_err(Invalid::Malformed)?;
     validate(&mut harvest).map_err(Invalid::Malformed)?;
     Ok((harvest, imports))
 }
@@ -582,71 +511,5 @@ impl super::elab::Ids for InRange {
 
     fn module(&mut self, module: &mut ModuleId) {
         self.ok &= module.index() < self.modules;
-    }
-}
-
-/// Serialization of types the crate exposes, which have no serde impls of their own
-pub(crate) mod wire {
-    pub(crate) mod span {
-        use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-        use crate::source::Span;
-
-        pub(crate) fn serialize<S: Serializer>(span: &Span, s: S) -> Result<S::Ok, S::Error> {
-            (span.start, span.end).serialize(s)
-        }
-
-        pub(crate) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Span, D::Error> {
-            let (start, end) = Deserialize::deserialize(d)?;
-            Ok(Span { start, end })
-        }
-    }
-
-    /// A span a typelib omits, which reads as one that locates nothing
-    pub(crate) fn invalid() -> crate::source::Span {
-        crate::source::Span::INVALID
-    }
-
-    /// A span of a harvest's own unit, which is left implicit
-    pub(crate) mod local_span {
-        use serde::{Deserializer, Serializer};
-
-        use crate::typeck::{elab::local, r#type::UnitSpan};
-
-        pub(crate) fn serialize<S: Serializer>(span: &UnitSpan, s: S) -> Result<S::Ok, S::Error> {
-            debug_assert_eq!(span.unit, local(), "a harvest refers to its own unit");
-            super::span::serialize(&span.span, s)
-        }
-
-        pub(crate) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<UnitSpan, D::Error> {
-            Ok(UnitSpan {
-                unit: local(),
-                span: super::span::deserialize(d)?,
-            })
-        }
-    }
-
-    pub(crate) mod rest_kind {
-        use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
-
-        use crate::RestKind;
-
-        pub(crate) fn serialize<S: Serializer>(kind: &RestKind, s: S) -> Result<S::Ok, S::Error> {
-            let tag: u8 = match kind {
-                RestKind::Mixed => 0,
-                RestKind::Pos => 1,
-                RestKind::Key => 2,
-            };
-            tag.serialize(s)
-        }
-
-        pub(crate) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<RestKind, D::Error> {
-            match u8::deserialize(d)? {
-                0 => Ok(RestKind::Mixed),
-                1 => Ok(RestKind::Pos),
-                2 => Ok(RestKind::Key),
-                _ => Err(D::Error::custom("unknown rest kind")),
-            }
-        }
     }
 }

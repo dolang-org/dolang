@@ -17,21 +17,17 @@ use std::{
 };
 
 use dolang_util::intern::AtomicId;
-use serde::{Deserialize, Serialize};
 
 use super::{Designated, Referent, Tables};
 use crate::{
     RestKind,
     ast::SpecialMethod,
     source::Span,
-    typeck::{
-        r#type::{DeclId, Intrinsic, TypeTag, UnitId},
-        typelib::wire,
-    },
+    typeck::r#type::{DeclId, Intrinsic, TypeTag, UnitId},
 };
 
 /// A string of a unit's string table
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct StrId(u32);
 
 impl StrId {
@@ -45,7 +41,7 @@ impl StrId {
 }
 
 /// A site of a shard's [`sites`](super::Shard::sites)
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct SiteId(u32);
 
 impl SiteId {
@@ -60,7 +56,7 @@ impl SiteId {
 
 /// An entry of a shard's [`referents`](super::Shard::referents): something a unit's names refer to, as
 /// collection resolved it
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct LinkId(u32);
 
 impl LinkId {
@@ -74,7 +70,7 @@ impl LinkId {
 }
 
 /// A module of a unit's module table
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ModuleId(u32);
 
 impl ModuleId {
@@ -123,19 +119,17 @@ impl Clone for Collection {
 }
 
 /// A name as written, and where
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Name {
-    #[serde(with = "wire::span")]
     pub(crate) span: Span,
     pub(crate) text: StrId,
 }
 
 /// A possibly dotted name written to refer to something. A typelib keeps only what
 /// it refers to, not how it is written.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Ref {
     /// The name with any fields dotted onto it
-    #[serde(skip, default = "wire::invalid")]
     pub(crate) span: Span,
     /// What it refers to, with its fields; absent where collection resolved nothing
     pub(crate) link: Option<LinkId>,
@@ -143,9 +137,8 @@ pub(crate) struct Ref {
 
 /// A symbol a type is written with, such as a key or a symbol constant, and where.
 /// A typelib omits the span.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Symbol {
-    #[serde(skip, default = "wire::invalid")]
     pub(crate) span: Span,
     pub(crate) text: StrId,
 }
@@ -160,95 +153,60 @@ impl From<Name> for Symbol {
 }
 
 /// A type expression
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) enum TypeExpr {
     /// A possibly dotted name, e.g. `Str` or `time.Duration`
     Name(Ref),
     /// A constant, or `None` for an expression that isn't one a type can be
-    Const {
-        #[serde(skip, default = "wire::invalid")]
-        span: Span,
-        value: Option<ConstLit>,
-    },
+    Const { span: Span, value: Option<ConstLit> },
     /// Type arguments applied to a type, e.g. `Array[Int]`
     App {
-        #[serde(skip, default = "wire::invalid")]
         span: Span,
         base: Box<TypeExpr>,
         args: Vec<TypeArg>,
         /// Its type, interned in the group it is written in
-        #[serde(skip)]
         interned: Interned,
     },
     /// A schema, e.g. `{name: Str, ?port: Int}`. Where a type is required, it is
     /// `std.Dict` of itself, or `std.Tuple` of its items when it is `tuple`.
     Schema {
-        #[serde(skip, default = "wire::invalid")]
         span: Span,
         params: Vec<TypeParam>,
         /// Whether it is written vertically without an explicitly keyed item, as an
         /// array's data is
         tuple: bool,
         /// Its collection, where kind checking found a type required
-        #[serde(skip)]
         collection: Collection,
     },
     /// A parenthesized type
-    Group {
-        #[serde(skip, default = "wire::invalid")]
-        span: Span,
-        ty: Box<TypeExpr>,
-    },
+    Group { span: Span, ty: Box<TypeExpr> },
     /// A tuple type, e.g. `(Int, Str)`: `std.Tuple` of the schema of its items
-    Tuple {
-        #[serde(skip, default = "wire::invalid")]
-        span: Span,
-        params: Vec<TypeParam>,
-    },
+    Tuple { span: Span, params: Vec<TypeParam> },
     /// A record type, e.g. `(name: Str, Int)`: `std.Record` of the schema of its
     /// items
-    Record {
-        #[serde(skip, default = "wire::invalid")]
-        span: Span,
-        params: Vec<TypeParam>,
-    },
+    Record { span: Span, params: Vec<TypeParam> },
     /// An array type, e.g. `[Int]`: `std.Array` of its element type
-    Array {
-        #[serde(skip, default = "wire::invalid")]
-        span: Span,
-        elem: Box<TypeExpr>,
-    },
+    Array { span: Span, elem: Box<TypeExpr> },
     /// A union, e.g. `Str | Path`
-    Union {
-        #[serde(skip, default = "wire::invalid")]
-        span: Span,
-        members: Vec<TypeExpr>,
-    },
+    Union { span: Span, members: Vec<TypeExpr> },
     /// A function type, e.g. `(Int, ?Int) -> Int`
     Func {
-        #[serde(skip, default = "wire::invalid")]
         span: Span,
         params: Vec<TypeParam>,
         /// The type of the `<` implicit parameter, giving the ambient input
         input: Option<Box<TypeExpr>>,
         /// The type of the `>` implicit parameter, giving the ambient output
         output: Option<Box<TypeExpr>>,
-        #[serde(skip, default = "wire::invalid")]
-        arrow_span: Span,
         ret: Box<TypeExpr>,
         /// Its type, interned in the group it is written in
-        #[serde(skip)]
         interned: Interned,
     },
     /// A type that could not be interpreted
-    Error {
-        #[serde(skip, default = "wire::invalid")]
-        span: Span,
-    },
+    Error { span: Span },
 }
 
 /// A literal a constant type stands for
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ConstLit {
     Str(StrId),
     Int(i128),
@@ -258,12 +216,12 @@ pub(crate) enum ConstLit {
 }
 
 /// A type argument in the `[]` of an application
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct TypeArg {
     pub(crate) kind: TypeArgKind,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) enum TypeArgKind {
     /// `T`
     Pos(TypeExpr),
@@ -274,7 +232,7 @@ pub(crate) enum TypeArgKind {
 }
 
 /// An item a schema or a function type's parameters declare
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) enum TypeParam {
     /// `T`, `?T`, `*T`, or `...S`
     Pos {
@@ -292,11 +250,11 @@ pub(crate) enum TypeParam {
     /// `**V`, or `**` alone, admitting any keyed item
     AnyKey(Option<TypeExpr>),
     /// `...` alone, spanning it
-    Open(#[serde(skip, default = "wire::invalid")] Span),
+    Open(Span),
 }
 
 /// How many of an element a schema item admits
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TypeQuant {
     /// `?`
     Opt,
@@ -306,7 +264,7 @@ pub(crate) enum TypeQuant {
     Include,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) enum TypeKey {
     /// A bareword key, which is a symbol
     Sym(Symbol),
@@ -421,7 +379,7 @@ impl TypeParam {
 }
 
 /// A name that stands for a type argument
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct Binder {
     pub(crate) kind: BinderKind,
     pub(crate) name: Name,
@@ -429,18 +387,18 @@ pub(crate) struct Binder {
     pub(crate) default: Option<SiteId>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BinderKind {
     /// `T`
     Pos,
     /// `:K`
     Key,
     /// `...R`, `*R` or `**R`
-    Rest(#[serde(with = "wire::rest_kind")] RestKind),
+    Rest(RestKind),
 }
 
 /// A parameter of a def, method or closure
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct Param {
     pub(crate) kind: ParamKind,
     /// The bound name; absent for an anonymous rest or a sub-pattern
@@ -450,7 +408,7 @@ pub(crate) struct Param {
     pub(crate) annot: Option<SiteId>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) enum ParamKind {
     Pos,
     /// Passed by a symbol key
@@ -463,14 +421,13 @@ pub(crate) enum ParamKind {
     },
     /// A rest, whose annotation is a type pattern when `pattern`
     Rest {
-        #[serde(with = "wire::rest_kind")]
         kind: RestKind,
         pattern: bool,
     },
 }
 
 /// The signature of a def, method or closure
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct Signature {
     pub(crate) params: Vec<Param>,
     /// The annotation of the `<` implicit parameter
@@ -481,7 +438,7 @@ pub(crate) struct Signature {
 }
 
 /// A def: a function's implementation or one of its `@def` overloads
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct Def {
     pub(crate) name: Name,
     pub(crate) binders: Vec<Binder>,
@@ -491,7 +448,7 @@ pub(crate) struct Def {
 }
 
 /// A method of a class
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct Method {
     pub(crate) name: Name,
     pub(crate) binders: Vec<Binder>,
@@ -507,7 +464,7 @@ pub(crate) struct Method {
 }
 
 /// A decorator, as far as elaboration can tell what it is
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) enum Decorator {
     /// A bare name
     Ident(Ref),
@@ -515,7 +472,7 @@ pub(crate) enum Decorator {
     Other,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MemberScope {
     Instance,
     Class,
@@ -523,7 +480,7 @@ pub(crate) enum MemberScope {
 }
 
 /// A field declaration, naming one or more fields that share an annotation
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct Field {
     pub(crate) names: Vec<Name>,
     pub(crate) annot: Option<SiteId>,
@@ -532,7 +489,7 @@ pub(crate) struct Field {
 }
 
 /// A member of a class body, in source order
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) enum Member {
     Field(Field),
     /// Signature `sig` of the method declaration `decl`
@@ -543,22 +500,20 @@ pub(crate) enum Member {
 }
 
 /// A supertype a class names
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct Super {
     pub(crate) head: Ref,
     pub(crate) args: Vec<TypeArg>,
     /// The `[]` of the arguments, if written
-    #[serde(skip)]
     pub(crate) bracket_span: Option<Span>,
     /// Whether it exists only in types
     pub(crate) type_only: bool,
     /// The supertype it names, interned in its class's group
-    #[serde(skip)]
     pub(crate) interned: Interned,
 }
 
 /// A class or protocol
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct Class {
     pub(crate) binders: Vec<Binder>,
     pub(crate) supers: Vec<Super>,
@@ -567,7 +522,7 @@ pub(crate) struct Class {
 }
 
 /// A transparent or opaque alias
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct Alias {
     pub(crate) binders: Vec<Binder>,
     /// The aliased type, absent for an opaque alias
@@ -575,10 +530,9 @@ pub(crate) struct Alias {
 }
 
 /// A lambda or field initializer
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct Closure {
     /// Where the closure is written
-    #[serde(with = "wire::span")]
     pub(crate) span: Span,
     pub(crate) sig: Signature,
 }

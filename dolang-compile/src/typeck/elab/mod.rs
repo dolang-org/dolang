@@ -25,13 +25,11 @@ use std::{
 };
 
 use rustc_hash::FxHashMap;
-use serde::{Deserialize, Serialize};
 
 use super::report::{Annotation, Report};
 use super::r#type::{
     Database, DeclId, DeclKind, Intrinsic, Kind, Scope, TypeId, UnitId, UnitSpan, Variance,
 };
-use super::typelib::wire;
 use crate::{
     RestKind, Unit, ast,
     diag::{AnnotationKind, NoteKind, Severity},
@@ -505,7 +503,7 @@ impl UnitInfo<'_> {
 /// declaration's defs or methods, and is 0 for any other declaration. The implicit
 /// binders of a signature's omitted ambient channels follow its written binders.
 /// Outer declarations are allocated first, so the order is outermost first.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct BinderRef {
     pub(crate) decl: DeclId,
     pub(crate) sig: usize,
@@ -513,10 +511,9 @@ pub(crate) struct BinderRef {
 }
 
 /// A type expression written in source, and how it is used
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct Site {
     /// A harvest's own unit, which a typelib leaves implicit
-    #[serde(skip, default = "local")]
     pub(crate) unit: UnitId,
     pub(crate) ty: TypeExpr,
     pub(crate) role: Role,
@@ -527,7 +524,6 @@ pub(crate) struct Site {
     /// absent at a unit's top level
     pub(crate) owner: Option<(DeclId, usize)>,
     /// The type as interned in its group
-    #[serde(skip)]
     pub(crate) interned: Interned,
 }
 
@@ -542,7 +538,7 @@ impl Site {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Role {
     /// The annotation of a binding, or a return type or ambient channel: a type
     Type,
@@ -674,10 +670,9 @@ pub(crate) enum Designated {
 }
 
 /// A source declaration
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct Decl<'u> {
     /// A harvest's own unit, which a typelib leaves implicit
-    #[serde(skip, default = "local")]
     pub(crate) unit: UnitId,
     pub(crate) kind: DeclKind,
     /// The declared name; absent for a closure
@@ -688,12 +683,11 @@ pub(crate) struct Decl<'u> {
     pub(crate) outer: Option<(DeclId, usize)>,
     /// The syntax the declaration was collected from, for lowering; absent for a
     /// unit checked without its source
-    #[serde(skip)]
     pub(crate) ast: Option<DeclAst<'u>>,
 }
 
 /// A declaration's surface
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) enum DeclNode {
     /// A class or protocol
     Class(Class),
@@ -759,24 +753,22 @@ impl DeclNode {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Referent {
     Decl(DeclId),
     Binder(BinderRef),
     /// A binding that exists only at runtime, such as a `let` or a parameter
-    Value(#[serde(with = "wire::local_span")] UnitSpan),
+    Value(UnitSpan),
     /// Nothing, for a reason already diagnosed
     Error,
     /// A checked module, reached by a name that is not dotted, which a harvest
-    /// names only once linked. Last, since serde numbers a skipped variant when
-    /// writing but not when reading.
-    #[serde(skip)]
+    /// names only once linked
     Module(UnitId),
 }
 
 /// What an unresolved name or export refers to. A module is one of its unit's
 /// module table.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Target {
     Local(Referent),
     /// An item of a module, by name

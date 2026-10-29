@@ -8,7 +8,6 @@
 use std::{borrow::Cow, collections::hash_map::Entry as MapEntry, iter};
 
 use rustc_hash::FxHashMap;
-use serde::{Deserialize, Serialize};
 
 use super::{
     AliasCycle, Bases, BinderRef, Decl, DeclAst, DeclNode, Diag, Head, ImportCycle, MissingExport,
@@ -31,10 +30,7 @@ use crate::{
     },
     resolvety::names_type_in,
     source::{File, Span},
-    typeck::{
-        r#type::{Database, DeclId, DeclKind, UnitId, UnitSpan},
-        typelib::wire,
-    },
+    typeck::r#type::{Database, DeclId, DeclKind, UnitId, UnitSpan},
 };
 
 /// What collection learns of one unit: its surface, and how the type names written
@@ -68,34 +64,30 @@ pub(crate) struct Harvest<'u> {
 
 /// Something a unit's names refer to, as far as the unit can tell, shared by every
 /// name that resolves to it
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct Link {
     /// A harvest's own unit, which a typelib leaves implicit
-    #[serde(skip, default = "local")]
     pub(crate) unit: UnitId,
     pub(crate) base: Target,
     /// The item a dotted name takes from the module `base` names
     pub(crate) item: Option<StrId>,
     /// The head of the first name referring to it, which a typelib omits
-    #[serde(skip, default = "wire::invalid")]
     pub(crate) span: Span,
 }
 
 /// A name a module exports
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct Export {
     pub(crate) name: StrId,
     /// The name it is bound by
-    #[serde(with = "wire::span")]
     pub(crate) span: Span,
     pub(crate) target: Target,
 }
 
 /// A variable a module exports
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct Value {
     /// Its name's
-    #[serde(with = "wire::span")]
     pub(crate) span: Span,
     /// Its annotation, if it has one
     pub(crate) annot: Option<SiteId>,
@@ -114,12 +106,11 @@ pub(crate) fn find_export<'e>(
 }
 
 /// A module a unit imports
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct Module {
     pub(crate) name: StrId,
     /// The module's name in the first import statement naming it, or the start of
     /// the unit for a module only the prelude imports
-    #[serde(with = "wire::span")]
     pub(crate) span: Span,
 }
 
@@ -712,7 +703,6 @@ impl<'u> Walk<'_, 'u> {
                 params,
                 input,
                 output,
-                arrow_span,
                 ret,
                 ..
             } => TypeExpr::Func {
@@ -724,7 +714,6 @@ impl<'u> Walk<'_, 'u> {
                 output: output
                     .as_ref()
                     .map(|implicit| Box::new(self.surface(&implicit.ty))),
-                arrow_span: *arrow_span,
                 ret: Box::new(self.surface(ret)),
                 interned: Interned::default(),
             },

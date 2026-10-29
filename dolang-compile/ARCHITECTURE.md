@@ -1196,7 +1196,10 @@ A typelib is written from a check. With `Builder::typelibs`, the check keeps the
 surface of each module it checks from source, taken from its harvest before
 linking and with the lines of its kept spans, and `Check::typelib` writes it. A
 module importing a module the check doesn't have has none, since its typelib
-would hold an interface elaborated against the missing module.
+would hold an interface elaborated against the missing module. A typelib has a
+serialization form of its own, converted to and from the harvest: type
+expressions are interned in one table, and what can be derived from the rest is
+left out where it holds.
 
 A `SourceSpan` is a span with an optional unit. A unit's own diagnostics have
 no unit and are relative to that unit. Type checker diagnostics name a unit in
