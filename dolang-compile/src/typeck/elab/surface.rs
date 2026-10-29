@@ -22,7 +22,7 @@ use super::{Designated, Referent, Tables};
 use crate::{
     RestKind,
     ast::SpecialMethod,
-    source::Span,
+    diag::Span,
     typeck::r#type::{DeclId, Intrinsic, TypeTag, UnitId},
 };
 
@@ -551,8 +551,8 @@ impl<'u> Tables<'u> {
     /// A name of `unit` as diagnostics quote it: as written in a unit with source,
     /// and otherwise by what it refers to
     pub(crate) fn quote(&self, unit: UnitId, name: Ref) -> String {
-        if self.info(unit).source.is_some() {
-            return self.text(unit, name.span).to_owned();
+        if let Some(source) = self.info(unit).source {
+            return source.text(name.span).to_owned();
         }
         match self.linked(name.link) {
             Some(&Referent::Decl(decl)) => {

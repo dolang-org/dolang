@@ -11,8 +11,8 @@ use super::{
     surface::{Binder, Member, Name, Ref, Signature, SiteId, TypeExpr},
 };
 use crate::{
+    diag::Span,
     diag::{NoteKind, Severity},
-    source::Span,
     typeck::{
         report::Report,
         r#type::{DeclId, DeclKind},

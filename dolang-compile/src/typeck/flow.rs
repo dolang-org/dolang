@@ -441,7 +441,7 @@ impl<'a, 'u> Tree<'a, 'u> {
 /// in source order. Those at one span keep their order.
 pub(crate) fn sort(problems: &mut [Problem], unresolved: &mut [(Span, Residual)]) {
     problems.sort_by_key(|problem| {
-        let span = crate::typeck::report::Report::span(problem);
+        let span = crate::typeck::report::Report::<Span>::span(problem);
         (span.start, span.end)
     });
     unresolved.sort_by_key(|&(span, _)| (span.start, span.end));
@@ -799,7 +799,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         let Some(results) = &mut self.results else {
             return;
         };
-        if crate::typeck::report::Report::span(&problem) != Span::INVALID
+        if crate::typeck::report::Report::<Span>::span(&problem) != Span::INVALID
             && !results.problems.contains(&problem)
         {
             results.problems.push(problem);

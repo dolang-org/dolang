@@ -34,8 +34,8 @@ use super::r#type::{
 };
 use crate::{
     RestKind, Unit, ast,
-    diag::{AnnotationKind, NoteKind, Severity},
-    source::{Coord, Span},
+    diag::{AnnotationKind, NoteKind, Severity, Span},
+    source,
 };
 use surface::{
     Alias, Binder, Class, Closure, Def, Interned, LinkId, Method, ModuleId, Name, Signature,
@@ -111,7 +111,7 @@ pub(crate) struct Shard<'u> {
     pub(crate) referents: Vec<Referent>,
     /// The link of each name a unit with source writes, by the span of its head.
     /// Only lowering and the analysis, which read syntax, look a name up.
-    pub(crate) refs: FxHashMap<Span, LinkId>,
+    pub(crate) refs: FxHashMap<source::Span, LinkId>,
     /// The modules the unit imports, and the prelude modules it uses, by
     /// [`ModuleId`]
     pub(crate) modules: Vec<Module>,
@@ -141,9 +141,7 @@ impl Shard<'_> {
     /// An exported variable, by the span of its name
     pub(crate) fn value(&self, span: Span) -> Option<&Value> {
         self.values
-            .binary_search_by_key(&(span.start, span.end), |value| {
-                (value.span.start, value.span.end)
-            })
+            .binary_search_by_key(&span, |value| value.span)
             .ok()
             .map(|index| &self.values[index])
     }
@@ -386,7 +384,7 @@ impl<'u> Tables<'u> {
     }
 
     /// What a name written in a unit with source refers to, by the span of its head
-    pub(crate) fn written(&self, unit: UnitId, head: Span) -> Option<&Referent> {
+    pub(crate) fn written(&self, unit: UnitId, head: source::Span) -> Option<&Referent> {
         self.linked(self.shards[unit.index()].refs.get(&head).copied())
     }
 
@@ -486,7 +484,7 @@ impl<'u> Tables<'u> {
 
     /// The source text of a span of a unit, for lowering and flow analysis, which
     /// read only units with source
-    pub(crate) fn text(&self, unit: UnitId, span: Span) -> &'u str {
+    pub(crate) fn text(&self, unit: UnitId, span: source::Span) -> &'u str {
         self.shards[unit.index()]
             .info
             .source
@@ -507,10 +505,6 @@ pub(crate) struct UnitInfo<'u> {
     /// The module's name; absent for a script
     pub(crate) module: Option<&'u str>,
     pub(crate) path: &'u Path,
-    /// Where the lines of a unit without source start, which locates the spans it
-    /// keeps: the number and start of each line holding one, in order. A unit with
-    /// source is located by its file.
-    pub(crate) lines: Vec<(u32, u32)>,
     /// The unit, when it is checked from source
     pub(crate) source: Option<&'u Unit<'u>>,
     /// Whether the unit is checked strictly
@@ -518,22 +512,23 @@ pub(crate) struct UnitInfo<'u> {
 }
 
 impl UnitInfo<'_> {
-    /// The line and column of an offset of the unit
-    pub(crate) fn coord(&self, offset: u32) -> Coord {
-        if let Some(source) = self.source {
-            return source.file.coord(offset);
+    /// The span covering `a` and `b`, either of which may be [`Span::INVALID`].
+    /// Joining spans on different lines needs the source, since how far apart
+    /// they are depends on the lines between.
+    pub(crate) fn join(&self, a: Span, b: Span) -> Span {
+        if a == Span::INVALID {
+            return b;
         }
-        let index = self.lines.partition_point(|&(_, start)| start <= offset);
-        match index.checked_sub(1).map(|index| self.lines[index]) {
-            Some((line, start)) => Coord {
-                line,
-                column: offset - start,
-            },
-            None => Coord {
-                line: 0,
-                column: offset,
-            },
+        if b == Span::INVALID {
+            return a;
         }
+        let file = &self.source.expect("spans are joined only with source").file;
+        let (a, b) = (file.byte_range(a), file.byte_range(b));
+        let start = a.start.min(b.start);
+        let end = a.end.max(b.end);
+        file.locate(source::Span::from(
+            start as source::Offset..end as source::Offset,
+        ))
     }
 
     /// A module's name, or a script's file stem

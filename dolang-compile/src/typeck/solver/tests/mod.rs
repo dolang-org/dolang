@@ -106,7 +106,7 @@ fn reserve(db: &mut Database, kind: DeclKind, name: &str) -> (DeclId, TypeId, De
         name: Some(db.intern_symbol(name)),
         span: UnitSpan {
             unit: db.allocate_unit(),
-            span: (0u32..1).into(),
+            span: crate::diag::Span::new(0, 0, 1),
         },
         is_final: false,
         is_mixable: false,

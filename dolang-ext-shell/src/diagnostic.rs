@@ -8,7 +8,7 @@ use std::{
 
 use anstyle::{AnsiColor, Style};
 use dolang::{
-    compile::{Config, Diag, NodeId},
+    compile::{Config, Diag, NodeId, Unit},
     runtime::{Error, Frame, Result, Strand, Value},
 };
 
@@ -37,7 +37,12 @@ impl SourceFile {
             .unit(path, source.as_str());
         unit.tokens(&mut |token, span, node: Option<NodeId>, context| {
             let kind = node.and_then(|id| unit.node(id)).map(|node| node.kind());
-            tokens.push((token, span, classify_node(kind.as_ref()), context));
+            tokens.push((
+                token,
+                unit.byte_range(span),
+                classify_node(kind.as_ref()),
+                context,
+            ));
         });
         Some(Self { source, tokens })
     }
@@ -237,12 +242,12 @@ pub async fn print_error_stderr<'v, 's>(
 pub async fn print_compile_diag_stderr<'v, 's>(
     strand: &mut Strand<'v, 's>,
     file: &str,
-    source: &str,
+    unit: &Unit<'_>,
     diag: &Diag,
 ) -> Result<'v, 's, ()> {
     let rendered = dolang_ext_compile::render_compile_diag(
         file,
-        source,
+        unit,
         diag,
         dolang_ext_compile::ColorMode::Always,
     );
@@ -254,12 +259,12 @@ pub async fn print_compile_diag_stderr<'v, 's>(
 pub async fn print_check_diag_stderr<'v, 's>(
     strand: &mut Strand<'v, 's>,
     paths: &[&str],
-    texts: &[Option<&str>],
+    units: &[Option<&Unit<'_>>],
     diag: &Diag,
 ) -> Result<'v, 's, ()> {
     let rendered = dolang_ext_compile::render_check_diag(
         paths,
-        texts,
+        units,
         diag,
         dolang_ext_compile::ColorMode::Always,
     );

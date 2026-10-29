@@ -20,7 +20,7 @@ use super::{
 };
 use crate::{
     RestKind,
-    source::Span,
+    diag::Span,
     typeck::{
         elab::{DeclNode, Diag, UnitDiag, sig},
         report::Report,
@@ -306,7 +306,11 @@ impl<'t> Check<'_, 't, '_> {
         self.name(&super_ref.head, &named, Some(Kind::Type));
         if !super_ref.args.is_empty() {
             let bracket = super_ref.bracket_span.unwrap_or(span);
-            self.args(&named, &super_ref.args, span | bracket);
+            self.args(
+                &named,
+                &super_ref.args,
+                self.tables.info(self.unit).join(span, bracket),
+            );
         }
     }
 

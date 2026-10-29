@@ -28,6 +28,7 @@ use crate::{
         LValue, Method, PatBind, PatIdent, PatItem, Pattern, PrimStmt, Res, SpecialMethod, Stmt,
         TypeDecl, TypeEntry, TypeRes, Var, visit::Node,
     },
+    diag,
     resolvety::names_type_in,
     source::{File, Span},
     typeck::r#type::{Database, DeclId, DeclKind, UnitId, UnitSpan},
@@ -43,7 +44,7 @@ pub(crate) struct Link {
     /// The item a dotted name takes from the module `base` names
     pub(crate) item: Option<StrId>,
     /// The head of the first name referring to it, which a typelib omits
-    pub(crate) span: Span,
+    pub(crate) span: diag::Span,
 }
 
 /// A name a module exports
@@ -51,7 +52,7 @@ pub(crate) struct Link {
 pub(crate) struct Export {
     pub(crate) name: StrId,
     /// The name it is bound by
-    pub(crate) span: Span,
+    pub(crate) span: diag::Span,
     pub(crate) target: Target,
 }
 
@@ -59,7 +60,7 @@ pub(crate) struct Export {
 #[derive(Clone)]
 pub(crate) struct Value {
     /// Its name's
-    pub(crate) span: Span,
+    pub(crate) span: diag::Span,
     /// Its annotation, if it has one
     pub(crate) annot: Option<SiteId>,
 }
@@ -82,7 +83,7 @@ pub(crate) struct Module {
     pub(crate) name: StrId,
     /// The module's name in the first import statement naming it, or the start of
     /// the unit for a module only the prelude imports
-    pub(crate) span: Span,
+    pub(crate) span: diag::Span,
 }
 
 /// Collect the surface of a unit into its shard, and resolve its type names as far
@@ -142,7 +143,7 @@ pub(crate) fn collect<'u>(unit: &'u Unit<'u>) -> Shard<'u> {
         .into_iter()
         .map(|(name, span)| Module {
             name,
-            span: span.unwrap_or_default(),
+            span: span.map_or(diag::Span::new(0, 0, 0), |span| unit.file.locate(span)),
         })
         .collect();
     // By name, to be found by name
@@ -154,7 +155,6 @@ pub(crate) fn collect<'u>(unit: &'u Unit<'u>) -> Shard<'u> {
                 Mode::Script | Mode::Repl => None,
             },
             path: unit.file.path(),
-            lines: Vec::new(),
             source: Some(unit),
             strict: unit.strict,
         },
@@ -256,7 +256,7 @@ pub(crate) fn link<'u>(
         let unit = UnitId::from_index(index);
         let modules = &shard.modules;
         let mut order: Vec<_> = (0..modules.len()).collect();
-        order.sort_by_key(|&id| (modules[id].span.start, modules[id].span.end, id));
+        order.sort_by_key(|&id| (modules[id].span, id));
         let mut providers = vec![None; modules.len()];
         for id in order {
             let Module { name, span } = modules[id];
@@ -514,9 +514,17 @@ impl<'u> Walk<'_, 'u> {
         })
     }
 
+    /// Where a span of the syntax tree is, as the surface holds it
+    fn at(&self, span: Span) -> diag::Span {
+        match span == Span::INVALID {
+            true => diag::Span::INVALID,
+            false => self.file.locate(span),
+        }
+    }
+
     fn name(&mut self, span: Span) -> Name {
         Name {
-            span,
+            span: self.at(span),
             text: self.intern(self.file.str(span)),
         }
     }
@@ -529,7 +537,7 @@ impl<'u> Walk<'_, 'u> {
     /// by its head and the fields dotted onto it
     fn reference(&mut self, head: Span, fields: &[Span]) -> Ref {
         Ref {
-            span: fields.last().map_or(head, |field| head | field),
+            span: self.at(fields.last().map_or(head, |field| head | field)),
             link: self.refs.get(&head).copied(),
         }
     }
@@ -562,7 +570,7 @@ impl<'u> Walk<'_, 'u> {
 
     /// A type expression's surface
     fn surface(&mut self, ty: &'u ast::TypeExpr) -> TypeExpr {
-        let span = ty.span();
+        let span = self.at(ty.span());
         match ty {
             ast::TypeExpr::Name { head, fields, .. } => {
                 TypeExpr::Name(self.reference(*head, fields))
@@ -675,7 +683,7 @@ impl<'u> Walk<'_, 'u> {
                 },
                 P::AnyPos { .. } => TypeParam::AnyPos,
                 P::AnyKey { ty, .. } => TypeParam::AnyKey(ty.as_ref().map(|ty| self.surface(ty))),
-                P::Open { ellipsis_span } => TypeParam::Open(*ellipsis_span),
+                P::Open { ellipsis_span } => TypeParam::Open(self.at(*ellipsis_span)),
             })
             .collect()
     }
@@ -709,7 +717,10 @@ impl<'u> Walk<'_, 'u> {
                 .iter()
                 .map(|var| {
                     Entry::Target(Target::Local(match var.origin.name() {
-                        Some(span) => Referent::Value(UnitSpan { unit, span }),
+                        Some(span) => Referent::Value(UnitSpan {
+                            unit,
+                            span: self.at(span),
+                        }),
                         None => Referent::Error,
                     }))
                 })
@@ -940,6 +951,7 @@ impl<'u> Walk<'_, 'u> {
             }
         };
         let item = item.map(|item| self.intern(item));
+        let span = self.at(head);
         let link = match self.linked.entry((base, item)) {
             MapEntry::Occupied(entry) => *entry.get(),
             MapEntry::Vacant(entry) => {
@@ -947,7 +959,7 @@ impl<'u> Walk<'_, 'u> {
                     unit: self.unit,
                     base,
                     item,
-                    span: head,
+                    span,
                 });
                 *entry.insert(LinkId::from_index(self.links.len() - 1))
             }
@@ -1088,7 +1100,7 @@ impl<'u> Walk<'_, 'u> {
     }
 
     fn closure(&mut self, frame: &Frame<'_, 'u>, func: &'u Function) {
-        let span = func.span();
+        let span = self.at(func.span());
         let empty = surface::Signature {
             params: Vec::new(),
             input: None,
@@ -1361,7 +1373,7 @@ impl<'u> Walk<'_, 'u> {
             supers.push(surface::Super {
                 head: self.reference(super_ref.ident.span, &super_ref.fields),
                 args,
-                bracket_span: super_ref.bracket_span,
+                bracket_span: super_ref.bracket_span.map(|span| self.at(span)),
                 type_only: super_ref.type_only,
                 interned: Interned::default(),
             });
@@ -1697,7 +1709,7 @@ impl<'u> Walk<'_, 'u> {
             self.export(stmt, &mut exports, &mut annots);
         }
         // The root block's annotations, by the span of the type each writes
-        let sites: FxHashMap<Span, SiteId> = self
+        let sites: FxHashMap<diag::Span, SiteId> = self
             .sites
             .iter()
             .enumerate()
@@ -1715,7 +1727,7 @@ impl<'u> Walk<'_, 'u> {
                 Value { span, annot }
             })
             .collect();
-        values.sort_by_key(|value| (value.span.start, value.span.end));
+        values.sort_by_key(|value| value.span);
         (exports, values)
     }
 
@@ -1725,14 +1737,14 @@ impl<'u> Walk<'_, 'u> {
         &mut self,
         stmt: &'u Stmt,
         exports: &mut Vec<Export>,
-        annots: &mut FxHashMap<Span, Span>,
+        annots: &mut FxHashMap<diag::Span, diag::Span>,
     ) {
         let file = self.file;
         // A name exported again is exported as it was last bound
         let add = |walk: &mut Self, exports: &mut Vec<Export>, span: Span, target| {
             let export = Export {
                 name: walk.intern(file.str(span)),
-                span,
+                span: walk.at(span),
                 target,
             };
             match exports.iter_mut().find(|other| other.name == export.name) {
@@ -1754,13 +1766,14 @@ impl<'u> Walk<'_, 'u> {
             }
             Stmt::Let(node) if node.pub_span.is_some() => {
                 let mut value = |ident: &Ident, annot: Option<&Annot>| {
+                    let span = self.at(ident.span);
                     let value = Referent::Value(UnitSpan {
                         unit: self.unit,
-                        span: ident.span,
+                        span,
                     });
                     add(self, exports, ident.span, Target::Local(value));
                     if let Some(annot) = annot {
-                        annots.insert(ident.span, annot.ty.span());
+                        annots.insert(span, self.at(annot.ty.span()));
                     }
                 };
                 pattern_names(&node.bind, &mut value);
@@ -1910,7 +1923,7 @@ impl<'a, 'u> Fixup<'a, 'u> {
     /// Where a target of `unit`, named at `span`, is reported as unresolved: at
     /// `span`, or in a unit without source, which keeps no reference's span, at the
     /// import of the module the target goes through.
-    fn site(&self, unit: UnitId, target: Target, span: Span) -> UnitSpan {
+    fn site(&self, unit: UnitId, target: Target, span: diag::Span) -> UnitSpan {
         let span = match target {
             Target::Import { module, .. } | Target::Module(module)
                 if self.tables.info(unit).source.is_none() =>
@@ -1924,7 +1937,7 @@ impl<'a, 'u> Fixup<'a, 'u> {
 
     /// Resolve a target of `unit`, named at `span`. A module no unit provides is
     /// reported with the unit's module table.
-    fn target(&mut self, unit: UnitId, target: Target, span: Span) -> Referent {
+    fn target(&mut self, unit: UnitId, target: Target, span: diag::Span) -> Referent {
         match target {
             Target::Local(referent) => referent,
             Target::Module(module) => match self.tables.shard(unit).providers[module.index()] {

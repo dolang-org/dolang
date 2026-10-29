@@ -113,8 +113,8 @@ fn judgments_do_not_depend_on_the_order_units_are_added() {
                         });
                         (
                             name,
-                            node.span().start,
-                            node.span().end,
+                            node.span(),
+                            node.end(),
                             judged.role(),
                             judged.ty(typeck::Style::Full),
                             judged.name().map(str::to_owned),
@@ -348,10 +348,7 @@ fn returns_cannot_exit_modules_or_repl() {
                         "{source:?}, typecheck={typecheck}, recover={recover}"
                     );
                     let span = diag.unwrap().span().span();
-                    assert_eq!(
-                        &source[span.start().byte_offset()..span.end().byte_offset()],
-                        "return"
-                    );
+                    assert_eq!(unit.text(span), "return");
                     assert!(unit.emit(&mut Vec::new()).is_err());
                 }
             }

@@ -4,13 +4,16 @@
 //! syntax tree they were copied from, so sorted by start ascending and end
 //! descending, each node's parent is the innermost node before it containing it.
 
-use std::{cmp::Reverse, fmt::Write, iter, sync::Arc};
+use std::{cmp::Reverse, fmt::Write, iter, ops::Range, sync::Arc};
 
 use super::{
     flow::Role,
     r#type::{BinderOrigin, Database, DeclId, Labels, Shared, Style, Type, TypeId, Variance},
 };
-use crate::{UnitId, source::Span};
+use crate::{
+    UnitId,
+    diag::{Pos, Span},
+};
 
 /// A check's own database, which its judgments' types are interned in, and the
 /// names of its declarations
@@ -136,19 +139,17 @@ impl Analysis {
         }
     }
 
-    /// The innermost node of `unit` containing the byte `offset`, or `None` where
-    /// there is none or `unit` wasn't checked from source.
-    pub fn at(&self, unit: UnitId, offset: u32) -> Option<Node<'_>> {
-        self.find(unit, offset, |span| {
-            span.start <= offset && offset < span.end
-        })
+    /// The innermost node of `unit` containing the character at `pos`, or `None`
+    /// where there is none or `unit` wasn't checked from source.
+    pub fn at(&self, unit: UnitId, pos: Pos) -> Option<Node<'_>> {
+        self.find(unit, pos, |outer| outer.start <= pos && pos < outer.end)
     }
 
-    /// The innermost node of `unit` containing all of `span`, or `None` where
+    /// The innermost node of `unit` containing all of `range`, or `None` where
     /// there is none or `unit` wasn't checked from source.
-    pub fn enclosing(&self, unit: UnitId, span: Span) -> Option<Node<'_>> {
-        self.find(unit, span.start, |outer| {
-            outer.start <= span.start && span.end <= outer.end
+    pub fn enclosing(&self, unit: UnitId, range: Range<Pos>) -> Option<Node<'_>> {
+        self.find(unit, range.start, |outer| {
+            outer.start <= range.start && range.end <= outer.end
         })
     }
 
@@ -169,7 +170,12 @@ impl Analysis {
 
     /// The innermost node satisfying `contains` whose span starts at or before
     /// `start`
-    fn find(&self, unit: UnitId, start: u32, contains: impl Fn(Span) -> bool) -> Option<Node<'_>> {
+    fn find(
+        &self,
+        unit: UnitId,
+        start: Pos,
+        contains: impl Fn(&Range<Pos>) -> bool,
+    ) -> Option<Node<'_>> {
         let tree = self.tree(unit)?;
         let index = tree.find(start, contains)?;
         Some(Node {
@@ -187,6 +193,8 @@ pub(crate) struct Tree {
 
 struct NodeData {
     span: Span,
+    /// Where it starts and ends
+    range: Range<Pos>,
     /// The innermost other node containing it
     parent: Option<usize>,
     /// Sorted by role
@@ -212,26 +220,29 @@ pub(crate) struct Entry {
 }
 
 impl Tree {
-    /// The tree of judgments at spans, which nest without crossing
-    pub(crate) fn new(mut judgments: Vec<(Span, Entry)>) -> Self {
-        judgments.sort_by_key(|(span, entry)| (span.start, Reverse(span.end), entry.role));
+    /// The tree of judgments at spans, each with where it starts and ends, which
+    /// nest without crossing
+    pub(crate) fn new(mut judgments: Vec<(Span, Range<Pos>, Entry)>) -> Self {
+        judgments.sort_by(|(_, a, a_entry), (_, b, b_entry)| {
+            (a.start, Reverse(a.end), a_entry.role).cmp(&(b.start, Reverse(b.end), b_entry.role))
+        });
         let mut nodes: Vec<NodeData> = Vec::new();
         // The nodes containing the last one, innermost last
         let mut open: Vec<usize> = Vec::new();
         let mut judgments = judgments.into_iter().peekable();
-        while let Some((span, entry)) = judgments.next() {
+        while let Some((span, range, entry)) = judgments.next() {
             let entries: Vec<Entry> = iter::once(entry)
                 .chain(iter::from_fn(|| {
                     judgments
-                        .next_if(|&(next, _)| next == span)
-                        .map(|(_, entry)| entry)
+                        .next_if(|(next, ..)| *next == span)
+                        .map(|(.., entry)| entry)
                 }))
                 .collect();
             while let Some(&top) = open.last()
-                && !contains(nodes[top].span, span)
+                && !contains(&nodes[top].range, &range)
             {
                 debug_assert!(
-                    nodes[top].span.end <= span.start,
+                    nodes[top].range.end <= range.start,
                     "spans {:?} and {span:?} cross",
                     nodes[top].span
                 );
@@ -240,6 +251,7 @@ impl Tree {
             open.push(nodes.len());
             nodes.push(NodeData {
                 span,
+                range,
                 parent: open.iter().rev().nth(1).copied(),
                 entries: entries.into(),
             });
@@ -252,12 +264,12 @@ impl Tree {
     /// The innermost node satisfying `contains` whose span starts at or before
     /// `start`. A node starting at or before it that doesn't is a finished
     /// sibling, so only the last one's ancestors are candidates.
-    fn find(&self, start: u32, contains: impl Fn(Span) -> bool) -> Option<usize> {
-        let last = self.nodes.partition_point(|node| node.span.start <= start);
+    fn find(&self, start: Pos, contains: impl Fn(&Range<Pos>) -> bool) -> Option<usize> {
+        let last = self.nodes.partition_point(|node| node.range.start <= start);
         let mut index = last.checked_sub(1)?;
         loop {
             let node = &self.nodes[index];
-            if contains(node.span) {
+            if contains(&node.range) {
                 return Some(index);
             }
             index = node.parent?;
@@ -265,7 +277,7 @@ impl Tree {
     }
 }
 
-fn contains(outer: Span, inner: Span) -> bool {
+fn contains(outer: &Range<Pos>, inner: &Range<Pos>) -> bool {
     outer.start <= inner.start && inner.end <= outer.end
 }
 
@@ -285,6 +297,11 @@ impl<'a> Node<'a> {
     /// Its span in its unit's source
     pub fn span(self) -> Span {
         self.data().span
+    }
+
+    /// Where its span ends (exclusive)
+    pub fn end(self) -> Pos {
+        self.data().range.end
     }
 
     /// The innermost other node containing it

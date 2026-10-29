@@ -85,9 +85,20 @@ def pos_arg ty
 def target_of out tree
   out["nodes"][tree["target"]]
 
-# The source text a raw span covers.
+# The source text a raw span covers. Its column and length count characters,
+# and its length counts each line break it crosses.
 def span_text source span
-  source[span["start"]["byte_offset"]..span["end"]["byte_offset"]]
+  let bounds = [...source.scalar_bounds()]
+  let start = span["start"]
+  # The character its line starts at
+  let first = 0
+  let line = 0
+  while (line < start["line"])
+    if (source[bounds[first]..bounds[first + 1]] == "\n")
+      line = (line + 1)
+    first = (first + 1)
+  let begin = (first + start["column"])
+  source[bounds[begin]..bounds[begin + span["len"]]]
 
 # The module documentation is the comment block on the first line.
 #[test]
@@ -471,9 +482,12 @@ def tokens_refer_to_nodes()
   let out = extract "--tokens"
   let source = fixture_source()
   # `Point` in the signature of `place`
-  let at = ([...source.split("@Point :limit")][0].len + 1)
+  let lines = [...[...source.split("@Point :limit")][0].split("\n")]
+  let line = (lines.len - 1)
+  let column = ([...lines[line].scalars()].len + 1)
   let token = out["tokens"].find do |token|
-    (token["span"]["start"]["byte_offset"] == at)
+    let start = token["span"]["start"]
+    (start["line"] == line && start["column"] == column)
   let target = out["nodes"][token["ref"]]
   assert_eq $target["kind"] Class
   assert_eq (span_text source target["name"]) Point

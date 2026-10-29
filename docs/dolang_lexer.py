@@ -3,7 +3,6 @@ import json
 import os
 import subprocess
 import threading
-from bisect import bisect_right
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from pygments.lexer import Lexer
@@ -185,7 +184,7 @@ class DoLexer(Lexer):
         return self._TOKEN_PRIORITY_TABLE.get(kind, 0)
 
     def _process_tokens(self, payload: dict, source_text: str) -> list:
-        offset_map = self._build_offset_map(source_text)
+        line_starts = self._line_starts(source_text)
         nodes = payload.get("nodes", [])
 
         # Diagnostics ride through the same span/priority pipeline as tokens,
@@ -204,22 +203,17 @@ class DoLexer(Lexer):
         for token_info in candidates:
             span = token_info.get("span") or {}
             start_pos = span.get("start", {})
-            end_pos = span.get("end", {})
-
-            start_offset = start_pos.get("byte_offset", 0)
-            end_offset = end_pos.get("byte_offset", start_offset)
-
-            # Skip invalid spans
-            if start_offset >= end_offset or start_offset < 0:
-                continue
+            line = start_pos.get("line", 0)
 
             # Skip tokens beyond source text
-            if start_offset >= offset_map["byte_length"]:
+            if line >= len(line_starts):
                 continue
 
-            start_index = self._byte_to_char_offset(offset_map, start_offset)
-            end_index = self._byte_to_char_offset(offset_map, end_offset)
+            # The column and length count characters, as Python indexes text
+            start_index = line_starts[line] + start_pos.get("column", 0)
+            end_index = min(start_index + span.get("len", 0), len(source_text))
 
+            # Skip empty spans
             if start_index >= end_index:
                 continue
 
@@ -256,39 +250,9 @@ class DoLexer(Lexer):
 
         return processed
 
-    def _build_offset_map(self, text: str) -> Dict[str, Any]:
-        encoded = text.encode("utf-8")
-        byte_offsets = [0]
-        char_offsets = [0]
-        byte_offset = 0
-
-        for char_index, ch in enumerate(text, start=1):
-            byte_offset += len(ch.encode("utf-8"))
-            byte_offsets.append(byte_offset)
-            char_offsets.append(char_index)
-
-        return {
-            "byte_length": len(encoded),
-            "byte_offsets": byte_offsets,
-            "char_offsets": char_offsets,
-        }
-
-    def _byte_to_char_offset(self, offset_map: Dict[str, Any], byte_offset: int) -> int:
-        byte_offsets = offset_map["byte_offsets"]
-        char_offsets = offset_map["char_offsets"]
-
-        if byte_offset <= 0:
-            return 0
-
-        if byte_offset >= offset_map["byte_length"]:
-            return char_offsets[-1]
-
-        index = bisect_right(byte_offsets, byte_offset) - 1
-
-        if byte_offsets[index] != byte_offset:
-            raise ValueError(f"token span is not on a UTF-8 boundary: {byte_offset}")
-
-        return char_offsets[index]
+    def _line_starts(self, text: str) -> list:
+        """The character index each line of `text` starts at."""
+        return [0] + [index + 1 for index, ch in enumerate(text) if ch == "\n"]
 
     def _load_payload(self, text: str) -> dict:
         if self._payload is not None:

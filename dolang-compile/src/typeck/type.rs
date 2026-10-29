@@ -40,7 +40,7 @@ use std::{
 use dolang_util::{alias, frozen::Frozen, intern, mono::MonoVec};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::source::Span;
+use crate::diag::Span;
 
 macro_rules! id {
     ($name:ident) => {

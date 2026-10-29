@@ -268,8 +268,8 @@ fn tokenize(path: &Path, source: &str) -> Vec<Tok> {
                 span.start().column_offset() as usize,
             ),
             end: (
-                span.end().line_offset() as usize,
-                span.end().column_offset() as usize,
+                unit.end(span).line_offset() as usize,
+                unit.end(span).column_offset() as usize,
             ),
         });
     });

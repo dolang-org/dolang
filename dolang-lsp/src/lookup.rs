@@ -9,8 +9,6 @@ use std::{collections::HashMap, sync::Arc};
 use dolang_compile::{Kind, NodeId, Unit};
 use tower_lsp_server::ls_types::Uri;
 
-use crate::backend::span_text;
-
 /// The most re-exports a lookup follows, which ends a cycle of them
 const MAX_HOPS: usize = 16;
 
@@ -42,8 +40,7 @@ pub(crate) fn item<'m>(modules: &'m Modules, module: &str, name: &str) -> Option
             return Some(Target::Bundled(module, name));
         };
         let unit = &found.unit;
-        let source = unit.source();
-        let named = |span: &_| span_text(source, span) == name;
+        let named = |span: &_| unit.text(*span) == name;
         let mut signature = None;
         let mut reexport = None;
         for id in unit.node(unit.root()?)?.children() {
@@ -86,10 +83,7 @@ pub(crate) fn item<'m>(modules: &'m Modules, module: &str, name: &str) -> Option
             return Some(Target::Source(found, id));
         }
         let (next, item) = reexport?;
-        (module, name) = (
-            span_text(source, &next).to_owned(),
-            span_text(source, &item).to_owned(),
-        );
+        (module, name) = (unit.text(next).to_owned(), unit.text(item).to_owned());
     }
     None
 }
@@ -113,7 +107,7 @@ pub(crate) fn member<'m>(
     let named = |id: NodeId, name: &str| {
         let node = unit.node(id);
         let span = node.and_then(|node| node.definition());
-        span.is_some_and(|span| span_text(unit.source(), &span) == name)
+        span.is_some_and(|span| unit.text(span) == name)
     };
     let class = unit.node(unit.root()?)?.children().find(|&id| {
         let is_class = matches!(
@@ -137,15 +131,15 @@ pub(crate) fn member<'m>(
 pub(crate) fn overload(unit: &Unit<'_>, id: NodeId, index: u32) -> NodeId {
     let chosen = || {
         let node = unit.node(id)?;
-        let name = span_text(unit.source(), &node.definition()?);
+        let name = unit.text(node.definition()?);
         let mut overloads: Vec<_> = unit
             .node(node.parent()?)?
             .children()
             .filter(|&other| is_overload(unit, other))
             .filter_map(|other| {
                 let node = unit.node(other)?;
-                let named = span_text(unit.source(), &node.definition()?) == name;
-                named.then_some((node.span()?.start().byte_offset(), other))
+                let named = unit.text(node.definition()?) == name;
+                named.then_some((node.span()?.start(), other))
             })
             .collect();
         overloads.sort_unstable_by_key(|&(start, _)| start);
@@ -171,9 +165,8 @@ fn is_overload(unit: &Unit<'_>, id: NodeId) -> bool {
             let (Some(span), Some(name)) = (node.span(), node.definition()) else {
                 return false;
             };
-            let before = unit
-                .source()
-                .get(span.start().byte_offset()..name.start().byte_offset());
+            let start = unit.byte_range(span).start;
+            let before = unit.source().get(start..unit.byte_range(name).start);
             let def = before.and_then(|before| before.trim_end().strip_suffix("def"));
             def.is_some_and(|def| def.trim_end().ends_with('@'))
         }
@@ -216,7 +209,7 @@ mod tests {
             Target::Source(module, id) => {
                 let unit = &module.unit;
                 let span = unit.node(id)?.definition()?;
-                let name = span_text(unit.source(), &span).to_owned();
+                let name = unit.text(span).to_owned();
                 Some((module.uri.path().to_string(), name))
             }
             Target::Bundled(module, name) => Some((module, name)),
@@ -274,7 +267,7 @@ mod tests {
         let id = chosen.map_or(id, |index| overload(&module.unit, id, index));
         let unit = &module.unit;
         let span = unit.node(id)?.definition()?;
-        let line = unit.source()[..span.start().byte_offset()].lines().count();
+        let line = span.start().line_number() as usize;
         Some((module.uri.path().to_string(), line))
     }
 

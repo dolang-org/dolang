@@ -20,7 +20,7 @@ use super::{
     UnitDiag,
     surface::{BinderKind, Class, Decorator, Member, MemberScope, Method, ParamKind, Signature},
 };
-use crate::source::Span;
+use crate::diag::Span;
 use crate::typeck::r#type::{DeclId, DeclKind, Intrinsic, Kind, Scope, UnitId, UnitSpan};
 
 /// Complete every def and method signature, record every field's type, and find
@@ -223,7 +223,7 @@ fn missing_values(tables: &Tables<'_>, diags: &mut Vec<UnitDiag>) {
                 })
         })
         .collect();
-    missing.sort_by_key(|value| (value.unit, value.span.start));
+    missing.sort_by_key(|value| (value.unit, value.span.start()));
     for value in missing {
         diags.push((
             value.unit,
@@ -407,7 +407,7 @@ fn missing_intrinsics(tables: &Tables<'_>, diags: &mut Vec<UnitDiag>) {
                 diags.push((
                     unit,
                     Diag::new(MissingIntrinsic {
-                        span: Span::default(),
+                        span: Span::new(0, 0, 0),
                         name,
                     }),
                 ));

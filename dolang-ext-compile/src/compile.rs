@@ -5,6 +5,7 @@ use std::{
     hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
+    ops::Range,
     path::Path,
 };
 
@@ -337,19 +338,6 @@ impl<'v> Global<'v> {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct PosData {
-    byte_offset: usize,
-    line: u32,
-    column: u32,
-}
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct SpanData {
-    start: PosData,
-    end: PosData,
-}
-
 pub(crate) struct UnitObject<'v> {
     // Fields are dropped in declaration order: the borrowing unit before its pin.
     unit: Option<compile::Unit<'static>>,
@@ -371,18 +359,38 @@ pub(crate) struct DiagnosticAnnex<'v> {
     diag: Diag,
     #[cfg(feature = "diagnostic-rendering")]
     paths: Vec<String>,
+    /// Where the diagnostic's locations lie in their sources, found while the
+    /// units were at hand
+    #[cfg_attr(not(feature = "diagnostic-rendering"), allow(dead_code))]
+    ranges: Ranges,
+}
+
+#[cfg(feature = "diagnostic-rendering")]
+type Ranges = crate::render::Ranges;
+#[cfg(not(feature = "diagnostic-rendering"))]
+type Ranges = ();
+
+/// Where each location of `diag` lies in the source of its unit, as `unit` gives
+/// it by the location's unit, for rendering
+#[cfg_attr(not(feature = "diagnostic-rendering"), allow(unused_variables))]
+fn ranges<'u>(
+    diag: &Diag,
+    unit: impl Fn(Option<compile::UnitId>) -> Option<&'u compile::Unit<'u>>,
+) -> Ranges {
+    #[cfg(feature = "diagnostic-rendering")]
+    return crate::render::ranges(diag, unit);
 }
 
 #[derive(Clone)]
 pub(crate) struct SpanAnnex<'v> {
     global: State<'v, Global<'v>>,
-    span: SpanData,
+    span: compile::Span,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct SourceSpanData {
     unit: Option<compile::UnitId>,
-    span: SpanData,
+    span: compile::Span,
 }
 
 pub(crate) struct SourceSpanAnnex<'v> {
@@ -392,7 +400,7 @@ pub(crate) struct SourceSpanAnnex<'v> {
 
 #[derive(Clone)]
 pub(crate) struct PosAnnex {
-    pos: PosData,
+    pos: compile::Pos,
 }
 
 pub(crate) struct AnnotationAnnex<'v> {
@@ -440,7 +448,7 @@ pub(crate) struct TokenObject;
 pub(crate) struct TokenAnnex<'v> {
     global: State<'v, Global<'v>>,
     kind: compile::Token,
-    span: SpanData,
+    span: compile::Span,
     node: Option<compile::NodeId>,
     context: compile::Context,
 }
@@ -514,21 +522,6 @@ const CHECK_INPUTS: usize = 1;
 
 const TYPELIB_BYTES: usize = 0;
 
-fn pos_data(pos: compile::Pos) -> PosData {
-    PosData {
-        byte_offset: pos.byte_offset(),
-        line: pos.line_offset(),
-        column: pos.column_offset(),
-    }
-}
-
-fn span_data(span: compile::Span) -> SpanData {
-    SpanData {
-        start: pos_data(span.start()),
-        end: pos_data(span.end()),
-    }
-}
-
 fn severity<'v>(global: State<'v, Global<'v>>, severity: compile::Severity) -> Sym<'v, 'v> {
     match severity {
         compile::Severity::Error => global.syms.error,
@@ -565,7 +558,7 @@ fn token_kind_sym<'v>(global: State<'v, Global<'v>>, token: compile::Token) -> S
 fn create_pos<'v>(
     global: State<'v, Global<'v>>,
     strand: &mut Strand<'v, '_>,
-    pos: PosData,
+    pos: compile::Pos,
     out: Slot<'v, '_>,
 ) {
     global
@@ -577,7 +570,7 @@ fn create_pos<'v>(
 fn create_span<'v>(
     global: State<'v, Global<'v>>,
     strand: &mut Strand<'v, '_>,
-    span: SpanData,
+    span: compile::Span,
     out: Slot<'v, '_>,
 ) {
     global
@@ -589,7 +582,7 @@ fn create_span<'v>(
 fn source_span_data(location: compile::SourceSpan) -> SourceSpanData {
     SourceSpanData {
         unit: location.unit(),
-        span: span_data(location.span()),
+        span: location.span(),
     }
 }
 
@@ -679,7 +672,7 @@ fn create_diagnostic<'v, 's>(
     global: State<'v, Global<'v>>,
     strand: &mut Strand<'v, 's>,
     sources: DiagSources<'_, 'v>,
-    diag: Diag,
+    (ranges, diag): (Ranges, Diag),
     out: &mut Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     global.types.diagnostic.create_with_annex(
@@ -688,6 +681,7 @@ fn create_diagnostic<'v, 's>(
         DiagnosticAnnex {
             global,
             diag,
+            ranges,
             #[cfg(feature = "diagnostic-rendering")]
             paths: match sources {
                 DiagSources::Unit(path, _) => vec![path.to_owned()],
@@ -848,8 +842,10 @@ fn check_units<'v, 's>(
                 // The shell's pipelines connect stages with `proc`'s pipes
                 builder.pipes(("proc", "PipeSender"), ("proc", "PipeReceiver"));
                 builder.typelibs(typelibs);
-                // The units the checker accepted, by unit ID
+                // The units the checker accepted, by unit ID, and the position in
+                // `taken` of each
                 let mut ids = Vec::new();
+                let mut accepted = Vec::new();
                 for (position, (index, input)) in taken.iter().enumerate() {
                     let added = match input {
                         Taken::Unit(unit) => builder.unit(unit),
@@ -862,6 +858,7 @@ fn check_units<'v, 's>(
                             units.get(strand, *index, &mut item)?;
                             inputs_array.push(strand, &*item)?;
                             ids.push(id);
+                            accepted.push(position);
                         }
                         // Its own diagnostics report it
                         Err(error) if matches!(error.kind(), compile::ErrorKind::Fail) => {}
@@ -873,7 +870,17 @@ fn check_units<'v, 's>(
                     .iter()
                     .map(|&id| check.path(id).to_string_lossy().into_owned())
                     .collect();
-                let diags: Vec<Diag> = check.diagnostics().cloned().collect();
+                let unit = |id: Option<compile::UnitId>| {
+                    let index = ids.iter().position(|&checked| Some(checked) == id)?;
+                    match &taken[accepted[index]].1 {
+                        Taken::Unit(unit) => Some(&**unit),
+                        Taken::Typelib(_) => None,
+                    }
+                };
+                let diags: Vec<(Ranges, Diag)> = check
+                    .diagnostics()
+                    .map(|diag| (ranges(diag, unit), diag.clone()))
+                    .collect();
                 let undecided = render_undecided(&paths, check.undecided());
                 let validated = check.validated();
                 Ok((
@@ -1261,7 +1268,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                         tokens.push(TokenAnnex {
                             global,
                             kind,
-                            span: span_data(span),
+                            span,
                             node,
                             context,
                         });
@@ -1308,7 +1315,62 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 Output::set(strand, out, AsTuple::new(imports));
                 Ok(())
             })
+            .method("text", async move |this, strand, args, out| {
+                let ([span], []) = unpack!(strand, args, 1, 0)?;
+                let range = span_range(this, strand, &span)?;
+                let borrow = this.borrow(strand)?;
+                let text = {
+                    let unit = borrow.unit.as_ref().expect("span_range checked the unit");
+                    unit.source()[range].to_owned()
+                };
+                Output::set(strand, out, text.as_str());
+                Ok(())
+            })
+            .method("byte_range", async move |this, strand, args, out| {
+                let ([span], []) = unpack!(strand, args, 1, 0)?;
+                let range = span_range(this, strand, &span)?;
+                Output::set(strand, out, range);
+                Ok(())
+            })
+            .method("end", async move |this, strand, args, out| {
+                let ([span], []) = unpack!(strand, args, 1, 0)?;
+                let span = span_arg(strand, &span)?;
+                let end = {
+                    let borrow = this.borrow(strand)?;
+                    let Some(unit) = borrow.unit.as_ref() else {
+                        return Err(Error::state_error(strand, "unit was emitted"));
+                    };
+                    unit.end(span)
+                };
+                create_pos(strand.state::<Tag>(), strand, end, out);
+                Ok(())
+            })
     }
+}
+
+/// A `compile.Span` argument
+fn span_arg<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: &Value<'v>,
+) -> Result<'v, 's, compile::Span> {
+    let Some(span) = strand.state::<Tag>().types.span.cast(value) else {
+        return Err(Error::type_error(strand, "expected `compile.Span`"));
+    };
+    Ok(span.enter_sync(strand, |_strand, span| span.annex().span))
+}
+
+/// Where a `compile.Span` argument lies in the source of a unit, in bytes
+fn span_range<'v, 's>(
+    this: Instance<'v, '_, UnitObject<'v>>,
+    strand: &mut Strand<'v, 's>,
+    span: &Value<'v>,
+) -> Result<'v, 's, Range<usize>> {
+    let span = span_arg(strand, span)?;
+    let borrow = this.borrow(strand)?;
+    let Some(unit) = borrow.unit.as_ref() else {
+        return Err(Error::state_error(strand, "unit was emitted"));
+    };
+    Ok(unit.byte_range(span))
 }
 
 impl<'v> Object<'v> for CheckObject {
@@ -1500,7 +1562,7 @@ impl<'v> Object<'v> for DiagnosticIter {
                 strand.state::<Tag>(),
                 strand,
                 DiagSources::Unit(&path, source),
-                diag,
+                (ranges(&diag, |_| Some(unit)), diag),
                 &mut out,
             )?;
             Ok(true)
@@ -1618,7 +1680,7 @@ impl<'v> Object<'v> for TokenObject {
                 Ok(())
             })
             .get("span", |this, strand, out| {
-                create_span(this.annex().global, strand, this.annex().span.clone(), out);
+                create_span(this.annex().global, strand, this.annex().span, out);
                 Ok(())
             })
             .get("node", |this, strand, mut out| {
@@ -1990,7 +2052,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
             Ok(())
         });
         builder = builder.get("span", |this, strand, out| {
-            let span = with_node(this, strand, |n, _| n.span().map(span_data))?;
+            let span = with_node(this, strand, |n, _| n.span())?;
             if let Some(span) = span {
                 create_span(strand.state::<Tag>(), strand, span, out)
             } else {
@@ -2002,7 +2064,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
         // documented: which of them those are is the compiler's determination,
         // and a consumer that has to know it in advance gains nothing.
         builder = builder.get("doc", |this, strand, out| {
-            let doc = with_node(this, strand, |n, _| n.doc().map(span_data))?;
+            let doc = with_node(this, strand, |n, _| n.doc())?;
             if let Some(doc) = doc {
                 create_span(strand.state::<Tag>(), strand, doc, out)
             } else {
@@ -2060,7 +2122,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
         if matches!(T::NAME, "MixedRestParam" | "PosRestParam" | "KeyRestParam") {
             builder = builder.get("type_ellipsis", |this, strand, out| {
                 let span = with_node(this, strand, |n, _| match n.kind() {
-                    compile::Kind::RestParam { type_ellipsis, .. } => type_ellipsis.map(span_data),
+                    compile::Kind::RestParam { type_ellipsis, .. } => type_ellipsis,
                     _ => None,
                 })?;
                 if let Some(span) = span {
@@ -2199,7 +2261,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
             "NameType" => builder
                 .get("head", |this, strand, out| {
                     let head = with_node(this, strand, |n, _| match n.kind() {
-                        compile::Kind::NameType { head, .. } => span_data(head),
+                        compile::Kind::NameType { head, .. } => head,
                         _ => unreachable!(),
                     })?;
                     create_span(strand.state::<Tag>(), strand, head, out);
@@ -2295,7 +2357,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                     compile::Kind::TypeArg {
                         kind: compile::TypeArgKind::Key { name },
                         ..
-                    } => span_data(name),
+                    } => name,
                     _ => unreachable!(),
                 })?;
                 create_span(strand.state::<Tag>(), strand, name, out);
@@ -2307,7 +2369,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                         compile::Kind::TypeItem {
                             kind: compile::TypeItemKind::Key { key, .. },
                             ..
-                        } => span_data(key),
+                        } => key,
                         _ => unreachable!(),
                     })?;
                     create_span(strand.state::<Tag>(), strand, key, out);
@@ -2410,7 +2472,7 @@ fn project_name<'v, 's, T: NodeMarker + 'static>(
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     enum Name {
-        Span(SpanData),
+        Span(compile::Span),
         Text(String),
         None,
     }
@@ -2427,10 +2489,8 @@ fn project_name<'v, 's, T: NodeMarker + 'static>(
         | compile::Kind::ImportItem { name, .. }
         | compile::Kind::PositionalParam { name, .. }
         | compile::Kind::KeyParam { name, .. }
-        | compile::Kind::Binder { name, .. } => Name::Span(span_data(name)),
-        compile::Kind::RestParam { name, .. } => {
-            name.map_or(Name::None, |v| Name::Span(span_data(v)))
-        }
+        | compile::Kind::Binder { name, .. } => Name::Span(name),
+        compile::Kind::RestParam { name, .. } => name.map_or(Name::None, Name::Span),
         // An implicit names an ambient channel rather than binding anything
         compile::Kind::ImplicitParam { .. } => Name::None,
         compile::Kind::PreludeModule { name, .. } | compile::Kind::PreludeItem { name, .. } => {
@@ -2471,7 +2531,7 @@ fn project_default<'v, 's, T: NodeMarker + 'static>(
 ) -> Result<'v, 's, ()> {
     let v = with_node(this, strand, |n, _| match n.kind() {
         compile::Kind::PositionalParam { default, .. }
-        | compile::Kind::KeyParam { default, .. } => default.map(span_data),
+        | compile::Kind::KeyParam { default, .. } => default,
         _ => unreachable!(),
     })?;
     if let Some(v) = v {
@@ -2488,7 +2548,7 @@ fn project_span_field<'v, 's, T: NodeMarker + 'static>(
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     let v = with_node(this, strand, |n, _| match n.kind() {
-        compile::Kind::KeyParam { key, .. } => span_data(key),
+        compile::Kind::KeyParam { key, .. } => key,
         _ => unreachable!(),
     })?;
     create_span(strand.state::<Tag>(), strand, v, out);
@@ -2501,13 +2561,13 @@ fn project_import<'v, 's, T: NodeMarker + 'static>(
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     enum V {
-        S(SpanData),
+        S(compile::Span),
         T(String),
     }
     let v = with_node(this, strand, |n, _| match (n.kind(), item) {
         (compile::Kind::ImportModule { module, .. }, false)
-        | (compile::Kind::ImportItem { module, .. }, false) => V::S(span_data(module)),
-        (compile::Kind::ImportItem { item, .. }, true) => V::S(span_data(item)),
+        | (compile::Kind::ImportItem { module, .. }, false) => V::S(module),
+        (compile::Kind::ImportItem { item, .. }, true) => V::S(item),
         (compile::Kind::PreludeModule { module, .. }, false)
         | (compile::Kind::PreludeItem { module, .. }, false) => V::T(module.to_owned()),
         (compile::Kind::PreludeItem { item, .. }, true) => V::T(item.to_owned()),
@@ -2615,6 +2675,7 @@ impl<'v> Object<'v> for Diagnostic {
                         crate::render::render_diag(
                             &paths,
                             &texts,
+                            &annex.ranges,
                             &annex.diag,
                             crate::render::ColorMode::Always,
                         )
@@ -2686,21 +2747,11 @@ impl<'v> Object<'v> for Span {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("start", |this, strand, out| {
-                create_pos(
-                    this.annex().global,
-                    strand,
-                    this.annex().span.start.clone(),
-                    out,
-                );
+                create_pos(this.annex().global, strand, this.annex().span.start(), out);
                 Ok(())
             })
-            .get("end", |this, strand, out| {
-                create_pos(
-                    this.annex().global,
-                    strand,
-                    this.annex().span.end.clone(),
-                    out,
-                );
+            .get("len", |this, strand, out| {
+                Output::set(strand, out, this.annex().span.len());
                 Ok(())
             })
     }
@@ -2761,12 +2812,7 @@ impl<'v> Object<'v> for SourceSpan {
                 Ok(())
             })
             .get("span", |this, strand, out| {
-                create_span(
-                    this.annex().global,
-                    strand,
-                    this.annex().location.span.clone(),
-                    out,
-                );
+                create_span(this.annex().global, strand, this.annex().location.span, out);
                 Ok(())
             })
     }
@@ -2818,16 +2864,12 @@ impl<'v> Object<'v> for Pos {
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
-            .get("byte_offset", |this, strand, out| {
-                Output::set(strand, out, this.annex().pos.byte_offset);
-                Ok(())
-            })
             .get("line", |this, strand, out| {
-                Output::set(strand, out, this.annex().pos.line);
+                Output::set(strand, out, this.annex().pos.line_offset());
                 Ok(())
             })
             .get("column", |this, strand, out| {
-                Output::set(strand, out, this.annex().pos.column);
+                Output::set(strand, out, this.annex().pos.column_offset());
                 Ok(())
             })
     }

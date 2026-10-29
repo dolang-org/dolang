@@ -72,7 +72,12 @@ impl Highlighter for DoHelper {
         unit.tokens(
             &mut |token: Token, span: Span, node: Option<NodeId>, context: Context| {
                 let kind = node.and_then(|id| unit.node(id)).map(|node| node.kind());
-                tokens.push((token, span, classify_node(kind.as_ref()), context));
+                tokens.push((
+                    token,
+                    unit.byte_range(span),
+                    classify_node(kind.as_ref()),
+                    context,
+                ));
             },
         );
 

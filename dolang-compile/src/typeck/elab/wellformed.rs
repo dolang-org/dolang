@@ -25,7 +25,7 @@ use super::{
     surface::{Class, Interned, Ref, TypeArg, TypeExpr, TypeParam, TypeQuant},
 };
 use crate::{
-    source::Span,
+    diag::Span,
     typeck::{
         report::Report,
         solver::{Gas, Issue, Provenance, Residual, Solver, Status},
@@ -291,7 +291,7 @@ impl Check<'_, '_> {
                         matches!(fill, Fill::Binder(s) | Fill::Item(s) | Fill::Expand(Some(s)) if *s == slot)
                     })
                     .map(|(_, arg)| arg.ty().span())
-                    .reduce(|first, last| first | last)
+                    .reduce(|first, last| self.tables.info(unit).join(first, last))
             });
             let at = at.map_or(span, |span| UnitSpan { unit, span });
             let binder = self.binder(decl, slot, binder);

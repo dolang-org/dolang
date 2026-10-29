@@ -364,8 +364,9 @@ impl<'u> Scope<'_, '_, 'u> {
     pub(super) fn annotation(&self, annot: &ast::Annot) -> Option<TypeId> {
         use crate::ast::visit::Node;
 
-        let span = annot.ty.span();
         let lower = self.lower;
+        let source = lower.tables.info(lower.unit).source;
+        let span = (source.expect("a unit lowered has source").file).locate(annot.ty.span());
         let site = lower.tables.site(*lower.sites.get(&span)?);
         let ty = site.interned.get()?;
         Some(match site.group() {

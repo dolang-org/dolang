@@ -5,7 +5,7 @@ use std::{cell::RefCell, fs::File, io::Read, mem, ops::Range, path::Path};
 use annotate_snippets::{AnnotationKind, Group, Level, Patch, Renderer, Snippet};
 
 use dolang::{
-    compile::{self, Config, Diag, Mode},
+    compile::{self, Config, Diag, Mode, SourceSpan, Unit},
     extension::{CompilerExt, VmExt},
     runtime::{
         Arg, Args, Bytecode, Error, Frame, Slot, Strand, Sym, call, unpack,
@@ -34,7 +34,7 @@ pub fn read_file(path: &Path) -> Vec<u8> {
 pub fn compile_standard(
     path: &Path,
     module: Option<&str>,
-) -> (Vec<u8>, Option<Bytecode>, Vec<Diag>, Vec<Directive>) {
+) -> (Vec<u8>, Option<Bytecode>, Vec<Located>, Vec<Directive>) {
     let content = read_file(path);
     let mut config = Config::new();
     apply_compiler_extensions(&mut config);
@@ -47,7 +47,9 @@ pub fn compile_standard(
         .to_str()
         .unwrap_or_else(|e| panic!("{}: not UTF-8: {e}", path.display()));
     let unit = config.unit(path, source);
-    let diags: Vec<_> = unit.diagnostics().collect();
+    let diags: Vec<_> = (unit.diagnostics())
+        .map(|diag| Located::new(diag, &unit))
+        .collect();
     let res = unit.emit(&mut out);
     let bytecode = res.ok().map(|_| Bytecode::new(out));
     (content, bytecode, diags, directives)
@@ -65,7 +67,7 @@ pub async fn vm_run<'v>(
     path: &Path,
     content: &[u8],
     bytecode: Option<Bytecode>,
-    diags: Vec<Diag>,
+    diags: Vec<Located>,
     mut directives: Vec<Directive>,
     test_state: &TestState,
     mut retval: Slot<'v, '_>,
@@ -304,7 +306,46 @@ fn anonymize_origin_lines(rendered: String) -> String {
     result
 }
 
-fn build_diag_report<'s>(file: &'s str, source: &'s str, diag: &Diag) -> Vec<Group<'s>> {
+/// A diagnostic with where its locations lie in the source of its unit, found while
+/// the unit was at hand
+pub struct Located {
+    pub diag: Diag,
+    ranges: Vec<(SourceSpan, Range<usize>)>,
+    /// The line number its span ends on
+    end_line: u32,
+}
+
+impl Located {
+    /// Locate `diag`, all of whose locations are in `unit`.
+    pub fn new(diag: Diag, unit: &Unit<'_>) -> Self {
+        let locations = [diag.span()]
+            .into_iter()
+            .chain(diag.annotations().map(|annotation| annotation.span()))
+            .chain(diag.patches().map(|patch| patch.span()));
+        let ranges = locations
+            .map(|location| {
+                let range = unit.byte_range(location.span());
+                (location, range)
+            })
+            .collect();
+        let end_line = unit.end(diag.span().span()).line_number();
+        Self {
+            diag,
+            ranges,
+            end_line,
+        }
+    }
+
+    fn range(&self, location: &SourceSpan) -> Range<usize> {
+        (self.ranges.iter())
+            .find(|(located, _)| located == location)
+            .map(|(_, range)| range.clone())
+            .expect("each location is located")
+    }
+}
+
+fn build_diag_report<'s>(file: &'s str, source: &'s str, located: &Located) -> Vec<Group<'s>> {
+    let diag = &located.diag;
     let level = match diag.severity() {
         compile::Severity::Error => Level::ERROR,
         compile::Severity::Warning => Level::WARNING,
@@ -321,14 +362,12 @@ fn build_diag_report<'s>(file: &'s str, source: &'s str, diag: &Diag) -> Vec<Gro
                 }
                 _ => AnnotationKind::Context,
             }
-            .span(ann.span().span().start().byte_offset()..ann.span().span().end().byte_offset())
+            .span(located.range(&ann.span()))
             .label(ann.message().to_string()),
         );
     }
     if !have_primary {
-        snippet = snippet.annotation(AnnotationKind::Primary.span(
-            diag.span().span().start().byte_offset()..diag.span().span().end().byte_offset(),
-        ));
+        snippet = snippet.annotation(AnnotationKind::Primary.span(located.range(&diag.span())));
     }
     let mut primary = level
         .primary_title(diag.message().to_string())
@@ -346,8 +385,7 @@ fn build_diag_report<'s>(file: &'s str, source: &'s str, diag: &Diag) -> Vec<Gro
         report.push(
             Group::with_title(Level::HELP.secondary_title(patch.message().to_string())).element(
                 Snippet::source(source).path(file).patch(Patch::new(
-                    patch.span().span().start().byte_offset()
-                        ..patch.span().span().end().byte_offset(),
+                    located.range(&patch.span()),
                     patch.sub().to_owned(),
                 )),
             ),
@@ -359,14 +397,14 @@ fn build_diag_report<'s>(file: &'s str, source: &'s str, diag: &Diag) -> Vec<Gro
 /// Render a diagnostic to a plain-text string with anonymized line numbers.
 ///
 /// The output matches what would appear in the test file comment blocks.
-pub fn render_diag(file: &str, source: &str, diag: &Diag) -> String {
+pub fn render_diag(file: &str, source: &str, diag: &Located) -> String {
     let report = build_diag_report(file, source, diag);
     let renderer = Renderer::plain().anonymized_line_numbers(true);
     anonymize_origin_lines(renderer.render(&report))
 }
 
 /// Render a diagnostic with real line numbers, for human-readable display.
-pub fn render_diag_display(file: &str, source: &str, diag: &Diag) -> String {
+pub fn render_diag_display(file: &str, source: &str, diag: &Located) -> String {
     let report = build_diag_report(file, source, diag);
     let renderer = Renderer::plain();
     renderer.render(&report)
@@ -385,7 +423,7 @@ pub fn expect_compile_error(directives: &[Directive]) -> bool {
 /// rendered string — useful for update mode.
 pub fn match_diagnostic(
     directives: &mut Vec<Directive>,
-    diag: &Diag,
+    diag: &Located,
     file: &str,
     source: &str,
 ) -> Option<String> {
@@ -415,7 +453,7 @@ pub fn match_diagnostics(
     path: &Path,
     content: &[u8],
     file: &str,
-    diags: &[Diag],
+    diags: &[Located],
     directives: &mut Vec<Directive>,
 ) -> bool {
     let source = str::from_utf8(content).unwrap();
@@ -423,7 +461,7 @@ pub fn match_diagnostics(
     let mut unexpected = false;
     let mut blocks = Vec::new();
     for d in diags {
-        let line = d.span().span().end().line_number();
+        let line = d.end_line;
         match match_diagnostic(directives, d, file, source) {
             None => {}
             Some(rendered) if update_mode => blocks.push((line, rendered)),
@@ -447,7 +485,7 @@ pub fn match_diagnostics(
 /// Matched blocks are preserved verbatim. Each of `blocks` is inserted
 /// after the line it references and any annotations binding to that line.
 /// `blocks` is a list of `(line_number, rendered_block)` pairs where `line_number`
-/// is 1-indexed in `source` (from `diag.span().span().end().line_number()`), so a
+/// is 1-indexed in `source` (the line a diagnostic's span ends on), so a
 /// block follows the last source line its span covers.
 pub fn rewrite_diagnostics(
     path: &Path,

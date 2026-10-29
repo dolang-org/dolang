@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
-    iter, mem,
+    iter, mem, ops,
     panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard, RwLock, Weak, mpsc},
@@ -21,7 +21,7 @@ use tower_lsp_server::{
 
 use dolang_compile::{
     Config as CompileConfig, Context, ErrorKind, Kind, Mode, Node, NodeId, Token, Unit, UnitId,
-    diag, source,
+    diag,
     typeck::{self, Role, Style},
 };
 
@@ -143,24 +143,19 @@ fn classify_token(token: Token, kind: Option<&Kind<'_>>, context: Context) -> (u
     }
 }
 
-fn same_span(a: &diag::Span, b: &diag::Span) -> bool {
-    a.start().byte_offset() == b.start().byte_offset()
-        && a.end().byte_offset() == b.end().byte_offset()
-}
-
 /// Modifier bits a token earns from the declaration it names.
 ///
 /// A declaration is its own definition in Do, so a token standing where the
 /// name was declared claims both; `statics` holds the fields a `#[class]` or
 /// `#[static]` decorator scoped to the class.
 fn declaration_modifiers(
-    span: &diag::Span,
-    def: &diag::Span,
+    span: diag::Span,
+    def: diag::Span,
     id: NodeId,
     statics: &HashSet<NodeId>,
 ) -> u32 {
     let mut modifiers = 0;
-    if same_span(span, def) {
+    if span == def {
         modifiers |= MOD_DECLARATION | MOD_DEFINITION;
     }
     if statics.contains(&id) {
@@ -204,33 +199,29 @@ fn static_fields(unit: &Unit<'_>) -> HashSet<NodeId> {
 /// opposite reason — they are real declarations, but they have no source text
 /// in this document to point at.  A binding spelled `_` is skipped because it
 /// is how a result is discarded: it declares nothing anyone navigates to.
-fn symbol_kind(kind: &Kind<'_>, content: &str) -> Option<SymbolKind> {
+fn symbol_kind(kind: &Kind<'_>, unit: &Unit<'_>) -> Option<SymbolKind> {
     Some(match kind {
         Kind::Class { .. } => SymbolKind::CLASS,
         Kind::Function { .. } => SymbolKind::FUNCTION,
         Kind::Method { .. } => SymbolKind::METHOD,
         Kind::SpecialMethod { name, .. } => {
-            if span_text(content, name) == "(init)" {
+            if unit.text(*name) == "(init)" {
                 SymbolKind::CONSTRUCTOR
             } else {
                 SymbolKind::METHOD
             }
         }
         Kind::Field { .. } => SymbolKind::FIELD,
-        Kind::Bind { name, .. } if span_text(content, name) == "_" => return None,
+        Kind::Bind { name, .. } if unit.text(*name) == "_" => return None,
         Kind::Bind { .. } => SymbolKind::VARIABLE,
         Kind::ImportModule { .. } | Kind::ImportItem { .. } => SymbolKind::NAMESPACE,
         _ => return None,
     })
 }
 
-pub(crate) fn span_text<'a>(content: &'a str, span: &diag::Span) -> &'a str {
-    &content[span.start().byte_offset()..span.end().byte_offset()]
-}
-
 /// Remove the source-level comment markers while preserving Markdown layout.
-fn normalize_doc(content: &str, span: &diag::Span) -> String {
-    normalize_doc_text(span_text(content, span))
+fn normalize_doc(unit: &Unit<'_>, span: diag::Span) -> String {
+    normalize_doc_text(unit.text(span))
 }
 
 fn normalize_doc_text(doc: &str) -> String {
@@ -250,8 +241,8 @@ fn normalize_doc_text(doc: &str) -> String {
         .join("\n")
 }
 
-fn one_line_source(content: &str, span: &diag::Span) -> String {
-    span_text(content, span)
+fn one_line_source(unit: &Unit<'_>, span: diag::Span) -> String {
+    unit.text(span)
         .lines()
         .map(str::trim)
         .collect::<Vec<_>>()
@@ -259,7 +250,7 @@ fn one_line_source(content: &str, span: &diag::Span) -> String {
 }
 
 /// A parameter of a signature, from its declaration
-fn parameter(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<signature::Param> {
+fn parameter(unit: &Unit<'_>, id: NodeId) -> Option<signature::Param> {
     let node = unit.node(id)?;
     let default = match node.kind() {
         Kind::PositionalParam { default, .. } | Kind::KeyParam { default, .. } => default,
@@ -273,18 +264,19 @@ fn parameter(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<signature::Pa
         .find(|child| matches!(child.kind(), Kind::Type { .. }))
         .and_then(|child| child.span());
     // The parameter as written ends where its annotation or default starts
-    let end = [ty.as_ref(), default.as_ref()]
+    let range = unit.byte_range(span);
+    let end = [ty, default]
         .into_iter()
         .flatten()
-        .map(|span| span.start().byte_offset())
+        .map(|span| unit.byte_range(span).start)
         .min()
-        .unwrap_or(span.end().byte_offset());
-    let head = content.get(span.start().byte_offset()..end)?.trim_end();
+        .unwrap_or(range.end);
+    let head = unit.source().get(range.start..end)?.trim_end();
     let head = head.strip_suffix('=').unwrap_or(head).trim_end();
     let head = head.strip_suffix('@').unwrap_or(head).trim_end();
     Some(signature::Param {
         head: head.lines().map(str::trim).collect::<Vec<_>>().join(" "),
-        ty: ty.map(|span| one_line_source(content, &span)),
+        ty: ty.map(|span| one_line_source(unit, span)),
         default: default.is_some(),
     })
 }
@@ -297,35 +289,33 @@ fn children_in_order(unit: &Unit<'_>, node: &Node<'_>) -> Vec<NodeId> {
         unit.node(*id)
             .expect("child node remains in its unit")
             .span()
-            .map(|span| span.start().byte_offset())
+            .map(|span| span.start())
     });
     children
 }
 
 /// The source text of the type describing a node, if it has one, given its children.
-fn type_label(content: &str, unit: &Unit<'_>, children: &[NodeId]) -> Option<String> {
+fn type_label(unit: &Unit<'_>, children: &[NodeId]) -> Option<String> {
     children
         .iter()
         .filter_map(|child| unit.node(*child))
         .find(|child| matches!(child.kind(), Kind::Type { .. }))
         .and_then(|child| child.span())
-        .map(|span| one_line_source(content, &span))
+        .map(|span| one_line_source(unit, span))
 }
 
 /// A declaration's signature, including any type it is annotated with.
-fn declaration_label(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<String> {
+fn declaration_label(unit: &Unit<'_>, id: NodeId) -> Option<String> {
     let node = unit.node(id)?;
     let kind = node.kind();
     let children = children_in_order(unit, &node);
-    let mut name = node
-        .definition()
-        .map(|span| span_text(content, &span).to_owned())?;
+    let mut name = node.definition().map(|span| unit.text(span).to_owned())?;
     let binders = children
         .iter()
         .filter_map(|child| unit.node(*child))
         .filter(|child| matches!(child.kind(), Kind::Binder { .. }))
         .filter_map(|child| child.span())
-        .map(|span| one_line_source(content, &span))
+        .map(|span| one_line_source(unit, span))
         .collect::<Vec<_>>();
     if !binders.is_empty() {
         name.push('[');
@@ -336,12 +326,12 @@ fn declaration_label(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<Strin
     let ty = if matches!(kind, Kind::Class { .. }) {
         None
     } else {
-        type_label(content, unit, &children)
+        type_label(unit, &children)
     };
     let params = || {
         children
             .iter()
-            .filter_map(|child| parameter(content, unit, *child))
+            .filter_map(|child| parameter(unit, *child))
             .collect::<Vec<_>>()
     };
     // Only the decorators the type checker designates say anything about the
@@ -362,10 +352,8 @@ fn declaration_label(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<Strin
                         item,
                         ..
                     } => item,
-                    Kind::ImportItem { module, item, .. }
-                        if span_text(content, &module) == "std" =>
-                    {
-                        span_text(content, &item)
+                    Kind::ImportItem { module, item, .. } if unit.text(module) == "std" => {
+                        unit.text(item)
                     }
                     _ => return None,
                 };
@@ -382,7 +370,7 @@ fn declaration_label(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<Strin
                 .filter_map(|child| unit.node(*child))
                 .filter(|child| matches!(child.kind(), Kind::Type { .. }))
                 .filter_map(|child| child.span())
-                .map(|span| span_text(content, &span))
+                .map(|span| unit.text(span))
                 .collect::<Vec<_>>();
             let decorators = designated(&["final", "mixable"]);
             format!(
@@ -445,7 +433,7 @@ fn declaration_label(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<Strin
         Kind::PositionalParam { .. }
         | Kind::KeyParam { .. }
         | Kind::RestParam { .. }
-        | Kind::SelfParam { .. } => parameter(content, unit, id)?.binding(),
+        | Kind::SelfParam { .. } => parameter(unit, id)?.binding(),
         _ => return None,
     };
     Some(label)
@@ -454,12 +442,10 @@ fn declaration_label(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<Strin
 /// Hover text for a name that resolves outside this document -- an import or
 /// a prelude binding -- built from the static doc index rather than a local
 /// doc comment, since there is no declaration in this file to read one from.
-fn external_hover(kind: Kind<'_>, content: &str) -> Vec<Described> {
+fn external_hover(kind: Kind<'_>, unit: &Unit<'_>) -> Vec<Described> {
     let (module, item) = match kind {
-        Kind::ImportModule { module, .. } => (span_text(content, &module), ""),
-        Kind::ImportItem { module, item, .. } => {
-            (span_text(content, &module), span_text(content, &item))
-        }
+        Kind::ImportModule { module, .. } => (unit.text(module), ""),
+        Kind::ImportItem { module, item, .. } => (unit.text(module), unit.text(item)),
         Kind::PreludeModule { module, .. } => (module, ""),
         Kind::PreludeItem { module, item, .. } => (module, item),
         _ => return Vec::new(),
@@ -533,10 +519,10 @@ impl Described {
 }
 
 /// Pre-render local hover text while the compiler unit and its spans live.
-fn build_hovers(unit: &Unit<'_>, content: &str) -> HashMap<NodeId, Vec<Described>> {
+fn build_hovers(unit: &Unit<'_>) -> HashMap<NodeId, Vec<Described>> {
     unit.nodes()
         .filter_map(|(id, node)| {
-            let mut docs = external_hover(node.kind(), content);
+            let mut docs = external_hover(node.kind(), unit);
             if docs.is_empty() {
                 docs.extend(local_hover(unit, id, None));
             }
@@ -549,8 +535,7 @@ fn build_hovers(unit: &Unit<'_>, content: &str) -> HashMap<NodeId, Vec<Described
 /// in and noted with `module`, and its doc comment. `module` is `None` for the
 /// document's own module, which goes unnoted.
 fn local_hover(unit: &Unit<'_>, id: NodeId, module: Option<&str>) -> Option<Described> {
-    let content = unit.source();
-    let label = declaration_label(content, unit, id)?;
+    let label = declaration_label(unit, id)?;
     let label = match enclosing_class(unit, id) {
         Some(class) => signature::member(module, class.as_deref(), &label),
         None => label,
@@ -579,7 +564,7 @@ fn local_hover(unit: &Unit<'_>, id: NodeId, module: Option<&str>) -> Option<Desc
         label,
         prose: node
             .doc()
-            .map(|span| normalize_doc(content, &span))
+            .map(|span| normalize_doc(unit, span))
             .unwrap_or_default(),
         shape,
     })
@@ -589,7 +574,6 @@ fn local_hover(unit: &Unit<'_>, id: NodeId, module: Option<&str>) -> Option<Desc
 /// of its class when it's a member, and `None` in anything else, such as a
 /// function
 fn enclosing_class(unit: &Unit<'_>, id: NodeId) -> Option<Option<String>> {
-    let content = unit.source();
     let parent = unit.node(id)?.parent()?;
     if parent == unit.root()? {
         return Some(None);
@@ -606,7 +590,7 @@ fn enclosing_class(unit: &Unit<'_>, id: NodeId) -> Option<Option<String>> {
         .filter_map(|child| unit.node(*child))
         .filter(|child| matches!(child.kind(), Kind::Binder { .. }))
         .filter_map(|child| child.span())
-        .map(|span| one_line_source(content, &span))
+        .map(|span| one_line_source(unit, span))
         .collect();
     let binders = if binders.is_empty() {
         String::new()
@@ -614,10 +598,7 @@ fn enclosing_class(unit: &Unit<'_>, id: NodeId) -> Option<Option<String>> {
         format!("[{}]", binders.join(", "))
     };
     let at = if type_only { "@" } else { "" };
-    Some(Some(format!(
-        "{at}class {}{binders}",
-        span_text(content, &name)
-    )))
+    Some(Some(format!("{at}class {}{binders}", unit.text(name))))
 }
 
 /// Assemble the document outline from the node table.
@@ -625,14 +606,13 @@ fn enclosing_class(unit: &Unit<'_>, id: NodeId) -> Option<Option<String>> {
 /// Parentage comes from the table, so this walks no syntax: an entry finds its
 /// outline parent by following node parents until one of them is an entry too.
 fn build_symbols(unit: &Unit<'_>, index: &DocumentIndex<'_>) -> Vec<DocumentSymbol> {
-    let content = index.content;
     let mut ids = Vec::new();
     let mut symbols = Vec::new();
     let mut of_node = HashMap::new();
 
     for (id, node) in unit.nodes() {
         let kind = node.kind();
-        let Some(symbol_kind) = symbol_kind(&kind, content) else {
+        let Some(symbol_kind) = symbol_kind(&kind, unit) else {
             continue;
         };
         let (Some(name), Some(span)) = (node.definition(), node.span()) else {
@@ -647,7 +627,7 @@ fn build_symbols(unit: &Unit<'_>, index: &DocumentIndex<'_>) -> Vec<DocumentSymb
         of_node.insert(id, ids.len());
         ids.push(id);
         symbols.push(Some(DocumentSymbol {
-            name: span_text(content, &name).to_owned(),
+            name: unit.text(name).to_owned(),
             detail: None,
             kind: symbol_kind,
             tags: None,
@@ -788,20 +768,20 @@ impl Document {
         &self,
         analyzed: &Analyzed,
         offset: usize,
-        reference: Option<source::Span>,
-    ) -> Option<(source::Span, Vec<String>)> {
-        let node = analyzed
-            .analysis
-            .at(analyzed.unit, offset.try_into().ok()?)?;
+        reference: Option<diag::Span>,
+    ) -> Option<(diag::Span, Vec<String>)> {
+        let node = analyzed.analysis.at(analyzed.unit, self.pos(offset)?)?;
         let span = node.span();
-        let named = (reference == Some(span))
-            .then(|| {
-                self.unit
-                    .source()
-                    .get(span.start as usize..span.end as usize)
-            })
-            .flatten();
+        let named = (reference == Some(span)).then(|| self.unit.text(span));
         Some((span, label(node, named)?))
+    }
+
+    /// The position of the byte `offset` of the source
+    fn pos(&self, offset: usize) -> Option<diag::Pos> {
+        let source = self.unit.source();
+        source
+            .is_char_boundary(offset)
+            .then(|| self.unit.locate(offset..offset).start())
     }
 
     /// The declaration named by the token under `pos`, if any.
@@ -826,26 +806,23 @@ impl Document {
         reference: Option<NodeId>,
     ) -> (Vec<Target<'a>>, Option<u32>) {
         let modules = &analyzed.modules;
-        let node = offset
-            .try_into()
-            .ok()
-            .and_then(|offset| analyzed.analysis.at(analyzed.unit, offset));
+        let node = self
+            .pos(offset)
+            .and_then(|pos| analyzed.analysis.at(analyzed.unit, pos));
         let chosen = node.and_then(chosen);
         let found = match reference {
             Some(id) => {
-                let content = self.unit.source();
+                let unit = &self.unit;
                 let root = |module: &str| {
                     let module = modules.get(module)?;
                     Some(Target::Source(module, module.unit.root()?))
                 };
                 let target = match self.unit.node(id).map(|node| node.kind()) {
-                    Some(Kind::ImportModule { module, .. }) => root(span_text(content, &module)),
+                    Some(Kind::ImportModule { module, .. }) => root(unit.text(module)),
                     Some(Kind::PreludeModule { module, .. }) => root(module),
-                    Some(Kind::ImportItem { module, item, .. }) => lookup::item(
-                        modules,
-                        span_text(content, &module),
-                        span_text(content, &item),
-                    ),
+                    Some(Kind::ImportItem { module, item, .. }) => {
+                        lookup::item(modules, unit.text(module), unit.text(item))
+                    }
                     Some(Kind::PreludeItem { module, item, .. }) => {
                         lookup::item(modules, module, item)
                     }
@@ -891,10 +868,10 @@ fn node_targets<'a>(modules: &'a Modules, node: typeck::Node<'_>) -> Vec<Target<
 /// judged at its member, and a function call at the whole call, which starts
 /// where its callee does. A union receiver's call reaches several.
 fn chosen(node: typeck::Node<'_>) -> Option<u32> {
-    let start = node.span().start;
+    let start = node.span().start();
     let callees = node
         .ancestors()
-        .take_while(|ancestor| ancestor.span().start == start)
+        .take_while(|ancestor| ancestor.span().start() == start)
         .map(|ancestor| {
             let callees = ancestor.judgments();
             callees
@@ -956,7 +933,7 @@ fn target_hover(target: &Target<'_>, chosen: Option<u32>, own: Option<&str>) -> 
                         prose: unit
                             .node(id)?
                             .doc()
-                            .map(|span| normalize_doc(unit.source(), &span))
+                            .map(|span| normalize_doc(unit, span))
                             .unwrap_or_default(),
                         shape: Shape::Other,
                     });
@@ -966,7 +943,7 @@ fn target_hover(target: &Target<'_>, chosen: Option<u32>, own: Option<&str>) -> 
                 if described.prose.is_empty()
                     && let Some(span) = unit.node(implementation)?.doc()
                 {
-                    described.prose = normalize_doc(unit.source(), &span);
+                    described.prose = normalize_doc(unit, span);
                 }
                 Some(described)
             });
@@ -1538,7 +1515,8 @@ fn relate_checked(
         }
     };
     let path = check.path(unit);
-    let (start, end) = (span.span().start(), span.span().end());
+    // Without the unit's text, the end is only known on the start's line
+    let (start, len) = (span.span().start(), span.span().len());
     match path
         .is_absolute()
         .then(|| Uri::from_file_path(path))
@@ -1549,7 +1527,7 @@ fn relate_checked(
                 uri,
                 Range::new(
                     Position::new(start.line_offset(), start.column_offset()),
-                    Position::new(end.line_offset(), end.column_offset()),
+                    Position::new(start.line_offset(), start.column_offset() + len),
                 ),
             ),
             message,
@@ -1681,8 +1659,23 @@ impl<'a> DocumentIndex<'a> {
         )
     }
 
+    /// Where `span` lies in the content, in bytes. A clamped span stops short.
+    fn byte_range(&self, span: diag::Span) -> ops::Range<usize> {
+        let start = span.start();
+        let line = (self.line_starts.get(start.line_offset() as usize))
+            .map_or(self.content.len(), |&line| line);
+        let advance = |from: usize, count: u32| {
+            (self.content[from..].char_indices())
+                .nth(count as usize)
+                .map_or(self.content.len(), |(offset, _)| from + offset)
+        };
+        let begin = advance(line, start.column_offset());
+        begin..advance(begin, span.len())
+    }
+
     fn range_from_span(&self, span: &diag::Span) -> Range {
-        self.range_from_offsets(span.start().byte_offset(), span.end().byte_offset())
+        let range = self.byte_range(*span);
+        self.range_from_offsets(range.start, range.end)
     }
 
     fn token_length_from_offsets(&self, start: usize, end: usize) -> u32 {
@@ -1698,7 +1691,8 @@ impl<'a> DocumentIndex<'a> {
     }
 
     fn token_length(&self, span: &diag::Span) -> u32 {
-        self.token_length_from_offsets(span.start().byte_offset(), span.end().byte_offset())
+        let range = self.byte_range(*span);
+        self.token_length_from_offsets(range.start, range.end)
     }
 }
 
@@ -1830,7 +1824,7 @@ fn project(
 
     let content = unit.source();
     let index = DocumentIndex::new(content, encoding.clone());
-    let hovers = build_hovers(&unit, content);
+    let hovers = build_hovers(&unit);
     for diag in unit.diagnostics() {
         let relate = |_, span: &diag::SourceSpan, message: String| DiagnosticRelatedInformation {
             location: Location::new(uri.clone(), index.range_from_span(&span.span())),
@@ -1858,9 +1852,7 @@ fn project(
         &mut |leaf, span: diag::Span, node: Option<NodeId>, context: Context| {
             // Punctuation and sigils have no semantic token type, so
             // they are left to the client's own syntax highlighting.
-            if span.start().byte_offset() != span.end().byte_offset()
-                && !matches!(leaf, Token::Delim | Token::Sigil)
-            {
+            if !span.is_empty() && !matches!(leaf, Token::Delim | Token::Sigil) {
                 let doc_node = node.and_then(|id| unit.node(id));
                 let kind = doc_node.map(|node| node.kind());
                 let (token_type, mut modifiers) = classify_token(leaf, kind.as_ref(), context);
@@ -1868,7 +1860,7 @@ fn project(
                     let range = index.range_from_span(&span);
                     match doc_node.and_then(|node| node.definition()) {
                         Some(def) => {
-                            modifiers |= declaration_modifiers(&span, &def, id, &statics);
+                            modifiers |= declaration_modifiers(span, def, id, &statics);
                             refs.push((range, id));
                             decls
                                 .entry(id)
@@ -1912,7 +1904,7 @@ fn project(
     let mut pre_line = 0;
     let mut pre_start = 0;
 
-    tokens.sort_by_key(|(_, _, range)| range.start().byte_offset());
+    tokens.sort_by_key(|(_, _, span)| span.start());
     refs.sort_by_key(|(range, _)| range.start);
     for decl in decls.values_mut() {
         decl.uses.sort_by_key(|range| range.start);
@@ -1922,7 +1914,7 @@ fn project(
     let tokens = tokens
         .into_iter()
         .map(|(token_type, modifiers, range)| {
-            let start = index.position_from_offset(range.start().byte_offset());
+            let start = index.position_from_offset(index.byte_range(range).start);
             let delta_line = start.line - pre_line;
             let token = SemanticToken {
                 delta_line,
@@ -2319,10 +2311,9 @@ impl LanguageServer for Backend {
         let referenced = reference.and_then(|(range, ..)| {
             let start = index.offset_from_position(&range.start)?;
             let end = index.offset_from_position(&range.end)?;
-            Some(source::Span {
-                start: start.try_into().ok()?,
-                end: end.try_into().ok()?,
-            })
+            let source = document.unit.source();
+            (source.is_char_boundary(start) && source.is_char_boundary(end) && start <= end)
+                .then(|| document.unit.locate(start..end))
         });
         let analyzed = document.analyzed();
         // A module has no node of its own, so the check's is the path through
@@ -2377,9 +2368,7 @@ impl LanguageServer for Backend {
             },
             Some((span, lines)) => {
                 let typed = format!("```dolang\n{}\n```", lines.join("\n"));
-                let range = reference.unwrap_or_else(|| {
-                    index.range_from_offsets(span.start as usize, span.end as usize)
-                });
+                let range = reference.unwrap_or_else(|| index.range_from_span(&span));
                 match render(!signatures) {
                     Some(markdown) if signatures => (range, markdown),
                     Some(markdown) => (range, format!("{typed}\n\n---\n\n{markdown}")),

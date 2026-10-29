@@ -4,16 +4,19 @@ use std::{
     path::Path,
 };
 
+use bitvec::slice::BitSlice;
+
 use super::{HEADER, Header, Invalid, wire};
 use crate::{
     Config, ErrorKind, Mode, Unit,
-    source::Span,
+    diag::Span,
     typeck::{
         Builder, Typelib, UnitId,
         elab::{
             Bases, BinderRef, DeclNode, Facts, Referent, Shard, Tables, Target, Value,
             surface::{Member, Name, ParamKind, StrId, TypeExpr},
         },
+        report::resolve_span,
         r#type::Variance,
     },
 };
@@ -247,7 +250,7 @@ pub class C
 fn underived_values_are_written() {
     let bytes = typelib();
     let (mut shard, facts) = read(&bytes).unwrap();
-    let elsewhere = Span { start: 0, end: 1 };
+    let elsewhere = Span::new(0, 0, 1);
     let (double, _) = (shard.decls.iter().enumerate())
         .find(|(_, decl)| matches!(decl.node, DeclNode::Defs(_)))
         .expect("the module declares a function");
@@ -538,7 +541,7 @@ fn exported_variables() {
     stray.values.insert(
         0,
         Value {
-            span: Span::default(),
+            span: Span::new(0, 0, 0),
             annot: None,
         },
     );
@@ -749,22 +752,38 @@ fn omits_reference_spans_and_spellings() {
 
 #[test]
 fn locates_kept_spans() {
-    let unit = compile(MODULE, Mode::Module { name: "lib".into() });
-    let bytes = write(&unit, &[]).unwrap();
+    // Kept spans after non-ASCII text and a tab on their line, and on later lines
+    let source = "pub def f :key @ Str = \"é\tü\" *rest @ Int -> Int\n  1\n\
+                  pub @let A[T] = Int # ü\npub @let B = Int\n";
+    let unit = compile(source, Mode::Module { name: "lib".into() });
+    let std = compile("", Mode::Module { name: "std".into() });
+    let mut builder = Builder::new();
+    builder.typelibs(true);
+    let id = builder.unit(&unit).unwrap();
+    builder.unit(&std).unwrap();
+    let (check, tables) = builder.check_tables();
+    let mut bytes = Vec::new();
+    check.typelib(id, &mut bytes).unwrap();
+    let located = |shard: &Shard<'_>, base: &Bases, kept: &BitSlice, facts: &Facts| {
+        let (_, spans) = wire::Encode::new(shard, base, kept, facts, None).content();
+        (spans.into_iter())
+            .filter(|&span| span != Span::INVALID)
+            .map(|span| resolve_span(id, span).span())
+            .collect::<Vec<_>>()
+    };
+    let shard = &tables.shards[id.index()];
+    let kept = shard.kept.as_ref().unwrap();
+    let from_source = located(shard, tables.base(id), kept, &tables.facts[id.index()]);
     let (shard, facts) = read(&bytes).unwrap();
-    // Declarations, binders, members and parameters, among others
     let (kept, _) = shard.interface();
-    let (_, spans) = wire::Encode::new(&shard, &Bases::local(), &kept, &facts, None).content();
-    assert!(spans.len() > shard.decls.len());
-    for span in spans {
-        for offset in [span.start, span.end] {
-            assert_eq!(
-                shard.info.coord(offset),
-                unit.file.coord(offset),
-                "{span:?} is located"
-            );
-        }
-    }
+    let from_typelib = located(&shard, &Bases::local(), &kept, &facts);
+    // Declarations, binders, members and parameters, among others
+    assert!(from_source.len() > shard.decls.len());
+    assert_eq!(from_typelib, from_source);
+    let rest = from_source
+        .iter()
+        .find(|span| span.start().column_offset() == 30);
+    assert_eq!(rest.map(|span| span.len()), Some(4), "{from_source:?}");
 }
 
 #[test]

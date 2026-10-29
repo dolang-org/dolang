@@ -90,7 +90,7 @@ fn source(db: &mut Database, kind: DeclKind, name: &str) -> DeclSource {
         name,
         span: UnitSpan {
             unit,
-            span: (0u32..10).into(),
+            span: Span::new(0, 0, 10),
         },
         is_final: false,
         is_mixable: false,
@@ -276,7 +276,7 @@ fn symbols_are_interned_independently_of_units() {
             name: Some(key),
             span: UnitSpan {
                 unit,
-                span: (2u32..7).into(),
+                span: Span::new(0, 2, 5),
             },
             is_final: false,
             is_mixable: false,

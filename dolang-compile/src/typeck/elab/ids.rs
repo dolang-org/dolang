@@ -16,7 +16,7 @@ use super::{
     },
 };
 use crate::{
-    source::Span,
+    diag::Span,
     typeck::r#type::{DeclId, UnitId, Variance},
 };
 

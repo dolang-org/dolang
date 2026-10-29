@@ -404,7 +404,7 @@ def outer[T, U @ Array[T]] _u @ U
                 .find(|&id| {
                     let decl = check.tables.decl(id);
                     decl.name
-                        .is_some_and(|name| check.tables.text(decl.unit, name.span) == "Capture")
+                        .is_some_and(|name| check.tables.name(decl.unit, name) == "Capture")
                 })
                 .unwrap();
             let lifted = check.tables.lifted(id).unwrap();

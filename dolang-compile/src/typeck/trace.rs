@@ -3,23 +3,47 @@
 
 use dolang_util::{debug_enabled, debug_eprintln};
 
-use super::{Analysis, Role, Style, elab::Tables, r#type::UnitId};
-use crate::source::Span;
+use super::{
+    Analysis, Role, Style,
+    elab::{Tables, UnitInfo},
+    r#type::UnitId,
+};
+use crate::{diag, source};
 
 impl Tables<'_> {
     /// A span of `unit` as `path:line:column`
-    pub(crate) fn locate(&self, unit: UnitId, span: Span) -> String {
+    pub(crate) fn locate(&self, unit: UnitId, span: impl Locate) -> String {
         let info = self.info(unit);
-        if span == Span::INVALID {
+        let Some(span) = span.locate(info) else {
             return format!("{}:?", info.path.display());
-        }
-        let start = super::report::resolve_span(unit, info, span).span().start();
+        };
+        let start = span.start();
         format!(
             "{}:{}:{}",
             info.path.display(),
             start.line_number(),
             start.column_number()
         )
+    }
+}
+
+/// A span traces locate: the surface's, or an offset into the source where it is
+/// sliced
+pub(crate) trait Locate {
+    /// Where it is in a unit, if anywhere
+    fn locate(self, info: &UnitInfo<'_>) -> Option<diag::Span>;
+}
+
+impl Locate for diag::Span {
+    fn locate(self, _: &UnitInfo<'_>) -> Option<diag::Span> {
+        (self != diag::Span::INVALID).then_some(self)
+    }
+}
+
+impl Locate for source::Span {
+    fn locate(self, info: &UnitInfo<'_>) -> Option<diag::Span> {
+        let source = info.source.filter(|_| self != source::Span::INVALID)?;
+        Some(source.file.locate(self))
     }
 }
 

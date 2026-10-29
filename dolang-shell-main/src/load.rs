@@ -34,11 +34,11 @@ pub(crate) async fn compile_config<'v, 's>(
             break;
         }
     }
-    let result = unit.emit(&mut out);
     let disp = path.display().to_string();
     for diag in &diagnostics {
-        dolang_ext_shell::print_compile_diag_stderr(strand, &disp, source, diag).await?;
+        dolang_ext_shell::print_compile_diag_stderr(strand, &disp, &unit, diag).await?;
     }
+    let result = unit.emit(&mut out);
     if let Err(error) = result {
         return Err(Error::compile(strand, error));
     }

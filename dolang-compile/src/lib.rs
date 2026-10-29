@@ -28,7 +28,7 @@ use std::{
     io::{self, Write},
     mem,
     num::NonZero,
-    ops::ControlFlow,
+    ops::{ControlFlow, Range},
     path::Path,
     slice,
 };
@@ -336,14 +336,6 @@ impl visit::Visit for CallAdapter<'_, '_, '_> {
     }
 }
 
-fn convert_span(file: &File, span: source::Span) -> diag::Span {
-    let coords = file.coord_span(span);
-    diag::Span::new(
-        diag::Pos::new(span.start as usize, coords.start.line, coords.start.column),
-        diag::Pos::new(span.end as usize, coords.end.line, coords.end.column),
-    )
-}
-
 fn public_node_id(id: doc::Id) -> NodeId {
     NodeId(id.get())
 }
@@ -388,7 +380,7 @@ impl<'a> Node<'a> {
     ///
     /// Order siblings by this; nothing depends on the order nodes are yielded.
     pub fn span(&self) -> Option<diag::Span> {
-        self.node.span.map(|span| convert_span(self.file, span))
+        self.node.span.map(|span| self.file.locate(span))
     }
 
     /// The name this node declares, where it declares one.
@@ -400,7 +392,7 @@ impl<'a> Node<'a> {
         self.node
             .kind
             .definition()
-            .map(|span| convert_span(self.file, span))
+            .map(|span| self.file.locate(span))
     }
 
     /// The doc comment block attached to this node, if any.
@@ -411,12 +403,12 @@ impl<'a> Node<'a> {
     /// covers the block as written — `#` markers, indentation and all — for the
     /// consumer to render as it sees fit.
     pub fn doc(&self) -> Option<diag::Span> {
-        self.node.doc.map(|span| convert_span(self.file, span))
+        self.node.doc.map(|span| self.file.locate(span))
     }
 
     /// What this node is, with whatever else varies by that.
     pub fn kind(&self) -> Kind<'a> {
-        let span = |span: &source::Span| convert_span(self.file, *span);
+        let span = |span: &source::Span| self.file.locate(*span);
         match &self.node.kind {
             doc::Kind::Root => Kind::Root,
             doc::Kind::Class {
@@ -1039,7 +1031,7 @@ impl VisitAdapter<'_, '_> {
         node: Option<doc::Id>,
         context: Context,
     ) -> ControlFlow<Infallible> {
-        let diag_span = convert_span(self.file, span);
+        let diag_span = self.file.locate(span);
         let node = node.map(public_node_id);
         self.emit.emit(token, diag_span, node, context);
         ControlFlow::Continue(())
@@ -1530,6 +1522,42 @@ impl Unit<'_> {
         self.file.content()
     }
 
+    /// Where a span of this unit lies in [`source`](Unit::source), in bytes.
+    ///
+    /// A span whose column or length was clamped stops short.
+    pub fn byte_range(&self, span: diag::Span) -> Range<usize> {
+        self.file.byte_range(span)
+    }
+
+    /// The span of the bytes `range` of [`source`](Unit::source), the inverse of
+    /// [`byte_range`](Unit::byte_range).
+    ///
+    /// # Panics
+    ///
+    /// If `range` is out of bounds or doesn't fall on character boundaries.
+    pub fn locate(&self, range: Range<usize>) -> diag::Span {
+        let content = self.file.content();
+        assert!(
+            content.is_char_boundary(range.start) && content.is_char_boundary(range.end),
+            "a range of the source on character boundaries"
+        );
+        assert!(range.start <= range.end, "an ordered range");
+        self.file.locate(source::Span {
+            start: range.start as source::Offset,
+            end: range.end as source::Offset,
+        })
+    }
+
+    /// The text of a span of this unit.
+    pub fn text(&self, span: diag::Span) -> &str {
+        &self.file.content()[self.file.byte_range(span)]
+    }
+
+    /// Where a span of this unit ends (exclusive).
+    pub fn end(&self, span: diag::Span) -> diag::Pos {
+        self.file.end(span)
+    }
+
     /// Whether the unit is checked strictly: as [`Config::strict`] set, or else as
     /// its directive says.
     pub fn strict(&self) -> bool {
@@ -1631,13 +1659,10 @@ impl Unit<'_> {
             let slice = content.trim_end();
             tokens.emit(
                 Token::Comment,
-                convert_span(
-                    &self.file,
-                    source::Span {
-                        start: comment.start,
-                        end: comment.start + slice.len() as u32,
-                    },
-                ),
+                self.file.locate(source::Span {
+                    start: comment.start,
+                    end: comment.start + slice.len() as u32,
+                }),
                 None,
                 ast::Context::None,
             );
