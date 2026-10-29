@@ -264,8 +264,14 @@ mod tests {
 
     use bytes::{Bytes, BytesMut};
     use nix::fcntl::{FcntlArg, FdFlag, fcntl};
+    use tokio::sync::Mutex;
 
     use crate::transport::{Receiver, RecvFrame, SendFrame, Sender, unix};
+
+    /// Serializes the tests in this module: they all contend on the
+    /// process-wide `SPAWN_GUARD`, and the test harness runs tests on
+    /// parallel threads in one process.
+    static TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
     async fn transfer_one_fd() -> std::os::fd::OwnedFd {
         let (left, right) = UnixStream::pair().unwrap();
@@ -321,6 +327,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn received_descriptors_stay_close_on_exec_under_spawn_pressure() {
+        let _serial = TEST_LOCK.lock().await;
         let _pressure = SpawnPressure::start(4);
         for _ in 0..200 {
             let received = transfer_one_fd().await;
@@ -331,6 +338,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn spawned_children_do_not_inherit_received_descriptors() {
+        let _serial = TEST_LOCK.lock().await;
         let _pressure = SpawnPressure::start(4);
         for _ in 0..50 {
             let received = transfer_one_fd().await;
@@ -353,10 +361,10 @@ mod tests {
 
     #[test]
     fn lock_is_usable_in_both_branches_after_fork() {
-        // SAFETY: forking a single-threaded-at-this-point test process and
-        // immediately doing nothing but a trylock/exit in the child is
-        // safe; no allocation or non-async-signal-safe work happens
-        // between fork and exit in the child branch.
+        let _serial = TEST_LOCK.blocking_lock();
+        // SAFETY: the child does nothing but a trylock/exit, so no
+        // allocation or non-async-signal-safe work happens between fork
+        // and exit even though other harness threads may exist.
         let pid = unsafe { libc::fork() };
         assert!(pid >= 0, "fork failed");
         if pid == 0 {
@@ -369,8 +377,19 @@ mod tests {
             unsafe { libc::_exit(if rc == 0 { 0 } else { 1 }) };
         }
         let mut status = 0;
-        // SAFETY: waiting on the pid we just forked.
-        unsafe { libc::waitpid(pid, &mut status, 0) };
+        loop {
+            // SAFETY: waiting on the pid we just forked.
+            let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+            if waited == pid {
+                break;
+            }
+            let err = std::io::Error::last_os_error();
+            assert_eq!(
+                err.kind(),
+                std::io::ErrorKind::Interrupted,
+                "waitpid failed: {err}"
+            );
+        }
         assert!(libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0);
 
         // Parent: the lock must also be usable again immediately.
