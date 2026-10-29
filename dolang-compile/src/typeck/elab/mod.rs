@@ -42,8 +42,9 @@ use surface::{
 
 pub(crate) use super::report::{Diag, UnitDiag};
 pub(crate) use capture::captures;
-pub(crate) use collect::{Export, Harvest, Link, Module, Value, find_export, harvest, link};
+pub(crate) use collect::{Export, Link, Module, Value, collect, find_export, link};
 pub(crate) use ids::Ids;
+pub(crate) use interface::Kept;
 pub(crate) use judge::Scoped;
 pub(crate) use kind::{Fill, kinds};
 pub(crate) use overrides::overrides;
@@ -59,7 +60,7 @@ pub(crate) const PIPES: [&str; 2] = ["PipeSender", "PipeReceiver"];
 /// What collection learns of the checked units, and what elaboration concludes
 /// about their declarations.
 ///
-/// Each unit has a [`Shard`] of what linking found in it and the [`Facts`]
+/// Each unit has a [`Shard`] of its declarations and names, and the [`Facts`]
 /// elaboration concludes about its declarations. A unit's declarations, sites and
 /// links are each numbered in one contiguous range, so an ID's unit is found by a
 /// binary search over the ranges' bases. Only what crosses units is global.
@@ -81,16 +82,27 @@ pub(crate) struct Tables<'u> {
     pub(crate) pipes: FxHashMap<DeclId, Option<DeclId>>,
 }
 
-/// What linking found in a unit
+/// What the checker knows of a unit's declarations and the names written in them.
+///
+/// Collection fills a shard from a unit's source, and a typelib decodes to one. It
+/// is local until it is linked: its unit is unit 0, and its declarations, sites and
+/// links are numbered from 0. Linking moves it to its unit and ranges, and fills
+/// what only linking can tell: `referents`, `providers`, `sig_decls` and
+/// `sig_owners`, which are empty until then.
+#[derive(Clone)]
 pub(crate) struct Shard<'u> {
     pub(crate) info: UnitInfo<'u>,
-    /// The unit's string table, by [`StrId`]
+    /// The unit's text, by [`StrId`]: each string once. Most borrow the unit's
+    /// source or typelib; a constant type's string is folded from it.
     pub(crate) strings: Vec<Cow<'u, str>>,
     /// The unit's declarations, from its base [`DeclId`]
     pub(crate) decls: Vec<Decl<'u>>,
     /// Every type expression written in a declaration or annotation of the unit,
     /// outermost only, from its base [`SiteId`]
     pub(crate) sites: Vec<Site>,
+    /// What the unit's names refer to as far as the unit can tell, each once, from
+    /// its base [`LinkId`]
+    pub(crate) links: Vec<Link>,
     /// What each of the unit's links refers to, from its base [`LinkId`]. Imports
     /// and renames are chased away; aliases are not, so `Pair[Int]` refers to the
     /// `Pair` alias.
@@ -98,14 +110,16 @@ pub(crate) struct Shard<'u> {
     /// The link of each name a unit with source writes, by the span of its head.
     /// Only lowering and the analysis, which read syntax, look a name up.
     pub(crate) refs: FxHashMap<Span, LinkId>,
+    /// The modules the unit imports, and the prelude modules it uses, by
+    /// [`ModuleId`]
+    pub(crate) modules: Vec<Module>,
     /// The unit providing each module of the unit's module table, by [`ModuleId`],
     /// or `None` for a module no unit provides
-    pub(crate) modules: Vec<Option<UnitId>>,
+    pub(crate) providers: Vec<Option<UnitId>>,
     /// The unit's exports, sorted by name. Empty for a unit that is not a module.
     pub(crate) exports: Vec<Export>,
-    /// Each exported variable, by the span of its name, with the site of its
-    /// annotation if it has one
-    pub(crate) values: FxHashMap<Span, Option<SiteId>>,
+    /// Each exported variable, in the order of the spans of their names
+    pub(crate) values: Vec<Value>,
     /// The database declaration of each def or method signature. A function's own
     /// ID holds its implementation, or its first signature when it has none.
     pub(crate) sig_decls: FxHashMap<(DeclId, usize), DeclId>,
@@ -114,8 +128,21 @@ pub(crate) struct Shard<'u> {
     pub(crate) sig_owners: Vec<(DeclId, usize)>,
 }
 
-/// What elaboration concludes about one unit's declarations
-#[derive(Default)]
+impl Shard<'_> {
+    /// An exported variable, by the span of its name
+    pub(crate) fn value(&self, span: Span) -> Option<&Value> {
+        self.values
+            .binary_search_by_key(&(span.start, span.end), |value| {
+                (value.span.start, value.span.end)
+            })
+            .ok()
+            .map(|index| &self.values[index])
+    }
+}
+
+/// What elaboration concludes about one unit's declarations. A unit's facts start
+/// empty, or with what its typelib records.
+#[derive(Clone, Default)]
 pub(crate) struct Facts {
     /// The underlying head of each transparent alias
     pub(crate) aliases: FxHashMap<DeclId, Head>,
@@ -152,12 +179,25 @@ pub(crate) struct Bases {
     pub(crate) links: usize,
 }
 
-impl<'u> Tables<'u> {
-    /// The tables of linked shards, whose bases are in the order they were linked
-    pub(crate) fn new(shards: Vec<Shard<'u>>, bases: Vec<Bases>) -> Self {
+impl Bases {
+    /// The bases of a shard that is not yet linked
+    pub(crate) fn local() -> Self {
         Self {
-            facts: shards.iter().map(|_| Facts::default()).collect(),
+            unit: local(),
+            decls: 0,
+            sites: 0,
+            links: 0,
+        }
+    }
+}
+
+impl<'u> Tables<'u> {
+    /// The tables of linked shards and their facts, whose bases are in the order
+    /// they were linked
+    pub(crate) fn new(shards: Vec<Shard<'u>>, facts: Vec<Facts>, bases: Vec<Bases>) -> Self {
+        Self {
             shards,
+            facts,
             bases,
             designated: FxHashMap::default(),
             nominees: FxHashMap::default(),
@@ -262,7 +302,7 @@ impl<'u> Tables<'u> {
     }
 
     /// The bases of a unit
-    fn base(&self, unit: UnitId) -> &Bases {
+    pub(crate) fn base(&self, unit: UnitId) -> &Bases {
         self.bases
             .iter()
             .find(|bases| bases.unit == unit)
@@ -447,7 +487,7 @@ impl<'u> Tables<'u> {
     }
 }
 
-/// The unit of a harvest that is not yet linked
+/// The unit of a shard that is not yet linked
 pub(crate) fn local() -> UnitId {
     UnitId::from_index(0)
 }
@@ -513,7 +553,7 @@ pub(crate) struct BinderRef {
 /// A type expression written in source, and how it is used
 #[derive(Clone)]
 pub(crate) struct Site {
-    /// A harvest's own unit, which a typelib leaves implicit
+    /// The shard's own unit, which a typelib leaves implicit
     pub(crate) unit: UnitId,
     pub(crate) ty: TypeExpr,
     pub(crate) role: Role,
@@ -610,6 +650,7 @@ pub(crate) enum Ambient {
 }
 
 /// A def or method signature, completed with the defaults for what it omits
+#[derive(Clone)]
 pub(crate) struct Sig {
     /// Each parameter's type, by its index in the signature's parameters
     pub(crate) params: Vec<ParamTy>,
@@ -672,7 +713,7 @@ pub(crate) enum Designated {
 /// A source declaration
 #[derive(Clone)]
 pub(crate) struct Decl<'u> {
-    /// A harvest's own unit, which a typelib leaves implicit
+    /// The shard's own unit, which a typelib leaves implicit
     pub(crate) unit: UnitId,
     pub(crate) kind: DeclKind,
     /// The declared name; absent for a closure
@@ -761,7 +802,7 @@ pub(crate) enum Referent {
     Value(UnitSpan),
     /// Nothing, for a reason already diagnosed
     Error,
-    /// A checked module, reached by a name that is not dotted, which a harvest
+    /// A checked module, reached by a name that is not dotted, which a shard
     /// names only once linked
     Module(UnitId),
 }

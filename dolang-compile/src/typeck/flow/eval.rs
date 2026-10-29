@@ -338,7 +338,7 @@ impl Flow<'_, '_> {
             match *target {
                 Target::Import { module, item } => {
                     name = self.tables.str(unit, item);
-                    unit = self.tables.shard(unit).modules[module.index()]?;
+                    unit = self.tables.shard(unit).providers[module.index()]?;
                 }
                 _ => return Some(target),
             }
@@ -349,8 +349,9 @@ impl Flow<'_, '_> {
     /// An exported variable's annotation, written at the top level, so with no
     /// binders to stand rigids in for
     fn variable(&self, value: &UnitSpan) -> TypeId {
-        match self.tables.shard(value.unit).values.get(&value.span) {
-            Some(&Some(site)) => {
+        let shard = self.tables.shard(value.unit);
+        match shard.value(value.span).and_then(|value| value.annot) {
+            Some(site) => {
                 let site = self.tables.site(site);
                 site.interned.get().expect("population interns each site")
             }

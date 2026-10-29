@@ -6,7 +6,7 @@ use std::fmt::{self, Write};
 use rustc_hash::FxHashSet;
 
 use super::{
-    Decl, DeclNode, Harvest, Link, Referent, Target,
+    Bases, Decl, DeclNode, Link, Referent, Shard, Target,
     surface::{Binder, Member, ModuleId, Name, Ref, Signature, SiteId, StrId, TypeExpr},
 };
 use crate::{
@@ -18,12 +18,12 @@ use crate::{
     },
 };
 
-/// What a harvest's surface keeps
+/// What a shard's surface keeps
 pub(crate) struct Kept {
-    /// Whether each declaration is kept
+    /// Whether each declaration is kept, by its offset in the unit
     pub(crate) decls: Vec<bool>,
-    /// The fields left out, by class and member index
-    pub(crate) fields: FxHashSet<(DeclId, usize)>,
+    /// The fields left out, by their class's offset in the unit and member index
+    pub(crate) fields: FxHashSet<(usize, usize)>,
 }
 
 /// A private declaration named in the public interface
@@ -44,21 +44,21 @@ pub(crate) enum User {
     Value(Span),
 }
 
-impl Harvest<'_> {
-    /// What the harvest's surface keeps, and the private declarations its interface
-    /// names.
+impl Shard<'_> {
+    /// What the shard's surface keeps, and the private declarations its interface
+    /// names. The shard's IDs start at `base`.
     ///
     /// The surface keeps the module's exports and their public and special members,
     /// and any private field whose type is a direct `Phantom` application, since it
     /// counts towards its class's variance. A kept declaration's binders, signatures,
     /// supertypes and kept fields' types are its interface, as is an exported
     /// variable's annotation.
-    pub(crate) fn interface(&self) -> (Kept, Vec<Leak>) {
-        let exported: FxHashSet<DeclId> = self
+    pub(crate) fn interface(&self, base: &Bases) -> (Kept, Vec<Leak>) {
+        let exported: FxHashSet<usize> = self
             .exports
             .iter()
             .filter_map(|export| match export.target {
-                Target::Local(Referent::Decl(decl)) => Some(decl),
+                Target::Local(Referent::Decl(decl)) => Some(decl.index() - base.decls),
                 _ => None,
             })
             .collect();
@@ -71,10 +71,11 @@ impl Harvest<'_> {
             // An outer declaration is allocated first
             let keep = decl.kind != DeclKind::Closure
                 && match decl.outer {
-                    None => exported.contains(&DeclId::from_index(index)),
+                    None => exported.contains(&index),
                     Some((outer, _)) => {
-                        kept.decls[outer.index()]
-                            && matches!(self.decls[outer.index()].node, DeclNode::Class(_))
+                        let outer = outer.index() - base.decls;
+                        kept.decls[outer]
+                            && matches!(self.decls[outer].node, DeclNode::Class(_))
                             && match &decl.node {
                                 // Overload signatures share their implementation's
                                 // visibility
@@ -93,7 +94,8 @@ impl Harvest<'_> {
         }
 
         let mut walk = Walk {
-            harvest: self,
+            shard: self,
+            base,
             kept: &kept.decls,
             leaks: Vec::new(),
         };
@@ -102,7 +104,7 @@ impl Harvest<'_> {
             if !kept.decls[index] {
                 continue;
             }
-            let id = DeclId::from_index(index);
+            let id = DeclId::from_index(base.decls + index);
             let user = User::Decl(id);
             match &decl.node {
                 DeclNode::Class(class) => {
@@ -123,11 +125,11 @@ impl Harvest<'_> {
                                 walk.site(annot, &User::Field(id, name));
                             }
                         } else if let Some(annot) = field.annot
-                            && walk.phantom(&self.sites[annot.index()].ty)
+                            && walk.phantom(&self.sites[annot.index() - base.sites].ty)
                         {
                             walk.site(annot, &user);
                         } else {
-                            dropped.insert((id, member));
+                            dropped.insert((index, member));
                         }
                     }
                 }
@@ -165,7 +167,8 @@ impl Harvest<'_> {
 
 /// Finds the private declarations an interface names
 struct Walk<'h, 'u> {
-    harvest: &'h Harvest<'u>,
+    shard: &'h Shard<'u>,
+    base: &'h Bases,
     kept: &'h [bool],
     leaks: Vec<Leak>,
 }
@@ -187,7 +190,7 @@ impl Walk<'_, '_> {
     }
 
     fn site(&mut self, site: SiteId, user: &User) {
-        self.ty(&self.harvest.sites[site.index()].ty, user);
+        self.ty(&self.shard.sites[site.index() - self.base.sites].ty, user);
     }
 
     fn ty(&mut self, ty: &TypeExpr, user: &User) {
@@ -195,11 +198,12 @@ impl Walk<'_, '_> {
     }
 
     fn link(&self, head: &Ref) -> Option<&Link> {
-        head.link.map(|link| &self.harvest.links[link.index()])
+        head.link
+            .map(|link| &self.shard.links[link.index() - self.base.links])
     }
 
     fn str(&self, id: StrId) -> &str {
-        &self.harvest.strings[id.index()]
+        &self.shard.strings[id.index()]
     }
 
     fn name(&mut self, head: &Ref, user: &User) {
@@ -208,8 +212,8 @@ impl Walk<'_, '_> {
         };
         // A name that isn't a type is diagnosed as such, and the surface erases it
         if let (Target::Local(Referent::Decl(decl)), None) = (link.base, link.item)
-            && !self.kept[decl.index()]
-            && is_type(self.harvest.decls[decl.index()].kind)
+            && !self.kept[decl.index() - self.base.decls]
+            && is_type(self.shard.decls[decl.index() - self.base.decls].kind)
         {
             self.leaks.push(Leak {
                 span: head.span,
@@ -231,19 +235,19 @@ impl Walk<'_, '_> {
         let Some(link) = self.link(head) else {
             return false;
         };
-        let harvest = self.harvest;
-        let module = |module: ModuleId| self.str(harvest.modules[module.index()].name);
+        let shard = self.shard;
+        let module = |module: ModuleId| self.str(shard.modules[module.index()].name);
         match (link.base, link.item) {
             (Target::Import { module: id, item }, None) | (Target::Module(id), Some(item)) => {
                 (module(id), self.str(item)) == ("std", "Phantom")
             }
             (Target::Local(Referent::Decl(decl)), None) => {
-                let decl = &harvest.decls[decl.index()];
-                harvest.info.module == Some("std")
+                let decl = &shard.decls[decl.index() - self.base.decls];
+                shard.info.module == Some("std")
                     && decl.outer.is_none()
                     && decl
                         .name
-                        .is_some_and(|name| harvest.strings[name.text.index()] == "Phantom")
+                        .is_some_and(|name| shard.strings[name.text.index()] == "Phantom")
             }
             _ => false,
         }
@@ -275,51 +279,50 @@ pub(crate) struct PrivateInInterface {
 }
 
 impl PrivateInInterface {
-    pub(crate) fn new(harvest: &Harvest<'_>, leak: &Leak) -> Self {
-        let name = |decl: DeclId| {
-            let decl = &harvest.decls[decl.index()];
-            decl.name
-                .map_or("", |name| &harvest.strings[name.text.index()])
+    /// The leak's report, for a shard whose IDs start at `base`
+    pub(crate) fn new(shard: &Shard<'_>, base: &Bases, leak: &Leak) -> Self {
+        let decl = |id: DeclId| &shard.decls[id.index() - base.decls];
+        let name = |id: DeclId| {
+            decl(id)
+                .name
+                .map_or("", |name| &shard.strings[name.text.index()])
         };
         let member = |class: DeclId, member: &str| format!("{}.{member}", name(class));
         let user = match leak.user {
-            User::Decl(decl) => match &harvest.decls[decl.index()] {
+            User::Decl(id) => match decl(id) {
                 Decl {
                     outer: Some((class, _)),
                     node: DeclNode::Methods(methods),
                     ..
                 } => {
                     let method = match methods[0].special {
-                        Some(_) => format!("({})", name(decl)),
-                        None => name(decl).to_owned(),
+                        Some(_) => format!("({})", name(id)),
+                        None => name(id).to_owned(),
                     };
                     format!("method `{}`", member(*class, &method))
                 }
                 _ => {
-                    let kind = kind_word(harvest.decls[decl.index()].kind);
-                    format!("{kind} `{}`", name(decl))
+                    let kind = kind_word(decl(id).kind);
+                    format!("{kind} `{}`", name(id))
                 }
             },
             User::Field(class, field) => {
-                let field = &harvest.strings[field.text.index()];
+                let field = &shard.strings[field.text.index()];
                 format!("field `{}`", member(class, field))
             }
             User::Value(span) => {
-                let export = harvest
+                let export = shard
                     .exports
                     .iter()
                     .find(|export| export.span == span)
                     .expect("an exported variable is exported");
-                format!(
-                    "exported variable `{}`",
-                    harvest.strings[export.name.index()]
-                )
+                format!("exported variable `{}`", shard.strings[export.name.index()])
             }
         };
         PrivateInInterface {
             span: leak.span,
             private: (
-                kind_word(harvest.decls[leak.private.index()].kind),
+                kind_word(decl(leak.private).kind),
                 name(leak.private).to_owned(),
             ),
             user,

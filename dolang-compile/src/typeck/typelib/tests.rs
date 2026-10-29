@@ -3,24 +3,23 @@ use std::{
     path::Path,
 };
 
-use super::{Header, Invalid, Surface, kept_spans, wire};
+use super::{HEADER, Header, Invalid, wire};
 use crate::{
     Config, ErrorKind, Mode, Unit,
     source::Span,
     typeck::{
         Builder, Typelib,
         elab::{
-            DeclNode, Harvest, Referent, Target, Value,
-            surface::{Member, Name, ParamKind, StrId, TypeExpr},
+            Bases, DeclNode, Referent, Shard, Target, Value,
+            surface::{Member, Name, ParamKind, TypeExpr},
         },
     },
 };
 
-/// Encode a harvest that is already a module's surface.
-fn encode(harvest: Harvest<'_>) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    Surface::new(harvest).write(&mut bytes).unwrap();
-    bytes
+/// Encode the surface of a shard that is not yet linked.
+fn encode(shard: Shard<'_>) -> Vec<u8> {
+    let (kept, _) = shard.interface(&Bases::local());
+    super::write(&shard, &Bases::local(), &kept)
 }
 
 /// Write a unit's typelib from a check of it with an empty module of each name in
@@ -48,9 +47,15 @@ fn content(bytes: &[u8]) -> wire::Content<&str> {
     postcard::from_bytes(rest).unwrap()
 }
 
-/// Read a typelib's harvest.
-fn read(bytes: &[u8]) -> Result<Harvest<'_>, Invalid> {
-    super::read(bytes).map(|(harvest, _)| harvest)
+/// The bytes of a typelib's content
+fn serialize(content: &wire::Content<&str>) -> Vec<u8> {
+    let out = postcard::to_stdvec(&HEADER).unwrap();
+    postcard::to_extend(content, out).unwrap()
+}
+
+/// Read a typelib's shard.
+fn read(bytes: &[u8]) -> Result<Shard<'_>, Invalid> {
+    super::read(bytes).map(|(shard, _)| shard)
 }
 
 const MODULE: &str = "
@@ -135,12 +140,12 @@ fn check(typelib: &[u8]) -> Result<Vec<String>, crate::Error> {
 #[test]
 fn round_trip() {
     let bytes = typelib();
-    let harvest = read(&bytes).unwrap();
+    let shard = read(&bytes).unwrap();
     assert!(
-        harvest.decls.iter().all(|decl| decl.name.is_some()),
+        shard.decls.iter().all(|decl| decl.name.is_some()),
         "the bodies' declarations are left out"
     );
-    assert_eq!(encode(harvest), bytes);
+    assert_eq!(encode(shard), bytes);
 }
 
 #[test]
@@ -159,8 +164,8 @@ pub let limit @ Tag = \"Tag\"
         },
     );
     let bytes = write(&unit, &[]).unwrap();
-    let harvest = read(&bytes).unwrap();
-    let mut strings: Vec<&str> = harvest.strings.iter().map(|text| &**text).collect();
+    let shard = read(&bytes).unwrap();
+    let mut strings: Vec<&str> = shard.strings.iter().map(|text| &**text).collect();
     strings.sort_unstable();
     assert!(
         strings.windows(2).all(|pair| pair[0] != pair[1]),
@@ -183,9 +188,9 @@ fn types_are_interned_once() {
     let bytes = write(&compile(source, Mode::Module { name: "lib".into() }), &[]).unwrap();
     // `Array`, `Int`, `Array[Int]` and `Str`, each once
     assert_eq!(content(&bytes).types.len(), 4);
-    let harvest = read(&bytes).unwrap();
-    assert_eq!(harvest.sites.len(), 4);
-    assert_eq!(encode(harvest), bytes);
+    let shard = read(&bytes).unwrap();
+    assert_eq!(shard.sites.len(), 4);
+    assert_eq!(encode(shard), bytes);
 }
 
 #[test]
@@ -200,8 +205,8 @@ fn type_before_its_children() {
 }
 
 /// The members of a class, each method by its declaration and signature
-fn members(harvest: &Harvest<'_>, class: usize) -> Vec<Option<(usize, usize)>> {
-    let DeclNode::Class(class) = &harvest.decls[class].node else {
+fn members(shard: &Shard<'_>, class: usize) -> Vec<Option<(usize, usize)>> {
+    let DeclNode::Class(class) = &shard.decls[class].node else {
         panic!("the declaration is a class");
     };
     class
@@ -226,62 +231,67 @@ pub class C
   pub field b @ Int = 0
 ";
     let bytes = write(&compile(source, Mode::Module { name: "lib".into() }), &[]).unwrap();
-    let harvest = read(&bytes).unwrap();
-    assert_eq!(members(&harvest, 0), [None, Some((1, 0)), None]);
-    assert_eq!(encode(harvest), bytes);
+    let shard = read(&bytes).unwrap();
+    assert_eq!(members(&shard, 0), [None, Some((1, 0)), None]);
+    assert_eq!(encode(shard), bytes);
 }
 
 /// What a typelib leaves to be derived is written where it can't be.
 #[test]
 fn underived_values_are_written() {
     let bytes = typelib();
-    let mut harvest = read(&bytes).unwrap();
+    let mut shard = read(&bytes).unwrap();
     let elsewhere = Span { start: 0, end: 1 };
-    let (double, _) = (harvest.decls.iter().enumerate())
+    let (double, _) = (shard.decls.iter().enumerate())
         .find(|(_, decl)| matches!(decl.node, DeclNode::Defs(_)))
         .expect("the module declares a function");
-    let DeclNode::Defs(defs) = &mut harvest.decls[double].node else {
+    let DeclNode::Defs(defs) = &mut shard.decls[double].node else {
         unreachable!()
     };
     defs[0].name.span = elsewhere;
+    // Strings are renumbered as they are met, so names are compared by text
+    let spelled =
+        |shard: &Shard<'_>, name: Name| (name.span, shard.strings[name.text.index()].to_string());
     let def = defs[0].name;
+    let def = spelled(&shard, def);
     // `double` has no binders for the site to name
-    let site = (harvest.sites.iter())
+    let site = (shard.sites.iter())
         .position(|site| site.owner.is_some_and(|(decl, _)| decl.index() == double))
         .expect("a site is in `double`'s signature");
-    harvest.sites[site].owner = None;
-    harvest.sites[site].ambient = None;
+    shard.sites[site].owner = None;
+    shard.sites[site].ambient = None;
     let mut key = None;
-    for decl in &mut harvest.decls {
+    for decl in &mut shard.decls {
         let DeclNode::Defs(defs) = &mut decl.node else {
             continue;
         };
         for param in defs.iter_mut().flat_map(|def| &mut def.sig.params) {
             if let ParamKind::Key { key: written } = &mut param.kind {
                 written.span = elsewhere;
-                key = Some(*written);
+                key = Some((written.span, written.text));
             }
         }
     }
-    let key = key.expect("a function takes a key");
-    let class = (harvest.decls.iter())
+    let (span, text) = key.expect("a function takes a key");
+    let key = (span, shard.strings[text.index()].to_string());
+    let class = (shard.decls.iter())
         .position(|decl| matches!(decl.node, DeclNode::Class(_)))
         .expect("the module declares a class");
-    let DeclNode::Class(written) = &mut harvest.decls[class].node else {
+    let DeclNode::Class(written) = &mut shard.decls[class].node else {
         unreachable!()
     };
     written.members.reverse();
-    let order = members(&harvest, class);
+    let order = members(&shard, class);
 
-    let bytes = encode(harvest);
-    let harvest = read(&bytes).unwrap();
-    let DeclNode::Defs(defs) = &harvest.decls[double].node else {
+    let bytes = encode(shard);
+    let shard = read(&bytes).unwrap();
+    let DeclNode::Defs(defs) = &shard.decls[double].node else {
         panic!("`double` is a function");
     };
-    assert_eq!(defs[0].name, def);
-    assert_eq!(harvest.sites[site].owner, None);
-    assert_eq!(harvest.sites[site].ambient, None);
-    let keys: Vec<_> = (harvest.decls.iter())
+    assert_eq!(spelled(&shard, defs[0].name), def);
+    assert_eq!(shard.sites[site].owner, None);
+    assert_eq!(shard.sites[site].ambient, None);
+    let keys: Vec<_> = (shard.decls.iter())
         .filter_map(|decl| match &decl.node {
             DeclNode::Defs(defs) => Some(defs),
             _ => None,
@@ -289,13 +299,13 @@ fn underived_values_are_written() {
         .flatten()
         .flat_map(|def| &def.sig.params)
         .filter_map(|param| match param.kind {
-            ParamKind::Key { key } => Some(key),
+            ParamKind::Key { key } => Some(spelled(&shard, key)),
             _ => None,
         })
         .collect();
     assert_eq!(keys, [key]);
-    assert_eq!(members(&harvest, class), order);
-    assert_eq!(encode(harvest), bytes);
+    assert_eq!(members(&shard, class), order);
+    assert_eq!(encode(shard), bytes);
 }
 
 #[test]
@@ -442,14 +452,11 @@ fn trailing() {
 #[test]
 fn out_of_range() {
     let bytes = typelib();
-    let mut harvest = read(&bytes).unwrap();
-    let strings = harvest.strings.len();
-    harvest.decls[0].name = Some(Name {
-        text: StrId::from_index(strings),
-        ..harvest.decls[0].name.unwrap()
-    });
+    let mut content = content(&bytes);
+    // The last string is the last one met, which the module's name and path aren't
+    content.strings.pop();
     assert!(matches!(
-        read(&encode(harvest)),
+        read(&serialize(&content)),
         Err(Invalid::Malformed("an ID is out of range"))
     ));
 }
@@ -457,17 +464,17 @@ fn out_of_range() {
 #[test]
 fn exported_variables() {
     let bytes = typelib();
-    let harvest = read(&bytes).unwrap();
+    let shard = read(&bytes).unwrap();
     let annotated = |name: &str| {
-        let export = harvest
+        let export = shard
             .exports
             .iter()
-            .find(|export| harvest.strings[export.name.index()] == name)
+            .find(|export| shard.strings[export.name.index()] == name)
             .expect("the name is exported");
         let Target::Local(Referent::Value(value)) = export.target else {
             panic!("`{name}` is exported as a variable");
         };
-        harvest
+        shard
             .values
             .iter()
             .find(|listed| listed.span == value.span)
@@ -475,7 +482,7 @@ fn exported_variables() {
     };
     assert!(annotated("limit"));
     assert!(!annotated("loose"));
-    assert_eq!(harvest.values.len(), 2);
+    assert_eq!(shard.values.len(), 2);
 
     let mut unlisted = read(&bytes).unwrap();
     unlisted.values.clear();
@@ -530,12 +537,12 @@ def private_def()
         &["std"],
     )
     .unwrap();
-    let harvest = read(&bytes).unwrap();
-    let text = |name: Option<Name>| &*harvest.strings[name.unwrap().text.index()];
-    let decls: Vec<_> = harvest.decls.iter().map(|decl| text(decl.name)).collect();
+    let shard = read(&bytes).unwrap();
+    let text = |name: Option<Name>| &*shard.strings[name.unwrap().text.index()];
+    let decls: Vec<_> = shard.decls.iter().map(|decl| text(decl.name)).collect();
     // The special `(init)` stays whatever its visibility
     assert_eq!(decls, ["Open", "init", "get"]);
-    let DeclNode::Class(open) = &harvest.decls[0].node else {
+    let DeclNode::Class(open) = &shard.decls[0].node else {
         panic!("`Open` is a class");
     };
     let fields: Vec<_> = open
@@ -548,7 +555,7 @@ def private_def()
         .collect();
     // A private `Phantom` field counts towards the class's variance
     assert_eq!(fields, ["marker", "shown"]);
-    assert_eq!(encode(harvest), bytes);
+    assert_eq!(encode(shard), bytes);
 }
 
 #[test]
@@ -676,15 +683,15 @@ fn omits_reference_spans_and_spellings() {
     let source = "import dep:\n  @Thing: Alias\npub @let G = Alias\npub @let H = Array[G]\n";
     let unit = compile(source, Mode::Module { name: "lib".into() });
     let bytes = write(&unit, &["dep"]).unwrap();
-    let harvest = read(&bytes).unwrap();
-    let strings: Vec<&str> = harvest.strings.iter().map(|text| &**text).collect();
+    let shard = read(&bytes).unwrap();
+    let strings: Vec<&str> = shard.strings.iter().map(|text| &**text).collect();
     assert!(strings.contains(&"Thing"));
     assert!(
         !strings.contains(&"Alias"),
         "a spelling is kept: {strings:?}"
     );
     let mut names = 0;
-    for site in &harvest.sites {
+    for site in &shard.sites {
         site.ty.each_node(&mut |ty| {
             assert_eq!(ty.span(), Span::INVALID);
             if let TypeExpr::Name(head) = ty {
@@ -694,21 +701,22 @@ fn omits_reference_spans_and_spellings() {
         });
     }
     assert_eq!(names, 3);
-    assert!(harvest.links.iter().all(|link| link.span == Span::INVALID));
+    assert!(shard.links.iter().all(|link| link.span == Span::INVALID));
 }
 
 #[test]
 fn locates_kept_spans() {
     let unit = compile(MODULE, Mode::Module { name: "lib".into() });
     let bytes = write(&unit, &[]).unwrap();
-    let harvest = read(&bytes).unwrap();
+    let shard = read(&bytes).unwrap();
     // Declarations, binders, members and parameters, among others
-    let spans = kept_spans(&harvest);
-    assert!(spans.len() > harvest.decls.len());
+    let (kept, _) = shard.interface(&Bases::local());
+    let (_, spans) = wire::Encode::new(&shard, &Bases::local(), &kept).content();
+    assert!(spans.len() > shard.decls.len());
     for span in spans {
         for offset in [span.start, span.end] {
             assert_eq!(
-                harvest.info.coord(offset),
+                shard.info.coord(offset),
                 unit.file.coord(offset),
                 "{span:?} is located"
             );

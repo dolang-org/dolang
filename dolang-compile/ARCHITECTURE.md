@@ -1193,13 +1193,15 @@ it keeps each unit's name and path, and its diagnostics and undecided checks
 with their spans already resolved to lines and columns.
 
 A typelib is written from a check. With `Builder::typelibs`, the check keeps the
-surface of each module it checks from source, taken from its harvest before
-linking and with the lines of its kept spans, and `Check::typelib` writes it. A
-module importing a module the check doesn't have has none, since its typelib
-would hold an interface elaborated against the missing module. A typelib has a
-serialization form of its own, converted to and from the harvest: type
+typelib of each module it checks from source, encoded from the module's shard
+once it is elaborated, with the lines of its kept spans, and `Check::typelib`
+writes it. A module importing a module the check doesn't have has none, since
+its typelib would hold an interface elaborated against the missing module. A
+typelib has a serialization form of its own, converted to and from the shard:
+encoding keeps only the module's surface and numbers its IDs anew, type
 expressions are interned in one table, and what can be derived from the rest is
-left out where it holds.
+left out where it holds. Reading one gives a shard and the facts it records,
+which are linked as any unit's are.
 
 A `SourceSpan` is a span with an optional unit. A unit's own diagnostics have
 no unit and are relative to that unit. Type checker diagnostics name a unit in
@@ -1247,8 +1249,9 @@ diagnosed, and their names are erroneous. A missing module is reported at its
 import, and an import that fails otherwise once per link, at its first name, or
 in a typelib, which keeps no reference's span, at the import of its module.
 
-Linking moves each unit's harvest into its shard of the tables, and each later
-pass records what it concludes about a unit's declarations, such as kinds,
+Collection fills each unit's shard, and linking moves it and its facts to their
+place in the tables, filling in what only linking can tell. Each later pass
+records what it concludes about a unit's declarations, such as kinds,
 completed signatures, variance and binder groups, in that unit's facts. Only
 what crosses units is global: the database, the designated declarations and the
 pipe placeholders' nominees. Linking numbers each unit's declarations, sites

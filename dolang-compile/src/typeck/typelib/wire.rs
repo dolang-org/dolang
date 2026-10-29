@@ -1,6 +1,7 @@
-//! A typelib's serialization form, and its conversion to and from a harvest.
+//! A typelib's serialization form, and its conversion to and from a shard.
 //!
-//! The form follows the harvest, except that it is denser:
+//! The form follows the shard, cut down to what its surface keeps, except that it
+//! is denser:
 //!
 //! - Type expressions are interned in one table, each distinct node once, with its
 //!   children before it. A site, or a supertype's argument, refers to a node.
@@ -10,8 +11,11 @@
 //!   among its members. Where a derivation doesn't hold, the value is written.
 //! - A declaration's kind is its node's, flags are packed into a byte, and an
 //!   optional ID is written as one more than the ID, or 0.
+//!
+//! Every ID is local to the unit. Declarations, sites and links keep their order;
+//! strings are numbered as the encoder first meets them, and each is written once.
 
-use std::{borrow::Cow, path::Path};
+use std::{borrow::Cow, mem, path::Path};
 
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -22,7 +26,7 @@ use crate::{
     source::Span,
     typeck::{
         elab::{
-            self, BinderRef, DeclNode, Harvest, Referent, Role, UnitInfo, local,
+            self, Bases, BinderRef, DeclNode, Kept, Referent, Role, Shard, UnitInfo, local,
             surface::{
                 self, ConstLit, Decorator, LinkId, Member, MemberScope, ModuleId, ParamKind, Ref,
                 SiteId, StrId, Symbol, TypeArgKind, TypeExpr, TypeKey, TypeParam, TypeQuant,
@@ -52,19 +56,6 @@ pub(super) struct Content<S> {
     exports: Vec<Export>,
     values: Vec<Value>,
     modules: Vec<Module>,
-}
-
-impl<'a> Content<&'a str> {
-    /// The names of the modules the module imports, each once, in order
-    pub(super) fn imports(&self) -> Vec<&'a str> {
-        let mut imports: Vec<&str> = self
-            .modules
-            .iter()
-            .filter_map(|module| self.strings.get(module.name as usize).copied())
-            .collect();
-        imports.sort_unstable();
-        imports
-    }
 }
 
 /// A span's start and end
@@ -392,24 +383,8 @@ fn index(id: usize) -> u32 {
     u32::try_from(id).expect("an ID fits in a u32")
 }
 
-fn span(span: Span) -> WireSpan {
-    (span.start, span.end)
-}
-
 fn unspan((start, end): WireSpan) -> Span {
     Span { start, end }
-}
-
-fn sig((decl, sig): (DeclId, usize)) -> Sig {
-    (index(decl.index()), index(sig))
-}
-
-fn binder(binder: BinderRef) -> WireBinder {
-    (
-        index(binder.decl.index()),
-        index(binder.sig),
-        index(binder.slot),
-    )
 }
 
 fn rest(kind: RestKind) -> Rest {
@@ -485,18 +460,24 @@ fn placed(decls: &[elab::Decl<'_>], values: &[elab::Value], sites: usize) -> Vec
 /// A site's owner, if it is placed on the surface
 type Placed = Option<Option<(DeclId, usize)>>;
 
-/// The ambient signature a site's place gives it
-fn ambient(decls: &[elab::Decl<'_>], site: &elab::Site) -> Option<(DeclId, usize)> {
-    site.group().filter(|(decl, _)| {
-        decls
-            .get(decl.index())
-            .is_some_and(|decl| matches!(decl.node, DeclNode::Defs(_) | DeclNode::Methods(_)))
+/// The ambient signature a site's place gives it, given the declarations by ID
+fn ambient<'d>(
+    decl: impl Fn(DeclId) -> Option<&'d elab::Decl<'d>>,
+    site: &elab::Site,
+) -> Option<(DeclId, usize)> {
+    site.group().filter(|(id, _)| {
+        decl(*id).is_some_and(|decl| matches!(decl.node, DeclNode::Defs(_) | DeclNode::Methods(_)))
     })
 }
 
-/// The members of a class with fields `fields`: they and the method signatures
-/// declared in it, in the order of the spans of their names
-fn members(decls: &[elab::Decl<'_>], class: DeclId, fields: Vec<surface::Field>) -> Vec<Member> {
+/// The members of a class with fields `fields`, among declarations `decls` by ID:
+/// they and the method signatures declared in it, in the order of the spans of
+/// their names
+fn members<'d>(
+    decls: impl Iterator<Item = (DeclId, &'d elab::Decl<'d>)>,
+    class: DeclId,
+    fields: Vec<surface::Field>,
+) -> Vec<Member> {
     let mut members: Vec<(u32, Member)> = fields
         .into_iter()
         .map(|field| {
@@ -504,14 +485,13 @@ fn members(decls: &[elab::Decl<'_>], class: DeclId, fields: Vec<surface::Field>)
             (start, Member::Field(field))
         })
         .collect();
-    for (index, decl) in decls.iter().enumerate() {
-        if decl.outer != Some((class, 0)) {
+    for (decl, node) in decls {
+        if node.outer != Some((class, 0)) {
             continue;
         }
-        let DeclNode::Methods(methods) = &decl.node else {
+        let DeclNode::Methods(methods) = &node.node else {
             continue;
         };
-        let decl = DeclId::from_index(index);
         for (sig, method) in methods.iter().enumerate() {
             members.push((method.name.span.start, Member::Method { decl, sig }));
         }
@@ -520,119 +500,282 @@ fn members(decls: &[elab::Decl<'_>], class: DeclId, fields: Vec<surface::Field>)
     members.into_iter().map(|(_, member)| member).collect()
 }
 
-/// Converts a harvest that is a module's surface to its serialization form
-pub(super) struct Encode<'h, 'u> {
-    harvest: &'h Harvest<'u>,
+/// Converts what a shard's surface keeps to its serialization form. The shard's
+/// IDs start at its bases; the form's are local to the unit, its declarations,
+/// sites and links numbered in their order and its strings as they are first met.
+pub(super) struct Encode<'s, 'u> {
+    shard: &'s Shard<'u>,
+    base: &'s Bases,
+    kept: &'s Kept,
+    /// The ID of each kept declaration, by its offset in the unit
+    decls: Vec<Option<u32>>,
+    /// The ID of each site met, by its offset in the unit
+    site_ids: Vec<Option<u32>>,
+    /// Each site met, in order, with the owner its place gives it
+    sites: Vec<(SiteId, Option<(DeclId, usize)>)>,
+    /// The ID of each link met, by its offset in the unit
+    link_ids: Vec<Option<u32>>,
+    /// Each link met, in order
+    links: Vec<LinkId>,
+    /// The ID of each string met, by its [`StrId`]
+    str_ids: Vec<Option<u32>>,
+    /// Each string, by text
+    texts: FxHashMap<String, u32>,
+    strings: Vec<String>,
     types: Vec<Type>,
     interned: FxHashMap<Type, u32>,
+    /// Every span written
+    spans: Vec<Span>,
 }
 
-impl<'h, 'u> Encode<'h, 'u> {
-    pub(super) fn new(harvest: &'h Harvest<'u>) -> Self {
+impl<'s, 'u> Encode<'s, 'u> {
+    /// An encoder of what `kept` keeps of a shard whose IDs start at `base`
+    pub(super) fn new(shard: &'s Shard<'u>, base: &'s Bases, kept: &'s Kept) -> Self {
+        let mut next = 0;
+        let decls = kept
+            .decls
+            .iter()
+            .map(|&keep| {
+                keep.then(|| {
+                    next += 1;
+                    next - 1
+                })
+            })
+            .collect();
         Self {
-            harvest,
+            shard,
+            base,
+            kept,
+            decls,
+            site_ids: vec![None; shard.sites.len()],
+            sites: Vec::new(),
+            link_ids: vec![None; shard.links.len()],
+            links: Vec::new(),
+            str_ids: vec![None; shard.strings.len()],
+            texts: FxHashMap::default(),
+            strings: Vec::new(),
             types: Vec::new(),
             interned: FxHashMap::default(),
+            spans: Vec::new(),
         }
     }
 
-    /// The content, with the given header fields
-    pub(super) fn content(
-        mut self,
-        module: StrId,
-        path: StrId,
-        lines: Vec<(u32, u32)>,
-        strings: Vec<String>,
-    ) -> Content<String> {
-        let harvest = self.harvest;
-        let decls = harvest
-            .decls
-            .iter()
-            .enumerate()
-            .map(|(index, decl)| self.decl(DeclId::from_index(index), decl))
+    /// The content, and every span it holds
+    pub(super) fn content(mut self) -> (Content<String>, Vec<Span>) {
+        // The first pass finds the sites and links the surface uses. They keep
+        // their order, which elaboration's diagnostics follow, so the second
+        // numbers them in it.
+        self.pass();
+        let (mut sites, mut links) = (mem::take(&mut self.sites), mem::take(&mut self.links));
+        sites.sort_by_key(|(site, _)| site.index());
+        links.sort_by_key(|link| link.index());
+        self.site_ids.fill(None);
+        self.link_ids.fill(None);
+        for (site, owner) in sites {
+            self.site(Some(site), owner);
+        }
+        for link in links {
+            self.link(Some(link));
+        }
+        self.str_ids.fill(None);
+        self.texts.clear();
+        self.interned.clear();
+        self.spans.clear();
+        let content = self.pass();
+        (content, self.spans)
+    }
+
+    /// Encode the content, numbering what is met that isn't yet numbered.
+    fn pass(&mut self) -> Content<String> {
+        let shard = self.shard;
+        let info = &shard.info;
+        let module = self.text(info.module.expect("only a module's typelib is written"));
+        let path = self.text(&info.path.to_string_lossy());
+        let decls = (shard.decls.iter().enumerate())
+            .filter(|&(index, _)| self.kept.decls[index])
+            .map(|(index, decl)| self.decl(DeclId::from_index(self.base.decls + index), decl))
             .collect();
-        let placed = placed(&harvest.decls, &harvest.values, harvest.sites.len());
-        let sites = harvest
-            .sites
-            .iter()
-            .zip(placed)
-            .map(|(site, placed)| self.site(site, placed))
+        let values = (shard.values.iter())
+            .map(|value| Value {
+                span: self.span(value.span),
+                annot: self.site(value.annot, None),
+            })
             .collect();
+        let exports = (shard.exports.iter())
+            .map(|export| Export {
+                name: self.str(export.name),
+                span: self.span(export.span),
+                target: self.target(export.target),
+            })
+            .collect();
+        let modules = (shard.modules.iter())
+            .map(|module| Module {
+                name: self.str(module.name),
+                span: self.span(module.span),
+            })
+            .collect();
+        // A site meets links, which meet no sites
+        let mut sites = Vec::new();
+        while let Some(&(site, placed)) = self.sites.get(sites.len()) {
+            sites.push(self.site_of(site, placed));
+        }
+        let mut links = Vec::new();
+        while let Some(&link) = self.links.get(links.len()) {
+            let link = &shard.links[link.index() - self.base.links];
+            links.push(Link {
+                base: self.target(link.base),
+                item: opt(link.item.map(|item| self.str(item) as usize)),
+            });
+        }
+        let mut lines: Vec<(u32, u32)> = (self.spans.iter())
+            .filter(|&&span| span != Span::INVALID)
+            .flat_map(|span| [span.start, span.end])
+            .map(|offset| {
+                let coord = info.coord(offset);
+                (coord.line, offset - coord.column)
+            })
+            .collect();
+        lines.sort_unstable();
+        lines.dedup();
         Content {
-            module: index(module.index()),
-            path: index(path.index()),
+            module,
+            path,
             lines,
-            strict: harvest.info.strict,
-            strings,
-            types: self.types,
+            strict: info.strict,
+            strings: mem::take(&mut self.strings),
+            types: mem::take(&mut self.types),
             decls,
             sites,
-            links: harvest
-                .links
-                .iter()
-                .map(|link| Link {
-                    base: target(link.base),
-                    item: opt(link.item.map(StrId::index)),
-                })
-                .collect(),
-            exports: harvest
-                .exports
-                .iter()
-                .map(|export| Export {
-                    name: index(export.name.index()),
-                    span: span(export.span),
-                    target: target(export.target),
-                })
-                .collect(),
-            values: harvest
-                .values
-                .iter()
-                .map(|value| Value {
-                    span: span(value.span),
-                    annot: opt(value.annot.map(SiteId::index)),
-                })
-                .collect(),
-            modules: harvest
-                .modules
-                .iter()
-                .map(|module| Module {
-                    name: index(module.name.index()),
-                    span: span(module.span),
-                })
-                .collect(),
+            links,
+            exports,
+            values,
+            modules,
         }
+    }
+
+    /// A declaration's offset in the unit
+    fn offset(&self, decl: DeclId) -> usize {
+        decl.index() - self.base.decls
+    }
+
+    /// The ID of a declaration, if it is kept
+    fn decl_id(&self, decl: DeclId) -> Option<u32> {
+        self.decls[self.offset(decl)]
+    }
+
+    /// The ID of a declaration the surface keeps
+    fn kept_id(&self, decl: DeclId) -> u32 {
+        self.decl_id(decl)
+            .expect("the surface keeps what it refers to")
+    }
+
+    /// A kept declaration, by ID
+    fn kept_decl(&self, decl: DeclId) -> Option<&'s elab::Decl<'u>> {
+        let offset = decl.index().checked_sub(self.base.decls)?;
+        self.decls.get(offset)?.and(self.shard.decls.get(offset))
+    }
+
+    fn sig(&self, (decl, sig): (DeclId, usize)) -> Sig {
+        (self.kept_id(decl), index(sig))
+    }
+
+    fn binder(&self, binder: BinderRef) -> WireBinder {
+        (
+            self.kept_id(binder.decl),
+            index(binder.sig),
+            index(binder.slot),
+        )
+    }
+
+    fn span(&mut self, span: Span) -> WireSpan {
+        self.spans.push(span);
+        (span.start, span.end)
+    }
+
+    fn name(&mut self, name: surface::Name) -> Name {
+        Name {
+            span: self.span(name.span),
+            text: self.str(name.text),
+        }
+    }
+
+    /// The ID of a text
+    fn text(&mut self, text: &str) -> u32 {
+        if let Some(&id) = self.texts.get(text) {
+            return id;
+        }
+        let id = index(self.strings.len());
+        self.strings.push(text.to_owned());
+        self.texts.insert(text.to_owned(), id);
+        id
+    }
+
+    /// The ID of a string of the shard
+    fn str(&mut self, id: StrId) -> u32 {
+        if let Some(found) = self.str_ids[id.index()] {
+            return found;
+        }
+        let shard = self.shard;
+        let found = self.text(&shard.strings[id.index()]);
+        self.str_ids[id.index()] = Some(found);
+        found
+    }
+
+    /// The ID of a site, met where its place gives it `owner`
+    fn site(&mut self, site: Option<SiteId>, owner: Option<(DeclId, usize)>) -> Opt {
+        let Some(site) = site else {
+            return 0;
+        };
+        let offset = site.index() - self.base.sites;
+        let id = *self.site_ids[offset].get_or_insert_with(|| {
+            self.sites.push((site, owner));
+            index(self.sites.len() - 1)
+        });
+        id + 1
+    }
+
+    /// The ID of a link
+    fn link(&mut self, link: Option<LinkId>) -> Opt {
+        let Some(link) = link else {
+            return 0;
+        };
+        let offset = link.index() - self.base.links;
+        let id = *self.link_ids[offset].get_or_insert_with(|| {
+            self.links.push(link);
+            index(self.links.len() - 1)
+        });
+        id + 1
     }
 
     fn decl(&mut self, id: DeclId, decl: &elab::Decl<'_>) -> Decl {
         let own = decl.name.expect("a declaration on a surface is named");
         // A def's or method's name is mostly its declaration's
-        let named = |name: surface::Name| (name != own).then(|| self::name(name));
+        let named = |this: &mut Self, name: surface::Name| (name != own).then(|| this.name(name));
         let node = match (&decl.node, decl.kind) {
             (DeclNode::Class(class), kind) => {
-                let class = self.class(id, class);
+                let class = self.class(id, decl.outer, class);
                 match kind {
                     DeclKind::Protocol => Node::Protocol(class),
                     _ => Node::Class(class),
                 }
             }
             (DeclNode::Alias(alias), _) => Node::Alias {
-                binders: self.binders(&alias.binders),
-                body: opt(alias.body.map(SiteId::index)),
+                binders: self.binders(&alias.binders, decl.outer),
+                body: self.site(alias.body, decl.outer),
             },
             (DeclNode::Defs(defs), _) => Node::Defs(
-                defs.iter()
-                    .map(|def| Def {
-                        name: named(def.name),
-                        binders: self.binders(&def.binders),
-                        sig: self.signature(&def.sig),
+                (defs.iter().enumerate())
+                    .map(|(index, def)| Def {
+                        name: named(self, def.name),
+                        binders: self.binders(&def.binders, decl.outer),
+                        sig: self.signature(&def.sig, (id, index)),
                         type_only: def.type_only,
                     })
                     .collect(),
             ),
             (DeclNode::Methods(methods), _) => Node::Methods(
-                methods
-                    .iter()
-                    .map(|method| {
+                (methods.iter().enumerate())
+                    .map(|(index, method)| {
                         let mut flags = scope_flags(method.scope);
                         if method.overload {
                             flags |= OVERLOAD;
@@ -641,12 +784,12 @@ impl<'h, 'u> Encode<'h, 'u> {
                             flags |= PUBLIC;
                         }
                         Method {
-                            name: named(method.name),
+                            name: named(self, method.name),
                             flags,
                             special: method.special,
-                            binders: self.binders(&method.binders),
-                            sig: self.signature(&method.sig),
-                            decorators: decorators(&method.decorators),
+                            binders: self.binders(&method.binders, decl.outer),
+                            sig: self.signature(&method.sig, (id, index)),
+                            decorators: self.decorators(&method.decorators),
                         }
                     })
                     .collect(),
@@ -654,24 +797,39 @@ impl<'h, 'u> Encode<'h, 'u> {
             (DeclNode::Closure(_), _) => unreachable!("a closure is never on a surface"),
         };
         Decl {
-            name: name(own),
+            name: self.name(own),
             node,
-            outer: decl.outer.map(sig),
+            outer: decl.outer.map(|outer| self.sig(outer)),
         }
     }
 
-    fn class(&mut self, id: DeclId, class: &surface::Class) -> Class {
-        let fields: Vec<_> = class
-            .members
-            .iter()
+    fn class(
+        &mut self,
+        id: DeclId,
+        outer: Option<(DeclId, usize)>,
+        class: &surface::Class,
+    ) -> Class {
+        let offset = self.offset(id);
+        let kept: Vec<&Member> = (class.members.iter().enumerate())
+            .filter(|&(index, member)| match member {
+                Member::Field(_) => !self.kept.fields.contains(&(offset, index)),
+                &Member::Method { decl, .. } => self.decl_id(decl).is_some(),
+            })
+            .map(|(_, member)| member)
+            .collect();
+        let fields: Vec<_> = (kept.iter())
             .filter_map(|member| match member {
                 Member::Field(field) => Some(field.clone()),
                 Member::Method { .. } => None,
             })
             .collect();
-        let derived = members(&self.harvest.decls, id, fields.clone());
-        let same = derived.len() == class.members.len()
-            && derived.iter().zip(&class.members).all(|pair| match pair {
+        let shard = self.shard;
+        let decls = (shard.decls.iter().enumerate())
+            .filter(|&(index, _)| self.kept.decls[index])
+            .map(|(index, decl)| (DeclId::from_index(self.base.decls + index), decl));
+        let derived = members(decls, id, fields.clone());
+        let same = derived.len() == kept.len()
+            && derived.iter().zip(&kept).all(|pair| match pair {
                 (Member::Method { decl, sig }, Member::Method { decl: d, sig: s }) => {
                     (decl, sig) == (d, s)
                 }
@@ -679,35 +837,50 @@ impl<'h, 'u> Encode<'h, 'u> {
                 _ => false,
             });
         let members = match same {
-            true => Members::Derived(fields.iter().map(field).collect()),
+            true => Members::Derived(fields.iter().map(|field| self.field(id, field)).collect()),
             false => Members::Written(
-                class
-                    .members
-                    .iter()
+                kept.iter()
                     .map(|member| match member {
-                        Member::Field(field) => WireMember::Field(self::field(field)),
-                        &Member::Method { decl, sig } => WireMember::Method(self::sig((decl, sig))),
+                        Member::Field(field) => WireMember::Field(self.field(id, field)),
+                        &&Member::Method { decl, sig } => WireMember::Method(self.sig((decl, sig))),
                     })
                     .collect(),
             ),
         };
         Class {
-            binders: self.binders(&class.binders),
+            binders: self.binders(&class.binders, outer),
             supers: class
                 .supers
                 .iter()
                 .map(|supertype| Super {
-                    head: opt(supertype.head.link.map(LinkId::index)),
+                    head: self.link(supertype.head.link),
                     args: supertype.args.iter().map(|arg| self.arg(arg)).collect(),
                     type_only: supertype.type_only,
                 })
                 .collect(),
             members,
-            decorators: decorators(&class.decorators),
+            decorators: self.decorators(&class.decorators),
         }
     }
 
-    fn binders(&mut self, binders: &[surface::Binder]) -> Vec<Binder> {
+    fn field(&mut self, class: DeclId, field: &surface::Field) -> Field {
+        let mut flags = scope_flags(field.scope);
+        if field.public {
+            flags |= PUBLIC;
+        }
+        Field {
+            names: field.names.iter().map(|&name| self.name(name)).collect(),
+            annot: self.site(field.annot, Some((class, 0))),
+            flags,
+        }
+    }
+
+    /// A declaration's binders, whose bounds and defaults are written where it is
+    fn binders(
+        &mut self,
+        binders: &[surface::Binder],
+        outer: Option<(DeclId, usize)>,
+    ) -> Vec<Binder> {
         binders
             .iter()
             .map(|binder| Binder {
@@ -716,14 +889,15 @@ impl<'h, 'u> Encode<'h, 'u> {
                     surface::BinderKind::Key => BinderKind::Key,
                     surface::BinderKind::Rest(kind) => BinderKind::Rest(rest(kind)),
                 },
-                name: name(binder.name),
-                bound: opt(binder.bound.map(SiteId::index)),
-                default: opt(binder.default.map(SiteId::index)),
+                name: self.name(binder.name),
+                bound: self.site(binder.bound, outer),
+                default: self.site(binder.default, outer),
             })
             .collect()
     }
 
-    fn signature(&mut self, sig: &surface::Signature) -> Signature {
+    /// Signature `owner` of a def or method
+    fn signature(&mut self, sig: &surface::Signature, owner: (DeclId, usize)) -> Signature {
         Signature {
             params: sig
                 .params
@@ -733,32 +907,35 @@ impl<'h, 'u> Encode<'h, 'u> {
                         ParamKind::Pos => WireParamKind::Pos,
                         // A key is mostly the parameter's name
                         ParamKind::Key { key } => {
-                            WireParamKind::Key((param.name != Some(*key)).then(|| name(*key)))
+                            WireParamKind::Key((param.name != Some(*key)).then(|| self.name(*key)))
                         }
                         ParamKind::ConstKey { key } => {
-                            WireParamKind::ConstKey(key.as_ref().map(constant))
+                            WireParamKind::ConstKey(key.as_ref().map(|key| self.constant(key)))
                         }
                         &ParamKind::Rest { kind, pattern } => WireParamKind::Rest {
                             kind: rest(kind),
                             pattern,
                         },
                     },
-                    name: param.name.map(name),
+                    name: param.name.map(|name| self.name(name)),
                     default: param.default,
-                    annot: opt(param.annot.map(SiteId::index)),
+                    annot: self.site(param.annot, Some(owner)),
                 })
                 .collect(),
-            input: opt(sig.input.map(SiteId::index)),
-            output: opt(sig.output.map(SiteId::index)),
-            ret: opt(sig.ret.map(SiteId::index)),
+            input: self.site(sig.input, Some(owner)),
+            output: self.site(sig.output, Some(owner)),
+            ret: self.site(sig.ret, Some(owner)),
         }
     }
 
-    fn site(&mut self, site: &elab::Site, placed: Placed) -> Site {
+    /// A site, whose place gives it `placed` as its owner
+    fn site_of(&mut self, site: SiteId, placed: Option<(DeclId, usize)>) -> Site {
+        let shard = self.shard;
+        let site = &shard.sites[site.index() - self.base.sites];
         let ambient = match site.ambient {
             None => Ambient::None,
-            found if found == self::ambient(&self.harvest.decls, site) => Ambient::Group,
-            Some(found) => Ambient::Sig(sig(found)),
+            found if found == self::ambient(|decl| self.kept_decl(decl), site) => Ambient::Group,
+            Some(found) => Ambient::Sig(self.sig(found)),
         };
         Site {
             ty: self.ty(&site.ty),
@@ -766,12 +943,71 @@ impl<'h, 'u> Encode<'h, 'u> {
                 Role::Type => WireRole::Type,
                 Role::Rest => WireRole::Rest,
                 Role::Pattern => WireRole::Pattern,
-                Role::Bound(found) => WireRole::Bound(binder(found)),
-                Role::Default(found) => WireRole::Default(binder(found)),
-                Role::Alias(decl) => WireRole::Alias(index(decl.index())),
+                Role::Bound(found) => WireRole::Bound(self.binder(found)),
+                Role::Default(found) => WireRole::Default(self.binder(found)),
+                Role::Alias(decl) => WireRole::Alias(self.kept_id(decl)),
             },
-            owner: (placed != Some(site.owner)).then(|| site.owner.map(sig)),
+            owner: (placed != site.owner).then(|| site.owner.map(|owner| self.sig(owner))),
             ambient,
+        }
+    }
+
+    fn decorators(&mut self, decorators: &[Decorator]) -> Vec<WireDecorator> {
+        decorators
+            .iter()
+            .map(|decorator| match decorator {
+                // A decorator naming a declaration left out names nothing
+                Decorator::Ident(head) => {
+                    WireDecorator::Ident(self.link(head.link.filter(|link| {
+                        match self.shard.links[link.index() - self.base.links].base {
+                            elab::Target::Local(Referent::Decl(decl)) => {
+                                self.decl_id(decl).is_some()
+                            }
+                            _ => true,
+                        }
+                    })))
+                }
+                Decorator::Other => WireDecorator::Other,
+            })
+            .collect()
+    }
+
+    fn constant(&mut self, value: &ConstLit) -> Const {
+        match value {
+            &ConstLit::Str(text) => Const::Str(self.str(text)),
+            &ConstLit::Int(value) => Const::Int(value),
+            &ConstLit::Bool(value) => Const::Bool(value),
+            ConstLit::Nil => Const::Nil,
+            ConstLit::Sym(symbol) => Const::Sym(self.str(symbol.text)),
+        }
+    }
+
+    /// A target, where a name the surface reads cannot reach into a body, nor name
+    /// a type it leaves out. Any other declaration left out is not a type, as is
+    /// diagnosed, so it is erroneous.
+    fn target(&mut self, target: elab::Target) -> WireTarget {
+        match target {
+            elab::Target::Local(Referent::Decl(decl)) => match self.decl_id(decl) {
+                Some(id) => WireTarget::Decl(id),
+                None => WireTarget::Error,
+            },
+            elab::Target::Local(Referent::Binder(found)) => match self.decl_id(found.decl) {
+                Some(_) => WireTarget::Binder(self.binder(found)),
+                None => WireTarget::Error,
+            },
+            elab::Target::Local(Referent::Value(value)) => {
+                debug_assert_eq!(value.unit, self.base.unit, "a shard refers to its own unit");
+                WireTarget::Value(self.span(value.span))
+            }
+            elab::Target::Local(Referent::Error) => WireTarget::Error,
+            elab::Target::Local(Referent::Module(_)) => {
+                unreachable!("a link names a module only once resolved")
+            }
+            elab::Target::Import { module, item } => WireTarget::Import {
+                module: index(module.index()),
+                item: self.str(item),
+            },
+            elab::Target::Module(module) => WireTarget::Module(index(module.index())),
         }
     }
 
@@ -779,7 +1015,7 @@ impl<'h, 'u> Encode<'h, 'u> {
         match &arg.kind {
             TypeArgKind::Pos(ty) => Arg::Pos(self.ty(ty)),
             TypeArgKind::Key { name, ty } => Arg::Key {
-                name: index(name.text.index()),
+                name: self.str(name.text),
                 ty: self.ty(ty),
             },
             TypeArgKind::Expand { ty } => Arg::Expand(self.ty(ty)),
@@ -797,7 +1033,7 @@ impl<'h, 'u> Encode<'h, 'u> {
                 TypeParam::Key { quant, key, ty } => WireParam::Key {
                     quant: quant.map(self::quant),
                     key: match key {
-                        TypeKey::Sym(symbol) => Key::Sym(index(symbol.text.index())),
+                        TypeKey::Sym(symbol) => Key::Sym(self.str(symbol.text)),
                         TypeKey::Type(ty) => Key::Type(self.ty(ty)),
                     },
                     ty: self.ty(ty),
@@ -814,8 +1050,10 @@ impl<'h, 'u> Encode<'h, 'u> {
     /// The node a type is interned as, after its children
     fn ty(&mut self, ty: &TypeExpr) -> u32 {
         let node = match ty {
-            TypeExpr::Name(head) => Type::Name(opt(head.link.map(LinkId::index))),
-            TypeExpr::Const { value, .. } => Type::Const(value.as_ref().map(constant)),
+            TypeExpr::Name(head) => Type::Name(self.link(head.link)),
+            TypeExpr::Const { value, .. } => {
+                Type::Const(value.as_ref().map(|value| self.constant(value)))
+            }
             TypeExpr::App { base, args, .. } => Type::App {
                 base: self.ty(base),
                 args: args.iter().map(|arg| self.arg(arg)).collect(),
@@ -855,45 +1093,6 @@ impl<'h, 'u> Encode<'h, 'u> {
     }
 }
 
-fn name(name: surface::Name) -> Name {
-    Name {
-        span: span(name.span),
-        text: index(name.text.index()),
-    }
-}
-
-fn field(field: &surface::Field) -> Field {
-    let mut flags = scope_flags(field.scope);
-    if field.public {
-        flags |= PUBLIC;
-    }
-    Field {
-        names: field.names.iter().copied().map(name).collect(),
-        annot: opt(field.annot.map(SiteId::index)),
-        flags,
-    }
-}
-
-fn decorators(decorators: &[Decorator]) -> Vec<WireDecorator> {
-    decorators
-        .iter()
-        .map(|decorator| match decorator {
-            Decorator::Ident(head) => WireDecorator::Ident(opt(head.link.map(LinkId::index))),
-            Decorator::Other => WireDecorator::Other,
-        })
-        .collect()
-}
-
-fn constant(value: &ConstLit) -> Const {
-    match value {
-        ConstLit::Str(text) => Const::Str(index(text.index())),
-        &ConstLit::Int(value) => Const::Int(value),
-        &ConstLit::Bool(value) => Const::Bool(value),
-        ConstLit::Nil => Const::Nil,
-        ConstLit::Sym(symbol) => Const::Sym(index(symbol.text.index())),
-    }
-}
-
 fn quant(quant: TypeQuant) -> Quant {
     match quant {
         TypeQuant::Opt => Quant::Opt,
@@ -902,29 +1101,9 @@ fn quant(quant: TypeQuant) -> Quant {
     }
 }
 
-fn target(target: elab::Target) -> WireTarget {
-    match target {
-        elab::Target::Local(Referent::Decl(decl)) => WireTarget::Decl(index(decl.index())),
-        elab::Target::Local(Referent::Binder(found)) => WireTarget::Binder(binder(found)),
-        elab::Target::Local(Referent::Value(value)) => {
-            debug_assert_eq!(value.unit, local(), "a harvest refers to its own unit");
-            WireTarget::Value(span(value.span))
-        }
-        elab::Target::Local(Referent::Error) => WireTarget::Error,
-        elab::Target::Local(Referent::Module(_)) => {
-            unreachable!("a harvest names a module only once linked")
-        }
-        elab::Target::Import { module, item } => WireTarget::Import {
-            module: index(module.index()),
-            item: index(item.index()),
-        },
-        elab::Target::Module(module) => WireTarget::Module(index(module.index())),
-    }
-}
-
-/// Decode content into a harvest. IDs are checked only where decoding follows
-/// them; the harvest is validated afterwards.
-pub(super) fn decode(content: Content<&str>) -> Result<Harvest<'_>, &'static str> {
+/// Decode content into a shard that is not yet linked. IDs are checked only where
+/// decoding follows them; the shard is validated afterwards.
+pub(super) fn decode(content: Content<&str>) -> Result<Shard<'_>, &'static str> {
     let Content {
         module,
         path,
@@ -954,7 +1133,7 @@ pub(super) fn decode(content: Content<&str>) -> Result<Harvest<'_>, &'static str
     let decode = Decode { types: &types };
 
     let mut derived = Vec::new();
-    let mut harvest_decls = Vec::with_capacity(decls.len());
+    let mut shard_decls = Vec::with_capacity(decls.len());
     for (index, decl) in decls.into_iter().enumerate() {
         let own = unname(decl.name);
         let (kind, node) = match decl.node {
@@ -1007,7 +1186,7 @@ pub(super) fn decode(content: Content<&str>) -> Result<Harvest<'_>, &'static str
                 (DeclKind::Function, DeclNode::Methods(methods))
             }
         };
-        harvest_decls.push(elab::Decl {
+        shard_decls.push(elab::Decl {
             unit: local(),
             kind,
             name: Some(own),
@@ -1017,8 +1196,10 @@ pub(super) fn decode(content: Content<&str>) -> Result<Harvest<'_>, &'static str
         });
     }
     for (index, fields) in derived {
-        let members = members(&harvest_decls, DeclId::from_index(index), fields);
-        if let DeclNode::Class(class) = &mut harvest_decls[index].node {
+        let decls =
+            (shard_decls.iter().enumerate()).map(|(id, decl)| (DeclId::from_index(id), decl));
+        let members = members(decls, DeclId::from_index(index), fields);
+        if let DeclNode::Class(class) = &mut shard_decls[index].node {
             class.members = members;
         }
     }
@@ -1030,8 +1211,8 @@ pub(super) fn decode(content: Content<&str>) -> Result<Harvest<'_>, &'static str
             annot: unopt(value.annot).map(SiteId::from_index),
         })
         .collect();
-    let placed = placed(&harvest_decls, &values, sites.len());
-    let mut harvest_sites = Vec::with_capacity(sites.len());
+    let placed = placed(&shard_decls, &values, sites.len());
+    let mut shard_sites = Vec::with_capacity(sites.len());
     for (site, placed) in sites.into_iter().zip(placed) {
         let owner = match site.owner {
             Some(owner) => owner.map(unsig),
@@ -1054,13 +1235,13 @@ pub(super) fn decode(content: Content<&str>) -> Result<Harvest<'_>, &'static str
         };
         decoded.ambient = match site.ambient {
             Ambient::None => None,
-            Ambient::Group => ambient(&harvest_decls, &decoded),
+            Ambient::Group => ambient(|decl| shard_decls.get(decl.index()), &decoded),
             Ambient::Sig(found) => Some(unsig(found)),
         };
-        harvest_sites.push(decoded);
+        shard_sites.push(decoded);
     }
 
-    Ok(Harvest {
+    Ok(Shard {
         info: UnitInfo {
             module: Some(module),
             path: Path::new(path),
@@ -1069,8 +1250,8 @@ pub(super) fn decode(content: Content<&str>) -> Result<Harvest<'_>, &'static str
             strict,
         },
         strings: strings.into_iter().map(Cow::Borrowed).collect(),
-        decls: harvest_decls,
-        sites: harvest_sites,
+        decls: shard_decls,
+        sites: shard_sites,
         links: links
             .into_iter()
             .map(|link| elab::Link {
@@ -1080,7 +1261,16 @@ pub(super) fn decode(content: Content<&str>) -> Result<Harvest<'_>, &'static str
                 span: Span::INVALID,
             })
             .collect(),
+        referents: Vec::new(),
         refs: FxHashMap::default(),
+        modules: modules
+            .into_iter()
+            .map(|module| elab::Module {
+                name: StrId::from_index(module.name as usize),
+                span: unspan(module.span),
+            })
+            .collect(),
+        providers: Vec::new(),
         exports: exports
             .into_iter()
             .map(|export| elab::Export {
@@ -1090,17 +1280,12 @@ pub(super) fn decode(content: Content<&str>) -> Result<Harvest<'_>, &'static str
             })
             .collect(),
         values,
-        modules: modules
-            .into_iter()
-            .map(|module| elab::Module {
-                name: StrId::from_index(module.name as usize),
-                span: unspan(module.span),
-            })
-            .collect(),
+        sig_decls: FxHashMap::default(),
+        sig_owners: Vec::new(),
     })
 }
 
-/// Builds a harvest's surface from its serialization form
+/// Builds a shard's surface from its serialization form
 struct Decode<'t> {
     types: &'t [Type],
 }

@@ -42,9 +42,9 @@ pub use r#type::Style;
 /// are not checked. A typelib is read only by the version of the checker that wrote
 /// it.
 pub struct Typelib<'a> {
-    harvest: elab::Harvest<'a>,
-    /// The modules the module imports, each once, in order
-    imports: Vec<&'a str>,
+    shard: elab::Shard<'a>,
+    /// What the typelib records of elaboration's conclusions
+    facts: elab::Facts,
 }
 
 impl<'a> Typelib<'a> {
@@ -57,32 +57,40 @@ impl<'a> Typelib<'a> {
     /// | [`ErrorKind::Typelib`](crate::ErrorKind::Typelib) | The bytes are not a typelib this version of the checker reads |
     pub fn read(bytes: &'a [u8]) -> Result<Self, Error> {
         typelib::read(bytes)
-            .map(|(harvest, imports)| Self { harvest, imports })
+            .map(|(shard, facts)| Self { shard, facts })
             .map_err(|invalid| Error(ErrorInfo::Typelib(invalid)))
     }
 
     /// The module's name.
     pub fn module(&self) -> &'a str {
-        self.harvest.info.module.expect("a typelib is a module's")
+        self.shard.info.module.expect("a typelib is a module's")
     }
 
     /// The path of the module's source when the typelib was written, which locates
     /// its diagnostics.
     pub fn path(&self) -> &'a Path {
-        self.harvest.info.path
+        self.shard.info.path
     }
 
     /// The modules the module imports, each once, in order. A check finds them
     /// among its units, and reports a module it doesn't have as not found.
     pub fn imports(&self) -> Vec<&'a str> {
-        self.imports.clone()
+        let strings = &self.shard.strings;
+        let mut imports: Vec<&'a str> = (self.shard.modules.iter())
+            .map(|module| match &strings[module.name.index()] {
+                Cow::Borrowed(name) => *name,
+                Cow::Owned(_) => unreachable!("a typelib's strings borrow its bytes"),
+            })
+            .collect();
+        imports.sort_unstable();
+        imports
     }
 }
 
 /// A unit to check
 enum Input<'u, 's> {
     Source(&'u Unit<'s>),
-    Typelib(Box<elab::Harvest<'u>>),
+    Typelib(Box<(elab::Shard<'u>, elab::Facts)>),
 }
 
 /// Collects the units to check together.
@@ -137,7 +145,7 @@ impl<'u, 's> Builder<'u, 's> {
         self
     }
 
-    /// Have the check keep the surface of each module it checks from source, which
+    /// Have the check keep the typelib of each module it checks from source, which
     /// [`Check::typelib`] writes. Defaults to off, which costs nothing.
     pub fn typelibs(&mut self, enabled: bool) -> &mut Self {
         self.typelibs = enabled;
@@ -197,8 +205,10 @@ impl<'u, 's> Builder<'u, 's> {
     /// | [`ErrorKind::DuplicateModule`](crate::ErrorKind::DuplicateModule) | A module of the same name was already added |
     pub fn typelib(&mut self, typelib: &Typelib<'u>) -> Result<UnitId, Error> {
         self.module(typelib.module())?;
-        self.units
-            .push(Input::Typelib(Box::new(typelib.harvest.clone())));
+        self.units.push(Input::Typelib(Box::new((
+            typelib.shard.clone(),
+            typelib.facts.clone(),
+        ))));
         Ok(UnitId::from_index(self.units.len() - 1))
     }
 
@@ -232,29 +242,29 @@ impl<'u, 's> Builder<'u, 's> {
                 "units are allocated in order"
             );
         }
-        let harvests: Vec<elab::Harvest<'u>> = self
+        let units: Vec<(elab::Shard<'u>, elab::Facts)> = self
             .units
             .into_iter()
             .map(|input| match input {
-                Input::Source(unit) => elab::harvest(unit),
-                Input::Typelib(harvest) => *harvest,
+                Input::Source(unit) => (elab::collect(unit), elab::Facts::default()),
+                Input::Typelib(typelib) => *typelib,
             })
             .collect();
-        let mut order: Vec<UnitId> = (0..harvests.len()).map(UnitId::from_index).collect();
+        let mut order: Vec<UnitId> = (0..units.len()).map(UnitId::from_index).collect();
         order.sort_by_key(|id| {
-            let info = &harvests[id.index()].info;
+            let info = &units[id.index()].0.info;
             match info.module {
                 Some(name) => (0, name, None),
                 None => (1, "", Some(info.path)),
             }
         });
-        let typelibs = self.typelibs.then(|| surfaces(&harvests));
-        let (mut tables, mut diags) = elab::link(&mut db, harvests, &order, self.pipes);
+        let (mut tables, mut diags) = elab::link(&mut db, units, &order, self.pipes);
         elab::kinds(&mut tables, &mut diags);
         elab::signatures(&mut tables, &mut diags);
         elab::captures(&mut tables);
         elab::variances(&mut tables);
         elab::populate(&mut db, &mut tables, &mut diags);
+        let typelibs = self.typelibs.then(|| typelibs(&tables));
         db.seal();
         elab::specialize(&mut db, &tables, &mut diags);
         let mut recursion = Vec::new();
@@ -422,35 +432,31 @@ enum Unwritten {
     NotExportable,
 }
 
-/// What each unit's typelib is written from, or why it has none: the surface of
-/// each module checked from source, all of whose imports are checked with it
-fn surfaces(harvests: &[elab::Harvest<'_>]) -> Vec<Result<typelib::Surface, Unwritten>> {
-    let modules: FxHashSet<&str> = harvests
-        .iter()
-        .filter_map(|harvest| harvest.info.module)
-        .collect();
-    harvests
-        .iter()
-        .map(|harvest| {
-            if harvest.info.source.is_none() {
+/// Each unit's typelib, or why it has none: the surface of each module checked
+/// from source, all of whose imports are checked with it
+fn typelibs(tables: &elab::Tables<'_>) -> Vec<Result<Vec<u8>, Unwritten>> {
+    (tables.shards.iter().enumerate())
+        .map(|(index, shard)| {
+            if shard.info.source.is_none() {
                 return Err(Unwritten::NoSource);
             }
-            if harvest.info.module.is_none() {
+            if shard.info.module.is_none() {
                 return Err(Unwritten::NotModule);
             }
-            let missing = harvest
-                .modules
-                .iter()
-                .map(|module| &*harvest.strings[module.name.index()])
-                .find(|name| !modules.contains(name));
-            if let Some(name) = missing {
-                return Err(Unwritten::MissingImport(name.to_owned()));
+            let missing = (shard.modules.iter())
+                .zip(&shard.providers)
+                .find(|(_, provider)| provider.is_none());
+            if let Some((module, _)) = missing {
+                return Err(Unwritten::MissingImport(
+                    shard.strings[module.name.index()].to_string(),
+                ));
             }
-            let (kept, leaks) = harvest.interface();
+            let base = tables.base(UnitId::from_index(index));
+            let (kept, leaks) = shard.interface(base);
             if !leaks.is_empty() {
                 return Err(Unwritten::NotExportable);
             }
-            Ok(typelib::Surface::new(harvest.clone().surface(&kept)))
+            Ok(typelib::write(shard, base, &kept))
         })
         .collect()
 }
@@ -735,9 +741,9 @@ pub struct Check {
     analysis: Option<Analysis>,
     /// Well-formedness checks the checker could not decide, with the kind of reason
     undecided: Vec<(String, diag::SourceSpan)>,
-    /// What each unit's typelib is written from, or why it has none, by [`UnitId`],
+    /// Each unit's typelib, or why it has none, by [`UnitId`],
     /// if the builder asked
-    typelibs: Option<Vec<Result<typelib::Surface, Unwritten>>>,
+    typelibs: Option<Vec<Result<Vec<u8>, Unwritten>>>,
     /// Each unit's typing CFG, by [`UnitId`], for a unit checked from source
     #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     cfgs: Vec<Option<cfg::Ir>>,
@@ -815,7 +821,7 @@ impl Check {
             .as_ref()
             .ok_or(Error(ErrorInfo::NotRequested))?;
         match &typelibs[unit.index()] {
-            Ok(surface) => Ok(surface.write(write)?),
+            Ok(bytes) => Ok(write.write_all(bytes)?),
             Err(Unwritten::NoSource) => Err(Error(ErrorInfo::NoSource)),
             Err(Unwritten::NotModule) => Err(Error(ErrorInfo::NotModule)),
             Err(Unwritten::MissingImport(name)) => {

@@ -216,8 +216,11 @@ fn missing_values(tables: &Tables<'_>, diags: &mut Vec<UnitDiag>) {
             shard
                 .values
                 .iter()
-                .filter(|(_, site)| site.is_none())
-                .map(move |(&span, _)| UnitSpan { unit, span })
+                .filter(|value| value.annot.is_none())
+                .map(move |value| UnitSpan {
+                    unit,
+                    span: value.span,
+                })
         })
         .collect();
     missing.sort_by_key(|value| (value.unit, value.span.start));
