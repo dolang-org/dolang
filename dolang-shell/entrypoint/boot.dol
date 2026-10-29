@@ -180,24 +180,25 @@ let _files = load.import_handler do |name|
 let _bundled = load.import_handler $bundled_import
 
 let implicit_repl = (target == nil)
-if implicit_repl
-  target = "repl"
+let selected = if let Str(name) = target
+  name
+else
   main = true
+  "repl"
 let identity = if implicit_repl
   nil
 else if main
-  target
+  selected
 else
-  fs.Path $target
+  fs.Path $selected
 
 shell.with_override args: $trailing program: $identity do
   if main
-    let bytecode = _shell.resource $ENTRYPOINT $target
-    if (bytecode == nil || target == "boot")
-      throw std.RuntimeError "unknown bundled entrypoint: $target"
+    let Bin(bytecode) = (selected != "boot" && _shell.resource(ENTRYPOINT, selected))
+    else throw std.RuntimeError "unknown bundled entrypoint: $selected"
     load.run $bytecode
   else
-    let path = fs.Path $target
+    let path = fs.Path $selected
     if check
       if !_script.precompiled(path)
         import _compile

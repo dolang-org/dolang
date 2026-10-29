@@ -1,0 +1,15 @@
+# dolang: strict
+# Command-line options the boot entrypoint supplies to the entrypoints it runs.
+@import compile: compiler
+
+# Prelude from `--import` and `--import-item`.
+pub let prelude @ BaseDict[{*(Str | Sym), *(Str | Sym): compiler.PreludeBinding}] = ...
+
+# Whether `--strict` was given.
+pub let strict @ Bool = ...
+
+# Whether REPL history is enabled.
+pub let history @ Bool = ...
+
+# Whether the bytecode cache is enabled.
+pub let cache @ Bool = ...

@@ -296,15 +296,19 @@ def with_build_env spec block
     do block()
 
 def typecheck spec rest :all = false
-  let dirs = ["dolang-shell-modules/lib", "dolang-shell-modules/stub"]
+  let dirs = ["dolang-shell-modules/lib", "dolang-shell-modules/stub", "dolang-shell/stub"]
   # The bundle's build checks the bundled libraries and stubs, so only what
-  # it doesn't bundle is checked here. The provisioning script is outside the
-  # lookup roots, so it uses script mode and the shell prelude. Its imports
-  # resolve against host-independent stubs, including Windows APIs; checking
-  # never runs the guest operations.
+  # it doesn't bundle is checked here: the provisioning script and the shell's
+  # entrypoints. Both are outside the lookup roots, so they use script mode
+  # and the shell prelude. The provisioning script's imports resolve against
+  # host-independent stubs, including Windows APIs; checking never runs the
+  # guest operations. `dolang-shell/stub` declares the modules the boot
+  # entrypoint supplies at runtime.
   let sources = $
     if all
       - dolang-shell-modules/resource/provision.dol
+      for name = ["boot", "compile", "dodo", "fs", "libvirt", "proc", "repl", "ssh", "test"]
+        - "dolang-shell/entrypoint/$name.dol"
   with_build_env $spec do
     spec.cargo build --bin dolang
     spec.dolang -m compile check
@@ -460,7 +464,7 @@ return $
       typecheck (Spec args) $args.args
 
   "typecheck-test":
-    help: type check the provisioning script, which the build doesn't, with zero diagnostics
+    help: type check the provisioning script and shell entrypoints, which the build doesn't, with zero diagnostics
     - opt: profile
       default: debug
       help: Cargo profile containing the compiler
