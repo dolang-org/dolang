@@ -210,11 +210,10 @@ pub(crate) fn lt_items<'v, 's>(
         let rk = key_value(strand, rkey, rint);
         lint += i64::from(lkey.is_none());
         rint += i64::from(rkey.is_none());
-        if lk.op_lt(strand, &rk)?.to_bool(strand)? {
-            return Ok(true);
-        }
-        if lvalue.op_lt(strand, rvalue)?.to_bool(strand)? {
-            return Ok(true);
+        for (l, r) in [(&lk, &rk), (lvalue, rvalue)] {
+            if !l.op_eq(strand, r)?.to_bool(strand)? {
+                return l.op_lt(strand, r)?.to_bool(strand);
+            }
         }
     }
     Ok(right.len() > left.len())

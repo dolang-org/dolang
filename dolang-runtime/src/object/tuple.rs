@@ -211,14 +211,11 @@ impl<'v> Protocol<'v> for [Value<'v>] {
                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                     strand.check_trap()?;
                 }
-                if l.op_lt(strand, r)?.to_bool(strand)? {
-                    return Ok(Value::from_bool(true));
+                if !l.op_eq(strand, r)?.to_bool(strand)? {
+                    return Ok(Value::from_bool(l.op_lt(strand, r)?.to_bool(strand)?));
                 }
             }
-            if right.len() > left.len() {
-                return Ok(Value::from_bool(true));
-            }
-            Ok(Value::from_bool(false))
+            Ok(Value::from_bool(right.len() > left.len()))
         } else {
             Err(Error::not_supported(strand))
         }

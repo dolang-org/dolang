@@ -808,10 +808,8 @@ impl<'v> Protocol<'v> for Array<'v> {
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let other = if let Some(other) = other.downcast_ref(strand.builtin_types().array) {
-            other
-        } else {
-            return Ok(Value::FALSE);
+        let Some(other) = other.downcast_ref(strand.builtin_types().array) else {
+            return Err(Error::not_supported(strand));
         };
         let this_borrow = this.borrow(strand)?;
         let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
@@ -823,14 +821,11 @@ impl<'v> Protocol<'v> for Array<'v> {
             }
             let l = unsafe { left.get_unchecked(i) };
             let r = unsafe { right.get_unchecked(i) };
-            if l.op_lt(strand, r)?.to_bool(strand)? {
-                return Ok(Value::from_bool(true));
+            if !l.op_eq(strand, r)?.to_bool(strand)? {
+                return Ok(Value::from_bool(l.op_lt(strand, r)?.to_bool(strand)?));
             }
         }
-        if right.len() > left.len() {
-            return Ok(Value::from_bool(true));
-        }
-        Ok(Value::from_bool(false))
+        Ok(Value::from_bool(right.len() > left.len()))
     }
 
     fn op_index<'a, 's>(
