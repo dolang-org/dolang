@@ -1,14 +1,15 @@
 use std::{cmp::Reverse, ops::Range};
 
 use anstyle::{AnsiColor, Style};
-use dolang::compile::{Context, Kind, Span, Token};
+use dolang::compile::{Context, Kind, Token};
 
-/// A token together with what it refers to, ready to be colored.
+/// A token together with where it lies in the source, in bytes, and what it refers
+/// to, ready to be colored.
 ///
-/// The classification is resolved when the token is collected rather than
-/// carried as a node identity, because a [`Kind`] borrows the unit that
-/// produced it and these outlive that borrow.
-pub type SemanticToken = (Token, Span, NodeClass, Context);
+/// The range and classification are resolved when the token is collected rather
+/// than carried as a span and node identity, because they need the unit that
+/// produced it and these outlive it.
+pub type SemanticToken = (Token, Range<usize>, NodeClass, Context);
 
 /// What a token refers to, at the granularity coloring cares about.
 #[derive(Clone, Copy)]
@@ -119,18 +120,13 @@ pub fn highlight_range(
     color: bool,
 ) -> String {
     let mut sorted = tokens.iter().collect::<Vec<_>>();
-    sorted.sort_by_key(|(_, span, _, _)| {
-        (
-            span.start().byte_offset(),
-            Reverse(span.end().byte_offset()),
-        )
-    });
+    sorted.sort_by_key(|(_, span, _, _)| (span.start, Reverse(span.end)));
 
     let mut out = String::new();
     let mut last_end = range.start;
     for (token, span, class, context) in sorted {
-        let start = span.start().byte_offset().max(range.start).max(last_end);
-        let end = span.end().byte_offset().min(range.end);
+        let start = span.start.max(range.start).max(last_end);
+        let end = span.end.min(range.end);
         if end <= start {
             continue;
         }

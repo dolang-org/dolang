@@ -5,7 +5,7 @@ use std::fmt::{self, Write};
 
 use super::{elab::UnitInfo, r#type::UnitId};
 use crate::{
-    diag::{self, AnnotationKind, NoteKind, Pos, Severity, SourceSpan},
+    diag::{self, AnnotationKind, NoteKind, Severity, SourceSpan},
     source::Span,
 };
 
@@ -73,14 +73,22 @@ impl Diag {
 
 /// A span of `unit`, resolved to lines and columns
 pub(crate) fn resolve_span(unit: UnitId, info: &UnitInfo<'_>, span: Span) -> SourceSpan {
-    let pos = |offset| {
-        let coord = info.coord(offset);
-        Pos::new(offset as usize, coord.line, coord.column)
-    };
     // A span a typelib omits is at the start of its first line
     let span = match span == Span::INVALID {
         true => Span { start: 0, end: 0 },
         false => span,
     };
-    SourceSpan::new(Some(unit), diag::Span::new(pos(span.start), pos(span.end)))
+    let span = match info.source {
+        Some(source) => source.file.locate(span),
+        // Without source, offsets count characters
+        None => {
+            let coord = info.coord(span.start);
+            diag::Span::new(
+                coord.line,
+                coord.column,
+                span.end.saturating_sub(span.start),
+            )
+        }
+    };
+    SourceSpan::new(Some(unit), span)
 }

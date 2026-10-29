@@ -60,7 +60,7 @@ mod detail {
         module: Option<&'a str>,
     ) -> (
         Result<Bytecode, compile::Error>,
-        Vec<dolang::compile::Diag>,
+        Vec<dolang_private_test::Located>,
         Vec<dolang_private_test::Directive>,
     ) {
         let mut config = Config::new();
@@ -87,7 +87,9 @@ mod detail {
         let source = std::str::from_utf8(content)
             .unwrap_or_else(|e| panic!("{}: not UTF-8: {e}", path.display()));
         let unit = config.unit(path, source);
-        let diags: Vec<_> = unit.diagnostics().collect();
+        let diags: Vec<_> = (unit.diagnostics())
+            .map(|diag| dolang_private_test::Located::new(diag, &unit))
+            .collect();
         let res = unit.emit(&mut out);
         (res.map(|_| Bytecode::new(out)), diags, directives)
     }

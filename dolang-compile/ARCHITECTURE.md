@@ -1195,19 +1195,28 @@ with their spans already resolved to lines and columns.
 A typelib is written from a check. With `Builder::typelibs`, the check keeps the
 typelib of each module it checks from source, encoded from the module's shard
 once it is elaborated, with the lines of its kept spans, and `Check::typelib`
-writes it. A module importing a module the check doesn't have has none, since
-its typelib would hold an interface elaborated against the missing module. A
-typelib has a serialization form of its own, converted to and from the shard:
-encoding keeps only the module's surface and numbers its IDs anew, type
-expressions are interned in one table, and what can be derived from the rest is
-left out where it holds. The surface leaves out private fields, which can decide
-a class's variance, so the typelib records what elaboration concluded of each
-binder's variance as side facts, and a check that loads it takes them as given.
-A typelib whose module is or imports `strand` also records the pipe types the
-check nominated (see `Builder::pipes`), since those facts can depend on them: a
+writes it. A typelib's spans and line starts are offsets in characters, not
+bytes, so a unit checked from one is located in characters without its source. A
+module importing a module the check doesn't have has none, since its typelib
+would hold an interface elaborated against the missing module. A typelib has a
+serialization form of its own, converted to and from the shard: encoding keeps
+only the module's surface and numbers its IDs anew, type expressions are
+interned in one table, and what can be derived from the rest is left out where
+it holds. The surface leaves out private fields, which can decide a class's
+variance, so the typelib records what elaboration concluded of each binder's
+variance as side facts, and a check that loads it takes them as given. A typelib
+whose module is or imports `strand` also records the pipe types the check
+nominated (see `Builder::pipes`), since those facts can depend on them: a
 builder nominating others rejects it, and a check without a recorded nominee's
 module reports it as not found. Reading one gives a shard and the facts it
 records, which are linked as any unit's are.
+
+A public `diag::Span` is a line, a column and a length, packed in a `u64`, with
+the column and length counted in characters (Unicode scalar values, a tab as
+one). That is what editors locate by; UTF-16 positions and display widths are
+computed from the line's text by whoever has it. The length counts each line
+break a span crosses, so its end, and its bytes, are found only with the source:
+`Unit::end`, `Unit::byte_range` and `Unit::text`, through the unit's line table.
 
 A `SourceSpan` is a span with an optional unit. A unit's own diagnostics have
 no unit and are relative to that unit. Type checker diagnostics name a unit in

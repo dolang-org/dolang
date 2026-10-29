@@ -508,8 +508,9 @@ pub(crate) struct UnitInfo<'u> {
     pub(crate) module: Option<&'u str>,
     pub(crate) path: &'u Path,
     /// Where the lines of a unit without source start, which locates the spans it
-    /// keeps: the number and start of each line holding one, in order. A unit with
-    /// source is located by its file.
+    /// keeps: the number and start of each line holding one, in order. The spans
+    /// of a unit without source, and these starts, are offsets in characters, not
+    /// bytes. A unit with source is located by its file.
     pub(crate) lines: Vec<(u32, u32)>,
     /// The unit, when it is checked from source
     pub(crate) source: Option<&'u Unit<'u>>,
@@ -518,7 +519,8 @@ pub(crate) struct UnitInfo<'u> {
 }
 
 impl UnitInfo<'_> {
-    /// The line and column of an offset of the unit
+    /// The line and column of an offset of the unit, in bytes for a unit with
+    /// source and in characters for one without
     pub(crate) fn coord(&self, offset: u32) -> Coord {
         if let Some(source) = self.source {
             return source.file.coord(offset);

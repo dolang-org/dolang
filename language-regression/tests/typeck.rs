@@ -332,14 +332,20 @@ pub fn validate(case: &Case) {
 
     let mut diags: Vec<Vec<_>> = units
         .iter()
-        .map(|unit| unit.diagnostics().collect())
+        .map(|unit| {
+            (unit.diagnostics())
+                .map(|diag| dolang_private_test::Located::new(diag, unit))
+                .collect()
+        })
         .collect();
     for diag in check.diagnostics() {
         let unit = diag
             .span()
             .unit()
             .expect("checker diagnostics name their unit");
-        diags[checked[&unit]].push(diag.clone());
+        let index = checked[&unit];
+        let located = dolang_private_test::Located::new(diag.clone(), &units[index]);
+        diags[index].push(located);
     }
 
     let mut failures = String::new();

@@ -21,18 +21,18 @@ let PRELUDE_ITEMS = Set $
 # class's contract and so are recorded on its entity
 let CLASS_DECORATORS = ["final", "mixable"]
 
-# One endpoint of a source span.
+# Where a span starts, with its line and column counted from zero.
 def pos_json pos
   $
     line: $pos.line
     column: $pos.column
-    byte_offset: $pos.byte_offset
 
-# Where a name is written.
+# Where a name is written: its start and its length, with the column and
+# length in characters.
 def span_json span
   $
     start: (pos_json span.start)
-    end: (pos_json span.end)
+    len: $span.len
 
 # A [`Span`](compile.Span) as JSON, or `nil`.
 def span_json_opt span
@@ -161,12 +161,12 @@ def const_type value
   else
     "Int"
 
-# Where a node starts, for ordering. A prelude node has no span, and comes first.
-def start_offset node
-  if (node.span == nil)
-    -1
-  else
-    node.span.start.byte_offset
+# Nodes in source order. A prelude node has no span, and comes first.
+def in_order nodes key
+  let spanless = [...nodes.filter(do |item| (key(item).span == nil))]
+  let spanned = [...nodes.filter(do |item| (key(item).span != nil))]
+  spanned.sort key: do |item| key(item).span
+  [...spanless, ...spanned]
 
 # A node reference as a `nodes` array index, or `nil`.
 def node_ref id_to_index id
@@ -362,12 +362,12 @@ def doc_line line
 # The documented declarations of one source file, described from an
 # already-built [`Index`](#Index) rather than re-walking `unit.nodes()`.
 class Document
-  field src module all index root
+  field unit module all index root
   field getter setter class_target static_target class_decorators
   field members entities
 
-  def (init) self src module all index
-    self.#src = src
+  def (init) self unit module all index
+    self.#unit = unit
     self.#module = module
     self.#all = all
     self.#index = index
@@ -403,8 +403,7 @@ class Document
       $compile.Field: $self.#field_member
       $compile.Method: $self.#method_member
       $compile.SpecialMethod: $self.#special_member
-    let nodes = [...unit.nodes()]
-    nodes.sort key: do |pair| (start_offset pair[1])
+    let nodes = in_order [...unit.nodes()] do |pair| pair[1]
     for id node = nodes
       if let handler = dispatch.get (type node) default: nil
         handler(id, node)
@@ -425,7 +424,7 @@ class Document
     items
 
   def text self span
-    self.#src[span.start.byte_offset..span.end.byte_offset]
+    self.#unit.text $span
 
   def doc_of self node
     if (node == nil || node.doc == nil)
@@ -434,9 +433,7 @@ class Document
 
   # The nodes belonging to one declaration, in source order.
   def own self id
-    let children = self.#index.node(id).children
-    children.sort key: $start_offset
-    children
+    in_order $self.#index.node(id).children do |child| child
 
   def included self is_pub
     (is_pub || self.#all)
@@ -836,7 +833,7 @@ def build_extract source display_path module doc all strict tokens
       for diag = diagnostics
         (diagnostic_json diag)
     if doc
-      doc: $Document(source, module, all, index).result(unit, display_path)
+      doc: $Document(unit, module, all, index).result(unit, display_path)
 
 def extract p
   let :doc :module :all :strict :tokens :path ... = p.extract

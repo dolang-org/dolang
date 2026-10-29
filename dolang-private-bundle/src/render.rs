@@ -1,9 +1,13 @@
 use annotate_snippets::{
     AnnotationKind as SnippetAnnotationKind, Group, Level, Patch as SnippetPatch, Renderer, Snippet,
 };
-use dolang_compile::diag::{self as compile, Diag};
+use dolang_compile::{
+    Unit,
+    diag::{self as compile, Diag},
+};
 
-fn render_report<'a>(file: &'a str, source: &'a str, diag: &'a Diag) -> Vec<Group<'a>> {
+fn render_report<'a>(file: &'a str, unit: &'a Unit<'_>, diag: &'a Diag) -> Vec<Group<'a>> {
+    let source = unit.source();
     let level = match diag.severity() {
         compile::Severity::Error => Level::ERROR,
         compile::Severity::Warning => Level::WARNING,
@@ -23,14 +27,13 @@ fn render_report<'a>(file: &'a str, source: &'a str, diag: &'a Diag) -> Vec<Grou
                 }
                 _ => SnippetAnnotationKind::Context,
             }
-            .span(ann.span().span().start().byte_offset()..ann.span().span().end().byte_offset())
+            .span(unit.byte_range(ann.span().span()))
             .label(ann.message().to_string()),
         );
     }
     if !have_primary {
-        snippet = snippet.annotation(SnippetAnnotationKind::Primary.span(
-            diag.span().span().start().byte_offset()..diag.span().span().end().byte_offset(),
-        ));
+        snippet = snippet
+            .annotation(SnippetAnnotationKind::Primary.span(unit.byte_range(diag.span().span())));
     }
     let mut primary = level
         .primary_title(diag.message().to_string())
@@ -48,8 +51,7 @@ fn render_report<'a>(file: &'a str, source: &'a str, diag: &'a Diag) -> Vec<Grou
         report.push(
             Group::with_title(Level::HELP.secondary_title(patch.message().to_string())).element(
                 Snippet::source(source).path(file).patch(SnippetPatch::new(
-                    patch.span().span().start().byte_offset()
-                        ..patch.span().span().end().byte_offset(),
+                    unit.byte_range(patch.span().span()),
                     patch.sub().to_owned(),
                 )),
             ),
@@ -58,6 +60,6 @@ fn render_report<'a>(file: &'a str, source: &'a str, diag: &'a Diag) -> Vec<Grou
     report
 }
 
-pub(crate) fn render_diag(file: &str, source: &str, diag: &Diag) -> String {
-    Renderer::plain().render(&render_report(file, source, diag))
+pub(crate) fn render_diag(file: &str, unit: &Unit<'_>, diag: &Diag) -> String {
+    Renderer::plain().render(&render_report(file, unit, diag))
 }

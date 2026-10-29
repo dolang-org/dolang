@@ -10,13 +10,13 @@ import compile std
   std:
     - hash
 
-def span_text source span
-  source[span.start.byte_offset..span.end.byte_offset]
+def span_text unit span
+  unit.text $span
 
-def declared_name source node
+def declared_name unit node
   let name = node.name
   if (type(name, compile.Span))
-    span_text $source $name
+    span_text $unit $name
   else
     name
 
@@ -37,7 +37,7 @@ def assert_span_contract left right
   assert_type $compile.Pos $right_start
   assert_eq $left_start $right_start
   assert_eq (hash left_start) (hash right_start)
-  assert (left_start <= left.end)
+  assert_eq $left.len $right.len
 
 #[test]
 def success()
@@ -125,7 +125,7 @@ def nodes()
   assert_type $compile.Root $first_node
   assert_eq $first_node.parent nil
   assert_eq $first_node.doc nil
-  assert_eq $source[first_node.span.start.byte_offset..first_node.span.end.byte_offset] $source
+  assert_eq $unit.text(first_node.span) $source
   assert_type (type first_node) $unit.node(first_id)
 
   let bytecode = unit.emit()
@@ -166,7 +166,7 @@ def node_doc_comments()
     if (type(node, compile.Function))
       let doc = node.doc
       assert_type $compile.Span $doc
-      assert_eq $source[doc.start.byte_offset..doc.end.byte_offset] |-
+      assert_eq $unit.text(doc) |-
         # A greeting.
         #
         # Spans several lines.
@@ -188,12 +188,26 @@ def root_doc_comments()
   let unit = compile.compile "module-doc.dol" $source document: true
   let root = unit.nodes().find(do |pair| type(pair[1], compile.Root))[1]
   assert_eq $root.parent nil
-  assert_eq $source[root.span.start.byte_offset..root.span.end.byte_offset] $source
+  assert_eq $unit.text(root.span) $source
   let doc = root.doc
-  assert_eq $source[doc.start.byte_offset..doc.end.byte_offset] |-
+  assert_eq $unit.text(doc) |-
     # Module summary.
     #
     # ## Details
+
+#[test]
+def spans_count_characters()
+  # A character of two bytes and a tab before the name count one each
+  let source = "def f a = \"é\t\" b = 1\n  b\n"
+  let unit = compile.compile "chars.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+  let name = (named_node unit nodes compile.PositionalParam "b")[1].name
+  assert_eq [name.start.line, name.start.column, name.len] [0, 15, 1]
+  assert_eq $unit.text(name) "b"
+  assert_eq $source[unit.byte_range(name)] "b"
+  let end = unit.end $name
+  assert_eq [end.line, end.column] [0, 16]
 
 #[test]
 def emit_without_recovery_fails_after_diagnostics()
@@ -280,7 +294,7 @@ def nonlocal_jumps_target_the_construct_they_leave()
 
   let the_while = unit.nodes().find(do |pair| type(pair[1], compile.While))
   let the_function = unit.nodes().find(do |pair|
-    (type(pair[1], compile.Function) && (declared_name(source, pair[1]) == "f")))
+    (type(pair[1], compile.Function) && (declared_name(unit, pair[1]) == "f")))
 
   let the_continue = unit.nodes().find(do |pair| type(pair[1], compile.Continue))
   assert_eq $the_continue[1].target $the_while[0]
@@ -443,12 +457,12 @@ def doc_comments_attach_only_to_the_declaration_directly_below_them()
 
   let doc_of = do |name ty|
     let found = nodes.find(do |pair|
-      (type(pair[1], ty) && (declared_name(source, pair[1]) == name)))
+      (type(pair[1], ty) && (declared_name(unit, pair[1]) == name)))
     let doc = found[1].doc
     if (doc == nil)
       nil
     else
-      span_text(source, doc)
+      span_text(unit, doc)
 
   # The interpreter line addresses the shell, not the reader.
   assert_eq (doc_of("greeting", compile.Bind)) "# The greeting to use."
@@ -474,10 +488,10 @@ def a_comment_block_runs_until_the_declaration_it_documents()
   assert_no_errors $unit
   let nodes = [...unit.nodes()]
   let thing = nodes.find(do |pair|
-    (type(pair[1], compile.Class) && (declared_name(source, pair[1]) == "Thing")))
+    (type(pair[1], compile.Class) && (declared_name(unit, pair[1]) == "Thing")))
   assert_eq $thing[1].doc nil
   let name = nodes.find(do |pair| type(pair[1], compile.Field))
-  assert_eq (span_text(source, name[1].doc)) |-
+  assert_eq (span_text(unit, name[1].doc)) |-
     # What it is called.
       #
       # Blank comment lines continue the block.
@@ -494,8 +508,8 @@ def root_doc_only_attaches_when_nothing_earlier_claims_it()
   let root = unit.nodes().find(do |pair| type(pair[1], compile.Root))
   assert_eq $root[1].doc nil
   let answer = unit.nodes().find(do |pair|
-    (type(pair[1], compile.Bind) && (declared_name(source, pair[1]) == "answer")))
-  assert_eq (span_text(source, answer[1].doc)) "# The answer."
+    (type(pair[1], compile.Bind) && (declared_name(unit, pair[1]) == "answer")))
+  assert_eq (span_text(unit, answer[1].doc)) "# The answer."
 
 #[test]
 def a_construct_spans_its_decorators_and_body_but_not_neighboring_lines()
@@ -515,8 +529,8 @@ def a_construct_spans_its_decorators_and_body_but_not_neighboring_lines()
   let nodes = [...unit.nodes()]
 
   let widget = nodes.find(do |pair|
-    (type(pair[1], compile.Function) && (declared_name(source, pair[1]) == "widget")))
-  assert_eq (span_text(source, widget[1].span)) |-
+    (type(pair[1], compile.Function) && (declared_name(unit, pair[1]) == "widget")))
+  assert_eq (span_text(unit, widget[1].span)) |-
     #[deco]
     pub def widget x
       let y = x
@@ -525,11 +539,11 @@ def a_construct_spans_its_decorators_and_body_but_not_neighboring_lines()
   # A binding extends over the statement that declares it, not just the name
   # it binds.
   let y = nodes.find(do |pair|
-    (type(pair[1], compile.Bind) && (declared_name(source, pair[1]) == "y")))
-  assert_eq (span_text(source, y[1].span)) "let y = x"
+    (type(pair[1], compile.Bind) && (declared_name(unit, pair[1]) == "y")))
+  assert_eq (span_text(unit, y[1].span)) "let y = x"
 
   let thing = nodes.find(do |pair| type(pair[1], compile.Class))
-  assert_eq (span_text(source, thing[1].span)) |-
+  assert_eq (span_text(unit, thing[1].span)) |-
     pub class Thing
       pub field tag = nil
 
@@ -553,10 +567,10 @@ def methods_record_visibility_and_special_methods_name_their_protocol()
   let nodes = [...unit.nodes()]
 
   let visible = nodes.find(do |pair|
-    (type(pair[1], compile.Method) && (declared_name(source, pair[1]) == "visible")))
+    (type(pair[1], compile.Method) && (declared_name(unit, pair[1]) == "visible")))
   assert $visible[1].is_pub
   let hidden = nodes.find(do |pair|
-    (type(pair[1], compile.Method) && (declared_name(source, pair[1]) == "hidden")))
+    (type(pair[1], compile.Method) && (declared_name(unit, pair[1]) == "hidden")))
   assert $!hidden[1].is_pub
 
   let special = [...nodes.filter(do |pair| type(pair[1], compile.SpecialMethod))]
@@ -576,7 +590,7 @@ def parameters_record_form_and_whether_they_have_a_default()
   assert_ne $port[1].default nil
 
   let rest = nodes.find(do |pair| type(pair[1], compile.RestParam))
-  assert_eq (declared_name(source, rest[1])) "rest"
+  assert_eq (declared_name(unit, rest[1])) "rest"
 
 #[test]
 def sibling_catch_handlers_binding_the_same_name_stay_distinct()
@@ -638,9 +652,9 @@ def unused_prelude_items_are_not_surfaced_as_nodes()
   assert_eq $items[0][1].item "getter"
 
 # The node of the given type whose declared name is `name`, as an `[id, node]` pair.
-def named_node source nodes kind name
+def named_node unit nodes kind name
   nodes.find(do |pair|
-    (type(pair[1], kind) && (declared_name(source, pair[1]) == name)))
+    (type(pair[1], kind) && (declared_name(unit, pair[1]) == name)))
 
 # The `[id, node]` pairs of the types describing the node `id`.
 def types_of nodes id
@@ -661,7 +675,7 @@ def type_only_declarations_are_exposed()
   let unit = compile.compile "type_only.dol" $source document: true
   assert_no_errors $unit
   let nodes = [...unit.nodes()]
-  let shape = (named_node source nodes compile.Class "Shape")
+  let shape = (named_node unit nodes compile.Class "Shape")
   assert $shape[1].type_only
   let area = nodes.find(do |pair| (type(pair[1], compile.Method) && (pair[1].parent == shape[0])))
   assert $area[1].type_only
@@ -669,7 +683,7 @@ def type_only_declarations_are_exposed()
   assert_eq [...grows.map(do |pair| pair[1].type_only)] [true, false]
   # An overload is public with its implementation
   assert $grows[0][1].is_pub
-  let square = (named_node source nodes compile.Class "Square")
+  let square = (named_node unit nodes compile.Class "Square")
   assert (!(square[1].type_only))
   assert_eq (types_of(nodes, square[0])[0][1].expr.target) $shape[0]
   let inits = [...nodes.filter(do |pair| type(pair[1], compile.SpecialMethod))]
@@ -696,13 +710,13 @@ def types_describe_what_they_annotate()
   assert_no_errors $unit
   let nodes = [...unit.nodes()]
 
-  let lookup = (named_node source nodes compile.Function "lookup")
+  let lookup = (named_node unit nodes compile.Function "lookup")
   let binder = nodes.find(do |pair| (type(pair[1], compile.Binder) && (pair[1].parent == lookup[0])))
-  assert_eq (declared_name(source, binder[1])) "T"
+  assert_eq (declared_name(unit, binder[1])) "T"
   assert_type $compile.PosBinder $binder[1]
 
   # A binder's class says how it takes a type argument
-  let spread = (named_node source nodes compile.Function "spread")
+  let spread = (named_node unit nodes compile.Function "spread")
   let binders = [...nodes.filter(do |pair| (type(pair[1], compile.Binder) && (pair[1].parent == spread[0])))]
   assert_eq [...binders.map(do |pair| type pair[1])] [compile.PosBinder, compile.KeyBinder, compile.MixedRestBinder]
 
@@ -711,39 +725,39 @@ def types_describe_what_they_annotate()
   assert_eq $returns.len 1
   let union = returns[0][1].expr
   assert_type $compile.UnionType $union
-  assert_eq (span_text(source, union.span)) "(T | nil)"
+  assert_eq (span_text(unit, union.span)) "(T | nil)"
   assert_eq $union.members[0].target $binder[0]
   assert_type $compile.ConstType $union.members[1]
 
   # A dotted name resolves its head
-  let table = (named_node source nodes compile.PositionalParam "table")
+  let table = (named_node unit nodes compile.PositionalParam "table")
   let app = (types_of(nodes, table[0])[0][1].expr)
   assert_type $compile.AppType $app
-  assert_eq (span_text(source, app.base.span)) "std.Dict"
-  assert_eq (span_text(source, app.base.head)) "std"
+  assert_eq (span_text(unit, app.base.span)) "std.Dict"
+  assert_eq (span_text(unit, app.base.head)) "std"
   let std_module = nodes.find(do |pair| (type(pair[1], compile.PreludeModule) && (pair[1].name == "std")))
   assert_eq $app.base.target $std_module[0]
   assert_eq $app.args[1].ty.target $binder[0]
 
   # Each field a declaration names is described by its annotation
-  let box = (named_node source nodes compile.Class "Box")
+  let box = (named_node unit nodes compile.Class "Box")
   let box_binder = nodes.find(do |pair| (type(pair[1], compile.Binder) && (pair[1].parent == box[0])))
   for name = ["first", "second"]
-    let field = (named_node source nodes compile.Field name)
+    let field = (named_node unit nodes compile.Field name)
     let described = (types_of nodes field[0])
     assert_eq $described.len 1
     assert_eq $described[0][1].expr.target $box_binder[0]
 
   # A type-only import is a target like any other
   let item = nodes.find(do |pair| type(pair[1], compile.ImportItem))
-  let record = (named_node source nodes compile.Bind "record")
+  let record = (named_node unit nodes compile.Bind "record")
   assert_eq (types_of(nodes, record[0])[0][1].expr.target) $item[0]
 
-  let consts = (named_node source nodes compile.Bind "consts")
+  let consts = (named_node unit nodes compile.Bind "consts")
   let members = (types_of(nodes, consts[0])[0][1].expr.members)
   assert_eq [...members.map(do |m| m.value)] [:a:, "b", 1, true, nil]
 
-  let schema = (named_node source nodes compile.Bind "schema")
+  let schema = (named_node unit nodes compile.Bind "schema")
   let schema_items = (types_of(nodes, schema[0])[0][1].expr.items)
   assert_eq [...schema_items.map(do |p| type p)] $
     - $compile.KeyTypeItem
@@ -751,11 +765,11 @@ def types_describe_what_they_annotate()
     - $compile.PosTypeItem
   assert_eq [...schema_items.map(do |p| type(p, compile.TypeItem))] [true, true, true]
   assert_eq [...schema_items.map(do |p| p.quant)] [nil, :OPT:, :STAR:]
-  assert_eq (span_text(source, schema_items[0].key)) "name"
-  assert_eq (span_text(source, schema_items[1].span)) "?port: Int"
+  assert_eq (span_text(unit, schema_items[0].key)) "name"
+  assert_eq (span_text(unit, schema_items[1].span)) "?port: Int"
   assert_type $compile.AppType $schema_items[2].ty
 
-  let func = (named_node source nodes compile.Bind "func")
+  let func = (named_node unit nodes compile.Bind "func")
   let func_type = (types_of(nodes, func[0])[0][1].expr)
   assert_type $compile.FuncType $func_type
   let items = func_type.items
@@ -783,31 +797,31 @@ def superclasses_are_types_of_their_class()
   let nodes = [...unit.nodes()]
 
   let module = nodes.find(do |pair| type(pair[1], compile.ImportModule))
-  let record = (named_node source nodes compile.ImportItem "Record")
+  let record = (named_node unit nodes compile.ImportItem "Record")
 
-  let named = (named_node source nodes compile.Class "Named")
+  let named = (named_node unit nodes compile.Class "Named")
   let named_supers = (types_of nodes named[0])
   assert_eq $named_supers.len 1
-  assert_eq (span_text(source, named_supers[0][1].span)) "Record"
+  assert_eq (span_text(unit, named_supers[0][1].span)) "Record"
   assert_eq $named_supers[0][1].expr.target $record[0]
 
   # A dotted name resolves by its head
-  let tagged = (named_node source nodes compile.Class "Tagged")
+  let tagged = (named_node unit nodes compile.Class "Tagged")
   let tagged_supers = (types_of nodes tagged[0])
   assert_eq $tagged_supers.len 1
-  assert_eq (span_text(source, tagged_supers[0][1].span)) "std.Record"
+  assert_eq (span_text(unit, tagged_supers[0][1].span)) "std.Record"
   assert_eq $tagged_supers[0][1].expr.target $module[0]
 
   # Type arguments may name the class's binders
-  let keyed = (named_node source nodes compile.Class "Keyed")
+  let keyed = (named_node unit nodes compile.Class "Keyed")
   let binder = nodes.find(do |pair| (type(pair[1], compile.Binder) && (pair[1].parent == keyed[0])))
   let app = (types_of(nodes, keyed[0])[0][1].expr)
   assert_type $compile.AppType $app
-  assert_eq (span_text(source, app.span)) "Record[...{*(K): Int}]"
+  assert_eq (span_text(unit, app.span)) "Record[...{*(K): Int}]"
   assert_eq $app.base.target $record[0]
   let arg = app.args[0]
   assert_type $compile.ExpandTypeArg $arg
-  assert_eq (span_text(source, arg.span)) "...{*(K): Int}"
+  assert_eq (span_text(unit, arg.span)) "...{*(K): Int}"
   let entries = arg.ty.items[0]
   assert_type $compile.KeyTypeItem $entries
   assert_eq $entries.quant :STAR:
@@ -827,11 +841,11 @@ def type_followups_are_exposed()
   let nodes = [...unit.nodes()]
   let module = nodes.find(do |pair| type(pair[1], compile.ImportModule))
   assert $module[1].type_only
-  let alias = (named_node source nodes compile.Alias "Entries")
+  let alias = (named_node unit nodes compile.Alias "Entries")
   assert $alias[1].is_pub
   let binder = nodes.find(do |pair| (type(pair[1], compile.Binder) && (pair[1].parent == alias[0])))
-  assert_eq (span_text(source, binder[1].bound.span)) "Str"
-  assert_eq (span_text(source, binder[1].default.span)) "Sym"
+  assert_eq (span_text(unit, binder[1].bound.span)) "Str"
+  assert_eq (span_text(unit, binder[1].default.span)) "Sym"
   let schema = (types_of(nodes, alias[0])[0][1].expr.args[0].ty)
   assert_type $compile.SchemaType $schema
   assert_eq [...schema.items.map(do |param| type param)] $
@@ -841,16 +855,16 @@ def type_followups_are_exposed()
     - $compile.KeyTypeItem
     - $compile.KeyTypeItem
   assert_eq [...[1, 2, 3, 4].map(do |i| schema.items[i].quant)] [:STAR:, :STAR:, nil, nil]
-  assert_eq (span_text(source, schema.items[0].span)) "..."
-  assert_eq (span_text(source, schema.items[1].key_ty.span)) "(K)"
-  assert_eq (span_text(source, schema.items[2].key_ty.span)) "(Tuple[Int, Int])"
+  assert_eq (span_text(unit, schema.items[0].span)) "..."
+  assert_eq (span_text(unit, schema.items[1].key_ty.span)) "(K)"
+  assert_eq (span_text(unit, schema.items[2].key_ty.span)) "(Tuple[Int, Int])"
   # A key other than a bareword is a type, and a name in it resolves
-  assert_eq (span_text(source, schema.items[3].key)) "(K)"
+  assert_eq (span_text(unit, schema.items[3].key)) "(K)"
   assert_eq $schema.items[3].key_ty.target $binder[0]
   assert_type $compile.ConstType $schema.items[4].key_ty
   assert_eq $schema.items[4].key_ty.value "k"
   # A binder's bound may name a later binder
-  let later = (named_node source nodes compile.Alias "Later")
+  let later = (named_node unit nodes compile.Alias "Later")
   let later_binders = [...nodes.filter(do |pair| (type(pair[1], compile.Binder) && (pair[1].parent == later[0])))]
   assert_eq $later_binders[0][1].bound.args[0].ty.target $later_binders[1][0]
   # Names in a binder's bound and default, and in the aliased type, resolve
@@ -871,14 +885,14 @@ def parenthesized_types_are_exposed()
   let unit = compile.compile "parens.dol" $source document: true
   assert_no_errors $unit
   let nodes = [...unit.nodes()]
-  let pair = (types_of(nodes, (named_node source nodes compile.Alias "Pair")[0])[0][1].expr)
+  let pair = (types_of(nodes, (named_node unit nodes compile.Alias "Pair")[0])[0][1].expr)
   assert_type $compile.ParensType $pair
-  assert_eq (span_text(source, pair.span)) "(Int, name: Str)"
+  assert_eq (span_text(unit, pair.span)) "(Int, name: Str)"
   assert_eq [...pair.items.map(do |param| type param)] $
     - $compile.PosTypeItem
     - $compile.KeyTypeItem
   # A lone item without a quantifier or a trailing comma only groups
-  let grouped = (types_of(nodes, (named_node source nodes compile.Alias "Grouped")[0])[0][1].expr)
+  let grouped = (types_of(nodes, (named_node unit nodes compile.Alias "Grouped")[0])[0][1].expr)
   assert_type $compile.NameType $grouped
 
 #[test]
@@ -888,11 +902,11 @@ def array_types_are_exposed()
   let unit = compile.compile "arrays.dol" $source document: true
   assert_no_errors $unit
   let nodes = [...unit.nodes()]
-  let ints = (types_of(nodes, (named_node source nodes compile.Alias "Ints")[0])[0][1].expr)
+  let ints = (types_of(nodes, (named_node unit nodes compile.Alias "Ints")[0])[0][1].expr)
   assert_type $compile.ArrayType $ints
-  assert_eq (span_text(source, ints.span)) "[Int]"
+  assert_eq (span_text(unit, ints.span)) "[Int]"
   assert_type $compile.NameType $ints.elem
-  assert_eq (span_text(source, ints.elem.span)) "Int"
+  assert_eq (span_text(unit, ints.elem.span)) "Int"
 
 #[test]
 def sibling_module_type_imports_resolve_separately()
@@ -914,8 +928,8 @@ def sibling_module_type_imports_resolve_separately()
   assert_eq $imports.len 2
   for pair = imports
     assert $pair[1].type_only
-  let first = (named_node source nodes compile.Alias "First")
-  let second = (named_node source nodes compile.Alias "Second")
+  let first = (named_node unit nodes compile.Alias "First")
+  let second = (named_node unit nodes compile.Alias "Second")
   assert_eq (types_of(nodes, first[0])[0][1].expr.target) $imports[0][0]
   assert_eq (types_of(nodes, second[0])[0][1].expr.target) $imports[1][0]
 
@@ -929,7 +943,7 @@ def unused_module_type_import_names_its_whole_path()
   assert_no_errors $unit
   let diagnostics = [...unit.diagnostics()]
   assert_eq $diagnostics.len 1
-  assert_eq (span_text(source, diagnostics[0].span.span)) "not_loaded.two"
+  assert_eq (span_text(unit, diagnostics[0].span.span)) "not_loaded.two"
 
 #[test]
 def a_module_import_names_types_in_that_module_alone()
@@ -945,7 +959,7 @@ def a_module_import_names_types_in_that_module_alone()
   assert_no_errors $unit
   let unbound = [...unit.diagnostics().filter(do |d| (d.message == "unbound type name"))]
   # The module is what is unbound, so each is reported over its whole path
-  assert_eq [...unbound.map(do |d| span_text(source, d.span.span))] ["not_loaded.deeper", "loaded.nested"]
+  assert_eq [...unbound.map(do |d| span_text(unit, d.span.span))] ["not_loaded.deeper", "loaded.nested"]
 
 #[test]
 def rest_annotation_expansion_is_indexed()
@@ -953,12 +967,12 @@ def rest_annotation_expansion_is_indexed()
   let unit = compile.compile "rest.dol" $source document: true
   assert_no_errors $unit
   let rest = unit.nodes().find(do |pair| type(pair[1], compile.RestParam))[1]
-  assert_eq (span_text source rest.type_ellipsis) "..."
-  assert_eq $rest.type_ellipsis.start.byte_offset 23
+  assert_eq (span_text unit rest.type_ellipsis) "..."
+  assert_eq $rest.type_ellipsis.start.column 23
   bind fields(rest)
     :type_ellipsis
     ...
-  assert_eq $type_ellipsis.start.byte_offset $rest.type_ellipsis.start.byte_offset
+  assert_eq $type_ellipsis $rest.type_ellipsis
 
 #[test]
 def type_arguments_are_positional_keyword_or_expansions()
@@ -966,13 +980,13 @@ def type_arguments_are_positional_keyword_or_expansions()
   let unit = compile.compile "args.dol" $source document: true
   assert_no_errors $unit
   let nodes = [...unit.nodes()]
-  let bind_node = (named_node source nodes compile.Bind "r")
+  let bind_node = (named_node unit nodes compile.Bind "r")
   let args = (types_of(nodes, bind_node[0])[0][1].expr.args)
   assert_eq [...args.map(do |a| type a)] [compile.PosTypeArg, compile.KeyTypeArg, compile.ExpandTypeArg]
   assert $args.all(do |a| type(a, compile.TypeArg))
-  assert_eq (span_text(source, args[1].name)) "name"
-  assert_eq (span_text(source, args[1].span)) "name: Str"
-  assert_eq (span_text(source, args[2].span)) "...{*Bool}"
+  assert_eq (span_text(unit, args[1].name)) "name"
+  assert_eq (span_text(unit, args[1].span)) "name: Str"
+  assert_eq (span_text(unit, args[2].span)) "...{*Bool}"
   assert_type $compile.SchemaType $args[2].ty
 
 #[test]
@@ -1013,10 +1027,10 @@ def statement_type_imports_keep_document_targets()
     assert $pair[1].type_only
     assert $pair[1].is_pub
   for i name = ["First", "Second", "Third", "Fourth", "Fifth"].enumerate()
-    let alias = (named_node source nodes compile.Alias name)
+    let alias = (named_node unit nodes compile.Alias name)
     assert_eq (types_of(nodes, alias[0])[0][1].expr.target) $imports[i][0]
-  assert_eq (span_text source imports[0][1].module) "missing.module"
-  assert_eq (span_text source imports[0][1].name) "renamed"
+  assert_eq (span_text unit imports[0][1].module) "missing.module"
+  assert_eq (span_text unit imports[0][1].name) "renamed"
   unit.emit()
 
 #[test]
@@ -1033,7 +1047,7 @@ def rest_kinds_are_exposed()
 
   # A rest binder's type says which items it takes
   let kinds = do |name|
-    let func = (named_node source nodes compile.Function name)
+    let func = (named_node unit nodes compile.Function name)
     let binders = nodes.filter(do |pair| (type(pair[1], compile.RestBinder) && (pair[1].parent == func[0])))
     [...binders.map(do |pair| type pair[1])]
   assert_eq (kinds "split") [compile.PosRestBinder, compile.KeyRestBinder]
@@ -1041,14 +1055,14 @@ def rest_kinds_are_exposed()
 
   # So does a rest parameter's
   let params = do |name|
-    let func = (named_node source nodes compile.Function name)
+    let func = (named_node unit nodes compile.Function name)
     let rests = nodes.filter(do |pair| (type(pair[1], compile.RestParam) && (pair[1].parent == func[0])))
     [...rests.map(do |pair| type pair[1])]
   assert_eq (params "split") [compile.PosRestParam, compile.KeyRestParam]
   assert_eq (params "mixed") [compile.MixedRestParam]
 
   # And a rest item's
-  let schema = (named_node source nodes compile.Bind "schema")
+  let schema = (named_node unit nodes compile.Bind "schema")
   let schema_items = (types_of(nodes, schema[0])[0][1].expr.items)
   assert_eq [...schema_items.map(do |p| type p)] $
     - $compile.PosTypeItem
@@ -1057,8 +1071,8 @@ def rest_kinds_are_exposed()
     - $compile.AnyPosTypeItem
   assert_eq [schema_items[0].quant, schema_items[2].quant] [:STAR:, :INCLUDE:]
   assert $schema_items.all(do |p| type(p, compile.TypeItem))
-  assert_eq (span_text(source, schema_items[1].span)) "**Str"
-  assert_eq (span_text(source, schema_items[1].ty.span)) "Str"
+  assert_eq (span_text(unit, schema_items[1].span)) "**Str"
+  assert_eq (span_text(unit, schema_items[1].ty.span)) "Str"
   unit.emit()
 
 #[test]
@@ -1075,7 +1089,7 @@ def implicit_params_are_exposed()
 
   # A declaration's implicits are parameter nodes that bind no name
   let implicits = do |name|
-    let func = (named_node source nodes compile.Function name)
+    let func = (named_node unit nodes compile.Function name)
     let found = nodes.filter(do |pair| (type(pair[1], compile.ImplicitParam) && (pair[1].parent == func[0])))
     [...found.map(do |pair| type pair[1])]
   assert_eq (implicits "reads") [compile.InputParam, compile.OutputParam]
@@ -1084,16 +1098,16 @@ def implicit_params_are_exposed()
   let input = nodes.find(do |pair| type(pair[1], compile.InputParam))[1]
   assert $type(input, compile.Param)
   assert_eq $input.name nil
-  assert_eq (span_text source input.span) "<Iter[Int]"
+  assert_eq (span_text unit input.span) "<Iter[Int]"
 
   # A function type carries them beside its parameters
-  let func = (named_node source nodes compile.Bind "func")
+  let func = (named_node unit nodes compile.Bind "func")
   let func_type = (types_of(nodes, func[0])[0][1].expr)
   assert_type $compile.FuncType $func_type
   assert_eq [...func_type.items.map(do |p| type p)] [compile.PosTypeItem]
   assert_type $compile.AppType $func_type.input
   assert_type $compile.AppType $func_type.output
-  assert_eq (span_text source func_type.input.span) "Iter[Int]"
+  assert_eq (span_text unit func_type.input.span) "Iter[Int]"
 
   unit.emit()
 
@@ -1105,7 +1119,7 @@ def type_forms_are_nodes_of_what_refers_to_them()
   let unit = compile.compile "forms.dol" $source document: true
   assert_no_errors $unit
   let nodes = [...unit.nodes()]
-  let pick = (named_node source nodes compile.Function "pick")
+  let pick = (named_node unit nodes compile.Function "pick")
 
   # A binder's bound is a child of the binder, and a union's members of the
   # union. A form covers the parentheses grouping it.
@@ -1113,13 +1127,13 @@ def type_forms_are_nodes_of_what_refers_to_them()
   let bound = binder[1].bound
   assert_type $compile.UnionType $bound
   assert_eq $bound.parent $binder[0]
-  assert_eq (span_text source bound.span) "(Int | Str)"
+  assert_eq (span_text unit bound.span) "(Int | Str)"
   for member = bound.members
     assert_eq $member.parent $bound.id
 
   # An annotation's form is the child of its type, and a schema's items and
   # their types are children of what lists them
-  let value = (named_node source nodes compile.PositionalParam "value")
+  let value = (named_node unit nodes compile.PositionalParam "value")
   let ty = (types_of(nodes, value[0])[0][1])
   let schema = ty.expr
   assert_eq $schema.parent $ty.id
@@ -1161,12 +1175,12 @@ def schema_items_and_union_members_carry_the_comment_above_them()
   let unit = compile.compile "docs.dol" $source document: true
   assert_no_errors $unit
   let nodes = [...unit.nodes()]
-  let settings = (named_node source nodes compile.Alias "Settings")
+  let settings = (named_node unit nodes compile.Alias "Settings")
   let documented = [...nodes.filter(do |pair|
     (pair[1].doc != nil && (type(pair[1], compile.TypeExpr) || type(pair[1], compile.TypeItem))))]
-  documented.sort key: do |pair| pair[1].span.start.byte_offset
+  documented.sort key: do |pair| pair[1].span
   let docs = [...documented.map(do |pair|
-    [span_text(source, pair[1].span), span_text(source, pair[1].doc)])]
+    [span_text(unit, pair[1].span), span_text(unit, pair[1].doc)])]
   # An item's span takes in its dash. The type node does not take the alias's
   # doc, nor a lone unparenthesized parameter its function type's, and a
   # member without a comment above its bar has none.
@@ -1177,14 +1191,14 @@ def schema_items_and_union_members_carry_the_comment_above_them()
     - [":fast:", "# Fast."]
     - ["callback: (\n    # Ignored.\n    Int -> Int)", "# A callback."]
     - ["pair: (Int | Str)", "# One line."]
-  assert_eq (span_text(source, settings[1].doc)) "# Settings."
+  assert_eq (span_text(unit, settings[1].doc)) "# Settings."
 
 #[test]
 def an_unreadable_type_leaves_no_nodes()
   let source = "let x @ (Int | 1.5) = nil\n"
   let unit = compile.compile "unreadable.dol" $source document: true recover: true
   let nodes = [...unit.nodes()]
-  let x = (named_node source nodes compile.Bind "x")
+  let x = (named_node unit nodes compile.Bind "x")
   assert_eq $x[1].children []
   let forms = nodes.filter(do |pair| (type(pair[1], compile.Type) || type(pair[1], compile.TypeExpr)))
   assert_eq ([...forms].len) 0
@@ -1226,6 +1240,24 @@ def check_writes_typelibs()
   assert_throws $std.ValueError do result.typelib $other
   let unasked = compile.check [lib, main]
   assert_throws $std.ValueError do unasked.typelib $lib
+
+# A unit checked from its typelib is located by characters, without its source
+#[test]
+def typelib_locations_count_characters()
+  # The parameter `b` follows a character of two bytes and a tab on its line
+  let source = "# dolang: strict\npub class S\npub def f a @ S = \"é\t\" b = nil\n  nil\n"
+  let lib = compile.compile "lib.dol" $source module: lib typecheck: true
+  let main = compile.compile "main.dol" "import lib\n" typecheck: true
+  let written = compile.check [lib, main] typelibs: true
+  let typelib = compile.Typelib $written.typelib(lib)
+  let main = compile.compile "main.dol" "import lib\n" typecheck: true
+  let result = compile.check [typelib, main]
+  assert_eq $result.diagnostics.len 1
+  let diag = result.diagnostics[0]
+  assert_eq $diag.message "a strict unit must annotate this parameter"
+  let start = diag.span.span.start
+  assert_eq [diag.span.unit, start.line, start.column] [0, 2, 23]
+  assert ("$(diag.render())".contains "lib.dol:3:24")
 
 #[test]
 def check_reports_diagnostics_across_units()

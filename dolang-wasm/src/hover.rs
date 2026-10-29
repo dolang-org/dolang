@@ -5,6 +5,8 @@
 //! typelib, so a declaration found in one is left as a key into the doc index
 //! the page loads. Signatures are returned in parts, since how one is laid out
 //! is up to the page.
+use std::ops::Range;
+
 use dolang::compile::{
     Kind, NodeId, Span, Token, Unit, UnitId,
     typeck::{self, Role, Style},
@@ -160,7 +162,7 @@ pub(crate) struct Param {
 pub(crate) fn references(unit: &Unit<'_>) -> Vec<Reference> {
     let mut refs = Vec::new();
     unit.tokens(&mut |token, span: Span, node: Option<NodeId>, _| {
-        let (start, end) = (span.start().byte_offset(), span.end().byte_offset());
+        let Range { start, end } = unit.byte_range(span);
         let punctuation = matches!(token, Token::Delim | Token::Sigil);
         let Some(id) = node.filter(|_| start != end && !punctuation) else {
             return;
@@ -352,14 +354,10 @@ fn targets(
     let chosen = node.and_then(chosen);
     let found = match reference {
         Some(id) => {
-            let source = unit.source();
             let target = match unit.node(id).map(|node| node.kind()) {
-                Some(Kind::ImportItem { module, item, .. }) => item_target(
-                    unit,
-                    own,
-                    span_text(source, &module),
-                    span_text(source, &item),
-                ),
+                Some(Kind::ImportItem { module, item, .. }) => {
+                    item_target(unit, own, unit.text(module), unit.text(item))
+                }
                 Some(Kind::PreludeItem { module, item, .. }) => {
                     item_target(unit, own, module, item)
                 }
@@ -424,12 +422,11 @@ fn chosen(node: typeck::Node<'_>) -> Option<u32> {
 /// its implementation.
 fn item_target(unit: &Unit<'_>, own: &str, module: &str, name: &str) -> Option<Target> {
     let (mut module, mut name) = (module.to_owned(), name.to_owned());
-    let source = unit.source();
     for _ in 0..MAX_HOPS {
         if module != own {
             return Some(Target::Bundled(module, name));
         }
-        let named = |span: &_| span_text(source, span) == name;
+        let named = |span: &_| unit.text(*span) == name;
         let mut signature = None;
         let mut reexport = None;
         for id in unit.node(unit.root()?)?.children() {
@@ -472,10 +469,7 @@ fn item_target(unit: &Unit<'_>, own: &str, module: &str, name: &str) -> Option<T
             return Some(Target::Source(id));
         }
         let (next, item) = reexport?;
-        (module, name) = (
-            span_text(source, &next).to_owned(),
-            span_text(source, &item).to_owned(),
-        );
+        (module, name) = (unit.text(next).to_owned(), unit.text(item).to_owned());
     }
     None
 }
@@ -499,7 +493,7 @@ fn member_target(
     let named = |id: NodeId, name: &str| {
         let node = unit.node(id);
         let span = node.and_then(|node| node.definition());
-        span.is_some_and(|span| span_text(unit.source(), &span) == name)
+        span.is_some_and(|span| unit.text(span) == name)
     };
     let class = unit.node(unit.root()?)?.children().find(|&id| {
         let is_class = matches!(
@@ -523,15 +517,15 @@ fn member_target(
 fn overload(unit: &Unit<'_>, id: NodeId, index: u32) -> NodeId {
     let chosen = || {
         let node = unit.node(id)?;
-        let name = span_text(unit.source(), &node.definition()?);
+        let name = unit.text(node.definition()?);
         let mut overloads: Vec<_> = unit
             .node(node.parent()?)?
             .children()
             .filter(|&other| is_overload(unit, other))
             .filter_map(|other| {
                 let node = unit.node(other)?;
-                let named = span_text(unit.source(), &node.definition()?) == name;
-                named.then_some((node.span()?.start().byte_offset(), other))
+                let named = unit.text(node.definition()?) == name;
+                named.then_some((node.span()?.start(), other))
             })
             .collect();
         overloads.sort_unstable_by_key(|&(start, _)| start);
@@ -557,9 +551,8 @@ fn is_overload(unit: &Unit<'_>, id: NodeId) -> bool {
             let (Some(span), Some(name)) = (node.span(), node.definition()) else {
                 return false;
             };
-            let before = unit
-                .source()
-                .get(span.start().byte_offset()..name.start().byte_offset());
+            let start = unit.byte_range(span).start;
+            let before = unit.source().get(start..unit.byte_range(name).start);
             let def = before.and_then(|before| before.trim_end().strip_suffix("def"));
             def.is_some_and(|def| def.trim_end().ends_with('@'))
         }
@@ -583,7 +576,7 @@ fn describe(unit: &Unit<'_>, target: &Target, chosen: Option<u32>) -> Vec<Declar
                 && doc.is_empty()
                 && let Some(span) = unit.node(implementation).and_then(|node| node.doc())
             {
-                *doc = normalize_doc(unit.source(), &span);
+                *doc = normalize_doc(unit, span);
             }
             vec![described]
         }
@@ -599,18 +592,16 @@ fn describe(unit: &Unit<'_>, target: &Target, chosen: Option<u32>) -> Vec<Declar
 /// check: an import or prelude binding names a bundled item, and anything
 /// else is described from the source.
 fn declared(unit: &Unit<'_>, id: NodeId) -> Vec<Declaration> {
-    let source = unit.source();
     let bundled = |module: &str, item: &str| Declaration::Bundled {
         module: module.to_owned(),
         item: item.to_owned(),
         overload: None,
     };
     let declaration = match unit.node(id).map(|node| node.kind()) {
-        Some(Kind::ImportModule { module, .. }) => Some(bundled(span_text(source, &module), "")),
-        Some(Kind::ImportItem { module, item, .. }) => Some(bundled(
-            span_text(source, &module),
-            span_text(source, &item),
-        )),
+        Some(Kind::ImportModule { module, .. }) => Some(bundled(unit.text(module), "")),
+        Some(Kind::ImportItem { module, item, .. }) => {
+            Some(bundled(unit.text(module), unit.text(item)))
+        }
         Some(Kind::PreludeModule { module, .. }) => Some(bundled(module, "")),
         Some(Kind::PreludeItem { module, item, .. }) => Some(bundled(module, item)),
         _ => local(unit, id),
@@ -648,7 +639,7 @@ fn local(unit: &Unit<'_>, id: NodeId) -> Option<Declaration> {
         class: class_header(unit, id),
         doc: node
             .doc()
-            .map(|span| normalize_doc(unit.source(), &span))
+            .map(|span| normalize_doc(unit, span))
             .unwrap_or_default(),
         signature,
     })
@@ -656,7 +647,6 @@ fn local(unit: &Unit<'_>, id: NodeId) -> Option<Declaration> {
 
 /// The header of the class a declaration is a member of, as `class C[T]`
 fn class_header(unit: &Unit<'_>, id: NodeId) -> Option<String> {
-    let source = unit.source();
     let parent = unit.node(unit.node(id)?.parent()?)?;
     let Kind::Class {
         name, type_only, ..
@@ -670,24 +660,20 @@ fn class_header(unit: &Unit<'_>, id: NodeId) -> Option<String> {
         .filter(|child| matches!(child.kind(), Kind::Binder { .. }))
         .filter_map(|child| child.span())
         .collect();
-    binders.sort_by_key(|span| span.start().byte_offset());
-    let binders: Vec<_> = binders.iter().map(|span| one_line(source, span)).collect();
+    binders.sort();
+    let binders: Vec<_> = binders.iter().map(|span| one_line(unit, *span)).collect();
     let binders = if binders.is_empty() {
         String::new()
     } else {
         format!("[{}]", binders.join(", "))
     };
     let at = if type_only { "@" } else { "" };
-    Some(format!("{at}class {}{binders}", span_text(source, &name)))
-}
-
-fn span_text<'a>(source: &'a str, span: &Span) -> &'a str {
-    &source[span.start().byte_offset()..span.end().byte_offset()]
+    Some(format!("{at}class {}{binders}", unit.text(name)))
 }
 
 /// A doc comment without its comment markers, keeping its Markdown layout
-fn normalize_doc(source: &str, span: &Span) -> String {
-    span_text(source, span)
+fn normalize_doc(unit: &Unit<'_>, span: Span) -> String {
+    unit.text(span)
         .split('\n')
         .map(|line| {
             let line = line.trim();
@@ -699,8 +685,8 @@ fn normalize_doc(source: &str, span: &Span) -> String {
 }
 
 /// Source text as one line
-fn one_line(source: &str, span: &Span) -> String {
-    span_text(source, span)
+fn one_line(unit: &Unit<'_>, span: Span) -> String {
+    unit.text(span)
         .lines()
         .map(str::trim)
         .collect::<Vec<_>>()
@@ -723,33 +709,33 @@ fn parameter(unit: &Unit<'_>, id: NodeId) -> Option<Param> {
         .find(|child| matches!(child.kind(), Kind::Type { .. }))
         .and_then(|child| child.span());
     // The parameter as written ends where its annotation or default starts
-    let end = [ty.as_ref(), default.as_ref()]
+    let range = unit.byte_range(span);
+    let end = [ty, default]
         .into_iter()
         .flatten()
-        .map(|span| span.start().byte_offset())
+        .map(|span| unit.byte_range(span).start)
         .min()
-        .unwrap_or(span.end().byte_offset());
-    let head = source.get(span.start().byte_offset()..end)?.trim_end();
+        .unwrap_or(range.end);
+    let head = source.get(range.start..end)?.trim_end();
     let head = head.strip_suffix('=').unwrap_or(head).trim_end();
     let head = head.strip_suffix('@').unwrap_or(head).trim_end();
     Some(Param {
         head: head.lines().map(str::trim).collect::<Vec<_>>().join(" "),
-        ty: ty.map(|span| one_line(source, &span)),
+        ty: ty.map(|span| one_line(unit, span)),
         default: default.is_some(),
     })
 }
 
 /// A declaration's signature, including any type it is annotated with
 fn signature(unit: &Unit<'_>, id: NodeId) -> Option<Signature> {
-    let source = unit.source();
     let node = unit.node(id)?;
     let kind = node.kind();
-    let name = span_text(source, &node.definition()?).to_owned();
+    let name = unit.text(node.definition()?).to_owned();
     // In source order; a prelude binding, having no span, sorts first
     let mut ids: Vec<_> = node.children().collect();
     ids.sort_by_key(|&id| {
         let span = unit.node(id).and_then(|child| child.span());
-        span.map(|span| span.start().byte_offset())
+        span.map(|span| span.start())
     });
     let children: Vec<_> = ids.iter().filter_map(|&id| unit.node(id)).collect();
     let spans = |matches: fn(&Kind<'_>) -> bool| -> Vec<Span> {
@@ -762,13 +748,13 @@ fn signature(unit: &Unit<'_>, id: NodeId) -> Option<Signature> {
     let binders = || {
         spans(|kind| matches!(kind, Kind::Binder { .. }))
             .iter()
-            .map(|span| one_line(source, span))
+            .map(|span| one_line(unit, *span))
             .collect()
     };
     let ty = || {
         spans(|kind| matches!(kind, Kind::Type { .. }))
             .first()
-            .map(|span| one_line(source, span))
+            .map(|span| one_line(unit, *span))
     };
     let params = || {
         ids.iter()
@@ -793,10 +779,8 @@ fn signature(unit: &Unit<'_>, id: NodeId) -> Option<Signature> {
                         item,
                         ..
                     } => item,
-                    Kind::ImportItem { module, item, .. }
-                        if span_text(source, &module) == "std" =>
-                    {
-                        span_text(source, &item)
+                    Kind::ImportItem { module, item, .. } if unit.text(module) == "std" => {
+                        unit.text(item)
                     }
                     _ => return None,
                 };
@@ -816,7 +800,7 @@ fn signature(unit: &Unit<'_>, id: NodeId) -> Option<Signature> {
             // A class's types are its superclasses
             supers: spans(|kind| matches!(kind, Kind::Type { .. }))
                 .iter()
-                .map(|span| span_text(source, span).to_owned())
+                .map(|span| unit.text(*span).to_owned())
                 .collect(),
         },
         Kind::Function {

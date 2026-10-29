@@ -30,7 +30,7 @@ use crate::{
             Delegated, Dispatch, GcObj, Header, Inspect, Protocol, Spread, SpreadContext,
             TypeHandle,
         },
-        set, tuple,
+        range, set, tuple,
     },
     sig::Unpack,
     stdlib::fmt as fmt_obj,
@@ -3271,6 +3271,24 @@ impl<'v, A: Input<'v>, B: Input<'v>> Input<'v> for (A, B) {
             InputBy::Value(value, _) => value,
         };
         InputBy::Value(Value::from_object(tuple::tuple(vm, [first, second])), None)
+    }
+}
+
+/// A Rust range becomes a Do `Range` from its start to its end.
+impl<'v, T: Input<'v>> Input<'v> for std::ops::Range<T> {
+    #[allow(private_interfaces)]
+    fn input_take<'a>(&'a mut self, vm: &'a Vm<'v>, _: private::Sealed) -> InputBy<'v, 'a> {
+        let start = match self.start.input_take(vm, private::Sealed) {
+            InputBy::Borrow(value) => value.dup(),
+            InputBy::Value(value, _) => value,
+        };
+        let end = match self.end.input_take(vm, private::Sealed) {
+            InputBy::Borrow(value) => value.dup(),
+            InputBy::Value(value, _) => value,
+        };
+        let range = range::Range::new(start, end, Value::NIL);
+        let range = GcObj::new(vm.arena(), vm.builtin_types().range, range);
+        InputBy::Value(Value::from_object(range), None)
     }
 }
 

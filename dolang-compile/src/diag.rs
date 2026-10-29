@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 
 use crate::UnitId;
 
@@ -26,27 +26,21 @@ impl Display for Severity {
     }
 }
 
-/// Source code position
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// Source code position: a line, and a column within it
+///
+/// The column counts Unicode scalar values from the start of the line, a tab
+/// counting as one, as editors do. Where a UTF-16 or display column is wanted, it
+/// is computed from the line's text.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Pos {
-    offset: usize,
     line: u32,
     column: u32,
 }
 
 impl Pos {
-    /// Construct a position from a byte offset and zero-based line/column.
-    pub(crate) fn new(offset: usize, line: u32, column: u32) -> Self {
-        Self {
-            offset,
-            line,
-            column,
-        }
-    }
-
-    /// Byte offset
-    pub fn byte_offset(&self) -> usize {
-        self.offset
+    /// Construct a position from a zero-based line and column.
+    pub(crate) fn new(line: u32, column: u32) -> Self {
+        Self { line, column }
     }
 
     /// Line (starting from 0)
@@ -54,7 +48,7 @@ impl Pos {
         self.line
     }
 
-    /// Column (starting from 0).
+    /// Column (starting from 0), in Unicode scalar values
     pub fn column_offset(&self) -> u32 {
         self.column
     }
@@ -64,33 +58,64 @@ impl Pos {
         self.line + 1
     }
 
-    /// Column number (starting from 1)
+    /// Column number (starting from 1), in Unicode scalar values
     pub fn column_number(&self) -> u32 {
         self.column + 1
     }
 }
 
-/// Source code span
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Span {
-    start: Pos,
-    end: Pos,
-}
+/// Source code span: a start position and a length
+///
+/// The length counts Unicode scalar values, as the column of [`Pos`] does,
+/// including those of each line break a span crosses (`\r\n` is two). Where it
+/// ends can therefore be found only with the text: [`Unit::end`](crate::Unit::end)
+/// gives the end position, and [`Unit::byte_range`](crate::Unit::byte_range) and
+/// [`Unit::text`](crate::Unit::text) slice the source.
+///
+/// Spans order by start, then by length. A line, column or length too large to
+/// represent is clamped, which only shortens what is highlighted.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Span(u64);
 
 impl Span {
-    /// Construct a half-open span.
-    pub(crate) fn new(start: Pos, end: Pos) -> Self {
-        Self { start, end }
+    const LINE_BITS: u32 = 24;
+    const COLUMN_BITS: u32 = 20;
+    const LEN_BITS: u32 = 20;
+
+    /// Construct a span, clamping each field to its range.
+    pub(crate) fn new(line: u32, column: u32, len: u32) -> Self {
+        let field = |value: u32, bits: u32| u64::from(value).min((1 << bits) - 1);
+        Self(
+            field(line, Self::LINE_BITS) << (Self::COLUMN_BITS + Self::LEN_BITS)
+                | field(column, Self::COLUMN_BITS) << Self::LEN_BITS
+                | field(len, Self::LEN_BITS),
+        )
     }
 
     /// Start of span (inclusive)
     pub fn start(&self) -> Pos {
-        self.start.clone()
+        let column = (self.0 >> Self::LEN_BITS) & ((1 << Self::COLUMN_BITS) - 1);
+        Pos::new(
+            (self.0 >> (Self::COLUMN_BITS + Self::LEN_BITS)) as u32,
+            column as u32,
+        )
     }
 
-    /// End of span (exclusive)
-    pub fn end(&self) -> Pos {
-        self.end.clone()
+    /// Length, in Unicode scalar values
+    pub fn len(&self) -> u32 {
+        (self.0 & ((1 << Self::LEN_BITS) - 1)) as u32
+    }
+
+    /// Whether the span is empty
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl Debug for Span {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let start = self.start();
+        write!(f, "{}:{}+{}", start.line, start.column, self.len())
     }
 }
 
@@ -114,7 +139,7 @@ impl SourceSpan {
         self.unit
     }
     pub fn span(&self) -> Span {
-        self.span.clone()
+        self.span
     }
     pub(crate) fn dup(&self) -> Self {
         self.clone()
@@ -297,5 +322,46 @@ impl Diag {
             kind: n.kind.dup(),
             message: n.message.clone(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spans_pack() {
+        let span = Span::new(70_000, 300, 12);
+        assert_eq!(span.start(), Pos::new(70_000, 300));
+        assert_eq!(span.len(), 12);
+    }
+
+    #[test]
+    fn fields_saturate() {
+        let span = Span::new(u32::MAX, u32::MAX, u32::MAX);
+        assert_eq!(span.start(), Pos::new((1 << 24) - 1, (1 << 20) - 1));
+        assert_eq!(span.len(), (1 << 20) - 1);
+        let span = Span::new(1, u32::MAX, 3);
+        assert_eq!((span.start().line_offset(), span.len()), (1, 3));
+    }
+
+    #[test]
+    fn spans_order_by_start_then_length() {
+        let mut spans = [
+            Span::new(1, 0, 1),
+            Span::new(0, 5, 9),
+            Span::new(0, 5, 2),
+            Span::new(0, 6, 0),
+        ];
+        spans.sort();
+        assert_eq!(
+            spans,
+            [
+                Span::new(0, 5, 2),
+                Span::new(0, 5, 9),
+                Span::new(0, 6, 0),
+                Span::new(1, 0, 1),
+            ]
+        );
     }
 }

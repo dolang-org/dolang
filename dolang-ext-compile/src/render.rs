@@ -2,8 +2,10 @@ use annotate_snippets::{
     Annotation, AnnotationKind as SnippetAnnotationKind, Group, Level, Origin,
     Patch as SnippetPatch, Renderer, Snippet, renderer::DecorStyle,
 };
+use std::ops::Range;
+
 use console::Term;
-use dolang::compile::{self, Diag, UnitId};
+use dolang::compile::{self, Diag, SourceSpan, Unit, UnitId};
 
 #[derive(Clone, Copy)]
 pub enum ColorMode {
@@ -25,11 +27,44 @@ fn use_color(term: &Term, color: ColorMode) -> bool {
 pub(crate) struct UnknownSource;
 
 /// Sources indexed by unit; a location with no unit refers to the first. A unit
-/// checked from its typelib has a path but no text.
+/// checked from its typelib has a path but no text. `ranges` gives where each
+/// location of the diagnostic in a unit with text lies in it.
 #[derive(Clone, Copy)]
 struct Sources<'a, 'b> {
     paths: &'b [&'a str],
     texts: &'b [Option<&'a str>],
+    ranges: &'b Ranges,
+}
+
+/// Where each location of a diagnostic in a unit with source lies in that source,
+/// in bytes
+pub(crate) type Ranges = Vec<(SourceSpan, Range<usize>)>;
+
+/// Where each location of `diag` lies in the source of its unit, as `unit` gives
+/// it by the location's unit
+pub(crate) fn ranges<'u>(
+    diag: &Diag,
+    unit: impl Fn(Option<UnitId>) -> Option<&'u Unit<'u>>,
+) -> Ranges {
+    let locations = [diag.span()]
+        .into_iter()
+        .chain(diag.annotations().map(|annotation| annotation.span()))
+        .chain(diag.patches().map(|patch| patch.span()));
+    locations
+        .filter_map(|location| {
+            let range = unit(location.unit())?.byte_range(location.span());
+            Some((location, range))
+        })
+        .collect()
+}
+
+impl Sources<'_, '_> {
+    fn range(&self, location: &SourceSpan) -> Range<usize> {
+        (self.ranges.iter())
+            .find(|(located, _)| located == location)
+            .map(|(_, range)| range.clone())
+            .expect("each location in a unit with source has a range")
+    }
 }
 
 /// Where a unit's locations are shown: its source, or for a unit without one, only
@@ -77,7 +112,7 @@ fn render_report<'a>(
     };
     // Annotations grouped by file, the primary location's first.
     let primary_location = diag.span();
-    type Located = (SnippetAnnotationKind, compile::Span, Option<String>);
+    type Located = (SnippetAnnotationKind, SourceSpan, Option<String>);
     let mut files: Vec<(Option<UnitId>, Vec<Located>)> =
         vec![(primary_location.unit(), Vec::new())];
     let mut have_primary = false;
@@ -90,26 +125,23 @@ fn render_report<'a>(
             }
             _ => SnippetAnnotationKind::Context,
         };
-        let annotation = (kind, location.span(), Some(ann.message().to_string()));
+        let annotation = (kind, location.clone(), Some(ann.message().to_string()));
         match files.iter_mut().find(|(unit, _)| *unit == location.unit()) {
             Some((_, annotations)) => annotations.push(annotation),
             None => files.push((location.unit(), vec![annotation])),
         }
     }
     if !have_primary {
-        files[0].1.push((
-            SnippetAnnotationKind::Primary,
-            primary_location.span(),
-            None,
-        ));
+        files[0]
+            .1
+            .push((SnippetAnnotationKind::Primary, primary_location, None));
     }
     let mut primary = Group::with_title(level.primary_title(diag.message().to_string()));
     for (unit, annotations) in files {
         match snippet(sources, unit)? {
             Shown::Snippet(snippet) => {
-                let annotations = annotations.into_iter().map(|(kind, span, label)| {
-                    let annotation: Annotation<'a> =
-                        kind.span(span.start().byte_offset()..span.end().byte_offset());
+                let annotations = annotations.into_iter().map(|(kind, location, label)| {
+                    let annotation: Annotation<'a> = kind.span(sources.range(&location));
                     match label {
                         Some(label) => annotation.label(label),
                         None => annotation,
@@ -118,8 +150,8 @@ fn render_report<'a>(
                 primary = primary.element(snippet.annotations(annotations));
             }
             Shown::Path(path) => {
-                for (_, span, label) in annotations {
-                    primary = primary.element(origin(path, span));
+                for (_, location, label) in annotations {
+                    primary = primary.element(origin(path, location.span()));
                     if let Some(label) = label {
                         primary = primary.element(Level::NOTE.message(label));
                     }
@@ -142,7 +174,7 @@ fn render_report<'a>(
         let title = Group::with_title(Level::HELP.secondary_title(patch.message().to_string()));
         report.push(match snippet(sources, location.unit())? {
             Shown::Snippet(snippet) => title.element(snippet.patch(SnippetPatch::new(
-                span.start().byte_offset()..span.end().byte_offset(),
+                sources.range(&location),
                 patch.sub().to_owned(),
             ))),
             Shown::Path(path) => title.element(origin(path, span)),
@@ -170,31 +202,40 @@ fn renderer(color: ColorMode) -> Renderer {
 pub(crate) fn render_diag(
     paths: &[&str],
     texts: &[Option<&str>],
+    ranges: &Ranges,
     diag: &Diag,
     color: ColorMode,
 ) -> Result<String, UnknownSource> {
-    let sources = Sources { paths, texts };
+    let sources = Sources {
+        paths,
+        texts,
+        ranges,
+    };
     Ok(renderer(color).render(&render_report(sources, diag)?))
 }
 
 /// Render a diagnostic from [`Check::diagnostics`](dolang::compile::typeck::Check::diagnostics).
 ///
-/// `paths` and `texts` are indexed by the checked units' [`UnitId`]s; a unit
-/// checked from its typelib has no text, and is located by line and column.
+/// `paths` and `units` are indexed by the checked units' [`UnitId`]s; a unit
+/// checked from its typelib has no [`Unit`], and is located by line and column.
 ///
 /// # Panics
 ///
-/// If the diagnostic refers to a unit beyond `paths` or `texts`.
+/// If the diagnostic refers to a unit beyond `paths` or `units`.
 pub fn render_check_diag(
     paths: &[&str],
-    texts: &[Option<&str>],
+    units: &[Option<&Unit<'_>>],
     diag: &Diag,
     color: ColorMode,
 ) -> String {
-    render_diag(paths, texts, diag, color).expect("diagnostic of a checked unit")
+    let texts: Vec<_> = units.iter().map(|unit| unit.map(Unit::source)).collect();
+    let ranges = ranges(diag, |id| *units.get(id.map_or(0, UnitId::index))?);
+    render_diag(paths, &texts, &ranges, diag, color).expect("diagnostic of a checked unit")
 }
 
 /// Render a diagnostic from [`Unit::diagnostics`](dolang::compile::Unit::diagnostics).
-pub fn render_compile_diag(file: &str, source: &str, diag: &Diag, color: ColorMode) -> String {
-    render_diag(&[file], &[Some(source)], diag, color).expect("local compiler diagnostic")
+pub fn render_compile_diag(file: &str, unit: &Unit<'_>, diag: &Diag, color: ColorMode) -> String {
+    let ranges = ranges(diag, |_| Some(unit));
+    render_diag(&[file], &[Some(unit.source())], &ranges, diag, color)
+        .expect("local compiler diagnostic")
 }

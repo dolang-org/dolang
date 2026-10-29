@@ -348,10 +348,7 @@ fn returns_cannot_exit_modules_or_repl() {
                         "{source:?}, typecheck={typecheck}, recover={recover}"
                     );
                     let span = diag.unwrap().span().span();
-                    assert_eq!(
-                        &source[span.start().byte_offset()..span.end().byte_offset()],
-                        "return"
-                    );
+                    assert_eq!(unit.text(span), "return");
                     assert!(unit.emit(&mut Vec::new()).is_err());
                 }
             }

@@ -36,11 +36,9 @@ pub(crate) struct Diagnostic {
 }
 
 /// A span's UTF-16 range; all positions exposed to the editor are UTF-16.
-fn range(offsets: &Offsets, span: &Span) -> (usize, usize) {
-    (
-        offsets.utf16(span.start().byte_offset()),
-        offsets.utf16(span.end().byte_offset()),
-    )
+fn range(offsets: &Offsets, unit: &Unit<'_>, span: Span) -> (usize, usize) {
+    let range = unit.byte_range(span);
+    (offsets.utf16(range.start), offsets.utf16(range.end))
 }
 
 /// Converts a diagnostic located in the source, appending it and its
@@ -50,11 +48,12 @@ fn range(offsets: &Offsets, span: &Span) -> (usize, usize) {
 /// returning `None` for one in the source itself.
 fn convert(
     offsets: &Offsets,
+    unit: &Unit<'_>,
     diag: &Diag,
     foreign: impl Fn(&dolang::compile::SourceSpan) -> Option<String>,
     out: &mut Vec<Diagnostic>,
 ) {
-    let (from, to) = range(offsets, &diag.span().span());
+    let (from, to) = range(offsets, unit, diag.span().span());
     let mut message = diag.message().to_string();
     for note in diag.notes() {
         message.push_str(&format!("\n{}", note.message()));
@@ -79,7 +78,7 @@ fn convert(
         // diagnostic's own range
         let (range, message) = match foreign(&span) {
             Some(location) => ((from, to), format!("{location}: {message}")),
-            None => (range(offsets, &span.span()), message),
+            None => (range(offsets, unit, span.span()), message),
         };
         out.push(Diagnostic {
             from: range.0,
@@ -97,7 +96,7 @@ fn diagnostics(unit: &Unit<'_>, offsets: &Offsets) -> Vec<Diagnostic> {
             diag.span().unit().is_none(),
             "playground diagnostics must be local"
         );
-        convert(offsets, &diag, |_| None, &mut result);
+        convert(offsets, unit, &diag, |_| None, &mut result);
     }
     result
 }
@@ -161,7 +160,7 @@ impl Analyzed {
         let offsets = &self.offsets;
         let mut tokens = Vec::new();
         unit.tokens(&mut |token, span: Span, node: Option<NodeId>, context| {
-            let (from, to) = range(offsets, &span);
+            let (from, to) = range(offsets, unit, span);
             if from == to {
                 return;
             }
@@ -212,7 +211,7 @@ impl Analyzed {
             for diag in check.diagnostics() {
                 if diag.span().unit() == Some(id) {
                     let foreign = |span: &dolang::compile::SourceSpan| foreign(&check, id, span);
-                    convert(offsets, diag, foreign, &mut result);
+                    convert(offsets, unit, diag, foreign, &mut result);
                 }
             }
             let name = check.name(id);

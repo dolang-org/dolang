@@ -197,7 +197,7 @@ pub fn bundle(spec: &Bundle<'_>) {
                 Severity::Warning => had_warning = true,
                 _ => {}
             }
-            eprintln!("{}", render::render_diag(compiler_path, source, &diag));
+            eprintln!("{}", render::render_diag(compiler_path, &unit, &diag));
         }
         if had_error {
             panic!("compilation errors in {compiler_path}");
@@ -224,8 +224,12 @@ pub fn bundle(spec: &Bundle<'_>) {
                 .span()
                 .unit()
                 .expect("checker diagnostics name their unit");
-            let (compiler_path, source) = &texts[ids.iter().position(|&id| id == unit).unwrap()];
-            eprintln!("{}", render::render_diag(compiler_path, source, diag));
+            let index = ids.iter().position(|&id| id == unit).unwrap();
+            let (compiler_path, _) = &texts[index];
+            eprintln!(
+                "{}",
+                render::render_diag(compiler_path, &units[index], diag)
+            );
             failed |= matches!(diag.severity(), Severity::Error | Severity::Warning);
         }
         if failed {

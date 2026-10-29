@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     RestKind,
     ast::SpecialMethod,
-    source::Span,
+    source::{self, Span},
     typeck::{
         elab::{
             self, Bases, BinderRef, DeclNode, Referent, Role, Shard, UnitInfo, local,
@@ -44,7 +44,9 @@ pub(super) struct Content<S> {
     pub(super) module: u32,
     /// The module's path, which only locates its diagnostics
     pub(super) path: u32,
-    /// The number and start of each line holding a span the typelib keeps
+    /// The number and start of each line holding a span the typelib keeps. Spans
+    /// and line starts are offsets in characters, which locates them in characters
+    /// without the source.
     pub(super) lines: Vec<(u32, u32)>,
     /// Whether the module was checked strictly, which its signatures depend on
     pub(super) strict: bool,
@@ -65,7 +67,7 @@ pub(super) struct Content<S> {
     pipes: Option<[(u32, u32); 2]>,
 }
 
-/// A span's start and end
+/// A span's start and end, in characters
 type WireSpan = (u32, u32);
 
 /// A declaration signature
@@ -587,8 +589,13 @@ pub(super) struct Encode<'s, 'u> {
     strings: Vec<String>,
     types: Vec<Type>,
     interned: FxHashMap<Type, u32>,
-    /// Every span written
+    /// The offset in characters of each line's start, for a shard with source,
+    /// whose spans are in bytes
+    chars: Option<Vec<u32>>,
+    /// Every span written, as the shard has it
     spans: Vec<Span>,
+    /// The number and start of each line holding a span written
+    lines: Vec<(u32, u32)>,
 }
 
 impl<'s, 'u> Encode<'s, 'u> {
@@ -628,7 +635,12 @@ impl<'s, 'u> Encode<'s, 'u> {
             strings: Vec::new(),
             types: Vec::new(),
             interned: FxHashMap::default(),
+            chars: shard
+                .info
+                .source
+                .map(|unit| line_chars(unit.file.content())),
             spans: Vec::new(),
+            lines: Vec::new(),
         }
     }
 
@@ -653,6 +665,7 @@ impl<'s, 'u> Encode<'s, 'u> {
         self.texts.clear();
         self.interned.clear();
         self.spans.clear();
+        self.lines.clear();
         let content = self.pass();
         (content, self.spans)
     }
@@ -703,14 +716,7 @@ impl<'s, 'u> Encode<'s, 'u> {
                 item: opt(link.item.map(|item| self.str(item) as usize)),
             });
         }
-        let mut lines: Vec<(u32, u32)> = (self.spans.iter())
-            .filter(|&&span| span != Span::INVALID)
-            .flat_map(|span| [span.start, span.end])
-            .map(|offset| {
-                let coord = info.coord(offset);
-                (coord.line, offset - coord.column)
-            })
-            .collect();
+        let mut lines = mem::take(&mut self.lines);
         lines.sort_unstable();
         lines.dedup();
         Content {
@@ -806,7 +812,24 @@ impl<'s, 'u> Encode<'s, 'u> {
 
     fn span(&mut self, span: Span) -> WireSpan {
         self.spans.push(span);
-        (span.start, span.end)
+        if span == Span::INVALID {
+            return (span.start, span.end);
+        }
+        let mut offset = |offset: u32| {
+            let info = &self.shard.info;
+            let coord = info.coord(offset);
+            let (start, column) = match (&self.chars, info.source) {
+                (Some(chars), Some(unit)) => {
+                    let line = (offset - coord.column) as usize;
+                    let prefix = &unit.file.content().as_bytes()[line..offset as usize];
+                    (chars[coord.line as usize], source::chars(prefix))
+                }
+                _ => (offset - coord.column, coord.column),
+            };
+            self.lines.push((coord.line, start));
+            start + column
+        };
+        (offset(span.start), offset(span.end))
     }
 
     fn name(&mut self, name: surface::Name) -> Name {
@@ -1206,6 +1229,19 @@ impl<'s, 'u> Encode<'s, 'u> {
         self.interned.insert(node, id);
         id
     }
+}
+
+/// The offset in characters of the start of each line of `content`
+fn line_chars(content: &str) -> Vec<u32> {
+    let mut starts = vec![0];
+    let mut count = 0;
+    for ch in content.chars() {
+        count += 1;
+        if ch == '\n' {
+            starts.push(count);
+        }
+    }
+    starts
 }
 
 fn quant(quant: TypeQuant) -> Quant {

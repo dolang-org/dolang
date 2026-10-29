@@ -2,7 +2,9 @@
 //!
 //! A check that is asked to writes the typelib of each module it checks from
 //! source, once it has elaborated it. A typelib holds the surface of a module's
-//! shard, with the module's name, path and the lines its kept spans are on. It is a
+//! shard, with the module's name, path and the lines its kept spans are on, which
+//! are offsets in characters rather than bytes, so they locate a column in
+//! characters without the source. It is a
 //! structural record of the module's interface: it keeps text that is part of the
 //! interface, not how a reference is spelled, and spans that locate definitions and
 //! imports, not those of written types. It is mostly what elaboration starts
@@ -39,7 +41,7 @@ mod wire;
 const MAGIC: [u8; 8] = *b"\xffdotypel";
 /// The format's version, which changes with any change to the format. It isn't 0,
 /// which the bytes after the magic of an older typelib would read as.
-const VERSION: u16 = 7;
+const VERSION: u16 = 8;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct Header {

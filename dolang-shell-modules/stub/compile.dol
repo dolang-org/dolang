@@ -117,6 +117,51 @@ pub class Unit
   pub def tokens self -> Iter[Token]
     ...
 
+  # Returns the source text of a span of this unit.
+  #
+  # ## Errors
+  #
+  # Raises `std.StateError` if the unit was emitted.
+  #
+  # ## Example
+  #
+  # ```
+  # for id node = unit.nodes()
+  #   if (node.span != nil)
+  #     echo $unit.text(node.span)
+  # ```
+  pub def text
+    self
+    # A span of this unit.
+    span @ Span
+  do -> Str
+    ...
+
+  # Returns where a span of this unit lies in its source, as a range of byte
+  # offsets, which slices the source.
+  #
+  # ## Errors
+  #
+  # Raises `std.StateError` if the unit was emitted.
+  pub def byte_range
+    self
+    # A span of this unit.
+    span @ Span
+  do -> Range[Int]
+    ...
+
+  # Returns the exclusive end position of a span of this unit.
+  #
+  # ## Errors
+  #
+  # Raises `std.StateError` if the unit was emitted.
+  pub def end
+    self
+    # A span of this unit.
+    span @ Span
+  do -> Pos
+    ...
+
   # Consumes the unit and returns its bytecode.
   #
   # ## Errors
@@ -406,7 +451,7 @@ pub class Param: Node
 # A positional parameter.
 pub class PositionalParam: Param
   # The span of the default value expression, or `nil` when the parameter has
-  # no default. Slice the source for its text.
+  # no default. [`Unit.text`](compile.Unit.text) gives its text.
   #[getter]
   pub def default self -> (Span | nil)
     ...
@@ -418,7 +463,7 @@ pub class PositionalParam: Param
 # cover the same text.
 pub class KeyParam: Param
   # The span of the default value expression, or `nil` when the parameter has
-  # no default. Slice the source for its text.
+  # no default. [`Unit.text`](compile.Unit.text) gives its text.
   #[getter]
   pub def default self -> (Span | nil)
     ...
@@ -940,14 +985,18 @@ pub class SourceSpan
   pub def span self -> Span
     ...
 
-# A region of source text.
+# A region of source text: where it starts, and its length in characters.
 #
-# Spans compare and order by position, so they can be sorted or used as dict
+# The length counts each line break the span crosses, so where a span ends is
+# known only with the source: [`Unit.end`](compile.Unit.end) gives it, and
+# [`Unit.text`](compile.Unit.text) slices it.
+#
+# Spans order by start, then by length, so they can be sorted or used as dict
 # keys.
 pub class Span
-  # The exclusive end position.
+  # The length in characters.
   #[getter]
-  pub def end self -> Pos
+  pub def len self -> Int
     ...
 
   # The inclusive start position.
@@ -957,12 +1006,7 @@ pub class Span
 
 # A position within source text. All coordinates are zero-based.
 pub class Pos
-  # Byte offset from the start of the source.
-  #[getter]
-  pub def byte_offset self -> Int
-    ...
-
-  # Column offset within the line.
+  # Column offset within the line, in characters. A tab counts as one.
   #[getter]
   pub def column self -> Int
     ...

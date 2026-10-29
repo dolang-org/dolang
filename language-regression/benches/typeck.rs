@@ -138,7 +138,10 @@ fn benchmarks(c: &mut Criterion) {
         let errors: Vec<_> = unit
             .diagnostics()
             .filter(|d| d.severity() == Severity::Error)
-            .map(|d| dolang_private_test::render_diag_display("dodo.dol", &source, &d))
+            .map(|d| {
+                let located = dolang_private_test::Located::new(d, &unit);
+                dolang_private_test::render_diag_display("dodo.dol", &source, &located)
+            })
             .collect();
         assert!(errors.is_empty(), "{}", errors.join("\n"));
         b.iter(|| black_box(config.unit(&path, black_box(source.as_str()))));
