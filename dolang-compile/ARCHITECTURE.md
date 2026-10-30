@@ -1224,10 +1224,12 @@ The checker's surface holds the same spans: collection locates each span it
 copies from the syntax tree, so a unit checked from source and one checked from
 its typelib hold the same kind of span, and diagnostics raised from the surface
 are located already. Byte spans remain where the checker reads syntax or slices
-source: lowering, flow analysis and the links found by the spans of their heads.
-A problem found there is located when it is reported, and the analysis locates
-its judgments when the check builds it, so `typeck::Node::span` is a public span
-like any other and `Analysis::at` takes a position. Joining two spans of the
+source: lowering and the links found by the spans of their heads. Lowering
+locates each span it puts in the typing CFG, joining spans from the syntax tree
+first where it needs one across several nodes, and names each source variable,
+so flow analysis holds located spans. Its problems and judgments need no
+locating, so `typeck::Node::span` is a public span like any other and
+`Analysis::at` takes a position. Joining two spans of the
 surface needs the source, since a span's length counts the lines it crosses;
 only a unit with source has spans to join.
 

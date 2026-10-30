@@ -18,8 +18,8 @@ use super::{
     rule::{Call, PreparedCall},
 };
 use crate::{
+    diag::Span,
     lex::Op,
-    source::Span,
     typeck::{
         cfg::{Expr, ExprKind, Item, Member},
         elab::Designated,

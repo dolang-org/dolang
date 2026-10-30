@@ -35,7 +35,7 @@ use super::{
 use crate::{
     ast::{Class, Function, Stmt},
     diag,
-    source::Span,
+    source::{File, Span},
 };
 
 /// Lower `unit` into its typing CFG, one region with the unit's top-level code as
@@ -66,6 +66,8 @@ struct Lower<'t, 'u> {
     tables: &'t Tables<'u>,
     db: &'t Database,
     unit: UnitId,
+    /// The unit's source, whose spans the graph holds located
+    file: &'u File<'u>,
     graph: Graph,
     queue: RefCell<Vec<Work<'u>>>,
     decls: FxHashMap<DeclKey, DeclId>,
@@ -125,6 +127,11 @@ impl<'t, 'u> Lower<'t, 'u> {
             tables,
             db,
             unit,
+            file: &tables
+                .info(unit)
+                .source
+                .expect("only a unit with source is lowered")
+                .file,
             graph: Graph::new(),
             queue: RefCell::new(Vec::new()),
             decls,
@@ -199,7 +206,7 @@ impl<'t, 'u> Lower<'t, 'u> {
             block.steps.insert(
                 index,
                 Step::Escape {
-                    span: capture.span,
+                    span: self.locate(capture.span),
                     kind: EscapeKind::Capture,
                     except: None,
                     supers: true,
@@ -242,6 +249,14 @@ impl<'t, 'u> Lower<'t, 'u> {
 
     fn text(&self, span: Span) -> &'u str {
         self.tables.text(self.unit, span)
+    }
+
+    /// A span of the unit's source as the graph holds it
+    fn locate(&self, span: Span) -> diag::Span {
+        match span == Span::INVALID {
+            true => diag::Span::INVALID,
+            false => self.file.locate(span),
+        }
     }
 
     fn symbol(&self, text: &str) -> SymbolId {
@@ -385,6 +400,10 @@ impl<'u> Scope<'_, '_, 'u> {
         self.lower.symbol(self.text(span))
     }
 
+    fn locate(&self, span: Span) -> diag::Span {
+        self.lower.locate(span)
+    }
+
     /// A variable for a value lowering introduces
     fn synthetic(&self) -> VarId {
         self.graph()
@@ -401,7 +420,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 let target = self.route(target, finally.as_ref());
                 self.end(Terminal::Branch {
                     target,
-                    span: Span::INVALID,
+                    span: diag::Span::INVALID,
                 });
             }
             End::EndFinally => self.end(Terminal::EndFinally),
@@ -409,7 +428,7 @@ impl<'u> Scope<'_, '_, 'u> {
     }
 }
 
-fn expr(kind: ExprKind, span: Span) -> Expr {
+fn expr(kind: ExprKind, span: diag::Span) -> Expr {
     Expr {
         kind,
         span,
@@ -418,7 +437,7 @@ fn expr(kind: ExprKind, span: Span) -> Expr {
 }
 
 /// An expression lowering makes up, spanned at source it doesn't stand for
-fn synthetic(kind: ExprKind, span: Span) -> Expr {
+fn synthetic(kind: ExprKind, span: diag::Span) -> Expr {
     Expr {
         kind,
         span,
@@ -427,6 +446,6 @@ fn synthetic(kind: ExprKind, span: Span) -> Expr {
 }
 
 /// A statement's value, or a field's, where it has none
-fn nil(span: Span) -> Expr {
+fn nil(span: diag::Span) -> Expr {
     synthetic(ExprKind::Literal(Literal::Nil), span)
 }

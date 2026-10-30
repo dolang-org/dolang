@@ -3,7 +3,7 @@ use std::{ops::Deref, path::Path};
 use super::{Layout, Problem, Results, Role, Tree, collate};
 use crate::{
     Config,
-    source::Span,
+    diag::Span,
     typeck::{
         Builder, Check,
         cfg::{BlockId, FuncKind, Ir, Origin, Terminal},
@@ -25,7 +25,7 @@ struct Rendered {
 /// A fact with its type rendered, ordered by span
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct RenderedFact {
-    span: (u32, u32),
+    span: Span,
     role: Role,
     ty: String,
     unassigned: bool,
@@ -40,7 +40,7 @@ fn rendered(
         .facts
         .iter()
         .map(move |&((span, role), seen)| RenderedFact {
-            span: (span.start, span.end),
+            span,
             role,
             ty: render(seen.fact.ty),
             unassigned: seen.fact.unassigned,
@@ -57,6 +57,17 @@ impl<'u> Checked<'u> {
     fn new(builder: Builder<'u, '_>) -> Self {
         let (check, tables) = builder.check_tables();
         Self { check, tables }
+    }
+
+    /// The source text of `unit` at `span`
+    fn text(&self, unit: UnitId, span: Span) -> &'u str {
+        let file = &self
+            .tables
+            .info(unit)
+            .source
+            .expect("a unit with source")
+            .file;
+        &file.content()[file.byte_range(span)]
     }
 }
 
@@ -131,7 +142,7 @@ fn facts_named(check: &Checked<'_>, unit: usize, name: &str) -> Vec<String> {
         .iter()
         .filter(|((span, role), _)| {
             matches!(role, Role::Read | Role::Bind)
-                && check.tables.text(UnitId::from_index(unit), *span) == name
+                && check.text(UnitId::from_index(unit), *span) == name
         })
         .map(|(_, seen)| check.render_fact(seen.fact.ty))
         .collect()
@@ -523,7 +534,7 @@ fn live_at(
             layout.live[block.index()]
                 .iter_ones()
                 .filter_map(|slot| match ir.var(vars[slot]).origin {
-                    Origin::Source(span) => Some(check.tables.text(layout.unit, span).to_owned()),
+                    Origin::Source(span, _) => Some(check.text(layout.unit, span).to_owned()),
                     _ => None,
                 })
                 .collect()

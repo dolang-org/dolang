@@ -2,13 +2,13 @@
 
 use std::collections::VecDeque;
 
-use crate::source::Span;
+use crate::diag::Span;
 
 use super::{
     At, Detail, Flow, Results, Role, Seen, State, problem::Problem, rule::passed_signature,
 };
 use crate::typeck::{
-    cfg::{Expr, ExprKind, FuncId, FuncKind},
+    cfg::{Expr, ExprKind, FuncId, FuncKind, Origin},
     elab::{Designated, Referent, Tables, Target},
     solver::Status,
     r#type::{
@@ -62,9 +62,14 @@ impl Flow<'_, '_> {
                 let fact = self.read(at, state, var);
                 self.record(expr.span, Role::Read, var, fact);
                 if fact.unassigned && self.observing() && expr.span != Span::INVALID {
+                    let name = match self.ir.var(var).origin {
+                        Origin::Source(_, name) => self.db.symbol(name),
+                        Origin::Field(key) => self.db.symbol(key.name),
+                        _ => "?",
+                    };
                     self.problem(Problem::Unassigned {
                         span: expr.span,
-                        name: self.tables.text(self.unit, expr.span).to_owned(),
+                        name: name.to_owned(),
                         definitely: fact.ty == self.db.bottom(),
                     });
                 }

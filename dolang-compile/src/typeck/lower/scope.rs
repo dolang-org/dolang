@@ -127,7 +127,9 @@ impl<'u> Lower<'_, 'u> {
                     let origin = match var.origin {
                         ast::Origin::Source(span)
                         | ast::Origin::SelfParam(span)
-                        | ast::Origin::Import(span) => Origin::Source(span),
+                        | ast::Origin::Import(span) => {
+                            Origin::Source(self.locate(span), self.symbol(self.text(span)))
+                        }
                         _ => Origin::Synthetic,
                     };
                     let id = self.graph.alloc_var(func, origin, None);
@@ -197,7 +199,11 @@ impl<'u> Lower<'_, 'u> {
                         let Some(slot) = entries.get_mut(index) else {
                             continue;
                         };
-                        let var = self.graph.alloc_var(func, Origin::Source(bind.span), None);
+                        let origin = Origin::Source(
+                            self.locate(bind.span),
+                            self.symbol(self.text(bind.span)),
+                        );
+                        let var = self.graph.alloc_var(func, origin, None);
                         *slot = Some(Entry::Item {
                             module: self.text(*module),
                             item: self.text(item.item()),
@@ -365,9 +371,9 @@ impl<'u> Scope<'_, '_, 'u> {
         use crate::ast::visit::Node;
 
         let lower = self.lower;
-        let source = lower.tables.info(lower.unit).source;
-        let span = (source.expect("a unit lowered has source").file).locate(annot.ty.span());
-        let site = lower.tables.site(*lower.sites.get(&span)?);
+        let site = lower
+            .tables
+            .site(*lower.sites.get(&lower.locate(annot.ty.span()))?);
         let ty = site.interned.get()?;
         Some(match site.group() {
             Some(group) => lower

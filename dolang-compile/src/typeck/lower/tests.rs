@@ -1,12 +1,20 @@
-use std::path::Path;
+use std::{borrow::Cow, path::Path};
 
 use crate::{
     Config, Mode,
+    diag::Span,
+    source::File,
     typeck::{
         Builder,
         cfg::{BlockId, ExprKind, FuncId, Ir, Origin, Step, Terminal, VarFlags, VarId},
     },
 };
+
+/// The text of `source` at `span`
+fn text(source: &str, span: Span) -> &str {
+    let file = File::new(Path::new("test.dol"), Cow::Borrowed(source));
+    &source[file.byte_range(span)]
+}
 
 /// Lower a script, which must be valid and keep the operand stack balanced
 fn lower(source: &str) {
@@ -294,10 +302,10 @@ for i = [1]
             .iter()
             .filter_map(|&var| {
                 let var = ir.var(var);
-                let Origin::Source(span) = var.origin else {
+                let Origin::Source(span, _) = var.origin else {
                     return None;
                 };
-                let name = &source[span.start as usize..span.end as usize];
+                let name = text(source, span);
                 Some((name, var.flags.contains(VarFlags::HOISTED)))
             })
             .collect();
@@ -336,7 +344,7 @@ for j = [1, 2]
     lower_with(source, |ir| {
         let (_, top) = ir.funcs().find(|(_, func)| func.parent.is_none()).unwrap();
         let name = |var: VarId| match ir.var(var).origin {
-            Origin::Source(span) => Some(&source[span.start as usize..span.end as usize]),
+            Origin::Source(span, _) => Some(text(source, span)),
             _ => None,
         };
         let mut uncached: Vec<_> = top
@@ -377,9 +385,9 @@ fn named(ir: &Ir, source: &str, name: &str) -> FuncId {
                 _ => continue,
             };
             value.walk(&mut |expr| {
-                let text = source.get(expr.span.start as usize..expr.span.end as usize);
                 if let ExprKind::Lambda(func) = expr.kind
-                    && text == Some(name)
+                    && expr.span != Span::INVALID
+                    && text(source, expr.span) == name
                 {
                     found = Some(func);
                 }
@@ -402,7 +410,7 @@ fn names<'s>(ir: &Ir, source: &'s str, vars: &[VarId]) -> Vec<&'s str> {
     let mut names: Vec<_> = vars
         .iter()
         .filter_map(|&var| match ir.var(var).origin {
-            Origin::Source(span) => Some(&source[span.start as usize..span.end as usize]),
+            Origin::Source(span, _) => Some(text(source, span)),
             _ => None,
         })
         .collect();

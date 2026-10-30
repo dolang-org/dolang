@@ -6,8 +6,8 @@ use dolang_util::alias;
 
 use super::{FuncId, Pattern, VarId};
 use crate::{
+    diag::Span,
     lex::Op,
-    source::Span,
     typeck::r#type::{DeclId, Literal, MemberKey, SymbolId, TypeId, UnitId},
 };
 
@@ -183,14 +183,18 @@ pub(crate) enum Target {
         var: VarId,
         value: Expr,
     },
+    /// `span` covers the object through the value
     Field {
         object: Expr,
         member: Member,
         value: Box<Item>,
+        span: Span,
     },
+    /// `span` covers the object through the value
     Index {
         object: Expr,
         args: Box<[Item; 2]>,
+        span: Span,
     },
     /// A module's member, through an import path to the module, spanning the path
     Import {

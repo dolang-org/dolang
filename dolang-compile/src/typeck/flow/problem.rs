@@ -3,8 +3,7 @@
 use std::fmt::{self, Write};
 
 use crate::{
-    diag::{AnnotationKind, NoteKind, Severity},
-    source::Span,
+    diag::{AnnotationKind, NoteKind, Severity, Span},
     typeck::{
         cfg::EscapeKind,
         report::{Annotation, Report},
@@ -208,7 +207,7 @@ pub(crate) enum Misfit {
     Class,
 }
 
-impl Report<Span> for Problem {
+impl Report for Problem {
     fn span(&self) -> Span {
         match *self {
             Problem::FmtGap { span, .. }
@@ -253,7 +252,7 @@ impl Report<Span> for Problem {
         }
     }
 
-    fn annotations(&self) -> Vec<Annotation<Span>> {
+    fn annotations(&self) -> Vec<Annotation> {
         match *self {
             Problem::Unreachable { span, call } if span != call => vec![Annotation {
                 kind: AnnotationKind::Context,

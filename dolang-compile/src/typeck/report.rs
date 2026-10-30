@@ -1,23 +1,19 @@
 //! The checker's diagnostics, which locate spans by line and column, so a unit
-//! checked without its source is reported like any other. A problem found where
-//! spans are still offsets into the source is located when it is reported.
+//! checked without its source is reported like any other.
 
 use std::fmt::{self, Write};
 
 use super::r#type::UnitId;
-use crate::{
-    diag::{self, AnnotationKind, NoteKind, Severity, SourceSpan, Span},
-    source::{self, File},
-};
+use crate::diag::{self, AnnotationKind, NoteKind, Severity, SourceSpan, Span};
 
-/// A problem the checker reports, at spans of type `S`
-pub(crate) trait Report<S = Span> {
+/// A problem the checker reports
+pub(crate) trait Report {
     fn severity(&self) -> Severity;
-    fn span(&self) -> S;
+    fn span(&self) -> Span;
     fn message(&self, w: &mut dyn Write) -> fmt::Result;
 
     /// Other spans the problem points to
-    fn annotations(&self) -> Vec<Annotation<S>> {
+    fn annotations(&self) -> Vec<Annotation> {
         Vec::new()
     }
 
@@ -27,9 +23,9 @@ pub(crate) trait Report<S = Span> {
 }
 
 /// A span a report points to besides its own, in the same unit
-pub(crate) struct Annotation<S = Span> {
+pub(crate) struct Annotation {
     pub(crate) kind: AnnotationKind,
-    pub(crate) span: S,
+    pub(crate) span: Span,
     pub(crate) message: String,
 }
 
@@ -41,29 +37,6 @@ pub(crate) struct Diag(Box<dyn Report + Send>);
 impl Diag {
     pub(crate) fn new(info: impl Report + Send + 'static) -> Self {
         Self(Box::new(info))
-    }
-
-    /// A report at offsets into `file`, located now
-    pub(crate) fn located(report: &impl Report<source::Span>, file: &File) -> Self {
-        let locate = |span| match span == source::Span::INVALID {
-            true => Span::INVALID,
-            false => file.locate(span),
-        };
-        let mut message = String::new();
-        let _ = report.message(&mut message);
-        Self::new(Located {
-            severity: report.severity(),
-            span: locate(report.span()),
-            message,
-            annotations: (report.annotations().into_iter())
-                .map(|annotation| Annotation {
-                    kind: annotation.kind,
-                    span: locate(annotation.span),
-                    message: annotation.message,
-                })
-                .collect(),
-            notes: report.notes(),
-        })
     }
 
     pub(crate) fn span(&self) -> Span {
@@ -103,41 +76,4 @@ pub(crate) fn resolve_span(unit: UnitId, span: Span) -> SourceSpan {
         false => span,
     };
     SourceSpan::new(Some(unit), span)
-}
-
-/// A report located once found, its message written
-struct Located {
-    severity: Severity,
-    span: Span,
-    message: String,
-    annotations: Vec<Annotation>,
-    notes: Vec<(NoteKind, String)>,
-}
-
-impl Report for Located {
-    fn severity(&self) -> Severity {
-        self.severity
-    }
-
-    fn span(&self) -> Span {
-        self.span
-    }
-
-    fn message(&self, w: &mut dyn Write) -> fmt::Result {
-        w.write_str(&self.message)
-    }
-
-    fn annotations(&self) -> Vec<Annotation> {
-        (self.annotations.iter())
-            .map(|annotation| Annotation {
-                kind: annotation.kind.clone(),
-                span: annotation.span,
-                message: annotation.message.clone(),
-            })
-            .collect()
-    }
-
-    fn notes(&self) -> Vec<(NoteKind, String)> {
-        self.notes.clone()
-    }
 }

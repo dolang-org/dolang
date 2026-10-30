@@ -8,30 +8,22 @@ use super::{
     Origin, Pattern, PatternItem, PatternKey, Relation, Step, Tag, Target, Terminal, VarFlags,
     VarId,
 };
-use crate::{
-    source::Span,
-    typeck::r#type::{Database, Literal, SymbolId, UnitId},
-};
+use crate::typeck::r#type::{Database, Literal, SymbolId, UnitId};
 
 impl Ir {
-    /// Dump the graph, naming variables by the source text of their spans
+    /// Dump the graph
     #[expect(dead_code, reason = "called while debugging")]
-    pub(crate) fn dump<'s>(&self, db: &Database, text: impl Fn(Span) -> &'s str) -> String {
-        let dump = Dump::new(self, db, &text);
+    pub(crate) fn dump(&self, db: &Database) -> String {
+        let dump = Dump::new(self, db);
         let mut out = String::new();
         dump.write(&mut out).expect("writing to a string succeeds");
         out
     }
 
-    /// A variable's name in a dump, by the source text of its span
-    pub(crate) fn var_name<'s>(
-        &self,
-        var: VarId,
-        db: &Database,
-        text: impl Fn(Span) -> &'s str,
-    ) -> String {
+    /// A variable's name in a dump
+    pub(crate) fn var_name(&self, var: VarId, db: &Database) -> String {
         match self.var(var).origin {
-            Origin::Source(span) => text(span).to_owned(),
+            Origin::Source(_, name) => db.symbol(name).to_owned(),
             Origin::Result => format!("result{}", self.var(var).owner.index()),
             Origin::Field(key) => {
                 let hash = if key.private { "#" } else { "" };
@@ -46,19 +38,18 @@ impl Ir {
     }
 }
 
-pub(super) struct Dump<'a, 's> {
+pub(super) struct Dump<'a> {
     ir: &'a Ir,
     db: &'a Database,
-    text: &'a dyn Fn(Span) -> &'s str,
 }
 
-impl<'a, 's> Dump<'a, 's> {
-    pub(super) fn new(ir: &'a Ir, db: &'a Database, text: &'a dyn Fn(Span) -> &'s str) -> Self {
-        Self { ir, db, text }
+impl<'a> Dump<'a> {
+    pub(super) fn new(ir: &'a Ir, db: &'a Database) -> Self {
+        Self { ir, db }
     }
 }
 
-impl Dump<'_, '_> {
+impl Dump<'_> {
     fn write(&self, out: &mut String) -> fmt::Result {
         for (id, _) in self.ir.funcs() {
             self.func(out, id)?;
@@ -164,7 +155,7 @@ impl Dump<'_, '_> {
     }
 
     fn var(&self, out: &mut String, var: VarId) -> fmt::Result {
-        write!(out, "{}", self.ir.var_name(var, self.db, self.text))
+        write!(out, "{}", self.ir.var_name(var, self.db))
     }
 
     /// A signature's variable, or `_` for an annotated item
@@ -190,7 +181,7 @@ impl Dump<'_, '_> {
                         self.expr(out, object)?;
                         self.member(out, member)?;
                     }
-                    Target::Index { object, args } => {
+                    Target::Index { object, args, .. } => {
                         self.expr(out, object)?;
                         write!(out, "[")?;
                         self.expr(out, args[0].pos())?;

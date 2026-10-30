@@ -88,7 +88,7 @@ impl Collect<'_> {
                     self.expr(object);
                     self.expr(value.pos());
                 }
-                Target::Index { object, args } => {
+                Target::Index { object, args, .. } => {
                     self.expr(object);
                     args.iter().for_each(|arg| self.expr(arg.pos()));
                 }
