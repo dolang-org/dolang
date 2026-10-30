@@ -19,6 +19,7 @@ use crate::{
         Function, Ident, If, IfBranch, LValue, Match, MemberScope, Method, PatBind, PatIdent,
         PatItem, PrimStmt, Return, SpecialMethod, Stmt, Try, TypeExpr, While, visit::Node,
     },
+    diag,
     source::Span,
     typeck::{
         cfg::{
@@ -34,7 +35,7 @@ use crate::{
 
 /// The sub-patterns a pattern leaves to match: for each, the synthetic variable its
 /// item binds the value to, its items, and its span
-type Nested<'u> = Vec<(VarId, &'u ast::Pattern, Span)>;
+type Nested<'u> = Vec<(VarId, &'u ast::Pattern, diag::Span)>;
 
 impl<'u> Scope<'_, '_, 'u> {
     /// A function's parameters and body, lowered from its entry block
@@ -70,17 +71,17 @@ impl<'u> Scope<'_, '_, 'u> {
             self.signature(func, result, exit);
         }
         if let Some(span) = func.stub_span {
-            self.assign(result, expr(ExprKind::Never, span));
+            self.assign(result, expr(ExprKind::Never, self.locate(span)));
             self.end(Terminal::Branch {
                 target: exit,
-                span: Span::INVALID,
+                span: diag::Span::INVALID,
             });
             return;
         }
         // Returning publishes the receiver
         if let Some(init) = &self.ctx.init {
             let escape = Step::Escape {
-                span: init.span,
+                span: self.locate(init.span),
                 kind: EscapeKind::Return,
                 except: None,
                 supers: true,
@@ -90,7 +91,7 @@ impl<'u> Scope<'_, '_, 'u> {
         if !self.stmts(&func.body.stmts, Some(result)) {
             self.end(Terminal::Branch {
                 target: exit,
-                span: Span::INVALID,
+                span: diag::Span::INVALID,
             });
         }
     }
@@ -110,11 +111,11 @@ impl<'u> Scope<'_, '_, 'u> {
         if let Some(&(_, flag)) = init.supers.first() {
             self.assign(
                 flag,
-                synthetic(ExprKind::Literal(Literal::Bool(true)), span),
+                synthetic(ExprKind::Literal(Literal::Bool(true)), self.locate(span)),
             );
         }
         self.emit(Step::Escape {
-            span,
+            span: self.locate(span),
             kind: EscapeKind::Default,
             except: None,
             supers: true,
@@ -123,10 +124,10 @@ impl<'u> Scope<'_, '_, 'u> {
             let func = self.graph().func(self.ctx.func);
             (func.result, func.exit)
         };
-        self.value_nil(Some(result), span);
+        self.value_nil(Some(result), self.locate(span));
         self.end(Terminal::Branch {
             target: exit,
-            span: Span::INVALID,
+            span: diag::Span::INVALID,
         });
     }
 
@@ -159,7 +160,7 @@ impl<'u> Scope<'_, '_, 'u> {
                     .alloc_var(self.ctx.func, Origin::Field(key), annotation);
                 self.graph().var_mut(var).flags.insert(VarFlags::BOTTOM);
                 let value = match &field.init {
-                    FieldInit::None => nil(span),
+                    FieldInit::None => nil(self.locate(span)),
                     FieldInit::Const(value, _) | FieldInit::Expr(value) => self.expr(value),
                     FieldInit::Thunk(thunk) => {
                         let [Stmt::Prim(PrimStmt::Expr(value))] = &thunk.body.stmts[..] else {
@@ -189,7 +190,10 @@ impl<'u> Scope<'_, '_, 'u> {
             self.graph().var_mut(var).flags.insert(VarFlags::BOTTOM);
             self.assign(
                 var,
-                synthetic(ExprKind::Literal(Literal::Bool(false)), init.span),
+                synthetic(
+                    ExprKind::Literal(Literal::Bool(false)),
+                    self.locate(init.span),
+                ),
             );
             supers.push((class, var));
             self.graph().func_mut(self.ctx.func).supers.push(var);
@@ -294,7 +298,7 @@ impl<'u> Scope<'_, '_, 'u> {
             self.assigned(var);
             graph.block_mut(exit).steps.push(Step::Assign(Target::Var {
                 var,
-                value: expr(ExprKind::Copy(result), Span::INVALID),
+                value: expr(ExprKind::Copy(result), diag::Span::INVALID),
             }));
         }
         graph.func_mut(self.ctx.func).signature = Some(signature);
@@ -310,7 +314,7 @@ impl<'u> Scope<'_, '_, 'u> {
             }
         }
         if stmts.is_empty() {
-            self.value_nil(dest, Span::INVALID);
+            self.value_nil(dest, diag::Span::INVALID);
         }
         false
     }
@@ -367,7 +371,7 @@ impl<'u> Scope<'_, '_, 'u> {
             Stmt::Return(Return { expr: value, .. }) => {
                 let value = match value {
                     Some(value) => self.expr(value),
-                    None => nil(span),
+                    None => nil(self.locate(span)),
                 };
                 self.return_(value, span);
                 return true;
@@ -379,21 +383,21 @@ impl<'u> Scope<'_, '_, 'u> {
             }
             Stmt::While(node) => {
                 self.while_(node);
-                self.value_nil(dest, span);
+                self.value_nil(dest, self.locate(span));
             }
             Stmt::For(node) => {
                 self.for_(node);
-                self.value_nil(dest, span);
+                self.value_nil(dest, self.locate(span));
             }
-            Stmt::Def(def) if def.is_type_only() => self.value_nil(dest, span),
+            Stmt::Def(def) if def.is_type_only() => self.value_nil(dest, self.locate(span)),
             Stmt::Def(def) => self.def(def, dest),
-            Stmt::Class(class) if class.is_protocol() => self.value_nil(dest, span),
+            Stmt::Class(class) if class.is_protocol() => self.value_nil(dest, self.locate(span)),
             Stmt::Class(class) => self.class(class, dest),
             Stmt::Import(import) => {
                 self.import(import);
-                self.value_nil(dest, span);
+                self.value_nil(dest, self.locate(span));
             }
-            Stmt::TypeAlias(_) => self.value_nil(dest, span),
+            Stmt::TypeAlias(_) => self.value_nil(dest, self.locate(span)),
         }
         false
     }
@@ -413,13 +417,13 @@ impl<'u> Scope<'_, '_, 'u> {
                 }) = self.entry(node.bind().res)
                 {
                     let value = self.lower.import(module, Some(self.lower.symbol(item)));
-                    self.assign(var, expr(value, node.item()));
+                    self.assign(var, expr(value, self.locate(node.item())));
                 }
             }
         }
     }
 
-    fn value_nil(&self, dest: Option<VarId>, span: Span) {
+    fn value_nil(&self, dest: Option<VarId>, span: diag::Span) {
         if let Some(dest) = dest {
             self.assign(dest, nil(span));
         }
@@ -448,7 +452,7 @@ impl<'u> Scope<'_, '_, 'u> {
             PrimStmt::If(_) | PrimStmt::Match(_) | PrimStmt::Try(_) => {
                 let var = self.synthetic();
                 self.prim(prim, Some(var));
-                expr(ExprKind::Copy(var), prim.span())
+                expr(ExprKind::Copy(var), self.locate(prim.span()))
             }
         }
     }
@@ -484,9 +488,12 @@ impl<'u> Scope<'_, '_, 'u> {
         };
         self.queue_block(failed, ctx, body, None, fallthrough);
         self.switch(fallthrough);
-        self.end(Terminal::ElseFallthrough { span, kind });
+        self.end(Terminal::ElseFallthrough {
+            span: self.locate(span),
+            kind,
+        });
         self.switch(success);
-        self.value_nil(dest, pattern.span());
+        self.value_nil(dest, self.locate(pattern.span()));
     }
 
     /// Bind a pattern to a value, whose operands are the only ones on the stack
@@ -504,7 +511,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 _ => self.temporary(value),
             };
             let frame = self.ctx.frame.clone();
-            self.nested_lets(vec![(var, pattern, pattern.span())], &frame);
+            self.nested_lets(vec![(var, pattern, self.locate(pattern.span()))], &frame);
             self.pattern_defaults(pattern, &frame, false);
             self.value_nil(dest, span);
             return;
@@ -526,12 +533,12 @@ impl<'u> Scope<'_, '_, 'u> {
             let value = self.prim_value(&node.rhs);
             let Some(var) = self.var(ident) else {
                 self.emit(Step::Eval(value));
-                self.value_nil(dest, span);
+                self.value_nil(dest, self.locate(span));
                 return;
             };
             self.assigned(var);
             self.assign(var, value);
-            self.value_nil(dest, span);
+            self.value_nil(dest, self.locate(span));
             return;
         }
         if let LValue::Field { object, field, .. } | LValue::PrivateField { object, field, .. } =
@@ -543,14 +550,14 @@ impl<'u> Scope<'_, '_, 'u> {
             // A setter overriding the field may observe the others
             if dispatches {
                 self.emit(Step::Escape {
-                    span: object.span(),
+                    span: self.locate(object.span()),
                     kind: EscapeKind::Use,
                     except: Some(var),
                     supers: true,
                 });
             }
             self.assign(var, value);
-            self.value_nil(dest, span);
+            self.value_nil(dest, self.locate(span));
             return;
         }
         // The target's operands would lie below the value's, so a value that is
@@ -560,7 +567,7 @@ impl<'u> Scope<'_, '_, 'u> {
             self.temporary(value)
         });
         let value = |scope: &mut Self| match early {
-            Some(var) => expr(ExprKind::Copy(var), node.rhs.span()),
+            Some(var) => expr(ExprKind::Copy(var), scope.locate(node.rhs.span())),
             None => scope.prim_value(&node.rhs),
         };
         let target = match &node.lhs {
@@ -570,19 +577,21 @@ impl<'u> Scope<'_, '_, 'u> {
                 Some(ExprKind::Import { module, item: None }) => Target::Import {
                     module,
                     item: self.lower.symbol(self.text(*field)),
-                    span: object.span() | *field,
+                    span: self.locate(object.span() | *field),
                     value: value(self),
                 },
                 _ => Target::Field {
                     object: self.expr(object),
                     member: self.member_key(*field, false, false),
                     value: Box::new(Item::Pos(value(self))),
+                    span: self.locate(object.span() | node.rhs.span()),
                 },
             },
             LValue::PrivateField { object, field, .. } => Target::Field {
                 object: self.expr(object),
                 member: self.member_key(*field, false, true),
                 value: Box::new(Item::Pos(value(self))),
+                span: self.locate(object.span() | node.rhs.span()),
             },
             LValue::Index { exprs, .. } => {
                 let object = self.expr(&exprs[0]);
@@ -590,11 +599,12 @@ impl<'u> Scope<'_, '_, 'u> {
                 Target::Index {
                     object,
                     args: Box::new([index, Item::Pos(value(self))]),
+                    span: self.locate(exprs[0].span() | node.rhs.span()),
                 }
             }
         };
         self.emit(Step::Assign(target));
-        self.value_nil(dest, span);
+        self.value_nil(dest, self.locate(span));
     }
 
     /// Lower a pattern's top level in `frame`, where its names are bound, with the
@@ -616,7 +626,7 @@ impl<'u> Scope<'_, '_, 'u> {
             }
             ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. } | ast::Pattern::Alt(_) => {
                 let var = scope.synthetic();
-                nested.push((var, pattern, pattern.span()));
+                nested.push((var, pattern, scope.locate(pattern.span())));
                 Pattern::Bind(var)
             }
         });
@@ -632,7 +642,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 let entry = self.alternatives(var, alt, span, frame, None, join);
                 self.end(Terminal::Branch {
                     target: entry,
-                    span: Span::INVALID,
+                    span: diag::Span::INVALID,
                 });
                 self.switch(join);
                 continue;
@@ -681,7 +691,7 @@ impl<'u> Scope<'_, '_, 'u> {
     }
 
     /// Use the folded value, including strings with constant interpolations.
-    fn pattern_constant(&mut self, value: &ast::Const, span: Span) -> Expr {
+    fn pattern_constant(&mut self, value: &ast::Const, span: diag::Span) -> Expr {
         let kind = match value {
             ast::Const::Nil => ExprKind::Literal(Literal::Nil),
             ast::Const::Bool(value) => ExprKind::Literal(Literal::Bool(*value)),
@@ -735,7 +745,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 let entry = self.alternatives(var, alt, span, frame, Some(else_), join);
                 self.end(Terminal::Branch {
                     target: entry,
-                    span: Span::INVALID,
+                    span: diag::Span::INVALID,
                 });
                 if !pending.is_empty() {
                     self.switch(join);
@@ -774,7 +784,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 }));
                 self.end(Terminal::Branch {
                     target: else_,
-                    span: Span::INVALID,
+                    span: diag::Span::INVALID,
                 });
                 self.switch(success);
                 self.emit(Step::Assume(Assume {
@@ -786,7 +796,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 if pending.is_empty() {
                     self.end(Terminal::Branch {
                         target: then,
-                        span: Span::INVALID,
+                        span: diag::Span::INVALID,
                     });
                 }
                 continue;
@@ -817,7 +827,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 }
                 self.end(Terminal::Branch {
                     target: else_,
-                    span: Span::INVALID,
+                    span: diag::Span::INVALID,
                 });
                 self.switch(success);
                 if let Some(class) = class {
@@ -846,7 +856,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 });
                 self.end(Terminal::Branch {
                     target: next,
-                    span: Span::INVALID,
+                    span: diag::Span::INVALID,
                 });
             } else {
                 let else_ = self.landing(else_, mismatch(var, &pattern).into_iter().collect());
@@ -872,7 +882,7 @@ impl<'u> Scope<'_, '_, 'u> {
         &mut self,
         var: VarId,
         alt: &'u ast::Alternation,
-        span: Span,
+        span: diag::Span,
         frame: &Rc<Frame<'u>>,
         else_: Option<BlockId>,
         join: BlockId,
@@ -890,7 +900,7 @@ impl<'u> Scope<'_, '_, 'u> {
                     self.nested_lets(vec![(var, pattern, span)], frame);
                     self.end(Terminal::Branch {
                         target: join,
-                        span: Span::INVALID,
+                        span: diag::Span::INVALID,
                     });
                     entry
                 }
@@ -1003,7 +1013,7 @@ impl<'u> Scope<'_, '_, 'u> {
         self.pattern_defaults(pattern, frame, false);
         self.end(Terminal::Branch {
             target,
-            span: Span::INVALID,
+            span: diag::Span::INVALID,
         });
         self.switch(from);
         block
@@ -1036,7 +1046,7 @@ impl<'u> Scope<'_, '_, 'u> {
             PatBind::Ident(ident) => self.binding(ident, annot),
             PatBind::Nested { pattern, .. } => {
                 let var = self.synthetic();
-                nested.push((var, pattern, bind.span()));
+                nested.push((var, pattern, self.locate(bind.span())));
                 var
             }
         }
@@ -1153,7 +1163,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 });
                 self.end(Terminal::Branch {
                     target: then,
-                    span: Span::INVALID,
+                    span: diag::Span::INVALID,
                 });
             }
             // A name binds the value itself, on its truthiness
@@ -1175,13 +1185,13 @@ impl<'u> Scope<'_, '_, 'u> {
                 });
                 self.end(Terminal::Branch {
                     target: then,
-                    span: Span::INVALID,
+                    span: diag::Span::INVALID,
                 });
                 self.switch(failed);
                 self.emit(Step::Pop);
                 self.end(Terminal::Branch {
                     target: else_,
-                    span: Span::INVALID,
+                    span: diag::Span::INVALID,
                 });
             }
             ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. } | ast::Pattern::Alt(_) => {
@@ -1196,7 +1206,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 let entry = self.nested_tests(vec![(var, pattern, span)], frame, then, else_);
                 self.end(Terminal::Branch {
                     target: entry,
-                    span: Span::INVALID,
+                    span: diag::Span::INVALID,
                 });
             }
             pattern @ ast::Pattern::Unpack(_) => {
@@ -1248,10 +1258,10 @@ impl<'u> Scope<'_, '_, 'u> {
             self.queue_block(self.bb, ctx, block, dest, join);
         }
         if !complete && dest.is_some() {
-            self.value_nil(dest, node.tbranch.span);
+            self.value_nil(dest, self.locate(node.tbranch.span));
             self.end(Terminal::Branch {
                 target: join,
-                span: Span::INVALID,
+                span: diag::Span::INVALID,
             });
         }
         self.switch(join);
@@ -1283,7 +1293,7 @@ impl<'u> Scope<'_, '_, 'u> {
             } else {
                 body
             };
-            let value = expr(ExprKind::Var(var), span);
+            let value = expr(ExprKind::Var(var), self.locate(span));
             self.test_pattern(value, &arm.pattern, false, &frame, entry, fallback);
             if let Some(guard) = &arm.guard {
                 self.switch(entry);
@@ -1306,10 +1316,10 @@ impl<'u> Scope<'_, '_, 'u> {
             self.queue_block(self.bb, ctx, block, dest, join);
         }
         if !complete && dest.is_some() {
-            self.value_nil(dest, node.match_span);
+            self.value_nil(dest, self.locate(node.match_span));
             self.end(Terminal::Branch {
                 target: join,
-                span: Span::INVALID,
+                span: diag::Span::INVALID,
             });
         }
         self.switch(join);
@@ -1333,7 +1343,7 @@ impl<'u> Scope<'_, '_, 'u> {
         let body = self.block();
         self.end(Terminal::Branch {
             target: header,
-            span: Span::INVALID,
+            span: diag::Span::INVALID,
         });
         self.switch(header);
         let frame = self.block_frame(&node.body);
@@ -1374,14 +1384,14 @@ impl<'u> Scope<'_, '_, 'u> {
                 });
                 (Some(iter), span)
             }
-            None => (None, node.for_span),
+            None => (None, self.locate(node.for_span)),
         };
         let header = self.block();
         let exit = self.block();
         let body = self.block();
         self.end(Terminal::Branch {
             target: header,
-            span: Span::INVALID,
+            span: diag::Span::INVALID,
         });
         self.switch(header);
         let (pattern, nested) = self.pattern(&node.bind, frame);
@@ -1430,6 +1440,7 @@ impl<'u> Scope<'_, '_, 'u> {
             ))
         });
         // Raise the exception on the stack again, running the `finally` first
+        let try_span = self.locate(node.try_span);
         let rethrow = || {
             let block = graph.alloc_block(func, handler, depth);
             let mut rethrow = graph.block_mut(block);
@@ -1441,7 +1452,7 @@ impl<'u> Scope<'_, '_, 'u> {
                         tag: Tag::Rethrow,
                     };
                 }
-                None => rethrow.terminal = Terminal::Throw(expr(ExprKind::Operand, node.try_span)),
+                None => rethrow.terminal = Terminal::Throw(expr(ExprKind::Operand, try_span)),
             }
             block
         };
@@ -1460,7 +1471,7 @@ impl<'u> Scope<'_, '_, 'u> {
         self.queue_block(body, ctx, &node.body.body, dest, join);
         self.end(Terminal::Branch {
             target: body,
-            span: Span::INVALID,
+            span: diag::Span::INVALID,
         });
 
         let Some(mut dispatch) = dispatch else {
@@ -1516,7 +1527,7 @@ impl<'u> Scope<'_, '_, 'u> {
         self.switch(block);
         let frame = self.ctx.frame.clone();
         let span = clause.span();
-        let operand = expr(ExprKind::Operand, span);
+        let operand = expr(ExprKind::Operand, self.locate(span));
         match &clause.params[..] {
             [] => self.emit(Step::Pop),
             [
@@ -1546,7 +1557,7 @@ impl<'u> Scope<'_, '_, 'u> {
                         items: items.into(),
                         group,
                     },
-                    value: synthetic(args, span),
+                    value: synthetic(args, self.locate(span)),
                 });
                 self.nested_lets(nested, &frame);
                 self.defaults(params, &frame, false);
@@ -1655,14 +1666,14 @@ impl<'u> Scope<'_, '_, 'u> {
                     callee: Box::new(decorator),
                     args: [Item::Pos(value)].into_iter().collect(),
                 };
-                expr(call, span)
+                expr(call, self.locate(span))
             })
     }
 
     fn def(&mut self, def: &'u Def, dest: Option<VarId>) {
         let decl = self.lower.decl(DeclKey::def(def));
         let id = self.function_value(decl, &def.func, false, self.ctx.class, None, def.ident.span);
-        let value = expr(ExprKind::Lambda(id), def.ident.span);
+        let value = expr(ExprKind::Lambda(id), self.locate(def.ident.span));
         let value = self.decorate(&def.decorators, value);
         let declared = def
             .decorators
@@ -1694,7 +1705,7 @@ impl<'u> Scope<'_, '_, 'u> {
         let span = ident.span;
         let Some(var) = self.var(ident) else {
             self.emit(Step::Eval(value));
-            self.value_nil(dest, span);
+            self.value_nil(dest, self.locate(span));
             return;
         };
         let mut data = self.graph().var_mut(var);
@@ -1707,7 +1718,7 @@ impl<'u> Scope<'_, '_, 'u> {
             value,
         });
         if let Some(dest) = dest {
-            self.assign(dest, expr(ExprKind::Copy(var), span));
+            self.assign(dest, expr(ExprKind::Copy(var), self.locate(span)));
         }
     }
 
@@ -1770,13 +1781,16 @@ impl<'u> Scope<'_, '_, 'u> {
                 }
             }
         }
-        let value = expr(ExprKind::Class(decl), span);
+        let value = expr(ExprKind::Class(decl), self.locate(span));
         // `final` and `mixable` return the class they are given, so the binding
         // keeps the class object's type; the applications are still checked
         let source = &self.lower.db.declaration(decl).source;
         let marked = source.is_final || source.is_mixable;
         let value = if marked {
-            let decorated = self.decorate(&class.decorators, expr(ExprKind::Class(decl), span));
+            let decorated = self.decorate(
+                &class.decorators,
+                expr(ExprKind::Class(decl), self.locate(span)),
+            );
             self.emit(Step::Eval(decorated));
             value
         } else {
@@ -1784,7 +1798,7 @@ impl<'u> Scope<'_, '_, 'u> {
         };
         let Some(var) = self.var(&class.ident) else {
             self.emit(Step::Eval(value));
-            self.value_nil(dest, span);
+            self.value_nil(dest, self.locate(span));
             return;
         };
         self.graph().var_mut(var).flags.insert(VarFlags::HOISTED);
@@ -1799,13 +1813,14 @@ impl<'u> Scope<'_, '_, 'u> {
         });
         for (member, value) in statics {
             self.emit(Step::Assign(Target::Field {
-                object: expr(ExprKind::Copy(var), span),
+                object: expr(ExprKind::Copy(var), self.locate(span)),
                 member,
-                value: Box::new(Item::Pos(expr(ExprKind::Copy(value), span))),
+                value: Box::new(Item::Pos(expr(ExprKind::Copy(value), self.locate(span)))),
+                span: self.locate(span),
             }));
         }
         if let Some(dest) = dest {
-            self.assign(dest, expr(ExprKind::Copy(var), span));
+            self.assign(dest, expr(ExprKind::Copy(var), self.locate(span)));
         }
     }
 

@@ -317,19 +317,11 @@ impl<'u, 's> Builder<'u, 's> {
             let unit = UnitId::from_index(index);
             let flow = output.cfg.is_some().then(|| {
                 let (facts, problems, undecided) = gather(output.runs, &mut results, &mut copies);
-                let file = &tables
-                    .info(unit)
-                    .source
-                    .expect("a unit with flow has source")
-                    .file;
                 for problem in &problems {
-                    diags.push((unit, report::Diag::located(problem, file)));
+                    diags.push((unit, report::Diag::new(problem.clone())));
                 }
                 unresolved.extend(undecided.iter().map(|&(span, residual)| elab::Unresolved {
-                    span: r#type::UnitSpan {
-                        unit,
-                        span: file.locate(span),
-                    },
+                    span: r#type::UnitSpan { unit, span },
                     residual,
                 }));
                 (facts, problems, undecided)
@@ -566,7 +558,7 @@ fn tree(
             let (mut decl, mut overload, mut item) = (None, None, None);
             let name = match seen.detail {
                 flow::Detail::Var(var) => match cfg.var(var).origin {
-                    cfg::Origin::Source(span) => Some(Cow::Borrowed(tables.text(unit, span))),
+                    cfg::Origin::Source(_, name) => Some(Cow::Borrowed(db.symbol(name))),
                     cfg::Origin::Field(key) => Some(Cow::Borrowed(db.symbol(key.name))),
                     _ => None,
                 },
@@ -602,7 +594,7 @@ fn tree(
                 item,
                 group: None,
             };
-            (file.locate(span), entry)
+            (span, entry)
         })
         .chain(elaborated)
         .map(|(span, entry)| (span, span.start()..file.end(span), entry))
@@ -618,9 +610,9 @@ fn gather(
     results: &mut r#type::Database,
     copies: &mut r#type::Copies,
 ) -> (
-    Vec<((crate::source::Span, flow::Role), flow::Seen)>,
+    Vec<((diag::Span, flow::Role), flow::Seen)>,
     Vec<flow::Problem>,
-    Vec<(crate::source::Span, solver::Residual)>,
+    Vec<(diag::Span, solver::Residual)>,
 ) {
     let mut facts = Vec::new();
     let mut problems = Vec::new();
@@ -646,8 +638,8 @@ fn gather(
 /// Facts by span and role, joined where runs logged facts at one
 fn merge(
     db: &r#type::Database,
-    mut facts: Vec<((crate::source::Span, flow::Role), flow::Seen)>,
-) -> Vec<((crate::source::Span, flow::Role), flow::Seen)> {
+    mut facts: Vec<((diag::Span, flow::Role), flow::Seen)>,
+) -> Vec<((diag::Span, flow::Role), flow::Seen)> {
     let gas = solver::Gas::default();
     let solver = solver::Solver::new(db, &gas);
     flow::collate(&mut facts, |old, new| solver.lub(old, new));
@@ -784,8 +776,7 @@ fn export_dot(ir: &cfg::Ir, db: &r#type::Database, info: &elab::UnitInfo) -> std
     let Some(out) = crate::dot_path(info.path, "typeck.dot")? else {
         return Ok(());
     };
-    let file = &info.source.expect("a lowered unit has a source").file;
-    ir.dot(db, |span| file.str(span), &mut std::fs::File::create(&out)?)?;
+    ir.dot(db, &mut std::fs::File::create(&out)?)?;
     dolang_util::debug_eprintln!(topic: "dot", "Typing CFG DOT exported to: {}", out.display());
     Ok(())
 }

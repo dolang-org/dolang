@@ -16,9 +16,7 @@ impl Flow<'_, '_> {
     }
 
     pub(super) fn var_name(&self, var: VarId) -> String {
-        let source = self.tables.info(self.unit).source;
-        let file = &source.expect("flow analyzes a unit from source").file;
-        self.ir.var_name(var, self.db, |span| file.str(span))
+        self.ir.var_name(var, self.db)
     }
 
     /// A block in a context: the block, the `finally` tags it was entered with,

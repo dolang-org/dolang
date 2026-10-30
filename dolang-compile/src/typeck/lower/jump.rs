@@ -7,6 +7,7 @@ use rustc_hash::FxHashMap;
 
 use super::{Ctx, Scope, expr};
 use crate::{
+    diag,
     source::Span,
     typeck::cfg::{BlockId, Expr, ExprKind, FuncId, Step, Tag, Target, Terminal},
 };
@@ -76,7 +77,10 @@ impl Scope<'_, '_, '_> {
             let block = if next { target.next } else { target.exit };
             let finally = target.finally.clone();
             let target = self.route(block, finally.as_ref());
-            self.end(Terminal::Branch { target, span });
+            self.end(Terminal::Branch {
+                target,
+                span: self.locate(span),
+            });
             return;
         }
         // Out of a `do` block: to the loop in scope where it was created
@@ -124,12 +128,15 @@ impl Scope<'_, '_, '_> {
         };
         self.assign(result, value);
         let target = self.route(exit, None);
-        self.end(Terminal::Branch { target, span });
+        self.end(Terminal::Branch {
+            target,
+            span: self.locate(span),
+        });
     }
 
     fn escape(&mut self, span: Span) {
         if self.graph().func(self.ctx.func).parent.is_some() {
-            self.end(Terminal::Escape(span));
+            self.end(Terminal::Escape(self.locate(span)));
         } else {
             self.end(Terminal::Unreachable);
         }
@@ -161,11 +168,11 @@ impl Scope<'_, '_, '_> {
             let mut block_mut = graph.block_mut(block);
             block_mut.steps.push(Step::Assign(Target::Var {
                 var: result,
-                value: expr(ExprKind::Never, Span::INVALID),
+                value: expr(ExprKind::Never, diag::Span::INVALID),
             }));
             block_mut.terminal = Terminal::Branch {
                 target,
-                span: Span::INVALID,
+                span: diag::Span::INVALID,
             };
             block
         };

@@ -142,7 +142,9 @@ impl Ir {
                         match target {
                             Target::Var { var, .. } => vars.push(*var),
                             Target::Field { object, .. } => exprs.push(object),
-                            Target::Index { object, args } => exprs.extend([object, args[0].pos()]),
+                            Target::Index { object, args, .. } => {
+                                exprs.extend([object, args[0].pos()])
+                            }
                             Target::Import { .. } => {}
                         }
                         exprs.push(target.value());
@@ -380,7 +382,7 @@ impl Ir {
                         let operands = match target {
                             Target::Var { .. } | Target::Import { .. } => 0,
                             Target::Field { object, .. } => operands(object),
-                            Target::Index { object, args } => {
+                            Target::Index { object, args, .. } => {
                                 operands(object) + operands(args[0].pos())
                             }
                         } + operands(target.value());

@@ -6,17 +6,12 @@ use std::io;
 use dot_writer::{Attributes, Color, DotWriter, Scope, Shape, Style};
 
 use super::{BlockId, Ir, Tag, Terminal, dump::Dump};
-use crate::{source::Span, typeck::r#type::Database};
+use crate::typeck::r#type::Database;
 
 impl Ir {
-    /// Write the graph in DOT, naming variables by the source text of their spans
-    pub(crate) fn dot<'s>(
-        &self,
-        db: &Database,
-        text: impl Fn(Span) -> &'s str,
-        w: &mut impl io::Write,
-    ) -> io::Result<()> {
-        let dump = Dump::new(self, db, &text);
+    /// Write the graph in DOT
+    pub(crate) fn dot(&self, db: &Database, w: &mut impl io::Write) -> io::Result<()> {
+        let dump = Dump::new(self, db);
         let mut writer = DotWriter::from(w);
         writer.set_pretty_print(true);
         let mut digraph = writer.digraph();

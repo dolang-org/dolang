@@ -12,6 +12,7 @@ use crate::{
         self, Arg, ArrayElem, DictElem, ExprBody, For, GetVariant, Ident, If, Key, Pair, Single,
         SpecialMethod, visit::Node,
     },
+    diag,
     lex::Op,
     source::Span,
     typeck::{
@@ -61,7 +62,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 };
                 ExprKind::FmtParam {
                     name,
-                    name_span,
+                    name_span: self.locate(name_span),
                     spec: self.spec(spec),
                 }
             }
@@ -80,7 +81,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 checked: *checked,
             },
             ast::Expr::Ident(ident) => match self.ident(ident) {
-                kind @ ExprKind::Var(_) => return self.spill(expr(kind, span)),
+                kind @ ExprKind::Var(_) => return self.spill(expr(kind, self.locate(span))),
                 kind => kind,
             },
             ast::Expr::Unary { op, expr, .. } => ExprKind::Unary {
@@ -93,7 +94,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 self.short_circuit(node, join, join, true);
                 self.switch(join);
                 self.ctx.hoist = hoist;
-                return self.spill(expr(ExprKind::Operand, span));
+                return self.spill(expr(ExprKind::Operand, self.locate(span)));
             }
             ast::Expr::Binary { op, exprs, .. } => {
                 let left = Item::Pos(self.expr(&exprs[0]));
@@ -117,7 +118,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 ExprKind::Lambda(self.function_value(decl, func, true, class, None, span))
             }
             ast::Expr::Get { object, field, .. } if let Some(var) = self.tracked(object, field) => {
-                return self.spill(expr(ExprKind::Var(var), span));
+                return self.spill(expr(ExprKind::Var(var), self.locate(span)));
             }
             ast::Expr::Get { object, field, .. } => match self.import_path(node) {
                 Some(import) => import,
@@ -148,7 +149,7 @@ impl<'u> Scope<'_, '_, 'u> {
             }
             ast::Expr::Error => ExprKind::Error,
         };
-        expr(kind, span)
+        expr(kind, self.locate(span))
     }
 
     /// The evaluated parts of a format specification
@@ -177,7 +178,10 @@ impl<'u> Scope<'_, '_, 'u> {
                 ast::Expr::Escape(char, _) => text.push(*char),
                 node => {
                     if !text.is_empty() {
-                        parts.push(synthetic(str_literal(&mem::take(&mut text)), span));
+                        parts.push(synthetic(
+                            str_literal(&mem::take(&mut text)),
+                            self.locate(span),
+                        ));
                     }
                     parts.push(interp(self, node));
                 }
@@ -193,7 +197,7 @@ impl<'u> Scope<'_, '_, 'u> {
             return str_literal(&text);
         }
         if !text.is_empty() {
-            parts.push(synthetic(str_literal(&text), span));
+            parts.push(synthetic(str_literal(&text), self.locate(span)));
         }
         ExprKind::Concat(parts.into())
     }
@@ -212,11 +216,11 @@ impl<'u> Scope<'_, '_, 'u> {
                         precision: None,
                     },
                 };
-                synthetic(kind, node.span())
+                synthetic(kind, scope.locate(node.span()))
             }
         });
         if !text.is_empty() {
-            parts.push(synthetic(str_literal(&text), span));
+            parts.push(synthetic(str_literal(&text), self.locate(span)));
         }
         ExprKind::Fmt(parts.into())
     }
@@ -237,7 +241,7 @@ impl<'u> Scope<'_, '_, 'u> {
         for node in nodes {
             if constant(node) {
                 if !run {
-                    parts.push(synthetic(ExprKind::Bin, span));
+                    parts.push(synthetic(ExprKind::Bin, self.locate(span)));
                 }
                 run = true;
             } else {
@@ -269,7 +273,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 // doesn't dispatch may observe its fields
                 if self.receiver() == Some(var) {
                     self.emit(Step::Escape {
-                        span: ident.span,
+                        span: self.locate(ident.span),
                         kind: EscapeKind::Use,
                         except: None,
                         supers: self.ctx.partial != Some(ident.span),
@@ -330,7 +334,7 @@ impl<'u> Scope<'_, '_, 'u> {
 
     fn call(&mut self, callee: &'u ast::Expr, args: &'u [Arg]) -> ExprKind {
         if let Some(import) = self.import_path(callee) {
-            let callee = expr(import, callee.span());
+            let callee = expr(import, self.locate(callee.span()));
             return ExprKind::Call {
                 callee: Box::new(callee),
                 args: self.args(args).into(),
@@ -419,10 +423,10 @@ impl<'u> Scope<'_, '_, 'u> {
             member: self.member(field),
             args,
         };
-        let result = self.temporary(expr(call, span));
+        let result = self.temporary(expr(call, self.locate(span)));
         self.assign(
             flag,
-            synthetic(ExprKind::Literal(Literal::Bool(true)), span),
+            synthetic(ExprKind::Literal(Literal::Bool(true)), self.locate(span)),
         );
         ExprKind::Copy(result)
     }
@@ -590,13 +594,13 @@ impl<'u> Scope<'_, '_, 'u> {
         let items = self.body_items(&frame, &node.body.elems, items);
         self.end(Terminal::Branch {
             target: exit,
-            span: Span::INVALID,
+            span: diag::Span::INVALID,
         });
         self.switch(exit);
         self.ctx.hoist = hoist;
         Item::For {
             items: items.into(),
-            span: node.for_span,
+            span: self.locate(node.for_span),
         }
     }
 
@@ -629,7 +633,7 @@ impl<'u> Scope<'_, '_, 'u> {
             spans.push(branch.span);
             self.end(Terminal::Branch {
                 target: join,
-                span: Span::INVALID,
+                span: diag::Span::INVALID,
             });
             self.switch(fallback);
         }
@@ -639,7 +643,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 let items = self.body_items(&frame, &body.elems, items);
                 self.end(Terminal::Branch {
                     target: join,
-                    span: Span::INVALID,
+                    span: diag::Span::INVALID,
                 });
                 self.switch(join);
                 items
@@ -650,7 +654,7 @@ impl<'u> Scope<'_, '_, 'u> {
             else_ = vec![Item::If {
                 then: then.into(),
                 else_: else_.into(),
-                span,
+                span: self.locate(span),
             }];
         }
         self.ctx.hoist = hoist;
@@ -710,7 +714,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 }
                 self.end(Terminal::Branch {
                     target: then,
-                    span: Span::INVALID,
+                    span: diag::Span::INVALID,
                 });
             }
             node => {
@@ -739,7 +743,7 @@ impl<'u> Scope<'_, '_, 'u> {
         landing.steps.extend(assumes.into_iter().map(Step::Assume));
         landing.terminal = Terminal::Branch {
             target,
-            span: Span::INVALID,
+            span: diag::Span::INVALID,
         };
         block
     }
@@ -757,7 +761,10 @@ impl<'u> Scope<'_, '_, 'u> {
                             var,
                             relation: Relation::Exact,
                             negated: true,
-                            against: Against::Value(expr(ExprKind::Literal(literal), node.span())),
+                            against: Against::Value(expr(
+                                ExprKind::Literal(literal),
+                                self.locate(node.span()),
+                            )),
                         })
                         .collect(),
                     falsy: Vec::new(),

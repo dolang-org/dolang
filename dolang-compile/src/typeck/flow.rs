@@ -125,7 +125,7 @@ use super::{
         Multiplicity, SchemaItem, Shared, SymbolId, Type, TypeId, UnitId,
     },
 };
-use crate::{RestKind, source::Span};
+use crate::{RestKind, diag::Span, typeck::report::Report};
 
 /// What flow concluded about a unit
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
@@ -440,11 +440,8 @@ impl<'a, 'u> Tree<'a, 'u> {
 /// Put the problems and undecided checks a unit's runs gave, each run's in turn,
 /// in source order. Those at one span keep their order.
 pub(crate) fn sort(problems: &mut [Problem], unresolved: &mut [(Span, Residual)]) {
-    problems.sort_by_key(|problem| {
-        let span = crate::typeck::report::Report::<Span>::span(problem);
-        (span.start, span.end)
-    });
-    unresolved.sort_by_key(|&(span, _)| (span.start, span.end));
+    problems.sort_by_key(|problem| problem.span());
+    unresolved.sort_by_key(|&(span, _)| span);
 }
 
 /// Sort logged facts by span and role, joining those at the same span and role,
@@ -453,7 +450,7 @@ pub(crate) fn collate(
     facts: &mut Vec<((Span, Role), Seen)>,
     lub: impl Fn(TypeId, TypeId) -> TypeId,
 ) {
-    facts.sort_by_key(|&((span, role), seen)| (span.start, span.end, role, seen.apart(role)));
+    facts.sort_by_key(|&((span, role), seen)| (span, role, seen.apart(role)));
     facts.dedup_by(|((span, role), seen), ((kept_span, kept_role), kept)| {
         let same =
             (*span, *role) == (*kept_span, *kept_role) && seen.apart(*role) == kept.apart(*role);
@@ -799,9 +796,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         let Some(results) = &mut self.results else {
             return;
         };
-        if crate::typeck::report::Report::<Span>::span(&problem) != Span::INVALID
-            && !results.problems.contains(&problem)
-        {
+        if problem.span() != Span::INVALID && !results.problems.contains(&problem) {
             results.problems.push(problem);
         }
     }
@@ -903,7 +898,7 @@ impl<'a, 'u> Flow<'a, 'u> {
     fn record(&mut self, span: Span, role: Role, var: VarId, fact: Fact) {
         let named = matches!(
             self.ir.var(var).origin,
-            Origin::Source(_) | Origin::Field(_)
+            Origin::Source(..) | Origin::Field(_)
         );
         let seen = Seen {
             fact,
@@ -1288,7 +1283,8 @@ impl<'a, 'u> Flow<'a, 'u> {
             // The call is the whole statement: what's unreachable is what follows
             Some(Step::Eval(value)) if value.span == call => None,
             Some(Step::Assign(Target::Var { var, value }))
-                if value.span == call && !matches!(self.ir.var(*var).origin, Origin::Source(_)) =>
+                if value.span == call
+                    && !matches!(self.ir.var(*var).origin, Origin::Source(..)) =>
             {
                 None
             }
@@ -1379,7 +1375,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let count = match target {
                     Target::Var { .. } | Target::Import { .. } => 0,
                     Target::Field { object, .. } => holes(object),
-                    Target::Index { object, args } => holes(object) + holes(args[0].pos()),
+                    Target::Index { object, args, .. } => holes(object) + holes(args[0].pos()),
                 };
                 let link = self.source_link(at, state, value);
                 let mut operands = Self::operands(state, count + holes(value));
@@ -1401,15 +1397,15 @@ impl<'a, 'u> Flow<'a, 'u> {
                         ref object,
                         member,
                         value: ref item,
+                        span,
                     } => {
-                        let span = object.span | value.span;
                         self.set(at, state, &mut operands, object, member, item, span);
                     }
                     Target::Index {
                         ref object,
                         ref args,
+                        span,
                     } => {
-                        let span = object.span | value.span;
                         self.assign_index(at, state, &mut operands, object, &args[..], span);
                     }
                     Target::Import {
@@ -1628,7 +1624,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         {
             return annotation;
         }
-        if !matches!(var.origin, Origin::Source(_) | Origin::Field(_)) {
+        if !matches!(var.origin, Origin::Source(..) | Origin::Field(_)) {
             return ty;
         }
         let decayed = self.db.decay(ty);
@@ -1759,7 +1755,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 for (row, (item, ty)) in items.iter().zip(types).enumerate() {
                     if let Some(var) = item.var {
                         let span = match self.ir.var(var).origin {
-                            Origin::Source(span) => span,
+                            Origin::Source(span, _) => span,
                             _ => Span::INVALID,
                         };
                         self.binding(at, state, var, ty, span);
@@ -1810,7 +1806,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             self.escaped.set(slot, false);
         }
         let ty = self.assign(at, state, var, ty, span);
-        if let Origin::Source(span) = self.ir.var(var).origin {
+        if let Origin::Source(span, _) = self.ir.var(var).origin {
             let fact = Fact {
                 ty,
                 unassigned: false,
@@ -1866,7 +1862,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             let types = params
                 .iter()
                 .map(|param| match param.var.map(|var| self.ir.var(var).origin) {
-                    Some(Origin::Source(span)) => {
+                    Some(Origin::Source(span, _)) => {
                         self.gap(span, "a parameter its declared type doesn't line up with")
                     }
                     _ => self.db.unknown(),
@@ -2342,9 +2338,7 @@ fn step_span(step: &Step) -> Span {
         | Step::Eval(value)
         | Step::Push(value)
         | Step::Assign(Target::Var { value, .. } | Target::Import { value, .. }) => value.span,
-        Step::Assign(target @ (Target::Field { object, .. } | Target::Index { object, .. })) => {
-            object.span | target.value().span
-        }
+        Step::Assign(Target::Field { span, .. } | Target::Index { span, .. }) => *span,
         Step::Dup
         | Step::Pop
         | Step::Assume(_)

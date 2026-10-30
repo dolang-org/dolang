@@ -1,5 +1,10 @@
 use super::{validate::Invalid, *};
-use crate::typeck::r#type::Literal;
+use crate::typeck::r#type::{Database, Literal};
+
+/// The origin of a variable written in source
+fn source() -> Origin {
+    Origin::Source(Span::INVALID, Database::new().intern_symbol("x"))
+}
 
 fn expr(kind: ExprKind) -> Expr {
     Expr {
@@ -78,8 +83,8 @@ fn well_formed() {
         let func = graph.func(top);
         (func.entry, func.exit)
     };
-    let x = graph.alloc_var(top, Origin::Source(Span::INVALID), None);
-    let f = graph.alloc_var(top, Origin::Source(Span::INVALID), None);
+    let x = graph.alloc_var(top, source(), None);
+    let f = graph.alloc_var(top, source(), None);
 
     // `f(x, x && g(x))`, with `x` captured by the closure `g`
     let lambda = closure(&graph, top);
@@ -492,7 +497,7 @@ fn variables() {
     // An enclosing function's variable that the closure doesn't list as a capture
     let graph = Graph::new();
     let top = returning(&graph);
-    let x = graph.alloc_var(top, Origin::Source(Span::INVALID), None);
+    let x = graph.alloc_var(top, source(), None);
     let lambda = closure(&graph, top);
     let (lambda_entry, lambda_exit) = {
         let func = graph.func(lambda);
@@ -536,7 +541,7 @@ fn variables() {
     // A parameter owned by another function
     let graph = Graph::new();
     let top = returning(&graph);
-    let x = graph.alloc_var(top, Origin::Source(Span::INVALID), None);
+    let x = graph.alloc_var(top, source(), None);
     let lambda = closure(&graph, top);
     graph.func_mut(lambda).params = Pattern::Bind(x);
     let lambda_exit = graph.func(lambda).exit;
@@ -654,7 +659,7 @@ fn captures() {
         graph.freeze().validate()
     }
 
-    let source = Origin::Source(Span::INVALID);
+    let source = source();
     assert_eq!(escaping(true, source, false), Ok(()));
     assert!(matches!(
         escaping(false, source, false),
@@ -704,7 +709,7 @@ fn caches() {
         graph.freeze().validate()
     }
 
-    let source = Origin::Source(Span::INVALID);
+    let source = source();
     let none = VarFlags::empty();
     assert_eq!(caching(source, none, true, true), Ok(()));
     for flags in [VarFlags::VOLATILE, VarFlags::EXPORTED, VarFlags::UNCACHED] {

@@ -45,7 +45,7 @@ use super::{
 };
 use crate::typeck::report::Report;
 use crate::{
-    source::Span,
+    diag::Span,
     typeck::{
         cfg::{
             Collection, Expr, ExprKind, FuncId, Item, Member, Pattern, PatternItem, PatternKey,

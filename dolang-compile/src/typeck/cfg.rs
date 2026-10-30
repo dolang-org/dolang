@@ -86,7 +86,7 @@ pub(crate) use expr::{Collection, Expr, ExprKind, FmtSpec, Item, Member, Target}
 pub(crate) use split::Run;
 
 use super::r#type::{DeclId, MemberKey, SymbolId, TypeId, UnitId};
-use crate::{RestKind, source::Span};
+use crate::{RestKind, diag::Span};
 
 macro_rules! id {
     ($(#[$attr:meta])* $name:ident) => {
@@ -207,7 +207,8 @@ impl Signature {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Origin {
-    Source(Span),
+    /// Written in source, by its binding's span and name
+    Source(Span, SymbolId),
     /// Introduced by lowering, such as a `for` loop's iterator or a caught exception
     Synthetic,
     /// The state of one of `self`'s fields in `(init)`
