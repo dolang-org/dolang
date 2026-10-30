@@ -23,14 +23,14 @@ Within a type's own `()`, `[]`, and `{}`, whitespace is insignificant.
 A name is an identifier, or a module name followed by `.`-separated names, such
 as `time.Duration`.
 
-A name refers to a binder, or to what the same identifier would refer to as a
-variable where the type is written. A `class`, protocol, alias, or import can
-be named anywhere in its block; any other binding must come before the type. A
-dotted name must begin with an import.
+A name refers to a [binder](./types.md#binders), or to what the same identifier
+would refer to as a variable where the type is written. A `class`, protocol,
+alias, or import can be named anywhere in its block; any other binding must come
+before the type. A dotted name must begin with an import.
 
 The compiler does not consider types when it warns about unused variables, so a
 binding named only in types is still reported as unused unless its name begins
-with `_`. A [checker-only import](./type-declarations.md#checker-only-imports)
+with `_`. A [checker-only import](./types.md#checker-only-imports)
 binds no runtime variable, so it is not reported.
 
 ## Constants
@@ -339,7 +339,7 @@ Schemas have no implicits, since an ambient channel is not data, and neither do
 ## Vertical Layout
 
 `$` followed by an indented body writes a schema in vertical layout, as in an
-[alias](./type-declarations.md#type-aliases). Positional items may be bin-packed
+[alias](./types.md#type-aliases). Positional items may be bin-packed
 on an undashed line. A dash introduces one positional item, and a keyed line
 introduces one keyed item. Quantifiers and inclusions have the same meaning as
 in `{}`.
@@ -406,15 +406,25 @@ under [Dicts](#dicts). Here `meta` is a `Dict[{owner: Str}]` and `at` is an
     Int Int
 ```
 
-## Type Utilities
+## Standard Types
 
-The standard module provides aliases for computing types from schemas:
+A few standard types have no syntax of their own but play a special role:
+
+| Type                     | Describes                                                          |
+| ------------------------ | ------------------------------------------------------------------ |
+| [`Value`](std.Value)     | Every value; few operations are available on it without narrowing  |
+| [`Never`](std.Never)     | No values; the result of a function that never returns             |
+| [`Unknown`](std.Unknown) | Unchecked values; it converts to and from every type               |
+| `Type[C]`                | The class object of `C` or of any subclass                         |
+
+See [Class Objects](./type-checking.md#class-objects) for how `Type[C]` relates
+to a class's own name.
+
+The standard module also provides aliases for computing types from schemas:
 
 | Alias                          | Purpose                                                         |
 | ------------------------------ | --------------------------------------------------------------- |
 | [`Union`](std.Union)           | Forms a union from type arguments, including expanded schemas   |
-| [`Never`](std.Never)           | Describes no values; a result for a function that never returns |
-| [`Unknown`](std.Unknown)       | Leaves a declaration unchecked                                  |
 | [`Keys`](std.Keys)             | Collects a schema's key types                                   |
 | [`Values`](std.Values)         | Collects a schema's value types                                 |
 | [`Entries`](std.Entries)       | Keeps each schema key paired with its value type                |

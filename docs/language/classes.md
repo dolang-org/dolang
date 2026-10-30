@@ -269,6 +269,9 @@ class Cat: Animal
     self.indoor = indoor
 ```
 
+The type checker requires this call before `self` is otherwise used; see
+[Superclass Initialization](./type-checking.md#superclass-initialization).
+
 ### Multiple Inheritance
 
 List multiple parents after the colon, separated by spaces. A class can't
@@ -294,7 +297,7 @@ class LocalTool: tools.build.Tool
 ```
 
 A superclass written with `@` exists only in types, and the class does not
-inherit from it. See [Protocols](type-declarations.md#protocols).
+inherit from it. See [Protocols](types.md#protocols).
 
 ### Vertical Supertypes
 

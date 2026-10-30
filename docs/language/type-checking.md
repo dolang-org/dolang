@@ -82,6 +82,115 @@ Reassignment replaces the local's current type, and branches join it again. A
 variable assigned by a closure is never narrowed; copy such a variable to a
 local before testing and using that value.
 
+## Object Initialization
+
+The checker follows a class's `(init)` to verify that its annotated fields hold
+values that fit by the time the instance becomes observable outside `(init)`.
+Until then, a field may hold a placeholder.
+
+### Field Defaults
+
+A field's default must fit its annotation, unless it is `nil` or a symbol. Such
+a default is a sentinel: a placeholder that `(init)` must replace. A field
+declared without a default starts as `nil`, so it also holds a sentinel.
+
+```
+class Connection
+  field host @ Str = nil
+  field port @ Int = :unset:
+  pub field retries @ Int = 3
+
+  def (init) self host @ Str port @ Int
+    self.#host = host
+    self.#port = port
+```
+
+A class is responsible for the fields it declares; inherited fields are its
+superclasses' responsibility. A class without an `(init)` of its own runs a
+default one, which only applies the defaults, so each of its sentinels is an
+error, even if a superclass's `(init)` runs after it.
+
+### Escaping `self`
+
+Within `(init)`, `self` escapes when:
+
+- It's used other than to access one of its class's private fields: as an
+    argument, a method's receiver, or an operand, or to access a public field.
+- A function capturing it is created, whether or not it runs.
+- `(init)` returns, including through a `return` in a `do` block. A `catch`
+    that lets `(init)` continue may skip assignments in its `try` body.
+
+Each field must fit its annotation wherever `self` escapes. Before that, a read
+of a private field has the type assigned on the paths reaching it; after, it has
+the field's annotation.
+
+```
+class Server
+  field host @ Str = nil
+  field port @ Int = nil
+
+  def (init) self host @ Str port @ Int
+    self.#host = host
+    self.#port = port
+    self.listen()
+
+  pub def listen self
+    echo "listening on $(self.#host):$(self.#port)"
+```
+
+A path that ends with `throw`, or with a call to a function returning
+[`Never`](std.Never), doesn't return, so a field it leaves unassigned isn't an
+error:
+
+```
+def fail msg @ Str -> std.Never
+  throw msg
+
+class Port
+  pub field number @ Int
+
+  def (init) self number @ Int
+    if (number > 0)
+      self.number = number
+    else
+      fail "port must be positive"
+```
+
+Writing a public field may run a setter that a subclass overrides, so `self`
+escapes for every field except the one written. Only the first public field
+written may hold a sentinel. A [final](./classes.md#final-classes) class's
+public fields can't be overridden, so they're accessed as private fields are.
+
+### Superclass Initialization
+
+`(init)` must call each direct superclass's `(init)`, where the superclass has
+or inherits one, before `self` otherwise escapes or `(init)` returns. The call
+must name the superclass directly, as in `Animal.(init) $self`. The call accepts
+a partly initialized `self` for the superclass's fields, but it is an escape for
+the class's own, so assign those first:
+
+```
+class Animal
+  pub field name @ Str = nil
+
+  def (init) self name @ Str
+    self.name = name
+
+class Dog: Animal
+  field breed @ Str = nil
+
+  def (init) self name @ Str breed @ Str
+    self.#breed = breed
+    Animal.(init) $self $name
+    echo "$(self.name) the $(self.#breed)"
+```
+
+Since writing a public field also escapes, a class whose superclass has an
+`(init)` gives its own public fields defaults that fit, unless it is final.
+
+A default `(init)` calls only the first superclass's `(init)`. A class with
+several superclasses that have one defines its own `(init)` to call each.
+
 ## Type Compatibility
 
 A subtype can be used where its supertype is expected. A union accepts values
