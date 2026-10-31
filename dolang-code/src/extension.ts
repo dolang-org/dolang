@@ -9,40 +9,34 @@ import {
     ErrorHandlerResult,
     CloseHandlerResult
 } from "vscode-languageclient/node";
-import { DoShellRunner } from "./shell";
+import { DoScriptRunner, TASK_TYPE } from "./runner";
+import { DoInteractiveShell } from "./shell";
 import { resolveTool } from "./tools";
 
 let client: LanguageClient | undefined;
-let shellRunner: DoShellRunner | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-    // Initialize shell runner
-    shellRunner = new DoShellRunner(context);
+    const runner = new DoScriptRunner(context);
+    const shell = new DoInteractiveShell(context);
+    const ignore = (promise: Promise<void>): void => {
+        void promise.catch(() => undefined);
+    };
 
-    // Register shell commands
-    const runScriptCommand = vscode.commands.registerCommand("dolang.runScript", () => {
-        void shellRunner?.runScript().catch(() => undefined);
-    });
-
-    const runScriptFileCommand = vscode.commands.registerCommand(
-        "dolang.runScriptFile",
-        (uri: vscode.Uri) => {
-            if (uri) {
-                void shellRunner?.runScript(uri.fsPath).catch(() => undefined);
-            } else {
-                void shellRunner?.runScript().catch(() => undefined);
-            }
-        }
+    context.subscriptions.push(
+        shell,
+        vscode.tasks.registerTaskProvider(TASK_TYPE, runner),
+        vscode.commands.registerCommand("dolang.runScript", () => ignore(runner.run())),
+        vscode.commands.registerCommand("dolang.runScriptFile", (uri?: vscode.Uri) =>
+            ignore(runner.run(uri))
+        ),
+        vscode.commands.registerCommand("dolang.runScriptWithArgs", (uri?: vscode.Uri) =>
+            ignore(runner.runWithArgs(uri))
+        ),
+        vscode.commands.registerCommand("dolang.openInteractiveShell", () => ignore(shell.open())),
+        vscode.commands.registerCommand("dolang.sendSelectionToShell", () =>
+            ignore(shell.sendSelection())
+        )
     );
-
-    const openInteractiveShellCommand = vscode.commands.registerCommand(
-        "dolang.openInteractiveShell",
-        () => {
-            void shellRunner?.openInteractiveShell().catch(() => undefined);
-        }
-    );
-
-    context.subscriptions.push(runScriptCommand, runScriptFileCommand, openInteractiveShellCommand);
 
     // Start LSP server
     const clientOptions: LanguageClientOptions = {
@@ -97,8 +91,5 @@ export async function deactivate(): Promise<void> {
     if (client) {
         await client.stop();
         client = undefined;
-    }
-    if (shellRunner) {
-        shellRunner.dispose();
     }
 }

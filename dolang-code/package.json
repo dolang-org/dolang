@@ -14,44 +14,42 @@
     "categories": [
         "Programming Languages"
     ],
-    "configuration": {
-        "title": "Do Language",
-        "properties": {
-            "dolang.runInTerminal": {
-                "type": "boolean",
-                "default": true,
-                "description": "Run Do scripts in integrated terminal (recommended for interactive scripts and user input)"
-            },
-            "dolang.autoSaveBeforeRun": {
-                "type": "boolean",
-                "default": true,
-                "description": "Automatically save Do script files before running them"
-            },
-            "dolang.keepTerminalOpen": {
-                "type": "boolean",
-                "default": true,
-                "description": "Keep terminal open after script execution to view output"
-            },
-            "dolang.path": {
-                "type": "string",
-                "default": "",
-                "description": "Absolute path to the `dolang` executable. When unset, the extension tries PATH and then downloads a GitHub release bundle."
-            },
-            "dolang.lsp.path": {
-                "type": "string",
-                "default": "",
-                "description": "Absolute path to the `dolang-lsp` executable. When unset, the extension tries PATH and then downloads a GitHub release bundle."
-            }
-        }
-    },
     "main": "./dist/extension.js",
     "activationEvents": [
         "onLanguage:dolang",
         "onCommand:dolang.runScript",
         "onCommand:dolang.runScriptFile",
-        "onCommand:dolang.openInteractiveShell"
+        "onCommand:dolang.openInteractiveShell",
+        "onCommand:dolang.runScriptWithArgs",
+        "onCommand:dolang.sendSelectionToShell",
+        "onTaskType:dolang"
     ],
     "contributes": {
+        "configuration": {
+            "title": "Do Language",
+            "properties": {
+                "dolang.autoSaveBeforeRun": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Save a modified Do script before running it"
+                },
+                "dolang.keepTerminalOpen": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Keep the script's terminal open after it exits, until a key is pressed"
+                },
+                "dolang.path": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Absolute path to the `dolang` executable. When unset, the extension tries PATH and then downloads a GitHub release bundle."
+                },
+                "dolang.lsp.path": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Absolute path to the `dolang-lsp` executable. When unset, the extension tries PATH and then downloads a GitHub release bundle."
+                }
+            }
+        },
         "languages": [
             {
                 "id": "dolang",
@@ -84,9 +82,17 @@
                 "icon": "$(play)"
             },
             {
+                "command": "dolang.runScriptWithArgs",
+                "title": "Run Do Script with Arguments…"
+            },
+            {
                 "command": "dolang.openInteractiveShell",
                 "title": "Open Do Interactive Shell",
                 "icon": "$(terminal)"
+            },
+            {
+                "command": "dolang.sendSelectionToShell",
+                "title": "Send Selection/Line to Do Shell"
             }
         ],
         "menus": {
@@ -102,11 +108,26 @@
                     "command": "dolang.runScriptFile",
                     "when": "resourceLangId == dolang",
                     "group": "navigation"
+                },
+                {
+                    "command": "dolang.runScriptWithArgs",
+                    "when": "resourceLangId == dolang",
+                    "group": "navigation"
+                },
+                {
+                    "command": "dolang.sendSelectionToShell",
+                    "when": "editorLangId == dolang",
+                    "group": "navigation"
                 }
             ],
             "explorer/context": [
                 {
                     "command": "dolang.runScriptFile",
+                    "when": "resourceLangId == dolang",
+                    "group": "navigation"
+                },
+                {
+                    "command": "dolang.runScriptWithArgs",
                     "when": "resourceLangId == dolang",
                     "group": "navigation"
                 }
@@ -119,9 +140,42 @@
                 {
                     "command": "dolang.runScriptFile",
                     "when": "resourceLangId == dolang"
+                },
+                {
+                    "command": "dolang.runScriptWithArgs",
+                    "when": "resourceLangId == dolang"
+                },
+                {
+                    "command": "dolang.sendSelectionToShell",
+                    "when": "editorLangId == dolang"
                 }
             ]
-        }
+        },
+        "taskDefinitions": [
+            {
+                "type": "dolang",
+                "required": [
+                    "script"
+                ],
+                "properties": {
+                    "script": {
+                        "type": "string",
+                        "description": "Path of the Do script to run, relative to the workspace folder"
+                    },
+                    "args": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "Arguments passed to the script, without any shell interpretation"
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Working directory, relative to the workspace folder; defaults to the script's directory"
+                    }
+                }
+            }
+        ]
     },
     "scripts": {
         "vscode:prepublish": "npm run package",

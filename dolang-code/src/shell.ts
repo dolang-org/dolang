@@ -1,141 +1,77 @@
 import * as vscode from "vscode";
-import * as path from "path";
+import { replPayload } from "./args";
 import { resolveExecutionTools } from "./tools";
 
-export class DoShellRunner {
-    private extensionContext: vscode.ExtensionContext;
+/** Owns the interactive Do shell terminal that send-to-shell targets. */
+export class DoInteractiveShell implements vscode.Disposable {
+    private terminal: vscode.Terminal | undefined;
+    private readonly closeListener: vscode.Disposable;
+
+    private readonly context: vscode.ExtensionContext;
 
     constructor(context: vscode.ExtensionContext) {
-        this.extensionContext = context;
+        this.context = context;
+        this.closeListener = vscode.window.onDidCloseTerminal(closed => {
+            if (closed === this.terminal) {
+                this.terminal = undefined;
+            }
+        });
     }
 
-    private getKeepTerminalCommand(): string {
-        const config = vscode.workspace.getConfiguration("dolang");
-        const shouldKeepOpen = config.get<boolean>("keepTerminalOpen", true);
-
-        if (!shouldKeepOpen) {
-            return "";
-        }
-
-        const isWindows = process.platform === "win32";
-        return isWindows
-            ? "; echo Press any key to continue... && pause >nul"
-            : '; echo "Press any key to continue..." && read -n 1';
-    }
-
-    public async runScript(filePath?: string): Promise<void> {
-        const config = vscode.workspace.getConfiguration("dolang");
-
-        let scriptPath: string;
-        if (filePath) {
-            scriptPath = filePath;
-        } else {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor) {
-                vscode.window.showErrorMessage("No active editor found");
-                return;
-            }
-
-            const document = editor.document;
-            if (document.languageId !== "dolang") {
-                vscode.window.showErrorMessage("Active file is not a Do language file (.dol)");
-                return;
-            }
-
-            const autoSave = config.get<boolean>("autoSaveBeforeRun", true);
-            if (!document.isUntitled && document.isDirty && autoSave) {
-                const saveAction = await vscode.window.showWarningMessage(
-                    "The file has unsaved changes. Do you want to save it before running?",
-                    "Save",
-                    "Run without saving",
-                    "Cancel"
-                );
-
-                if (saveAction === "Save") {
-                    await document.save();
-                } else if (saveAction === "Cancel" || !saveAction) {
-                    return;
-                }
-            }
-
-            scriptPath = document.fileName;
-        }
-
-        const { shell } = await this.resolveExecutionTools();
-
-        // Create new terminal for each execution
-        const terminal = this.createScriptTerminal(shell.path, scriptPath);
+    /** Opens a new interactive shell, which becomes the send-to-shell target. */
+    public async open(): Promise<void> {
+        const terminal = await this.create();
         terminal.show();
     }
 
-    private async resolveExecutionTools() {
+    /** Sends the selection, or the current line, to the interactive shell. */
+    public async sendSelection(): Promise<void> {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showErrorMessage("No active editor found");
+            return;
+        }
+        const selection = editor.selection;
+        const text = selection.isEmpty
+            ? editor.document.lineAt(selection.active.line).text
+            : editor.document.getText(selection);
+        const payload = replPayload(text, process.platform !== "win32");
+
+        if (payload !== undefined) {
+            const terminal = this.terminal ?? (await this.create());
+            terminal.show(true);
+            terminal.sendText(payload, true);
+        }
+
+        if (selection.isEmpty) {
+            const next = Math.min(selection.active.line + 1, editor.document.lineCount - 1);
+            const position = new vscode.Position(next, 0);
+            editor.selection = new vscode.Selection(position, position);
+            editor.revealRange(new vscode.Range(position, position));
+        }
+    }
+
+    public dispose(): void {
+        this.closeListener.dispose();
+    }
+
+    private async create(): Promise<vscode.Terminal> {
+        let shellPath: string;
         try {
-            return await resolveExecutionTools({ context: this.extensionContext });
+            shellPath = (await resolveExecutionTools({ context: this.context })).shell.path;
         } catch (error) {
             const message =
                 error instanceof Error ? error.message : `Failed to resolve Do tools: ${error}`;
             vscode.window.showErrorMessage(message);
             throw error;
         }
-    }
-
-    private createScriptTerminal(
-        shellPath: string,
-        scriptPath: string
-    ): vscode.Terminal {
-        const timestamp = new Date().toLocaleTimeString();
-        const separator = `--- Running ${path.basename(scriptPath)} at ${timestamp} ---`;
-        const keepTerminalCmd = this.getKeepTerminalCommand();
-        if (keepTerminalCmd) {
-            // Use shell command to keep terminal open
-            const isWindows = process.platform === "win32";
-            const shellPath_wrapper = isWindows ? "cmd" : "bash";
-            const shellArgs_wrapper = isWindows
-                ? ["/c", `"${shellPath}" "${scriptPath}"${keepTerminalCmd}`]
-                : ["-c", `"${shellPath}" "${scriptPath}"${keepTerminalCmd}`];
-
-            return vscode.window.createTerminal({
-                name: "Do Script Terminal",
-                shellPath: shellPath_wrapper,
-                shellArgs: shellArgs_wrapper,
-                cwd: path.dirname(scriptPath),
-                message: separator
-            });
-        } else {
-            // Direct execution
-            return vscode.window.createTerminal({
-                name: "Do Script Terminal",
-                shellPath,
-                shellArgs: [scriptPath],
-                cwd: path.dirname(scriptPath),
-                message: separator
-            });
-        }
-    }
-
-    public async openInteractiveShell(): Promise<void> {
-        const { shell } = await this.resolveExecutionTools();
-
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        const cwd =
-            workspaceFolders && workspaceFolders.length > 0
-                ? workspaceFolders[0].uri.fsPath
-                : undefined;
-
-        const terminal = this.createShellTerminal(shell.path, cwd);
-        terminal.show();
-    }
-
-    private createShellTerminal(shellPath: string, cwd?: string): vscode.Terminal {
-        return vscode.window.createTerminal({
+        const folders = vscode.workspace.workspaceFolders;
+        this.terminal = vscode.window.createTerminal({
             name: "Do Interactive Shell",
             shellPath,
-            cwd,
+            cwd: folders && folders.length > 0 ? folders[0].uri.fsPath : undefined,
             message: "--- Do Interactive Shell ---\nType Do commands or use Ctrl+D to exit\n"
         });
-    }
-
-    public dispose(): void {
-        // No terminals to dispose since we create new ones each time
+        return this.terminal;
     }
 }
