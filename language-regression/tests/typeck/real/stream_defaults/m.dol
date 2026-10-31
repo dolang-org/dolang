@@ -34,17 +34,17 @@ pub def consumes()
 pub def consumes_unannotated -> Iterable[Int]
   stream do
     each do |s @ Str| s.len
-    # error: this call does not fit `@[T1, T2] ((T1) -> T2, <std.Iter[T1], >std.Sink[T2]) -> nil`
+    # error: expected `std.Str`, found `Value`
     #   --> m.dol:LL:LL
     #    |
     # LL |     each do |s @ Str| s.len
-    #    |     ^^^^^^^^^^^^^^^^^^^^^^^
+    #    |          ^^^^^^^^^^^^^^^^^^
 
 pub def produces_wrong -> Iterable[Int]
   stream do
     put foo
-    # error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
+    # error: expected `std.Int`, found `"foo"`
     #   --> m.dol:LL:LL
     #    |
     # LL |     put foo
-    #    |     ^^^^^^^
+    #    |         ^^^

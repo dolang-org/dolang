@@ -263,7 +263,7 @@ fn shared_reductions_preserve_each_root_and_dependency() {
     assert_eq!(results.len(), 2);
     for result in results {
         assert_eq!(result.status, Status::Contradicted);
-        let provenance = s.provenance(result.constraint);
+        let provenance = &result.provenance;
         assert_eq!(
             provenance.actual.as_ref().map(|origin| origin.site),
             Some(Site::Declared(span_a))

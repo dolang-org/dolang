@@ -381,12 +381,14 @@ impl<'db> Solver<'db> {
                     }
                     call => call,
                 };
-                let (status, free, mut fork, outcome) = self.trial(relation, owned)?;
+                let (status, free, mut fork, mut outcome) = self.trial(relation, owned)?;
                 match status {
                     Status::Contradicted => {
                         // The trial's root is in its judgment's place, as its
                         // contradictions are explained
-                        fork.roots[outcome.constraint.0].provenance = self.root_provenance(id);
+                        let provenance = self.root_provenance(id);
+                        fork.roots[outcome.constraint.0].provenance = provenance.clone();
+                        outcome.provenance = provenance;
                         let root = fork.roots[outcome.constraint.0].obligation;
                         let overload = fork.reify(fork.relation(root).checked());
                         rejections.push(Rejection {

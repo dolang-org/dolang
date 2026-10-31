@@ -112,11 +112,11 @@ pub def passes_declared >Sink[Int]
   run do
     put 1
     put "x"
-    # error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
+    # error: expected `std.Int`, found `"x"`
     #   --> m.dol:LL:LL
     #    |
     # LL |     put "x"
-    #    |     ^^^^^^^
+    #    |         ^^^
     nil
   nil
 
@@ -193,11 +193,11 @@ def run_int f @ ((>Sink[Int]) -> nil) >Sink[Int] -> nil
 pub def passes_fixed >Sink[Int]
   run_int do
     put "x"
-    # error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
+    # error: expected `std.Int`, found `"x"`
     #   --> m.dol:LL:LL
     #    |
     # LL |     put "x"
-    #    |     ^^^^^^^
+    #    |         ^^^
     nil
   nil
 
@@ -238,22 +238,22 @@ pub def annotated >Sink[Int]
   let f @ ((>Sink[Int]) -> nil) = do
     put 1
     put "x"
-    # error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
+    # error: expected `std.Int`, found `"x"`
     #   --> m.dol:LL:LL
     #    |
     # LL |     put "x"
-    #    |     ^^^^^^^
+    #    |         ^^^
     nil
   f()
   nil
 
 pub def cast >Sink[Int]
   let f = ((do put "x") @ ((>Sink[Int]) -> nil))
-  # error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
+  # error: expected `std.Int`, found `"x"`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let f = ((do put "x") @ ((>Sink[Int]) -> nil))
-  #    |                ^^^^^^^
+  #    |                    ^^^
   f()
   nil
 

@@ -708,32 +708,34 @@ This fixed point remains independent of CFG/dataflow analysis.
 
 Each submitted root retains its provenance: an origin for its actual side and
 for its expected side, where source gives one, saying what the side is (an
-expression, a held argument, a call with its arguments' spans, or a rule's
-expected result) and where. Obligations retain original operands and historical
-labeled edges for arguments, parameters, returns, union members, bound
-propagation, and assignments. A bound propagation's edge also names its partner:
-the earliest obligation that imposed the other bound it pairs with its parent's.
-Current proof premises are tracked separately and replaced on reprocessing.
-Historical edges explain contradictions to every contributing root, preferring a
-path without an assignment edge, which explains only by what the assignment was
-drawn from.
+expression, a value that must be something, an empty dict's schema, a held
+argument, a call with its arguments' spans, or a rule's expected result) and
+where. Each outcome carries its root's provenance. Obligations retain original
+operands and historical labeled edges for arguments, parameters, returns, union
+members, bound propagation, and assignments. A bound propagation's edge also
+names its partner: the earliest obligation that imposed the other bound it pairs
+with its parent's. Current proof premises are tracked separately and replaced on
+reprocessing. Historical edges explain contradictions to every contributing
+root, preferring a path without an assignment edge, which explains only by what
+the assignment was drawn from.
 
 Explaining a contradiction carries the root's origins down its path. A call's
 arguments narrow the call to its arguments, and an item or key of them to that
-argument. A contravariant
-step swaps the origins, as it does the sides, so a reader tracks which is found.
-A bound propagation takes the side its partner imposed from the partner. An
-assignment's child takes its actual side from its parent, a source of the
-variable's bounds, and its expected side from its own path. A partner's or
-child's origins are those along the path a diagnostic would read to it, from the
-first root to reach it by the same walk. Flow places a call's contradiction by
-these origins: at the argument its path narrows the arguments to, at the call
-for an extra or missing argument of its arguments, and otherwise at the call. An
-argument the path meets only as a partner, as through a channel, leaves it at
-the call. Historical cycles and obsolete
-residuals do not prevent a current proof. Cycles in current proof
-premises remain unresolved. Reports distinguish proven, contradicted, and
-unresolved roots; quiescence alone is not proof.
+argument. A contravariant step swaps the origins, as it does the sides, so a
+reader tracks which is found. A bound propagation takes the side its partner
+imposed from the partner. An assignment's child takes its actual side from its
+parent, a source of the variable's bounds, and its expected side from its own
+path. A partner's or child's origins are those along the path a diagnostic would
+read to it, from the first root to reach it by the same walk. Flow places a
+call's contradiction by these origins: at the first argument its path reaches,
+whether by narrowing the arguments or as a partner, as through a channel; at the
+call for an extra or missing argument of its arguments; and otherwise at the
+call. Flow diagnoses a rule's outcomes by what their
+actual sides are: a root whose actual side is a held argument, or that has no
+origin, checks nothing of its own, since a held argument's sub-rule checks it.
+Historical cycles and obsolete residuals do not prevent a current proof. Cycles
+in current proof premises remain unresolved. Reports distinguish proven,
+contradicted, and unresolved roots; quiescence alone is not proof.
 
 `solution` exposes a committed canonical type, or nothing for a solution
 holding skolems, `solution_sources` exposes its

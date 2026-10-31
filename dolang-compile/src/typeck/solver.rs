@@ -28,7 +28,10 @@ use dolang_util::{
 };
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 
-use crate::{diag, typeck::r#type::UnitSpan};
+use crate::{
+    diag,
+    typeck::{flow::Misfit, r#type::UnitSpan},
+};
 
 use super::r#type::{
     Argument, Binder, Binding, BoundRef, Database, DeclId, DeclKind, Element, FieldAccess,
@@ -195,6 +198,10 @@ pub(crate) enum OriginKind {
     },
     /// A call's arguments, with each one's span by its index
     Arguments(alias::Box<[diag::Span]>),
+    /// A value that must be something
+    Misfit(Misfit),
+    /// An empty dict's schema, which must admit no items
+    Empty,
     /// What a rule's context expects of its result
     ExpectedResult,
 }
@@ -517,6 +524,8 @@ pub(crate) struct Outcome {
     pub(crate) constraint: ConstraintId,
     pub(crate) status: Status,
     pub(crate) diagnostics: Vec<Diagnostic>,
+    /// Where its constraint's sides come from
+    pub(crate) provenance: Provenance,
 }
 
 #[derive(Debug)]
@@ -2574,7 +2583,7 @@ impl<'db> Solver<'db> {
                 causes.push(cause);
             }
         }
-        let provenance = &self.roots[outcome.constraint.0].provenance;
+        let provenance = &outcome.provenance;
         let mut found = FxHashMap::default();
         causes
             .into_iter()
@@ -2609,9 +2618,9 @@ impl<'db> Solver<'db> {
         self.roots[id.0].obligation
     }
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
-    pub(crate) fn provenance(&self, id: ConstraintId) -> &Provenance {
-        &self.roots[id.0].provenance
+    /// How many constraints it's been given, which is the next one's ID
+    pub(crate) fn constraints(&self) -> usize {
+        self.roots.len()
     }
 
     /// Check the term IDs and return their kind
@@ -3656,11 +3665,13 @@ impl<'db> Solver<'db> {
 
     /// Trace a root through its dependencies to collect issues and determine its status.
     fn outcome(&self, constraint: ConstraintId) -> Outcome {
-        let (status, diagnostics) = self.trace_root(self.roots[constraint.0].obligation);
+        let root = &self.roots[constraint.0];
+        let (status, diagnostics) = self.trace_root(root.obligation);
         Outcome {
             constraint,
             status,
             diagnostics,
+            provenance: root.provenance.clone(),
         }
     }
 

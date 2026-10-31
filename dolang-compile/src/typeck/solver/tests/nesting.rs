@@ -255,7 +255,7 @@ fn a_committed_fork_is_absorbed() {
     let outcomes = s.solve();
     assert_eq!(outcomes.len(), roots + 2);
     // And keep their provenance
-    let last = s.provenance(outcomes[roots + 1].constraint);
+    let last = &outcomes[roots + 1].provenance;
     assert!(matches!(
         last.actual,
         Some(Origin {
