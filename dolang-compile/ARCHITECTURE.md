@@ -706,14 +706,27 @@ This fixed point remains independent of CFG/dataflow analysis.
 
 ### Reporting and reification
 
-Each submitted root retains actual/expected source spans. Obligations retain
-original operands and historical labeled edges for arguments, parameters,
-returns, union members, bound propagation, and assignments. Current proof
-premises are tracked separately and replaced on reprocessing. Historical edges
-explain contradictions to every contributing root, preferring a path without an
-assignment edge, which explains only by what the assignment was drawn from.
-Historical cycles and
-obsolete residuals do not prevent a current proof. Cycles in current proof
+Each submitted root retains its provenance: an origin for its actual side and
+for its expected side, where source gives one, saying what the side is (an
+expression, a held argument, a call with its arguments' spans, or a rule's
+expected result) and where. Obligations retain original operands and historical
+labeled edges for arguments, parameters, returns, union members, bound
+propagation, and assignments. A bound propagation's edge also names its partner:
+the earliest obligation that imposed the other bound it pairs with its parent's.
+Current proof premises are tracked separately and replaced on reprocessing.
+Historical edges explain contradictions to every contributing root, preferring a
+path without an assignment edge, which explains only by what the assignment was
+drawn from.
+
+Explaining a contradiction carries the root's origins down its path. An item or
+key under a call's arguments narrows the call to that argument. A contravariant
+step swaps the origins, as it does the sides, so a reader tracks which is found.
+A bound propagation takes the side its partner imposed from the partner. An
+assignment's child takes its actual side from its parent, a source of the
+variable's bounds, and its expected side from its own path. A partner's or
+child's origins are those along the path a diagnostic would read to it, from the
+first root to reach it by the same walk. Historical cycles and obsolete
+residuals do not prevent a current proof. Cycles in current proof
 premises remain unresolved. Reports distinguish proven, contradicted, and
 unresolved roots; quiescence alone is not proof.
 

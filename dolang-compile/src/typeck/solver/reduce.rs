@@ -896,8 +896,22 @@ impl Solver<'_> {
             // L <: V <: U requires L <: U. L or U may itself be an inference
             // variable, so ordinary reduction also propagates variable chains.
             let (actual, expected) = if lower { (term, other) } else { (other, term) };
-            for &parent in sources.iter().chain(other_sources.iter()) {
-                self.derive(parent, actual, expected, Step::BoundPropagation);
+            // Each parent is paired with the earliest of the other bound's
+            let earliest = |sources: &[ObligationId], upper| {
+                sources
+                    .iter()
+                    .min()
+                    .map(|&obligation| Partner { obligation, upper })
+            };
+            let pairs = [
+                (&sources, earliest(&other_sources, lower)),
+                (&other_sources, earliest(&sources, !lower)),
+            ];
+            for (parents, partner) in pairs {
+                let partner = partner.expect("a bound has a source");
+                for &parent in parents {
+                    self.propagate(parent, actual, expected, partner);
+                }
             }
         }
         Ok(())

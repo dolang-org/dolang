@@ -48,7 +48,7 @@ fn what_a_child_solves_doesnt_reach_its_parent() {
         child.default(b).unwrap();
         child.solve();
         let added = ObligationId(obligations);
-        child.add_dependency(ObligationId(0), added, Step::Assignment);
+        child.add_dependency(ObligationId(0), added, Step::Assignment, None);
         assert!(child.assignment(b).is_some());
         assert!(
             child

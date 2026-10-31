@@ -331,7 +331,8 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
             repeated: repeated || self.repeated,
         });
         if let Some(preview) = prepared.preview() {
-            self.constrain(self.closed(preview), term, Check::Quiet);
+            let provenance = prepared.provenance();
+            self.constrain_from(self.closed(preview), term, Check::Quiet, provenance);
         }
         term
     }
@@ -611,8 +612,8 @@ enum Prepared {
         instance: Option<TypeId>,
     },
     Collection(PreparedCollection),
-    /// A template, with its values and hole shape known
-    Fmt(TypeId),
+    /// A template, with its values and hole shape known, at its span
+    Fmt(TypeId, Span),
 }
 
 impl Prepared {
@@ -622,14 +623,28 @@ impl Prepared {
         match self {
             Prepared::Call { call, .. } => Some(call.span),
             Prepared::Collection(collection) => Some(collection.span),
-            Prepared::Fmt(_) => None,
+            Prepared::Fmt(..) => None,
+        }
+    }
+
+    /// Where a constraint on the variable it's held back as comes from: it
+    /// stands for the argument
+    fn provenance(&self) -> Provenance {
+        let span = match self {
+            Prepared::Call { call, .. } => call.span,
+            Prepared::Collection(collection) => collection.span,
+            &Prepared::Fmt(_, span) => span,
+        };
+        Provenance {
+            actual: Some(Origin::local(OriginKind::Held, span)),
+            expected: None,
         }
     }
 
     /// Its type, if it's known before its expectation is
     fn preview(&self) -> Option<TypeId> {
         match *self {
-            Prepared::Fmt(ty) => Some(ty),
+            Prepared::Fmt(ty, _) => Some(ty),
             Prepared::Call { .. } | Prepared::Collection(_) => None,
         }
     }
@@ -2089,7 +2104,7 @@ impl<'a> Flow<'a, '_> {
             }
             ExprKind::Fmt(_) => match self.eval(at, state, operands, expr) {
                 ty if ty == self.db.bottom() => Err(ty),
-                ty => Ok(Prepared::Fmt(ty)),
+                ty => Ok(Prepared::Fmt(ty, expr.span)),
             },
             _ => unreachable!("an item that takes an expectation"),
         }
@@ -2126,11 +2141,12 @@ impl<'a> Flow<'a, '_> {
         let raisable: Vec<Term> = held.iter().map(|held| held.term).collect();
         for held in held {
             let expected = self.held_expectation(rule, held.term, &raisable);
-            if let Prepared::Fmt(preview) = *held.prepared {
+            if let Prepared::Fmt(preview, _) = *held.prepared {
                 let expected = expected.and_then(|expected| rule.solver.reify(expected).ok());
                 let refined = self.contextual_fmt(preview, expected);
                 if refined != preview {
-                    rule.constrain(rule.closed(refined), held.term, Check::Quiet);
+                    let provenance = held.prepared.provenance();
+                    rule.constrain_from(rule.closed(refined), held.term, Check::Quiet, provenance);
                 }
                 continue;
             }
@@ -2191,14 +2207,7 @@ impl<'a> Flow<'a, '_> {
                 ..Rule::new(&mut fork, db, gas)
             };
             let (given, seeded) = self.held_term(&mut sub, held.prepared, expected);
-            // What the argument is solved as stands for the argument
-            let provenance = || Provenance {
-                actual: held
-                    .prepared
-                    .span()
-                    .map(|span| Origin::local(OriginKind::Held, span)),
-                expected: None,
-            };
+            let provenance = || held.prepared.provenance();
             if sub.seed {
                 if let Some(seeded) = seeded {
                     sub.constrain_from(given, seeded, Check::Quiet, provenance());
@@ -2337,7 +2346,7 @@ impl<'a> Flow<'a, '_> {
                 (given, None)
             }
             Prepared::Collection(collection) => self.collection_term(rule, collection, expected),
-            Prepared::Fmt(_) => unreachable!("a template is refined, not made"),
+            Prepared::Fmt(..) => unreachable!("a template is refined, not made"),
         }
     }
 

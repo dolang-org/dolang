@@ -17,7 +17,10 @@
 //! establishes as it does declared ones. Any other declaration's rigid has
 //! escaped its check.
 
-use std::cell::{Cell, RefCell};
+use std::{
+    cell::{Cell, RefCell},
+    ops::ControlFlow::{self, Break, Continue},
+};
 
 use dolang_util::{
     alias, intern,
@@ -39,7 +42,7 @@ type GenericMember = (DeclId, Option<DeclId>, MemberKey, member::Access);
 
 macro_rules! id {
     ($name:ident) => {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub(crate) struct $name(usize);
     };
 }
@@ -154,11 +157,9 @@ pub(crate) enum CallArgument {
 
 /// Where a constraint's actual and expected sides come from in source, each
 /// `None` where nothing a reader wrote is to blame for it
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Provenance {
-    #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     pub(crate) actual: Option<Origin>,
-    #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     pub(crate) expected: Option<Origin>,
 }
 
@@ -414,6 +415,20 @@ pub(crate) enum Reach {
 pub(crate) struct Dependency {
     pub(crate) obligation: ObligationId,
     pub(crate) step: Step,
+    /// For a bound propagation, the obligation that imposed the bound its
+    /// parent's is paired with
+    pub(crate) partner: Option<Partner>,
+}
+
+/// The other parent of a bound propagation `L <: U`, which imposed the bound
+/// on the variable `L <: V <: U` pairs with its parent's. Of several that
+/// imposed it, it's the earliest recorded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Partner {
+    pub(crate) obligation: ObligationId,
+    /// Whether it imposed the upper bound, and so gives the child's expected
+    /// side, rather than the lower bound and its actual side
+    pub(crate) upper: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -483,6 +498,10 @@ pub(crate) struct Node {
     /// Its actual side as what's found of it so far, where that doesn't reify
     /// itself: each unsolved variable as the join of its lower bounds
     pub(crate) found: Option<TypeId>,
+    /// Where its sides come from in source, as the path carries its root's
+    /// (see [`Solver::carry`])
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
+    pub(crate) origins: Provenance,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -502,7 +521,6 @@ pub(crate) struct Outcome {
 #[derive(Debug)]
 struct Root {
     obligation: ObligationId,
-    #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     provenance: Provenance,
 }
 
@@ -1517,7 +1535,7 @@ impl<'db> Solver<'db> {
             self.add_subscriber(variable, obligation);
             if self.assignment(variable).is_some() {
                 for source in self.support(variable) {
-                    self.link(source, obligation, Step::Assignment);
+                    self.link(source, obligation, Step::Assignment, None);
                 }
             }
         }
@@ -2555,14 +2573,17 @@ impl<'db> Solver<'db> {
                 causes.push(cause);
             }
         }
+        let provenance = &self.roots[outcome.constraint.0].provenance;
+        let mut found = FxHashMap::default();
         causes
             .into_iter()
             .map(|(path, contradiction)| Contradicted {
                 contradiction,
                 path: path
                     .iter()
+                    .zip(self.carry(provenance.clone(), &path, &mut found))
                     .enumerate()
-                    .map(|(index, &obligation)| Node {
+                    .map(|(index, (&obligation, origins))| Node {
                         step: index
                             .checked_sub(1)
                             .and_then(|parent| step(path[parent], obligation)),
@@ -2574,6 +2595,7 @@ impl<'db> Solver<'db> {
                             .sides()
                             .filter(|&(actual, _)| self.reify(actual).is_err())
                             .and_then(|(actual, _)| self.reify_found(actual).ok()),
+                        origins,
                     })
                     .collect(),
             })
@@ -2713,7 +2735,23 @@ impl<'db> Solver<'db> {
             expected,
             fill,
         };
-        self.derive_relation(parent, relation, step);
+        self.derive_relation(parent, relation, step, None);
+    }
+
+    /// Add the child `actual <: expected` of a bound propagation, from a
+    /// parent that imposed one bound and its partner that imposed the other
+    fn propagate(&self, parent: ObligationId, actual: Term, expected: Term, partner: Partner) {
+        assert_eq!(
+            self.kind(actual),
+            self.kind(expected),
+            "derived constraint kind mismatch"
+        );
+        let relation = Relation::Subtype {
+            actual,
+            expected,
+            fill: Fill::Arguments,
+        };
+        self.derive_relation(parent, relation, Step::BoundPropagation, Some(partner));
     }
 
     /// Add a child call obligation and a labeled dependency from its parent, a
@@ -2724,11 +2762,17 @@ impl<'db> Solver<'db> {
             Kind::Type,
             "derived call kind mismatch"
         );
-        self.derive_relation(parent, Relation::Call(call), step);
+        self.derive_relation(parent, Relation::Call(call), step, None);
     }
 
     /// Add a child obligation and a labeled dependency from its parent
-    fn derive_relation(&self, parent: ObligationId, relation: Relation, step: Step) {
+    fn derive_relation(
+        &self,
+        parent: ObligationId,
+        relation: Relation,
+        step: Step,
+        partner: Option<Partner>,
+    ) {
         // Recursion through variables is the occurs check's, so a step through
         // one starts unguarded
         let guarded = self.tracks
@@ -2741,7 +2785,7 @@ impl<'db> Solver<'db> {
                 .borrow_mut()
                 .push((child, step.clone()));
         }
-        self.link(parent, child, step);
+        self.link(parent, child, step, partner);
     }
 
     /// Whether `step` from `parent` to `child` takes a value apart, as a
@@ -2762,8 +2806,14 @@ impl<'db> Solver<'db> {
         }
     }
 
-    fn link(&self, parent: ObligationId, child: ObligationId, step: Step) {
-        self.add_dependency(parent, child, step);
+    fn link(
+        &self,
+        parent: ObligationId,
+        child: ObligationId,
+        step: Step,
+        partner: Option<Partner>,
+    ) {
+        self.add_dependency(parent, child, step, partner);
     }
 
     /// Charge the work budget, permanently marking exhaustion on failure.
@@ -3680,12 +3730,7 @@ impl<'db> Solver<'db> {
         // what the assignment was drawn from, so one is taken only where no other
         // reaches it.
         for assignments in [false, true] {
-            let mut history = vec![(root, vec![root])];
-            let mut seen = FxHashSet::default();
-            while let Some((id, path)) = history.pop() {
-                if !seen.insert(id) {
-                    continue;
-                }
+            let _ = self.history(root, assignments, |id, path| {
                 if let State::Issue(issue @ Issue::Contradiction(_)) = self.progress(id).state.get()
                     && !diagnostics
                         .iter()
@@ -3693,18 +3738,11 @@ impl<'db> Solver<'db> {
                 {
                     diagnostics.push(Diagnostic {
                         issue,
-                        path: path.clone(),
+                        path: path.to_vec(),
                     });
                 }
-                for dependency in self.dependencies(id) {
-                    if !assignments && dependency.step == Step::Assignment {
-                        continue;
-                    }
-                    let mut next = path.clone();
-                    next.push(dependency.obligation);
-                    history.push((dependency.obligation, next));
-                }
-            }
+                Continue(())
+            });
         }
         if self.gas.is_exhausted() {
             diagnostics.push(Diagnostic {
@@ -3723,6 +3761,197 @@ impl<'db> Solver<'db> {
             Status::Unresolved
         };
         (status, diagnostics)
+    }
+}
+
+impl Solver<'_> {
+    /// Walk the edges recorded from `root`, depth first, visiting each
+    /// obligation reached once, with the first path that reaches it. Without
+    /// `assignments`, it doesn't take assignments. A diagnostic reads a path
+    /// through one only where no other reaches its obligation, as
+    /// [`Self::trace_root`] does, and as [`Self::path_to`] does.
+    fn history(
+        &self,
+        root: ObligationId,
+        assignments: bool,
+        mut visit: impl FnMut(ObligationId, &[ObligationId]) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
+        let mut history = vec![(root, vec![root])];
+        let mut seen = FxHashSet::default();
+        while let Some((id, path)) = history.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            visit(id, &path)?;
+            for dependency in self.dependencies(id) {
+                if !assignments && dependency.step == Step::Assignment {
+                    continue;
+                }
+                let mut next = path.clone();
+                next.push(dependency.obligation);
+                history.push((dependency.obligation, next));
+            }
+        }
+        Continue(())
+    }
+
+    /// The path a diagnostic would read from a root to `target`, with the
+    /// root's provenance: from the first root, in the order they're
+    /// registered, that reaches it as [`Self::history`] walks, preferring one
+    /// that doesn't take an assignment. The roots of solvers this one is
+    /// nested in come first, as a fork's follow its parent's once absorbed.
+    fn path_to(&self, target: ObligationId) -> Option<(Provenance, Vec<ObligationId>)> {
+        let roots = self.every_root();
+        for assignments in [false, true] {
+            for root in &roots {
+                let mut found = None;
+                let _ = self.history(root.obligation, assignments, |id, path| {
+                    if id != target {
+                        return Continue(());
+                    }
+                    found = Some(path.to_vec());
+                    Break(())
+                });
+                if let Some(path) = found {
+                    return Some((root.provenance.clone(), path));
+                }
+            }
+        }
+        None
+    }
+
+    /// The roots of this solver and those it's nested in, outermost first
+    fn every_root(&self) -> Vec<&Root> {
+        let mut solvers = vec![self];
+        while let Some(parent) = solvers.last().and_then(|solver| solver.open_parent()) {
+            solvers.push(parent);
+        }
+        solvers
+            .iter()
+            .rev()
+            .flat_map(|solver| &solver.roots)
+            .collect()
+    }
+
+    /// The provenance of the first root that judges `obligation`, of this
+    /// solver or one it's nested in, if one does
+    pub(super) fn root_provenance(&self, obligation: ObligationId) -> Provenance {
+        self.every_root()
+            .into_iter()
+            .find(|root| root.obligation == obligation)
+            .map(|root| root.provenance.clone())
+            .unwrap_or_default()
+    }
+
+    /// The origins of an obligation's sides, as carried along the path a
+    /// diagnostic would read to it (see [`Self::path_to`]). `found` holds
+    /// those already found, and `None` for one being found, which a cycle
+    /// back to it finds nothing of.
+    fn origins(
+        &self,
+        obligation: ObligationId,
+        found: &mut FxHashMap<ObligationId, Option<Provenance>>,
+    ) -> Provenance {
+        if let Some(origins) = found.get(&obligation) {
+            return origins.clone().unwrap_or_default();
+        }
+        found.insert(obligation, None);
+        let origins = match self.path_to(obligation) {
+            Some((provenance, path)) => self
+                .carry(provenance, &path, found)
+                .pop()
+                .expect("a path has its root"),
+            None => Provenance::default(),
+        };
+        found.insert(obligation, Some(origins.clone()));
+        origins
+    }
+
+    /// The origins of each obligation on a path from a root with
+    /// `provenance`. Each child keeps its parent's, except where a step says
+    /// otherwise:
+    ///
+    /// - An argument's item or key under a call's arguments is the argument.
+    ///   What it's passed to has no origin of its own.
+    /// - A bound propagation `L <: U` takes the side its partner imposed from
+    ///   its partner, and the other from its parent.
+    /// - An assignment's child takes its actual side from its parent, a
+    ///   source of the variable's bounds: what the variable was drawn from,
+    ///   or where it stands. It takes its expected side from its own path.
+    ///
+    /// - A step into a contravariant position swaps them, as it does the
+    ///   sides. Which one is found is a reader's to track.
+    fn carry(
+        &self,
+        provenance: Provenance,
+        path: &[ObligationId],
+        found: &mut FxHashMap<ObligationId, Option<Provenance>>,
+    ) -> Vec<Provenance> {
+        let mut origins = vec![provenance];
+        let mut previous = None;
+        for pair in path.windows(2) {
+            let &[parent, child] = pair else {
+                unreachable!("a pair")
+            };
+            let carried = origins.last().expect("a path has its root").clone();
+            let dependency = self
+                .dependencies(parent)
+                .into_iter()
+                .find(|dependency| dependency.obligation == child);
+            let next = match &dependency {
+                Some(Dependency {
+                    step: Step::Item(index) | Step::Key(index),
+                    ..
+                }) if previous == Some(Step::Arguments) => {
+                    let argument = match &carried.actual {
+                        Some(Origin {
+                            kind: OriginKind::Call { arguments, .. },
+                            ..
+                        }) => arguments
+                            .get(*index)
+                            .map(|&span| Origin::local(OriginKind::Expression, span)),
+                        _ => None,
+                    };
+                    Provenance {
+                        actual: argument,
+                        expected: None,
+                    }
+                }
+                Some(Dependency {
+                    step: Step::BoundPropagation,
+                    partner: Some(partner),
+                    ..
+                }) => {
+                    let other = self.origins(partner.obligation, found);
+                    match partner.upper {
+                        true => Provenance {
+                            actual: carried.actual,
+                            expected: other.expected,
+                        },
+                        false => Provenance {
+                            actual: other.actual,
+                            expected: carried.expected,
+                        },
+                    }
+                }
+                Some(Dependency {
+                    step: Step::Assignment,
+                    ..
+                }) => Provenance {
+                    actual: carried.actual,
+                    expected: self.origins(child, found).expected,
+                },
+                // The child's sides are its parent's, swapped
+                Some(dependency) if dependency.step.reverses() => Provenance {
+                    actual: carried.expected,
+                    expected: carried.actual,
+                },
+                _ => carried,
+            };
+            origins.push(next);
+            previous = dependency.map(|dependency| dependency.step);
+        }
+        origins
     }
 }
 
