@@ -253,5 +253,6 @@ jobs:
           prerelease: true
           files: |
             artifacts/*.tar.gz
+            artifacts/*.vsix
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

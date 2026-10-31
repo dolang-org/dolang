@@ -7,9 +7,13 @@ VS Code extension providing language support for the Do programming language.
 - Syntax highlighting for `.dol` files
 - Indentation-aware editing, offside folding and bracket matching
 - Language server integration for:
-    - Diagnostics
-    - Code completion
-    - Go to definition
+    - Diagnostics, with quick fixes
+    - Hover documentation
+    - Go to definition, find references and document highlights
+    - Document outline
+    - Semantic highlighting
+- Extensionless scripts are recognized by a `dolang` shebang line, such as
+  `#!/usr/bin/env dolang`
 - Script execution:
     - Run Do scripts with a single click, with or without arguments
     - `dolang` tasks in `tasks.json` for saved argument sets

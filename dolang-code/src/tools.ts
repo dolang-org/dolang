@@ -34,7 +34,10 @@ const REPOSITORY_OWNER = "dolang-org";
 const REPOSITORY_NAME = "dolang";
 const BUNDLE_DIRECTORY = "bundle";
 
-/** Downloads in progress, keyed by install directory, shared by concurrent resolves. */
+/**
+ * Downloads keyed by install directory. A finished download stays here until
+ * `clear`, so a resolve whose file check started before it finished reuses it.
+ */
 const downloads = new Map<string, Promise<void>>();
 
 /** The extension's version, which names the tool release it downloads. */
@@ -196,8 +199,9 @@ export class GitHubReleaseToolDownloader {
 
     public async resolve(tool: ToolName): Promise<ResolvedTool | undefined> {
         const targetPath = this.downloadedBinaryPath(tool);
+        const resolved: ResolvedTool = { tool, path: targetPath, source: "downloaded" };
         if (await isExecutableFile(targetPath)) {
-            return { tool, path: targetPath, source: "downloaded" };
+            return resolved;
         }
 
         if (!this.isEnabled()) {
@@ -205,17 +209,36 @@ export class GitHubReleaseToolDownloader {
         }
 
         const key = this.bundleInstallDir();
+        const previous = downloads.get(key);
+        if (previous) {
+            await previous;
+            if (await isExecutableFile(targetPath)) {
+                return resolved;
+            }
+            // The bundle was removed after it was downloaded
+            if (downloads.get(key) === previous) {
+                downloads.delete(key);
+            }
+        }
+
         let download = downloads.get(key);
         if (!download) {
-            download = this.download().finally(() => downloads.delete(key));
-            downloads.set(key, download);
+            const started = this.download();
+            started.catch(() => {
+                if (downloads.get(key) === started) {
+                    downloads.delete(key);
+                }
+            });
+            downloads.set(key, started);
+            download = started;
         }
         await download;
-        return { tool, path: targetPath, source: "downloaded" };
+        return resolved;
     }
 
     /** Deletes this version's cached bundle, so the next resolve downloads it again. */
     public async clear(): Promise<void> {
+        downloads.delete(this.bundleInstallDir());
         await fs.rm(this.versionDir(), { recursive: true, force: true });
     }
 
