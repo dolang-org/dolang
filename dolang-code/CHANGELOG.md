@@ -19,3 +19,6 @@
   downloads
 - Limited support in untrusted workspaces: no language server or script
   execution, and the tool path settings are restricted
+- Scripts without a `.dol` extension are recognized by a `dolang` shebang
+  line
+- An icon, a more descriptive name and Marketplace keywords

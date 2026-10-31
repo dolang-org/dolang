@@ -276,6 +276,27 @@ suite("Extension Manifest", () => {
         ]);
         assert.strictEqual(manifest.capabilities.virtualWorkspaces, false);
     });
+
+    test("recognizes extensionless scripts by their shebang", async () => {
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dolang-shebang-"));
+        const languageOf = async (name: string, shebang: string): Promise<string> => {
+            const file = path.join(dir, name);
+            await fs.writeFile(file, `${shebang}\necho hello\n`);
+            return (await vscode.workspace.openTextDocument(vscode.Uri.file(file))).languageId;
+        };
+        try {
+            assert.strictEqual(await languageOf("env", "#!/usr/bin/env dolang"), "dolang");
+            assert.strictEqual(await languageOf("direct", "#!/usr/local/bin/dolang"), "dolang");
+            assert.strictEqual(
+                await languageOf("args", "#!/usr/bin/env -S dolang -m test"),
+                "dolang"
+            );
+            assert.notStrictEqual(await languageOf("sh", "#!/bin/sh"), "dolang");
+            assert.notStrictEqual(await languageOf("other", "#!/usr/bin/env dolang-lsp"), "dolang");
+        } finally {
+            await fs.rm(dir, { recursive: true, force: true });
+        }
+    });
 });
 
 suite("Argument Splitting", () => {

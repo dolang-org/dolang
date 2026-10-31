@@ -1,9 +1,14 @@
 {
     "name": "dolang",
-    "displayName": "dolang",
-    "description": "Do Language Support",
+    "displayName": "Do Language",
+    "description": "Syntax highlighting, language server and script running for the Do scripting language",
     "version": "0.1.1",
     "license": "Apache-2.0 OR MIT",
+    "icon": "images/icon.png",
+    "galleryBanner": {
+        "color": "#3F1A0F",
+        "theme": "dark"
+    },
     "repository": {
         "type": "git",
         "url": "https://github.com/dolang-org/dolang.git"
@@ -13,6 +18,14 @@
     },
     "categories": [
         "Programming Languages"
+    ],
+    "keywords": [
+        "dolang",
+        "do",
+        "devops",
+        "automation",
+        "shell",
+        "scripting"
     ],
     "main": "./dist/extension.js",
     "capabilities": {
@@ -28,14 +41,7 @@
     },
     "activationEvents": [
         "onLanguage:dolang",
-        "onCommand:dolang.runScript",
-        "onCommand:dolang.runScriptFile",
-        "onCommand:dolang.openInteractiveShell",
-        "onCommand:dolang.runScriptWithArgs",
-        "onCommand:dolang.sendSelectionToShell",
-        "onTaskType:dolang",
-        "onCommand:dolang.restartLanguageServer",
-        "onCommand:dolang.redownloadTools"
+        "onTaskType:dolang"
     ],
     "contributes": {
         "configuration": {
@@ -84,6 +90,7 @@
                 "extensions": [
                     ".dol"
                 ],
+                "firstLine": "^#!.*\\bdolang(\\s|$)",
                 "configuration": "./language-configuration.json"
             }
         ],
