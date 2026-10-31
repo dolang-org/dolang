@@ -63,6 +63,18 @@ function keepOpenSetting(): boolean {
     return vscode.workspace.getConfiguration("dolang").get<boolean>("keepTerminalOpen", true);
 }
 
+/**
+ * Returns whether the workspace is trusted, telling the user why nothing ran
+ * when it isn't.
+ */
+export function requireTrustedWorkspace(): boolean {
+    if (vscode.workspace.isTrusted) {
+        return true;
+    }
+    void vscode.window.showErrorMessage("Running Do scripts requires a trusted workspace");
+    return false;
+}
+
 function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
@@ -71,13 +83,18 @@ export class DoScriptRunner implements vscode.TaskProvider {
     private static readonly LAST_ARGS_KEY = "dolang.lastArgs";
 
     private readonly context: vscode.ExtensionContext;
+    private readonly log: vscode.LogOutputChannel;
 
-    constructor(context: vscode.ExtensionContext) {
+    constructor(context: vscode.ExtensionContext, log: vscode.LogOutputChannel) {
         this.context = context;
+        this.log = log;
     }
 
     /** Runs the script at `uri`, or the active editor's document. */
     public async run(uri?: vscode.Uri, args: readonly string[] = []): Promise<void> {
+        if (!requireTrustedWorkspace()) {
+            return;
+        }
         const target = this.targetDocument(uri);
         if (!target) {
             return;
@@ -101,6 +118,9 @@ export class DoScriptRunner implements vscode.TaskProvider {
 
     /** Prompts for arguments, then runs like {@link run}. */
     public async runWithArgs(uri?: vscode.Uri): Promise<void> {
+        if (!requireTrustedWorkspace()) {
+            return;
+        }
         const target = this.targetDocument(uri);
         if (!target) {
             return;
@@ -139,7 +159,7 @@ export class DoScriptRunner implements vscode.TaskProvider {
 
     public async resolveTask(task: vscode.Task): Promise<vscode.Task | undefined> {
         const definition = task.definition as DoTaskDefinition;
-        if (definition.type !== TASK_TYPE) {
+        if (definition.type !== TASK_TYPE || !requireTrustedWorkspace()) {
             return undefined;
         }
         if (typeof definition.script !== "string" || definition.script === "") {
@@ -241,7 +261,7 @@ export class DoScriptRunner implements vscode.TaskProvider {
 
     private async resolveExecutionTools() {
         try {
-            return await resolveExecutionTools({ context: this.context });
+            return await resolveExecutionTools({ context: this.context, log: this.log });
         } catch (error) {
             vscode.window.showErrorMessage(errorMessage(error));
             throw error;

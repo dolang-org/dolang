@@ -34,6 +34,11 @@ runs:
       working-directory: dolang-code
       run: npm run test:syntax
 
+    - name: Check extension version
+      shell: bash
+      working-directory: dolang-code
+      run: npm run test:version
+
     - name: Install session bus dependencies
       shell: bash
       run: |

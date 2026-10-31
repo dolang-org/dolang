@@ -8,3 +8,14 @@
 - Run Do Script with Arguments…, `dolang` task definitions, and Send
   Selection/Line to Do Shell
 - Removed the unused `dolang.runInTerminal` setting
+- Downloaded tools come from the release matching the extension version,
+  instead of `releases/latest`, which skipped prereleases; "Re-download Do
+  Tools" replaces the cached bundle
+- "Restart Do Language Server", automatic restart when `dolang.lsp.path`
+  changes, a warning when the server's version differs from the extension's,
+  and a language server that fails to start no longer disables the other
+  commands
+- `dolang.trace.server` and a "Do" output channel for tool resolution and
+  downloads
+- Limited support in untrusted workspaces: no language server or script
+  execution, and the tool path settings are restricted
