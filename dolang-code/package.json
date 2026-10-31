@@ -138,7 +138,8 @@
         "format": "prettier --write .",
         "package:vsix": "npx --yes @vscode/vsce@3.9.2 package",
         "test": "vscode-test --fail-zero",
-        "test:syntax": "node --test test/syntax.test.mjs"
+        "test:syntax": "node --test test/syntax.test.mjs",
+        "test:language-config": "node --test test/language-configuration.test.mjs"
     },
     "dependencies": {
         "tar": "^7.5.21",

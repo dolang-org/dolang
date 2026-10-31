@@ -1,26 +1,68 @@
 {
     "comments": {
-        // symbol used for single line comment. Remove this entry if your language does not support line comments
         "lineComment": "#"
     },
-    // symbols used as brackets
     "brackets": [
-        // To avoid spurious bracket colorization (in literal strings, etc.), report no brackets
-        // FIXME: find a better way to change the bracket colorizers behavior or force it off for only
-        // this language
-    ],
-    // symbols that are auto closed when typing
-    "autoClosingPairs": [
         ["{", "}"],
         ["[", "]"],
-        ["(", ")"],
-        ["\"", "\""]
+        ["(", ")"]
     ],
-    // symbols that can be used to surround a selection
+    "colorizedBracketPairs": [],
+    "autoClosingPairs": [
+        { "open": "{", "close": "}" },
+        { "open": "[", "close": "]" },
+        { "open": "(", "close": ")" },
+        { "open": "\"", "close": "\"", "notIn": ["string", "comment"] }
+    ],
     "surroundingPairs": [
         ["{", "}"],
         ["[", "]"],
         ["(", ")"],
         ["\"", "\""]
+    ],
+    "folding": {
+        "offSide": true,
+        "markers": {
+            "start": "^\\s*#\\s*region\\b",
+            "end": "^\\s*#\\s*endregion\\b"
+        }
+    },
+    "indentationRules": {
+        "increaseIndentPattern": "^(?!)",
+        "decreaseIndentPattern": "^\\s*(?:catch|finally)\\b"
+    },
+    "onEnterRules": [
+        {
+            "beforeText": "^\\s*#",
+            "action": { "indent": "none" }
+        },
+        {
+            "beforeText": "^\\s*(?:pub\\s+)?(?:(?:def|class|@class|if|while|for|try|catch|finally|match|bind)\\b|else\\s*(?:#.*)?$|else\\s+if\\b)",
+            "action": { "indent": "indent" }
+        },
+        {
+            "beforeText": "^[^#]*[^=!<>]=\\s*(?:if|match|try)\\b",
+            "action": { "indent": "indent" }
+        },
+        {
+            "beforeText": "\\bdo(?:\\s*\\|.*\\|)?(?:\\s*->\\s*\\S+)?(?:\\s+#.*)?$",
+            "action": { "indent": "indent" }
+        },
+        {
+            "beforeText": "\\|-?(?:\\s+#.*)?$",
+            "action": { "indent": "indent" }
+        },
+        {
+            "beforeText": "(?:^|\\s)\\$(?:\\s+#.*)?$",
+            "action": { "indent": "indent" }
+        },
+        {
+            "beforeText": "(?<!(?:^|[^\\w:]):\\w+):(?:\\s+#.*)?$",
+            "action": { "indent": "indent" }
+        },
+        {
+            "beforeText": "^\\s*(?:return|throw|break|continue)\\b",
+            "action": { "indent": "outdent" }
+        }
     ]
 }
