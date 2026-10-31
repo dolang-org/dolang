@@ -718,14 +718,19 @@ Historical edges explain contradictions to every contributing root, preferring a
 path without an assignment edge, which explains only by what the assignment was
 drawn from.
 
-Explaining a contradiction carries the root's origins down its path. An item or
-key under a call's arguments narrows the call to that argument. A contravariant
+Explaining a contradiction carries the root's origins down its path. A call's
+arguments narrow the call to its arguments, and an item or key of them to that
+argument. A contravariant
 step swaps the origins, as it does the sides, so a reader tracks which is found.
 A bound propagation takes the side its partner imposed from the partner. An
 assignment's child takes its actual side from its parent, a source of the
 variable's bounds, and its expected side from its own path. A partner's or
 child's origins are those along the path a diagnostic would read to it, from the
-first root to reach it by the same walk. Historical cycles and obsolete
+first root to reach it by the same walk. Flow places a call's contradiction by
+these origins: at the argument its path narrows the arguments to, at the call
+for an extra or missing argument of its arguments, and otherwise at the call. An
+argument the path meets only as a partner, as through a channel, leaves it at
+the call. Historical cycles and obsolete
 residuals do not prevent a current proof. Cycles in current proof
 premises remain unresolved. Reports distinguish proven, contradicted, and
 unresolved roots; quiescence alone is not proof.

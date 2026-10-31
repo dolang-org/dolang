@@ -55,7 +55,7 @@ use crate::{
         solver::{
             Call as SolverCall, CallArgument, Contradiction, Gas, InferVarId, Issue, Node,
             ObligationId, Origin, OriginKind, Outcome, PatternShape, Provenance, Reason, Relation,
-            Residual, Solver, Status, Step as Derivation, Term, Unpacked,
+            Residual, Site, Solver, Status, Step as Derivation, Term, Unpacked,
         },
         r#type::{
             Argument, BoundRef, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
@@ -1356,14 +1356,14 @@ impl<'a> Flow<'a, '_> {
                     let problems: Vec<Problem> = match check {
                         // An argument is reported once, with a note for each of
                         // its parts that doesn't fit
-                        Check::Call { span, args, callee } => {
+                        Check::Call { span, callee, .. } => {
                             let mut problems = Vec::new();
                             for cause in solver.explain(outcome).iter() {
                                 if let (Contradiction::NoOverload, [_]) =
                                     (cause.contradiction, &cause.path[..])
                                 {
                                     let overloaded = root(outcome);
-                                    let notes = self.rejections(solver, *span, args, overloaded);
+                                    let notes = self.rejections(solver, *span, overloaded);
                                     merge(
                                         &mut problems,
                                         Problem::NoOverload {
@@ -1376,7 +1376,6 @@ impl<'a> Flow<'a, '_> {
                                 }
                                 let problem = self.call_problem(
                                     *span,
-                                    args,
                                     &cause.path,
                                     cause.contradiction,
                                     &actual.map(|callee| self.shown(callee)),
@@ -1394,9 +1393,7 @@ impl<'a> Flow<'a, '_> {
                         &Check::Expected(span) | &Check::Empty(span) => {
                             let mut notes = Vec::new();
                             for cause in solver.explain(outcome).iter() {
-                                let steps = steps(&cause.path);
-                                if let Some(note) =
-                                    self.cause(&cause.path, &steps, 0, cause.contradiction)
+                                if let Some(note) = self.cause(&cause.path, 0, cause.contradiction)
                                     && !notes.contains(&note)
                                 {
                                     notes.push(note);
@@ -1437,13 +1434,7 @@ impl<'a> Flow<'a, '_> {
     /// Why each overload of an overloaded callee was rejected by a call: the
     /// overload, and what its trial's contradictions say, as they would of a
     /// call of it alone
-    fn rejections(
-        &self,
-        solver: &Solver<'_>,
-        span: Span,
-        args: &[Span],
-        overloaded: ObligationId,
-    ) -> Vec<String> {
+    fn rejections(&self, solver: &Solver<'_>, span: Span, overloaded: ObligationId) -> Vec<String> {
         let mut notes = Vec::new();
         for rejection in solver.rejections(overloaded).iter() {
             let overload = rejection
@@ -1451,8 +1442,7 @@ impl<'a> Flow<'a, '_> {
                 .map(|ty| self.overload(solver, overloaded, rejection.index, ty));
             let mut problems = Vec::new();
             for cause in &rejection.contradictions {
-                let problem =
-                    self.call_problem(span, args, &cause.path, cause.contradiction, &overload);
+                let problem = self.call_problem(span, &cause.path, cause.contradiction, &overload);
                 merge(&mut problems, problem);
             }
             let mut reasons = Vec::new();
@@ -1550,12 +1540,10 @@ impl<'a> Flow<'a, '_> {
     fn call_problem(
         &self,
         span: Span,
-        args: &[Span],
         path: &[Node],
         contradiction: Contradiction,
         callee: &Option<String>,
     ) -> Problem {
-        let steps = steps(path);
         match contradiction {
             Contradiction::Conflict => return Problem::Conflict(span),
             Contradiction::Unadmitted(key) => {
@@ -1576,72 +1564,84 @@ impl<'a> Flow<'a, '_> {
             span,
             callee: callee.clone().unwrap_or_else(|| "?".to_owned()),
         };
-        if steps.len() + 1 != path.len() {
-            return fallback;
+        let origins = found_origins(path);
+        // The argument the path narrows the call's arguments to. One its path
+        // only meets as a partner, as through a channel, isn't the call's to
+        // place it at.
+        let argument = origins
+            .windows(2)
+            .enumerate()
+            .find_map(|(index, pair)| match pair {
+                [
+                    Some(Origin {
+                        kind: OriginKind::Arguments(_),
+                        ..
+                    }),
+                    Some(Origin {
+                        site: Site::Local(site),
+                        ..
+                    }),
+                ] => Some((index + 1, *site)),
+                _ => None,
+            });
+        let Some((mut root, arg)) = argument else {
+            return match (contradiction, origins.last()) {
+                (Contradiction::Excess(index), Some(Some(origin)))
+                    if let OriginKind::Arguments(arguments) = &origin.kind =>
+                {
+                    Problem::ExtraArgument(arguments.get(index).copied().unwrap_or(span))
+                }
+                (Contradiction::Missing(_), Some(Some(origin)))
+                    if matches!(origin.kind, OriginKind::Arguments(_)) =>
+                {
+                    Problem::MissingArgument(span)
+                }
+                _ => fallback,
+            };
+        };
+        // An argument held back that's left unsolved shows what it's made of,
+        // as does one solved as what it's made of
+        // The step from a node to the next
+        let onward = |index: usize| path.get(index + 1).and_then(|node| node.step.as_ref());
+        if let Some(Derivation::BoundPropagation | Derivation::Assignment) = onward(root)
+            && let Some((found, _)) = path[root].sides
+            && (found.is_none() || path[root].sides == path[root + 1].sides)
+        {
+            root += 1;
         }
-        let Some(arguments) = steps.iter().position(|step| *step == Derivation::Arguments) else {
+        // A write through a key selecting several items shows the item the
+        // argument doesn't fit
+        if let Some(Derivation::Selected(_)) = onward(root) {
+            root += 1;
+        }
+        // What's found of an argument held back that's left unsolved
+        let Some((Some(found), expected)) = path[root]
+            .sides
+            .map(|(found, expected)| (found.or(path[root].found), expected))
+        else {
             return fallback;
         };
-        match steps.get(arguments + 1) {
-            Some(&(Derivation::Item(index) | Derivation::Key(index))) => {
-                let Some(&arg) = args.get(index) else {
-                    return fallback;
-                };
-                let mut root = arguments + 2;
-                // An argument held back that's left unsolved shows what it's
-                // made of, as does one solved as what it's made of
-                if let Some(Derivation::BoundPropagation | Derivation::Assignment) = steps.get(root)
-                    && let Some((found, _)) = path[root].sides
-                    && (found.is_none() || path[root].sides == path[root + 1].sides)
-                {
-                    root += 1;
-                }
-                // A write through a key selecting several items shows the item
-                // the argument doesn't fit
-                if let Some(Derivation::Selected(_)) = steps.get(root) {
-                    root += 1;
-                }
-                // What's found of an argument held back that's left unsolved
-                let Some((Some(found), expected)) = path[root]
-                    .sides
-                    .map(|(found, expected)| (found.or(path[root].found), expected))
-                else {
-                    return fallback;
-                };
-                // A parameter whose type is left unsolved shows the bound of it
-                // that the argument doesn't fit
-                let expected = expected.or_else(|| match steps.get(root) {
-                    Some(Derivation::BoundPropagation) => path[root + 1].sides?.1,
-                    _ => None,
-                });
-                let (found, expected) = match expected {
-                    Some(expected) => {
-                        let (found, expected) = self.pair(found, expected);
-                        (found, Some(expected))
-                    }
-                    None => (self.subject(found), None),
-                };
-                // What fails may lie deeper than the argument's own relation, as
-                // in a binder's bound its type solves
-                let causes = self
-                    .cause(path, &steps, root, contradiction)
-                    .into_iter()
-                    .collect();
-                Problem::Argument {
-                    span: arg,
-                    found,
-                    expected,
-                    causes,
-                }
+        // A parameter whose type is left unsolved shows the bound of it that
+        // the argument doesn't fit
+        let expected = expected.or_else(|| match onward(root) {
+            Some(Derivation::BoundPropagation) => path[root + 1].sides?.1,
+            _ => None,
+        });
+        let (found, expected) = match expected {
+            Some(expected) => {
+                let (found, expected) = self.pair(found, expected);
+                (found, Some(expected))
             }
-            None => match contradiction {
-                Contradiction::Excess(index) => {
-                    Problem::ExtraArgument(args.get(index).copied().unwrap_or(span))
-                }
-                Contradiction::Missing(_) => Problem::MissingArgument(span),
-                _ => fallback,
-            },
-            Some(_) => fallback,
+            None => (self.subject(found), None),
+        };
+        // What fails may lie deeper than the argument's own relation, as in a
+        // binder's bound its type solves
+        let causes = self.cause(path, root, contradiction).into_iter().collect();
+        Problem::Argument {
+            span: arg,
+            found,
+            expected,
+            causes,
         }
     }
 
@@ -1654,19 +1654,19 @@ impl<'a> Flow<'a, '_> {
     fn cause(
         &self,
         path: &[Node],
-        steps: &[Derivation],
         start: usize,
         contradiction: Contradiction,
     ) -> Option<Vec<String>> {
+        let step = |index: usize| path[index].step.as_ref();
         let mut end = path.len();
-        while end > start + 1 && matches!(steps[end - 2], Derivation::IntrinsicBacking(_)) {
+        while end > start + 1 && matches!(step(end - 1), Some(Derivation::IntrinsicBacking(_))) {
             end -= 1;
         }
         // Whether each obligation's expected side is the found one
-        let reversed: Vec<bool> = steps[start..end - 1]
+        let reversed: Vec<bool> = path[start + 1..end]
             .iter()
-            .scan(false, |reversed, step| {
-                *reversed ^= step.reverses();
+            .scan(false, |reversed, node| {
+                *reversed ^= node.step.as_ref().is_some_and(Derivation::reverses);
                 Some(*reversed)
             })
             .collect();
@@ -1711,16 +1711,18 @@ impl<'a> Flow<'a, '_> {
         for index in (start + 1..end - 1).rev() {
             // Only steps into a type's parts are where a reader can look
             if !matches!(
-                steps[index - 1],
-                Derivation::Argument { .. }
-                    | Derivation::Parameters
-                    | Derivation::Arguments
-                    | Derivation::Return
-                    | Derivation::Input
-                    | Derivation::Output
-                    | Derivation::UnionMember(_)
-                    | Derivation::Item(_)
-                    | Derivation::Key(_)
+                step(index),
+                Some(
+                    Derivation::Argument { .. }
+                        | Derivation::Parameters
+                        | Derivation::Arguments
+                        | Derivation::Return
+                        | Derivation::Input
+                        | Derivation::Output
+                        | Derivation::UnionMember(_)
+                        | Derivation::Item(_)
+                        | Derivation::Key(_)
+                )
             ) {
                 continue;
             }
@@ -3856,11 +3858,18 @@ fn spread_into(
     );
 }
 
-/// The derivation steps along a path, leaving out any not recorded
-fn steps(path: &[Node]) -> Vec<Derivation> {
+/// Each node's found-side origin: its actual side's, or its expected side's
+/// below an odd number of steps that reverse a relation
+fn found_origins(path: &[Node]) -> Vec<Option<Origin>> {
+    let mut reversed = false;
     path.iter()
-        .skip(1)
-        .filter_map(|node| node.step.clone())
+        .map(|node| {
+            reversed ^= node.step.as_ref().is_some_and(Derivation::reverses);
+            match reversed {
+                false => node.origins.actual.clone(),
+                true => node.origins.expected.clone(),
+            }
+        })
         .collect()
 }
 

@@ -193,6 +193,8 @@ pub(crate) enum OriginKind {
         arguments: alias::Box<[diag::Span]>,
         callee: Option<alias::Box<str>>,
     },
+    /// A call's arguments, with each one's span by its index
+    Arguments(alias::Box<[diag::Span]>),
     /// What a rule's context expects of its result
     ExpectedResult,
 }
@@ -500,7 +502,6 @@ pub(crate) struct Node {
     pub(crate) found: Option<TypeId>,
     /// Where its sides come from in source, as the path carries its root's
     /// (see [`Solver::carry`])
-    #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     pub(crate) origins: Provenance,
 }
 
@@ -3871,8 +3872,8 @@ impl Solver<'_> {
     /// `provenance`. Each child keeps its parent's, except where a step says
     /// otherwise:
     ///
-    /// - An argument's item or key under a call's arguments is the argument.
-    ///   What it's passed to has no origin of its own.
+    /// - A call's arguments are the call's, and an item or key of them is
+    ///   the argument. What it's passed to has no origin of its own.
     /// - A bound propagation `L <: U` takes the side its partner imposed from
     ///   its partner, and the other from its parent.
     /// - An assignment's child takes its actual side from its parent, a
@@ -3888,7 +3889,6 @@ impl Solver<'_> {
         found: &mut FxHashMap<ObligationId, Option<Provenance>>,
     ) -> Vec<Provenance> {
         let mut origins = vec![provenance];
-        let mut previous = None;
         for pair in path.windows(2) {
             let &[parent, child] = pair else {
                 unreachable!("a pair")
@@ -3898,30 +3898,46 @@ impl Solver<'_> {
                 .dependencies(parent)
                 .into_iter()
                 .find(|dependency| dependency.obligation == child);
-            let next = match &dependency {
-                Some(Dependency {
-                    step: Step::Item(index) | Step::Key(index),
-                    ..
-                }) if previous == Some(Step::Arguments) => {
-                    let argument = match &carried.actual {
-                        Some(Origin {
-                            kind: OriginKind::Call { arguments, .. },
-                            ..
-                        }) => arguments
-                            .get(*index)
-                            .map(|&span| Origin::local(OriginKind::Expression, span)),
-                        _ => None,
-                    };
-                    Provenance {
-                        actual: argument,
-                        expected: None,
-                    }
-                }
-                Some(Dependency {
-                    step: Step::BoundPropagation,
-                    partner: Some(partner),
-                    ..
-                }) => {
+            let next = match (&dependency, &carried.actual) {
+                (
+                    Some(Dependency {
+                        step: Step::Arguments,
+                        ..
+                    }),
+                    Some(Origin {
+                        kind: OriginKind::Call { arguments, .. },
+                        site,
+                    }),
+                ) => Provenance {
+                    actual: Some(Origin {
+                        kind: OriginKind::Arguments(arguments.clone()),
+                        site: *site,
+                    }),
+                    expected: carried.expected,
+                },
+                (
+                    Some(Dependency {
+                        step: Step::Item(index) | Step::Key(index),
+                        ..
+                    }),
+                    Some(Origin {
+                        kind: OriginKind::Arguments(arguments),
+                        ..
+                    }),
+                ) => Provenance {
+                    actual: arguments
+                        .get(*index)
+                        .map(|&span| Origin::local(OriginKind::Expression, span)),
+                    expected: None,
+                },
+                (
+                    Some(Dependency {
+                        step: Step::BoundPropagation,
+                        partner: Some(partner),
+                        ..
+                    }),
+                    _,
+                ) => {
                     let other = self.origins(partner.obligation, found);
                     match partner.upper {
                         true => Provenance {
@@ -3934,22 +3950,24 @@ impl Solver<'_> {
                         },
                     }
                 }
-                Some(Dependency {
-                    step: Step::Assignment,
-                    ..
-                }) => Provenance {
+                (
+                    Some(Dependency {
+                        step: Step::Assignment,
+                        ..
+                    }),
+                    _,
+                ) => Provenance {
                     actual: carried.actual,
                     expected: self.origins(child, found).expected,
                 },
                 // The child's sides are its parent's, swapped
-                Some(dependency) if dependency.step.reverses() => Provenance {
+                (Some(dependency), _) if dependency.step.reverses() => Provenance {
                     actual: carried.expected,
                     expected: carried.actual,
                 },
                 _ => carried,
             };
             origins.push(next);
-            previous = dependency.map(|dependency| dependency.step);
         }
         origins
     }

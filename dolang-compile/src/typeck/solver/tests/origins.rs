@@ -65,6 +65,64 @@ fn an_argument_narrows_its_call_origin() {
 }
 
 #[test]
+fn an_extra_argument_is_the_calls_arguments() {
+    let mut db = Database::new();
+    let one = literal(&db, 1);
+    let callee = function(&db, &[one], one);
+    db.seal();
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    let args = [one, one].map(|ty| {
+        (
+            Multiplicity::Required,
+            CallArgument::Positional(s.closed(ty)),
+        )
+    });
+    let call = Call {
+        callee: s.closed(callee),
+        arguments: s.arguments_schema(&args),
+        result: s.closed(one),
+        input: None,
+        output: None,
+    };
+    let arguments: alias::Box<[diag::Span]> = [diag::Span::new(1, 2, 1), diag::Span::new(1, 4, 1)]
+        .to_vec()
+        .into();
+    let provenance = Provenance {
+        actual: Some(Origin::local(
+            OriginKind::Call {
+                arguments: arguments.clone(),
+                callee: None,
+            },
+            diag::Span::new(1, 0, 5),
+        )),
+        expected: None,
+    };
+    s.constrain_call(call, provenance);
+    let outcome = s.solve().remove(0);
+    let excess = s
+        .explain(&outcome)
+        .iter()
+        .find(|cause| cause.contradiction == Contradiction::Excess(1))
+        .map(|cause| {
+            cause
+                .path
+                .last()
+                .expect("a path has its root")
+                .origins
+                .clone()
+        })
+        .expect("the extra argument's contradiction");
+    assert_eq!(
+        excess.actual,
+        Some(Origin::local(
+            OriginKind::Arguments(arguments),
+            diag::Span::new(1, 0, 5)
+        ))
+    );
+}
+
+#[test]
 fn a_propagated_bound_takes_each_side_from_its_own_root() {
     let mut db = Database::new();
     let one = literal(&db, 1);
