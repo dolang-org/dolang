@@ -264,7 +264,9 @@ impl<'db> Solver<'db> {
             if fixed {
                 continue;
             }
-            match self.head(view.child(ty)) {
+            // A metatype member is `Type[C]`'s, as the actual's class may
+            // reach it, so several of them may cover it together
+            match self.widened_head(view.child(ty)) {
                 Ok(Head::Nominal(nominal)) if !nominal.arguments.is_empty() => {
                     match class
                         .as_ref()
@@ -277,9 +279,6 @@ impl<'db> Solver<'db> {
                     if reached > 1 {
                         return Ok(residual);
                     }
-                }
-                Ok(Head::Meta(nominal)) if !nominal.arguments.is_empty() => {
-                    return Ok(residual);
                 }
                 Ok(Head::Infer(_)) | Err(Issue::Residual(_)) => return Ok(residual),
                 Ok(_) => {}
@@ -383,6 +382,8 @@ impl<'db> Solver<'db> {
                 };
                 let (status, free, mut fork, mut outcome) = self.trial(relation, owned)?;
                 match status {
+                    // What's expected of a result alone doesn't reject
+                    Status::Contradicted if fork.expected_only(&outcome) => possible.push(index),
                     Status::Contradicted => {
                         // The trial's root is in its judgment's place, as its
                         // contradictions are explained
@@ -412,6 +413,22 @@ impl<'db> Solver<'db> {
             [] => (Verdict::Failed(none), vec![], rejections),
             _ => (Verdict::Ambiguous, possible, vec![]),
         })
+    }
+
+    /// Whether each of an outcome's contradictions derives from what's
+    /// expected of a rule's result (see [`Solver::expect`])
+    fn expected_only(&self, outcome: &Outcome) -> bool {
+        let mut leaves = outcome
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| matches!(diagnostic.issue, Issue::Contradiction(_)))
+            .filter_map(|diagnostic| diagnostic.path.last())
+            .peekable();
+        if leaves.peek().is_none() {
+            return false;
+        }
+        let expected = self.expected();
+        !expected.is_empty() && leaves.all(|leaf| expected.contains(leaf))
     }
 
     /// Whether a call's arguments may fit its callee's parameters by their
@@ -507,6 +524,8 @@ impl<'db> Solver<'db> {
         fork.roots.push(Root {
             obligation,
             provenance: Provenance::default(),
+            expectation: false,
+            seed: false,
         });
         fork.quiesce();
         if self.gas.is_exhausted() {

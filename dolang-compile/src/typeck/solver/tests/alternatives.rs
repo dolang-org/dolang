@@ -35,6 +35,39 @@ fn a_rejected_member_leaves_the_one_to_infer_through() {
 }
 
 #[test]
+fn what_is_expected_of_a_result_does_not_reject_a_member() {
+    let mut db = Database::new();
+    let a = nominal(&mut db, "A", vec![], vec![]);
+    let b = nominal(&mut db, "B", vec![], vec![]);
+    let expected = union(&db, &[b, var(&db)]);
+    db.seal();
+    let gas = Gas::default();
+    // Expected to be `B`, the variable is still the member `A` infers through,
+    // and only the expectation is contradicted
+    let mut s = Solver::new(&db, &gas);
+    let t = s.infer();
+    let e = s.environment(s.empty_environment(), vec![t]);
+    s.constrain(s.closed(a), s.view(expected, e), Provenance::default());
+    let expectation = s.expect(t, s.closed(b), Provenance::default());
+    let outcomes = s.solve();
+    assert_eq!(outcomes[expectation.0].status, Status::Contradicted);
+    let found = lower(&s, t);
+    assert_eq!(found.len(), 1);
+    assert!(s.same(found[0], s.closed(a)).unwrap());
+    // Found apart from what derives from the expectation, the variable is `A`
+    let apart = s.derived(s.obligation(expectation));
+    assert_eq!(s.reify_apart(t, &apart), Ok(a));
+    // As any other constraint, it rejects the member, and so every member
+    let mut s = Solver::new(&db, &gas);
+    let t = s.infer();
+    let e = s.environment(s.empty_environment(), vec![t]);
+    s.constrain(s.closed(a), s.view(expected, e), Provenance::default());
+    s.constrain(t, s.closed(b), Provenance::default());
+    assert_ne!(s.solve()[0].status, Status::Proven);
+    assert!(lower(&s, t).is_empty());
+}
+
+#[test]
 fn several_possible_members_are_ambiguous_and_leak_nothing() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);

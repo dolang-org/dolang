@@ -113,3 +113,35 @@ pub def unstored cls @ Type[Shape]
   #    |                                  ^^^
   let _ = maker
   nil
+
+# A `Type[Shape]` may be either subclass's metatype, so a dict keyed by them
+# doesn't refute a key it gives, whether the key is held back in the call or not
+pub class Square: Shape
+  def (init) self
+    Shape.(init) $self square
+
+let SHAPES = $
+  $Circle: circle
+  $Square: square
+
+pub def keyed shape @ Shape
+  let held @ (Str | nil) = SHAPES.get (type shape)
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let held @ (Str | nil) = SHAPES.get (type shape)
+  #    |                            ^^^^^^^^^^^^^^^^^^^^^^^
+  #    |
+  #    = note: nothing determines a type here; annotate it
+  let key = type shape
+  let passed @ (Str | nil) = SHAPES.get $key
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let passed @ (Str | nil) = SHAPES.get $key
+  #    |                              ^^^^^^^^^^^^^^^
+  #    |
+  #    = note: nothing determines a type here; annotate it
+  let _ = held
+  let _ = passed
+  nil

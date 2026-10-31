@@ -53,9 +53,9 @@ use crate::{
         },
         elab::Designated,
         solver::{
-            Call as SolverCall, CallArgument, Contradiction, Gas, InferVarId, Issue, Node,
-            ObligationId, Origin, OriginKind, Outcome, PatternShape, Provenance, Reason, Relation,
-            Residual, Site, Solver, Status, Step as Derivation, Term, Unpacked,
+            Call as SolverCall, CallArgument, ConstraintId, Contradiction, Gas, InferVarId, Issue,
+            Node, ObligationId, Origin, OriginKind, Outcome, PatternShape, Provenance, Reason,
+            Relation, Residual, Site, Solver, Status, Step as Derivation, Term, Unpacked,
         },
         r#type::{
             Argument, BoundRef, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
@@ -121,11 +121,6 @@ struct Rule<'s, 'a, 'p> {
     /// Whether it's made for a run that defaults, so each sub-rule defaults
     /// its own variables, as a rule of its own would
     defaulting: bool,
-    /// Whether its sub-rules are seeded: bounded by what's expected of them
-    /// (see [`Flow::sub_rule`])
-    seed: bool,
-    /// Whether a sub-rule was seeded
-    seeded: bool,
     /// The arguments held back that an earlier make of the run found exactly,
     /// passed closed (see [`Flow::decide`])
     exact: &'s [Found],
@@ -133,6 +128,11 @@ struct Rule<'s, 'a, 'p> {
     /// solved types below them, without a check of their own left undecided
     /// or a `do` block
     found: Vec<Found>,
+    /// For each check made in an argument held back, the bounds that argument,
+    /// and each it's held back in, takes from what it's expected to be (see
+    /// [`Flow::sub_rule`]): what derives from them is the argument's to report,
+    /// not the check's
+    isolated: FxHashMap<ObligationId, Vec<ObligationId>>,
     /// Whether a `do` block's result is left to a variable even once it's known,
     /// so that choosing a fresh dict's schema doesn't depend on it
     blind: bool,
@@ -207,10 +207,9 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
             logged: Vec::new(),
             repeated: false,
             defaulting: false,
-            seed: true,
-            seeded: false,
             exact: &[],
             found: Vec::new(),
+            isolated: FxHashMap::default(),
             blind: false,
         }
     }
@@ -490,13 +489,9 @@ struct Run<'g> {
     calls: Vec<(Term, Span, bool)>,
     logged: Vec<Pending>,
     outcomes: Vec<Outcome>,
-    /// How many of the outcomes are of the rule's own constraints, ahead of
-    /// what's expected of it and its sub-rules'
-    own: usize,
-    /// Whether what's expected of it is contradicted
-    rejected: bool,
-    /// Whether a sub-rule was seeded
-    seeded: bool,
+    /// The constraint bounding its result by what's expected of it
+    expectation: Option<ConstraintId>,
+    isolated: FxHashMap<ObligationId, Vec<ObligationId>>,
 }
 
 impl Run<'_> {
@@ -1064,14 +1059,15 @@ impl<'a> Flow<'a, '_> {
     ///
     /// Each run solves what `build` makes before releasing the arguments it
     /// holds back, each as a sub-rule (see [`Flow::release`]). A run that
-    /// defaults and is contradicted is made again with each sub-rule solved
-    /// alone, and then, if `expected` or the rule's own checks are still
-    /// contradicted, without `expected` as a bound. The last run's results are
-    /// the ones concluded, and its checks the ones diagnosed, so a value that
-    /// doesn't fit what's expected of it is reported where it's checked
-    /// against that, rather than taking it as its type. A
-    /// call held back whose result is bottom ends the path, and means the whole
-    /// isn't produced unless it's in a `for`.
+    /// isn't decided is made again defaulting, when the pass defaults or
+    /// observes; the last run's results are the ones concluded, and its checks
+    /// the ones diagnosed. `expected` bounds the first result without choosing how
+    /// it's made (see [`Solver::expect`]). What contradicts it is left to
+    /// whatever expects it, which checks the result as it's found apart from
+    /// that bound, so a value that doesn't fit what's expected of it is
+    /// reported where it's checked against that, rather than taking it as its
+    /// type. A call held back whose result is bottom ends the path, and means
+    /// the whole isn't produced unless it's in a `for`.
     fn decide<'p>(
         &mut self,
         at: At,
@@ -1084,7 +1080,7 @@ impl<'a> Flow<'a, '_> {
         // An argument held back that's found exactly is then passed as one that
         // isn't, closed, so it chooses only what that would: the rule is made
         // again with it
-        let make = |default: bool, (expect, seed): (bool, bool)| {
+        let make = |default: bool| {
             let mut exact = Vec::new();
             loop {
                 gases.push(Gas::default());
@@ -1093,20 +1089,17 @@ impl<'a> Flow<'a, '_> {
                 let mut rule = Rule {
                     defaulting: default,
                     logging: self.logging && self.observing(),
-                    seed,
                     exact: &exact,
                     ..Rule::new(&mut solver, self.db, gas)
                 };
                 let results = build(self, &mut rule);
-                let own = rule.solver.constraints();
-                let expect = expected.filter(|_| expect).map(|expected| {
+                let expectation = expected.map(|expected| {
                     let expected = rule.closed(expected);
                     let provenance = Provenance {
                         actual: None,
                         expected: Some(Origin::local(OriginKind::ExpectedResult, span)),
                     };
-                    rule.constrain(results[0], expected, provenance);
-                    own
+                    rule.solver.expect(results[0], expected, provenance)
                 });
                 if !rule.held.is_empty() {
                     rule.solver.solve();
@@ -1118,7 +1111,7 @@ impl<'a> Flow<'a, '_> {
                     calls,
                     logged,
                     found,
-                    seeded,
+                    isolated,
                     ..
                 } = rule;
                 if exact.is_empty() && !found.is_empty() {
@@ -1137,8 +1130,6 @@ impl<'a> Flow<'a, '_> {
                 } else {
                     solver.solve()
                 };
-                let rejected =
-                    expect.is_some_and(|index| outcomes[index].status == Status::Contradicted);
                 break Run {
                     solver,
                     results,
@@ -1147,30 +1138,16 @@ impl<'a> Flow<'a, '_> {
                     calls,
                     logged,
                     outcomes,
-                    own,
-                    rejected,
-                    seeded,
+                    expectation,
+                    isolated,
                 };
             }
         };
-        // A contradicted run is made again with its sub-rules unseeded, and
-        // then, if what's expected of it or its own checks are still
-        // contradicted, without what's expected of it either
-        let unseed = |run: &Run<'_>, seeds: &mut (bool, bool)| {
-            if !run.any(run.outcomes.len(), Status::Contradicted) {
-                return false;
-            }
-            match *seeds {
-                (_, true) if run.seeded => seeds.1 = false,
-                (true, _) if run.rejected || run.any(run.own, Status::Contradicted) => {
-                    *seeds = (false, false)
-                }
-                _ => return false,
-            }
-            true
-        };
-        let mut seeds = (true, true);
-        let mut run = make(false, seeds);
+        let mut run = make(false);
+        // What derives from what's expected of a contradicted run's result,
+        // whose contradictions are left to whatever expects it, and which its
+        // results are found apart from
+        let mut apart = FxHashSet::default();
         let contradicted = run.any(run.outcomes.len(), Status::Contradicted);
         // A check left unresolved may be decided by defaulting
         let unresolved = run.any(run.outcomes.len(), Status::Unresolved);
@@ -1182,15 +1159,23 @@ impl<'a> Flow<'a, '_> {
         let (mut values, decided): (Vec<TypeId>, bool) = match reified {
             Some(values) if !contradicted && !unresolved => (values, true),
             _ if self.defaulting || self.observing() => {
-                unseed(&run, &mut seeds);
-                run = make(true, seeds);
-                while unseed(&run, &mut seeds) {
-                    run = make(true, seeds);
-                }
+                run = make(true);
+                apart = match run.expectation {
+                    Some(id) if run.any(run.outcomes.len(), Status::Contradicted) => {
+                        run.solver.derived(run.solver.obligation(id))
+                    }
+                    _ => FxHashSet::default(),
+                };
                 let reified: Vec<_> = run
                     .results
                     .iter()
-                    .map(|&term| run.solver.reify(term).ok())
+                    .map(|&term| {
+                        if apart.is_empty() {
+                            run.solver.reify(term).ok()
+                        } else {
+                            run.solver.reify_apart(term, &apart).ok()
+                        }
+                    })
                     .collect();
                 // A strict unit's defaulting leaves what nothing determines
                 // unresolved. A check it leaves unresolved is recorded instead.
@@ -1239,6 +1224,7 @@ impl<'a> Flow<'a, '_> {
             calls,
             logged,
             outcomes,
+            isolated,
             ..
         } = run;
         let bottom = self.db.bottom();
@@ -1257,7 +1243,7 @@ impl<'a> Flow<'a, '_> {
             .map(|(&ty, &term)| ty == bottom && chosen(&solver, term))
             .collect();
         if self.observing() {
-            self.blame(&solver, &outcomes);
+            self.blame(&solver, &outcomes, &apart, &isolated);
             let unknown = self.db.unknown();
             let reify = |term| Some(solver.reify(term).unwrap_or(unknown));
             for pending in logged {
@@ -1279,7 +1265,17 @@ impl<'a> Flow<'a, '_> {
 
     /// Diagnose what a rule's final run contradicted of what its constraints
     /// check, and record what it couldn't decide
-    fn blame(&mut self, solver: &Solver<'_>, outcomes: &[Outcome]) {
+    fn blame(
+        &mut self,
+        solver: &Solver<'_>,
+        outcomes: &[Outcome],
+        apart: &FxHashSet<ObligationId>,
+        isolated: &FxHashMap<ObligationId, Vec<ObligationId>>,
+    ) {
+        // What a value that doesn't fit is found as leaves out what's expected
+        // of it
+        let mut found = solver.seeded();
+        found.extend(apart);
         for outcome in outcomes {
             let Some((span, kind)) = diagnosed(&outcome.provenance) else {
                 continue;
@@ -1303,12 +1299,31 @@ impl<'a> Flow<'a, '_> {
                 }
                 (_, Status::Unresolved) => self.undecided(span, super::residual(outcome)),
                 (kind, Status::Contradicted) => {
+                    // What derives from what's expected of the rule's result is
+                    // left to whatever expects it, and what derives from what's
+                    // expected of an argument held back, to the argument
+                    let seeds = isolated.get(&root(outcome)).into_iter().flatten();
+                    let mut seeded = FxHashSet::default();
+                    for &seed in seeds {
+                        seeded.extend(solver.derived(seed));
+                    }
+                    let mut causes = solver.explain(outcome).to_vec();
+                    let all = causes.len();
+                    causes.retain(|cause| {
+                        cause.path.last().is_none_or(|node| {
+                            !apart.contains(&node.obligation) && !seeded.contains(&node.obligation)
+                        })
+                    });
+                    if all > 0 && causes.is_empty() {
+                        continue;
+                    }
                     let relation = solver.relation(root(outcome));
                     // The callee, or the value that doesn't fit, as what's found
                     // of it if an argument held back in it is left unsolved
                     let checked = relation.checked();
                     let actual = solver
-                        .reify(checked)
+                        .reify_apart(checked, &found)
+                        .or_else(|_| solver.reify(checked))
                         .or_else(|_| solver.reify_found(checked))
                         .ok();
                     let problems: Vec<Problem> = match *kind {
@@ -1317,7 +1332,7 @@ impl<'a> Flow<'a, '_> {
                         OriginKind::Call { ref callee, .. } => {
                             let callee = callee.as_deref().map(str::to_owned);
                             let mut problems = Vec::new();
-                            for cause in solver.explain(outcome).iter() {
+                            for cause in causes.iter() {
                                 if let (Contradiction::NoOverload, [_]) =
                                     (cause.contradiction, &cause.path[..])
                                 {
@@ -1351,7 +1366,7 @@ impl<'a> Flow<'a, '_> {
                         }],
                         _ => {
                             let mut notes = Vec::new();
-                            for cause in solver.explain(outcome).iter() {
+                            for cause in causes.iter() {
                                 if let Some(note) = self.cause(&cause.path, 0, cause.contradiction)
                                     && !notes.contains(&note)
                                 {
@@ -2098,8 +2113,8 @@ impl<'a> Flow<'a, '_> {
     /// made in a fork of the rule's solver that the rule then takes over: its
     /// checks and `do` blocks are the rule's, and what's solved so far gives
     /// its expectation, which leaves the binders it names open (see
-    /// [`expectation`]), and in a seeded run, it's bounded by that, as a fresh
-    /// array is by the type that gives it. A template only takes the holes its expectation gives,
+    /// [`expectation`]), and it's bounded by that, as a fresh array is by the
+    /// type that gives it. A template only takes the holes its expectation gives,
     /// once that's solved.
     fn release(&self, rule: &mut Rule<'_, '_, '_>) {
         let held = std::mem::take(&mut rule.held);
@@ -2148,7 +2163,7 @@ impl<'a> Flow<'a, '_> {
     }
 
     /// Make the sub-rule of an argument held back, and have the rule take it
-    /// over. In an unseeded run, it's solved alone and passed closed.
+    /// over.
     fn sub_rule<'p>(&self, rule: &mut Rule<'_, '_, 'p>, held: Held<'p>, expected: Option<Term>) {
         let (db, gas) = (rule.db, rule.gas);
         let lengths = (rule.passed.len(), rule.pending.len());
@@ -2162,23 +2177,24 @@ impl<'a> Flow<'a, '_> {
                 logging: rule.logging,
                 logged: std::mem::take(&mut rule.logged),
                 found: std::mem::take(&mut rule.found),
+                isolated: std::mem::take(&mut rule.isolated),
                 repeated: held.repeated,
                 defaulting: rule.defaulting,
-                seed: rule.seed,
-                seeded: rule.seeded,
                 exact: rule.exact,
                 blind: rule.blind,
                 ..Rule::new(&mut fork, db, gas)
             };
             let (given, seeded) = self.held_term(&mut sub, held.prepared, expected);
             let provenance = || held.prepared.provenance();
-            if sub.seed {
-                if let Some(seeded) = seeded {
-                    sub.constrain(given, seeded, provenance());
-                }
-                sub.constrain(given, held.term, provenance());
-                sub.seeded = true;
+            let mut seeds = Vec::new();
+            if let Some(seeded) = seeded {
+                seeds.push(sub.solver.seed(given, seeded, provenance()));
             }
+            seeds.push(sub.solver.seed(given, held.term, provenance()));
+            let seeds: Vec<_> = seeds
+                .into_iter()
+                .map(|id| sub.solver.obligation(id))
+                .collect();
             sub.solver.solve();
             if !sub.held.is_empty() {
                 self.release(&mut sub);
@@ -2194,13 +2210,6 @@ impl<'a> Flow<'a, '_> {
                 }
                 let roots = outputs(&[given], &[]);
                 default_own(sub.solver, Some(&roots));
-            }
-            // Unseeded, it's solved alone, and what it's solved as is passed
-            // closed, so what the argument doesn't fit is reported only against
-            // the argument
-            if !sub.seed {
-                let given = sub.solver.reify(given).map_or(given, |ty| sub.closed(ty));
-                sub.constrain(given, held.term, provenance());
             }
             // A value that's solved, or that only solved types are below, as a
             // call's of a function that isn't generic is, is the argument
@@ -2261,17 +2270,24 @@ impl<'a> Flow<'a, '_> {
                 calls,
                 logged,
                 found,
-                seeded,
+                mut isolated,
                 ..
             } = sub;
+            // The checks made in it, as one solved alone would make them,
+            // don't take in what's expected of it
+            for check in fork.root_obligations() {
+                if !seeds.contains(&check) {
+                    isolated.entry(check).or_default().extend(&seeds);
+                }
+            }
             (
                 rule.passed,
                 rule.pending,
                 rule.calls,
                 rule.logged,
                 rule.found,
-                rule.seeded,
-            ) = (passed, pending, calls, logged, found, seeded);
+                rule.isolated,
+            ) = (passed, pending, calls, logged, found, isolated);
             fork.commit()
         };
         rule.solver.absorb(delta);

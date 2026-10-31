@@ -171,7 +171,7 @@ pub def literals ints @ Array[Int]
   let _ = funcs
   #       ^~~~~: flow [(std.Int, <std.Iter[Value], >std.Sink[Value]) -> std.Int]
   let _bad @ BaseArray[Str] = [1]
-  # error: `[std.Int]` does not fit the annotation `std.BaseArray[std.Str]`
+  # error: `[1]` does not fit the annotation `std.BaseArray[std.Str]`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _bad @ BaseArray[Str] = [1]
@@ -188,10 +188,10 @@ pub def literal_call()
   reads ["a"]
   reads []
   reads [1]
-# error: expected `std.BaseArray[std.Str | std.Sym]`, found `[std.Int]`
+# error: expected `std.BaseArray[std.Str | std.Sym]`, found `[1]`
 #   --> m.dol:LL:LL
 #    |
 # LL |   reads [1]
 #    |         ^^^
 #    |
-#    = note: `std.Int` does not fit `std.Str | std.Sym`
+#    = note: `1` does not fit `std.Str | std.Sym`
