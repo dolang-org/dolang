@@ -3123,9 +3123,12 @@ def build_provision_iso root@Path files@Dict[Str, (Path | Str)] -> Path
 def dolang_platform_key os@sys.Os arch@sys.Arch -> Str
   "$(str(arch).lower())-$(str(os).lower())"
 
-def dolang_artifact_name os@sys.Os arch@sys.Arch -> (Str | nil)
+# Release archives carry the tag without its `v`: `dolang-0.1.1-<key>.tar.gz`
+# for `v0.1.1`, `dolang-bootstrap-<key>.tar.gz` for `bootstrap`.
+def dolang_artifact_name tag@Str os@sys.Os arch@sys.Arch -> (Str | nil)
   let key = (dolang_platform_key os arch)
-  (DOLANG_PLATFORMS.contains(key) && "dolang-$key.tar.gz" || nil)
+  let version = tag.without_prefix "v"
+  (DOLANG_PLATFORMS.contains(key) && "dolang-$version-$key.tar.gz" || nil)
 
 def dolang_current_tag -> Str
   let major minor patch = shell.VERSION
@@ -3170,7 +3173,7 @@ def dolang_artifact spec@(DolangSpec | nil) os@sys.Os arch@sys.Arch -> Artifact
   let release = dolang_release $spec
   if (type release Artifact)
     return release
-  let artifact = dolang_artifact_name $os $arch
+  let artifact = dolang_artifact_name $release $os $arch
   if (artifact == nil)
     throw std.ValueError "dolang: no known release artifact for $(dolang_platform_key os arch)"
   Artifact source: (Url (dolang_release_url release artifact))
