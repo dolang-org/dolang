@@ -3,6 +3,8 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
+import { replPayload, splitArgs } from "../args";
+import { buildScriptTask } from "../runner";
 import {
     binaryFileName,
     GitHubReleaseToolDownloader,
@@ -144,6 +146,87 @@ suite("Tool Resolution", () => {
             )
         );
         assert.strictEqual(downloader.releaseAssetName(), `dolang-${key}.tar.gz`);
+    });
+});
+
+suite("Argument Splitting", () => {
+    test("whitespace separates words", () => {
+        assert.deepStrictEqual(splitArgs("  a  b\tc\n"), ["a", "b", "c"]);
+        assert.deepStrictEqual(splitArgs(""), []);
+        assert.deepStrictEqual(splitArgs("   "), []);
+    });
+
+    test("quotes group and concatenate", () => {
+        assert.deepStrictEqual(splitArgs(`'a b' "c d" e'f'"g"`), ["a b", "c d", "efg"]);
+        assert.deepStrictEqual(splitArgs(`'' ""`), ["", ""]);
+    });
+
+    test("escapes", () => {
+        assert.deepStrictEqual(splitArgs(String.raw`"a\"b" "c\\d" "e\nf"`), [`a"b`, String.raw`c\d`, String.raw`e\nf`]);
+        assert.deepStrictEqual(splitArgs(String.raw`a\ b 'c\d'`), ["a b", String.raw`c\d`]);
+    });
+
+    test("shell metacharacters are preserved verbatim", () => {
+        assert.deepStrictEqual(splitArgs("$HOME `id` ; | & > *"), ["$HOME", "`id`", ";", "|", "&", ">", "*"]);
+    });
+
+    test("unterminated quotes are errors", () => {
+        assert.throws(() => splitArgs("'abc"), /single quote/);
+        assert.throws(() => splitArgs('"abc'), /double quote/);
+    });
+});
+
+suite("REPL Payload", () => {
+    test("a single line is sent without its indentation", () => {
+        assert.strictEqual(replPayload("    echo hi  ", true), "echo hi");
+        assert.strictEqual(replPayload("\n    echo hi\n\n", false), "echo hi");
+        assert.strictEqual(replPayload("\n  \n", true), undefined);
+    });
+
+    test("several lines become one dedented bracketed paste", () => {
+        assert.strictEqual(
+            replPayload("\n  if x\r\n\n    echo a\n  else\n    echo b\n", true),
+            "\x1b[200~if x\n\n  echo a\nelse\n  echo b\x1b[201~"
+        );
+    });
+
+    test("without bracketed paste, several lines use REPL multi-line mode", () => {
+        assert.strictEqual(
+            replPayload("  if x\n\n    echo a\n", false),
+            "\rif x\r  echo a\r"
+        );
+    });
+});
+
+suite("Script Tasks", () => {
+    test("dolang runs directly with an argument vector", () => {
+        const script = path.join(os.tmpdir(), `odd "dir" $x \`y\``, "script name.dol");
+        const task = buildScriptTask({
+            dolang: "/opt/dolang/bin/dolang",
+            script,
+            args: ["a b", "$HOME", `"q"`],
+            cwd: "/work",
+            keepOpen: true
+        });
+
+        const execution = task.execution;
+        assert.ok(execution instanceof vscode.ProcessExecution);
+        assert.strictEqual(execution.process, "/opt/dolang/bin/dolang");
+        assert.deepStrictEqual(execution.args, [script, "a b", "$HOME", `"q"`]);
+        assert.strictEqual(execution.options?.cwd, "/work");
+        assert.strictEqual(task.presentationOptions.close, false);
+        assert.strictEqual(task.definition.type, "dolang");
+    });
+
+    test("keepOpen off closes the terminal", () => {
+        const task = buildScriptTask({
+            dolang: "dolang",
+            script: "/s.dol",
+            args: [],
+            cwd: "/",
+            keepOpen: false
+        });
+        assert.strictEqual(task.presentationOptions.close, true);
     });
 });
 

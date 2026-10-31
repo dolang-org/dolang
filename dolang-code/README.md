@@ -11,8 +11,9 @@ VS Code extension providing language support for the Do programming language.
     - Code completion
     - Go to definition
 - Script execution:
-    - Run Do scripts with a single click
-    - Interactive Do shell
+    - Run Do scripts with a single click, with or without arguments
+    - `dolang` tasks in `tasks.json` for saved argument sets
+    - Interactive Do shell, with Send Selection/Line to Do Shell
 
 ## Requirements
 
@@ -31,19 +32,54 @@ VS Code extension providing language support for the Do programming language.
 2. Click the play button (▶) in the editor title bar
 3. Or right-click the file and select "Run Do Script"
 
+Scripts run as VS Code tasks that start `dolang` directly, with no shell in
+between, so paths and arguments are passed through verbatim. A modified file is
+saved first. An untitled buffer is written to a temporary file in the
+extension's storage and run from the first workspace folder.
+
+### Arguments
+
+"Run Do Script with Arguments…" prompts for arguments and remembers the last
+ones for each file. Separate arguments with spaces; group them with `'…'`
+(literal) or `"…"` (where `\"` and `\\` are escapes), or escape a single
+character with `\`.
+
+To save argument sets, add `dolang` tasks to `.vscode/tasks.json`. Relative
+`script` and `cwd` paths resolve against the workspace folder, and `cwd`
+defaults to the script's directory:
+
+```json
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "dolang",
+            "label": "deploy staging",
+            "script": "scripts/deploy.dol",
+            "args": ["--env", "staging"]
+        }
+    ]
+}
+```
+
 ### Interactive Shell
 
 1. Press `Ctrl+Shift+P` and type "Open Do Interactive Shell"
 2. Opens a dedicated terminal for interactive Do sessions
 
+"Send Selection/Line to Do Shell" sends the selection, or the current line, to
+the most recently opened interactive shell, opening one if needed. A
+multi-line selection is dedented and runs as a single REPL turn. With no
+selection, the cursor moves to the next line.
+
 ## Configuration
 
 Customize execution behavior in VS Code settings:
 
-- `dolang.keepTerminalOpen` (default: true): Keep terminal open after script
-  execution
-- `dolang.autoSaveBeforeRun` (default: true): Auto-save files before running
-- `dolang.runInTerminal` (default: true): Execute scripts in integrated terminal
+- `dolang.keepTerminalOpen` (default: true): Keep the script's terminal open
+  after it exits, until a key is pressed
+- `dolang.autoSaveBeforeRun` (default: true): Save a modified script before
+  running it
 - `dolang.path`: Explicit path to `dolang`
 - `dolang.lsp.path`: Explicit path to `dolang-lsp`
 
