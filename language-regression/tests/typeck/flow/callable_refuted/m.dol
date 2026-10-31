@@ -34,7 +34,7 @@ pub def refuted plain @ Plain a @ Adder
   # LL |   map_each ["s"] $a
   #    |                   ^
   #    |
-  #    = note: `std.Int` doesn't accept `std.Str`
+  #    = note: `std.Int` doesn't accept `"s"`
   #    = note: in `{std.Int}`
   apply "s"
   # error: expected `(std.Int) -> std.Str`, found `"s"`

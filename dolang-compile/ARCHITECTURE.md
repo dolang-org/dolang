@@ -510,6 +510,11 @@ exhausting it is residual. A fork judges the alternatives of the judgments it
 creates, nested to a fixed depth beyond which they stay untried, but not those
 it was forked with, which are its parent's to judge.
 
+What a rule's result is expected to be doesn't choose how it's made: a trial
+whose every contradiction derives from an expectation root (`Solver::expect`),
+of its solver or one it's nested in, leaves its member possible. The choice is
+then contradicted by the expectation alone, which is its producer's to report.
+
 The same trials choose among alternatives on the left. A callable class's
 signatures below one function type derive the chosen one below it; none
 fitting is the caller's residual rather than a contradiction, since a subclass
@@ -733,6 +738,13 @@ call for an extra or missing argument of its arguments; and otherwise at the
 call. Flow diagnoses a rule's outcomes by what their
 actual sides are: a root whose actual side is a held argument, or that has no
 origin, checks nothing of its own, since a held argument's sub-rule checks it.
+A root that bounds what a rule's result is expected to be (`Solver::expect`)
+has no actual side either. A contradiction whose obligation derives from it,
+through any step but an assignment (`Solver::derived`), is left to whatever
+expects the result, which checks the result as `reify_apart` finds it: each
+variable as the join of the lower bounds not imposed only by what derives from
+that root, and a solved one as its solution if that root imposes none of its
+lower bounds, or only those.
 Historical cycles and obsolete residuals do not prevent a current proof. Cycles
 in current proof premises remain unresolved. Reports distinguish proven,
 contradicted, and unresolved roots; quiescence alone is not proof.
@@ -1044,21 +1056,24 @@ The rules are:
   expectation only once the call is solved, so a collection literal, call or
   template passed to it is held back: it's evaluated as far as it can be
   without its expectation (`Prepared`), and the call's rule stands a fresh
-  variable for it. Once what the rule makes is solved, each held argument is
-  a sub-rule in a fork of the rule's solver, which the rule then takes over
+  variable for it. Once what the rule makes is solved, each held argument is a
+  sub-rule in a fork of the rule's solver, which the rule then takes over
   (`Flow::release`). Its expectation is what's solved so far expects of its
   variable, open in the binders not yet solved, so what it holds, such as a
   nested handler, raises them with the other arguments; where a variable the
   held arguments can't raise (`Solver::raised`) would solve it once given its
   least solution, it takes that solved expectation. A dict chooses among an
   open union's alternatives by probing them in discarded forks. A sub-rule is
-  first made seeded with its expectation; if that contradicts it or the rule,
-  it's made again solved alone, defaulting its own variables, and its value is
-  passed closed. Only the rule defaults, but in a run that defaults, each
-  sub-rule first defaults its own variables, as a rule of its own would. A
-  held template supplies a cached preliminary type with its interpolated
-  values and distinct hole names, and its hole types take its expectation once
-  that's solved.
+  made once, bounded by its expectation through seed roots (`Solver::seed`).
+  The checks it makes don't report what derives from its seeds, which the
+  argument reports itself, and a diagnostic shows a value apart from the
+  bounds its seeds impose (`Solver::seeded`). What the call is expected to
+  give bounds its result as an expectation root, made once, whose
+  contradictions are left to whatever expects it. Only the rule defaults, but
+  in a run that defaults, each sub-rule first defaults its own variables, as a
+  rule of its own would. A held template supplies a cached preliminary type
+  with its interpolated values and distinct hole names, and its hole types
+  take its expectation once that's solved.
 - A call through an overloaded function, a def, a method, `(init)` or a
   class-level `(call)`, calls its overloads as a whole (`Type::Overloaded`),
   which the solver chooses among (see "Alternatives and trials"). Every

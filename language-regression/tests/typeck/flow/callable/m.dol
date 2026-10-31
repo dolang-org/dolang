@@ -214,13 +214,13 @@ do
   let _ = callback
   #   ^: flow std.Str
   f [:c:]
-# error: expected `[:a: | :b:]`, found `[std.Sym]`
+# error: expected `[:a: | :b:]`, found `[:c:]`
 #   --> m.dol:LL:LL
 #    |
 # LL |   f [:c:]
 #    |     ^^^^^
 #    |
-#    = note: `std.Sym` does not fit `:a: | :b:`
+#    = note: `:c:` does not fit `:a: | :b:`
 
 pub def dynamic x e @ Empty
   let _ = x 1

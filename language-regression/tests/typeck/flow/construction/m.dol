@@ -52,7 +52,7 @@ pub def misfits()
   # LL |   let _p @ Str = Pack()
   #    |                  ^^^^^^
   let _m @ Many[Int, Int] = Many [1, 2]
-# error: `m.Many[...std.Int]` does not fit the annotation `m.Many[std.Int, std.Int]`
+# error: `m.Many[...1 | 2]` does not fit the annotation `m.Many[std.Int, std.Int]`
 #   --> m.dol:LL:LL
 #    |
 # LL |   let _m @ Many[Int, Int] = Many [1, 2]

@@ -591,14 +591,13 @@ do
   r[:a:] = [1]
   r.insert :a: [1]
   d["k"] = [nil]
-# error: expected `[std.Int | std.Str]`, found `[std.Nil]`
+# error: expected `[std.Int | std.Str]`, found `[nil]`
 #   --> m.dol:LL:LL
 #    |
 # LL |   d["k"] = [nil]
 #    |            ^^^^^
 #    |
-#    = note: `std.Nil` doesn't accept `std.Int | std.Str`
-#    = note: `std.Nil` does not fit `std.Int | std.Str`
+#    = note: `nil` does not fit `std.Int | std.Str`
 
 pub class Shadow: Func
   pub def tag self -> Int

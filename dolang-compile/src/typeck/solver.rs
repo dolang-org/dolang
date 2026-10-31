@@ -499,6 +499,7 @@ pub(crate) struct Contradicted {
 /// An obligation on a contradiction's path, as diagnostics read it
 #[derive(Clone, Debug)]
 pub(crate) struct Node {
+    pub(crate) obligation: ObligationId,
     /// How this node derives from the previous one: `None` at the root, or where
     /// no dependency edge was recorded
     pub(crate) step: Option<Step>,
@@ -532,6 +533,12 @@ pub(crate) struct Outcome {
 struct Root {
     obligation: ObligationId,
     provenance: Provenance,
+    /// Whether it bounds what a rule's result is expected to be (see
+    /// [`Solver::expect`])
+    expectation: bool,
+    /// Whether it bounds an argument held back by what it's expected to be
+    /// (see [`Solver::seed`])
+    seed: bool,
 }
 
 /// Maps each distinct bound term to the obligations that introduced it. Several
@@ -1406,13 +1413,40 @@ impl<'db> Solver<'db> {
 
     /// Rebuild a closed canonical type, retaining references owned by local binders.
     pub(crate) fn reify(&self, term: Term) -> Result<TypeId, Residual> {
-        self.reify_scoped(term, 0, 0, false)
+        self.reify_scoped(term, 0, 0, None)
     }
 
     /// [`Self::reify`], taking each unsolved variable as the join of its lower
     /// bounds: what's found of it so far, as a diagnostic shows it
     pub(crate) fn reify_found(&self, term: Term) -> Result<TypeId, Residual> {
-        self.reify_scoped(term, 0, 0, true)
+        self.reify_scoped(term, 0, 0, Some(&FxHashSet::default()))
+    }
+
+    /// [`Self::reify_found`], leaving out each lower bound that only the
+    /// obligations in `apart` imposed
+    pub(crate) fn reify_apart(
+        &self,
+        term: Term,
+        apart: &FxHashSet<ObligationId>,
+    ) -> Result<TypeId, Residual> {
+        self.reify_scoped(term, 0, 0, Some(apart))
+    }
+
+    /// The obligations that derive from `root`, itself among them, apart from
+    /// assignments it makes
+    pub(crate) fn derived(&self, root: ObligationId) -> FxHashSet<ObligationId> {
+        let mut derived = FxHashSet::default();
+        let mut queue = vec![root];
+        while let Some(obligation) = queue.pop() {
+            if derived.insert(obligation) {
+                // A variable's assignment is judged again by what it reaches,
+                // which doesn't derive from what assigned it
+                let children = self.dependencies(obligation).into_iter();
+                let children = children.filter(|dependency| dependency.step != Step::Assignment);
+                queue.extend(children.map(|dependency| dependency.obligation));
+            }
+        }
+        derived
     }
 
     fn reify_scoped(
@@ -1420,24 +1454,39 @@ impl<'db> Solver<'db> {
         term: Term,
         local: u32,
         depth: usize,
-        found: bool,
+        // Whether an unsolved variable is the join of its lower bounds, leaving
+        // out those that only these obligations imposed. A solved variable that
+        // one of them bounds from below is found the same way: what it's
+        // solved as took that bound in.
+        found: Option<&FxHashSet<ObligationId>>,
     ) -> Result<TypeId, Residual> {
         self.depth(depth)?;
         self.spend()?;
         match term {
-            Term::Infer(id) => match self.assignment(id) {
-                Some(term) => self.reify_scoped(term, 0, depth + 1, found),
-                None if found => {
-                    let lower = self
-                        .bounds(id)
-                        .lower()
-                        .map(|term| self.reify_scoped(term, 0, depth + 1, found))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    self.join(self.variable(id).kind, &lower)
-                        .ok_or(Residual::Inference)
+            Term::Infer(id) => {
+                let assignment = self.assignment(id);
+                let Some(apart) = found else {
+                    let term = assignment.ok_or(Residual::Inference)?;
+                    return self.reify_scoped(term, 0, depth + 1, found);
+                };
+                let sources = self.bound_sources(id, true);
+                let (lower, imposed): (Vec<_>, Vec<_>) = sources
+                    .into_iter()
+                    .partition(|(_, sources)| sources.iter().any(|source| !apart.contains(source)));
+                match assignment {
+                    Some(term) if imposed.is_empty() || lower.is_empty() => {
+                        self.reify_scoped(term, 0, depth + 1, found)
+                    }
+                    _ => {
+                        let lower = lower
+                            .into_iter()
+                            .map(|(term, _)| self.reify_scoped(term, 0, depth + 1, found))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        self.join(self.variable(id).kind, &lower)
+                            .ok_or(Residual::Inference)
+                    }
                 }
-                None => Err(Residual::Inference),
-            },
+            }
             // A skolem has no canonical form; nothing leaves its judgment with one
             Term::Skolem(_) => Err(Residual::Escape),
             Term::View(view) => {
@@ -2585,6 +2634,13 @@ impl<'db> Solver<'db> {
         }
         let provenance = &outcome.provenance;
         let mut found = FxHashMap::default();
+        // A value is shown apart from the bounds an argument held back takes
+        // from what's expected of it
+        let seeded = self.seeded();
+        let actual = |term| {
+            let solved = self.reify(term).ok()?;
+            Some(self.reify_apart(term, &seeded).unwrap_or(solved))
+        };
         causes
             .into_iter()
             .map(|(path, contradiction)| Contradicted {
@@ -2594,17 +2650,23 @@ impl<'db> Solver<'db> {
                     .zip(self.carry(provenance.clone(), &path, &mut found))
                     .enumerate()
                     .map(|(index, (&obligation, origins))| Node {
+                        obligation,
                         step: index
                             .checked_sub(1)
                             .and_then(|parent| step(path[parent], obligation)),
-                        sides: self.relation(obligation).sides().map(|(actual, expected)| {
-                            (self.reify(actual).ok(), self.reify(expected).ok())
-                        }),
+                        sides: self
+                            .relation(obligation)
+                            .sides()
+                            .map(|(term, expected)| (actual(term), self.reify(expected).ok())),
                         found: self
                             .relation(obligation)
                             .sides()
                             .filter(|&(actual, _)| self.reify(actual).is_err())
-                            .and_then(|(actual, _)| self.reify_found(actual).ok()),
+                            .and_then(|(actual, _)| {
+                                self.reify_apart(actual, &seeded)
+                                    .or_else(|_| self.reify_found(actual))
+                                    .ok()
+                            }),
                         origins,
                     })
                     .collect(),
@@ -2616,11 +2678,6 @@ impl<'db> Solver<'db> {
     /// keeps its ID when a fork is absorbed.
     pub(crate) fn obligation(&self, id: ConstraintId) -> ObligationId {
         self.roots[id.0].obligation
-    }
-
-    /// How many constraints it's been given, which is the next one's ID
-    pub(crate) fn constraints(&self) -> usize {
-        self.roots.len()
     }
 
     /// Check the term IDs and return their kind
@@ -2661,6 +2718,66 @@ impl<'db> Solver<'db> {
         };
         let obligation = self.enqueue(relation, false);
         self.root(obligation, provenance)
+    }
+
+    /// Register a diagnostic root bounding what a rule's result is expected to
+    /// be, as [`Self::constrain`] does. What derives from it alone doesn't
+    /// reject an alternative, so what's expected of a result doesn't choose
+    /// how it's made (see [`Self::expected`]).
+    pub(crate) fn expect(
+        &mut self,
+        actual: Term,
+        expected: Term,
+        provenance: Provenance,
+    ) -> ConstraintId {
+        let id = self.constrain(actual, expected, provenance);
+        self.roots[id.0].expectation = true;
+        id
+    }
+
+    /// [`Self::constrain`], as the bound an argument held back takes from
+    /// what's expected of it, as a fresh array does from the type that gives
+    /// it. What the argument is found as leaves that out (see
+    /// [`Self::seeded`]).
+    pub(crate) fn seed(
+        &mut self,
+        actual: Term,
+        expected: Term,
+        provenance: Provenance,
+    ) -> ConstraintId {
+        let id = self.constrain(actual, expected, provenance);
+        self.roots[id.0].seed = true;
+        id
+    }
+
+    /// The obligations its own constraints judge, apart from those of the
+    /// solvers it's nested in
+    pub(crate) fn root_obligations(&self) -> impl Iterator<Item = ObligationId> {
+        self.roots.iter().map(|root| root.obligation)
+    }
+
+    /// The obligations that derive from the bounds arguments held back take
+    /// from what's expected of them (see [`Self::seed`])
+    pub(crate) fn seeded(&self) -> FxHashSet<ObligationId> {
+        let mut derived = FxHashSet::default();
+        for root in self.every_root() {
+            if root.seed {
+                derived.extend(self.derived(root.obligation));
+            }
+        }
+        derived
+    }
+
+    /// The obligations that derive from what's expected of a rule's result, of
+    /// this solver or one it's nested in (see [`Self::expect`])
+    pub(super) fn expected(&self) -> FxHashSet<ObligationId> {
+        let mut derived = FxHashSet::default();
+        for root in self.every_root() {
+            if root.expectation {
+                derived.extend(self.derived(root.obligation));
+            }
+        }
+        derived
     }
 
     /// Register as a diagnostic root that `schema` admits no items, as an empty
@@ -2707,6 +2824,8 @@ impl<'db> Solver<'db> {
         self.roots.push(Root {
             obligation,
             provenance,
+            expectation: false,
+            seed: false,
         });
         id
     }
