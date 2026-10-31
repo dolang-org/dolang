@@ -5,6 +5,7 @@ VS Code extension providing language support for the Do programming language.
 ## Features
 
 - Syntax highlighting for `.dol` files
+- Indentation-aware editing, offside folding and bracket matching
 - Language server integration for:
     - Diagnostics
     - Code completion
