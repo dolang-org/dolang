@@ -25,7 +25,7 @@ use dolang_util::{
 };
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 
-use crate::typeck::r#type::UnitSpan;
+use crate::{diag, typeck::r#type::UnitSpan};
 
 use super::r#type::{
     Argument, Binder, Binding, BoundRef, Database, DeclId, DeclKind, Element, FieldAccess,
@@ -152,12 +152,58 @@ pub(crate) enum CallArgument {
     Spread(Term),
 }
 
+/// Where a constraint's actual and expected sides come from in source, each
+/// `None` where nothing a reader wrote is to blame for it
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Provenance {
     #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
-    pub(crate) actual: Option<UnitSpan>,
-    #[expect(dead_code, reason = "diagnostics don't cite provenance yet")]
-    pub(crate) expected: Option<UnitSpan>,
+    pub(crate) actual: Option<Origin>,
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
+    pub(crate) expected: Option<Origin>,
+}
+
+/// A side of a constraint as source gives it: what it is, and where
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Origin {
+    pub(crate) kind: OriginKind,
+    pub(crate) site: Site,
+}
+
+impl Origin {
+    /// An origin at a site of the unit being checked
+    pub(crate) fn local(kind: OriginKind, span: diag::Span) -> Self {
+        Origin {
+            kind,
+            site: Site::Local(span),
+        }
+    }
+}
+
+/// What a constraint's side is in source
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum OriginKind {
+    /// A value an expression gives
+    Expression,
+    /// An argument held back, solved in a sub-rule of its own
+    Held,
+    /// A call, with each argument's span by its index among the arguments, and
+    /// the callee's name, if it has one
+    Call {
+        arguments: alias::Box<[diag::Span]>,
+        callee: Option<alias::Box<str>>,
+    },
+    /// What a rule's context expects of its result
+    ExpectedResult,
+}
+
+/// Where an origin is
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Site {
+    /// A site in the unit being checked
+    Local(diag::Span),
+    /// A declaration, possibly in another unit
+    #[cfg_attr(not(test), expect(dead_code, reason = "made by tests"))]
+    Declared(UnitSpan),
 }
 
 /// A reason a judgment remains unresolved, rather than proven or refuted.

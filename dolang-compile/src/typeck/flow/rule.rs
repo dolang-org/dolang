@@ -34,7 +34,7 @@
 
 use std::{collections::VecDeque, ops::ControlFlow};
 
-use dolang_util::mono::MonoVec;
+use dolang_util::{alias, mono::MonoVec};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
@@ -54,8 +54,8 @@ use crate::{
         elab::Designated,
         solver::{
             Call as SolverCall, CallArgument, Contradiction, Gas, InferVarId, Issue, Node,
-            ObligationId, Outcome, PatternShape, Provenance, Reason, Relation, Residual, Solver,
-            Status, Step as Derivation, Term, Unpacked,
+            ObligationId, Origin, OriginKind, Outcome, PatternShape, Provenance, Reason, Relation,
+            Residual, Solver, Status, Step as Derivation, Term, Unpacked,
         },
         r#type::{
             Argument, BoundRef, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
@@ -83,6 +83,29 @@ enum Check {
     Empty(Span),
     /// Nothing that can fail
     Quiet,
+}
+
+impl Check {
+    /// The origin of the actual side of the constraint it checks
+    fn provenance(&self) -> Provenance {
+        let actual = match self {
+            Check::Call { span, args, callee } => Some(Origin::local(
+                OriginKind::Call {
+                    arguments: args.iter().copied().collect(),
+                    callee: callee.as_deref().map(alias::Box::new_str),
+                },
+                *span,
+            )),
+            &Check::Fits(span, _) | &Check::Expected(span) | &Check::Empty(span) => {
+                Some(Origin::local(OriginKind::Expression, span))
+            }
+            Check::Quiet => None,
+        };
+        Provenance {
+            actual,
+            expected: None,
+        }
+    }
 }
 
 /// A rule's constraints, as they are made
@@ -213,14 +236,25 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
     }
 
     fn constrain(&mut self, actual: Term, expected: Term, check: Check) {
-        self.solver
-            .constrain(actual, expected, Provenance::default());
+        let provenance = check.provenance();
+        self.constrain_from(actual, expected, check, provenance);
+    }
+
+    /// Constrain as [`Rule::constrain`] does, with sides from `provenance`
+    fn constrain_from(
+        &mut self,
+        actual: Term,
+        expected: Term,
+        check: Check,
+        provenance: Provenance,
+    ) {
+        self.solver.constrain(actual, expected, provenance);
         self.checks.push(check);
     }
 
     /// Constrain `schema` to admit the empty schema, once it's solved
     fn constrain_empty(&mut self, schema: Term, check: Check) {
-        self.solver.constrain_empty(schema, Provenance::default());
+        self.solver.constrain_empty(schema, check.provenance());
         self.checks.push(check);
     }
 
@@ -1087,7 +1121,11 @@ impl<'a> Flow<'a, '_> {
                 let own = rule.checks.len();
                 let expect = expected.filter(|_| expect).map(|expected| {
                     let expected = rule.closed(expected);
-                    rule.constrain(results[0], expected, Check::Quiet);
+                    let provenance = Provenance {
+                        actual: None,
+                        expected: Some(Origin::local(OriginKind::ExpectedResult, span)),
+                    };
+                    rule.constrain_from(results[0], expected, Check::Quiet, provenance);
                     own
                 });
                 if !rule.held.is_empty() {
@@ -2153,11 +2191,19 @@ impl<'a> Flow<'a, '_> {
                 ..Rule::new(&mut fork, db, gas)
             };
             let (given, seeded) = self.held_term(&mut sub, held.prepared, expected);
+            // What the argument is solved as stands for the argument
+            let provenance = || Provenance {
+                actual: held
+                    .prepared
+                    .span()
+                    .map(|span| Origin::local(OriginKind::Held, span)),
+                expected: None,
+            };
             if sub.seed {
                 if let Some(seeded) = seeded {
-                    sub.constrain(given, seeded, Check::Quiet);
+                    sub.constrain_from(given, seeded, Check::Quiet, provenance());
                 }
-                sub.constrain(given, held.term, Check::Quiet);
+                sub.constrain_from(given, held.term, Check::Quiet, provenance());
                 sub.seeded = true;
             }
             sub.solver.solve();
@@ -2181,7 +2227,7 @@ impl<'a> Flow<'a, '_> {
             // the argument
             if !sub.seed {
                 let given = sub.solver.reify(given).map_or(given, |ty| sub.closed(ty));
-                sub.constrain(given, held.term, Check::Quiet);
+                sub.constrain_from(given, held.term, Check::Quiet, provenance());
             }
             // A value that's solved, or that only solved types are below, as a
             // call's of a function that isn't generic is, is the argument
@@ -2205,7 +2251,7 @@ impl<'a> Flow<'a, '_> {
                 })
                 .flatten();
             if let Some(exact) = exact {
-                sub.constrain(held.term, sub.closed(exact), Check::Quiet);
+                sub.constrain_from(held.term, sub.closed(exact), Check::Quiet, provenance());
                 // Found exactly unless what it checks of its own is left
                 // undecided, or it passes a `do` block values
                 let outcomes = sub.solver.solve();
@@ -4042,7 +4088,7 @@ fn call_constraint<'p>(
         args: spans,
         callee: name,
     };
-    let constraint = rule.solver.constrain_call(call, Provenance::default());
+    let constraint = rule.solver.constrain_call(call, check.provenance());
     rule.checks.push(check);
     if rule.logging && logs {
         let obligation = rule.solver.obligation(constraint);
@@ -4123,7 +4169,12 @@ fn collection_constraint<'p>(
         Shape::Chosen(ty, schema) => {
             let (arguments, _) = rule.arguments(values, spread, span);
             let exact = rule.solver.arguments_schema(&arguments);
-            rule.constrain(exact, schema, Check::Expected(span));
+            let check = Check::Expected(span);
+            let provenance = Provenance {
+                expected: Some(Origin::local(OriginKind::ExpectedResult, span)),
+                ..check.provenance()
+            };
+            rule.constrain_from(exact, schema, check, provenance);
             ty
         }
         Shape::Empty => {

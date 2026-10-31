@@ -220,7 +220,21 @@ fn a_committed_fork_is_absorbed() {
         let fresh = child.infer();
         let environment = child.environment(child.empty_environment(), vec![fresh]);
         child.constrain(child.closed(two), Term::Infer(b), Provenance::default());
-        child.constrain(Term::Infer(b), fresh, Provenance::default());
+        let call = Origin::local(
+            OriginKind::Call {
+                arguments: vec![diag::Span::new(1, 2, 3)].into(),
+                callee: Some("f".into()),
+            },
+            diag::Span::new(1, 0, 6),
+        );
+        child.constrain(
+            Term::Infer(b),
+            fresh,
+            Provenance {
+                actual: Some(call),
+                expected: None,
+            },
+        );
         child.solve();
         ((variable_id(fresh), environment), true)
     });
@@ -240,6 +254,16 @@ fn a_committed_fork_is_absorbed() {
     // Its constraints follow the parent's
     let outcomes = s.solve();
     assert_eq!(outcomes.len(), roots + 2);
+    // And keep their provenance
+    let last = s.provenance(outcomes[roots + 1].constraint);
+    assert!(matches!(
+        last.actual,
+        Some(Origin {
+            kind: OriginKind::Call { ref arguments, ref callee },
+            site: Site::Local(_),
+        }) if arguments.len() == 1 && callee.as_deref() == Some("f")
+    ));
+    assert!(last.expected.is_none());
     assert!(
         outcomes
             .iter()
