@@ -13,16 +13,38 @@ export interface ResolvedTool {
     readonly source: ToolSource;
 }
 
+/** The parts of the extension context that tool resolution needs. */
+export interface ToolContext {
+    readonly globalStorageUri: vscode.Uri;
+    readonly extension: { readonly packageJSON: { readonly version?: unknown } };
+}
+
+/** Where tool resolution reports what it found and what it downloaded. */
+export type ToolLog = Pick<vscode.LogOutputChannel, "info" | "warn" | "error">;
+
 export interface ToolResolverOptions {
-    readonly context: Pick<vscode.ExtensionContext, "globalStorageUri">;
+    readonly context: ToolContext;
     readonly configuration?: vscode.WorkspaceConfiguration;
     readonly pathEnv?: string | undefined;
+    readonly log?: ToolLog;
 }
 
 const DOWNLOADS_ENABLED = true;
 const REPOSITORY_OWNER = "dolang-org";
 const REPOSITORY_NAME = "dolang";
 const BUNDLE_DIRECTORY = "bundle";
+
+/** Downloads in progress, keyed by install directory, shared by concurrent resolves. */
+const downloads = new Map<string, Promise<void>>();
+
+/** The extension's version, which names the tool release it downloads. */
+export function extensionVersion(context: ToolContext): string {
+    const version = context.extension.packageJSON.version;
+    if (typeof version !== "string" || version === "") {
+        throw new Error("The extension's package.json has no version");
+    }
+    return version;
+}
 
 const TOOL_METADATA: Record<
     ToolName,
@@ -59,6 +81,8 @@ export async function resolveTool(
     }
 
     const configuration = options.configuration ?? vscode.workspace.getConfiguration("dolang");
+    const displayName = TOOL_METADATA[tool].displayName;
+    const log = options.log;
     const attempts: string[] = [];
 
     const settingKey = TOOL_METADATA[tool].settingKey;
@@ -66,34 +90,41 @@ export async function resolveTool(
     if (configured) {
         attempts.push(`configured path (${configured})`);
         if (await isExecutableFile(configured)) {
+            log?.info(`Resolved ${displayName} from dolang.${settingKey}: ${configured}`);
             return { tool, path: configured, source: "configured" };
         }
-        throw new Error(
-            `Configured path for ${TOOL_METADATA[tool].displayName} does not exist or is not executable: ${configured}`
-        );
+        const message = `Configured path for ${displayName} does not exist or is not executable: ${configured}`;
+        log?.error(message);
+        throw new Error(message);
     }
 
     const pathMatch = await findOnPath(tool, options.pathEnv);
     attempts.push("PATH");
     if (pathMatch) {
+        log?.info(`Resolved ${displayName} from PATH: ${pathMatch}`);
         return { tool, path: pathMatch, source: "path" };
     }
 
-    const downloader = new GitHubReleaseToolDownloader(options.context);
+    const downloader = new GitHubReleaseToolDownloader(
+        options.context,
+        extensionVersion(options.context),
+        log
+    );
     attempts.push("downloaded release");
     const downloaded = await downloader.resolve(tool);
     if (downloaded) {
+        log?.info(
+            `Resolved ${displayName} from release v${downloader.version}: ${downloaded.path}`
+        );
         return downloaded;
     }
 
-    throw new Error(
-        `Unable to find ${TOOL_METADATA[tool].displayName}. Tried ${attempts.join(", ")}.`
-    );
+    const message = `Unable to find ${displayName}. Tried ${attempts.join(", ")}.`;
+    log?.error(message);
+    throw new Error(message);
 }
 
-export async function resolveExecutionTools(
-    options: ToolResolverOptions
-): Promise<{
+export async function resolveExecutionTools(options: ToolResolverOptions): Promise<{
     readonly shell: ResolvedTool;
 }> {
     const shell = await resolveTool("shell", options);
@@ -144,11 +175,19 @@ async function fileExists(filePath: string): Promise<boolean> {
     }
 }
 
+/**
+ * Downloads the release bundle whose tag matches the extension version, so the
+ * tools always pair with the extension that fetched them.
+ */
 export class GitHubReleaseToolDownloader {
     readonly cacheRoot: string;
+    readonly version: string;
+    private readonly log: ToolLog | undefined;
 
-    constructor(private readonly context: Pick<vscode.ExtensionContext, "globalStorageUri">) {
+    constructor(context: Pick<ToolContext, "globalStorageUri">, version: string, log?: ToolLog) {
         this.cacheRoot = path.join(context.globalStorageUri.fsPath, "tools", "releases");
+        this.version = version;
+        this.log = log;
     }
 
     public isEnabled(): boolean {
@@ -165,9 +204,23 @@ export class GitHubReleaseToolDownloader {
             return undefined;
         }
 
-        await fs.mkdir(this.platformCacheDir(), { recursive: true });
-        await this.downloadAndExtractLatestReleaseBundle();
+        const key = this.bundleInstallDir();
+        let download = downloads.get(key);
+        if (!download) {
+            download = this.download().finally(() => downloads.delete(key));
+            downloads.set(key, download);
+        }
+        await download;
         return { tool, path: targetPath, source: "downloaded" };
+    }
+
+    /** Deletes this version's cached bundle, so the next resolve downloads it again. */
+    public async clear(): Promise<void> {
+        await fs.rm(this.versionDir(), { recursive: true, force: true });
+    }
+
+    public releaseUrl(): string {
+        return `https://api.github.com/repos/${REPOSITORY_OWNER}/${REPOSITORY_NAME}/releases/tags/v${this.version}`;
     }
 
     public downloadedBinaryPath(tool: ToolName): string {
@@ -182,27 +235,73 @@ export class GitHubReleaseToolDownloader {
         return path.join(this.platformCacheDir(), this.releaseAssetName());
     }
 
+    private versionDir(): string {
+        return path.join(this.cacheRoot, this.version);
+    }
+
     private platformCacheDir(): string {
-        return path.join(this.cacheRoot, platformKeyFor(process.platform, process.arch));
+        return path.join(this.versionDir(), platformKeyFor(process.platform, process.arch));
     }
 
     private bundleInstallDir(): string {
         return path.join(this.platformCacheDir(), BUNDLE_DIRECTORY);
     }
 
-    private async downloadAndExtractLatestReleaseBundle(): Promise<void> {
-        const response = await fetch(
-            `https://api.github.com/repos/${REPOSITORY_OWNER}/${REPOSITORY_NAME}/releases/latest`,
-            {
-                headers: {
-                    Accept: "application/vnd.github+json"
-                }
-            }
-        );
+    private async download(): Promise<void> {
+        this.log?.info(`Downloading Do tools v${this.version} (${this.releaseAssetName()})`);
+        try {
+            await vscode.window.withProgress(
+                {
+                    location: vscode.ProgressLocation.Notification,
+                    title: `Downloading Do tools v${this.version}`
+                },
+                () => this.downloadAndExtract()
+            );
+        } catch (error) {
+            this.log?.error(
+                `Download failed: ${error instanceof Error ? error.message : String(error)}`
+            );
+            throw error;
+        }
+        this.log?.info(`Installed Do tools v${this.version} in ${this.bundleInstallDir()}`);
+        await this.prune();
+    }
 
+    /** Removes every cached bundle other than this version's. */
+    private async prune(): Promise<void> {
+        let entries: string[];
+        try {
+            entries = await fs.readdir(this.cacheRoot);
+        } catch {
+            return;
+        }
+        await Promise.all(
+            entries
+                .filter(entry => entry !== this.version)
+                .map(async entry => {
+                    const stale = path.join(this.cacheRoot, entry);
+                    this.log?.info(`Removing cached tools ${stale}`);
+                    await fs.rm(stale, { recursive: true, force: true });
+                })
+        );
+    }
+
+    private async downloadAndExtract(): Promise<void> {
+        const response = await fetch(this.releaseUrl(), {
+            headers: {
+                Accept: "application/vnd.github+json"
+            }
+        });
+
+        if (response.status === 404) {
+            throw new Error(
+                `No Do release v${this.version} exists to download tools from; ` +
+                    "install dolang and dolang-lsp on PATH or set dolang.path and dolang.lsp.path"
+            );
+        }
         if (!response.ok) {
             throw new Error(
-                `Failed to query GitHub releases: ${response.status} ${response.statusText}`
+                `Failed to query GitHub release v${this.version}: ${response.status} ${response.statusText}`
             );
         }
 
@@ -211,9 +310,7 @@ export class GitHubReleaseToolDownloader {
         const asset = release.assets.find(candidate => candidate.name === assetName);
 
         if (!asset) {
-            throw new Error(
-                `Release ${release.tag_name} does not contain asset ${assetName}`
-            );
+            throw new Error(`Release ${release.tag_name} does not contain asset ${assetName}`);
         }
 
         const download = await fetch(asset.browser_download_url);
@@ -225,7 +322,10 @@ export class GitHubReleaseToolDownloader {
 
         const bytes = Buffer.from(await download.arrayBuffer());
         const archivePath = this.downloadedArchivePath();
-        const extractDir = this.bundleInstallDir();
+        const installDir = this.bundleInstallDir();
+        // Extract beside the install directory and rename it into place, so an
+        // interrupted download never leaves a partial bundle that looks usable
+        const extractDir = `${installDir}.partial`;
 
         await fs.rm(extractDir, { recursive: true, force: true });
         await fs.mkdir(extractDir, { recursive: true });
@@ -235,17 +335,20 @@ export class GitHubReleaseToolDownloader {
             file: archivePath,
             strict: true
         });
-        await this.ensureBundleExecutables();
+        await this.ensureBundleExecutables(extractDir);
+        await fs.rm(installDir, { recursive: true, force: true });
+        await fs.rename(extractDir, installDir);
+        await fs.rm(archivePath, { force: true });
     }
 
-    private async ensureBundleExecutables(): Promise<void> {
+    private async ensureBundleExecutables(dir: string): Promise<void> {
         const toolNames: ToolName[] = ["shell", "vfs", "lsp"];
         const supportedToolNames = toolNames.filter(tool =>
             isToolSupportedOnPlatform(tool, process.platform)
         );
         await Promise.all(
             supportedToolNames.map(async tool => {
-                const executable = this.downloadedBinaryPath(tool);
+                const executable = path.join(dir, binaryFileName(tool));
                 if (!(await fileExists(executable))) {
                     throw new Error(
                         `Downloaded tool bundle is missing ${TOOL_METADATA[tool].displayName}`
@@ -260,10 +363,7 @@ export class GitHubReleaseToolDownloader {
     }
 }
 
-export function platformKeyFor(
-    platformName: NodeJS.Platform,
-    arch: NodeJS.Architecture
-): string {
+export function platformKeyFor(platformName: NodeJS.Platform, arch: NodeJS.Architecture): string {
     return `${dolangArch(arch)}-${dolangOs(platformName)}`;
 }
 

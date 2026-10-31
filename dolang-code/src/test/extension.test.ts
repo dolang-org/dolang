@@ -2,6 +2,7 @@ import * as assert from "assert";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
+import * as tar from "tar";
 import * as vscode from "vscode";
 import { replPayload, splitArgs } from "../args";
 import { buildScriptTask } from "../runner";
@@ -11,8 +12,12 @@ import {
     platformKeyFor,
     resolveExecutionTools,
     resolveTool,
+    type ToolContext,
+    type ToolLog,
     type ToolName
 } from "../tools";
+
+const VERSION = "9.8.7";
 
 suite("Tool Resolution", () => {
     test("configured path wins over PATH and release download", async () => {
@@ -23,7 +28,7 @@ suite("Tool Resolution", () => {
         const resolved = await resolveTool("shell", {
             context: createContext(root),
             configuration: createConfiguration({
-                "path": configured
+                path: configured
             }),
             pathEnv: path.dirname(onPath)
         });
@@ -58,6 +63,7 @@ suite("Tool Resolution", () => {
                 "global-storage",
                 "tools",
                 "releases",
+                VERSION,
                 platformKeyFor(process.platform, process.arch),
                 "bundle"
             ),
@@ -118,7 +124,7 @@ suite("Tool Resolution", () => {
 
     test("downloader computes stable bundle cache paths", () => {
         const root = path.join(os.tmpdir(), "dolang-code-test-static");
-        const downloader = new GitHubReleaseToolDownloader(createContext(root));
+        const downloader = new GitHubReleaseToolDownloader(createContext(root), VERSION);
         const key = platformKeyFor(process.platform, process.arch);
 
         assert.strictEqual(downloader.isEnabled(), true);
@@ -129,6 +135,7 @@ suite("Tool Resolution", () => {
                 "global-storage",
                 "tools",
                 "releases",
+                VERSION,
                 key,
                 "bundle",
                 binaryFileName("shell")
@@ -141,11 +148,133 @@ suite("Tool Resolution", () => {
                 "global-storage",
                 "tools",
                 "releases",
+                VERSION,
                 key,
                 `dolang-${key}.tar.gz`
             )
         );
         assert.strictEqual(downloader.releaseAssetName(), `dolang-${key}.tar.gz`);
+        assert.strictEqual(
+            downloader.releaseUrl(),
+            `https://api.github.com/repos/dolang-org/dolang/releases/tags/v${VERSION}`
+        );
+    });
+
+    test("resolution logs where the tool came from", async () => {
+        const root = await fs.mkdtemp(path.join(os.tmpdir(), "dolang-code-test-"));
+        const onPath = await createExecutable(root, "path", "lsp");
+        const log = createLog();
+
+        await resolveTool("lsp", {
+            context: createContext(root),
+            configuration: createConfiguration(),
+            pathEnv: path.dirname(onPath),
+            log
+        });
+
+        assert.deepStrictEqual(log.lines, [`info: Resolved dolang-lsp from PATH: ${onPath}`]);
+    });
+});
+
+suite("Release Downloads", () => {
+    test("a missing release names the pinned version", async () => {
+        const root = await fs.mkdtemp(path.join(os.tmpdir(), "dolang-code-test-"));
+        const downloader = new GitHubReleaseToolDownloader(createContext(root), VERSION);
+        const fetches: string[] = [];
+
+        await withFetch(
+            async url => {
+                fetches.push(url);
+                return new Response("not found", { status: 404 });
+            },
+            () =>
+                assert.rejects(downloader.resolve("shell"), (error: unknown) => {
+                    assert.ok(error instanceof Error);
+                    assert.match(error.message, new RegExp(`No Do release v${VERSION}`));
+                    return true;
+                })
+        );
+        assert.deepStrictEqual(fetches, [downloader.releaseUrl()]);
+    });
+
+    test("concurrent resolves share one download and prune other versions", async function () {
+        if (process.platform === "win32") {
+            this.skip();
+        }
+
+        const root = await fs.mkdtemp(path.join(os.tmpdir(), "dolang-code-test-"));
+        const context = createContext(root);
+        const releases = path.join(context.globalStorageUri.fsPath, "tools", "releases");
+        const key = platformKeyFor(process.platform, process.arch);
+        // An older version and the old unversioned layout
+        await fs.mkdir(path.join(releases, "0.0.1", key, "bundle"), { recursive: true });
+        await fs.mkdir(path.join(releases, key, "bundle"), { recursive: true });
+
+        const archive = await createBundle(root);
+        const downloader = new GitHubReleaseToolDownloader(context, VERSION);
+        const fetches: string[] = [];
+        const resolved = await withFetch(
+            async url => {
+                fetches.push(url);
+                if (url === downloader.releaseUrl()) {
+                    return Response.json({
+                        tag_name: `v${VERSION}`,
+                        assets: [
+                            {
+                                name: downloader.releaseAssetName(),
+                                browser_download_url: "https://example.invalid/bundle"
+                            }
+                        ]
+                    });
+                }
+                return new Response(await fs.readFile(archive));
+            },
+            () => Promise.all([downloader.resolve("shell"), downloader.resolve("lsp")])
+        );
+
+        assert.strictEqual(fetches.length, 2);
+        assert.deepStrictEqual(
+            resolved.map(tool => tool?.path),
+            [downloader.downloadedBinaryPath("shell"), downloader.downloadedBinaryPath("lsp")]
+        );
+        assert.deepStrictEqual(await fs.readdir(releases), [VERSION]);
+        assert.deepStrictEqual(await fs.readdir(path.join(releases, VERSION, key)), ["bundle"]);
+    });
+
+    test("clear removes this version's bundle", async () => {
+        const root = await fs.mkdtemp(path.join(os.tmpdir(), "dolang-code-test-"));
+        const downloader = new GitHubReleaseToolDownloader(createContext(root), VERSION);
+        const shell = downloader.downloadedBinaryPath("shell");
+        await fs.mkdir(path.dirname(shell), { recursive: true });
+        await fs.writeFile(shell, "");
+
+        await downloader.clear();
+
+        await assert.rejects(fs.access(shell));
+    });
+});
+
+suite("Extension Manifest", () => {
+    const manifest = vscode.extensions.all.find(
+        extension => extension.packageJSON.name === "dolang"
+    )?.packageJSON;
+
+    test("declares the trace setting", () => {
+        assert.ok(manifest);
+        assert.deepStrictEqual(
+            manifest.contributes.configuration.properties["dolang.trace.server"].enum,
+            ["off", "messages", "verbose"]
+        );
+    });
+
+    test("restricts tool paths in untrusted workspaces", () => {
+        assert.ok(manifest);
+        assert.strictEqual(manifest.capabilities.untrustedWorkspaces.supported, "limited");
+        assert.deepStrictEqual(manifest.capabilities.untrustedWorkspaces.restrictedConfigurations, [
+            "dolang.path",
+            "dolang.lsp.path"
+        ]);
+        assert.strictEqual(manifest.capabilities.virtualWorkspaces, false);
     });
 });
 
@@ -162,12 +291,24 @@ suite("Argument Splitting", () => {
     });
 
     test("escapes", () => {
-        assert.deepStrictEqual(splitArgs(String.raw`"a\"b" "c\\d" "e\nf"`), [`a"b`, String.raw`c\d`, String.raw`e\nf`]);
+        assert.deepStrictEqual(splitArgs(String.raw`"a\"b" "c\\d" "e\nf"`), [
+            `a"b`,
+            String.raw`c\d`,
+            String.raw`e\nf`
+        ]);
         assert.deepStrictEqual(splitArgs(String.raw`a\ b 'c\d'`), ["a b", String.raw`c\d`]);
     });
 
     test("shell metacharacters are preserved verbatim", () => {
-        assert.deepStrictEqual(splitArgs("$HOME `id` ; | & > *"), ["$HOME", "`id`", ";", "|", "&", ">", "*"]);
+        assert.deepStrictEqual(splitArgs("$HOME `id` ; | & > *"), [
+            "$HOME",
+            "`id`",
+            ";",
+            "|",
+            "&",
+            ">",
+            "*"
+        ]);
     });
 
     test("unterminated quotes are errors", () => {
@@ -191,10 +332,7 @@ suite("REPL Payload", () => {
     });
 
     test("without bracketed paste, several lines use REPL multi-line mode", () => {
-        assert.strictEqual(
-            replPayload("  if x\n\n    echo a\n", false),
-            "\rif x\r  echo a\r"
-        );
+        assert.strictEqual(replPayload("  if x\n\n    echo a\n", false), "\rif x\r  echo a\r");
     });
 });
 
@@ -238,17 +376,48 @@ function createConfiguration(values: Record<string, string> = {}): vscode.Worksp
     } as vscode.WorkspaceConfiguration;
 }
 
-function createContext(root: string): Pick<vscode.ExtensionContext, "globalStorageUri"> {
+function createContext(root: string): ToolContext {
     return {
-        globalStorageUri: vscode.Uri.file(path.join(root, "global-storage"))
+        globalStorageUri: vscode.Uri.file(path.join(root, "global-storage")),
+        extension: { packageJSON: { version: VERSION } }
     };
 }
 
-async function createExecutable(
-    root: string,
-    directory: string,
-    tool: ToolName
-): Promise<string> {
+function createLog(): ToolLog & { lines: string[] } {
+    const lines: string[] = [];
+    return {
+        lines,
+        info: (message: string) => lines.push(`info: ${message}`),
+        warn: (message: string) => lines.push(`warn: ${message}`),
+        error: (message: string | Error) => lines.push(`error: ${message}`)
+    };
+}
+
+async function withFetch<T>(
+    handler: (_url: string) => Promise<Response>,
+    body: () => Promise<T>
+): Promise<T> {
+    const original = globalThis.fetch;
+    globalThis.fetch = (input: string | URL | Request) =>
+        handler(input instanceof Request ? input.url : input.toString());
+    try {
+        return await body();
+    } finally {
+        globalThis.fetch = original;
+    }
+}
+
+/** Builds a release archive holding stub executables for every tool. */
+async function createBundle(root: string): Promise<string> {
+    const tools: ToolName[] = ["shell", "vfs", "lsp"];
+    const dir = path.join(root, "bundle-source");
+    await Promise.all(tools.map(tool => createExecutable(root, "bundle-source", tool)));
+    const archive = path.join(root, "bundle.tar.gz");
+    await tar.c({ gzip: true, file: archive, cwd: dir }, tools.map(binaryFileName));
+    return archive;
+}
+
+async function createExecutable(root: string, directory: string, tool: ToolName): Promise<string> {
     const dir = path.join(root, directory);
     const executablePath = path.join(dir, binaryFileName(tool));
     await fs.mkdir(dir, { recursive: true });

@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { replPayload } from "./args";
+import { requireTrustedWorkspace } from "./runner";
 import { resolveExecutionTools } from "./tools";
 
 /** Owns the interactive Do shell terminal that send-to-shell targets. */
@@ -8,9 +9,11 @@ export class DoInteractiveShell implements vscode.Disposable {
     private readonly closeListener: vscode.Disposable;
 
     private readonly context: vscode.ExtensionContext;
+    private readonly log: vscode.LogOutputChannel;
 
-    constructor(context: vscode.ExtensionContext) {
+    constructor(context: vscode.ExtensionContext, log: vscode.LogOutputChannel) {
         this.context = context;
+        this.log = log;
         this.closeListener = vscode.window.onDidCloseTerminal(closed => {
             if (closed === this.terminal) {
                 this.terminal = undefined;
@@ -20,12 +23,18 @@ export class DoInteractiveShell implements vscode.Disposable {
 
     /** Opens a new interactive shell, which becomes the send-to-shell target. */
     public async open(): Promise<void> {
+        if (!requireTrustedWorkspace()) {
+            return;
+        }
         const terminal = await this.create();
         terminal.show();
     }
 
     /** Sends the selection, or the current line, to the interactive shell. */
     public async sendSelection(): Promise<void> {
+        if (!requireTrustedWorkspace()) {
+            return;
+        }
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
             vscode.window.showErrorMessage("No active editor found");
@@ -58,7 +67,8 @@ export class DoInteractiveShell implements vscode.Disposable {
     private async create(): Promise<vscode.Terminal> {
         let shellPath: string;
         try {
-            shellPath = (await resolveExecutionTools({ context: this.context })).shell.path;
+            shellPath = (await resolveExecutionTools({ context: this.context, log: this.log }))
+                .shell.path;
         } catch (error) {
             const message =
                 error instanceof Error ? error.message : `Failed to resolve Do tools: ${error}`;

@@ -1985,7 +1985,11 @@ impl LanguageServer for Backend {
             .write()
             .expect("position encoding lock poisoned") = position_encoding.clone();
         Ok(InitializeResult {
-            server_info: None,
+            // Clients compare the version with their own to spot mismatches
+            server_info: Some(ServerInfo {
+                name: env!("CARGO_PKG_NAME").to_owned(),
+                version: Some(env!("CARGO_PKG_VERSION").to_owned()),
+            }),
             offset_encoding: (position_encoding == PositionEncodingKind::UTF8)
                 .then(|| "utf-8".to_owned()),
             capabilities: ServerCapabilities {
@@ -2824,6 +2828,16 @@ mod tests {
             result.capabilities.hover_provider,
             Some(HoverProviderCapability::Simple(true))
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn initialize_reports_server_version() {
+        let mut harness = Harness::new();
+        let result = harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+
+        let info = result.server_info.expect("server info");
+        assert_eq!(info.name, "dolang-lsp");
+        assert_eq!(info.version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
     }
 
     #[tokio::test(flavor = "current_thread")]

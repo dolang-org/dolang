@@ -81,7 +81,10 @@ Customize execution behavior in VS Code settings:
 - `dolang.autoSaveBeforeRun` (default: true): Save a modified script before
   running it
 - `dolang.path`: Explicit path to `dolang`
-- `dolang.lsp.path`: Explicit path to `dolang-lsp`
+- `dolang.lsp.path`: Explicit path to `dolang-lsp`; changing it restarts the
+  language server
+- `dolang.trace.server` (default: `off`): Trace language server messages
+  (`messages` or `verbose`) in the "Do Language Server" output channel
 
 Tool resolution order is:
 
@@ -89,9 +92,32 @@ Tool resolution order is:
 2. Matching binary from `PATH`
 3. Downloaded GitHub release bundle
 
-If the tools are not available locally, the extension downloads one platform
-`tar.gz` bundle from the latest GitHub release for `dolang-org/dolang` and
-extracts it into extension global storage.
+If the tools are not available locally, the extension downloads the platform
+`tar.gz` bundle from the `dolang-org/dolang` GitHub release whose tag matches
+the extension's version (for example, `v0.1.1` for extension 0.1.1), so the
+tools always match the extension. The bundle is extracted into extension
+global storage, and bundles for other versions are removed. "Re-download Do
+Tools" replaces the cached bundle; tools from a configured path or `PATH`
+still take precedence over it.
+
+"Restart Do Language Server" restarts the server, for example after
+rebuilding a local `dolang-lsp`. A server whose version differs from the
+extension's is reported as a warning.
+
+### Restricted Mode
+
+In an untrusted workspace, the extension provides syntax highlighting and
+editing support only: the language server doesn't start, and scripts, tasks
+and the interactive shell can't be run. Workspace settings can't change
+`dolang.path` or `dolang.lsp.path`. Trusting the workspace starts the
+language server. Virtual workspaces aren't supported.
+
+### Troubleshooting
+
+The "Do" output channel logs which tool was used and where it came from
+(a setting, `PATH` or a downloaded release), along with download activity.
+The language server's own output appears in the "Do Language Server" output
+channel.
 
 ## Building
 

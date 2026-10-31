@@ -2,7 +2,7 @@
     "name": "dolang",
     "displayName": "dolang",
     "description": "Do Language Support",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "license": "Apache-2.0 OR MIT",
     "repository": {
         "type": "git",
@@ -15,6 +15,17 @@
         "Programming Languages"
     ],
     "main": "./dist/extension.js",
+    "capabilities": {
+        "untrustedWorkspaces": {
+            "supported": "limited",
+            "description": "In a restricted workspace, the language server doesn't start and Do scripts can't be run.",
+            "restrictedConfigurations": [
+                "dolang.path",
+                "dolang.lsp.path"
+            ]
+        },
+        "virtualWorkspaces": false
+    },
     "activationEvents": [
         "onLanguage:dolang",
         "onCommand:dolang.runScript",
@@ -22,7 +33,9 @@
         "onCommand:dolang.openInteractiveShell",
         "onCommand:dolang.runScriptWithArgs",
         "onCommand:dolang.sendSelectionToShell",
-        "onTaskType:dolang"
+        "onTaskType:dolang",
+        "onCommand:dolang.restartLanguageServer",
+        "onCommand:dolang.redownloadTools"
     ],
     "contributes": {
         "configuration": {
@@ -47,6 +60,17 @@
                     "type": "string",
                     "default": "",
                     "description": "Absolute path to the `dolang-lsp` executable. When unset, the extension tries PATH and then downloads a GitHub release bundle."
+                },
+                "dolang.trace.server": {
+                    "type": "string",
+                    "scope": "window",
+                    "enum": [
+                        "off",
+                        "messages",
+                        "verbose"
+                    ],
+                    "default": "off",
+                    "description": "Trace the communication between VS Code and the Do language server in the \"Do Language Server\" output channel"
                 }
             }
         },
@@ -93,61 +117,77 @@
             {
                 "command": "dolang.sendSelectionToShell",
                 "title": "Send Selection/Line to Do Shell"
+            },
+            {
+                "command": "dolang.restartLanguageServer",
+                "title": "Restart Do Language Server"
+            },
+            {
+                "command": "dolang.redownloadTools",
+                "title": "Re-download Do Tools"
             }
         ],
         "menus": {
             "editor/title": [
                 {
                     "command": "dolang.runScript",
-                    "when": "resourceLangId == dolang",
+                    "when": "resourceLangId == dolang && isWorkspaceTrusted",
                     "group": "navigation"
                 }
             ],
             "editor/context": [
                 {
                     "command": "dolang.runScriptFile",
-                    "when": "resourceLangId == dolang",
+                    "when": "resourceLangId == dolang && isWorkspaceTrusted",
                     "group": "navigation"
                 },
                 {
                     "command": "dolang.runScriptWithArgs",
-                    "when": "resourceLangId == dolang",
+                    "when": "resourceLangId == dolang && isWorkspaceTrusted",
                     "group": "navigation"
                 },
                 {
                     "command": "dolang.sendSelectionToShell",
-                    "when": "editorLangId == dolang",
+                    "when": "editorLangId == dolang && isWorkspaceTrusted",
                     "group": "navigation"
                 }
             ],
             "explorer/context": [
                 {
                     "command": "dolang.runScriptFile",
-                    "when": "resourceLangId == dolang",
+                    "when": "resourceLangId == dolang && isWorkspaceTrusted",
                     "group": "navigation"
                 },
                 {
                     "command": "dolang.runScriptWithArgs",
-                    "when": "resourceLangId == dolang",
+                    "when": "resourceLangId == dolang && isWorkspaceTrusted",
                     "group": "navigation"
                 }
             ],
             "commandPalette": [
                 {
                     "command": "dolang.runScript",
-                    "when": "resourceLangId == dolang"
+                    "when": "resourceLangId == dolang && isWorkspaceTrusted"
                 },
                 {
                     "command": "dolang.runScriptFile",
-                    "when": "resourceLangId == dolang"
+                    "when": "resourceLangId == dolang && isWorkspaceTrusted"
                 },
                 {
                     "command": "dolang.runScriptWithArgs",
-                    "when": "resourceLangId == dolang"
+                    "when": "resourceLangId == dolang && isWorkspaceTrusted"
                 },
                 {
                     "command": "dolang.sendSelectionToShell",
-                    "when": "editorLangId == dolang"
+                    "when": "editorLangId == dolang && isWorkspaceTrusted"
+                },
+                {
+                    "command": "dolang.openInteractiveShell",
+                    "when": "isWorkspaceTrusted"
+                },
+                {
+                    "command": "dolang.redownloadTools",
+                    "when": "isWorkspaceTrusted"
                 }
             ]
         },
@@ -193,7 +233,8 @@
         "package:vsix": "npx --yes @vscode/vsce@3.9.2 package",
         "test": "vscode-test --fail-zero",
         "test:syntax": "node --test test/syntax.test.mjs",
-        "test:language-config": "node --test test/language-configuration.test.mjs"
+        "test:language-config": "node --test test/language-configuration.test.mjs",
+        "test:version": "node --test test/version.test.mjs"
     },
     "dependencies": {
         "tar": "^7.5.21",
