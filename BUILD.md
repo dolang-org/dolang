@@ -33,14 +33,16 @@ under [Optional tooling](#optional-tooling).
 ## Bootstrap from a Release
 
 The [GitHub releases page](https://github.com/dolang-org/dolang/releases)
-provides bootstrap archives named for their target platform:
+provides archives named `dolang-<version>-<platform>.tar.gz`, where
+`<version>` is the release version without its `v` (such as `0.1.1`), or
+`bootstrap` for the rolling bootstrap release. The platforms are:
 
-- `dolang-x86_64-linux.tar.gz`
-- `dolang-aarch64-linux.tar.gz`
-- `dolang-x86_64-windows.tar.gz`
-- `dolang-aarch64-windows.tar.gz`
-- `dolang-aarch64-macos.tar.gz`
-- `dolang-x86_64-freebsd.tar.gz`
+- `x86_64-linux`
+- `aarch64-linux`
+- `x86_64-windows`
+- `aarch64-windows`
+- `aarch64-macos`
+- `x86_64-freebsd`
 
 Download the archive for the host, extract its contents into `<PREFIX>/bin`,
 and add that directory to `PATH`. The archive contains `dolang`, `dolang-lsp`,
@@ -51,7 +53,7 @@ For example:
 
 ```
 mkdir -p <PREFIX>/bin
-tar -xzf dolang-x86_64-linux.tar.gz -C <PREFIX>/bin
+tar -xzf dolang-bootstrap-x86_64-linux.tar.gz -C <PREFIX>/bin
 export PATH="<PREFIX>/bin:$PATH"
 dodo --list
 ```

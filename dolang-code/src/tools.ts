@@ -228,7 +228,7 @@ export class GitHubReleaseToolDownloader {
     }
 
     public releaseAssetName(): string {
-        return `dolang-${platformKeyFor(process.platform, process.arch)}.tar.gz`;
+        return `dolang-${this.version}-${platformKeyFor(process.platform, process.arch)}.tar.gz`;
     }
 
     public downloadedArchivePath(): string {

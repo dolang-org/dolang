@@ -150,10 +150,10 @@ suite("Tool Resolution", () => {
                 "releases",
                 VERSION,
                 key,
-                `dolang-${key}.tar.gz`
+                `dolang-${VERSION}-${key}.tar.gz`
             )
         );
-        assert.strictEqual(downloader.releaseAssetName(), `dolang-${key}.tar.gz`);
+        assert.strictEqual(downloader.releaseAssetName(), `dolang-${VERSION}-${key}.tar.gz`);
         assert.strictEqual(
             downloader.releaseUrl(),
             `https://api.github.com/repos/dolang-org/dolang/releases/tags/v${VERSION}`

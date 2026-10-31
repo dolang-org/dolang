@@ -32,25 +32,29 @@ runs:
           DOLANG_VERSION=$(tr -d '[:space:]' < "${GITHUB_WORKSPACE}/.github/dolang-version")
         fi
 
+        # Archive names carry the tag without its `v`, e.g. `dolang-0.1.1-…`
+        # or `dolang-bootstrap-…`.
+        version="${DOLANG_VERSION#v}"
+
         case "${RUNNER_OS}-${RUNNER_ARCH}" in
           Linux-X64)
-            artifact=dolang-x86_64-linux.tar.gz
+            artifact=dolang-${version}-x86_64-linux.tar.gz
             executable=dolang
             ;;
           Linux-ARM64)
-            artifact=dolang-aarch64-linux.tar.gz
+            artifact=dolang-${version}-aarch64-linux.tar.gz
             executable=dolang
             ;;
           Windows-X64)
-            artifact=dolang-x86_64-windows.tar.gz
+            artifact=dolang-${version}-x86_64-windows.tar.gz
             executable=dolang.exe
             ;;
           Windows-ARM64)
-            artifact=dolang-aarch64-windows.tar.gz
+            artifact=dolang-${version}-aarch64-windows.tar.gz
             executable=dolang.exe
             ;;
           macOS-ARM64)
-            artifact=dolang-aarch64-macos.tar.gz
+            artifact=dolang-${version}-aarch64-macos.tar.gz
             executable=dolang
             ;;
           *)

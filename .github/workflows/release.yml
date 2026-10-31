@@ -18,8 +18,29 @@ defaults:
     shell: dolang-ci {0}
 
 jobs:
+  version:
+    name: Archive Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      # The version archive names carry: a `v*` tag without its `v`, or any
+      # other ref (`bootstrap`, or a branch for a manual run) as a file name.
+      - name: Derive version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" == v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${GITHUB_REF_NAME//\//-}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   dist:
     name: Build Distribution
+    needs: version
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -36,6 +57,8 @@ jobs:
             os: macos-latest
           - target: x86_64-freebsd
             os: ubuntu-latest
+    env:
+      DIST_ARCHIVE: dolang-${{ needs.version.outputs.version }}-${{ matrix.target }}.tar.gz
 
     steps:
       - uses: actions/checkout@v5
@@ -70,7 +93,7 @@ jobs:
         if: matrix.target != 'x86_64-freebsd'
         run: |
           import transfer
-          transfer.pack release/bin "dolang-${{ matrix.target }}.tar.gz"
+          transfer.pack release/bin $env["DIST_ARCHIVE"]
 
       - name: Package release (CI VM)
         if: matrix.target == 'x86_64-freebsd'
@@ -80,16 +103,18 @@ jobs:
             fs:
               - glob
 
+          # Read on the host: the closure runs in the guest, whose env differs.
+          let archive = env["DIST_ARCHIVE"]
           let vm = libvirt.attach dolang-ci
           vm.with do cd release/bin do
-            run tar -czf ../../dolang-${{ matrix.target }}.tar.gz ...(glob "*")
-          vm.download dolang-${{ matrix.target }}.tar.gz dolang-${{ matrix.target }}.tar.gz
+            run tar -czf ../../$archive ...(glob "*")
+          vm.download $archive $archive
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: dolang-${{ matrix.target }}
-          path: dolang-${{ matrix.target }}.tar.gz
+          path: ${{ env.DIST_ARCHIVE }}
 
   vsix:
     name: Build VSIX
@@ -105,7 +130,7 @@ jobs:
 
   release-tests:
     name: Release Integration
-    needs: dist
+    needs: [dist, version]
     # Not `ubuntu-latest`, which is still 24.04 and so libvirt 10.0: the vTPM
     # state directory is chosen with `<tpm><backend><source>`, which libvirt
     # only understands from 10.10.0 on. An older one ignores the element and
@@ -131,16 +156,19 @@ jobs:
           merge-multiple: true
 
       - name: Run release integration tests
+        env:
+          DIST_VERSION: ${{ needs.version.outputs.version }}
         run: |
           import fs:
             - Path
 
+          let version = env["DIST_VERSION"]
           let bin = Path("release-test-bin").absolute()
           bin.create_dir all: true
-          run tar -xzf artifacts/dolang-x86_64-linux.tar.gz -C $bin
-          let archive = Path("artifacts/dolang-x86_64-freebsd.tar.gz").absolute()
+          run tar -xzf artifacts/dolang-$version-x86_64-linux.tar.gz -C $bin
+          let archive = Path("artifacts/dolang-$version-x86_64-freebsd.tar.gz").absolute()
           # The Windows guest runs the Windows build, not the host's own.
-          let windows = Path("artifacts/dolang-x86_64-windows.tar.gz").absolute()
+          let windows = Path("artifacts/dolang-$version-x86_64-windows.tar.gz").absolute()
           env 
             DOLANG_LIBVIRT_TEST_ARCHIVE: $archive
             DOLANG_LIBVIRT_TEST_WINDOWS_ARCHIVE: $windows
