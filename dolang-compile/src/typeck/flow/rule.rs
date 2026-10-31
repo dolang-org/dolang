@@ -34,7 +34,7 @@
 
 use std::{collections::VecDeque, ops::ControlFlow};
 
-use dolang_util::mono::MonoVec;
+use dolang_util::{alias, mono::MonoVec};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
@@ -54,8 +54,8 @@ use crate::{
         elab::Designated,
         solver::{
             Call as SolverCall, CallArgument, Contradiction, Gas, InferVarId, Issue, Node,
-            ObligationId, Outcome, PatternShape, Provenance, Reason, Relation, Residual, Solver,
-            Status, Step as Derivation, Term, Unpacked,
+            ObligationId, Origin, OriginKind, Outcome, PatternShape, Provenance, Reason, Relation,
+            Residual, Site, Solver, Status, Step as Derivation, Term, Unpacked,
         },
         r#type::{
             Argument, BoundRef, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
@@ -64,25 +64,30 @@ use crate::{
     },
 };
 
-/// What a constraint of a rule checks, to diagnose it by
-#[derive(Clone)]
-enum Check {
-    /// A callee against the call, by the call's span and each argument's, and
-    /// the callee's name, if it has one
-    Call {
-        span: Span,
-        args: Vec<Span>,
-        callee: Option<String>,
-    },
-    /// A value that must be something
-    Fits(Span, Misfit),
-    /// A value that must be what's expected of it
-    Expected(Span),
-    /// An empty dict's schema, which must admit no items. Left undecided, the
-    /// dict's type is one nothing determines, which its rule reports.
-    Empty(Span),
-    /// Nothing that can fail
-    Quiet,
+/// Where a constraint's actual side comes from, with nothing said of its
+/// expected side
+fn actual(kind: OriginKind, span: Span) -> Provenance {
+    Provenance {
+        actual: Some(Origin::local(kind, span)),
+        expected: None,
+    }
+}
+
+/// What a constraint checks of its own, by where its actual side is and what
+/// that is. One whose actual side is an argument held back checks nothing of
+/// its own: the argument's sub-rule checks it.
+fn diagnosed(provenance: &Provenance) -> Option<(Span, &OriginKind)> {
+    let Origin { kind, site } = provenance.actual.as_ref()?;
+    match (kind, *site) {
+        (
+            OriginKind::Expression
+            | OriginKind::Call { .. }
+            | OriginKind::Misfit(_)
+            | OriginKind::Empty,
+            Site::Local(span),
+        ) => Some((span, kind)),
+        _ => None,
+    }
 }
 
 /// A rule's constraints, as they are made
@@ -91,7 +96,6 @@ struct Rule<'s, 'a, 'p> {
     db: &'a Database,
     /// The budget of the run it's made for, which its sub-rules share
     gas: &'a Gas,
-    checks: Vec<Check>,
     /// The variables standing for what a call passes the `do` blocks it's given,
     /// by the signature variable each joins into
     passed: Vec<(VarId, Term)>,
@@ -195,7 +199,6 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
             solver,
             db,
             gas,
-            checks: Vec::new(),
             passed: Vec::new(),
             pending: Vec::new(),
             held: Vec::new(),
@@ -212,16 +215,13 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
         }
     }
 
-    fn constrain(&mut self, actual: Term, expected: Term, check: Check) {
-        self.solver
-            .constrain(actual, expected, Provenance::default());
-        self.checks.push(check);
+    fn constrain(&mut self, actual: Term, expected: Term, provenance: Provenance) {
+        self.solver.constrain(actual, expected, provenance);
     }
 
     /// Constrain `schema` to admit the empty schema, once it's solved
-    fn constrain_empty(&mut self, schema: Term, check: Check) {
-        self.solver.constrain_empty(schema, Provenance::default());
-        self.checks.push(check);
+    fn constrain_empty(&mut self, schema: Term, provenance: Provenance) {
+        self.solver.constrain_empty(schema, provenance);
     }
 
     fn closed(&self, ty: TypeId) -> Term {
@@ -297,7 +297,8 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
             repeated: repeated || self.repeated,
         });
         if let Some(preview) = prepared.preview() {
-            self.constrain(self.closed(preview), term, Check::Quiet);
+            let provenance = prepared.provenance();
+            self.constrain(self.closed(preview), term, provenance);
         }
         term
     }
@@ -484,14 +485,13 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
 struct Run<'g> {
     solver: Solver<'g>,
     results: Vec<Term>,
-    checks: Vec<Check>,
     passed: Vec<(VarId, Term)>,
     pending: Vec<Term>,
     calls: Vec<(Term, Span, bool)>,
     logged: Vec<Pending>,
     outcomes: Vec<Outcome>,
-    /// How many of the checks are the rule's own, ahead of what's expected of
-    /// it and its sub-rules'
+    /// How many of the outcomes are of the rule's own constraints, ahead of
+    /// what's expected of it and its sub-rules'
     own: usize,
     /// Whether what's expected of it is contradicted
     rejected: bool,
@@ -500,7 +500,7 @@ struct Run<'g> {
 }
 
 impl Run<'_> {
-    /// Whether any of the first `count` checks has `status`
+    /// Whether any of the first `count` outcomes has `status`
     fn any(&self, count: usize, status: Status) -> bool {
         self.outcomes[..count]
             .iter()
@@ -577,8 +577,8 @@ enum Prepared {
         instance: Option<TypeId>,
     },
     Collection(PreparedCollection),
-    /// A template, with its values and hole shape known
-    Fmt(TypeId),
+    /// A template, with its values and hole shape known, at its span
+    Fmt(TypeId, Span),
 }
 
 impl Prepared {
@@ -588,14 +588,28 @@ impl Prepared {
         match self {
             Prepared::Call { call, .. } => Some(call.span),
             Prepared::Collection(collection) => Some(collection.span),
-            Prepared::Fmt(_) => None,
+            Prepared::Fmt(..) => None,
+        }
+    }
+
+    /// Where a constraint on the variable it's held back as comes from: it
+    /// stands for the argument
+    fn provenance(&self) -> Provenance {
+        let span = match self {
+            Prepared::Call { call, .. } => call.span,
+            Prepared::Collection(collection) => collection.span,
+            &Prepared::Fmt(_, span) => span,
+        };
+        Provenance {
+            actual: Some(Origin::local(OriginKind::Held, span)),
+            expected: None,
         }
     }
 
     /// Its type, if it's known before its expectation is
     fn preview(&self) -> Option<TypeId> {
         match *self {
-            Prepared::Fmt(ty) => Some(ty),
+            Prepared::Fmt(ty, _) => Some(ty),
             Prepared::Call { .. } | Prepared::Collection(_) => None,
         }
     }
@@ -812,7 +826,7 @@ impl Slot {
         }
         let var = rule.solver.infer();
         for &term in closed.iter().chain(&self.terms) {
-            rule.constrain(term, var, Check::Quiet);
+            rule.constrain(term, var, Provenance::default());
         }
         Some(var)
     }
@@ -1084,10 +1098,14 @@ impl<'a> Flow<'a, '_> {
                     ..Rule::new(&mut solver, self.db, gas)
                 };
                 let results = build(self, &mut rule);
-                let own = rule.checks.len();
+                let own = rule.solver.constraints();
                 let expect = expected.filter(|_| expect).map(|expected| {
                     let expected = rule.closed(expected);
-                    rule.constrain(results[0], expected, Check::Quiet);
+                    let provenance = Provenance {
+                        actual: None,
+                        expected: Some(Origin::local(OriginKind::ExpectedResult, span)),
+                    };
+                    rule.constrain(results[0], expected, provenance);
                     own
                 });
                 if !rule.held.is_empty() {
@@ -1095,7 +1113,6 @@ impl<'a> Flow<'a, '_> {
                     self.release(&mut rule);
                 }
                 let Rule {
-                    checks,
                     passed,
                     pending,
                     calls,
@@ -1125,7 +1142,6 @@ impl<'a> Flow<'a, '_> {
                 break Run {
                     solver,
                     results,
-                    checks,
                     passed,
                     pending,
                     calls,
@@ -1141,7 +1157,7 @@ impl<'a> Flow<'a, '_> {
         // then, if what's expected of it or its own checks are still
         // contradicted, without what's expected of it either
         let unseed = |run: &Run<'_>, seeds: &mut (bool, bool)| {
-            if !run.any(run.checks.len(), Status::Contradicted) {
+            if !run.any(run.outcomes.len(), Status::Contradicted) {
                 return false;
             }
             match *seeds {
@@ -1155,9 +1171,9 @@ impl<'a> Flow<'a, '_> {
         };
         let mut seeds = (true, true);
         let mut run = make(false, seeds);
-        let contradicted = run.any(run.checks.len(), Status::Contradicted);
+        let contradicted = run.any(run.outcomes.len(), Status::Contradicted);
         // A check left unresolved may be decided by defaulting
-        let unresolved = run.any(run.checks.len(), Status::Unresolved);
+        let unresolved = run.any(run.outcomes.len(), Status::Unresolved);
         let reified: Option<Vec<TypeId>> = run
             .results
             .iter()
@@ -1178,11 +1194,12 @@ impl<'a> Flow<'a, '_> {
                     .collect();
                 // A strict unit's defaulting leaves what nothing determines
                 // unresolved. A check it leaves unresolved is recorded instead.
-                let decided = !run.any(run.checks.len(), Status::Unresolved);
+                let decided = !run.any(run.outcomes.len(), Status::Unresolved);
                 let (mut empty, mut others) = (false, false);
-                for (check, outcome) in run.checks.iter().zip(&run.outcomes) {
-                    match (check, outcome.status) {
-                        (Check::Empty(_), Status::Unresolved) => empty = true,
+                for outcome in &run.outcomes {
+                    let kind = diagnosed(&outcome.provenance).map(|(_, kind)| kind);
+                    match (kind, outcome.status) {
+                        (Some(OriginKind::Empty), Status::Unresolved) => empty = true,
                         (_, Status::Unresolved) => others = true,
                         _ => {}
                     }
@@ -1217,7 +1234,6 @@ impl<'a> Flow<'a, '_> {
         let Run {
             mut solver,
             results,
-            checks,
             passed,
             pending,
             calls,
@@ -1241,7 +1257,7 @@ impl<'a> Flow<'a, '_> {
             .map(|(&ty, &term)| ty == bottom && chosen(&solver, term))
             .collect();
         if self.observing() {
-            self.blame(&solver, &checks, &outcomes[..checks.len()]);
+            self.blame(&solver, &outcomes);
             let unknown = self.db.unknown();
             let reify = |term| Some(solver.reify(term).unwrap_or(unknown));
             for pending in logged {
@@ -1261,37 +1277,32 @@ impl<'a> Flow<'a, '_> {
         }
     }
 
-    /// Diagnose the checks a rule's final run contradicted, and record the ones it
-    /// couldn't decide
-    fn blame(&mut self, solver: &Solver<'_>, checks: &[Check], outcomes: &[Outcome]) {
-        for (check, outcome) in checks.iter().zip(outcomes) {
-            let span = match *check {
-                Check::Call { span, .. } | Check::Fits(span, _) | Check::Expected(span) => span,
-                // Its rule reports it left undecided
-                Check::Empty(_) if outcome.status == Status::Unresolved => continue,
-                Check::Empty(span) => span,
-                Check::Quiet => continue,
+    /// Diagnose what a rule's final run contradicted of what its constraints
+    /// check, and record what it couldn't decide
+    fn blame(&mut self, solver: &Solver<'_>, outcomes: &[Outcome]) {
+        for outcome in outcomes {
+            let Some((span, kind)) = diagnosed(&outcome.provenance) else {
+                continue;
             };
-            match outcome.status {
-                Status::Proven => {}
-                Status::Unresolved => match check {
-                    Check::Call { callee, .. }
-                        if let Some(survivors) = self.ambiguous(solver, outcome) =>
-                    {
-                        match survivors {
-                            Some(survivors) => self.problem(Problem::AmbiguousCall {
-                                span,
-                                callee: callee.clone(),
-                                survivors,
-                            }),
-                            // What would tell them apart may be unknown, so
-                            // it's only undecided
-                            None => self.undecided(span, Residual::Ambiguous),
-                        }
+            match (kind, outcome.status) {
+                // Its rule reports it left undecided
+                (OriginKind::Empty, Status::Unresolved) | (_, Status::Proven) => {}
+                (OriginKind::Call { callee, .. }, Status::Unresolved)
+                    if let Some(survivors) = self.ambiguous(solver, outcome) =>
+                {
+                    match survivors {
+                        Some(survivors) => self.problem(Problem::AmbiguousCall {
+                            span,
+                            callee: callee.as_deref().map(str::to_owned),
+                            survivors,
+                        }),
+                        // What would tell them apart may be unknown, so it's
+                        // only undecided
+                        None => self.undecided(span, Residual::Ambiguous),
                     }
-                    _ => self.undecided(span, super::residual(outcome)),
-                },
-                Status::Contradicted => {
+                }
+                (_, Status::Unresolved) => self.undecided(span, super::residual(outcome)),
+                (kind, Status::Contradicted) => {
                     let relation = solver.relation(root(outcome));
                     // The callee, or the value that doesn't fit, as what's found
                     // of it if an argument held back in it is left unsolved
@@ -1300,21 +1311,22 @@ impl<'a> Flow<'a, '_> {
                         .reify(checked)
                         .or_else(|_| solver.reify_found(checked))
                         .ok();
-                    let problems: Vec<Problem> = match check {
+                    let problems: Vec<Problem> = match *kind {
                         // An argument is reported once, with a note for each of
                         // its parts that doesn't fit
-                        Check::Call { span, args, callee } => {
+                        OriginKind::Call { ref callee, .. } => {
+                            let callee = callee.as_deref().map(str::to_owned);
                             let mut problems = Vec::new();
                             for cause in solver.explain(outcome).iter() {
                                 if let (Contradiction::NoOverload, [_]) =
                                     (cause.contradiction, &cause.path[..])
                                 {
                                     let overloaded = root(outcome);
-                                    let notes = self.rejections(solver, *span, args, overloaded);
+                                    let notes = self.rejections(solver, span, overloaded);
                                     merge(
                                         &mut problems,
                                         Problem::NoOverload {
-                                            span: *span,
+                                            span,
                                             callee: callee.clone(),
                                             notes,
                                         },
@@ -1322,8 +1334,7 @@ impl<'a> Flow<'a, '_> {
                                     continue;
                                 }
                                 let problem = self.call_problem(
-                                    *span,
-                                    args,
+                                    span,
                                     &cause.path,
                                     cause.contradiction,
                                     &actual.map(|callee| self.shown(callee)),
@@ -1332,18 +1343,16 @@ impl<'a> Flow<'a, '_> {
                             }
                             problems
                         }
-                        &Check::Fits(span, misfit) => vec![Problem::Misfit {
+                        OriginKind::Misfit(misfit) => vec![Problem::Misfit {
                             span,
                             found: actual
                                 .map_or(Shown::Type("?".to_owned()), |found| self.subject(found)),
                             misfit,
                         }],
-                        &Check::Expected(span) | &Check::Empty(span) => {
+                        _ => {
                             let mut notes = Vec::new();
                             for cause in solver.explain(outcome).iter() {
-                                let steps = steps(&cause.path);
-                                if let Some(note) =
-                                    self.cause(&cause.path, &steps, 0, cause.contradiction)
+                                if let Some(note) = self.cause(&cause.path, 0, cause.contradiction)
                                     && !notes.contains(&note)
                                 {
                                     notes.push(note);
@@ -1371,7 +1380,6 @@ impl<'a> Flow<'a, '_> {
                                 causes: notes,
                             }]
                         }
-                        Check::Quiet => Vec::new(),
                     };
                     for problem in problems {
                         self.problem(problem);
@@ -1384,13 +1392,7 @@ impl<'a> Flow<'a, '_> {
     /// Why each overload of an overloaded callee was rejected by a call: the
     /// overload, and what its trial's contradictions say, as they would of a
     /// call of it alone
-    fn rejections(
-        &self,
-        solver: &Solver<'_>,
-        span: Span,
-        args: &[Span],
-        overloaded: ObligationId,
-    ) -> Vec<String> {
+    fn rejections(&self, solver: &Solver<'_>, span: Span, overloaded: ObligationId) -> Vec<String> {
         let mut notes = Vec::new();
         for rejection in solver.rejections(overloaded).iter() {
             let overload = rejection
@@ -1398,8 +1400,7 @@ impl<'a> Flow<'a, '_> {
                 .map(|ty| self.overload(solver, overloaded, rejection.index, ty));
             let mut problems = Vec::new();
             for cause in &rejection.contradictions {
-                let problem =
-                    self.call_problem(span, args, &cause.path, cause.contradiction, &overload);
+                let problem = self.call_problem(span, &cause.path, cause.contradiction, &overload);
                 merge(&mut problems, problem);
             }
             let mut reasons = Vec::new();
@@ -1497,12 +1498,10 @@ impl<'a> Flow<'a, '_> {
     fn call_problem(
         &self,
         span: Span,
-        args: &[Span],
         path: &[Node],
         contradiction: Contradiction,
         callee: &Option<String>,
     ) -> Problem {
-        let steps = steps(path);
         match contradiction {
             Contradiction::Conflict => return Problem::Conflict(span),
             Contradiction::Unadmitted(key) => {
@@ -1523,72 +1522,89 @@ impl<'a> Flow<'a, '_> {
             span,
             callee: callee.clone().unwrap_or_else(|| "?".to_owned()),
         };
-        if steps.len() + 1 != path.len() {
-            return fallback;
+        let origins = found_origins(path);
+        // The first node whose found side is one of the call's arguments,
+        // whether the path narrows the arguments to it or meets it as a
+        // partner, as through a channel
+        let arguments = match origins.first() {
+            Some(Some(Origin {
+                kind: OriginKind::Call { arguments, .. },
+                ..
+            })) => &arguments[..],
+            _ => &[],
+        };
+        let argument = origins
+            .iter()
+            .enumerate()
+            .find_map(|(index, origin)| match origin {
+                Some(Origin {
+                    kind: OriginKind::Call { .. } | OriginKind::Arguments(_),
+                    ..
+                }) => None,
+                Some(Origin {
+                    site: Site::Local(site),
+                    ..
+                }) if arguments.contains(site) => Some((index, *site)),
+                _ => None,
+            });
+        let Some((mut root, arg)) = argument else {
+            return match (contradiction, origins.last()) {
+                (Contradiction::Excess(index), Some(Some(origin)))
+                    if let OriginKind::Arguments(arguments) = &origin.kind =>
+                {
+                    Problem::ExtraArgument(arguments.get(index).copied().unwrap_or(span))
+                }
+                (Contradiction::Missing(_), Some(Some(origin)))
+                    if matches!(origin.kind, OriginKind::Arguments(_)) =>
+                {
+                    Problem::MissingArgument(span)
+                }
+                _ => fallback,
+            };
+        };
+        // The step from a node to the next
+        let onward = |index: usize| path.get(index + 1).and_then(|node| node.step.as_ref());
+        // An argument held back that's left unsolved shows what it's made of,
+        // as does one solved as what it's made of
+        if let Some(Derivation::BoundPropagation | Derivation::Assignment) = onward(root)
+            && let Some((found, _)) = path[root].sides
+            && (found.is_none() || path[root].sides == path[root + 1].sides)
+        {
+            root += 1;
         }
-        let Some(arguments) = steps.iter().position(|step| *step == Derivation::Arguments) else {
+        // A write through a key selecting several items shows the item the
+        // argument doesn't fit
+        if let Some(Derivation::Selected(_)) = onward(root) {
+            root += 1;
+        }
+        // What's found of an argument held back that's left unsolved
+        let Some((Some(found), expected)) = path[root]
+            .sides
+            .map(|(found, expected)| (found.or(path[root].found), expected))
+        else {
             return fallback;
         };
-        match steps.get(arguments + 1) {
-            Some(&(Derivation::Item(index) | Derivation::Key(index))) => {
-                let Some(&arg) = args.get(index) else {
-                    return fallback;
-                };
-                let mut root = arguments + 2;
-                // An argument held back that's left unsolved shows what it's
-                // made of, as does one solved as what it's made of
-                if let Some(Derivation::BoundPropagation | Derivation::Assignment) = steps.get(root)
-                    && let Some((found, _)) = path[root].sides
-                    && (found.is_none() || path[root].sides == path[root + 1].sides)
-                {
-                    root += 1;
-                }
-                // A write through a key selecting several items shows the item
-                // the argument doesn't fit
-                if let Some(Derivation::Selected(_)) = steps.get(root) {
-                    root += 1;
-                }
-                // What's found of an argument held back that's left unsolved
-                let Some((Some(found), expected)) = path[root]
-                    .sides
-                    .map(|(found, expected)| (found.or(path[root].found), expected))
-                else {
-                    return fallback;
-                };
-                // A parameter whose type is left unsolved shows the bound of it
-                // that the argument doesn't fit
-                let expected = expected.or_else(|| match steps.get(root) {
-                    Some(Derivation::BoundPropagation) => path[root + 1].sides?.1,
-                    _ => None,
-                });
-                let (found, expected) = match expected {
-                    Some(expected) => {
-                        let (found, expected) = self.pair(found, expected);
-                        (found, Some(expected))
-                    }
-                    None => (self.subject(found), None),
-                };
-                // What fails may lie deeper than the argument's own relation, as
-                // in a binder's bound its type solves
-                let causes = self
-                    .cause(path, &steps, root, contradiction)
-                    .into_iter()
-                    .collect();
-                Problem::Argument {
-                    span: arg,
-                    found,
-                    expected,
-                    causes,
-                }
+        // A parameter whose type is left unsolved shows the bound of it that
+        // the argument doesn't fit
+        let expected = expected.or_else(|| match onward(root) {
+            Some(Derivation::BoundPropagation) => path[root + 1].sides?.1,
+            _ => None,
+        });
+        let (found, expected) = match expected {
+            Some(expected) => {
+                let (found, expected) = self.pair(found, expected);
+                (found, Some(expected))
             }
-            None => match contradiction {
-                Contradiction::Excess(index) => {
-                    Problem::ExtraArgument(args.get(index).copied().unwrap_or(span))
-                }
-                Contradiction::Missing(_) => Problem::MissingArgument(span),
-                _ => fallback,
-            },
-            Some(_) => fallback,
+            None => (self.subject(found), None),
+        };
+        // What fails may lie deeper than the argument's own relation, as in a
+        // binder's bound its type solves
+        let causes = self.cause(path, root, contradiction).into_iter().collect();
+        Problem::Argument {
+            span: arg,
+            found,
+            expected,
+            causes,
         }
     }
 
@@ -1601,19 +1617,19 @@ impl<'a> Flow<'a, '_> {
     fn cause(
         &self,
         path: &[Node],
-        steps: &[Derivation],
         start: usize,
         contradiction: Contradiction,
     ) -> Option<Vec<String>> {
+        let step = |index: usize| path[index].step.as_ref();
         let mut end = path.len();
-        while end > start + 1 && matches!(steps[end - 2], Derivation::IntrinsicBacking(_)) {
+        while end > start + 1 && matches!(step(end - 1), Some(Derivation::IntrinsicBacking(_))) {
             end -= 1;
         }
         // Whether each obligation's expected side is the found one
-        let reversed: Vec<bool> = steps[start..end - 1]
+        let reversed: Vec<bool> = path[start + 1..end]
             .iter()
-            .scan(false, |reversed, step| {
-                *reversed ^= step.reverses();
+            .scan(false, |reversed, node| {
+                *reversed ^= node.step.as_ref().is_some_and(Derivation::reverses);
                 Some(*reversed)
             })
             .collect();
@@ -1658,16 +1674,18 @@ impl<'a> Flow<'a, '_> {
         for index in (start + 1..end - 1).rev() {
             // Only steps into a type's parts are where a reader can look
             if !matches!(
-                steps[index - 1],
-                Derivation::Argument { .. }
-                    | Derivation::Parameters
-                    | Derivation::Arguments
-                    | Derivation::Return
-                    | Derivation::Input
-                    | Derivation::Output
-                    | Derivation::UnionMember(_)
-                    | Derivation::Item(_)
-                    | Derivation::Key(_)
+                step(index),
+                Some(
+                    Derivation::Argument { .. }
+                        | Derivation::Parameters
+                        | Derivation::Arguments
+                        | Derivation::Return
+                        | Derivation::Input
+                        | Derivation::Output
+                        | Derivation::UnionMember(_)
+                        | Derivation::Item(_)
+                        | Derivation::Key(_)
+                )
             ) {
                 continue;
             }
@@ -2051,7 +2069,7 @@ impl<'a> Flow<'a, '_> {
             }
             ExprKind::Fmt(_) => match self.eval(at, state, operands, expr) {
                 ty if ty == self.db.bottom() => Err(ty),
-                ty => Ok(Prepared::Fmt(ty)),
+                ty => Ok(Prepared::Fmt(ty, expr.span)),
             },
             _ => unreachable!("an item that takes an expectation"),
         }
@@ -2088,11 +2106,12 @@ impl<'a> Flow<'a, '_> {
         let raisable: Vec<Term> = held.iter().map(|held| held.term).collect();
         for held in held {
             let expected = self.held_expectation(rule, held.term, &raisable);
-            if let Prepared::Fmt(preview) = *held.prepared {
+            if let Prepared::Fmt(preview, _) = *held.prepared {
                 let expected = expected.and_then(|expected| rule.solver.reify(expected).ok());
                 let refined = self.contextual_fmt(preview, expected);
                 if refined != preview {
-                    rule.constrain(rule.closed(refined), held.term, Check::Quiet);
+                    let provenance = held.prepared.provenance();
+                    rule.constrain(rule.closed(refined), held.term, provenance);
                 }
                 continue;
             }
@@ -2132,12 +2151,11 @@ impl<'a> Flow<'a, '_> {
     /// over. In an unseeded run, it's solved alone and passed closed.
     fn sub_rule<'p>(&self, rule: &mut Rule<'_, '_, 'p>, held: Held<'p>, expected: Option<Term>) {
         let (db, gas) = (rule.db, rule.gas);
-        let lengths = (rule.checks.len(), rule.passed.len(), rule.pending.len());
+        let lengths = (rule.passed.len(), rule.pending.len());
         let logged = rule.logged.len();
         let delta = {
             let mut fork = rule.solver.fork(gas);
             let mut sub = Rule {
-                checks: std::mem::take(&mut rule.checks),
                 passed: std::mem::take(&mut rule.passed),
                 pending: std::mem::take(&mut rule.pending),
                 calls: std::mem::take(&mut rule.calls),
@@ -2153,11 +2171,12 @@ impl<'a> Flow<'a, '_> {
                 ..Rule::new(&mut fork, db, gas)
             };
             let (given, seeded) = self.held_term(&mut sub, held.prepared, expected);
+            let provenance = || held.prepared.provenance();
             if sub.seed {
                 if let Some(seeded) = seeded {
-                    sub.constrain(given, seeded, Check::Quiet);
+                    sub.constrain(given, seeded, provenance());
                 }
-                sub.constrain(given, held.term, Check::Quiet);
+                sub.constrain(given, held.term, provenance());
                 sub.seeded = true;
             }
             sub.solver.solve();
@@ -2169,9 +2188,9 @@ impl<'a> Flow<'a, '_> {
             // rule of its own would be. A `do` block's result that isn't known
             // yet is bottom, as a defaulting run takes it.
             if sub.defaulting {
-                for index in lengths.2..sub.pending.len() {
+                for index in lengths.1..sub.pending.len() {
                     let term = sub.pending[index];
-                    sub.constrain(sub.closed(db.bottom()), term, Check::Quiet);
+                    sub.constrain(sub.closed(db.bottom()), term, Provenance::default());
                 }
                 let roots = outputs(&[given], &[]);
                 default_own(sub.solver, Some(&roots));
@@ -2181,7 +2200,7 @@ impl<'a> Flow<'a, '_> {
             // the argument
             if !sub.seed {
                 let given = sub.solver.reify(given).map_or(given, |ty| sub.closed(ty));
-                sub.constrain(given, held.term, Check::Quiet);
+                sub.constrain(given, held.term, provenance());
             }
             // A value that's solved, or that only solved types are below, as a
             // call's of a function that isn't generic is, is the argument
@@ -2205,22 +2224,18 @@ impl<'a> Flow<'a, '_> {
                 })
                 .flatten();
             if let Some(exact) = exact {
-                sub.constrain(held.term, sub.closed(exact), Check::Quiet);
+                sub.constrain(held.term, sub.closed(exact), provenance());
                 // Found exactly unless what it checks of its own is left
                 // undecided, or it passes a `do` block values
                 let outcomes = sub.solver.solve();
-                let decided =
-                    sub.checks[lengths.0..]
-                        .iter()
-                        .zip(&outcomes)
-                        .all(|(check, outcome)| match outcome.status {
-                            Status::Proven => true,
-                            Status::Unresolved => matches!(check, Check::Quiet),
-                            Status::Contradicted => false,
-                        });
+                let decided = outcomes.iter().all(|outcome| match outcome.status {
+                    Status::Proven => true,
+                    Status::Unresolved => diagnosed(&outcome.provenance).is_none(),
+                    Status::Contradicted => false,
+                });
                 if decided
                     && exact != db.bottom()
-                    && (sub.passed.len(), sub.pending.len()) == (lengths.1, lengths.2)
+                    && (sub.passed.len(), sub.pending.len()) == lengths
                 {
                     let solver = &*sub.solver;
                     let reify = |term| {
@@ -2241,7 +2256,6 @@ impl<'a> Flow<'a, '_> {
                 }
             }
             let Rule {
-                checks,
                 passed,
                 pending,
                 calls,
@@ -2251,14 +2265,13 @@ impl<'a> Flow<'a, '_> {
                 ..
             } = sub;
             (
-                rule.checks,
                 rule.passed,
                 rule.pending,
                 rule.calls,
                 rule.logged,
                 rule.found,
                 rule.seeded,
-            ) = (checks, passed, pending, calls, logged, found, seeded);
+            ) = (passed, pending, calls, logged, found, seeded);
             fork.commit()
         };
         rule.solver.absorb(delta);
@@ -2291,7 +2304,7 @@ impl<'a> Flow<'a, '_> {
                 (given, None)
             }
             Prepared::Collection(collection) => self.collection_term(rule, collection, expected),
-            Prepared::Fmt(_) => unreachable!("a template is refined, not made"),
+            Prepared::Fmt(..) => unreachable!("a template is refined, not made"),
         }
     }
 
@@ -3018,7 +3031,7 @@ impl<'a> Flow<'a, '_> {
             }
         }
         let exact = probe.solver.arguments_schema(&arguments);
-        probe.constrain(exact, schema, Check::Quiet);
+        probe.constrain(exact, schema, Provenance::default());
         let contradicted = |outcomes: &[Outcome]| {
             outcomes
                 .iter()
@@ -3040,7 +3053,7 @@ impl<'a> Flow<'a, '_> {
             Candidate::Closed(ty, schema) => (rule.closed(ty), rule.closed(schema)),
             Candidate::Open(alternative) => {
                 let (argument, ty) = applied_term(rule.solver, rule.db, class, Kind::Schema);
-                rule.constrain(ty, alternative, Check::Quiet);
+                rule.constrain(ty, alternative, Provenance::default());
                 rule.solver.solve();
                 let below = |actual, expected| self.below(actual, expected);
                 let schema = expectation(rule.solver, argument, below).unwrap_or(argument);
@@ -3216,7 +3229,7 @@ impl<'a> Flow<'a, '_> {
                 rule.constrain(
                     rule.closed(value),
                     rule.closed(ty),
-                    Check::Fits(span, misfit),
+                    actual(OriginKind::Misfit(misfit), span),
                 );
             }
             vec![rule.closed(result)]
@@ -3241,7 +3254,7 @@ impl<'a> Flow<'a, '_> {
         };
         self.conclude(at, span, None, |_, rule| {
             let term = rule.lambda(&lambda, span);
-            rule.constrain(term, rule.closed(expected), Check::Quiet);
+            rule.constrain(term, rule.closed(expected), Provenance::default());
             vec![term]
         })[0]
     }
@@ -3293,8 +3306,8 @@ impl<'a> Flow<'a, '_> {
                 unreachable!("one positional argument");
             };
             let joined = rule.solver.infer();
-            rule.constrain(found, joined, Check::Quiet);
-            rule.constrain(rule.closed(present), joined, Check::Quiet);
+            rule.constrain(found, joined, Provenance::default());
+            rule.constrain(rule.closed(present), joined, Provenance::default());
             vec![joined, found]
         })[1]
     }
@@ -3305,7 +3318,8 @@ impl<'a> Flow<'a, '_> {
             return;
         }
         self.conclude(at, span, None, |_, rule| {
-            rule.constrain(rule.closed(value), rule.closed(ty), Check::Expected(span));
+            let provenance = actual(OriginKind::Expression, span);
+            rule.constrain(rule.closed(value), rule.closed(ty), provenance);
             Vec::new()
         });
     }
@@ -3594,7 +3608,7 @@ impl<'a> Flow<'a, '_> {
             };
             return Some((vec![value; items.len()], group));
         }
-        let check = Check::Fits(span, Misfit::Unpackable);
+        let check = actual(OriginKind::Misfit(Misfit::Unpackable), span);
         let pattern = self.pattern_shape(at, state, items);
         if let Some(unpacked) = self
             .solver(&Gas::default())
@@ -3787,7 +3801,7 @@ fn spread_into(
 ) {
     let Some(spread) = spread else {
         let unknown = rule.db.unknown_of(Kind::Schema);
-        rule.constrain(rule.closed(unknown), schema, Check::Quiet);
+        rule.constrain(rule.closed(unknown), schema, Provenance::default());
         return;
     };
     let target = rule.term(|holes| {
@@ -3797,15 +3811,22 @@ fn spread_into(
     rule.constrain(
         rule.closed(ty),
         target,
-        Check::Fits(span, Misfit::Spreadable),
+        actual(OriginKind::Misfit(Misfit::Spreadable), span),
     );
 }
 
-/// The derivation steps along a path, leaving out any not recorded
-fn steps(path: &[Node]) -> Vec<Derivation> {
+/// Each node's found-side origin: its actual side's, or its expected side's
+/// below an odd number of steps that reverse a relation
+fn found_origins(path: &[Node]) -> Vec<Option<Origin>> {
+    let mut reversed = false;
     path.iter()
-        .skip(1)
-        .filter_map(|node| node.step.clone())
+        .map(|node| {
+            reversed ^= node.step.as_ref().is_some_and(Derivation::reverses);
+            match reversed {
+                false => node.origins.actual.clone(),
+                true => node.origins.expected.clone(),
+            }
+        })
         .collect()
 }
 
@@ -4037,13 +4058,11 @@ fn call_constraint<'p>(
         input,
         output,
     };
-    let check = Check::Call {
-        span,
-        args: spans,
-        callee: name,
+    let kind = OriginKind::Call {
+        arguments: spans.into(),
+        callee: name.as_deref().map(alias::Box::new_str),
     };
-    let constraint = rule.solver.constrain_call(call, Provenance::default());
-    rule.checks.push(check);
+    let constraint = rule.solver.constrain_call(call, actual(kind, span));
     if rule.logging && logs {
         let obligation = rule.solver.obligation(constraint);
         rule.logged.push(Pending::Callee(obligation, span));
@@ -4081,14 +4100,16 @@ fn collection_constraint<'p>(
             };
             for placed in &values.values {
                 match placed.value {
-                    Value::Pos(ty, _) => rule.constrain(rule.closed(ty), element, Check::Quiet),
+                    Value::Pos(ty, _) => {
+                        rule.constrain(rule.closed(ty), element, Provenance::default())
+                    }
                     Value::Lambda(key, ref lambda, span) => {
                         let term = rule.lambda(lambda, span);
                         let element = match key {
                             Some(_) => rule.closed(unknown),
                             None => element,
                         };
-                        rule.constrain(term, element, Check::Quiet);
+                        rule.constrain(term, element, Provenance::default());
                     }
                     Value::Spread(ty, span) => {
                         let schema = rule.term(|holes| {
@@ -4101,7 +4122,7 @@ fn collection_constraint<'p>(
                         spread_into(rule, spread, ty, schema, span);
                     }
                     Value::Key(..) | Value::Pair(..) => {
-                        rule.constrain(rule.closed(unknown), element, Check::Quiet);
+                        rule.constrain(rule.closed(unknown), element, Provenance::default());
                     }
                     Value::Held(at, index, _) => {
                         let term = rule.hold(&values.held[index], placed.group.is_some());
@@ -4109,7 +4130,7 @@ fn collection_constraint<'p>(
                             HeldAt::Positional => element,
                             HeldAt::Keyword(_) | HeldAt::Pair(_) => rule.closed(unknown),
                         };
-                        rule.constrain(term, element, Check::Quiet);
+                        rule.constrain(term, element, Provenance::default());
                     }
                 }
             }
@@ -4123,12 +4144,16 @@ fn collection_constraint<'p>(
         Shape::Chosen(ty, schema) => {
             let (arguments, _) = rule.arguments(values, spread, span);
             let exact = rule.solver.arguments_schema(&arguments);
-            rule.constrain(exact, schema, Check::Expected(span));
+            let provenance = Provenance {
+                expected: Some(Origin::local(OriginKind::ExpectedResult, span)),
+                ..actual(OriginKind::Expression, span)
+            };
+            rule.constrain(exact, schema, provenance);
             ty
         }
         Shape::Empty => {
             let schema = rule.solver.infer_fresh(Kind::Schema, Rest::All);
-            rule.constrain_empty(schema, Check::Empty(span));
+            rule.constrain_empty(schema, actual(OriginKind::Empty, span));
             rule.term(|holes| {
                 let schema = holes.hole(schema, Kind::Schema);
                 holes.apply(class, vec![schema])
@@ -4141,8 +4166,8 @@ fn collection_constraint<'p>(
             let keys = rule.solver.infer();
             let entries = rule.solver.infer();
             let entry = |rule: &mut Rule<'_, '_, '_>, key: TypeId, value: Term| {
-                rule.constrain(rule.closed(key), keys, Check::Quiet);
-                rule.constrain(value, entries, Check::Quiet);
+                rule.constrain(rule.closed(key), keys, Provenance::default());
+                rule.constrain(value, entries, Provenance::default());
             };
             let lanes = |holes: &mut Holes<'_>, has_positional: bool, has_keyed: bool| {
                 let mut items = Vec::new();
@@ -4161,14 +4186,16 @@ fn collection_constraint<'p>(
             let symbol = |name| rule.db.intern(Type::Fresh(Literal::Sym(name)));
             for placed in &values.values {
                 match placed.value {
-                    Value::Pos(ty, _) => rule.constrain(rule.closed(ty), positional, Check::Quiet),
+                    Value::Pos(ty, _) => {
+                        rule.constrain(rule.closed(ty), positional, Provenance::default())
+                    }
                     Value::Key(name, ty, _) => entry(rule, symbol(name), rule.closed(ty)),
                     Value::Pair(key_type, ty) => entry(rule, key_type, rule.closed(ty)),
                     Value::Lambda(key, ref lambda, span) => {
                         let term = rule.lambda(lambda, span);
                         match key {
                             Some(key) => entry(rule, symbol(key), term),
-                            None => rule.constrain(term, positional, Check::Quiet),
+                            None => rule.constrain(term, positional, Provenance::default()),
                         }
                     }
                     Value::Spread(ty, span) => {
@@ -4178,7 +4205,9 @@ fn collection_constraint<'p>(
                     Value::Held(at, index, _) => {
                         let term = rule.hold(&values.held[index], placed.group.is_some());
                         match at {
-                            HeldAt::Positional => rule.constrain(term, positional, Check::Quiet),
+                            HeldAt::Positional => {
+                                rule.constrain(term, positional, Provenance::default())
+                            }
                             HeldAt::Keyword(key) => entry(rule, symbol(key), term),
                             HeldAt::Pair(key) => entry(rule, key, term),
                         }
@@ -4199,12 +4228,12 @@ fn collection_constraint<'p>(
                     }
                     Value::Pos(ty, _) => {
                         let var = rule.solver.infer();
-                        rule.constrain(rule.closed(ty), var, Check::Quiet);
+                        rule.constrain(rule.closed(ty), var, Provenance::default());
                         elements.push((None, var, Kind::Type));
                     }
                     Value::Key(key, ty, _) => {
                         let var = rule.solver.infer();
-                        rule.constrain(rule.closed(ty), var, Check::Quiet);
+                        rule.constrain(rule.closed(ty), var, Provenance::default());
                         elements.push((Some(key), var, Kind::Type));
                     }
                     Value::Spread(ty, span) => {
@@ -4215,7 +4244,7 @@ fn collection_constraint<'p>(
                     Value::Held(at, index, _) => {
                         let term = rule.hold(&values.held[index], placed.group.is_some());
                         let var = rule.solver.infer();
-                        rule.constrain(term, var, Check::Quiet);
+                        rule.constrain(term, var, Provenance::default());
                         let key = match at {
                             HeldAt::Positional => None,
                             HeldAt::Keyword(key) => Some(key),

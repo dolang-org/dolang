@@ -248,8 +248,14 @@ fn shared_reductions_preserve_each_root_and_dependency() {
             s.closed(function(&db, &[], a)),
             s.closed(function(&db, &[], b)),
             Provenance {
-                actual: Some(span_a),
-                expected: Some(span_b),
+                actual: Some(Origin {
+                    kind: OriginKind::Expression,
+                    site: Site::Declared(span_a),
+                }),
+                expected: Some(Origin {
+                    kind: OriginKind::ExpectedResult,
+                    site: Site::Declared(span_b),
+                }),
             },
         );
     }
@@ -257,9 +263,14 @@ fn shared_reductions_preserve_each_root_and_dependency() {
     assert_eq!(results.len(), 2);
     for result in results {
         assert_eq!(result.status, Status::Contradicted);
+        let provenance = &result.provenance;
         assert_eq!(
-            s.provenance(result.constraint).actual.unwrap().unit,
-            span_a.unit
+            provenance.actual.as_ref().map(|origin| origin.site),
+            Some(Site::Declared(span_a))
+        );
+        assert_eq!(
+            provenance.expected.as_ref().map(|origin| origin.site),
+            Some(Site::Declared(span_b))
         );
         let diagnostic = result
             .diagnostics

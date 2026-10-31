@@ -106,6 +106,7 @@ use std::{
 use bitvec::{bitbox, boxed::BitBox};
 pub(crate) use eval::{class_object, function_value};
 use problem::MemberUse;
+pub(super) use problem::Misfit;
 pub(crate) use problem::Problem;
 use rustc_hash::{FxHashMap, FxHashSet};
 pub(crate) use state::Fact;

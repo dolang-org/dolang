@@ -14,9 +14,9 @@ use rustc_hash::{FxBuildHasher, FxHashMap};
 
 use super::{
     Alternatives, Bases, Bounds, Constructor, DeclId, Dependency, Environment, EnvironmentId,
-    GenericMember, InferVarId, Issue, Lookup, ObligationId, ObligationLayer, Relation, Residual,
-    Root, Scope, ScopeId, Signature, Skolem, SkolemId, Solver, State, Status, Step, Term, TypeId,
-    Variable, VariableLayer, VariableState,
+    GenericMember, InferVarId, Issue, Lookup, ObligationId, ObligationLayer, Partner, Relation,
+    Residual, Root, Scope, ScopeId, Signature, Skolem, SkolemId, Solver, State, Status, Step, Term,
+    TypeId, Variable, VariableLayer, VariableState,
 };
 
 /// A work budget, shared by a solver and the solvers nested in it. Each unit of
@@ -234,7 +234,7 @@ impl<'db> Solver<'db> {
     }
 
     /// The solver this one is nested in, if it's open
-    fn open_parent(&self) -> Option<&'db Solver<'db>> {
+    pub(super) fn open_parent(&self) -> Option<&'db Solver<'db>> {
         self.parent
             .as_ref()
             .filter(|parent| parent.nesting.is_open())
@@ -619,7 +619,13 @@ impl<'db> Solver<'db> {
     }
 
     /// Record an edge from `parent` to `child`, unless it's recorded
-    pub(super) fn add_dependency(&self, parent: ObligationId, child: ObligationId, step: Step) {
+    pub(super) fn add_dependency(
+        &self,
+        parent: ObligationId,
+        child: ObligationId,
+        step: Step,
+        partner: Option<Partner>,
+    ) {
         let mut known = false;
         self.obligation_layers(parent, &mut |layer| {
             known |= layer
@@ -631,6 +637,7 @@ impl<'db> Solver<'db> {
             self.progress_mut(parent).dependencies.push(Dependency {
                 obligation: child,
                 step,
+                partner,
             });
         }
     }
@@ -1000,7 +1007,12 @@ impl<'db> Solver<'db> {
             progress.queued.set(layer.queued.get());
             *progress.active.borrow_mut() = layer.active.borrow().clone();
             for dependency in layer.dependencies.iter() {
-                self.add_dependency(id, dependency.obligation, dependency.step.clone());
+                self.add_dependency(
+                    id,
+                    dependency.obligation,
+                    dependency.step.clone(),
+                    dependency.partner,
+                );
             }
         }
         for index in 0..environments.len() {
