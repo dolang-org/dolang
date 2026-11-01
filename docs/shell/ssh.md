@@ -144,8 +144,8 @@ operations available to that identity.
 
 ## Running a Script over SSH
 
-The bundled `ssh` entrypoint compiles a local script and runs it with an SSH
-VFS context:
+The bundled `ssh` entrypoint loads a local script, bytecode, or
+[bundle](./index.md#script-bundles) and runs it with an SSH VFS context:
 
 ```
 dolang -m ssh --batch --user builder build.example.com build.dol release

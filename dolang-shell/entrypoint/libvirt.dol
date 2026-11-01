@@ -2,21 +2,21 @@ import _shell _script _boot_options args libvirt load shell
   fs:
     - Path
 
-# Resolves the target to run remotely, returning its bytecode and the program
-# the target should see as its own invocation.
+# Resolves the target to run remotely, returning a function that runs it and
+# the program the target should see as its own invocation. A script is read
+# and compiled now, before connecting.
 def load_target main target
   if main
-    let bytecode = _shell.resource "dolang.entrypoint" $target
-    if (bytecode == nil)
-      throw args.Error "unknown entrypoint: $target"
-    [bytecode, target]
+    let Bin(bytecode) = _shell.resource "dolang.entrypoint" $target
+    else throw args.Error "unknown entrypoint: $target"
+    [(do load.run(bytecode)), target]
   else
     let script = Path $target
-    let bytecode = _script.compile $script
+    let program = _script.load $script
       prelude: $_boot_options.prelude
       strict: $_boot_options.strict
       cache: $_boot_options.cache
-    [bytecode, script]
+    [program, script]
 
 def parse_env sets unsets
   let overrides = {}
@@ -67,7 +67,7 @@ args.with
     help: Arguments passed to the target script
   do |p|
     let remote_env = parse_env $p.env $p.unset_env
-    let bytecode program = load_target $p.main $p.script
+    let run_target program = load_target $p.main $p.script
     let domain = libvirt.attach $p.domain connect_uri: $p.connect_uri
 
     domain.with
@@ -77,4 +77,4 @@ args.with
         shell.with_override
           program: $program
           args: $p.script_args
-          do load.run $bytecode
+          do run_target()

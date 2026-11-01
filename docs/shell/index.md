@@ -23,7 +23,6 @@ Other options:
 
 - `-m`, `--main` -- run a bundled entrypoint instead of a script
 - `--check` -- check a script and the modules it imports without executing
-- `--compile OUTPUT` -- compile to bytecode file
 - `--module-path PATH` -- add a module search path (repeatable)
 - `--import MODULE[=NAME]` -- add a module to the prelude (repeatable)
 - `--import-item MODULE.ITEM[=NAME]` -- add a module item to the prelude
@@ -55,10 +54,18 @@ echo Hello from Do!
 Arguments after the script path are available as `shell.args`.
 The executed script path is available as `shell.program`.
 
+A script may also be precompiled bytecode, recognized by its `.dolc` extension
+or its header. `dolang -m compile bytecode` writes it:
+
+```bash
+dolang -m compile bytecode script.dol -o script.dolc
+dolang script.dolc
+```
+
 ### Checking Scripts
 
 `--check` runs the [type checker](../language/type-checking.md) on a
-script without executing it:
+script's source without executing it:
 
 ```bash
 dolang --check script.dol
@@ -87,14 +94,30 @@ The archive holds:
 
 Other members are ignored. Imports resolve inside the bundle first, then through
 the [module search paths](./modules.md#module-search-paths). Each module in the
-bundle runs once. Bytecode for `main.dol` is compiled as a script, as
-`--compile` does, and bytecode for a module is compiled in module mode under the
-module's name. Bytecode that fails verification is recompiled from its source
-when the bundle has one. `--check` and `--compile` don't accept bundles, and the
-effect of prelude options and `--strict` on a bundle is unspecified.
+bundle runs once. Bytecode for `main.dol` is compiled as a script, and bytecode
+for a module in module mode under the module's name, as
+`dolang -m compile bytecode --module` does. Bytecode that fails verification is
+recompiled from its source when the bundle has one. Sources in a bundle compile
+with no prelude, whatever the prelude options and `--strict` say, so a bundle
+runs the same however it is invoked.
 
-Archive offsets count from the start of the archive, so a bundle can be built
-with any zip tool by prepending the `#!` line:
+`dolang -m compile bundle` builds a bundle from a main module and the modules
+named with `--module NAME=PATH`, writing each source beside its bytecode:
+
+```bash
+dolang -m compile bundle src/main.dol \
+  --module util=src/util.dol \
+  --module util.net=src/util/net.dol \
+  --shebang '/usr/bin/env dolang' \
+  -o app
+```
+
+With `--shebang`, the bundle starts with that `#!` line and is made executable
+where the platform allows. The builder only compiles; run
+`dolang -m compile check` first to check types.
+
+Archive offsets count from the start of the archive, so any zip tool can build a
+bundle too, with the `#!` line prepended:
 
 ```bash
 (cd src && zip -r ../app.zip main.dol lib)

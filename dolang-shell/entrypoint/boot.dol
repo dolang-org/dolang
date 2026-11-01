@@ -42,7 +42,6 @@ def help()
     Options:
       -m, --main                              Run a bundled main entrypoint
           --check                             Check a script and its imports without executing
-          --compile <OUTPUT>                  Compile to bytecode file
           --module-path <PATH>                Add a module search path
           --import <MODULE[=NAME]>            Add a module to the prelude
           --import-item <MODULE.ITEM[=NAME]>  Add a module item to the prelude
@@ -56,7 +55,6 @@ let iter = shell.args.iter()
 let target = nil
 let main = false
 let check = false
-let output = nil
 let module_paths = []
 let prelude = {}
 let strict = false
@@ -94,19 +92,12 @@ while true
       "-m" | "--main" do
         if check
           conflict --check --main
-        if (output != nil)
-          conflict --compile --main
         main = true
         continue
       "--check" do
         if main
           conflict --check --main
         check = true
-        continue
-      "--compile" do
-        output = value "--compile <OUTPUT>"
-        if main
-          conflict --compile --main
         continue
       "--module-path" do
         module_paths.push (fs.Path(value "--module-path <PATH>"))
@@ -157,9 +148,9 @@ let _options_handler = load.import_handler do |name|
   else
     throw std.ImportError $name
 
-# Load the native-only source helpers through the bootstrap importer before a
-# filesystem importer could depend on them recursively.
-import _bundle _script
+# Load the native-only source helper through the bootstrap importer before a
+# filesystem importer could depend on it recursively.
+import _script
 
 # Filesystem modules precede bundled modules once CLI paths are known.
 resources.unregister()
@@ -176,7 +167,7 @@ def find_module name
     throw std.ImportError $name
 
 let _files = load.import_handler do |name|
-  _script.run (find_module name) mode: $name :strict :cache
+  _script.run_module (find_module name) $name :strict :cache
 let _bundled = load.import_handler $bundled_import
 
 let implicit_repl = (target == nil)
@@ -199,19 +190,8 @@ shell.with_override args: $trailing program: $identity do
     load.run $bytecode
   else
     let path = fs.Path $selected
-    let bundle = _bundle.offset $path
-    if (bundle != nil && check)
-      argument_error "--check does not support bundles"
-    if (bundle != nil && output != nil)
-      argument_error "--compile does not support bundles"
-    if let Int(offset) = bundle
-      _bundle.run $path $offset prelude: $prelude strict: $strict
-    else if check
-      if !_script.precompiled(path)
-        import _compile
-        _compile.check_script $path prelude: $prelude strict: $strict paths: (search_paths())
-    else if (output != nil)
-      let bytecode = _script.compile $path prelude: $prelude strict: $strict cache: false
-      fs.write $output $bytecode
+    if check
+      import _compile
+      _compile.check_script $path prelude: $prelude strict: $strict paths: (search_paths())
     else
       _script.run $path prelude: $prelude strict: $strict cache: $cache

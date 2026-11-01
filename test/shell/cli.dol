@@ -48,15 +48,12 @@ def shell_help_and_usage_errors()
   for arguments message = [
     (["--wat"], "unexpected argument '--wat'"),
     (["-m"], "expected a target after '--main'"),
-    (["--compile"], "a value is required for '--compile <OUTPUT>'"),
     (["--module-path"], "a value is required for '--module-path <PATH>'"),
     (["--import"], "a value is required for '--import <MODULE[=NAME]>'"),
     (["--import-item"], "a value is required for '--import-item <MODULE.ITEM[=NAME]>'"),
     (["--import-item", "item"], "--import-item requires MODULE.ITEM[=NAME]"),
     (["--check", "-m", "test"], "'--check' cannot be used with '--main'"),
-    (["-m", "--check", "test"], "'--check' cannot be used with '--main'"),
-    (["--compile", "out", "-m", "test"], "'--compile' cannot be used with '--main'"),
-    (["-m", "--compile", "out", "test"], "'--compile' cannot be used with '--main'")
+    (["-m", "--check", "test"], "'--check' cannot be used with '--main'")
   ]
     let code out err = invoke $arguments
     assert_eq $code 2
@@ -91,16 +88,6 @@ def args_rest_is_reusable()
       shell.stdout.write "$(str([...rest])) $(str([...rest]))\n"
     let code out err = invoke [str(script), "a", "b", "c"]
     assert_eq (code, out, err) (0, "[\"b\", \"c\"] [\"b\", \"c\"]\n", "")
-
-#[test]
-def check_takes_precedence_over_compile()
-  with_temp_dir do |dir|
-    let script = (dir / "main.dol")
-    let output = (dir / "out.dolc")
-    script.write "throw std.RuntimeError should-not-run\n"
-    let code out err = invoke ["--compile", str(output), "--check", str(script)]
-    assert_eq (code, out, err) (0, "", "")
-    assert_eq $output.exists() false
 
 #[test]
 def module_paths_preserve_order_and_modules_have_no_cli_prelude()

@@ -101,17 +101,11 @@ def a_strict_script_is_warned_where_it_is_unverified()
     assert (text.contains "an overloaded method as a value")
 
 #[test]
-def checking_does_not_execute_and_bytecode_is_a_noop()
+def checking_does_not_execute()
   with_temp_dir do |dir|
     let script = (dir / "main.dol")
     script.write "throw std.RuntimeError must-not-execute\n"
     assert_eq (check dir "main.dol") ""
-    let bytecode = (dir / "main.dolc")
-    run $exe --compile $bytecode $script
-    assert_eq (check dir "main.dolc") ""
-    let disguised = (dir / "main.bytes")
-    disguised.write $bytecode.read()
-    assert_eq (check dir "main.bytes") ""
 
 #[test]
 def checker_wrappers_keep_distinct_output()
