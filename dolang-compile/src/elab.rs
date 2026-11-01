@@ -971,6 +971,20 @@ pub(crate) struct Elaborater<'a> {
     alts: Vec<AltFrame>,
 }
 
+/// Where a pattern's bindings land, relative to where it is tested
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum PatternSite {
+    /// In the current scope
+    Local,
+    /// In the current scope, as module exports (`pub let`)
+    Export,
+    /// In a branch's own scope, entered after the test. The pattern's classes
+    /// are looked up there, so that naming one of its own bindings is
+    /// diagnosed, but resolved as if from the enclosing scope, where the test
+    /// runs.
+    Branch,
+}
+
 enum ScopeKind {
     Normal,
     Element,
@@ -2411,7 +2425,12 @@ impl<'a> Elaborater<'a> {
         }
     }
 
-    fn bind_ident(&mut self, scope: &mut Scope<'_>, ident: &mut Ident, export: bool) -> Result<()> {
+    fn bind_ident(
+        &mut self,
+        scope: &mut Scope<'_>,
+        ident: &mut Ident,
+        site: PatternSite,
+    ) -> Result<()> {
         let id = self
             .symtab
             .id(&self.bintab.id_str(self.file.str(ident.span)));
@@ -2454,6 +2473,7 @@ impl<'a> Elaborater<'a> {
             }
             None => None,
         };
+        let export = site == PatternSite::Export;
         let index = index
             .unwrap_or_else(|| scope.insert(id, Origin::Source(ident.span), self.epoch, export));
         if !wildcard {
@@ -2477,7 +2497,7 @@ impl<'a> Elaborater<'a> {
         &mut self,
         scope: &mut Scope<'_>,
         alt: &mut Alternation,
-        export: bool,
+        site: PatternSite,
     ) -> Result<()> {
         let names = scope.names();
         self.alts.push(AltFrame::default());
@@ -2487,7 +2507,7 @@ impl<'a> Elaborater<'a> {
             frame.current = current;
             frame.seen.clear();
             scope.restore_names(names.clone());
-            result = self.visit_pattern_inner(scope, pattern, export);
+            result = self.visit_pattern_inner(scope, pattern, site);
             if result.is_err() {
                 break;
             }
@@ -2563,7 +2583,12 @@ impl<'a> Elaborater<'a> {
             return Ok(());
         }
 
-        self.visit_pattern(scope, &mut node.bind, node.pub_span.is_some())?;
+        let site = if node.pub_span.is_some() {
+            PatternSite::Export
+        } else {
+            PatternSite::Local
+        };
+        self.visit_pattern(scope, &mut node.bind, site)?;
         Ok(())
     }
 
@@ -2572,7 +2597,7 @@ impl<'a> Elaborater<'a> {
         if let Some((body, _)) = &mut node.else_branch {
             self.visit_block(scope, body)?;
         }
-        self.visit_pattern(scope, &mut node.bind, false)?;
+        self.visit_pattern(scope, &mut node.bind, PatternSite::Local)?;
         Ok(())
     }
 
@@ -2599,9 +2624,9 @@ impl<'a> Elaborater<'a> {
         &mut self,
         scope: &mut Scope<'_>,
         pat: &mut Pattern,
-        export: bool,
+        site: PatternSite,
     ) -> Result<()> {
-        let result = self.visit_pattern_inner(scope, pat, export);
+        let result = self.visit_pattern_inner(scope, pat, site);
         scope.finish_pattern();
         result
     }
@@ -2610,7 +2635,7 @@ impl<'a> Elaborater<'a> {
         &mut self,
         scope: &mut Scope<'_>,
         pat: &mut Pattern,
-        export: bool,
+        site: PatternSite,
     ) -> Result<()> {
         match pat {
             Pattern::Constant { .. } => Ok(()),
@@ -2625,7 +2650,12 @@ impl<'a> Elaborater<'a> {
                         binding_span,
                     });
                 }
-                self.visit_pattern_inner(scope, &mut test.pattern, export)
+                if site == PatternSite::Branch
+                    && let Some(res) = &mut test.class.ident.res
+                {
+                    res.depth = res.depth.saturating_sub(1);
+                }
+                self.visit_pattern_inner(scope, &mut test.pattern, site)
             }
             Pattern::Ident(PatIdent { ident, default, .. }) => {
                 if let Some(default) = default
@@ -2633,9 +2663,9 @@ impl<'a> Elaborater<'a> {
                 {
                     self.visit_expr(scope, &mut default.expr, false)?;
                 }
-                self.bind_ident(scope, ident, export)
+                self.bind_ident(scope, ident, site)
             }
-            Pattern::Alt(alt) => self.visit_alternation(scope, alt, export),
+            Pattern::Alt(alt) => self.visit_alternation(scope, alt, site),
             Pattern::Unpack(params) => {
                 for param in params.iter_mut() {
                     self.visit_param_non_const_default(scope, param)?;
@@ -2643,14 +2673,14 @@ impl<'a> Elaborater<'a> {
                         PatItem::Pos { bind, .. }
                         | PatItem::Key { bind, .. }
                         | PatItem::ConstKey { bind, .. } => match bind {
-                            PatBind::Ident(ident) => self.bind_ident(scope, ident, export)?,
+                            PatBind::Ident(ident) => self.bind_ident(scope, ident, site)?,
                             PatBind::Nested { pattern, .. } => {
-                                self.visit_pattern_inner(scope, pattern, export)?
+                                self.visit_pattern_inner(scope, pattern, site)?
                             }
                         },
                         PatItem::Rest { ident, .. } => {
                             if let Some(ident) = ident {
-                                self.bind_ident(scope, ident, export)?
+                                self.bind_ident(scope, ident, site)?
                             }
                         }
                     }
@@ -2671,7 +2701,7 @@ impl<'a> Elaborater<'a> {
     /// The bindings land at the front of the scope, which lowering relies on to
     /// resolve them positionally.
     fn bind_pattern(&mut self, scope: &mut Scope<'_>, pattern: &mut Pattern) -> Result<()> {
-        self.visit_pattern(scope, pattern, false)
+        self.visit_pattern(scope, pattern, PatternSite::Local)
     }
 
     /// Visit the body of an `if` or `while` branch, injecting the bindings of its
@@ -2692,7 +2722,7 @@ impl<'a> Elaborater<'a> {
             scope.nested()
         };
         if let Some(bind) = bind {
-            self.bind_pattern(&mut inner, &mut bind.pattern)?;
+            self.visit_pattern(&mut inner, &mut bind.pattern, PatternSite::Branch)?;
         }
         self.visit_block_inner(&mut inner, body)?;
         inner.finish(self, &mut body.vars);
@@ -2752,7 +2782,7 @@ impl<'a> Elaborater<'a> {
     ) -> Result<()> {
         let mut inner = scope.nested_element();
         if let Some(bind) = bind {
-            self.bind_pattern(&mut inner, &mut bind.pattern)?;
+            self.visit_pattern(&mut inner, &mut bind.pattern, PatternSite::Branch)?;
         }
         for elem in body.elems.iter_mut() {
             visit_elem(self, &mut inner, elem, is_arg)?;
@@ -2806,7 +2836,7 @@ impl<'a> Elaborater<'a> {
 
         for arm in &mut node.arms {
             let mut inner = scope.nested();
-            self.bind_pattern(&mut inner, &mut arm.pattern)?;
+            self.visit_pattern(&mut inner, &mut arm.pattern, PatternSite::Branch)?;
             if let Some(guard) = &mut arm.guard {
                 self.visit_expr(&mut inner, &mut guard.expr, false)?;
                 if let Some(bind) = &mut guard.bind {
@@ -3534,7 +3564,7 @@ impl<'a> Elaborater<'a> {
                 | PatItem::ConstKey { bind, .. } => match bind {
                     PatBind::Ident(ident) => Some(ident),
                     PatBind::Nested { pattern, .. } => {
-                        self.visit_pattern_inner(scope, pattern, false)?;
+                        self.visit_pattern_inner(scope, pattern, PatternSite::Local)?;
                         None
                     }
                 },
@@ -3725,7 +3755,7 @@ impl<'a> Elaborater<'a> {
                 | PatItem::ConstKey { bind, .. } => match bind {
                     PatBind::Ident(ident) => Some(ident),
                     PatBind::Nested { pattern, .. } => {
-                        self.visit_pattern_inner(&mut scope, pattern, false)?;
+                        self.visit_pattern_inner(&mut scope, pattern, PatternSite::Local)?;
                         None
                     }
                 },

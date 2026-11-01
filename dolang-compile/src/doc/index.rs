@@ -955,6 +955,7 @@ impl Index<'_> {
         for (i, param) in func.params.iter_mut().enumerate() {
             self.param(&inner, param, true, false, method && i == 0, None);
         }
+        self.items_classes(&inner, &mut func.params);
         for (kind, implicit) in [
             (ImplicitKind::In, &mut func.input),
             (ImplicitKind::Out, &mut func.output),
@@ -1049,6 +1050,38 @@ impl Index<'_> {
         self.annot(scope, id, ty);
     }
 
+    /// Index the classes of a pattern's type tests, which run in `scope`, the
+    /// current scope, wherever the pattern binds
+    fn pattern_classes(&mut self, scope: &Scope<'_>, pattern: &mut Pattern) {
+        match pattern {
+            Pattern::Constant { .. } | Pattern::Ident(_) => {}
+            Pattern::TypeTest(test) => {
+                self.reference(scope, &mut test.class.ident);
+                self.pattern_classes(scope, &mut test.pattern);
+            }
+            Pattern::Unpack(items) => self.items_classes(scope, items),
+            Pattern::Alt(alt) => {
+                for pattern in &mut alt.alts {
+                    self.pattern_classes(scope, pattern);
+                }
+            }
+        }
+    }
+
+    /// [`Self::pattern_classes`] for the sub-patterns of unpacked items
+    fn items_classes(&mut self, scope: &Scope<'_>, items: &mut [PatItem]) {
+        for item in items {
+            if let PatItem::Pos { bind, .. }
+            | PatItem::Key { bind, .. }
+            | PatItem::ConstKey { bind, .. } = item
+                && let PatBind::Nested { pattern, .. } = bind
+            {
+                self.pattern_classes(scope, pattern);
+            }
+        }
+    }
+
+    /// Index the bindings of a pattern, which land in `scope`
     fn pattern(
         &mut self,
         scope: &Scope<'_>,
@@ -1058,10 +1091,7 @@ impl Index<'_> {
     ) {
         match pattern {
             Pattern::Constant { .. } => {}
-            Pattern::TypeTest(test) => {
-                self.reference(scope, &mut test.class.ident);
-                self.pattern(scope, &mut test.pattern, is_pub, extent);
-            }
+            Pattern::TypeTest(test) => self.pattern(scope, &mut test.pattern, is_pub, extent),
             Pattern::Ident(PatIdent { ident, ty, default }) => {
                 if let Some(default) = default {
                     self.expr(scope, &mut default.expr);
@@ -1110,6 +1140,7 @@ impl Index<'_> {
                     let else_span = *else_span | body.span();
                     self.branch(scope, &mut **body, None, Kind::Else, else_span, Self::block);
                 }
+                self.pattern_classes(scope, &mut node.bind);
                 self.pattern(scope, &mut node.bind, node.pub_span.is_some(), Some(span));
             }
             Stmt::Bind(node) => {
@@ -1119,6 +1150,7 @@ impl Index<'_> {
                     let else_span = *else_span | body.span();
                     self.branch(scope, &mut **body, None, Kind::Else, else_span, Self::block);
                 }
+                self.pattern_classes(scope, &mut node.bind);
                 self.pattern(scope, &mut node.bind, false, Some(span));
             }
             Stmt::Assign(node) => {
@@ -1337,11 +1369,13 @@ impl Index<'_> {
                 for arm in &mut node.arms {
                     let span = arm.span();
                     let id = self.push(scope, Kind::Arm, span);
+                    self.pattern_classes(scope, &mut arm.pattern);
                     let inner = scope.nested(&mut arm.body.vars, Some(id));
                     self.pattern(&inner, &mut arm.pattern, false, None);
                     if let Some(guard) = &mut arm.guard {
                         self.expr(&inner, &mut guard.expr);
                         if let Some(bind) = &mut guard.bind {
+                            self.pattern_classes(&inner, &mut bind.pattern);
                             self.pattern(&inner, &mut bind.pattern, false, None);
                         }
                     }
@@ -1379,12 +1413,18 @@ impl Index<'_> {
         &mut self,
         scope: &Scope<'_>,
         body: &mut T,
-        pattern: Option<&mut Pattern>,
+        mut pattern: Option<&mut Pattern>,
         kind: Kind,
         span: Span,
         visit: fn(&mut Self, &Scope<'_>, &mut [T::Element]),
     ) {
         let is_loop = matches!(kind, Kind::While | Kind::For);
+        // A `for` matches its pattern in its body, as a `let` in it would; a
+        // condition is tested before its branch is entered
+        let is_for = matches!(kind, Kind::For | Kind::ForElem);
+        if !is_for && let Some(pattern) = pattern.as_deref_mut() {
+            self.pattern_classes(scope, pattern);
+        }
         let id = self.push(scope, kind, span);
         let (vars, elems) = body.parts();
         let mut inner = scope.nested(vars, Some(id));
@@ -1392,6 +1432,9 @@ impl Index<'_> {
             inner.loop_target = Some(id);
         }
         if let Some(pattern) = pattern {
+            if is_for {
+                self.pattern_classes(&inner, pattern);
+            }
             self.pattern(&inner, pattern, false, None);
         }
         visit(self, &inner, elems);

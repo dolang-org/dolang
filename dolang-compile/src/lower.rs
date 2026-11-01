@@ -58,7 +58,7 @@ enum Defaults<'a> {
 /// The prologue bindings a branch body needs: how to bind the values the
 /// terminator left on the operand stack, and the pattern carrying any
 /// non-constant defaults.
-type Binds<'a> = (Option<BindPlan>, Option<Defaults<'a>>);
+type Binds<'a> = (Option<Prologue<'a>>, Option<Defaults<'a>>);
 
 /// How to bind the values an unpack leaves on the operand stack.
 ///
@@ -125,8 +125,16 @@ enum Slot<'a> {
     Optional(&'a Pattern),
 }
 
+/// How a body's prologue binds the values its entry left on the operand stack
+enum Prologue<'a> {
+    /// As planned where the values were tested
+    Plan(BindPlan),
+    /// By matching a pattern in the body, as a loop binds each iteration
+    Pattern(&'a Pattern),
+}
+
 struct Params<'a> {
-    bind: Option<BindPlan>,
+    bind: Option<Prologue<'a>>,
     bind_params: Option<Defaults<'a>>,
     mode: Mode<'a>,
     is_top_level: bool,
@@ -1067,14 +1075,13 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     &body.vars,
                 );
                 let bodyid = self.graph.alloc_block(self.block.func, bscope);
-                let binds = self.pattern_plan(self.graph.scope(bscope), bind)?;
                 let bind_params = Some(Defaults::Pattern(bind));
                 // FIXME: include span of keyword, not of block
                 self.queue(Work {
                     bb: bodyid,
                     ast: WorkAst::DictElems(&body.elems),
                     params: Params {
-                        bind: Some(binds),
+                        bind: Some(Prologue::Pattern(bind)),
                         bind_params,
                         mode: self.params.mode.clone(),
                         is_top_level: false,
@@ -1157,14 +1164,13 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     &body.vars,
                 );
                 let bodyid = self.graph.alloc_block(self.block.func, bscope);
-                let binds = self.pattern_plan(self.graph.scope(bscope), bind)?;
                 let bind_params = Some(Defaults::Pattern(bind));
                 // FIXME: include span of keyword, not of block
                 self.queue(Work {
                     bb: bodyid,
                     ast: WorkAst::ArrayElems(&body.elems),
                     params: Params {
-                        bind: Some(binds),
+                        bind: Some(Prologue::Pattern(bind)),
                         bind_params,
                         mode: self.params.mode.clone(),
                         is_top_level: false,
@@ -1249,14 +1255,13 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     &body.vars,
                 );
                 let bodyid = self.graph.alloc_block(self.block.func, bscope);
-                let binds = self.pattern_plan(self.graph.scope(bscope), bind)?;
                 let bind_params = Some(Defaults::Pattern(bind));
                 // FIXME: include span of keyword, not of block
                 self.queue(Work {
                     bb: bodyid,
                     ast: WorkAst::Args(&body.elems),
                     params: Params {
-                        bind: Some(binds),
+                        bind: Some(Prologue::Pattern(bind)),
                         bind_params,
                         mode: self.params.mode.clone(),
                         is_top_level: false,
@@ -1350,9 +1355,13 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 vars: vec![Some(self.resolve_var(res.index, res.depth))],
             }
         } else {
-            self.lower_cond_test(pattern, scope, success, failed, span)?
+            match self
+                .lower_cond_test(pattern, scope, success, failed, span)?
                 .0
-                .unwrap()
+            {
+                Some(Prologue::Plan(plan)) => plan,
+                _ => unreachable!("a tested pattern leaves a plan"),
+            }
         };
         self.switch(success);
         self.lower_bind_plan(plan, span);
@@ -1365,7 +1374,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
     fn lower_pattern(&mut self, bind: &'a Pattern, want_result: bool) -> Result<()> {
         let span = bind.span();
-        let plan = self.pattern_plan(self.graph.scope(self.block.scope), bind)?;
+        let plan = self.pattern_plan(bind)?;
         self.lower_bind_plan(plan, span);
         self.lower_pattern_defaults(bind, span)?;
         if want_result {
@@ -1464,10 +1473,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             let res = ident.res.as_ref().expect("unresolved pattern binding");
             let var = self.resolve_var_in_scope(self.graph.scope(bscope), res.index, res.depth);
             return Ok((
-                Some(BindPlan {
+                Some(Prologue::Plan(BindPlan {
                     steps: Vec::new(),
                     vars: vec![Some(var)],
-                }),
+                })),
                 None,
             ));
         }
@@ -1485,7 +1494,9 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         fid: cfg::BlockId,
         span: Span,
     ) -> Result<Binds<'a>> {
-        let BindPlan { steps, vars } = self.pattern_plan(self.graph.scope(bscope), pattern)?;
+        // The test runs here, and the body binds what it leaves in `bscope`
+        let BindPlan { steps, vars } =
+            self.plan_slots(self.graph.scope(bscope), vec![Slot::Pattern(pattern)])?;
         let test = self.bb;
         let fail = Fail::Goto {
             target: fid,
@@ -1496,10 +1507,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         self.link(tid);
         self.switch(test);
         Ok((
-            Some(BindPlan {
+            Some(Prologue::Plan(BindPlan {
                 steps: Vec::new(),
                 vars,
-            }),
+            })),
             Some(Defaults::Pattern(pattern)),
         ))
     }
@@ -1711,7 +1722,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     /// continues at `next`
     fn branch_params(
         &self,
-        bind: Option<BindPlan>,
+        bind: Option<Prologue<'a>>,
         bind_params: Option<Defaults<'a>>,
         next: cfg::BlockId,
     ) -> Params<'a> {
@@ -2023,14 +2034,13 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             &node.body.vars,
         );
         let bodyid = self.graph.alloc_block(self.block.func, bscope);
-        let binds = self.pattern_plan(self.graph.scope(bscope), &node.bind)?;
         let bind_params = Some(Defaults::Pattern(&node.bind));
         // FIXME: include span of keyword, not of block
         self.queue(Work {
             bb: bodyid,
             ast: WorkAst::Block(&node.body, false),
             params: Params {
-                bind: Some(binds),
+                bind: Some(Prologue::Pattern(&node.bind)),
                 bind_params,
                 mode: self.params.mode.clone(),
                 is_top_level: false,
@@ -3211,8 +3221,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
     fn lower_function(&mut self, function: &'a Function, sig: sig::UnpackId) -> Result<()> {
         // Compute order in which to move arguments into locals or upvars
-        self.params.bind =
-            Some(self.bind_plan(self.graph.scope(self.block.scope), &function.params, sig)?);
+        self.params.bind = Some(Prologue::Plan(self.bind_plan(&function.params, sig)?));
         self.params.bind_params = Some(Defaults::Items(&function.params));
         self.lower_block(&function.body, true, function.stub_span, None)?;
         Ok(())
@@ -3324,12 +3333,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
     /// Plan the binding of the values an unpack with `sig` leaves on the operand
     /// stack for `items`, unpacking sub-patterns in turn.
-    fn bind_plan(
-        &mut self,
-        scope: cfg::ScopeRef<'a>,
-        items: &'a [PatItem],
-        sig: sig::UnpackId,
-    ) -> Result<BindPlan> {
+    fn bind_plan(&mut self, items: &'a [PatItem], sig: sig::UnpackId) -> Result<BindPlan> {
+        let scope = self.graph.scope(self.block.scope);
         let stack = self.unpack_order_in_scope(cfg::ScopeRef::clone(&scope), items, sig);
         self.plan_slots(scope, stack)
     }
@@ -3385,10 +3390,16 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         }
     }
 
-    fn pattern_plan(&mut self, scope: cfg::ScopeRef<'a>, pattern: &'a Pattern) -> Result<BindPlan> {
-        self.plan_slots(scope, vec![Slot::Pattern(pattern)])
+    /// Plan matching `pattern`, binding in the current scope
+    fn pattern_plan(&mut self, pattern: &'a Pattern) -> Result<BindPlan> {
+        self.plan_slots(
+            self.graph.scope(self.block.scope),
+            vec![Slot::Pattern(pattern)],
+        )
     }
 
+    /// Plan matching the values `stack` describes, with tests that run in the
+    /// current scope, binding in `scope`
     fn plan_slots(
         &mut self,
         scope: cfg::ScopeRef<'a>,
@@ -3471,11 +3482,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         .res
                         .as_ref()
                         .expect("unresolved pattern class");
-                    let var = self.resolve_var_in_scope(
-                        cfg::ScopeRef::clone(&scope),
-                        res.index,
-                        res.depth,
-                    );
+                    let var = self.resolve_var(res.index, res.depth);
                     let fields = test
                         .class
                         .fields
@@ -3882,8 +3889,13 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     /// Bind the values the body's caller left on the operand stack, as the body's
     /// prologue.
     fn lower_prologue_bind(&mut self, span: Span) -> Result<()> {
-        if let Some(plan) = self.params.bind.take() {
-            self.lower_bind_plan(plan, span);
+        match self.params.bind.take() {
+            Some(Prologue::Plan(plan)) => self.lower_bind_plan(plan, span),
+            Some(Prologue::Pattern(pattern)) => {
+                let plan = self.pattern_plan(pattern)?;
+                self.lower_bind_plan(plan, span);
+            }
+            None => {}
         }
         match self.params.bind_params {
             Some(Defaults::Items(params)) => self.lower_non_const_defaults(params, span)?,

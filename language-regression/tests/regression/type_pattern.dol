@@ -180,3 +180,74 @@ assert_eq $selected 18
 def defaulted C = std.Int get = (do |x = 1| [C, x])
   get()
 assert_eq (defaulted()) [std.Int, 1]
+
+# A conditional pattern is tested before its branch is entered, so its class
+# is found from there, however the branch captures. Each class here is itself
+# captured, so a misplaced lookup would find another variable.
+def classify value
+  let C = std.Int
+  let _keep = (do C)
+  if let C(n) = value
+    let get = (do n)
+    return "int $(get())"
+  else if let Str(s) = value
+    let get = (do s)
+    return "str $(get())"
+  "other"
+assert_eq (classify 1) "int 1"
+assert_eq (classify "a") "str a"
+assert_eq (classify nil) "other"
+
+def arm value
+  let C = std.Int
+  let _keep = (do C)
+  match value
+    C(n) do
+      let get = (do n)
+      get()
+    _ do nil
+assert_eq (arm 2) 2
+assert_eq (arm "b") nil
+
+def drain items
+  let C = std.Int
+  let _keep = (do C)
+  let index = 0
+  let out = []
+  while let C(n) = items[index]
+    let get = (do n)
+    out.push (get())
+    index = (index + 1)
+  out
+assert_eq (drain [1, 2, "x"]) [1, 2]
+
+def elems value
+  let C = std.Int
+  let _keep = (do C)
+  $
+    if let C(n) = value
+      - (do n)
+let got = (elems 5)
+let first = got[0]
+assert_eq (first()) 5
+assert_eq (elems "c") []
+
+# A loop's pattern binds in its body, where its class is found.
+def collect items
+  let C = std.Int
+  let _keep = (do C)
+  let out = []
+  for C(n) = items
+    let get = (do n)
+    out.push (get())
+  out
+assert_eq (collect [3, 4]) [3, 4]
+
+# A non-local return gives the branch a capture of its own.
+def guarded x
+  if let std.Int(_y) = x
+    try
+      return (do x)
+  nil
+let g = (guarded 6)
+assert_eq (g()) 6
