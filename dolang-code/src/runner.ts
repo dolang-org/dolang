@@ -2,6 +2,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
 import { splitArgs } from "./args";
+import type { DoLanguageServer } from "./lsp";
 import { resolveExecutionTools } from "./tools";
 
 export const TASK_TYPE = "dolang";
@@ -15,6 +16,8 @@ export interface DoTaskDefinition extends vscode.TaskDefinition {
 
 export interface ScriptTaskOptions {
     readonly dolang: string;
+    /** `dolang` options that go before the script, such as its module path */
+    readonly options?: readonly string[];
     readonly script: string;
     readonly args: readonly string[];
     readonly cwd: string;
@@ -36,7 +39,7 @@ export function buildScriptTask(options: ScriptTaskOptions): vscode.Task {
     };
     const execution = new vscode.ProcessExecution(
         options.dolang,
-        [options.script, ...options.args],
+        [...(options.options ?? []), options.script, ...options.args],
         {
             cwd: options.cwd
         }
@@ -84,10 +87,16 @@ export class DoScriptRunner implements vscode.TaskProvider {
 
     private readonly context: vscode.ExtensionContext;
     private readonly log: vscode.LogOutputChannel;
+    private readonly server: DoLanguageServer;
 
-    constructor(context: vscode.ExtensionContext, log: vscode.LogOutputChannel) {
+    constructor(
+        context: vscode.ExtensionContext,
+        log: vscode.LogOutputChannel,
+        server: DoLanguageServer
+    ) {
         this.context = context;
         this.log = log;
+        this.server = server;
     }
 
     /** Runs the script at `uri`, or the active editor's document. */
@@ -105,8 +114,10 @@ export class DoScriptRunner implements vscode.TaskProvider {
         }
         const { shell } = await this.resolveExecutionTools();
         const folder = vscode.workspace.getWorkspaceFolder(target.uri);
+        const options = prepared.project ? await this.server.modulePathArgs(prepared.project) : [];
         const task = buildScriptTask({
             dolang: shell.path,
+            options,
             script: prepared.script,
             args,
             cwd: prepared.cwd,
@@ -184,8 +195,10 @@ export class DoScriptRunner implements vscode.TaskProvider {
             return undefined;
         }
         const { shell } = await this.resolveExecutionTools();
+        const options = await this.server.modulePathArgs(vscode.Uri.file(script));
         return buildScriptTask({
             dolang: shell.path,
+            options,
             script,
             args: definition.args ?? [],
             cwd,
@@ -216,11 +229,14 @@ export class DoScriptRunner implements vscode.TaskProvider {
         return { uri: editor.document.uri, document: editor.document };
     }
 
-    /** Saves or materializes the document, returning the file to run. */
+    /**
+     * Saves or materializes the document, returning the file to run, and
+     * where to look for its project.
+     */
     private async prepare(target: {
         uri: vscode.Uri;
         document?: vscode.TextDocument;
-    }): Promise<{ script: string; cwd: string } | undefined> {
+    }): Promise<{ script: string; cwd: string; project?: vscode.Uri } | undefined> {
         const { uri, document } = target;
         if (uri.scheme === "untitled") {
             if (!document) {
@@ -239,9 +255,8 @@ export class DoScriptRunner implements vscode.TaskProvider {
                 );
                 return undefined;
             }
-            const folders = vscode.workspace.workspaceFolders;
-            const cwd = folders && folders.length > 0 ? folders[0].uri.fsPath : dir;
-            return { script, cwd };
+            const folder = vscode.workspace.workspaceFolders?.[0];
+            return { script, cwd: folder?.uri.fsPath ?? dir, project: folder?.uri };
         }
         if (uri.scheme !== "file") {
             vscode.window.showErrorMessage(
@@ -256,7 +271,7 @@ export class DoScriptRunner implements vscode.TaskProvider {
             vscode.window.showErrorMessage(`Failed to save ${path.basename(uri.fsPath)}`);
             return undefined;
         }
-        return { script: uri.fsPath, cwd: path.dirname(uri.fsPath) };
+        return { script: uri.fsPath, cwd: path.dirname(uri.fsPath), project: uri };
     }
 
     private async resolveExecutionTools() {

@@ -8,9 +8,9 @@ let server: DoLanguageServer | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     const log = vscode.window.createOutputChannel("Do", { log: true });
-    const runner = new DoScriptRunner(context, log);
-    const shell = new DoInteractiveShell(context, log);
     const languageServer = new DoLanguageServer(context, log);
+    const runner = new DoScriptRunner(context, log, languageServer);
+    const shell = new DoInteractiveShell(context, log, languageServer);
     server = languageServer;
     const ignore = (promise: Promise<void>): void => {
         void promise.catch(() => undefined);

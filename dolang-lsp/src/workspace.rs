@@ -49,7 +49,12 @@ pub(crate) struct Workspaces {
 impl Workspaces {
     /// The workspace of the document at `path`, created unless one is live.
     pub(crate) fn open(&mut self, path: &Path) -> Arc<Workspace> {
-        let root = root(path);
+        self.open_dir(path.parent().unwrap_or(path))
+    }
+
+    /// The workspace of the documents in `dir`, created unless one is live.
+    pub(crate) fn open_dir(&mut self, dir: &Path) -> Arc<Workspace> {
+        let root = root(dir);
         if let Some(workspace) = self.table.get(&root).and_then(Weak::upgrade) {
             return workspace;
         }
@@ -112,11 +117,10 @@ impl Workspaces {
     }
 }
 
-/// A document's workspace root: the nearest directory above it with a
-/// `.git`, whether a repository's directory or a submodule's or worktree's
-/// file, else its own directory.
-fn root(path: &Path) -> PathBuf {
-    let dir = path.parent().unwrap_or(path);
+/// The workspace root of the documents in `dir`: the nearest of it and its
+/// ancestors with a `.git`, whether a repository's directory or a submodule's
+/// or worktree's file, else `dir`.
+fn root(dir: &Path) -> PathBuf {
     dir.ancestors()
         .find(|dir| fs::symlink_metadata(dir.join(".git")).is_ok())
         .unwrap_or(dir)
@@ -304,6 +308,22 @@ fn index<'a>(
 }
 
 impl Workspace {
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// The directories of the module path that exist now, in order.
+    pub(crate) fn module_dirs(&self) -> Vec<PathBuf> {
+        self.modules().map_or_else(Vec::new, |modules| {
+            modules
+                .roots()
+                .iter()
+                .filter(|root| root.is_dir())
+                .cloned()
+                .collect()
+        })
+    }
+
     /// The module the document at `path` is on the module path, if it is.
     pub(crate) fn module_of(&self, path: &Path) -> Option<String> {
         self.modules()?.module_of(path)
@@ -870,16 +890,10 @@ mod tests {
         let module = workspaces.open(&tree.0.join("sub/module/lib/a.dol"));
         assert_eq!(module.root, tree.0.join("sub/module"));
 
-        // With no repository, a document's own directory
-        let loose = Directory::new();
-        let script = workspaces.open(&loose.0.join("a/b.dol"));
-        assert_eq!(script.root, loose.0.join("a"));
-
         // A change to a configuration retires the workspaces containing it
         workspaces.retire(&tree.0.join("nested"));
         assert!(!workspaces.current(&main));
         assert!(workspaces.current(&module));
-        assert!(workspaces.current(&script));
         workspaces.retire(&tree.0.join("sub/module/x"));
         assert!(!workspaces.current(&module));
         let reopened = workspaces.open(&tree.0.join("main.dol"));
@@ -888,6 +902,19 @@ mod tests {
         // Once nothing holds a workspace, it's gone
         drop((main, other, nested, reopened));
         assert!(workspaces.live().all(|live| live.root != tree.0));
+
+        // With no repository, a document's own directory.  That needs a
+        // scratch directory no repository encloses, which a temporary
+        // directory under a checkout, or a stray `C:\.git` under Wine, isn't.
+        let loose = Directory::new();
+        let enclosed = loose
+            .0
+            .ancestors()
+            .any(|dir| fs::symlink_metadata(dir.join(".git")).is_ok());
+        if !enclosed {
+            let script = workspaces.open(&loose.0.join("a/b.dol"));
+            assert_eq!(script.root, loose.0.join("a"));
+        }
     }
 
     #[test]
@@ -952,7 +979,7 @@ mod tests {
 
     #[test]
     fn checks_gather_the_closure_of_unchecked_members() {
-        let tree = Directory::new();
+        let tree = Directory::repo();
         library(&tree);
         let a = tree.write("lib/a.dol", "import b\n");
         let b = tree.write("lib/b.dol", "");
@@ -987,7 +1014,7 @@ mod tests {
 
     #[test]
     fn checks_stay_valid_while_their_imports_look_up_the_same() {
-        let tree = Directory::new();
+        let tree = Directory::repo();
         library(&tree);
         let a = tree.write("lib/a.dol", "import b\n");
         let b = tree.write("lib/b.dol", "");
@@ -1029,7 +1056,7 @@ mod tests {
 
     #[test]
     fn loaded_members_stay_while_an_open_document_imports_them() {
-        let tree = Directory::new();
+        let tree = Directory::repo();
         library(&tree);
         let a = tree.write("lib/a.dol", "");
         let main = tree.0.join("main.dol");
@@ -1058,7 +1085,7 @@ mod tests {
 
     #[test]
     fn missing_modules_are_looked_for_again() {
-        let tree = Directory::new();
+        let tree = Directory::repo();
         library(&tree);
         tree.write("lib/a.dol", "");
         let main = tree.0.join("main.dol");
@@ -1073,7 +1100,7 @@ mod tests {
 
     #[test]
     fn checks_of_replaced_members_are_passed_over() {
-        let tree = Directory::new();
+        let tree = Directory::repo();
         let main = tree.0.join("main.dol");
         let workspace = Workspaces::default().open(&main);
         let first = open(&workspace, &main, 1, "let a = 1\n").unwrap();
@@ -1089,7 +1116,7 @@ mod tests {
 
     #[test]
     fn a_buffer_of_a_module_another_stands_in_for_is_checked_alone() {
-        let tree = Directory::new();
+        let tree = Directory::repo();
         tree.write(
             CONFIG_FILE_NAME,
             "[prelude]\n[modules]\npath = [\"one\", \"two\"]\n",
@@ -1114,7 +1141,7 @@ mod tests {
 
     #[test]
     fn revisions_replace_by_version() {
-        let tree = Directory::new();
+        let tree = Directory::repo();
         library(&tree);
         let a = tree.write("lib/a.dol", "");
         let main = tree.0.join("main.dol");

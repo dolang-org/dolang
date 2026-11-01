@@ -128,6 +128,10 @@ file is canonicalized, contained in its root's canonical path (rechecked at
 open), opened non-blocking, verified as a regular file on the open handle and
 read up to a size limit. A check compiles at most `MAX_MODULES` sources.
 
+The custom request `dolang/modulePath` reports a document's or directory's
+root and the existing directories of its module path, so an editor can run
+scripts with the module path the server checks them with.
+
 `dodo install` uses the newly built `dolang` binary to regenerate typelibs
 from bundled-library sources, checking them all together in one
 `compile typelib` run, then sets `DOLANG_LSP_TYPELIB_DIR` for the LSP

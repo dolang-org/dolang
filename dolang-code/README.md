@@ -41,6 +41,12 @@ between, so paths and arguments are passed through verbatim. A modified file is
 saved first. An untitled buffer is written to a temporary file in the
 extension's storage and run from the first workspace folder.
 
+A script runs with its project's module path, which the language server
+reports: `lib/` by convention, or the `modules` table of a `.dolang-lsp.toml`
+at the project's root. An untitled buffer gets the module path of the first
+workspace folder's project. Without a running language server, a script runs
+with no module path.
+
 ### Arguments
 
 "Run Do Script with Arguments…" prompts for arguments and remembers the last
@@ -70,6 +76,9 @@ defaults to the script's directory:
 
 1. Press `Ctrl+Shift+P` and type "Open Do Interactive Shell"
 2. Opens a dedicated terminal for interactive Do sessions
+
+A new shell gets the module path of the active document's project, else of the
+first workspace folder's, as a script does.
 
 "Send Selection/Line to Do Shell" sends the selection, or the current line, to
 the most recently opened interactive shell, opening one if needed. A

@@ -61,6 +61,12 @@ A file under `lib/` is checked as its module: `lib/a/b.dol` or
 name. Other files are scripts. An import is found on the module path first,
 then among the bundled modules.
 
+The VS Code extension runs scripts and starts the interactive shell with the
+same module path, passing each directory to `dolang` as `--module-path`. Other
+editors can ask for it with the `dolang/modulePath` request. Its parameter is
+`{uri}`, a file or a directory. Its result has the project's `root` and its
+`modulePath`, the module path's directories that exist, in search order.
+
 ## Configuration with `.dolang-lsp.toml`
 
 A project with an unusual layout describes it in a `.dolang-lsp.toml` file. A

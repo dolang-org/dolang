@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { replPayload } from "./args";
+import type { DoLanguageServer } from "./lsp";
 import { requireTrustedWorkspace } from "./runner";
 import { resolveExecutionTools } from "./tools";
 
@@ -10,10 +11,16 @@ export class DoInteractiveShell implements vscode.Disposable {
 
     private readonly context: vscode.ExtensionContext;
     private readonly log: vscode.LogOutputChannel;
+    private readonly server: DoLanguageServer;
 
-    constructor(context: vscode.ExtensionContext, log: vscode.LogOutputChannel) {
+    constructor(
+        context: vscode.ExtensionContext,
+        log: vscode.LogOutputChannel,
+        server: DoLanguageServer
+    ) {
         this.context = context;
         this.log = log;
+        this.server = server;
         this.closeListener = vscode.window.onDidCloseTerminal(closed => {
             if (closed === this.terminal) {
                 this.terminal = undefined;
@@ -75,11 +82,16 @@ export class DoInteractiveShell implements vscode.Disposable {
             vscode.window.showErrorMessage(message);
             throw error;
         }
-        const folders = vscode.workspace.workspaceFolders;
+        const folder = vscode.workspace.workspaceFolders?.[0];
+        // The project of the active document, else of the first folder
+        const active = vscode.window.activeTextEditor?.document.uri;
+        const project = active?.scheme === "file" ? active : folder?.uri;
+        const shellArgs = project ? await this.server.modulePathArgs(project) : [];
         this.terminal = vscode.window.createTerminal({
             name: "Do Interactive Shell",
             shellPath,
-            cwd: folders && folders.length > 0 ? folders[0].uri.fsPath : undefined,
+            shellArgs,
+            cwd: folder?.uri.fsPath,
             message: "--- Do Interactive Shell ---\nType Do commands or use Ctrl+D to exit\n"
         });
         return this.terminal;

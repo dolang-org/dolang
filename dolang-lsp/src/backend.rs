@@ -16,7 +16,9 @@ use tokio::sync::{
     oneshot,
 };
 use tower_lsp_server::{
-    Client, ClientSocket, LanguageServer, LspService, jsonrpc::Result, ls_types::*,
+    Client, ClientSocket, LanguageServer, LspService,
+    jsonrpc::{self, Result},
+    ls_types::*,
 };
 
 use dolang_compile::{
@@ -1745,6 +1747,23 @@ impl Backend {
         self.documents().handles.get(uri)?.projected.clone()
     }
 
+    /// Answers `dolang/modulePath`: the workspace root of a document or
+    /// directory, and the directories of its module path that exist, for
+    /// running it the way the server checks it.
+    async fn module_path(&self, params: TextDocumentIdentifier) -> Result<serde_json::Value> {
+        let path = uri_to_file_path(&params.uri)
+            .ok_or_else(|| jsonrpc::Error::invalid_params("expected a file: URI"))?;
+        let dir = match path.is_dir() {
+            true => &path,
+            false => path.parent().unwrap_or(&path),
+        };
+        let workspace = self.documents().workspaces.open_dir(dir);
+        Ok(serde_json::json!({
+            "root": workspace.root(),
+            "modulePath": workspace.module_dirs(),
+        }))
+    }
+
     fn documents(&self) -> MutexGuard<'_, Documents> {
         self.documents.lock().expect("documents lock poisoned")
     }
@@ -2448,7 +2467,14 @@ impl LanguageServer for Backend {
 }
 
 pub(crate) fn build_service() -> (LspService<Backend>, ClientSocket) {
-    LspService::new(Backend::new)
+    service(Backend::new)
+}
+
+/// The service for backends `init` makes, with the server's custom requests.
+fn service(init: impl FnOnce(Client) -> Backend) -> (LspService<Backend>, ClientSocket) {
+    LspService::build(init)
+        .custom_method("dolang/modulePath", Backend::module_path)
+        .finish()
 }
 
 fn uri_to_file_path(uri: &Uri) -> Option<Cow<'_, Path>> {
@@ -2510,8 +2536,7 @@ mod tests {
         }
 
         fn with_check_delay(delay: Option<Duration>) -> Self {
-            let (service, socket) =
-                LspService::new(move |client| Backend::with_check_delay(client, delay));
+            let (service, socket) = service(move |client| Backend::with_check_delay(client, delay));
             Self {
                 service,
                 socket,
@@ -2543,6 +2568,33 @@ mod tests {
                 .unwrap();
             let (_, body) = response.into_parts();
             serde_json::from_value(body.unwrap()).unwrap()
+        }
+
+        /// The workspace root and module path the server reports for `path`.
+        async fn module_path(&mut self, path: &Path) -> (PathBuf, Vec<PathBuf>) {
+            let id = self.next_id;
+            self.next_id += 1;
+            let uri = Uri::from_file_path(path).unwrap();
+            let response = self
+                .service
+                .ready()
+                .await
+                .unwrap()
+                .call(
+                    Request::build("dolang/modulePath")
+                        .params(json!({ "uri": uri }))
+                        .id(id)
+                        .finish(),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            let (_, body) = response.into_parts();
+            let body = body.unwrap();
+            (
+                serde_json::from_value(body["root"].clone()).unwrap(),
+                serde_json::from_value(body["modulePath"].clone()).unwrap(),
+            )
         }
 
         async fn send_notification<N>(&mut self, params: N::Params)
@@ -4461,6 +4513,62 @@ pub def area d @ a.D
             1,
             "{:#?}",
             projected.diagnostics
+        );
+    }
+
+    /// `path` as the server sees it in a URI.  The root it reports is in that
+    /// form, which on Windows differs from the canonical path of a scratch
+    /// directory.
+    fn through_uri(path: &Path) -> PathBuf {
+        let uri = Uri::from_file_path(path).unwrap();
+        uri.to_file_path().unwrap().into_owned()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn module_path_request_follows_the_convention() {
+        let tree = Directory::repo();
+        let root = through_uri(&tree.0);
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+
+        // Without `lib/`, the module path names no directory
+        let script = tree.write("sub/main.dol", "echo hi\n");
+        assert_eq!(harness.module_path(&script).await, (root.clone(), vec![]));
+
+        let lib = tree.dir("lib");
+        assert_eq!(
+            harness.module_path(&script).await,
+            (root.clone(), vec![lib.clone()])
+        );
+        // A directory resolves like a document in it
+        assert_eq!(
+            harness.module_path(&tree.dir("sub")).await,
+            (root.clone(), vec![lib])
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn module_path_request_follows_the_root_configuration() {
+        let tree = Directory::repo();
+        tree.dir("src");
+        tree.dir("vendor/a");
+        tree.dir("vendor/b");
+        tree.dir("lib");
+        tree.write(
+            CONFIG_FILE_NAME,
+            "[modules]\npath = [\"src\", \"vendor/*\"]\n",
+        );
+        tree.write(&format!("tests/{CONFIG_FILE_NAME}"), "[prelude]\n");
+        let script = tree.write("tests/main.dol", "echo hi\n");
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+
+        // In order, and unaffected by the configuration below the root
+        let root = through_uri(&tree.0);
+        let dirs = ["src", "vendor/a", "vendor/b"].map(|dir| tree.0.join(dir));
+        assert_eq!(
+            harness.module_path(&script).await,
+            (root.clone(), dirs.to_vec())
         );
     }
 

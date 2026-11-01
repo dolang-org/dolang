@@ -83,6 +83,11 @@ impl ModulePath {
         })
     }
 
+    /// The roots, in search order.
+    pub(crate) fn roots(&self) -> &[PathBuf] {
+        &self.roots
+    }
+
     /// The module a document at `path` is, if it is a source under a root.
     pub(crate) fn module_of(&self, path: &Path) -> Option<String> {
         if path.extension().is_none_or(|ext| ext != "dol") {
