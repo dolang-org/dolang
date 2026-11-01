@@ -4033,8 +4033,8 @@ def uses b @ Box n @ Int
         if typelib_index::lookup("std").is_none() {
             return;
         }
-        let tree = Directory::new();
-        tree.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = [\"lib\"]\n");
+        // By convention, `lib/` is the module path
+        let tree = Directory::repo();
         tree.write("lib/a.dol", "pub def f x@Int\n  x\n");
         let mut harness = Harness::checking(Duration::from_millis(10));
         harness.initialize(vec![PositionEncodingKind::UTF16]).await;
@@ -4049,9 +4049,9 @@ def uses b @ Box n @ Int
         };
         assert_eq!(*range, Range::new(Position::new(1, 4), Position::new(1, 7)));
 
-        // Without the module path the module is unknown
-        let other = Directory::new();
-        other.write(CONFIG_FILE_NAME, "[prelude]\n");
+        // Without it the module is unknown
+        let other = Directory::repo();
+        other.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = []\n");
         let reported = checked(&mut harness, &other.0.join("main.dol"), "import a\na.f 1\n").await;
         let import = Range::new(Position::new(0, 7), Position::new(0, 8));
         assert_eq!(reported, [(import, "module `a` not found".to_owned())]);
@@ -4063,7 +4063,7 @@ def uses b @ Box n @ Int
         if typelib_index::lookup("std").is_none() {
             return;
         }
-        let tree = Directory::new();
+        let tree = Directory::repo();
         tree.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = [\"lib\"]\n");
         tree.write("lib/a.dol", "import b\npub def g x@b.T\n  x\n");
         let b = Uri::from_file_path(tree.write("lib/b.dol", "pub @let T = Int\n")).unwrap();
@@ -4098,7 +4098,7 @@ def uses b @ Box n @ Int
         if typelib_index::lookup("std").is_none() {
             return;
         }
-        let tree = Directory::new();
+        let tree = Directory::repo();
         tree.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = [\"lib\"]\n");
         tree.write("lib/a.dol", "pub def f x@Int\n  x\n");
         let one = Uri::from_file_path(tree.0.join("one.dol")).unwrap();
@@ -4144,7 +4144,7 @@ def uses b @ Box n @ Int
         if typelib_index::lookup("std").is_none() {
             return;
         }
-        let tree = Directory::new();
+        let tree = Directory::repo();
         tree.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = [\"lib\"]\n");
         let a_text = "# A module\n\n# Doubles its argument\npub def f x @ Int -> Int\n  (x * 2)\n";
         let a = Uri::from_file_path(tree.write("lib/a.dol", a_text)).unwrap();
@@ -4217,7 +4217,7 @@ f 1
         if typelib_index::lookup("term").is_none() {
             return;
         }
-        let tree = Directory::new();
+        let tree = Directory::repo();
         // No `[prelude]` table, so the shell's
         tree.write(CONFIG_FILE_NAME, "[modules]\npath = [\"lib\"]\n");
         tree.write("lib/a.dol", "pub def f x @ Int\n  echo $x\n");
@@ -4236,7 +4236,7 @@ f 1
         if typelib_index::lookup("std").is_none() {
             return;
         }
-        let tree = Directory::new();
+        let tree = Directory::repo();
         tree.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = [\"lib\"]\n");
         let a_text = "\
 # A module
@@ -4369,7 +4369,7 @@ pub def area d @ a.D
         if typelib_index::lookup("std").is_none() {
             return;
         }
-        let tree = Directory::new();
+        let tree = Directory::repo();
         tree.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = [\"lib\"]\n");
         let a = tree.write("lib/a.dol", "pub def f x@Int\n  x\n");
         let main = Uri::from_file_path(tree.0.join("main.dol")).unwrap();
@@ -4422,7 +4422,7 @@ pub def area d @ a.D
         if typelib_index::lookup("std").is_none() {
             return;
         }
-        let tree = Directory::new();
+        let tree = Directory::repo();
         let config = tree.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = [\"one\"]\n");
         tree.write("one/a.dol", "pub def f x@Str\n  x\n");
         tree.write("two/a.dol", "pub def f x@Int\n  x\n");
@@ -4441,6 +4441,27 @@ pub def area d @ a.D
         let checked = harness.next_publish_for(&main).await;
         assert_eq!(checked.diagnostics.len(), 1, "{:#?}", checked.diagnostics);
         harness.quiet().await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn subtree_config_changes_compile_documents_again() {
+        let tree = Directory::repo();
+        let script = Uri::from_file_path(tree.0.join("tests/a.dol")).unwrap();
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let opened = harness.open(script.clone(), "echo hi\n", 1).await;
+        assert_eq!(opened.diagnostics, []);
+
+        // An empty prelude for the subtree leaves `echo` unbound
+        let config = tree.write(&format!("tests/{CONFIG_FILE_NAME}"), "[prelude]\n");
+        harness.watched(&[(&config, FileChangeType::CREATED)]).await;
+        let projected = harness.next_publish_for(&script).await;
+        assert_eq!(
+            projected.diagnostics.len(),
+            1,
+            "{:#?}",
+            projected.diagnostics
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -4506,7 +4527,7 @@ pub def area d @ a.D
 
     #[tokio::test(flavor = "current_thread")]
     async fn document_on_the_module_path_is_its_module() {
-        let tree = Directory::new();
+        let tree = Directory::repo();
         tree.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = [\"lib\"]\n");
         tree.write("lib/a.dol", "");
         let mut harness = Harness::new();
