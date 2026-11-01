@@ -4,7 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import * as tar from "tar";
 import * as vscode from "vscode";
-import { replPayload, splitArgs } from "../args";
+import { modulePathArgs, replPayload, splitArgs } from "../args";
 import { buildScriptTask } from "../runner";
 import {
     binaryFileName,
@@ -386,6 +386,31 @@ suite("Script Tasks", () => {
             keepOpen: false
         });
         assert.strictEqual(task.presentationOptions.close, true);
+    });
+
+    test("the module path goes before the script", () => {
+        const task = buildScriptTask({
+            dolang: "dolang",
+            options: modulePathArgs(["/p/lib", "/p/vendor/a"]),
+            script: "/p/s.dol",
+            args: ["x"],
+            cwd: "/",
+            keepOpen: true
+        });
+        const execution = task.execution;
+        assert.ok(execution instanceof vscode.ProcessExecution);
+        assert.deepStrictEqual(execution.args, [
+            "--module-path",
+            "/p/lib",
+            "--module-path",
+            "/p/vendor/a",
+            "/p/s.dol",
+            "x"
+        ]);
+    });
+
+    test("an empty module path adds no options", () => {
+        assert.deepStrictEqual(modulePathArgs([]), []);
     });
 });
 

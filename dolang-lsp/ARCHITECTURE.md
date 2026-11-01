@@ -4,8 +4,12 @@ LSP server for Do using `tower-lsp-server` and `tokio`. Document state
 recompiles on every change to provide diagnostics and semantic tokens.
 
 Documents live in workspaces (`workspace.rs`). A workspace is a root: the
-directory of the nearest `.dolang-lsp.toml` above a document, or else the
-document's own directory, with the settings found there. Its members are the
+nearest directory above a document with a `.git`, directory or file, or else
+the document's own directory, with its settings. A `.dolang-lsp.toml` at the
+root sets them; whatever it leaves out comes from the convention, `lib/` as the
+module path and the shell's prelude. A configuration below the root sets the
+prelude of its subtree only, and is read the first time a document there is
+compiled. Its members are the
 documents in it open for any reason: in the client, or as a module a check
 imports. A member is one revision of its document, an `Arc` that new text
 replaces in the workspace's table; whoever holds an older one keeps it, and can
@@ -72,20 +76,20 @@ the doc index (`signature.rs`).
 Being the check's own units, they agree with its analysis, and an edit to a
 module reaches its importers with their next check.
 
-A check looks modules up in its workspace's table. A member the client has
-open as the module comes first, so importers see the client's buffer, then one
-loaded from disk; of several, the one at the least path. Open documents are
-matched to modules by the workspace's module path, not by URI. A buffer under a
-nested configuration is a member of that configuration's workspace only, so an
+A check looks modules up in its workspace's table. A member the client has open
+as the module comes first, so importers see the client's buffer, then one loaded
+from disk; of several, the one at the least path. Open documents are matched to
+modules by the workspace's module path, not by URI. A buffer under a nested
+root, such as a submodule, is a member of that root's workspace only, so an
 enclosing workspace whose module path reaches it reads its file. A module the
-table lacks is read from the module path and becomes a loaded member, unless
-the client opened the module meanwhile, whose buffer stands in for it. Next is
-a bundled typelib unless the configuration turns them off. An import found
-nowhere is reported as not found. A check gathers the modules its members
-import, directly or transitively, plus `proc` for the pipe types, as `compile
-check` does, loading modules until the set stops growing. Each member stands
-for its own module, so it replaces its bundled copy. A buffer of a module that
-another buffer of the same module stands in for is checked on its own.
+table lacks is read from the module path and becomes a loaded member, unless the
+client opened the module meanwhile, whose buffer stands in for it. Next is a
+bundled typelib unless the configuration turns them off. An import found nowhere
+is reported as not found. A check gathers the modules its members import,
+directly or transitively, plus `proc` for the pipe types, as `compile check`
+does, loading modules until the set stops growing. Each member stands for its
+own module, so it replaces its bundled copy. A buffer of a module that another
+buffer of the same module stands in for is checked on its own.
 
 A member's check records, for each module in its closure, what it looked up to:
 a member, held weakly, a bundled typelib, or nothing. The check is valid while
@@ -109,20 +113,24 @@ When the client allows it, the server registers watchers for `.dol` sources
 and configuration files. A source event puts every live workspace's check off,
 and the check's look at the disk finds what changed. A module held by an open
 document ignores its file. A configuration event in a
-directory retires the workspaces at, above and under it, and moves their open
-documents to the workspaces they find now, nearer configurations included,
-where they are compiled and checked again. Wildcard roots expand only when a
-configuration loads, so a new directory they match waits for the next
-configuration event.
+directory retires the workspaces whose roots contain it, and moves their open
+documents to the workspaces they find now, where they are compiled and checked
+again. Wildcard roots expand only when a configuration loads, so a new
+directory they match waits for the next configuration event. The convention's
+`lib/` is resolved at each lookup instead, so it may appear later.
 
-Configuration files are TOML files (`.dolang-lsp.toml`, the nearest ancestor
-wins) that provide static prelude imports and the module path. A
-configuration is untrusted, so `module_path` confines what it reads to the
-configuration's directory. Roots are canonicalized and contained when the
-configuration loads. Each module file is canonicalized, contained in its
-root's canonical path (rechecked at open), opened non-blocking, verified as a
-regular file on the open handle and read up to a size limit. A check compiles
-at most `MAX_MODULES` sources.
+Configuration files are TOML files (`.dolang-lsp.toml`) that provide static
+prelude imports and, at the root only, the module path. For a document's
+prelude, the nearest configuration that sets one wins. A configuration is
+untrusted, so `module_path` confines what it reads to the workspace's root.
+Roots are canonicalized and contained when the configuration loads. Each module
+file is canonicalized, contained in its root's canonical path (rechecked at
+open), opened non-blocking, verified as a regular file on the open handle and
+read up to a size limit. A check compiles at most `MAX_MODULES` sources.
+
+The custom request `dolang/modulePath` reports a document's or directory's
+root and the existing directories of its module path, so an editor can run
+scripts with the module path the server checks them with.
 
 `dodo install` uses the newly built `dolang` binary to regenerate typelibs
 from bundled-library sources, checking them all together in one

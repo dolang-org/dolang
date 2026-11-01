@@ -71,6 +71,11 @@ export function splitArgs(text: string): string[] {
     return args;
 }
 
+/** The `dolang` options that put `paths` on the module path, in order. */
+export function modulePathArgs(paths: readonly string[]): string[] {
+    return paths.flatMap(p => ["--module-path", p]);
+}
+
 /**
  * Builds the text to type into the Do REPL for `text`, without the final
  * Enter, or `undefined` when there is nothing to send.

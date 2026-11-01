@@ -1,5 +1,6 @@
 import * as path from "path";
 import * as vscode from "vscode";
+import { modulePathArgs } from "./args";
 import { Executable, LanguageClient, LanguageClientOptions } from "vscode-languageclient/node";
 import { extensionVersion, resolveTool, type ToolSource } from "./tools";
 
@@ -38,6 +39,31 @@ export class DoLanguageServer implements vscode.Disposable {
             await this.stopNow();
             await this.startNow();
         });
+    }
+
+    /**
+     * Asks the server for the module path of the project holding `uri`, a
+     * document or a directory, as `dolang` options. With no server, or one
+     * that doesn't answer, there are none.
+     */
+    public async modulePathArgs(uri: vscode.Uri): Promise<string[]> {
+        await this.queue;
+        const client = this.client;
+        if (!client) {
+            this.log.warn(`No language server to find the module path of ${uri.fsPath}`);
+            return [];
+        }
+        try {
+            const result = await client.sendRequest<{ modulePath: string[] }>("dolang/modulePath", {
+                uri: client.code2ProtocolConverter.asUri(uri)
+            });
+            return modulePathArgs(result.modulePath);
+        } catch (error) {
+            this.log.warn(
+                `Failed to find the module path of ${uri.fsPath}: ${errorMessage(error)}`
+            );
+            return [];
+        }
     }
 
     public dispose(): void {

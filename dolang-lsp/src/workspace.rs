@@ -1,8 +1,10 @@
 //! Workspaces, and the documents open in each.
 //!
-//! A workspace is a root, the directory of the nearest `.dolang-lsp.toml`
-//! above a document or else the document's own directory, with the settings
-//! found there.  Its members are the documents in it that are open for any
+//! A workspace is a root, the nearest directory above a document with a
+//! `.git` or else the document's own directory, with its settings: those of
+//! a `.dolang-lsp.toml` at the root, else the convention, `lib/` as the module
+//! path and the shell's prelude.  A configuration below the root sets the
+//! prelude of its subtree.  Its members are the documents in it that are open for any
 //! reason: in the client, or as a module a check imports.  A member is one
 //! revision of its document, which new text replaces: the client's newer
 //! version of a document it has open, or a change to a file on disk.  Whoever
@@ -19,6 +21,7 @@
 
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
+    fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard, OnceLock, Weak},
 };
@@ -29,7 +32,7 @@ use tower_lsp_server::ls_types::Uri;
 use crate::{
     backend::{Checked, compile_document},
     module_path::{ModulePath, Stamp},
-    settings::{self, CONFIG_FILE_NAME, Import, Settings},
+    settings::{self, CONFIG_FILE_NAME, Import},
     typelib_index,
 };
 
@@ -46,21 +49,46 @@ pub(crate) struct Workspaces {
 impl Workspaces {
     /// The workspace of the document at `path`, created unless one is live.
     pub(crate) fn open(&mut self, path: &Path) -> Arc<Workspace> {
-        let (root, config) = root(path);
+        self.open_dir(path.parent().unwrap_or(path))
+    }
+
+    /// The workspace of the documents in `dir`, created unless one is live.
+    pub(crate) fn open_dir(&mut self, dir: &Path) -> Arc<Workspace> {
+        let root = root(dir);
         if let Some(workspace) = self.table.get(&root).and_then(Weak::upgrade) {
             return workspace;
         }
-        let settings = match config {
-            Some(config) => settings::read(&config, &root)
+        let config = root.join(CONFIG_FILE_NAME);
+        let settings = match config.is_file() {
+            true => settings::read(&config, Some(&root))
                 .inspect_err(|err| {
                     log::error!("failed to load configuration {}: {err}", config.display())
                 })
                 .ok(),
-            None => Some(Settings::default()),
+            false => Some(settings::Settings {
+                prelude: None,
+                modules: None,
+            }),
+        };
+        // An unreadable configuration leaves the workspace with nothing
+        let (prelude, modules) = match settings {
+            Some(settings) => {
+                let modules = settings.modules.or_else(|| {
+                    ModulePath::convention(&root)
+                        .inspect_err(|err| log::error!("no module path: {err}"))
+                        .ok()
+                        .map(Arc::new)
+                });
+                let prelude = settings.prelude.unwrap_or_else(settings::default_prelude);
+                (prelude.into(), modules)
+            }
+            None => (Arc::default(), None),
         };
         let workspace = Arc::new(Workspace {
             root: root.clone(),
-            settings,
+            prelude,
+            modules,
+            preludes: Mutex::default(),
             bundled: self.bundled.clone(),
             members: Mutex::default(),
         });
@@ -77,11 +105,10 @@ impl Workspaces {
     }
 
     /// Forgets the workspaces a change to the configuration in `dir` may
-    /// affect: its own, and those above and below it.  Their documents find
-    /// their workspaces again when they next open one.
+    /// affect: those whose roots contain it.  Their documents find their
+    /// workspaces again when they next open one.
     pub(crate) fn retire(&mut self, dir: &Path) {
-        self.table
-            .retain(|root, _| !root.starts_with(dir) && !dir.starts_with(root));
+        self.table.retain(|root, _| !dir.starts_with(root));
     }
 
     /// The live workspaces.
@@ -90,22 +117,25 @@ impl Workspaces {
     }
 }
 
-/// A document's workspace root, and the configuration there if there is one.
-fn root(path: &Path) -> (PathBuf, Option<PathBuf>) {
-    for dir in path.ancestors().skip(1) {
-        let config = dir.join(CONFIG_FILE_NAME);
-        if config.is_file() {
-            return (dir.to_owned(), Some(config));
-        }
-    }
-    (path.parent().unwrap_or(path).to_owned(), None)
+/// The workspace root of the documents in `dir`: the nearest of it and its
+/// ancestors with a `.git`, whether a repository's directory or a submodule's
+/// or worktree's file, else `dir`.
+fn root(dir: &Path) -> PathBuf {
+    dir.ancestors()
+        .find(|dir| fs::symlink_metadata(dir.join(".git")).is_ok())
+        .unwrap_or(dir)
+        .to_owned()
 }
 
 /// One root, and its members.
 pub(crate) struct Workspace {
     root: PathBuf,
-    /// `None` when its configuration is unreadable
-    settings: Option<Settings>,
+    /// The prelude at the root
+    prelude: Arc<[Import]>,
+    /// `None` when the root's configuration is unreadable
+    modules: Option<Arc<ModulePath>>,
+    /// The prelude of each directory below the root looked at so far
+    preludes: Mutex<HashMap<PathBuf, Arc<[Import]>>>,
     bundled: Arc<Bundled>,
     /// The current revision of each member
     members: Mutex<HashMap<PathBuf, Arc<Member>>>,
@@ -278,20 +308,63 @@ fn index<'a>(
 }
 
 impl Workspace {
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// The directories of the module path that exist now, in order.
+    pub(crate) fn module_dirs(&self) -> Vec<PathBuf> {
+        self.modules().map_or_else(Vec::new, |modules| {
+            modules
+                .roots()
+                .iter()
+                .filter(|root| root.is_dir())
+                .cloned()
+                .collect()
+        })
+    }
+
     /// The module the document at `path` is on the module path, if it is.
     pub(crate) fn module_of(&self, path: &Path) -> Option<String> {
         self.modules()?.module_of(path)
     }
 
-    /// The prelude its documents are compiled with.
-    pub(crate) fn prelude(&self) -> &[Import] {
-        self.settings
-            .as_ref()
-            .map_or(&[], |settings| &settings.prelude)
+    /// The prelude the document at `path` is compiled with: that of the
+    /// nearest configuration below the root that sets one, else the root's.
+    /// An unreadable configuration sets an empty prelude.
+    pub(crate) fn prelude(&self, path: &Path) -> Arc<[Import]> {
+        let Some(dir) = path.parent().filter(|dir| dir.starts_with(&self.root)) else {
+            return self.prelude.clone();
+        };
+        if dir == self.root {
+            return self.prelude.clone();
+        }
+        if let Some(prelude) = self.preludes().get(dir) {
+            return prelude.clone();
+        }
+        let config = dir.join(CONFIG_FILE_NAME);
+        let prelude = match config.is_file() {
+            true => match settings::read(&config, None) {
+                Ok(settings) => settings.prelude.map(Arc::from),
+                Err(err) => {
+                    log::error!("failed to load configuration {}: {err}", config.display());
+                    Some(Arc::default())
+                }
+            },
+            false => None,
+        };
+        // A configuration may leave the prelude to the enclosing one
+        let prelude = prelude.unwrap_or_else(|| self.prelude(dir));
+        self.preludes().insert(dir.to_owned(), prelude.clone());
+        prelude
+    }
+
+    fn preludes(&self) -> MutexGuard<'_, HashMap<PathBuf, Arc<[Import]>>> {
+        self.preludes.lock().expect("prelude lock poisoned")
     }
 
     fn modules(&self) -> Option<&ModulePath> {
-        self.settings.as_ref()?.modules.as_deref()
+        self.modules.as_deref()
     }
 
     /// The current revision of the document at `path`.
@@ -360,7 +433,7 @@ impl Workspace {
                 Arc::new(compile_document(
                     &member.path,
                     text.clone(),
-                    self.prelude(),
+                    &self.prelude(&member.path),
                     module,
                 ))
             })
@@ -622,7 +695,7 @@ impl Workspace {
     /// A module's source on the module path, read and compiled.
     fn load(&self, modules: &ModulePath, name: &str) -> Option<Arc<Member>> {
         let (path, stamp, text) = modules.open(name)?;
-        let unit = compile_document(&path, text, self.prelude(), Some(name));
+        let unit = compile_document(&path, text, &self.prelude(&path), Some(name));
         Some(Arc::new(Member {
             path,
             module: Some(name.to_owned()),
@@ -801,39 +874,112 @@ mod tests {
     }
 
     #[test]
-    fn documents_share_the_workspace_of_their_root() {
-        let tree = Directory::new();
-        tree.write(CONFIG_FILE_NAME, "[prelude]\n");
+    fn documents_share_the_workspace_of_their_repository() {
+        let tree = Directory::repo();
+        // A configuration below the root doesn't split the workspace
         tree.write(&format!("nested/{CONFIG_FILE_NAME}"), "[prelude]\n");
+        // A submodule's `.git` file makes it its own root
+        tree.write("sub/module/.git", "gitdir: ../../.git/modules/module\n");
         let mut workspaces = Workspaces::default();
         let main = workspaces.open(&tree.0.join("main.dol"));
         assert_eq!(main.root, tree.0);
         let other = workspaces.open(&tree.0.join("sub/other.dol"));
         assert!(Arc::ptr_eq(&main, &other));
         let nested = workspaces.open(&tree.0.join("nested/a.dol"));
-        assert_eq!(nested.root, tree.0.join("nested"));
+        assert!(Arc::ptr_eq(&main, &nested));
+        let module = workspaces.open(&tree.0.join("sub/module/lib/a.dol"));
+        assert_eq!(module.root, tree.0.join("sub/module"));
 
-        // With no configuration, a document's own directory
-        let loose = Directory::new();
-        let script = workspaces.open(&loose.0.join("a/b.dol"));
-        assert_eq!(script.root, loose.0.join("a"));
-
-        // A change to a configuration retires the workspaces around it
+        // A change to a configuration retires the workspaces containing it
         workspaces.retire(&tree.0.join("nested"));
         assert!(!workspaces.current(&main));
-        assert!(!workspaces.current(&nested));
-        assert!(workspaces.current(&script));
+        assert!(workspaces.current(&module));
+        workspaces.retire(&tree.0.join("sub/module/x"));
+        assert!(!workspaces.current(&module));
         let reopened = workspaces.open(&tree.0.join("main.dol"));
         assert!(!Arc::ptr_eq(&main, &reopened));
 
         // Once nothing holds a workspace, it's gone
-        drop((main, other, reopened));
+        drop((main, other, nested, reopened));
         assert!(workspaces.live().all(|live| live.root != tree.0));
+
+        // With no repository, a document's own directory.  That needs a
+        // scratch directory no repository encloses, which a temporary
+        // directory under a checkout, or a stray `C:\.git` under Wine, isn't.
+        let loose = Directory::new();
+        let enclosed = loose
+            .0
+            .ancestors()
+            .any(|dir| fs::symlink_metadata(dir.join(".git")).is_ok());
+        if !enclosed {
+            let script = workspaces.open(&loose.0.join("a/b.dol"));
+            assert_eq!(script.root, loose.0.join("a"));
+        }
+    }
+
+    #[test]
+    fn the_convention_puts_lib_on_the_module_path() {
+        let tree = Directory::repo();
+        let main = tree.0.join("main.dol");
+        let workspace = Workspaces::default().open(&main);
+        assert_eq!(&*workspace.prelude(&main), settings::default_prelude());
+        open(&workspace, &main, 1, "import a\n").unwrap();
+        check(&workspace);
+        assert_eq!(prepare(&workspace).unwrap().len(), 0);
+
+        // `lib/` appears after the workspace opened
+        let a = tree.write("lib/a.dol", "");
+        assert_eq!(workspace.module_of(&a).as_deref(), Some("a"));
+        assert_eq!(workspace.module_of(&main), None);
+        assert!(prepare(&workspace).is_none());
+        assert_eq!(check_paths(&workspace), [a.as_path(), &main]);
+    }
+
+    #[test]
+    fn subtree_configurations_override_the_prelude() {
+        let tree = Directory::repo();
+        // The root's configuration leaves the prelude to the convention
+        tree.write(CONFIG_FILE_NAME, "[modules]\npath = [\"src\"]\n");
+        tree.write(
+            &format!("tests/{CONFIG_FILE_NAME}"),
+            "[prelude]\nfoo = true\n",
+        );
+        tree.write(&format!("tests/deep/{CONFIG_FILE_NAME}"), "");
+        tree.write(
+            &format!("tests/bad/{CONFIG_FILE_NAME}"),
+            "[prelude]\nfoo = true\n[modules]\npath = [\"lib\"]\n",
+        );
+        let src = tree.write("src/m.dol", "");
+        let workspace = Workspaces::default().open(&tree.0.join("main.dol"));
+        let foo = [Import::Module("foo".into())];
+        assert_eq!(&*workspace.prelude(&tree.0.join("tests/x.dol")), foo);
+        assert_eq!(&*workspace.prelude(&tree.0.join("tests/deep/y.dol")), foo);
+        assert_eq!(
+            &*workspace.prelude(&tree.0.join("main.dol")),
+            settings::default_prelude()
+        );
+        assert_eq!(
+            &*workspace.prelude(&tree.0.join("other/z.dol")),
+            settings::default_prelude()
+        );
+
+        // A `modules` table below the root is rejected, leaving its subtree
+        // an empty prelude and the root's module path as it was
+        assert_eq!(&*workspace.prelude(&tree.0.join("tests/bad/w.dol")), []);
+        assert_eq!(workspace.module_of(&src).as_deref(), Some("m"));
+        let lib = tree.write("tests/bad/lib/n.dol", "");
+        assert_eq!(workspace.module_of(&lib), None);
+
+        // The root's own prelude applies where nothing overrides it
+        tree.write(CONFIG_FILE_NAME, "[prelude]\n");
+        let workspace = Workspaces::default().open(&tree.0.join("main.dol"));
+        assert_eq!(&*workspace.prelude(&tree.0.join("other/z.dol")), []);
+        assert_eq!(&*workspace.prelude(&tree.0.join("tests/x.dol")), foo);
     }
 
     #[test]
     fn checks_gather_the_closure_of_unchecked_members() {
-        let tree = Directory::new();
+        let tree = Directory::repo();
         library(&tree);
         let a = tree.write("lib/a.dol", "import b\n");
         let b = tree.write("lib/b.dol", "");
@@ -868,7 +1014,7 @@ mod tests {
 
     #[test]
     fn checks_stay_valid_while_their_imports_look_up_the_same() {
-        let tree = Directory::new();
+        let tree = Directory::repo();
         library(&tree);
         let a = tree.write("lib/a.dol", "import b\n");
         let b = tree.write("lib/b.dol", "");
@@ -910,7 +1056,7 @@ mod tests {
 
     #[test]
     fn loaded_members_stay_while_an_open_document_imports_them() {
-        let tree = Directory::new();
+        let tree = Directory::repo();
         library(&tree);
         let a = tree.write("lib/a.dol", "");
         let main = tree.0.join("main.dol");
@@ -939,7 +1085,7 @@ mod tests {
 
     #[test]
     fn missing_modules_are_looked_for_again() {
-        let tree = Directory::new();
+        let tree = Directory::repo();
         library(&tree);
         tree.write("lib/a.dol", "");
         let main = tree.0.join("main.dol");
@@ -954,7 +1100,7 @@ mod tests {
 
     #[test]
     fn checks_of_replaced_members_are_passed_over() {
-        let tree = Directory::new();
+        let tree = Directory::repo();
         let main = tree.0.join("main.dol");
         let workspace = Workspaces::default().open(&main);
         let first = open(&workspace, &main, 1, "let a = 1\n").unwrap();
@@ -970,7 +1116,7 @@ mod tests {
 
     #[test]
     fn a_buffer_of_a_module_another_stands_in_for_is_checked_alone() {
-        let tree = Directory::new();
+        let tree = Directory::repo();
         tree.write(
             CONFIG_FILE_NAME,
             "[prelude]\n[modules]\npath = [\"one\", \"two\"]\n",
@@ -995,7 +1141,7 @@ mod tests {
 
     #[test]
     fn revisions_replace_by_version() {
-        let tree = Directory::new();
+        let tree = Directory::repo();
         library(&tree);
         let a = tree.write("lib/a.dol", "");
         let main = tree.0.join("main.dol");

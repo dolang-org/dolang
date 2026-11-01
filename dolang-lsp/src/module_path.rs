@@ -69,6 +69,25 @@ impl ModulePath {
         })
     }
 
+    /// The module path of a workspace at `root` that configures none: its
+    /// `lib/`, then the bundled modules.  `lib/` need not exist yet, since a
+    /// root is resolved again whenever a module is looked for under it.
+    pub(crate) fn convention(root: &Path) -> Result<Self, String> {
+        let base = root
+            .canonicalize()
+            .map_err(|err| format!("cannot resolve {}: {err}", root.display()))?;
+        Ok(Self {
+            roots: vec![base.join("lib")],
+            base,
+            bundled: true,
+        })
+    }
+
+    /// The roots, in search order.
+    pub(crate) fn roots(&self) -> &[PathBuf] {
+        &self.roots
+    }
+
     /// The module a document at `path` is, if it is a source under a root.
     pub(crate) fn module_of(&self, path: &Path) -> Option<String> {
         if path.extension().is_none_or(|ext| ext != "dol") {
@@ -328,6 +347,14 @@ pub(crate) mod tests {
             Self(path.canonicalize().unwrap())
         }
 
+        /// A scratch repository: a directory with a `.git`, which makes it
+        /// a workspace's root.
+        pub(crate) fn repo() -> Self {
+            let tree = Self::new();
+            tree.dir(".git");
+            tree
+        }
+
         pub(crate) fn write(&self, path: &str, text: &str) -> PathBuf {
             let path = self.0.join(path);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -335,7 +362,7 @@ pub(crate) mod tests {
             path
         }
 
-        fn dir(&self, path: &str) -> PathBuf {
+        pub(crate) fn dir(&self, path: &str) -> PathBuf {
             let path = self.0.join(path);
             fs::create_dir_all(&path).unwrap();
             path
@@ -401,6 +428,18 @@ pub(crate) mod tests {
         assert_eq!(opened(&path, "a.b"), Some((nested, String::new())));
         assert_eq!(opened(&path, "c"), Some((package, String::new())));
         assert_eq!(path.open("missing"), None);
+    }
+
+    #[test]
+    fn the_convention_is_lib_even_before_it_exists() {
+        let tree = Directory::new();
+        let path = ModulePath::convention(&tree.0).unwrap();
+        assert!(path.bundled);
+        assert_eq!(path.open("a"), None);
+        let a = tree.write("lib/a.dol", "");
+        assert_eq!(path.module_of(&a).as_deref(), Some("a"));
+        assert_eq!(opened(&path, "a"), Some((a, String::new())));
+        assert_eq!(path.module_of(&tree.write("a.dol", "")), None);
     }
 
     #[test]

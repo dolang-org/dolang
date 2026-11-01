@@ -6,7 +6,7 @@ use toml::{Table, Value as TomlValue};
 
 use crate::module_path::ModulePath;
 
-/// The file whose directory is a workspace's root
+/// The file that configures a workspace, at its root, or a subtree below it
 pub(crate) const CONFIG_FILE_NAME: &str = ".dolang-lsp.toml";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,27 +35,31 @@ impl Import {
     }
 }
 
+/// The tables a configuration sets, each `None` when it leaves the table out.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Settings {
-    pub(crate) prelude: Vec<Import>,
+    pub(crate) prelude: Option<Vec<Import>>,
     pub(crate) modules: Option<Arc<ModulePath>>,
 }
 
-pub(crate) fn read(path: &Path, dir: &Path) -> Result<Settings, String> {
+/// Reads the configuration at `path`.  At a workspace's root, `root` is the
+/// root, which the module path is relative to; below it, `None`, and a
+/// `modules` table is an error.
+pub(crate) fn read(path: &Path, root: Option<&Path>) -> Result<Settings, String> {
     let content =
         fs::read_to_string(path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
     let value = toml::from_str::<TomlValue>(&content)
         .map_err(|e| format!("invalid TOML in {}: {e}", path.display()))?;
-    parse(&value, dir)
+    parse(&value, root)
 }
 
 #[cfg(test)]
 fn parse_value(value: &TomlValue) -> Result<Settings, String> {
-    parse(value, Path::new("."))
+    parse(value, Some(Path::new(".")))
 }
 
-/// Parses settings found in `dir`, which the module path is relative to.
-fn parse(value: &TomlValue, dir: &Path) -> Result<Settings, String> {
+/// Parses settings found at `root`, or below a root when `None`.
+fn parse(value: &TomlValue, root: Option<&Path>) -> Result<Settings, String> {
     let table = value
         .as_table()
         .ok_or_else(|| "settings are not a table as expected".to_owned())?;
@@ -65,15 +69,18 @@ fn parse(value: &TomlValue, dir: &Path) -> Result<Settings, String> {
     for (key, value) in table {
         match key.as_str() {
             "prelude" => parse_prelude_table(value, prelude.insert(Vec::new()))?,
-            "modules" => modules = Some(Arc::new(parse_modules_table(value, dir)?)),
+            "modules" => {
+                let root = root.ok_or_else(|| {
+                    "a modules table is allowed only in the configuration at the workspace root"
+                        .to_owned()
+                })?;
+                modules = Some(Arc::new(parse_modules_table(value, root)?));
+            }
             _ => return Err(format!("unexpected key in settings: {key}")),
         }
     }
 
-    Ok(Settings {
-        prelude: prelude.unwrap_or_else(default_prelude),
-        modules,
-    })
+    Ok(Settings { prelude, modules })
 }
 
 fn parse_modules_table(value: &TomlValue, dir: &Path) -> Result<ModulePath, String> {
@@ -197,19 +204,8 @@ fn parse_prelude_descriptor(
     Ok(())
 }
 
-/// A script's settings with no configuration: the shell's prelude, and no
-/// module path
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            prelude: default_prelude(),
-            modules: None,
-        }
-    }
-}
-
-/// The prelude of a script with no configured one: the shell's.
-fn default_prelude() -> Vec<Import> {
+/// The prelude where no configuration sets one: the shell's.
+pub(crate) fn default_prelude() -> Vec<Import> {
     vec![
         Import::Module("shell".into()),
         Import::Item("proc".into(), "run".into()),
@@ -239,7 +235,10 @@ mod tests {
     fn parse_module_import() {
         let settings = parse_value(&parse_toml("[prelude]\nshell = true\n")).unwrap();
 
-        assert_eq!(settings.prelude, vec![Import::Module("shell".to_owned())]);
+        assert_eq!(
+            settings.prelude,
+            Some(vec![Import::Module("shell".to_owned())])
+        );
     }
 
     #[test]
@@ -247,7 +246,7 @@ mod tests {
         let settings = parse_value(&parse_toml("[prelude.proc]\nrun = true\n")).unwrap();
 
         assert_eq!(
-            settings.prelude,
+            settings.prelude.unwrap(),
             vec![Import::Item("proc".to_owned(), "run".to_owned())]
         );
     }
@@ -260,7 +259,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            settings.prelude,
+            settings.prelude.unwrap(),
             vec![
                 Import::Item("regression".to_owned(), "assert".to_owned()),
                 Import::Item("regression".to_owned(), "log".to_owned()),
@@ -274,7 +273,7 @@ mod tests {
             parse_value(&parse_toml("[prelude.proc]\nmod = true\nsub = true\n")).unwrap();
 
         assert_eq!(
-            settings.prelude,
+            settings.prelude.unwrap(),
             vec![
                 Import::Module("proc".to_owned()),
                 Import::Item("proc".to_owned(), "sub".to_owned()),
@@ -287,17 +286,10 @@ mod tests {
         let settings = parse_value(&parse_toml(
             "[prelude]\nstd = [\"@Never\"]\n[prelude.custom]\n\"@Seq\" = \"Sequence\"\n\"@Index\" = true\n",
         )).unwrap();
-        assert!(
-            settings
-                .prelude
-                .contains(&Import::TypeItem("std".into(), "Never".into()))
-        );
-        assert!(
-            settings
-                .prelude
-                .contains(&Import::TypeItem("custom".into(), "Index".into()))
-        );
-        assert!(settings.prelude.contains(&Import::TypeItemAs(
+        let prelude = settings.prelude.unwrap();
+        assert!(prelude.contains(&Import::TypeItem("std".into(), "Never".into())));
+        assert!(prelude.contains(&Import::TypeItem("custom".into(), "Index".into())));
+        assert!(prelude.contains(&Import::TypeItemAs(
             "custom".into(),
             "Seq".into(),
             "Sequence".into()
@@ -326,7 +318,7 @@ mod tests {
             let unit = compile_document(
                 Path::new("m.dol"),
                 format!("def first items@{name}[Int] -> Int\n  items[0]\nfirst [1]\n"),
-                &settings.prelude,
+                settings.prelude.as_deref().unwrap(),
                 None,
             );
             assert!(unit.diagnostics().next().is_none());
@@ -368,11 +360,17 @@ mod tests {
     }
 
     #[test]
-    fn missing_prelude_is_the_default() {
+    fn missing_tables_are_left_out() {
         let settings = parse_value(&parse_toml("")).unwrap();
-        assert_eq!(settings.prelude, default_prelude());
+        assert_eq!(
+            settings,
+            Settings {
+                prelude: None,
+                modules: None
+            }
+        );
         let settings = parse_value(&parse_toml("[prelude]\n")).unwrap();
-        assert_eq!(settings.prelude, []);
+        assert_eq!(settings.prelude, Some(vec![]));
     }
 
     #[test]
@@ -380,7 +378,7 @@ mod tests {
         let tree = Directory::new();
         tree.write("lib/a.dol", "");
         let value = parse_toml("[modules]\npath = [\"lib\", \"/abs\", \"../up\"]\n");
-        let settings = parse(&value, &tree.0).unwrap();
+        let settings = parse(&value, Some(&tree.0)).unwrap();
         // The rejected entries are logged; the rest applies
         let modules = settings.modules.unwrap();
         assert!(modules.bundled);
@@ -390,8 +388,17 @@ mod tests {
         );
 
         let value = parse_toml("[modules]\nbundled = false\n");
-        let settings = parse(&value, &tree.0).unwrap();
+        let settings = parse(&value, Some(&tree.0)).unwrap();
         assert!(!settings.modules.unwrap().bundled);
+    }
+
+    #[test]
+    fn reject_modules_below_the_root() {
+        let value = parse_toml("[prelude]\n[modules]\npath = [\"lib\"]\n");
+        let error = parse(&value, None).unwrap_err();
+        assert!(error.contains("only in the configuration at the workspace root"));
+        let settings = parse(&parse_toml("[prelude]\n"), None).unwrap();
+        assert_eq!(settings.prelude, Some(vec![]));
     }
 
     #[test]
