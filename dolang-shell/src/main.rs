@@ -11,6 +11,7 @@ extern crate dolang_shell_modules;
 
 extern crate dolang_ext_compile;
 extern crate dolang_ext_load;
+extern crate dolang_ext_zip;
 
 #[cfg(feature = "base64")]
 extern crate dolang_ext_base64;
@@ -49,8 +50,6 @@ extern crate dolang_ext_winscm;
 extern crate dolang_ext_xml;
 #[cfg(feature = "yaml")]
 extern crate dolang_ext_yaml;
-#[cfg(feature = "zip")]
-extern crate dolang_ext_zip;
 
 #[cfg(not(asan))]
 #[global_allocator]

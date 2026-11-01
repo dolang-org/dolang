@@ -26,6 +26,13 @@ modules in `dolang-shell-modules`, and stock entrypoints here.
   ordered prelude bindings. Source mtime invalidates cache entries; bytecode
   verification errors trigger recompilation. `--no-cache` bypasses the cache.
   The stock shell always links `digest`.
+- **Script bundles**: before choosing a script, boot asks `_bundle` for the
+  offset of a zip signature at the start or after a `#!` line. A bundle's
+  `main.dol[c]` and `lib/` members are read up front, then run by a
+  program-bound importer: bundle modules first, memoized and guarded per module
+  by a `strand.Resource`, then `load.import`. Modules run without strand I/O.
+  Stale `.dolc` is recompiled from its source without a disk cache. `--check`
+  and `--compile` reject bundles.
 - **Checking**: boot lazily imports `_compile`, shared with `compile check`.
   `--check` retains quiet success and permits partial verification; the tooling
   entrypoint retains summaries and fails partial verification.

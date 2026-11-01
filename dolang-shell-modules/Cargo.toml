@@ -55,7 +55,6 @@ winreg = []
 winscm = []
 xml = []
 yaml = []
-zip = []
 # The `test` module's stub for the playground, which provides `test` natively.
 wasm = []
 

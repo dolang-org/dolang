@@ -12,11 +12,11 @@ every bundled module, native or not.
   one, and a source is bundled only when the features of everything it imports
   are enabled, so a build that leaves an extension out bundles no types for it.
   Extensions that every consumer links have no feature, and the native shell's
-  mandatory ones, such as `shell`, are bundled unless `wasm` is enabled.
-  The selected modules are checked together, and each typelib is written from
-  that check. The build fails if the check reports an error or warning, a
-  bundled module imports one that isn't bundled, or two sources are the same
-  module.
+  mandatory ones, such as `shell` and `zip`, are bundled unless `wasm` is
+  enabled. The selected modules are checked together, and each typelib is
+  written from that check. The build fails if the check reports an error or
+  warning, a bundled module imports one that isn't bundled, or two sources are
+  the same module.
 - **Shell-core integration**: the crate registers its public `RESOURCES` table
   with `dolang::resources!`. The shell links this crate to include stock
   modules.

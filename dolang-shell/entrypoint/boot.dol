@@ -36,7 +36,7 @@ def help()
     $usage
 
     Arguments:
-      [PATH]     Script path (or bundled entrypoint name if -m is used)
+      [PATH]     Script or bundle path (or bundled entrypoint name if -m is used)
       [ARGS]...  Script arguments (appear in `shell.args`)
 
     Options:
@@ -157,9 +157,9 @@ let _options_handler = load.import_handler do |name|
   else
     throw std.ImportError $name
 
-# Load the native-only source helper through the bootstrap importer before a
-# filesystem importer could depend on it recursively.
-import _script
+# Load the native-only source helpers through the bootstrap importer before a
+# filesystem importer could depend on them recursively.
+import _bundle _script
 
 # Filesystem modules precede bundled modules once CLI paths are known.
 resources.unregister()
@@ -199,7 +199,14 @@ shell.with_override args: $trailing program: $identity do
     load.run $bytecode
   else
     let path = fs.Path $selected
-    if check
+    let bundle = _bundle.offset $path
+    if (bundle != nil && check)
+      argument_error "--check does not support bundles"
+    if (bundle != nil && output != nil)
+      argument_error "--compile does not support bundles"
+    if let Int(offset) = bundle
+      _bundle.run $path $offset prelude: $prelude strict: $strict
+    else if check
       if !_script.precompiled(path)
         import _compile
         _compile.check_script $path prelude: $prelude strict: $strict paths: (search_paths())

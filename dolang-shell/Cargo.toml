@@ -27,7 +27,6 @@ default = [
   "glob",
   "http",
   "http_mock",
-  "zip",
   "tar",
   "compress",
   "sqlite",
@@ -54,7 +53,6 @@ glob = ["dep:dolang-ext-glob", "dolang-shell-modules/glob"]
 url = ["dep:dolang-ext-url", "dolang-shell-modules/url"]
 http = ["dep:dolang-ext-http", "url", "dolang-shell-modules/http"]
 http_mock = ["dep:dolang-ext-http-mock", "url", "dolang-shell-modules/http_mock"]
-zip = ["dep:dolang-ext-zip", "dolang-shell-modules/zip"]
 tar = ["dep:dolang-ext-tar", "dolang-shell-modules/tar"]
 compress = ["dep:dolang-ext-compress", "dolang-shell-modules/compress"]
 sqlite = ["dep:dolang-ext-sqlite", "dolang-shell-modules/sqlite"]
@@ -139,7 +137,6 @@ optional = true
 
 [dependencies.dolang-ext-zip]
 workspace = true
-optional = true
 
 
 [dependencies.dolang-ext-tar]

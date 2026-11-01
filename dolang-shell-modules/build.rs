@@ -28,8 +28,8 @@ const TABLE: &[Row] = &[
         when: &["!wasm"],
         globs: &[
             "stub/{fs,proc,security,shell,shlex,sys}{.dol,/**/*.dol}",
-            "stub/_shell.dol",
-            "lib/{_compile,_display,_script,args,dodo,exec,xdg}.dol",
+            "stub/{_shell,zip}.dol",
+            "lib/{_bundle,_compile,_display,_script,args,dodo,exec,xdg}.dol",
             "lib/_container/common.dol",
             "lib/_vm/{common,provision}.dol",
         ],
@@ -111,10 +111,6 @@ const TABLE: &[Row] = &[
         globs: &["stub/yaml.dol"],
     },
     Row {
-        when: &["!wasm", "zip"],
-        globs: &["stub/zip.dol"],
-    },
-    Row {
         when: &["!wasm", "url"],
         globs: &["lib/systemd.dol"],
     },
@@ -137,21 +133,21 @@ const TABLE: &[Row] = &[
     Row {
         when: &[
             "!wasm", "base64", "compress", "http", "json", "progress", "rand", "regex", "tar",
-            "url", "zip",
+            "url",
         ],
         globs: &["lib/transfer.dol"],
     },
     Row {
         when: &[
             "!wasm", "base64", "compress", "http", "json", "patch", "progress", "rand", "regex",
-            "tar", "url", "zip",
+            "tar", "url",
         ],
         globs: &["lib/{docker,podman}.dol", "lib/_container/dockman.dol"],
     },
     Row {
         when: &[
             "!wasm", "base64", "compress", "http", "json", "progress", "rand", "regex", "tar",
-            "url", "xml", "yaml", "zip",
+            "url", "xml", "yaml",
         ],
         globs: &["lib/libvirt.dol"],
     },

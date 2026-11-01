@@ -68,6 +68,40 @@ The checker follows imports using the ordinary module search paths, including
 any `--module-path` directories, and uses bundled type libraries when no source
 module is found. With `--strict`, warnings fail the check too.
 
+### Script Bundles
+
+A script bundle packages a program and its modules as one file: a zip archive,
+optionally preceded by a `#!` line. `dolang` runs a bundle as it runs a script:
+
+```bash
+dolang app world
+./app world
+```
+
+The archive holds:
+
+- `main.dol` -- the program
+- `lib/` -- modules; `foo.bar` is `lib/foo/bar.dol` or `lib/foo/bar/mod.dol`
+- `.dolc` files -- precompiled bytecode, used in place of a `.dol` source of
+  the same name
+
+Other members are ignored. Imports resolve inside the bundle first, then through
+the [module search paths](./modules.md#module-search-paths). Each module in the
+bundle runs once. Bytecode for `main.dol` is compiled as a script, as
+`--compile` does, and bytecode for a module is compiled in module mode under the
+module's name. Bytecode that fails verification is recompiled from its source
+when the bundle has one. `--check` and `--compile` don't accept bundles, and the
+effect of prelude options and `--strict` on a bundle is unspecified.
+
+Archive offsets count from the start of the archive, so a bundle can be built
+with any zip tool by prepending the `#!` line:
+
+```bash
+(cd src && zip -r ../app.zip main.dol lib)
+{ echo '#!/usr/bin/env dolang'; cat app.zip; } > app
+chmod +x app
+```
+
 ### Bundled Entrypoints
 
 `-m` runs an entrypoint bundled with `dolang`:
