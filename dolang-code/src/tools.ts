@@ -22,6 +22,9 @@ export interface ToolContext {
 /** Where tool resolution reports what it found and what it downloaded. */
 export type ToolLog = Pick<vscode.LogOutputChannel, "info" | "warn" | "error">;
 
+/** Fetches release metadata and archives; tests substitute their own. */
+export type ToolFetch = (_url: string, _init?: RequestInit) => Promise<Response>;
+
 export interface ToolResolverOptions {
     readonly context: ToolContext;
     readonly configuration?: vscode.WorkspaceConfiguration;
@@ -186,11 +189,18 @@ export class GitHubReleaseToolDownloader {
     readonly cacheRoot: string;
     readonly version: string;
     private readonly log: ToolLog | undefined;
+    private readonly fetch: ToolFetch;
 
-    constructor(context: Pick<ToolContext, "globalStorageUri">, version: string, log?: ToolLog) {
+    constructor(
+        context: Pick<ToolContext, "globalStorageUri">,
+        version: string,
+        log?: ToolLog,
+        fetcher: ToolFetch = (url, init) => fetch(url, init)
+    ) {
         this.cacheRoot = path.join(context.globalStorageUri.fsPath, "tools", "releases");
         this.version = version;
         this.log = log;
+        this.fetch = fetcher;
     }
 
     public isEnabled(): boolean {
@@ -310,7 +320,7 @@ export class GitHubReleaseToolDownloader {
     }
 
     private async downloadAndExtract(): Promise<void> {
-        const response = await fetch(this.releaseUrl(), {
+        const response = await this.fetch(this.releaseUrl(), {
             headers: {
                 Accept: "application/vnd.github+json"
             }
@@ -336,7 +346,7 @@ export class GitHubReleaseToolDownloader {
             throw new Error(`Release ${release.tag_name} does not contain asset ${assetName}`);
         }
 
-        const download = await fetch(asset.browser_download_url);
+        const download = await this.fetch(asset.browser_download_url);
         if (!download.ok || !download.body) {
             throw new Error(
                 `Failed to download ${assetName}: ${download.status} ${download.statusText}`
