@@ -328,6 +328,8 @@ fn wildcard(pattern: &str, name: &str) -> bool {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
 
     /// A scratch directory, removed when dropped.
@@ -335,13 +337,11 @@ pub(crate) mod tests {
 
     impl Directory {
         pub(crate) fn new() -> Self {
+            static COUNT: AtomicUsize = AtomicUsize::new(0);
             let path = std::env::temp_dir().join(format!(
                 "dolang-lsp-modules-{}-{}",
                 std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
+                COUNT.fetch_add(1, Ordering::Relaxed),
             ));
             fs::create_dir(&path).unwrap();
             Self(path.canonicalize().unwrap())
