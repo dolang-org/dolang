@@ -21,40 +21,35 @@ workspace = true
 workspace = true
 
 
+# The native shell's prelude for compiling `lib/`; unused under `wasm`.
 [build-dependencies.dolang-ext-shell]
 workspace = true
-optional = true
 
 
 [build-dependencies.wax]
 workspace = true
 
 
-# Each extension's feature bundles its stub's typelib and the libraries that
-# need it; see the table in build.rs.
+# Each optional extension's feature bundles its stub's typelib and the
+# libraries that need it; see the table in build.rs. Extensions every consumer
+# links have no feature, and those only the native shell links are bundled
+# unless `wasm` is enabled.
 [features]
 debug = ["dolang-private-bundle/debug"]
 base64 = []
-compile = []
 compress = []
-digest = []
 glob = []
 http = []
 http_mock = []
 json = []
-load = []
 patch = []
 progress = []
 rand = []
 regex = []
-shell = ["dep:dolang-ext-shell"]
 sqlite = []
 tar = []
-term = []
-time = []
 toml = []
 url = []
-uuid = []
 winnet = []
 winreg = []
 winscm = []

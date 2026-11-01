@@ -1,4 +1,4 @@
-#[cfg(feature = "shell")]
+#[cfg(not(feature = "wasm"))]
 extern crate dolang_ext_shell;
 
 use std::{env, path::Path};
@@ -18,36 +18,40 @@ struct Row {
 /// its sources import, directly or not, since an import of a module this build
 /// leaves out fails the build.
 const TABLE: &[Row] = &[
+    // Every consumer links these.
     Row {
         when: &[],
-        globs: &["stub/{std,io,math,strand}.dol"],
+        globs: &["stub/{std,io,math,strand,compile,digest,load,term,time,uuid}.dol"],
+    },
+    // Only the native shell links these.
+    Row {
+        when: &["!wasm"],
+        globs: &[
+            "stub/{fs,proc,security,shell,shlex,sys}{.dol,/**/*.dol}",
+            "stub/_shell.dol",
+            "lib/{_compile,_display,_script,args,dodo,exec,xdg}.dol",
+            "lib/_container/common.dol",
+            "lib/_vm/{common,provision}.dol",
+        ],
     },
     Row {
         when: &["base64"],
         globs: &["stub/base64.dol"],
     },
     Row {
-        when: &["compile", "term"],
-        globs: &["stub/compile.dol"],
-    },
-    Row {
-        when: &["compress", "shell", "time", "uuid"],
+        when: &["!wasm", "compress"],
         globs: &["stub/compress.dol"],
-    },
-    Row {
-        when: &["digest"],
-        globs: &["stub/digest.dol"],
     },
     Row {
         when: &["glob"],
         globs: &["stub/glob.dol"],
     },
     Row {
-        when: &["http", "json", "time", "url"],
+        when: &["http", "json", "url"],
         globs: &["stub/http.dol"],
     },
     Row {
-        when: &["http_mock", "time", "url"],
+        when: &["http_mock", "url"],
         globs: &["stub/http/mock.dol"],
     },
     Row {
@@ -55,11 +59,7 @@ const TABLE: &[Row] = &[
         globs: &["stub/json.dol"],
     },
     Row {
-        when: &["load"],
-        globs: &["stub/load.dol"],
-    },
-    Row {
-        when: &["patch", "shell", "time", "uuid"],
+        when: &["!wasm", "patch"],
         globs: &["stub/patch.dol"],
     },
     Row {
@@ -75,28 +75,12 @@ const TABLE: &[Row] = &[
         globs: &["stub/regex.dol"],
     },
     Row {
-        when: &["shell", "time", "uuid"],
-        globs: &["stub/{fs,proc,security,shell,shlex,sys}{.dol,/**/*.dol}"],
-    },
-    Row {
-        when: &["shell", "compile", "term", "time", "uuid"],
-        globs: &["stub/_shell.dol"],
-    },
-    Row {
-        when: &["sqlite", "shell", "time", "uuid"],
+        when: &["!wasm", "sqlite"],
         globs: &["stub/sqlite.dol"],
     },
     Row {
-        when: &["tar", "shell", "time", "uuid"],
+        when: &["!wasm", "tar"],
         globs: &["stub/tar.dol"],
-    },
-    Row {
-        when: &["term"],
-        globs: &["stub/term.dol"],
-    },
-    Row {
-        when: &["time"],
-        globs: &["stub/time.dol"],
     },
     Row {
         when: &["toml"],
@@ -107,19 +91,15 @@ const TABLE: &[Row] = &[
         globs: &["stub/url.dol"],
     },
     Row {
-        when: &["uuid"],
-        globs: &["stub/uuid.dol"],
-    },
-    Row {
-        when: &["winnet", "shell", "time", "uuid"],
+        when: &["!wasm", "winnet"],
         globs: &["stub/winnet.dol"],
     },
     Row {
-        when: &["winreg", "shell", "time", "uuid"],
+        when: &["!wasm", "winreg"],
         globs: &["stub/winreg.dol"],
     },
     Row {
-        when: &["winscm", "shell", "time", "uuid"],
+        when: &["!wasm", "winscm"],
         globs: &["stub/winscm.dol"],
     },
     Row {
@@ -131,69 +111,47 @@ const TABLE: &[Row] = &[
         globs: &["stub/yaml.dol"],
     },
     Row {
-        when: &["zip", "shell", "time", "uuid"],
+        when: &["!wasm", "zip"],
         globs: &["stub/zip.dol"],
     },
     Row {
-        when: &["shell", "time", "uuid"],
-        globs: &[
-            "lib/{args,xdg}.dol",
-            "lib/_container/common.dol",
-            "lib/_vm/{common,provision}.dol",
-        ],
-    },
-    Row {
-        when: &["shell", "term", "time", "uuid"],
-        globs: &["lib/_display.dol"],
-    },
-    Row {
-        when: &["shell", "term", "time", "url", "uuid"],
+        when: &["!wasm", "url"],
         globs: &["lib/systemd.dol"],
     },
     Row {
-        when: &["shell", "compile", "term", "time", "uuid"],
-        globs: &["lib/_compile.dol"],
-    },
-    Row {
-        when: &["shell", "compile", "digest", "load", "term", "time", "uuid"],
-        globs: &["lib/{_script,dodo,exec}.dol"],
-    },
-    Row {
-        when: &[
-            "shell", "compile", "load", "progress", "term", "time", "uuid",
-        ],
+        when: &["!wasm", "progress"],
         globs: &["lib/test.dol"],
     },
     Row {
-        when: &["shell", "base64", "rand", "regex", "time", "uuid"],
+        when: &["!wasm", "base64", "rand", "regex"],
         globs: &["lib/{_ssh,_vfs,_wsl,admin,ssh,sudo,toolbx,wsl}.dol"],
     },
     Row {
-        when: &["shell", "digest", "time", "uuid", "yaml"],
+        when: &["!wasm", "yaml"],
         globs: &["lib/_vm/cloud_init.dol"],
     },
     Row {
-        when: &["shell", "time", "uuid", "xml"],
+        when: &["!wasm", "xml"],
         globs: &["lib/_vm/unattend.dol"],
     },
     Row {
         when: &[
-            "shell", "base64", "compress", "digest", "http", "json", "progress", "rand", "regex",
-            "tar", "time", "url", "uuid", "zip",
+            "!wasm", "base64", "compress", "http", "json", "progress", "rand", "regex", "tar",
+            "url", "zip",
         ],
         globs: &["lib/transfer.dol"],
     },
     Row {
         when: &[
-            "shell", "base64", "compress", "digest", "http", "json", "patch", "progress", "rand",
-            "regex", "tar", "time", "url", "uuid", "zip",
+            "!wasm", "base64", "compress", "http", "json", "patch", "progress", "rand", "regex",
+            "tar", "url", "zip",
         ],
         globs: &["lib/{docker,podman}.dol", "lib/_container/dockman.dol"],
     },
     Row {
         when: &[
-            "shell", "base64", "compile", "compress", "digest", "http", "json", "progress", "rand",
-            "regex", "tar", "term", "time", "url", "uuid", "xml", "yaml", "zip",
+            "!wasm", "base64", "compress", "http", "json", "progress", "rand", "regex", "tar",
+            "url", "xml", "yaml", "zip",
         ],
         globs: &["lib/libvirt.dol"],
     },
@@ -225,7 +183,7 @@ fn selected(path: &Path) -> bool {
 }
 
 /// The library modules run under the shell's prelude.
-#[cfg(feature = "shell")]
+#[cfg(not(feature = "wasm"))]
 fn configure(config: &mut Config<'_>) {
     use dolang::extension::CompilerExt;
 
@@ -234,8 +192,8 @@ fn configure(config: &mut Config<'_>) {
     }
 }
 
-/// No library module is selected without the shell.
-#[cfg(not(feature = "shell"))]
+/// No library module is selected for the playground.
+#[cfg(feature = "wasm")]
 fn configure(_config: &mut Config<'_>) {}
 
 fn main() {

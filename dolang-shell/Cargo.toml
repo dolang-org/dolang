@@ -81,10 +81,9 @@ workspace = true
 workspace = true
 
 
+# Optional extensions forward their features.
 [dependencies.dolang-shell-modules]
 workspace = true
-# The extensions always linked; the optional ones forward their features.
-features = ["shell", "compile", "load", "digest", "uuid", "time", "term"]
 
 
 [dependencies.dolang]
