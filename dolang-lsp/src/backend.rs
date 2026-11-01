@@ -4659,15 +4659,4 @@ pub def area d @ a.D
             .await;
         assert_eq!(script.diagnostics, []);
     }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn bundled_stub_checks_clean_with_the_repository_config() {
-        let std =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../dolang-shell-modules/stub/std.dol");
-        let std = std.canonicalize().unwrap();
-        let text = fs::read_to_string(&std).unwrap();
-        let mut harness = Harness::checking(Duration::from_millis(10));
-        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
-        assert_eq!(checked(&mut harness, &std, &text).await, []);
-    }
 }

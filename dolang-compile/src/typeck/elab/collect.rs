@@ -1019,6 +1019,7 @@ impl<'u> Walk<'_, 'u> {
             .iter()
             .map(|param| self.param(&frame, param))
             .collect();
+        self.items_classes(&frame, &func.params);
         let [input, output] = [&func.input, &func.output].map(|implicit| {
             implicit
                 .as_ref()
@@ -1224,17 +1225,46 @@ impl<'u> Walk<'_, 'u> {
         }
     }
 
-    fn pattern(&mut self, frame: &Frame<'_, 'u>, pattern: &'u Pattern) {
+    /// Refer to the classes of a pattern's type tests, which run in `frame`, the
+    /// current scope, wherever the pattern binds
+    fn pattern_classes(&mut self, frame: &Frame<'_, 'u>, pattern: &'u Pattern) {
         match pattern {
-            Pattern::Constant { .. } => {}
+            Pattern::Constant { .. } | Pattern::Ident(_) => {}
             Pattern::TypeTest(test) => {
                 if let Some(res) = test.class.ident.res
                     && let Some(entry) = frame.value_entry(res)
                 {
                     self.refer(test.class.ident.span, entry, &test.class.fields);
                 }
-                self.pattern(frame, &test.pattern);
+                self.pattern_classes(frame, &test.pattern);
             }
+            Pattern::Unpack(items) => self.items_classes(frame, items),
+            Pattern::Alt(alt) => {
+                for pattern in &alt.alts {
+                    self.pattern_classes(frame, pattern);
+                }
+            }
+        }
+    }
+
+    /// [`Self::pattern_classes`] for the sub-patterns of unpacked items
+    fn items_classes(&mut self, frame: &Frame<'_, 'u>, items: &'u [PatItem]) {
+        for item in items {
+            if let PatItem::Pos { bind, .. }
+            | PatItem::Key { bind, .. }
+            | PatItem::ConstKey { bind, .. } = item
+                && let PatBind::Nested { pattern, .. } = bind
+            {
+                self.pattern_classes(frame, pattern);
+            }
+        }
+    }
+
+    /// Walk the bindings of a pattern, which land in `frame`
+    fn pattern(&mut self, frame: &Frame<'_, 'u>, pattern: &'u Pattern) {
+        match pattern {
+            Pattern::Constant { .. } => {}
+            Pattern::TypeTest(test) => self.pattern(frame, &test.pattern),
             Pattern::Ident(PatIdent { ty, .. }) => {
                 self.annot(frame, ty, Role::Type);
             }
@@ -1260,6 +1290,7 @@ impl<'u> Walk<'_, 'u> {
                 if let Some((body, _)) = &node.else_branch {
                     self.branch(frame, &**body, None);
                 }
+                self.pattern_classes(frame, &node.bind);
                 self.pattern(frame, &node.bind);
             }
             Stmt::Bind(node) => {
@@ -1267,6 +1298,7 @@ impl<'u> Walk<'_, 'u> {
                 if let Some((body, _)) = &node.else_branch {
                     self.branch(frame, &**body, None);
                 }
+                self.pattern_classes(frame, &node.bind);
                 self.pattern(frame, &node.bind);
             }
             Stmt::Assign(node) => {
@@ -1313,6 +1345,9 @@ impl<'u> Walk<'_, 'u> {
             Stmt::Throw(node) => self.expr(frame, &node.expr),
             Stmt::While(node) => {
                 self.expr(frame, &node.expr);
+                if let Some(bind) = &node.bind {
+                    self.pattern_classes(frame, &bind.pattern);
+                }
                 self.branch(
                     frame,
                     &node.body,
@@ -1323,7 +1358,7 @@ impl<'u> Walk<'_, 'u> {
                 if let Some(expr) = &node.expr {
                     self.expr(frame, expr);
                 }
-                self.branch(frame, &node.body, Some(&node.bind));
+                self.loop_body(frame, &node.body, &node.bind);
             }
         }
     }
@@ -1523,10 +1558,12 @@ impl<'u> Walk<'_, 'u> {
                 self.expr(frame, &node.scrutinee);
                 for arm in &node.arms {
                     let inner = self.scope(Some(frame), &arm.body.vars, &arm.body.stmts);
+                    self.pattern_classes(frame, &arm.pattern);
                     self.pattern(&inner, &arm.pattern);
                     if let Some(guard) = &arm.guard {
                         self.expr(&inner, &guard.expr);
                         if let Some(bind) = &guard.bind {
+                            self.pattern_classes(&inner, &bind.pattern);
                             self.pattern(&inner, &bind.pattern);
                         }
                     }
@@ -1553,6 +1590,7 @@ impl<'u> Walk<'_, 'u> {
         }
     }
 
+    /// Walk a branch body, into which a tested pattern's bindings land
     fn branch<T: Body>(
         &mut self,
         frame: &Frame<'_, 'u>,
@@ -1569,9 +1607,23 @@ impl<'u> Walk<'_, 'u> {
         }
     }
 
+    /// Walk a loop body, which matches the loop's pattern as a `let` in it would
+    fn loop_body<T: Body>(&mut self, frame: &Frame<'_, 'u>, body: &'u T, bind: &'u Pattern) {
+        let (vars, elems) = body.parts();
+        let inner = self.scope(Some(frame), vars, elems);
+        self.pattern_classes(&inner, bind);
+        self.pattern(&inner, bind);
+        for elem in elems {
+            elem.walk(self, &inner);
+        }
+    }
+
     fn if_body<T: Body>(&mut self, frame: &Frame<'_, 'u>, node: &'u If<T>) {
         for branch in iter::once(&node.tbranch).chain(node.elif_branches.iter().map(|(b, _)| b)) {
             self.expr(frame, &branch.expr);
+            if let Some(bind) = &branch.bind {
+                self.pattern_classes(frame, &bind.pattern);
+            }
             self.branch(
                 frame,
                 &branch.body,
@@ -1587,7 +1639,7 @@ impl<'u> Walk<'_, 'u> {
         if let Some(expr) = &node.expr {
             self.expr(frame, expr);
         }
-        self.branch(frame, &node.body, Some(&node.bind));
+        self.loop_body(frame, &node.body, &node.bind);
     }
 
     fn lvalue(&mut self, frame: &Frame<'_, 'u>, value: &'u LValue) {

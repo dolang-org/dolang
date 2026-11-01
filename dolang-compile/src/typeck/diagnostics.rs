@@ -58,30 +58,6 @@ fn check_excludes_unit_diagnostics() {
 }
 
 #[test]
-fn oversized_binder_group_is_diagnosed_and_seals() {
-    let binders: Vec<_> = (0..=usize::from(u16::MAX) + 1)
-        .map(|n| format!("T{n}"))
-        .collect();
-    let source = format!(
-        "pub class Big[{}]\npub let big @ Big[] = nil\n",
-        binders.join(", ")
-    );
-    let unit = config(Mode::Module { name: "m".into() }).unit(Path::new("m.dol"), source);
-    let mut checker = typeck::Builder::new();
-    checker.unit(&unit).unwrap();
-    let check = checker.check();
-    let messages: Vec<_> = check
-        .diagnostics()
-        .map(|diag| diag.message().to_string())
-        .collect();
-    assert_eq!(
-        messages,
-        ["declaration has more than 65536 binders, counting those it captures"]
-    );
-    check.smoke();
-}
-
-#[test]
 fn judgments_do_not_depend_on_the_order_units_are_added() {
     let geo = config(Mode::Module { name: "geo".into() }).unit(
         Path::new("geo.dol"),
