@@ -179,21 +179,22 @@ suite("Tool Resolution", () => {
 suite("Release Downloads", () => {
     test("a missing release names the pinned version", async () => {
         const root = await fs.mkdtemp(path.join(os.tmpdir(), "dolang-code-test-"));
-        const downloader = new GitHubReleaseToolDownloader(createContext(root), VERSION);
         const fetches: string[] = [];
-
-        await withFetch(
+        const downloader = new GitHubReleaseToolDownloader(
+            createContext(root),
+            VERSION,
+            undefined,
             async url => {
                 fetches.push(url);
                 return new Response("not found", { status: 404 });
-            },
-            () =>
-                assert.rejects(downloader.resolve("shell"), (error: unknown) => {
-                    assert.ok(error instanceof Error);
-                    assert.match(error.message, new RegExp(`No Do release v${VERSION}`));
-                    return true;
-                })
+            }
         );
+
+        await assert.rejects(downloader.resolve("shell"), (error: unknown) => {
+            assert.ok(error instanceof Error);
+            assert.match(error.message, new RegExp(`No Do release v${VERSION}`));
+            return true;
+        });
         assert.deepStrictEqual(fetches, [downloader.releaseUrl()]);
     });
 
@@ -211,9 +212,11 @@ suite("Release Downloads", () => {
         await fs.mkdir(path.join(releases, key, "bundle"), { recursive: true });
 
         const archive = await createBundle(root);
-        const downloader = new GitHubReleaseToolDownloader(context, VERSION);
         const fetches: string[] = [];
-        const resolved = await withFetch(
+        const downloader: GitHubReleaseToolDownloader = new GitHubReleaseToolDownloader(
+            context,
+            VERSION,
+            undefined,
             async url => {
                 fetches.push(url);
                 if (url === downloader.releaseUrl()) {
@@ -228,9 +231,12 @@ suite("Release Downloads", () => {
                     });
                 }
                 return new Response(await fs.readFile(archive));
-            },
-            () => Promise.all([downloader.resolve("shell"), downloader.resolve("lsp")])
+            }
         );
+        const resolved = await Promise.all([
+            downloader.resolve("shell"),
+            downloader.resolve("lsp")
+        ]);
 
         assert.strictEqual(fetches.length, 2);
         assert.deepStrictEqual(
@@ -437,20 +443,6 @@ function createLog(): ToolLog & { lines: string[] } {
         warn: (message: string) => lines.push(`warn: ${message}`),
         error: (message: string | Error) => lines.push(`error: ${message}`)
     };
-}
-
-async function withFetch<T>(
-    handler: (_url: string) => Promise<Response>,
-    body: () => Promise<T>
-): Promise<T> {
-    const original = globalThis.fetch;
-    globalThis.fetch = (input: string | URL | Request) =>
-        handler(input instanceof Request ? input.url : input.toString());
-    try {
-        return await body();
-    } finally {
-        globalThis.fetch = original;
-    }
 }
 
 /** Builds a release archive holding stub executables for every tool. */
