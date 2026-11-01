@@ -41,10 +41,11 @@ pub def compile path :mode = :SCRIPT: :prelude = {} :strict = false :cache = tru
 # Execute in the caller's context, retrying cached verification failures only.
 pub def run path :mode = :SCRIPT: :prelude = {} :strict = false :cache = true
   let bytecode cached = read $path $mode $prelude $strict $cache false
-  try
-    load.run $bytecode
-  catch std.BytecodeError: error
+  let program = try
+    load.load $bytecode
+  catch load.BytecodeError: error
     if !cached
       throw error
     let bytecode _cached = read $path $mode $prelude $strict $cache true
-    load.run $bytecode
+    load.load $bytecode
+  program.run()

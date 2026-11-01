@@ -47,7 +47,6 @@ pub(crate) enum Boxed<'v> {
     CyclicImport(alias::Box<str>),
     Import(alias::Box<str>),
     Compile(Box<dyn error::Error>),
-    Bytecode(Box<dyn error::Error>),
     Runtime(Box<dyn error::Error>),
     Abort(Box<dyn error::Error>),
 }
@@ -75,7 +74,6 @@ impl<'v> Boxed<'v> {
             CyclicImport(_) => ErrorKind::CyclicImport,
             Import(_) => ErrorKind::Import,
             Compile(_) => ErrorKind::Compile,
-            Bytecode(_) => ErrorKind::Bytecode,
             Runtime(_) => ErrorKind::Runtime,
             Abort(_) => ErrorKind::Abort,
             Canceled => ErrorKind::Canceled,
@@ -114,7 +112,6 @@ impl<'v> Display for Boxed<'v> {
                 write!(f, "cycle detected importing module: {name}")
             }
             Compile(error) => write!(f, "compile error: {error}"),
-            Bytecode(error) => write!(f, "bytecode error: {error}"),
             Runtime(error) => Display::fmt(error, f),
             Abort(error) => Display::fmt(error, f),
         }
@@ -440,11 +437,6 @@ fn construct<'v, 's>(
             let msg = expect_string(strand, &msg)?;
             Error::compile(strand, msg)
         }
-        ErrorKind::Bytecode => {
-            let ([msg], []) = unpack!(strand, args, 1, 0)?;
-            let msg = expect_string(strand, &msg)?;
-            Error::bytecode(strand, msg)
-        }
         ErrorKind::Abort => {
             return Err(Error::type_error(
                 strand,
@@ -498,7 +490,6 @@ fn variant_singleton<'v>(strand: &Strand<'v, '_>, kind: ErrorKind) -> &'v Value<
         ErrorKind::CyclicImport => &class.error_cyclic_import,
         ErrorKind::Import => &class.error_import,
         ErrorKind::Compile => &class.error_compile,
-        ErrorKind::Bytecode => &class.error_bytecode,
         ErrorKind::Runtime => &class.error_runtime,
         ErrorKind::Abort => &class.error_abort,
         ErrorKind::Canceled => &class.error_canceled,
@@ -527,7 +518,6 @@ fn variant_name(kind: ErrorKind) -> &'static str {
         ErrorKind::CyclicImport => "CyclicImport",
         ErrorKind::Import => "Import",
         ErrorKind::Compile => "Compile",
-        ErrorKind::Bytecode => "Bytecode",
         ErrorKind::Runtime => "Runtime",
         ErrorKind::Abort => "Abort",
         ErrorKind::Canceled => "Canceled",
@@ -555,7 +545,6 @@ fn is_runtime_superkind(kind: ErrorKind) -> bool {
             | ErrorKind::CyclicImport
             | ErrorKind::Import
             | ErrorKind::Compile
-            | ErrorKind::Bytecode
             | ErrorKind::Runtime
             | ErrorKind::TimedOut
     )

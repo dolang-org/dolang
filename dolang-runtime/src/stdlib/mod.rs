@@ -84,7 +84,6 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     let error_cyclic_import = bc.error_cyclic_import.dup();
     let error_import = bc.error_import.dup();
     let error_compile = bc.error_compile.dup();
-    let error_bytecode = bc.error_bytecode.dup();
     let error_runtime = bc.error_runtime.dup();
     let error_abort = bc.error_abort.dup();
     let error_canceled = bc.error_canceled.dup();
@@ -172,7 +171,6 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .value("CyclicImportError", &error_cyclic_import)
         .value("ImportError", &error_import)
         .value("CompileError", &error_compile)
-        .value("BytecodeError", &error_bytecode)
         .value("RuntimeError", &error_runtime)
         .value("AbortError", &error_abort)
         .value("CanceledError", &error_canceled)

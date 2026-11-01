@@ -1,4 +1,4 @@
-import compile exec fs shell strand std
+import compile exec fs load shell strand std
   std:
     - TypeError
     - CompileError
@@ -220,6 +220,25 @@ def run_passes_channels_through()
       strand.pipeline input: [1, 2] output: $output
         do exec.run $path :app
       assert_eq $output [1, 2]
+
+# A bytecode error raised while cached bytecode runs is the script's own, so it
+# must not recompile and rerun the script.
+#[test]
+def run_does_not_retry_runtime_bytecode_errors()
+  with_channel_source do |dir app cache|
+    let path = (dir / "script.dol")
+    path.write r|
+      import load strand
+      strand.put ran
+      load.run b"invalid bytecode"
+    path.update_metadata modified: $DateTime.from_unix(1)
+    for _ = 0..2
+      let output = []
+      strand.redirect output: $output do
+        assert_throws $load.BytecodeError do exec.run $path :app
+      assert_eq $output ["ran"]
+    let files = [...cache.glob("*.dolc")]
+    assert_eq $files.len 1
 
 #[test]
 def module_rejects_top_level_return()

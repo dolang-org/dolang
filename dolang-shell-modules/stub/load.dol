@@ -1,5 +1,51 @@
 # dolang: strict
-# Executes Do bytecode and registers runtime import handlers.
+# Loads and executes Do bytecode and registers runtime import handlers.
+
+# Decoded and verified Do bytecode, produced by [`load`](load.load).
+#
+# It runs at most once.
+pub class Bytecode
+  # Executes the bytecode, as [`run`](load.run) does.
+  #
+  # ## Returns
+  #
+  # The result of executing the bytecode.
+  #
+  # ## Errors
+  #
+  # [`StateError`](std.StateError) if the bytecode has already run.
+  #
+  # ## Example
+  #
+  # ```
+  # let program = load $ (compile.compile "example.dol" "(1 + 1)").emit()
+  # assert_eq $program.run() 2
+  # ```
+  pub def run
+    self
+    # Program-specific module importer, called with the requested module name.
+    # Input ends immediately and output is discarded while the importer runs.
+    :importer @ ((Str, <Value, >Value) -> Value) = ...
+    <Iter[Value]
+    >Sink[Value]
+  do -> Value
+    ...
+
+# Raised when bytes are not valid Do bytecode.
+#
+# [`load`](load.load) and [`run`](load.run) raise it before any of the
+# bytecode runs, so a caller can recompile and retry without repeating side
+# effects. A program that loads other bytecode can also raise it while running.
+#
+# ## Example
+#
+# ```
+# try
+#   load b"not bytecode"
+# catch BytecodeError: err
+#   echo "invalid bytecode: $err"
+# ```
+pub class BytecodeError: std.RuntimeError
 
 # A registered runtime import handler.
 pub class ImportHandler
@@ -87,6 +133,25 @@ pub def import_handler
 do -> ImportHandler
   ...
 
+# Decodes and verifies compiled Do bytecode without running it.
+#
+# ## Errors
+#
+# [`BytecodeError`](load.BytecodeError) if `bytecode` is not valid Do
+# bytecode.
+#
+# ## Example
+#
+# ```
+# let program = load $ (compile.compile "example.dol" "(1 + 1)").emit()
+# assert_eq $program.run() 2
+# ```
+pub def load
+  # Compiled Do bytecode.
+  bytecode @ Bin
+do -> Bytecode
+  ...
+
 # Executes compiled Do bytecode.
 #
 # The loaded program uses the caller's input and output. Imports run with input
@@ -101,6 +166,13 @@ do -> ImportHandler
 #
 # The result of executing the bytecode.
 #
+# ## Errors
+#
+# | Exception | Condition |
+# | --- | --- |
+# | [`BytecodeError`](load.BytecodeError) | `bytecode` is a [`Bin`](std.Bin) that is not valid Do bytecode |
+# | [`StateError`](std.StateError) | `bytecode` is a [`Bytecode`](load.Bytecode) that has already run |
+#
 # ## Example
 #
 # ```
@@ -108,8 +180,8 @@ do -> ImportHandler
 # assert_eq $result 2
 # ```
 pub def run
-  # Compiled Do bytecode.
-  bytecode @ Bin
+  # Compiled Do bytecode, or bytecode already decoded by [`load`](load.load).
+  bytecode @ (Bin | Bytecode)
   # Program-specific module importer, called with the requested module name.
   # Input ends immediately and output is discarded while the importer runs.
   :importer @ ((Str, <Value, >Value) -> Value) = ...

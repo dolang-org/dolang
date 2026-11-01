@@ -156,11 +156,11 @@ class Operation
     else
       compile.compile "$(self.#path)" $source module: $name prelude: $prelude
 
-  def run_loaded self bytecode @ Bin <Iter[Value] >Sink[Value] -> Value
+  def run_loaded self program @ load.Bytecode <Iter[Value] >Sink[Value] -> Value
     let module = Namespace $self.#inject
     let synthetic = self.#synthetic
     let imports = self.#import
-    load.run $bytecode importer: do |name|
+    program.run importer: do |name|
       if (name == synthetic)
         module
       else
@@ -176,14 +176,16 @@ class Operation
       throw std.CompileError "failed to compile $path"
     let bytecode = compiled.emit()
     self.#cache.write $bytecode
-    self.#run_loaded $bytecode
+    self.#run_loaded $ load.load $bytecode
 
   pub def run self <Iter[Value] >Sink[Value] -> Value
     if cache_usable $self.#cache $self.#path
-      try
-        return self.#run_loaded $ self.#cache.read()
-      catch std.BytecodeError: _
+      let program = try
+        load.load $ self.#cache.read()
+      catch load.BytecodeError: _
         nil
+      if (program != nil)
+        return self.#run_loaded $program
     self.#compile_cached()
 
 # Compiles a script if needed, caches the bytecode, and runs it.

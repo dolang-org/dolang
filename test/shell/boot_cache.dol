@@ -62,6 +62,24 @@ def cache_settings_and_execution_errors()
         run $shell.exe $error_script stderr: (BinBuf())
     assert_eq $marker.read_str() "xx"
 
+# A bytecode error raised while a cached script runs is the script's own, so
+# it must not recompile and rerun the script.
+#[test]
+def cached_scripts_do_not_retry_runtime_bytecode_errors()
+  isolated do |dir|
+    let script = (dir / "nested.dol")
+    let marker = (dir / "marker")
+    script.write |
+      import fs load
+      fs.append $(dbg(str(marker))) x
+      load.run b"invalid bytecode"
+    import proc
+    for _ = 0..2
+      assert_throws $proc.Error do
+        run $shell.exe $script stderr: (BinBuf())
+    assert_eq $(entries dir).len 1
+    assert_eq $marker.read_str() "xx"
+
 #[test]
 def strictness_and_compilation_mode_have_separate_cache_entries()
   isolated do |dir|

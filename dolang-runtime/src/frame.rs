@@ -466,7 +466,7 @@ impl<'v, 'a> FrameInfo<'v, 'a> {
                         Err(i) => i - 1,
                     };
                     let entry = &sourcemap[index];
-                    let file = &loaded.debug_strtab()[entry.2.clone()];
+                    let file = &loaded.debug_strtab()[debug.file.clone()];
                     Some((file, entry.1))
                 } else {
                     None

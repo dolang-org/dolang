@@ -3,12 +3,12 @@ use crate::global::Tag;
 use std::{cell::Cell, collections::HashSet, mem};
 
 use dolang::runtime::{
-    Error, Object, Output, State, call,
+    Error, Input, Instance, Object, Output, Result, State, Strand, Value, call,
     error::ErrorKind,
-    object::{Mut, Ref, TypeBuilder},
+    object::{Mut, Ref, TypeBuilder, fmt},
     unpack,
-    value::Nil,
-    vm::{Builder, Register},
+    value::{Nil, TypeObject, fmt::Format},
+    vm::{self, Builder, Register},
 };
 
 use crate::global::Global;
@@ -71,20 +71,27 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
     let importer_sym = builder.sym("importer");
     builder
         .module("load")
+        .value("Bytecode", global.types.bytecode)
+        .value("BytecodeError", global.types.bytecode_error)
         .value("ImportHandler", global.types.import_handler)
+        .function("load", async move |strand, args, mut out| {
+            let ([bytes], []) = unpack!(strand, args, 1, 0)?;
+            let bytecode = decode(strand, &bytes)?;
+            global.types.bytecode.create_with_annex(
+                strand,
+                Bytecode,
+                BytecodeAnnex(Cell::new(Some(bytecode))),
+                &mut out,
+            );
+            Ok(())
+        })
         .function("run", async move |strand, args, out| {
             let ([bytecode], [importer]) = unpack!(strand, args, 1, 0, importer_sym = None)?;
-
-            let bytecode = dolang::runtime::Bytecode::new(
-                bytecode
-                    .as_bin(strand)
-                    .ok_or_else(|| Error::type_error(strand, "bytecode: expected Bin"))?
-                    .to_vec(),
-            );
-            match importer {
-                Some(importer) => bytecode.run_with_importer(strand, importer, out).await,
-                None => bytecode.run(strand, out).await,
-            }
+            let bytecode = match global.types.bytecode.cast(&bytecode) {
+                Some(cast) => cast.enter_sync(strand, |strand, inst| take(strand, inst))?,
+                None => decode(strand, &bytecode)?,
+            };
+            run(strand, bytecode, importer, out).await
         })
         .function("import", async move |strand, args, out| {
             let ([name], []) = unpack!(strand, args, 1, 0)?;
@@ -138,6 +145,105 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
             Ok(())
         })
         .commit();
+}
+
+/// Decodes and verifies `bytes`, raising `load.BytecodeError` if they are invalid
+fn decode<'v, 's>(strand: &mut Strand<'v, 's>, bytes: &Value<'v>) -> Result<'v, 's, vm::Bytecode> {
+    let bytes = bytes
+        .as_bin(strand)
+        .ok_or_else(|| Error::type_error(strand, "bytecode: expected Bin or Bytecode"))?
+        .to_vec();
+    vm::Bytecode::new(bytes).map_err(|e| {
+        let global = strand.state::<Tag>();
+        Error::object_with_annex(
+            strand,
+            global.types.bytecode_error,
+            BytecodeError,
+            ErrorAnnex {
+                message: e.to_string(),
+            },
+        )
+    })
+}
+
+fn take<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    inst: Instance<'v, '_, Bytecode>,
+) -> Result<'v, 's, vm::Bytecode> {
+    inst.annex()
+        .0
+        .take()
+        .ok_or_else(|| Error::state_error(strand, "bytecode already run"))
+}
+
+async fn run<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    bytecode: vm::Bytecode,
+    importer: Option<impl Input<'v>>,
+    out: impl Output<'v>,
+) -> Result<'v, 's, ()> {
+    match importer {
+        Some(importer) => bytecode.run_with_importer(strand, importer, out).await,
+        None => bytecode.run(strand, out).await,
+    }
+}
+
+/// Decoded bytecode, emptied once run
+pub(crate) struct Bytecode;
+
+pub(crate) struct BytecodeAnnex(Cell<Option<vm::Bytecode>>);
+
+impl<'v> Object<'v> for Bytecode {
+    const NAME: &'v str = "Bytecode";
+    const MODULE: &'v str = "load";
+    type Annex = BytecodeAnnex;
+    type Type = ();
+    type TypeAnnex = ();
+
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let importer_sym = builder.sym("importer");
+        builder.method("run", async move |this, strand, args, out| {
+            let ([], [importer]) = unpack!(strand, args, 0, 0, importer_sym = None)?;
+            let bytecode = take(strand, this)?;
+            run(strand, bytecode, importer, out).await
+        })
+    }
+}
+
+pub(crate) struct BytecodeError;
+
+pub(crate) struct ErrorAnnex {
+    message: String,
+}
+
+impl<'v> Object<'v> for BytecodeError {
+    const NAME: &'v str = "BytecodeError";
+    const MODULE: &'v str = "load";
+    type Annex = ErrorAnnex;
+    type Type = ();
+    type TypeAnnex = ();
+
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder.nominal_supertype(TypeObject::RuntimeError)
+    }
+
+    fn display<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        fmt!(strand, w, "{}", this.annex().message)
+    }
+
+    fn debug<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        fmt!(strand, w, "<load.BytecodeError ")?;
+        Self::display(this, strand, w)?;
+        fmt!(strand, w, ">")
+    }
 }
 
 pub(crate) struct ImportHandler {

@@ -19,7 +19,6 @@ import
     - CompileError
     - RuntimeError
     - AbortError
-    - BytecodeError
     - CanceledError
     - TimedOutError
     - IterStop
@@ -83,7 +82,6 @@ assert_ctor $SinkStop msg: "sink stopped"
 assert_ctor $CyclicImportError msg: "cycle detected importing module: pkg.mod" "pkg.mod"
 assert_ctor $ImportError msg: "module not found: pkg.mod" "pkg.mod"
 assert_ctor $CompileError msg: "compile error: invalid token" "invalid token"
-assert_ctor $BytecodeError msg: "bytecode error: bad opcode" "bad opcode"
 assert_ctor $RuntimeError msg: "closed" "closed"
 assert_ctor $CanceledError msg: "strand canceled"
 assert_ctor $TimedOutError msg: "strand timed out"
@@ -96,7 +94,6 @@ assert_ctor_fail $StateError type: $TypeError msg: "type error: expected `Str`" 
 assert_ctor_fail $FieldError type: $TypeError msg: "type error: expected `Sym`" 123
 assert_ctor_fail $ImportError type: $TypeError msg: "type error: expected `Str`" 123
 assert_ctor_fail $CompileError type: $TypeError msg: "type error: expected `Str`" 123
-assert_ctor_fail $BytecodeError type: $TypeError msg: "type error: expected `Str`" 123
 assert_ctor_fail $RuntimeError type: $TypeError msg: "type error: expected `Str`" 123
 
 assert_ctor_fail $AbortError type: $TypeError msg: "type error: Abort is not instantiable" "stop"

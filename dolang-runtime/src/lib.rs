@@ -38,7 +38,7 @@ use crate::{
     sym::Sym,
     value::Value,
 };
-use dolang_bytecode::{self as bytecode, Phase};
+use dolang_bytecode as bytecode;
 use dolang_util::alias;
 
 /// How often (in iterations) to check for interrupts in inner loops.
@@ -51,17 +51,13 @@ pub(crate) const INTERRUPT_INTERVAL: usize = 1024;
 /// and [`Sink`](crate::value::TypeObject::Sink) operations.
 pub const BYTE_STREAM_CHUNK_SIZE: usize = 512 * 1024;
 
-pub(crate) struct Runtime;
-
-impl Phase for Runtime {
-    type Bytes = Range<usize>;
-}
-
-pub(crate) type Func = bytecode::Func<Runtime>;
+/// A loaded function; its bytecode range is absolute within the program's bytecode
+pub(crate) type Func = bytecode::Func;
 
 pub(crate) struct FuncDebug {
     pub(crate) name: Range<usize>,
-    pub(crate) sourcemap: alias::Box<[(usize, u32, Range<usize>)]>,
+    pub(crate) file: Range<usize>,
+    pub(crate) sourcemap: alias::Box<[(usize, u32)]>,
 }
 
 // Loaded bytecode program
@@ -87,10 +83,10 @@ pub(crate) struct ProgramAnnex<'v> {
 impl<'v> ProgramAnnex<'v> {
     /// Returns the debug string table as `&str` directly from the owned bytecode.
     ///
-    /// Sound because `verify_debugbintab` validates the entire table as UTF-8
+    /// Sound because `verify_debug` validates the entire region as UTF-8
     /// before a `Program` can be constructed.
     pub(crate) fn debug_strtab(&self) -> &str {
-        // SAFETY: the bytecode verifier rejects any file whose debugbintab
+        // SAFETY: the bytecode verifier rejects any file whose debug region
         // contains invalid UTF-8, so this range is guaranteed to be valid UTF-8.
         unsafe { std::str::from_utf8_unchecked(&self.bytecode[self.debugbintab.clone()]) }
     }
