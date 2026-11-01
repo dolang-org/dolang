@@ -1,0 +1,146 @@
+import fs io proc sys zip
+  _shell:
+    - compile
+  shell:
+    - exe
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+    - ignore
+    - test
+
+# Writes a bundle of `members`, a dict of member names to contents, after
+# `prefix`.
+def make_bundle path members :prefix = b""
+  fs.open $path w+ do |file|
+    file.write $prefix
+    zip.open (io.Cursor(file, (prefix.len..))) w do |archive|
+      for name data = members
+        archive.open $name do |member| member.write $data
+
+# The standard output and standard error of a run.
+def capture program *args
+  let out = BinBuf()
+  let err = BinBuf()
+  run $program ...args stdout: $out stderr: $err mode: :CHUNK:
+  (Str(out.freeze()), Str(err.freeze()))
+
+# The standard output of running the shell.
+def run_bundle *args
+  let out _err = capture $exe ...args
+  out
+
+# The combined output of a run expected to fail, and its exit code.
+def fail_bundle *args
+  let out = BinBuf()
+  let error = assert_throws $proc.Error do
+    run $exe ...args stdout: $out stderr: :STDOUT: mode: :CHUNK:
+  (Str(out.freeze()), error.rc)
+
+#[test]
+def runs_main_with_or_without_a_shebang()
+  fs.with_temp_dir do |dir|
+    let members = {"main.dol": "put \"hello \$(shell.args[0])\\n\"\n"}
+    let plain = (dir / "plain")
+    make_bundle $plain $members
+    assert_eq (run_bundle(plain, "world")) "hello world\n"
+    let shebang = (dir / "shebang")
+    make_bundle $shebang $members prefix: b"#!/usr/bin/env dolang\n"
+    assert_eq (run_bundle(shebang, "world")) "hello world\n"
+
+#[test]
+def runs_directly_through_its_shebang()
+  if (sys.os_info().family != :UNIX:)
+    ignore "requires shebang execution"
+  fs.with_temp_dir do |dir|
+    let app = (dir / "app")
+    make_bundle $app {"main.dol": "put \"direct\\n\"\n"} prefix: (Bin "#!$exe\n")
+    app.update_metadata mode: 0o755
+    let out _err = capture $app
+    assert_eq $out "direct\n"
+
+#[test]
+def resolves_modules_inside_the_bundle_once()
+  fs.with_temp_dir do |dir|
+    let app = (dir / "app")
+    make_bundle $app $
+      "main.dol": "import a c\nput \"\$(a.value) \$(c.value)\\n\"\n"
+      "lib/a.dol": "import b\npub let value = (b.value + 1)\n"
+      "lib/c.dol": "import b\npub let value = (b.value + 2)\n"
+      "lib/b/mod.dol": "echo loading b\npub let value = 40\n"
+    let out err = capture $exe $app
+    assert_eq $out "41 42\n"
+    assert_eq $err "loading b\n"
+
+#[test]
+def bundled_modules_precede_global_ones()
+  fs.with_temp_dir do |dir|
+    let modules = (dir / "modules")
+    modules.create_dir()
+    (modules / "a.dol").write "pub let value = \"global\"\n"
+    (modules / "other.dol").write "pub let value = \"other\"\n"
+    let app = (dir / "app")
+    make_bundle $app $
+      "main.dol": "import a other\nput \"\$(a.value) \$(other.value)\\n\"\n"
+      "lib/a.dol": "pub let value = \"bundled\"\n"
+    assert_eq (run_bundle("--module-path", str(modules), app)) "bundled other\n"
+
+#[test]
+def import_cycles_are_errors()
+  fs.with_temp_dir do |dir|
+    let app = (dir / "app")
+    make_bundle $app $
+      "main.dol": "import a\n"
+      "lib/a.dol": "import b\npub let value = 1\n"
+      "lib/b.dol": "import a\npub let value = 2\n"
+    let output _rc = fail_bundle $app
+    assert $output.contains("cycle detected importing module: a")
+
+#[test]
+def bytecode_precedes_source()
+  fs.with_temp_dir do |dir|
+    let app = (dir / "app")
+    make_bundle $app $
+      "main.dol": "put \"source main\\n\"\n"
+      "main.dolc": (compile "main.dol" "import a\nput \"bytecode main \$(a.value)\\n\"\n")
+      "lib/a.dol": "pub let value = \"source\"\n"
+      "lib/a.dolc": (compile "a.dol" "pub let value = \"bytecode\"\n" mode: "a")
+    assert_eq (run_bundle app) "bytecode main bytecode\n"
+
+#[test]
+def invalid_bytecode_falls_back_to_source()
+  fs.with_temp_dir do |dir|
+    let app = (dir / "app")
+    make_bundle $app $
+      "main.dol": "import a\nput \"\$(a.value)\\n\"\n"
+      "main.dolc": b"invalid bytecode"
+      "lib/a.dol": "pub let value = \"recompiled\"\n"
+      "lib/a.dolc": b"invalid bytecode"
+    assert_eq (run_bundle app) "recompiled\n"
+    let orphan = (dir / "orphan")
+    make_bundle $orphan $
+      "main.dol": "import a\n"
+      "lib/a.dolc": b"invalid bytecode"
+    let output _rc = fail_bundle $orphan
+    assert $output.contains("invalid file header")
+
+#[test]
+def missing_main_is_an_error()
+  fs.with_temp_dir do |dir|
+    let app = (dir / "app")
+    make_bundle $app {"lib/a.dol": "pub let value = 1\n"}
+    let output _rc = fail_bundle $app
+    assert $output.contains("main.dol")
+
+#[test]
+def check_and_compile_reject_bundles()
+  fs.with_temp_dir do |dir|
+    let app = (dir / "app")
+    make_bundle $app {"main.dol": "echo hi\n"}
+    let checked checked_rc = fail_bundle --check $app
+    assert_eq $checked_rc 2
+    assert $checked.contains("--check")
+    let compiled compiled_rc = fail_bundle --compile (dir / "out.dolc") $app
+    assert_eq $compiled_rc 2
+    assert $compiled.contains("--compile")
