@@ -487,6 +487,24 @@ def stream_output_is_forwarded()
 
 #[test]
 #[vfs]
+def stderr_merges_only_into_the_same_destination()
+  let script = Path "both-child.dol"
+  script.write r|
+    import shell
+    shell.stdout.write b"out\n"
+    shell.stderr.write b"err\n"
+  # Equal destinations stay apart unless they are the same object.
+  let out = BinBuf()
+  let err = BinBuf()
+  run $exe $script stdout: $out stderr: $err
+  assert_eq $out.freeze() b"out\n"
+  assert_eq $err.freeze() b"err\n"
+  let both = BinBuf()
+  run $exe $script stdout: $both stderr: $both
+  assert_eq $both.freeze() b"out\nerr\n"
+
+#[test]
+#[vfs]
 def failing_stream_fails_successful_child()
   let err = assert_throws $ValueError do cat stdin: $Memory(fail: "source broke")
   assert_eq (str err) "value error: source broke"
