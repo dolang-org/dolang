@@ -8,7 +8,7 @@ use std::{
     io,
     marker::PhantomData,
     mem,
-    ops::{Deref, DerefMut, Range},
+    ops::{Deref, DerefMut},
     pin::Pin,
     ptr::NonNull,
     task::{Poll, Waker},
@@ -449,22 +449,6 @@ impl<'v> Vm<'v> {
         &self.singletons
     }
 
-    fn slice_range(buffer: &[u8], slice: &[u8]) -> Option<Range<usize>> {
-        let buffer_start = buffer.as_ptr().addr();
-        let slice_start = slice.as_ptr().addr();
-
-        let byte_start = slice_start.wrapping_sub(buffer_start);
-
-        let start = byte_start;
-        let end = start.wrapping_add(slice.len());
-
-        if start <= buffer.len() && end <= buffer.len() {
-            Some(start..end)
-        } else {
-            None
-        }
-    }
-
     /// Load and deserialize bytecode into a Program object.
     ///
     /// # Bytecode Loading Process
@@ -492,18 +476,23 @@ impl<'v> Vm<'v> {
         importer: Value<'v>,
     ) -> dolang_bytecode::Result<Gc<'v, Program<'v>>> {
         let verified = file::deserialize(&bytecode.0)?;
+        let main = verified.main(&bytecode.0);
+        let main_start = verified.main.start;
+        let debugbintab = verified.debug.clone();
+        let verified = &verified.index;
 
         let funcs: alias::Box<_> = verified
             .functab
             .content
             .iter()
             .map(|e| {
+                let code = &e.func.bytecode;
                 (
                     Func {
                         sig: e.func.sig,
                         locals: e.func.locals,
                         upvars: e.func.upvars.clone(),
-                        bytecode: Self::slice_range(&bytecode.0, e.func.bytecode).unwrap(),
+                        bytecode: main_start + code.start..main_start + code.end,
                     },
                     e.cert.max_operand_depth + e.func.locals,
                 )
@@ -515,8 +504,7 @@ impl<'v> Vm<'v> {
             .content
             .iter()
             .map(|s| {
-                let name = std::str::from_utf8(&verified.bintab.content[s.name.clone()])
-                    .expect("verified UTF-8");
+                let name = std::str::from_utf8(&main[s.name.clone()]).expect("verified UTF-8");
                 if s.private {
                     self.sym_register_unique_obj(name)
                 } else {
@@ -538,14 +526,12 @@ impl<'v> Vm<'v> {
                 file::Const::Nil => Value::NIL,
                 file::Const::Int(v) => Value::from_int(self, *v),
                 file::Const::VerbatimInt(v, file::StrId { start, end }) => {
-                    let s = std::str::from_utf8(&verified.bintab.content[*start..*end])
-                        .expect("verified UTF-8");
+                    let s = std::str::from_utf8(&main[*start..*end]).expect("verified UTF-8");
                     Value::from_int_verbatim(self, *v, s)
                 }
                 file::Const::F64(v) => Value::from_f64(self, *v),
                 file::Const::VerbatimF64(v, file::StrId { start, end }) => {
-                    let s = std::str::from_utf8(&verified.bintab.content[*start..*end])
-                        .expect("verified UTF-8");
+                    let s = std::str::from_utf8(&main[*start..*end]).expect("verified UTF-8");
                     Value::from_f64_verbatim(self, *v, s)
                 }
                 file::Const::Bool(v) => Value::from_bool(*v),
@@ -554,12 +540,12 @@ impl<'v> Vm<'v> {
                         gc::Base::from_header_utf8_slice(
                             &self.arena,
                             Header::new(self.arena(), self.builtin_types.str.vtbl),
-                            &verified.bintab.content[*start..*end],
+                            &main[*start..*end],
                         )
                     }))
                 }
                 file::Const::Bin(file::BinId { start, end }) => {
-                    Value::from_u8_slice(self, &verified.bintab.content[*start..*end])
+                    Value::from_u8_slice(self, &main[*start..*end])
                 }
                 file::Const::Sym(idx) => Value::from_object(symroots[*idx].clone()),
             })
@@ -630,8 +616,6 @@ impl<'v> Vm<'v> {
             .collect::<Vec<_>>()
             .into();
 
-        let debugbintab = Self::slice_range(&bytecode.0, verified.debugbintab.content).unwrap();
-
         let module_name = verified.module_name.clone().map(|id| id.start..id.end);
 
         let funcdebugs = verified
@@ -644,14 +628,15 @@ impl<'v> Vm<'v> {
                 let first = iter.next().expect("empty source map?!");
                 let mut offset = 0;
                 let mut line = first.line_delta;
-                sourcemap.push((offset, line as u32, first.file.clone()));
+                sourcemap.push((offset, line as u32));
                 for entry in iter {
                     offset += entry.offset_delta + 1;
                     line += entry.line_delta;
-                    sourcemap.push((offset, line as u32, entry.file.clone()))
+                    sourcemap.push((offset, line as u32))
                 }
                 FuncDebug {
-                    name: debug.name.start..debug.name.end,
+                    name: debug.name.clone(),
+                    file: debug.file.clone(),
                     sourcemap: sourcemap.into(),
                 }
             })

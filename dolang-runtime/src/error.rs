@@ -136,7 +136,7 @@ impl<'v> UnwindEntry<'v> {
                         Err(i) => i - 1,
                     };
                     let entry = &sourcemap[index];
-                    let file = &program.debug_strtab()[entry.2.clone()];
+                    let file = &program.debug_strtab()[debug.file.clone()];
                     Some((Cow::Owned(file.to_owned()), entry.1))
                 } else {
                     None

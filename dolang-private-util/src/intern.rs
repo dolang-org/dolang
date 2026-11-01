@@ -364,8 +364,9 @@ const MIN_SEGMENT: usize = 4096;
 
 /// Interns byte strings through `&self`.
 ///
-/// Each byte string is assigned a range of logical offsets in insertion order,
-/// which [`flatten`](Self::flatten) lays out contiguously.
+/// Each byte string, interned or [appended](Self::append), is assigned a range
+/// of logical offsets in insertion order, which [`flatten`](Self::flatten) lays
+/// out contiguously.
 pub struct BinTable {
     segments: MonoVec<Segment>,
     // Maps each byte string to its logical start offset.
@@ -396,13 +397,25 @@ impl BinTable {
         StrId(self.id(s.as_bytes()).0)
     }
 
+    /// Stores `bytes` without interning them and returns their logical
+    /// offsets.
+    ///
+    /// For byte strings unlikely to repeat, this skips hashing and keeps them
+    /// out of the index.
+    pub fn append(&self, bytes: &[u8]) -> Range<usize> {
+        let start = self.len.get();
+        self.len.set(start + bytes.len());
+        self.store(bytes);
+        start..start + bytes.len()
+    }
+
     /// Returns the logical offsets of `id`'s bytes.
     pub fn range(&self, id: BinId) -> Range<usize> {
         let (blob, &start) = self.entry(id);
         start..start + blob.bytes().len()
     }
 
-    /// Copies every interned byte string into one buffer, at its logical
+    /// Copies every stored byte string into one buffer, at its logical
     /// offsets.
     pub fn flatten(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.len.get());
@@ -497,7 +510,7 @@ impl Frozen<BinTable> {
         unsafe { self.inner() }.range(id)
     }
 
-    /// Copies every interned byte string into one buffer, at its logical
+    /// Copies every stored byte string into one buffer, at its logical
     /// offsets.
     pub fn flatten(&self) -> Vec<u8> {
         unsafe { self.inner() }.flatten()
@@ -542,6 +555,25 @@ mod test {
             assert_eq!(&flat[table.range(id)], &table[id]);
         }
         assert_eq!(flat.len(), 10 + big.len());
+    }
+
+    #[test]
+    fn bin_table_append() {
+        let table = BinTable::new();
+        let big = vec![7u8; MIN_SEGMENT * 3];
+        let a = table.id_str("hello");
+        let b = table.append(b"hello");
+        let c = table.append(&big);
+        let d = table.id_str("world");
+        // Appended bytes aren't interned
+        assert_eq!(table.id_str("hello"), a);
+        assert_eq!(table.range(a.as_bin_id()), 0..5);
+        assert_eq!(b, 5..10);
+        let flat = table.flatten();
+        assert_eq!(&flat[b], b"hello");
+        assert_eq!(&flat[c], &big[..]);
+        assert_eq!(&flat[table.range(d.as_bin_id())], b"world");
+        assert_eq!(flat.len(), 15 + big.len());
     }
 
     #[test]

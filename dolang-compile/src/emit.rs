@@ -2,7 +2,6 @@ use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
     io::{self, Write},
-    mem,
 };
 
 use bytecode::Inst as BcInst;
@@ -12,7 +11,7 @@ use dolang_util::{alias::Box, intern::BinTable};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use dolang_bytecode::{
-    self as bytecode, Certificate, InstEncoder, Phase, file,
+    self as bytecode, InstEncoder, file,
     verify::{Context, Verifier},
 };
 
@@ -311,20 +310,22 @@ impl<'a, 'b> FuncEmitter<'a, 'b> {
         sourcemap.push(file::SourceLine {
             offset_delta: 0,
             line_delta: last.1,
-            file: path.clone(),
         });
         for span in spans {
             if span.1 != last.1 {
                 sourcemap.push(file::SourceLine {
                     offset_delta: (span.0 - last.0) - 1,
                     line_delta: span.1 - last.1,
-                    file: path.clone(),
                 });
                 last = span
             }
         }
 
-        file::FuncDebug { name, sourcemap }
+        file::FuncDebug {
+            name,
+            file: path,
+            sourcemap,
+        }
     }
 
     fn emit(&mut self) -> (Vec<u8>, file::FuncDebug) {
@@ -363,14 +364,6 @@ impl<'a, 'b> FuncEmitter<'a, 'b> {
     }
 }
 
-struct Emit;
-
-impl Phase for Emit {
-    type Bytes = Box<[u8]>;
-}
-
-type EmitFunc = bytecode::Func<Emit>;
-
 pub(crate) struct Emitter<'a> {
     pub(crate) file: &'a File<'a>,
     pub(crate) graph: &'a Graph,
@@ -383,21 +376,23 @@ pub(crate) struct Emitter<'a> {
     pub(crate) mode: Mode<'a>,
 }
 
-struct EmitContext<'c>(&'c Emitter<'c>, &'c [EmitFunc]);
+struct EmitContext<'c> {
+    emitter: &'c Emitter<'c>,
+    code: &'c [u8],
+    funcs: &'c [bytecode::Func],
+}
 
-impl<'c> Context for EmitContext<'c> {
-    type Phase = Emit;
-
-    fn slice<'a>(&'a self, bytes: &'a <Self::Phase as Phase>::Bytes) -> &'a [u8] {
-        &bytes[..]
+impl Context for EmitContext<'_> {
+    fn code(&self) -> &[u8] {
+        self.code
     }
 
-    fn function(&self, index: usize) -> Option<&EmitFunc> {
-        self.1.get(index)
+    fn function(&self, index: usize) -> Option<&bytecode::Func> {
+        self.funcs.get(index)
     }
 
     fn pack(&self, index: usize) -> Option<impl Iterator<Item = bytecode::Arg>> {
-        self.0.packtab.get_by_index(index).map(|p| {
+        self.emitter.packtab.get_by_index(index).map(|p| {
             p.iter().map(|p| match p {
                 Arg::Value => bytecode::Arg::Value,
                 Arg::Pack => bytecode::Arg::Pack,
@@ -407,15 +402,15 @@ impl<'c> Context for EmitContext<'c> {
     }
 
     fn unpack_arity(&self, index: usize) -> Option<usize> {
-        self.0.unpacktab.get_by_index(index).map(|s| s.len())
+        self.emitter.unpacktab.get_by_index(index).map(|s| s.len())
     }
 
     fn symbol_valid(&self, index: usize) -> bool {
-        self.0.symtab.get_by_index(index).is_some()
+        self.emitter.symtab.get_by_index(index).is_some()
     }
 
     fn constant_valid(&self, index: usize) -> bool {
-        self.0.consttab.get_by_index(index).is_some()
+        self.emitter.consttab.get_by_index(index).is_some()
     }
 }
 
@@ -444,7 +439,10 @@ impl<'a> Emitter<'a> {
         upvars
     }
 
-    fn emit_funcs(&mut self) -> (Vec<(EmitFunc, Certificate)>, Vec<file::FuncDebug>) {
+    /// Emits every function, appending its bytecode to the main bin table,
+    /// and returns the function table, the flattened main region and the
+    /// function debug table.
+    fn emit_funcs(&mut self) -> (Vec<file::FuncEntry>, Vec<u8>, Vec<file::FuncDebug>) {
         let mut funcs = Vec::with_capacity(self.graph.func_count());
         let mut debugs = Vec::with_capacity(self.graph.func_count());
 
@@ -464,8 +462,8 @@ impl<'a> Emitter<'a> {
                     debug_eprintln!(topic: "emit", "  {:0width$x} {}", item.before, item.inst)
                 }
             }
-            funcs.push(EmitFunc {
-                bytecode: bytecode.into(),
+            funcs.push(bytecode::Func {
+                bytecode: self.bintab.append(&bytecode),
                 sig: func.sig.index(),
                 locals: func.locals,
                 upvars: self.upvars(&func),
@@ -473,54 +471,27 @@ impl<'a> Emitter<'a> {
             debugs.push(debug);
         }
 
-        let context = EmitContext(&*self, &funcs[..]);
+        let main = self.bintab.flatten();
+        let context = EmitContext {
+            emitter: &*self,
+            code: &main,
+            funcs: &funcs,
+        };
         let verifier = Verifier::new(&context);
         let certs = verifier
             .compute(&funcs)
             .expect("internal compiler error: verification failed");
 
-        (
-            funcs
-                .into_iter()
-                .map(|f| EmitFunc {
-                    bytecode: f.bytecode,
-                    sig: f.sig,
-                    locals: f.locals,
-                    upvars: f.upvars,
-                })
-                .zip(certs)
-                .collect(),
-            debugs,
-        )
+        let funcs = funcs
+            .into_iter()
+            .zip(certs)
+            .map(|(func, cert)| file::FuncEntry { func, cert })
+            .collect();
+        (funcs, main, debugs)
     }
 
-    fn with_content(
-        &'a mut self,
-        f: &mut dyn FnMut(&file::Content) -> io::Result<()>,
-    ) -> io::Result<()> {
-        let (mut funcs, debugs) = self.emit_funcs();
-        let funcs: Vec<_> = funcs
-            .iter_mut()
-            .map(
-                |(
-                    EmitFunc {
-                        sig,
-                        locals,
-                        upvars,
-                        bytecode,
-                    },
-                    cert,
-                )| file::FuncEntry {
-                    func: file::Func {
-                        sig: *sig,
-                        locals: *locals,
-                        upvars: mem::take(upvars),
-                        bytecode,
-                    },
-                    cert: mem::take(cert),
-                },
-            )
-            .collect();
+    pub(crate) fn emit(&'a mut self, mut w: impl Write) -> io::Result<()> {
+        let (funcs, main, debugs) = self.emit_funcs();
         let functab = file::FuncTable { content: funcs };
         let consttab_entries: Vec<_> = self
             .consttab
@@ -541,10 +512,6 @@ impl<'a> Emitter<'a> {
                 Const::Bin(id) => file::Const::Bin(self.bintab.range(*id)),
             })
             .collect();
-        let bintab_content = self.bintab.flatten();
-        let bintab = file::BinTable {
-            content: &bintab_content,
-        };
         let symtab = file::SymTable {
             content: self
                 .symtab
@@ -605,27 +572,18 @@ impl<'a> Emitter<'a> {
             ),
             _ => None,
         };
-        let debugbintab_content = self.debugbintab.flatten();
-        let debugbintab = file::BinTable {
-            content: &debugbintab_content,
-        };
+        let debug = self.debugbintab.flatten();
         let funcdebugtab = file::FuncDebugTable { content: debugs };
-        let content = file::Content {
-            bintab,
+        let index = file::Index {
             symtab,
             consttab,
             packtab,
             unpacktab,
             functab,
             funcdebugtab,
-            debugbintab,
             module_name,
         };
-        f(&content)
-    }
-
-    pub(crate) fn emit(&'a mut self, mut w: impl Write) -> io::Result<()> {
-        self.with_content(&mut |content| file::serialize(content, &mut w))
+        file::serialize(&index, &main, &debug, &mut w)
     }
 
     fn qualified_name(&self, func: &cfg::Func) -> String {

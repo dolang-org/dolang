@@ -6,7 +6,7 @@ use std::{
 
 use super::{
     Arg, BUILTINS, BlockState, Certificate, DecError, Func, Inst, InstDecoder, InstOffsets,
-    LocalState, Phase, limit,
+    LocalState, limit,
 };
 use dolang_util::debug_eprintln;
 
@@ -186,10 +186,9 @@ type FlowResult<T> = result::Result<T, InstError>;
 pub type Result<T> = result::Result<T, Error>;
 
 pub trait Context {
-    type Phase: Phase;
-
-    fn slice<'a>(&'a self, bytes: &'a <Self::Phase as Phase>::Bytes) -> &'a [u8];
-    fn function(&self, index: usize) -> Option<&Func<Self::Phase>>;
+    /// The code table that function bytecode spans index into
+    fn code(&self) -> &[u8];
+    fn function(&self, index: usize) -> Option<&Func>;
     fn pack(&self, index: usize) -> Option<impl Iterator<Item = Arg>>;
     fn unpack_arity(&self, index: usize) -> Option<usize>;
     fn symbol_valid(&self, index: usize) -> bool;
@@ -319,7 +318,7 @@ struct FuncVerifier<'a, C: Context> {
     // Index of function being verified
     index: usize,
     // Function being verified
-    func: &'a Func<C::Phase>,
+    func: &'a Func,
     // Function use relations
     used: &'a mut [Used],
     // Byte offsets of logical instructions (and whether they start a basic block)
@@ -333,7 +332,7 @@ struct FuncVerifier<'a, C: Context> {
 }
 
 impl<'a, C: Context> FuncVerifier<'a, C> {
-    fn new(ctx: &'a C, index: usize, func: &'a Func<C::Phase>, used: &'a mut [Used]) -> Self {
+    fn new(ctx: &'a C, index: usize, func: &'a Func, used: &'a mut [Used]) -> Self {
         Self {
             ctx,
             index,
@@ -364,7 +363,7 @@ impl<'a, C: Context> FuncVerifier<'a, C> {
     // Pass 0: static limits, code well-formedness, branch target boundedness => offset array
     fn syntax(&mut self) -> FuncResult<()> {
         use Inst::*;
-        let bytecode_len = self.ctx.slice(&self.func.bytecode).len();
+        let bytecode_len = self.func.bytecode.len();
         if self
             .func
             .upvars
@@ -377,7 +376,7 @@ impl<'a, C: Context> FuncVerifier<'a, C> {
 
         let mut need_bb = true;
 
-        let bytecode = self.ctx.slice(&self.func.bytecode);
+        let bytecode = &self.ctx.code()[self.func.bytecode.clone()];
 
         let mut last = InstOffsets {
             before: 0usize,
@@ -589,7 +588,7 @@ impl<'a, C: Context> FuncVerifier<'a, C> {
     fn basic_blocks(&mut self, cert: Option<&Certificate>) -> FuncResult<()> {
         use Inst::*;
 
-        let bytecode = self.ctx.slice(&self.func.bytecode);
+        let bytecode = &self.ctx.code()[self.func.bytecode.clone()];
 
         for item in Self::insts_verified(bytecode, 0) {
             let InstOffsets {
@@ -898,7 +897,7 @@ impl<'a, C: Context> FuncVerifier<'a, C> {
     fn dataflow(&mut self, cert: Option<&Certificate>) -> FuncResult<()> {
         use Inst::*;
 
-        let bytecode = self.ctx.slice(&self.func.bytecode);
+        let bytecode = &self.ctx.code()[self.func.bytecode.clone()];
 
         // Initialize entry block state from function signature
         let operands = self
@@ -1147,10 +1146,7 @@ impl<'a, C: Context> Verifier<'a, C> {
         Ok(())
     }
 
-    pub fn compute(
-        &self,
-        funcs: impl IntoIterator<Item = &'a Func<C::Phase>>,
-    ) -> Result<Box<[Certificate]>> {
+    pub fn compute(&self, funcs: impl IntoIterator<Item = &'a Func>) -> Result<Box<[Certificate]>> {
         let mut certs = Vec::new();
         let funcs: Vec<_> = funcs.into_iter().collect();
         let mut used = vec![Default::default(); funcs.len()];
@@ -1171,7 +1167,7 @@ impl<'a, C: Context> Verifier<'a, C> {
 
     pub fn check(
         &self,
-        funcs: impl IntoIterator<Item = (&'a Func<C::Phase>, &'a Certificate)>,
+        funcs: impl IntoIterator<Item = (&'a Func, &'a Certificate)>,
     ) -> Result<()> {
         let funcs: Vec<_> = funcs.into_iter().collect();
         let mut used = vec![Default::default(); funcs.len()];
@@ -1210,23 +1206,16 @@ mod test {
 
     struct Context {
         mock: Mock,
-        funcs: Vec<Func<Test>>,
-    }
-
-    struct Test;
-
-    impl Phase for Test {
-        type Bytes = Box<[u8]>;
+        code: Vec<u8>,
+        funcs: Vec<Func>,
     }
 
     impl super::Context for Context {
-        type Phase = Test;
-
-        fn slice<'a>(&'a self, bytes: &'a <Self::Phase as Phase>::Bytes) -> &'a [u8] {
-            bytes
+        fn code(&self) -> &[u8] {
+            &self.code
         }
 
-        fn function(&self, index: usize) -> Option<&Func<Self::Phase>> {
+        fn function(&self, index: usize) -> Option<&Func> {
             self.funcs.get(index)
         }
 
@@ -1306,25 +1295,28 @@ mod test {
     }
 
     fn link(mock: Mock, funcs: Vec<Input>) -> Context {
-        Context {
-            mock,
-            funcs: funcs
-                .into_iter()
-                .map(
-                    |Input {
-                         sig,
-                         locals,
-                         upvars,
-                         bytecode,
-                     }| Func {
-                        bytecode,
+        let mut code = Vec::new();
+        let funcs = funcs
+            .into_iter()
+            .map(
+                |Input {
+                     sig,
+                     locals,
+                     upvars,
+                     bytecode,
+                 }| {
+                    let start = code.len();
+                    code.extend_from_slice(&bytecode);
+                    Func {
+                        bytecode: start..code.len(),
                         sig,
                         locals,
                         upvars,
-                    },
-                )
-                .collect(),
-        }
+                    }
+                },
+            )
+            .collect();
+        Context { mock, code, funcs }
     }
 
     fn func(locals: usize, upvars: Vec<usize>, insts: Vec<Inst>) -> Input {
@@ -1763,7 +1755,9 @@ mod test {
                 vec![func(0, vec![], vec![ElseFallthrough(kind)])],
             );
             run(&ctx).unwrap();
-            let mut decoder = InstDecoder::new(std::io::Cursor::new(&ctx.funcs[0].bytecode));
+            let mut decoder = InstDecoder::new(std::io::Cursor::new(
+                &ctx.code[ctx.funcs[0].bytecode.clone()],
+            ));
             assert!(
                 matches!(decoder.next().unwrap().unwrap(), ElseFallthrough(got) if got == kind)
             );

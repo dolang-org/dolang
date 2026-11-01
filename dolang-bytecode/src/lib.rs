@@ -37,7 +37,8 @@ type DecResult<T> = result::Result<T, DecError>;
 pub enum Error {
     FileSizeLimit,
     InvalidHeader,
-    TrailingJunk(usize),
+    InvalidTrailer,
+    IndexTrailingJunk,
     BinTabLimit,
     DebugBinTabLimit,
     InvalidUtf8InDebugBinTab,
@@ -69,7 +70,8 @@ pub enum Error {
     ConstKeyInFunctionParam(usize, usize),
     InvalidUnpackInFuncTab(usize),
     InvalidStrInFuncDebugTab(usize),
-    InvalidStrInSourceMap(usize, usize),
+    InvalidFileInFuncDebugTab(usize),
+    InvalidCodeInFuncTab(usize),
     InvalidModuleName,
     Verify(verify::Error),
     Malformed(Box<dyn error::Error>),
@@ -83,7 +85,8 @@ impl Display for Error {
         match self {
             FileSizeLimit => write!(f, "bytecode file size limit exceeded"),
             InvalidHeader => write!(f, "invalid file header"),
-            TrailingJunk(offset) => write!(f, "trailing junk in bytecode file at offset {offset}"),
+            InvalidTrailer => write!(f, "invalid file trailer"),
+            IndexTrailingJunk => write!(f, "trailing junk in bytecode index"),
             BinTabLimit => write!(f, "binary table exceeds size limit"),
             DebugBinTabLimit => write!(f, "debug binary table exceeds size limit"),
             InvalidUtf8InDebugBinTab => write!(f, "debug binary table contains invalid UTF-8"),
@@ -160,11 +163,11 @@ impl Display for Error {
             InvalidStrInFuncDebugTab(index) => {
                 write!(f, "invalid string in function debug table at index {index}")
             }
-            InvalidStrInSourceMap(func, index) => {
-                write!(
-                    f,
-                    "invalid string in source map for function #{func} at index {index}"
-                )
+            InvalidFileInFuncDebugTab(index) => {
+                write!(f, "invalid file in function debug table at index {index}")
+            }
+            InvalidCodeInFuncTab(index) => {
+                write!(f, "code out of bounds at function table index {index}")
             }
             SourceMapEmpty(index) => write!(f, "empty source map for function #{index}"),
             SourceMapLimit(index) => {
@@ -226,6 +229,7 @@ use std::{
     io,
     marker::PhantomData,
     mem,
+    ops::Range,
     ptr::NonNull,
     result, slice,
 };
@@ -1213,10 +1217,6 @@ impl<'a> UnsafeInstDecoder<'a> {
     }
 }
 
-pub trait Phase: Sized {
-    type Bytes;
-}
-
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
 pub enum Arg {
     Value,
@@ -1281,12 +1281,14 @@ impl Variadic {
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
-pub struct Func<P: Phase> {
+pub struct Func {
     // Index in unpack table for function parameters
     pub sig: usize,
     pub locals: usize,
     pub upvars: Vec<usize>,
-    pub bytecode: P::Bytes,
+    /// Span of the function's instructions in the code table
+    #[serde(with = "file::span")]
+    pub bytecode: Range<usize>,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
