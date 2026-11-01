@@ -864,7 +864,7 @@ async fn run<'v, 's>(
         && (captured || (console_owned && core.terminal.stdout_is_terminal));
     let stderr_to_console = captured || (console_owned && core.terminal.stderr_is_terminal);
     // Compared before stdout's value is replaced by its sink.
-    let stderr_merge = explicit.stderr && stderr.eq(strand, &output)?;
+    let stderr_merge = explicit.stderr && stderr.repr_eq(strand, &output);
 
     let stdin_link = connect_stdin(strand, &vfs, &mut command, &mut input).await?;
     let stdout_link =

@@ -1125,9 +1125,9 @@ impl Connection {
                 if self.mode == SessionMode::Remote {
                     return Err(Self::unsupported("native process stdio"));
                 }
-                Ok(Some(SpawnStdio::Native(Stdio::from(std::fs::File::from(
+                Ok(Some(SpawnStdio::Native(std::fs::File::from(
                     handle.into_inner(),
-                )))))
+                ))))
             }
             StdioRecvTarget::Opaque(stdio) => {
                 // Consuming the receiver releases its drain slot: once a child
@@ -1170,9 +1170,9 @@ impl Connection {
                 if self.mode == SessionMode::Remote {
                     return Err(Self::unsupported("native process stdio"));
                 }
-                Ok(Some(SpawnStdio::Native(Stdio::from(std::fs::File::from(
+                Ok(Some(SpawnStdio::Native(std::fs::File::from(
                     handle.into_inner(),
-                )))))
+                ))))
             }
             StdioSendTarget::Opaque(stdio) => {
                 let stdio = context
@@ -1202,14 +1202,20 @@ impl Connection {
     ) -> Result<Vec<File>> {
         let stdin = self.spawn_stdio_recv(context, stdin);
         let stdout = self.spawn_stdio_send(context, stdout);
-        let stderr_to_stdout = matches!(stderr, StdioSendTarget::Stdout);
+        let mut stderr_to_stdout = matches!(stderr, StdioSendTarget::Stdout);
         let stderr = self.spawn_stdio_send(context, stderr);
-        let (stdin, stdout, stderr) = (stdin?, stdout?, stderr?);
+        let (stdin, stdout, mut stderr) = (stdin?, stdout?, stderr?);
+        // A native stdout is used as is, so merging gives stderr a duplicate of
+        // it, rather than leaving the command to use the server's own stdout.
+        if stderr_to_stdout && let Some(SpawnStdio::Native(file)) = &stdout {
+            stderr = Some(SpawnStdio::Native(file.try_clone()?));
+            stderr_to_stdout = false;
+        }
 
         let mut files = Vec::new();
         match stdin {
             Some(SpawnStdio::Pipe(pipe)) => command.stdin(pipe)?,
-            Some(SpawnStdio::Native(stdio)) => command.stdin_native(stdio)?,
+            Some(SpawnStdio::Native(file)) => command.stdin_native(Stdio::from(file))?,
             Some(SpawnStdio::File(file)) => {
                 files.push(file.clone());
                 command.stdin(file)?
@@ -1218,7 +1224,7 @@ impl Connection {
         };
         match stdout {
             Some(SpawnStdio::Pipe(pipe)) => command.stdout(pipe)?,
-            Some(SpawnStdio::Native(stdio)) => command.stdout_native(stdio)?,
+            Some(SpawnStdio::Native(file)) => command.stdout_native(Stdio::from(file))?,
             Some(SpawnStdio::File(file)) => {
                 files.push(file.clone());
                 command.stdout(file)?
@@ -1230,7 +1236,7 @@ impl Connection {
         } else {
             match stderr {
                 Some(SpawnStdio::Pipe(pipe)) => command.stderr(pipe)?,
-                Some(SpawnStdio::Native(stdio)) => command.stderr_native(stdio)?,
+                Some(SpawnStdio::Native(file)) => command.stderr_native(Stdio::from(file))?,
                 Some(SpawnStdio::File(file)) => {
                     files.push(file.clone());
                     command.stderr(file)?
@@ -2352,7 +2358,7 @@ enum SpawnStdio<P> {
     /// A pipe end the peer retained here.
     Pipe(P),
     /// A native handle the peer passed along, used as is.
-    Native(Stdio),
+    Native(std::fs::File),
     /// A file the peer retained here.
     File(File),
 }
