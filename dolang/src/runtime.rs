@@ -58,11 +58,12 @@ pub mod io {
 pub mod vm {
     pub use dolang_runtime::frame::Frame;
     pub use dolang_runtime::vm::{
-        Alloc, AllocExt, Builder, Bytecode, ModuleBuilder, Register, State, StateTag, Vm,
+        Alloc, AllocExt, Builder, Bytecode, BytecodeError, ModuleBuilder, Register, State,
+        StateTag, Vm,
     };
 }
 
-pub use vm::{Alloc, AllocExt, Bytecode, Frame, State, Vm};
+pub use vm::{Alloc, AllocExt, Bytecode, BytecodeError, Frame, State, Vm};
 
 /// Strands
 pub mod strand {

@@ -91,7 +91,11 @@ mod detail {
             .map(|diag| dolang_private_test::Located::new(diag, &unit))
             .collect();
         let res = unit.emit(&mut out);
-        (res.map(|_| Bytecode::new(out)), diags, directives)
+        (
+            res.map(|_| Bytecode::new(out).expect("compiler output must verify")),
+            diags,
+            directives,
+        )
     }
 
     #[derive(Clone, Debug)]
@@ -859,7 +863,7 @@ fn constant_pattern_without_prelude() {
         .unit(std::path::Path::new("constant.dol"), "let 200 = 404\n")
         .emit(&mut bytes)
         .unwrap();
-    let bytecode = Bytecode::new(bytes);
+    let bytecode = Bytecode::new(bytes).expect("compiler output must verify");
     futures::executor::block_on(Builder::build(async |vm| {
         vm.importer(async |_strand, _name, _out| panic!("unexpected import"));
         vm.enter_with_slots(async |strand, [mut out]| {

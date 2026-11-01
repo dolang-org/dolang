@@ -150,9 +150,14 @@ fn run() -> Outcome {
                                 )?;
                                 strand
                                     .with_slots(async |strand, [out]| {
-                                        runtime::Bytecode::new(boot.as_bytes())
-                                            .run(strand, out)
-                                            .await
+                                        let boot = runtime::Bytecode::new(boot.as_bytes())
+                                            .map_err(|e| {
+                                                runtime::Error::runtime(
+                                                    strand,
+                                                    format!("invalid bundled boot entrypoint: {e}"),
+                                                )
+                                            })?;
+                                        boot.run(strand, out).await
                                     })
                                     .await
                             });

@@ -14,7 +14,7 @@ use std::{
     task::{Poll, Waker},
 };
 
-use dolang_util::{alias, mono::MonoVec};
+use dolang_util::{alias, mono::MonoVec, verified::Verified};
 use futures::{
     channel::mpsc,
     stream::{FuturesUnordered, StreamExt},
@@ -455,7 +455,7 @@ impl<'v> Vm<'v> {
     ///
     /// This function transforms serialized bytecode into runtime data structures:
     ///
-    /// 1. **Deserialize**: Parse the bytecode file format into structured tables
+    /// 1. **Index**: Use the tables decoded and verified by [`Bytecode::new`]
     /// 2. **Function Table**: Build function descriptors with bytecode ranges
     /// 3. **Symbol Table**: Register symbols in the VM's symbol table
     /// 4. **Constant Table**: Convert file constants into runtime Values
@@ -470,13 +470,12 @@ impl<'v> Vm<'v> {
     /// - `packtab`: Argument patterns → sig::Pack specifications
     /// - `unpacktab`: Function signatures → sig::Unpack with default values
     /// - `sourcemap`: Delta-encoded offsets → (offset, line, file) tuples
-    fn load_bytecode(
-        &self,
-        bytecode: Bytecode,
-        importer: Value<'v>,
-    ) -> dolang_bytecode::Result<Gc<'v, Program<'v>>> {
-        let verified = file::deserialize(&bytecode.0)?;
-        let main = verified.main(&bytecode.0);
+    fn load_bytecode(&self, bytecode: Bytecode, importer: Value<'v>) -> Gc<'v, Program<'v>> {
+        let Bytecode {
+            bytes,
+            content: verified,
+        } = bytecode;
+        let main = verified.main(&bytes);
         let main_start = verified.main.start;
         let debugbintab = verified.debug.clone();
         let verified = &verified.index;
@@ -642,11 +641,11 @@ impl<'v> Vm<'v> {
             })
             .collect();
 
-        let loaded = Gc::new_with_annex(
+        Gc::new_with_annex(
             self.arena(),
             Program { importer },
             ProgramAnnex {
-                bytecode: bytecode.0,
+                bytecode: bytes,
                 funcs,
                 symroots,
                 symtab,
@@ -657,9 +656,7 @@ impl<'v> Vm<'v> {
                 funcdebugs,
                 module_name,
             },
-        );
-
-        Ok(loaded)
+        )
     }
 }
 
@@ -1268,9 +1265,9 @@ impl<'v> Builder<'v> {
     ///
     /// A typical importer should try the following sequence of steps :
     /// 1. If applicable, locate cached bytecode for the named module
-    ///     - Try to run the bytecode
-    ///     - If running the bytecode fails with a bytecode error (e.g. version mismatch),
-    ///       treat the cache as expired
+    ///     - Decode it with [`Bytecode::new`]. If that fails (e.g. version mismatch), treat
+    ///       the cache as expired; otherwise run it. Errors from running it are the module's own
+    ///       and must not trigger a recompile.
     /// 2. If cached bytecode is not available, locate and compile Do source for the named module
     ///     - A typical organization scheme is to replace `.` in the module name with path separators,
     ///       append `.dol` to the result, then search one or more source paths for the resulting
@@ -1425,13 +1422,35 @@ impl<'v> Builder<'v> {
 
 /// Bytecode
 ///
-/// Ready to be consumed by a VM with [`Bytecode::run`].
-pub struct Bytecode(pub(crate) Cow<'static, [u8]>);
+/// Decoded and verified, ready to be consumed by a VM with [`Bytecode::run`].
+pub struct Bytecode {
+    bytes: Cow<'static, [u8]>,
+    // Only valid for `bytes`, so both stay private
+    content: Verified<file::Content>,
+}
 
 impl Bytecode {
-    /// Create bytecode from raw bytes
-    pub fn new(bytes: impl Into<Cow<'static, [u8]>>) -> Self {
-        Self(bytes.into())
+    /// Decode and verify bytecode from raw bytes
+    pub fn new(bytes: impl Into<Cow<'static, [u8]>>) -> std::result::Result<Self, BytecodeError> {
+        let bytes = bytes.into();
+        let content = file::deserialize(&bytes).map_err(BytecodeError)?;
+        Ok(Self { bytes, content })
+    }
+}
+
+/// Error decoding or verifying [`Bytecode`]
+#[derive(Debug)]
+pub struct BytecodeError(dolang_bytecode::Error);
+
+impl std::fmt::Display for BytecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl std::error::Error for BytecodeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
     }
 }
 
@@ -1473,9 +1492,7 @@ impl Bytecode {
         importer: Value<'v>,
         mut out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
-        let loaded = strand
-            .load_bytecode(self, importer)
-            .map_err(|e| Error::bytecode(strand, e.to_string()))?;
+        let loaded = strand.load_bytecode(self, importer);
         let mut frame = unsafe { CallFrame::new(loaded, 0, None, None) };
         strand
             .run(strand.inner, &mut frame, Slot::from_output(&mut out))
@@ -1489,6 +1506,11 @@ mod tests {
 
     use super::*;
     use crate::test_support::with_builder;
+
+    #[test]
+    fn invalid_bytecode_fails_to_decode() {
+        assert!(Bytecode::new(&b"not bytecode"[..]).is_err());
+    }
 
     #[test]
     fn value_hashers_share_vm_seed() {

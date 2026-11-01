@@ -126,6 +126,22 @@ def invalid_bytecode_falls_back_to_source()
     assert $output.contains("invalid file header")
 
 #[test]
+def runtime_bytecode_errors_do_not_fall_back()
+  fs.with_temp_dir do |dir|
+    let app = (dir / "app")
+    let main = r|
+      import load
+      put "from-bytecode\n"
+      load.run b"invalid bytecode"
+    make_bundle $app $
+      "main.dol": r|
+        put "from-source\n"
+      "main.dolc": (compile "main.dol" main)
+    let output _rc = fail_bundle $app
+    assert $output.starts_with("from-bytecode\n")
+    assert (!output.contains("from-source"))
+
+#[test]
 def missing_main_is_an_error()
   fs.with_temp_dir do |dir|
     let app = (dir / "app")

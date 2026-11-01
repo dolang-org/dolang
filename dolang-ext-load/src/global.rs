@@ -7,10 +7,12 @@ use dolang::runtime::{
     vm::{Register, StateTag},
 };
 
-use crate::load::ImportHandler;
+use crate::load::{Bytecode, BytecodeError, ImportHandler};
 
 pub(crate) struct Types<'v> {
     pub(crate) import_handler: Type<'v, ImportHandler>,
+    pub(crate) bytecode: Type<'v, Bytecode>,
+    pub(crate) bytecode_error: Type<'v, BytecodeError>,
 }
 
 pub(crate) struct Global<'v> {
@@ -33,6 +35,8 @@ impl<'v> Global<'v> {
         Self {
             types: Types {
                 import_handler: builder.register_type(),
+                bytecode: builder.register_type(),
+                bytecode_error: builder.register_type(),
             },
             handlers: root,
             executors: Cell::new(0),

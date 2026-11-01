@@ -7,7 +7,7 @@ mod typelibs;
 use dolang::{
     compile::Config,
     extension::Extension,
-    runtime::{Bytecode, Frame, error::ErrorKind, vm::Builder},
+    runtime::{Bytecode, Error, Frame, error::ErrorKind, vm::Builder},
 };
 use futures::future::{self, Either};
 use serde::Serialize;
@@ -105,7 +105,9 @@ async fn execute(source: String, host: Host, signal: AbortSignal) -> RunResult {
                 let interrupt = strand.interrupt_token();
                 let result = {
                     let run = pin!(async {
-                        Bytecode::new(bytes)
+                        let bytecode =
+                            Bytecode::new(bytes).map_err(|e| Error::runtime(strand, e))?;
+                        bytecode
                             .run(strand, &mut out)
                             .await
                             .and_then(|_| out.to_string(strand))

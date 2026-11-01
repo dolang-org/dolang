@@ -57,11 +57,14 @@ class Bundle
     let source = self.#members.get "$stem.dol"
     let bytecode = self.#members.get "$stem.dolc"
     if let Bin(bytecode) = bytecode
-      try
-        return load.run $bytecode importer: (do |name| self.#import_module(name))
-      catch std.BytecodeError: error
+      let program = try
+        load.load $bytecode
+      catch load.BytecodeError: error
         if (source == nil)
           throw error
+        nil
+      if (program != nil)
+        return program.run importer: (do |name| self.#import_module(name))
     let Bin(source) = source
     else throw std.RuntimeError "missing bundle member: $(self.#path)/$stem.dol"
     let label = "$(self.#path)/$stem.dol"

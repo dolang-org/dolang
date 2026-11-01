@@ -51,7 +51,9 @@ pub fn compile_standard(
         .map(|diag| Located::new(diag, &unit))
         .collect();
     let res = unit.emit(&mut out);
-    let bytecode = res.ok().map(|_| Bytecode::new(out));
+    let bytecode = res
+        .ok()
+        .map(|_| Bytecode::new(out).expect("compiler output must verify"));
     (content, bytecode, diags, directives)
 }
 

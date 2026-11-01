@@ -70,8 +70,6 @@ pub enum ErrorKind {
     Import,
     /// Compilation error when loading a module
     Compile,
-    /// Error attempting to load Do bytecode
-    Bytecode,
     /// Generic runtime error
     Runtime,
     /// Explicit abort
@@ -433,10 +431,7 @@ impl<'v, 's> error::Error for Error<'v, 's> {
                 let val = root.get();
                 match val.downcast_ref(info.vm.builtin_types().error) {
                     Some(boxed) => match boxed.get() {
-                        Boxed::Compile(error)
-                        | Boxed::Bytecode(error)
-                        | Boxed::Runtime(error)
-                        | Boxed::Abort(error) => {
+                        Boxed::Compile(error) | Boxed::Runtime(error) | Boxed::Abort(error) => {
                             // Safety: the Box<dyn error::Error + 'static> is
                             // kept alive by FloatingRoot which outlives &self.
                             Some(unsafe {
@@ -690,13 +685,6 @@ impl<'v, 's> Error<'v, 's> {
     /// Create error: cyclic module import detected
     pub fn cyclic_import(strand: &mut Strand<'v, 's>, name: &str) -> Self {
         Self::new_info(strand.inner, Boxed::CyclicImport(name.into()))
-    }
-
-    pub(crate) fn bytecode(
-        strand: &mut Strand<'v, 's>,
-        err: impl Into<Box<dyn error::Error>>,
-    ) -> Self {
-        Self::new_info(strand.inner, Boxed::Bytecode(err.into()))
     }
 
     /// Create error: generic runtime error

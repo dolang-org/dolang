@@ -7,6 +7,8 @@ import compile load strand
     - test
   std:
     - ImportError
+    - RuntimeError
+    - StateError
     - TypeError
 import load:
   import: global_import
@@ -98,6 +100,43 @@ def unregister()
 #[test]
 def execute()
   assert_eq 2 $ load.run $ (compile.compile "test.dol" "(1 + 1)").emit()
+
+#[test]
+def load_rejects_invalid_bytecode()
+  let err = assert_throws $load.BytecodeError do load.load b"not bytecode"
+  assert_type $RuntimeError $err
+  assert_throws $load.BytecodeError do load.run b"not bytecode"
+
+#[test]
+def loaded_bytecode_runs_once()
+  let program = load.load $ (compile.compile "test.dol" "(1 + 1)").emit()
+  assert_type $load.Bytecode $program
+  assert_eq $program.run() 2
+  let err = assert_throws $StateError do program.run()
+  assert_eq (str err) "state error: bytecode already run"
+
+#[test]
+def run_consumes_loaded_bytecode()
+  let program = load.load $ (compile.compile "test.dol" "(1 + 1)").emit()
+  assert_eq 2 $ load.run $program
+  assert_throws $StateError do load.run $program
+
+#[test]
+def loaded_bytecode_program_importer()
+  let importer = do |_name| Answer 5
+  let source = |
+    import virtual
+    virtual.answer
+  let program = load.load $ (compile.compile "test.dol" source).emit()
+  assert_eq $program.run(importer: importer) 5
+
+#[test]
+def nested_bytecode_error_propagates_from_run()
+  let source = |
+    import load
+    load.run b"not bytecode"
+  let program = load.load $ (compile.compile "nested.dol" source).emit()
+  assert_throws $load.BytecodeError do program.run()
 
 #[test]
 def program_importer()

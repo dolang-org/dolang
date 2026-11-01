@@ -421,7 +421,6 @@ pub(crate) struct Singletons<'v> {
     pub(crate) error_cyclic_import: Value<'v>,
     pub(crate) error_import: Value<'v>,
     pub(crate) error_compile: Value<'v>,
-    pub(crate) error_bytecode: Value<'v>,
     pub(crate) error_runtime: Value<'v>,
     pub(crate) error_abort: Value<'v>,
     pub(crate) error_canceled: Value<'v>,
@@ -561,10 +560,6 @@ impl<'v> Singletons<'v> {
             error_compile: v!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Compile)
-            ),
-            error_bytecode: v!(
-                builtin_types.error_variant_type,
-                error::VariantType(ErrorKind::Bytecode)
             ),
             error_runtime: v!(
                 builtin_types.error_variant_type,
