@@ -307,7 +307,7 @@ def typecheck spec rest :all = false
   let sources = $
     if all
       - dolang-shell-modules/resource/provision.dol
-      for name = ["boot", "compile", "dodo", "fs", "libvirt", "proc", "repl", "ssh", "test"]
+      for name = ["boot", "compile", "dodo", "doze", "fs", "libvirt", "proc", "repl", "ssh", "test"]
         - "dolang-shell/entrypoint/$name.dol"
   with_build_env $spec do
     spec.cargo build --bin dolang
@@ -716,6 +716,7 @@ return $
         install_bin $spec $bin_dir dolang-lsp
         if (sys.os_info().family != :WINDOWS:)
           install_bin_symlink $spec $bin_dir dolang dodo
+          install_bin_symlink $spec $bin_dir dolang doze
           install_bin_symlink $spec $bin_dir dolang dolang-test
         install_bin $vfs_spec $bin_dir dolang-vfs
 

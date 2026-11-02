@@ -94,10 +94,8 @@ do
       seen.add $root[1]
   for root = roots
     add $root[0] $root[1]
-  # `proc` holds the pipe types `strand`'s placeholders stand for
-  if !seen.contains("proc")
-    seen.add proc
-    pending.push proc
+  # `std` holds the types the checker designates, such as those of literals
+  queue ["std"]
   while (pending.len > 0)
     let name = pending.pop()
     let relative = name.replace(".", "/")

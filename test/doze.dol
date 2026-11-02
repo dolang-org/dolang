@@ -1,0 +1,182 @@
+import fs proc zip
+  shell:
+    - cd
+    - exe
+  test:
+    - assert
+    - assert_eq
+    - test
+
+# Runs the `doze` entrypoint, returning its combined output and exit code.
+def doze *args
+  let out = BinBuf()
+  let rc = try
+    run $exe -m doze ...args stdout: $out stderr: :STDOUT: mode: :CHUNK:
+    0
+  catch proc.Error: error
+    error.rc
+  (Str(out.freeze()), rc)
+
+# The standard output of running a bundle.
+def run_bundle *args
+  let out = BinBuf()
+  run $exe ...args stdout: $out mode: :CHUNK:
+  Str $out.freeze()
+
+# Writes a project into `dir`: a program whose main module imports `c`, which
+# imports `a.b`.
+def write_project dir
+  (dir / "lib/a").create_dir all: true
+  (dir / "main.dol").write "import c\nput \"\$(c.value) \$(shell.args[0])\\n\"\n"
+  (dir / "lib/a/b.dol").write "pub let value = 40\n"
+  (dir / "lib/c.dol").write "import a.b: ab\npub let value = (ab.value + 2)\n"
+
+# A source that compiles, but fails the type check.
+let TYPE_ERROR = "pub def f() -> Int\n  \"x\"\n"
+
+#[test]
+def checks_a_project()
+  fs.with_temp_dir do |dir|
+    write_project $dir
+    let output rc = doze check --project $dir
+    assert_eq $rc 0
+    assert $output.contains("checked 3 sources: 0 errors, 0 warnings")
+    # The current directory is the default project
+    cd $dir do
+      let _output rc = doze check
+      assert_eq $rc 0
+
+#[test]
+def check_failures_fail()
+  for file = [["lib", "c.dol"], ["main.dol"]]
+    fs.with_temp_dir do |dir|
+      write_project $dir
+      let path = fs.Path.join(dir, ...file)
+      path.write $TYPE_ERROR
+      let output rc = doze check --project $dir
+      assert_eq $rc 1
+      assert $output.contains("$path") $output
+
+#[test]
+def warnings_fail_only_when_strict()
+  fs.with_temp_dir do |dir|
+    write_project $dir
+    (dir / "lib/w.dol").write "pub def f()\n  let unused = 1\n  nil\n"
+    let output rc = doze check --project $dir
+    assert_eq $rc 0
+    assert $output.contains("1 warnings")
+    let _output rc = doze check --project $dir --strict
+    assert_eq $rc 1
+
+#[test]
+def checks_a_library_without_main()
+  fs.with_temp_dir do |dir|
+    write_project $dir
+    (dir / "main.dol").remove()
+    let output rc = doze check --project $dir
+    assert_eq $rc 0
+    assert $output.contains("checked 2 sources")
+
+#[test]
+def checks_modules_importing_strand()
+  # `strand`'s pipes are `proc`'s, which the check needs too
+  fs.with_temp_dir do |dir|
+    write_project $dir
+    (dir / "lib/s.dol").write "import strand\npub def go() -> Int\n  strand.spawn(do 1).join()\n"
+    let output rc = doze check --project $dir
+    assert_eq $rc 0 $output
+
+#[test]
+def other_sources_are_ignored()
+  fs.with_temp_dir do |dir|
+    write_project $dir
+    for sub = ["test", "build"]
+      (dir / sub).create_dir()
+      (dir / sub / "x.dol").write "let = 1\n"
+    let output rc = doze check --project $dir
+    assert_eq $rc 0
+    assert $output.contains("checked 3 sources")
+
+#[test]
+def bad_module_paths_fail()
+  let cases = $
+    - (["lib", "x-y.dol"], "invalid module path")
+    - (["lib", "mod.dol"], "invalid module path")
+    - (["lib", "c", "mod.dol"], "module c given by both")
+  for case = cases
+    let file expected = case
+    fs.with_temp_dir do |dir|
+      write_project $dir
+      let path = fs.Path.join(dir, ...file)
+      path.parent.create_dir all: true
+      path.write "nil\n"
+      let output rc = doze check --project $dir
+      assert_eq $rc 1
+      assert $output.contains(expected) $output
+      assert $output.contains("$path") $output
+
+#[test]
+def bundles_a_project()
+  fs.with_temp_dir do |parent|
+    let dir = (parent / "app")
+    write_project $dir
+    # Unimported modules and `mod.dol` modules are bundled too, laid out by
+    # module name
+    (dir / "lib/d").create_dir()
+    (dir / "lib/d/mod.dol").write "pub let value = 1\n"
+    let _output rc = doze bundle --project $dir
+    assert_eq $rc 0
+    let app = (dir / "build/app.dolz")
+    assert_eq (run_bundle(app, "world")) "42 world\n"
+    let names = zip.open $app do |archive|
+      Set $ archive.entries.map do |entry| str $entry.name
+    let expected = $
+      for stem = ["main", "lib/a/b", "lib/c", "lib/d"]
+        - "$stem.dol"
+        - "$stem.dolc"
+    assert_eq $names (Set(expected))
+
+#[test]
+def bundles_with_output_and_shebang()
+  fs.with_temp_dir do |dir|
+    write_project $dir
+    let app = (dir / "app")
+    let _output rc = doze bundle --project $dir -o $app --shebang $exe
+    assert_eq $rc 0
+    assert $app.read().starts_with(Bin("#!$exe\n"))
+    assert_eq (run_bundle(app, "world")) "42 world\n"
+    assert (!(dir / "build").exists())
+
+#[test]
+def bundling_needs_main()
+  fs.with_temp_dir do |dir|
+    write_project $dir
+    (dir / "main.dol").remove()
+    let output rc = doze bundle --project $dir
+    assert_eq $rc 1
+    assert $output.contains("no main.dol")
+    assert (!(dir / "build").exists())
+
+#[test]
+def bundling_checks_unless_told_not_to()
+  fs.with_temp_dir do |dir|
+    write_project $dir
+    (dir / "lib/e.dol").write $TYPE_ERROR
+    let _output rc = doze bundle --project $dir
+    assert_eq $rc 1
+    assert (!(dir / "build").exists())
+    let _output rc = doze bundle --project $dir --no-check
+    assert_eq $rc 0
+    let app = (dir / "build" / "$(dir.canonical().name).dolz")
+    assert $app.exists()
+
+#[test]
+def compile_errors_fail_the_bundle()
+  fs.with_temp_dir do |dir|
+    write_project $dir
+    let path = (dir / "lib" / "c.dol")
+    path.write "let = 1\n"
+    let output rc = doze bundle --project $dir --no-check
+    assert_eq $rc 1
+    assert $output.contains("$path") $output
+    assert (!(dir / "build").exists())

@@ -46,8 +46,8 @@ provides archives named `dolang-<version>-<platform>.tar.gz`, where
 
 Download the archive for the host, extract its contents into `<PREFIX>/bin`,
 and add that directory to `PATH`. The archive contains `dolang`, `dolang-lsp`,
-and `dolang-vfs`. Unix archives also contain the `dodo` and `dolang-test`
-symlinks.
+and `dolang-vfs`. Unix archives also contain the `dodo`, `doze` and
+`dolang-test` symlinks.
 
 For example:
 
@@ -91,8 +91,8 @@ to start `dodo`. The `install` rule then builds the complete distribution
 profile and installs the main programs into `<PREFIX>/bin`. If that directory
 is not writable, the rule requests privilege elevation.
 
-On Unix, the installation also creates `<PREFIX>/bin/dodo` and
-`<PREFIX>/bin/dolang-test` as symlinks to `dolang`. Add the directory to
+On Unix, the installation also creates `<PREFIX>/bin/dodo`, `<PREFIX>/bin/doze`
+and `<PREFIX>/bin/dolang-test` as symlinks to `dolang`. Add the directory to
 `PATH`, then use `dodo` for subsequent work:
 
 ```
@@ -100,7 +100,7 @@ export PATH="<PREFIX>/bin:$PATH"
 dodo build
 ```
 
-On Windows, `install` does not create either symlink. Continue to use
+On Windows, `install` does not create these symlinks. Continue to use
 `dolang.exe -m dodo`, or create a `dodo.exe` symlink yourself.
 
 ## Common Workflow

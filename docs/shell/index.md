@@ -114,7 +114,8 @@ dolang -m compile bundle src/main.dol \
 
 With `--shebang`, the bundle starts with that `#!` line and is made executable
 where the platform allows. The builder only compiles; run
-`dolang -m compile check` first to check types.
+`dolang -m compile check` first to check types. [`doze`](./doze.md) checks and
+bundles a project laid out by convention instead.
 
 Archive offsets count from the start of the archive, so any zip tool can build a
 bundle too, with the `#!` line prepended:

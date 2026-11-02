@@ -991,6 +991,35 @@ fn records_pipes() {
 }
 
 #[test]
+fn imports_nominees() {
+    let [strand, proc, dep, other] = piped();
+    let imports = |bytes: &[u8]| {
+        let typelib = Typelib::read(bytes).unwrap();
+        typelib
+            .imports()
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(imports(&strand), ["proc"]);
+    assert_eq!(imports(&dep), ["proc", "std", "strand"]);
+    assert!(imports(&proc).is_empty());
+    assert_eq!(imports(&other), ["std"]);
+    // Nominating `strand`'s own types adds no import
+    let unpiped = write(
+        &compile(
+            STRAND,
+            Mode::Module {
+                name: "strand".into(),
+            },
+        ),
+        &[],
+    )
+    .unwrap();
+    assert!(imports(&unpiped).is_empty());
+}
+
+#[test]
 fn rejects_other_pipes() {
     let [strand, ..] = piped();
     let typelib = Typelib::read(&strand).unwrap();
