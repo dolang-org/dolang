@@ -1,51 +1,221 @@
-# Host source loading and bytecode caching. Execution stays in the caller's VFS.
-import _shell fs load shell
+# dolang: strict
+# Host program loading for boot and remote entrypoints: a path holds source,
+# bytecode, or a bundle (an optional `#!` line followed by a zip archive, with
+# `main.dol` as the entry and modules under `lib/`). Loading reads everything
+# from the host up front; the program then runs in the caller's VFS.
+import _shell fs io shell strand zip
+# `load` is this module's own entry, so the module goes by another name.
+import load: loader
+@import compile
 
-def is_precompiled path
+# How much of a file is read to tell its kind.
+let PREFIX_LEN = 4096
+
+# The prelude as boot builds it: positional module names and aliased bindings.
+pub @let Prelude = BaseDict[{*(Str | Sym), *(Str | Sym): compile.PreludeBinding}]
+
+# Bytecode, the offset of a bundle's archive after an optional `#!` line, or
+# `nil` for source. Only a bounded prefix is read.
+def classify path @ fs.Path :script @ Bool -> (:BYTECODE: | Int | nil)
   if (path.ext == "dolc")
-    return true
-  path.open do |file|
-    (file.read(8) == b"\xffdobytec")
-
-# Recognizes bytecode without reading the entire file.
-pub def precompiled path
-  shell.with_host do is_precompiled $path
+    return :BYTECODE:
+  let prefix = path.open do |file| file.read $PREFIX_LEN
+  if prefix.starts_with(b"\xffdobytec")
+    return :BYTECODE:
+  if !script
+    return nil
+  let start = if prefix.starts_with(b"#!")
+    let lines = [...prefix.split(b"\n", limit: 1)]
+    if (lines.len < 2)
+      return nil
+    (lines[0].len + 1)
+  else
+    0
+  if prefix[start..].starts_with(b"PK\x03\x04")
+    start
+  else
+    nil
 
 # Include duplicate prelude keys and their order in the compilation identity.
-def cache_path path mode prelude strict
+def cache_path
+  path @ fs.Path
+  mode @ (:SCRIPT: | Str)
+  prelude @ Prelude
+  strict @ Bool
+do -> fs.Path
   import digest
   let key = dbg ["dolang-shell-cache-v3", str(path.absolute()), mode, strict, [...prelude.pairs()]]
   let hash = digest.blake3 $key
   (fs.cache_dir(app: "dolang") / "bytecode" / "${hash:x}.dolc")
 
-# Return whether the bytecode came from a cache, so only cache verification
-# failures trigger a retry. All IO, including directory lookup, is host-local.
-def read path mode prelude strict cache refresh
+# Compile a source file through the cache. Return whether the bytecode came
+# from the cache, so only cache verification failures trigger a retry. All IO,
+# including directory lookup, is host-local.
+def compile_source
+  path @ fs.Path
+  mode @ (:SCRIPT: | Str)
+  prelude @ Prelude
+  strict @ Bool
+  cache @ Bool
+  refresh @ Bool
+do -> (Bin, Bool)
   shell.with_host do
-    if is_precompiled(path)
-      return (path.read(), false)
     let cached = (cache && cache_path(path, mode, prelude, strict) || nil)
-    if (!refresh && cached != nil && cached.exists() && path.metadata().modified <= cached.metadata().modified)
-      return (cached.read(), true)
-    let bytecode = _shell.compile $path $path.read_str() mode: $mode prelude: $prelude strict: $strict
-    if (cached != nil)
-      cached.parent.create_dir all: true
+    if let fs.Path(cached) = cached
+      if (!refresh && cached.exists() && path.metadata().modified <= cached.metadata().modified)
+        return (cached.read(), true)
+    let bytecode = _shell.compile $path $path.read_str() :mode :prelude :strict
+    if let fs.Path(cached) = cached
+      # A cache entry always has a parent directory.
+      let dir = (cached.parent !@ fs.Path)
+      dir.create_dir all: true
       cached.write $bytecode
     (bytecode, false)
 
-# Compile a source file or pass through bytecode, without executing it.
-pub def compile path :mode = :SCRIPT: :prelude = {} :strict = false :cache = true
-  let bytecode _cached = read $path $mode $prelude $strict $cache false
-  bytecode
+# Load bytecode, and if it fails verification, the bytecode `retry` returns
+# instead. A `nil` from `retry` rethrows the failure.
+def load_with_fallback bytecode @ Bin retry @ (() -> (Bin | nil)) -> loader.Bytecode
+  try
+    loader.load $bytecode
+  catch loader.BytecodeError: error
+    let Bin(retried) = retry()
+    else throw error
+    loader.load $retried
 
-# Execute in the caller's context, retrying cached verification failures only.
-pub def run path :mode = :SCRIPT: :prelude = {} :strict = false :cache = true
-  let bytecode cached = read $path $mode $prelude $strict $cache false
-  let program = try
-    load.load $bytecode
-  catch load.BytecodeError: error
-    if !cached
-      throw error
-    let bytecode _cached = read $path $mode $prelude $strict $cache true
-    load.load $bytecode
-  program.run()
+# Program members, by name: sources and bytecode for the entry and modules.
+def is_member name @ Str -> Bool
+  let ext = (name.ends_with(".dol") || name.ends_with(".dolc"))
+  (ext && (name.starts_with("lib/") || name == "main.dol" || name == "main.dolc"))
+
+class Bundle
+  field path @ fs.Path
+  field members @ Dict[Str, Bin]
+  # Imported modules and the reservation that serializes loading each one.
+  field modules @ Dict[Str, Value]
+  field guards @ Dict[Str, strand.Resource]
+  # Modules this strand is loading, to detect a cycle within the guard.
+  field pending @ Dict[Str, Bool]
+
+  def (init) self path @ fs.Path members @ Dict[Str, Bin]
+    self.#path = path
+    self.#members = members
+    self.#modules = {}
+    self.#guards = {}
+    self.#pending = {}
+
+  # Run a member's bytecode, else compile its source. Stale bytecode is
+  # recompiled from its source when there is one. Sources compile with default
+  # options, whatever the CLI's prelude and strictness, so a bundle means the
+  # same thing however it is invoked.
+  def load_member self stem @ Str mode @ (:SCRIPT: | Str) <Iter[Value] >Sink[Value] -> Value
+    let label = "$(self.#path)/$stem.dol"
+    let source = self.#members.get "$stem.dol"
+    def recompile() -> (Bin | nil)
+      if let Bin(source) = source
+        _shell.compile $label (Str source) :mode
+      else
+        nil
+    let program = if let Bin(bytecode) = self.#members.get("$stem.dolc")
+      load_with_fallback $bytecode $recompile
+    else
+      let Bin(compiled) = recompile()
+      else throw std.RuntimeError "missing bundle member: $label"
+      loader.load $compiled
+    program.run importer: (do |name| self.#import_module(name))
+
+  # The member stem holding a module, or `nil` when the bundle lacks it.
+  def find_module self name @ Str -> (Str | nil)
+    let relative = name.replace "." "/"
+    for stem = ["lib/$relative", "lib/$relative/mod"]
+      if (self.#members.contains("$stem.dol") || self.#members.contains("$stem.dolc"))
+        return stem
+    nil
+
+  # Resolve an import inside the bundle first, then globally. Each module runs
+  # once, without strand I/O; other strands wait while one loads it.
+  def import_module self name @ Str -> Value
+    let Str(stem) = self.#find_module(name)
+    else return loader.import $name
+    let guard = self.#guards.get $name else: do
+      let guard = strand.Resource 1
+      self.#guards[name] = guard
+      guard
+    guard.with do
+      let modules = self.#modules
+      if modules.contains(name)
+        modules[name]
+      else if self.#pending.contains(name)
+        throw std.CyclicImportError $name
+      else
+        self.#pending[name] = true
+        try
+          let module = strand.redirect input: ([] @ Array[Value]) output: $std.null do
+            self.#load_member $stem $name
+          modules[name] = module
+          module
+        finally
+          self.#pending.delete $name
+
+  pub def run self <Iter[Value] >Sink[Value] -> Value
+    if !(self.#members.contains("main.dol") || self.#members.contains("main.dolc"))
+      throw std.RuntimeError "bundle has no main.dol: $(self.#path)"
+    self.#load_member main :SCRIPT:
+
+# Read a bundle's program members, so the file is closed before it runs.
+def read_bundle path @ fs.Path offset @ Int -> Bundle
+  let members @ Dict[Str, Bin] = {}
+  path.open do |file|
+    zip.open (io.Cursor(file, (offset..))) r do |archive|
+      for entry = archive.entries
+        let name = str $entry.name
+        if (entry.type == :FILE: && is_member(name))
+          members[name] = entry.open do |member| member.read_all()
+  Bundle $path $members
+
+# Load the program at `path`, returning a function that runs it in the caller's
+# context. Everything is read from the host now, so a missing file or compile
+# error surfaces before the caller runs it. Prelude, strictness, and the cache
+# apply only to a source file; a bundle runs as built.
+pub def load
+  path @ fs.Path
+  :mode @ (:SCRIPT: | Str) = :SCRIPT:
+  :prelude @ Prelude = {}
+  :strict @ Bool = false
+  :cache @ Bool = true
+do -> ((<Iter[Value], >Sink[Value]) -> Value)
+  let kind = shell.with_host do classify $path script: (mode == :SCRIPT:)
+  if let Int(offset) = kind
+    let bundle = shell.with_host do read_bundle $path $offset
+    return (do bundle.run())
+  if (kind == :BYTECODE:)
+    let bytecode = shell.with_host do path.read()
+    return (do loader.run(bytecode))
+  let bytecode cached = compile_source $path $mode $prelude $strict $cache false
+  do
+    # Retry only cache verification failures, with a fresh compile.
+    def retry() -> (Bin | nil)
+      if cached
+        let fresh _cached = compile_source $path $mode $prelude $strict $cache true
+        fresh
+      else
+        nil
+    let program = load_with_fallback $bytecode $retry
+    program.run()
+
+# Load and run the script at `path` in the caller's context.
+pub def run
+  path @ fs.Path
+  :prelude @ Prelude = {}
+  :strict @ Bool = false
+  :cache @ Bool = true
+  <Iter[Value]
+  >Sink[Value]
+do -> Value
+  let program = load $path :prelude :strict :cache
+  program()
+
+# Load and run the module `name` from its source or bytecode at `path`, for an
+# import handler. Like any import, it runs without strand I/O.
+pub def run_module path @ fs.Path name @ Str :strict @ Bool = false :cache @ Bool = true -> Value
+  let program = load $path mode: $name :strict :cache
+  strand.redirect input: ([] @ Array[Value]) output: $std.null do program()

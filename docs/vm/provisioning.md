@@ -173,8 +173,9 @@ guest.download /tmp/result.tar ./result.tar
 
 ## Running a Script in a Guest
 
-The bundled `libvirt` entrypoint compiles a local script and runs it through an
-existing Do-created guest's VFS:
+The bundled `libvirt` entrypoint loads a local script, bytecode, or
+[bundle](../shell/index.md#script-bundles) and runs it through an existing
+Do-created guest's VFS:
 
 ```
 dolang -m libvirt freebsd-build build.dol release

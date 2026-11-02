@@ -149,14 +149,92 @@ def missing_main_is_an_error()
     let output _rc = fail_bundle $app
     assert $output.contains("main.dol")
 
+# Builds a bundle with the `compile bundle` entrypoint, returning its output
+# and exit code.
+def build *args
+  let out = BinBuf()
+  let rc = try
+    run $exe -m compile bundle ...args stdout: $out stderr: :STDOUT: mode: :CHUNK:
+    0
+  catch proc.Error: error
+    error.rc
+  (Str(out.freeze()), rc)
+
+# Writes the sources of a program whose main module imports `c`, which
+# imports `a.b`, and returns the `--module` arguments naming the modules.
+def write_sources dir
+  (dir / "src/a").create_dir all: true
+  (dir / "src/main.dol").write "import c\nput \"\$(c.value) \$(shell.args[0])\\n\"\n"
+  (dir / "src/a/b.dol").write "pub let value = 40\n"
+  (dir / "src/c.dol").write "import a.b: ab\npub let value = (ab.value + 2)\n"
+  ["--module", "a.b=$(dir / "src/a/b.dol")", "--module", "c=$(dir / "src/c.dol")"]
+
 #[test]
-def check_and_compile_reject_bundles()
+def builds_a_bundle_that_runs()
   fs.with_temp_dir do |dir|
+    let modules = write_sources $dir
+    let plain = (dir / "plain")
+    let main = (dir / "src/main.dol")
+    assert_eq (build(main, ...modules, "-o", plain)) ("", 0)
+    assert_eq (run_bundle(plain, "world")) "42 world\n"
+    let names = zip.open $plain do |archive|
+      Set $ archive.entries.map do |entry| str $entry.name
+    assert_eq $names (Set ["main.dol", "main.dolc", "lib/a/b.dol", "lib/a/b.dolc", "lib/c.dol", "lib/c.dolc"])
+
+    let shebang = (dir / "shebang")
+    assert_eq (build(main, ...modules, "-o", shebang, "--shebang", exe)) ("", 0)
+    assert $shebang.read().starts_with(Bin("#!$exe\n"))
+    assert_eq (run_bundle(shebang, "world")) "42 world\n"
+    if (sys.os_info().family == :UNIX:)
+      let out _err = capture $shebang world
+      assert_eq $out "42 world\n"
+
+#[test]
+def compile_errors_fail_the_build()
+  fs.with_temp_dir do |dir|
+    let modules = write_sources $dir
+    (dir / "src/c.dol").write "let = 1\n"
     let app = (dir / "app")
-    make_bundle $app {"main.dol": "echo hi\n"}
-    let checked checked_rc = fail_bundle --check $app
-    assert_eq $checked_rc 2
-    assert $checked.contains("--check")
-    let compiled compiled_rc = fail_bundle --compile (dir / "out.dolc") $app
-    assert_eq $compiled_rc 2
-    assert $compiled.contains("--compile")
+    let _output rc = build (dir / "src/main.dol") ...modules -o $app
+    assert_eq $rc 1
+    assert (!app.exists())
+
+#[test]
+def bad_module_mappings_fail_the_build()
+  fs.with_temp_dir do |dir|
+    let main = (dir / "main.dol")
+    main.write "nil\n"
+    let source = str $main
+    let app = (dir / "app")
+    let cases = $
+      - (["--module", "a..b=$source"], "invalid module name: a..b")
+      - (["--module", "1a=$source"], "invalid module name: 1a")
+      - (["--module", source], "expects NAME=PATH")
+      - (["--module", "a=$source", "--module", "a=$source"], "more than once: a")
+    for case = cases
+      let mapping expected = case
+      let output rc = build $main ...mapping -o $app
+      assert_eq $rc 1
+      assert $output.contains(expected)
+    assert (!app.exists())
+
+#[test]
+def cli_options_do_not_affect_recompiled_bundles()
+  fs.with_temp_dir do |dir|
+    # A source that runs only with the CLI prelude, and one with a warning.
+    let prelude_source = "put \"\$(stringify(42))\\n\"\n"
+    let warning_source = "def f unused\n  nil\nf 1\nput \"ran\\n\"\n"
+    let script = (dir / "script.dol")
+    script.write $prelude_source
+    assert_eq (run_bundle("--import-item", "std.str=stringify", script)) "42\n"
+    script.write $warning_source
+    let _output rc = fail_bundle --strict $script
+    assert_eq $rc 1
+
+    let prelude_app = (dir / "prelude")
+    make_bundle $prelude_app {"main.dol": prelude_source, "main.dolc": b"invalid bytecode"}
+    let output _rc = fail_bundle --import-item std.str=stringify $prelude_app
+    assert $output.contains("stringify")
+    let warning_app = (dir / "warning")
+    make_bundle $warning_app {"main.dol": warning_source, "main.dolc": b"invalid bytecode"}
+    assert_eq (run_bundle("--strict", warning_app)) "ran\n"

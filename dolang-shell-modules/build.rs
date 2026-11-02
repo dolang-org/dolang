@@ -29,7 +29,7 @@ const TABLE: &[Row] = &[
         globs: &[
             "stub/{fs,proc,security,shell,shlex,sys}{.dol,/**/*.dol}",
             "stub/{_shell,zip}.dol",
-            "lib/{_bundle,_compile,_display,_script,args,dodo,exec,xdg}.dol",
+            "lib/{_compile,_display,_script,args,dodo,exec,xdg}.dol",
             "lib/_container/common.dol",
             "lib/_vm/{common,provision}.dol",
         ],

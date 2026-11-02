@@ -23,17 +23,18 @@ def compiles_a_script_to_bytecode()
     assert_eq (load.run bytecode) 42
 
 #[test]
-def cli_compilation_passes_through_precompiled_bytecode()
+def compile_entrypoint_precompiles_scripts_and_modules()
   with_temp_dir do |dir|
     let script = (dir / "script.dol")
     script.write "(40 + 2)\n"
-    let bytecode = compile $script
-    for name = ["script.dolc", "script.bytes"]
-      let source = (dir / name)
-      let output = (dir / "output.dolc")
-      source.write $bytecode
-      run $exe --compile $output $source
-      assert_eq $output.read() $bytecode
+    run $exe -m compile bytecode $script
+    assert_eq (load.run((dir / "script.dolc").read())) 42
+    let module = (dir / "module.dol")
+    module.write "pub let answer = 42\n"
+    let output = (dir / "out.bytes")
+    run $exe -m compile bytecode --module example -o $output $module
+    let result = load.run $output.read()
+    assert_eq $result.answer 42
 
 #[test]
 def runs_a_precompiled_script()

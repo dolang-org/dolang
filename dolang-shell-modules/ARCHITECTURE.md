@@ -24,6 +24,8 @@ every bundled module, native or not.
   between boot's `--check` and the `compile` entrypoint, whose `typelib`
   command checks its sources with the modules they import. It is imported only
   when checking or writing typelibs.
-- **Host source loading**: `_script` shares bytecode detection and caching
-  between boot and remote entrypoints. File IO uses `shell.with_host`; its
-  `run` executes bytecode after restoring the caller's VFS context.
+- **Host program loading**: `_script` owns turning a path into a running
+  program, for boot and remote entrypoints: source through the bytecode cache,
+  bytecode, or a bundle. `load` does all file IO up front under
+  `shell.with_host` and returns a function that runs the program in the
+  caller's VFS context. It is bootstrap code and isn't shared with tooling.

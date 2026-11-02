@@ -154,8 +154,30 @@ def remote_scripts_keep_cli_prelude_and_precompiled_support()
       run $exe --no-cache --import-item std.str=stringify -m ssh
         --command $(_vfs.bin()) --no-login-env example $script $marker
       assert_eq $marker.read_str() "42"
-      run $exe --import-item std.str=stringify --compile $compiled $script
+      let plain = (dir / "plain.dol")
+      plain.write r|
+        import fs shell
+        fs.write $shell.args[0] (str 42)
+      run $exe -m compile bytecode -o $compiled $plain
       marker.remove()
       run $exe -m ssh
         --command $(_vfs.bin()) --no-login-env example $compiled $marker
       assert_eq $marker.read_str() "42"
+
+#[test]
+def runs_bundle_in_remote_vfs()
+  with_temp_dir do |dir|
+    write_ssh_shim $dir
+    let main = (dir / "main.dol")
+    let module = (dir / "value.dol")
+    let app = (dir / "app")
+    let marker = (dir / "marker")
+    main.write r|
+      import fs shell value
+      fs.write $shell.args[0] $value.text
+    module.write "pub let text = \"bundled\"\n"
+    run $exe -m compile bundle $main --module "value=$module" -o $app
+    env PATH: "$dir:$(shell.env["PATH"])" do
+      run $exe -m ssh
+        --command $(_vfs.bin()) --no-login-env example $app $marker
+    assert_eq $marker.read_str() "bundled"

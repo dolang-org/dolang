@@ -4,8 +4,11 @@
 # tokens, so it asks for them with `--tokens`. `dolang -m compile check` runs
 # the type checker over sources and the modules they import, and
 # `dolang -m compile typelib` writes a module's typelib for checking against.
+# `dolang -m compile bytecode` precompiles a source, and
+# `dolang -m compile bundle` packs sources into a bundle, compiled with the
+# compiler's defaults but not type checked.
 
-import _shell args compile json shell
+import _shell args compile io json regex shell sys zip
   fs:
     - Path
 
@@ -954,6 +957,83 @@ def typelib p
     out.write $check.typelib(units[index])
     index = (index + 1)
 
+# Compiles `text`, the source at `path`, to bytecode with the compiler's
+# defaults, rendering its diagnostics. Returns `nil` when one is an error.
+def emit_source path text module
+  let unit = if (module == nil)
+    compile.compile $path $text
+  else
+    compile.compile $path $text :module
+  let failed = false
+  for diag = unit.diagnostics()
+    if (diag.severity == :ERROR:)
+      failed = true
+    echo $diag.render()
+  if failed
+    nil
+  else
+    unit.emit()
+
+# Precompiles a source, as a script or as a module, to bytecode.
+def emit_bytecode p
+  let :source :module :output ... = p.bytecode
+  let file = Path $source
+  let Bin(bytecode) = emit_source $source $file.read_str() $module
+  else shell.exit 1
+  let out = if (output == nil)
+    file.with_ext dolc
+  else
+    Path $output
+  out.write $bytecode
+
+# Packs the main module and the named modules into a bundle: `main.dol` and
+# `lib/a/b.dol` for module `a.b`, each source beside its bytecode, after an
+# optional `#!` line. Nothing is written unless every source compiles.
+def build_bundle p
+  let :main :module :output :shebang ... = p.bundle
+  if (output == nil)
+    throw args.Error "name the bundle to write with --output"
+  let prefix = if (shebang == nil)
+    b""
+  else if shebang.contains("\n")
+    throw args.Error "--shebang must be a single line"
+  else
+    Bin "#!$shebang\n"
+  let name_pattern = regex.Regex r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$"
+  # Member stem, source path, and module name (`nil` for the main module)
+  let entries = [["main", main, nil]]
+  let seen = {}
+  for mapping = module
+    let name path = [...mapping.split "=" limit: 1]
+    else throw args.Error "--module expects NAME=PATH, got: $mapping"
+    if (name_pattern.match(name) == nil)
+      throw args.Error "invalid module name: $name"
+    if seen.contains(name)
+      throw args.Error "module given more than once: $name"
+    seen[name] = true
+    entries.push ["lib/$(name.replace "." "/")", path, name]
+  let members = {}
+  let failed = false
+  for entry = entries
+    let stem source named = entry
+    let text = Path(source).read_str()
+    let bytecode = emit_source $source $text $named
+    if (bytecode == nil)
+      failed = true
+    else
+      members["$stem.dol"] = text
+      members["$stem.dolc"] = bytecode
+  if failed
+    shell.exit 1
+  let out = Path $output
+  out.open w+ do |file|
+    file.write $prefix
+    zip.open (io.Cursor(file, (prefix.len..))) w do |archive|
+      for name data = members
+        archive.open $name do |member| member.write $data
+  if (shebang != nil && sys.os_info().family == :UNIX:)
+    out.update_metadata mode: 0o755
+
 args.with
   help: Describe a Do source file's compiler output as JSON.
   - cmd: extract
@@ -1013,3 +1093,32 @@ args.with
       help: The modules' sources
     do |p|
       typelib $p
+  - cmd: bytecode
+    help: Precompile a source to bytecode, with the compiler's defaults.
+    - opt: module
+      default: nil
+      help: Compile in module mode under this name; by default, as a script
+    - opt: output
+      short: o
+      default: nil
+      help: File to write; by default, the source's path with the extension `.dolc`
+    - arg: source
+      help: The source to compile
+    do |p|
+      emit_bytecode $p
+  - cmd: bundle
+    help: Pack a main module and modules into a bundle, compiled with the compiler's defaults. Types aren't checked; run `check` first for that.
+    - opt: module
+      collect: true
+      help: "A module of the bundle, as NAME=PATH, such as `a.b=src/a/b.dol`"
+    - opt: output
+      short: o
+      default: nil
+      help: File to write the bundle to
+    - opt: shebang
+      default: nil
+      help: "Interpreter command for a `#!` line, such as `/usr/bin/env dolang`; the bundle is then made executable where the platform allows"
+    - arg: main
+      help: The main module's source
+    do |p|
+      build_bundle $p
