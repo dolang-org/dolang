@@ -129,13 +129,15 @@ pub(crate) struct Func {
     pub(crate) scopes: MonoVec<ScopeId>,
     pub(crate) name: Option<Span>,
     pub(crate) class_name: Option<Span>,
+    /// Where the function is defined, for debug info
+    pub(crate) span: Span,
 }
 
 pub(crate) type BlockRef<'c> = Ref<'c, Block>;
 pub(crate) type BlockRefMut<'c> = RefMut<'c, Block>;
 
 impl Func {
-    fn new(sig: sig::UnpackId, name: Option<Span>) -> Self {
+    fn new(sig: sig::UnpackId, name: Option<Span>, span: Span) -> Self {
         Self {
             enter: BlockId(0),
             exit: BlockId(0),
@@ -144,6 +146,7 @@ impl Func {
             scopes: Default::default(),
             name,
             class_name: None,
+            span,
         }
     }
 }
@@ -254,9 +257,14 @@ impl Graph {
     }
 
     /// Allocate a synthetic NL guard function (zero-arg, with forced upvar record)
-    pub(crate) fn alloc_nl_guard(&self, sig: sig::UnpackId, scope: Option<ScopeId>) -> FuncId {
+    pub(crate) fn alloc_nl_guard(
+        &self,
+        sig: sig::UnpackId,
+        span: Span,
+        scope: Option<ScopeId>,
+    ) -> FuncId {
         let id = FuncId(self.funcs.len());
-        self.funcs.push(RefCell::new(Func::new(sig, None)));
+        self.funcs.push(RefCell::new(Func::new(sig, None, span)));
         let sid = self.alloc_scope(true, true, id, scope, &[]);
         let enter = self.alloc_block(id, sid);
         let exit = self.alloc_block(id, sid);
@@ -270,11 +278,12 @@ impl Graph {
         &self,
         sig: sig::UnpackId,
         name: Option<Span>,
+        span: Span,
         vars: &[Var],
         scope: Option<ScopeId>,
     ) -> FuncId {
         let id = FuncId(self.funcs.len());
-        self.funcs.push(RefCell::new(Func::new(sig, name)));
+        self.funcs.push(RefCell::new(Func::new(sig, name, span)));
         let sid = self.alloc_scope(true, false, id, scope, vars);
         let enter = self.alloc_block(id, sid);
         let exit = self.alloc_block(id, sid);

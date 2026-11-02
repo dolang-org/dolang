@@ -18,6 +18,7 @@
 //! So a name on the same line as the span before it is usually one byte, and one
 //! starting a line is usually two.
 
+use crate::diag::INVALID_SPAN;
 use std::slice;
 
 use crate::diag::Span;
@@ -49,7 +50,7 @@ pub(super) struct Writer {
 impl Writer {
     /// Write a span, of a name with text `name` if it locates one.
     pub(super) fn push(&mut self, span: Span, name: Option<&str>) {
-        if span == Span::INVALID {
+        if span == INVALID_SPAN {
             self.words.push(INVALID);
             return;
         }
@@ -116,7 +117,7 @@ impl<'a> Reader<'a> {
                 let column = i64::from(self.state.first) + zig(self.word()?);
                 (field(line)?, column)
             }
-            INVALID if head == INVALID => return Ok(Span::INVALID),
+            INVALID if head == INVALID => return Ok(INVALID_SPAN),
             _ => return Err("a span is malformed"),
         };
         let column = field(column)?;
@@ -170,7 +171,7 @@ fn zig(x: u32) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::{Reader, Writer, zag, zig};
-    use crate::diag::Span;
+    use crate::diag::{INVALID_SPAN, Span};
 
     fn round_trip(spans: &[(Span, Option<&str>)]) -> Vec<u32> {
         let mut writer = Writer::default();
@@ -240,8 +241,8 @@ mod tests {
     fn invalid_spans_leave_the_reference() {
         let words = round_trip(&[
             (Span::new(4, 2, 1), Some("x")),
-            (Span::INVALID, Some("y")),
-            (Span::INVALID, None),
+            (INVALID_SPAN, Some("y")),
+            (INVALID_SPAN, None),
             (Span::new(4, 4, 1), Some("z")),
         ]);
         assert_eq!(words[words.len() - 1], 2 << 3);

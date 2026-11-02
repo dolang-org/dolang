@@ -184,10 +184,6 @@ impl<'s> File<'s> {
         coord(self.newlines(), offset)
     }
 
-    pub(crate) fn coord_span(&self, span: Span) -> Range<Coord> {
-        self.coord(span.start)..self.coord(span.end)
-    }
-
     /// Where a line starts
     fn line_start(&self, line: u32) -> usize {
         match line.checked_sub(1) {

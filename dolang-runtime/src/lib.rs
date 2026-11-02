@@ -38,7 +38,7 @@ use crate::{
     sym::Sym,
     value::Value,
 };
-use dolang_bytecode as bytecode;
+use dolang_bytecode::{self as bytecode, span::Span};
 use dolang_util::alias;
 
 /// How often (in iterations) to check for interrupts in inner loops.
@@ -57,7 +57,18 @@ pub(crate) type Func = bytecode::Func;
 pub(crate) struct FuncDebug {
     pub(crate) name: Range<usize>,
     pub(crate) file: Range<usize>,
-    pub(crate) sourcemap: alias::Box<[(usize, u32)]>,
+    pub(crate) sourcemap: alias::Box<[(usize, Span)]>,
+}
+
+impl FuncDebug {
+    /// The span of the instruction at `pc`
+    pub(crate) fn locate(&self, pc: usize) -> Span {
+        let index = match self.sourcemap.binary_search_by_key(&pc, |e| e.0) {
+            Ok(i) => i,
+            Err(i) => i - 1,
+        };
+        self.sourcemap[index].1
+    }
 }
 
 // Loaded bytecode program

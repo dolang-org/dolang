@@ -7,6 +7,7 @@
 //! is never reported. A typelib's declarations were reported when its source was
 //! checked, so they are not reported again.
 
+use crate::diag::INVALID_SPAN;
 use std::fmt::{self, Write};
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -110,7 +111,7 @@ pub(crate) fn report(tables: &Tables<'_>, unresolved: &[Unresolved], diags: &mut
     for &Unresolved { span, residual } in unresolved {
         let info = tables.info(span.unit);
         if info.source.is_none()
-            || span.span == Span::INVALID
+            || span.span == INVALID_SPAN
             || reported.contains(&span)
             || residual.class() == ResidualClass::Cascade
         {

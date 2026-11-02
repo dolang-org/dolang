@@ -36,7 +36,7 @@ pub(crate) trait Locate {
 
 impl Locate for diag::Span {
     fn locate(self, _: &UnitInfo<'_>) -> Option<diag::Span> {
-        (self != diag::Span::INVALID).then_some(self)
+        (self != diag::INVALID_SPAN).then_some(self)
     }
 }
 

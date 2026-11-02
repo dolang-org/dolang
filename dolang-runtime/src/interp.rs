@@ -1162,6 +1162,7 @@ impl<'v> Vm<'v> {
                 // - 1: continue
                 // - 2: return
                 NlBranch => {
+                    frame.pc = reader.offset();
                     let depth = reader.usize();
                     let indicator = reader.usize() as u8;
                     let target = Upvars::at_depth(&frame.upvars, depth);

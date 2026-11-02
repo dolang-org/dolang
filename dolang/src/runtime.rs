@@ -56,7 +56,7 @@ pub mod io {
 
 /// VM management
 pub mod vm {
-    pub use dolang_runtime::frame::Frame;
+    pub use dolang_runtime::frame::{Frame, Pos, Span};
     pub use dolang_runtime::vm::{
         Alloc, AllocExt, Builder, Bytecode, BytecodeError, ModuleBuilder, Register, State,
         StateTag, Vm,

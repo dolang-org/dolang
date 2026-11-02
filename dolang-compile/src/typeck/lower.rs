@@ -254,7 +254,7 @@ impl<'t, 'u> Lower<'t, 'u> {
     /// A span of the unit's source as the graph holds it
     fn locate(&self, span: Span) -> diag::Span {
         match span == Span::INVALID {
-            true => diag::Span::INVALID,
+            true => diag::INVALID_SPAN,
             false => self.file.locate(span),
         }
     }
@@ -420,7 +420,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 let target = self.route(target, finally.as_ref());
                 self.end(Terminal::Branch {
                     target,
-                    span: diag::Span::INVALID,
+                    span: diag::INVALID_SPAN,
                 });
             }
             End::EndFinally => self.end(Terminal::EndFinally),

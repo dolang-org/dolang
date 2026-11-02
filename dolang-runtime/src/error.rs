@@ -10,6 +10,8 @@ use std::{
     result, slice,
 };
 
+use dolang_bytecode::span::Span;
+
 use crate::{
     Program,
     frame::{self, Frame},
@@ -118,7 +120,7 @@ impl<'v> ErrorMeta<'v> {
 pub(crate) type ErrorPair<'v> = (Value<'v>, Vec<UnwindEntry<'v>>);
 
 impl<'v> UnwindEntry<'v> {
-    pub(crate) fn source(&self) -> Option<(Cow<'_, str>, u32)> {
+    pub(crate) fn source(&self) -> Option<(Cow<'_, str>, Span)> {
         match self {
             UnwindEntry::Do {
                 program,
@@ -127,15 +129,8 @@ impl<'v> UnwindEntry<'v> {
             } => {
                 let program = program.annex();
                 if let Some(debug) = program.funcdebugs.get(*function_index as usize) {
-                    let pc = *pc as usize - 1;
-                    let sourcemap = &debug.sourcemap;
-                    let index = match sourcemap.binary_search_by_key(&pc, |e| e.0) {
-                        Ok(i) => i,
-                        Err(i) => i - 1,
-                    };
-                    let entry = &sourcemap[index];
                     let file = &program.debug_strtab()[debug.file.clone()];
-                    Some((Cow::Owned(file.to_owned()), entry.1))
+                    Some((Cow::Owned(file.to_owned()), debug.locate(*pc as usize - 1)))
                 } else {
                     None
                 }
@@ -251,7 +246,7 @@ pub struct Error<'v, 's> {
 pub struct BacktraceEntry<'v, 'a>(&'a UnwindEntry<'v>);
 
 impl<'v, 'a> BacktraceEntry<'v, 'a> {
-    /// Source and line number of the error.
+    /// Source file, and the span of the code that raised the error.
     ///
     /// This may not be available if:
     /// - The entry represents a native function
@@ -259,7 +254,7 @@ impl<'v, 'a> BacktraceEntry<'v, 'a> {
     ///
     /// Note that the filename may be a lossy approximation of the native path
     /// on the system on which the code was originally compiled to bytecode.
-    pub fn source(&self) -> Option<(Cow<'_, str>, u32)> {
+    pub fn source(&self) -> Option<(Cow<'_, str>, Span)> {
         self.0.source()
     }
 
@@ -289,7 +284,7 @@ impl<'v, 'a> BacktraceEntry<'v, 'a> {
 }
 
 impl<'v, 'a> Frame for BacktraceEntry<'v, 'a> {
-    fn source(&self) -> Option<(Cow<'_, str>, u32)> {
+    fn source(&self) -> Option<(Cow<'_, str>, Span)> {
         BacktraceEntry::source(self)
     }
 
@@ -342,7 +337,7 @@ pub(crate) struct OwnedBacktraceEntry<'v> {
 }
 
 impl<'v> Frame for OwnedBacktraceEntry<'v> {
-    fn source(&self) -> Option<(Cow<'_, str>, u32)> {
+    fn source(&self) -> Option<(Cow<'_, str>, Span)> {
         self.entry.source()
     }
 

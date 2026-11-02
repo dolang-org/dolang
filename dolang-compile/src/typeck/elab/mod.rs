@@ -19,6 +19,7 @@ pub(crate) mod surface;
 mod variance;
 mod wellformed;
 
+use crate::diag::INVALID_SPAN;
 use std::{
     borrow::Cow,
     fmt::{self, Write},
@@ -512,14 +513,14 @@ pub(crate) struct UnitInfo<'u> {
 }
 
 impl UnitInfo<'_> {
-    /// The span covering `a` and `b`, either of which may be [`Span::INVALID`].
+    /// The span covering `a` and `b`, either of which may be [`INVALID_SPAN`].
     /// Joining spans on different lines needs the source, since how far apart
     /// they are depends on the lines between.
     pub(crate) fn join(&self, a: Span, b: Span) -> Span {
-        if a == Span::INVALID {
+        if a == INVALID_SPAN {
             return b;
         }
-        if b == Span::INVALID {
+        if b == INVALID_SPAN {
             return a;
         }
         let file = &self.source.expect("spans are joined only with source").file;

@@ -622,17 +622,10 @@ impl<'v> Vm<'v> {
             .content
             .iter()
             .map(|debug| {
-                let mut sourcemap = Vec::new();
-                let mut iter = debug.sourcemap.iter();
-                let first = iter.next().expect("empty source map?!");
-                let mut offset = 0;
-                let mut line = first.line_delta;
-                sourcemap.push((offset, line as u32));
-                for entry in iter {
-                    offset += entry.offset_delta + 1;
-                    line += entry.line_delta;
-                    sourcemap.push((offset, line as u32))
-                }
+                let sourcemap = debug
+                    .spans()
+                    .map(|entry| entry.expect("verified source map"))
+                    .collect::<Vec<_>>();
                 FuncDebug {
                     name: debug.name.clone(),
                     file: debug.file.clone(),

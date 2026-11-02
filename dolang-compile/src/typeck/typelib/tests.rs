@@ -1,3 +1,4 @@
+use crate::diag::INVALID_SPAN;
 use std::{
     collections::BTreeMap,
     panic::{self, AssertUnwindSafe},
@@ -744,7 +745,7 @@ fn omits_reference_spans_and_spellings() {
     let mut names = 0;
     for site in &shard.sites {
         site.ty.each_node(&mut |ty| {
-            assert_eq!(ty.span(), Span::INVALID);
+            assert_eq!(ty.span(), INVALID_SPAN);
             if let TypeExpr::Name(head) = ty {
                 assert!(head.link.is_some());
                 names += 1;
@@ -752,7 +753,7 @@ fn omits_reference_spans_and_spellings() {
         });
     }
     assert_eq!(names, 3);
-    assert!(shard.links.iter().all(|link| link.span == Span::INVALID));
+    assert!(shard.links.iter().all(|link| link.span == INVALID_SPAN));
 }
 
 #[test]
@@ -772,7 +773,7 @@ fn locates_kept_spans() {
     let located = |shard: &Shard<'_>, base: &Bases, kept: &BitSlice, facts: &Facts| {
         let (_, spans) = wire::Encode::new(shard, base, kept, facts, None).content();
         (spans.into_iter())
-            .filter(|&span| span != Span::INVALID)
+            .filter(|&span| span != INVALID_SPAN)
             .map(|span| resolve_span(id, span).span())
             .collect::<Vec<_>>()
     };

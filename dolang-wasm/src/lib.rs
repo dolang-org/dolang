@@ -132,8 +132,9 @@ async fn execute(source: String, host: Host, signal: AbortSignal) -> RunResult {
                                 frame.module(),
                                 frame.receiver()
                             ));
-                            if let Some((path, line)) = frame.source() {
-                                message.push_str(&format!(" ({path}:{})", line + 1));
+                            if let Some((path, span)) = frame.source() {
+                                message
+                                    .push_str(&format!(" ({path}:{})", span.start().line_number()));
                             }
                         }
                         Err((message, canceled))

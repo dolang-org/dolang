@@ -1,5 +1,6 @@
 //! Expressions: their types in a state, and the class and import values they name.
 
+use crate::diag::INVALID_SPAN;
 use std::collections::VecDeque;
 
 use crate::diag::Span;
@@ -61,7 +62,7 @@ impl Flow<'_, '_> {
             &ExprKind::Var(var) => {
                 let fact = self.read(at, state, var);
                 self.record(expr.span, Role::Read, var, fact);
-                if fact.unassigned && self.observing() && expr.span != Span::INVALID {
+                if fact.unassigned && self.observing() && expr.span != INVALID_SPAN {
                     let name = match self.ir.var(var).origin {
                         Origin::Source(_, name) => self.db.symbol(name),
                         Origin::Field(key) => self.db.symbol(key.name),
@@ -144,7 +145,7 @@ impl Flow<'_, '_> {
         let span = value.span;
         if !checked
             && self.observing()
-            && span != Span::INVALID
+            && span != INVALID_SPAN
             && self.trial(at, state, operands, value, ty)
         {
             self.problem(Problem::Assertion {
@@ -161,7 +162,7 @@ impl Flow<'_, '_> {
         }
         if checked
             && self.observing()
-            && span != Span::INVALID
+            && span != INVALID_SPAN
             && self.conform(found, ty, span) == Status::Contradicted
         {
             let (found, ty) = self.pair(found, ty);
@@ -321,7 +322,7 @@ impl Flow<'_, '_> {
     /// Report an item a module doesn't export. One that a re-export names is
     /// reported where the re-exporting module imports it.
     fn check_export(&mut self, unit: UnitId, item: SymbolId, span: Span) {
-        if !self.observing() || span == Span::INVALID {
+        if !self.observing() || span == INVALID_SPAN {
             return;
         }
         let name = self.db.symbol(item);

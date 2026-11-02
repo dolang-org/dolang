@@ -97,7 +97,9 @@ where
             module: entry.module().into_owned(),
             receiver: entry.receiver().into_owned(),
             method: entry.method().map(Cow::into_owned),
-            source: entry.source().map(|(path, line)| (path.into_owned(), line)),
+            source: entry
+                .source()
+                .map(|(path, span)| (path.into_owned(), span.start().line_offset())),
         })
         .collect()
 }

@@ -517,7 +517,7 @@ impl<'u> Walk<'_, 'u> {
     /// Where a span of the syntax tree is, as the surface holds it
     fn at(&self, span: Span) -> diag::Span {
         match span == Span::INVALID {
-            true => diag::Span::INVALID,
+            true => diag::INVALID_SPAN,
             false => self.file.locate(span),
         }
     }

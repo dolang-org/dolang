@@ -594,7 +594,7 @@ impl<'u> Scope<'_, '_, 'u> {
         let items = self.body_items(&frame, &node.body.elems, items);
         self.end(Terminal::Branch {
             target: exit,
-            span: diag::Span::INVALID,
+            span: diag::INVALID_SPAN,
         });
         self.switch(exit);
         self.ctx.hoist = hoist;
@@ -633,7 +633,7 @@ impl<'u> Scope<'_, '_, 'u> {
             spans.push(branch.span);
             self.end(Terminal::Branch {
                 target: join,
-                span: diag::Span::INVALID,
+                span: diag::INVALID_SPAN,
             });
             self.switch(fallback);
         }
@@ -643,7 +643,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 let items = self.body_items(&frame, &body.elems, items);
                 self.end(Terminal::Branch {
                     target: join,
-                    span: diag::Span::INVALID,
+                    span: diag::INVALID_SPAN,
                 });
                 self.switch(join);
                 items
@@ -714,7 +714,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 }
                 self.end(Terminal::Branch {
                     target: then,
-                    span: diag::Span::INVALID,
+                    span: diag::INVALID_SPAN,
                 });
             }
             node => {
@@ -743,7 +743,7 @@ impl<'u> Scope<'_, '_, 'u> {
         landing.steps.extend(assumes.into_iter().map(Step::Assume));
         landing.terminal = Terminal::Branch {
             target,
-            span: diag::Span::INVALID,
+            span: diag::INVALID_SPAN,
         };
         block
     }

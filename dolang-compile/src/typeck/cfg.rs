@@ -77,6 +77,7 @@ mod split;
 mod tests;
 mod validate;
 
+use crate::diag::INVALID_SPAN;
 use std::cell::{Ref, RefCell, RefMut};
 
 use bitvec::boxed::BitBox;
@@ -342,7 +343,7 @@ pub(crate) enum EscapeKind {
 
 pub(crate) enum Terminal {
     /// Continue at `target`. A `return`, `break` or `continue` has its
-    /// statement's span; a synthetic branch, `Span::INVALID`.
+    /// statement's span; a synthetic branch, `INVALID_SPAN`.
     Branch {
         target: BlockId,
         span: Span,
@@ -664,7 +665,7 @@ impl Terminal {
         blocks.into_iter()
     }
 
-    /// The span of the source construct it lowers, or `Span::INVALID` for a
+    /// The span of the source construct it lowers, or `INVALID_SPAN` for a
     /// synthetic one
     pub(crate) fn span(&self) -> Span {
         match self {
@@ -680,7 +681,7 @@ impl Terminal {
             | Terminal::Leave { .. }
             | Terminal::EndFinally
             | Terminal::Guard { .. }
-            | Terminal::Unreachable => Span::INVALID,
+            | Terminal::Unreachable => INVALID_SPAN,
         }
     }
 }

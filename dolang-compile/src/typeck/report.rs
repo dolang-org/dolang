@@ -1,6 +1,7 @@
 //! The checker's diagnostics, which locate spans by line and column, so a unit
 //! checked without its source is reported like any other.
 
+use crate::diag::INVALID_SPAN;
 use std::fmt::{self, Write};
 
 use super::r#type::UnitId;
@@ -71,7 +72,7 @@ impl Diag {
 /// A span of `unit`, as a diagnostic's location
 pub(crate) fn resolve_span(unit: UnitId, span: Span) -> SourceSpan {
     // A span a typelib omits is at the start of its first line
-    let span = match span == Span::INVALID {
+    let span = match span == INVALID_SPAN {
         true => Span::new(0, 0, 0),
         false => span,
     };

@@ -17,6 +17,7 @@
 //! Every ID is local to the unit. Declarations, sites and links keep their order;
 //! strings are numbered as the encoder first meets them, and each is written once.
 
+use crate::diag::INVALID_SPAN;
 use std::{borrow::Cow, convert::Infallible, mem, path::Path};
 
 use bitvec::slice::BitSlice;
@@ -421,7 +422,7 @@ fn index(id: usize) -> u32 {
 
 /// A span the stream fills in
 fn invalid() -> Span {
-    Span::INVALID
+    INVALID_SPAN
 }
 
 fn variance(variance: Variance) -> WireVariance {
@@ -1506,7 +1507,7 @@ pub(super) fn decode(mut content: Content<&str>) -> Result<(Shard<'_>, elab::Fac
                 unit: local(),
                 base: untarget(link.base),
                 item: unopt(link.item).map(StrId::from_index),
-                span: Span::INVALID,
+                span: INVALID_SPAN,
             })
             .collect(),
         referents: Vec::new(),
@@ -1729,7 +1730,7 @@ impl Decode<'_> {
                     },
                     WireParam::AnyPos => TypeParam::AnyPos,
                     &WireParam::AnyKey(ty) => TypeParam::AnyKey(self.opt_ty(ty)?),
-                    WireParam::Open => TypeParam::Open(Span::INVALID),
+                    WireParam::Open => TypeParam::Open(INVALID_SPAN),
                 })
             })
             .collect()
@@ -1742,7 +1743,7 @@ impl Decode<'_> {
     /// A fresh tree of a node, since each place a type is written in has slots of
     /// its own
     fn ty(&self, id: u32) -> Result<TypeExpr, &'static str> {
-        let span = Span::INVALID;
+        let span = INVALID_SPAN;
         let boxed = |id| self.ty(id).map(Box::new);
         Ok(
             match self.types.get(id as usize).ok_or("an ID is out of range")? {
@@ -1876,14 +1877,14 @@ fn unname(name: Name) -> surface::Name {
 
 fn symbol(text: u32) -> Symbol {
     Symbol {
-        span: Span::INVALID,
+        span: INVALID_SPAN,
         text: StrId::from_index(text as usize),
     }
 }
 
 fn unref(link: Opt) -> Ref {
     Ref {
-        span: Span::INVALID,
+        span: INVALID_SPAN,
         link: unopt(link).map(LinkId::from_index),
     }
 }

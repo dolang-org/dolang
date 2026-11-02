@@ -32,6 +32,7 @@
 //! result that isn't known yet to be bottom. A union's alternatives end it only
 //! if they all do.
 
+use crate::diag::INVALID_SPAN;
 use std::{collections::VecDeque, ops::ControlFlow};
 
 use dolang_util::{alias, mono::MonoVec};
@@ -2693,7 +2694,7 @@ impl<'a> Flow<'a, '_> {
     /// Instantiate each `do` block among values that no rule types
     fn untyped(&mut self, at: At, values: &Values) {
         for lambda in values.lambdas() {
-            self.lambda(at, lambda.func, Span::INVALID);
+            self.lambda(at, lambda.func, INVALID_SPAN);
         }
     }
 
@@ -3239,7 +3240,7 @@ impl<'a> Flow<'a, '_> {
         let Some(ty) = ty else {
             return result;
         };
-        let span = values.first().map_or(Span::INVALID, |&(_, span)| span);
+        let span = values.first().map_or(INVALID_SPAN, |&(_, span)| span);
         self.conclude(at, span, None, |_, rule| {
             for &(value, span) in values {
                 rule.constrain(
