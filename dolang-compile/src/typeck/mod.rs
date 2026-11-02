@@ -27,17 +27,17 @@ use rustc_hash::FxHashSet;
 
 use crate::{
     Error, ErrorInfo, Mode, Unit, UnitId,
-    diag::{self, Diag, Severity},
+    diag::{self, Diag},
 };
 
 pub use analysis::{Analysis, Declaration, Judged, Node};
 pub use flow::Role;
 pub use r#type::Style;
 
-/// A module's typelib, as [`Check::typelib`] wrote it, decoded and found to be one this
+/// A module's typelib, as [`Checked::typelib`] wrote it, decoded and found to be one this
 /// checker reads. It borrows from the bytes it was read from.
 ///
-/// A unit checked against a typelib (see [`Builder::typelib`]) sees the same
+/// A unit checked against a typelib (see [`Check::typelib`]) sees the same
 /// declarations as if the module were checked from source, but the module's bodies
 /// are not checked. A typelib is read only by the version of the checker that wrote
 /// it.
@@ -71,43 +71,22 @@ impl<'a> Typelib<'a> {
     pub fn path(&self) -> &'a Path {
         self.shard.info.path
     }
-
-    /// The modules the module imports, and those of the pipe types its recorded
-    /// nominations name (see [`Builder::pipes`]), each once, in order. A check
-    /// finds them among its units, and reports a module it doesn't have as not
-    /// found.
-    pub fn imports(&self) -> Vec<&'a str> {
-        let shard = &self.shard;
-        let text = |id: elab::surface::StrId| match &shard.strings[id.index()] {
-            Cow::Borrowed(name) => *name,
-            Cow::Owned(_) => unreachable!("a typelib's strings borrow its bytes"),
-        };
-        let module = self.module();
-        let nominees = (shard.nominations.iter().flatten())
-            .map(|&(nominee, _)| text(nominee))
-            .filter(|&nominee| nominee != module);
-        let mut imports: Vec<&'a str> = (shard.modules.iter())
-            .map(|module| text(module.name))
-            .chain(nominees)
-            .collect();
-        imports.sort_unstable();
-        imports.dedup();
-        imports
-    }
 }
 
-/// A unit to check
-enum Input<'u, 's> {
-    Source(&'u Unit<'s>),
-    Typelib(Box<(elab::Shard<'u>, elab::Facts)>),
-}
-
-/// Collects the units to check together.
+/// The units to check together, and what they need.
 ///
 /// Each unit is identified by the [`UnitId`] returned when it is added; IDs
-/// are meaningful only for the [`Check`] this builder produces.
-pub struct Builder<'u, 's> {
-    units: Vec<Input<'u, 's>>,
+/// are meaningful only for this check and the [`Checked`] it produces.
+///
+/// A check knows which modules its units need: [`Check::missing`] names those
+/// it doesn't have. A driver adds the units it starts from, then adds a unit
+/// for each missing module it can find, until every module still missing is one
+/// it has already looked for, and then runs the check, which reports any module
+/// still missing as not found.
+pub struct Check<'u> {
+    /// Each unit's shard, collected when it was added, and what elaboration
+    /// concluded of it already, by [`UnitId`]
+    units: Vec<(elab::Shard<'u>, elab::Facts)>,
     modules: FxHashSet<&'u str>,
     /// The types `strand.PipeSender` and `strand.PipeReceiver` stand for, by module
     /// and item
@@ -120,13 +99,13 @@ pub struct Builder<'u, 's> {
     typelibs: bool,
 }
 
-impl Default for Builder<'_, '_> {
+impl Default for Check<'_> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'u, 's> Builder<'u, 's> {
+impl<'u> Check<'u> {
     pub fn new() -> Self {
         Self {
             units: Vec::new(),
@@ -147,7 +126,7 @@ impl<'u, 's> Builder<'u, 's> {
     }
 
     /// Give the check an [`Analysis`] of its units checked from source, which
-    /// [`Check::analysis`] borrows and [`Check::into_analysis`] takes. Defaults to
+    /// [`Checked::analysis`] borrows and [`Checked::into_analysis`] takes. Defaults to
     /// off, which costs nothing.
     pub fn analysis(&mut self, enabled: bool) -> &mut Self {
         self.analysis = enabled;
@@ -155,7 +134,7 @@ impl<'u, 's> Builder<'u, 's> {
     }
 
     /// Have the check keep the typelib of each module it checks from source, which
-    /// [`Check::typelib`] writes. Defaults to off, which costs nothing.
+    /// [`Checked::typelib`] writes. Defaults to off, which costs nothing.
     pub fn typelibs(&mut self, enabled: bool) -> &mut Self {
         self.typelibs = enabled;
         self
@@ -177,7 +156,7 @@ impl<'u, 's> Builder<'u, 's> {
     /// Panics if a typelib was already added; nominate the pipes first.
     pub fn pipes(&mut self, sender: (&'u str, &'u str), receiver: (&'u str, &'u str)) -> &mut Self {
         assert!(
-            !(self.units.iter()).any(|unit| matches!(unit, Input::Typelib(_))),
+            !(self.units.iter()).any(|(shard, _)| shard.info.source.is_none()),
             "pipes are nominated before typelibs are added"
         );
         self.pipes = [sender, receiver];
@@ -195,7 +174,7 @@ impl<'u, 's> Builder<'u, 's> {
     /// | [`ErrorKind::Fail`](crate::ErrorKind::Fail) | The unit failed to compile |
     /// | [`ErrorKind::Unresolved`](crate::ErrorKind::Unresolved) | The unit was compiled without resolving types |
     /// | [`ErrorKind::DuplicateModule`](crate::ErrorKind::DuplicateModule) | A module of the same name was already added |
-    pub fn unit(&mut self, unit: &'u Unit<'s>) -> Result<UnitId, Error> {
+    pub fn unit(&mut self, unit: &'u Unit<'_>) -> Result<UnitId, Error> {
         if unit.failed {
             return Err(Error(ErrorInfo::Fail));
         }
@@ -205,7 +184,8 @@ impl<'u, 's> Builder<'u, 's> {
         if let Mode::Module { name } = &unit.mode {
             self.module(name)?;
         }
-        self.units.push(Input::Source(unit));
+        self.units
+            .push((elab::collect(unit), elab::Facts::default()));
         Ok(UnitId::from_index(self.units.len() - 1))
     }
 
@@ -224,7 +204,7 @@ impl<'u, 's> Builder<'u, 's> {
     /// | Kind | Condition |
     /// | ---- | --------- |
     /// | [`ErrorKind::DuplicateModule`](crate::ErrorKind::DuplicateModule) | A module of the same name was already added |
-    /// | [`ErrorKind::Pipes`](crate::ErrorKind::Pipes) | The typelib was written by a check that nominated other pipes (see [`Builder::pipes`]) |
+    /// | [`ErrorKind::Pipes`](crate::ErrorKind::Pipes) | The typelib was written by a check that nominated other pipes (see [`Check::pipes`]) |
     pub fn typelib(&mut self, typelib: &Typelib<'u>) -> Result<UnitId, Error> {
         let shard = &typelib.shard;
         if let Some(nominations) = shard.nominations {
@@ -234,10 +214,7 @@ impl<'u, 's> Builder<'u, 's> {
             }
         }
         self.module(typelib.module())?;
-        self.units.push(Input::Typelib(Box::new((
-            typelib.shard.clone(),
-            typelib.facts.clone(),
-        ))));
+        (self.units).push((typelib.shard.clone(), typelib.facts.clone()));
         Ok(UnitId::from_index(self.units.len() - 1))
     }
 
@@ -248,21 +225,56 @@ impl<'u, 's> Builder<'u, 's> {
         }
     }
 
+    /// The modules a unit needs, sorted and listed once each: those it imports,
+    /// by statement or through the prelude bindings it uses, and `std`, which
+    /// holds the types the checker designates, such as those of literals. For
+    /// `strand`, they include the modules of the nominated pipe types (see
+    /// [`Check::pipes`]). A unit doesn't need its own module.
+    pub fn depends(&self, unit: UnitId) -> Vec<&str> {
+        let (shard, _) = &self.units[unit.index()];
+        let own = shard.info.module;
+        let nominees = (own == Some("strand"))
+            .then_some(self.pipes.map(|(module, _)| module))
+            .into_iter()
+            .flatten();
+        let mut modules: Vec<&str> = (shard.modules.iter())
+            .map(|module| &*shard.strings[module.name.index()])
+            .chain(["std"])
+            .chain(nominees)
+            .filter(|&module| Some(module) != own)
+            .collect();
+        modules.sort_unstable();
+        modules.dedup();
+        modules
+    }
+
+    /// The modules the check's units need (see [`Check::depends`]) that none of
+    /// them is, sorted and listed once each.
+    pub fn missing(&self) -> Vec<&str> {
+        let mut missing: Vec<&str> = (0..self.units.len())
+            .flat_map(|index| self.depends(UnitId::from_index(index)))
+            .filter(|module| !self.modules.contains(module))
+            .collect();
+        missing.sort_unstable();
+        missing.dedup();
+        missing
+    }
+
     /// Check the units.
     ///
     /// Units are checked in a fixed order, modules by name and then scripts by path,
     /// whatever order they were added in.
-    pub fn check(self) -> Check {
-        self.run().0
+    pub fn run(self) -> Checked {
+        self.elaborate().0
     }
 
     /// Check the units, keeping the tables elaboration built
     #[cfg(test)]
-    pub(crate) fn check_tables(self) -> (Check, elab::Tables<'u>) {
-        self.run()
+    pub(crate) fn run_tables(self) -> (Checked, elab::Tables<'u>) {
+        self.elaborate()
     }
 
-    fn run(self) -> (Check, elab::Tables<'u>) {
+    fn elaborate(self) -> (Checked, elab::Tables<'u>) {
         let mut db = r#type::Database::new();
         for index in 0..self.units.len() {
             assert_eq!(
@@ -271,14 +283,7 @@ impl<'u, 's> Builder<'u, 's> {
                 "units are allocated in order"
             );
         }
-        let units: Vec<(elab::Shard<'u>, elab::Facts)> = self
-            .units
-            .into_iter()
-            .map(|input| match input {
-                Input::Source(unit) => (elab::collect(unit), elab::Facts::default()),
-                Input::Typelib(typelib) => *typelib,
-            })
-            .collect();
+        let units = self.units;
         let mut order: Vec<UnitId> = (0..units.len()).map(UnitId::from_index).collect();
         order.sort_by_key(|id| {
             let info = &units[id.index()].0.info;
@@ -414,7 +419,7 @@ impl<'u, 's> Builder<'u, 's> {
             trace::elab(analysis, &tables);
         }
         undecided::report(&tables, &unresolved, &mut diags);
-        let check = Check {
+        let check = Checked {
             cfgs,
             layers,
             flows,
@@ -792,18 +797,15 @@ fn export_dot(ir: &cfg::Ir, db: &r#type::Database, info: &elab::UnitInfo) -> std
 
 /// The result of checking a set of units.
 ///
-/// A check is *validated* when the checker reported no errors. A check it
-/// couldn't decide in a strict unit is a warning; in a non-strict unit, which
-/// accepts `Unknown`, it isn't reported. Otherwise the check is *partial*: its
-/// declarations are usable for diagnostics and tooling, but checking code against
-/// them proves nothing. Units that could not
-/// be checked at all are refused by [`Builder::unit`].
-pub struct Check {
+/// A check the checker couldn't decide in a strict unit is a warning; in a
+/// non-strict unit, which accepts `Unknown`, it isn't reported. Units that could
+/// not be checked at all are refused by [`Check::unit`].
+pub struct Checked {
     diagnostics: Vec<Diag>,
     /// Each unit's name and path, by [`UnitId`]
     units: Vec<Located>,
     /// Each written type, with the kinds of its binder group's binders, for
-    /// [`Check::smoke`]
+    /// [`Checked::smoke`]
     site_kinds: Vec<(r#type::TypeId, Vec<r#type::Kind>)>,
     /// The database every unit's fork is of
     shared: Arc<r#type::Shared>,
@@ -811,12 +813,12 @@ pub struct Check {
     /// names of its declarations
     #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     types: Arc<analysis::Types>,
-    /// What the check concluded about its units' spans, if the builder asked
+    /// What the check concluded about its units' spans, if the check asked
     analysis: Option<Analysis>,
     /// Well-formedness checks the checker could not decide, with the kind of reason
     undecided: Vec<(String, diag::SourceSpan)>,
     /// Each unit's typelib, or why it has none, by [`UnitId`],
-    /// if the builder asked
+    /// if the check asked
     typelibs: Option<Vec<Result<Vec<u8>, Unwritten>>>,
     /// Each unit's typing CFG, by [`UnitId`], for a unit checked from source
     #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
@@ -838,7 +840,7 @@ struct Located {
     path: PathBuf,
 }
 
-impl Check {
+impl Checked {
     /// Iterate the type checker's diagnostics.
     ///
     /// Every location names the unit it refers to. The units' own diagnostics
@@ -859,13 +861,6 @@ impl Check {
         self.units[unit.index()].name.clone()
     }
 
-    /// Whether every well-formedness check passed. See [`Check`].
-    pub fn validated(&self) -> bool {
-        self.diagnostics
-            .iter()
-            .all(|diag| diag.severity() != Severity::Error)
-    }
-
     /// The checks the checker could not decide, each with the kind of reason,
     /// for developing the checker. Reasons are internal and may change.
     #[doc(hidden)]
@@ -883,10 +878,10 @@ impl Check {
     ///
     /// | Kind | Condition |
     /// | ---- | --------- |
-    /// | [`ErrorKind::NotRequested`](crate::ErrorKind::NotRequested) | The builder wasn't asked for typelibs with [`Builder::typelibs`] |
+    /// | [`ErrorKind::NotRequested`](crate::ErrorKind::NotRequested) | The check wasn't asked for typelibs with [`Check::typelibs`] |
     /// | [`ErrorKind::NoSource`](crate::ErrorKind::NoSource) | The unit was checked from its typelib |
     /// | [`ErrorKind::NotModule`](crate::ErrorKind::NotModule) | The unit is not a module |
-    /// | [`ErrorKind::MissingImport`](crate::ErrorKind::MissingImport) | The module imports a module that wasn't checked with it, or is or imports `strand` and the module of a nominated pipe type wasn't (see [`Builder::pipes`]) |
+    /// | [`ErrorKind::MissingImport`](crate::ErrorKind::MissingImport) | The module imports a module that wasn't checked with it, or is or imports `strand` and the module of a nominated pipe type wasn't (see [`Check::pipes`]) |
     /// | [`ErrorKind::NotExportable`](crate::ErrorKind::NotExportable) | The module's public interface names a private declaration, which the check's diagnostics report |
     /// | [`ErrorKind::Io`](crate::ErrorKind::Io) | Writing failed |
     pub fn typelib(&self, unit: UnitId, write: &mut dyn Write) -> Result<(), Error> {
@@ -908,14 +903,14 @@ impl Check {
         }
     }
 
-    /// What the check concluded about its units' spans, if the builder asked for it
-    /// with [`Builder::analysis`].
+    /// What the check concluded about its units' spans, if the check asked for it
+    /// with [`Check::analysis`].
     pub fn analysis(&self) -> Option<&Analysis> {
         self.analysis.as_ref()
     }
 
-    /// Take what the check concluded about its units' spans, if the builder asked
-    /// for it with [`Builder::analysis`].
+    /// Take what the check concluded about its units' spans, if the check asked
+    /// for it with [`Check::analysis`].
     pub fn into_analysis(self) -> Option<Analysis> {
         self.analysis
     }

@@ -75,8 +75,6 @@ class Compiler
   field units @ Dict[Path, compile.Unit] = {}
   # Each source's text, by path.
   field sources @ Dict[Path, Str] = {}
-  # Each module's source, by module name.
-  field modules @ Dict[Str, Path] = {}
 
   def (init)
     self
@@ -90,7 +88,6 @@ class Compiler
 
   # Adds the module `name`, whose source is at `path`.
   pub def add_module self name@Str path@Path
-    self.#modules[name] = path
     self.#add $path $name
 
   # Adds the script at `path`.
@@ -113,7 +110,11 @@ class Compiler
           $diag
     let strict = self.#strict
     if (self.#check && !diagnostics.any(do |diag| diag.severity == :ERROR:))
-      let result = compile.check [...self.#units.values(), ...self.#typelibs()]
+      let checker = compile.Check()
+      for unit = self.#units.values()
+        checker.add $unit
+      add_bundled $checker
+      let result = checker.run()
       return Report [...diagnostics, ...result.diagnostics] $self.#units.len true :strict
     Report $diagnostics $self.#units.len $self.#check :strict
 
@@ -121,36 +122,29 @@ class Compiler
     let text = path.read_str()
     let check = self.#check
     self.#sources[path] = text
-    self.#units[path] = compile.compile "$path" $text typecheck: $check document: $check
+    self.#units[path] = compile.compile "$path" $text typecheck: $check
       if module
         :module
 
-  # The bundled typelibs of the modules the units import from elsewhere, and
-  # those they import in turn.
-  def typelibs self -> Array[compile.Typelib]
-    let seen = Set $self.#modules.keys()
-    # The checker gives every unit `std`'s designated types, such as those of
-    # literals, whether or not it imports `std`
-    let pending = $
-      std
-      for unit = self.#units.values()
-        for name = unit.imports()
-          $name
-    let typelibs @ Array[compile.Typelib] = []
-    while let name = pending.pop default: nil
-      if seen.contains(name)
+# Adds the bundled typelibs of the modules `checker` is missing, and of those
+# they need in turn.
+def add_bundled checker @ compile.Check
+  let tried @ Set[Str] = Set []
+  let more = true
+  while more
+    more = false
+    for name = checker.missing()
+      if tried.contains(name)
         continue
-      seen.add $name
+      tried.add $name
+      more = true
       let resource = _shell.resource "dolang.typelib" $name
       # A module that isn't bundled either is left for the check to report
       if (resource == nil)
         continue
       let Bin(bytes) = resource
       else throw std.RuntimeError "broken dolang build: bundled typelib of $name isn't binary"
-      let typelib = compile.Typelib $bytes
-      typelibs.push $typelib
-      pending.push ...typelib.imports().iter()
-    typelibs
+      checker.add $compile.Typelib(bytes)
 
 # A project: a directory laid out by convention. Its modules are the `.dol`
 # files under `lib/`, and its program is `main.dol`. Its build output goes under

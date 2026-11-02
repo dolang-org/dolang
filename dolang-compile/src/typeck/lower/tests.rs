@@ -5,7 +5,7 @@ use crate::{
     diag::Span,
     source::File,
     typeck::{
-        Builder,
+        Check,
         cfg::{BlockId, ExprKind, FuncId, Ir, Origin, Step, Terminal, VarFlags, VarId},
     },
 };
@@ -34,9 +34,9 @@ fn lower_mode_with(source: &str, mode: Mode<'_>, inspect: impl FnOnce(&Ir)) {
         .map(|diag| diag.message().to_string())
         .collect();
     assert!(!unit.failed, "the fixture doesn't compile: {diags:?}");
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.unit(&unit).unwrap();
-    let check = builder.check();
+    let check = builder.run();
     let ir = check.cfgs[0]
         .as_ref()
         .expect("a unit with source is lowered");

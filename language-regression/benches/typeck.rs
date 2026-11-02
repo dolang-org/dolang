@@ -56,7 +56,7 @@ fn benchmarks(c: &mut Criterion) {
                                     Err(e) => panic!("{e}"),
                                 }
                             }
-                            black_box(builder.check())
+                            black_box(builder.run())
                         });
                     } else {
                         assert!(
@@ -74,7 +74,7 @@ fn benchmarks(c: &mut Criterion) {
                                 Err(e) => panic!("{e}"),
                             })
                             .collect();
-                        let check = builder.check();
+                        let check = builder.run();
                         let bytes: Vec<_> = case
                             .sources
                             .iter()
@@ -109,7 +109,7 @@ fn benchmarks(c: &mut Criterion) {
                                     }
                                 }
                             }
-                            black_box(builder.check())
+                            black_box(builder.run())
                         });
                     }
                 });

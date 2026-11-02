@@ -82,17 +82,6 @@ pub class Unit
   pub def root self -> (Root | nil)
     ...
 
-  # Returns the modules the unit imports, by statement or through the prelude
-  # bindings it uses, each once, in order.
-  #
-  # Empty unless the unit was compiled with `document: true`.
-  #
-  # ## Errors
-  #
-  # Raises `std.StateError` if the unit was emitted.
-  pub def imports self -> Iterable[Str]
-    ...
-
   # Looks up a node by [`NodeId`](compile.NodeId).
   #
   # ## Returns
@@ -186,7 +175,7 @@ pub class Unit
 # let lib = compile "lib.dol" $lib_source module: lib typecheck: true
 # let result = check [lib] typelibs: true
 # let typelib = Typelib $result.typelib(lib)
-# echo $typelib.module ...typelib.imports()
+# echo $typelib.module
 # ```
 pub class Typelib
   # Reads a typelib.
@@ -197,7 +186,7 @@ pub class Typelib
   # version of Do.
   pub def (init)
     self
-    # Bytes from [`Check.typelib`](compile.Check.typelib).
+    # Bytes from [`Checked.typelib`](compile.Checked.typelib).
     bytes @ Bin
   do
     ...
@@ -210,13 +199,6 @@ pub class Typelib
   # The path of the module's source when the typelib was written.
   #[getter]
   pub def path self -> Str
-    ...
-
-  # Returns the modules the module imports or its declarations name, and those
-  # of the pipe types its check nominated for `strand`'s placeholders, each
-  # once, in order. [`check`](compile.check) reports those it isn't given as not
-  # found.
-  pub def imports self -> Iterable[Str]
     ...
 
 # An opaque handle identifying one node within a [`Unit`](compile.Unit).
@@ -1098,7 +1080,8 @@ pub def compile
 do -> Unit
   ...
 
-# Checks the types of units together.
+# Checks the types of units together: adds each of `units` to a
+# [`Check`](compile.Check) and runs it.
 #
 # A unit's imports of another unit's module are checked against that module.
 # An import of a module that isn't among the units is an error, and the names it
@@ -1135,25 +1118,87 @@ do -> Unit
 # ```
 pub def check
   units @ Iterable[Unit | Typelib]
-  # Whether the result keeps what [`Check.typelib`](compile.Check.typelib)
+  # Whether the result keeps what [`Checked.typelib`](compile.Checked.typelib)
   # writes. False by default.
   :typelibs @ Bool = ...
-do -> Check
+do -> Checked
   ...
 
-# The result of [`check`](compile.check).
+# Units and typelibs to check together, and the modules they need.
+#
+# A driver adds the units it starts from, then a unit or typelib for each module
+# [`missing`](compile.Check.missing) names that it can find, until every module
+# still missing is one it has looked for. Then it runs the check, which reports
+# imports of the modules still missing as not found.
+#
+# ## Example
+#
+# ```
+# let check = Check()
+# check.add $(compile "main.dol" $source typecheck: true)
+# let tried = Set []
+# let more = true
+# while more
+#   more = false
+#   for name = check.missing()
+#     if tried.contains(name)
+#       continue
+#     tried.add $name
+#     more = true
+#     let path = Path "lib/$name.dol"
+#     if path.exists()
+#       check.add $(compile "$path" $path.read_str() module: $name typecheck: true)
+# for diag = check.run().diagnostics
+#   echo $diag.render()
+# ```
 pub class Check
+  # Starts a check of no units.
+  pub def (init)
+    self
+    # Whether the result keeps what [`Checked.typelib`](compile.Checked.typelib)
+    # writes. False by default.
+    :typelibs @ Bool = ...
+  do
+    ...
+
+  # Adds a unit, or a module by its typelib.
+  #
+  # A unit that failed to compile needs no modules, and the check skips it; its
+  # own diagnostics report why.
+  #
+  # ## Errors
+  #
+  # | Exception        | Condition                                                  |
+  # | ---------------- | ---------------------------------------------------------- |
+  # | `std.ValueError` | `input` was compiled without `typecheck: true`, or its module was already added |
+  # | `std.StateError` | `input` was emitted                                        |
+  pub def add
+    self
+    input @ (Unit | Typelib)
+  do
+    ...
+
+  # Returns the modules the units added need that none of them is, sorted: those
+  # they import, by statement or through the prelude bindings they use, and
+  # `std`, which holds the types of literals. Once `strand` is added, they
+  # include `proc`, whose pipes [`check`](compile.check) describes.
+  pub def missing self -> Iterable[Str]
+    ...
+
+  # Checks the units added together.
+  #
+  # ## Errors
+  #
+  # `std.StateError` if a unit was emitted after it was added.
+  pub def run self -> Checked
+    ...
+
+# The result of a [`Check`](compile.Check).
+pub class Checked
   # The checker's diagnostics. Their locations may be in any of the units, and
   # their rendering shows each one's source.
   #[getter]
   pub def diagnostics self -> Array[Diagnostic]
-    ...
-
-  # Whether the check reported no errors and could decide everything it
-  # checked. When it couldn't, the units' declarations are still usable, but
-  # checking proves nothing about the code using them.
-  #[getter]
-  pub def validated self -> Bool
     ...
 
   # Renders the checks the checker couldn't decide, grouped by the kind of
@@ -1175,7 +1220,7 @@ pub class Check
   # | `std.CompileError` | `unit` is a typelib or not a module, imports a module that wasn't checked with it, or has a private declaration in its public interface; a module that is or imports `strand` also needs `proc` |
   pub def typelib
     self
-    # A unit given to [`check`](compile.check).
+    # A unit added to the check.
     unit @ (Unit | Typelib)
   do -> Bin
     ...

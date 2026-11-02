@@ -5,7 +5,7 @@ use crate::{
     Config,
     diag::Span,
     typeck::{
-        Builder, Check,
+        Check, Checked,
         cfg::{BlockId, FuncKind, Ir, Origin, Terminal},
         elab::Tables,
         solver::{Gas, Residual, Solver},
@@ -48,14 +48,14 @@ fn rendered(
 }
 
 /// A check, with the tables elaboration built
-struct Checked<'u> {
-    check: Check,
+struct Elaborated<'u> {
+    check: Checked,
     tables: Tables<'u>,
 }
 
-impl<'u> Checked<'u> {
-    fn new(builder: Builder<'u, '_>) -> Self {
-        let (check, tables) = builder.check_tables();
+impl<'u> Elaborated<'u> {
+    fn new(builder: Check<'u>) -> Self {
+        let (check, tables) = builder.run_tables();
         Self { check, tables }
     }
 
@@ -71,17 +71,17 @@ impl<'u> Checked<'u> {
     }
 }
 
-impl Deref for Checked<'_> {
-    type Target = Check;
+impl Deref for Elaborated<'_> {
+    type Target = Checked;
 
-    fn deref(&self) -> &Check {
+    fn deref(&self) -> &Checked {
         &self.check
     }
 }
 
 /// Analyze a unit's runs, each in queue order or in reverse, gathering
 /// their results as a check does
-fn analyze(check: &Checked<'_>, unit: usize, reversed: bool) -> Rendered {
+fn analyze(check: &Elaborated<'_>, unit: usize, reversed: bool) -> Rendered {
     let ir = check.cfgs[unit]
         .as_ref()
         .expect("a unit with source is lowered");
@@ -114,7 +114,7 @@ fn analyze(check: &Checked<'_>, unit: usize, reversed: bool) -> Rendered {
 
 /// Analyze a unit both in queue order and in reverse, which must agree with
 /// each other and with the check
-fn agreed(check: &Checked<'_>, unit: usize) -> Rendered {
+fn agreed(check: &Elaborated<'_>, unit: usize) -> Rendered {
     let forward = analyze(check, unit, false);
     let reversed = analyze(check, unit, true);
     assert_eq!(forward, reversed);
@@ -134,7 +134,7 @@ fn agreed(check: &Checked<'_>, unit: usize) -> Rendered {
 
 /// The rendered types of the references and bindings at spans of `unit` whose
 /// text is `name`
-fn facts_named(check: &Checked<'_>, unit: usize, name: &str) -> Vec<String> {
+fn facts_named(check: &Elaborated<'_>, unit: usize, name: &str) -> Vec<String> {
     let flow = check.flows[unit]
         .as_ref()
         .expect("a unit with source is analyzed");
@@ -153,7 +153,7 @@ fn agree(source: &str) {
     agree_with(source, |_| {});
 }
 
-fn agree_with(source: &str, inspect: impl FnOnce(&Checked<'_>)) {
+fn agree_with(source: &str, inspect: impl FnOnce(&Elaborated<'_>)) {
     let mut config = Config::new();
     config.typecheck(true);
     let unit = config.unit(Path::new("test.dol"), source);
@@ -162,10 +162,10 @@ fn agree_with(source: &str, inspect: impl FnOnce(&Checked<'_>)) {
         .map(|diag| diag.message().to_string())
         .collect();
     assert!(!unit.failed, "the fixture doesn't compile: {diags:?}");
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.analysis(true);
     builder.unit(&unit).unwrap();
-    let check = Checked::new(builder);
+    let check = Elaborated::new(builder);
     agreed(&check, 0);
     inspect(&check);
 }
@@ -180,9 +180,9 @@ fn unlogged() {
         "@class Empty\ndef f e @ Empty\n  e()\n",
     );
     assert!(!unit.failed);
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.unit(&unit).unwrap();
-    let check = builder.check();
+    let check = builder.run();
     let flow = check.flows[0]
         .as_ref()
         .expect("a unit with source is analyzed");
@@ -471,11 +471,11 @@ pub def run n @ Int width @ Int text @ Str
     config.mode(crate::Mode::Script);
     let script = config.unit(Path::new("test.dol"), source);
     assert!(!script.failed);
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.analysis(true);
     builder.unit(&std).unwrap();
     builder.unit(&script).unwrap();
-    let check = Checked::new(builder);
+    let check = Elaborated::new(builder);
     let forward = agreed(&check, 1);
     assert!(forward.unresolved.is_empty(), "{:?}", forward.unresolved);
     assert_eq!(forward.problems.len(), 3, "{:?}", forward.problems);
@@ -512,9 +512,9 @@ fn live_at(
     config.typecheck(true);
     let unit = config.unit(Path::new("test.dol"), source);
     assert!(!unit.failed, "the fixture doesn't compile");
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.unit(&unit).unwrap();
-    let check = Checked::new(builder);
+    let check = Elaborated::new(builder);
     let ir = check.cfgs[0]
         .as_ref()
         .expect("a unit with source is lowered");

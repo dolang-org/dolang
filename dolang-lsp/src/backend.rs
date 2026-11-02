@@ -32,7 +32,7 @@ use crate::{
     lookup::{self, Modules, Target},
     settings::{CONFIG_FILE_NAME, Import},
     signature,
-    workspace::{Check, Member, Round, Workspace, Workspaces},
+    workspace::{Check, Member, PIPES, Round, Workspace, Workspaces},
 };
 
 const TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
@@ -1390,10 +1390,9 @@ fn check_units(
         .iter()
         .map(|member| workspace.unit(member))
         .collect();
-    let mut builder = typeck::Builder::new();
+    let mut builder = typeck::Check::new();
     builder.analysis(true);
-    // The shell's pipelines connect stages with `proc`'s pipes
-    builder.pipes(("proc", "PipeSender"), ("proc", "PipeReceiver"));
+    builder.pipes(PIPES[0], PIPES[1]);
     let ids: Vec<_> = check
         .members()
         .iter()
@@ -1414,7 +1413,7 @@ fn check_units(
             log::error!("cannot check against {}: {err}", typelib.module());
         }
     }
-    let checked = builder.check();
+    let checked = builder.run();
     let at: HashMap<UnitId, usize> = ids
         .iter()
         .enumerate()
@@ -1501,7 +1500,7 @@ fn check_units(
 fn relate_checked(
     uri: &Uri,
     index: &DocumentIndex<'_>,
-    check: &typeck::Check,
+    check: &typeck::Checked,
     id: UnitId,
     range: Range,
     span: &diag::SourceSpan,

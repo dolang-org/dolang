@@ -487,11 +487,11 @@ check (time.Date.from_ymd(2024, 2, 29).rfc() == "2024-02-29") "Date.from_ymd"
                 typelib
             })
             .collect();
-        let mut builder = typeck::Builder::new();
+        let mut builder = typeck::Check::new();
         for typelib in &typelibs {
             builder.typelib(typelib).unwrap();
         }
-        let check = builder.check();
+        let check = builder.run();
         let errors: Vec<_> = check
             .diagnostics()
             .filter(|diag| diag.severity() == Severity::Error)

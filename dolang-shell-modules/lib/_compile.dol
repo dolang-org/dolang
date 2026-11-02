@@ -50,71 +50,65 @@ pub def roots entries dirs :script = false
     roots.push [file, module]
   roots
 
-# What to check `roots` with: their units and typelibs, and those of the modules
-# they import, found under `dirs` or bundled. A root's unit comes before any
-# found.
+# A check of `roots`, and of the modules they need, found under `dirs` or
+# bundled, with the units and typelibs it was given. A root's unit comes before
+# any found.
 pub def gather
   roots
   dirs
   :no_bundled = false
   :script = false
   :prelude = {}
+  :typelibs = false
 do
+  let check = compile.Check :typelibs
   let units = []
-  let typelibs = []
+  let found = []
   let bundled = []
-  let seen = Set []
-  let pending = []
-
-  def add_typelib typelib to
-    to.push $typelib
-    queue $typelib.imports()
-
-  def queue imports
-    for name = imports
-      if !seen.contains(name)
-        seen.add $name
-        pending.push $name
 
   def add file module
     if (!script && is_typelib(file))
-      add_typelib $compile.Typelib(file.read()) $typelibs
+      let typelib = compile.Typelib $file.read()
+      found.push $typelib
+      check.add $typelib
     else
       let imports = (module == nil && prelude || {})
-      let unit = compile.compile "$file" $file.read_str() module: $module prelude: $imports typecheck: true document: true
+      let unit = compile.compile "$file" $file.read_str() module: $module prelude: $imports typecheck: true
       units.push $unit
-      if (module != nil)
-        seen.add $module
-      queue $unit.imports()
+      check.add $unit
 
-  # Every root's module is known before any is compiled, so an import of one
-  # is met by the root rather than found again
-  for root = roots
-    if (root[1] != nil)
-      seen.add $root[1]
+  # Every root is added before the check is asked what it is missing, so an
+  # import of one is met by the root rather than found again
   for root = roots
     add $root[0] $root[1]
-  # `std` holds the types the checker designates, such as those of literals
-  queue ["std"]
-  while (pending.len > 0)
-    let name = pending.pop()
-    let relative = name.replace(".", "/")
-    let candidates = $
-      for dir = dirs
-        - (dir / "$relative.dol")
-        - (dir / "$relative/mod.dol")
-        if !script
-          - (dir / "$relative.dolt")
-    let found = candidates.find (do |file| file.exists()) default: nil
-    if (found != nil)
-      add $found $name
-      continue
-    if no_bundled
-      continue
-    let typelib = _shell.resource "dolang.typelib" $name
-    if (typelib != nil)
-      add_typelib $compile.Typelib(Bin(typelib)) $bundled
-  record :units :typelibs :bundled
+  let tried = Set []
+  let more = true
+  while more
+    more = false
+    for name = check.missing()
+      if tried.contains(name)
+        continue
+      tried.add $name
+      more = true
+      let relative = name.replace(".", "/")
+      let candidates = $
+        for dir = dirs
+          - (dir / "$relative.dol")
+          - (dir / "$relative/mod.dol")
+          if !script
+            - (dir / "$relative.dolt")
+      let file = candidates.find (do |file| file.exists()) default: nil
+      if (file != nil)
+        add $file $name
+        continue
+      if no_bundled
+        continue
+      let bytes = _shell.resource "dolang.typelib" $name
+      if (bytes != nil)
+        let typelib = compile.Typelib $Bin(bytes)
+        bundled.push $typelib
+        check.add $typelib
+  record :check :units typelibs: $found :bundled
 
 pub def check
   entries
@@ -127,7 +121,7 @@ pub def check
 do
   let dirs = [...paths.map do |dir| (Path dir)]
   let found = roots $entries $dirs :script
-  let :units :typelibs :bundled = gather $found $dirs :no_bundled :script :prelude
+  let :check :units :typelibs :bundled = gather $found $dirs :no_bundled :script :prelude
 
   let counts = {diagnostics: 0, errors: 0, warnings: 0}
   let failed = false
@@ -150,7 +144,7 @@ do
   for unit = units
     for diag = unit.diagnostics()
       report $diag
-  let result = compile.check [...units, ...typelibs, ...bundled]
+  let result = check.run()
   for diag = result.diagnostics
     report $diag
   if script
@@ -163,13 +157,10 @@ do
     let listing = result.undecided()
     if (listing != "")
       echo "undecided checks:\n$(listing.trim_end())"
-  let verdict = if (result.validated && !failed)
-    "validated"
-  else
-    "partial"
+  let verdict = (failed && "failed" || "passed")
   let summary = "$verdict: $(units.len + typelibs.len) units, $(counts[:diagnostics:]) diagnostics"
   echo "$summary ($(bundled.len) bundled typelibs)"
-  if (verdict != "validated")
+  if failed
     shell.exit 1
 
 pub def check_script path :paths = [] :prelude = {} :strict = false

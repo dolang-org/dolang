@@ -53,7 +53,7 @@ pub struct Typelibs<'a> {
     /// The output
     pub name: &'a str,
     /// The pipe types the check nominates, sender then receiver, each by module
-    /// and item (see `typeck::Builder::pipes`). The checks that read the typelibs
+    /// and item (see `typeck::Check::pipes`). The checks that read the typelibs
     /// must nominate the same.
     pub pipes: [(&'a str, &'a str); 2],
 }
@@ -211,13 +211,13 @@ pub fn bundle(spec: &Bundle<'_>) {
     // The modules are checked together, and each one's typelib written from the
     // check
     if let Some((out, [sender, receiver])) = &typelib_out {
-        let mut builder = typeck::Builder::new();
+        let mut builder = typeck::Check::new();
         builder.typelibs(true).pipes(*sender, *receiver);
         let ids: Vec<_> = units
             .iter()
             .map(|unit| builder.unit(unit).unwrap())
             .collect();
-        let check = builder.check();
+        let check = builder.run();
         let mut failed = false;
         for diag in check.diagnostics() {
             let unit = diag

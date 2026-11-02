@@ -1368,7 +1368,7 @@ impl<'a> Config<'a> {
     }
 
     /// Resolve type annotations so the unit can be passed to
-    /// [`typeck::Builder::unit`].
+    /// [`typeck::Check::unit`].
     ///
     /// Default: false. [`Config::document`] also resolves them.
     pub fn typecheck(&mut self, typecheck: bool) -> &mut Self {
@@ -1600,29 +1600,6 @@ impl Unit<'_> {
         let table = self.document.as_ref()?;
         let next = id.map_or(0, |id| internal_node_id(id).index() + 1);
         (next < table.len()).then(|| public_node_id(doc::Id::from_index(next)))
-    }
-
-    /// The modules the unit imports, by statement or through the prelude
-    /// bindings it uses, sorted and listed once each.
-    ///
-    /// Requires [`Config::document`]; without it, the list is empty.
-    pub fn imports(&self) -> Vec<&str> {
-        let Some(table) = &self.document else {
-            return Vec::new();
-        };
-        let mut modules: Vec<&str> = (0..table.len())
-            .filter_map(|index| match &table[doc::Id::from_index(index)].kind {
-                doc::Kind::ImportModule { module, .. } | doc::Kind::ImportItem { module, .. } => {
-                    Some(self.file.str(*module))
-                }
-                doc::Kind::PreludeModule(prelude) => Some(&*prelude.module),
-                doc::Kind::PreludeItem(prelude) => Some(&*prelude.module),
-                _ => None,
-            })
-            .collect();
-        modules.sort_unstable();
-        modules.dedup();
-        modules
     }
 
     /// Look up a single document node, as named by a token or by another node.

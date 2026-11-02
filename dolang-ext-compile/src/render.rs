@@ -214,7 +214,7 @@ pub(crate) fn render_diag(
     Ok(renderer(color).render(&render_report(sources, diag)?))
 }
 
-/// Render a diagnostic from [`Check::diagnostics`](dolang::compile::typeck::Check::diagnostics).
+/// Render a diagnostic from [`Checked::diagnostics`](dolang::compile::typeck::Checked::diagnostics).
 ///
 /// `paths` and `units` are indexed by the checked units' [`UnitId`]s; a unit
 /// checked from its typelib has no [`Unit`], and is located by line and column.

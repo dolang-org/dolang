@@ -21,7 +21,7 @@ fn builder_assigns_ids_in_order_and_rejects_duplicate_modules() {
     let script = config(Mode::Script).unit(path, "");
     // Checking needs resolved types, not the document index
     assert!(script.nodes().next().is_none());
-    let mut checker = typeck::Builder::new();
+    let mut checker = typeck::Check::new();
     let ids = [&first, &second, &script].map(|unit| checker.unit(unit).unwrap());
     assert_eq!(ids.map(|id| id.index()), [0, 1, 2]);
     assert!(matches!(
@@ -37,7 +37,7 @@ fn builder_rejects_units_without_resolved_types() {
     let path = Path::new("unit.dol");
     let failed = config(Mode::Script).unit(path, "let =\n");
     let unchecked = Config::new().unit(path, "");
-    let mut checker = typeck::Builder::new();
+    let mut checker = typeck::Check::new();
     assert!(matches!(
         checker.unit(&failed).map_err(|error| error.kind()),
         Err(ErrorKind::Fail)
@@ -52,9 +52,9 @@ fn builder_rejects_units_without_resolved_types() {
 fn check_excludes_unit_diagnostics() {
     let unit = config(Mode::Script).unit(Path::new("unit.dol"), "let x @ Missing = 1\n");
     assert!(unit.diagnostics().next().is_some());
-    let mut checker = typeck::Builder::new();
+    let mut checker = typeck::Check::new();
     checker.unit(&unit).unwrap();
-    assert!(checker.check().diagnostics().next().is_none());
+    assert!(checker.run().diagnostics().next().is_none());
 }
 
 #[test]
@@ -71,10 +71,10 @@ fn judgments_do_not_depend_on_the_order_units_are_added() {
         "import geo:\n  - Box\npub class Crate[T]: Box[T]\n  pub field extra @ Box[T] = nil\n",
     );
     let judge = |units: [(&'static str, &crate::Unit<'_>); 2]| {
-        let mut checker = typeck::Builder::new();
+        let mut checker = typeck::Check::new();
         checker.analysis(true);
         let ids = units.map(|(_, unit)| checker.unit(unit).unwrap());
-        let check = checker.check();
+        let check = checker.run();
         check.smoke();
         // Keyed by the unit, whatever ID it was given
         let mut judgments: Vec<_> = units
@@ -147,13 +147,13 @@ fn results_do_not_depend_on_threads() {
     ];
     // A pool of `threads` threads, else the global pool
     let check = |threads: Option<usize>| {
-        let mut checker = typeck::Builder::new();
+        let mut checker = typeck::Check::new();
         checker.analysis(true);
         if let Some(threads) = threads {
             checker.threads(threads.try_into().unwrap());
         }
         let ids = units.each_ref().map(|unit| checker.unit(unit).unwrap());
-        let check = checker.check();
+        let check = checker.run();
         check.smoke();
         let diagnostics: Vec<String> = check
             .diagnostics()
@@ -194,32 +194,36 @@ fn results_do_not_depend_on_threads() {
                     .collect()
             })
             .collect();
-        (
-            diagnostics,
-            check.validated(),
-            format!("{:?}", check.undecided()),
-            judgments,
-        )
+        (diagnostics, format!("{:?}", check.undecided()), judgments)
     };
     let sequential = check(Some(1));
     // The fixture exercises errors, undecided checks and judgments in every unit
     assert!(!sequential.0.is_empty());
-    assert!(!sequential.1);
-    assert!(sequential.3.iter().all(|judgments| !judgments.is_empty()));
+    assert!(sequential.2.iter().all(|judgments| !judgments.is_empty()));
     assert_eq!(sequential, check(Some(4)));
     assert_eq!(sequential, check(None));
 }
 
 #[test]
-fn imports_lists_statement_and_prelude_modules() {
+fn depends_lists_imports_prelude_modules_and_std() {
     let source = "import zeta\nimport alpha.beta:\n  - Item\ndef f()\n  import zeta: z\n  import @gamma\n  spawn f\n";
-    let mut config = config(Mode::Script);
-    config.document(true);
-    let unit = config.unit(Path::new("unit.dol"), source);
-    assert_eq!(unit.imports(), ["alpha.beta", "gamma", "strand", "zeta"]);
-    // The list comes from the document index
-    let unit = Config::new().unit(Path::new("unit.dol"), source);
-    assert!(unit.imports().is_empty());
+    let script = config(Mode::Script).unit(Path::new("unit.dol"), source);
+    let mut checker = typeck::Check::new();
+    let id = checker.unit(&script).unwrap();
+    let expected = ["alpha.beta", "gamma", "std", "strand", "zeta"];
+    assert_eq!(checker.depends(id), expected);
+    assert_eq!(checker.missing(), expected);
+    // `std` doesn't need itself, and a module checked with the unit isn't missing
+    let std = config(Mode::Module { name: "std".into() }).unit(Path::new("std.dol"), "");
+    let zeta = config(Mode::Module {
+        name: "zeta".into(),
+    })
+    .unit(Path::new("zeta.dol"), "import gamma\n");
+    let std = checker.unit(&std).unwrap();
+    let zeta = checker.unit(&zeta).unwrap();
+    assert!(checker.depends(std).is_empty());
+    assert_eq!(checker.depends(zeta), ["gamma", "std"]);
+    assert_eq!(checker.missing(), ["alpha.beta", "gamma", "strand"]);
 }
 
 #[test]

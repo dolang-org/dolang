@@ -25,7 +25,7 @@ def imports_are_found_on_the_search_path()
   let out = BinBuf()
   check main.dol $out
   let text = printed $out
-  assert (text.contains "validated: 2 units, 0 diagnostics")
+  assert (text.contains "passed: 2 units, 0 diagnostics")
   assert $!text.contains("not found")
 
 #[test]
@@ -35,20 +35,20 @@ def errors_fail_the_check()
   assert_eq $err.rc 1
   let text = printed $out
   assert (text.contains "module `m` has no export `Absent`")
-  assert (text.contains "partial: 2 units, 1 diagnostics")
+  assert (text.contains "failed: 2 units, 1 diagnostics")
 
 #[test]
 def a_source_under_the_search_path_is_its_module()
   let out = BinBuf()
   check lib/m.dol $out
-  assert ((printed out).contains "validated: 1 units, 0 diagnostics")
+  assert ((printed out).contains "passed: 1 units, 0 diagnostics")
 
 #[test]
 def an_imported_entry_is_checked_once()
   let out = BinBuf()
   cd $FIXTURE do
     run $shell.exe -m compile check main.dol lib/m.dol lib/m.dol --path lib stdout: $out stderr: :STDOUT: mode: :CHUNK:
-  assert ((printed out).contains "validated: 2 units, 0 diagnostics")
+  assert ((printed out).contains "passed: 2 units, 0 diagnostics")
 
 # Write the typelib of a fixture module under `lib_dir` into `dir`, as the search
 # path finds it.
@@ -63,7 +63,7 @@ def imports_are_met_by_typelibs()
     let out = BinBuf()
     cd $FIXTURE do
       run $shell.exe -m compile check main.dol --path $dir stdout: $out stderr: :STDOUT: mode: :CHUNK:
-    assert ((printed out).contains "validated: 2 units, 0 diagnostics")
+    assert ((printed out).contains "passed: 2 units, 0 diagnostics")
 
 #[test]
 def a_typelibs_imports_are_found()
@@ -73,7 +73,7 @@ def a_typelibs_imports_are_found()
     cd $FIXTURE do
       run $shell.exe -m compile check wraps.dol --path $dir --path lib stdout: $out stderr: :STDOUT: mode: :CHUNK:
     let text = printed $out
-    assert (text.contains "validated: 3 units, 1 diagnostics")
+    assert (text.contains "passed: 3 units, 1 diagnostics")
     assert $!text.contains("module `m` not found")
 
 #[test]
@@ -83,7 +83,7 @@ def a_typelib_entry_is_its_module()
     let out = BinBuf()
     cd $FIXTURE do
       run $shell.exe -m compile check main.dol "$dir/m.dolt" --path lib stdout: $out stderr: :STDOUT: mode: :CHUNK:
-    assert ((printed out).contains "validated: 2 units, 0 diagnostics")
+    assert ((printed out).contains "passed: 2 units, 0 diagnostics")
 
 #[test]
 def typelib_exports_are_checked()
@@ -106,7 +106,7 @@ def typelibs_are_written_together()
     cd $FIXTURE do
       run $shell.exe -m compile check wraps.dol --path $dir stdout: $out stderr: :STDOUT: mode: :CHUNK:
     let text = printed $out
-    assert (text.contains "validated: 3 units, 1 diagnostics")
+    assert (text.contains "passed: 3 units, 1 diagnostics")
     assert $!text.contains("not found")
 
 #[test]
@@ -142,7 +142,7 @@ def bundled_modules_are_found_without_a_path()
     let text = printed $out
     assert (text.contains "main.dol:2:19")
     assert $!text.contains("not found")
-    assert (text.contains "partial: 1 units, 1 diagnostics")
+    assert (text.contains "failed: 1 units, 1 diagnostics")
 
 #[test]
 def a_module_on_the_path_overrides_its_typelib()
@@ -158,7 +158,7 @@ def a_module_on_the_path_overrides_its_typelib()
     let out = BinBuf()
     cd $dir do
       run $shell.exe -m compile check main.dol --path lib stdout: $out stderr: :STDOUT: mode: :CHUNK:
-    assert ((printed out).contains "validated: 2 units, 0 diagnostics")
+    assert ((printed out).contains "passed: 2 units, 0 diagnostics")
 
 #[test]
 def strict_check_rejects_compiler_warnings()
@@ -172,7 +172,7 @@ def strict_check_rejects_compiler_warnings()
     let err = assert_throws $proc.Error do
       run $shell.exe -m compile check --strict $source stdout: $out stderr: :STDOUT: mode: :CHUNK:
     assert_eq $err.rc 1
-    assert ((printed out).contains "partial:")
+    assert ((printed out).contains "failed:")
 
 #[test]
 def strict_check_rejects_unverified_code()
@@ -191,7 +191,7 @@ def strict_check_rejects_unverified_code()
     run $shell.exe -m compile check $source stdout: $out stderr: :STDOUT: mode: :CHUNK:
     let text = printed $out
     assert (text.contains "the checker can't verify this")
-    assert (text.contains "validated: 1 units, 1 diagnostics")
+    assert (text.contains "passed: 1 units, 1 diagnostics")
     assert $!text.contains("undecided checks:")
     out = BinBuf()
     run $shell.exe -m compile check --undecided $source stdout: $out stderr: :STDOUT: mode: :CHUNK:
@@ -227,7 +227,7 @@ def directory_modules_are_resolved_as_roots_and_imports()
       let out = BinBuf()
       cd $dir do
         run $shell.exe -m compile check ...roots --path . stdout: $out stderr: :STDOUT: mode: :CHUNK:
-      assert ((printed out).contains "validated: 2 units, 0 diagnostics")
+      assert ((printed out).contains "passed: 2 units, 0 diagnostics")
 
 #[test]
 def vfs_scopes_preserve_unconstrained_input()
