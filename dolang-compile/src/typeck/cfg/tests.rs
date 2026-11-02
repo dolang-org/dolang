@@ -1,15 +1,16 @@
 use super::{validate::Invalid, *};
+use crate::diag::INVALID_SPAN;
 use crate::typeck::r#type::{Database, Literal};
 
 /// The origin of a variable written in source
 fn source() -> Origin {
-    Origin::Source(Span::INVALID, Database::new().intern_symbol("x"))
+    Origin::Source(INVALID_SPAN, Database::new().intern_symbol("x"))
 }
 
 fn expr(kind: ExprKind) -> Expr {
     Expr {
         kind,
-        span: Span::INVALID,
+        span: INVALID_SPAN,
         synthetic: false,
     }
 }
@@ -69,7 +70,7 @@ fn returning(graph: &Graph) -> FuncId {
         entry,
         Terminal::Branch {
             target: exit,
-            span: Span::INVALID,
+            span: INVALID_SPAN,
         },
     );
     func
@@ -105,7 +106,7 @@ fn well_formed() {
         lambda_entry,
         Terminal::Branch {
             target: lambda_exit,
-            span: Span::INVALID,
+            span: INVALID_SPAN,
         },
     );
 
@@ -131,7 +132,7 @@ fn well_formed() {
         rhs,
         Terminal::Branch {
             target: join,
-            span: Span::INVALID,
+            span: INVALID_SPAN,
         },
     );
 
@@ -161,7 +162,7 @@ fn well_formed() {
         after,
         Terminal::Branch {
             target: exit,
-            span: Span::INVALID,
+            span: INVALID_SPAN,
         },
     );
 
@@ -252,7 +253,7 @@ fn non_local() {
         func_entry,
         Terminal::Branch {
             target: header,
-            span: Span::INVALID,
+            span: INVALID_SPAN,
         },
     );
     terminate(
@@ -266,7 +267,7 @@ fn non_local() {
             },
             body,
             exit: loop_exit,
-            span: Span::INVALID,
+            span: INVALID_SPAN,
         },
     );
     terminate(
@@ -281,7 +282,7 @@ fn non_local() {
     terminate(
         &graph,
         graph.func(breaking).entry,
-        Terminal::Escape(Span::INVALID),
+        Terminal::Escape(INVALID_SPAN),
     );
     let each = call(expr(ExprKind::Lambda(breaking)), Vec::new());
     push(&graph, call_block, Step::Eval(each));
@@ -290,7 +291,7 @@ fn non_local() {
         call_block,
         Terminal::Branch {
             target: header,
-            span: Span::INVALID,
+            span: INVALID_SPAN,
         },
     );
     push(
@@ -303,7 +304,7 @@ fn non_local() {
         loop_exit,
         Terminal::Branch {
             target: func_exit,
-            span: Span::INVALID,
+            span: INVALID_SPAN,
         },
     );
     assert_eq!(graph.freeze().validate(), Ok(()));
@@ -315,7 +316,7 @@ fn non_local_outside_closure() {
     let graph = Graph::new();
     let top = returning(&graph);
     let block = graph.alloc_block(top, None, 0);
-    terminate(&graph, block, Terminal::Escape(Span::INVALID));
+    terminate(&graph, block, Terminal::Escape(INVALID_SPAN));
     assert_eq!(graph.freeze().validate(), Err(Invalid::NonLocal(block)));
 
     // Returning from a function that doesn't enclose the closure
@@ -348,7 +349,7 @@ fn foreign_edge() {
         entry,
         Terminal::Branch {
             target: lambda_entry,
-            span: Span::INVALID,
+            span: INVALID_SPAN,
         },
     );
     assert_eq!(
@@ -370,7 +371,7 @@ fn foreign_edge() {
         lambda_entry,
         Terminal::Branch {
             target: exit,
-            span: Span::INVALID,
+            span: INVALID_SPAN,
         },
     );
     assert_eq!(
@@ -395,7 +396,7 @@ fn finally_depths() {
         entry,
         Terminal::Branch {
             target: finally,
-            span: Span::INVALID,
+            span: INVALID_SPAN,
         },
     );
     assert_eq!(
@@ -509,7 +510,7 @@ fn variables() {
         lambda_entry,
         Terminal::Branch {
             target: lambda_exit,
-            span: Span::INVALID,
+            span: INVALID_SPAN,
         },
     );
     assert_eq!(
@@ -551,7 +552,7 @@ fn variables() {
         lambda_entry,
         Terminal::Branch {
             target: lambda_exit,
-            span: Span::INVALID,
+            span: INVALID_SPAN,
         },
     );
     assert_eq!(
@@ -580,7 +581,7 @@ fn lambdas() {
             entry,
             Terminal::Branch {
                 target: exit,
-                span: Span::INVALID,
+                span: INVALID_SPAN,
             },
         );
     }
@@ -615,7 +616,7 @@ fn captures() {
             entry,
             Terminal::Branch {
                 target: exit,
-                span: Span::INVALID,
+                span: INVALID_SPAN,
             },
         );
         let block = if in_parent {
@@ -653,7 +654,7 @@ fn captures() {
             entry,
             Terminal::Branch {
                 target: exit,
-                span: Span::INVALID,
+                span: INVALID_SPAN,
             },
         );
         graph.freeze().validate()
@@ -703,7 +704,7 @@ fn caches() {
             entry,
             Terminal::Branch {
                 target: exit,
-                span: Span::INVALID,
+                span: INVALID_SPAN,
             },
         );
         graph.freeze().validate()
@@ -763,7 +764,7 @@ fn signatures() {
             entry,
             Terminal::Branch {
                 target: exit,
-                span: Span::INVALID,
+                span: INVALID_SPAN,
             },
         );
         graph.freeze().validate()

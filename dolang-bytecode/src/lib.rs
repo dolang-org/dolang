@@ -1,6 +1,7 @@
 #![deny(warnings)]
 
 pub mod file;
+pub mod span;
 pub mod varint;
 pub mod verify;
 
@@ -58,7 +59,10 @@ pub enum Error {
     SourceMapLimit(usize),
     SourceMapOffsetBounds(usize, usize),
     SourceMapLineBounds(usize, usize),
-    SourceMapLineDeltaZero(usize, usize),
+    SourceMapColumnBounds(usize, usize),
+    SourceMapLenBounds(usize, usize),
+    SourceMapUnchanged(usize, usize),
+    DefinitionBounds(usize),
     InvalidStrInSymTab(usize),
     InvalidStrInConstTab(usize),
     InvalidBinInConstTab(usize),
@@ -185,11 +189,26 @@ impl Display for Error {
                     "source map line out of bounds for function #{func} at index {index}"
                 )
             }
-            SourceMapLineDeltaZero(func, index) => {
+            SourceMapColumnBounds(func, index) => {
                 write!(
                     f,
-                    "redundant source map line for function #{func} at index {index}"
+                    "source map column out of bounds for function #{func} at index {index}"
                 )
+            }
+            SourceMapLenBounds(func, index) => {
+                write!(
+                    f,
+                    "source map length out of bounds for function #{func} at index {index}"
+                )
+            }
+            SourceMapUnchanged(func, index) => {
+                write!(
+                    f,
+                    "redundant source map entry for function #{func} at index {index}"
+                )
+            }
+            DefinitionBounds(index) => {
+                write!(f, "definition span out of bounds for function #{index}")
             }
             InvalidModuleName => write!(f, "invalid module name in bytecode"),
             Verify(err) => write!(f, "verification failed: {err}"),
@@ -250,7 +269,8 @@ pub(crate) mod limit {
     pub(crate) const FUNC_TAB_ENTRIES: usize = PLENTY;
     // Total frame slots (locals and operands) for a function
     pub(crate) const FUNC_FRAME_SLOTS: usize = SOME;
-    pub(crate) const SOURCE_MAP_ENTRIES: usize = SOME;
+    // An entry per instruction at most, so no more than a function's bytes
+    pub(crate) const SOURCE_MAP_ENTRIES: usize = FUNC_SIZE;
     // Maximum total upvars, summing over nested records
     pub(crate) const UPVAR_TOTAL: usize = FEW;
     pub(crate) const SYMBOL_TAB_ENTRIES: usize = PLENTY;
@@ -460,6 +480,34 @@ pub enum Inst {
     Shr,
     UnpackBranch(usize, isize),
     ElseFallthrough(usize),
+}
+
+impl Inst {
+    /// Whether the instruction can raise an error or dispatch to code that can,
+    /// so a backtrace can stop at it
+    ///
+    /// The others are bookkeeping, and need no source location.
+    pub fn raises(&self) -> bool {
+        use Inst::*;
+
+        match self {
+            Add | Sub | Mul | Div | Ediv | Mod | Neg | Not | BitNot | BitAnd | BitOr | BitXor
+            | Shl | Shr | Eq | Ne | Gt | Lt | Gte | Lte => true,
+            Call(_) | MethodCall(_, _) | Builtin(_, _) => true,
+            Get(_) | Set(_) | Index | Assign => true,
+            Next | Unpack(_) | UnpackBranch(_, _) => true,
+            // Truthiness dispatches
+            BranchTrue(_) | BranchFalse(_) => true,
+            // A backward branch checks for interrupts
+            Branch(offset) => *offset < 0,
+            NlGuard(_) | NlBranch(_, _) | ElseFallthrough(_) => true,
+            Dup | Pick(_) | Swap(_, _) | Pop => false,
+            LoadConst(_) | LoadLocal(_) | LoadUpvar(_, _) | StoreLocal(_) | StoreUpvar(_, _) => {
+                false
+            }
+            PushUpvars(_) | PopUpvars | Close(_) | Reify(_) | Ret => false,
+        }
+    }
 }
 
 #[cfg(feature = "debug")]

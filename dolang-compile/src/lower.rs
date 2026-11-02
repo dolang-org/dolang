@@ -1895,7 +1895,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         let sig = self.unpacktab.id(&unpack);
         let fid = self
             .graph
-            .alloc_func(sig, None, &func.body.vars, Some(self.block.scope));
+            .alloc_func(sig, None, span, &func.body.vars, Some(self.block.scope));
         let (enter, exit) = {
             let f = self.graph.func(fid);
             (f.enter, f.exit)
@@ -2251,6 +2251,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         let fid = self.graph.alloc_func(
             sig,
             Some(name),
+            node.def_span | name,
             &node.func.body.vars,
             Some(self.block.scope),
         );
@@ -2327,6 +2328,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         let fid = self.graph.alloc_func(
             sig,
             Some(name),
+            node.def_span | name,
             &node.func.body.vars,
             Some(self.block.scope),
         );
@@ -2909,7 +2911,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         // Create a zero-arg synthetic closure for the guard body
         let empty = sig::Unpack::new(0, [], [], dolang_bytecode::Variadic::NONE);
         let sig = self.unpacktab.id(&empty);
-        let fid = self.graph.alloc_nl_guard(sig, Some(self.block.scope));
+        let fid = self.graph.alloc_nl_guard(sig, span, Some(self.block.scope));
         let (enter, exit) = {
             let func = self.graph.func(fid);
             (func.enter, func.exit)
@@ -4078,7 +4080,7 @@ impl<'c> Lowerer<'c> {
         let mut graph = cfg::Graph::new();
         let empty = sig::Unpack::new(0, [], [], dolang_bytecode::Variadic::NONE);
         let sig = self.unpacktab.id(&empty);
-        let fid = graph.alloc_func(sig, None, &root.0.body.vars, None);
+        let fid = graph.alloc_func(sig, None, Span::default(), &root.0.body.vars, None);
         let (enter, exit) = {
             let func = graph.func(fid);
             (func.enter, func.exit)

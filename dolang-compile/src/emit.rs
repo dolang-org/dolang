@@ -19,6 +19,7 @@ use super::{
     Mode,
     cfg::{self, BlockId, BlockRef, Func, Graph, InstInfo, TermInfo},
     constant::{self, Const},
+    diag,
     sig::{self, Arg},
     source::{File, Span},
     sym,
@@ -195,6 +196,9 @@ impl<'a, 'b> FuncEmitter<'a, 'b> {
                 Unpack(id) => BcInst::Unpack(id.index()),
                 NlGuard(id) => BcInst::NlGuard(id.index()),
             };
+            if !inst.raises() {
+                spans.last_mut().unwrap().span = Span::INVALID;
+            }
             inst.write(&mut write).unwrap();
         }
         output.term_offset.set(borrow.len());
@@ -222,7 +226,7 @@ impl<'a, 'b> FuncEmitter<'a, 'b> {
         }
 
         let inst = match &input.term.0 {
-            Ret => return BcInst::Ret.write(&mut write).unwrap(),
+            Ret => BcInst::Ret,
             ElseFallthrough(kind) => BcInst::ElseFallthrough(*kind),
             Branch(id) if Some(*id) != next => {
                 let i = self.map[id];
@@ -275,6 +279,9 @@ impl<'a, 'b> FuncEmitter<'a, 'b> {
             }
             NlBranch(depth, indicator) => BcInst::NlBranch(*depth, *indicator as usize),
         };
+        if initial && !inst.raises() {
+            spans.last_mut().unwrap().span = Span::INVALID;
+        }
         inst.write(&mut write).unwrap()
     }
 
@@ -285,45 +292,32 @@ impl<'a, 'b> FuncEmitter<'a, 'b> {
         let name_str: Cow<'_, str> = self.emitter.qualified_name(self.func).into();
         let name = debugbintab.range(debugbintab.id_str(&name_str).as_bin_id());
 
-        let mut sourcemap = Vec::new();
-
-        let mut spans = self.blocks.iter().flat_map(|block| {
-            let spans = block.spans.borrow();
+        let source = &self.emitter.file;
+        let definition = match self.func.span {
+            Span::INVALID => diag::Span::new(0, 0, 0),
+            span => source.locate(span),
+        };
+        // An instruction that cannot raise, or that was lowered from an empty
+        // node, has no span, so the span before it carries over
+        let spans = self.blocks.iter().flat_map(|block| {
             let offset = block.offset.get();
-            spans
+            block
+                .spans
+                .borrow()
                 .iter()
-                .map(|s| {
-                    (
-                        s.offset + offset,
-                        self.emitter
-                            .file
-                            .coord_span(s.span)
-                            .start
-                            .line
-                            .try_into()
-                            .unwrap(),
-                    )
-                })
+                .filter(|s| s.span != Span::INVALID)
+                .map(|s| (s.offset + offset, source.locate(s.span)))
                 .collect::<Vec<_>>()
         });
-        let mut last = spans.next().expect("empty block?!");
-        sourcemap.push(file::SourceLine {
-            offset_delta: 0,
-            line_delta: last.1,
-        });
-        for span in spans {
-            if span.1 != last.1 {
-                sourcemap.push(file::SourceLine {
-                    offset_delta: (span.0 - last.0) - 1,
-                    line_delta: span.1 - last.1,
-                });
-                last = span
-            }
+        let mut sourcemap = file::FuncDebug::encode_sourcemap(spans);
+        if sourcemap.is_empty() {
+            sourcemap = file::FuncDebug::encode_sourcemap([(0, definition)]);
         }
 
         file::FuncDebug {
             name,
             file: path,
+            definition: definition.into(),
             sourcemap,
         }
     }
@@ -618,6 +612,90 @@ impl<'a> Emitter<'a> {
         } else {
             parts.reverse();
             parts.join(".")
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use dolang_bytecode::{file, span::Span};
+
+    use crate::{Config, Mode};
+
+    /// Each function's name and debug info, from compiling `source`
+    fn debug_info(source: &str) -> Vec<(String, file::FuncDebug)> {
+        let mut config = Config::new();
+        config.mode(Mode::Script);
+        let unit = config.unit(Path::new("t.dol"), source);
+        let mut bytes = Vec::new();
+        unit.emit(&mut bytes).unwrap();
+        let content = file::deserialize(&bytes).unwrap().into_inner();
+        let debug = content.debug(&bytes).to_vec();
+        content
+            .index
+            .funcdebugtab
+            .content
+            .into_iter()
+            .map(|entry| {
+                let name = String::from_utf8(debug[entry.name.clone()].to_vec()).unwrap();
+                (name, entry)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn functions_record_definition_spans() {
+        let source = "\
+class Box
+  pub field v = 0
+  pub def get self
+    self.v
+def greet name
+  name
+let f = do |x| x
+";
+        let funcs = debug_info(source);
+        let definition = |name: &str| {
+            let (_, debug) = funcs
+                .iter()
+                .find(|(n, _)| n == name || (name == "lambda" && n.parse::<usize>().is_ok()))
+                .unwrap_or_else(|| panic!("no function {name}"));
+            debug.definition.span().unwrap()
+        };
+        assert_eq!(
+            definition("greet"),
+            Span::new(4, 0, "def greet".len() as u32)
+        );
+        assert_eq!(
+            definition("Box.get"),
+            Span::new(2, 6, "def get".len() as u32)
+        );
+        assert_eq!(definition("lambda"), Span::new(6, 8, "do".len() as u32));
+    }
+
+    #[test]
+    fn source_map_records_columns() {
+        let source = "\
+def f x
+  x
+let a = (f(1) + f(2))
+";
+        let funcs = debug_info(source);
+        let (_, main) = funcs.first().unwrap();
+        let columns: Vec<_> = main
+            .spans()
+            .map(|entry| entry.unwrap().1)
+            .filter(|span| span.start().line_offset() == 2)
+            .map(|span| span.start().column_offset())
+            .collect();
+        for call in ["f(1)", "f(2)"] {
+            let column = source.lines().nth(2).unwrap().find(call).unwrap() as u32;
+            assert!(
+                columns.contains(&column),
+                "{call} at {column}, not in {columns:?}"
+            );
         }
     }
 }

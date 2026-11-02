@@ -1,3 +1,4 @@
+use crate::diag::INVALID_SPAN;
 use std::{borrow::Cow, path::Path};
 
 use crate::{
@@ -386,7 +387,7 @@ fn named(ir: &Ir, source: &str, name: &str) -> FuncId {
             };
             value.walk(&mut |expr| {
                 if let ExprKind::Lambda(func) = expr.kind
-                    && expr.span != Span::INVALID
+                    && expr.span != INVALID_SPAN
                     && text(source, expr.span) == name
                 {
                     found = Some(func);

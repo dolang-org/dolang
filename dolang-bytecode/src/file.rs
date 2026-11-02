@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     Arg, Certificate, Error, Result, limit,
+    span::Span,
     verify::{Context, Verifier},
 };
 
@@ -12,7 +13,7 @@ use dolang_util::verified::Verified;
 pub use super::Func;
 
 const MAGIC: [u8; 8] = *b"\xffdobytec";
-const VERSION: [u8; 3] = [0, 0, 8];
+const VERSION: [u8; 3] = [0, 0, 9];
 
 const HEADER: Header = Header {
     magic: MAGIC,
@@ -209,10 +210,51 @@ pub struct FuncTable {
     pub content: Vec<FuncEntry>,
 }
 
+/// Source map entry: where an instruction's code is in the source
+///
+/// Each entry is relative to the one before it, starting from offset 0 at line 0,
+/// column 0. It holds until the next entry's offset.
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
-pub struct SourceLine {
+pub struct SourceSpan {
+    /// Bytecode offset past the entry before's, less one; for the first entry, the
+    /// offset itself, which must be 0
     pub offset_delta: usize,
+    /// Lines past the entry before's line
     pub line_delta: i32,
+    /// Columns past the entry before's column if on the same line, or the column
+    /// itself if not
+    pub column: i32,
+    /// Length, in characters
+    pub len: u32,
+}
+
+/// A span, written out field by field
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub struct SpanFields {
+    pub line: u32,
+    pub column: u32,
+    pub len: u32,
+}
+
+impl SpanFields {
+    /// The span, if every field is in range
+    pub fn span(&self) -> Option<Span> {
+        (self.line <= Span::MAX_LINE
+            && self.column <= Span::MAX_COLUMN
+            && self.len <= Span::MAX_LEN)
+            .then(|| Span::new(self.line, self.column, self.len))
+    }
+}
+
+impl From<Span> for SpanFields {
+    fn from(span: Span) -> Self {
+        let start = span.start();
+        Self {
+            line: start.line_offset(),
+            column: start.column_offset(),
+            len: span.len(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -223,7 +265,111 @@ pub struct FuncDebug {
     /// Source file path, a span in the debug region
     #[serde(with = "span")]
     pub file: StrId,
-    pub sourcemap: Vec<SourceLine>,
+    /// Where the function is defined: the header of a `def`, or what introduces
+    /// any other function
+    pub definition: SpanFields,
+    pub sourcemap: Vec<SourceSpan>,
+}
+
+/// What is wrong with a source map entry
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceMapFault {
+    Offset,
+    Line,
+    Column,
+    Len,
+}
+
+impl FuncDebug {
+    /// Encode a source map from each instruction's offset and span, in order of
+    /// offset. Consecutive instructions with the same span share an entry, and
+    /// the first span covers any bytecode before its instruction.
+    pub fn encode_sourcemap(spans: impl IntoIterator<Item = (usize, Span)>) -> Vec<SourceSpan> {
+        let mut out = Vec::new();
+        let mut last: Option<(usize, Span)> = None;
+        for (offset, span) in spans {
+            let (prior_offset, prior) = match last {
+                Some((_, prior)) if prior == span => continue,
+                Some((offset, prior)) => (Some(offset), prior.start()),
+                None => (None, super::span::Pos::new(0, 0)),
+            };
+            let start = span.start();
+            let (line, column) = (start.line_offset(), start.column_offset());
+            let line_delta = i64::from(line) - i64::from(prior.line_offset());
+            let column = if line_delta == 0 {
+                i64::from(column) - i64::from(prior.column_offset())
+            } else {
+                i64::from(column)
+            };
+            out.push(SourceSpan {
+                offset_delta: match prior_offset {
+                    Some(prior) => offset - prior - 1,
+                    None => 0,
+                },
+                // Lines and columns are narrower than 32 bits, so neither delta
+                // can overflow
+                line_delta: line_delta as i32,
+                column: column as i32,
+                len: span.len(),
+            });
+            last = Some((if prior_offset.is_some() { offset } else { 0 }, span));
+        }
+        out
+    }
+
+    /// Decode the source map: each entry's bytecode offset and span
+    ///
+    /// Decoding stops at the first entry that is out of range, yielding why. A
+    /// verified file has none.
+    pub fn spans(
+        &self,
+    ) -> impl Iterator<Item = std::result::Result<(usize, Span), SourceMapFault>> + '_ {
+        let mut state: Option<(usize, u32, u32)> = None;
+        let mut failed = false;
+        self.sourcemap.iter().map_while(move |entry| {
+            if failed {
+                return None;
+            }
+            let decoded = (|| {
+                let (offset, line, column) = match state {
+                    Some((offset, line, column)) => (
+                        offset
+                            .checked_add(entry.offset_delta)
+                            .and_then(|o| o.checked_add(1))
+                            .ok_or(SourceMapFault::Offset)?,
+                        line,
+                        column,
+                    ),
+                    None => (entry.offset_delta, 0, 0),
+                };
+                let new_line = line
+                    .checked_add_signed(entry.line_delta)
+                    .filter(|&l| l <= Span::MAX_LINE)
+                    .ok_or(SourceMapFault::Line)?;
+                let new_column = if entry.line_delta == 0 {
+                    column.checked_add_signed(entry.column)
+                } else {
+                    u32::try_from(entry.column).ok()
+                }
+                .filter(|&c| c <= Span::MAX_COLUMN)
+                .ok_or(SourceMapFault::Column)?;
+                if entry.len > Span::MAX_LEN {
+                    return Err(SourceMapFault::Len);
+                }
+                Ok((offset, new_line, new_column))
+            })();
+            Some(match decoded {
+                Ok((offset, line, column)) => {
+                    state = Some((offset, line, column));
+                    Ok((offset, Span::new(line, column, entry.len)))
+                }
+                Err(fault) => {
+                    failed = true;
+                    Err(fault)
+                }
+            })
+        })
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -552,26 +698,25 @@ fn verify_funcdebugtab(
         if c.sourcemap.len() > limit::SOURCE_MAP_ENTRIES {
             return Err(Error::SourceMapLimit(i));
         }
+        if c.definition.span().is_none() {
+            return Err(Error::DefinitionBounds(i));
+        }
         let bytecode_len = functab.content[i].func.bytecode.len();
-        let mut offset = 0usize;
-        let mut line = 0u32;
-        for (j, m) in c.sourcemap.iter().enumerate() {
-            if j != 0 {
-                offset = offset
-                    .checked_add(m.offset_delta)
-                    .and_then(|o| o.checked_add(1))
-                    .ok_or_else(|| Error::SourceMapOffsetBounds(i, j))?;
-                if offset >= bytecode_len {
-                    return Err(Error::SourceMapOffsetBounds(i, j));
-                }
-
-                if m.line_delta == 0 {
-                    return Err(Error::SourceMapLineDeltaZero(i, j));
-                }
+        let mut last: Option<Span> = None;
+        for (j, entry) in c.spans().enumerate() {
+            let (offset, span) = entry.map_err(|fault| match fault {
+                SourceMapFault::Offset => Error::SourceMapOffsetBounds(i, j),
+                SourceMapFault::Line => Error::SourceMapLineBounds(i, j),
+                SourceMapFault::Column => Error::SourceMapColumnBounds(i, j),
+                SourceMapFault::Len => Error::SourceMapLenBounds(i, j),
+            })?;
+            if (j == 0 && offset != 0) || offset >= bytecode_len {
+                return Err(Error::SourceMapOffsetBounds(i, j));
             }
-            line = line
-                .checked_add_signed(m.line_delta)
-                .ok_or_else(|| Error::SourceMapLineBounds(i, j))?;
+            if last == Some(span) {
+                return Err(Error::SourceMapUnchanged(i, j));
+            }
+            last = Some(span);
         }
     }
     Ok(())
@@ -737,18 +882,21 @@ mod test {
         f(content)
     }
 
-    fn debug_entry(name: StrId, file: StrId, sourcemap: Vec<SourceLine>) -> FuncDebug {
+    fn debug_entry(name: StrId, file: StrId, sourcemap: Vec<SourceSpan>) -> FuncDebug {
         FuncDebug {
             name,
             file,
+            definition: Span::new(0, 0, 0).into(),
             sourcemap,
         }
     }
 
-    fn line(offset_delta: usize, line_delta: i32) -> SourceLine {
-        SourceLine {
+    fn line(offset_delta: usize, line_delta: i32) -> SourceSpan {
+        SourceSpan {
             offset_delta,
             line_delta,
+            column: 0,
+            len: 0,
         }
     }
 
@@ -986,16 +1134,8 @@ mod test {
     fn verify_rejects_wrong_funcdebugtab_size() {
         with_valid_content(|mut content| {
             content.funcdebugtab.content = vec![
-                FuncDebug {
-                    name: 5..9,
-                    file: 0..4,
-                    sourcemap: vec![line(0, 1)],
-                },
-                FuncDebug {
-                    name: 5..9,
-                    file: 0..4,
-                    sourcemap: vec![line(0, 1)],
-                },
+                debug_entry(5..9, 0..4, vec![line(0, 1)]),
+                debug_entry(5..9, 0..4, vec![line(0, 1)]),
             ];
             expect_error(content.verify(), |err| {
                 matches!(err, Error::FuncDebugTabWrongSize)
@@ -1006,66 +1146,44 @@ mod test {
     #[test]
     fn verify_rejects_funcdebugtab_and_sourcemap_errors() {
         with_valid_content(|mut content| {
-            content.funcdebugtab.content = vec![FuncDebug {
-                name: 30..31,
-                file: 0..4,
-                sourcemap: vec![line(0, 1)],
-            }];
+            content.funcdebugtab.content = vec![debug_entry(30..31, 0..4, vec![line(0, 1)])];
             expect_error(content.verify(), |err| {
                 matches!(err, Error::InvalidStrInFuncDebugTab(0))
             });
         });
 
         with_valid_content(|mut content| {
-            content.funcdebugtab.content = vec![FuncDebug {
-                name: 5..9,
-                file: 0..4,
-                sourcemap: vec![],
-            }];
+            content.funcdebugtab.content = vec![debug_entry(5..9, 0..4, vec![])];
             expect_error(content.verify(), |err| {
                 matches!(err, Error::SourceMapEmpty(0))
             });
         });
 
         with_valid_content(|mut content| {
-            content.funcdebugtab.content = vec![FuncDebug {
-                name: 5..9,
-                file: 0..4,
-                sourcemap: vec![line(0, 1), line(10, 1)],
-            }];
+            content.funcdebugtab.content =
+                vec![debug_entry(5..9, 0..4, vec![line(0, 1), line(10, 1)])];
             expect_error(content.verify(), |err| {
                 matches!(err, Error::SourceMapOffsetBounds(0, 1))
             });
         });
 
         with_valid_content(|mut content| {
-            content.funcdebugtab.content = vec![FuncDebug {
-                name: 5..9,
-                file: 0..4,
-                sourcemap: vec![line(0, 1), line(0, 0)],
-            }];
+            content.funcdebugtab.content =
+                vec![debug_entry(5..9, 0..4, vec![line(0, 1), line(0, 0)])];
             expect_error(content.verify(), |err| {
-                matches!(err, Error::SourceMapLineDeltaZero(0, 1))
+                matches!(err, Error::SourceMapUnchanged(0, 1))
             });
         });
 
         with_valid_content(|mut content| {
-            content.funcdebugtab.content = vec![FuncDebug {
-                name: 5..9,
-                file: 0..4,
-                sourcemap: vec![line(0, -1)],
-            }];
+            content.funcdebugtab.content = vec![debug_entry(5..9, 0..4, vec![line(0, -1)])];
             expect_error(content.verify(), |err| {
                 matches!(err, Error::SourceMapLineBounds(0, 0))
             });
         });
 
         with_valid_content(|mut content| {
-            content.funcdebugtab.content = vec![FuncDebug {
-                name: 5..9,
-                file: 30..31,
-                sourcemap: vec![line(0, 1)],
-            }];
+            content.funcdebugtab.content = vec![debug_entry(5..9, 30..31, vec![line(0, 1)])];
             expect_error(content.verify(), |err| {
                 matches!(err, Error::InvalidFileInFuncDebugTab(0))
             });
@@ -1224,16 +1342,87 @@ mod test {
     #[test]
     fn verify_rejects_source_map_size_limit() {
         with_valid_content(|mut content| {
-            content.funcdebugtab.content = vec![FuncDebug {
-                name: 5..9,
-                file: 0..4,
-                sourcemap: (0..(limit::SOURCE_MAP_ENTRIES + 1))
+            content.funcdebugtab.content = vec![debug_entry(
+                5..9,
+                0..4,
+                (0..(limit::SOURCE_MAP_ENTRIES + 1))
                     .map(|i| line(usize::from(i != 0), 1))
                     .collect(),
-            }];
+            )];
             expect_error(content.verify(), |err| {
                 matches!(err, Error::SourceMapLimit(0))
             });
         });
+    }
+
+    #[test]
+    fn verify_rejects_span_field_errors() {
+        let entry = |line_delta, column, len| SourceSpan {
+            offset_delta: 0,
+            line_delta,
+            column,
+            len,
+        };
+        let cases = [
+            (entry(1, -1, 0), "column"),
+            (entry(0, -1, 0), "column"),
+            (entry(1, 0, Span::MAX_LEN + 1), "len"),
+            (entry(Span::MAX_LINE as i32 + 1, 0, 0), "line"),
+        ];
+        for (entry, field) in cases {
+            with_valid_content(|mut content| {
+                content.funcdebugtab.content = vec![debug_entry(5..9, 0..4, vec![entry])];
+                expect_error(content.verify(), |err| match field {
+                    "column" => matches!(err, Error::SourceMapColumnBounds(0, 0)),
+                    "len" => matches!(err, Error::SourceMapLenBounds(0, 0)),
+                    _ => matches!(err, Error::SourceMapLineBounds(0, 0)),
+                });
+            });
+        }
+
+        with_valid_content(|mut content| {
+            content.funcdebugtab.content = vec![debug_entry(5..9, 0..4, vec![line(1, 1)])];
+            expect_error(content.verify(), |err| {
+                matches!(err, Error::SourceMapOffsetBounds(0, 0))
+            });
+        });
+
+        with_valid_content(|mut content| {
+            let mut debug = debug_entry(5..9, 0..4, vec![line(0, 1)]);
+            debug.definition.column = Span::MAX_COLUMN + 1;
+            content.funcdebugtab.content = vec![debug];
+            expect_error(content.verify(), |err| {
+                matches!(err, Error::DefinitionBounds(0))
+            });
+        });
+    }
+
+    #[test]
+    fn sourcemap_round_trips() {
+        let spans = [
+            (0, Span::new(3, 4, 5)),
+            (2, Span::new(3, 4, 5)),
+            (3, Span::new(3, 9, 2)),
+            (5, Span::new(3, 1, 7)),
+            (6, Span::new(1, 8, 0)),
+            (9, Span::new(7, 0, 3)),
+        ];
+        let debug = debug_entry(5..9, 0..4, FuncDebug::encode_sourcemap(spans));
+        assert_eq!(debug.sourcemap.len(), spans.len() - 1);
+        let decoded: Vec<_> = debug.spans().map(|entry| entry.unwrap()).collect();
+        let expected: Vec<_> = spans
+            .iter()
+            .copied()
+            .filter(|&(offset, _)| offset != 2)
+            .collect();
+        assert_eq!(decoded, expected);
+
+        let late = debug_entry(
+            5..9,
+            0..4,
+            FuncDebug::encode_sourcemap([(3, Span::new(1, 2, 3))]),
+        );
+        let decoded: Vec<_> = late.spans().map(|entry| entry.unwrap()).collect();
+        assert_eq!(decoded, [(0, Span::new(1, 2, 3))]);
     }
 }

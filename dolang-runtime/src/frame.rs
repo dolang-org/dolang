@@ -8,6 +8,7 @@ use std::{
     ptr::NonNull,
 };
 
+pub use dolang_bytecode::span::{Pos, Span};
 use dolang_util::alias;
 
 use crate::{
@@ -23,7 +24,8 @@ use crate::{
 };
 
 pub trait Frame {
-    fn source(&self) -> Option<(Cow<'_, str>, u32)>;
+    /// Source file and the span of the code running in this frame
+    fn source(&self) -> Option<(Cow<'_, str>, Span)>;
     fn receiver(&self) -> Cow<'_, str>;
     fn method(&self) -> Option<Cow<'_, str>>;
     fn module(&self) -> Cow<'_, str>;
@@ -446,28 +448,21 @@ impl<'v> Upvars<'v> {
 pub struct FrameInfo<'v, 'a>(Ptr<'v>, PhantomData<&'a ()>);
 
 impl<'v, 'a> FrameInfo<'v, 'a> {
-    /// Source file and line
+    /// Source file, and the span of the code running in this frame
     ///
     /// This may be unavailable if the frame represents a native or built-in function,
     /// or if debug information is not present.
     ///
     /// Note that the filename may be a lossy approximation of the native path
     /// on the system on which the code was originally compiled to bytecode.
-    pub fn source(&self) -> Option<(&str, u32)> {
+    pub fn source(&self) -> Option<(&str, Span)> {
         match self.0 {
             Ptr::Do(head) => {
                 let head = unsafe { head.as_ref() };
                 let loaded = head.program.annex();
                 if let Some(debug) = loaded.funcdebugs.get(head.func) {
-                    let pc = head.pc - 1;
-                    let sourcemap = &debug.sourcemap;
-                    let index = match sourcemap.binary_search_by_key(&pc, |e| e.0) {
-                        Ok(i) => i,
-                        Err(i) => i - 1,
-                    };
-                    let entry = &sourcemap[index];
                     let file = &loaded.debug_strtab()[debug.file.clone()];
-                    Some((file, entry.1))
+                    Some((file, debug.locate(head.pc - 1)))
                 } else {
                     None
                 }
@@ -539,7 +534,7 @@ impl<'v, 'a> FrameInfo<'v, 'a> {
 }
 
 impl<'v, 'a> Frame for FrameInfo<'v, 'a> {
-    fn source(&self) -> Option<(Cow<'_, str>, u32)> {
+    fn source(&self) -> Option<(Cow<'_, str>, Span)> {
         FrameInfo::source(self).map(|(path, line)| (Cow::Borrowed(path), line))
     }
 

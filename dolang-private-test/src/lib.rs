@@ -635,14 +635,14 @@ pub fn print_backtrace(strand: &Strand) {
         } else {
             format!("{}.{}", module, receiver)
         };
-        if let Some((path, line)) = frame.source() {
+        if let Some((path, span)) = frame.source() {
             let path: &str = path.as_ref();
             eprintln!(
                 "  #{}: {} at {}:{}",
                 i,
                 name,
                 Path::new(path).file_name().unwrap().display(),
-                line + 1
+                span.start().line_number()
             );
         } else {
             eprintln!("  #{}: {}", i, name)
@@ -662,14 +662,14 @@ pub fn print_error_backtrace<'v, 's>(strand: &mut Strand<'v, 's>, error: &Error<
         } else {
             format!("{}.{}", module, receiver)
         };
-        if let Some((path, line)) = entry.source() {
+        if let Some((path, span)) = entry.source() {
             let path: &str = path.as_ref();
             eprintln!(
                 "  #{}: {} at {}:{}",
                 i,
                 name,
                 Path::new(path).file_name().unwrap().display(),
-                line + 1
+                span.start().line_number()
             );
         } else {
             eprintln!("  #{}: {}", i, name)

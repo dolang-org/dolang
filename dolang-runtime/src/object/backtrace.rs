@@ -333,8 +333,8 @@ impl<'v> Protocol<'v> for Frame<'v> {
                 Ok(())
             }
             sym::LINE => {
-                if let Some((_, line)) = this.get().entry.source() {
-                    Output::set(strand, out, line);
+                if let Some((_, span)) = this.get().entry.source() {
+                    Output::set(strand, out, span.start().line_offset());
                 } else {
                     out.store(Value::NIL);
                 }

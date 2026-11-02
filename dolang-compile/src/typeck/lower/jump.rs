@@ -168,11 +168,11 @@ impl Scope<'_, '_, '_> {
             let mut block_mut = graph.block_mut(block);
             block_mut.steps.push(Step::Assign(Target::Var {
                 var: result,
-                value: expr(ExprKind::Never, diag::Span::INVALID),
+                value: expr(ExprKind::Never, diag::INVALID_SPAN),
             }));
             block_mut.terminal = Terminal::Branch {
                 target,
-                span: diag::Span::INVALID,
+                span: diag::INVALID_SPAN,
             };
             block
         };

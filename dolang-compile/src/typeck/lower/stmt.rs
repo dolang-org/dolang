@@ -74,7 +74,7 @@ impl<'u> Scope<'_, '_, 'u> {
             self.assign(result, expr(ExprKind::Never, self.locate(span)));
             self.end(Terminal::Branch {
                 target: exit,
-                span: diag::Span::INVALID,
+                span: diag::INVALID_SPAN,
             });
             return;
         }
@@ -91,7 +91,7 @@ impl<'u> Scope<'_, '_, 'u> {
         if !self.stmts(&func.body.stmts, Some(result)) {
             self.end(Terminal::Branch {
                 target: exit,
-                span: diag::Span::INVALID,
+                span: diag::INVALID_SPAN,
             });
         }
     }
@@ -127,7 +127,7 @@ impl<'u> Scope<'_, '_, 'u> {
         self.value_nil(Some(result), self.locate(span));
         self.end(Terminal::Branch {
             target: exit,
-            span: diag::Span::INVALID,
+            span: diag::INVALID_SPAN,
         });
     }
 
@@ -298,7 +298,7 @@ impl<'u> Scope<'_, '_, 'u> {
             self.assigned(var);
             graph.block_mut(exit).steps.push(Step::Assign(Target::Var {
                 var,
-                value: expr(ExprKind::Copy(result), diag::Span::INVALID),
+                value: expr(ExprKind::Copy(result), diag::INVALID_SPAN),
             }));
         }
         graph.func_mut(self.ctx.func).signature = Some(signature);
@@ -314,7 +314,7 @@ impl<'u> Scope<'_, '_, 'u> {
             }
         }
         if stmts.is_empty() {
-            self.value_nil(dest, diag::Span::INVALID);
+            self.value_nil(dest, diag::INVALID_SPAN);
         }
         false
     }
@@ -642,7 +642,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 let entry = self.alternatives(var, alt, span, frame, None, join);
                 self.end(Terminal::Branch {
                     target: entry,
-                    span: diag::Span::INVALID,
+                    span: diag::INVALID_SPAN,
                 });
                 self.switch(join);
                 continue;
@@ -745,7 +745,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 let entry = self.alternatives(var, alt, span, frame, Some(else_), join);
                 self.end(Terminal::Branch {
                     target: entry,
-                    span: diag::Span::INVALID,
+                    span: diag::INVALID_SPAN,
                 });
                 if !pending.is_empty() {
                     self.switch(join);
@@ -784,7 +784,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 }));
                 self.end(Terminal::Branch {
                     target: else_,
-                    span: diag::Span::INVALID,
+                    span: diag::INVALID_SPAN,
                 });
                 self.switch(success);
                 self.emit(Step::Assume(Assume {
@@ -796,7 +796,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 if pending.is_empty() {
                     self.end(Terminal::Branch {
                         target: then,
-                        span: diag::Span::INVALID,
+                        span: diag::INVALID_SPAN,
                     });
                 }
                 continue;
@@ -827,7 +827,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 }
                 self.end(Terminal::Branch {
                     target: else_,
-                    span: diag::Span::INVALID,
+                    span: diag::INVALID_SPAN,
                 });
                 self.switch(success);
                 if let Some(class) = class {
@@ -856,7 +856,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 });
                 self.end(Terminal::Branch {
                     target: next,
-                    span: diag::Span::INVALID,
+                    span: diag::INVALID_SPAN,
                 });
             } else {
                 let else_ = self.landing(else_, mismatch(var, &pattern).into_iter().collect());
@@ -900,7 +900,7 @@ impl<'u> Scope<'_, '_, 'u> {
                     self.nested_lets(vec![(var, pattern, span)], frame);
                     self.end(Terminal::Branch {
                         target: join,
-                        span: diag::Span::INVALID,
+                        span: diag::INVALID_SPAN,
                     });
                     entry
                 }
@@ -1013,7 +1013,7 @@ impl<'u> Scope<'_, '_, 'u> {
         self.pattern_defaults(pattern, frame, false);
         self.end(Terminal::Branch {
             target,
-            span: diag::Span::INVALID,
+            span: diag::INVALID_SPAN,
         });
         self.switch(from);
         block
@@ -1163,7 +1163,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 });
                 self.end(Terminal::Branch {
                     target: then,
-                    span: diag::Span::INVALID,
+                    span: diag::INVALID_SPAN,
                 });
             }
             // A name binds the value itself, on its truthiness
@@ -1185,13 +1185,13 @@ impl<'u> Scope<'_, '_, 'u> {
                 });
                 self.end(Terminal::Branch {
                     target: then,
-                    span: diag::Span::INVALID,
+                    span: diag::INVALID_SPAN,
                 });
                 self.switch(failed);
                 self.emit(Step::Pop);
                 self.end(Terminal::Branch {
                     target: else_,
-                    span: diag::Span::INVALID,
+                    span: diag::INVALID_SPAN,
                 });
             }
             ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. } | ast::Pattern::Alt(_) => {
@@ -1206,7 +1206,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 let entry = self.nested_tests(vec![(var, pattern, span)], frame, then, else_);
                 self.end(Terminal::Branch {
                     target: entry,
-                    span: diag::Span::INVALID,
+                    span: diag::INVALID_SPAN,
                 });
             }
             pattern @ ast::Pattern::Unpack(_) => {
@@ -1261,7 +1261,7 @@ impl<'u> Scope<'_, '_, 'u> {
             self.value_nil(dest, self.locate(node.tbranch.span));
             self.end(Terminal::Branch {
                 target: join,
-                span: diag::Span::INVALID,
+                span: diag::INVALID_SPAN,
             });
         }
         self.switch(join);
@@ -1319,7 +1319,7 @@ impl<'u> Scope<'_, '_, 'u> {
             self.value_nil(dest, self.locate(node.match_span));
             self.end(Terminal::Branch {
                 target: join,
-                span: diag::Span::INVALID,
+                span: diag::INVALID_SPAN,
             });
         }
         self.switch(join);
@@ -1343,7 +1343,7 @@ impl<'u> Scope<'_, '_, 'u> {
         let body = self.block();
         self.end(Terminal::Branch {
             target: header,
-            span: diag::Span::INVALID,
+            span: diag::INVALID_SPAN,
         });
         self.switch(header);
         let frame = self.block_frame(&node.body);
@@ -1391,7 +1391,7 @@ impl<'u> Scope<'_, '_, 'u> {
         let body = self.block();
         self.end(Terminal::Branch {
             target: header,
-            span: diag::Span::INVALID,
+            span: diag::INVALID_SPAN,
         });
         self.switch(header);
         let (pattern, nested) = self.pattern(&node.bind, frame);
@@ -1471,7 +1471,7 @@ impl<'u> Scope<'_, '_, 'u> {
         self.queue_block(body, ctx, &node.body.body, dest, join);
         self.end(Terminal::Branch {
             target: body,
-            span: diag::Span::INVALID,
+            span: diag::INVALID_SPAN,
         });
 
         let Some(mut dispatch) = dispatch else {

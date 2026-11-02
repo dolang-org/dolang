@@ -97,6 +97,7 @@ mod tests;
 #[cfg(feature = "debug")]
 mod trace;
 
+use crate::diag::INVALID_SPAN;
 use std::{
     collections::{BTreeSet, VecDeque},
     mem,
@@ -797,7 +798,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         let Some(results) = &mut self.results else {
             return;
         };
-        if problem.span() != Span::INVALID && !results.problems.contains(&problem) {
+        if problem.span() != INVALID_SPAN && !results.problems.contains(&problem) {
             results.problems.push(problem);
         }
     }
@@ -807,7 +808,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         let Some(results) = &mut self.results else {
             return;
         };
-        if span != Span::INVALID && !results.unresolved.contains(&(span, residual)) {
+        if span != INVALID_SPAN && !results.unresolved.contains(&(span, residual)) {
             results.unresolved.push((span, residual));
         }
     }
@@ -815,7 +816,7 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// Check a value against a variable's annotation, or a function's declared
     /// result, when reporting
     fn check(&mut self, var: VarId, ty: TypeId, span: Span) {
-        if !self.observing() || span == Span::INVALID || ty == self.db.bottom() {
+        if !self.observing() || span == INVALID_SPAN || ty == self.db.bottom() {
             return;
         }
         let (annotation, result) = match self.ir.var(var).annotation {
@@ -914,7 +915,7 @@ impl<'a, 'u> Flow<'a, 'u> {
 
     /// Log what was seen at `span`, if the check was asked for an analysis
     pub(super) fn log(&mut self, span: Span, role: Role, seen: Seen) {
-        if !self.logging || span == Span::INVALID {
+        if !self.logging || span == INVALID_SPAN {
             return;
         }
         if let Some(results) = &mut self.results {
@@ -1297,9 +1298,9 @@ impl<'a, 'u> Flow<'a, 'u> {
                 .iter()
                 .map(step_span)
                 .chain([data.terminal.span()])
-                .find(|&span| span != Span::INVALID)
+                .find(|&span| span != INVALID_SPAN)
         });
-        if let Some(span) = span.filter(|&span| span != Span::INVALID) {
+        if let Some(span) = span.filter(|&span| span != INVALID_SPAN) {
             self.problem(Problem::Unreachable { span, call });
         }
     }
@@ -1419,7 +1420,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                         }
                         match expected {
                             Some(expected) => self.store(at, ty, expected, value.span),
-                            None if self.observing() && span != Span::INVALID => {
+                            None if self.observing() && span != INVALID_SPAN => {
                                 self.problem(Problem::MemberUse {
                                     span,
                                     name: self.db.symbol(item).to_owned(),
@@ -1757,7 +1758,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                     if let Some(var) = item.var {
                         let span = match self.ir.var(var).origin {
                             Origin::Source(span, _) => span,
-                            _ => Span::INVALID,
+                            _ => INVALID_SPAN,
                         };
                         self.binding(at, state, var, ty, span);
                         if correlated {
@@ -1844,7 +1845,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         };
         for (item, ty) in items.iter().zip(types) {
             if let Some(var) = item.var {
-                self.binding(at, state, var, ty, Span::INVALID);
+                self.binding(at, state, var, ty, INVALID_SPAN);
             }
         }
     }
@@ -2330,7 +2331,7 @@ fn has_rule(expr: &Expr) -> bool {
     found
 }
 
-/// The span of the source a step evaluates, or `Span::INVALID` if it evaluates
+/// The span of the source a step evaluates, or `INVALID_SPAN` if it evaluates
 /// none
 fn step_span(step: &Step) -> Span {
     match step {
@@ -2345,7 +2346,7 @@ fn step_span(step: &Step) -> Span {
         | Step::Assume(_)
         | Step::Capture(_)
         | Step::Cache(_)
-        | Step::Escape { .. } => Span::INVALID,
+        | Step::Escape { .. } => INVALID_SPAN,
     }
 }
 
