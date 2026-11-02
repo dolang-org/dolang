@@ -8,7 +8,7 @@
 # `dolang -m compile bundle` packs sources into a bundle, compiled with the
 # compiler's defaults but not type checked.
 
-import _shell args compile io json regex shell sys zip
+import _shell args compile json regex shell
   fs:
     - Path
 
@@ -990,18 +990,15 @@ def emit_bytecode p
 # `lib/a/b.dol` for module `a.b`, each source beside its bytecode, after an
 # optional `#!` line. Nothing is written unless every source compiles.
 def build_bundle p
+  import _bundle
   let :main :module :output :shebang ... = p.bundle
   if (output == nil)
     throw args.Error "name the bundle to write with --output"
-  let prefix = if (shebang == nil)
-    b""
-  else if shebang.contains("\n")
+  if (shebang != nil && shebang.contains("\n"))
     throw args.Error "--shebang must be a single line"
-  else
-    Bin "#!$shebang\n"
   let name_pattern = regex.Regex r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$"
-  # Member stem, source path, and module name (`nil` for the main module)
-  let entries = [["main", main, nil]]
+  # Each module's source path and name
+  let entries = []
   let seen = {}
   for mapping = module
     let name path = [...mapping.split "=" limit: 1]
@@ -1011,28 +1008,24 @@ def build_bundle p
     if seen.contains(name)
       throw args.Error "module given more than once: $name"
     seen[name] = true
-    entries.push ["lib/$(name.replace "." "/")", path, name]
-  let members = {}
-  let failed = false
+    entries.push [path, name]
+  let main_text = Path(main).read_str()
+  let main_bytecode = emit_source $main $main_text nil
+  let failed = (main_bytecode == nil)
+  let modules = {}
   for entry = entries
-    let stem source named = entry
+    let source named = entry
     let text = Path(source).read_str()
     let bytecode = emit_source $source $text $named
     if (bytecode == nil)
       failed = true
     else
-      members["$stem.dol"] = text
-      members["$stem.dolc"] = bytecode
+      modules[named] = (source: text, bytecode: bytecode)
+  let Bin(bytecode) = main_bytecode
+  else shell.exit 1
   if failed
     shell.exit 1
-  let out = Path $output
-  out.open w+ do |file|
-    file.write $prefix
-    zip.open (io.Cursor(file, (prefix.len..))) w do |archive|
-      for name data = members
-        archive.open $name do |member| member.write $data
-  if (shebang != nil && sys.os_info().family == :UNIX:)
-    out.update_metadata mode: 0o755
+  _bundle.write (Path(output)) (source: main_text, bytecode: bytecode) $modules :shebang
 
 args.with
   help: Describe a Do source file's compiler output as JSON.

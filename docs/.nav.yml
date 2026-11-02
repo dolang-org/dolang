@@ -39,6 +39,7 @@ nav:
     - shell/system-errors.md
     - shell/modules.md
     - shell/cli-tools.md
+    - shell/doze.md
     - shell/vfs.md
     - shell/containers.md
     - shell/ssh.md

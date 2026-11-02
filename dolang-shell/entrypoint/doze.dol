@@ -1,0 +1,306 @@
+# dolang: strict
+
+# Project tooling: `dolang -m doze check` checks a project's sources, and
+# `dolang -m doze bundle` packs its program into a bundle.
+
+import _bundle _shell args compile regex shell
+  fs:
+    - Path
+
+let IDENTIFIER = regex.Regex r"^[A-Za-z_][A-Za-z0-9_]*$"
+
+# Raised for a project that isn't laid out as `doze` expects.
+#[final]
+class ProjectError: std.RuntimeError
+  def (init) self message @ Str
+    std.RuntimeError.(init) $self $message
+
+# What compiling, and possibly checking, a project's sources found.
+#[final]
+class Report
+  field diagnostics @ Array[compile.Diagnostic] = []
+  field sources @ Int = 0
+  field checked @ Bool = false
+  field strict @ Bool = false
+
+  def (init)
+    self
+    diagnostics @ Array[compile.Diagnostic]
+    # How many sources were compiled.
+    sources @ Int
+    # Whether the sources' types were checked.
+    checked @ Bool
+    # Whether warnings fail too.
+    :strict @ Bool = false
+  do
+    self.#diagnostics = diagnostics
+    self.#sources = sources
+    self.#checked = checked
+    self.#strict = strict
+
+  #[getter]
+  pub def diagnostics self -> Seq[compile.Diagnostic]
+    self.#diagnostics
+
+  # How many sources were compiled.
+  #[getter]
+  pub def sources self -> Int
+    self.#sources
+
+  # Whether the sources' types were checked.
+  #[getter]
+  pub def checked self -> Bool
+    self.#checked
+
+  #[getter]
+  pub def errors self -> Int
+    self.#diagnostics.filter(do |diag| diag.severity == :ERROR:).count()
+
+  #[getter]
+  pub def warnings self -> Int
+    (self.#diagnostics.len - self.errors)
+
+  # Whether the sources passed: no errors, and no warnings when strict.
+  #[getter]
+  pub def passed self -> Bool
+    (self.errors == 0 && (!self.#strict || self.warnings == 0))
+
+# Sources compiled together: modules by name, and scripts. Units are compiled
+# as they are added; checking their types, when asked for, waits for the
+# report.
+class Compiler
+  field check @ Bool = false
+  field strict @ Bool = false
+  # Each source's unit, by path.
+  field units @ Dict[Path, compile.Unit] = {}
+  # Each source's text, by path.
+  field sources @ Dict[Path, Str] = {}
+  # Each module's source, by module name.
+  field modules @ Dict[Str, Path] = {}
+
+  def (init)
+    self
+    # Whether to check the sources' types.
+    :check @ Bool = false
+    # Whether warnings fail too.
+    :strict @ Bool = false
+  do
+    self.#check = check
+    self.#strict = strict
+
+  # Adds the module `name`, whose source is at `path`.
+  pub def add_module self name@Str path@Path
+    self.#modules[name] = path
+    self.#add $path $name
+
+  # Adds the script at `path`.
+  pub def add_script self path @ Path
+    self.#add $path nil
+
+  # The unit of the source at `path`, for emitting once the report passes.
+  pub def unit self path @ Path -> compile.Unit
+    self.#units[path]
+
+  # The text of the source at `path`.
+  pub def source self path @ Path -> Str
+    self.#sources[path]
+
+  # Checks for diagnostics on added sources, including type checking if requested
+  pub def check self -> Report
+    let diagnostics = $
+      for unit = self.#units.values()
+        for diag = unit.diagnostics()
+          $diag
+    let strict = self.#strict
+    if (self.#check && !diagnostics.any(do |diag| diag.severity == :ERROR:))
+      let result = compile.check [...self.#units.values(), ...self.#typelibs()]
+      return Report [...diagnostics, ...result.diagnostics] $self.#units.len true :strict
+    Report $diagnostics $self.#units.len $self.#check :strict
+
+  def add self path@Path module@(Str | nil)
+    let text = path.read_str()
+    let check = self.#check
+    self.#sources[path] = text
+    self.#units[path] = compile.compile "$path" $text typecheck: $check document: $check
+      if module
+        :module
+
+  # The bundled typelibs of the modules the units import from elsewhere, and
+  # those they import in turn.
+  def typelibs self -> Array[compile.Typelib]
+    let seen = Set $self.#modules.keys()
+    # The checker gives every unit `std`'s designated types, such as those of
+    # literals, whether or not it imports `std`
+    let pending = $
+      std
+      for unit = self.#units.values()
+        for name = unit.imports()
+          $name
+    let typelibs @ Array[compile.Typelib] = []
+    while let name = pending.pop default: nil
+      if seen.contains(name)
+        continue
+      seen.add $name
+      let resource = _shell.resource "dolang.typelib" $name
+      # A module that isn't bundled either is left for the check to report
+      if (resource == nil)
+        continue
+      let Bin(bytes) = resource
+      else throw std.RuntimeError "broken dolang build: bundled typelib of $name isn't binary"
+      let typelib = compile.Typelib $bytes
+      typelibs.push $typelib
+      pending.push ...typelib.imports().iter()
+    typelibs
+
+# A project: a directory laid out by convention. Its modules are the `.dol`
+# files under `lib/`, and its program is `main.dol`. Its build output goes under
+# `build/`.
+class Project
+  field root @ Path
+  # The project's name: its directory's.
+  field name @ Str
+  # The program's source, if the project has one.
+  field main @ (Path | nil) = nil
+  # Each module's source, by module name.
+  field modules @ Dict[Str, Path] = {}
+
+  # The project at `root`. Never searches its parents.
+  def (init) self root @ Path
+    if (!root.exists() || root.metadata().type != :DIR:)
+      throw ProjectError "not a directory: $root"
+    self.#root = root
+    self.#name = (root.canonical().name || "project")
+    self.#discover()
+
+  # Checks the types of the project's sources.
+  pub def check self :strict @ Bool = false -> Report
+    let compiler = self.#compile check: true :strict
+    compiler.check()
+
+  # Packs the program and every module into a bundle, after checking them
+  # unless `check` is false. Nothing is written unless the report passes.
+  pub def bundle
+    self
+    # File to write; by default, `build/<name>.dolz` in the project, named after
+    # its directory.
+    :output @ (Path | nil) = nil
+    # Whether to check the sources' types first. True by default.
+    :check @ Bool = true
+    # Whether warnings fail too.
+    :strict @ Bool = false
+    # Interpreter command for a `#!` line.
+    :shebang @ (Str | nil) = nil
+  do -> Report
+    let Path(main) = self.#main
+    else throw ProjectError "no main.dol in $(self.#root)"
+    let compiler = self.#compile :check :strict
+    let report = compiler.check()
+    if !report.passed
+      return report
+    let program = (source: compiler.source(main), bytecode: compiler.unit(main).emit())
+    let modules @ Dict[Str, _bundle.Program] = $
+      for name path = self.#modules
+        $name: (source: compiler.source(path), bytecode: compiler.unit(path).emit())
+    let out = if let Path(output) = output
+      output
+    else
+      let build = (self.#root / "build")
+      build.create_dir all: true
+      (build / "$(self.#name).dolz")
+    _bundle.write $out $program $modules :shebang
+    report
+
+  # Finds the program and the modules.
+  def discover self
+    let main = (self.#root / "main.dol")
+    if main.exists()
+      self.#main = main
+    let lib = self.#lib_dir()
+    if lib.exists()
+      for file = lib.glob "**/*.dol"
+        let name = self.#module_name $file
+        if let Path(other) = self.#modules.get(name)
+          throw ProjectError "module $name given by both $other and $file"
+        self.#modules[name] = file
+
+  # The directory of the project's modules.
+  def lib_dir self -> Path
+    (self.#root / "lib")
+
+  # The name of the module whose source is `file`: `lib/a/b.dol` or
+  # `lib/a/b/mod.dol` is `a.b`.
+  def module_name self file @ Path -> Str
+    let named = if (file.name == "mod.dol")
+      (file.parent !@ Path)
+    else
+      file.without_ext()
+    let parts = [...named.relative(self.#lib_dir()).components]
+    if (parts.len == 0 || parts.any(do |part| IDENTIFIER.match(part) == nil))
+      throw ProjectError "invalid module path: $file"
+    ".".join $parts
+
+  # The project's sources, compiled together.
+  def compile self :check@Bool :strict@Bool -> Compiler
+    let compiler = Compiler :check :strict
+    let main = self.#main
+    if let Path(main) = main
+      compiler.add_script $main
+    for name path = self.#modules
+      compiler.add_module $name $path
+    compiler
+
+# Renders `report` and a summary, then exits with failure unless it passed.
+def finish report @ Report
+  for diag = report.diagnostics
+    echo $diag.render()
+  let verb = (report.checked && "checked" || "compiled")
+  echo "$verb $(report.sources) sources: $(report.errors) errors, $(report.warnings) warnings"
+  if !report.passed
+    shell.exit 1
+
+# Runs a command on the project at `path`, the current directory by default,
+# reporting a `ProjectError` as its failure.
+def with_project path @ (Str | nil) command @ ((Project) -> Report)
+  try
+    finish $command(Project(Path(path || ".")))
+  catch ProjectError: e
+    echo "error: $e"
+    shell.exit 1
+
+args.with
+  help: Check and bundle a Do project.
+  - cmd: check
+    help: Check the types of the project's modules under `lib/` and its `main.dol`.
+    - opt: project
+      default: nil
+      help: The project directory; by default, the current directory
+    - flag: strict
+      help: Fail on warnings too
+    do |p|
+      let :project :strict ... = p.check
+      with_project $project do |it| it.check(:strict)
+  - cmd: bundle
+    help: Check the project, then pack `main.dol` and every module under `lib/` into a bundle.
+    - opt: project
+      default: nil
+      help: The project directory; by default, the current directory
+    - flag: strict
+      help: Fail the check on warnings too
+    - flag: no-check
+      help: Only compile the sources, without checking their types
+    - opt: output
+      short: o
+      default: nil
+      help: File to write the bundle to; by default, `build/<project>.dolz` in the project, named after its directory
+    - opt: shebang
+      default: nil
+      help: "Interpreter command for a `#!` line, such as `/usr/bin/env dolang`; the bundle is then made executable where the platform allows"
+    do |p|
+      let :project :strict :no_check :output :shebang ... = p.bundle
+      if (shebang != nil && shebang.contains("\n"))
+        throw args.Error "--shebang must be a single line"
+      let out = if (output != nil)
+        Path $output
+      else
+        nil
+      with_project $project do |it| it.bundle(output: out, check: !no_check, :strict, :shebang)

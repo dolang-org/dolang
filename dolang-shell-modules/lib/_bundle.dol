@@ -1,0 +1,51 @@
+# dolang: strict
+# Writing script bundles: an optional `#!` line followed by a zip archive whose
+# offsets count from the start of the archive.
+
+import io sys zip
+  fs:
+    - @Path
+
+# A program or module as a bundle holds it.
+pub @let Program = (source: Str, bytecode: Bin)
+
+# Writes a bundle to `path`, replacing any file there.
+#
+# The archive holds `main` as `main.dol`, and each module as `lib/a/b.dol` for
+# module `a.b`, each source beside its bytecode in a `.dolc` member.
+#
+# ## Errors
+#
+# | Exception        | Condition                         |
+# | ---------------- | --------------------------------- |
+# | `std.ValueError` | `shebang` is more than one line   |
+pub def write
+  path @ Path
+  # The main program.
+  main @ Program
+  # The modules, by name.
+  modules @ Dict[Str, Program]
+  # Interpreter command for a `#!` line, such as `/usr/bin/env dolang`. The
+  # bundle is then made executable where the platform allows.
+  :shebang @ (Str | nil) = nil
+do
+  let prefix = if (shebang == nil)
+    b""
+  else if shebang.contains("\n")
+    throw std.ValueError "shebang must be a single line"
+  else
+    Bin "#!$shebang\n"
+  # Each program by the stem of its members
+  let programs = $
+    - ("main", main)
+    for name program = modules
+      - ("lib/$(name.replace(".", "/"))", program)
+  path.open w+ do |file|
+    file.write $prefix
+    zip.open (io.Cursor(file, (prefix.len..))) w do |archive|
+      for stem program = programs
+        let :source :bytecode = program
+        archive.open "$stem.dol" do |member| member.write $source
+        archive.open "$stem.dolc" do |member| member.write $bytecode
+  if (shebang != nil && sys.os_info().family == :UNIX:)
+    path.update_metadata mode: 0o755
