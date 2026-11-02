@@ -928,8 +928,8 @@ def typelib p
     if (named == nil)
       throw args.Error "name the module with --module, or put $source under a --path directory"
     roots.push [file, named]
-  let :units :typelibs :bundled = gather $roots $dirs :no_bundled
-  let check = compile.check [...units, ...typelibs, ...bundled] typelibs: true
+  let :check :units ... = gather $roots $dirs :no_bundled typelibs: true
+  let check = check.run()
   let failed = false
   def report diag
     if (diag.severity == :ERROR:)

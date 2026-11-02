@@ -101,34 +101,34 @@ fn diagnostics(unit: &Unit<'_>, offsets: &Offsets) -> Vec<Diagnostic> {
     result
 }
 
-/// The typelibs of the bundled modules a unit imports, directly or through
-/// other typelibs, each once. `std` is always among them, since the types of
-/// literals are declared there.
-fn imported_by<'t>(
-    cache: &'t mut HashMap<&'static str, typeck::Typelib<'static>>,
-    unit: &Unit<'_>,
-) -> Vec<&'t typeck::Typelib<'static>> {
-    let mut queue: Vec<String> = unit.imports().into_iter().map(str::to_owned).collect();
-    queue.push("std".to_owned());
-    let mut seen = HashSet::new();
-    while let Some(name) = queue.pop() {
-        if seen.contains(&name) {
-            continue;
+/// Add the bundled typelibs of the modules `check` is missing, and those they
+/// need in turn, each once. A module that isn't bundled is left for the check to
+/// report.
+fn add_bundled(
+    cache: &mut HashMap<&'static str, typeck::Typelib<'static>>,
+    check: &mut typeck::Check<'_>,
+) {
+    let mut tried = HashSet::new();
+    loop {
+        let names: Vec<String> = (check.missing().into_iter())
+            .filter(|name| !tried.contains(*name))
+            .map(str::to_owned)
+            .collect();
+        if names.is_empty() {
+            return;
         }
-        if let Some((name, bytes)) = typelibs().find(|(module, _)| *module == name) {
-            let typelib = cache.entry(name).or_insert_with(|| {
-                typeck::Typelib::read(bytes).expect("bundled typelibs are readable")
-            });
-            queue.extend(typelib.imports().into_iter().map(str::to_owned));
+        for name in names {
+            if let Some((name, bytes)) = typelibs().find(|(module, _)| *module == name) {
+                let typelib = cache.entry(name).or_insert_with(|| {
+                    typeck::Typelib::read(bytes).expect("bundled typelibs are readable")
+                });
+                check
+                    .typelib(typelib)
+                    .expect("bundled typelibs check together");
+            }
+            tried.insert(name);
         }
-        seen.insert(name);
     }
-    let mut found: Vec<_> = seen
-        .iter()
-        .filter_map(|name| cache.get(name.as_str()))
-        .collect();
-    found.sort_by_key(|typelib| typelib.module());
-    found
 }
 
 /// A playground source, compiled for highlighting and checking.
@@ -194,19 +194,15 @@ impl Analyzed {
         let unit = &self.unit;
         let offsets = &self.offsets;
         let (result, checked) = TYPELIBS.with_borrow_mut(|cache| {
-            let mut builder = typeck::Builder::new();
+            let mut builder = typeck::Check::new();
             builder.analysis(true);
             let id = match builder.unit(unit) {
                 Ok(id) => id,
                 Err(err) if matches!(err.kind(), ErrorKind::Fail) => return (Vec::new(), None),
                 Err(err) => panic!("cannot check the playground's unit: {err}"),
             };
-            for typelib in imported_by(cache, unit) {
-                builder
-                    .typelib(typelib)
-                    .expect("bundled typelibs check together");
-            }
-            let check = builder.check();
+            add_bundled(cache, &mut builder);
+            let check = builder.run();
             let mut result = Vec::new();
             for diag in check.diagnostics() {
                 if diag.span().unit() == Some(id) {
@@ -244,7 +240,7 @@ impl Analyzed {
 
 /// Where a span in a unit other than `id` lies, as `path:line:column`.
 fn foreign(
-    check: &typeck::Check,
+    check: &typeck::Checked,
     id: UnitId,
     span: &dolang::compile::SourceSpan,
 ) -> Option<String> {

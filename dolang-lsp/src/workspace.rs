@@ -39,6 +39,10 @@ use crate::{
 /// The most module sources one check reads
 const MAX_MODULES: usize = 512;
 
+/// The types `strand`'s pipe placeholders stand for: the shell's pipelines
+/// connect stages with `proc`'s pipes
+pub(crate) const PIPES: [(&str, &str); 2] = [("proc", "PipeSender"), ("proc", "PipeReceiver")];
+
 /// The live workspaces, by root.
 #[derive(Default)]
 pub(crate) struct Workspaces {
@@ -150,6 +154,8 @@ pub(crate) struct Member {
     /// Compiled when first needed, which for an open document is on the
     /// worker rather than in the handler that made it
     unit: OnceLock<Arc<Unit<'static>>>,
+    /// The modules a check of its unit needs, once a check has gathered it
+    depends: OnceLock<Vec<String>>,
     results: Mutex<Option<Results>>,
     /// The closure of the latest check of an earlier revision, which keeps
     /// its modules loaded until this one is checked
@@ -200,8 +206,14 @@ impl Resolution {
 /// What a check found a module to be.
 enum Found {
     Member(Arc<Member>),
-    Bundled(Arc<typeck::Typelib<'static>>),
+    Bundled(Arc<Library>),
     Missing,
+}
+
+/// A bundled module's typelib, and the modules a check of it needs.
+pub(crate) struct Library {
+    typelib: typeck::Typelib<'static>,
+    depends: Vec<String>,
 }
 
 /// What a check of a workspace is to do.
@@ -216,7 +228,7 @@ pub(crate) enum Round {
 /// they import.
 pub(crate) struct Check {
     members: Vec<Arc<Member>>,
-    typelibs: Vec<Arc<typeck::Typelib<'static>>>,
+    typelibs: Vec<Arc<Library>>,
     /// The members the check is of, as indexes into `members`, and the
     /// closures it is checked against
     targets: Vec<(usize, Deps)>,
@@ -229,8 +241,8 @@ impl Check {
     }
 
     /// The bundled typelibs checked against, sorted by module.
-    pub(crate) fn typelibs(&self) -> &[Arc<typeck::Typelib<'static>>] {
-        &self.typelibs
+    pub(crate) fn typelibs(&self) -> impl Iterator<Item = &typeck::Typelib<'static>> {
+        self.typelibs.iter().map(|library| &library.typelib)
     }
 }
 
@@ -282,6 +294,19 @@ impl Member {
     /// Its unit, which a member is once a check has gathered it.
     fn compiled(&self) -> &Unit<'static> {
         self.unit.get().expect("a gathered member is compiled")
+    }
+
+    /// The modules a check of its unit needs, which a member has once a check
+    /// has gathered it. A unit that failed to compile needs none.
+    fn depends(&self) -> &[String] {
+        self.depends.get_or_init(|| {
+            let mut check = typeck::Check::new();
+            check.pipes(PIPES[0], PIPES[1]);
+            match check.unit(self.compiled()) {
+                Ok(id) => owned(check.depends(id)),
+                Err(_) => Vec::new(),
+            }
+        })
     }
 
     /// Of the members of a module, the one it looks up to: the client's
@@ -414,6 +439,7 @@ impl Workspace {
             path,
             source: Source::Open { uri, version, text },
             unit: unit.map(OnceLock::from).unwrap_or_default(),
+            depends: OnceLock::new(),
             results: Mutex::new(results),
             earlier: old.and_then(|old| old.deps()),
         });
@@ -605,7 +631,7 @@ impl Workspace {
     }
 
     /// A module's bundled typelib, if the module path allows.
-    fn typelib(&self, name: &str) -> Option<Arc<typeck::Typelib<'static>>> {
+    fn typelib(&self, name: &str) -> Option<Arc<Library>> {
         self.modules()
             .is_none_or(|modules| modules.bundled)
             .then(|| self.bundled.get(name))
@@ -626,7 +652,8 @@ impl Workspace {
             .collect();
         let mut queue: Vec<String> = Vec::new();
         for root in &roots {
-            queue.extend(imports(&self.unit(root)).map(str::to_owned));
+            self.unit(root);
+            queue.extend(root.depends().iter().cloned());
         }
         let count = roots.len();
         let mut members = roots;
@@ -639,18 +666,19 @@ impl Workspace {
             let next = self.find(&name, full);
             match &next {
                 Found::Member(member) => {
-                    queue.extend(imports(&self.unit(member)).map(str::to_owned));
+                    self.unit(member);
+                    queue.extend(member.depends().iter().cloned());
                     members.push(member.clone());
                 }
-                Found::Bundled(typelib) => {
-                    queue.extend(typelib.imports().into_iter().map(str::to_owned));
-                    typelibs.push(typelib.clone());
+                Found::Bundled(library) => {
+                    queue.extend(library.depends.iter().cloned());
+                    typelibs.push(library.clone());
                 }
                 Found::Missing => {}
             }
             found.insert(name, next);
         }
-        typelibs.sort_by(|a, b| a.module().cmp(b.module()));
+        typelibs.sort_by(|a, b| a.typelib.module().cmp(b.typelib.module()));
         let targets = (0..members.len())
             .filter(|&target| match whole {
                 true => target < count || members[target].results().is_none(),
@@ -701,6 +729,7 @@ impl Workspace {
             module: Some(name.to_owned()),
             source: Source::Loaded { stamp },
             unit: OnceLock::from(Arc::new(unit)),
+            depends: OnceLock::new(),
             results: Mutex::default(),
             earlier: None,
         }))
@@ -769,7 +798,7 @@ fn admit(
 /// to be.  Its own module is itself.
 fn closure(found: &HashMap<String, Found>, member: &Member) -> Deps {
     let mut seen: HashSet<&str> = member.module.as_deref().into_iter().collect();
-    let mut queue: Vec<&str> = imports(member.compiled()).collect();
+    let mut queue: Vec<&str> = member.depends().iter().map(String::as_str).collect();
     let mut deps = Vec::new();
     while let Some(name) = queue.pop() {
         if !seen.insert(name) {
@@ -777,11 +806,11 @@ fn closure(found: &HashMap<String, Found>, member: &Member) -> Deps {
         }
         let resolution = match &found[name] {
             Found::Member(member) => {
-                queue.extend(imports(member.compiled()));
+                queue.extend(member.depends().iter().map(String::as_str));
                 Resolution::Member(Arc::downgrade(member))
             }
-            Found::Bundled(typelib) => {
-                queue.extend(typelib.imports());
+            Found::Bundled(library) => {
+                queue.extend(library.depends.iter().map(String::as_str));
                 Resolution::Bundled
             }
             Found::Missing => Resolution::Missing,
@@ -791,29 +820,33 @@ fn closure(found: &HashMap<String, Found>, member: &Member) -> Deps {
     deps.into()
 }
 
-/// What a check of `unit` needs first: its imports, plus `std`, which holds the
-/// types the checker designates, such as those of literals.
-fn imports<'a>(unit: &'a Unit<'_>) -> impl Iterator<Item = &'a str> {
-    unit.imports().into_iter().chain(["std"])
+fn owned(names: Vec<&str>) -> Vec<String> {
+    names.into_iter().map(str::to_owned).collect()
 }
 
 /// The bundled typelibs, decoded as checks first need them, for every
 /// workspace.
 #[derive(Default)]
-struct Bundled(Mutex<HashMap<String, Option<Arc<typeck::Typelib<'static>>>>>);
+struct Bundled(Mutex<HashMap<String, Option<Arc<Library>>>>);
 
 impl Bundled {
     /// A bundled module's typelib, decoded the first time a check needs it.
-    fn get(&self, name: &str) -> Option<Arc<typeck::Typelib<'static>>> {
+    fn get(&self, name: &str) -> Option<Arc<Library>> {
         let mut typelibs = self.0.lock().expect("bundled lock poisoned");
         typelibs
             .entry(name.to_owned())
             .or_insert_with(|| {
                 let bytes = typelib_index::lookup(name)?;
-                typeck::Typelib::read(bytes)
+                let typelib = typeck::Typelib::read(bytes)
                     .inspect_err(|err| log::error!("bundled typelib {name} is unreadable: {err}"))
-                    .ok()
-                    .map(Arc::new)
+                    .ok()?;
+                let mut check = typeck::Check::new();
+                check.pipes(PIPES[0], PIPES[1]);
+                let depends = match check.typelib(&typelib) {
+                    Ok(id) => owned(check.depends(id)),
+                    Err(_) => Vec::new(),
+                };
+                Some(Arc::new(Library { typelib, depends }))
             })
             .clone()
     }

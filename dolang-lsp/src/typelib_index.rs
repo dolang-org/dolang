@@ -46,11 +46,11 @@ mod tests {
             config.typecheck(true);
             let path = PathBuf::from("fixture.dol");
             let unit = config.unit(&path, "pub let value = 1\n");
-            let mut builder = typeck::Builder::new();
+            let mut builder = typeck::Check::new();
             builder.typelibs(true);
             let id = builder.unit(&unit).unwrap();
             let mut typelib = Vec::new();
-            builder.check().typelib(id, &mut typelib).unwrap();
+            builder.run().typelib(id, &mut typelib).unwrap();
             fs::write(self.0.join(format!("{name}.dolt")), typelib).unwrap();
         }
     }
@@ -133,12 +133,12 @@ mod tests {
                 typelib
             })
             .collect();
-        let mut builder = typeck::Builder::new();
+        let mut builder = typeck::Check::new();
         builder.pipes(("proc", "PipeSender"), ("proc", "PipeReceiver"));
         for typelib in &typelibs {
             builder.typelib(typelib).unwrap();
         }
-        let check = builder.check();
+        let check = builder.run();
         let errors: Vec<_> = check
             .diagnostics()
             .filter(|diag| diag.severity() == dolang_compile::diag::Severity::Error)

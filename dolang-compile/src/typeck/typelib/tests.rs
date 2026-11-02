@@ -11,7 +11,7 @@ use crate::{
     Config, ErrorKind, Mode, Unit,
     diag::Span,
     typeck::{
-        Builder, Typelib, UnitId,
+        Check, Typelib, UnitId,
         elab::{
             Bases, BinderRef, DeclNode, Facts, Referent, Shard, Tables, Target, Value,
             surface::{Member, Name, ParamKind, StrId, TypeExpr},
@@ -39,14 +39,14 @@ fn write(unit: &Unit<'_>, imports: &[&str]) -> Result<Vec<u8>, crate::Error> {
         .chain(["std"].iter().filter(|_| !imports.contains(&"std")))
         .map(|&name| compile("", Mode::Module { name: name.into() }))
         .collect();
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.typelibs(true);
     let id = builder.unit(unit)?;
     for module in &imported {
         builder.unit(module)?;
     }
     let mut bytes = Vec::new();
-    builder.check().typelib(id, &mut bytes)?;
+    builder.run().typelib(id, &mut bytes)?;
     Ok(bytes)
 }
 
@@ -134,10 +134,10 @@ fn typelib() -> Vec<u8> {
 fn check(typelib: &[u8]) -> Result<Vec<String>, crate::Error> {
     let script = compile(SCRIPT, Mode::Script);
     let typelib = Typelib::read(typelib)?;
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.typelib(&typelib)?;
     let script = builder.unit(&script).unwrap();
-    let check = builder.check();
+    let check = builder.run();
     check.smoke();
     Ok(check
         .diagnostics()
@@ -321,10 +321,10 @@ fn underived_values_are_written() {
 fn checks_against_typelib() {
     let script = compile(SCRIPT, Mode::Script);
     let module = compile(MODULE, Mode::Module { name: "lib".into() });
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.unit(&module).unwrap();
     builder.unit(&script).unwrap();
-    let from_source = builder.check();
+    let from_source = builder.run();
     let script_unit =
         |diag: &&crate::diag::Diag| diag.span().unit().map(|unit| unit.index()) == Some(1);
     let expected: Vec<_> = from_source
@@ -344,9 +344,9 @@ fn script_has_no_typelib() {
 #[test]
 fn not_requested() {
     let module = compile(MODULE, Mode::Module { name: "lib".into() });
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     let id = builder.unit(&module).unwrap();
-    let error = builder.check().typelib(id, &mut Vec::new()).unwrap_err();
+    let error = builder.run().typelib(id, &mut Vec::new()).unwrap_err();
     assert!(matches!(error.kind(), ErrorKind::NotRequested));
 }
 
@@ -354,10 +354,10 @@ fn not_requested() {
 fn checked_from_typelib() {
     let bytes = typelib();
     let typelib = Typelib::read(&bytes).unwrap();
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.typelibs(true);
     let id = builder.typelib(&typelib).unwrap();
-    let error = builder.check().typelib(id, &mut Vec::new()).unwrap_err();
+    let error = builder.run().typelib(id, &mut Vec::new()).unwrap_err();
     assert!(matches!(error.kind(), ErrorKind::NoSource));
 }
 
@@ -378,7 +378,7 @@ fn written_alone() {
     );
     let dep = compile("pub @class Thing\n", Mode::Module { name: "dep".into() });
     let script = compile(SCRIPT, Mode::Script);
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.typelibs(true);
     builder.unit(&script).unwrap();
     builder.unit(&dep).unwrap();
@@ -386,7 +386,7 @@ fn written_alone() {
     builder.unit(&std).unwrap();
     let id = builder.unit(&lib).unwrap();
     let mut bytes = Vec::new();
-    builder.check().typelib(id, &mut bytes).unwrap();
+    builder.run().typelib(id, &mut bytes).unwrap();
     assert_eq!(bytes, write(&lib, &["dep"]).unwrap());
 }
 
@@ -395,7 +395,7 @@ fn duplicate_module() {
     let bytes = typelib();
     let typelib = Typelib::read(&bytes).unwrap();
     let module = compile(MODULE, Mode::Module { name: "lib".into() });
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.unit(&module).unwrap();
     let error = builder.typelib(&typelib).unwrap_err();
     assert!(matches!(error.kind(), ErrorKind::DuplicateModule));
@@ -421,8 +421,13 @@ pub let unused @ json.Value = nil
     let typelib = Typelib::read(&bytes).unwrap();
     assert_eq!(typelib.module(), "lib");
     assert_eq!(typelib.path(), Path::new("lib.dol"));
-    // A module named only in a body is still imported
-    assert_eq!(typelib.imports(), ["geometry", "json", "time", "uuid"]);
+    // A module named only in a body is still needed
+    let mut check = Check::new();
+    let id = check.typelib(&typelib).unwrap();
+    assert_eq!(
+        check.depends(id),
+        ["geometry", "json", "std", "time", "uuid"]
+    );
 }
 
 #[test]
@@ -667,7 +672,7 @@ fn located(units: &[&Unit<'_>], typelibs: &[&[u8]]) -> Vec<(usize, u32, u32, Str
         .iter()
         .map(|bytes| Typelib::read(bytes).unwrap())
         .collect();
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     let mut ids = Vec::new();
     for typelib in &typelibs {
         ids.push(builder.typelib(typelib).unwrap());
@@ -675,7 +680,7 @@ fn located(units: &[&Unit<'_>], typelibs: &[&[u8]]) -> Vec<(usize, u32, u32, Str
     for unit in units {
         ids.push(builder.unit(unit).unwrap());
     }
-    let check = builder.check();
+    let check = builder.run();
     check.smoke();
     check
         .diagnostics()
@@ -757,11 +762,11 @@ fn locates_kept_spans() {
                   pub @let A[T] = Int # ü\npub @let B = Int\n";
     let unit = compile(source, Mode::Module { name: "lib".into() });
     let std = compile("", Mode::Module { name: "std".into() });
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.typelibs(true);
     let id = builder.unit(&unit).unwrap();
     builder.unit(&std).unwrap();
-    let (check, tables) = builder.check_tables();
+    let (check, tables) = builder.run_tables();
     let mut bytes = Vec::new();
     check.typelib(id, &mut bytes).unwrap();
     let located = |shard: &Shard<'_>, base: &Bases, kept: &BitSlice, facts: &Facts| {
@@ -884,20 +889,20 @@ fn variances(
 fn variance_is_recorded() {
     let std = compile(PHANTOM_STD, Mode::Module { name: "std".into() });
     let lib = compile(VARIANT, Mode::Module { name: "lib".into() });
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.typelibs(true);
     builder.unit(&std).unwrap();
     let id = builder.unit(&lib).unwrap();
-    let (check, tables) = builder.check_tables();
+    let (check, tables) = builder.run_tables();
     let mut bytes = Vec::new();
     check.typelib(id, &mut bytes).unwrap();
     let mut from_source = variances(&tables, id);
 
     let typelib = Typelib::read(&bytes).unwrap();
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.unit(&std).unwrap();
     let id = builder.typelib(&typelib).unwrap();
-    let (_, tables) = builder.check_tables();
+    let (_, tables) = builder.run_tables();
     let from_typelib = variances(&tables, id);
 
     // The private method isn't on the surface
@@ -957,14 +962,14 @@ fn piped() -> [Vec<u8>; 4] {
         ),
     ];
     let std = compile("pub @class Int\n", Mode::Module { name: "std".into() });
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.typelibs(true).pipes(PIPES[0], PIPES[1]);
     builder.unit(&std).unwrap();
     let ids: Vec<_> = units
         .iter()
         .map(|unit| builder.unit(unit).unwrap())
         .collect();
-    let check = builder.check();
+    let check = builder.run();
     let typelibs: Vec<_> = (ids.into_iter())
         .map(|id| {
             let mut bytes = Vec::new();
@@ -991,21 +996,28 @@ fn records_pipes() {
 }
 
 #[test]
-fn imports_nominees() {
+fn missing_follows_strand_to_its_nominees() {
     let [strand, proc, dep, other] = piped();
-    let imports = |bytes: &[u8]| {
-        let typelib = Typelib::read(bytes).unwrap();
-        typelib
-            .imports()
-            .into_iter()
-            .map(str::to_owned)
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(imports(&strand), ["proc"]);
-    assert_eq!(imports(&dep), ["proc", "std", "strand"]);
-    assert!(imports(&proc).is_empty());
-    assert_eq!(imports(&other), ["std"]);
-    // Nominating `strand`'s own types adds no import
+    let [strand, proc, dep, other] =
+        [&strand, &proc, &dep, &other].map(|bytes| Typelib::read(bytes).unwrap());
+    let std = compile("pub @class Int\n", Mode::Module { name: "std".into() });
+    let mut check = Check::new();
+    check.pipes(PIPES[0], PIPES[1]);
+    let id = check.typelib(&dep).unwrap();
+    assert_eq!(check.depends(id), ["std", "strand"]);
+    assert_eq!(check.missing(), ["std", "strand"]);
+    // The nominees' module is needed once `strand` is there
+    let id = check.typelib(&strand).unwrap();
+    assert_eq!(check.depends(id), ["proc", "std"]);
+    assert_eq!(check.missing(), ["proc", "std"]);
+    // A nominee's own module needs no nominee
+    let id = check.typelib(&proc).unwrap();
+    assert_eq!(check.depends(id), ["std"]);
+    check.unit(&std).unwrap();
+    assert!(check.missing().is_empty());
+    let id = check.typelib(&other).unwrap();
+    assert_eq!(check.depends(id), ["std"]);
+    // Nominating `strand`'s own types needs no other module
     let unpiped = write(
         &compile(
             STRAND,
@@ -1016,20 +1028,22 @@ fn imports_nominees() {
         &[],
     )
     .unwrap();
-    assert!(imports(&unpiped).is_empty());
+    let mut check = Check::new();
+    let id = check.typelib(&Typelib::read(&unpiped).unwrap()).unwrap();
+    assert_eq!(check.depends(id), ["std"]);
 }
 
 #[test]
 fn rejects_other_pipes() {
     let [strand, ..] = piped();
     let typelib = Typelib::read(&strand).unwrap();
-    let error = Builder::new().typelib(&typelib).unwrap_err();
+    let error = Check::new().typelib(&typelib).unwrap_err();
     assert!(matches!(error.kind(), ErrorKind::Pipes));
     assert_eq!(
         error.to_string(),
         "typelib of `strand` was written with other pipe types"
     );
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.pipes(PIPES[0], PIPES[1]);
     builder.typelib(&typelib).unwrap();
 }
@@ -1039,7 +1053,7 @@ fn rejects_other_pipes() {
 fn pipes_before_typelibs() {
     let bytes = typelib();
     let typelib = Typelib::read(&bytes).unwrap();
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.typelib(&typelib).unwrap();
     builder.pipes(PIPES[0], PIPES[1]);
 }
@@ -1049,12 +1063,12 @@ fn recorded_nominee_not_found() {
     let [strand, ..] = piped();
     let typelib = Typelib::read(&strand).unwrap();
     let std = compile("pub @class Int\n", Mode::Module { name: "std".into() });
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.pipes(PIPES[0], PIPES[1]);
     builder.unit(&std).unwrap();
     builder.typelib(&typelib).unwrap();
     // The minimal `std` misses what the checker requires, which it reports too
-    let messages: Vec<_> = (builder.check().diagnostics())
+    let messages: Vec<_> = (builder.run().diagnostics())
         .map(|diag| diag.message().to_string())
         .filter(|message| message.ends_with("not found"))
         .collect();
@@ -1079,14 +1093,14 @@ fn missing_nominee() {
         },
     );
     let std = compile("pub @class Int\n", Mode::Module { name: "std".into() });
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.typelibs(true).pipes(PIPES[0], PIPES[1]);
     builder.unit(&std).unwrap();
     let ids = [
         builder.unit(&strand).unwrap(),
         builder.unit(&other).unwrap(),
     ];
-    let check = builder.check();
+    let check = builder.run();
     let error = check.typelib(ids[0], &mut Vec::new()).unwrap_err();
     assert!(matches!(error.kind(), ErrorKind::MissingImport));
     assert_eq!(

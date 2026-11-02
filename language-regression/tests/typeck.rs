@@ -17,7 +17,7 @@
 //! Only annotated spans are asserted.
 //!
 //! Each case is then checked again with every module supplied by its typelib (see
-//! [`typeck::Check::typelib`]), as a library the interpreter bundles is.
+//! [`typeck::Checked::typelib`]), as a library the interpreter bundles is.
 //! Everything reported for the script must be the same, and what is reported for the
 //! modules must be what was before, less what came of checking their bodies.
 //!
@@ -199,13 +199,16 @@ fn sources(case: &Path, settings: &Settings) -> Vec<Source> {
             continue;
         }
         let (path, file) = repo_stub(&name);
-        let source = Source::read(path, file, Some(name), false);
+        let source = Source::read(path, file, Some(name.clone()), false);
         let mut config = Config::new();
-        config.document(true);
+        config
+            .typecheck(true)
+            .mode(Mode::Module { name: name.into() });
         let unit = config.unit(&source.path, source.text());
+        let mut checker = typeck::Check::new();
+        let id = checker.unit(&unit).expect("repository stubs compile");
         queue.extend(
-            unit.imports()
-                .into_iter()
+            (checker.depends(id).into_iter())
                 .filter(|module| *module != "std" && find_repo_stub(module).is_some())
                 .map(str::to_owned),
         );
@@ -290,8 +293,8 @@ impl Case {
             .collect()
     }
 
-    pub fn builder(&self) -> typeck::Builder<'_, '_> {
-        let mut builder = typeck::Builder::new();
+    pub fn builder(&self) -> typeck::Check<'_> {
+        let mut builder = typeck::Check::new();
         builder.analysis(true);
         if let Some([(sender_module, sender), (receiver_module, receiver)]) = &self.settings.pipes {
             builder.pipes((sender_module, sender), (receiver_module, receiver));
@@ -326,7 +329,7 @@ pub fn validate(case: &Case) {
             Err(error) => panic!("{}: {error}", sources[index].file),
         }
     }
-    let check = checker.check();
+    let check = checker.run();
     // The sealed database must never make the solver panic, whatever errors it holds
     check.smoke();
 
@@ -349,8 +352,9 @@ pub fn validate(case: &Case) {
     }
 
     let mut failures = String::new();
+    let validated = (check.diagnostics()).all(|diag| diag.severity() != Severity::Error);
     if let Some(expected) = settings.validated
-        && check.validated() != expected
+        && validated != expected
     {
         let _ = write!(
             failures,
@@ -405,7 +409,7 @@ fn from_typelibs(
     sources: &[Source],
     units: &[dolang::compile::Unit<'_>],
     settings: &Settings,
-    check: &typeck::Check,
+    check: &typeck::Checked,
     ids: &[Option<UnitId>],
     failures: &mut String,
 ) {
@@ -485,7 +489,7 @@ fn from_typelibs(
                 .map(|bytes| typeck::Typelib::read(bytes).unwrap())
         })
         .collect();
-    let mut checker = typeck::Builder::new();
+    let mut checker = typeck::Check::new();
     checker.analysis(true);
     if let Some([(sender_module, sender), (receiver_module, receiver)]) = &settings.pipes {
         checker.pipes((sender_module, sender), (receiver_module, receiver));
@@ -500,7 +504,7 @@ fn from_typelibs(
         };
         assert_eq!(Some(id.unwrap()), ids[index], "units are added in order");
     }
-    let other = checker.check();
+    let other = checker.run();
     other.smoke();
 
     let script = |unit: Option<UnitId>| {
@@ -511,7 +515,7 @@ fn from_typelibs(
     // What is reported in the script, then in the modules. A typelib keeps neither
     // a reference's span nor how it is written, so what is reported in a module is
     // compared without spans or quoted names.
-    let diagnostics = |check: &typeck::Check| -> [Vec<String>; 2] {
+    let diagnostics = |check: &typeck::Checked| -> [Vec<String>; 2] {
         let mut split = [Vec::new(), Vec::new()];
         for diag in check.diagnostics() {
             let module = !script(diag.span().unit());
@@ -549,7 +553,7 @@ fn from_typelibs(
         }
         split
     };
-    let undecided = |check: &typeck::Check| -> [Vec<String>; 2] {
+    let undecided = |check: &typeck::Checked| -> [Vec<String>; 2] {
         let mut split = [Vec::new(), Vec::new()];
         for (reason, span) in check.undecided() {
             split[usize::from(!script(span.unit()))].push(format!("{reason} {span:?}"));
@@ -589,7 +593,7 @@ fn from_typelibs(
         let Some(id) = ids[index].filter(|_| source.module.is_none()) else {
             continue;
         };
-        let judgments = |check: &typeck::Check| -> Vec<String> {
+        let judgments = |check: &typeck::Checked| -> Vec<String> {
             judgments(check, id, source.text())
                 .into_iter()
                 .map(|judgment| {
@@ -621,7 +625,7 @@ struct Judgment {
 
 /// What the check's analysis concluded about `unit`'s spans, as annotations name
 /// it, in source order
-fn judgments(check: &typeck::Check, unit: UnitId, text: &str) -> Vec<Judgment> {
+fn judgments(check: &typeck::Checked, unit: UnitId, text: &str) -> Vec<Judgment> {
     use typeck::{Role, Style};
 
     let analysis = check
@@ -695,7 +699,7 @@ fn byte(text: &str, pos: Pos) -> u32 {
 }
 
 /// Check a case file's judgment annotations.
-fn judge(source: &Source, id: Option<UnitId>, check: &typeck::Check, failures: &mut String) {
+fn judge(source: &Source, id: Option<UnitId>, check: &typeck::Checked, failures: &mut String) {
     let lines: Vec<&str> = source.text().split('\n').collect();
     let annotations = annotate::parse(&source.path, &lines);
     if annotations.is_empty() {

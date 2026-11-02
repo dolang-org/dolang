@@ -1015,11 +1015,12 @@ Lowering interns in a fork of its own, which is shared as the unit's layer, and
 each run is a rayon task with a fork of the layer. A run's inherited types are
 copied from its parent's fork. Once every unit is checked, each run's facts are
 copied, in unit and run order, into a standalone results database that the
-`Check` keeps, through one `Copies` memo, which keeps each copied declaration's
-original for rendering. The copied facts are sorted by span and role, and those
-at the same span and role are joined: types by least upper bound, and
-unassigned if either is. Problems and undecided checks are gathered in run order
-and stably sorted by span, so nothing depends on which run finishes first.
+`Checked` keeps, through one `Copies` memo, which keeps each copied
+declaration's original for rendering. The copied facts are sorted by span and
+role, and those at the same span and role are joined: types by least upper
+bound, and unassigned if either is. Problems and undecided checks are gathered
+in run order and stably sorted by span, so nothing depends on which run finishes
+first.
 
 Checking rules (`flow/rule.rs`) are solved by a fresh solver on each run, and
 only reified types leave it:
@@ -1212,28 +1213,36 @@ fits truncates the log back to its length before the trial. The
 pass reports each problem once per span: contradicted rules,
 values that don't fit a local's annotation or a function's declared result, and
 reads that may be unassigned. Checks the solver can't decide join
-`Check::undecided`.
+`Checked::undecided`.
 
 ## Checking units and diagnostic locations
 
-`typeck::Builder` collects the units to check together. A unit must have
-compiled without failure and with `Config::typecheck`, so that elaboration and
-type resolution have run; anything else is rejected. `Config::typecheck` runs
-type resolution without building the document index. Adding a unit returns its
+`typeck::Check` collects the units to check together. A unit must have compiled
+without failure and with `Config::typecheck`, so that elaboration and type
+resolution have run; anything else is rejected. `Config::typecheck` runs type
+resolution without building the document index. Adding a unit returns its
 `UnitId`, which is meaningful only within that check; paths do not identify
-units. A module name may be added only once. `Builder::check` consumes the
-builder and returns a `Check`, which yields the type checker's diagnostics. The
-units' own diagnostics stay with the units. A `Check` borrows none of its units:
-it keeps each unit's name and path, and its diagnostics and undecided checks
-with their spans already resolved to lines and columns.
+units. A module name may be added only once. Adding a source unit collects its
+shard then, so a check knows what each unit needs: `Check::depends` lists the
+modules of its shard's module table, the modules it imports and the prelude
+modules it uses, with `std`, whose designated types every unit has, and for
+`strand`, the modules of the nominated pipe types. `Check::missing` lists what
+the units need that none of them is. A driver adds the units it starts from,
+adds one for each missing module it can find, and repeats until every missing
+module is one it already looked for; the check then reports imports of those as
+not found. `Check::run` consumes the check and returns a `Checked`, which yields
+the type checker's diagnostics. The units' own diagnostics stay with the units.
+A `Checked` borrows none of its units: it keeps each unit's name and path, and
+its diagnostics and undecided checks with their spans already resolved to lines
+and columns.
 
-A typelib is written from a check. With `Builder::typelibs`, the check keeps the
+A typelib is written from a check. With `Check::typelibs`, the check keeps the
 typelib of each module it checks from source, encoded from the module's shard
-once it is elaborated, and `Check::typelib` writes it. Its spans are written as
-one stream, in the order its content holds them, each relative to the one before
-it: a name on the same line is a gap from where the last span ended, a span on
-another line a count of lines and a column relative to the first span on the
-last one's line, and a name's length is left out where it is the name's. A
+once it is elaborated, and `Checked::typelib` writes it. Its spans are written
+as one stream, in the order its content holds them, each relative to the one
+before it: a name on the same line is a gap from where the last span ended, a
+span on another line a count of lines and a column relative to the first span on
+the last one's line, and a name's length is left out where it is the name's. A
 module importing a module the check doesn't have has none, since its typelib
 would hold an interface elaborated against the missing module. A typelib has a
 serialization form of its own, converted to and from the shard: encoding keeps
@@ -1243,10 +1252,10 @@ it holds. The surface leaves out private fields, which can decide a class's
 variance, so the typelib records what elaboration concluded of each binder's
 variance as side facts, and a check that loads it takes them as given. A typelib
 whose module is or imports `strand` also records the pipe types the check
-nominated (see `Builder::pipes`), since those facts can depend on them: a
-builder nominating others rejects it, and a check without a recorded nominee's
-module reports it as not found. Reading one gives a shard and the facts it
-records, which are linked as any unit's are.
+nominated (see `Check::pipes`), since those facts can depend on them: a builder
+nominating others rejects it, and a check without a recorded nominee's module
+reports it as not found. Reading one gives a shard and the facts it records,
+which are linked as any unit's are.
 
 A public `diag::Span` is a line, a column and a length, packed in a `u64`, with
 the column and length counted in characters (Unicode scalar values, a tab as
@@ -1280,7 +1289,7 @@ caller-selected environment on the builder.
 
 ## Elaborating declarations
 
-`Builder::check` allocates each unit in the database, in the order units were
+`Check::run` allocates each unit in the database, in the order units were
 added, then runs the passes in `typeck/elab` over common tables and the frozen
 syntax trees. The tables refer to declaration nodes in place. Passes visit units
 in a fixed order, modules by name and then scripts by path, so declarations and
@@ -1325,7 +1334,7 @@ binary search over the ranges' bases. The database declarations of a function's
 signatures other than the one its own ID holds follow its unit's declarations
 in the same range.
 
-`Check` drops the tables. An analysis reports what they concluded about each
+`Checked` drops the tables. An analysis reports what they concluded about each
 span of a unit: what a type name refers to, the type written there and each
 declaration's type. The type-checking tests in
 `language-regression/tests/typeck` assert these with annotations in fixture
@@ -1368,7 +1377,7 @@ the classes that literal and constructor expressions produce, `Float`, `Bin`,
 `Array`, `Dict`, `Tuple`, `Record`, `Range` and the `Fmt` classes, which the
 check tables record without the database needing them, except `Tuple`, which
 `Entries` builds. A checked `strand` module's opaque `PipeSender` and
-`PipeReceiver` are designated too: each stands for the class the `Builder`
+`PipeReceiver` are designated too: each stands for the class the `Check`
 nominates, resolved as if the placeholder imported it, and is populated as a
 transparent alias of that class applied to its binders, whose variance it takes.
 A nominee in no checked module leaves the placeholder `Unknown`; one that isn't
@@ -1437,7 +1446,7 @@ large to represent. Each erroneous site, whenever it was diagnosed, is interned
 as `Unknown` of the kind its position requires, and an alias on a cycle gets an
 `Unknown` body, so the sealed database keeps every structural invariant the
 solver assumes. It is sealed but not validated until well-formedness is
-checked. `Check`'s hidden `smoke` method relates every type the database
+checked. `Checked`'s hidden `smoke` method relates every type the database
 holds to itself and to top, to show that the solver judges it without
 panicking. An analysis's declaration and annotation roles report what was
 interned, and its reference role what each written name refers to.
@@ -1510,9 +1519,5 @@ are local, as well-formedness's are. An instance `(call)`
 in a class or protocol that doesn't reach `Func` is warned of, since the solver
 won't pass its instances as functions.
 
-`Check::validated` holds when the checker reported no errors and decided every
-check, except those that need a form it doesn't support yet, which are
-provisionally accepted. Otherwise the result is partial: usable for diagnostics
-and tooling, but checking code against it proves nothing. Undecided checks are
-not diagnosed until a strictness policy decides how, but a `wf` judgment
-reports each.
+A check the checker can't decide is a warning in a strict unit; in a
+non-strict unit it isn't diagnosed, but a `wf` judgment reports each.

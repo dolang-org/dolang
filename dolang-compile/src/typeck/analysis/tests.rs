@@ -5,7 +5,7 @@ use crate::{
     Config, Mode, UnitId,
     diag::{Pos, Span},
     typeck::{
-        Builder, Role, Style,
+        Check, Role, Style,
         r#type::{Database, Labels},
     },
 };
@@ -124,14 +124,14 @@ fn checked() {
     config.typecheck(true);
     let unit = config.unit(Path::new("test.dol"), source);
     assert!(!unit.failed);
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.unit(&unit).unwrap();
-    assert!(builder.check().analysis().is_none());
+    assert!(builder.run().analysis().is_none());
 
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.analysis(true);
     let id = builder.unit(&unit).unwrap();
-    let analysis = builder.check().into_analysis().unwrap();
+    let analysis = builder.run().into_analysis().unwrap();
     let judged = |offset: usize, role| {
         let node = analysis
             .at(id, unit.locate(offset..offset).start())
@@ -173,10 +173,10 @@ def run a @ A b @ B
     config.typecheck(true);
     let unit = config.unit(Path::new("test.dol"), source);
     assert!(!unit.failed);
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.analysis(true);
     let id = builder.unit(&unit).unwrap();
-    let analysis = builder.check().into_analysis().unwrap();
+    let analysis = builder.run().into_analysis().unwrap();
     let judged = |at: &str, role| {
         let offset = source.find(at).unwrap();
         let node = analysis
@@ -212,11 +212,11 @@ fn items() {
     config.typecheck(true);
     let unit = config.unit(Path::new("test.dol"), script);
     assert!(!module.failed && !unit.failed);
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.analysis(true);
     builder.unit(&module).unwrap();
     let id = builder.unit(&unit).unwrap();
-    let analysis = builder.check().into_analysis().unwrap();
+    let analysis = builder.run().into_analysis().unwrap();
     // A path through a module names its item by the module's own name
     let offset = script.find("m.f").unwrap();
     let node = analysis
@@ -235,10 +235,10 @@ fn after_non_ascii() {
     config.typecheck(true);
     let unit = config.unit(Path::new("test.dol"), source);
     assert!(!unit.failed);
-    let mut builder = Builder::new();
+    let mut builder = Check::new();
     builder.analysis(true);
     let id = builder.unit(&unit).unwrap();
-    let analysis = builder.check().into_analysis().unwrap();
+    let analysis = builder.run().into_analysis().unwrap();
     let node = analysis.at(id, Pos::new(1, 15)).unwrap();
     assert!(
         node.judgments()

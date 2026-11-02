@@ -3,7 +3,6 @@ import compile std
     - assert
     - assert_eq
     - assert_ne
-    - assert_not
     - assert_throws
     - assert_type
     - test
@@ -1218,9 +1217,8 @@ def check_accepts_well_typed_units()
   # Any iterable of units will do
   let lib main = checked_units $source
   let result = compile.check (lib, main)
-  assert_type $compile.Check $result
+  assert_type $compile.Checked $result
   assert_eq $result.diagnostics []
-  assert $result.validated
   assert_type $Str $result.undecided()
 
 #[test]
@@ -1233,7 +1231,7 @@ def check_writes_typelibs()
   let result = compile.check [lib, main] typelibs: true
   let typelib = compile.Typelib $result.typelib(lib)
   assert_eq $typelib.module a
-  assert $compile.check([typelib, main]).validated
+  assert_eq $compile.check([typelib, main]).diagnostics []
   # A script has none
   assert_throws $std.CompileError do result.typelib $main
   let other = compile.compile "other.dol" "" module: other typecheck: true
@@ -1266,7 +1264,6 @@ def check_reports_diagnostics_across_units()
       - @Absent
     pub let absent @ Absent = nil
   let result = compile.check (checked_units source)
-  assert_not $result.validated
   assert_eq $result.diagnostics.len 1
   let diag = result.diagnostics[0]
   assert_eq $diag.severity :ERROR:
@@ -1292,6 +1289,48 @@ def check_refuses_units_it_cannot_check()
   let emitted = compile.compile "emitted.dol" "" typecheck: true
   emitted.emit()
   assert_throws $std.StateError do compile.check [emitted]
+
+#[test]
+def check_names_missing_modules()
+  let main = compile.compile "user.dol" "import a\nimport b.c\n" typecheck: true
+  let check = compile.Check typelibs: true
+  check.add $main
+  assert_eq [...check.missing()] ["a", "b.c", "std"]
+  # A module added isn't missing
+  let lib = compile.compile "a.dol" "import b.c\n" module: a typecheck: true
+  check.add $lib
+  assert_eq [...check.missing()] ["b.c", "std"]
+  # `strand`'s pipes are `proc`'s
+  let strand = compile.compile "strand.dol" "" module: strand typecheck: true
+  check.add $strand
+  assert_eq [...check.missing()] ["b.c", "proc", "std"]
+  # A typelib needs what its module did
+  let user = compile.compile "user.dol" "import a\n" module: user typecheck: true
+  check.add $user
+  let typelib = compile.Typelib $check.run().typelib(user)
+  let check = compile.Check()
+  check.add $typelib
+  assert_eq [...check.missing()] ["a", "std"]
+
+#[test]
+def check_add_refuses_units_it_cannot_check()
+  let check = compile.Check()
+  let a = compile.compile "a.dol" "" module: a typecheck: true
+  check.add $a
+  let again = compile.compile "again.dol" "" module: a typecheck: true
+  assert_throws $std.ValueError do check.add $again
+  let plain = compile.compile "plain.dol" "let x = 1\n"
+  assert_throws $std.ValueError do check.add $plain
+  let emitted = compile.compile "emitted.dol" "" typecheck: true
+  emitted.emit()
+  assert_throws $std.StateError do check.add $emitted
+  # A unit that failed to compile needs nothing, and its module isn't missing
+  let broken = compile.compile "b.dol" "import c\nlet = \n" module: b typecheck: true
+  check.add $broken
+  assert_eq [...check.missing()] ["std"]
+  assert_type $compile.Checked $check.run()
+  # Checking leaves the units usable
+  assert_type $Bin $a.emit()
 
 #[test]
 def prelude_array_read_view()

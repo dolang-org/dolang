@@ -2,7 +2,7 @@ use std::num::NonZeroU32;
 
 /// Identifies a unit among those checked together.
 ///
-/// Obtained from [`typeck::Builder::unit`](crate::typeck::Builder::unit); an ID
+/// Obtained from [`typeck::Check::unit`](crate::typeck::Check::unit); an ID
 /// is meaningful only for the check that assigned it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct UnitId(NonZeroU32);
