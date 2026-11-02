@@ -72,17 +72,26 @@ impl<'a> Typelib<'a> {
         self.shard.info.path
     }
 
-    /// The modules the module imports, each once, in order. A check finds them
-    /// among its units, and reports a module it doesn't have as not found.
+    /// The modules the module imports, and those of the pipe types its recorded
+    /// nominations name (see [`Builder::pipes`]), each once, in order. A check
+    /// finds them among its units, and reports a module it doesn't have as not
+    /// found.
     pub fn imports(&self) -> Vec<&'a str> {
-        let strings = &self.shard.strings;
-        let mut imports: Vec<&'a str> = (self.shard.modules.iter())
-            .map(|module| match &strings[module.name.index()] {
-                Cow::Borrowed(name) => *name,
-                Cow::Owned(_) => unreachable!("a typelib's strings borrow its bytes"),
-            })
+        let shard = &self.shard;
+        let text = |id: elab::surface::StrId| match &shard.strings[id.index()] {
+            Cow::Borrowed(name) => *name,
+            Cow::Owned(_) => unreachable!("a typelib's strings borrow its bytes"),
+        };
+        let module = self.module();
+        let nominees = (shard.nominations.iter().flatten())
+            .map(|&(nominee, _)| text(nominee))
+            .filter(|&nominee| nominee != module);
+        let mut imports: Vec<&'a str> = (shard.modules.iter())
+            .map(|module| text(module.name))
+            .chain(nominees)
             .collect();
         imports.sort_unstable();
+        imports.dedup();
         imports
     }
 }

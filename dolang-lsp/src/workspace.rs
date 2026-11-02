@@ -791,10 +791,10 @@ fn closure(found: &HashMap<String, Found>, member: &Member) -> Deps {
     deps.into()
 }
 
-/// What a check of `unit` needs first: its imports, plus `proc` for the pipe
-/// types `strand` stands for.
+/// What a check of `unit` needs first: its imports, plus `std`, which holds the
+/// types the checker designates, such as those of literals.
 fn imports<'a>(unit: &'a Unit<'_>) -> impl Iterator<Item = &'a str> {
-    unit.imports().into_iter().chain(["proc"])
+    unit.imports().into_iter().chain(["std"])
 }
 
 /// The bundled typelibs, decoded as checks first need them, for every

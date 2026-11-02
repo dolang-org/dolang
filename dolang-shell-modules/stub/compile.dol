@@ -212,8 +212,10 @@ pub class Typelib
   pub def path self -> Str
     ...
 
-  # Returns the modules the module imports or its declarations name, each once, in
-  # order. [`check`](compile.check) reports those it isn't given as not found.
+  # Returns the modules the module imports or its declarations name, and those
+  # of the pipe types its check nominated for `strand`'s placeholders, each
+  # once, in order. [`check`](compile.check) reports those it isn't given as not
+  # found.
   pub def imports self -> Iterable[Str]
     ...
 
