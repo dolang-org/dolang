@@ -11,53 +11,43 @@ pub def inferred n @ Int text @ Str
   #       ^~~~~: flow std.Fmt[std.Int | std.Str, {Unknown, name: Unknown}]
   mixed.format 1 name: "a"
   mixed.format name: "a"
-  # error: expected `{Unknown, name: Unknown}`, found `{name: "a"}`
+  # error: this call is missing an argument
   #   --> main.dol:LL:LL
   #    |
   # LL |   mixed.format name: "a"
-  #    |                      ^^^
-  #    |
-  #    = note: `{name: "a"}` may be missing positional `Unknown`
+  #    |   ^^^^^^^^^^^^^^^^^^^^^^
   mixed.format 1 typo: "a"
-  # error: expected `{Unknown, name: Unknown}`, found `{1, typo: "a"}`
+  # error: this call is missing an argument
   #   --> main.dol:LL:LL
   #    |
   # LL |   mixed.format 1 typo: "a"
-  #    |                ^
-  #    |
-  #    = note: `{1, typo: "a"}` may be missing `name: Unknown`
+  #    |   ^^^^^^^^^^^^^^^^^^^^^^^^
   mixed.format 1 name: "a" extra: true
-  # error: expected `{Unknown, name: Unknown}`, found `{1, name: "a", extra: true}`
+  # error: the callee takes no such argument
   #   --> main.dol:LL:LL
   #    |
   # LL |   mixed.format 1 name: "a" extra: true
-  #    |                ^
-  #    |
-  #    = note: `{Unknown, name: Unknown}` doesn't admit `extra: true`
+  #    |                                   ^^^^
   let empty = t"literal"
   let _ = empty
   #       ^~~~~: flow std.Fmt[Never, {}]
   empty.format()
   empty.format 1
-  # error: expected `{}`, found `{1}`
+  # error: the callee takes no such argument
   #   --> main.dol:LL:LL
   #    |
   # LL |   empty.format 1
   #    |                ^
-  #    |
-  #    = note: `{}` doesn't admit positional `1`
   let nested = t"nested $mixed ${#outer}"
   let _ = nested
   #       ^~~~~~: flow std.Fmt[std.Fmt[std.Int | std.Str, {Unknown, name: Unknown}], {outer: Unknown}]
   nested.format outer: 1
   nested.format outer: 1 name: "nested"
-  # error: expected `{outer: Unknown}`, found `{outer: 1, name: "nested"}`
+  # error: the callee takes no such argument
   #   --> main.dol:LL:LL
   #    |
   # LL |   nested.format outer: 1 name: "nested"
-  #    |                        ^
-  #    |
-  #    = note: `{outer: Unknown}` doesn't admit `name: "nested"`
+  #    |                                ^^^^^^^^
   let reordered = t"${#1} ${#0} ${#1}"
   let _ = reordered
   #       ^~~~~~~~~: flow std.Fmt[Never, {Unknown, Unknown}]
@@ -71,13 +61,11 @@ pub def inferred n @ Int text @ Str
   let _ = lone
   #       ^~~~: flow std.Fmt[Never, {(1): Unknown}]
   lone.format 1
-  # error: expected `{(1): Unknown}`, found `{1}`
+  # error: the callee takes no such argument
   #   --> main.dol:LL:LL
   #    |
   # LL |   lone.format 1
   #    |               ^
-  #    |
-  #    = note: `{(1): Unknown}` doesn't admit positional `1`
   let gap = t"${#0} ${#2} ${#2}"
   # warning: format hole `#2` follows missing `#1`; it is an integer key, not a positional item
   #   --> main.dol:LL:LL
@@ -112,14 +100,16 @@ pub def contextual n @ Int
   let explicit @ Fmt[Int, {Int, name: Str}] = t"$n ${#0} ${#name}"
   explicit.format 1 name: "ok"
   explicit.format "bad" name: 1
-  # error: expected `{std.Int, name: std.Str}`, found `{"bad", name: 1}`
+  # error: expected `std.Int`, found `"bad"`
   #   --> main.dol:LL:LL
   #    |
   # LL |   explicit.format "bad" name: 1
   #    |                   ^^^^^
+  # error: expected `std.Str`, found `1`
+  #   --> main.dol:LL:LL
   #    |
-  #    = note: `1` does not fit `std.Str`
-  #    = note: `"bad"` does not fit `std.Int`
+  # LL |   explicit.format "bad" name: 1
+  #    |                               ^
   let result = typed t"$n ${#0} ${#name}"
   let _ = result
   #       ^~~~~~: flow std.Fmt[std.Int, {std.Int, name: std.Str}]
@@ -158,21 +148,17 @@ pub def database conn @ Connection
   #    |                      ^^^
   conn.execute t"SELECT ${#id}" id: 2
   conn.execute t"SELECT ${#id}" typo: 2
-  # error: expected `{id: Unknown}`, found `{typo: 2}`
+  # error: this call is missing an argument
   #   --> main.dol:LL:LL
   #    |
   # LL |   conn.execute t"SELECT ${#id}" typo: 2
-  #    |                                       ^
-  #    |
-  #    = note: `{typo: 2}` may be missing `id: Unknown`
+  #    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   conn.execute t"SELECT ${#id}" id: [1]
-  # error: expected `{*sqlite.SqlValue, **sqlite.SqlValue}`, found `{id: [std.Int]}`
+  # error: expected `sqlite.SqlValue`, found `[std.Int]`
   #   --> main.dol:LL:LL
   #    |
   # LL |   conn.execute t"SELECT ${#id}" id: [1]
   #    |                                     ^^^
-  #    |
-  #    = note: `[std.Int]` does not fit `sqlite.SqlValue`
   conn.prepare t"SELECT ${#id}" do |prepared|
     prepared.execute id: 1
     prepared.query typo: 1

@@ -1,7 +1,9 @@
 # dolang: strict
-# Items of a key that several expected literals share fill them in order, as
-# positional items do, one literal each. A parameter takes the first item of its
-# key, and a rest admitting the key takes the later ones.
+# Parameters bind by count: items of a key that several literals share fill
+# them in order, as positional items do, one literal each. A rest binds a
+# record, so the items it takes follow data schema rules instead, and may skip
+# an optional literal. A parameter takes the first item of its key, and a rest
+# admitting the key takes the later ones.
 
 pub @let Opts = $
   ?image: Str
@@ -24,11 +26,6 @@ pub def ordered()
   two image: a
   two image: a image: 2
   two image: 1
-  # error: expected `std.Str`, found `1`
-  #   --> m.dol:LL:LL
-  #    |
-  # LL |   two image: 1
-  #    |              ^
   two image: 2 image: a
   # error: expected `std.Str`, found `2`
   #   --> m.dol:LL:LL
@@ -61,6 +58,18 @@ pub def missing()
 #    |
 # LL |   both image: a
 #    |   ^^^^^^^^^^^^^
+
+def shared :image @ Str = nil ..._rest @ {*image: Int}
+  ...
+
+pub def taken()
+  shared image: a image: 2 image: 3
+  shared image: 1
+# error: expected `std.Str`, found `1`
+#   --> m.dol:LL:LL
+#    |
+# LL |   shared image: 1
+#    |                 ^
 
 def absorb :image @ Str = nil **_rest @ Int
   ...

@@ -15,8 +15,8 @@ use rustc_hash::{FxBuildHasher, FxHashMap};
 use super::{
     Alternatives, Bases, Bounds, Constructor, DeclId, Dependency, Environment, EnvironmentId,
     GenericMember, InferVarId, Issue, Lookup, ObligationId, ObligationLayer, Partner, Relation,
-    Residual, Root, Scope, ScopeId, Signature, Skolem, SkolemId, Solver, State, Status, Step, Term,
-    TypeId, Variable, VariableLayer, VariableState,
+    Residual, Rest, Root, Scope, ScopeId, Signature, Skolem, SkolemId, Solver, State, Status, Step,
+    Term, TypeId, Variable, VariableLayer, VariableState,
 };
 
 /// A work budget, shared by a solver and the solvers nested in it. Each unit of
@@ -186,6 +186,7 @@ impl<'db> Solver<'db> {
             }),
             instantiations: RefCell::default(),
             skolemizations: RefCell::default(),
+            inversions: RefCell::default(),
             skolems: MonoVec::new(),
             scopes: MonoVec::new(),
             relations: MonoVec::new(),
@@ -753,6 +754,32 @@ impl<'db> Solver<'db> {
             .or_else(|| self.open_parent()?.skolemization_of(obligation))
     }
 
+    /// The environment of variables an obligation's inversion of a mapping in
+    /// `lanes` created, if it has one
+    pub(super) fn inversion_of(
+        &self,
+        obligation: ObligationId,
+        lanes: Rest,
+    ) -> Option<EnvironmentId> {
+        self.inversions
+            .borrow()
+            .get(&(obligation, lanes))
+            .copied()
+            .or_else(|| self.open_parent()?.inversion_of(obligation, lanes))
+    }
+
+    pub(super) fn record_inversion(
+        &self,
+        obligation: ObligationId,
+        lanes: Rest,
+        environment: EnvironmentId,
+    ) {
+        self.writable();
+        self.inversions
+            .borrow_mut()
+            .insert((obligation, lanes), environment);
+    }
+
     pub(super) fn record_skolemization(
         &self,
         obligation: ObligationId,
@@ -857,6 +884,7 @@ pub(crate) struct Delta {
     dirty: Vec<bool>,
     instantiations: FxHashMap<ObligationId, EnvironmentId>,
     skolemizations: FxHashMap<ObligationId, EnvironmentId>,
+    inversions: FxHashMap<(ObligationId, Rest), EnvironmentId>,
     skolems: MonoVec<Skolem>,
     scopes: MonoVec<Scope>,
     relations: MonoVec<(Relation, bool)>,
@@ -892,6 +920,7 @@ impl<'db> Solver<'db> {
             dirty,
             instantiations,
             skolemizations,
+            inversions,
             skolems,
             scopes,
             relations,
@@ -928,6 +957,7 @@ impl<'db> Solver<'db> {
             dirty: dirty.into_inner(),
             instantiations: instantiations.into_inner(),
             skolemizations: skolemizations.into_inner(),
+            inversions: inversions.into_inner(),
             skolems,
             scopes,
             relations,
@@ -957,6 +987,7 @@ impl<'db> Solver<'db> {
             dirty,
             instantiations,
             skolemizations,
+            inversions,
             mut skolems,
             mut scopes,
             mut relations,
@@ -1046,6 +1077,7 @@ impl<'db> Solver<'db> {
         self.roots.extend(roots);
         self.instantiations.get_mut().extend(instantiations);
         self.skolemizations.get_mut().extend(skolemizations);
+        self.inversions.get_mut().extend(inversions);
         self.alternatives.get_mut().extend(alternatives);
         self.blinded.extend(blinded);
         if let Some(caches) = caches {

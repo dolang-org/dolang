@@ -1,0 +1,29 @@
+# dolang: strict
+# An argument the rest's schema doesn't hold is reported where it is passed. An
+# optional parameter before the rest takes the next argument, if there is one.
+
+def f *_xs @ {?Int, *Str}
+  nil
+
+def h _first@Int _second@Int = 0 *_xs @ {?Int, *Str}
+  nil
+
+pub def calls ints @ (*Int) strs @ (*Str)
+  f 1 2
+  # error: expected `std.Str`, found `2`
+  #   --> bad.dol:LL:LL
+  #    |
+  # LL |   f 1 2
+  #    |       ^
+  h 1 ...ints
+  # error: expected `std.Str`, found `std.Int`
+  #   --> bad.dol:LL:LL
+  #    |
+  # LL |   h 1 ...ints
+  #    |          ^^^^
+  h 1 ...strs
+# error: expected `std.Int`, found `std.Str`
+#   --> bad.dol:LL:LL
+#    |
+# LL |   h 1 ...strs
+#    |          ^^^^

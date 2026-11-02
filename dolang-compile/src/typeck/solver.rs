@@ -101,8 +101,9 @@ pub(crate) enum Relation {
 
 /// How the schemas of a subtype relation fill their multiplicities. A parameter
 /// list binds by count: each required item takes one, optional items take what
-/// is left over from left to right, and a repeated item takes the rest. Other
-/// schemas may fill any way that fits.
+/// is left over from left to right, and a repeated item takes the rest. A rest
+/// takes the items left over in its lanes as the values it holds, which fill
+/// its schema any way that fits, as other schemas do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Fill {
     /// Both sides are parameter lists, as when functions relate
@@ -366,6 +367,9 @@ pub(crate) enum Step {
     Item(usize),
     /// A schema item's key
     Key(usize),
+    /// The items a rest takes at a call, as the values it holds, with the index
+    /// of each one's argument
+    Rest(alias::Box<[usize]>),
     /// An item an `AssignItem`'s key selects, by its index among them
     Selected(usize),
     /// A quantified type's body under fresh variables for its binders
@@ -721,6 +725,10 @@ pub(crate) struct Solver<'db> {
     /// The environment of skolems each skolemization created, by the obligation
     /// that skolemized, so reprocessing reuses its skolems
     skolemizations: RefCell<FxHashMap<ObligationId, EnvironmentId>>,
+    /// The environment of item variables each inversion of a mapping created,
+    /// by the obligation that inverted it and the mapping's lanes, so
+    /// reprocessing reuses its variables
+    inversions: RefCell<FxHashMap<(ObligationId, Rest), EnvironmentId>>,
     skolems: MonoVec<Skolem>,
     scopes: MonoVec<Scope>,
     // Intern only the relation and its guard bit; processing state and
@@ -849,6 +857,7 @@ impl<'db> Solver<'db> {
             dirty: RefCell::new(Vec::new()),
             instantiations: RefCell::new(FxHashMap::default()),
             skolemizations: RefCell::new(FxHashMap::default()),
+            inversions: RefCell::new(FxHashMap::default()),
             skolems: MonoVec::new(),
             scopes,
             relations: MonoVec::new(),
@@ -2853,7 +2862,7 @@ impl<'db> Solver<'db> {
         // relate parameter lists. Bounds settle with the actual side filling
         // freely, the stricter reading.
         let fill = match (&step, self.relation(parent)) {
-            (Step::Argument { .. }, _) => Fill::Contents,
+            (Step::Argument { .. } | Step::Rest(_), _) => Fill::Contents,
             (Step::Parameters, _) => Fill::Parameters,
             (Step::Arguments | Step::BoundPropagation | Step::Assignment, _) => Fill::Arguments,
             (_, Relation::Subtype { fill, .. }) => fill,
@@ -4003,7 +4012,8 @@ impl Solver<'_> {
     /// otherwise:
     ///
     /// - A call's arguments are the call's, and an item or key of them is
-    ///   the argument. What it's passed to has no origin of its own.
+    ///   the argument. What it's passed to has no origin of its own. The
+    ///   items a rest takes are the arguments they come from.
     /// - A bound propagation `L <: U` takes the side its partner imposed from
     ///   its partner, and the other from its parent.
     /// - An assignment's child takes its actual side from its parent, a
@@ -4059,6 +4069,28 @@ impl Solver<'_> {
                         .get(*index)
                         .map(|&span| Origin::local(OriginKind::Expression, span)),
                     expected: None,
+                },
+                // A rest's items are the arguments it takes
+                (
+                    Some(Dependency {
+                        step: Step::Rest(items),
+                        ..
+                    }),
+                    Some(Origin {
+                        kind: OriginKind::Arguments(arguments),
+                        site,
+                    }),
+                ) => Provenance {
+                    actual: Some(Origin {
+                        kind: OriginKind::Arguments(
+                            items
+                                .iter()
+                                .filter_map(|&index| arguments.get(index).copied())
+                                .collect(),
+                        ),
+                        site: *site,
+                    }),
+                    expected: carried.expected,
                 },
                 (
                     Some(Dependency {

@@ -911,7 +911,7 @@ fn a_mapping_over_a_rigid_pairs_up_or_stands_for_its_bound() {
 }
 
 #[test]
-fn a_mapping_over_a_pack_being_inferred_pairs_with_one_of_its_pattern() {
+fn a_mapping_over_a_pack_being_inferred_chooses_it_from_the_items() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
     let boxed = nominal(&mut db, "Box", vec![binder(Variance::Covariant)], vec![]);
@@ -938,9 +938,620 @@ fn a_mapping_over_a_pack_being_inferred_pairs_with_one_of_its_pattern() {
     let concrete = takes(&db, schema(&db, &[apply(&db, boxed, &[int])]));
     db.seal();
     assert_eq!(check(&db, generic, generic).status, Status::Proven);
-    // Choosing the pack from the items it maps to is not supported
-    assert!(residual(
-        &check(&db, generic, concrete),
-        Residual::Unsupported("a mapping over a pack being inferred")
-    ));
+    assert_ne!(check(&db, generic, concrete).status, Status::Contradicted);
+    let (_, packs, outcomes) = invert_call(
+        &db,
+        &Gas::default(),
+        generic,
+        &[CallArg::Positional(apply(&db, boxed, &[int]))],
+        None,
+    );
+    assert!(
+        outcomes.iter().all(|o| o.status == Status::Proven),
+        "{outcomes:?}"
+    );
+    assert_eq!(packs, vec![Ok(schema(&db, &[int]))]);
+}
+
+/// An argument of [`invert_call`]
+enum CallArg {
+    Positional(TypeId),
+    Keyword(SymbolId, TypeId),
+    Spread(TypeId),
+}
+
+/// Call `callee` with `args`, giving `result` if any, and default what is
+/// left, those without lower bounds to their upper bounds as a flow driver's
+/// last rounds do. Returns the solver, each schema variable's solution in creation
+/// order, which puts an instantiation's packs first, and the outcomes.
+fn invert_call<'db>(
+    db: &'db Database,
+    gas: &'db Gas,
+    callee: TypeId,
+    args: &[CallArg],
+    result: Option<TypeId>,
+) -> (Solver<'db>, Vec<Result<TypeId, Residual>>, Vec<Outcome>) {
+    let mut s = Solver::new(db, gas);
+    let result = match result {
+        Some(ty) => s.closed(ty),
+        None => s.infer(),
+    };
+    let args: Vec<_> = args
+        .iter()
+        .map(|arg| match *arg {
+            CallArg::Positional(ty) => CallArgument::Positional(s.closed(ty)),
+            CallArg::Keyword(key, ty) => CallArgument::Keyword(key, s.closed(ty)),
+            CallArg::Spread(ty) => CallArgument::Spread(s.closed(ty)),
+        })
+        .collect();
+    let callee = s.closed(callee);
+    constrain_call(&mut s, callee, &args, result, None);
+    s.solve();
+    let mut outcomes = default_all(&mut s);
+    loop {
+        let bare: Vec<_> = s
+            .unresolved()
+            .filter(|&id| s.bounds(id).lower().next().is_none())
+            .collect();
+        let progress = bare
+            .into_iter()
+            .filter(|&id| s.default_upper(id).is_ok())
+            .count();
+        if progress == 0 {
+            break;
+        }
+        outcomes = default_all(&mut s);
+    }
+    let packs = (0..s.variable_count())
+        .map(InferVarId)
+        .filter(|&id| s.variable(id).kind == Kind::Schema)
+        .map(|id| s.reify(Term::Infer(id)))
+        .collect();
+    (s, packs, outcomes)
+}
+
+/// `[*Us] (...pattern) -> result` over one pack, or two with `two`
+fn mapping_callee(db: &Database, rest: Rest, two: bool, pattern: TypeId, result: TypeId) -> TypeId {
+    let packs: Vec<_> = (0..if two { 2 } else { 1 })
+        .map(|slot| pack(db, slot))
+        .collect();
+    let params = items(
+        db,
+        vec![include(Multiplicity::Required, map(db, &packs, pattern))],
+    );
+    quantified(
+        db,
+        packs
+            .iter()
+            .map(|_| bounded(Kind::Schema, Binding::Rest(rest), None))
+            .collect(),
+        db.intern(Type::Function(Function {
+            params,
+            result,
+            input: None,
+            output: None,
+        })),
+    )
+}
+
+#[test]
+fn several_packs_take_one_item_each_per_position() {
+    let mut db = Database::new();
+    let int = nominal(&mut db, "Int", vec![], vec![]);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let covariant = || binder(Variance::Covariant);
+    let pair = nominal(&mut db, "Pair", vec![covariant(), covariant()], vec![]);
+    let pattern = apply(&db, pair, &[reference(&db, 0, 0), reference(&db, 0, 1)]);
+    // [*Us, *Vs] (...Pair[Us, Vs]) -> Value
+    let callee = mapping_callee(&db, Rest::Positional, true, pattern, db.top());
+    let args = [
+        CallArg::Positional(apply(&db, pair, &[int, str])),
+        CallArg::Positional(apply(&db, pair, &[str, int])),
+    ];
+    db.seal();
+    let (_, packs, outcomes) = invert_call(&db, &Gas::default(), callee, &args, None);
+    assert!(
+        outcomes.iter().all(|o| o.status == Status::Proven),
+        "{outcomes:?}"
+    );
+    assert_eq!(
+        packs,
+        vec![Ok(schema(&db, &[int, str])), Ok(schema(&db, &[str, int]))]
+    );
+}
+
+#[test]
+fn a_pack_item_keeps_its_items_key_and_multiplicity() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let sym = nominal(&mut db, "Sym", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Sym, sym);
+    let boxed = nominal(&mut db, "Box", vec![binder(Variance::Covariant)], vec![]);
+    let pattern = apply(&db, boxed, &[reference(&db, 0, 0)]);
+    let keyed_callee = mapping_callee(&db, Rest::Keyed, false, pattern, db.top());
+    let positional_callee = mapping_callee(&db, Rest::Positional, false, pattern, db.top());
+    let a = db.intern_symbol("a");
+    let a_key = db.intern(Type::Literal(Literal::Sym(a)));
+    let spread = items(
+        &db,
+        vec![
+            positional(Multiplicity::Required, apply(&db, boxed, &[int])),
+            positional(Multiplicity::Repeated, apply(&db, boxed, &[str])),
+        ],
+    );
+    let maybe = items(
+        &db,
+        vec![positional(
+            Multiplicity::Optional,
+            apply(&db, boxed, &[int]),
+        )],
+    );
+    db.seal();
+    // [**Ks] (...Box[Ks]) -> Value, called with a: Box[Int]
+    let (_, packs, outcomes) = invert_call(
+        &db,
+        &Gas::default(),
+        keyed_callee,
+        &[CallArg::Keyword(a, apply(&db, boxed, &[int]))],
+        None,
+    );
+    assert!(
+        outcomes.iter().all(|o| o.status == Status::Proven),
+        "{outcomes:?}"
+    );
+    assert_eq!(
+        packs,
+        vec![Ok(items(
+            &db,
+            vec![keyed(Multiplicity::Required, a_key, int)]
+        ))]
+    );
+    // Called with ...(Box[Int], *Box[Str])
+    let (_, packs, outcomes) = invert_call(
+        &db,
+        &Gas::default(),
+        positional_callee,
+        &[CallArg::Spread(spread)],
+        None,
+    );
+    assert!(
+        outcomes.iter().all(|o| o.status == Status::Proven),
+        "{outcomes:?}"
+    );
+    assert_eq!(
+        packs,
+        vec![Ok(items(
+            &db,
+            vec![
+                positional(Multiplicity::Required, int),
+                positional(Multiplicity::Repeated, str),
+            ]
+        ))]
+    );
+    // Called with ...(?Box[Int])
+    let (_, packs, outcomes) = invert_call(
+        &db,
+        &Gas::default(),
+        positional_callee,
+        &[CallArg::Spread(maybe)],
+        None,
+    );
+    assert!(
+        outcomes.iter().all(|o| o.status == Status::Proven),
+        "{outcomes:?}"
+    );
+    assert_eq!(
+        packs,
+        vec![Ok(items(
+            &db,
+            vec![positional(Multiplicity::Optional, int)]
+        ))]
+    );
+}
+
+#[test]
+fn a_pack_item_the_pattern_doesnt_use_falls_back_to_its_bound() {
+    let mut db = Database::new();
+    let int = nominal(&mut db, "Int", vec![], vec![]);
+    let boxed = nominal(&mut db, "Box", vec![binder(Variance::Covariant)], vec![]);
+    let box_int = apply(&db, boxed, &[int]);
+    // [*Us] (...Box[Int]) -> Value
+    let callee = mapping_callee(&db, Rest::Positional, false, box_int, db.top());
+    db.seal();
+    let args = [CallArg::Positional(box_int), CallArg::Positional(box_int)];
+    let (_, packs, outcomes) = invert_call(&db, &Gas::default(), callee, &args, None);
+    assert!(
+        outcomes.iter().all(|o| o.status == Status::Proven),
+        "{outcomes:?}"
+    );
+    assert_eq!(packs, vec![Ok(schema(&db, &[db.top(), db.top()]))]);
+}
+
+#[test]
+fn an_inverted_pack_is_exactly_its_items() {
+    let mut db = Database::new();
+    let int = nominal(&mut db, "Int", vec![], vec![]);
+    let boxed = nominal(&mut db, "Box", vec![binder(Variance::Covariant)], vec![]);
+    let pattern = apply(&db, boxed, &[reference(&db, 0, 0)]);
+    // [*Us] (...Box[Us]) -> (...Us) -> Value
+    let takes = db.intern(Type::Function(Function {
+        params: items(&db, vec![include(Multiplicity::Required, pack(&db, 0))]),
+        result: db.top(),
+        input: None,
+        output: None,
+    }));
+    let callee = mapping_callee(&db, Rest::Positional, false, pattern, takes);
+    let expected = function(&db, &[int, int], db.top());
+    db.seal();
+    // A result taking two items would need a pack of two
+    let (_, _, outcomes) = invert_call(
+        &db,
+        &Gas::default(),
+        callee,
+        &[CallArg::Positional(apply(&db, boxed, &[int]))],
+        Some(expected),
+    );
+    assert!(
+        outcomes.iter().any(|o| o.status == Status::Contradicted),
+        "{outcomes:?}"
+    );
+}
+
+#[test]
+fn a_dynamic_item_gives_a_dynamic_pack() {
+    let mut db = Database::new();
+    let boxed = nominal(&mut db, "Box", vec![binder(Variance::Covariant)], vec![]);
+    let pattern = apply(&db, boxed, &[reference(&db, 0, 0)]);
+    let callee = mapping_callee(&db, Rest::Positional, false, pattern, db.top());
+    db.seal();
+    let unknown = db.unknown_schema();
+    let (_, packs, outcomes) = invert_call(
+        &db,
+        &Gas::default(),
+        callee,
+        &[CallArg::Spread(unknown)],
+        None,
+    );
+    assert!(
+        outcomes.iter().all(|o| o.status == Status::Proven),
+        "{outcomes:?}"
+    );
+    assert_eq!(
+        packs,
+        vec![Ok(items(
+            &db,
+            vec![include(Multiplicity::Required, unknown)]
+        ))]
+    );
+}
+
+#[test]
+fn an_actual_mapping_over_a_pack_being_inferred_waits_for_it() {
+    let mut db = Database::new();
+    let int = nominal(&mut db, "Int", vec![], vec![]);
+    let boxed = nominal(&mut db, "Box", vec![binder(Variance::Covariant)], vec![]);
+    let mapping = map(
+        &db,
+        &[pack(&db, 0)],
+        apply(&db, boxed, &[reference(&db, 0, 0)]),
+    );
+    // [*Us] f@((...Box[Us]) -> Value) -> Value
+    let callback = db.intern(Type::Function(Function {
+        params: items(&db, vec![include(Multiplicity::Required, mapping)]),
+        result: db.top(),
+        input: None,
+        output: None,
+    }));
+    let callee = quantified(
+        &db,
+        vec![bounded(Kind::Schema, Binding::Rest(Rest::Positional), None)],
+        function(&db, &[callback], db.top()),
+    );
+    let arg = function(&db, &[apply(&db, boxed, &[int])], db.top());
+    db.seal();
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    let result = s.infer();
+    let callee = s.closed(callee);
+    let arg = CallArgument::Positional(s.closed(arg));
+    constrain_call(&mut s, callee, &[arg], result, None);
+    let outcome = s.solve().remove(0);
+    assert!(residual(&outcome, Residual::Inference), "{outcome:?}");
+}
+
+/// `(...params) -> Value`
+fn takes(db: &Database, params: Vec<SchemaItem>) -> TypeId {
+    db.intern(Type::Function(Function {
+        params: items(db, params),
+        result: db.top(),
+        input: None,
+        output: None,
+    }))
+}
+
+/// The statuses of calling `callee` with each list of arguments
+fn statuses(db: &Database, callee: TypeId, calls: &[&[CallArg]]) -> Vec<Status> {
+    calls
+        .iter()
+        .map(|args| {
+            let (_, _, outcomes) = invert_call(db, &Gas::default(), callee, args, None);
+            outcomes
+                .iter()
+                .map(|o| o.status)
+                .find(|&status| status != Status::Proven)
+                .unwrap_or(Status::Proven)
+        })
+        .collect()
+}
+
+#[test]
+fn a_rest_holds_the_items_left_over_as_values() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let rest = items(
+        &db,
+        vec![
+            positional(Multiplicity::Optional, int),
+            positional(Multiplicity::Repeated, str),
+        ],
+    );
+    let strs = items(&db, vec![positional(Multiplicity::Repeated, str)]);
+    let ints = items(&db, vec![positional(Multiplicity::Repeated, int)]);
+    // (...{?Int, *Str}), (Int, ...{?Int, *Str}) and (Int, ?Int, ...{?Int, *Str})
+    let f = takes(&db, vec![include(Multiplicity::Required, rest)]);
+    let g = takes(
+        &db,
+        vec![
+            positional(Multiplicity::Required, int),
+            include(Multiplicity::Required, rest),
+        ],
+    );
+    let h = takes(
+        &db,
+        vec![
+            positional(Multiplicity::Required, int),
+            positional(Multiplicity::Optional, int),
+            include(Multiplicity::Required, rest),
+        ],
+    );
+    db.seal();
+    use CallArg::{Positional as P, Spread as S};
+    let proven = |n| vec![Status::Proven; n];
+    assert_eq!(
+        statuses(
+            &db,
+            f,
+            &[&[P(str)], &[S(strs)], &[P(int), P(str), P(str)], &[]]
+        ),
+        proven(4)
+    );
+    assert_eq!(
+        statuses(&db, f, &[&[P(int), P(int)]]),
+        [Status::Contradicted]
+    );
+    assert_eq!(
+        statuses(&db, g, &[&[P(int), S(strs)], &[P(int), P(str)], &[P(int)]]),
+        proven(3)
+    );
+    assert_eq!(statuses(&db, g, &[&[P(str)]]), [Status::Contradicted]);
+    // The optional parameter takes the second item, if there is one
+    assert_eq!(
+        statuses(
+            &db,
+            h,
+            &[
+                &[P(int), P(int), P(int), P(str)],
+                &[P(int), S(strs)],
+                &[P(int), P(int), S(strs)],
+            ]
+        ),
+        [Status::Proven, Status::Contradicted, Status::Proven]
+    );
+    // ...(*Int) leaves `{*Int}`, which `{?Int, *Str}` doesn't hold
+    assert_eq!(
+        statuses(&db, h, &[&[P(int), S(ints)]]),
+        [Status::Contradicted]
+    );
+}
+
+#[test]
+fn a_keyed_rest_takes_the_keys_parameters_dont() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let sym = nominal(&mut db, "Sym", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Sym, sym);
+    let [image, headers, add, typo] = ["image", "headers", "add", "typo"].map(|name| {
+        let symbol = db.intern_symbol(name);
+        (symbol, db.intern(Type::Literal(Literal::Sym(symbol))))
+    });
+    let options = items(
+        &db,
+        vec![
+            keyed(Multiplicity::Optional, headers.1, int),
+            keyed(Multiplicity::Repeated, add.1, str),
+        ],
+    );
+    let images = items(&db, vec![keyed(Multiplicity::Repeated, image.1, int)]);
+    // (?image: Str, ...{?headers: Int, *add: Str}) and
+    // (?image: Str, ...{*image: Int})
+    let f = takes(
+        &db,
+        vec![
+            keyed(Multiplicity::Optional, image.1, str),
+            include(Multiplicity::Required, options),
+        ],
+    );
+    let g = takes(
+        &db,
+        vec![
+            keyed(Multiplicity::Optional, image.1, str),
+            include(Multiplicity::Required, images),
+        ],
+    );
+    db.seal();
+    use CallArg::Keyword as K;
+    assert_eq!(
+        statuses(
+            &db,
+            f,
+            &[
+                &[
+                    K(image.0, str),
+                    K(headers.0, int),
+                    K(add.0, str),
+                    K(add.0, str)
+                ],
+                &[K(headers.0, str)],
+                &[K(typo.0, int)],
+            ]
+        ),
+        [Status::Proven, Status::Contradicted, Status::Contradicted]
+    );
+    // The parameter takes the first item of its key, and the rest the others
+    assert_eq!(
+        statuses(
+            &db,
+            g,
+            &[
+                &[K(image.0, str), K(image.0, int), K(image.0, int)],
+                &[K(image.0, int)],
+            ]
+        ),
+        [Status::Proven, Status::Contradicted]
+    );
+}
+
+#[test]
+fn a_pack_being_inferred_and_a_keyed_rest_take_their_own_lanes() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let sym = nominal(&mut db, "Sym", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Sym, sym);
+    let a = db.intern_symbol("a");
+    let a_key = db.intern(Type::Literal(Literal::Sym(a)));
+    let options = items(&db, vec![keyed(Multiplicity::Optional, a_key, int)]);
+    // [*Ts] (...Ts, ...{?a: Int}) -> Value
+    let callee = quantified(
+        &db,
+        vec![bounded(Kind::Schema, Binding::Rest(Rest::Positional), None)],
+        takes(
+            &db,
+            vec![
+                include(Multiplicity::Required, pack(&db, 0)),
+                include(Multiplicity::Required, options),
+            ],
+        ),
+    );
+    db.seal();
+    use CallArg::{Keyword as K, Positional as P};
+    let (_, packs, outcomes) = invert_call(
+        &db,
+        &Gas::default(),
+        callee,
+        &[P(int), P(str), K(a, int)],
+        None,
+    );
+    assert!(
+        outcomes.iter().all(|o| o.status == Status::Proven),
+        "{outcomes:?}"
+    );
+    assert_eq!(packs, vec![Ok(schema(&db, &[int, str]))]);
+    assert_eq!(
+        statuses(&db, callee, &[&[P(int), K(a, str)]]),
+        [Status::Contradicted]
+    );
+}
+
+#[test]
+fn a_rest_with_a_rigid_in_it_is_spliced() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let ts = pack(&db, 0);
+    // {Int, ...{Int, ...Ts}} below itself, as parameters, where `Ts` is rigid
+    let rest = items(
+        &db,
+        vec![
+            positional(Multiplicity::Required, int),
+            include(Multiplicity::Required, ts),
+        ],
+    );
+    let params = items(
+        &db,
+        vec![
+            positional(Multiplicity::Required, int),
+            include(Multiplicity::Required, rest),
+        ],
+    );
+    let args = items(
+        &db,
+        vec![
+            positional(Multiplicity::Required, int),
+            positional(Multiplicity::Required, int),
+            include(Multiplicity::Required, ts),
+        ],
+    );
+    let body = function(&db, &[], db.top());
+    let f = generic(
+        &mut db,
+        vec![bounded(Kind::Schema, Binding::Rest(Rest::Positional), None)],
+        body,
+    );
+    db.seal();
+    assert_eq!(under(&db, f, args, params).status, Status::Proven);
+}
+
+#[test]
+fn a_positional_and_a_keyed_mapping_invert_apart() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let sym = nominal(&mut db, "Sym", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Sym, sym);
+    let boxed = nominal(&mut db, "Box", vec![binder(Variance::Covariant)], vec![]);
+    let a = db.intern_symbol("a");
+    let a_key = db.intern(Type::Literal(Literal::Sym(a)));
+    let pattern = apply(&db, boxed, &[reference(&db, 0, 0)]);
+    // [*Us, **Ks] (...Box[Us], ...Box[Ks]) -> Value
+    let callee = quantified(
+        &db,
+        vec![
+            bounded(Kind::Schema, Binding::Rest(Rest::Positional), None),
+            bounded(Kind::Schema, Binding::Rest(Rest::Keyed), None),
+        ],
+        takes(
+            &db,
+            vec![
+                include(Multiplicity::Required, map(&db, &[pack(&db, 0)], pattern)),
+                include(Multiplicity::Required, map(&db, &[pack(&db, 1)], pattern)),
+            ],
+        ),
+    );
+    db.seal();
+    use CallArg::{Keyword as K, Positional as P};
+    let (_, packs, outcomes) = invert_call(
+        &db,
+        &Gas::default(),
+        callee,
+        &[
+            P(apply(&db, boxed, &[int])),
+            P(apply(&db, boxed, &[str])),
+            K(a, apply(&db, boxed, &[str])),
+        ],
+        None,
+    );
+    assert!(
+        outcomes.iter().all(|o| o.status == Status::Proven),
+        "{outcomes:?}"
+    );
+    assert_eq!(
+        packs,
+        vec![
+            Ok(schema(&db, &[int, str])),
+            Ok(items(&db, vec![keyed(Multiplicity::Required, a_key, str)])),
+        ]
+    );
 }
