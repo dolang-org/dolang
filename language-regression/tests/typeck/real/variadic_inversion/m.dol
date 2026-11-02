@@ -23,3 +23,18 @@ pub def forked_all blocks @ Array[() -> Int] -> Array[Int]
   let results = strand.fork ...blocks
   #   ^~~~~~~: flow (*std.Int)
   [...results]
+
+pub def zipped_spread names @ Array[Str] others @ (?Array[Int], *Array[Str]) -> Iter[(Str, ?Int, *Str)]
+  let tuples = names.iter().zip(...others)
+  #   ^~~~~~: flow std.Iter[(std.Str, ?std.Int, *std.Str)]
+  tuples
+
+pub def chained_spread names @ Array[Str] others @ (?Array[Int], *Array[Str]) -> Iter[Int | Str]
+  let all = names.iter().chain(...others)
+  #   ^~~: flow std.Iter[std.Int | std.Str]
+  all
+
+pub def forked_spread blocks @ (?(() -> Int), *(() -> Str)) -> (?Int, *Str)
+  let results = strand.fork ...blocks
+  #   ^~~~~~~: flow (?std.Int, *std.Str)
+  results

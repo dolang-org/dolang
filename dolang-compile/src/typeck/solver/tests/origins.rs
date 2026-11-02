@@ -218,3 +218,74 @@ fn a_contravariant_step_swaps_origins() {
     assert_eq!(origins.actual, at(OriginKind::ExpectedResult, 8));
     assert_eq!(origins.expected, at(OriginKind::Expression, 0));
 }
+
+#[test]
+fn a_rests_items_are_the_arguments_they_come_from() {
+    let mut db = Database::new();
+    let one = literal(&db, 1);
+    let two = literal(&db, 2);
+    // (1, ...{*2}) -> 2, called with (1, 2, 1)
+    let rest = db.intern(Type::Schema(
+        vec![SchemaItem {
+            multiplicity: Multiplicity::Repeated,
+            element: Element::Positional(two),
+        }]
+        .into(),
+    ));
+    let params = db.intern(Type::Schema(
+        vec![
+            SchemaItem {
+                multiplicity: Multiplicity::Required,
+                element: Element::Positional(one),
+            },
+            SchemaItem {
+                multiplicity: Multiplicity::Required,
+                element: Element::Include(rest),
+            },
+        ]
+        .into(),
+    ));
+    let callee = db.intern(Type::Function(Function {
+        params,
+        result: two,
+        input: None,
+        output: None,
+    }));
+    db.seal();
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    let args = [one, two, one].map(|ty| {
+        (
+            Multiplicity::Required,
+            CallArgument::Positional(s.closed(ty)),
+        )
+    });
+    let call = Call {
+        callee: s.closed(callee),
+        arguments: s.arguments_schema(&args),
+        result: s.closed(two),
+        input: None,
+        output: None,
+    };
+    let arguments = [1, 3, 5].map(|column| diag::Span::new(1, column, 1));
+    let provenance = Provenance {
+        actual: Some(Origin::local(
+            OriginKind::Call {
+                arguments: arguments.to_vec().into(),
+                callee: None,
+            },
+            diag::Span::new(1, 0, 6),
+        )),
+        expected: None,
+    };
+    s.constrain_call(call, provenance);
+    let outcome = s.solve().remove(0);
+    let leaves = leaves(&s, &outcome);
+    // The rest's second item is the third argument
+    let (steps, origins) = leaves
+        .iter()
+        .find(|(steps, _)| steps.iter().any(|step| matches!(step, Some(Step::Rest(_)))))
+        .expect("the rest's contradiction");
+    assert_eq!(steps.last(), Some(&Some(Step::Item(1))));
+    assert_eq!(origins.actual, at(OriginKind::Expression, 5));
+}

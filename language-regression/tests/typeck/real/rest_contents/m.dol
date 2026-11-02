@@ -1,0 +1,23 @@
+# dolang: strict
+# A rest takes the arguments left over in its lanes, which its schema holds as
+# values, rather than binding them to its items by count.
+
+def f *_xs @ {?Int, *Str}
+  nil
+
+def g _first@Int *_xs @ {?Int, *Str}
+  nil
+
+def h _first@Int _second@Int = 0 *_xs @ {?Int, *Str}
+  nil
+
+pub def calls strs @ (*Str) ints @ (?Int, *Str)
+  f ...strs
+  g 1 ...strs
+  f "a"
+  g 1 "a"
+  f 1 "a" "b"
+  f ...ints
+  h 1
+  h 1 2 ...strs
+  h 1 2 3 "a"

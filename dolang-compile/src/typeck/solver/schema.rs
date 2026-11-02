@@ -12,9 +12,11 @@
 //! counting does. Other schemas may fill their multiplicities any way that
 //! fits, and the schema a value holds may also be taken by any filling of the
 //! expected side: where counting is refuted, a filling still fits when its
-//! types prove some path ([`Fill`]).
+//! types prove some path ([`Fill`]). At a call, a rest takes the items left
+//! over in its lanes, which its schema holds as values.
 //!
-//! Both sides are flattened into lanes of atoms, splicing inclusions. Schemas
+//! Both sides are flattened into lanes of atoms, splicing inclusions, except
+//! for a call's rest whose items are all known, which stays whole. Schemas
 //! that can't be exposed stay opaque: the same rigid on both sides pairs up, an
 //! actual rigid otherwise stands for its bound, and the dynamic schema leaves
 //! the lanes it occupies unchecked but for the required items that lead the
@@ -66,6 +68,9 @@ pub(super) enum Opacity {
     /// without such a counterpart chooses its packs from the actual side's
     /// items ([`Solver::invert`]).
     Mapped(Term),
+    /// A parameter list's rest whose items are all known, at a call. It takes
+    /// the items left over in its lanes as the values it holds.
+    Rest(Term),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -91,8 +96,8 @@ impl Opaque {
 enum Collected {
     Atom(Atom),
     Keyed(KeyedAtom),
-    /// The dynamic schema
-    Unknown,
+    /// The dynamic schema, with the top-level item it came from
+    Unknown(usize),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -205,8 +210,16 @@ impl Solver<'_> {
         if let Some(shape) = rest_shape(ys) {
             return self.rest_shaped(av, xs, bv, shape, expected, obligation);
         }
+        let fill = match self.relation(obligation) {
+            Relation::Subtype { fill, .. } => fill,
+            Relation::Call(_) | Relation::Empty(_) => Fill::Arguments,
+        };
         let mut b = Shape::default();
-        self.flatten(bv, ys, None, None, &mut b, 0)?;
+        if fill == Fill::Arguments {
+            self.parameters(bv, ys, &mut b)?;
+        } else {
+            self.flatten(bv, ys, None, None, &mut b, 0)?;
+        }
         let mut a = Shape::default();
         self.flatten(av, xs, None, None, &mut a, 0)?;
         let mut pairs = self.pair(&a, &b)?;
@@ -267,16 +280,16 @@ impl Solver<'_> {
         {
             return Err(Residual::Inference.into());
         }
-        let variables: Vec<usize> = (0..b.opaque.len())
+        let collectors: Vec<usize> = (0..b.opaque.len())
             .filter(|j| {
-                matches!(b.opaque[*j].opacity, Opacity::Infer(_) | Opacity::Mapped(_))
-                    && !b_paired.contains(j)
+                matches!(
+                    b.opaque[*j].opacity,
+                    Opacity::Infer(_) | Opacity::Mapped(_) | Opacity::Rest(_)
+                ) && !b_paired.contains(j)
             })
             .collect();
-        match variables[..] {
-            [] => {}
-            [variable] => return self.collect(&a, &b, variable, obligation),
-            _ => return Err(Residual::Inference.into()),
+        if !collectors.is_empty() {
+            return self.collect(&a, &b, &collectors, obligation);
         }
         let open = |shape: &Shape, lane: fn(&Opaque) -> bool| {
             shape
@@ -299,41 +312,96 @@ impl Solver<'_> {
         )
     }
 
-    /// Relate schemas where the expected side has one variable, or mapping over
-    /// packs being inferred, without a counterpart. It must end its positional
-    /// lane, after required items only, and it takes the keyed items that the
-    /// expected side doesn't name. What it takes becomes a variable's lower
-    /// bound, or decides a mapping's packs.
+    /// Relate schemas where the expected side has variables, mappings over
+    /// packs being inferred, or rests without a counterpart: one in any lanes,
+    /// or one positional and one keyed. A positional one must end its lane,
+    /// after required or optional items, and a keyed one takes the keyed items
+    /// that the expected side doesn't name. What a variable takes becomes its
+    /// lower bound, decides a mapping's packs, or is the values a rest holds.
     fn collect(
         &self,
         a: &Shape,
         b: &Shape,
-        variable: usize,
+        collectors: &[usize],
         obligation: ObligationId,
     ) -> Result<(), Issue> {
-        let var = b.opaque[variable];
-        let collected = self.gather(a, b, var, variable, obligation)?;
+        let (positional, keyed) = match *collectors {
+            [only] => {
+                let var = b.opaque[only];
+                (
+                    var.positional().then_some(only),
+                    var.keyed().then_some(only),
+                )
+            }
+            [x, y] => {
+                let (p, k) = match (b.opaque[x].lanes, b.opaque[y].lanes) {
+                    (Rest::Positional, Rest::Keyed) => (x, y),
+                    (Rest::Keyed, Rest::Positional) => (y, x),
+                    _ => return Err(Residual::Inference.into()),
+                };
+                (Some(p), Some(k))
+            }
+            _ => return Err(Residual::Inference.into()),
+        };
+        let (mut taken, overflow) = self.gather(a, b, positional, keyed, obligation)?;
+        if positional == keyed {
+            taken.extend(overflow);
+            return self.consume(b.opaque[collectors[0]], taken, obligation);
+        }
+        if let Some(p) = positional {
+            self.consume(b.opaque[p], taken, obligation)?;
+        }
+        if let Some(k) = keyed {
+            self.consume(b.opaque[k], overflow, obligation)?;
+        }
+        Ok(())
+    }
+
+    /// Give `var`, an expected variable, mapping or rest, the items it takes
+    fn consume(
+        &self,
+        var: Opaque,
+        collected: Vec<Collected>,
+        obligation: ObligationId,
+    ) -> Result<(), Issue> {
+        let step = || {
+            Step::Rest(
+                collected
+                    .iter()
+                    .map(|collected| match *collected {
+                        Collected::Atom(atom) => atom.item,
+                        Collected::Keyed(atom) => atom.item,
+                        Collected::Unknown(item) => item,
+                    })
+                    .collect(),
+            )
+        };
         match var.opacity {
             Opacity::Infer(id) => {
                 let taken = self.synthetic(&collected);
-                self.derive(obligation, taken, Term::Infer(id), Step::Item(var.item));
+                self.derive(obligation, taken, Term::Infer(id), step());
                 Ok(())
             }
-            Opacity::Mapped(mapping) => self.invert(mapping, &collected, var.item, obligation),
-            _ => unreachable!("only variables and mappings are collected into"),
+            Opacity::Rest(rest) => {
+                let taken = self.synthetic(&collected);
+                self.derive(obligation, taken, rest, step());
+                Ok(())
+            }
+            Opacity::Mapped(mapping) => self.invert(mapping, &collected, var, obligation),
+            _ => unreachable!("only variables, mappings and rests are collected into"),
         }
     }
 
-    /// The actual items that land on `var`, the expected opaque at `variable`,
-    /// relating the rest
+    /// The actual items that land on the expected opaques at `positional` and
+    /// `keyed`, in those lanes, relating the rest
     fn gather(
         &self,
         a: &Shape,
         b: &Shape,
-        var: Opaque,
-        variable: usize,
+        positional: Option<usize>,
+        keyed: Option<usize>,
         obligation: ObligationId,
-    ) -> Result<Vec<Collected>, Issue> {
+    ) -> Result<(Vec<Collected>, Vec<Collected>), Issue> {
         let unknown = |shape: &Shape, lane: fn(&Opaque) -> bool| {
             shape
                 .opaque
@@ -343,68 +411,39 @@ impl Solver<'_> {
         if unknown(b, Opaque::positional) || unknown(b, Opaque::keyed) {
             return Err(Residual::Inference.into());
         }
-        let mut collected = Vec::new();
-        if var.positional() {
-            let mut fixed = Vec::new();
-            let mut last = false;
-            for slot in &b.positional {
-                match *slot {
-                    Slot::Atom(atom) if !last && atom.multiplicity == Multiplicity::Required => {
-                        fixed.push(atom);
-                    }
-                    Slot::Opaque(index) if index == variable => last = true,
-                    Slot::Opaque(index) if !b.opaque[index].positional() => {}
-                    _ => return Err(Residual::Inference.into()),
-                }
-            }
-            let mut atoms = Vec::new();
-            for slot in &a.positional {
-                match *slot {
-                    Slot::Atom(atom) => atoms.push(Collected::Atom(atom)),
-                    Slot::Opaque(index) if a.opaque[index].opacity == Opacity::Unknown => {
-                        atoms.push(Collected::Unknown);
-                    }
-                    Slot::Opaque(index) if !a.opaque[index].positional() => {}
-                    Slot::Opaque(_) => return Err(Residual::Inference.into()),
-                }
-            }
-            for (index, y) in fixed.iter().enumerate() {
-                match atoms.get(index) {
-                    Some(Collected::Atom(x)) if x.multiplicity == Multiplicity::Required => {
-                        self.derive(obligation, x.ty, y.ty, Step::Item(x.item));
-                    }
-                    None if atoms.iter().all(|x| {
-                        matches!(x, Collected::Atom(x) if x.multiplicity == Multiplicity::Required)
-                    }) =>
-                    {
-                        return Err(Issue::Contradiction(Contradiction::Missing(y.item)));
-                    }
-                    _ => return Err(Residual::Alignment.into()),
-                }
-            }
-            collected.extend(atoms.into_iter().skip(fixed.len()));
+        let mut taken = Vec::new();
+        if let Some(variable) = positional {
+            taken = self.tail(a, b, variable, obligation)?;
         } else if !unknown(a, Opaque::positional) {
             self.positional(a, b, obligation)?;
         }
-        if var.keyed() {
+        let mut overflow = Vec::new();
+        if keyed.is_some() {
             // A domain could take the same items
             for y in &b.keyed {
                 if !self.literal(y.key)? {
                     return Err(Residual::Inference.into());
                 }
             }
-            let mut overflow = Vec::new();
+            let mut atoms = Vec::new();
             self.keyed(
                 &a.keyed,
                 &b.keyed,
                 unknown(a, Opaque::keyed),
                 false,
-                Some(&mut overflow),
+                Some(&mut atoms),
                 obligation,
             )?;
-            collected.extend(overflow.into_iter().map(Collected::Keyed));
-            if unknown(a, Opaque::keyed) && !var.positional() {
-                collected.push(Collected::Unknown);
+            overflow.extend(atoms.into_iter().map(Collected::Keyed));
+            // The dynamic schema's keyed items, unless the same opaque takes it
+            // positionally
+            if positional != keyed
+                && let Some(o) = a
+                    .opaque
+                    .iter()
+                    .find(|o| o.opacity == Opacity::Unknown && o.keyed())
+            {
+                overflow.push(Collected::Unknown(o.item));
             }
         } else {
             self.keyed(
@@ -416,20 +455,149 @@ impl Solver<'_> {
                 obligation,
             )?;
         }
-        Ok(collected)
+        Ok((taken, overflow))
+    }
+
+    /// The actual positional items left over for the expected opaque at
+    /// `variable`, which ends the expected positional lane, once the required
+    /// and optional items before it take theirs by count, relating those
+    fn tail(
+        &self,
+        a: &Shape,
+        b: &Shape,
+        variable: usize,
+        obligation: ObligationId,
+    ) -> Result<Vec<Collected>, Issue> {
+        let mut fixed = Vec::new();
+        let mut last = false;
+        for slot in &b.positional {
+            match *slot {
+                Slot::Atom(atom) if !last && atom.multiplicity != Multiplicity::Repeated => {
+                    fixed.push(atom);
+                }
+                Slot::Opaque(index) if index == variable => last = true,
+                Slot::Opaque(index) if !b.opaque[index].positional() => {}
+                _ => return Err(Residual::Inference.into()),
+            }
+        }
+        let mut atoms = Vec::new();
+        for slot in &a.positional {
+            match *slot {
+                Slot::Atom(atom) => atoms.push(Collected::Atom(atom)),
+                Slot::Opaque(index) if a.opaque[index].opacity == Opacity::Unknown => {
+                    atoms.push(Collected::Unknown(a.opaque[index].item));
+                }
+                Slot::Opaque(index) if !a.opaque[index].positional() => {}
+                Slot::Opaque(_) => return Err(Residual::Inference.into()),
+            }
+        }
+        let required = |x: &Collected| matches!(x, Collected::Atom(x) if x.multiplicity == Multiplicity::Required);
+        // Required items take as many leading required ones
+        if fixed
+            .iter()
+            .all(|y| y.multiplicity == Multiplicity::Required)
+        {
+            if atoms.len() >= fixed.len() && atoms[..fixed.len()].iter().all(required) {
+                for (x, y) in atoms.iter().zip(&fixed) {
+                    let Collected::Atom(x) = x else {
+                        unreachable!("a required atom")
+                    };
+                    self.derive(obligation, x.ty, y.ty, Step::Item(x.item));
+                }
+                return Ok(atoms.split_off(fixed.len()));
+            }
+            if atoms.iter().all(required) {
+                let missing = fixed[atoms.len()].item;
+                return Err(Issue::Contradiction(Contradiction::Missing(missing)));
+            }
+        }
+        // Otherwise how many the fixed items take varies. The left over items
+        // are those after the first `fixed.len()`, with `lo..=hi` still to
+        // drop: an item that may be dropped or not may be left over, and one
+        // whose count varies leaves the number to drop varying.
+        let (mut lo, mut hi) = (fixed.len(), fixed.len());
+        let mut left = Vec::new();
+        let mut uncovered = false;
+        for &x in &atoms {
+            if hi == 0 {
+                left.push(x);
+                continue;
+            }
+            match x {
+                Collected::Atom(atom) => match atom.multiplicity {
+                    Multiplicity::Required if lo > 0 => {
+                        lo -= 1;
+                        hi -= 1;
+                    }
+                    Multiplicity::Required => {
+                        left.push(Collected::Atom(Atom {
+                            multiplicity: Multiplicity::Optional,
+                            ..atom
+                        }));
+                        hi -= 1;
+                    }
+                    Multiplicity::Optional => {
+                        if lo == 0 {
+                            left.push(x);
+                        }
+                        lo = lo.saturating_sub(1);
+                    }
+                    Multiplicity::Repeated => {
+                        left.push(x);
+                        lo = 0;
+                    }
+                },
+                Collected::Unknown(_) => {
+                    uncovered = true;
+                    left.push(x);
+                    lo = 0;
+                }
+                Collected::Keyed(_) => unreachable!("a positional item"),
+            }
+        }
+        let leading: Vec<Atom> = atoms
+            .iter()
+            .map_while(|x| match *x {
+                Collected::Atom(atom) => Some(atom),
+                _ => None,
+            })
+            .collect();
+        if uncovered {
+            // Beside the dynamic schema, only leading required items pair up
+            let required = |atom: &&Atom| atom.multiplicity == Multiplicity::Required;
+            for (x, y) in leading
+                .iter()
+                .take_while(required)
+                .zip(fixed.iter().take_while(required))
+            {
+                self.derive(obligation, x.ty, y.ty, Step::Item(x.item));
+            }
+        } else {
+            // Those left over land on a catch-all
+            fixed.push(Atom {
+                multiplicity: Multiplicity::Repeated,
+                ty: self.closed(self.db.top()),
+                item: b.opaque[variable].item,
+            });
+            self.align(&leading, &fixed, obligation)?;
+        }
+        Ok(left)
     }
 
     /// Decide the packs of `mapping` from the items it must admit. Each item
     /// takes a fresh variable for each pack and fits the pattern over them, and
     /// each pack is exactly its variables, in the items' order and with their
-    /// multiplicities and keys. The variables are created once per obligation.
+    /// multiplicities and keys. `var` is the mapping's opaque. The variables are
+    /// created once per obligation and lanes, which tell apart a positional and
+    /// a keyed mapping of the same obligation.
     fn invert(
         &self,
         mapping: Term,
         collected: &[Collected],
-        item: usize,
+        var: Opaque,
         obligation: ObligationId,
     ) -> Result<(), Issue> {
+        let item = var.item;
         let Head::Structural(view) = self.head(mapping)? else {
             unreachable!("a mapping is structural")
         };
@@ -437,7 +605,7 @@ impl Solver<'_> {
             unreachable!("a mapping is a map")
         };
         let count = packs.len() * collected.len();
-        let environment = match self.inversion_of(obligation) {
+        let environment = match self.inversion_of(obligation, var.lanes) {
             Some(environment) => environment,
             None => {
                 let scope = self.scope(&[mapping])?;
@@ -445,7 +613,7 @@ impl Solver<'_> {
                     .map(|_| self.fresh(Kind::Type, Rest::All, scope))
                     .collect();
                 let environment = self.intern_environment(self.empty_environment(), group);
-                self.record_inversion(obligation, environment);
+                self.record_inversion(obligation, var.lanes, environment);
                 environment
             }
         };
@@ -467,7 +635,7 @@ impl Solver<'_> {
                 Collected::Keyed(atom) => {
                     self.derive(obligation, atom.value, fits, Step::Item(atom.item));
                 }
-                Collected::Unknown => {}
+                Collected::Unknown(_) => {}
             }
         }
         for (index, &pack) in packs.iter().enumerate() {
@@ -483,7 +651,7 @@ impl Solver<'_> {
                         value: own[index],
                         ..atom
                     }),
-                    Collected::Unknown => Collected::Unknown,
+                    Collected::Unknown(item) => Collected::Unknown(item),
                 })
                 .collect();
             let exact = self.synthetic(&items);
@@ -519,7 +687,7 @@ impl Solver<'_> {
                         value: slot(atom.value, Kind::Type),
                     },
                 },
-                Collected::Unknown => SchemaItem {
+                Collected::Unknown(_) => SchemaItem {
                     multiplicity: Multiplicity::Required,
                     element: Element::Include(self.db.unknown_schema()),
                 },
@@ -696,6 +864,71 @@ impl Solver<'_> {
                 }
                 _ => unreachable!(),
             }
+        }
+        Ok(())
+    }
+
+    /// Flatten a parameter list into `shape` as a call binds it. A rest whose
+    /// items are all known stays whole ([`Opacity::Rest`]); one with opaque
+    /// parts is spliced, so a rigid in it pairs with one passed through.
+    fn parameters(
+        &self,
+        view: TypeView,
+        items: &[SchemaItem],
+        shape: &mut Shape,
+    ) -> Result<(), Issue> {
+        // Whether an item may take positional items
+        let positional = |item: &SchemaItem| -> Result<bool, Issue> {
+            Ok(match item.element {
+                Element::Positional(_) => true,
+                Element::Keyed { .. } => false,
+                Element::Include(schema) => self.lanes(view.child(schema), 1)? != Rest::Keyed,
+            })
+        };
+        for (index, item) in items.iter().enumerate() {
+            if let (Multiplicity::Required, Element::Include(schema)) =
+                (item.multiplicity, &item.element)
+            {
+                let term = view.child(*schema);
+                let mut inner = Shape::default();
+                self.include(term, Multiplicity::Required, index, None, &mut inner, 1)?;
+                let lanes = match (!inner.positional.is_empty(), !inner.keyed.is_empty()) {
+                    _ if !inner.opaque.is_empty() => None,
+                    (true, false) => Some(Rest::Positional),
+                    (false, true) => Some(Rest::Keyed),
+                    (true, true) => Some(Rest::All),
+                    (false, false) => None,
+                };
+                // A positional rest ends its lane
+                let rest = match lanes {
+                    Some(Rest::Keyed) => true,
+                    Some(_) => {
+                        let mut later = false;
+                        for item in &items[index + 1..] {
+                            later |= positional(item)?;
+                        }
+                        !later
+                    }
+                    None => false,
+                };
+                if let (true, Some(lanes)) = (rest, lanes) {
+                    shape.positional.push(Slot::Opaque(shape.opaque.len()));
+                    shape.opaque.push(Opaque {
+                        opacity: Opacity::Rest(term),
+                        lanes,
+                        item: index,
+                    });
+                    continue;
+                }
+            }
+            self.flatten(
+                view,
+                std::slice::from_ref(item),
+                Some(index),
+                None,
+                shape,
+                0,
+            )?;
         }
         Ok(())
     }
@@ -880,6 +1113,7 @@ impl Solver<'_> {
                             }
                             // Its pack is decided once the inner one is
                             Opacity::Mapped(_) => return Err(Residual::Inference.into()),
+                            Opacity::Rest(_) => unreachable!("only a parameter list has a rest"),
                             Opacity::Rigid(rigid) => {
                                 let mapping = self.mapping(view, pattern, &[rigid]);
                                 if keep.is_some_and(|keep| !keep.contains(&mapping)) {
@@ -1558,7 +1792,7 @@ impl Solver<'_> {
     /// more keys than it shows, and the expected side admits anything. With
     /// `overflow`, the items that no literal key claims go there instead of to a
     /// domain, as do domain items, after counting toward the literal keys they
-    /// may hold.
+    /// may hold, and the items of a key past those its literal admits.
     fn keyed(
         &self,
         xs: &[KeyedAtom],
@@ -1682,6 +1916,17 @@ impl Solver<'_> {
                     for d in &absorbing {
                         self.derive(obligation, x.value, d.value, Step::Item(x.item));
                     }
+                    // Past the literal, or perhaps so
+                    if let Some(overflow) = overflow.as_deref_mut()
+                        && self.literal(x.key)?
+                    {
+                        let multiplicity = match max {
+                            Some(max) if before_low >= max => x.multiplicity,
+                            _ if x.multiplicity == Multiplicity::Repeated => x.multiplicity,
+                            _ => Multiplicity::Optional,
+                        };
+                        overflow.push(KeyedAtom { multiplicity, ..*x });
+                    }
                 }
             }
             if open_expected {
@@ -1690,7 +1935,7 @@ impl Solver<'_> {
             if low < min && !open_actual {
                 return Err(Issue::Contradiction(Contradiction::Missing(y.item)));
             }
-            if excess && absorbing.is_empty() {
+            if excess && absorbing.is_empty() && overflow.is_none() {
                 let (last, _, _) = contributing.last().unwrap();
                 return Err(Issue::Contradiction(Contradiction::Excess(last.item)));
             }
