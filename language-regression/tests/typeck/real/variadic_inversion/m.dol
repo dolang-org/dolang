@@ -1,0 +1,25 @@
+# dolang: strict
+# A rest binding's pack is chosen from the items its pattern maps.
+import strand
+
+pub def zipped names @ Array[Str] ints @ Array[Int]
+  let pairs = names.iter().zip(ints)
+  #   ^~~~~: flow std.Iter[(std.Str, std.Int)]
+  for name n = pairs
+    let _ @ Str = name
+    let _ @ Int = n
+
+pub def chained names @ Array[Str] ints @ Array[Int] -> Iter[Int | Str]
+  let all = names.iter().chain(ints)
+  #   ^~~: flow std.Iter[std.Int | std.Str]
+  all
+
+pub def forked() -> (Int, Str)
+  let results = strand.fork (do 1) (do "a")
+  #   ^~~~~~~: flow (std.Int, std.Str)
+  results
+
+pub def forked_all blocks @ Array[() -> Int] -> Array[Int]
+  let results = strand.fork ...blocks
+  #   ^~~~~~~: flow (*std.Int)
+  [...results]

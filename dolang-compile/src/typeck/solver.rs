@@ -721,6 +721,9 @@ pub(crate) struct Solver<'db> {
     /// The environment of skolems each skolemization created, by the obligation
     /// that skolemized, so reprocessing reuses its skolems
     skolemizations: RefCell<FxHashMap<ObligationId, EnvironmentId>>,
+    /// The environment of item variables each inversion of a mapping created,
+    /// by the obligation that inverted it, so reprocessing reuses its variables
+    inversions: RefCell<FxHashMap<ObligationId, EnvironmentId>>,
     skolems: MonoVec<Skolem>,
     scopes: MonoVec<Scope>,
     // Intern only the relation and its guard bit; processing state and
@@ -849,6 +852,7 @@ impl<'db> Solver<'db> {
             dirty: RefCell::new(Vec::new()),
             instantiations: RefCell::new(FxHashMap::default()),
             skolemizations: RefCell::new(FxHashMap::default()),
+            inversions: RefCell::new(FxHashMap::default()),
             skolems: MonoVec::new(),
             scopes,
             relations: MonoVec::new(),

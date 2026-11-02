@@ -61,8 +61,10 @@ pub(super) enum Opacity {
     /// A rigid, as its closed view, or a skolem
     Rigid(Term),
     Infer(InferVarId),
-    /// A mapping over a pack being inferred, which relates only to a mapping of
-    /// the same pattern, pack by pack
+    /// A mapping over packs some of which are being inferred. It relates to a
+    /// mapping of the same pattern pack by pack; on the expected side, one
+    /// without such a counterpart chooses its packs from the actual side's
+    /// items ([`Solver::invert`]).
     Mapped(Term),
 }
 
@@ -209,8 +211,7 @@ impl Solver<'_> {
         self.flatten(av, xs, None, None, &mut a, 0)?;
         let mut pairs = self.pair(&a, &b)?;
         self.cross(&a, &b, &mut pairs, obligation)?;
-        // Mappings paired by pattern relate pack by pack; one without a
-        // counterpart would need its pack inferred from the other side's items
+        // Mappings paired by pattern relate pack by pack
         for &(i, j) in &pairs {
             match (a.opaque[i].opacity, b.opaque[j].opacity) {
                 (Opacity::Mapped(x), Opacity::Mapped(y) | Opacity::Rigid(y))
@@ -220,17 +221,12 @@ impl Solver<'_> {
                 _ => {}
             }
         }
-        let mapped = |shape: &Shape, paired: &dyn Fn(usize) -> bool| {
-            shape
-                .opaque
-                .iter()
-                .enumerate()
-                .any(|(index, o)| matches!(o.opacity, Opacity::Mapped(_)) && !paired(index))
-        };
-        if mapped(&a, &|i| pairs.iter().any(|&(x, _)| x == i))
-            || mapped(&b, &|j| pairs.iter().any(|&(_, y)| y == j))
-        {
-            return Err(Residual::Unsupported("a mapping over a pack being inferred").into());
+        // An actual mapping without a counterpart, like an actual variable, waits
+        // for its packs to be decided elsewhere
+        if a.opaque.iter().enumerate().any(|(i, o)| {
+            matches!(o.opacity, Opacity::Mapped(_)) && !pairs.iter().any(|&(x, _)| x == i)
+        }) {
+            return Err(Residual::Inference.into());
         }
         // Every actual rigid without a counterpart stands for its bound
         let paired: FxHashSet<Term> = pairs
@@ -272,7 +268,10 @@ impl Solver<'_> {
             return Err(Residual::Inference.into());
         }
         let variables: Vec<usize> = (0..b.opaque.len())
-            .filter(|j| matches!(b.opaque[*j].opacity, Opacity::Infer(_)) && !b_paired.contains(j))
+            .filter(|j| {
+                matches!(b.opaque[*j].opacity, Opacity::Infer(_) | Opacity::Mapped(_))
+                    && !b_paired.contains(j)
+            })
             .collect();
         match variables[..] {
             [] => {}
@@ -300,10 +299,11 @@ impl Solver<'_> {
         )
     }
 
-    /// Relate schemas where the expected side has one variable without a
-    /// counterpart. It must end its positional lane, after required items only,
-    /// and it takes the keyed items that the expected side doesn't name. What it
-    /// takes becomes its lower bound.
+    /// Relate schemas where the expected side has one variable, or mapping over
+    /// packs being inferred, without a counterpart. It must end its positional
+    /// lane, after required items only, and it takes the keyed items that the
+    /// expected side doesn't name. What it takes becomes a variable's lower
+    /// bound, or decides a mapping's packs.
     fn collect(
         &self,
         a: &Shape,
@@ -312,9 +312,28 @@ impl Solver<'_> {
         obligation: ObligationId,
     ) -> Result<(), Issue> {
         let var = b.opaque[variable];
-        let Opacity::Infer(id) = var.opacity else {
-            unreachable!()
-        };
+        let collected = self.gather(a, b, var, variable, obligation)?;
+        match var.opacity {
+            Opacity::Infer(id) => {
+                let taken = self.synthetic(&collected);
+                self.derive(obligation, taken, Term::Infer(id), Step::Item(var.item));
+                Ok(())
+            }
+            Opacity::Mapped(mapping) => self.invert(mapping, &collected, var.item, obligation),
+            _ => unreachable!("only variables and mappings are collected into"),
+        }
+    }
+
+    /// The actual items that land on `var`, the expected opaque at `variable`,
+    /// relating the rest
+    fn gather(
+        &self,
+        a: &Shape,
+        b: &Shape,
+        var: Opaque,
+        variable: usize,
+        obligation: ObligationId,
+    ) -> Result<Vec<Collected>, Issue> {
         let unknown = |shape: &Shape, lane: fn(&Opaque) -> bool| {
             shape
                 .opaque
@@ -397,8 +416,81 @@ impl Solver<'_> {
                 obligation,
             )?;
         }
-        let taken = self.synthetic(&collected);
-        self.derive(obligation, taken, Term::Infer(id), Step::Item(var.item));
+        Ok(collected)
+    }
+
+    /// Decide the packs of `mapping` from the items it must admit. Each item
+    /// takes a fresh variable for each pack and fits the pattern over them, and
+    /// each pack is exactly its variables, in the items' order and with their
+    /// multiplicities and keys. The variables are created once per obligation.
+    fn invert(
+        &self,
+        mapping: Term,
+        collected: &[Collected],
+        item: usize,
+        obligation: ObligationId,
+    ) -> Result<(), Issue> {
+        let Head::Structural(view) = self.head(mapping)? else {
+            unreachable!("a mapping is structural")
+        };
+        let Type::Map { packs, pattern } = self.db.ty(view.ty) else {
+            unreachable!("a mapping is a map")
+        };
+        let count = packs.len() * collected.len();
+        let environment = match self.inversion_of(obligation) {
+            Some(environment) => environment,
+            None => {
+                let scope = self.scope(&[mapping])?;
+                let group = (0..count)
+                    .map(|_| self.fresh(Kind::Type, Rest::All, scope))
+                    .collect();
+                let environment = self.intern_environment(self.empty_environment(), group);
+                self.record_inversion(obligation, environment);
+                environment
+            }
+        };
+        let variables = self.frame(environment).group.clone();
+        if variables.len() != count {
+            debug_assert!(false, "an inversion's items changed in count");
+            return Err(Residual::Inference.into());
+        }
+        let variables: Vec<&[Term]> = variables.chunks(packs.len().max(1)).collect();
+        for (collected, own) in collected.iter().zip(&variables) {
+            let fits = self.view(
+                *pattern,
+                self.intern_environment(view.environment, own.to_vec()),
+            );
+            match *collected {
+                Collected::Atom(atom) => {
+                    self.derive(obligation, atom.ty, fits, Step::Item(atom.item));
+                }
+                Collected::Keyed(atom) => {
+                    self.derive(obligation, atom.value, fits, Step::Item(atom.item));
+                }
+                Collected::Unknown => {}
+            }
+        }
+        for (index, &pack) in packs.iter().enumerate() {
+            let items: Vec<Collected> = collected
+                .iter()
+                .zip(&variables)
+                .map(|(collected, own)| match *collected {
+                    Collected::Atom(atom) => Collected::Atom(Atom {
+                        ty: own[index],
+                        ..atom
+                    }),
+                    Collected::Keyed(atom) => Collected::Keyed(KeyedAtom {
+                        value: own[index],
+                        ..atom
+                    }),
+                    Collected::Unknown => Collected::Unknown,
+                })
+                .collect();
+            let exact = self.synthetic(&items);
+            let pack = view.child(pack);
+            self.derive(obligation, exact, pack, Step::Item(item));
+            self.derive(obligation, pack, exact, Step::Item(item));
+        }
         Ok(())
     }
 
@@ -587,12 +679,8 @@ impl Solver<'_> {
                             }
                             (Slot::Opaque(o), _) if shape.opaque[o].opacity == Opacity::Unknown => {
                             }
-                            (Slot::Opaque(_), _) => {
-                                return Err(Residual::Unsupported(
-                                    "a mapping over a pack being inferred",
-                                )
-                                .into());
-                            }
+                            // Its packs are decided elsewhere
+                            (Slot::Opaque(_), _) => return Err(Residual::Inference.into()),
                         }
                     }
                     for atom in &shape.keyed {
@@ -776,7 +864,6 @@ impl Solver<'_> {
         }
         let mapped =
             |items: Vec<Term>| self.view(pattern, self.intern_environment(view.environment, items));
-        let inferred = Residual::Unsupported("a mapping over a pack being inferred");
         if let [inner] = &flattened[..] {
             for slot in &inner.positional {
                 match *slot {
@@ -789,11 +876,12 @@ impl Solver<'_> {
                         let opacity = match opaque.opacity {
                             Opacity::Unknown => Opacity::Unknown,
                             Opacity::Infer(id) => {
-                                Opacity::Mapped(self.mapping(view, pattern, Term::Infer(id)))
+                                Opacity::Mapped(self.mapping(view, pattern, &[Term::Infer(id)]))
                             }
-                            Opacity::Mapped(_) => return Err(inferred.into()),
+                            // Its pack is decided once the inner one is
+                            Opacity::Mapped(_) => return Err(Residual::Inference.into()),
                             Opacity::Rigid(rigid) => {
-                                let mapping = self.mapping(view, pattern, rigid);
+                                let mapping = self.mapping(view, pattern, &[rigid]);
                                 if keep.is_some_and(|keep| !keep.contains(&mapping)) {
                                     // Standing for the mapping over its bound
                                     // keeps order only if the pattern does
@@ -807,7 +895,7 @@ impl Solver<'_> {
                                         .into());
                                     }
                                     let bound = self.opaque_bound(rigid)?;
-                                    let mapping = self.mapping(view, pattern, bound);
+                                    let mapping = self.mapping(view, pattern, &[bound]);
                                     self.include(
                                         mapping,
                                         Multiplicity::Required,
@@ -834,13 +922,32 @@ impl Solver<'_> {
             }
             return Ok(());
         }
-        // Several packs map item by item only once their items are all known
-        if let Some(opaque) = flattened.iter().flat_map(|inner| &inner.opaque).next() {
-            return Err(match opaque.opacity {
-                Opacity::Infer(_) => inferred,
-                _ => Residual::Unsupported("a mapping over several packs not all known"),
+        // Several packs map item by item only once their items are all known.
+        // While some are being inferred, the mapping stays whole.
+        let opaques = || flattened.iter().flat_map(|inner| &inner.opaque);
+        let inferred = |o: &Opaque| matches!(o.opacity, Opacity::Infer(_) | Opacity::Mapped(_));
+        if opaques().next().is_some() && opaques().all(inferred) {
+            let mut lanes = None;
+            for o in opaques().filter(|o| matches!(o.opacity, Opacity::Infer(_))) {
+                lanes = Some(match lanes {
+                    Some(seen) if seen != o.lanes => Rest::All,
+                    _ => o.lanes,
+                });
             }
-            .into());
+            let Some(lanes) = lanes else {
+                return Err(Residual::Inference.into());
+            };
+            let packs: Vec<Term> = packs.iter().map(|&pack| view.child(pack)).collect();
+            shape.positional.push(Slot::Opaque(shape.opaque.len()));
+            shape.opaque.push(Opaque {
+                opacity: Opacity::Mapped(self.mapping(view, pattern, &packs)),
+                lanes,
+                item,
+            });
+            return Ok(());
+        }
+        if opaques().next().is_some() {
+            return Err(Residual::Unsupported("a mapping over several packs not all known").into());
         }
         let first = &flattened[0];
         if flattened.iter().any(|inner| {
@@ -886,25 +993,32 @@ impl Solver<'_> {
         Ok(())
     }
 
-    /// A mapping of `pattern`, viewed in `view`'s environment, over `pack` alone,
-    /// closed where it can be so the same mapping on both sides of a judgment is
-    /// the same term
-    fn mapping(&self, view: TypeView, pattern: TypeId, pack: Term) -> Term {
-        let reference = self.db.intern(Type::Bound {
-            reference: BoundRef::new(0, 0),
-            kind: Kind::Schema,
-        });
-        // The pack's group is outside the pattern's own
+    /// A mapping of `pattern`, viewed in `view`'s environment, over `packs`
+    /// alone, closed where it can be so the same mapping on both sides of a
+    /// judgment is the same term
+    fn mapping(&self, view: TypeView, pattern: TypeId, packs: &[Term]) -> Term {
+        let references: Vec<TypeId> = (0..packs.len())
+            .map(|slot| {
+                self.db.intern(Type::Bound {
+                    reference: BoundRef::new(0, slot),
+                    kind: Kind::Schema,
+                })
+            })
+            .collect();
+        // The packs' group is outside the pattern's own
         let pattern = self
             .db
             .shift(pattern, 1, 1)
             .expect("inserting a group removes none");
         let map = self.db.intern(Type::Map {
-            packs: vec![reference].into(),
+            packs: references.into(),
             pattern,
         });
-        let pack = self.resolve(pack).unwrap_or(pack);
-        let term = self.view(map, self.intern_environment(view.environment, vec![pack]));
+        let packs = packs
+            .iter()
+            .map(|&pack| self.resolve(pack).unwrap_or(pack))
+            .collect();
+        let term = self.view(map, self.intern_environment(view.environment, packs));
         self.reify(term).map_or(term, |ty| self.closed(ty))
     }
 
