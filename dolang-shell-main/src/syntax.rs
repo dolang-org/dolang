@@ -9,11 +9,11 @@ use dolang::compile::{Context, Kind, Token};
 /// The range and classification are resolved when the token is collected rather
 /// than carried as a span and node identity, because they need the unit that
 /// produced it and these outlive it.
-pub type SemanticToken = (Token, Range<usize>, NodeClass, Context);
+pub(crate) type SemanticToken = (Token, Range<usize>, NodeClass, Context);
 
 /// What a token refers to, at the granularity coloring cares about.
 #[derive(Clone, Copy)]
-pub enum NodeClass {
+pub(crate) enum NodeClass {
     Normal,
     Param,
     Function,
@@ -26,7 +26,7 @@ pub enum NodeClass {
 /// Classify what a token refers to.
 ///
 /// Pass the [`Kind`] of the node the token names, if it names one.
-pub fn classify_node(kind: Option<&Kind<'_>>) -> NodeClass {
+pub(crate) fn classify_node(kind: Option<&Kind<'_>>) -> NodeClass {
     match kind {
         Some(
             Kind::PositionalParam { .. }
@@ -103,30 +103,27 @@ fn push_sanitized(out: &mut String, value: &str) {
     }
 }
 
-fn push_styled(out: &mut String, value: &str, style: Option<Style>, color: bool) {
-    if color && let Some(style) = style {
-        out.push_str(&style.to_string());
-        push_sanitized(out, value);
-        out.push_str(&style.render_reset().to_string());
-    } else {
-        push_sanitized(out, value);
+fn push_styled(out: &mut String, value: &str, style: Option<Style>) {
+    match style {
+        Some(style) => {
+            out.push_str(&style.to_string());
+            push_sanitized(out, value);
+            out.push_str(&style.render_reset().to_string());
+        }
+        None => push_sanitized(out, value),
     }
 }
 
-pub fn highlight_range(
-    source: &str,
-    tokens: &[SemanticToken],
-    range: Range<usize>,
-    color: bool,
-) -> String {
+/// Color `source` by its `tokens`
+pub(crate) fn highlight(source: &str, tokens: &[SemanticToken]) -> String {
     let mut sorted = tokens.iter().collect::<Vec<_>>();
     sorted.sort_by_key(|(_, span, _, _)| (span.start, Reverse(span.end)));
 
     let mut out = String::new();
-    let mut last_end = range.start;
+    let mut last_end = 0;
     for (token, span, class, context) in sorted {
-        let start = span.start.max(range.start).max(last_end);
-        let end = span.end.min(range.end);
+        let start = span.start.max(last_end);
+        let end = span.end.min(source.len());
         if end <= start {
             continue;
         }
@@ -137,12 +134,11 @@ pub fn highlight_range(
             &mut out,
             &source[start..end],
             token_style(*token, *class, *context),
-            color,
         );
         last_end = end;
     }
-    if last_end < range.end {
-        push_sanitized(&mut out, &source[last_end..range.end]);
+    if last_end < source.len() {
+        push_sanitized(&mut out, &source[last_end..]);
     }
     out
 }

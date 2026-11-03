@@ -201,7 +201,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     }
 
     /// Branch on `expr`'s truthiness to `then` or `else_`, testing each operand of a
-    /// short circuit once.  `span` is the operator testing it.
+    /// short circuit once.  Each test is blamed on the operand it tests, as testing
+    /// can run a user `(bool)` method.
     ///
     /// With `want_result`, both targets receive the value on the stack, and when
     /// they're the same block nothing is tested.  Otherwise `!` swaps the targets.
@@ -211,36 +212,32 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         then: cfg::BlockId,
         else_: cfg::BlockId,
         want_result: bool,
-        span: Span,
     ) -> Result<()> {
         match expr {
             Expr::Group { expr, .. } | Expr::Cast { expr, .. } => {
-                self.lower_short_circuit(expr, then, else_, want_result, span)
+                self.lower_short_circuit(expr, then, else_, want_result)
             }
             Expr::Unary {
                 op: Op::Bang, expr, ..
-            } if !want_result => self.lower_short_circuit(expr, else_, then, false, span),
-            Expr::Logical {
-                op,
-                exprs,
-                op_spans,
-            } => {
+            } if !want_result => self.lower_short_circuit(expr, else_, then, false),
+            Expr::Logical { op, exprs, .. } => {
                 let (last, init) = exprs.split_last().expect("a short circuit has operands");
-                for (operand, &op_span) in init.iter().zip(op_spans) {
+                for operand in init {
                     let long = self.graph.alloc_block(self.block.func, self.block.scope);
                     let (t, f) = match op {
                         Op::AmpAmp => (long, else_),
                         _ => (then, long),
                     };
-                    self.lower_short_circuit(operand, t, f, want_result, op_span)?;
+                    self.lower_short_circuit(operand, t, f, want_result)?;
                     self.switch(long);
                     if want_result {
-                        self.block.insts.push(Inst(InstInfo::Pop, op_span));
+                        self.block.insts.push(Inst(InstInfo::Pop, operand.span()));
                     }
                 }
-                self.lower_short_circuit(last, then, else_, want_result, span)
+                self.lower_short_circuit(last, then, else_, want_result)
             }
             expr => {
+                let span = expr.span();
                 self.lower_expr(expr)?;
                 if then == else_ {
                     if !want_result {
@@ -657,16 +654,16 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 self.block.insts.push(Inst(InstInfo::LoadConst(cid), *span));
             }
             Expr::Group { expr, .. } | Expr::Cast { expr, .. } => self.lower_expr(expr)?,
-            Expr::Logical { op_spans, .. } => {
+            Expr::Logical { .. } => {
                 let join = self.graph.alloc_block(self.block.func, self.block.scope);
-                self.lower_short_circuit(expr, join, join, true, op_spans[0])?;
+                self.lower_short_circuit(expr, join, join, true)?;
                 self.switch(join);
             }
             // Branch on a short circuit rather than test its value again
             Expr::Unary {
                 op: Op::Bang,
                 expr: operand,
-                op_span,
+                ..
             } if {
                 let mut inner = &**operand;
                 while let Expr::Group { expr, .. } | Expr::Cast { expr, .. } = inner {
@@ -680,17 +677,21 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     let id = self.graph.alloc_block(self.block.func, self.block.scope);
                     let mut block = self.graph.block_mut(id);
                     let cid = self.consttab.bool(value);
-                    block.insts.push(Inst(InstInfo::LoadConst(cid), *op_span));
-                    block.term = Term(TermInfo::Branch(join), *op_span);
+                    block
+                        .insts
+                        .push(Inst(InstInfo::LoadConst(cid), expr.span()));
+                    block.term = Term(TermInfo::Branch(join), expr.span());
                     self.graph.block_mut(join).inbound.insert(id);
                     id
                 };
                 let (falsy, truthy) = (load(false), load(true));
-                self.lower_short_circuit(operand, falsy, truthy, false, *op_span)?;
+                self.lower_short_circuit(operand, falsy, truthy, false)?;
                 self.switch(join);
             }
-            Expr::Unary { op, expr, op_span } => {
-                self.lower_expr(expr)?;
+            Expr::Unary {
+                op, expr: operand, ..
+            } => {
+                self.lower_expr(operand)?;
                 self.block.insts.push(Inst(
                     match op {
                         Op::Minus => InstInfo::Neg,
@@ -698,10 +699,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         Op::Tilde => InstInfo::BitNot,
                         _ => unreachable!(),
                     },
-                    *op_span,
+                    expr.span(),
                 ));
             }
-            Expr::Binary { op, exprs, op_span } => {
+            Expr::Binary { op, exprs, .. } => {
                 self.lower_expr(&exprs[0])?;
                 self.lower_expr(&exprs[1])?;
                 self.block.insts.push(Inst(
@@ -733,7 +734,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                             unreachable!()
                         }
                     },
-                    *op_span,
+                    expr.span(),
                 ));
             }
             Expr::Range { exprs, op_span } => {
@@ -751,7 +752,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 let sig = sig::Pack::new(std::iter::repeat_n(sig::Arg::Value, 3));
                 self.block.insts.push(Inst(
                     InstInfo::Builtin(builtin::RANGE, self.packtab.id(&sig)),
-                    *op_span,
+                    expr.span(),
                 ));
             }
             Expr::Lambda { func, do_span } => {
@@ -759,12 +760,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 self.lower_closure(func, span)?;
             }
             Expr::Call { arg0, args, .. } => match &**arg0 {
-                Expr::Get {
-                    object,
-                    field,
-                    dot_span,
-                    ..
-                } => {
+                Expr::Get { object, field, .. } => {
                     let sym = match field {
                         GetVariant::Normal(span) => {
                             self.symtab.id(&self.bintab.id_str(self.file.str(*span)))
@@ -783,7 +779,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     let sig = sig::Pack::new(sig.into_iter());
                     self.block.insts.push(Inst(
                         InstInfo::MethodCall(sym, self.packtab.id(&sig)),
-                        *dot_span,
+                        expr.span(),
                     ));
                 }
                 _ => {
@@ -798,12 +794,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         .push(Inst(InstInfo::Call(self.packtab.id(&sig)), expr.span()));
                 }
             },
-            Expr::Get {
-                object,
-                field,
-                dot_span,
-                ..
-            } => {
+            Expr::Get { object, field, .. } => {
                 self.lower_expr(object)?;
                 let sym = match field {
                     GetVariant::Normal(span) => {
@@ -815,7 +806,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     GetVariant::Private { res: Some(id), .. } => *id,
                     GetVariant::Private { res: None, .. } => unreachable!(),
                 };
-                self.block.insts.push(Inst(InstInfo::Get(sym), *dot_span))
+                self.block.insts.push(Inst(InstInfo::Get(sym), expr.span()))
             }
             Expr::Index { exprs, .. } => {
                 self.lower_expr(&exprs[0])?;
@@ -1058,9 +1049,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     let call = sig::Pack::new([].into_iter());
                     self.packtab.id(&call)
                 };
+                let iter_span = expr.as_ref().map_or(*for_span, Expr::span);
                 self.block
                     .insts
-                    .push(Inst(InstInfo::Builtin(builtin::ITER, sig), *for_span));
+                    .push(Inst(InstInfo::Builtin(builtin::ITER, sig), iter_span));
                 self.lower_store_res(
                     iter.as_ref().expect("unresolved for iterator"),
                     *for_span,
@@ -1097,7 +1089,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 self.link(advance);
                 self.switch(advance);
                 self.lower_load(iter.as_ref().unwrap(), *for_span);
-                self.block.insts.push(Inst(InstInfo::Next, *for_span));
+                self.block.insts.push(Inst(InstInfo::Next, iter_span));
                 self.block.term = Term(TermInfo::If(bodyid, next), *for_span);
                 self.link(bodyid);
                 self.link(next);
@@ -1147,9 +1139,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     let call = sig::Pack::new([].into_iter());
                     self.packtab.id(&call)
                 };
+                let iter_span = expr.as_ref().map_or(*for_span, Expr::span);
                 self.block
                     .insts
-                    .push(Inst(InstInfo::Builtin(builtin::ITER, sig), *for_span));
+                    .push(Inst(InstInfo::Builtin(builtin::ITER, sig), iter_span));
                 self.lower_store_res(
                     iter.as_ref().expect("unresolved for iterator"),
                     *for_span,
@@ -1186,7 +1179,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 self.link(advance);
                 self.switch(advance);
                 self.lower_load(iter.as_ref().unwrap(), *for_span);
-                self.block.insts.push(Inst(InstInfo::Next, *for_span));
+                self.block.insts.push(Inst(InstInfo::Next, iter_span));
                 self.block.term = Term(TermInfo::If(bodyid, next), *for_span);
                 self.link(bodyid);
                 self.link(next);
@@ -1238,9 +1231,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     let call = sig::Pack::new([].into_iter());
                     self.packtab.id(&call)
                 };
+                let iter_span = expr.as_ref().map_or(*for_span, Expr::span);
                 self.block
                     .insts
-                    .push(Inst(InstInfo::Builtin(builtin::ITER, sig), *for_span));
+                    .push(Inst(InstInfo::Builtin(builtin::ITER, sig), iter_span));
                 self.lower_store_res(
                     iter.as_ref().expect("unresolved for iterator"),
                     *for_span,
@@ -1277,7 +1271,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 self.link(advance);
                 self.switch(advance);
                 self.lower_load(iter.as_ref().unwrap(), *for_span);
-                self.block.insts.push(Inst(InstInfo::Next, *for_span));
+                self.block.insts.push(Inst(InstInfo::Next, iter_span));
                 self.block.term = Term(TermInfo::If(bodyid, next), *for_span);
                 self.link(bodyid);
                 self.link(next);
@@ -1386,11 +1380,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     }
 
     fn lower_assign(&mut self, node: &'a Assign, want_result: bool) -> Result<()> {
-        let Assign {
-            lhs,
-            rhs,
-            equal_span,
-        } = node;
+        let Assign { lhs, rhs, .. } = node;
         let span = node.span();
 
         match lhs {
@@ -1402,11 +1392,11 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     Var::Local(index) => self
                         .block
                         .insts
-                        .push(Inst(InstInfo::StoreLocal(index), *equal_span)),
+                        .push(Inst(InstInfo::StoreLocal(index), span)),
                     Var::Upvar(index, depth) => self
                         .block
                         .insts
-                        .push(Inst(InstInfo::StoreUpvar(index, depth), *equal_span)),
+                        .push(Inst(InstInfo::StoreUpvar(index, depth), span)),
                 }
             }
             LValue::Field { object, field, .. } => {
@@ -1414,7 +1404,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 self.lower_prim_stmt(rhs, true)?;
                 self.block.insts.push(Inst(
                     InstInfo::Set(self.symtab.id(&self.bintab.id_str(self.file.str(*field)))),
-                    *equal_span,
+                    span,
                 ));
             }
             LValue::PrivateField {
@@ -1424,14 +1414,14 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             } => {
                 self.lower_expr(object)?;
                 self.lower_prim_stmt(rhs, true)?;
-                self.block.insts.push(Inst(InstInfo::Set(*id), *equal_span));
+                self.block.insts.push(Inst(InstInfo::Set(*id), span));
             }
             LValue::PrivateField { res: None, .. } => unreachable!(),
             LValue::Index { exprs, .. } => {
                 self.lower_expr(&exprs[0])?;
                 self.lower_expr(&exprs[1])?;
                 self.lower_prim_stmt(rhs, true)?;
-                self.block.insts.push(Inst(InstInfo::Assign, *equal_span));
+                self.block.insts.push(Inst(InstInfo::Assign, span));
             }
         }
         if want_result {
@@ -1456,7 +1446,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         span: Span,
     ) -> Result<Binds<'a>> {
         let Some(bind) = bind else {
-            self.lower_short_circuit(cond, tid, fid, false, span)?;
+            self.lower_short_circuit(cond, tid, fid, false)?;
             return Ok((None, None));
         };
         if let Pattern::Ident(PatIdent { ident, .. }) = &bind.pattern {
@@ -1466,7 +1456,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             // failure target is shared with predecessors that have no such value to
             // clean up.
             let cleanup = self.graph.alloc_block(self.block.func, self.block.scope);
-            self.lower_short_circuit(cond, tid, cleanup, true, span)?;
+            self.lower_short_circuit(cond, tid, cleanup, true)?;
             self.switch(cleanup);
             self.block.insts.push(Inst(InstInfo::Pop, span));
             self.block.term = Term(TermInfo::Branch(fid), span);
@@ -2017,9 +2007,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             let call = sig::Pack::new([].into_iter());
             self.packtab.id(&call)
         };
+        let iter_span = node.expr.as_ref().map_or(node.for_span, Expr::span);
         self.block
             .insts
-            .push(Inst(InstInfo::Builtin(builtin::ITER, sig), span));
+            .push(Inst(InstInfo::Builtin(builtin::ITER, sig), iter_span));
         self.lower_store_res(
             node.iter.as_ref().expect("unresolved for iterator"),
             span,
@@ -2056,7 +2047,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         self.link(advance);
         self.switch(advance);
         self.lower_load(node.iter.as_ref().unwrap(), span);
-        self.block.insts.push(Inst(InstInfo::Next, span));
+        self.block.insts.push(Inst(InstInfo::Next, iter_span));
         self.block.term = Term(TermInfo::If(bodyid, next), span);
         self.link(bodyid);
         self.link(next);
@@ -3204,7 +3195,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 let sig = sig::Pack::new(std::iter::once(sig::Arg::Value));
                 self.block.insts.push(Inst(
                     InstInfo::Builtin(builtin::THROW, self.packtab.id(&sig)),
-                    node.span,
+                    node.span | node.expr.span(),
                 ));
                 self.lower_scope_leave(self.params.exit_id, node.span)?;
                 Ok(true)

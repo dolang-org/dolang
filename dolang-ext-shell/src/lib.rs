@@ -18,7 +18,6 @@ mod security;
 mod shell;
 mod shell_args;
 mod shlex;
-mod syntax;
 mod sys;
 mod util;
 
@@ -37,7 +36,7 @@ pub use crate::{
     global::ProgramSource,
     security::AccessMask as WindowsAccessMask,
 };
-use dolang::runtime::{Alloc, AllocExt, Error, Output, Result, Slot, Strand, Value};
+use dolang::runtime::{Alloc, AllocExt, Error, Output, Result, Strand, Value};
 pub use dolang_ext_term::{
     ansi_enabled, terminal_line_ending, terminal_output, write_terminal_line,
 };
@@ -55,10 +54,6 @@ pub use diagnostic::{
     render_message_backtrace,
 };
 use dolang_vfs::path as vfs_path;
-#[doc(hidden)]
-pub use syntax::{
-    NodeClass, SemanticToken, classify_node, highlight_range as highlight_source_range,
-};
 
 /// Instantiate the `shell.stdin` handle.
 ///
@@ -370,20 +365,6 @@ pub fn stderr_cols<'v>(strand: &Strand<'v, '_>) -> Option<u16> {
     let ov = &global.terminal.console_override;
     ov.cols
         .or_else(|| ::console::Term::stderr().size_checked().map(|(_, c)| c))
-}
-
-/// Formats an error value and backtrace as a `term.Text`, the way an uncaught
-/// error is reported.
-///
-/// `backtrace` defaults to that of the active handled exception.
-pub fn render_error<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    error: &Value<'v>,
-    backtrace: Option<&Value<'v>>,
-    out: Slot<'v, '_>,
-) -> Result<'v, 's, ()> {
-    let rendered = diagnostic::render_error_value(strand, error, backtrace)?;
-    dolang_ext_term::preformatted_text(strand, &rendered, out)
 }
 
 /// Redirect terminal output (`term.echo`/`term.print` and default child stderr)

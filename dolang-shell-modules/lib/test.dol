@@ -12,7 +12,7 @@
 #
 # `--tags !windows,!macos` means “not Windows OR not macOS.” Use
 # `--tags !windows --tags !macos` to exclude both.
-import _shell compile load progress strand term
+import compile load progress shell strand term
   fs:
     - Path
   time:
@@ -279,7 +279,7 @@ class Harness
           print (err_style "failed") ": " (name_style "$module/$(failure.test)") ": "
         else
           print (err_style "failed") ": " (name_style "$module") ": "
-        echo $ _shell.render_error $e backtrace: $failure.backtrace
+        echo $ shell.render_error $e backtrace: $failure.backtrace
         if failure.output
           print "  ──\n" $term.preformat(failure.output).indent(2)
     print (pass_style "passed") ": $(self.#success)/$(self.#total - skipped - ignored)"

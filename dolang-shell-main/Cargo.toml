@@ -18,6 +18,10 @@ default = []
 debug = ["dolang/debug"]
 
 
+[dependencies.anstyle]
+workspace = true
+
+
 [dependencies.console]
 workspace = true
 

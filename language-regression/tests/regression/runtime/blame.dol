@@ -1,0 +1,48 @@
+# An error is blamed on the whole expression or statement that raised it, not
+# only its operator or keyword.
+
+# Zero-based line, column and length of the code `depth` frames out
+def blame f depth = 0
+  try
+    f()
+  catch _
+    let frames = [...strand.error_backtrace()]
+    let loc = frames[depth].location
+    return [loc.line, loc.column, loc.len]
+  throw "did not raise"
+
+class Bad
+  pub def (bool) _self
+    throw "no bool"
+
+let n = 1
+let bad = Bad()
+
+assert_eq (blame do (n.nope(1, 2))) [20, 21, 12]
+assert_eq (blame do (n + "x")) [21, 21, 7]
+assert_eq (blame do (-"x")) [22, 21, 4]
+assert_eq (blame do (n.missing)) [23, 21, 9]
+let field = blame do
+  n.field = 2
+assert_eq $field [25, 2, 11]
+let index = blame do
+  let a = [1]
+  a["x"] = 2
+assert_eq $index [29, 2, 10]
+def boom()
+  throw "boom"
+assert_eq (blame boom) [32, 2, 12]
+let looped = blame do
+  for x = 5
+    x
+assert_eq $looped [35, 10, 1]
+
+# Testing truthiness can run a `(bool)` method, so a test is blamed on the
+# operand it tests.
+assert_eq (blame (do (bad && 1)) 1) [41, 22, 3]
+assert_eq (blame (do (1 && bad || 2)) 1) [42, 27, 3]
+assert_eq (blame (do (!(bad || 1))) 1) [43, 24, 3]
+def test_if()
+  if bad
+    1
+assert_eq (blame test_if 1) [45, 5, 3]

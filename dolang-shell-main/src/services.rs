@@ -13,16 +13,11 @@ pub(crate) fn register<'v>(builder: &mut Register<'v>) {
     let editor = builder.build_type::<LineEditor>((), prelude_sym).build();
     let mode_sym = builder.sym("mode");
     let strict_sym = builder.sym("strict");
-    let backtrace_sym = builder.sym("backtrace");
     let script_sym = builder.sym("SCRIPT");
     let repl_sym = builder.sym("REPL");
     builder
         .module("_shell")
         .value("Editor", editor)
-        .function("render_error", async move |strand, args, out| {
-            let ([error], [backtrace]) = unpack!(strand, args, 1, 0, backtrace_sym = None)?;
-            dolang_ext_shell::render_error(strand, &error, backtrace.as_deref(), out)
-        })
         .function("compile", async move |strand, args, out| {
             let ([path], [source, mode, prelude, strict_arg]) = unpack!(
                 strand,

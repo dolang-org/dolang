@@ -41,6 +41,6 @@ try
     catch std.CanceledError: error
       throw error
     catch error
-      term.print (_shell.render_error error) "\n"
+      term.print (shell.render_error error) "\n"
 finally
   editor.save_history()
