@@ -1,7 +1,7 @@
 {
     "name": "dolang",
     "displayName": "Do Language",
-    "description": "Syntax highlighting, language server and script running for the Do scripting language",
+    "description": "Syntax highlighting, language server, script running and testing for the Do scripting language",
     "version": "0.1.1",
     "license": "Apache-2.0 OR MIT",
     "icon": "images/icon.png",
@@ -41,7 +41,8 @@
     },
     "activationEvents": [
         "onLanguage:dolang",
-        "onTaskType:dolang"
+        "onTaskType:dolang",
+        "workspaceContains:**/test/**/*.dol"
     ],
     "contributes": {
         "configuration": {
