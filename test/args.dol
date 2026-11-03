@@ -199,6 +199,19 @@ def subcommand()
   assert_eq (p.handler p) "myservice"
 
 #[test]
+def subcommand_divider()
+  let p = args.parse
+    args: ["--verbose", "run", "--x", "-h", "y", "--"]
+    - flag: verbose
+    - cmd: run
+      divider: true
+      - arg: rest
+        collect: true
+  assert $p.verbose
+  assert_eq $p.cmd :run:
+  assert_eq $p.run.rest ["--x", "-h", "y", "--"]
+
+#[test]
 def subcommand_hyphen_normalized()
   let p = args.parse
     args: ["build-docs", "api"]

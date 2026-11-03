@@ -34,6 +34,22 @@ def write_project dir
 # A source that compiles, but fails the type check.
 let TYPE_ERROR = "pub def f() -> Int\n  \"x\"\n"
 
+# A test of `write_project`'s modules that passes.
+let PASSING_TEST = r|
+  import c
+    test:
+      - test
+      - assert_eq
+
+  #[test]
+  def value()
+    assert_eq $c.value 42
+
+# Writes `source` as the project's test in `dir`.
+def write_test dir source
+  (dir / "test").create_dir all: true
+  (dir / "test/t.dol").write $source
+
 # The JSON report in `file`.
 def read_report file
   let Dict(report) = json.decode $file.read_str()
@@ -47,7 +63,7 @@ def span line column len
 def checks_a_project()
   fs.with_temp_dir do |dir|
     write_project $dir
-    let output rc = doze check --project $dir
+    let output rc = doze --project $dir check
     assert_eq $rc 0
     assert $output.contains("checked 3 sources: 0 errors, 0 warnings")
     # The current directory is the default project
@@ -62,7 +78,7 @@ def check_failures_fail()
       write_project $dir
       let path = fs.Path.join(dir, ...file)
       path.write $TYPE_ERROR
-      let output rc = doze check --project $dir
+      let output rc = doze --project $dir check
       assert_eq $rc 1
       assert $output.contains("$path") $output
 
@@ -71,10 +87,10 @@ def warnings_fail_only_when_strict()
   fs.with_temp_dir do |dir|
     write_project $dir
     (dir / "lib/w.dol").write "pub def f()\n  let unused = 1\n  nil\n"
-    let output rc = doze check --project $dir
+    let output rc = doze --project $dir check
     assert_eq $rc 0
     assert $output.contains("1 warnings")
-    let _output rc = doze check --project $dir --strict
+    let _output rc = doze --project $dir check --strict
     assert_eq $rc 1
 
 #[test]
@@ -82,7 +98,7 @@ def checks_a_library_without_main()
   fs.with_temp_dir do |dir|
     write_project $dir
     (dir / "main.dol").remove()
-    let output rc = doze check --project $dir
+    let output rc = doze --project $dir check
     assert_eq $rc 0
     assert $output.contains("checked 2 sources")
 
@@ -92,19 +108,77 @@ def checks_modules_importing_strand()
   fs.with_temp_dir do |dir|
     write_project $dir
     (dir / "lib/s.dol").write "import strand\npub def go() -> Int\n  strand.spawn(do 1).join()\n"
-    let output rc = doze check --project $dir
+    let output rc = doze --project $dir check
     assert_eq $rc 0 $output
 
 #[test]
 def other_sources_are_ignored()
   fs.with_temp_dir do |dir|
     write_project $dir
-    for sub = ["test", "build"]
-      (dir / sub).create_dir()
-      (dir / sub / "x.dol").write "let = 1\n"
-    let output rc = doze check --project $dir
+    (dir / "build").create_dir()
+    (dir / "build/x.dol").write "let = 1\n"
+    let output rc = doze --project $dir check
     assert_eq $rc 0
     assert $output.contains("checked 3 sources")
+
+#[test]
+def checks_tests()
+  fs.with_temp_dir do |dir|
+    write_project $dir
+    write_test $dir $PASSING_TEST
+    let output rc = doze --project $dir check
+    assert_eq $rc 0 $output
+    assert $output.contains("checked 4 sources: 0 errors, 0 warnings") $output
+    # Tests are found at any depth
+    let nested = (dir / "test/sub/x.dol")
+    nested.parent.create_dir()
+    nested.write $TYPE_ERROR
+    let output rc = doze --project $dir check
+    assert_eq $rc 1
+    assert $output.contains("$nested") $output
+
+#[test]
+def bundling_leaves_tests_out()
+  fs.with_temp_dir do |dir|
+    write_project $dir
+    write_test $dir "let = 1\n"
+    let output rc = doze --project $dir bundle
+    assert_eq $rc 0 $output
+    assert $output.contains("checked 3 sources") $output
+
+#[test]
+def runs_tests()
+  fs.with_temp_dir do |dir|
+    write_project $dir
+    write_test $dir $PASSING_TEST
+    let output rc = doze --project $dir test
+    assert_eq $rc 0 $output
+    write_test $dir $PASSING_TEST.replace("42", "41")
+    let output rc = doze --project $dir test
+    assert_eq $rc 1 $output
+
+#[test]
+def passes_arguments_to_tests()
+  fs.with_temp_dir do |dir|
+    write_project $dir
+    write_test $dir $PASSING_TEST
+    let file = (dir / "tests.json")
+    let output rc = doze --project $dir test --list --format json --output $file
+    assert_eq $rc 0 $output
+    let Dict(listing) = json.decode $file.read_str()
+    let ids = $
+      for module = listing["modules"]
+        for record = module["tests"]
+          - $record["id"]
+    assert_eq $ids ["test/t/value"]
+
+#[test]
+def testing_needs_a_test_dir()
+  fs.with_temp_dir do |dir|
+    write_project $dir
+    let output rc = doze --project $dir test
+    assert_eq $rc 1
+    assert $output.contains("no test directory") $output
 
 #[test]
 def bad_module_paths_fail()
@@ -119,7 +193,7 @@ def bad_module_paths_fail()
       let path = fs.Path.join(dir, ...file)
       path.parent.create_dir all: true
       path.write "nil\n"
-      let output rc = doze check --project $dir
+      let output rc = doze --project $dir check
       assert_eq $rc 1
       assert $output.contains(expected) $output
       assert $output.contains("$path") $output
@@ -133,7 +207,7 @@ def bundles_a_project()
     # module name
     (dir / "lib/d").create_dir()
     (dir / "lib/d/mod.dol").write "pub let value = 1\n"
-    let _output rc = doze bundle --project $dir
+    let _output rc = doze --project $dir bundle
     assert_eq $rc 0
     let app = (dir / "build/app.dolz")
     assert_eq (run_bundle(app, "world")) "42 world\n"
@@ -150,7 +224,7 @@ def bundles_with_output_and_shebang()
   fs.with_temp_dir do |dir|
     write_project $dir
     let app = (dir / "app")
-    let _output rc = doze bundle --project $dir -o $app --shebang $exe
+    let _output rc = doze --project $dir bundle -o $app --shebang $exe
     assert_eq $rc 0
     assert $app.read().starts_with(Bin("#!$exe\n"))
     assert_eq (run_bundle(app, "world")) "42 world\n"
@@ -161,7 +235,7 @@ def bundling_needs_main()
   fs.with_temp_dir do |dir|
     write_project $dir
     (dir / "main.dol").remove()
-    let output rc = doze bundle --project $dir
+    let output rc = doze --project $dir bundle
     assert_eq $rc 1
     assert $output.contains("no main.dol")
     assert (!(dir / "build").exists())
@@ -171,10 +245,10 @@ def bundling_checks_unless_told_not_to()
   fs.with_temp_dir do |dir|
     write_project $dir
     (dir / "lib/e.dol").write $TYPE_ERROR
-    let _output rc = doze bundle --project $dir
+    let _output rc = doze --project $dir bundle
     assert_eq $rc 1
     assert (!(dir / "build").exists())
-    let _output rc = doze bundle --project $dir --no-check
+    let _output rc = doze --project $dir bundle --no-check
     assert_eq $rc 0
     let app = (dir / "build" / "$(dir.canonical().name).dolz")
     assert $app.exists()
@@ -185,7 +259,7 @@ def compile_errors_fail_the_bundle()
     write_project $dir
     let path = (dir / "lib" / "c.dol")
     path.write "let = 1\n"
-    let output rc = doze bundle --project $dir --no-check
+    let output rc = doze --project $dir bundle --no-check
     assert_eq $rc 1
     assert $output.contains("$path") $output
     assert (!(dir / "build").exists())
@@ -205,7 +279,7 @@ def reports_diagnostics_as_json()
         boom()
         1
     let file = (dir / "report.json")
-    let output rc = doze check --project $dir --json $file
+    let output rc = doze --project $dir check --json $file
     assert_eq $rc 1 $output
     let report = read_report $file
     assert_eq $report["sources"] 4
@@ -236,7 +310,7 @@ def reports_compile_errors_as_json()
     let path = (dir / "lib/c.dol")
     path.write "let = 1\n"
     let file = (dir / "report.json")
-    let _output rc = doze bundle --project $dir --no-check --json $file
+    let _output rc = doze --project $dir bundle --no-check --json $file
     assert_eq $rc 1
     let report = read_report $file
     assert_eq $report["checked"] false
@@ -253,7 +327,7 @@ def reports_a_pass_as_json()
     fs.with_temp_dir do |dir|
       write_project $dir
       let file = (dir / "report.json")
-      let output rc = doze $command --project $dir --json $file
+      let output rc = doze --project $dir $command --json $file
       assert_eq $rc 0 $output
       let expected = $
         "sources": 3
@@ -270,13 +344,13 @@ def project_errors_write_no_report()
     write_project $dir
     (dir / "lib/x-y.dol").write "nil\n"
     let file = (dir / "report.json")
-    let _output rc = doze check --project $dir --json $file
+    let _output rc = doze --project $dir check --json $file
     assert_eq $rc 1
     assert (!file.exists())
   fs.with_temp_dir do |dir|
     write_project $dir
     (dir / "main.dol").remove()
     let file = (dir / "report.json")
-    let _output rc = doze bundle --project $dir --json $file
+    let _output rc = doze --project $dir bundle --json $file
     assert_eq $rc 1
     assert (!file.exists())

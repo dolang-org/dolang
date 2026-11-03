@@ -1,7 +1,7 @@
 # Projects
 
-`doze` checks and bundles a project. Run it as `dolang -m doze`, or through a
-`doze` symlink to `dolang`, which an installation provides on Unix.
+`doze` checks, tests and bundles a project. Run it as `dolang -m doze`, or
+through a `doze` symlink to `dolang`, which an installation provides on Unix.
 
 ## Layout
 
@@ -16,26 +16,48 @@ app/
       net.dol    # module util.net
     store/
       mod.dol    # module store
+  test/
+    util.dol     # tests
 ```
 
 Each `.dol` file under `lib/` is a module, named by its path: `lib/a/b.dol` or
 `lib/a/b/mod.dol` is `a.b`. A path that isn't a module name, such as
 `lib/my-thing.dol`, is an error, and so are two files naming the same module.
-`main.dol` is the program, and is optional for a library. No other files have a
-role yet.
+`main.dol` is the program, and is optional for a library. The `.dol` files under
+`test/`, at any depth, are the tests.
 
-Each command works on the project given with `--project`, or else on the
-current directory. It doesn't search parent directories for one.
+Each command works on the project given with `--project`, before the command,
+or else on the current directory. It doesn't search parent directories for one.
 
 ## Checking
 
-`doze check` checks the types of every module under `lib/` and of `main.dol`,
-together. Imports resolve to the project's modules, then to the bundled
-modules. With `--strict`, warnings fail the check too.
+`doze check` checks the types of every module under `lib/`, of `main.dol`, and
+of the tests, together. Imports resolve to the project's modules, then to the
+bundled modules. With `--strict`, warnings fail the check too.
 
 ```
 doze check
-doze check --project path/to/app
+doze --project path/to/app check
+```
+
+## Testing
+
+`doze test` runs the tests with the
+[`test` entrypoint](./index.md#bundled-entrypoints), with `lib/` on the module
+path so the tests import the project's modules. Every argument after `test`
+goes to it unchanged, and its exit status is `doze`'s. It runs in the project's
+directory, so test IDs such as `test/util/parses` are the same wherever `doze`
+was run from. For a project in `app`, these are the same:
+
+```
+doze --project app test --filter 'util/*'
+(cd app && dolang --module-path lib -m test test --filter 'util/*')
+```
+
+`--list` lists the tests instead, and `--format` gives JSON for tools:
+
+```
+doze test --list --format json
 ```
 
 ## Bundling
