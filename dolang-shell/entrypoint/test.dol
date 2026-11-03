@@ -86,26 +86,30 @@ args.with args: $shell.args
   - flag: list
     help: List tests without running them.
   - opt: format
-    values: ["json"]
+    values: ["json", "jsonl"]
     default: nil
     meta: FMT
-    help: "Output format for --list: json, on stdout"
+    help: "Machine-readable output on stdout: json for --list, jsonl for runs"
   - opt: output
     short: o
     parse: $Path
     default: nil
     meta: FILE
-    help: Write --format json output to FILE instead
+    help: Write --format output to FILE instead
   - arg: paths
     parse: $Path
     collect: true
     help: Test directories or files to run.
   do |p|
     let :filter :tags :id :jobs :module_jobs :timeout :no_capture :list :format :output :paths ... = p
-    if (format != nil && !list)
-      throw args.Error "--format requires --list"
+    if (format == "json" && !list)
+      throw args.Error "--format json requires --list"
+    if (format == "jsonl" && list)
+      throw args.Error "--format jsonl does not apply to --list"
+    if (format == "jsonl" && no_capture)
+      throw args.Error "--format jsonl does not allow --no-capture"
     if (output != nil && format == nil)
-      throw args.Error "--output requires --format json"
+      throw args.Error "--output requires --format"
     let name_filter = Glob $filter
     let ids = {}
     for i = id
@@ -115,6 +119,8 @@ args.with args: $shell.args
         (ids.len == 0 || ids.contains info.id))
     if (format == "json")
       exit $ test.list :module_jobs :filter :timeout format: :JSON: :output ...paths
+    if (format == "jsonl")
+      exit $ test.run :jobs :module_jobs :filter :timeout format: :JSONL: :output ...paths
     let rc = progress.with do
       if list
         test.list :module_jobs :filter :timeout ...paths

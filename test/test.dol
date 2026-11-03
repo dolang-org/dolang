@@ -397,7 +397,7 @@ def info_reports_definition_locations()
     let out = BinBuf()
     run $shell.exe --no-cache --module-path $dir -m test --list --format json $path stdout: $out mode: :CHUNK:
     let seen = {}
-    for record = json.decode(Str(out.freeze()))["modules"][0]["tests"]
+    for record = json.decode(out.freeze_str())["modules"][0]["tests"]
       seen[record["base"]] = record["location"]
     let expected = $
       "plain": plain
@@ -413,15 +413,18 @@ def info_reports_definition_locations()
 
 # Lists tests through the CLI, giving the exit status, standard output and
 # standard error.
-def list_cli *args
+# Runs `dolang -m test`, giving its exit status and stdout.
+def test_cli *args
   let out = BinBuf()
-  let err = BinBuf()
   let rc = try
-    run $shell.exe --no-cache -m test --list ...args stdout: $out stderr: $err mode: :CHUNK:
+    run $shell.exe --no-cache -m test ...args stdout: $out mode: :CHUNK:
     0
   catch proc.Error: e
     e.rc
-  (rc, Str(out.freeze()), Str(err.freeze()))
+  (rc, out.freeze_str())
+
+def list_cli *args
+  test_cli --list ...args
 
 #[test]
 def cli_lists_without_running()
@@ -429,15 +432,12 @@ def cli_lists_without_running()
     let path = tagged_module $dir
     let module = module_of $path
     env DOLANG_TEST_MARKER_DIR: $dir do
-      let rc out err = list_cli $path
+      let rc out = list_cli $path
       assert_eq $rc 0
       assert_eq $out ""
-      assert $err.contains("$module/alpha [fast, linux]\n")
-      assert $err.contains("$module/plain\n")
-      assert $err.contains("listed: 4 tests in 1 module")
       assert_markers $dir []
 
-      let rc out _err = list_cli --format json --tags fast --filter "**/a*" $path
+      let rc out = list_cli --format json --tags fast --filter "**/a*" $path
       assert_eq $rc 0
       let doc = json.decode $out
       assert_eq $doc["version"] 1
@@ -445,7 +445,7 @@ def cli_lists_without_running()
       assert_eq [...tests.map(do |t| t["name"])] ["alpha"]
       assert_markers $dir []
 
-      let rc out _err = list_cli --format json --id "$module/gamma" --id "$module/plain" $path
+      let rc out = list_cli --format json --id "$module/gamma" --id "$module/plain" $path
       assert_eq $rc 0
       let tests = json.decode(out)["modules"][0]["tests"]
       assert_eq [...tests.map(do |t| t["name"])] ["gamma", "plain"]
@@ -468,7 +468,7 @@ def cli_json_records()
       def connects :backend
         backend
     let module = module_of $path
-    let rc out _err = list_cli --format json $path
+    let rc out = list_cli --format json $path
     assert_eq $rc 0
     let doc = json.decode $out
     let entry = doc["modules"][0]
@@ -496,12 +496,11 @@ def cli_list_keeps_module_output_off_stdout()
       #[test.test]
       def quiet()
         nil
-    let rc out err = list_cli $path
+    let rc out = list_cli $path
     assert_eq $rc 0
     assert_eq $out ""
-    assert_not $err.contains("noisy-")
 
-    let rc out _err = list_cli --format json $path
+    let rc out = list_cli --format json $path
     assert_eq $rc 0
     assert_not $out.contains("noisy-")
     assert_eq $json.decode(out)["modules"][0]["status"] "loaded"
@@ -520,15 +519,11 @@ def cli_list_reports_module_failures()
       import test
       test.skip "not here"
 
-    let rc out err = list_cli $broken $raising $skipping
+    let rc out = list_cli $broken $raising $skipping
     assert_eq $rc 1
     assert_eq $out ""
-    assert $err.contains("compilation failed")
-    assert $err.contains("boom")
-    assert $err.contains("skipped")
-    assert $err.contains("not here")
 
-    let rc out _err = list_cli --format json $dir
+    let rc out = list_cli --format json $dir
     assert_eq $rc 1
     let modules = json.decode(out)["modules"]
     assert_eq [...modules.map(do |m| m["status"])] ["failed", "failed", "skipped"]
@@ -544,7 +539,7 @@ def cli_list_reports_module_failures()
     assert $load_error["output"].contains("loading")
     assert_eq $modules[2]["message"] "not here"
 
-    let rc _out _err = list_cli $skipping
+    let rc _out = list_cli $skipping
     assert_eq $rc 0
 
 #[test]
@@ -552,7 +547,7 @@ def cli_list_writes_json_to_output_file()
   with_temp_dir do |dir|
     let path = tagged_module $dir
     let target = (dir / "tests.json")
-    let rc out _err = env DOLANG_TEST_MARKER_DIR: $dir do
+    let rc out = env DOLANG_TEST_MARKER_DIR: $dir do
       list_cli --format json --output $target $path
     assert_eq $rc 0
     assert_eq $out ""
@@ -562,6 +557,198 @@ def cli_list_writes_json_to_output_file()
 def cli_rejects_misplaced_list_options()
   with_temp_dir do |dir|
     let path = tagged_module $dir
-    for options = [["--format", "json"], ["--list", "--output", "x.json"], ["--list", "--format", "text"]]
+    let invalid = $
+      - ["--format", "json"]
+      - ["--list", "--output", "x.json"]
+      - ["--output", "x.json"]
+      - ["--list", "--format", "text"]
+      - ["--list", "--format", "jsonl"]
+      - ["--format", "jsonl", "--no-capture"]
+    for options = invalid
       assert_throws $proc.Error do
-        run $shell.exe --no-cache -m test ...options $path stderr: $std.null
+        run $shell.exe --no-cache -m test ...options $path
+
+# The zero-based line of `source` containing `text`.
+def line_of source text
+  for i line = source.split("\n").enumerate()
+    if line.contains $text
+      return i
+  throw std.ValueError "no line with $text"
+
+# Decodes a JSONL stream, checking that every line is an event.
+def decode_events text
+  assert text.ends_with("\n")
+  let events = []
+  for line = text.trim_end("\n").split("\n")
+    let event = json.decode $line
+    assert_type $Dict $event
+    assert event.contains("event")
+    events.push $event
+  events
+
+let events_source = r|
+  import shell
+  import test:
+    - assert_eq
+    - fixture
+    - ignore
+    - skip
+    - test
+
+  echo loading
+
+  def check value
+    assert_eq $value 2
+
+  #[fixture]
+  def broken block ...rest
+    assert_eq 1 3
+    block(...rest)
+
+  #[test]
+  def passes()
+    echo noisy-passed
+
+  #[test]
+  def fails()
+    print noisy-failed
+    run $shell.exe $env["DOLANG_TEST_CHILD"]
+    assert_eq [1] [2]
+
+  #[test]
+  def via_helper()
+    check 3
+
+  #[test]
+  #[broken]
+  def via_fixture()
+    nil
+
+  #[test]
+  def skips()
+    skip "not now"
+
+  #[test]
+  def ignores()
+    ignore()
+
+#[test]
+def cli_jsonl_reports_events()
+  with_temp_dir do |dir|
+    let path = (dir / "a_events.dol")
+    path.write $events_source
+    let broken = (dir / "b_broken.dol")
+    broken.write "let x = (\n"
+    let raising = (dir / "c_raising.dol")
+    raising.write "throw std.ValueError boom\n"
+    let module = module_of $path
+    # Not a `.dol` file, so it isn't a test module.
+    let child = (dir / "child.script")
+    child.write "shell.stdout.write \"noisy-child\\n\"\n"
+
+    let rc out = env DOLANG_TEST_CHILD: $child do test_cli --format jsonl $dir
+    assert_eq $rc 1
+    assert_not $out.contains("noisy-passed")
+    let events = decode_events $out
+    assert_eq $events[0] {"event": "run-start", "version": 1, "modules": 3}
+    let last = events[events.len - 1]
+    let summary = $
+      "event": run-end
+      "passed": 1
+      "failed": 3
+      "skipped": 1
+      "ignored": 1
+      "status": 1
+    assert_eq $last $summary
+
+    # Each module and test starts before it ends.
+    let position = {}
+    for i event = events.enumerate()
+      let kind = event["event"]
+      if kind.starts_with("module-")
+        position[(kind, event["path"])] = i
+      else if kind.starts_with("test-")
+        position[(kind, event["id"])] = i
+    for p = [path, broken, raising]
+      assert (position[("module-start", str(p))] < position[("module-end", str(p))])
+    let names = ["passes", "fails", "via_helper", "via_fixture", "skips", "ignores"]
+    for name = names
+      let id = "$module/$name"
+      assert (position[("test-start", id)] < position[("test-end", id)])
+
+    let modules = {}
+    let starts = {}
+    let ends = {}
+    for event = events
+      let kind = event["event"]
+      if (kind == "module-end")
+        modules[event["path"]] = event
+      else if (kind == "test-start")
+        starts[event["id"]] = event
+      else if (kind == "test-end")
+        ends[event["id"]] = event
+    let loaded = modules[str(path)]
+    assert_eq $loaded["status"] "loaded"
+    assert_eq [...loaded["tests"].map(do |t| t["name"])] $names
+    assert_eq $modules[str(broken)]["error"]["kind"] "compile"
+    assert_eq $modules[str(broken)]["error"]["diagnostics"][0]["location"]["line"] 0
+    assert_eq $modules[str(raising)]["error"]["kind"] "load"
+    assert_eq $modules[str(raising)]["error"]["message"] "value error: boom"
+
+    let start = starts["$module/fails"]
+    assert_eq $start["base"] "fails"
+    assert_eq $start["location"]["line"] $(def_line events_source "fails")
+
+    let passed = ends["$module/passes"]
+    assert_eq $passed["outcome"] "passed"
+    assert (type passed["duration"] Float || type passed["duration"] Int)
+    assert_not $passed.contains("message")
+
+    let failed = ends["$module/fails"]
+    assert_eq $failed["outcome"] "failed"
+    assert_eq $failed["message"] "assertion failed: [1] == [2]"
+    let error = failed["error"]
+    assert_eq $error["type"] "test.Assert"
+    assert_eq $error["expected"] "[2]"
+    assert_eq $error["actual"] "[1]"
+    assert $error["rendered"].contains("assertion failed")
+    assert_not $error["rendered"].contains("\u{1b}")
+    assert_eq $error["backtrace"][0]["receiver"] "assert_eq"
+    assert $failed["output"].contains("noisy-failed")
+    assert $failed["output"].contains("noisy-child")
+    assert_eq $failed["failure_location"]["file"] $(str path)
+
+    let expect_line = do |id text|
+      assert_eq $ends["$module/$id"]["failure_location"]["line"] $(line_of events_source text)
+    expect_line fails "assert_eq [1] [2]"
+    expect_line via_helper r"assert_eq $value 2"
+    expect_line via_fixture "assert_eq 1 3"
+
+    let skipped = ends["$module/skips"]
+    assert_eq $skipped["outcome"] "skipped"
+    assert_eq $skipped["message"] "not now"
+    assert_not $skipped.contains("error")
+    let ignored = ends["$module/ignores"]
+    assert_eq $ignored["outcome"] "ignored"
+    assert_eq $ignored["message"] nil
+
+#[test]
+def cli_jsonl_writes_to_output_file()
+  with_temp_dir do |dir|
+    let path = (dir / "passing.dol")
+    path.write r|
+      import test:
+        - test
+
+      #[test]
+      def passes()
+        nil
+    let target = (dir / "events.jsonl")
+    let rc out = test_cli --format jsonl --output $target $path
+    assert_eq $rc 0
+    assert_eq $out ""
+    let events = decode_events $target.read_str()
+    let last = events[events.len - 1]
+    assert_eq $last["event"] "run-end"
+    assert_eq $last["passed"] 1
+    assert_eq $last["status"] 0
