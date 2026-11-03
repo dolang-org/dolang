@@ -30,7 +30,7 @@ use dolang_compile::{
 use crate::{
     doc_index,
     lookup::{self, Modules, Target},
-    settings::{CONFIG_FILE_NAME, Import},
+    settings::{CONFIG_FILE_NAME, Import, PROJECT_FILE_NAME},
     signature,
     workspace::{Check, Member, PIPES, Round, Workspace, Workspaces},
 };
@@ -2067,10 +2067,11 @@ impl LanguageServer for Backend {
         if !self.config.lock().await.watch {
             return;
         }
-        let watchers = ["**/*.dol", "**/.dolang-lsp.toml"].map(|pattern| FileSystemWatcher {
-            glob_pattern: GlobPattern::String(pattern.to_owned()),
-            kind: None,
-        });
+        let watchers =
+            ["**/*.dol", "**/.dolang-lsp.toml", "**/doze.toml"].map(|pattern| FileSystemWatcher {
+                glob_pattern: GlobPattern::String(pattern.to_owned()),
+                kind: None,
+            });
         let options = DidChangeWatchedFilesRegistrationOptions {
             watchers: watchers.into(),
         };
@@ -2230,9 +2231,11 @@ impl LanguageServer for Backend {
             let Some(path) = uri_to_file_path(&event.uri).map(Cow::into_owned) else {
                 continue;
             };
+            // A project file moves a root, and a configuration changes a
+            // workspace's settings
             if path
                 .file_name()
-                .is_some_and(|name| name == CONFIG_FILE_NAME)
+                .is_some_and(|name| name == CONFIG_FILE_NAME || name == PROJECT_FILE_NAME)
             {
                 configs.extend(path.parent().map(Path::to_owned));
             }
@@ -4515,6 +4518,35 @@ pub def area d @ a.D
         );
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn project_files_move_roots() {
+        let tree = Directory::repo();
+        let repo = through_uri(&tree.0);
+        let app = through_uri(&tree.dir("app"));
+        let lib = tree.dir("app/lib");
+        let script = tree.write("app/main.dol", "echo hi\n");
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        // An open document keeps its workspace live
+        let uri = Uri::from_file_path(&script).unwrap();
+        harness.open(uri, "echo hi\n", 1).await;
+        assert_eq!(harness.module_path(&script).await, (repo.clone(), vec![]));
+
+        // A nested project's `doze.toml` makes it a root of its own
+        let project = tree.write(&format!("app/{PROJECT_FILE_NAME}"), "");
+        harness
+            .watched(&[(&project, FileChangeType::CREATED)])
+            .await;
+        assert_eq!(harness.module_path(&script).await, (app, vec![lib]));
+
+        // Without it, the repository is the root again
+        fs::remove_file(&project).unwrap();
+        harness
+            .watched(&[(&project, FileChangeType::DELETED)])
+            .await;
+        assert_eq!(harness.module_path(&script).await, (repo, vec![]));
+    }
+
     /// `path` as the server sees it in a URI.  The root it reports is in that
     /// form, which on Windows differs from the canonical path of a scratch
     /// directory.
@@ -4618,7 +4650,7 @@ pub def area d @ a.D
                 .collect();
             assert_eq!(
                 patterns,
-                ["**/*.dol", "**/.dolang-lsp.toml"]
+                ["**/*.dol", "**/.dolang-lsp.toml", "**/doze.toml"]
                     .map(|pattern| GlobPattern::String(pattern.into()))
             );
             let id = request.id().cloned().unwrap();

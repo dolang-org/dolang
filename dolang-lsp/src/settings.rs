@@ -9,6 +9,10 @@ use crate::module_path::ModulePath;
 /// The file that configures a workspace, at its root, or a subtree below it
 pub(crate) const CONFIG_FILE_NAME: &str = ".dolang-lsp.toml";
 
+/// The file that marks a `doze` project's root.  Only its presence matters
+/// here: `doze` reads it.
+pub(crate) const PROJECT_FILE_NAME: &str = "doze.toml";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Import {
     Module(String),

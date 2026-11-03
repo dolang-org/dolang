@@ -46,10 +46,10 @@ The repository's VS Code extension starts `dolang-lsp` automatically.
 
 ## Projects
 
-The LSP finds a file's project by convention. Its root is the nearest
-directory above the file that contains `.git`, or else the file's own
-directory. A submodule's or worktree's `.git` file makes that directory a root
-of its own.
+The LSP finds a file's project by convention. Its root is the nearest directory
+above the file that contains a [`doze.toml`](./shell/doze.md#configuration) or
+`.git`, or else the file's own directory. So a project nested in a repository is
+a root of its own, and so is a submodule or worktree, whose `.git` is a file.
 
 With no configuration, a project has:
 

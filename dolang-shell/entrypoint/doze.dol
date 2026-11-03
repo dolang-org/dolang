@@ -4,11 +4,14 @@
 # `dolang -m doze test` runs its tests, and `dolang -m doze bundle` packs its
 # program into a bundle.
 
-import _bundle _shell args compile json regex shell
+import _bundle _shell args compile json regex shell toml
   fs:
     - Path
 
 let IDENTIFIER = regex.Regex r"^[A-Za-z_][A-Za-z0-9_]*$"
+
+# The project's configuration file, at its root.
+let CONFIG_FILE = "doze.toml"
 
 # Raised for a project that isn't laid out as `doze` expects.
 #[final]
@@ -234,11 +237,16 @@ def add_bundled checker@compile.Check paths@Array[Str]
 
 # A project: a directory laid out by convention. Its modules are the `.dol`
 # files under `lib/`, its program is `main.dol`, and its tests are the `.dol`
-# files under `test/`. Its build output goes under `build/`.
+# files under `test/`. Its build output goes under `build/`. An optional
+# `doze.toml` gives its metadata.
 class Project
   field root @ Path
-  # The project's name: its directory's.
+  # The project's name: `doze.toml`'s, else its directory's.
   field name @ Str
+  field version @ (Str | nil) = nil
+  field authors @ Array[Str] = []
+  field license @ (Str | nil) = nil
+  field description @ (Str | nil) = nil
   # The program's source, if the project has one.
   field main @ (Path | nil) = nil
   # Each module's source, by module name.
@@ -252,6 +260,7 @@ class Project
       throw ProjectError "not a directory: $root"
     self.#root = root
     self.#name = (root.canonical().name || "project")
+    self.#configure()
     self.#discover()
 
   # Checks the types of the project's sources, its tests included.
@@ -264,7 +273,7 @@ class Project
   pub def bundle
     self
     # File to write; by default, `build/<name>.dolz` in the project, named after
-    # its directory.
+    # the project.
     :output @ (Path | nil) = nil
     # Whether to check the sources' types first. True by default.
     :check @ Bool = true
@@ -302,6 +311,47 @@ class Project
     let exe = shell.exe.absolute()
     shell.cd $self.#root do
       shell.exec $exe --module-path lib -m test test ...harness
+
+  # Reads `doze.toml`, if the project has one.
+  def configure self
+    let file = (self.#root / CONFIG_FILE)
+    if !file.exists()
+      return
+    let doc = try
+      toml.decode $file.read_str()
+    catch std.ValueError: e
+      throw ProjectError "invalid TOML in $file: $e"
+    # A document is always a table
+    let Dict(table) = doc
+    else throw std.RuntimeError "TOML document isn't a table: $file"
+    bind table
+      "project": project = {}
+      **rest
+    unknown $file "" $rest
+    let Dict(project) = project
+    else throw ProjectError "$file: `project` must be a table"
+    bind project
+      "name": name = nil
+      "version": version = nil
+      "authors": authors = nil
+      "license": license = nil
+      "description": description = nil
+      **rest
+    unknown $file "project." $rest
+    if let Str(name) = config_str(file, "project.name", name)
+      if (name == "" || name == "." || name == ".." || name.contains("/") || name.contains("\\") || name.contains("\0"))
+        throw ProjectError "$file: `project.name` can't name a file: `$name`"
+      self.#name = name
+    self.#version = config_str $file project.version $version
+    self.#license = config_str $file project.license $license
+    self.#description = config_str $file project.description $description
+    if (authors != nil)
+      let Array(items) = authors
+      else throw ProjectError "$file: `project.authors` must be an array of strings"
+      for item = items
+        let Str(author) = item
+        else throw ProjectError "$file: `project.authors` must be an array of strings"
+        self.#authors.push $author
 
   # Finds the program and the modules.
   def discover self
@@ -352,6 +402,22 @@ class Project
       for path = self.#tests
         compiler.add_script $path
     compiler
+
+# A string read from `key` in the configuration `file`, or nil if absent.
+def config_str file@Path key@Str value@(toml.DecodeValue | nil) -> (Str | nil)
+  if (value == nil)
+    return nil
+  let Str(text) = value
+  else throw ProjectError "$file: `$key` must be a string"
+  text
+
+# Rejects the keys left in `rest`, under `prefix`, in the configuration `file`.
+def unknown file@Path prefix@Str rest@Iterable[(Str, toml.DecodeValue)]
+  let keys = $
+    for key _ = rest
+      - "`$prefix$key`"
+  if (keys.len > 0)
+    throw ProjectError "$file: unknown keys: $(", ".join(keys))"
 
 # Renders `report` and a summary, then exits with failure unless it passed.
 def finish report @ Report
@@ -411,7 +477,7 @@ args.with
     - opt: output
       short: o
       default: nil
-      help: File to write the bundle to; by default, `build/<project>.dolz` in the project, named after its directory
+      help: File to write the bundle to; by default, `build/<name>.dolz` in the project, named after the project
     - opt: shebang
       default: nil
       help: "Interpreter command for a `#!` line, such as `/usr/bin/env dolang`; the bundle is then made executable where the platform allows"
