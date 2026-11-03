@@ -297,6 +297,7 @@ impl<'a> Parser<'a> {
             input: None,
             output: None,
             ret: None,
+            bars: None,
             stub_span: None,
             body,
         })

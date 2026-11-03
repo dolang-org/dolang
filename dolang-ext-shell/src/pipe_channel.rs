@@ -992,7 +992,7 @@ impl<'v> Object<'v> for PipeSender {
                                 if backtrace.as_backtrace(strand.vm()).is_none() {
                                     return Err(Error::type_error(
                                         strand,
-                                        "expected strand.Backtrace",
+                                        "expected inspect.Backtrace",
                                     ));
                                 }
                                 Output::set(

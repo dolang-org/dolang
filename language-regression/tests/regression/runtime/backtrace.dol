@@ -1,3 +1,4 @@
+import inspect
 import
   std:
     - Iterable
@@ -16,7 +17,7 @@ def receivers bt
 def frame_info bt
   let out = $
     for frame = bt
-      - [frame.module, frame.receiver, frame.method, frame.source != nil, frame.line != nil]
+      - [frame.module, frame.receiver, frame.method, type(frame, inspect.Frame), frame.location != nil]
   out
 
 def live_inner()
@@ -168,8 +169,7 @@ assert_eq $put_receivers[1] "boom_outer"
 
 # A backtrace claims Iterable, so it answers to the forwarded method surface
 # rather than only to `(iter)`.
-# A backtrace claims Iterable, so it answers to the forwarded method surface
-# rather than only to `(iter)`.
+assert (type live inspect.Backtrace)
 assert (type live Iterable)
 let mapped = [...live.map (do |frame| frame.receiver)]
 assert_eq $mapped[0] "live_inner"

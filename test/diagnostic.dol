@@ -71,7 +71,7 @@ def error_bad_type()
     _shell.render_error "boom" backtrace: "bad"
   catch e
     e
-  assert_eq (str type_err) "type error: expected strand.Backtrace"
+  assert_eq (str type_err) "type error: expected inspect.Backtrace"
 
 #[test]
 def backtrace_source_is_relative_highlighted_and_unique()

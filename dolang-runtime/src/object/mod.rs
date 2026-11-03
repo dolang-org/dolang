@@ -218,6 +218,7 @@ pub(crate) struct BuiltinTypes<'v> {
     pub(crate) func_type: TypeHandle<'v, function::Type>,
     pub(crate) range_type: TypeHandle<'v, range::Type>,
     pub(crate) backtrace_type: TypeHandle<'v, backtrace::Type>,
+    pub(crate) backtrace_frame_type: TypeHandle<'v, backtrace::FrameType>,
     pub(crate) array_view_type: TypeHandle<'v, array_view::Type>,
     pub(crate) dict_view_type: TypeHandle<'v, dict_view::Type>,
     pub(crate) error_type: TypeHandle<'v, error::Type>,
@@ -325,6 +326,7 @@ impl<'v> BuiltinTypes<'v> {
             func_type: types.register_type_handle(),
             range_type: types.register_type_handle(),
             backtrace_type: types.register_type_handle(),
+            backtrace_frame_type: types.register_type_handle(),
             array_view_type: types.register_type_handle(),
             dict_view_type: types.register_type_handle(),
             error_type: types.register_type_handle(),
@@ -393,6 +395,7 @@ pub(crate) struct Singletons<'v> {
     pub(crate) func: Value<'v>,
     pub(crate) range: Value<'v>,
     pub(crate) backtrace: Value<'v>,
+    pub(crate) backtrace_frame: Value<'v>,
     pub(crate) array_view: Value<'v>,
     pub(crate) dict_view: Value<'v>,
     pub(crate) error: Value<'v>,
@@ -478,6 +481,7 @@ impl<'v> Singletons<'v> {
             func: v!(builtin_types.func_type, function::Type),
             range: v!(builtin_types.range_type, range::Type),
             backtrace: v!(builtin_types.backtrace_type, backtrace::Type),
+            backtrace_frame: v!(builtin_types.backtrace_frame_type, backtrace::FrameType),
             array_view: v!(builtin_types.array_view_type, array_view::Type),
             dict_view: v!(builtin_types.dict_view_type, dict_view::Type),
             error: v!(builtin_types.error_type, error::Type),
@@ -634,6 +638,17 @@ impl<'v> Protocol<'v> for BoundMethod<'v> {
 }
 
 impl<'v> BoundMethod<'v> {
+    /// The receiver the method is looked up on
+    pub(crate) fn receiver(&self) -> &Value<'v> {
+        &self.rcvr
+    }
+
+    /// The method name
+    pub(crate) fn method(&self) -> Sym<'v, '_> {
+        // Safety: `self.method` roots the symbol
+        unsafe { Sym::from_tag(self.method.tag) }
+    }
+
     pub(crate) fn create(
         alloc: &mut impl Alloc<'v>,
         rcvr: impl Input<'v>,

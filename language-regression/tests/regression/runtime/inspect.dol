@@ -1,0 +1,74 @@
+import inspect
+
+def located loc line column len
+  assert (type loc inspect.Location)
+  assert (loc.source.ends_with "inspect.dol")
+  assert_eq [loc.line, loc.column, loc.len] [line, column, len]
+
+# A frame's location picks out the call it is in, not just its line.
+def ok x
+  x
+
+def fail x
+  throw "fail $x"
+
+def caller()
+  let pair = [ok(1), fail(2)]
+  pair
+
+let bt = try
+  caller()
+catch _
+  strand.error_backtrace()
+let frames = [...bt]
+assert (type frames[0] inspect.Frame)
+assert_eq $frames[0].receiver "fail"
+located $frames[0].location 12 2 5
+assert_eq $frames[1].receiver "caller"
+located $frames[1].location 15 21 7
+
+# Locations compare by file and span.
+assert_eq $frames[1].location $frames[1].location
+assert (frames[0].location != frames[1].location)
+
+# Definitions of Do functions and methods
+def plain x
+  x
+
+class Base
+  pub def greet _self
+    "hi"
+
+  #[class]
+  pub def make cls
+    cls()
+
+class Derived: Base
+  pub def (call) _self
+    1
+
+let lambda = do |x| x
+let typed = (do |x @ Int| -> Int x * 2)
+let block = do -> Int
+  1
+let bare = do 1
+let obj = Derived()
+
+located (inspect.definition plain) 34 0 9
+# A `do` block's location runs through its parameters and return type.
+located (inspect.definition lambda) 49 13 6
+located (inspect.definition typed) 50 13 19
+located (inspect.definition block) 51 12 9
+located (inspect.definition bare) 53 11 2
+located (inspect.definition obj.greet) 38 6 9
+located (inspect.definition Base.greet) 38 6 9
+located (inspect.definition Derived.make) 42 6 8
+assert_eq (inspect.definition plain) (inspect.definition plain)
+
+# Values without a Do definition
+assert_eq (inspect.definition echo) nil
+let push = [].push
+assert_eq (inspect.definition push) nil
+assert_eq (inspect.definition obj) nil
+assert_eq (inspect.definition Derived) nil
+assert_eq (inspect.definition 42) nil

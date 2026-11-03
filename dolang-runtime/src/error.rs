@@ -955,7 +955,7 @@ impl<'v, 's> Error<'v, 's> {
     ) -> Result<'v, 's, Self> {
         let backtrace = Value::from_input(strand, backtrace);
         let Some(backtrace) = backtrace::entries_from_value(strand, &backtrace) else {
-            return Err(Error::type_error(strand, "expected strand.Backtrace"));
+            return Err(Error::type_error(strand, "expected inspect.Backtrace"));
         };
         Ok(Self::from_pair(
             strand,
@@ -971,7 +971,7 @@ impl<'v, 's> Error<'v, 's> {
     ) -> Result<'v, 's, Self> {
         let backtrace = if !backtrace.is_nil() {
             backtrace::entries_from_value(strand.vm(), &backtrace)
-                .ok_or_else(|| Error::type_error_raw(strand, "expected strand.Backtrace"))?
+                .ok_or_else(|| Error::type_error_raw(strand, "expected inspect.Backtrace"))?
         } else {
             Vec::new()
         };

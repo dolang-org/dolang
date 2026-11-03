@@ -204,7 +204,7 @@ pub(crate) fn render_error_value<'v, 's>(
     let message = error.to_string(strand)?;
     let frames = if let Some(backtrace) = backtrace {
         let Some(backtrace) = backtrace.as_backtrace(strand) else {
-            return Err(Error::type_error(strand, "expected strand.Backtrace"));
+            return Err(Error::type_error(strand, "expected inspect.Backtrace"));
         };
         collect_frames(backtrace)
     } else {

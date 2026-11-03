@@ -672,7 +672,7 @@ let f = do |x| x
             definition("Box.get"),
             Span::new(2, 6, "def get".len() as u32)
         );
-        assert_eq!(definition("lambda"), Span::new(6, 8, "do".len() as u32));
+        assert_eq!(definition("lambda"), Span::new(6, 8, "do |x|".len() as u32));
     }
 
     #[test]

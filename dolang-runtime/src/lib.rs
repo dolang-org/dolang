@@ -57,6 +57,8 @@ pub(crate) type Func = bytecode::Func;
 pub(crate) struct FuncDebug {
     pub(crate) name: Range<usize>,
     pub(crate) file: Range<usize>,
+    /// Span of the function's header
+    pub(crate) definition: Span,
     pub(crate) sourcemap: alias::Box<[(usize, Span)]>,
 }
 

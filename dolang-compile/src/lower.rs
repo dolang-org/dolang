@@ -755,7 +755,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 ));
             }
             Expr::Lambda { func, do_span } => {
-                self.lower_closure(func, do_span.unwrap_or_else(|| func.span()))?;
+                let span = do_span.map_or_else(|| func.span(), |s| func.do_head_span(s));
+                self.lower_closure(func, span)?;
             }
             Expr::Call { arg0, args, .. } => match &**arg0 {
                 Expr::Get {

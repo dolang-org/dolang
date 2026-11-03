@@ -20,6 +20,7 @@ pub(crate) mod fmt;
 pub(crate) mod io;
 
 mod cursor;
+pub(crate) mod inspect;
 mod math;
 mod strand;
 
@@ -290,6 +291,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         })
         .commit();
 
+    inspect::configure(builder);
     io::configure(builder);
     math::configure(builder);
     strand::configure(builder);

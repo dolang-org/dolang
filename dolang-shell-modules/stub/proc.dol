@@ -6,6 +6,7 @@
 # See [External Programs](../../shell/external-programs.md) for lookup,
 # redirection, capture and pipeline behavior.
 
+@import inspect
 import
   fs:
     - @Path
@@ -278,15 +279,15 @@ pub class PipeSender[T]: std.Sink[T]
   #
   # ## Errors
   #
-  # | Exception                    | Condition                               |
-  # | ---------------------------- | --------------------------------------- |
-  # | [`TypeError`](std.TypeError) | `backtrace` is not a `strand.Backtrace` |
+  # | Exception                    | Condition                                 |
+  # | ---------------------------- | ----------------------------------------- |
+  # | [`TypeError`](std.TypeError) | `backtrace` is not an `inspect.Backtrace` |
   pub def close
     self
     # Error value to propagate to the receiver.
     error @ Value = ...
     # Backtrace for `error`.
-    :backtrace @ strand.Backtrace = ...
+    :backtrace @ inspect.Backtrace = ...
   do
     ...
 

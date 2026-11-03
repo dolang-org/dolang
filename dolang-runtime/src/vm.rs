@@ -629,6 +629,7 @@ impl<'v> Vm<'v> {
                 FuncDebug {
                     name: debug.name.clone(),
                     file: debug.file.clone(),
+                    definition: debug.definition.span().expect("verified definition span"),
                     sourcemap: sourcemap.into(),
                 }
             })

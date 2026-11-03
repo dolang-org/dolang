@@ -288,7 +288,7 @@ impl<'v> Protocol<'v> for Frame<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().value)
+        Output::set(strand, out, &strand.singletons().backtrace_frame)
     }
 
     fn op_debug<'a, 's>(
@@ -297,6 +297,20 @@ impl<'v> Protocol<'v> for Frame<'v> {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         crate::fmt!(strand, w, "<backtrace frame>")
+    }
+
+    fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
+        Some(Inspect {
+            is_abstract: false,
+            is_final: true,
+            members: members![
+                Getter(sym::MODULE),
+                Getter(sym::RECEIVER),
+                Getter(sym::METHOD),
+                Getter(sym::LOCATION),
+            ],
+            type_members: &[],
+        })
     }
 
     fn op_get<'a, 's>(
@@ -324,17 +338,9 @@ impl<'v> Protocol<'v> for Frame<'v> {
                 }
                 Ok(())
             }
-            sym::SOURCE => {
-                if let Some((source, _)) = this.get().entry.source() {
-                    Output::set(strand, out, source.as_ref());
-                } else {
-                    out.store(Value::NIL);
-                }
-                Ok(())
-            }
-            sym::LINE => {
-                if let Some((_, span)) = this.get().entry.source() {
-                    Output::set(strand, out, span.start().line_offset());
+            sym::LOCATION => {
+                if let Some((source, span)) = this.get().entry.source() {
+                    crate::stdlib::inspect::location(strand, source.into(), span, out);
                 } else {
                     out.store(Value::NIL);
                 }
@@ -390,13 +396,68 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type strand.Backtrace>")
+        crate::fmt!(strand, w, "<type inspect.Backtrace>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: true,
             is_final: false,
+            members: &[],
+            type_members: members![
+                Method(sym::VERBATIM_METHOD),
+                Method(sym::STR_METHOD),
+                Method(sym::DBG_METHOD),
+            ],
+        })
+    }
+}
+
+/// The type object of [`Frame`]
+pub(crate) struct FrameType;
+
+unsafe impl Collect for FrameType {
+    const CYCLIC: bool = false;
+    const IMMUTABLE: bool = true;
+    type Annex = ();
+
+    fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
+        ControlFlow::Continue(())
+    }
+
+    fn clear(&mut self) {}
+}
+
+impl<'v> Protocol<'v> for FrameType {
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) {
+        Output::set(strand, out, &strand.singletons().type_obj)
+    }
+
+    fn op_subtype<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        supertype: &Value<'v>,
+    ) -> bool {
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
+    }
+
+    fn op_debug<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        crate::fmt!(strand, w, "<type inspect.Frame>")
+    }
+
+    fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
+        Some(Inspect {
+            is_abstract: true,
+            is_final: true,
             members: &[],
             type_members: members![
                 Method(sym::VERBATIM_METHOD),

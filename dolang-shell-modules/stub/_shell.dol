@@ -1,7 +1,7 @@
 # Internal shell services used by bundled modules and entrypoints.
 @import fs term
 @import compile: compiler
-import strand:
+import inspect:
   - @Backtrace
 
 pub def render_error error :backtrace @ Backtrace = ... -> term.Text
