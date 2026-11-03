@@ -1,0 +1,58 @@
+# dolang: strict
+# Support status of release cycles.
+#
+# Every function takes the current date as `today`, so results don't depend on
+# when they're computed.
+
+import eol:
+  - @Release
+import time:
+  - @Date
+
+# A release cycle's support status:
+#
+# - `:SUPPORTED:`: not end-of-life within the warning window
+# - `:ENDING:`: end-of-life within the warning window
+# - `:EOL:`: end-of-life
+pub @let Status = (:SUPPORTED: | :ENDING: | :EOL:)
+
+# Classifies a release cycle's support status.
+pub def classify
+  release @ Release
+  # The current date
+  :today @ Date
+  # How many days before its end of life a release is `:ENDING:`
+  :warn @ Int = 90
+do -> Status
+  let eol = release.eol
+  if (eol == nil)
+    return (release.is_eol && :EOL: || :SUPPORTED:)
+  if (eol <= today)
+    :EOL:
+  else if (eol <= today.add_days(warn))
+    :ENDING:
+  else
+    :SUPPORTED:
+
+# Days from `today` until `release` reaches end-of-life: negative once it has,
+# and `nil` with no announced date.
+pub def days_left release@Release :today@Date -> (Int | nil)
+  let eol = release.eol
+  if (eol == nil)
+    return nil
+  ((eol - today).nanos // 86_400_000_000_000)
+
+# Finds the release cycle a version belongs to.
+#
+# A cycle matches the version equal to its name, or starting with its name and
+# a dot: cycle `3.9` matches `3.9` and `3.9.18`, but not `3.90`. The longest
+# matching name wins.
+pub def find_release releases@Array[Release] version@Str -> (Release | nil)
+  let best = nil
+  for release = releases
+    let name = release.name
+    if (version != name && !version.starts_with("$name."))
+      continue
+    if (best == nil || name.len > best.name.len)
+      best = release
+  best

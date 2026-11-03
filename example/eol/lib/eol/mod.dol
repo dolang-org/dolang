@@ -1,0 +1,232 @@
+# dolang: strict
+# A client for the [endoflife.date](https://endoflife.date) API (v1).
+#
+# ```
+# let python = Client().product "python"
+# for release = python.releases
+#   echo $release.name $release.eol
+# ```
+
+import http
+@import json
+import std:
+  - RuntimeError
+  - Nil
+import time:
+  - Date
+  - timeout
+import url:
+  - Url
+
+# The API's address when none is given to [`Client`](eol.Client).
+pub let DEFAULT_URL @ Str = "https://endoflife.date"
+
+# Raised when the API has no such product or release.
+#[final]
+pub class NotFound: RuntimeError
+  # The product's name.
+  pub field product @ Str
+  # The release's name, or `nil` when the product itself is missing.
+  pub field release @ (Str | nil)
+
+  def (init) self product@Str release@(Str | nil) = nil
+    let what = if (release == nil)
+      "product $product"
+    else
+      "release $release of $product"
+    self.product = product
+    self.release = release
+    RuntimeError.(init) $self "not found: $what"
+
+# Raised when a response isn't what the API documents.
+#[final]
+pub class ResponseError: RuntimeError
+  def (init) self message @ Str
+    RuntimeError.(init) $self "unexpected response: $message"
+
+# The newest version in a release cycle.
+#[final]
+pub class Latest
+  # The version, such as `3.12.7`.
+  pub field name @ Str
+  # When it was published, if known.
+  pub field date @ (Date | nil)
+
+  def (init) self name@Str date@(Date | nil)
+    self.name = name
+    self.date = date
+
+# A release cycle of a product, such as Python 3.12.
+#[final]
+pub class Release
+  # The cycle's name, such as `3.12`.
+  pub field name @ Str
+  # A display name, such as `3.12 (LTS)`.
+  pub field label @ Str
+  # When the cycle was first released.
+  pub field released @ Date
+  # Whether the cycle has long-term support.
+  pub field lts @ Bool
+  # When the cycle stops receiving security fixes, if announced.
+  pub field eol @ (Date | nil)
+  # Whether the API reports the cycle as end-of-life. This can be `true` with
+  # no [`eol`](eol.Release.eol) date.
+  pub field is_eol @ Bool
+  # The newest version in the cycle, if any.
+  pub field latest @ (Latest | nil)
+
+  def (init)
+    self
+    :name @ Str
+    :label @ Str
+    :released @ Date
+    :lts @ Bool
+    :eol @ (Date | nil)
+    :is_eol @ Bool
+    :latest @ (Latest | nil)
+  do
+    self.name = name
+    self.label = label
+    self.released = released
+    self.lts = lts
+    self.eol = eol
+    self.is_eol = is_eol
+    self.latest = latest
+
+# A product, with its release cycles from newest to oldest.
+#[final]
+pub class Product
+  # The product's identifier, such as `python`.
+  pub field name @ Str
+  # A display name, such as `Python`.
+  pub field label @ Str
+  # A category, such as `lang` or `os`.
+  pub field category @ Str
+  # Release cycles, newest first. Empty in [`products`](eol.Client.products).
+  pub field releases @ Array[Release]
+
+  def (init)
+    self
+    :name @ Str
+    :label @ Str
+    :category @ Str
+    :releases @ Array[Release]
+  do
+    self.name = name
+    self.label = label
+    self.category = category
+    self.releases = releases
+
+# Talks to the endoflife.date API.
+#[final]
+pub class Client
+  field api @ Url
+  field timeout @ Int
+
+  # Makes a client for the API at `base_url`.
+  def (init)
+    self
+    # The API's address, without `/api/v1`
+    :base_url @ (Str | Url) = DEFAULT_URL
+    # Seconds a request may take before failing with `std.TimedOutError`
+    :timeout @ Int = 30
+  do
+    self.#api = (Url(base_url) / "api" / "v1")
+    self.#timeout = timeout
+
+  # Lists every product, without release cycles.
+  pub def products self -> Array[Product]
+    let Array(items) = self.#get "products"
+    else throw ResponseError "product list is not an array"
+    $
+      for item = items
+        - (product_of item)
+
+  # Gets a product and its release cycles.
+  pub def product self name @ Str -> Product
+    product_of $self.#get("products", name, missing: NotFound(name))
+
+  # Gets one release cycle of a product.
+  pub def release self product@Str name@Str -> Release
+    let missing = (NotFound product name)
+    release_of $self.#get("products", product, "releases", name, :missing)
+
+  # Gets the `result` of an API response.
+  def get
+    self
+    # Raised instead of a 404 status error
+    :missing @ (NotFound | nil) = nil
+    # Path segments after `/api/v1`
+    *segments @ Str
+  do -> json.DecodeValue
+    let target = self.#api
+    for segment = segments
+      target = (target / segment)
+    let body = try
+      timeout $self.#timeout do
+        let response = http.get $target headers: {accept: "application/json"}
+        response.json()
+    catch http.Status: err
+      if (err.status == 404 && missing != nil)
+        throw missing
+      throw err
+    let Dict("schema_version": Str(version) "result": result ...) = body
+    else throw ResponseError "no result envelope"
+    if !version.starts_with("1.")
+      throw ResponseError "unsupported schema version $version"
+    result
+
+def date_of value @ json.DecodeValue -> (Date | nil)
+  match value
+    nil do nil
+    Str(text) do Date.parse_rfc(text)
+  else
+    throw ResponseError "expected a date or null"
+
+def product_of value @ json.DecodeValue -> Product
+  bind value
+    Dict $
+      "name": Str(name)
+      "label": Str(label)
+      "category": Str(category)
+      ?"releases": Array(items = [])
+      ...
+  else throw ResponseError "malformed product"
+  let releases = $
+    for item = items
+      - (release_of item)
+  Product :name :label :category :releases
+
+def release_of value @ json.DecodeValue -> Release
+  bind value
+    Dict $
+      "name": Str(name)
+      "label": (Str(label) | Nil(label))
+      "releaseDate": released
+      "isLts": Bool(lts)
+      "isEol": Bool(is_eol)
+      "eolFrom": eol
+      "latest": latest
+      ...
+  else throw ResponseError "malformed release"
+  let released_date = date_of $released
+  else throw ResponseError "release $name has no release date"
+  Release
+    :name
+    label: (label || name)
+    released: $released_date
+    :lts
+    eol: (date_of eol)
+    :is_eol
+    latest: (latest_of latest)
+
+def latest_of value @ json.DecodeValue -> (Latest | nil)
+  if (value == nil)
+    return nil
+  bind value
+    Dict $
+      "name": Str(name)
+      "date": date = nil
+      ...
+  else throw ResponseError "malformed latest version"
+  Latest $name (date_of date)

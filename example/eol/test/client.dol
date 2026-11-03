@@ -1,0 +1,145 @@
+# Tests `eol.Client` against a mock of the API.
+
+import eol http
+import http.mock
+import time:
+  - Date
+import test:
+  - assert
+  - assert_eq
+  - assert_throws
+  - test
+
+let PY39 = $
+  name: "3.9"
+  codename: nil
+  label: "3.9"
+  releaseDate: "2020-10-05"
+  isLts: false
+  isEol: true
+  eolFrom: "2025-10-31"
+  latest:
+    name: "3.9.25"
+    date: "2025-10-31"
+    link: "https://www.python.org/downloads/release/python-3925/"
+
+let PY315 = $
+  name: "3.15"
+  codename: nil
+  label: "3.15"
+  releaseDate: "2026-10-09"
+  isLts: false
+  isEol: false
+  eolFrom: "2031-10-31"
+  latest:
+    name: "3.15.2"
+    date: nil
+    link: nil
+
+let PYTHON = $
+  name: python
+  label: Python
+  category: lang
+  releases: [PY315, PY39]
+
+def envelope result
+  {schema_version: "1.2.1", result: result}
+
+# Runs `block` with a client for a mock server that answers `GET path` with
+# `json`.
+def serving path json block
+  http.mock.Server do |server|
+    server.mock
+      - method: GET
+        path: $path
+        respond:
+          json: $json
+      do |handle|
+        block $eol.Client(base_url: server.url) $handle
+
+#[test]
+def gets_product()
+  serving /api/v1/products/python $envelope(PYTHON) do |client _|
+    let python = client.product python
+    assert_eq $python.name python
+    assert_eq $python.label Python
+    assert_eq $python.category lang
+    assert_eq [...python.releases.map(do |r| r.name)] ["3.15", "3.9"]
+
+#[test]
+def maps_release_fields()
+  serving /api/v1/products/python/releases/3.9 $envelope(PY39) do |client _|
+    let release = client.release python "3.9"
+    assert_eq $release.name "3.9"
+    assert_eq $release.released $Date.from_ymd(2020, 10, 5)
+    assert_eq $release.lts false
+    assert_eq $release.eol $Date.from_ymd(2025, 10, 31)
+    assert $release.is_eol
+    assert_eq $release.latest.name "3.9.25"
+    assert_eq $release.latest.date $Date.from_ymd(2025, 10, 31)
+
+#[test]
+def allows_null_dates()
+  serving /api/v1/products/python/releases/3.15 $envelope(PY315) do |client _|
+    let release = client.release python "3.15"
+    assert_eq $release.latest.date nil
+
+#[test]
+def lists_products()
+  let summary = {name: "python", label: "Python", category: "lang"}
+  serving /api/v1/products $envelope([summary]) do |client _|
+    let products = client.products()
+    assert_eq $products.len 1
+    assert_eq $products[0].name python
+    assert_eq $products[0].releases []
+
+#[test]
+def asks_for_json()
+  serving /api/v1/products/python $envelope(PYTHON) do |client handle|
+    client.product python
+    assert_eq $handle.received()[0].headers["accept"] application/json
+
+#[test]
+def missing_product_is_not_found()
+  http.mock.Server do |server|
+    let client = eol.Client base_url: $server.url
+    let err = assert_throws $eol.NotFound do client.product nosuch
+    assert_eq $err.product nosuch
+    assert_eq $err.release nil
+
+#[test]
+def missing_release_is_not_found()
+  http.mock.Server do |server|
+    let client = eol.Client base_url: $server.url
+    let err = assert_throws $eol.NotFound do client.release python "1.0"
+    assert_eq $err.product python
+    assert_eq $err.release "1.0"
+
+#[test]
+def server_errors_propagate()
+  http.mock.Server do |server|
+    server.mock
+      - path: /api/v1/products/python
+        respond:
+          status: 500
+      do |_handle|
+        let client = eol.Client base_url: $server.url
+        let err = assert_throws $http.Status do client.product python
+        assert_eq $err.status 500
+
+#[test]
+def rejects_missing_envelope()
+  serving /api/v1/products/python $PYTHON do |client _|
+    assert_throws $eol.ResponseError do client.product python
+
+#[test]
+def rejects_unknown_schema_version()
+  let body = {schema_version: "2.0.0", result: PYTHON}
+  serving /api/v1/products/python $body do |client _|
+    assert_throws $eol.ResponseError do client.product python
+
+#[test]
+def rejects_malformed_release()
+  let release = {name: "3.9", releaseDate: "2020-10-05"}
+  serving /api/v1/products/python/releases/3.9 $envelope(release) do |client _|
+    assert_throws $eol.ResponseError do client.release python "3.9"

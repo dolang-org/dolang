@@ -1,0 +1,183 @@
+#!/usr/bin/env -S dolang --strict
+# Reports end-of-life dates from endoflife.date.
+#
+# Results go to standard output, as a table or, with `--format json`, as JSON.
+# `check` exits with status 1 when a version is end-of-life or unknown, so it
+# can gate a CI job.
+
+import args fs json shell toml
+import eol
+import eol.status: status
+import std:
+  - FmtSpec
+import time:
+  - Date
+
+def print_table headers rows
+  let all = [headers, ...rows]
+  let widths = $
+    for header = headers
+      - $header.len
+  for row = rows
+    for i cell = row.iter().enumerate()
+      if (cell.len > widths[i])
+        widths[i] = cell.len
+  for row = all
+    let cells = $
+      for cell width = row.iter().zip(widths)
+        - (FmtSpec(width: width).pad(cell))
+    shell.stdout.write ("  ".join(cells).trim_end()) "\n"
+
+def report format headers rows records
+  if (format == "json")
+    shell.stdout.write (json.encode records indent: 2) "\n"
+  else
+    print_table $headers $rows
+
+def date_text date
+  (date == nil && "-" || str(date))
+
+def products client format category
+  let products = $
+    for product = client.products()
+      if (category == nil || product.category == category)
+        - $product
+  let rows = $
+    for p = products
+      - [p.name, p.label, p.category]
+  let records = $
+    for p = products
+      - {name: p.name, label: p.label, category: p.category}
+  report $format ["product", "label", "category"] $rows $records
+
+def releases client format name
+  let releases = client.product(name).releases
+  let rows = $
+    for r = releases
+      - [r.name, str(r.released), (r.latest && r.latest.name || "-"), date_text(r.eol)]
+  let records = $
+    for r = releases
+      - release: $r.name
+        released: $(str r.released)
+        latest: $(r.latest && r.latest.name)
+        eol: $(r.eol && str(r.eol))
+        is_eol: $r.is_eol
+  report $format ["release", "released", "latest", "eol"] $rows $records
+
+def latest client format name
+  let product = client.product $name
+  if (product.releases.len == 0)
+    throw eol.NotFound $name
+  let release = product.releases[0]
+  let version = (release.latest && release.latest.name || release.name)
+  if (format == "json")
+    shell.stdout.write (json.encode {product: name, release: release.name, latest: version}) "\n"
+  else
+    shell.stdout.write $version "\n"
+
+# Reads `product = "version"` pairs from a TOML file.
+def pinned_versions path
+  let pins = []
+  let Dict(table) = toml.decode(fs.read_str(path))
+  else throw args.Error "$path: expected a table"
+  for product version = table
+    let Str(version) = version
+    else throw args.Error "$path: version of $product must be a string"
+    pins.push (product, version)
+  pins
+
+def check client format pins warn
+  let today = Date.today()
+  let failed = false
+  let results = []
+  for name version = pins
+    let release = status.find_release $client.product(name).releases $version
+    let state = if (release == nil)
+      failed = true
+      echo "$name $version: no matching release"
+      "unknown"
+    else
+      let state = status.classify $release :today :warn
+      match state
+        :EOL: do
+          failed = true
+          echo "$name $version: end-of-life since $(release.eol || "an unknown date")"
+        :ENDING: do
+          let days = status.days_left $release :today
+          echo "$name $version: end-of-life in $days days, on $(release.eol)"
+      str(state).lower()
+    let result = record
+      product: $name
+      version: $version
+      release: $(release && release.name)
+      eol: $(release && release.eol && str(release.eol))
+      status: $state
+    results.push $result
+  let rows = $
+    for :product :version :release :eol :status = results
+      - [product, version, (release || "-"), (eol || "-"), status]
+  report $format ["product", "version", "release", "eol", "status"] $rows $results
+  if failed
+    exit 1
+
+try
+  args.with
+    help: Report end-of-life dates from endoflife.date.
+    - opt: base-url
+      env: EOL_BASE_URL
+      default: $eol.DEFAULT_URL
+      help: The API's address
+    - opt: format
+      short: f
+      values: ["table", "json"]
+      default: table
+      help: Output format
+    - cmd: products
+      help: List products
+      - opt: category
+        default: nil
+        help: Only list products in this category, such as `os` or `lang`
+      do |p|
+        products $eol.Client(base_url: p.base_url) $p.format $p.products.category
+    - cmd: releases
+      help: List a product's release cycles
+      - arg: product
+        help: The product, such as `python`
+      do |p|
+        releases $eol.Client(base_url: p.base_url) $p.format $p.releases.product
+    - cmd: latest
+      help: Show a product's newest version
+      - arg: product
+        help: The product, such as `python`
+      do |p|
+        latest $eol.Client(base_url: p.base_url) $p.format $p.latest.product
+    - cmd: check
+      help: Check whether versions are still supported
+      - opt: from
+        default: nil
+        help: A TOML file of `product = "version"` pairs to check
+      - opt: warn
+        short: w
+        parse: $int
+        default: 90
+        help: Warn this many days before a version's end of life
+      - arg: product
+        default: nil
+        help: The product, such as `python`
+      - arg: version
+        default: nil
+        help: The version in use, such as `3.12.4`
+      do |p|
+        let :from :warn :product :version ... = p.check
+        let pins = if (from != nil)
+          if (product != nil)
+            throw args.Error "give either --from or a product and version"
+          pinned_versions $from
+        else
+          if (version == nil)
+            throw args.Error "give a product and version, or --from"
+          [(product, version)]
+        check $eol.Client(base_url: p.base_url) $p.format $pins $warn
+catch eol.NotFound: err
+  echo $err
+  exit 1

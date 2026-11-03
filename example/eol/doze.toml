@@ -1,0 +1,5 @@
+[project]
+name = "eol"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+description = "Reports end-of-life dates from endoflife.date."
