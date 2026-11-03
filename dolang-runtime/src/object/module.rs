@@ -546,22 +546,20 @@ impl<'v> Protocol<'v> for Namespace<'v> {
         let re = this.borrow(strand)?;
         match &re.inner {
             NamespaceInner::Normal(module) => {
-                match module.map.binary_search_by_key(&field, |(s, _)| *s) {
-                    Ok(index) => {
-                        unsafe {
-                            out.store(
-                                module
-                                    .upvars
-                                    .borrow()
-                                    .expect("upvar borrow conflict")
-                                    .vars
-                                    .get_unchecked(module.map.get_unchecked(index).1)
-                                    .dup(),
-                            );
-                        }
-                        return Ok(());
+                // A name that isn't an export may be a submodule inserted beneath
+                if let Ok(index) = module.map.binary_search_by_key(&field, |(s, _)| *s) {
+                    unsafe {
+                        out.store(
+                            module
+                                .upvars
+                                .borrow()
+                                .expect("upvar borrow conflict")
+                                .vars
+                                .get_unchecked(module.map.get_unchecked(index).1)
+                                .dup(),
+                        );
                     }
-                    Err(_) => return Err(Error::field(strand, field)),
+                    return Ok(());
                 }
             }
             NamespaceInner::Custom(value) => {
@@ -599,11 +597,12 @@ impl<'v> Protocol<'v> for Namespace<'v> {
             NamespaceInner::Normal(module) => {
                 match module.map.binary_search_by_key(&field, |(s, _)| *s) {
                     Ok(index) => {
+                        let var = module.map[index].1;
                         module
                             .upvars
                             .borrow_mut()
                             .expect("upvar borrow conflict")
-                            .vars[index] = value.take();
+                            .vars[var] = value.take();
                         return Ok(());
                     }
                     Err(_) => return Err(Error::field(strand, field)),
