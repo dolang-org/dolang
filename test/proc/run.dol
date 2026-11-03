@@ -492,6 +492,8 @@ def stderr_merges_only_into_the_same_destination()
   script.write r|
     import shell
     shell.stdout.write b"out\n"
+    # The two streams complete writes independently, so order them.
+    shell.stdout.flush()
     shell.stderr.write b"err\n"
   # Equal destinations stay apart unless they are the same object.
   let out = BinBuf()
