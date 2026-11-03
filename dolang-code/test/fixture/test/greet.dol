@@ -1,0 +1,14 @@
+# Tests the `greet` module.
+
+import greet
+import test:
+  - assert_eq
+  - test
+
+#[test]
+def greets()
+  assert_eq $greet.greeting("Ada") "Hello, Ada!"
+
+#[test]
+def fails()
+  assert_eq $greet.greeting("Ada") "Goodbye, Ada!"

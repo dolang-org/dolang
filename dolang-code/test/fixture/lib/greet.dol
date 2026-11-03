@@ -1,0 +1,4 @@
+# Greets people.
+
+pub def greeting name @ Str -> Str
+  "Hello, $name!"

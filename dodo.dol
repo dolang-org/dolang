@@ -5,6 +5,7 @@ import sys admin dodo exec toml json proc shlex
     - create_dir
     - remove
     - with_temp_dir
+    - update_metadata
     - symlink_file
     - home_dir
 
@@ -279,6 +280,41 @@ def with_lsp_bundle spec block
 
 def lsp_test spec rest
   with_lsp_bundle $spec do spec.cargo test -p dolang-lsp ...rest
+
+# Runs the VS Code extension's Node tests and unit tests, builds the tools for
+# `spec` and runs its integration tests against them, then packages the VSIX.
+#
+# When Xvfb is installed, VS Code runs on its display, as if outside any
+# desktop session: Electron picks Wayland when `XDG_SESSION_TYPE` says so, and
+# finds the desktop's `wayland-0` in `XDG_RUNTIME_DIR` even with
+# `WAYLAND_DISPLAY` unset, so the window would open there instead. Without a
+# session bus, as in CI, `dbus-run-session` provides one.
+def vscode_test spec
+  let headless = run["xvfb-run"].which()
+  let npm = do |script|
+    dodo.show
+      if (headless && !env.get("DBUS_SESSION_BUS_ADDRESS"))
+        dbus-run-session --
+      if headless
+        xvfb-run -a
+      npm --prefix dolang-code run $script
+  let session = if headless
+    do |block| with_temp_dir do |runtime|
+      update_metadata $runtime mode: 0o700
+      env XDG_RUNTIME_DIR: $runtime WAYLAND_DISPLAY: nil XDG_SESSION_TYPE: nil do block()
+  else
+    do |block| block()
+  spec.cargo_vfs build --bin dolang
+  with_lsp_bundle $spec do spec.cargo build -p dolang-lsp --bin dolang-lsp
+  for script = ["test:syntax", "test:language-config", "test:version"]
+    dodo.show npm --prefix dolang-code run $script
+  session do
+    npm test
+    env
+      DOLANG_CODE_DOLANG: (spec.bin "dolang")
+      DOLANG_CODE_LSP: (spec.bin "dolang-lsp")
+      do npm "test:integration"
+  dodo.show npm --prefix dolang-code run "package:vsix"
 
 def shell_test spec args
   spec.cargo_vfs build --bin dolang
@@ -622,6 +658,10 @@ return $
       dodo.show npm --prefix dolang-code run test:syntax
       dodo.show npm --prefix dolang-code run test:language-config
       vim_test()
+
+  "vscode-test":
+    help: run the VS Code extension's tests, including integration tests against debug builds of the tools, and package it (requires npm dependencies)
+    do |args| vscode_test (Spec args)
 
   "vim-test":
     help: test Vim highlighting (requires Vim or Neovim)

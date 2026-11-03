@@ -13,7 +13,16 @@ import {
 
 let server: DoLanguageServer | undefined;
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
+/**
+ * What `activate` returns, for the integration tests to observe the extension
+ * with. It isn't an API for other extensions.
+ */
+export interface DoExtensionExports {
+    readonly languageServer: DoLanguageServer;
+    readonly tests: DoTestController;
+}
+
+export async function activate(context: vscode.ExtensionContext): Promise<DoExtensionExports> {
     const log = vscode.window.createOutputChannel("Do", { log: true });
     const languageServer = new DoLanguageServer(context, log);
     const runner = new DoScriptRunner(context, log, languageServer);
@@ -67,6 +76,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
 
     await languageServer.start();
+    return { languageServer, tests };
 }
 
 export async function deactivate(): Promise<void> {
