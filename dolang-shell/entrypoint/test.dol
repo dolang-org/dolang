@@ -50,10 +50,6 @@ def tag_filter groups info
       return false
   true
 
-def module_name path
-  let name = str $path.without_ext()
-  name.replace "\\" "/"
-
 args.with args: $shell.args
   help: Run Do unit test modules.
   - opt: jobs
@@ -81,24 +77,59 @@ args.with args: $shell.args
     default: 600
     meta: SECS
     help: Max seconds for each test and module load.
+  - opt: id
+    collect: true
+    meta: ID
+    help: Exact test ID to select; repeat for more
   - flag: no-capture
     help: Print module and test output as it is produced.
+  - flag: list
+    help: List tests without running them.
+  - opt: format
+    values: ["json", "jsonl"]
+    default: nil
+    meta: FMT
+    help: "Machine-readable output on stdout: json for --list, jsonl for runs"
+  - opt: output
+    short: o
+    parse: $Path
+    default: nil
+    meta: FILE
+    help: Write --format output to FILE instead
   - arg: paths
     parse: $Path
     collect: true
     help: Test directories or files to run.
   do |p|
-    let :filter :tags :jobs :module_jobs :timeout :no_capture :paths ... = p
+    let :filter :tags :id :jobs :module_jobs :timeout :no_capture :list :format :output :paths ... = p
+    if (format == "json" && !list)
+      throw args.Error "--format json requires --list"
+    if (format == "jsonl" && list)
+      throw args.Error "--format jsonl does not apply to --list"
+    if (format == "jsonl" && no_capture)
+      throw args.Error "--format jsonl does not allow --no-capture"
+    if (output != nil && format == nil)
+      throw args.Error "--output requires --format"
     let name_filter = Glob $filter
+    let ids = {}
+    for i = id
+      ids[i] = true
     let filter = do |info|
-      (name_filter.matches "$(module_name info.module)/$(info.name)" &&
-        tag_filter tags info)
+      (name_filter.matches info.id && tag_filter tags info &&
+        (ids.len == 0 || ids.contains info.id))
+    if (format == "json")
+      exit $ test.list :module_jobs :filter :timeout format: :JSON: :output ...paths
+    if (format == "jsonl")
+      exit $ test.run :jobs :module_jobs :filter :timeout format: :JSONL: :output ...paths
     let rc = progress.with do
-      test.run
-        jobs: $jobs
-        module_jobs: $module_jobs
-        filter: $filter
-        timeout: $timeout
-        capture: $!no_capture
-        ...paths
+      if list
+        test.list :module_jobs :filter :timeout ...paths
+      else
+        test.run
+          jobs: $jobs
+          module_jobs: $module_jobs
+          filter: $filter
+          timeout: $timeout
+          capture: $!no_capture
+          ...paths
     exit $rc
