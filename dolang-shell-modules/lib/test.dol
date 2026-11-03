@@ -12,7 +12,68 @@
 #
 # `--tags !windows,!macos` means “not Windows OR not macOS.” Use
 # `--tags !windows --tags !macos` to exclude both.
-import compile load progress shell strand term
+#
+# The repeatable `--id` option selects tests by exact
+# [ID](test.TestInfo.id), with no glob syntax to escape. It combines with
+# `--filter` and `--tags`, all of which must match.
+#
+# ## Listing Tests
+#
+# `--list` loads each module with [`list`](test.list) and reports the selected
+# tests without running them. `--jobs` and `--no-capture` don't apply. The exit
+# status is one when a module fails to compile or load, and zero otherwise,
+# including when a module skips while loading.
+#
+# By default the list is a report on the console. `--format json` instead
+# writes one JSON document to standard output, or to the file given by
+# `--output`:
+#
+# ```json
+# {
+#   "version": 1,
+#   "modules": [
+#     {
+#       "path": "test/foo.dol",
+#       "module": "test/foo",
+#       "status": "loaded",
+#       "tests": [
+#         {
+#           "id": "test/foo/connects/backend=sqlite",
+#           "module": "test/foo",
+#           "name": "connects/backend=sqlite",
+#           "base": "connects",
+#           "params": [["backend", "sqlite"]],
+#           "tags": ["slow"],
+#           "location": {"file": "test/foo.dol", "line": 12, "column": 0, "len": 12}
+#         }
+#       ]
+#     },
+#     {
+#       "path": "test/bar.dol",
+#       "module": "test/bar",
+#       "status": "failed",
+#       "error": {"kind": "compile", "message": "...", "diagnostics": [...]}
+#     }
+#   ]
+# }
+# ```
+#
+# - `version` changes when the format changes incompatibly.
+# - Modules appear in path order, and tests in registration order. Paths are
+#   as given on the command line, with directories expanded.
+# - `status` is `loaded`, `failed`, `skipped` or `ignored`. A skipped or ignored
+#   module has a `message`, which may be `null`.
+# - A test's fields are those of [`TestInfo`](test.TestInfo). `location` is
+#   `null` when unknown.
+# - A failed module's `error` has a `kind` of `compile` or `load` and a
+#   `message`. A compile error lists `diagnostics`, each with a `severity`
+#   (`error` or `warning`), `message` and `location`. A load error has
+#   `rendered`, the error as the run report prints it, with its backtrace. An
+#   `output` field holds what the module wrote while loading, when it wrote
+#   anything.
+# - Locations are zero-based, with columns and lengths in characters, as in
+#   [`inspect.Location`](inspect.Location).
+import _shell compile inspect json load progress shell strand term
   fs:
     - Path
   time:
@@ -25,13 +86,16 @@ let name_style = term.Style dim: true
 let note_style = term.Style bold: true
 
 class TestCase
-  pub field module name tags func
+  pub field module name tags func base params location
 
-  def (init) self module name tags func
+  def (init) self module name tags func base params location
     self.module = module
     self.name = name
     self.tags = tags
     self.func = func
+    self.base = base
+    self.params = params
+    self.location = location
 
 class TestCollection
   field module
@@ -41,10 +105,11 @@ class TestCollection
   def (init) self module
     self.#module = module
 
-  pub def add self name tags func
+  pub def add self name tags func base params location
     if (self.#module == nil)
       throw std.StateError "test registration outside a test file"
-    self.#tests.push $TestCase(self.#module, name, Tuple([...self.#tags, ...tags]), func)
+    let all_tags = Tuple [...self.#tags, ...tags]
+    self.#tests.push $TestCase(self.#module, name, all_tags, func, base, params, location)
 
   pub def add_tags self tags
     if (self.#module == nil)
@@ -61,12 +126,16 @@ let collect_key @ strand.Key[TestCollection] = strand.Key(TestCollection nil)
 # only `parametrize`) normalizes its input into a `TestDef` via
 # `to_test_def`; `fixture` reaches through (or creates) one transparently,
 # so `#[fixture]`-only tests register the same function as before.
+#
+# The definition location is taken from the function the first decorator
+# receives, before any fixture wraps it.
 class TestDef: Func
-  pub field func
+  pub field func location
   pub field params = []
 
   def (init) self func
     self.func = func
+    self.location = inspect.definition $func
 
   # Transparently forwards to `func`, so a `TestDef` remains a drop-in
   # function/stringifiable value wherever the decorated function itself
@@ -147,6 +216,33 @@ pub class TestInfo
   pub def tags self -> Tuple[...Str]
     self.#case.tags
 
+  # The test's ID, `module/name` with the module path's extension removed: the
+  # string `--filter` and `--id` match.
+  #[getter]
+  pub def id self -> Str
+    "$(module_name self.#case.module)/$(self.#case.name)"
+
+  # The name the test was registered under, before any
+  # [`parametrize`](test.parametrize) axes are appended. Equal to
+  # [`name`](test.TestInfo.name) for a test without axes.
+  #[getter]
+  pub def base self -> Str
+    self.#case.base
+
+  # The case's `parametrize` axes as `(axis, value)` pairs, in the order they
+  # appear in the name. Values are given as in the name. Empty for a test
+  # without axes.
+  #[getter]
+  pub def params self -> Tuple[...Tuple[Str, Str]]
+    self.#case.params
+
+  # Where the test function is defined, as given by
+  # [`inspect.definition`](inspect.definition) for the function the first
+  # test decorator received, or `nil` when unknown.
+  #[getter]
+  pub def location self -> (inspect.Location | nil)
+    self.#case.location
+
 class ModuleCompileError: std.RuntimeError
   pub field path output
 
@@ -165,9 +261,48 @@ class Failure
     self.test = test
     self.output = output
 
+# The outcome of loading a test module: `status` is `:LOADED:` with the
+# selected `cases`, or `:FAILED:`, `:SKIPPED:` or `:IGNORED:` with `error`.
+class ModuleResult
+  pub field path status error backtrace output
+  pub field cases = []
+
+  def (init) self path status
+    self.path = path
+    self.status = status
+
 def module_name path
   let name = str $path.without_ext()
   name.replace "\\" "/"
+
+# Prints a failure, skip or ignore in the run report's style, returning which
+# it was.
+def print_failure failure
+  let e = failure.error
+  let module = module_name $failure.path
+  if (type e Ignore)
+    return :IGNORED:
+  if (type e Skip)
+    let name = (failure.test && "$module/$(failure.test)" || module)
+    print (info_style "skipped") ": " (name_style name)
+    if e.message
+      print " (" (note_style e.message) ")"
+    echo()
+    return :SKIPPED:
+  if (type e ModuleCompileError)
+    print (err_style "failed") ": " (name_style "$module")
+      " (" (note_style "compilation failed") ")\n"
+    for diag = e.output.diagnostics()
+      echo $diag.render().indent(2)
+    return :FAILED:
+  if failure.test
+    print (err_style "failed") ": " (name_style "$module/$(failure.test)") ": "
+  else
+    print (err_style "failed") ": " (name_style "$module") ": "
+  echo $ shell.render_error $e backtrace: $failure.backtrace
+  if failure.output
+    print "  ──\n" $term.preformat(failure.output).indent(2)
+  :FAILED:
 
 class Harness
   field module_jobs jobs filter timeout capture
@@ -225,7 +360,10 @@ class Harness
               self.#run_test $case
               w.delta()
 
-  def run_file self path
+  # Compiles and loads a module, collecting the tests it registers that pass
+  # the filter. With `redirect`, the module's strand output goes to the
+  # capture buffer as well, so none of it reaches stdout.
+  def load_file self path :redirect = false
     let output = BinBuf()
     try
       let source = path.read_str()
@@ -237,51 +375,48 @@ class Harness
         throw ModuleCompileError $path $compiled
 
       let cases = collect_key.with (TestCollection path) do
-        self.#with_capture $output do self.#with_timeout do load.run $compiled.emit()
+        if redirect
+          strand.redirect output: $output do
+            self.#with_capture $output do self.#with_timeout do load.run $compiled.emit()
+        else
+          self.#with_capture $output do self.#with_timeout do load.run $compiled.emit()
         collect_key.value.take()
-      cases = [...cases.filter(do |case| self.#matches_filter case)]
-      self.#run_module $path $cases
+      let result = ModuleResult $path :LOADED:
+      result.cases = [...cases.filter(do |case| self.#matches_filter case)]
+      result
     catch std.RuntimeError: e
-      let captured = (self.#capture && output.freeze_str())
-      self.#record_error $e $(strand.error_backtrace()) $path nil $captured
+      let status = if (type e Skip)
+        :SKIPPED:
+      else if (type e Ignore)
+        :IGNORED:
+      else
+        :FAILED:
+      let result = ModuleResult $path $status
+      result.error = e
+      result.backtrace = strand.error_backtrace()
+      result.output = (self.#capture && output.freeze_str() || nil)
+      result
+
+  def run_file self path
+    let result = self.#load_file $path
+    if (result.status == :LOADED:)
+      self.#run_module $path $result.cases
+    else
+      self.#record_error $result.error $result.backtrace $path nil $result.output
 
   def report self
     let rc = 0
     let ignored = 0
     let skipped = 0
     for failure = self.#errors
-      let e = failure.error
-      let module = module_name $failure.path
-      if (type e Ignore)
-        if failure.test
-          ignored = (ignored + 1)
-      else if (type e Skip)
-        if failure.test
-          print (info_style "skipped") ": " (name_style "$module/$(failure.test)")
-          if e.message
-            print " (" (note_style e.message) ")"
-          echo()
+      let kind = print_failure $failure
+      if (kind == :FAILED:)
+        rc = 1
+      else if failure.test
+        if (kind == :SKIPPED:)
           skipped = (skipped + 1)
         else
-          print (info_style "skipped") ": " (name_style "$module")
-          if e.message
-            print " (" (note_style e.message) ")"
-          echo()
-      else if (type e ModuleCompileError)
-        rc = 1
-        print (err_style "failed") ": " (name_style "$module")
-          " (" (note_style "compilation failed") ")\n"
-        for diag = e.output.diagnostics()
-          echo $diag.render().indent(2)
-      else
-        rc = 1
-        if failure.test
-          print (err_style "failed") ": " (name_style "$module/$(failure.test)") ": "
-        else
-          print (err_style "failed") ": " (name_style "$module") ": "
-        echo $ shell.render_error $e backtrace: $failure.backtrace
-        if failure.output
-          print "  ──\n" $term.preformat(failure.output).indent(2)
+          ignored = (ignored + 1)
     print (pass_style "passed") ": $(self.#success)/$(self.#total - skipped - ignored)"
     if skipped
       print " ($skipped " (info_style "skipped") ")"
@@ -296,6 +431,113 @@ class Harness
             self.#run_file $path
             w.delta()
     self.#report()
+
+  # Loads each module without running its tests, giving a `ModuleResult` for
+  # each file in order.
+  pub def list self files
+    let results = []
+    for _ = files
+      results.push nil
+    progress.show message: modules total: $files.len do |w|
+      strand.fork
+        for i path = files.enumerate()
+          do self.#module_jobs.with do
+            results[i] = self.#load_file $path redirect: true
+            w.delta()
+    results
+
+# The JSON form of an `inspect.Location`, or `nil`.
+def location_record loc
+  if (loc == nil)
+    return nil
+  $
+    file: $loc.source
+    line: $loc.line
+    column: $loc.column
+    len: $loc.len
+
+# The JSON record of a test case, shared by `--list` and progress events.
+def test_record case
+  let module = module_name $case.module
+  $
+    id: "$module/$(case.name)"
+    module: $module
+    name: $case.name
+    base: $case.base
+    params: $case.params
+    tags: $case.tags
+    location: $(location_record case.location)
+
+def diagnostic_record diag path
+  let span = diag.span.span
+  $
+    severity: (diag.severity == :ERROR: && "error" || "warning")
+    message: $diag.message
+    location:
+      file: $(str path)
+      line: $span.start.line
+      column: $span.start.column
+      len: $span.len
+
+def module_record result
+  let record = $
+    path: $(str result.path)
+    module: $(module_name result.path)
+  let e = result.error
+  if (result.status == :LOADED:)
+    record[:status:] = "loaded"
+    record[:tests:] = [...result.cases.map(test_record)]
+  else if (result.status == :FAILED:)
+    record[:status:] = "failed"
+    let error = if (type e ModuleCompileError)
+      let diagnostics = [...e.output.diagnostics().map(do |d| diagnostic_record d result.path)]
+      $
+        kind: compile
+        message: $(str e)
+        diagnostics: $diagnostics
+    else
+      $
+        kind: load
+        message: $(str e)
+        rendered: $(str (shell.render_error e backtrace: result.backtrace))
+    if result.output
+      error[:output:] = result.output
+    record[:error:] = error
+  else
+    record[:status:] = (result.status == :SKIPPED: && "skipped" || "ignored")
+    record[:message:] = e.message
+  record
+
+def print_listing results
+  let tests = 0
+  let modules = 0
+  for result = results
+    if (result.status != :LOADED:)
+      continue
+    modules = (modules + 1)
+    let module = module_name $result.path
+    for case = result.cases
+      tests = (tests + 1)
+      print (name_style "$module/") $case.name
+      if case.tags.len
+        print " " (name_style "[$(", ".join(case.tags))]")
+      echo()
+  for result = results
+    if (result.status != :LOADED:)
+      print_failure $Failure(result.error, result.backtrace, result.path, nil, result.output)
+  print (pass_style "listed") ": $tests " (tests == 1 && "test" || "tests")
+  print " in $modules " (modules == 1 && "module" || "modules")
+  echo()
+
+def test_files paths
+  let files = []
+  for path = paths
+    let path = Path $path
+    if (path.metadata().type == :DIR:)
+      files.push ...path.glob("**/*.dol")
+    else
+      files.push $path
+  files
 
 class Fixture: Func
   field wrap func
@@ -385,30 +627,32 @@ do
   let test_def = to_test_def $func
   let base_name = (name || str(test_def.func))
 
+  let location = test_def.location
   if (test_def.params.len == 0)
-    collect_key.value.add $base_name $tag_values $test_def.func
+    collect_key.value.add $base_name $tag_values $test_def.func $base_name () $location
     return func
 
   let combos = [[{}, [], []]]
   for axis_name axis_values = test_def.params
     let next = []
     for combo = combos
-      let kwargs extra_tags name_parts = combo
+      let kwargs extra_tags params = combo
       for pv = axis_values
         let new_kwargs = {...kwargs}
         new_kwargs[axis_name] = pv.value
         # `/` is stripped so a stringified value can't split the registered
         # name across what `--filter` treats as path segments.
         let value_part = str(pv.value).replace("/", "_")
-        next.push [new_kwargs, [...extra_tags, ...pv.tags], [...name_parts, "$axis_name=$value_part"]]
+        next.push [new_kwargs, [...extra_tags, ...pv.tags], [...params, (str(axis_name), value_part)]]
     combos = next
 
   for combo = combos
-    let kwargs extra_tags name_parts = combo
+    let kwargs extra_tags params = combo
+    let name_parts = [...params.map(do |p| "$(p[0])=$(p[1])")]
     let case_name = "$base_name/$("/".join(name_parts))"
     let case_tags = [...tag_values, ...extra_tags]
     let case_func = do test_def.func(...kwargs)
-    collect_key.value.add $case_name $case_tags $case_func
+    collect_key.value.add $case_name $case_tags $case_func $base_name $Tuple(params) $location
 
   func
 
@@ -682,13 +926,49 @@ pub def run
   # Test file or directory.
   *paths @ (Str | Path)
 do -> Int
-  let paths = [...paths]
   let harness = Harness :jobs :module_jobs :filter :timeout :capture
-  let files = []
-  for path = paths
-    let path = Path $path
-    if (path.metadata().type == :DIR:)
-      files.push ...path.glob("**/*.dol")
+  harness.run $(test_files paths)
+
+# Discovers tests under the given files and directories without running them.
+#
+# Each module is compiled and loaded as [`run`](test.run) loads it, and the
+# tests it registers that pass `filter` are reported in file order, then in
+# registration order. Output a module writes while loading is captured. Modules
+# that fail to compile or load, or that skip while loading, are reported
+# alongside the tests.
+#
+# The human-readable report goes to the console. The JSON document is
+# described in the [module documentation](test).
+#
+# ## Returns
+#
+# One when any module fails to compile or load, otherwise zero.
+pub def list
+  # Maximum concurrent modules.
+  :module_jobs @ Int = 4
+  # Predicate receiving a
+  # [`TestInfo`](test.TestInfo). Defaults to accepting every test.
+  :filter @ (TestInfo -> Bool) = (do |_| true)
+  # Module-load timeout in seconds.
+  :timeout @ Int = 600
+  # `:HUMAN:` for a report on the console, or `:JSON:` for a JSON document.
+  :format @ (:HUMAN: | :JSON:) = :HUMAN:
+  # File to write the JSON document to instead of standard output.
+  :output @ (Str | Path | nil) = nil
+  # Test file or directory.
+  *paths @ (Str | Path)
+do -> Int
+  let harness = Harness jobs: 1 :module_jobs :filter :timeout capture: true
+  let results = harness.list $(test_files paths)
+  if (format == :JSON:)
+    let document = $
+      version: 1
+      modules: $[...results.map(module_record)]
+    let text = "$(json.encode document)\n"
+    if (output != nil)
+      Path(output).write $text
     else
-      files.push $path
-  harness.run $files
+      shell.stdout.write $text
+  else
+    print_listing $results
+  (results.any(do |r| r.status == :FAILED:) && 1 || 0)

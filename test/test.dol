@@ -1,4 +1,4 @@
-import proc shell term
+import json proc shell term
   fs:
     - with_temp_dir
   test:
@@ -11,6 +11,7 @@ import proc shell term
     - test
     tags: register_tags
     run: run_tests
+    list: list_tests
 
 #[test]
 def registration_requires_active_collection()
@@ -303,3 +304,264 @@ def cli_rejects_malformed_tag_expressions()
     for expression = ["", "!", "fast,", ",fast", "fast,,slow"]
       assert_throws $proc.Error do
         run $shell.exe --no-cache -m test --tags $expression $path
+
+# The module part of a test ID: the path without its extension, separated by
+# `/` on every platform.
+def module_of path
+  let name = str $path.without_ext()
+  name.replace "\\" "/"
+
+#[test]
+def info_reports_id_base_and_params()
+  with_temp_dir do |dir|
+    let path = (dir / "ids.dol")
+    path.write r|
+      import test:
+        - parametrize
+        - test
+
+      #[test]
+      #[parametrize color: ["red", "a/b"] size: [1]]
+      def combo :color :size
+        [color, size]
+
+      #[test name: "custom"]
+      def plain()
+        nil
+
+    let module = module_of $path
+    let seen = []
+    let filter = do |info|
+      seen.push [info.id, info.base, info.params]
+      true
+    assert_eq (list_tests filter: filter path) 0
+    assert_eq $seen $
+      - ["$module/combo/color=red/size=1", "combo", (("color", "red"), ("size", "1"))]
+      - ["$module/combo/color=a_b/size=1", "combo", (("color", "a_b"), ("size", "1"))]
+      - ["$module/custom", "custom", ()]
+
+# The zero-based line of the `def` of `name` in `source`.
+def def_line source name
+  for i line = source.split("\n").enumerate()
+    if line.starts_with "def $name"
+      return i
+  throw std.ValueError "no def $name"
+
+#[test]
+def info_reports_definition_locations()
+  with_temp_dir do |dir|
+    (dir / "helpers.dol").write r|
+      import test
+
+      pub def registered func
+        test.test name: imported $func
+
+    let path = (dir / "located.dol")
+    let source = r|
+      import helpers
+      import test:
+        - fixture
+        - parametrize
+        - test
+
+      #[fixture]
+      def inject block ...rest
+        block(...rest, extra: 1)
+
+      def wrapped func
+        test name: wrapped $func
+
+      #[test]
+      def plain()
+        nil
+
+      #[test]
+      #[inject]
+      def fixtured :extra
+        extra
+
+      #[test]
+      #[parametrize n: [1]]
+      def param :n
+        n
+
+      #[wrapped]
+      def via_wrapper()
+        nil
+
+      #[helpers.registered]
+      def via_import()
+        nil
+    path.write $source
+
+    let out = BinBuf()
+    run $shell.exe --no-cache --module-path $dir -m test --list --format json $path stdout: $out mode: :CHUNK:
+    let seen = {}
+    for record = json.decode(Str(out.freeze()))["modules"][0]["tests"]
+      seen[record["base"]] = record["location"]
+    let expected = $
+      "plain": plain
+      "fixtured": fixtured
+      "param": param
+      "wrapped": via_wrapper
+      "imported": via_import
+    for base name = expected
+      let loc = seen[base]
+      assert (loc != nil) $base
+      let expected = {"file": str(path), "line": def_line(source, name), "column": 0, "len": 4 + name.len}
+      assert_eq $loc $expected $base
+
+# Lists tests through the CLI, giving the exit status, standard output and
+# standard error.
+def list_cli *args
+  let out = BinBuf()
+  let err = BinBuf()
+  let rc = try
+    run $shell.exe --no-cache -m test --list ...args stdout: $out stderr: $err mode: :CHUNK:
+    0
+  catch proc.Error: e
+    e.rc
+  (rc, Str(out.freeze()), Str(err.freeze()))
+
+#[test]
+def cli_lists_without_running()
+  with_temp_dir do |dir|
+    let path = tagged_module $dir
+    let module = module_of $path
+    env DOLANG_TEST_MARKER_DIR: $dir do
+      let rc out err = list_cli $path
+      assert_eq $rc 0
+      assert_eq $out ""
+      assert $err.contains("$module/alpha [fast, linux]\n")
+      assert $err.contains("$module/plain\n")
+      assert $err.contains("listed: 4 tests in 1 module")
+      assert_markers $dir []
+
+      let rc out _err = list_cli --format json --tags fast --filter "**/a*" $path
+      assert_eq $rc 0
+      let doc = json.decode $out
+      assert_eq $doc["version"] 1
+      let tests = doc["modules"][0]["tests"]
+      assert_eq [...tests.map(do |t| t["name"])] ["alpha"]
+      assert_markers $dir []
+
+      let rc out _err = list_cli --format json --id "$module/gamma" --id "$module/plain" $path
+      assert_eq $rc 0
+      let tests = json.decode(out)["modules"][0]["tests"]
+      assert_eq [...tests.map(do |t| t["name"])] ["gamma", "plain"]
+
+#[test]
+def cli_json_records()
+  with_temp_dir do |dir|
+    let path = (dir / "records.dol")
+    path.write r|
+      import test:
+        - parametrize
+        - tagged
+        - tags
+        - test
+
+      tags "suite"
+
+      #[test]
+      #[parametrize backend: ["sqlite", tagged("pg", "slow")]]
+      def connects :backend
+        backend
+    let module = module_of $path
+    let rc out _err = list_cli --format json $path
+    assert_eq $rc 0
+    let doc = json.decode $out
+    let entry = doc["modules"][0]
+    assert_eq [entry["path"], entry["module"], entry["status"]] [str(path), module, "loaded"]
+    let test = entry["tests"][1]
+    assert_eq $test["id"] "$module/connects/backend=pg"
+    assert_eq $test["module"] $module
+    assert_eq $test["name"] "connects/backend=pg"
+    assert_eq $test["base"] "connects"
+    assert_eq $test["params"] [["backend", "pg"]]
+    assert_eq $test["tags"] ["suite", "slow"]
+    assert_eq $test["location"] {"file": str(path), "line": 10, "column": 0, "len": 12}
+
+#[test]
+def cli_list_keeps_module_output_off_stdout()
+  with_temp_dir do |dir|
+    let path = (dir / "noisy.dol")
+    path.write r|
+      import strand test
+
+      echo noisy-echo
+      print "noisy-print\n"
+      strand.put "noisy-put\n"
+
+      #[test.test]
+      def quiet()
+        nil
+    let rc out err = list_cli $path
+    assert_eq $rc 0
+    assert_eq $out ""
+    assert_not $err.contains("noisy-")
+
+    let rc out _err = list_cli --format json $path
+    assert_eq $rc 0
+    assert_not $out.contains("noisy-")
+    assert_eq $json.decode(out)["modules"][0]["status"] "loaded"
+
+#[test]
+def cli_list_reports_module_failures()
+  with_temp_dir do |dir|
+    let broken = (dir / "a_broken.dol")
+    broken.write "let x = (\n"
+    let raising = (dir / "b_raising.dol")
+    raising.write r|
+      echo loading
+      throw std.ValueError "boom"
+    let skipping = (dir / "c_skipping.dol")
+    skipping.write r|
+      import test
+      test.skip "not here"
+
+    let rc out err = list_cli $broken $raising $skipping
+    assert_eq $rc 1
+    assert_eq $out ""
+    assert $err.contains("compilation failed")
+    assert $err.contains("boom")
+    assert $err.contains("skipped")
+    assert $err.contains("not here")
+
+    let rc out _err = list_cli --format json $dir
+    assert_eq $rc 1
+    let modules = json.decode(out)["modules"]
+    assert_eq [...modules.map(do |m| m["status"])] ["failed", "failed", "skipped"]
+    let compile_error = modules[0]["error"]
+    assert_eq $compile_error["kind"] "compile"
+    let diag = compile_error["diagnostics"][0]
+    assert_eq $diag["severity"] "error"
+    assert_eq $diag["location"]["file"] $(str broken)
+    assert_eq $diag["location"]["line"] 0
+    let load_error = modules[1]["error"]
+    assert_eq $load_error["kind"] "load"
+    assert_eq $load_error["message"] "value error: boom"
+    assert $load_error["output"].contains("loading")
+    assert_eq $modules[2]["message"] "not here"
+
+    let rc _out _err = list_cli $skipping
+    assert_eq $rc 0
+
+#[test]
+def cli_list_writes_json_to_output_file()
+  with_temp_dir do |dir|
+    let path = tagged_module $dir
+    let target = (dir / "tests.json")
+    let rc out _err = env DOLANG_TEST_MARKER_DIR: $dir do
+      list_cli --format json --output $target $path
+    assert_eq $rc 0
+    assert_eq $out ""
+    assert_eq $json.decode(target.read_str())["modules"][0]["tests"].len 4
+
+#[test]
+def cli_rejects_misplaced_list_options()
+  with_temp_dir do |dir|
+    let path = tagged_module $dir
+    for options = [["--format", "json"], ["--list", "--output", "x.json"], ["--list", "--format", "text"]]
+      assert_throws $proc.Error do
+        run $shell.exe --no-cache -m test ...options $path stderr: $std.null
