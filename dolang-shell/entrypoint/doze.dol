@@ -3,7 +3,7 @@
 # Project tooling: `dolang -m doze check` checks a project's sources, and
 # `dolang -m doze bundle` packs its program into a bundle.
 
-import _bundle _shell args compile regex shell
+import _bundle _shell args compile json regex shell
   fs:
     - Path
 
@@ -19,6 +19,11 @@ class ProjectError: std.RuntimeError
 #[final]
 class Report
   field diagnostics @ Array[compile.Diagnostic] = []
+  # The path of the unit that reported each diagnostic, by its index in
+  # `diagnostics`.
+  field reporters @ Array[Str] = []
+  # The path of each unit checked together, by unit index.
+  field units @ Array[Str] = []
   field sources @ Int = 0
   field checked @ Bool = false
   field strict @ Bool = false
@@ -26,6 +31,10 @@ class Report
   def (init)
     self
     diagnostics @ Array[compile.Diagnostic]
+    # The path of the unit that reported each diagnostic.
+    reporters @ Array[Str]
+    # The path of each unit checked together, by unit index.
+    units @ Array[Str]
     # How many sources were compiled.
     sources @ Int
     # Whether the sources' types were checked.
@@ -34,6 +43,8 @@ class Report
     :strict @ Bool = false
   do
     self.#diagnostics = diagnostics
+    self.#reporters = reporters
+    self.#units = units
     self.#sources = sources
     self.#checked = checked
     self.#strict = strict
@@ -64,6 +75,66 @@ class Report
   #[getter]
   pub def passed self -> Bool
     (self.errors == 0 && (!self.#strict || self.warnings == 0))
+
+  # The report as data for `json.encode`: the summary, and each diagnostic with
+  # its locations resolved to paths.
+  pub def json self -> Dict[Sym, json.EncodeValue]
+    let diagnostics = $
+      for diag reporter = self.#diagnostics.zip(self.#reporters)
+        - $self.#diagnostic_json(diag, reporter)
+    $
+      sources: $self.#sources
+      checked: $self.#checked
+      errors: $self.errors
+      warnings: $self.warnings
+      passed: $self.passed
+      diagnostics: $diagnostics
+
+  # A diagnostic as data for `json.encode`, given the path of the unit that
+  # reported it.
+  def diagnostic_json self diag@compile.Diagnostic reporter@Str -> Dict[Sym, json.EncodeValue]
+    let annotations = $
+      for annotation = diag.annotations
+        - $self.#location_json(annotation.span, reporter, kind: lower(annotation.kind), message: annotation.message)
+    let notes = $
+      for note = diag.notes
+        - {kind: lower(note.kind), message: note.message}
+    let patches = $
+      for patch = diag.patches
+        - $self.#location_json(patch.span, reporter, message: patch.message, sub: patch.sub)
+    $
+      path: $self.#path(diag.span, reporter)
+      severity: $lower(diag.severity)
+      message: $diag.message
+      span: $span_json(diag.span.span)
+      annotations: $annotations
+      notes: $notes
+      patches: $patches
+
+  # The fields `fields`, with the path and span of `location`.
+  def location_json self location@compile.SourceSpan reporter@Str **fields@Str -> Dict[Sym, json.EncodeValue]
+    let path = self.#path(location, reporter)
+    {...fields, path: path, span: span_json(location.span)}
+
+  # The path of the source `location` is in, given the path of the unit that
+  # reported it.
+  def path self location@compile.SourceSpan reporter@Str -> Str
+    if let Int(unit) = location.unit
+      self.#units[unit]
+    else
+      reporter
+
+# A symbol's name, lowercased.
+def lower value @ Sym -> Str
+  str(value).lower()
+
+# A span as data for `json.encode`, as `compile.Span` describes it.
+def span_json span @ compile.Span -> Dict[Sym, json.EncodeValue]
+  $
+    start:
+      line: $span.start.line
+      column: $span.start.column
+    len: $span.len
 
 # Sources compiled together: modules by name, and scripts. Units are compiled
 # as they are added; checking their types, when asked for, waits for the
@@ -104,19 +175,31 @@ class Compiler
 
   # Checks for diagnostics on added sources, including type checking if requested
   pub def check self -> Report
-    let diagnostics = $
-      for unit = self.#units.values()
-        for diag = unit.diagnostics()
-          $diag
+    let diagnostics @ Array[compile.Diagnostic] = []
+    let reporters @ Array[Str] = []
+    # Each unit's path, by its index in a check
+    let units @ Array[Str] = []
+    for path unit = self.#units
+      units.push "$path"
+      for diag = unit.diagnostics()
+        diagnostics.push $diag
+        reporters.push "$path"
     let strict = self.#strict
-    if (self.#check && !diagnostics.any(do |diag| diag.severity == :ERROR:))
-      let checker = compile.Check()
-      for unit = self.#units.values()
-        checker.add $unit
-      add_bundled $checker
-      let result = checker.run()
-      return Report [...diagnostics, ...result.diagnostics] $self.#units.len true :strict
-    Report $diagnostics $self.#units.len $self.#check :strict
+    let count = self.#units.len
+    if (!self.#check || diagnostics.any(do |diag| diag.severity == :ERROR:))
+      return Report $diagnostics $reporters $units $count $self.#check :strict
+    # With no errors, the check accepts every unit, so unit indices follow the
+    # order they are added in
+    let checker = compile.Check()
+    for unit = self.#units.values()
+      checker.add $unit
+    add_bundled $checker $units
+    for diag = checker.run().diagnostics
+      let Int(unit) = diag.span.unit
+      else throw std.RuntimeError "checker diagnostic without a unit: $(diag.message)"
+      diagnostics.push $diag
+      reporters.push $units[unit]
+    Report $diagnostics $reporters $units $count true :strict
 
   def add self path@Path module@(Str | nil)
     let text = path.read_str()
@@ -127,8 +210,8 @@ class Compiler
         :module
 
 # Adds the bundled typelibs of the modules `checker` is missing, and of those
-# they need in turn.
-def add_bundled checker @ compile.Check
+# they need in turn, appending each one's path to `paths`.
+def add_bundled checker@compile.Check paths@Array[Str]
   let tried @ Set[Str] = Set []
   let more = true
   while more
@@ -144,7 +227,9 @@ def add_bundled checker @ compile.Check
         continue
       let Bin(bytes) = resource
       else throw std.RuntimeError "broken dolang build: bundled typelib of $name isn't binary"
-      checker.add $compile.Typelib(bytes)
+      let typelib = compile.Typelib $bytes
+      checker.add $typelib
+      paths.push $typelib.path
 
 # A project: a directory laid out by convention. Its modules are the `.dol`
 # files under `lib/`, and its program is `main.dol`. Its build output goes under
@@ -253,10 +338,14 @@ def finish report @ Report
     shell.exit 1
 
 # Runs a command on the project at `path`, the current directory by default,
-# reporting a `ProjectError` as its failure.
-def with_project path @ (Str | nil) command @ ((Project) -> Report)
+# reporting a `ProjectError` as its failure. The report is also written as JSON
+# to `report`, if given, unless the project couldn't be read.
+def with_project path@(Str | nil) report@(Str | nil) command@((Project) -> Report)
   try
-    finish $command(Project(Path(path || ".")))
+    let result = command(Project(Path(path || ".")))
+    if let Str(file) = report
+      Path(file).write $json.encode(result.json(), indent: 2)
+    finish $result
   catch ProjectError: e
     echo "error: $e"
     shell.exit 1
@@ -270,9 +359,12 @@ args.with
       help: The project directory; by default, the current directory
     - flag: strict
       help: Fail on warnings too
+    - opt: json
+      default: nil
+      help: File to also write the report to, as JSON
     do |p|
-      let :project :strict ... = p.check
-      with_project $project do |it| it.check(:strict)
+      let :project :strict :json ... = p.check
+      with_project $project $json do |it| it.check(:strict)
   - cmd: bundle
     help: Check the project, then pack `main.dol` and every module under `lib/` into a bundle.
     - opt: project
@@ -282,6 +374,9 @@ args.with
       help: Fail the check on warnings too
     - flag: no-check
       help: Only compile the sources, without checking their types
+    - opt: json
+      default: nil
+      help: File to also write the check's report to, as JSON
     - opt: output
       short: o
       default: nil
@@ -290,11 +385,11 @@ args.with
       default: nil
       help: "Interpreter command for a `#!` line, such as `/usr/bin/env dolang`; the bundle is then made executable where the platform allows"
     do |p|
-      let :project :strict :no_check :output :shebang ... = p.bundle
+      let :project :strict :no_check :output :shebang :json ... = p.bundle
       if (shebang != nil && shebang.contains("\n"))
         throw args.Error "--shebang must be a single line"
       let out = if (output != nil)
         Path $output
       else
         nil
-      with_project $project do |it| it.bundle(output: out, check: !no_check, :strict, :shebang)
+      with_project $project $json do |it| it.bundle(output: out, check: !no_check, :strict, :shebang)

@@ -60,3 +60,46 @@ doze bundle -o app --shebang '/usr/bin/env dolang'
 
 The `.dolz` extension is only a convention; `dolang` recognizes a bundle by its
 contents.
+
+## Reports
+
+`--json FILE` writes the check's report to `FILE` as JSON, besides rendering it
+on stderr. `doze check` and `doze bundle` both take it. The report is written
+whenever the sources were compiled, whether or not they passed. Nothing is
+written if the project can't be read, such as for an invalid module path or,
+when bundling, a missing `main.dol`.
+
+```
+doze check --json build/report.json
+```
+
+The report is an object:
+
+| Key           | Value                                                                 |
+| ------------- | --------------------------------------------------------------------- |
+| `sources`     | How many sources were compiled                                        |
+| `checked`     | Whether their types were checked                                      |
+| `errors`      | The number of errors                                                  |
+| `warnings`    | The number of warnings                                                |
+| `passed`      | Whether the report passed: no errors, and no warnings with `--strict` |
+| `diagnostics` | An array of diagnostics                                               |
+
+Each diagnostic has:
+
+| Key           | Value                                                                                            |
+| ------------- | ------------------------------------------------------------------------------------------------ |
+| `path`        | The path of the source                                                                           |
+| `severity`    | `error` or `warning`                                                                             |
+| `message`     | The message                                                                                      |
+| `span`        | The span the message is about                                                                    |
+| `annotations` | Other highlighted spans, each with `kind` (`primary` or `context`), `message`, `path` and `span` |
+| `notes`       | Each with `kind` (`info` or `help`) and `message`                                                |
+| `patches`     | Suggested edits, each with `message`, `path`, `span`, and `sub`, the replacement text            |
+
+A span is as `compile.Span` describes it: a `start` with zero-based `line` and
+`column`, and a `len`, both in characters. It doesn't give an end; find one from
+the source text.
+
+```
+{"start": {"line": 1, "column": 4}, "len": 3}
+```
