@@ -29,6 +29,36 @@ Each `.dol` file under `lib/` is a module, named by its path: `lib/a/b.dol` or
 Each command works on the project given with `--project`, before the command,
 or else on the current directory. It doesn't search parent directories for one.
 
+## Configuration
+
+A `doze.toml` file at the root describes the project. It is optional: without
+it, the project is its layout alone. It also marks the root for editors: the
+[language server](../lsp.md#projects) takes the nearest directory with a
+`doze.toml` or a `.git` as a file's project.
+
+```toml
+[project]
+name = "app"
+version = "0.1.0"
+authors = ["A. Developer <dev@example.com>"]
+license = "MIT"
+description = "Deploys the app."
+```
+
+Every key in the `project` table is optional, as is the table itself:
+
+| Key           | Value                                                                   |
+| ------------- | ----------------------------------------------------------------------- |
+| `name`        | The project's name, which names its bundle; by default, its directory's |
+| `version`     | A string                                                                |
+| `authors`     | An array of strings                                                     |
+| `license`     | A string                                                                |
+| `description` | A string                                                                |
+
+Only `name` is used so far. A key or table `doze` doesn't know, a value of the
+wrong type, and a `name` that can't name a file, such as one with a `/`, are
+errors, so a misspelled key doesn't go unnoticed.
+
 ## Checking
 
 `doze check` checks the types of every module under `lib/`, of `main.dol`, and
@@ -69,9 +99,10 @@ every source compiles. `--no-check` skips the check, so only compile errors
 stop the bundle.
 
 The bundle is written to `build/<name>.dolz` in the project, named after the
-project's directory. `build/` holds only build output, so a repository can
-ignore it. `-o` writes the bundle elsewhere, and `--shebang` starts it with a
-`#!` line and makes it executable where the platform allows:
+project: its configured [`name`](./doze.md#configuration), else its directory.
+`build/` holds only build output, so a repository can ignore it. `-o` writes the
+bundle elsewhere, and `--shebang` starts it with a `#!` line and makes it
+executable where the platform allows:
 
 ```
 doze bundle

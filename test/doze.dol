@@ -354,3 +354,47 @@ def project_errors_write_no_report()
     let _output rc = doze --project $dir bundle --json $file
     assert_eq $rc 1
     assert (!file.exists())
+
+#[test]
+def reads_the_configuration()
+  fs.with_temp_dir do |dir|
+    write_project $dir
+    # An empty configuration is the convention
+    (dir / "doze.toml").write ""
+    let output rc = doze --project $dir check
+    assert_eq $rc 0 $output
+    (dir / "doze.toml").write r|
+      [project]
+      name = "app"
+      version = "0.1.0"
+      authors = ["A <a@example.com>"]
+      license = "MIT"
+      description = "An app."
+    let output rc = doze --project $dir check
+    assert_eq $rc 0 $output
+    # The bundle is named after the project
+    let output rc = doze --project $dir bundle
+    assert_eq $rc 0 $output
+    assert_eq (run_bundle(dir / "build/app.dolz", "x")) "42 x\n"
+
+#[test]
+def bad_configurations_fail()
+  let cases = $
+    - ("[project\n", "invalid TOML")
+    - ("[tests]\n", "unknown keys: `tests`")
+    - ("name = \"app\"\n", "unknown keys: `name`")
+    - ("[project]\nnmae = \"app\"\n", "unknown keys: `project.nmae`")
+    - ("project = 1\n", "`project` must be a table")
+    - ("[project]\nname = 1\n", "`project.name` must be a string")
+    - ("[project]\nauthors = \"A\"\n", "`project.authors` must be an array of strings")
+    - ("[project]\nauthors = [1]\n", "`project.authors` must be an array of strings")
+    - ("[project]\nname = \"a/b\"\n", "`project.name` can't name a file")
+    - ("[project]\nname = \"..\"\n", "`project.name` can't name a file")
+  for case = cases
+    let text expected = case
+    fs.with_temp_dir do |dir|
+      write_project $dir
+      (dir / "doze.toml").write $text
+      let output rc = doze --project $dir check
+      assert_eq $rc 1 $output
+      assert $output.contains(expected) $output

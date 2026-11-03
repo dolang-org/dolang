@@ -1,7 +1,8 @@
 //! Workspaces, and the documents open in each.
 //!
 //! A workspace is a root, the nearest directory above a document with a
-//! `.git` or else the document's own directory, with its settings: those of
+//! `doze.toml` or a `.git`, or else the document's own directory, with its
+//! settings: those of
 //! a `.dolang-lsp.toml` at the root, else the convention, `lib/` as the module
 //! path and the shell's prelude.  A configuration below the root sets the
 //! prelude of its subtree.  Its members are the documents in it that are open for any
@@ -32,7 +33,7 @@ use tower_lsp_server::ls_types::Uri;
 use crate::{
     backend::{Checked, compile_document},
     module_path::{ModulePath, Stamp},
-    settings::{self, CONFIG_FILE_NAME, Import},
+    settings::{self, CONFIG_FILE_NAME, Import, PROJECT_FILE_NAME},
     typelib_index,
 };
 
@@ -122,13 +123,19 @@ impl Workspaces {
 }
 
 /// The workspace root of the documents in `dir`: the nearest of it and its
-/// ancestors with a `.git`, whether a repository's directory or a submodule's
-/// or worktree's file, else `dir`.
+/// ancestors that marks one, else `dir`.
 fn root(dir: &Path) -> PathBuf {
     dir.ancestors()
-        .find(|dir| fs::symlink_metadata(dir.join(".git")).is_ok())
+        .find(|dir| marks_root(dir))
         .unwrap_or(dir)
         .to_owned()
+}
+
+/// Whether `dir` is a workspace root: a project's, with a `doze.toml`, or a
+/// repository's, with a `.git` directory, or a submodule's or worktree's
+/// `.git` file.
+fn marks_root(dir: &Path) -> bool {
+    dir.join(PROJECT_FILE_NAME).is_file() || fs::symlink_metadata(dir.join(".git")).is_ok()
 }
 
 /// One root, and its members.
@@ -922,6 +929,16 @@ mod tests {
         assert!(Arc::ptr_eq(&main, &nested));
         let module = workspaces.open(&tree.0.join("sub/module/lib/a.dol"));
         assert_eq!(module.root, tree.0.join("sub/module"));
+        // So does a project's `doze.toml`, with the convention's module path
+        tree.write(&format!("sub/app/{PROJECT_FILE_NAME}"), "");
+        tree.write("sub/app/lib/x/mod.dol", "");
+        let app = workspaces.open(&tree.0.join("sub/app/lib/x/mod.dol"));
+        assert_eq!(app.root, tree.0.join("sub/app"));
+        assert_eq!(
+            app.module_of(&tree.0.join("sub/app/lib/x/mod.dol"))
+                .as_deref(),
+            Some("x")
+        );
 
         // A change to a configuration retires the workspaces containing it
         workspaces.retire(&tree.0.join("nested"));
@@ -937,13 +954,10 @@ mod tests {
         assert!(workspaces.live().all(|live| live.root != tree.0));
 
         // With no repository, a document's own directory.  That needs a
-        // scratch directory no repository encloses, which a temporary
-        // directory under a checkout, or a stray `C:\.git` under Wine, isn't.
+        // scratch directory no root encloses, which a temporary directory
+        // under a checkout, or a stray `C:\.git` under Wine, isn't.
         let loose = Directory::new();
-        let enclosed = loose
-            .0
-            .ancestors()
-            .any(|dir| fs::symlink_metadata(dir.join(".git")).is_ok());
+        let enclosed = loose.0.ancestors().any(marks_root);
         if !enclosed {
             let script = workspaces.open(&loose.0.join("a/b.dol"));
             assert_eq!(script.root, loose.0.join("a"));
