@@ -3025,9 +3025,26 @@ pub(crate) struct Function {
     /// The `>` implicit parameter, giving the ambient output
     pub(crate) output: Option<Box<Implicit>>,
     pub(crate) ret: Option<Box<RetType>>,
+    /// A `do` block's parameter list, from its opening `|` through its closing one, if written
+    pub(crate) bars: Option<Span>,
     /// The `...` of a stub body, in place of the otherwise empty block.
     pub(crate) stub_span: Option<Span>,
     pub(crate) body: Block,
+}
+
+impl Function {
+    /// The header of a `do` block whose keyword is at `do_span`: through its
+    /// parameters and return type, leaving out the body
+    pub(crate) fn do_head_span(&self, do_span: Span) -> Span {
+        let mut span = do_span;
+        if let Some(bars) = self.bars {
+            span = span | bars;
+        }
+        if let Some(ret) = &self.ret {
+            span = span | ret.span();
+        }
+        span
+    }
 }
 
 impl Node for Function {

@@ -163,6 +163,7 @@ impl Parser<'_> {
                     input: None,
                     output: None,
                     ret: None,
+                    bars: None,
                     stub_span: None,
                     body: Block {
                         stmts: vec![Stmt::Prim(PrimStmt::Expr(rhs))],

@@ -21,7 +21,7 @@ const TABLE: &[Row] = &[
     // Every consumer links these.
     Row {
         when: &[],
-        globs: &["stub/{std,io,math,strand,compile,digest,load,term,time,uuid}.dol"],
+        globs: &["stub/{std,io,inspect,math,strand,compile,digest,load,term,time,uuid}.dol"],
     },
     // Only the native shell links these.
     Row {

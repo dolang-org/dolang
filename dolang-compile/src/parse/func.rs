@@ -11,31 +11,45 @@ use crate::{
     source::Span,
 };
 
+/// A `do` block's parameter list
+#[derive(Default)]
+struct LambdaParams {
+    items: Vec<PatItem>,
+    implicits: Implicits,
+    /// From the opening `|` through the closing one, if the list is written
+    bars: Option<Span>,
+}
+
 impl Parser<'_> {
-    fn parse_lambda_params(&mut self, scope: &mut Scope) -> Result<(Vec<PatItem>, Implicits)> {
+    fn parse_lambda_params(&mut self, scope: &mut Scope) -> Result<LambdaParams> {
         match self.peek()? {
             Some(token!(TokenInfo::Op(Op::Bar))) => {
-                self.advance();
+                let open = self.advance();
                 self.with_inline_shell(|this| {
-                    let params = this.parse_pat_items(scope, PatMode::Lambda)?;
-                    this.expect(scope, &[ExpectKind::Op(Op::Bar)])?;
-                    Ok(params)
+                    let (items, implicits) = this.parse_pat_items(scope, PatMode::Lambda)?;
+                    let close = this.expect(scope, &[ExpectKind::Op(Op::Bar)])?;
+                    Ok(LambdaParams {
+                        items,
+                        implicits,
+                        bars: Some(open | close),
+                    })
                 })
             }
-            _ => Ok((vec![], Implicits::default())),
+            _ => Ok(LambdaParams::default()),
         }
     }
 
     pub(super) fn parse_lambda(&mut self, scope: &mut Scope, do_span: Span) -> Result<Expr> {
-        let (params, implicits) = self.parse_lambda_params(scope)?;
+        let params = self.parse_lambda_params(scope)?;
         let ret = self.parse_ret_type(scope)?;
         let expr = self.parse_expr(scope, ExprMode::Full)?;
         Ok(Expr::Lambda {
             func: Box::new(Function {
-                params,
-                input: implicits.input,
-                output: implicits.output,
+                params: params.items,
+                input: params.implicits.input,
+                output: params.implicits.output,
                 ret,
+                bars: params.bars,
                 stub_span: None,
                 body: Block {
                     stmts: vec![Stmt::Prim(PrimStmt::Expr(expr))],
@@ -50,9 +64,9 @@ impl Parser<'_> {
     fn parse_do_params(
         &mut self,
         scope: &mut Scope,
-    ) -> Result<(Vec<PatItem>, Implicits, Option<Box<RetType>>)> {
+    ) -> Result<(LambdaParams, Option<Box<RetType>>)> {
         match self.peek()? {
-            Some(token!(TokenInfo::Indent)) => return Ok((vec![], Implicits::default(), None)),
+            Some(token!(TokenInfo::Indent)) => return Ok((LambdaParams::default(), None)),
             Some(token!(TokenInfo::ArgSep)) => self.advance(),
             _ => {
                 let token = self.next()?;
@@ -63,17 +77,21 @@ impl Parser<'_> {
                 ));
             }
         };
-        let (params, implicits) = match self.peek()? {
+        let params = match self.peek()? {
             Some(token!(TokenInfo::Op(Op::Bar))) => {
-                self.advance();
-                let params = self.parse_pat_items(scope, PatMode::Lambda)?;
-                self.expect(scope, &[ExpectKind::Op(Op::Bar)])?;
+                let open = self.advance();
+                let (items, implicits) = self.parse_pat_items(scope, PatMode::Lambda)?;
+                let close = self.expect(scope, &[ExpectKind::Op(Op::Bar)])?;
                 if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
                     self.advance();
                 }
-                params
+                LambdaParams {
+                    items,
+                    implicits,
+                    bars: Some(open | close),
+                }
             }
-            _ => (vec![], Implicits::default()),
+            _ => LambdaParams::default(),
         };
         let ret = self.parse_ret_type(scope)?;
         if ret.is_some()
@@ -81,7 +99,7 @@ impl Parser<'_> {
         {
             self.advance();
         }
-        Ok((params, implicits, ret))
+        Ok((params, ret))
     }
 
     pub(super) fn parse_do_block(
@@ -90,15 +108,16 @@ impl Parser<'_> {
         allow_trailing: bool,
     ) -> Result<Expr> {
         let do_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Do)])?;
-        let (params, implicits, ret) = self.parse_do_params(scope)?;
+        let (params, ret) = self.parse_do_params(scope)?;
         match self.peek()? {
             Some(token!(TokenInfo::Indent)) if allow_trailing => {
                 self.advance();
                 let function = Function {
-                    params,
-                    input: implicits.input,
-                    output: implicits.output,
+                    params: params.items,
+                    input: params.implicits.input,
+                    output: params.implicits.output,
                     ret,
+                    bars: params.bars,
                     stub_span: None,
                     body: self.parse_block_through_dedent(scope)?,
                 };
@@ -109,10 +128,11 @@ impl Parser<'_> {
             }
             _ => Ok(Expr::Lambda {
                 func: Box::new(Function {
-                    params,
-                    input: implicits.input,
-                    output: implicits.output,
+                    params: params.items,
+                    input: params.implicits.input,
+                    output: params.implicits.output,
                     ret,
+                    bars: params.bars,
                     stub_span: None,
                     body: Block {
                         stmts: vec![if allow_trailing {
@@ -261,6 +281,7 @@ impl Parser<'_> {
                 input: implicits.input,
                 output: implicits.output,
                 ret,
+                bars: None,
                 stub_span,
                 body,
             },

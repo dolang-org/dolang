@@ -393,7 +393,7 @@ impl<'v> Protocol<'v> for Sender<'v> {
                     Some(backtrace) => {
                         let Some(_) = backtrace.downcast_ref(strand.builtin_types().backtrace)
                         else {
-                            return Err(Error::type_error(strand, "expected strand.Backtrace"));
+                            return Err(Error::type_error(strand, "expected inspect.Backtrace"));
                         };
                         Some(backtrace)
                     }

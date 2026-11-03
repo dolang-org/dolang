@@ -566,13 +566,11 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     let else_key = builder.sym("else");
     let strand_class = builder.singletons().strand.dup();
     let stream_class = builder.singletons().stream.dup();
-    let backtrace_class = builder.singletons().backtrace.dup();
 
     builder
         .module("strand")
         .value("Strand", &strand_class)
         .value("Stream", &stream_class)
-        .value("Backtrace", &backtrace_class)
         .value("Key", state.types.key)
         .value("Resource", state.types.resource)
         // Implicit I/O functions (moved from former std.iter)

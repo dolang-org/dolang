@@ -1822,7 +1822,7 @@ impl<'v> Value<'v> {
         Some(Range(self.downcast_ref(vm.builtin_types().range)?))
     }
 
-    /// Downcast value to `strand.Backtrace`.
+    /// Downcast value to `inspect.Backtrace`.
     #[inline]
     pub fn as_backtrace<'a>(
         &'a self,

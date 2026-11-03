@@ -3,7 +3,7 @@
 
 use dolang::resource;
 
-/// Each module's name and typelib: `std`, `io`, `math` and `strand`, the extensions
+/// Each module's name and typelib: `std`, `io`, `inspect`, `math` and `strand`, the extensions
 /// [`run`](crate::run) applies, and the `test` shim. `dolang-shell-modules`
 /// bundles them by the features this crate enables, which match those
 /// extensions.
