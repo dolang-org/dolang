@@ -85,7 +85,15 @@ do -> DecodeValue
 # | `Struct` | object               |
 # | `Record` | object               |
 #
-# Object keys are written in the order the dict holds them.
+# Object keys are written in the order the dict holds them. A non-finite
+# `Float` is written as `null`.
+#
+# ## Errors
+#
+# | Exception | Condition |
+# | --- | --- |
+# | [`TypeError`](std.TypeError) | A value has no JSON form, such as a `Bin`, or a key is not a `Str`, `Sym`, `Int`, `Float`, or `Bool`. |
+# | [`ValueError`](std.ValueError) | The value contains itself, an `Int` is outside the signed 64-bit range, or a `Float` key is not finite. |
 #
 # ## Example
 #
