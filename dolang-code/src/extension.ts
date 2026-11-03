@@ -2,7 +2,14 @@ import * as vscode from "vscode";
 import { DoLanguageServer } from "./lsp";
 import { DoScriptRunner, requireTrustedWorkspace, TASK_TYPE } from "./runner";
 import { DoInteractiveShell } from "./shell";
-import { extensionVersion, GitHubReleaseToolDownloader, resolveTool, type ToolName } from "./tools";
+import { DoTestController } from "./testing";
+import {
+    extensionVersion,
+    GitHubReleaseToolDownloader,
+    resolveExecutionTools,
+    resolveTool,
+    type ToolName
+} from "./tools";
 
 let server: DoLanguageServer | undefined;
 
@@ -11,6 +18,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const languageServer = new DoLanguageServer(context, log);
     const runner = new DoScriptRunner(context, log, languageServer);
     const shell = new DoInteractiveShell(context, log, languageServer);
+    const tests = new DoTestController({
+        projectRoot: uri => languageServer.projectRoot(uri),
+        dolang: async () => (await resolveExecutionTools({ context, log })).shell.path,
+        log
+    });
     server = languageServer;
     const ignore = (promise: Promise<void>): void => {
         void promise.catch(() => undefined);
@@ -19,6 +31,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     context.subscriptions.push(
         log,
         shell,
+        tests,
         languageServer,
         vscode.tasks.registerTaskProvider(TASK_TYPE, runner),
         vscode.commands.registerCommand("dolang.runScript", () => ignore(runner.run())),

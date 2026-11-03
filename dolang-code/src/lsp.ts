@@ -47,22 +47,37 @@ export class DoLanguageServer implements vscode.Disposable {
      * that doesn't answer, there are none.
      */
     public async modulePathArgs(uri: vscode.Uri): Promise<string[]> {
+        const result = await this.project(uri, "module path");
+        return result ? modulePathArgs(result.modulePath) : [];
+    }
+
+    /**
+     * Asks the server for the root of the project holding `uri`, a document
+     * or a directory. With no server, or one that doesn't answer, there is
+     * none.
+     */
+    public async projectRoot(uri: vscode.Uri): Promise<string | undefined> {
+        return (await this.project(uri, "project"))?.root;
+    }
+
+    private async project(
+        uri: vscode.Uri,
+        what: string
+    ): Promise<{ root: string; modulePath: string[] } | undefined> {
         await this.queue;
         const client = this.client;
         if (!client) {
-            this.log.warn(`No language server to find the module path of ${uri.fsPath}`);
-            return [];
+            this.log.warn(`No language server to find the ${what} of ${uri.fsPath}`);
+            return undefined;
         }
         try {
-            const result = await client.sendRequest<{ modulePath: string[] }>("dolang/modulePath", {
-                uri: client.code2ProtocolConverter.asUri(uri)
-            });
-            return modulePathArgs(result.modulePath);
-        } catch (error) {
-            this.log.warn(
-                `Failed to find the module path of ${uri.fsPath}: ${errorMessage(error)}`
+            return await client.sendRequest<{ root: string; modulePath: string[] }>(
+                "dolang/modulePath",
+                { uri: client.code2ProtocolConverter.asUri(uri) }
             );
-            return [];
+        } catch (error) {
+            this.log.warn(`Failed to find the ${what} of ${uri.fsPath}: ${errorMessage(error)}`);
+            return undefined;
         }
     }
 

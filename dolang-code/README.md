@@ -18,6 +18,7 @@ VS Code extension providing language support for the Do programming language.
     - Run Do scripts with a single click, with or without arguments
     - `dolang` tasks in `tasks.json` for saved argument sets
     - Interactive Do shell, with Send Selection/Line to Do Shell
+- A project's tests in the Test Explorer, run with `doze test`
 
 ## Requirements
 
@@ -85,6 +86,24 @@ the most recently opened interactive shell, opening one if needed. A
 multi-line selection is dedented and runs as a single REPL turn. With no
 selection, the cursor moves to the next line.
 
+## Testing
+
+The Test Explorer shows the tests of each project in the workspace: the `.dol`
+files under its `test/` directory. The language server reports each project's
+root, so tests appear only while it runs. Each file lists its tests, and a
+parameterized test groups its cases.
+
+The extension runs `doze test` in the project, so tests run the same way as
+from a terminal: `doze test --list` to list them, and `doze test --format jsonl`
+to run all of them, a file or a single test, with `--id` for each test chosen.
+A failure shows the harness's message at the failing line, with a diff when an
+assertion compared two values. Modified Do files in the project are saved
+before a run when `dolang.autoSaveBeforeRun` is on. Editing a file under
+`test/` lists its project again.
+
+Listing loads the test modules, which runs their top-level code, so tests are
+listed only in a trusted workspace.
+
 ## Configuration
 
 Customize execution behavior in VS Code settings:
@@ -120,8 +139,8 @@ extension's is reported as a warning.
 ### Restricted Mode
 
 In an untrusted workspace, the extension provides syntax highlighting and
-editing support only: the language server doesn't start, and scripts, tasks
-and the interactive shell can't be run. Workspace settings can't change
+editing support only: the language server doesn't start, and scripts, tasks,
+tests and the interactive shell can't be run. Workspace settings can't change
 `dolang.path` or `dolang.lsp.path`. Trusting the workspace starts the
 language server. Virtual workspaces aren't supported.
 

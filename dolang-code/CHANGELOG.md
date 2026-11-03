@@ -24,3 +24,4 @@
 - An icon, a more descriptive name and Marketplace keywords
 - Scripts, `dolang` tasks and new interactive shells run with the project's
   module path, as the language server reports it
+- The Test Explorer lists and runs each project's tests through `doze test`
