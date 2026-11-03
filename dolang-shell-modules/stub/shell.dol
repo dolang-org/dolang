@@ -10,6 +10,7 @@ import fs:
   - @Path
 import io:
   - Io
+@import inspect term
 
 # The process's standard input.
 #
@@ -485,6 +486,20 @@ pub def exit
   # Exit status. Defaults to `0`.
   code @ Int = ...
 do -> Never
+  ...
+
+# Formats an error the way the shell reports an uncaught one.
+#
+# The error's message is followed by its backtrace: a line for each call,
+# showing the code the call was running, with that code marked. Code already
+# shown for an earlier call isn't shown again.
+pub def render_error
+  # Error to format.
+  error @ Value
+  # Backtrace to show. By default, that of the exception being handled, and
+  # none when there isn't one; `nil` shows none.
+  :backtrace @ (inspect.Backtrace | nil) = ...
+do -> term.Text
   ...
 
 # Returns the line ending native to the current [`Vfs`](shell.Vfs) target:

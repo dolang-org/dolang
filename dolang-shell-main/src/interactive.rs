@@ -15,7 +15,6 @@ use dolang::{
     },
 };
 use dolang_ext_compile::apply_prelude_value;
-use dolang_ext_shell::classify_node;
 use rustyline::{
     Editor, Helper,
     completion::{Candidate, Completer},
@@ -27,7 +26,10 @@ use rustyline::{
     validate::{ValidationContext, ValidationResult, Validator},
 };
 
-use crate::load;
+use crate::{
+    load,
+    syntax::{classify_node, highlight},
+};
 
 struct DoCandidate {}
 
@@ -84,12 +86,7 @@ impl Highlighter for DoHelper {
         if tokens.is_empty() {
             return Cow::Borrowed(line);
         }
-        Cow::Owned(dolang_ext_shell::highlight_source_range(
-            line,
-            &tokens,
-            0..line.len(),
-            true,
-        ))
+        Cow::Owned(highlight(line, &tokens))
     }
 
     fn highlight_char(&self, line: &str, pos: usize, kind: rustyline::highlight::CmdKind) -> bool {

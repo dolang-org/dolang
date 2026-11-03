@@ -1,5 +1,4 @@
 import
-  _shell
   fs
   shell
   compile
@@ -44,7 +43,7 @@ def error()
   let plain = try
     throw "boom"
   catch e
-    _shell.render_error $e
+    shell.render_error $e
   assert_eq (type plain) $term.Text
   assert ((str plain).contains "boom")
   assert (!(str(plain).ends_with("\n")))
@@ -54,33 +53,35 @@ def error_explicit_backtrace()
   let color = try
     throw "boom"
   catch e
-    _shell.render_error $e backtrace: (strand.error_backtrace())
+    shell.render_error $e backtrace: (strand.error_backtrace())
   assert ((str color).contains "boom")
 
 #[test]
 def error_no_backtrace()
-  let err = try
-    _shell.render_error "boom"
+  # Nothing is being handled, so there is no backtrace to show.
+  assert_eq (str(shell.render_error("boom"))) "boom"
+  let plain = try
+    throw "boom"
   catch e
-    e
-  assert_eq (str err) "state error: no active handled exception"
+    shell.render_error $e backtrace: nil
+  assert_eq (str plain) "boom"
 
 #[test]
 def error_bad_type()
   let type_err = try
-    _shell.render_error "boom" backtrace: "bad"
+    shell.render_error "boom" backtrace: "bad"
   catch e
     e
   assert_eq (str type_err) "type error: expected inspect.Backtrace"
 
 #[test]
-def backtrace_source_is_relative_highlighted_and_unique()
+def backtrace_source_is_relative_and_unique()
   fs.with_temp_dir do |dir|
     # Match the physical cwd the child reports, including macOS temp aliases.
     let dir = dir.canonical()
     let path = (dir / "backtrace.dol")
     path.write r|
-      import _shell strand shell
+      import strand shell
       def fail n
         if (n > 0)
           fail (n - 1)
@@ -89,7 +90,7 @@ def backtrace_source_is_relative_highlighted_and_unique()
       try
         fail 2
       catch err
-        shell.stdout.write $(_shell.render_error(err, backtrace: strand.error_backtrace()).encode())
+        shell.stdout.write $(shell.render_error(err, backtrace: strand.error_backtrace()).encode())
     let output = []
     cd $dir do run $shell.exe --no-cache $path stdout: $output
     let encoded = "".join(output)
@@ -100,3 +101,23 @@ def backtrace_source_is_relative_highlighted_and_unique()
     assert (plain.contains "throw \"boom\"")
     assert (encoded.contains(str(b"\x1b")))
     assert_eq (str(term.text(encoded))) $plain
+
+#[test]
+def backtrace_shows_whole_span()
+  fs.with_temp_dir do |dir|
+    let path = (dir / "multiline.dol")
+    path.write r|
+      import shell
+      def fail _x _y
+        throw "boom"
+      try
+        fail
+          - first
+          - second
+      catch err
+        shell.stdout.write $(shell.render_error(err).encode())
+    let output = []
+    run $shell.exe --no-cache $path stdout: $output
+    let plain = str $term.preformat("".join(output))
+    assert (plain.contains "- first")
+    assert (plain.contains "- second")

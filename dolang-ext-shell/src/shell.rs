@@ -26,6 +26,7 @@ use dolang::{
 
 use crate::util;
 use crate::{
+    diagnostic,
     env::Env as EnvObject,
     error::{ErrorExt, ResultExt as _},
     fs::path::{cast_path, create_path, path_from_value},
@@ -935,9 +936,15 @@ pub(crate) fn configure_vm<'v>(
     let program_sym = builder.sym("program");
     let capture_ty = core.types.capture;
     let chomp_sym = builder.sym("chomp");
+    let backtrace_sym = builder.sym("backtrace");
 
     builder
         .module("shell")
+        .function("render_error", async move |strand, args, out| {
+            let ([error], [backtrace]) = unpack!(strand, args, 1, 0, backtrace_sym = None)?;
+            let rendered = diagnostic::render_error_value(strand, &error, backtrace.as_deref())?;
+            dolang_ext_term::preformatted_text(strand, &rendered, out)
+        })
         .function("line_ending", async move |strand, args, out| {
             let ([], []) = unpack!(strand, args, 0, 0)?;
             // A function rather than a getter: the answer follows the VFS

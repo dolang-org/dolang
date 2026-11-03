@@ -20,4 +20,3 @@ Reusable process lifecycle for `dolang`-style binaries.
   diagnostics, and returns bytecode. It does no bytecode detection or caching.
 - **REPL services**: `_shell.Editor` runs Do-aware editing/history under
   `spawn_blocking`; cancellation waits for readline to return.
-  `_shell.render_error` formats runtime errors.

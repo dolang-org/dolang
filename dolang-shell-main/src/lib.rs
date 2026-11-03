@@ -20,6 +20,7 @@ use crate::terminal_state::TerminalRestoreGuard;
 mod interactive;
 mod load;
 mod services;
+mod syntax;
 mod terminal_state;
 
 #[cfg(unix)]

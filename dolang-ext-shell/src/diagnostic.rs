@@ -6,62 +6,50 @@ use std::{
     path::Path,
 };
 
+use annotate_snippets::{AnnotationKind, Group, Level, Renderer, Snippet, renderer::DecorStyle};
 use anstyle::{AnsiColor, Style};
 use dolang::{
-    compile::{Config, Diag, NodeId, Unit},
-    runtime::{Error, Frame, Result, Strand, Value},
+    compile::{Diag, Unit},
+    runtime::{Error, Frame, Result, Strand, Value, vm::Span},
 };
-
-use crate::syntax::{SemanticToken, classify_node, highlight_range};
 
 #[derive(Clone)]
 struct RenderedFrame {
     module: String,
     receiver: String,
     method: Option<String>,
-    source: Option<(String, u32)>,
+    source: Option<(String, Span)>,
 }
 
+/// A source file a backtrace shows code from
 struct SourceFile {
-    source: String,
-    tokens: Vec<SemanticToken>,
+    text: String,
+    /// Where each line starts, in bytes
+    line_starts: Vec<usize>,
 }
 
 impl SourceFile {
     fn open(path: &Path) -> Option<Self> {
-        let source = fs::read_to_string(path).ok()?;
-        let mut tokens = Vec::new();
-        let unit = Config::new()
-            .document(true)
-            .recover(true)
-            .unit(path, source.as_str());
-        unit.tokens(&mut |token, span, node: Option<NodeId>, context| {
-            let kind = node.and_then(|id| unit.node(id)).map(|node| node.kind());
-            tokens.push((
-                token,
-                unit.byte_range(span),
-                classify_node(kind.as_ref()),
-                context,
-            ));
-        });
-        Some(Self { source, tokens })
+        let text = fs::read_to_string(path).ok()?;
+        let line_starts = std::iter::once(0)
+            .chain(text.match_indices('\n').map(|(offset, _)| offset + 1))
+            .collect();
+        Some(Self { text, line_starts })
     }
 
-    fn line_range(&self, line: u32) -> Option<Range<usize>> {
-        let wanted = usize::try_from(line).ok()?;
-        let mut start = 0;
-        for (index, value) in self.source.split_inclusive('\n').enumerate() {
-            let end = start + value.len();
-            if index == wanted {
-                let mut end = end - usize::from(value.ends_with('\n'));
-                if end > start && self.source.as_bytes()[end - 1] == b'\r' {
-                    end -= 1;
-                }
-                return Some(start..end);
-            }
-            start = end;
-        }
-        None
+    /// Where `span` lies in the text, in bytes. A span past the end of the
+    /// file, which may have changed since it ran, stops short.
+    fn byte_range(&self, span: Span) -> Range<usize> {
+        let start = span.start();
+        let line = (self.line_starts.get(start.line_offset() as usize))
+            .map_or(self.text.len(), |&line| line);
+        let advance = |from: usize, count: u32| {
+            (self.text[from..].char_indices())
+                .nth(count as usize)
+                .map_or(self.text.len(), |(offset, _)| from + offset)
+        };
+        let begin = advance(line, start.column_offset());
+        begin..advance(begin, span.len())
     }
 }
 
@@ -71,14 +59,22 @@ struct SourceCache {
 }
 
 impl SourceCache {
-    fn render_line(&mut self, path: &str, line: u32, color: bool) -> Option<String> {
+    /// The code `span` covers in the file at `path`, marked, in lines of at most
+    /// `width` columns
+    fn render_snippet(&mut self, path: &str, span: Span, width: Option<usize>) -> Option<String> {
         let file = self
             .files
             .entry(path.to_owned())
             .or_insert_with(|| SourceFile::open(Path::new(path)))
             .as_ref()?;
-        let range = file.line_range(line)?;
-        Some(highlight_range(&file.source, &file.tokens, range, color))
+        let snippet = Snippet::source(file.text.as_str())
+            .line_start(1)
+            .annotation(AnnotationKind::Primary.span(file.byte_range(span)));
+        let mut renderer = Renderer::styled().decor_style(DecorStyle::Unicode);
+        if let Some(width) = width {
+            renderer = renderer.term_width(width);
+        }
+        Some(renderer.render(&[Group::with_level(Level::NOTE).element(snippet)]))
     }
 }
 
@@ -97,17 +93,18 @@ where
             module: entry.module().into_owned(),
             receiver: entry.receiver().into_owned(),
             method: entry.method().map(Cow::into_owned),
-            source: entry
-                .source()
-                .map(|(path, span)| (path.into_owned(), span.start().line_offset())),
+            source: entry.source().map(|(path, span)| (path.into_owned(), span)),
         })
         .collect()
 }
 
+/// Render `message` and the frames of its backtrace, each frame's code shown
+/// once in lines of at most `cols` columns
 fn render_message_backtrace_frames(
     message: &str,
     backtrace: &[RenderedFrame],
     cwd: Option<&Path>,
+    cols: Option<u16>,
 ) -> String {
     let mut out = String::new();
     out.push_str(&render_styled(
@@ -117,8 +114,8 @@ fn render_message_backtrace_frames(
     out.push('\n');
 
     let width = backtrace.len().saturating_sub(1).to_string().len();
-    // Margin marker character consumes last indent space
-    let source_indent = " ".repeat(width + 3);
+    let source_indent = " ".repeat(width + 4);
+    let snippet_width = cols.map(|cols| usize::from(cols).saturating_sub(source_indent.len()));
     let mut source_cache = SourceCache::default();
     let mut rendered_sources = HashSet::new();
     for (i, entry) in backtrace.iter().enumerate() {
@@ -153,31 +150,34 @@ fn render_message_backtrace_frames(
                 &entry.receiver,
             ));
         }
-        if let Some((source_path, line)) = &entry.source {
-            let source_key = (source_path.clone(), *line);
+        if let Some((source_path, span)) = &entry.source {
             let path = Path::new(source_path.as_str());
             let path = cwd
                 .and_then(|cwd| path.strip_prefix(cwd).ok())
                 .unwrap_or(path);
+            let start = span.start();
+            let colon = render_styled(Style::new().fg_color(Some(AnsiColor::Yellow.into())), ":");
+            let number =
+                |n: u32| render_styled(Style::new().fg_color(Some(AnsiColor::Magenta.into())), n);
             out.push(' ');
             out.push_str(&render_styled(Style::new().dimmed(), "at"));
             out.push(' ');
             out.push_str(&path.display().to_string());
-            out.push_str(&render_styled(
-                Style::new().fg_color(Some(AnsiColor::Yellow.into())),
-                ":",
-            ));
-            out.push_str(&render_styled(
-                Style::new().fg_color(Some(AnsiColor::Magenta.into())),
-                format!("{}", line + 1),
-            ));
-            if rendered_sources.insert(source_key)
-                && let Some(source) = source_cache.render_line(source_path, *line, true)
+            out.push_str(&colon);
+            out.push_str(&number(start.line_number()));
+            out.push_str(&colon);
+            out.push_str(&number(start.column_number()));
+            if rendered_sources.insert((source_path, *span))
+                && let Some(snippet) =
+                    source_cache.render_snippet(source_path, *span, snippet_width)
             {
-                out.push('\n');
-                out.push_str(&source_indent);
-                out.push_str(&render_styled(Style::new().dimmed(), "▕"));
-                out.push_str(&source);
+                for line in snippet.lines() {
+                    out.push('\n');
+                    if !line.is_empty() {
+                        out.push_str(&source_indent);
+                        out.push_str(line);
+                    }
+                }
             }
         }
         out.push('\n');
@@ -186,38 +186,44 @@ fn render_message_backtrace_frames(
     out
 }
 
-pub fn render_message_backtrace<I, F>(message: &str, backtrace: I) -> String
+/// Render `message` and its backtrace as an uncaught error is reported, in
+/// lines of at most `cols` columns
+pub fn render_message_backtrace<I, F>(message: &str, backtrace: I, cols: Option<u16>) -> String
 where
     I: IntoIterator<Item = F>,
     F: Frame,
 {
     let cwd = std::env::current_dir().ok();
     let frames = collect_frames(backtrace);
-    render_message_backtrace_frames(message, &frames, cwd.as_deref())
+    render_message_backtrace_frames(message, &frames, cwd.as_deref(), cols)
 }
 
+/// Render `error` with `backtrace`: by default that of the active handled
+/// exception, if any, and none for `nil`
 pub(crate) fn render_error_value<'v, 's>(
     strand: &mut Strand<'v, 's>,
     error: &Value<'v>,
     backtrace: Option<&Value<'v>>,
 ) -> Result<'v, 's, String> {
     let message = error.to_string(strand)?;
-    let frames = if let Some(backtrace) = backtrace {
-        let Some(backtrace) = backtrace.as_backtrace(strand) else {
-            return Err(Error::type_error(strand, "expected inspect.Backtrace"));
-        };
-        collect_frames(backtrace)
-    } else {
-        let Some(backtrace) = strand.error_backtrace() else {
-            return Err(Error::state_error(strand, "no active handled exception"));
-        };
-        collect_frames(backtrace)
+    let frames = match backtrace {
+        Some(backtrace) if backtrace.is_nil() => Vec::new(),
+        Some(backtrace) => {
+            let Some(backtrace) = backtrace.as_backtrace(strand) else {
+                return Err(Error::type_error(strand, "expected inspect.Backtrace"));
+            };
+            collect_frames(backtrace)
+        }
+        None => strand
+            .error_backtrace()
+            .map_or_else(Vec::new, collect_frames),
     };
     let cwd = std::env::current_dir().ok();
     Ok(render_message_backtrace_frames(
         &message,
         &frames,
         cwd.as_deref(),
+        crate::stderr_cols(strand),
     ))
 }
 
@@ -236,7 +242,8 @@ pub async fn print_error_stderr<'v, 's>(
     error: Error<'v, 's>,
 ) -> Result<'v, 's, ()> {
     let message = error.display(strand).to_string();
-    let rendered = render_message_backtrace(&message, error.backtrace());
+    let rendered =
+        render_message_backtrace(&message, error.backtrace(), crate::stderr_cols(strand));
     drop(error);
     write_preformatted_stderr(strand, &rendered).await
 }
