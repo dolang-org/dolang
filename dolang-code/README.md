@@ -19,6 +19,8 @@ VS Code extension providing language support for the Do programming language.
     - `dolang` tasks in `tasks.json` for saved argument sets
     - Interactive Do shell, with Send Selection/Line to Do Shell
 - A project's tests in the Test Explorer, run with `doze test`
+- Do: Build Project and Do: Check Project, run with `doze`, with the check's
+  results in the Problems panel
 
 ## Requirements
 
@@ -104,6 +106,34 @@ before a run when `dolang.autoSaveBeforeRun` is on. Editing a file under
 Listing loads the test modules, which runs their top-level code, so tests are
 listed only in a trusted workspace.
 
+## Projects
+
+**Do: Build Project** runs `doze bundle`, and **Do: Check Project** runs
+`doze check`, on the project holding the active document, or the file or
+folder chosen in the Explorer. The language server reports the project's root,
+which is passed to `doze` as `--project` and used as its working directory, so
+both commands need the server to be running. Modified Do files in the project
+are saved first when `dolang.autoSaveBeforeRun` is on.
+
+`doze` tasks run the same commands from `tasks.json`, with extra arguments, on
+the project of their workspace folder:
+
+```json
+{
+    "type": "doze",
+    "command": "bundle",
+    "args": ["--shebang", "/usr/bin/env dolang"]
+}
+```
+
+Without a `tasks.json`, Run Build Task offers `doze bundle` and Run Test Task
+offers `doze check`, for each workspace folder.
+
+The check's results appear in the Problems panel, read from the report
+`doze --json` writes. A run replaces the project's earlier results. Files open
+in an editor are left to the language server: their results from `doze` are
+dropped when they are opened or edited, and later runs skip them.
+
 ## Configuration
 
 Customize execution behavior in VS Code settings:
@@ -140,9 +170,9 @@ extension's is reported as a warning.
 
 In an untrusted workspace, the extension provides syntax highlighting and
 editing support only: the language server doesn't start, and scripts, tasks,
-tests and the interactive shell can't be run. Workspace settings can't change
-`dolang.path` or `dolang.lsp.path`. Trusting the workspace starts the
-language server. Virtual workspaces aren't supported.
+tests, project builds and the interactive shell can't be run. Workspace settings
+can't change `dolang.path` or `dolang.lsp.path`. Trusting the workspace starts
+the language server. Virtual workspaces aren't supported.
 
 ### Troubleshooting
 

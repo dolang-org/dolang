@@ -42,7 +42,9 @@
     "activationEvents": [
         "onLanguage:dolang",
         "onTaskType:dolang",
-        "workspaceContains:**/test/**/*.dol"
+        "onTaskType:doze",
+        "workspaceContains:**/test/**/*.dol",
+        "workspaceContains:**/doze.toml"
     ],
     "contributes": {
         "configuration": {
@@ -118,6 +120,16 @@
                 "title": "Run Do Script with Arguments…"
             },
             {
+                "command": "dolang.buildProject",
+                "title": "Build Project",
+                "category": "Do"
+            },
+            {
+                "command": "dolang.checkProject",
+                "title": "Check Project",
+                "category": "Do"
+            },
+            {
                 "command": "dolang.openInteractiveShell",
                 "title": "Open Do Interactive Shell",
                 "icon": "$(terminal)"
@@ -170,6 +182,16 @@
                     "command": "dolang.runScriptWithArgs",
                     "when": "resourceLangId == dolang && isWorkspaceTrusted",
                     "group": "navigation"
+                },
+                {
+                    "command": "dolang.buildProject",
+                    "when": "(explorerResourceIsFolder || resourceLangId == dolang) && isWorkspaceTrusted",
+                    "group": "dolang"
+                },
+                {
+                    "command": "dolang.checkProject",
+                    "when": "(explorerResourceIsFolder || resourceLangId == dolang) && isWorkspaceTrusted",
+                    "group": "dolang"
                 }
             ],
             "commandPalette": [
@@ -196,6 +218,14 @@
                 {
                     "command": "dolang.redownloadTools",
                     "when": "isWorkspaceTrusted"
+                },
+                {
+                    "command": "dolang.buildProject",
+                    "when": "isWorkspaceTrusted"
+                },
+                {
+                    "command": "dolang.checkProject",
+                    "when": "isWorkspaceTrusted"
                 }
             ]
         },
@@ -220,6 +250,29 @@
                     "cwd": {
                         "type": "string",
                         "description": "Working directory, relative to the workspace folder; defaults to the script's directory"
+                    }
+                }
+            },
+            {
+                "type": "doze",
+                "required": [
+                    "command"
+                ],
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "enum": [
+                            "check",
+                            "bundle"
+                        ],
+                        "description": "The `doze` command to run on the workspace folder's project"
+                    },
+                    "args": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "Arguments passed to the command, such as `--strict` or `--no-check`, without any shell interpretation"
                     }
                 }
             }

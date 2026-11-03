@@ -68,13 +68,16 @@ function keepOpenSetting(): boolean {
 
 /**
  * Returns whether the workspace is trusted, telling the user why nothing ran
- * when it isn't.
+ * when it isn't. `what` names what was refused.
  */
-export function requireTrustedWorkspace(): boolean {
-    if (vscode.workspace.isTrusted) {
+export function requireTrustedWorkspace(
+    what = "Running Do scripts",
+    trusted = vscode.workspace.isTrusted
+): boolean {
+    if (trusted) {
         return true;
     }
-    void vscode.window.showErrorMessage("Running Do scripts requires a trusted workspace");
+    void vscode.window.showErrorMessage(`${what} requires a trusted workspace`);
     return false;
 }
 

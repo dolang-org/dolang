@@ -152,6 +152,47 @@ suite("Integration", () => {
         assert.strictEqual(await fs.readFile(output.fsPath, "utf8"), "Hello, world!");
     });
 
+    suite("Projects", () => {
+        /** Runs `command` on the fixture project, returning the root it reports on. */
+        async function runOnProject(command: string): Promise<string> {
+            const read = new Promise<string>(resolve => {
+                const listener = api.doze.onDidReadReport(reported => {
+                    listener.dispose();
+                    resolve(reported);
+                });
+            });
+            await vscode.commands.executeCommand(command, fixture("main.dol"));
+            return within("the report to be read", read);
+        }
+
+        test("a check's report fills the Problems panel", async () => {
+            const uri = fixture("lib", "broken.dol");
+            await fs.writeFile(uri.fsPath, "# Uses a name that isn't bound.\n\necho $missing\n");
+            try {
+                const reported = await runOnProject("dolang.checkProject");
+                assert.strictEqual(await fs.realpath(reported), root);
+                const diagnostics = api.doze.diagnostics.get(uri) ?? [];
+                const unbound = diagnostics.find(d => /unbound/.test(d.message));
+                assert.ok(unbound, `an unbound name is reported: ${JSON.stringify(diagnostics)}`);
+                assert.strictEqual(unbound.severity, vscode.DiagnosticSeverity.Error);
+                assert.strictEqual(unbound.source, "doze");
+                assert.strictEqual(unbound.range.start.line, 2);
+            } finally {
+                await fs.rm(uri.fsPath);
+            }
+        });
+
+        test("a build bundles the project and clears its entries", async () => {
+            const bundle = fixture("build", "fixture.dolz");
+            await fs.rm(bundle.fsPath, { force: true });
+            await runOnProject("dolang.buildProject");
+            await fs.access(bundle.fsPath);
+            let entries = 0;
+            api.doze.diagnostics.forEach(() => entries++);
+            assert.strictEqual(entries, 0);
+        });
+    });
+
     suite("Test Explorer", () => {
         let file: vscode.TestItem;
 
