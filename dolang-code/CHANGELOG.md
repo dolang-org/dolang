@@ -25,3 +25,6 @@
 - Scripts, `dolang` tasks and new interactive shells run with the project's
   module path, as the language server reports it
 - The Test Explorer lists and runs each project's tests through `doze test`
+- Do: Build Project and Do: Check Project run `doze bundle` and `doze check`
+  on the language server's project root, with `doze` tasks for `tasks.json`
+  and Run Build Task; the check's report fills the Problems panel

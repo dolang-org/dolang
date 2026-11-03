@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { DOZE_TASK_TYPE, DozeRunner } from "./doze";
 import { DoLanguageServer } from "./lsp";
 import { DoScriptRunner, requireTrustedWorkspace, TASK_TYPE } from "./runner";
 import { DoInteractiveShell } from "./shell";
@@ -20,6 +21,7 @@ let server: DoLanguageServer | undefined;
 export interface DoExtensionExports {
     readonly languageServer: DoLanguageServer;
     readonly tests: DoTestController;
+    readonly doze: DozeRunner;
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<DoExtensionExports> {
@@ -32,6 +34,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<DoExte
         dolang: async () => (await resolveExecutionTools({ context, log })).shell.path,
         log
     });
+    const doze = new DozeRunner({
+        projectRoot: uri => languageServer.projectRoot(uri),
+        dolang: async () => (await resolveExecutionTools({ context, log })).shell.path,
+        storage: context.storageUri ?? context.globalStorageUri,
+        log
+    });
     server = languageServer;
     const ignore = (promise: Promise<void>): void => {
         void promise.catch(() => undefined);
@@ -41,14 +49,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<DoExte
         log,
         shell,
         tests,
+        doze,
         languageServer,
         vscode.tasks.registerTaskProvider(TASK_TYPE, runner),
+        vscode.tasks.registerTaskProvider(DOZE_TASK_TYPE, doze),
         vscode.commands.registerCommand("dolang.runScript", () => ignore(runner.run())),
         vscode.commands.registerCommand("dolang.runScriptFile", (uri?: vscode.Uri) =>
             ignore(runner.run(uri))
         ),
         vscode.commands.registerCommand("dolang.runScriptWithArgs", (uri?: vscode.Uri) =>
             ignore(runner.runWithArgs(uri))
+        ),
+        vscode.commands.registerCommand("dolang.buildProject", (uri?: vscode.Uri) =>
+            ignore(doze.run("bundle", uri))
+        ),
+        vscode.commands.registerCommand("dolang.checkProject", (uri?: vscode.Uri) =>
+            ignore(doze.run("check", uri))
         ),
         vscode.commands.registerCommand("dolang.openInteractiveShell", () => ignore(shell.open())),
         vscode.commands.registerCommand("dolang.sendSelectionToShell", () =>
@@ -76,7 +92,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<DoExte
     );
 
     await languageServer.start();
-    return { languageServer, tests };
+    return { languageServer, tests, doze };
 }
 
 export async function deactivate(): Promise<void> {
