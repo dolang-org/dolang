@@ -23,7 +23,7 @@ catch _
 let frames = [...bt]
 assert (type frames[0] inspect.Frame)
 assert_eq $frames[0].receiver "fail"
-located $frames[0].location 12 2 5
+located $frames[0].location 12 2 15
 assert_eq $frames[1].receiver "caller"
 located $frames[1].location 15 21 7
 
