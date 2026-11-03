@@ -99,6 +99,9 @@ pub @let CmdSpec[R, I, O] = BaseDict $
   ?help: Str
   # Replacement for the generated `Usage:` line
   ?usage: Str
+  # Pass every later argument, options included, verbatim to the subcommand's
+  # positional arguments
+  ?divider: Bool
   # The subcommand's own spec items and, optionally, its handler
   *(SpecItem[R, I, O] | Handler[R, I, O])
 
@@ -346,7 +349,7 @@ class Parser
   field sym usage_override rec arg_idx
   field opts args = []
   field long_opts short_opts sub_cmds = {}
-  field drain = false
+  field drain divider = false
 
   def (init) self :name :help = nil ...spec
     self.name = name
@@ -394,6 +397,8 @@ class Parser
         self.help = v
       else if (k == :usage:)
         self.#usage_override = v
+      else if (k == :divider:)
+        self.#divider = v
       else
         throw Error "unknown spec key: $k" nil
 
@@ -402,7 +407,7 @@ class Parser
 
   pub def init_rec self
     self.#arg_idx = 0
-    self.#drain = false
+    self.#drain = self.#divider
     self.#rec = {}
     let rec = self.#rec
     rec[:cmd:] = nil

@@ -1,7 +1,8 @@
 # dolang: strict
 
-# Project tooling: `dolang -m doze check` checks a project's sources, and
-# `dolang -m doze bundle` packs its program into a bundle.
+# Project tooling: `dolang -m doze check` checks a project's sources,
+# `dolang -m doze test` runs its tests, and `dolang -m doze bundle` packs its
+# program into a bundle.
 
 import _bundle _shell args compile json regex shell
   fs:
@@ -232,8 +233,8 @@ def add_bundled checker@compile.Check paths@Array[Str]
       paths.push $typelib.path
 
 # A project: a directory laid out by convention. Its modules are the `.dol`
-# files under `lib/`, and its program is `main.dol`. Its build output goes under
-# `build/`.
+# files under `lib/`, its program is `main.dol`, and its tests are the `.dol`
+# files under `test/`. Its build output goes under `build/`.
 class Project
   field root @ Path
   # The project's name: its directory's.
@@ -242,6 +243,8 @@ class Project
   field main @ (Path | nil) = nil
   # Each module's source, by module name.
   field modules @ Dict[Str, Path] = {}
+  # The tests' sources.
+  field tests @ Array[Path] = []
 
   # The project at `root`. Never searches its parents.
   def (init) self root @ Path
@@ -251,9 +254,9 @@ class Project
     self.#name = (root.canonical().name || "project")
     self.#discover()
 
-  # Checks the types of the project's sources.
+  # Checks the types of the project's sources, its tests included.
   pub def check self :strict @ Bool = false -> Report
-    let compiler = self.#compile check: true :strict
+    let compiler = self.#compile check: true :strict tests: true
     compiler.check()
 
   # Packs the program and every module into a bundle, after checking them
@@ -272,7 +275,7 @@ class Project
   do -> Report
     let Path(main) = self.#main
     else throw ProjectError "no main.dol in $(self.#root)"
-    let compiler = self.#compile :check :strict
+    let compiler = self.#compile :check :strict tests: false
     let report = compiler.check()
     if !report.passed
       return report
@@ -289,6 +292,17 @@ class Project
     _bundle.write $out $program $modules :shebang
     report
 
+  # Runs the tests under `test/` with `dolang -m test`, with `lib/` on the
+  # module path, passing `harness` to it. Runs from the project's directory, so
+  # test IDs don't depend on how the project was named. Replaces the running
+  # program.
+  pub def test self harness @ Array[Str] -> Never
+    if !self.#test_dir().exists()
+      throw ProjectError "no test directory in $(self.#root)"
+    let exe = shell.exe.absolute()
+    shell.cd $self.#root do
+      shell.exec $exe --module-path lib -m test test ...harness
+
   # Finds the program and the modules.
   def discover self
     let main = (self.#root / "main.dol")
@@ -301,10 +315,18 @@ class Project
         if let Path(other) = self.#modules.get(name)
           throw ProjectError "module $name given by both $other and $file"
         self.#modules[name] = file
+    let tests = self.#test_dir()
+    if tests.exists()
+      for file = tests.glob "**/*.dol"
+        self.#tests.push $file
 
   # The directory of the project's modules.
   def lib_dir self -> Path
     (self.#root / "lib")
+
+  # The directory of the project's tests.
+  def test_dir self -> Path
+    (self.#root / "test")
 
   # The name of the module whose source is `file`: `lib/a/b.dol` or
   # `lib/a/b/mod.dol` is `a.b`.
@@ -318,14 +340,17 @@ class Project
       throw ProjectError "invalid module path: $file"
     ".".join $parts
 
-  # The project's sources, compiled together.
-  def compile self :check@Bool :strict@Bool -> Compiler
+  # The project's sources, compiled together, with its tests if `tests` is true.
+  def compile self :check@Bool :strict@Bool :tests@Bool -> Compiler
     let compiler = Compiler :check :strict
     let main = self.#main
     if let Path(main) = main
       compiler.add_script $main
     for name path = self.#modules
       compiler.add_module $name $path
+    if tests
+      for path = self.#tests
+        compiler.add_script $path
     compiler
 
 # Renders `report` and a summary, then exits with failure unless it passed.
@@ -351,25 +376,31 @@ def with_project path@(Str | nil) report@(Str | nil) command@((Project) -> Repor
     shell.exit 1
 
 args.with
-  help: Check and bundle a Do project.
+  help: Check, test and bundle a Do project.
+  - opt: project
+    default: nil
+    help: The project directory; by default, the current directory
   - cmd: check
-    help: Check the types of the project's modules under `lib/` and its `main.dol`.
-    - opt: project
-      default: nil
-      help: The project directory; by default, the current directory
+    help: Check the types of the project's modules under `lib/`, its `main.dol`, and its tests under `test/`.
     - flag: strict
       help: Fail on warnings too
     - opt: json
       default: nil
       help: File to also write the report to, as JSON
     do |p|
-      let :project :strict :json ... = p.check
-      with_project $project $json do |it| it.check(:strict)
+      let :strict :json ... = p.check
+      with_project $p.project $json do |it| it.check(:strict)
+  - cmd: test
+    help: Run the project's tests under `test/` with `dolang -m test`, with `lib/` on the module path.
+    divider: true
+    - arg: harness
+      collect: true
+      help: Arguments to `dolang -m test`
+    do |p|
+      let :harness ... = p.test
+      with_project $p.project nil do |it| it.test $harness
   - cmd: bundle
     help: Check the project, then pack `main.dol` and every module under `lib/` into a bundle.
-    - opt: project
-      default: nil
-      help: The project directory; by default, the current directory
     - flag: strict
       help: Fail the check on warnings too
     - flag: no-check
@@ -385,11 +416,11 @@ args.with
       default: nil
       help: "Interpreter command for a `#!` line, such as `/usr/bin/env dolang`; the bundle is then made executable where the platform allows"
     do |p|
-      let :project :strict :no_check :output :shebang :json ... = p.bundle
+      let :strict :no_check :output :shebang :json ... = p.bundle
       if (shebang != nil && shebang.contains("\n"))
         throw args.Error "--shebang must be a single line"
       let out = if (output != nil)
         Path $output
       else
         nil
-      with_project $project $json do |it| it.bundle(output: out, check: !no_check, :strict, :shebang)
+      with_project $p.project $json do |it| it.bundle(output: out, check: !no_check, :strict, :shebang)
