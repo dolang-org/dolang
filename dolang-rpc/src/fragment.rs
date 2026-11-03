@@ -977,6 +977,18 @@ impl Reassembler {
             if first || last || trailer || payload_len != 0 {
                 return Err(Error::Protocol("invalid ABORT fragment".into()));
             }
+            // The id alone would find the entry today, but requests and
+            // responses travel in opposite directions, and the kind is what
+            // keeps the two apart; an abort naming the wrong one is malformed.
+            if self
+                .incomplete
+                .get(&id)
+                .is_some_and(|entry| entry.kind != kind)
+            {
+                return Err(Error::Protocol(format!(
+                    "{kind:?} ABORT for message {id}, which is not a {kind:?}"
+                )));
+            }
             let entry = self.incomplete.remove(&id).ok_or_else(|| {
                 Error::Protocol(format!("ABORT for message {id} with no active fragments"))
             })?;
@@ -1365,7 +1377,7 @@ struct ActiveSend {
 /// either flavour of credit.
 enum ControlSend {
     Empty { kind: Kind, id: u64 },
-    Abort { id: u64 },
+    Abort { kind: Kind, id: u64 },
     Release { id: u64, count: u32 },
     Credit { id: u64, count: u32 },
     PayloadCredit { count: u32 },
@@ -1566,9 +1578,10 @@ impl Scheduler {
     }
 
     /// Admits an `ABORT` fragment for a message whose FIRST fragment was
-    /// already sent, ahead of ordinary sends.
-    pub(crate) fn admit_abort(&mut self, id: u64) {
-        self.control.push_back(ControlSend::Abort { id });
+    /// already sent, ahead of ordinary sends. `kind` is that message's own
+    /// kind, which keeps the abort in the direction the message travels.
+    pub(crate) fn admit_abort(&mut self, kind: Kind, id: u64) {
+        self.control.push_back(ControlSend::Abort { kind, id });
     }
 
     /// Admits a `Release` for `count` references to the opaque `id`, ahead of
@@ -1926,7 +1939,10 @@ impl Scheduler {
             match std::future::poll_fn(|cx| SendShared::poll_action(shared, cx)).await {
                 SendAction::Finish => {}
                 SendAction::Abort => {
-                    self.control.push_back(ControlSend::Abort { id: send.id });
+                    self.control.push_back(ControlSend::Abort {
+                        kind: send.kind,
+                        id: send.id,
+                    });
                     if send.multi_fragment {
                         self.free_fragmented_slot();
                     }
@@ -1948,7 +1964,10 @@ impl Scheduler {
                         }
                         SendAction::Finish => {}
                         SendAction::Abort => {
-                            self.control.push_back(ControlSend::Abort { id: send.id });
+                            self.control.push_back(ControlSend::Abort {
+                                kind: send.kind,
+                                id: send.id,
+                            });
                             if send.multi_fragment {
                                 self.free_fragmented_slot();
                             }
@@ -1993,10 +2012,10 @@ impl Scheduler {
                 },
                 None,
             ),
-            ControlSend::Abort { id } => (
+            ControlSend::Abort { kind, id } => (
                 FragmentHeader {
                     flags: Flags::ABORT,
-                    kind: Kind::Request,
+                    kind,
                     id,
                     payload_len: 0,
                 },
@@ -2603,6 +2622,21 @@ mod tests {
             }
         ));
         assert_eq!(reassembler.incomplete.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn rejects_abort_naming_the_other_direction() {
+        let mut bytes = fragment_bytes(Flags::FIRST, 1, Kind::Response, b"abcd");
+        bytes.extend(fragment_bytes(Flags::ABORT, 1, Kind::Request, b""));
+        let mut frame = FakeRecvFrame::new(bytes);
+        let mut reassembler = new_reassembler(Limits::default());
+        let header = read_fragment_header(&mut frame).await.unwrap();
+        reassembler.accept(header, &mut frame).await.unwrap();
+        let header = read_fragment_header(&mut frame).await.unwrap();
+        assert!(matches!(
+            reassembler.accept(header, &mut frame).await,
+            Err(Error::Protocol(_))
+        ));
     }
 
     #[tokio::test]

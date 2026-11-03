@@ -883,7 +883,7 @@ impl<P: Protocol> SendDriver<P> {
                 fragment::AbortOutcome::NotActive => {}
                 fragment::AbortOutcome::Discarded { started, .. } => {
                     if started {
-                        self.scheduler.admit_abort(id);
+                        self.scheduler.admit_abort(Kind::Response, id);
                     }
                     if !started {
                         self.shared.discard_unsent_escrow(id);

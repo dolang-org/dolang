@@ -1142,6 +1142,51 @@ async fn client_discarding_a_response_trailer_errors_the_servers_writer() {
     );
 }
 
+/// An abandoned response trailer is aborted on the wire, and that ABORT
+/// names a response: the client takes it as the end of the trailer rather
+/// than as a request it has no business receiving, so the connection stays
+/// usable.
+#[tokio::test]
+async fn server_abandoning_a_response_trailer_aborts_it_without_failing_the_connection() {
+    let (client_io, server_io) = crate::tests::duplex(4096);
+    tokio::spawn(async move {
+        builder()
+            .server(server_io)
+            .await
+            .unwrap()
+            .bind::<Test>()
+            .serve(async move |context, request| match request {
+                Request::TrailerRoundTrip(value) => {
+                    let mut trailer = context.respond_with_trailer(Response(value));
+                    trailer.write_all(b"partial").await.unwrap();
+                    trailer.flush().await.unwrap();
+                    // Dropped without `finish`, which abandons it.
+                }
+                Request::Echo(value) => context.respond(Response(value)),
+                _ => unreachable!(),
+            })
+            .await
+    });
+    let client = unbound_client::<_, Test>(client_io).await;
+    let (response, trailer) = client
+        .call(Request::TrailerRoundTrip(1))
+        .await
+        .unwrap()
+        .into_response_trailer();
+    assert_eq!(response, Response(1));
+    let mut trailer = trailer.unwrap();
+    let mut data = Vec::new();
+    let error = tokio::time::timeout(Duration::from_secs(10), trailer.read_to_end(&mut data))
+        .await
+        .expect("an aborted trailer must end")
+        .expect_err("an abandoned trailer must not read as complete");
+    assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+    let echo = tokio::time::timeout(Duration::from_secs(10), client.call(Request::Echo(2)))
+        .await
+        .expect("the connection must still answer calls");
+    assert_eq!(echo.unwrap().into_response(), Response(2));
+}
+
 #[cfg(unix)]
 mod unix_handles {
     use std::io::Read;
