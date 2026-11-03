@@ -73,6 +73,7 @@ jobs:
         with:
           target: ${{ matrix.target }}
           virt: ${{ matrix.target == 'x86_64-freebsd' }}
+          vscode: ${{ matrix.target == 'x86_64-linux' }}
           save-cache: ${{ github.ref == 'refs/heads/master' }}
 
       # Keep PR linting on Linux; check every target on master pushes and
@@ -102,6 +103,23 @@ jobs:
       - name: Run tests
         run: dodo.run test --slow
 
+      # All the extension's tests, including its integration tests against
+      # this leg's debug build of the tools, and packaging the VSIX. The Linux
+      # leg is rarely the long pole.
+      - name: Setup Node.js
+        if: matrix.target == 'x86_64-linux'
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: dolang-code/package-lock.json
+
+      - name: Test and package VS Code extension
+        if: matrix.target == 'x86_64-linux'
+        run: |
+          run npm --prefix dolang-code ci
+          dodo.run vscode-test
+
       # Runs on the runner rather than in the VM, and before teardown: the
       # domain disk drops guest flushes, so the caches have to be copied out
       # while it is still up. Skipped outside master, where nothing would
@@ -129,13 +147,3 @@ jobs:
         with:
           path: ${{ runner.temp }}/dolang-freebsd-cache
           key: freebsd-cargo-v2-${{ hashFiles('Cargo.lock') }}
-
-  extension:
-    name: VS Code Extension
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Build VSIX
-        uses: ./.github/actions/build-vsix

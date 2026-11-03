@@ -1,0 +1,5 @@
+# Writes a greeting to `greeting.txt`, using the project's `greet` module.
+
+import fs greet
+
+fs.write greeting.txt $greet.greeting("world")

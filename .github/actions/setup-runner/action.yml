@@ -14,6 +14,9 @@ inputs:
   virt:
     description: Install host virtualization prerequisites on Linux
     default: "false"
+  vscode:
+    description: Install the packages `dodo vscode-test` needs on Linux (Xvfb and a D-Bus session)
+    default: "false"
   save-cache:
     description: >
       Save updated caches for a later run to restore. Caches are scoped to the
@@ -121,6 +124,7 @@ runs:
         CI_TARGET: ${{ inputs.target }}
         CI_RUST: ${{ inputs.rust }}
         CI_VIRT: ${{ inputs.virt }}
+        CI_VSCODE: ${{ inputs.vscode }}
       run: |
         import ci
         ci.setup
@@ -128,6 +132,7 @@ runs:
           target: $env["CI_TARGET"]
           rust: (env["CI_RUST"] == "true")
           virt: (env["CI_VIRT"] == "true")
+          vscode: (env["CI_VSCODE"] == "true")
 
     # The counterpart to "Restore CI gold image" above. Placed here, right
     # after the bundle is minted, rather than left to run automatically at the

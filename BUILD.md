@@ -148,20 +148,21 @@ dodo shell-test -- --tags parser test
 
 ### Formatting and tests
 
-| Rule                      | Purpose                                                                                                                 |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `fmt`                     | Formats Rust with `cargo fmt`.                                                                                          |
-| `lint`                    | Runs Clippy for all targets, then checks Rust formatting.                                                               |
-| `cargo-test`              | Runs Cargo tests. Additional arguments are passed to `cargo test`.                                                      |
-| `shell-test`              | Runs the Do integration tests. By default, slow and release-tagged tests are excluded.                                  |
-| `typecheck`               | Checks explicit sources with the repository libraries and stubs on the import search path.                              |
-| `typecheck-test`          | Checks the sources the build doesn't, from source; any diagnostic fails the rule.                                       |
-| `test`                    | Runs `typecheck-test`, Cargo tests, and Do integration tests. Use `--slow` or `--release` to include those test groups. |
-| `cargo-bench`             | Runs Cargo benchmarks with the optimized distribution profile.                                                          |
-| `test-asan`               | Runs tests under AddressSanitizer with nightly Rust.                                                                    |
-| `test-miri`               | Runs selected crates under Miri with nightly Rust.                                                                      |
-| `gen-bytecode-fuzz-seeds` | Generates the bytecode fuzzer's seed corpus.                                                                            |
-| `fuzz-bytecode`           | Regenerates the seed corpus and runs the bytecode fuzzer.                                                               |
+| Rule                      | Purpose                                                                                                                                                  |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fmt`                     | Formats Rust with `cargo fmt`.                                                                                                                           |
+| `lint`                    | Runs Clippy for all targets, then checks Rust formatting.                                                                                                |
+| `cargo-test`              | Runs Cargo tests. Additional arguments are passed to `cargo test`.                                                                                       |
+| `shell-test`              | Runs the Do integration tests. By default, slow and release-tagged tests are excluded.                                                                   |
+| `typecheck`               | Checks explicit sources with the repository libraries and stubs on the import search path.                                                               |
+| `typecheck-test`          | Checks the sources the build doesn't, from source; any diagnostic fails the rule.                                                                        |
+| `test`                    | Runs `typecheck-test`, Cargo tests, and Do integration tests. Use `--slow` or `--release` to include those test groups.                                  |
+| `vscode-test`             | Runs the VS Code extension's tests, including integration tests against debug builds of `dolang`, `dolang-vfs` and `dolang-lsp`, then packages the VSIX. |
+| `cargo-bench`             | Runs Cargo benchmarks with the optimized distribution profile.                                                                                           |
+| `test-asan`               | Runs tests under AddressSanitizer with nightly Rust.                                                                                                     |
+| `test-miri`               | Runs selected crates under Miri with nightly Rust.                                                                                                       |
+| `gen-bytecode-fuzz-seeds` | Generates the bytecode fuzzer's seed corpus.                                                                                                             |
+| `fuzz-bytecode`           | Regenerates the seed corpus and runs the bytecode fuzzer.                                                                                                |
 
 The build checks the modules it bundles from `dolang-shell-modules/lib` and
 `dolang-shell-modules/stub` together, and fails on any diagnostic.
@@ -171,6 +172,14 @@ and stubs from source. It requires zero diagnostics and a successful exit, and
 disables bundled typelib fallback. It runs first in `dodo test` and gates
 release packaging in CI. Release CI uses
 `dodo typecheck-test --profile dist` to reuse the distribution build.
+
+`vscode-test` needs the extension's npm dependencies
+(`npm --prefix dolang-code ci`). When `xvfb-run` is installed, it runs VS Code
+on Xvfb, hidden from any desktop session, with `dbus-run-session` when there is
+no session bus. It sets `DOLANG_CODE_DOLANG` and `DOLANG_CODE_LSP` to the debug
+binaries for `npm run test:integration` in `dolang-code`, which can also be run
+directly against other builds of the tools. Plain `npm test` there needs no
+tools.
 
 Passing explicit test-runner arguments to `shell-test` replaces its default
 tag selection. `test --release` also increases the integration-test timeout.
