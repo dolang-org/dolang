@@ -142,6 +142,13 @@ def install_virt()
       passt cloud-image-utils openssh-client apparmor-utils
       ovmf swtpm swtpm-tools xorriso
 
+# Installs what `dodo vscode-test` needs to run VS Code headless: Xvfb, and
+# `dbus-run-session` for a session bus, which a runner has none of.
+def install_vscode()
+  sudo.with do
+    run apt-get update
+    run apt-get install --no-install-recommends -y xvfb dbus-bin dbus-daemon
+
 # Grants KVM access and unconfines user namespaces enough for session-mode
 # libvirt to start a domain.
 def unconfine()
@@ -240,6 +247,7 @@ pub def setup
   :target = nil
   :rust = true
   :virt = false
+  :vscode = false
 do
   # Filled in by "create CI VM" below when `target` needs one.
   let vm = nil
@@ -267,6 +275,10 @@ do
         - name: "unconfine user namespaces"
           icon: 🔓
           do unconfine()
+      if (vscode && sys.os_info().os == :LINUX:)
+        - name: "install VS Code test packages"
+          icon: 📦
+          do install_vscode()
       if (target == "x86_64-freebsd")
         # The VM is left running: GitHub runners are ephemeral, so it dies
         # with the job. `setup` exports `DOLANG_CI_VM` below once these have
