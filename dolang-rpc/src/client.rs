@@ -1004,7 +1004,7 @@ impl<P: Protocol> SendDriver<P> {
                 dispatched,
             } => {
                 if started {
-                    self.scheduler.admit_abort(id);
+                    self.scheduler.admit_abort(Kind::Request, id);
                 }
                 if !started {
                     self.shared.discard_unsent_escrow(id);
