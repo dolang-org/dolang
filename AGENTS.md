@@ -246,6 +246,21 @@ let d = $
 
 No compile error results; it surfaces as a confusing assertion failure.
 
+#### No Python-Style `iter()` Builtin
+
+There is no `iter` function. Iterator methods such as `map`, `filter`, `all`,
+`any`, and `chain` are available directly on collections and other iterables;
+when an explicit iterator is needed, call the `.iter()` method:
+
+```
+# WRONG — unbound identifier
+let doubled = iter(items).map(do |x| x * 2)
+
+# RIGHT
+let doubled = items.map(do |x| x * 2)
+let it = items.iter()
+```
+
 #### Expression-Level `if` (Does Not Exist)
 
 There is no expression-level `if`/`else`. `if` is always a statement with an
@@ -282,7 +297,7 @@ let result = $
     - (x * 2)
 
 # RIGHT — do lambda in expression context (single expression body)
-let doubled = (iter(items).map(do |x| x * 2))
+let doubled = items.map(do |x| x * 2)
 ```
 
 `do` in expression context creates a lambda with an **expression** body (like
@@ -359,7 +374,7 @@ let f = do |x|
 
 # Expression context: lambda (expression body, no indented block)
 assert_eq ((do |x| x * 2) 5) 10
-let evens = (iter(items).filter(do |x| x % 2 == 0))
+let evens = items.filter(do |x| x % 2 == 0)
 ```
 
 ### Control Flow
@@ -381,9 +396,17 @@ while (count < 5)
 for item = [1, 2, 3]
   echo $item
 
-for k v = {name: "Alice", age: 30}
+for k v = {name: "Alice", age: 30}   # dicts iterate as (key, value) tuples
   echo "$k: $v"
+
+for i = 0..5                        # 0, 1, 2, 3, 4
+  echo $i
 ```
+
+Range syntax is `start..end` (end exclusive), `start..`, `..end`, and `..`; a
+missing start counts from 0. It also slices: `$arr[1..]`, `(s[..n])`. Use
+`Range start end step` only when a step is needed (`Range 5 1 -1` counts down);
+`5..1` is empty.
 
 `if` as RHS of `let`/assignment:
 
@@ -423,9 +446,9 @@ foo                           # bare name → evaluates variable (NOT a call)
 foo()                         # zero-arg call
 foo 1 2                       # call with args
 
-range start: 1 end: 10        # keyword arguments
-let start = 1
-range :start end: 10          # :key shorthand (passes start: $start)
+connect host: db port: 5432   # keyword arguments
+let host = "db"
+connect :host port: 5432      # :key shorthand (passes host: $host)
 ```
 
 ### Implicit Concatenation
@@ -520,8 +543,8 @@ let headers = $
 `$` as an operator is a right-associative, low-precedence function call:
 
 ```
-echo $ type $ str $ range 10
-# equivalent to: echo (type (str (range 10)))
+echo $ type $ str $ Range 10
+# equivalent to: echo (type (str (Range 10)))
 ```
 
 ### Classes
@@ -537,7 +560,7 @@ class Point
   pub def magnitude self
     ((self.x * self.x + self.y * self.y) / 1.0)
 
-class Dog: Animal              # inheritance
+class Dog: Animal              # inheritance (single parent)
   pub field breed = nil
 
   def (init) self name breed
@@ -547,6 +570,19 @@ class Dog: Animal              # inheritance
 let p = Point 3 4
 echo $p.x                     # field access
 echo $p.magnitude()           # method call
+```
+
+Classes are disjoint by default: the checker rejects a class inheriting from
+two unrelated classes. Mark the extra parents `#[mixable]` (prelude decorator;
+`#[final]` forbids subclassing):
+
+```
+#[mixable]
+class Pet
+  pub def category _self
+    "companion"
+
+class LoudDog: Animal Pet
 ```
 
 An empty `:` introduces vertical supertypes. Mix bin-packed lines and single
@@ -615,6 +651,10 @@ bind args
   - y = 0
   :verbose = false
 ```
+
+Rests are iterable without copying: a `*` rest (or rest of a sequence) yields
+values; a `**` rest (or `...` rest of a dict/record) yields `(key, value)`
+tuples.
 
 Standalone `let` and `bind` accept a diverging `else`. Matching follows
 `if let` / `if bind`; a single name tests truthiness. Bindings remain in scope
@@ -708,11 +748,10 @@ let dir = (path.parent !@ Path)
 
 ### Concurrency
 
-```
-import strand:
-  - spawn
-  - fork
+The `strand` module and `spawn`, `fork`, `pipeline`, `stream`, and `put` are in
+the prelude; no import is needed.
 
+```
 let s = spawn do
   expensive_work()
 let result = s.join()
