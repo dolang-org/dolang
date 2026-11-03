@@ -1,0 +1,104 @@
+# Tests the `eol` program against a mock of the API.
+
+import fs http json proc shlex
+import http.mock
+  shell:
+    - exe
+  test:
+    - assert_eq
+    - test
+
+let PYTHON = $
+  name: python
+  label: Python
+  category: lang
+  releases:
+    - name: "3.20"
+      label: "3.20"
+      releaseDate: "2031-10-01"
+      isLts: false
+      isEol: false
+      eolFrom: "2099-10-31"
+      latest:
+        name: "3.20.1"
+        date: "2031-11-01"
+    - name: "3.9"
+      label: "3.9"
+      releaseDate: "2020-10-05"
+      isLts: false
+      isEol: true
+      eolFrom: "2025-10-31"
+      latest:
+        name: "3.9.25"
+        date: "2025-10-31"
+
+# Runs `main.dol` against a mock API, returning its standard output and exit
+# status.
+def eol *args
+  http.mock.Server do |server|
+    server.mock
+      - path: /api/v1/products/python
+        respond:
+          json: {schema_version: "1.2.1", result: PYTHON}
+      do |_handle|
+        let out = BinBuf()
+        let rc = try
+          run $exe --module-path lib main.dol --base-url $server.url ...args stdout: $out stderr: $std.null
+          0
+        catch proc.Error: error
+          error.rc
+        (Str(out.freeze()), rc)
+
+# The first item of `check --format json`'s output.
+def first_result out
+  let Array(Dict(result) ...) = json.decode(out)
+  else throw "expected an array of objects: $out"
+  result
+
+#[test]
+def check_passes_for_supported_version()
+  let out rc = eol --format json check python 3.20.1
+  assert_eq $rc 0
+  assert_eq (first_result(out)["status"]) supported
+
+#[test]
+def check_fails_for_eol_version()
+  let out rc = eol --format json check python 3.9.18
+  assert_eq $rc 1
+  let result = first_result(out)
+  assert_eq $result["release"] "3.9"
+  assert_eq $result["status"] eol
+
+#[test]
+def check_fails_for_unknown_version()
+  let out rc = eol --format json check python 4.0
+  assert_eq $rc 1
+  assert_eq (first_result(out)["status"]) unknown
+
+#[test]
+def check_fails_for_unknown_product()
+  let _out rc = eol check nosuch 1.0
+  assert_eq $rc 1
+
+#[test]
+def check_reads_pins_from_file()
+  fs.with_temp_dir do |dir|
+    let pins = (dir / "versions.toml")
+    pins.write "python = \"3.20\"\n"
+    let out rc = eol --format json check --from $pins
+    assert_eq $rc 0
+    assert_eq (first_result(out)["product"]) python
+
+#[test]
+def lists_releases()
+  let out rc = eol releases python
+  assert_eq $rc 0
+  let lines = [...out.split("\n")]
+  assert_eq [...shlex.split(lines[0])] ["release", "released", "latest", "eol"]
+  assert_eq [...shlex.split(lines[2])] ["3.9", "2020-10-05", "3.9.25", "2025-10-31"]
+
+#[test]
+def shows_latest_version()
+  let out rc = eol latest python
+  assert_eq $rc 0
+  assert_eq $out "3.20.1\n"

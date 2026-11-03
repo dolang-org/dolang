@@ -1,0 +1,24 @@
+# Tests `eol.Client` against the real API. Tagged `network`, and skipped
+# unless `EOL_LIVE` is set:
+#
+# ```
+# EOL_LIVE=1 doze test --tags network
+# ```
+
+import eol
+import test:
+  - assert
+  - assert_eq
+  - skip
+  - tags
+  - test
+
+tags network
+
+#[test]
+def gets_python()
+  if !env.get("EOL_LIVE", default: nil)
+    skip "set EOL_LIVE=1 to call the real API"
+  let python = eol.Client().product "python"
+  assert_eq $python.name python
+  assert (python.releases.len > 0)

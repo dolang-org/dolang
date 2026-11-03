@@ -1,0 +1,80 @@
+# Tests `eol.status`, as of a fixed date.
+
+import eol:
+  - Release
+import eol.status: status
+import time:
+  - Date
+import test:
+  - assert_eq
+  - parametrize
+  - test
+
+let TODAY = Date.from_ymd 2026 1 1
+
+def cycle name :eol = nil :is_eol = false :label = name
+  Release
+    :name
+    :label
+    released: $Date.from_ymd(2020, 1, 1)
+    lts: false
+    eol: (eol && Date.parse_rfc(eol))
+    :is_eol
+    latest: nil
+
+# With the default 90-day warning, releases ending by 2026-04-01 are ending.
+let CLASSIFIED = $
+  "2025-06-30": :EOL:
+  "2026-01-01": :EOL:
+  "2026-01-02": :ENDING:
+  "2026-04-01": :ENDING:
+  "2026-04-02": :SUPPORTED:
+
+#[test]
+#[parametrize eol: ["2025-06-30", "2026-01-01", "2026-01-02", "2026-04-01", "2026-04-02"]]
+def classifies_by_date :eol
+  let release = cycle "1.0" :eol
+  assert_eq (status.classify release today: TODAY) $CLASSIFIED[eol]
+
+#[test]
+def classifies_eol_without_date()
+  assert_eq (status.classify(cycle("1.0", is_eol: true), today: TODAY)) :EOL:
+  assert_eq (status.classify(cycle("1.0"), today: TODAY)) :SUPPORTED:
+
+#[test]
+def warning_window_is_adjustable()
+  let release = cycle "1.0" eol: "2026-03-01"
+  assert_eq (status.classify release today: TODAY warn: 30) :SUPPORTED:
+  assert_eq (status.classify release today: TODAY warn: 60) :ENDING:
+
+#[test]
+def counts_days_left()
+  assert_eq (status.days_left(cycle("1.0", eol: "2026-01-31"), today: TODAY)) 30
+  assert_eq (status.days_left(cycle("1.0", eol: "2025-12-31"), today: TODAY)) -1
+  assert_eq (status.days_left(cycle("1.0"), today: TODAY)) nil
+
+let RELEASES = [cycle("3.10"), cycle("3.9"), cycle("3"), cycle("2.7")]
+
+# The release cycle each version belongs to, or `nil` for none.
+let FOUND = $
+  "3.9": "3.9"
+  "3.9.18": "3.9"
+  "3.10.1": "3.10"
+  "3.11": "3"
+  "2.7.18": "2.7"
+  "2": nil
+  "3.90": "3"
+
+#[test]
+#[parametrize version: ["3.9", "3.9.18", "3.10.1", "3.11", "2.7.18", "2", "3.90"]]
+def finds_release :version
+  let found = status.find_release $RELEASES $version
+  assert_eq (found && found.name) $FOUND[version]
+
+# The astral character puts UTF-16 and character columns out of step on the
+# assertion's line, as a failure there would report it.
+#[test]
+def keeps_label()
+  let releases = [cycle("3.9", label: "🐍 3.9")]
+  let found = status.find_release $releases "3.9.18"
+  assert_eq (found && found.label) "🐍 3.9"

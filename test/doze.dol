@@ -398,3 +398,16 @@ def bad_configurations_fail()
       let output rc = doze --project $dir check
       assert_eq $rc 1 $output
       assert $output.contains(expected) $output
+
+#[test]
+def example_project_passes()
+  let project = "example/eol"
+  let output rc = doze --project $project check --strict
+  assert_eq $rc 0 $output
+  let output rc = doze --project $project test --tags !network
+  assert_eq $rc 0 $output
+  fs.with_temp_dir do |dir|
+    let bundle = (dir / "eol.dolz")
+    let output rc = doze --project $project bundle -o $bundle
+    assert_eq $rc 0 $output
+    let _ = run_bundle $bundle --help

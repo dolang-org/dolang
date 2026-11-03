@@ -29,6 +29,10 @@ Each `.dol` file under `lib/` is a module, named by its path: `lib/a/b.dol` or
 Each command works on the project given with `--project`, before the command,
 or else on the current directory. It doesn't search parent directories for one.
 
+[`example/eol`](https://github.com/dolang-org/dolang/tree/master/example/eol) is
+a complete project: a client for the endoflife.date API, with a program, a
+module and its submodule, and tests that run against a mock server.
+
 ## Configuration
 
 A `doze.toml` file at the root describes the project. It is optional: without
