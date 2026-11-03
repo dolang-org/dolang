@@ -1,0 +1,22 @@
+# A source module and its submodule share one binding.
+import parent_ns
+import parent_ns.child
+assert_eq $parent_ns.top 1
+assert_eq $parent_ns.child.value 42
+
+def child_first()
+  import parent_ns.child
+  import parent_ns
+  [parent_ns.top, parent_ns.child.value]
+
+assert_eq (child_first()) [1, 42]
+
+def one_line()
+  import parent_ns parent_ns.child
+  [parent_ns.top, parent_ns.child.value]
+
+assert_eq (one_line()) [1, 42]
+
+# Assigning an export through the namespace changes only that export.
+parent_ns.zz = 9
+assert_eq [parent_ns.top, parent_ns.zz, parent_ns.aa] [1, 9, 3]
