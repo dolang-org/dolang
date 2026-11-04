@@ -1084,15 +1084,11 @@ impl<'v, 's> Error<'v, 's> {
 
 /// [`std::error::Error`] extension trait.
 ///
-/// Prefer [`into_do_value`](Self::into_do_value) or
-/// [`into_do_data`](Self::into_do_data), which choose the Do class at the call
-/// site. For an [`io::Error`](std::io::Error), use
+/// Each conversion names the Do class at the call site. For an
+/// [`io::Error`](std::io::Error), use
 /// [`IoErrorExt::into_do_io`](crate::io::IoErrorExt::into_do_io), which keeps its
-/// class.
+/// class. When an untyped error is really intended, use [`Error::runtime`].
 pub trait ErrorExt {
-    /// Convert into Do runtime error ([`Error::runtime`]).
-    fn into_do<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's>;
-
     /// Convert into a Do value error ([`Error::value`]) carrying the error's message.
     fn into_do_value<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's>;
 
@@ -1101,10 +1097,6 @@ pub trait ErrorExt {
 }
 
 impl<T: Into<Box<dyn error::Error + 'static>>> ErrorExt for T {
-    fn into_do<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
-        Error::runtime(strand, self)
-    }
-
     fn into_do_value<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
         let err: Box<dyn error::Error> = self.into();
         Error::value(strand, err.to_string())
@@ -1120,9 +1112,6 @@ impl<T: Into<Box<dyn error::Error + 'static>>> ErrorExt for T {
 ///
 /// See [`ErrorExt`] for which conversion to prefer.
 pub trait ResultExt<T> {
-    /// Convert error into Do runtime error ([`Error::runtime`]).
-    fn into_do<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T>;
-
     /// Convert error into a Do value error ([`Error::value`]).
     fn into_do_value<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T>;
 
@@ -1131,10 +1120,6 @@ pub trait ResultExt<T> {
 }
 
 impl<T, E: ErrorExt> ResultExt<T> for result::Result<T, E> {
-    fn into_do<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T> {
-        self.map_err(|e| e.into_do(strand))
-    }
-
     fn into_do_value<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T> {
         self.map_err(|e| e.into_do_value(strand))
     }

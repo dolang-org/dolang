@@ -7,15 +7,88 @@ use std::{
 };
 
 use serde::de::{self, DeserializeSeed, Visitor};
-use serde_json::ser::{CharEscape, CompactFormatter, Formatter as JsonFormatter, PrettyFormatter};
+use serde_json::{
+    error::Category,
+    ser::{CharEscape, CompactFormatter, Formatter as JsonFormatter, PrettyFormatter},
+};
 
 use dolang::runtime::{
-    Alloc, Output, Slot, Strand, Value,
-    error::{Error, Result, ResultExt},
+    Alloc, Input, Instance, Object, Output, Slot, State, Strand, Value,
+    error::{Error, Result},
+    io::IoResultExt as _,
+    object::{Mut, Ref, TypeBuilder, fmt},
     unpack,
-    value::{BinEmbryo, Empty, Nil, View},
+    value::{AsTuple, BinEmbryo, Empty, Nil, TypeObject, View, fmt::Format},
     vm::Register,
 };
+
+use crate::global::{Global, Tag};
+
+/// `json.DecodeError`: the document is not valid JSON.
+pub(crate) struct DecodeError;
+
+/// What is wrong with a document.
+#[derive(Clone, Copy)]
+enum DecodeKind {
+    /// Malformed or trailing text.
+    Syntax,
+    /// The document ends inside a value.
+    Eof,
+}
+
+pub(crate) struct DecodeAnnex {
+    message: String,
+    kind: DecodeKind,
+    line: usize,
+    column: usize,
+}
+
+/// `json.EncodeError`: the value has a JSON form in general, but not as given.
+///
+/// A `ValueError`: the fault is in the value the caller passed.
+pub(crate) struct EncodeError;
+
+/// Why a value could not be written.
+#[derive(Clone, Copy)]
+enum EncodeKind {
+    /// The value contains itself.
+    Cycle,
+    /// An `Int` is outside the signed 64-bit range.
+    Range,
+    /// A `Float` key is not finite.
+    Key,
+}
+
+pub(crate) struct EncodeAnnex {
+    message: String,
+    kind: EncodeKind,
+}
+
+/// Failure while encoding.
+enum Fault<'v, 's> {
+    /// Raised as is.
+    Do(Error<'v, 's>),
+    /// Raised as `json.EncodeError`, with the path [`Encoder::within`]
+    /// collected.
+    Encode(EncodeAnnex),
+}
+
+impl<'v, 's> From<Error<'v, 's>> for Fault<'v, 's> {
+    fn from(error: Error<'v, 's>) -> Self {
+        Self::Do(error)
+    }
+}
+
+impl Fault<'_, '_> {
+    fn encode(kind: EncodeKind, message: impl Into<String>) -> Self {
+        Self::Encode(EncodeAnnex {
+            message: message.into(),
+            kind,
+        })
+    }
+}
+
+type EncodeResult<'v, 's, T = ()> = result::Result<T, Fault<'v, 's>>;
 
 /// Destination for encoded bytes.
 trait Sink<'v> {
@@ -54,7 +127,7 @@ impl<'v> Sink<'v> for BinEmbryo<'v> {
             embryo: self,
             alloc: strand,
         });
-        result.into_do(strand)
+        result.into_do_io(strand)
     }
 }
 
@@ -94,30 +167,26 @@ fn write_str_contents(
 }
 
 /// Walks a value, driving `formatter` into `sink`.
-struct Encoder<'a, F, S> {
+struct Encoder<'a, 'v, 'p, F, S> {
     formatter: F,
     sink: &'a mut S,
     /// Containers being written, for cycle detection.
     seen: HashSet<NonZero<usize>>,
+    /// Nil, or an `Array` of the steps from the fault outward.
+    path: Slot<'v, 'p>,
 }
 
-impl<F: JsonFormatter, S> Encoder<'_, F, S> {
-    fn emit<'v, 's>(
+impl<'v, F: JsonFormatter, S: Sink<'v>> Encoder<'_, 'v, '_, F, S> {
+    fn emit<'s>(
         &mut self,
         strand: &mut Strand<'v, 's>,
         f: impl FnOnce(&mut F, &mut dyn io::Write) -> io::Result<()>,
-    ) -> Result<'v, 's, ()>
-    where
-        S: Sink<'v>,
-    {
+    ) -> Result<'v, 's, ()> {
         let formatter = &mut self.formatter;
         self.sink.write(strand, |writer| f(formatter, writer))
     }
 
-    fn string<'v, 's>(&mut self, strand: &mut Strand<'v, 's>, value: &str) -> Result<'v, 's, ()>
-    where
-        S: Sink<'v>,
-    {
+    fn string<'s>(&mut self, strand: &mut Strand<'v, 's>, value: &str) -> Result<'v, 's, ()> {
         self.emit(strand, |f, w| {
             f.begin_string(w)?;
             write_str_contents(f, w, value)?;
@@ -125,51 +194,68 @@ impl<F: JsonFormatter, S> Encoder<'_, F, S> {
         })
     }
 
-    fn int<'v, 's>(strand: &mut Strand<'v, 's>, value: i128) -> Result<'v, 's, i64> {
-        i64::try_from(value)
-            .map_err(|_| Error::value(strand, "JSON integers outside i64 range are not supported"))
+    fn int<'s>(value: i128) -> EncodeResult<'v, 's, i64> {
+        i64::try_from(value).map_err(|_| {
+            Fault::encode(
+                EncodeKind::Range,
+                "JSON integers outside i64 range are not supported",
+            )
+        })
     }
 
-    fn enter<'v, 's>(
+    /// Records that `fault` lies under `segment`, an index or a key.
+    fn within<'s>(
         &mut self,
         strand: &mut Strand<'v, 's>,
-        id: NonZero<usize>,
-        kind: &str,
-    ) -> Result<'v, 's, ()> {
+        fault: Fault<'v, 's>,
+        segment: impl Input<'v>,
+    ) -> Fault<'v, 's> {
+        if let Fault::Encode(_) = fault {
+            if self.path.is_nil() {
+                Output::set(strand, &mut self.path, Empty::Array);
+            }
+            let path = self.path.as_array(strand.vm()).expect("path is an Array");
+            path.push(strand, segment).expect("path is not shared");
+        }
+        fault
+    }
+
+    fn enter<'s>(&mut self, id: NonZero<usize>, kind: &str) -> EncodeResult<'v, 's> {
         if self.seen.insert(id) {
             Ok(())
         } else {
-            Err(Error::value(strand, format!("cyclic reference to {kind}")))
+            Err(Fault::encode(
+                EncodeKind::Cycle,
+                format!("cyclic reference to {kind}"),
+            ))
         }
     }
 
-    fn value<'v, 's>(
+    fn value<'s>(
         &mut self,
         strand: &mut Strand<'v, 's>,
         value: &Value<'v>,
-    ) -> Result<'v, 's, ()>
-    where
-        S: Sink<'v>,
-    {
+    ) -> EncodeResult<'v, 's> {
         match value.view(strand.vm()) {
-            View::Nil => self.emit(strand, |f, w| f.write_null(w)),
-            View::Bool(b) => self.emit(strand, |f, w| f.write_bool(w, b)),
+            View::Nil => self.emit(strand, |f, w| f.write_null(w))?,
+            View::Bool(b) => self.emit(strand, |f, w| f.write_bool(w, b))?,
             View::Int(i) => {
-                let i = Self::int(strand, i)?;
-                self.emit(strand, |f, w| f.write_i64(w, i))
+                let i = Self::int(i)?;
+                self.emit(strand, |f, w| f.write_i64(w, i))?
             }
             // `serde_json` writes non-finite floats as `null`.
-            View::Float(x) if !x.is_finite() => self.emit(strand, |f, w| f.write_null(w)),
-            View::Float(x) => self.emit(strand, |f, w| f.write_f64(w, x)),
-            View::Str(s) => self.string(strand, &s.pin()),
+            View::Float(x) if !x.is_finite() => self.emit(strand, |f, w| f.write_null(w))?,
+            View::Float(x) => self.emit(strand, |f, w| f.write_f64(w, x))?,
+            View::Str(s) => self.string(strand, &s.pin())?,
             View::Sym(sym) => {
                 let name = sym.as_str(strand.vm());
-                self.string(strand, name)
+                self.string(strand, name)?
             }
-            View::Bin(_) => Err(Error::type_error(
-                strand,
-                "binary values are not JSON-representable",
-            )),
+            View::Bin(_) => {
+                return Err(
+                    Error::type_error(strand, "binary values are not JSON-representable").into(),
+                );
+            }
             View::Array(handle) => {
                 let len = handle.len(strand)?;
                 self.array(
@@ -178,7 +264,7 @@ impl<F: JsonFormatter, S> Encoder<'_, F, S> {
                     "array",
                     len,
                     |strand, i, elem| handle.get(strand, i, elem),
-                )
+                )?
             }
             View::Tuple(handle) => self.array(
                 strand,
@@ -186,82 +272,81 @@ impl<F: JsonFormatter, S> Encoder<'_, F, S> {
                 "tuple",
                 handle.len(),
                 |strand, i, elem| handle.get(strand, i, elem),
-            ),
+            )?,
             View::Dict(handle) => {
                 let mut pairs = handle.pairs();
                 self.object(strand, handle.id().addr(), "dict", |strand, key, val| {
                     pairs.next(strand, key, val)
-                })
+                })?
             }
             View::Record(handle) => {
                 let mut pairs = handle.pairs();
                 self.object(strand, handle.id().addr(), "record", |strand, key, val| {
                     pairs.next(strand, key, val)
-                })
+                })?
             }
             View::Struct(handle) => {
                 let mut pairs = handle.pairs();
                 self.object(strand, handle.id().addr(), "struct", |strand, key, val| {
                     pairs.next(strand, key, val)
-                })
+                })?
             }
-            _ => Err(Error::type_error(strand, "unsupported JSON type")),
+            _ => return Err(Error::type_error(strand, "unsupported JSON type").into()),
         }
+        Ok(())
     }
 
     /// Writes an object key, quoting scalars as `serde_json` does.
-    fn key<'v, 's>(&mut self, strand: &mut Strand<'v, 's>, key: &Value<'v>) -> Result<'v, 's, ()>
-    where
-        S: Sink<'v>,
-    {
+    fn key<'s>(&mut self, strand: &mut Strand<'v, 's>, key: &Value<'v>) -> EncodeResult<'v, 's> {
         match key.view(strand.vm()) {
-            View::Str(s) => self.string(strand, &s.pin()),
+            View::Str(s) => self.string(strand, &s.pin())?,
             View::Sym(sym) => {
                 let name = sym.as_str(strand.vm());
-                self.string(strand, name)
+                self.string(strand, name)?
             }
             View::Int(i) => {
-                let i = Self::int(strand, i)?;
+                let i = Self::int(i)?;
                 self.emit(strand, |f, w| {
                     f.begin_string(w)?;
                     f.write_i64(w, i)?;
                     f.end_string(w)
-                })
+                })?
             }
             View::Bool(b) => self.emit(strand, |f, w| {
                 f.begin_string(w)?;
                 f.write_bool(w, b)?;
                 f.end_string(w)
-            }),
-            View::Float(x) if !x.is_finite() => Err(Error::value(
-                strand,
-                "float key must be finite (got NaN or +/-inf)",
-            )),
+            })?,
+            View::Float(x) if !x.is_finite() => {
+                return Err(Fault::encode(
+                    EncodeKind::Key,
+                    "float key must be finite (got NaN or +/-inf)",
+                ));
+            }
             View::Float(x) => self.emit(strand, |f, w| {
                 f.begin_string(w)?;
                 f.write_f64(w, x)?;
                 f.end_string(w)
-            }),
-            View::Bin(_) => Err(Error::type_error(
-                strand,
-                "binary values are not JSON-representable",
-            )),
-            _ => Err(Error::type_error(strand, "key must be a string")),
+            })?,
+            View::Bin(_) => {
+                return Err(
+                    Error::type_error(strand, "binary values are not JSON-representable").into(),
+                );
+            }
+            _ => return Err(Error::type_error(strand, "key must be a string").into()),
         }
+        Ok(())
     }
 
-    fn array<'v, 's>(
+    fn array<'s>(
         &mut self,
         strand: &mut Strand<'v, 's>,
         id: NonZero<usize>,
         kind: &str,
         len: usize,
         mut get: impl FnMut(&mut Strand<'v, 's>, usize, &mut Slot<'v, '_>) -> Result<'v, 's, bool>,
-    ) -> Result<'v, 's, ()>
-    where
-        S: Sink<'v>,
-    {
-        self.enter(strand, id, kind)?;
+    ) -> EncodeResult<'v, 's> {
+        self.enter(id, kind)?;
         self.emit(strand, |f, w| f.begin_array(w))?;
         strand.with_slots_sync(|strand, [mut elem]| {
             for i in 0..len {
@@ -269,17 +354,18 @@ impl<F: JsonFormatter, S> Encoder<'_, F, S> {
                     break;
                 }
                 self.emit(strand, |f, w| f.begin_array_value(w, i == 0))?;
-                self.value(strand, &elem)?;
+                self.value(strand, &elem)
+                    .map_err(|fault| self.within(strand, fault, i))?;
                 self.emit(strand, |f, w| f.end_array_value(w))?;
             }
-            Ok(())
+            EncodeResult::Ok(())
         })?;
         self.emit(strand, |f, w| f.end_array(w))?;
         self.seen.remove(&id);
         Ok(())
     }
 
-    fn object<'v, 's>(
+    fn object<'s>(
         &mut self,
         strand: &mut Strand<'v, 's>,
         id: NonZero<usize>,
@@ -289,11 +375,8 @@ impl<F: JsonFormatter, S> Encoder<'_, F, S> {
             &mut Slot<'v, '_>,
             &mut Slot<'v, '_>,
         ) -> Result<'v, 's, bool>,
-    ) -> Result<'v, 's, ()>
-    where
-        S: Sink<'v>,
-    {
-        self.enter(strand, id, kind)?;
+    ) -> EncodeResult<'v, 's> {
+        self.enter(id, kind)?;
         self.emit(strand, |f, w| f.begin_object(w))?;
         strand.with_slots_sync(|strand, [mut key, mut val]| {
             let mut first = true;
@@ -305,10 +388,11 @@ impl<F: JsonFormatter, S> Encoder<'_, F, S> {
                     f.end_object_key(w)?;
                     f.begin_object_value(w)
                 })?;
-                self.value(strand, &val)?;
+                self.value(strand, &val)
+                    .map_err(|fault| self.within(strand, fault, &*key))?;
                 self.emit(strand, |f, w| f.end_object_value(w))?;
             }
-            Ok(())
+            EncodeResult::Ok(())
         })?;
         self.emit(strand, |f, w| f.end_object(w))?;
         self.seen.remove(&id);
@@ -323,15 +407,54 @@ fn encode<'v, 's>(
     formatter: impl JsonFormatter,
     sink: &mut impl Sink<'v>,
 ) -> Result<'v, 's, ()> {
-    Encoder {
-        formatter,
-        sink,
-        seen: HashSet::new(),
-    }
-    .value(strand, value)
+    strand.with_slots_sync(|strand, [path, mut tuple, mut error]| {
+        let mut encoder = Encoder {
+            formatter,
+            sink,
+            seen: HashSet::new(),
+            path,
+        };
+        let annex = match encoder.value(strand, value) {
+            Ok(()) => return Ok(()),
+            Err(Fault::Do(error)) => return Err(error),
+            Err(Fault::Encode(annex)) => annex,
+        };
+        match encoder.path.as_array(strand.vm()) {
+            Some(path) => {
+                path.reverse(strand).expect("path is not shared");
+                path.to_tuple(strand, &mut tuple)
+                    .expect("path is not shared");
+            }
+            None => Output::set(strand, &mut tuple, AsTuple::new([Nil; 0])),
+        }
+        let ty = strand.state::<Tag>().types.encode_error;
+        ty.create_with_annex(strand, EncodeError, annex, &mut error);
+        ty.cast(&error)
+            .unwrap()
+            .enter_sync(strand, |strand, instance| {
+                let mut borrow = instance.borrow_mut_unwrap();
+                Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &tuple);
+            });
+        Err(Error::from_value(strand, &error))
+    })
 }
 
-struct Seed<'v, 'a, 'b>(&'a mut Strand<'v, 'b>, Slot<'v, 'a>);
+/// Builds a decoded value in its slot.
+///
+/// A Do error is set aside in the stash, since a serde error can't carry it,
+/// and a marker error stops deserialization.
+struct Seed<'v, 'a, 'b>(
+    &'a mut Strand<'v, 'b>,
+    Slot<'v, 'a>,
+    &'a mut Option<Error<'v, 'b>>,
+);
+
+impl<'v, 'a, 'b> Seed<'v, 'a, 'b> {
+    fn stash<E: de::Error>(stash: &mut Option<Error<'v, 'b>>, error: Error<'v, 'b>) -> E {
+        *stash = Some(error);
+        E::custom("")
+    }
+}
 
 impl<'v, 'a, 'b, 'de> DeserializeSeed<'de> for Seed<'v, 'a, 'b> {
     type Value = ();
@@ -407,41 +530,176 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
         Ok(())
     }
 
-    fn visit_seq<A>(mut self, mut seq: A) -> result::Result<Self::Value, A::Error>
+    fn visit_seq<A>(self, mut seq: A) -> result::Result<Self::Value, A::Error>
     where
         A: de::SeqAccess<'de>,
     {
-        Output::set(self.0, &mut self.1, Empty::Array);
-        let array = self.1.as_array(self.0).unwrap();
-        self.0.with_slots_sync(|strand, [mut elem]| {
-            while let Some(()) = seq.next_element_seed(Seed(strand, Slot::reborrow(&mut elem)))? {
-                array.push(strand, &mut elem).unwrap();
+        let Seed(strand, mut out, stash) = self;
+        Output::set(strand, &mut out, Empty::Array);
+        let array = out.as_array(strand).unwrap();
+        strand.with_slots_sync(|strand, [mut elem]| {
+            while let Some(()) =
+                seq.next_element_seed(Seed(strand, Slot::reborrow(&mut elem), &mut *stash))?
+            {
+                array
+                    .push(strand, &mut elem)
+                    .map_err(|error| Self::stash(stash, error))?;
             }
             Ok(())
         })
     }
 
-    fn visit_map<A>(mut self, mut map: A) -> result::Result<Self::Value, A::Error>
+    fn visit_map<A>(self, mut map: A) -> result::Result<Self::Value, A::Error>
     where
         A: de::MapAccess<'de>,
     {
-        Output::set(self.0, &mut self.1, Empty::Dict);
-        let dict = self.1.as_dict(self.0).unwrap();
-        self.0.with_slots_sync(|strand, [mut key, mut value]| {
-            while let Some(()) = map.next_key_seed(Seed(strand, Slot::reborrow(&mut key)))? {
-                map.next_value_seed(Seed(strand, Slot::reborrow(&mut value)))?;
-                dict.insert(strand, &mut key, &mut value, false).unwrap();
+        let Seed(strand, mut out, stash) = self;
+        Output::set(strand, &mut out, Empty::Dict);
+        let dict = out.as_dict(strand).unwrap();
+        strand.with_slots_sync(|strand, [mut key, mut value]| {
+            while let Some(()) =
+                map.next_key_seed(Seed(strand, Slot::reborrow(&mut key), &mut *stash))?
+            {
+                map.next_value_seed(Seed(strand, Slot::reborrow(&mut value), &mut *stash))?;
+                dict.insert(strand, &mut key, &mut value, false)
+                    .map_err(|error| Self::stash(stash, error))?;
             }
             Ok(())
         })
     }
 }
 
-pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
+/// Raises `json.DecodeError` for a serde error.
+fn decode_error<'v, 's>(strand: &mut Strand<'v, 's>, error: serde_json::Error) -> Error<'v, 's> {
+    let kind = match error.classify() {
+        Category::Eof => DecodeKind::Eof,
+        Category::Syntax => DecodeKind::Syntax,
+        // The input is a `Str`, and the visitor accepts every JSON type.
+        Category::Io | Category::Data => {
+            debug_assert!(false, "unexpected JSON error: {error}");
+            DecodeKind::Syntax
+        }
+    };
+    let global = strand.state::<Tag>();
+    Error::object_with_annex(
+        strand,
+        global.types.decode_error,
+        DecodeError,
+        DecodeAnnex {
+            message: error.to_string(),
+            kind,
+            line: error.line(),
+            column: error.column(),
+        },
+    )
+}
+
+impl<'v> Object<'v> for DecodeError {
+    const NAME: &'v str = "DecodeError";
+    const MODULE: &'v str = "json";
+    type Annex = DecodeAnnex;
+    type Type = ();
+    type TypeAnnex = ();
+
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let syntax = builder.sym("SYNTAX");
+        let eof = builder.sym("EOF");
+        builder
+            .nominal_supertype(TypeObject::DataError)
+            .get("kind", move |this, strand, out| {
+                let kind = match this.annex().kind {
+                    DecodeKind::Syntax => syntax,
+                    DecodeKind::Eof => eof,
+                };
+                Output::set(strand, out, kind);
+                Ok(())
+            })
+            .get("line", |this, strand, out| {
+                Output::set(strand, out, this.annex().line);
+                Ok(())
+            })
+            .get("column", |this, strand, out| {
+                Output::set(strand, out, this.annex().column);
+                Ok(())
+            })
+    }
+
+    fn display<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        fmt!(strand, w, "{}", this.annex().message)
+    }
+
+    fn debug<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        fmt!(strand, w, "<json.DecodeError ")?;
+        Self::display(this, strand, w)?;
+        fmt!(strand, w, ">")
+    }
+}
+
+impl<'v> Object<'v> for EncodeError {
+    const NAME: &'v str = "EncodeError";
+    const MODULE: &'v str = "json";
+    /// Slot 0 is the path tuple.
+    const SLOTS: usize = 1;
+    type Annex = EncodeAnnex;
+    type Type = ();
+    type TypeAnnex = ();
+
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let cycle = builder.sym("CYCLE");
+        let range = builder.sym("RANGE");
+        let key = builder.sym("KEY");
+        builder
+            .nominal_supertype(TypeObject::ValueError)
+            .get("kind", move |this, strand, out| {
+                let kind = match this.annex().kind {
+                    EncodeKind::Cycle => cycle,
+                    EncodeKind::Range => range,
+                    EncodeKind::Key => key,
+                };
+                Output::set(strand, out, kind);
+                Ok(())
+            })
+            .get("path", |this, strand, out| {
+                let borrow = this.borrow(strand)?;
+                Output::set(strand, out, Ref::slot::<0>(&borrow));
+                Ok(())
+            })
+    }
+
+    fn display<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        fmt!(strand, w, "{}", this.annex().message)
+    }
+
+    fn debug<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        fmt!(strand, w, "<json.EncodeError ")?;
+        Self::display(this, strand, w)?;
+        fmt!(strand, w, ">")
+    }
+}
+
+pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     let indent_sym = builder.sym("indent");
 
     builder
         .module("json")
+        .value("DecodeError", global.types.decode_error)
+        .value("EncodeError", global.types.encode_error)
         .function("encode", async move |strand, args, out| {
             let ([arg], [indent]) = unpack!(strand, args, 1, 0, indent_sym = None)?;
             let indent = match indent {
@@ -450,7 +708,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
                         .as_int(strand)
                         .and_then(|indent| usize::try_from(indent).ok())
                         .ok_or_else(|| {
-                            Error::type_error(strand, "indent: expected a non-negative Int")
+                            Error::value(strand, "indent: expected a non-negative Int")
                         })?,
                 ),
                 _ => None,
@@ -477,9 +735,14 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
                 .ok_or_else(|| Error::type_error(strand, "expected Str"))?
                 .pin();
             let mut dejson = serde_json::Deserializer::from_str(&src);
-            Seed(strand, out)
+            let mut stash = None;
+            let result = Seed(strand, out, &mut stash)
                 .deserialize(&mut dejson)
-                .into_do_data(strand)
+                .and_then(|()| dejson.end());
+            if let Some(error) = stash {
+                return Err(error);
+            }
+            result.map_err(|error| decode_error(strand, error))
         })
         .commit();
 }

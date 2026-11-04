@@ -457,6 +457,9 @@ pub @let BodyOptions = $
 # which is formatted as an HTTP-date (`IMF-fixdate`) -- what a header such as
 # `if-modified-since` expects.
 #
+# A name or value that HTTP doesn't allow in a header, such as one containing a
+# newline, raises a [`ValueError`](std.ValueError).
+#
 # ```
 # client.get https://api.example.com/users
 #   headers:

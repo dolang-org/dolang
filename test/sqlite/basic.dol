@@ -382,3 +382,8 @@ def quoted_interpolation_rejected()
     let name = "Alice"
     assert_throws $ValueError do
       conn.execute t"INSERT INTO t VALUES ('$name')"
+
+#[test]
+def nul_in_sql_text_raises_value_error()
+  sqlite.open ":memory:" do |conn|
+    assert_throws $ValueError do conn.execute t"SELECT 1\u{0}"

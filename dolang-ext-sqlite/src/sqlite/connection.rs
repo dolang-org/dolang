@@ -130,7 +130,7 @@ impl ConnectionAnnex<'_> {
             }
         })
         .await
-        .into_do(strand)?
+        .map_err(|err| Error::runtime(strand, err))?
         .map_err(|e| unsafe { map_sqlite_error(strand, e, raw.into_inner()) });
 
         if pending_close {
@@ -148,7 +148,7 @@ impl ConnectionAnnex<'_> {
         strand: &mut Strand<'v, 's>,
         sql: &str,
     ) -> Result<'v, 's, ()> {
-        let sql = CString::new(sql).into_do(strand)?;
+        let sql = CString::new(sql).into_do_value(strand)?;
         self.with_raw(strand, move |raw| {
             let rc =
                 unsafe { sqlite3_exec(raw, sql.as_ptr(), None, ptr::null_mut(), ptr::null_mut()) };
@@ -403,7 +403,7 @@ async fn create_statement<'v, 's>(
 ) -> Result<'v, 's, *mut sqlite3_stmt> {
     let stmt = annex
         .busy_retry(strand, async |strand| {
-            let sql = CString::new(sql).into_do(strand)?;
+            let sql = CString::new(sql).into_do_value(strand)?;
             annex
                 .with_raw(strand, move |raw| {
                     let mut stmt: *mut sqlite3_stmt = ptr::null_mut();

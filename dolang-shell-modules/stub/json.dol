@@ -4,6 +4,71 @@
 import std:
   - @BaseStruct
 
+# Raised when [`decode`](json.decode) is given invalid JSON.
+#
+# ## Example
+#
+# ```
+# try
+#   decode "[1,"
+# catch DecodeError: err
+#   echo "bad JSON at line $(err.line), column $(err.column)"
+# ```
+pub class DecodeError: std.DataError
+  # What is wrong with the document.
+  #
+  # | Kind | Meaning |
+  # | --- | --- |
+  # | `:SYNTAX:` | A character is out of place, or text follows the value. |
+  # | `:EOF:` | The document ends inside a value. |
+  #[getter]
+  pub def kind self -> (:SYNTAX: | :EOF:)
+    ...
+
+  # Line of the fault, counting from 1.
+  #[getter]
+  pub def line self -> Int
+    ...
+
+  # Column of the fault, counting from 1.
+  #[getter]
+  pub def column self -> Int
+    ...
+
+# Raised when [`encode`](json.encode) is given a value that can't be written as
+# JSON as it stands.
+#
+# ## Example
+#
+# ```
+# let items = []
+# items.push $items
+# try
+#   encode {items: $items}
+# catch EncodeError: err
+#   echo "can't encode $(err.path): $err"
+# ```
+pub class EncodeError: std.ValueError
+  # Why the value can't be written.
+  #
+  # | Kind | Meaning |
+  # | --- | --- |
+  # | `:CYCLE:` | The value contains itself. |
+  # | `:RANGE:` | An `Int` is outside the signed 64-bit range. |
+  # | `:KEY:` | A `Float` key is not finite. |
+  #[getter]
+  pub def kind self -> (:CYCLE: | :RANGE: | :KEY:)
+    ...
+
+  # Keys and indices that lead from the encoded value to the fault.
+  #
+  # For `:CYCLE:` the path leads to the repeated container, for `:RANGE:` to
+  # the `Int`, or to the object holding it when it is a key, and for `:KEY:` to
+  # the object holding the key. Each key is the one in the encoded value.
+  #[getter]
+  pub def path self -> Tuple[...(Int | Str | Sym | Float | Bool)]
+    ...
+
 # A value decoded from JSON.
 pub @let DecodeValue = $
   | nil
@@ -46,7 +111,8 @@ pub @let EncodeValue = $
 #
 # ## Errors
 #
-# [`DataError`](std.DataError) if the JSON is invalid.
+# [`DecodeError`](json.DecodeError) if the JSON is invalid or text follows the
+# value.
 #
 # ## Example
 #
@@ -93,7 +159,8 @@ do -> DecodeValue
 # | Exception | Condition |
 # | --- | --- |
 # | [`TypeError`](std.TypeError) | A value has no JSON form, such as a `Bin`, or a key is not a `Str`, `Sym`, `Int`, `Float`, or `Bool`. |
-# | [`ValueError`](std.ValueError) | The value contains itself, an `Int` is outside the signed 64-bit range, or a `Float` key is not finite. |
+# | [`EncodeError`](json.EncodeError) | The value contains itself, an `Int` is outside the signed 64-bit range, or a `Float` key is not finite. |
+# | [`ValueError`](std.ValueError) | `indent` is negative. |
 #
 # ## Example
 #

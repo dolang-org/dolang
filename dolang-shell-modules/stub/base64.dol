@@ -9,6 +9,35 @@
 # | `:URL:`      | URL-safe alphabet, using `-` and `_` (section 5)          |
 # | `:AUTO:`     | Decoding only; detect the alphabet from the input         |
 
+# Raised when [`decode`](base64.decode) is given invalid base64.
+#
+# ## Example
+#
+# ```
+# try
+#   decode "aGVs%G8="
+# catch DecodeError: err
+#   echo "bad base64 at offset $(err.offset)"
+# ```
+pub class DecodeError: std.DataError
+  # What is wrong with the input.
+  #
+  # | Kind | Meaning |
+  # | --- | --- |
+  # | `:BYTE:` | A character outside the alphabet, or padding before the end. |
+  # | `:LAST_SYMBOL:` | The last character has bits that decoding would discard. |
+  # | `:LENGTH:` | The last group has a single character. |
+  # | `:PADDING:` | Padding does not match `pad:`. |
+  #[getter]
+  pub def kind self -> (:BYTE: | :LAST_SYMBOL: | :LENGTH: | :PADDING:)
+    ...
+
+  # Byte offset of the fault, counting from 0; `nil` for `:LENGTH:` and
+  # `:PADDING:`.
+  #[getter]
+  pub def offset self -> (Int | nil)
+    ...
+
 # A value accepted by [`encode`](base64.encode).
 pub @let EncodeValue = (Str | Bin)
 
@@ -22,7 +51,7 @@ pub @let DecodeValue = Bin
 #
 # ## Errors
 #
-# [`DataError`](std.DataError) if the input is not valid base64.
+# [`DecodeError`](base64.DecodeError) if the input is not valid base64.
 #
 # ## Example
 #
@@ -37,10 +66,9 @@ pub def decode
   text @ (Str | Bin)
   # Alphabet; default `:AUTO:`.
   #
-  # `:AUTO:` selects the URL-safe alphabet if the input contains `-` or `_`, and
-  # the standard alphabet otherwise. Input containing characters from both
-  # alphabets is rejected. Input containing neither decodes identically under
-  # both.
+  # `:AUTO:` uses the alphabet of the first `-`, `_`, `+`, or `/` in the input;
+  # a character of the other alphabet is then invalid. Input containing none of
+  # them decodes identically under both.
   :alphabet @ (:STANDARD: | :URL: | :AUTO:) = ...
   # Required padding; default none.
   #

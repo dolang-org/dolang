@@ -1,21 +1,36 @@
 //! Local well-formedness checks, applied as values enter a tree so that
 //! serialization never meets an invalid name or string.
 
+use std::result;
+
 use dolang::runtime::{Error, Result, Strand};
 
 use crate::attr::Name;
 
+/// A failed check, with its message. Constructors raise it as `ValueError`;
+/// `xml.decode` raises it as `xml.DecodeError`.
+pub(crate) struct Invalid(pub(crate) String);
+
+pub(crate) type Checked<T = ()> = result::Result<T, Invalid>;
+
+/// Raises a failed check as `ValueError`.
+pub(crate) trait OrValue<T> {
+    fn or_value<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T>;
+}
+
+impl<T> OrValue<T> for Checked<T> {
+    fn or_value<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T> {
+        self.map_err(|Invalid(message)| Error::value(strand, message))
+    }
+}
+
 pub(crate) const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
 pub(crate) const XMLNS_NS: &str = "http://www.w3.org/2000/xmlns/";
 
-pub(crate) fn validate_ncname<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    name: &str,
-    kind: &str,
-) -> Result<'v, 's, ()> {
+pub(crate) fn validate_ncname(name: &str, kind: &str) -> Checked {
     let mut chars = name.chars();
     if !chars.next().is_some_and(is_name_start) || !chars.all(is_name_char) {
-        return Err(Error::value(strand, format!("invalid XML {kind} {name:?}")));
+        return Err(Invalid(format!("invalid XML {kind} {name:?}")));
     }
     Ok(())
 }
@@ -53,11 +68,7 @@ fn is_name_char(c: char) -> bool {
         )
 }
 
-pub(crate) fn validate_text<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    text: &str,
-    kind: &str,
-) -> Result<'v, 's, ()> {
+pub(crate) fn validate_text(text: &str, kind: &str) -> Checked {
     // A `str` has no surrogates, so XML 1.0 forbids only C0 controls other
     // than tab, LF, and CR, and U+FFFE and U+FFFF (`EF BF BE`, `EF BF BF`).
     // Scanning bytes finds both without decoding characters.
@@ -71,75 +82,51 @@ pub(crate) fn validate_text<'v, 's>(
         _ => false,
     });
     if forbidden {
-        return Err(Error::value(
-            strand,
-            format!("{kind} contains a character forbidden by XML 1.0"),
-        ));
+        return Err(Invalid(format!(
+            "{kind} contains a character forbidden by XML 1.0"
+        )));
     }
     Ok(())
 }
 
-pub(crate) fn validate_namespace<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    namespace: Option<&str>,
-    kind: &str,
-) -> Result<'v, 's, ()> {
+pub(crate) fn validate_namespace(namespace: Option<&str>, kind: &str) -> Checked {
     let Some(namespace) = namespace else {
         return Ok(());
     };
     if namespace.is_empty() {
-        return Err(Error::value(
-            strand,
-            format!("{kind} has an empty namespace URI"),
-        ));
+        return Err(Invalid(format!("{kind} has an empty namespace URI")));
     }
     if namespace == XMLNS_NS {
-        return Err(Error::value(
-            strand,
-            format!("{kind} uses the reserved xmlns namespace"),
-        ));
+        return Err(Invalid(format!("{kind} uses the reserved xmlns namespace")));
     }
-    validate_text(strand, namespace, "namespace URI")
+    validate_text(namespace, "namespace URI")
 }
 
-pub(crate) fn validate_name<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    name: &Name,
-    kind: &str,
-) -> Result<'v, 's, ()> {
-    validate_ncname(strand, &name.local, kind)?;
-    validate_namespace(strand, name.namespace.as_deref(), kind)
+pub(crate) fn validate_name(name: &Name, kind: &str) -> Checked {
+    validate_ncname(&name.local, kind)?;
+    validate_namespace(name.namespace.as_deref(), kind)
 }
 
 /// Checks one namespace declaration; `""` is the default namespace, which an
 /// empty URI undeclares.
-pub(crate) fn validate_namespace_binding<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    prefix: &str,
-    namespace: &str,
-) -> Result<'v, 's, ()> {
-    validate_text(strand, namespace, "namespace URI")?;
+pub(crate) fn validate_namespace_binding(prefix: &str, namespace: &str) -> Checked {
+    validate_text(namespace, "namespace URI")?;
     if prefix == "xmlns" || namespace == XMLNS_NS {
-        return Err(Error::value(strand, "the xmlns namespace is reserved"));
+        return Err(Invalid("the xmlns namespace is reserved".into()));
     }
     if prefix == "xml" && namespace != XML_NS {
-        return Err(Error::value(
-            strand,
-            "the xml prefix must map to the XML namespace",
+        return Err(Invalid(
+            "the xml prefix must map to the XML namespace".into(),
         ));
     }
     if namespace == XML_NS && prefix != "xml" {
-        return Err(Error::value(
-            strand,
-            "the XML namespace must use the xml prefix",
-        ));
+        return Err(Invalid("the XML namespace must use the xml prefix".into()));
     }
     if !prefix.is_empty() {
-        validate_ncname(strand, prefix, "namespace prefix")?;
+        validate_ncname(prefix, "namespace prefix")?;
         if namespace.is_empty() {
-            return Err(Error::value(
-                strand,
-                "a named namespace prefix cannot map to an empty URI",
+            return Err(Invalid(
+                "a named namespace prefix cannot map to an empty URI".into(),
             ));
         }
     }

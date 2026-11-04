@@ -4,6 +4,73 @@
 import std:
   - @BaseStruct
 
+# Raised when [`decode`](toml.decode) is given invalid TOML, or TOML that uses
+# a feature it doesn't support.
+#
+# ## Example
+#
+# ```
+# try
+#   decode "a = [1,"
+# catch DecodeError: err
+#   echo "bad TOML at line $(err.line), column $(err.column)"
+# ```
+pub class DecodeError: std.DataError
+  # What is wrong with the input.
+  #
+  # | Kind | Meaning |
+  # | --- | --- |
+  # | `:SYNTAX:` | The text is not valid TOML. |
+  # | `:UNSUPPORTED:` | The input has a datetime, date, or time value. |
+  # | `:RANGE:` | An integer is too large for an `Int`, or a float for a `Float`. |
+  #[getter]
+  pub def kind self -> (:SYNTAX: | :UNSUPPORTED: | :RANGE:)
+    ...
+
+  # Line of the fault, counting from 1.
+  #[getter]
+  pub def line self -> Int
+    ...
+
+  # Column of the fault, counting characters from 1.
+  #[getter]
+  pub def column self -> Int
+    ...
+
+# Raised when [`encode`](toml.encode) is given a value that can't be written as
+# TOML as it stands.
+#
+# ## Example
+#
+# ```
+# let items = []
+# items.push $items
+# try
+#   encode {items: $items}
+# catch EncodeError: err
+#   echo "can't encode $(err.path): $err"
+# ```
+pub class EncodeError: std.ValueError
+  # Why the value can't be written.
+  #
+  # | Kind | Meaning |
+  # | --- | --- |
+  # | `:CYCLE:` | The value contains itself. |
+  # | `:RANGE:` | An `Int` is outside the signed 64-bit range. |
+  # | `:KEY:` | Two keys of one table have the same name, such as `:a:` and `"a"`. |
+  #[getter]
+  pub def kind self -> (:CYCLE: | :RANGE: | :KEY:)
+    ...
+
+  # Keys and indices that lead from the encoded value to the fault.
+  #
+  # For `:CYCLE:` the path leads to the repeated container, for `:RANGE:` to
+  # the `Int`, and for `:KEY:` to the table holding the keys. Each key is the
+  # one in the encoded value.
+  #[getter]
+  pub def path self -> Tuple[...(Int | Str | Sym)]
+    ...
+
 # A value decoded from TOML.
 pub @let DecodeValue = $
   | Bool
@@ -42,8 +109,10 @@ pub @let EncodeValue = $
 #
 # ## Errors
 #
-# [`DataError`](std.DataError) if the input is invalid TOML or contains a
-# datetime, date, or time value, which this module does not support.
+# [`DecodeError`](toml.DecodeError) if the input is invalid TOML, contains a
+# datetime, date, or time value, or has a number too large to represent. When the
+# input is neither a valid document nor a valid bare value, the error is from
+# whichever reading got further.
 #
 # ## Example
 #
@@ -96,7 +165,7 @@ do -> DecodeValue
 # | Exception | Condition |
 # | --- | --- |
 # | [`TypeError`](std.TypeError) | A value has no TOML form, such as `nil`, a `Bin`, or a custom object, or a key is not a `Str` or `Sym`. |
-# | [`ValueError`](std.ValueError) | The value contains itself, or an `Int` is outside the signed 64-bit range. |
+# | [`EncodeError`](toml.EncodeError) | The value contains itself, an `Int` is outside the signed 64-bit range, or a table has two keys with the same name. |
 #
 # ## Example
 #

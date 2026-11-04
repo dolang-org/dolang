@@ -3,7 +3,11 @@ use dolang::runtime::{
     vm::{Register, StateTag},
 };
 
-use crate::{comment::Comment, document::Document};
+use crate::{
+    comment::Comment,
+    document::Document,
+    xml::{DecodeError, EncodeError},
+};
 
 use crate::element::{Element, TraverseIter};
 
@@ -12,6 +16,8 @@ pub(crate) struct Global<'v> {
     pub(crate) document_type: Type<'v, Document>,
     pub(crate) element_type: Type<'v, Element>,
     pub(crate) traverse_iter_type: Type<'v, TraverseIter>,
+    pub(crate) decode_error_type: Type<'v, DecodeError>,
+    pub(crate) encode_error_type: Type<'v, EncodeError>,
     pub(crate) syms: Syms<'v>,
 }
 
@@ -34,6 +40,8 @@ impl<'v> Global<'v> {
             document_type: builder.register_type::<Document>(),
             element_type: builder.register_type::<Element>(),
             traverse_iter_type: builder.register_type::<TraverseIter>(),
+            decode_error_type: builder.register_type::<DecodeError>(),
+            encode_error_type: builder.register_type::<EncodeError>(),
             syms: Syms {
                 attrs: builder.sym("attrs"),
                 namespace: builder.sym("namespace"),

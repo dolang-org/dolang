@@ -2,7 +2,7 @@
 use dolang::{
     compile::Mode,
     resource::{self, Payload},
-    runtime::{Error, Output, error::ResultExt, unpack, value::Nil, vm::Register},
+    runtime::{Error, Output, io::IoResultExt as _, unpack, value::Nil, vm::Register},
 };
 use dolang_ext_compile::apply_prelude_value;
 
@@ -68,7 +68,7 @@ pub(crate) fn register<'v>(builder: &mut Register<'v>) {
             }
             let source = match source {
                 Some(source) => source,
-                None => tokio::fs::read_to_string(&path).await.into_do(strand)?,
+                None => tokio::fs::read_to_string(&path).await.into_do_io(strand)?,
             };
             let data = load::compile_config(strand, &path, &source, &config, strict).await?;
             Output::set(strand, out, data.as_slice());

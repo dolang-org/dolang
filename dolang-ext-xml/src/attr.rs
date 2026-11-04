@@ -1,6 +1,6 @@
 use dolang::runtime::{Error, Result, Strand, Value};
 
-use crate::check::{validate_name, validate_text};
+use crate::check::{Checked, Invalid, validate_name, validate_text};
 
 /// An expanded name: a local name and an optional namespace URI.
 #[derive(Clone)]
@@ -31,16 +31,12 @@ pub(crate) struct Attr {
 
 impl Attr {
     /// Creates an attribute after checking its name and value.
-    pub(crate) fn checked<'v, 's>(
-        strand: &mut Strand<'v, 's>,
-        name: Name,
-        value: String,
-    ) -> Result<'v, 's, Self> {
-        validate_name(strand, &name, "attribute name")?;
+    pub(crate) fn checked(name: Name, value: String) -> Checked<Self> {
+        validate_name(&name, "attribute name")?;
         if name.namespace.is_none() && name.local == "xmlns" {
-            return Err(Error::value(strand, "the xmlns attribute name is reserved"));
+            return Err(Invalid("the xmlns attribute name is reserved".into()));
         }
-        validate_text(strand, &value, "attribute value")?;
+        validate_text(&value, "attribute value")?;
         Ok(Self { name, value })
     }
 }

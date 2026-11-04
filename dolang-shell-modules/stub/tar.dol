@@ -211,6 +211,12 @@ pub class Writer
 
   # Creates a directory entry.
   #
+  # ## Errors
+  #
+  # | Exception    | Condition                                                       |
+  # | ------------ | --------------------------------------------------------------- |
+  # | `ValueError` | `owner_name` or `group_name` exceeds 32 bytes or contains a NUL |
+  #
   # ## Example
   #
   # ```
@@ -247,10 +253,11 @@ pub class Writer
   #
   # ## Errors
   #
-  # | Exception          | Condition                                                    |
-  # | ------------------ | ------------------------------------------------------------ |
-  # | `ConcurrencyError` | Another entry is created while an entry scope is active      |
-  # | `ValueError`       | The number of bytes written differs from the declared `size` |
+  # | Exception          | Condition                                                       |
+  # | ------------------ | --------------------------------------------------------------- |
+  # | `ConcurrencyError` | Another entry is created while an entry scope is active         |
+  # | `ValueError`       | The number of bytes written differs from the declared `size`    |
+  # | `ValueError`       | `owner_name` or `group_name` exceeds 32 bytes or contains a NUL |
   #
   # ## Example
   #
@@ -288,6 +295,13 @@ pub class Writer
   #
   # Argument order matches [`fs.hard_link`](fs.hard_link).
   #
+  # ## Errors
+  #
+  # | Exception    | Condition                                                       |
+  # | ------------ | --------------------------------------------------------------- |
+  # | `ValueError` | `target` is empty, exceeds 100 bytes, or contains a NUL         |
+  # | `ValueError` | `owner_name` or `group_name` exceeds 32 bytes or contains a NUL |
+  #
   # ## Example
   #
   # ```
@@ -321,6 +335,13 @@ pub class Writer
   #
   # Argument order matches
   # [`fs.symlink_file`](fs.symlink_file).
+  #
+  # ## Errors
+  #
+  # | Exception    | Condition                                                       |
+  # | ------------ | --------------------------------------------------------------- |
+  # | `ValueError` | `target` is empty, exceeds 100 bytes, or contains a NUL         |
+  # | `ValueError` | `owner_name` or `group_name` exceeds 32 bytes or contains a NUL |
   #
   # ## Example
   #

@@ -7,18 +7,13 @@ use dolang::{
     compile::Config,
     extension,
     extension::{Extension, Version},
-    runtime::vm::{Builder, StateTag},
+    runtime::vm::Builder,
 };
+
+use crate::global::{self, Global};
 
 /// TOML extension
 pub struct TomlExt;
-
-/// Lazy setup tag
-struct Tag;
-
-impl StateTag for Tag {
-    type State<'v> = ();
-}
 
 #[derive(Debug)]
 pub enum Infallible {}
@@ -42,9 +37,10 @@ impl Extension for TomlExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        builder.lazy::<Tag>(&["toml"], |reg| {
-            reg.register_state::<Tag>(());
-            crate::toml::configure(reg);
+        builder.lazy::<global::Tag>(&["toml"], |reg| {
+            let global = Global::new(reg);
+            let global = reg.register_state::<global::Tag>(global);
+            crate::toml::configure(reg, global);
         });
         Ok(())
     }

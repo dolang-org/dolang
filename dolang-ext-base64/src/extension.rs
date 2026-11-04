@@ -7,18 +7,13 @@ use dolang::{
     compile::Config,
     extension,
     extension::{Extension, Version},
-    runtime::vm::{Builder, StateTag},
+    runtime::vm::Builder,
 };
+
+use crate::global::{self, Global};
 
 /// Base64 extension
 pub struct Base64Ext;
-
-/// Lazy setup tag
-struct Tag;
-
-impl StateTag for Tag {
-    type State<'v> = ();
-}
 
 #[derive(Debug)]
 pub enum Infallible {}
@@ -42,9 +37,10 @@ impl Extension for Base64Ext {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        builder.lazy::<Tag>(&["base64"], |reg| {
-            reg.register_state::<Tag>(());
-            crate::base64::configure(reg);
+        builder.lazy::<global::Tag>(&["base64"], |reg| {
+            let global = Global::new(reg);
+            let global = reg.register_state::<global::Tag>(global);
+            crate::base64::configure(reg, global);
         });
         Ok(())
     }

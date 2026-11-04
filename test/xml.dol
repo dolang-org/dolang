@@ -11,8 +11,11 @@ import
   xml:
     decode: decode_document
     encode: encode_document
+    - Comment
+    - DecodeError
     - Document
     - Element
+    - EncodeError
 
 # Existing element regressions operate on the document root.
 def decode source
@@ -137,8 +140,9 @@ def entity_references_are_expanded()
   assert_eq $node[0] "a&bABcd"
   assert_eq $encode(node) "<root>a&amp;bABcd</root>"
 
-  assert_throws $DataError do
+  let err = assert_throws $DecodeError do
     decode "<!DOCTYPE root [<!ENTITY custom \"value\">]><root>&custom;</root>"
+  assert_eq $err.kind :REFERENCE:
 
 #[test]
 def attribute_values_are_escaped_once()
@@ -278,8 +282,9 @@ def namespaced_attributes()
   assert_throws $ValueError do el[("", "id")] = "1"
   assert_throws $ValueError do el[("urn:x", "a:b")] = "1"
 
-  assert_throws $DataError do
+  let err = assert_throws $DecodeError do
     decode r#"<root xmlns:a="urn:x" xmlns:b="urn:x" a:id="1" b:id="2"/>"#
+  assert_eq $err.kind :ILL_FORMED:
 
 #[test]
 def default_namespace_semantics()
@@ -371,11 +376,14 @@ def mutations_reject_malformed_trees()
   assert_eq $node.children.len 0
   node.push "ok"
   assert_throws $TypeError do node.children[0] = 42
-  assert_throws $DataError do decode "<root>&#1;</root>"
+  let ref_err = assert_throws $DecodeError do decode "<root>&#1;</root>"
+  assert_eq $ref_err.kind :REFERENCE:
   assert_throws $ValueError do encode "\u{1}"
 
   let cyclic = Element "root"
   cyclic.children.push $cyclic
+  let err = assert_throws $EncodeError do encode $cyclic
+  assert_eq (err.kind, err.path) (:CYCLE:, (0, 0))
   assert_throws $ValueError do encode $cyclic
 
   let shared = Element "shared"
@@ -632,3 +640,73 @@ def attribute_identity_is_independent_of_prefixes()
   let parsed = decode $encode(node)
   assert_eq [...parsed.attrs.keys()] [("urn:shared", "id")]
   assert_eq $parsed[("urn:shared", "id")] "one"
+
+#[test]
+def decode_error_kinds()
+  def check kind inputs
+    for src = inputs
+      let err = assert_throws $DecodeError do
+        decode_document $src
+      assert_eq (src, err.kind) (src, kind)
+      assert_throws $DataError do decode_document $src
+
+  check :SYNTAX: ["<a/><!bogus>", "<a x=1/>", "<a x/>"]
+  check :EOF: ["<a", "<a>", "<a><b/>", "<a>&amp", "<!-- c", "<a><![CDATA[x</a>"]
+  check :ILL_FORMED: $
+    - "<a></b>"
+    - "</a>"
+    - r#"<a x="1" x="2"/>"#
+    - r#"<r xmlns:p="urn:x" xmlns:q="urn:x" p:x="1" q:x="2"/>"#
+    - "<1a/>"
+    - "<a><!-- x -- y --></a>"
+    - ""
+    - "<a/><b/>"
+    - "text<a/>"
+    - "<a/>&amp;"
+    - "<a>\u{1}</a>"
+    - "<a><![CDATA[\u{1}]]></a>"
+    - "<a x=\"\u{1}\"/>"
+  check :REFERENCE: $
+    - "<a>&foo;</a>"
+    - r#"<a x="&foo;"/>"#
+    - "<a>&#0;</a>"
+    - "<a>&#1;</a>"
+    - r#"<a x="&#1;"/>"#
+    - "<a>&#xZZ;</a>"
+  check :NAMESPACE: $
+    - "<p:a/>"
+    - r#"<a p:x="1"/>"#
+    - r#"<a xmlns:xml="urn:x"/>"#
+    - r#"<a xmlns:p=""/>"#
+    - r#"<a xmlns="http://www.w3.org/2000/xmlns/"/>"#
+
+#[test]
+def decode_error_positions()
+  def check src line column
+    let err = assert_throws $DecodeError do
+      decode_document $src
+    assert_eq (src, err.line, err.column) (src, line, column)
+
+  # quick-xml's attribute positions.
+  check "<a>\n  <b x='1' y/>\n</a>" 2 13
+  check "<a x=\"1\" x=\"2\"/>" 1 10
+  # The end tag that doesn't match.
+  check "<a>\n<b></a>" 2 4
+  check "<a>" 1 4
+  # The second root starts at its `<`.
+  check "<a/>\n <b/>" 2 2
+  # A fault in a tag as a whole is at the tag.
+  check "<a>\n  <1b/></a>" 2 3
+  # Columns count characters, not bytes.
+  check "<a>é</b>" 1 5
+
+#[test]
+def encode_cycle_path()
+  let root = Element root
+  let item = Element item "text" (Element "leaf")
+  root.push "text"
+  root.push $item
+  item.children[1].push $root
+  let err = assert_throws $EncodeError do
+    encode_document (Document (Comment "c") root)
+  assert_eq (err.kind, err.path) (:CYCLE:, (1, 1, 1, 0))

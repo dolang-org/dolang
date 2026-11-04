@@ -12,7 +12,7 @@ use dolang::runtime::object::fmt;
 
 use dolang::runtime::strand::InterruptMask;
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, Type, call, error::ResultExt,
+    Error, Instance, Object, Output, Result, Slot, State, Strand, Type, call, io::IoResultExt as _,
     object::TypeBuilder, unpack, value::Root, vm::Register,
 };
 use futures::future::{AbortHandle, Abortable};
@@ -485,7 +485,7 @@ impl<'v> Object<'v> for Date {
             })
             .type_method("today", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let now = DateTimeAnnex::now().into_do(strand)?;
+                let now = DateTimeAnnex::now().into_do_io(strand)?;
                 let date = OffsetDateTime::from_unix_timestamp_nanos(now.total_nanos())
                     .map_err(|_| Error::runtime(strand, "invalid DateTime"))?
                     .date();
@@ -906,7 +906,7 @@ impl<'v> Object<'v> for DateTime {
             })
             .type_method("now", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let annex = DateTimeAnnex::now().into_do(strand)?;
+                let annex = DateTimeAnnex::now().into_do_io(strand)?;
                 this.create_with_annex(strand, DateTime, annex, out);
                 Ok(())
             })

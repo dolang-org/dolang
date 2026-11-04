@@ -1,5 +1,7 @@
 import
   json:
+    - DecodeError
+    - EncodeError
     - encode
     - decode
   test:
@@ -25,6 +27,52 @@ def parse_primitives()
 def decode_rejects_invalid_json()
   for input = ["", "{", "[1,]", "nul", "{\"a\" 1}"]
     assert_throws $DataError do decode $input
+    assert_throws $DecodeError do decode $input
+
+#[test]
+def decode_error_kind_and_position()
+  let err = assert_throws $DecodeError do
+    decode |-
+      {
+        "a" 1}
+  assert_eq $err.kind :SYNTAX:
+  assert_eq $err.line 2
+  assert_eq $err.column 7
+
+  let err = assert_throws $DecodeError do
+    decode "[1,"
+  assert_eq $err.kind :EOF:
+
+  let err = assert_throws $DecodeError do
+    decode "[1] x"
+  assert_eq $err.kind :SYNTAX:
+  assert_eq $err.column 5
+
+#[test]
+def encode_error_paths()
+  let inner = {}
+  inner["name"] = inner
+  let err = assert_throws $EncodeError do
+    encode {"items": [0, 0, 0, inner]}
+  assert_eq $err.kind :CYCLE:
+  assert_eq $err.path ("items", 3, "name")
+  # Faults in the encoded value are value errors.
+  assert_throws $ValueError do
+    encode {"items": [0, 0, 0, inner]}
+
+  let err = assert_throws $EncodeError do
+    encode [1, 170141183460469231731687303715884105727]
+  assert_eq $err.kind :RANGE:
+  assert_eq $err.path (1,)
+
+  let err = assert_throws $EncodeError do
+    encode {a: {(Float.NAN): 1}}
+  assert_eq $err.kind :KEY:
+  assert_eq $err.path (:a:,)
+
+  let err = assert_throws $EncodeError do
+    encode {1: {(true): [Float.NAN, 170141183460469231731687303715884105727]}}
+  assert_eq $err.path (1, true, 1)
 
 #[test]
 def round_trip_primitives()
@@ -80,9 +128,10 @@ def structs_as_objects()
 
   let cyclic = struct()
   cyclic.self = cyclic
-  let err = assert_throws $ValueError do
+  let err = assert_throws $EncodeError do
     encode $cyclic
-  assert ((str err).contains "cyclic reference to struct")
+  assert_eq $err.kind :CYCLE:
+  assert_eq $err.path (:self:,)
 
 #[test]
 def symbols_as_strings()
@@ -98,9 +147,10 @@ def numbers()
   assert_eq (decode "18446744073709551615") 18446744073709551615
   assert (type (decode "18446744073709551616") Float)
 
-  let err = assert_throws $ValueError do
+  let err = assert_throws $EncodeError do
     encode 170141183460469231731687303715884105727
-  assert ((str err).contains "outside i64 range")
+  assert_eq $err.kind :RANGE:
+  assert_eq $err.path ()
 
 #[test]
 def indented_encoding()
@@ -110,9 +160,8 @@ def indented_encoding()
   assert_eq (encode [] indent: 2) "[]"
   assert_eq (encode [1, 2]) "[1,2]"
 
-  let err = assert_throws $TypeError do
+  assert_throws $ValueError do
     encode [1] indent: -1
-  assert ((str err).contains "indent")
 
 #[test]
 def encode_array_read_view()
@@ -142,9 +191,9 @@ def scalar_keys_quoted()
   assert_eq (encode {sym: 1}) r#"{"sym":1}"#
   assert_eq (encode((a: 1, b: []))) r#"{"a":1,"b":[]}"#
 
-  let err = assert_throws $ValueError do
+  let err = assert_throws $EncodeError do
     encode {(Float.NAN): 1}
-  assert ((str err).contains "float key must be finite")
+  assert_eq $err.kind :KEY:
   assert_throws $TypeError do
     encode {(nil): 1}
   assert_throws $TypeError do
@@ -160,13 +209,15 @@ def unsupported_values()
 
   let array = []
   array.push $array
-  let err = assert_throws $ValueError do
+  let err = assert_throws $EncodeError do
     encode $array
-  assert ((str err).contains "cyclic reference to array")
+  assert_eq $err.kind :CYCLE:
+  assert_eq $err.path (0,)
   let dict = {}
   dict["self"] = dict
-  assert_throws $ValueError do
+  let err = assert_throws $EncodeError do
     encode $dict
+  assert_eq $err.path ("self",)
 
   # Shared, acyclic values are not cycles.
   let shared = [1]

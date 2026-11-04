@@ -53,7 +53,7 @@ impl<'v> Object<'v> for Regex {
             .as_str(strand.vm())
             .ok_or_else(|| Error::type_error(strand, "pattern: expected Str"))?
             .pin();
-        let regex = rx::Regex::new(&pattern).into_do(strand)?;
+        let regex = rx::Regex::new(&pattern).into_do_value(strand)?;
         let global = strand.state::<Tag>();
         this.create_with_annex(strand, Regex, RegexAnnex { global, regex }, out);
         Ok(())

@@ -1,4 +1,7 @@
-use crate::{attr::required_string, check::validate_text};
+use crate::{
+    attr::required_string,
+    check::{Checked, Invalid, OrValue, validate_text},
+};
 use dolang::runtime::{
     Args, Instance, Object, Output, Result, Slot, Strand, Type,
     object::{TypeBuilder, fmt},
@@ -10,16 +13,10 @@ pub(crate) struct Comment {
     pub(crate) text: String,
 }
 
-pub(crate) fn validate_comment<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    text: &str,
-) -> Result<'v, 's, ()> {
-    validate_text(strand, text, "XML comment")?;
+pub(crate) fn validate_comment(text: &str) -> Checked {
+    validate_text(text, "XML comment")?;
     if text.contains("--") || text.ends_with('-') {
-        return Err(dolang::runtime::Error::value(
-            strand,
-            "XML comments cannot contain -- or end in -",
-        ));
+        return Err(Invalid("XML comments cannot contain -- or end in -".into()));
     }
     Ok(())
 }
@@ -38,7 +35,7 @@ impl<'v> Object<'v> for Comment {
     ) -> Result<'v, 's, ()> {
         let ([text], []) = unpack!(strand, args, 1, 0)?;
         let text = required_string(strand, &text, "comment text")?;
-        validate_comment(strand, &text)?;
+        validate_comment(&text).or_value(strand)?;
         this.create(strand, Self { text }, out);
         Ok(())
     }
@@ -67,7 +64,7 @@ impl<'v> Object<'v> for Comment {
             })
             .set("text", |this, strand, value| {
                 let text = required_string(strand, &value, "comment text")?;
-                validate_comment(strand, &text)?;
+                validate_comment(&text).or_value(strand)?;
                 this.borrow_mut(strand)?.text = text;
                 Ok(())
             })
