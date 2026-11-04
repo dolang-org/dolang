@@ -279,8 +279,14 @@ impl Solver<'_> {
         }
     }
 
+    /// A member as narrowing sees it, through any transparent alias, as `Unset`
+    /// in `@let Unset = :UNSET:` is the literal
     fn classify(&self, ty: TypeId) -> Member {
-        match self.db.ty(ty) {
+        let seen = match self.head(self.closed(ty)) {
+            Ok(Head::Structural(view)) => view.ty,
+            _ => ty,
+        };
+        match self.db.ty(seen) {
             Type::Unknown(_) => return Member::Unknown,
             Type::Top => return Member::Top,
             Type::Literal(literal) | Type::Fresh(literal) => {
