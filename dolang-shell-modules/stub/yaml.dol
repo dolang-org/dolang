@@ -4,6 +4,73 @@
 import std:
   - @BaseStruct
 
+# Raised when [`decode`](yaml.decode) is given invalid YAML, or YAML that uses
+# a feature it doesn't support.
+#
+# ## Example
+#
+# ```
+# try
+#   decode "[1,"
+# catch DecodeError: err
+#   echo "bad YAML at line $(err.line), column $(err.column)"
+# ```
+pub class DecodeError: std.DataError
+  # What is wrong with the document.
+  #
+  # | Kind | Meaning |
+  # | --- | --- |
+  # | `:SYNTAX:` | The text is not well-formed YAML, or ends inside a value. |
+  # | `:UNSUPPORTED:` | The document uses a tag or an alias. |
+  # | `:DOCUMENTS:` | The input holds no document, or more than one. |
+  # | `:RANGE:` | An integer is too large for an `Int`. |
+  #[getter]
+  pub def kind self -> (:SYNTAX: | :UNSUPPORTED: | :DOCUMENTS: | :RANGE:)
+    ...
+
+  # Line of the fault, counting from 1.
+  #[getter]
+  pub def line self -> Int
+    ...
+
+  # Column of the fault, counting from 1.
+  #[getter]
+  pub def column self -> Int
+    ...
+
+# Raised when [`encode`](yaml.encode) is given a value that can't be written as
+# YAML as it stands.
+#
+# ## Example
+#
+# ```
+# let items = []
+# items.push $items
+# try
+#   encode {items: $items}
+# catch EncodeError: err
+#   echo "can't encode $(err.path): $err"
+# ```
+pub class EncodeError: std.ValueError
+  # Why the value can't be written.
+  #
+  # | Kind | Meaning |
+  # | --- | --- |
+  # | `:CYCLE:` | The value contains itself. |
+  # | `:RANGE:` | An `Int` is outside the signed 64-bit range. |
+  #[getter]
+  pub def kind self -> (:CYCLE: | :RANGE:)
+    ...
+
+  # Keys and indices that lead from the encoded value to the fault.
+  #
+  # For `:CYCLE:` the path leads to the repeated container, and for `:RANGE:`
+  # to the `Int`. When the fault is inside a key, the path leads to the mapping
+  # holding that key. Each key is the one in the encoded value.
+  #[getter]
+  pub def path self -> Tuple[...EncodeValue]
+    ...
+
 # A value decoded from YAML. A mapping key may be any YAML value.
 pub @let DecodeValue = $
   | nil
@@ -42,8 +109,9 @@ pub @let EncodeValue = $
 #
 # ## Errors
 #
-# [`DataError`](std.DataError) if the input is invalid, contains more than one
-# document, or uses unsupported YAML features such as tags or aliases.
+# [`DecodeError`](yaml.DecodeError) if the input is invalid, holds no document
+# or more than one, uses a tag or an alias, or has an integer too large for an
+# `Int`.
 #
 # ## Example
 #
@@ -86,8 +154,10 @@ do -> DecodeValue
 #
 # ## Errors
 #
-# `TypeError` if a value is not YAML-representable, such as binary data or a
-# custom object.
+# | Exception | Condition |
+# | --- | --- |
+# | [`TypeError`](std.TypeError) | A value has no YAML form, such as a `Bin` or a custom object. |
+# | [`EncodeError`](yaml.EncodeError) | The value contains itself, or an `Int` is outside the signed 64-bit range. |
 #
 # ## Example
 #

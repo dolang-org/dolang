@@ -1,16 +1,18 @@
 import
   yaml:
+    - DecodeError
+    - EncodeError
     - decode
     - encode
   test:
-    - assert
     - assert_eq
     - assert_throws
     - test
   std:
     - @BaseArray
     - DataError
-    - RuntimeError
+    - TypeError
+    - ValueError
 
 #[test]
 def parse_scalars()
@@ -42,14 +44,48 @@ def parse_arbitrary_keys()
   assert_eq $seq_pair[1] "sequence key"
 
 #[test]
-def parse_error_cases()
-  let empty_err = assert_throws $DataError do
+def decode_error_kind_and_position()
+  let empty = assert_throws $DecodeError do
     decode ""
-  assert ((str empty_err).contains "no YAML document")
+  assert_eq $empty.kind :DOCUMENTS:
+  assert_throws $DataError do
+    decode ""
 
-  let multi_err = assert_throws $DataError do
-    decode "---\n1\n---\n2\n"
-  assert ((str multi_err).contains "single document")
+  let multi = assert_throws $DecodeError do
+    decode |
+      ---
+      1
+      ---
+      2
+  assert_eq $multi.kind :DOCUMENTS:
+  assert_eq (multi.line, multi.column) (3, 1)
+
+  let syntax = assert_throws $DecodeError do
+    decode |
+      a: 1
+       b: 2
+  assert_eq $syntax.kind :SYNTAX:
+  assert_eq (syntax.line, syntax.column) (2, 3)
+
+  let truncated = assert_throws $DecodeError do
+    decode "[1,"
+  assert_eq $truncated.kind :SYNTAX:
+
+  let tag = assert_throws $DecodeError do
+    decode r"!!str x"
+  assert_eq $tag.kind :UNSUPPORTED:
+
+  let alias = assert_throws $DecodeError do
+    decode "[&a 1, *a]"
+  assert_eq $alias.kind :UNSUPPORTED:
+  assert_eq (alias.line, alias.column) (1, 8)
+
+  let range = assert_throws $DecodeError do
+    decode |
+      a:
+        - 999999999999999999999999999999999999999999
+  assert_eq $range.kind :RANGE:
+  assert_eq (range.line, range.column) (2, 5)
 
   assert_eq (decode "9223372036854775808") 9223372036854775808
 
@@ -92,23 +128,53 @@ def structs_as_mappings()
 
   let cyclic = struct()
   cyclic.self = cyclic
-  let err = assert_throws $RuntimeError do
+  let err = assert_throws $EncodeError do
     encode $cyclic
-  assert ((str err).contains "cyclic reference to struct")
+  assert_eq $err.kind :CYCLE:
+  assert_eq $err.path (:self:,)
 
 #[test]
 def serialize_error_cases()
-  let overflow_err = assert_throws $RuntimeError do
+  let overflow_err = assert_throws $EncodeError do
     encode 9223372036854775808
-  assert ((str overflow_err).contains "numeric overflow")
+  assert_eq $overflow_err.kind :RANGE:
+  assert_eq $overflow_err.path ()
 
-  let bin_err = assert_throws $RuntimeError do
+  assert_throws $TypeError do
     encode b"\x01\x02"
-  assert ((str bin_err).contains "YAML-representable")
 
-  let type_err = assert_throws $RuntimeError do
+  assert_throws $TypeError do
     encode $ Range 10
-  assert ((str type_err).contains "unsupported YAML type")
+
+#[test]
+def encode_error_paths()
+  let big = 9223372036854775808
+  let items = []
+  items.push 0 {name: items}
+  let cycle = assert_throws $EncodeError do
+    encode {"items": items}
+  assert_eq $cycle.kind :CYCLE:
+  assert_eq $cycle.path ("items", 1, :name:)
+  assert_throws $ValueError do
+    encode $items
+
+  let index = assert_throws $EncodeError do
+    encode [1, big]
+  assert_eq $index.kind :RANGE:
+  assert_eq $index.path (1,)
+
+  let key = assert_throws $EncodeError do
+    encode {a: {(big): 1}}
+  assert_eq $key.kind :RANGE:
+  assert_eq $key.path (:a:,)
+
+  let composite = assert_throws $EncodeError do
+    encode {(1, :a:): [0, big]}
+  assert_eq $composite.path ((1, :a:), 1)
+
+  let scalars = assert_throws $EncodeError do
+    encode {(nil): {(true): {(1.5): [big]}}}
+  assert_eq $scalars.path (nil, true, 1.5, 0)
 
 #[test]
 def encode_array_read_view()

@@ -7,18 +7,13 @@ use dolang::{
     compile::Config,
     extension,
     extension::{Extension, Version},
-    runtime::vm::{Builder, StateTag},
+    runtime::vm::Builder,
 };
+
+use crate::global::{self, Global};
 
 /// YAML extension
 pub struct YamlExt;
-
-/// Lazy setup tag
-struct Tag;
-
-impl StateTag for Tag {
-    type State<'v> = ();
-}
 
 #[derive(Debug)]
 pub enum Infallible {}
@@ -42,9 +37,10 @@ impl Extension for YamlExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        builder.lazy::<Tag>(&["yaml"], |reg| {
-            reg.register_state::<Tag>(());
-            crate::yaml::configure(reg);
+        builder.lazy::<global::Tag>(&["yaml"], |reg| {
+            let global = Global::new(reg);
+            let global = reg.register_state::<global::Tag>(global);
+            crate::yaml::configure(reg, global);
         });
         Ok(())
     }

@@ -1,20 +1,95 @@
-use std::{borrow::Cow, collections::HashSet, fmt, mem, num::NonZero};
+use std::{borrow::Cow, collections::HashSet, fmt, mem, num::NonZero, result};
 
 use ordered_float::OrderedFloat;
 use saphyr::{Mapping as YamlMapping, Scalar, Yaml, YamlEmitter};
 
 use dolang::runtime::{
-    Alloc, Output, Slot, Strand, Value,
+    Alloc, Input, Instance, Object, Output, Slot, State, Strand, Value,
     error::{Error, Result},
+    object::{Mut, Ref, TypeBuilder, fmt},
     unpack,
-    value::{Array, Empty, Nil, PinStr, StrEmbryo, View},
+    value::{Array, AsTuple, Empty, Nil, PinStr, StrEmbryo, TypeObject, View, fmt::Format},
     vm::Register,
 };
-use saphyr_parser::{Event, Parser, ScalarStyle, Span, StrInput};
+use saphyr_parser::{Event, Marker, Parser, ScalarStyle, Span, StrInput};
 
-pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
+use crate::global::{Global, Tag};
+
+/// `yaml.DecodeError`: the document is not valid YAML, or uses a feature
+/// `yaml.decode` rejects.
+pub(crate) struct DecodeError;
+
+/// What is wrong with a document.
+#[derive(Clone, Copy)]
+enum DecodeKind {
+    /// The scanner rejected the text.
+    Syntax,
+    /// A tag or alias.
+    Unsupported,
+    /// The stream holds no document, or more than one.
+    Documents,
+    /// An integer scalar is outside the `Int` range.
+    Range,
+}
+
+pub(crate) struct DecodeAnnex {
+    message: String,
+    kind: DecodeKind,
+    line: usize,
+    /// 1-based.
+    column: usize,
+}
+
+/// `yaml.EncodeError`: the value has a YAML form in general, but not as given.
+///
+/// A `ValueError`: the fault is in the value the caller passed.
+pub(crate) struct EncodeError;
+
+/// Why a value could not be written.
+#[derive(Clone, Copy)]
+enum EncodeKind {
+    /// The value contains itself.
+    Cycle,
+    /// An `Int` is outside the signed 64-bit range.
+    Range,
+}
+
+pub(crate) struct EncodeAnnex {
+    message: String,
+    kind: EncodeKind,
+}
+
+/// Failure while encoding.
+enum Fault<'v, 's> {
+    /// Raised as is.
+    Do(Error<'v, 's>),
+    /// Raised as `yaml.EncodeError`, with the path [`Builder::within`]
+    /// collected.
+    Encode(EncodeAnnex),
+}
+
+impl<'v, 's> From<Error<'v, 's>> for Fault<'v, 's> {
+    fn from(error: Error<'v, 's>) -> Self {
+        Self::Do(error)
+    }
+}
+
+impl Fault<'_, '_> {
+    fn encode(kind: EncodeKind, message: impl Into<String>) -> Self {
+        Self::Encode(EncodeAnnex {
+            message: message.into(),
+            kind,
+        })
+    }
+}
+
+type EncodeResult<'v, 's, T> = result::Result<T, Fault<'v, 's>>;
+
+pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     builder
         .module("yaml")
+        .value("DecodeError", global.types.decode_error)
+        .value("EncodeError", global.types.encode_error)
         .function("decode", async move |strand, args, out| {
             let ([arg], []) = unpack!(strand, args, 1, 0)?;
             let src = arg
@@ -26,15 +101,38 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
         })
         .function("encode", async move |strand, args, out| {
             let ([arg], []) = unpack!(strand, args, 1, 0)?;
-            strand.with_slots_sync(|strand, [mut keep]| {
+            strand.with_slots_sync(|strand, [mut keep, path, mut tuple, mut error]| {
                 Output::set(strand, &mut keep, Empty::Array);
                 let mut builder = Builder {
                     keep: keep.as_array(strand.vm()).expect("keep must be an array"),
                     pins: Vec::new(),
                     seen: HashSet::new(),
+                    path,
                 };
                 // Declared after `builder`, so it drops first, even on error.
-                let yaml = builder.value(strand, &arg)?;
+                let yaml = match builder.value(strand, &arg) {
+                    Ok(yaml) => yaml,
+                    Err(Fault::Do(error)) => return Err(error),
+                    Err(Fault::Encode(annex)) => {
+                        match builder.path.as_array(strand.vm()) {
+                            Some(path) => {
+                                path.reverse(strand).expect("path is not shared");
+                                path.to_tuple(strand, &mut tuple)
+                                    .expect("path is not shared");
+                            }
+                            None => Output::set(strand, &mut tuple, AsTuple::new([Nil; 0])),
+                        }
+                        let ty = strand.state::<Tag>().types.encode_error;
+                        ty.create_with_annex(strand, EncodeError, annex, &mut error);
+                        ty.cast(&error)
+                            .unwrap()
+                            .enter_sync(strand, |strand, instance| {
+                                let mut borrow = instance.borrow_mut_unwrap();
+                                Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &tuple);
+                            });
+                        return Err(Error::from_value(strand, &error));
+                    }
+                };
                 let mut buf = StrEmbryo::new();
                 let mut writer = EmbryoWriter {
                     embryo: &mut buf,
@@ -85,6 +183,8 @@ struct Builder<'k, 'v> {
     /// Pins of the borrowed `Str` texts.
     pins: Vec<PinStr<'v, 'static>>,
     seen: HashSet<NonZero<usize>>,
+    /// Nil, or an `Array` of the steps from the fault outward.
+    path: Slot<'v, 'k>,
 }
 
 impl<'v> Builder<'_, 'v> {
@@ -92,13 +192,19 @@ impl<'v> Builder<'_, 'v> {
         &mut self,
         strand: &mut Strand<'v, 's>,
         value: &Value<'v>,
-    ) -> Result<'v, 's, Yaml<'static>> {
+    ) -> EncodeResult<'v, 's, Yaml<'static>> {
         match value.view(strand.vm()) {
             View::Nil => Ok(Yaml::Value(Scalar::Null)),
             View::Bool(b) => Ok(Yaml::Value(Scalar::Boolean(b))),
-            View::Int(i) => Ok(Yaml::Value(Scalar::Integer(
-                i64::try_from(i).map_err(|_| Error::overflow(strand))?,
-            ))),
+            View::Int(i) => {
+                let i = i64::try_from(i).map_err(|_| {
+                    Fault::encode(
+                        EncodeKind::Range,
+                        "YAML integers outside i64 range are not supported",
+                    )
+                })?;
+                Ok(Yaml::Value(Scalar::Integer(i)))
+            }
             View::Float(f) => Ok(Yaml::Value(Scalar::FloatingPoint(OrderedFloat(f)))),
             View::Str(s) => {
                 self.keep.push(strand, value)?;
@@ -118,13 +224,12 @@ impl<'v> Builder<'_, 'v> {
                 self.keep.push(strand, value)?;
                 Ok(Yaml::Value(Scalar::String(Cow::Borrowed(text))))
             }
-            View::Bin(_) => Err(Error::type_error(
-                strand,
-                "binary values are not YAML-representable",
-            )),
+            View::Bin(_) => {
+                Err(Error::type_error(strand, "binary values are not YAML-representable").into())
+            }
             View::Array(handle) => {
                 let id = handle.id().addr();
-                self.enter(strand, id, "array")?;
+                self.enter(id, "array")?;
                 let mut seq = Vec::new();
                 strand.with_slots_sync(|strand, [mut elem]| {
                     let len = handle.len(strand)?;
@@ -133,32 +238,38 @@ impl<'v> Builder<'_, 'v> {
                         if !handle.get(strand, i, &mut elem)? {
                             break;
                         }
-                        seq.push(self.value(strand, &elem)?);
+                        let item = self
+                            .value(strand, &elem)
+                            .map_err(|fault| self.within(strand, fault, i))?;
+                        seq.push(item);
                     }
-                    Ok(())
+                    EncodeResult::Ok(())
                 })?;
                 self.seen.remove(&id);
                 Ok(Yaml::Sequence(seq))
             }
             View::Tuple(handle) => {
                 let id = handle.id().addr();
-                self.enter(strand, id, "tuple")?;
+                self.enter(id, "tuple")?;
                 let mut seq = Vec::with_capacity(handle.len());
                 strand.with_slots_sync(|strand, [mut elem]| {
                     for i in 0..handle.len() {
                         if !handle.get(strand, i, &mut elem)? {
                             break;
                         }
-                        seq.push(self.value(strand, &elem)?);
+                        let item = self
+                            .value(strand, &elem)
+                            .map_err(|fault| self.within(strand, fault, i))?;
+                        seq.push(item);
                     }
-                    Ok(())
+                    EncodeResult::Ok(())
                 })?;
                 self.seen.remove(&id);
                 Ok(Yaml::Sequence(seq))
             }
             View::Dict(handle) => {
                 let id = handle.id().addr();
-                self.enter(strand, id, "dict")?;
+                self.enter(id, "dict")?;
                 let mut pairs = handle.pairs();
                 let map = self.mapping(strand, |strand, key, val| pairs.next(strand, key, val))?;
                 self.seen.remove(&id);
@@ -166,7 +277,7 @@ impl<'v> Builder<'_, 'v> {
             }
             View::Record(handle) => {
                 let id = handle.id().addr();
-                self.enter(strand, id, "record")?;
+                self.enter(id, "record")?;
                 let mut pairs = handle.pairs();
                 let map = self.mapping(strand, |strand, key, val| pairs.next(strand, key, val))?;
                 self.seen.remove(&id);
@@ -174,49 +285,99 @@ impl<'v> Builder<'_, 'v> {
             }
             View::Struct(handle) => {
                 let id = handle.id().addr();
-                self.enter(strand, id, "struct")?;
+                self.enter(id, "struct")?;
                 let mut pairs = handle.pairs();
                 let map = self.mapping(strand, |strand, key, val| pairs.next(strand, key, val))?;
                 self.seen.remove(&id);
                 Ok(Yaml::Mapping(map))
             }
-            _ => Err(Error::type_error(strand, "unsupported YAML type")),
+            _ => Err(Error::type_error(strand, "unsupported YAML type").into()),
         }
     }
 
-    fn enter<'s>(
+    /// Records that `fault` lies under `segment`, an index or a key.
+    fn within<'s>(
         &mut self,
         strand: &mut Strand<'v, 's>,
-        id: NonZero<usize>,
-        kind: &str,
-    ) -> Result<'v, 's, ()> {
+        fault: Fault<'v, 's>,
+        segment: impl Input<'v>,
+    ) -> Fault<'v, 's> {
+        if let Fault::Encode(_) = fault {
+            if self.path.is_nil() {
+                Output::set(strand, &mut self.path, Empty::Array);
+            }
+            let path = self.path.as_array(strand.vm()).expect("path is an Array");
+            path.push(strand, segment).expect("path is not shared");
+        }
+        fault
+    }
+
+    fn enter<'s>(&mut self, id: NonZero<usize>, kind: &str) -> EncodeResult<'v, 's, ()> {
         if self.seen.insert(id) {
             Ok(())
         } else {
-            Err(Error::type_error(
-                strand,
+            Err(Fault::encode(
+                EncodeKind::Cycle,
                 format!("cyclic reference to {kind}"),
             ))
         }
     }
 
     /// Builds a mapping from the pairs `next` yields.
+    ///
+    /// A fault in a key leaves the path at the mapping.
     fn mapping<'s>(
         &mut self,
         strand: &mut Strand<'v, 's>,
         mut next: impl FnMut(&mut Strand<'v, 's>, Slot<'v, '_>, Slot<'v, '_>) -> Result<'v, 's, bool>,
-    ) -> Result<'v, 's, YamlMapping<'static>> {
+    ) -> EncodeResult<'v, 's, YamlMapping<'static>> {
         let mut map = YamlMapping::new();
         strand.with_slots_sync(|strand, [mut key, mut val]| {
             while next(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut val))? {
                 let yaml_key = self.value(strand, &key)?;
-                let yaml_val = self.value(strand, &val)?;
+                let yaml_val = self
+                    .value(strand, &val)
+                    .map_err(|fault| self.within(strand, fault, &*key))?;
                 map.insert(yaml_key, yaml_val);
             }
-            Ok(())
+            EncodeResult::Ok(())
         })?;
         Ok(map)
     }
+}
+
+/// Raises `yaml.DecodeError` positioned at `mark`.
+fn decode_error<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    kind: DecodeKind,
+    mark: Marker,
+    message: impl fmt::Display,
+) -> Error<'v, 's> {
+    let line = mark.line();
+    let column = mark.col() + 1;
+    let global = strand.state::<Tag>();
+    Error::object_with_annex(
+        strand,
+        global.types.decode_error,
+        DecodeError,
+        DecodeAnnex {
+            message: format!("{message} at line {line} column {column}"),
+            kind,
+            line,
+            column,
+        },
+    )
+}
+
+/// Raises for an event sequence the parser should never produce.
+fn internal<'v, 's>(strand: &mut Strand<'v, 's>, span: Span, what: &str) -> Error<'v, 's> {
+    debug_assert!(false, "internal YAML parse error: {what}");
+    decode_error(
+        strand,
+        DecodeKind::Syntax,
+        span.start,
+        format_args!("internal YAML parse error: {what}"),
+    )
 }
 
 fn parse_yaml<'v, 's, 'i>(
@@ -227,70 +388,55 @@ fn parse_yaml<'v, 's, 'i>(
     let mut parser: Parser<'i, StrInput<'i>> = Parser::new_from_str(src);
 
     match next_event(strand, &mut parser)? {
-        Some((Event::StreamStart, _)) => {}
-        Some((_, span)) => {
-            return Err(error_at(
-                strand,
-                span,
-                "internal YAML parse error: expected stream start",
-            ));
-        }
-        None => return Err(Error::data(strand, "no YAML document")),
+        (Event::StreamStart, _) => {}
+        (_, span) => return Err(internal(strand, span, "expected stream start")),
     }
 
-    let (event, span) = match next_event(strand, &mut parser)? {
-        Some(pair) => pair,
-        None => return Err(Error::data(strand, "no YAML document")),
-    };
-
-    match event {
-        Event::DocumentStart(_explicit) => {}
-        Event::StreamEnd => return Err(Error::data(strand, "no YAML document")),
-        _ => {
-            return Err(error_at(
+    match next_event(strand, &mut parser)? {
+        (Event::DocumentStart(_explicit), _) => {}
+        (Event::StreamEnd, span) => {
+            return Err(decode_error(
                 strand,
-                span,
-                "internal YAML parse error: expected document start",
+                DecodeKind::Documents,
+                span.start,
+                "no YAML document",
             ));
         }
+        (_, span) => return Err(internal(strand, span, "expected document start")),
     }
 
-    let first = next_event(strand, &mut parser)?
-        .ok_or_else(|| Error::data(strand, "invalid YAML document"))?;
+    let first = next_event(strand, &mut parser)?;
     parse_event_into(strand, &mut parser, first, out)?;
 
     match next_event(strand, &mut parser)? {
-        Some((Event::DocumentEnd, _)) => {}
-        Some((Event::DocumentStart(_), span)) => {
-            return Err(error_at(
-                strand,
-                span,
-                "yaml.decode only accepts a single document",
-            ));
-        }
-        Some((_, span)) => {
-            return Err(error_at(
-                strand,
-                span,
-                "internal YAML parse error: expected document end",
-            ));
-        }
-        None => return Err(Error::data(strand, "invalid YAML document")),
+        (Event::DocumentEnd, _) => {}
+        (_, span) => return Err(internal(strand, span, "expected document end")),
     }
 
     match next_event(strand, &mut parser)? {
-        Some((Event::StreamEnd, _)) | None => Ok(()),
-        Some((Event::DocumentStart(_), span)) => Err(error_at(
+        (Event::StreamEnd, _) => Ok(()),
+        (Event::DocumentStart(_), span) => Err(decode_error(
             strand,
-            span,
+            DecodeKind::Documents,
+            span.start,
             "yaml.decode only accepts a single document",
         )),
-        Some((_, span)) => Err(error_at(
-            strand,
-            span,
-            "internal YAML parse error: unexpected trailing event",
-        )),
+        (_, span) => Err(internal(strand, span, "unexpected trailing event")),
     }
+}
+
+/// Raises for a tag, which `yaml.decode` does not resolve.
+fn tag_error<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    span: Span,
+    tag: impl fmt::Display,
+) -> Error<'v, 's> {
+    decode_error(
+        strand,
+        DecodeKind::Unsupported,
+        span.start,
+        format_args!("YAML tags are not supported: {tag}"),
+    )
 }
 
 fn parse_event_into<'v, 's, 'i>(
@@ -306,32 +452,25 @@ fn parse_event_into<'v, 's, 'i>(
         | Event::DocumentStart(_)
         | Event::DocumentEnd
         | Event::SequenceEnd
-        | Event::MappingEnd => Err(error_at(
-            strand,
-            span,
-            "internal YAML parse error: unexpected structural event",
-        )),
+        | Event::MappingEnd => Err(internal(strand, span, "unexpected structural event")),
 
-        Event::Alias(_anchor) => Err(error_at(strand, span, "YAML aliases are not supported")),
+        Event::Alias(_anchor) => Err(decode_error(
+            strand,
+            DecodeKind::Unsupported,
+            span.start,
+            "YAML aliases are not supported",
+        )),
 
         Event::Scalar(value, style, _anchor, tag) => {
             if let Some(tag) = tag {
-                return Err(error_at(
-                    strand,
-                    span,
-                    format!("YAML tags are not supported: {tag}"),
-                ));
+                return Err(tag_error(strand, span, tag));
             }
-            scalar_into_slot(strand, value.as_ref(), style, out)
+            scalar_into_slot(strand, value.as_ref(), style, span, out)
         }
 
         Event::SequenceStart(_anchor, tag) => {
             if let Some(tag) = tag {
-                return Err(error_at(
-                    strand,
-                    span,
-                    format!("YAML tags are not supported: {tag}"),
-                ));
+                return Err(tag_error(strand, span, tag));
             }
 
             Output::set(strand, &mut out, Empty::Array);
@@ -340,8 +479,7 @@ fn parse_event_into<'v, 's, 'i>(
                 .expect("sequence output must be an array");
 
             loop {
-                let next = next_event(strand, parser)?
-                    .ok_or_else(|| Error::data(strand, "invalid YAML sequence"))?;
+                let next = next_event(strand, parser)?;
                 if matches!(next.0, Event::SequenceEnd) {
                     break;
                 }
@@ -357,11 +495,7 @@ fn parse_event_into<'v, 's, 'i>(
 
         Event::MappingStart(_anchor, tag) => {
             if let Some(tag) = tag {
-                return Err(error_at(
-                    strand,
-                    span,
-                    format!("YAML tags are not supported: {tag}"),
-                ));
+                return Err(tag_error(strand, span, tag));
             }
 
             Output::set(strand, &mut out, Empty::Dict);
@@ -370,23 +504,16 @@ fn parse_event_into<'v, 's, 'i>(
                 .expect("mapping output must be a dict");
 
             loop {
-                let next = next_event(strand, parser)?
-                    .ok_or_else(|| Error::data(strand, "invalid YAML mapping"))?;
+                let next = next_event(strand, parser)?;
                 if matches!(next.0, Event::MappingEnd) {
                     break;
                 }
 
                 strand.with_slots_sync(|strand, [mut key, mut value]| {
                     parse_event_into(strand, parser, next, Slot::reborrow(&mut key))?;
-                    let value_event = next_event(strand, parser)?.ok_or_else(|| {
-                        Error::data(strand, "invalid YAML mapping: missing value for key")
-                    })?;
+                    let value_event = next_event(strand, parser)?;
                     if matches!(value_event.0, Event::MappingEnd) {
-                        return Err(error_at(
-                            strand,
-                            value_event.1,
-                            "invalid YAML mapping: missing value for key",
-                        ));
+                        return Err(internal(strand, value_event.1, "missing value for key"));
                     }
                     parse_event_into(strand, parser, value_event, Slot::reborrow(&mut value))?;
                     dict.insert(strand, &key, &value, false)
@@ -398,17 +525,21 @@ fn parse_event_into<'v, 's, 'i>(
     }
 }
 
+/// The next meaningful event. The parser ends with `StreamEnd`, so running
+/// out first is an internal error.
 fn next_event<'v, 's, 'i>(
     strand: &mut Strand<'v, 's>,
     parser: &mut Parser<'i, StrInput<'i>>,
-) -> Result<'v, 's, Option<(Event<'i>, Span)>> {
+) -> Result<'v, 's, (Event<'i>, Span)> {
     loop {
         let Some(event) = parser.next() else {
-            return Ok(None);
+            let end = Span::empty(Marker::default());
+            return Err(internal(strand, end, "unexpected end of events"));
         };
-        let (event, span) = event.map_err(|err| Error::data(strand, err.to_string()))?;
+        let (event, span) = event
+            .map_err(|err| decode_error(strand, DecodeKind::Syntax, *err.marker(), err.info()))?;
         if !matches!(event, Event::Nothing) {
-            return Ok(Some((event, span)));
+            return Ok((event, span));
         }
     }
 }
@@ -417,6 +548,7 @@ fn scalar_into_slot<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &str,
     style: ScalarStyle,
+    span: Span,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     if style != ScalarStyle::Plain {
@@ -428,7 +560,10 @@ fn scalar_into_slot<'v, 's>(
         Output::set(strand, out, Nil);
     } else if let Some(bool) = parse_bool(value) {
         Output::set(strand, out, bool);
-    } else if let Some(int) = parse_int(strand, value)? {
+    } else if let Some(int) = parse_int(value) {
+        let int = int.ok_or_else(|| {
+            decode_error(strand, DecodeKind::Range, span.start, "numeric overflow")
+        })?;
         Output::set(strand, out, int);
     } else if let Some(float) = parse_float(value) {
         Output::set(strand, out, float);
@@ -437,22 +572,6 @@ fn scalar_into_slot<'v, 's>(
     }
 
     Ok(())
-}
-
-fn error_at<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    span: Span,
-    message: impl Into<String>,
-) -> Error<'v, 's> {
-    Error::data(
-        strand,
-        format!(
-            "{} at line {} column {}",
-            message.into(),
-            span.start.line(),
-            span.start.col()
-        ),
-    )
 }
 
 fn is_null(value: &str) -> bool {
@@ -467,11 +586,13 @@ fn parse_bool(value: &str) -> Option<bool> {
     }
 }
 
-fn parse_int<'v, 's>(strand: &mut Strand<'v, 's>, value: &str) -> Result<'v, 's, Option<i128>> {
+/// Parses an integer scalar: `None` if `value` isn't one, `Some(None)` if it
+/// is but doesn't fit.
+fn parse_int(value: &str) -> Option<Option<i128>> {
     let normalized = value.replace('_', "");
     let text = normalized.as_str();
     if text.is_empty() {
-        return Ok(None);
+        return None;
     }
 
     let (negative, digits) = match text.as_bytes()[0] {
@@ -481,7 +602,7 @@ fn parse_int<'v, 's>(strand: &mut Strand<'v, 's>, value: &str) -> Result<'v, 's,
     };
 
     if digits.is_empty() {
-        return Ok(None);
+        return None;
     }
 
     let (radix, digits) = if let Some(rest) = digits.strip_prefix("0b") {
@@ -495,7 +616,7 @@ fn parse_int<'v, 's>(strand: &mut Strand<'v, 's>, value: &str) -> Result<'v, 's,
     };
 
     if digits.is_empty() {
-        return Ok(None);
+        return None;
     }
 
     let valid_digits = match radix {
@@ -506,17 +627,15 @@ fn parse_int<'v, 's>(strand: &mut Strand<'v, 's>, value: &str) -> Result<'v, 's,
         _ => false,
     };
     if !valid_digits {
-        return Ok(None);
+        return None;
     }
 
-    let unsigned = if negative {
-        i128::from_str_radix(digits, radix)
-            .map(|value| -value)
-            .map_err(|_| Error::data(strand, "numeric overflow"))?
+    let magnitude = i128::from_str_radix(digits, radix).ok();
+    Some(if negative {
+        magnitude.map(|value| -value)
     } else {
-        i128::from_str_radix(digits, radix).map_err(|_| Error::data(strand, "numeric overflow"))?
-    };
-    Ok(Some(unsigned))
+        magnitude
+    })
 }
 
 fn parse_float(value: &str) -> Option<f64> {
@@ -527,5 +646,106 @@ fn parse_float(value: &str) -> Option<f64> {
         ".nan" | ".NaN" | ".NAN" => Some(f64::NAN),
         text if text.chars().any(|ch| matches!(ch, '.' | 'e' | 'E')) => text.parse().ok(),
         _ => None,
+    }
+}
+
+impl<'v> Object<'v> for DecodeError {
+    const NAME: &'v str = "DecodeError";
+    const MODULE: &'v str = "yaml";
+    type Annex = DecodeAnnex;
+    type Type = ();
+    type TypeAnnex = ();
+
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let syntax = builder.sym("SYNTAX");
+        let unsupported = builder.sym("UNSUPPORTED");
+        let documents = builder.sym("DOCUMENTS");
+        let range = builder.sym("RANGE");
+        builder
+            .nominal_supertype(TypeObject::DataError)
+            .get("kind", move |this, strand, out| {
+                let kind = match this.annex().kind {
+                    DecodeKind::Syntax => syntax,
+                    DecodeKind::Unsupported => unsupported,
+                    DecodeKind::Documents => documents,
+                    DecodeKind::Range => range,
+                };
+                Output::set(strand, out, kind);
+                Ok(())
+            })
+            .get("line", |this, strand, out| {
+                Output::set(strand, out, this.annex().line);
+                Ok(())
+            })
+            .get("column", |this, strand, out| {
+                Output::set(strand, out, this.annex().column);
+                Ok(())
+            })
+    }
+
+    fn display<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        fmt!(strand, w, "{}", this.annex().message)
+    }
+
+    fn debug<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        fmt!(strand, w, "<yaml.DecodeError ")?;
+        Self::display(this, strand, w)?;
+        fmt!(strand, w, ">")
+    }
+}
+
+impl<'v> Object<'v> for EncodeError {
+    const NAME: &'v str = "EncodeError";
+    const MODULE: &'v str = "yaml";
+    /// Slot 0 is the path tuple.
+    const SLOTS: usize = 1;
+    type Annex = EncodeAnnex;
+    type Type = ();
+    type TypeAnnex = ();
+
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let cycle = builder.sym("CYCLE");
+        let range = builder.sym("RANGE");
+        builder
+            .nominal_supertype(TypeObject::ValueError)
+            .get("kind", move |this, strand, out| {
+                let kind = match this.annex().kind {
+                    EncodeKind::Cycle => cycle,
+                    EncodeKind::Range => range,
+                };
+                Output::set(strand, out, kind);
+                Ok(())
+            })
+            .get("path", |this, strand, out| {
+                let borrow = this.borrow(strand)?;
+                Output::set(strand, out, Ref::slot::<0>(&borrow));
+                Ok(())
+            })
+    }
+
+    fn display<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        fmt!(strand, w, "{}", this.annex().message)
+    }
+
+    fn debug<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        fmt!(strand, w, "<yaml.EncodeError ")?;
+        Self::display(this, strand, w)?;
+        fmt!(strand, w, ">")
     }
 }
