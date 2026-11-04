@@ -586,6 +586,10 @@ pub class BaseFile: Io
   #
   # The new absolute byte position.
   #
+  # ## Errors
+  #
+  # [`ValueError`](std.ValueError) if `start` is negative.
+  #
   # ## Example
   #
   # ```

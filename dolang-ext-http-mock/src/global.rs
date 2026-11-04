@@ -30,6 +30,18 @@ pub(crate) struct Syms<'v> {
     pub(crate) name: Sym<'v, 'v>,
     pub(crate) close: Sym<'v, 'v>,
     pub(crate) cancel: Sym<'v, 'v>,
+    pub(crate) assert: Sym<'v, 'v>,
+    pub(crate) fault: Sym<'v, 'v>,
+    pub(crate) faults: FaultSyms<'v>,
+}
+
+/// The values of `respond.fault`.
+pub(crate) struct FaultSyms<'v> {
+    pub(crate) reset: Sym<'v, 'v>,
+    pub(crate) close: Sym<'v, 'v>,
+    pub(crate) garbage: Sym<'v, 'v>,
+    pub(crate) truncate: Sym<'v, 'v>,
+    pub(crate) bad_chunk: Sym<'v, 'v>,
 }
 
 pub(crate) struct Global<'v> {
@@ -70,6 +82,15 @@ impl<'v> Global<'v> {
                 name: builder.sym("name"),
                 close: builder.sym("close"),
                 cancel: builder.sym("cancel"),
+                assert: builder.sym("Assert"),
+                fault: builder.sym("fault"),
+                faults: FaultSyms {
+                    reset: builder.sym("RESET"),
+                    close: builder.sym("CLOSE"),
+                    garbage: builder.sym("GARBAGE"),
+                    truncate: builder.sym("TRUNCATE"),
+                    bad_chunk: builder.sym("BAD_CHUNK"),
+                },
             },
         }
     }

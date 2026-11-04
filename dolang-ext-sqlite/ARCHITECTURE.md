@@ -57,6 +57,26 @@ SQLite calls are dispatched via `tokio::task::spawn_blocking()`. `Connection`
 methods are `async fn`s that await these blocking tasks, so they compose
 naturally with Do's strand concurrency.
 
+An interrupt of the strand waiting on a statement calls `sqlite3_interrupt` on
+its connection, then waits for the task with interrupts masked and raises the
+strand's own interrupt error in place of the `SQLITE_INTERRUPT` that follows.
+A task that is closing the connection is left to finish, since it frees the
+handle itself.
+
+## Errors
+
+A failure is captured as a `Failure` inside the blocking task, before the
+handle can be closed: the extended result code, SQLite's message, and the OS
+error behind it, if one can be recovered. The strand then raises it as the
+`sys.Error` class for the OS error, or else as `sqlite.Error` or the subclass
+the code belongs to.
+
+SQLite keeps only a code for an OS failure. Its own VFSes record the errno,
+which `sqlite3_system_errno` returns. The custom VFS records the OS error
+itself, in the thread-local `LAST_ERROR`, along with the code it returned; the
+error is used only when the failure's primary code matches, so an error SQLite
+recovered from is not blamed for a later one.
+
 ## Busy Retries
 
 `SQLITE_BUSY` and `SQLITE_LOCKED` errors trigger automatic retries with

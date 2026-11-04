@@ -13,7 +13,7 @@ pub def environment mapping @ shell.Env
 # LL |   mapping["FOO"] = nil
 #    |                    ^^^
 
-pub def headers response @ http.Response status @ http.Status
+pub def headers response @ http.Response status @ http.StatusError
   let _headers @ Map[Str, Str | time.DateTime] = response.headers
   let _status @ Map[Str, Str | time.DateTime] = status.headers
   response.headers.delete "x-test"

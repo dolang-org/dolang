@@ -444,11 +444,17 @@ out (the hierarchy is in
 
 Classify by what the function is for: bad contents in what it parses or
 decodes are data errors, and bad options or settings that control how it works
-are value errors.
+are value errors. A foreign library's error caused by the caller's own
+arguments, such as a builder or parse error from an option, raises a std class
+rather than the module's error class.
 
 Convert foreign errors with a method that names the class:
 
 - `into_do_io` for an `io::Error`, which keeps its `sys` class.
+- `into_sys` (`dolang_ext_shell::ErrorExt` and `ResultExt`) in crates that
+  depend on the shell extension. It also takes a `VfsError`. For a condition
+  with no OS error behind it, such as a missing archive entry, build an
+  `io::Error` of the matching `ErrorKind` to raise the `sys` class.
 - `into_do_decode` for an `io::Error` from a decoder library that reports
   malformed input as `ErrorKind::Other` or truncated input as
   `UnexpectedEof`, as the tar crate does. Those become `DataError`s, and other
@@ -465,7 +471,14 @@ document.
 Use `Error::runtime` when an untyped error is really intended.
 
 A `kind` field that distinguishes cases of one error class takes uppercase
-symbols, such as `:SYNTAX:` or `:CYCLE:`.
+symbols, such as `:SYNTAX:` or `:CYCLE:`. Use it when callers have no real
+reason to catch some cases but not others. When they do, use subclasses that
+share one annex; splitting a kind out into a subclass later stays mostly
+backward compatible. A subclass's `kind` can only narrow its base's, so a base
+class with a `kind` must declare the union of all its subclasses' kinds.
+
+A `spawn_blocking` task that panicked resumes the panic with
+`std::panic::resume_unwind` rather than raising an error.
 
 ## GC Slots and Lifetime Transmuting
 

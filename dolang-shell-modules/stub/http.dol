@@ -27,7 +27,27 @@
 # - Request bodies are buffered, not streamed.
 # - The [`Client`](http.Client) options `unix_socket`, `proxy`, `cookies`,
 #   `ca_cert`, `identity`, `password` and `invalid_certs` raise
-#   [`RuntimeError`](std.RuntimeError).
+#   [`UnsupportedError`](std.UnsupportedError).
+#
+# ## Errors {: #http.errors }
+#
+# A request that fails raises a subclass of [`Error`](http.Error). The
+# subclasses group the failures by how a caller should respond:
+#
+# | Class                                   | Raised when                                  | Usual response             |
+# | --------------------------------------- | -------------------------------------------- | -------------------------- |
+# | [`TransportError`](http.TransportError) | Connecting fails or the connection breaks    | Retry                      |
+# | [`DataError`](http.DataError)           | The response is malformed                    | Propagate                  |
+# | [`RequestError`](http.RequestError)     | Following redirects fails, or anything else  | Propagate                  |
+# | [`StatusError`](http.StatusError)       | The response's status is outside `200..=299` | Depends on the application |
+#
+# Each subclass but `StatusError` has a `kind` that says more, and
+# [`cause`](http.Error.cause) gives the operating system's error behind the
+# failure, if any.
+#
+# Bad arguments raise the standard classes instead, such as
+# [`ValueError`](std.ValueError) for a URL with a scheme other than `http` or
+# `https`.
 
 import
   io:
@@ -42,11 +62,10 @@ import
   url:
     - @Url
 
-# A transport or protocol failure.
+# Raised when a request fails; never raised itself.
 #
-# A response that arrives but carries a non-2xx status is reported as
-# [`Status`](http.Status) instead, which extends this type -- so `catch Error`
-# catches both.
+# Catching `Error` catches its subclasses, which group the failures callers
+# handle differently. See [Errors](http.errors).
 #
 # ## Example
 #
@@ -73,6 +92,83 @@ pub class Error: RuntimeError
   pub def url self -> (Url | nil)
     ...
 
+  # The operating system's error behind the failure, such as a
+  # [`sys.ConnectionResetError`](sys.ConnectionResetError), or `nil` when there
+  # is none. It is always `nil` on a [`StatusError`](http.StatusError).
+  #
+  # ## Example
+  #
+  # ```
+  # try
+  #   get "http://127.0.0.1:1"
+  # catch TransportError: err
+  #   echo "cause: $(err.cause)"
+  # ```
+  #[getter]
+  pub def cause self -> (std.Error | nil)
+    ...
+
+# Raised when the exchange with the server breaks down: connecting, the TLS
+# handshake, or the connection failing before the response is complete.
+#
+# These failures are often temporary, so this is the class to retry.
+#
+# ## Example
+#
+# ```
+# let response = nil
+# for attempt = 0..3
+#   try
+#     response = get https://mirror.example.com/file
+#     break
+#   catch TransportError: err
+#     echo "attempt $attempt failed: $err"
+# ```
+pub class TransportError: Error
+  # Where the exchange failed.
+  #
+  # | Kind        | Meaning                                                                             |
+  # | ----------- | ----------------------------------------------------------------------------------- |
+  # | `:CONNECT:` | Connecting failed: the name did not resolve, or the host refused or was unreachable |
+  # | `:TLS:`     | The TLS handshake failed, or the certificate was rejected                           |
+  # | `:CLOSED:`  | The server closed the connection before the response was complete                   |
+  # | `:IO:`      | Another I/O failure, such as a reset; [`cause`](http.Error.cause) says which        |
+  #[getter]
+  pub def kind self -> (:CONNECT: | :TLS: | :CLOSED: | :IO:)
+    ...
+
+# Raised when the server's response is malformed.
+#
+# This is also a [`std.DataError`](std.DataError).
+pub class DataError: Error std.DataError
+  # Raised only by requests; there is no public constructor.
+  def (init) self
+    ...
+
+  # What was malformed.
+  #
+  # | Kind          | Meaning                                           |
+  # | ------------- | ------------------------------------------------- |
+  # | `:PARSE:`     | The status line or headers                        |
+  # | `:TOO_LARGE:` | The status line and headers exceed the size limit |
+  # | `:BODY:`      | The body's framing, such as a malformed chunk     |
+  #[getter]
+  pub def kind self -> (:PARSE: | :TOO_LARGE: | :BODY:)
+    ...
+
+# Raised when a request fails for a reason other than the transport, the
+# response's format, or its status.
+pub class RequestError: Error
+  # Why the request failed.
+  #
+  # | Kind         | Meaning                                                |
+  # | ------------ | ------------------------------------------------------ |
+  # | `:REDIRECT:` | Following redirects failed, such as on a redirect loop |
+  # | `:OTHER:`    | Any other failure                                      |
+  #[getter]
+  pub def kind self -> (:REDIRECT: | :OTHER:)
+    ...
+
 # A response whose status is outside `200..=299`.
 #
 # Raised by a request that completes normally but reports a failure status,
@@ -85,11 +181,11 @@ pub class Error: RuntimeError
 # ```
 # try
 #   get "https://example.com/missing"
-# catch Status: err
+# catch StatusError: err
 #   echo $err.status
 #   echo $err.text()
 # ```
-pub class Status: Error
+pub class StatusError: Error
   # The HTTP status code.
   #[getter]
   pub def status self -> Int
@@ -218,10 +314,11 @@ pub class Response
   #
   # ## Errors
   #
-  # | Exception                         | Condition                             |
-  # | --------------------------------- | ------------------------------------- |
-  # | [`StateError`](std.StateError)    | The body was read or the response closed |
-  # | [`Error`](http.Error)             | A transport or protocol failure       |
+  # | Exception                               | Condition                                         |
+  # | --------------------------------------- | ------------------------------------------------- |
+  # | [`StateError`](std.StateError)          | The body was read or the response closed          |
+  # | [`TransportError`](http.TransportError) | The connection breaks before the body is complete |
+  # | [`DataError`](http.DataError)           | The body's framing is malformed                   |
   pub def text self -> Str
     ...
 
@@ -229,11 +326,12 @@ pub class Response
   #
   # ## Errors
   #
-  # | Exception                             | Condition                       |
-  # | ------------------------------------- | ------------------------------- |
-  # | [`StateError`](std.StateError)        | The body was read or the response closed |
-  # | [`Error`](http.Error)                 | A transport or protocol failure |
-  # | [`DataError`](std.DataError)   | The body is not valid JSON      |
+  # | Exception                               | Condition                                         |
+  # | --------------------------------------- | ------------------------------------------------- |
+  # | [`StateError`](std.StateError)          | The body was read or the response closed          |
+  # | [`TransportError`](http.TransportError) | The connection breaks before the body is complete |
+  # | [`DataError`](http.DataError)           | The body's framing is malformed                   |
+  # | [`std.DataError`](std.DataError)        | The body is not valid JSON                        |
   #
   # ## Example
   #
@@ -252,7 +350,8 @@ pub class Response
   # closes it.
   #
   # A failure reading the body raises from the stream's methods as an I/O
-  # error, not an [`Error`](http.Error).
+  # error, not an [`Error`](http.Error): the error behind it where there is
+  # one, such as a [`sys.ConnectionResetError`](sys.ConnectionResetError).
   #
   # ## Example
   #
@@ -302,11 +401,12 @@ pub class Response
   #
   # ## Errors
   #
-  # | Exception                             | Condition                            |
-  # | ------------------------------------- | ------------------------------------ |
-  # | [`StateError`](std.StateError)        | The body was read or the response closed |
-  # | [`Error`](http.Error)                 | The underlying body read fails       |
-  # | [`DataError`](std.DataError) | The stream contains invalid UTF-8    |
+  # | Exception                               | Condition                                         |
+  # | --------------------------------------- | ------------------------------------------------- |
+  # | [`StateError`](std.StateError)          | The body was read or the response closed          |
+  # | [`TransportError`](http.TransportError) | The connection breaks before the body is complete |
+  # | [`DataError`](http.DataError)           | The body's framing is malformed                   |
+  # | [`std.DataError`](std.DataError)        | The stream contains invalid UTF-8                 |
   #
   # ## Example
   #
@@ -318,7 +418,7 @@ pub class Response
   pub def events self -> Iter[Event]
     ...
 
-  # Raises [`Status`](http.Status) when the status is outside `200..=299`, and
+  # Raises [`StatusError`](http.StatusError) when the status is outside `200..=299`, and
   # does nothing otherwise.
   #
   # This is what a request does for you unless `status: :IGNORE:` was passed,
@@ -341,7 +441,7 @@ pub @let RequestOptions = $
   # Query parameters -- see [`query`](http.Client.query)
   ?query: BaseDict[Value, Value]
   # `:IGNORE:` to return a response whose status is outside `200..=299` instead
-  # of raising [`Status`](http.Status)
+  # of raising [`StatusError`](http.StatusError)
   ?status: (:IGNORE: | "IGNORE")
 
 # Options of a request with a body: those of
@@ -485,7 +585,7 @@ pub class Client: Func
   # Builds a client.
   #
   # Browser builds accept only `func`; any other option raises
-  # [`RuntimeError`](std.RuntimeError).
+  # [`UnsupportedError`](std.UnsupportedError).
   #
   # ## Example
   #
@@ -501,7 +601,8 @@ pub class Client: Func
   @def (call)
     self
     # Path to a Unix domain socket to connect
-    # through. Unix only.
+    # through. Unix only; elsewhere it raises
+    # [`UnsupportedError`](std.UnsupportedError).
     #
     # This is **not** container-transparent: it connects to a socket on the
     # host running the Do process, not through the shell agent's container
@@ -512,7 +613,8 @@ pub class Client: Func
     #
     # By default the client honors the system proxy environment
     # (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`). Passing `nil` explicitly
-    # disables proxy detection entirely rather than selecting the default.
+    # disables proxy detection entirely rather than selecting the default. An
+    # invalid proxy URL raises [`ValueError`](std.ValueError).
     :proxy @ (Str | (Url | nil)) = ...
     # Give the client a cookie jar, so cookies it
     # receives are replayed on later requests.
@@ -521,10 +623,12 @@ pub class Client: Func
     # the module-level request functions included.
     :cookies @ Bool = ...
     # PEM-encoded CA
-    # certificate to add to the trust store.
+    # certificate to add to the trust store. One that does not parse raises
+    # [`DataError`](std.DataError).
     :ca_cert @ (Str | Bin) = ...
     # PKCS#12/PFX client
-    # certificate, for mutual TLS.
+    # certificate, for mutual TLS. One that does not parse, or a wrong
+    # `password`, raises [`DataError`](std.DataError).
     :identity @ (Str | Bin) = ...
     # Password for `identity`. Defaults to empty.
     # Passing it without `identity` raises
@@ -539,7 +643,7 @@ pub class Client: Func
   # returns.
   #
   # Browser builds accept only `func`; any other option raises
-  # [`RuntimeError`](std.RuntimeError).
+  # [`UnsupportedError`](std.UnsupportedError).
   #[class]
   @def (call)[R]
     self
@@ -589,10 +693,13 @@ pub class Client: Func
   #
   # ## Errors
   #
-  # | Exception               | Condition                                            |
-  # | ----------------------- | ---------------------------------------------------- |
-  # | [`Status`](http.Status) | The response is non-2xx and `status:` was not passed |
-  # | [`Error`](http.Error)   | A transport or protocol failure                      |
+  # | Exception                               | Condition                                            |
+  # | --------------------------------------- | ---------------------------------------------------- |
+  # | [`StatusError`](http.StatusError)       | The response is non-2xx and `status:` was not passed |
+  # | [`TransportError`](http.TransportError) | Connecting fails or the connection breaks            |
+  # | [`DataError`](http.DataError)           | The response is malformed                            |
+  # | [`RequestError`](http.RequestError)     | Following redirects fails                            |
+  # | [`ValueError`](std.ValueError)          | The URL, a header, or the body arguments are invalid |
   #
   # ## Example
   #
@@ -629,10 +736,13 @@ pub class Client: Func
   #
   # ## Errors
   #
-  # | Exception               | Condition                                            |
-  # | ----------------------- | ---------------------------------------------------- |
-  # | [`Status`](http.Status) | The response is non-2xx and `status:` was not passed |
-  # | [`Error`](http.Error)   | A transport or protocol failure                      |
+  # | Exception                               | Condition                                            |
+  # | --------------------------------------- | ---------------------------------------------------- |
+  # | [`StatusError`](http.StatusError)       | The response is non-2xx and `status:` was not passed |
+  # | [`TransportError`](http.TransportError) | Connecting fails or the connection breaks            |
+  # | [`DataError`](http.DataError)           | The response is malformed                            |
+  # | [`RequestError`](http.RequestError)     | Following redirects fails                            |
+  # | [`ValueError`](std.ValueError)          | The URL, a header, or the body arguments are invalid |
   #
   # ## Example
   #
@@ -843,10 +953,13 @@ pub class Client: Func
 #
 # ## Errors
 #
-# | Exception               | Condition                                            |
-# | ----------------------- | ---------------------------------------------------- |
-# | [`Status`](http.Status) | The response is non-2xx and `status:` was not passed |
-# | [`Error`](http.Error)   | A transport or protocol failure                      |
+# | Exception                               | Condition                                            |
+# | --------------------------------------- | ---------------------------------------------------- |
+# | [`StatusError`](http.StatusError)       | The response is non-2xx and `status:` was not passed |
+# | [`TransportError`](http.TransportError) | Connecting fails or the connection breaks            |
+# | [`DataError`](http.DataError)           | The response is malformed                            |
+# | [`RequestError`](http.RequestError)     | Following redirects fails                            |
+# | [`ValueError`](std.ValueError)          | The URL, a header, or the body arguments are invalid |
 #
 # ## Example
 #
@@ -879,10 +992,13 @@ pub def get url @ (Str | Url) ...options @ Value -> Value
 #
 # ## Errors
 #
-# | Exception               | Condition                                            |
-# | ----------------------- | ---------------------------------------------------- |
-# | [`Status`](http.Status) | The response is non-2xx and `status:` was not passed |
-# | [`Error`](http.Error)   | A transport or protocol failure                      |
+# | Exception                               | Condition                                            |
+# | --------------------------------------- | ---------------------------------------------------- |
+# | [`StatusError`](http.StatusError)       | The response is non-2xx and `status:` was not passed |
+# | [`TransportError`](http.TransportError) | Connecting fails or the connection breaks            |
+# | [`DataError`](http.DataError)           | The response is malformed                            |
+# | [`RequestError`](http.RequestError)     | Following redirects fails                            |
+# | [`ValueError`](std.ValueError)          | The URL, a header, or the body arguments are invalid |
 #
 # ## Example
 #

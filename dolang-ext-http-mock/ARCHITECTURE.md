@@ -66,6 +66,11 @@ HTTP/2 stream task in its own `FuturesUnordered`:
   target has no authority. A target that doesn't parse gets 400.
 - If the dispatcher is gone, the service answers 500 `http.mock: server
   closed`.
+- A response with a `fault:` never reaches hyper. The service sends the fault
+  to its connection over a channel and stays pending. The connection drops
+  hyper, then breaks the connection through a duplicate of the socket it took
+  before handing the stream over: it closes it, writes raw bytes first, or
+  sets a zero linger so the close resets.
 
 The loop exits when the shutdown oneshot resolves (sent or its sender
 dropped), when the dispatcher drops its receiver, or on an accept error. It

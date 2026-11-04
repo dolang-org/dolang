@@ -307,3 +307,18 @@ def header_names_that_do_not_fit_raise_value_errors()
   assert_throws $ValueError do
     tar.write long-target.tar do |archive|
       archive.symlink ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt link
+
+#[test]
+#[vfs]
+def unsafe_entry_paths_raise_value_errors()
+  tar.write paths.tar do |archive|
+    for path = ["/abs", "a/../b", "", "./"]
+      assert_throws $ValueError do
+        archive.create_dir $path
+      assert_throws $ValueError do
+        archive.entry $path size: 0 do |_| nil
+    # A rejected path does not poison the writer.
+    archive.create_dir ok
+  tar.read paths.tar do |archive|
+    let names = [...archive.map(do |entry| str entry.path)]
+    assert_eq $names ["ok"]

@@ -89,7 +89,7 @@ mod native {
             while self.chunk.is_empty() {
                 match ready!(self.stream.as_mut().poll_next(cx)) {
                     Some(Ok(chunk)) => self.chunk = chunk,
-                    Some(Err(err)) => return Poll::Ready(Err(io::Error::other(err))),
+                    Some(Err(err)) => return Poll::Ready(Err(crate::error::into_io(err))),
                     None => return Poll::Ready(Ok(0)),
                 }
             }

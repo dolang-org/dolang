@@ -1,9 +1,10 @@
 import http
 import http.mock
 import std:
-  - RuntimeError
+  - MissingPosError
   - ValueError
 import test:
+  - Assert
   - assert
   - assert_eq
   - assert_throws
@@ -253,9 +254,9 @@ def reset_unmounts_persistent_mocks()
     let after = http.get (server.url / "/reset") status: :IGNORE:
     assert_eq $after.status 404
     assert_eq $handle.received() []
-    let err = assert_throws $RuntimeError do
+    let err = assert_throws $Assert do
       handle.verify()
-    assert ((str err).contains "mock: unmounted")
+    assert ((err.message.contains "mock: unmounted"))
     handle.unmount()
 
 #[test]
@@ -269,7 +270,7 @@ def reset_inside_scoped_mock()
         server.reset()
         assert_eq $handle.received() []
 
-    let err = assert_throws $RuntimeError do
+    let err = assert_throws $Assert do
       server.mock
         - path: /reset
           expect: 0
@@ -278,7 +279,7 @@ def reset_inside_scoped_mock()
             status: 200
         do |_handle|
           server.reset()
-    assert ((str err).contains "counted: unmounted")
+    assert ((err.message.contains "counted: unmounted"))
 
 #[test]
 def unmount_inside_scoped_mock()
@@ -359,3 +360,39 @@ def received_is_in_arrival_order()
         assert_eq $requests.len 2
         assert ((str requests[0].url).ends_with "/b")
         assert ((str requests[1].url).ends_with "/a")
+
+#[test]
+def invalid_mock_arguments()
+  http.mock.Server do |server|
+    assert_throws $MissingPosError do
+      server.mock()
+    assert_throws $ValueError do
+      server.mock
+        - path: /bad
+          headers:
+            "bad name": x
+          respond:
+            status: 200
+    assert_throws $ValueError do
+      server.mock
+        - path: /bad
+          respond:
+            status: 200
+            headers:
+              "x-ok": "bad\nvalue"
+
+#[test]
+def fault_responses_count_as_matches()
+  http.mock.Server do |server|
+    server.mock
+      - method: GET
+        path: /broken
+        expect: 1
+        respond:
+          fault: :CLOSE:
+      do |_handle|
+        assert_throws $http.TransportError do http.get (server.url / "/broken")
+    assert_throws $ValueError do
+      server.mock
+        - respond:
+            fault: :BOGUS:

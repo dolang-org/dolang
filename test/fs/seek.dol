@@ -13,6 +13,7 @@ import testlib.vfs:
 import std:
   - MissingPosError
   - UnexpectedKeyError
+  - ValueError
 
 #[test]
 #[vfs]
@@ -52,4 +53,5 @@ def seek_rejects_redundant_args()
     assert_throws $UnexpectedKeyError do file.seek 1 start: 2
     assert_throws $UnexpectedKeyError do file.seek start: 1 end: 2
     assert_throws $MissingPosError do file.seek()
+    assert_throws $ValueError do file.seek start: (0 - 1)
   remove $path

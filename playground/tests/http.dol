@@ -68,7 +68,7 @@ assert_eq $events[1].data "line one\nline two"
 let missing = try
   http.get $api/missing
   nil
-catch http.Status: err
+catch http.StatusError: err
   err
 assert_eq $missing.status 404
 assert_eq $missing.text() "no such thing"

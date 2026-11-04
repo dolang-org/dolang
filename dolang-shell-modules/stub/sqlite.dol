@@ -15,11 +15,27 @@
 # This API is partially VFS-aware. It opens databases over the Unix socket
 # transport on Unix hosts, so `docker.with` and `sudo.with` work. Remote
 # transports and Windows UAC elevation are not supported.
+#
+# ## Errors {: #sqlite.errors }
+#
+# A failed SQLite operation raises [`Error`](sqlite.Error) or one of its
+# subclasses, which group the failures callers handle differently:
+# [`Busy`](sqlite.Busy), [`ConstraintError`](sqlite.ConstraintError), and
+# [`CorruptError`](sqlite.CorruptError). Each carries a
+# [`kind`](sqlite.Error.kind) and SQLite's [`code`](sqlite.Error.code).
+#
+# When the operating system's error behind a failure is known, such as a
+# database file in a directory that does not exist, the
+# [`sys.Error`](sys.Error) subclass for it is raised instead.
+#
+# Canceling the strand running a statement, or letting a
+# [`timeout`](time.timeout) expire around it, interrupts the statement.
 
 import
   fs:
     - @Path
   std:
+    - DataError
     - RuntimeError
     - @Fmt
 
@@ -32,10 +48,31 @@ pub @let SqlValue = $
   | Str
   | Bin
 
-# Raised when a SQLite operation fails for any reason other than the database
-# being locked.
+# Why a SQLite operation failed; see [`Error.kind`](sqlite.Error.kind).
+pub @let ErrorKind = $
+  | :BUSY:
+  | :LOCKED:
+  | :UNIQUE:
+  | :PRIMARY_KEY:
+  | :FOREIGN_KEY:
+  | :NOT_NULL:
+  | :CHECK:
+  | :CONSTRAINT:
+  | :CORRUPT:
+  | :NOTADB:
+  | :SQL:
+  | :FULL:
+  | :READONLY:
+  | :PERM:
+  | :CANTOPEN:
+  | :IO:
+  | :OTHER:
+
+# Raised when a SQLite operation fails.
 #
-# Catching `Error` also catches [`Busy`](sqlite.Busy), which extends it.
+# Catching `Error` also catches its subclasses, [`Busy`](sqlite.Busy),
+# [`ConstraintError`](sqlite.ConstraintError), and
+# [`CorruptError`](sqlite.CorruptError). See [Errors](sqlite.errors).
 #
 # ## Example
 #
@@ -46,9 +83,32 @@ pub @let SqlValue = $
 #   catch Busy: _
 #     echo "database is busy"
 #   catch Error: e
-#     echo "sqlite error: $e"
+#     echo "sqlite error ($(e.kind)): $e"
 # ```
 pub class Error: RuntimeError
+  # Why the operation failed.
+  #
+  # | Kind                                                    | Meaning                                                                          |
+  # | ------------------------------------------------------- | -------------------------------------------------------------------------------- |
+  # | `:BUSY:`, `:LOCKED:`                                    | The database is locked; see [`Busy`](sqlite.Busy)                                |
+  # | A [`ConstraintError`](sqlite.ConstraintError.kind) kind | A constraint was violated                                                        |
+  # | `:CORRUPT:`, `:NOTADB:`                                 | The file is damaged or not a database; see [`CorruptError`](sqlite.CorruptError) |
+  # | `:SQL:`                                                 | The SQL is invalid, or names a table or column that does not exist               |
+  # | `:FULL:`                                                | The database or disk is full                                                     |
+  # | `:READONLY:`                                            | The database cannot be written                                                   |
+  # | `:PERM:`                                                | Access was denied                                                                |
+  # | `:CANTOPEN:`                                            | The database file cannot be opened                                               |
+  # | `:IO:`                                                  | An I/O operation failed                                                          |
+  # | `:OTHER:`                                               | Any other failure                                                                |
+  #[getter]
+  pub def kind self -> ErrorKind
+    ...
+
+  # SQLite's [extended result code](https://www.sqlite.org/rescode.html) for
+  # the failure, such as `2067` for `SQLITE_CONSTRAINT_UNIQUE`.
+  #[getter]
+  pub def code self -> Int
+    ...
 
 # Raised when an operation fails because the database is locked by another
 # connection or process.
@@ -57,6 +117,53 @@ pub class Error: RuntimeError
 # retry](sqlite.Connection.busy-retry). Inside a transaction the whole block is
 # retried instead; see [`Connection.transaction`](sqlite.Connection.transaction).
 pub class Busy: Error
+  # `:BUSY:` when another connection holds a lock, `:LOCKED:` when the
+  # conflict is within this connection.
+  #[getter]
+  pub def kind self -> (:BUSY: | :LOCKED:)
+    ...
+
+# Raised when a statement violates a constraint.
+#
+# ## Example
+#
+# ```
+# try
+#   conn.execute t"INSERT INTO users (name) VALUES ($name)"
+# catch ConstraintError: e
+#   if (e.kind != :UNIQUE:)
+#     throw e
+#   echo "$name is taken"
+# ```
+pub class ConstraintError: Error
+  # The constraint violated.
+  #
+  # | Kind            | Constraint                              |
+  # | --------------- | --------------------------------------- |
+  # | `:UNIQUE:`      | `UNIQUE`                                |
+  # | `:PRIMARY_KEY:` | `PRIMARY KEY`                           |
+  # | `:FOREIGN_KEY:` | `REFERENCES` or `FOREIGN KEY`           |
+  # | `:NOT_NULL:`    | `NOT NULL`                              |
+  # | `:CHECK:`       | `CHECK`                                 |
+  # | `:CONSTRAINT:`  | Any other, such as one a trigger raises |
+  #[getter]
+  pub def kind self -> (:UNIQUE: | :PRIMARY_KEY: | :FOREIGN_KEY: | :NOT_NULL: | :CHECK: | :CONSTRAINT:)
+    ...
+
+# Raised when the database file is damaged, or is not a SQLite database.
+#
+# Opening a database reads nothing, so this is raised by the first statement
+# that does.
+pub class CorruptError: Error DataError
+  # Raised only by SQLite operations; there is no public constructor.
+  def (init) self
+    ...
+
+  # `:NOTADB:` when the file is not a database, `:CORRUPT:` when it is a
+  # damaged one.
+  #[getter]
+  pub def kind self -> (:CORRUPT: | :NOTADB:)
+    ...
 
 # An open database connection.
 #
@@ -117,7 +224,9 @@ pub class Connection
   #
   # ## Errors
   #
-  # [`ValueError`](std.ValueError) if the SQL text contains a NUL.
+  # [`ValueError`](std.ValueError) if the SQL text contains a NUL, and
+  # otherwise those of [`prepare`](sqlite.Connection.prepare) and
+  # [`Statement.execute`](sqlite.Statement.execute).
   #
   # ## Example
   #
@@ -146,7 +255,13 @@ pub class Connection
   #
   # ## Errors
   #
-  # [`ValueError`](std.ValueError) if the SQL text contains a NUL.
+  # | Exception                             | Condition                                                            |
+  # | ------------------------------------- | -------------------------------------------------------------------- |
+  # | [`ValueError`](std.ValueError)        | The SQL text contains a NUL, or an interpolated value can't be bound |
+  # | [`Error`](sqlite.Error)               | The SQL is invalid (kind `:SQL:`)                                    |
+  # | [`CorruptError`](sqlite.CorruptError) | The database file is damaged or not a database                       |
+  #
+  # See [Errors](sqlite.errors) for the rest.
   #
   # ## Example
   #
@@ -249,7 +364,7 @@ pub class Connection
 #
 # | Condition                                   | Why                                                 |
 # | ------------------------------------------- | --------------------------------------------------- |
-# | The SQL is a [`Str`](std.Str)         | A `Str` cannot say which of its text is data        |
+# | The SQL is a [`Str`](std.Str)               | A `Str` cannot say which of its text is data        |
 # | A `:name` or `?` in the template's own text | The binder cannot see it, so it would step as NULL  |
 # | A quoted interpolation, as in `'$name'`     | Quoting buries the value in a literal, binding none |
 # | A specification, as in `${#0:>10}`          | A bound value is never rendered, so it takes none   |
@@ -261,9 +376,9 @@ pub class Connection
 #
 # ### Accepted value types
 #
-# | Do type                    | SQLite type | Example                              |
-# | -------------------------- | ----------- | ------------------------------------ |
-# | `nil`                      | NULL        | `stmt.execute value: nil`            |
+# | Do type              | SQLite type | Example                              |
+# | -------------------- | ----------- | ------------------------------------ |
+# | `nil`                | NULL        | `stmt.execute value: nil`            |
 # | [`Bool`](std.Bool)   | INTEGER     | `stmt.execute active: true`          |
 # | [`Int`](std.Int)     | INTEGER     | `stmt.execute id: 42`                |
 # | [`Float`](std.Float) | REAL        | `stmt.execute price: 19.99`          |
@@ -303,12 +418,17 @@ pub class Statement[S @ {*SqlValue, **SqlValue}]
   #
   # ## Errors
   #
-  # | Exception                                              | Condition                     |
-  # | ------------------------------------------------------ | ----------------------------- |
-  # | [`MissingPosError`](std.MissingPosError)       | A numbered parameter unfilled |
-  # | [`MissingKeyError`](std.MissingKeyError)       | A named parameter unfilled    |
-  # | [`UnexpectedPosError`](std.UnexpectedPosError) | A positional argument unused  |
-  # | [`UnexpectedKeyError`](std.UnexpectedKeyError) | A keyword argument unused     |
+  # | Exception                                      | Condition                                                            |
+  # | ---------------------------------------------- | -------------------------------------------------------------------- |
+  # | [`MissingPosError`](std.MissingPosError)       | A numbered parameter unfilled                                        |
+  # | [`MissingKeyError`](std.MissingKeyError)       | A named parameter unfilled                                           |
+  # | [`UnexpectedPosError`](std.UnexpectedPosError) | A positional argument unused                                         |
+  # | [`UnexpectedKeyError`](std.UnexpectedKeyError) | A keyword argument unused                                            |
+  # | [`ValueError`](std.ValueError)                 | A `Str` argument contains a NUL, or an argument is too large to bind |
+  # | [`ConstraintError`](sqlite.ConstraintError)    | The statement violates a constraint                                  |
+  # | [`Busy`](sqlite.Busy)                          | The database stays locked through every retry                        |
+  #
+  # See [Errors](sqlite.errors) for the rest.
   #
   # ## Example
   #
@@ -387,9 +507,9 @@ pub class Statement[S @ {*SqlValue, **SqlValue}]
 #
 # A column value is converted from its SQLite type:
 #
-# | SQLite type                | Do type                    | Notes                                                        |
-# | -------------------------- | -------------------------- | ------------------------------------------------------------ |
-# | NULL                       | `nil`                      |                                                              |
+# | SQLite type                | Do type              | Notes                                                        |
+# | -------------------------- | -------------------- | ------------------------------------------------------------ |
+# | NULL                       | `nil`                |                                                              |
 # | INTEGER (declared BOOLEAN) | [`Bool`](std.Bool)   | Declared type must be `BOOLEAN` or `BOOL` (case-insensitive) |
 # | INTEGER                    | [`Int`](std.Int)     |                                                              |
 # | REAL                       | [`Float`](std.Float) |                                                              |
@@ -483,7 +603,10 @@ pub class Transaction
 #
 # ## Errors
 #
-# [`ValueError`](std.ValueError) if `path` contains a NUL.
+# | Exception                      | Condition                                                                                                         |
+# | ------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+# | [`ValueError`](std.ValueError) | `path` contains a NUL                                                                                             |
+# | [`sys.Error`](sys.Error)       | The database file can't be opened, such as [`NotFoundError`](sys.NotFoundError) when its directory does not exist |
 #
 # ## Example
 #

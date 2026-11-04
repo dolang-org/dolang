@@ -1,32 +1,34 @@
-use crate::global::Tag;
-
-use std::{
-    cell::Cell,
-    ffi::{CStr, CString},
-    path::Path,
-    ptr,
-};
-
-use dolang::runtime::value::fmt::Format;
-
-use dolang::runtime::{object::fmt, strand::InterruptMask};
+use std::{cell::Cell, ffi::CString, path::Path, ptr};
 
 use dolang::runtime::{
-    Error, Instance, Object, Result, State, Strand, call, error::ResultExt, method, unpack,
+    Error, State, Strand, call, error::ResultExt, method, strand::InterruptMask, unpack,
     vm::Register,
 };
 use libsqlite3_sys::{
-    SQLITE_BUSY, SQLITE_LOCKED, SQLITE_OK, SQLITE_OPEN_CREATE, SQLITE_OPEN_READWRITE, sqlite3,
-    sqlite3_close, sqlite3_errmsg, sqlite3_errstr, sqlite3_open_v2,
+    SQLITE_OK, SQLITE_OPEN_CREATE, SQLITE_OPEN_READWRITE, sqlite3, sqlite3_close, sqlite3_open_v2,
 };
 
 use crate::global::Global;
 
+/// Maps a failed blocking task: a panic resumes on this thread, and a task
+/// dropped by a shutting-down runtime raises `CanceledError`.
+pub(crate) fn join_error<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    err: tokio::task::JoinError,
+) -> Error<'v, 's> {
+    if err.is_panic() {
+        std::panic::resume_unwind(err.into_panic())
+    }
+    Error::canceled(strand)
+}
+
 pub(crate) mod connection;
+pub(crate) mod error;
 pub(crate) mod row;
 pub(crate) mod statement;
 
 use connection::{Connection, ConnectionAnnex};
+use error::Failure;
 
 #[derive(Copy, Clone)]
 struct AssertSend<T>(T);
@@ -40,52 +42,6 @@ impl<T> AssertSend<T> {
 }
 
 type Epoch = u64;
-
-unsafe fn sqlite_error_message(raw: *mut sqlite3) -> String {
-    unsafe {
-        let msg = sqlite3_errmsg(raw);
-        if msg.is_null() {
-            "<unknown>".into()
-        } else {
-            CStr::from_ptr(msg).to_string_lossy().to_string()
-        }
-    }
-}
-
-unsafe fn map_sqlite_error<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    rc: i32,
-    raw: *mut sqlite3,
-) -> Error<'v, 's> {
-    let global = strand.state::<Tag>();
-    let msg = unsafe { sqlite_error_message(raw) };
-    if matches!(rc, SQLITE_BUSY | SQLITE_LOCKED) {
-        Error::object_with_annex(strand, global.types.busy, SqliteBusy, ErrorAnnex(rc, msg))
-    } else {
-        Error::object_with_annex(strand, global.types.error, SqliteError, ErrorAnnex(rc, msg))
-    }
-}
-
-unsafe fn sqlite_error_string(rc: i32) -> String {
-    unsafe {
-        let msg = sqlite3_errstr(rc);
-        if msg.is_null() {
-            "<unknown>".into()
-        } else {
-            CStr::from_ptr(msg).to_string_lossy().to_string()
-        }
-    }
-}
-
-fn map_sqlite_errcode<'v, 's>(strand: &mut Strand<'v, 's>, rc: i32) -> Error<'v, 's> {
-    let global = strand.state::<Tag>();
-    let msg = unsafe { sqlite_error_string(rc) };
-    if matches!(rc, SQLITE_BUSY | SQLITE_LOCKED) {
-        Error::object_with_annex(strand, global.types.busy, SqliteBusy, ErrorAnnex(rc, msg))
-    } else {
-        Error::object_with_annex(strand, global.types.error, SqliteError, ErrorAnnex(rc, msg))
-    }
-}
 
 pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     // Register the shell VFS for container-aware file operations.
@@ -168,18 +124,19 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                                 )
                             };
                             if rc != SQLITE_OK {
+                                let failure = unsafe { Failure::capture(raw, rc) };
                                 if !raw.is_null() {
                                     unsafe { sqlite3_close(raw) };
                                 }
-                                Err(rc)
+                                Err(failure)
                             } else {
                                 Ok(AssertSend(raw))
                             }
                         })
                     })
                     .await
-                    .map_err(|err| Error::runtime(strand, err))?
-                    .map_err(|rc| map_sqlite_errcode(strand, rc))?
+                    .map_err(|err| join_error(strand, err))?
+                    .map_err(|failure| failure.raise(strand))?
                     .into_inner()
                 }
             };
@@ -196,17 +153,18 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                         )
                     };
                     if rc != SQLITE_OK {
+                        let failure = unsafe { Failure::capture(raw, rc) };
                         if !raw.is_null() {
                             unsafe { sqlite3_close(raw) };
                         }
-                        Err(rc)
+                        Err(failure)
                     } else {
                         Ok(AssertSend(raw))
                     }
                 })
                 .await
-                .map_err(|err| Error::runtime(strand, err))?
-                .map_err(|rc| map_sqlite_errcode(strand, rc))?
+                .map_err(|err| join_error(strand, err))?
+                .map_err(|failure| failure.raise(strand))?
                 .into_inner()
             }
 
@@ -268,45 +226,11 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
         })
         .value("Error", global.types.error)
         .value("Busy", global.types.busy)
+        .value("ConstraintError", global.types.constraint)
+        .value("CorruptError", global.types.corrupt)
         .value("Connection", global.types.connection)
         .value("Statement", global.types.statement)
         .value("Transaction", global.types.transaction)
         .value("Row", global.types.row)
         .commit();
-}
-
-pub(crate) struct SqliteError;
-pub(crate) struct SqliteBusy;
-pub(crate) struct ErrorAnnex(#[expect(dead_code)] i32, String);
-
-impl<'v> Object<'v> for SqliteError {
-    const NAME: &'v str = "Error";
-    const MODULE: &'v str = "sqlite";
-    type Annex = ErrorAnnex;
-    type Type = ();
-    type TypeAnnex = ();
-
-    fn display<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        fmt!(strand, w, "{}", this.annex().1)
-    }
-}
-
-impl<'v> Object<'v> for SqliteBusy {
-    const NAME: &'v str = "Busy";
-    const MODULE: &'v str = "sqlite";
-    type Annex = ErrorAnnex;
-    type Type = ();
-    type TypeAnnex = ();
-
-    fn display<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        fmt!(strand, w, "{}", this.annex().1)
-    }
 }

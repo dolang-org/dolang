@@ -3,6 +3,8 @@ import fs:
   - with_temp_dir
 import http
 import http.mock
+import std:
+  - ValueError
 import test:
   - assert
   - assert_eq
@@ -261,8 +263,8 @@ def body_and_multipart_are_mutually_exclusive()
               - name: value
                 body: ok
           false
-        catch err
-          assert_eq (str err) "at most one of `body`, `lines`, `json`, or `multipart` arguments may be specified"
+        catch ValueError: err
+          assert ((str err).contains "at most one of `body`, `lines`, `json`, or `multipart` arguments may be specified")
           true
         assert $caught
 
@@ -282,8 +284,8 @@ def multipart_and_manual_content_type_are_mutually_exclusive()
               - name: value
                 body: ok
           false
-        catch err
-          assert_eq (str err) "multipart requests must not set content-type manually"
+        catch ValueError: err
+          assert ((str err).contains "multipart requests must not set content-type manually")
           true
         assert $caught
 
@@ -304,7 +306,7 @@ def multipart_part_body_and_json_are_mutually_exclusive()
                 json:
                   kind: nope
           false
-        catch err
-          assert_eq (str err) "multipart part may specify at most one of `body` or `json`"
+        catch ValueError: err
+          assert ((str err).contains "multipart part may specify at most one of `body` or `json`")
           true
         assert $caught

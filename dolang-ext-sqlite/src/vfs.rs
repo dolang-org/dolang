@@ -12,6 +12,7 @@ use std::{
     collections::HashMap,
     ffi::CString,
     fs::File,
+    io,
     os::unix::{
         fs::{FileExt, MetadataExt},
         io::{AsRawFd, RawFd},
@@ -72,11 +73,31 @@ fn gen_temp_path() -> String {
 /// - `PermissionDenied`, `AlreadyExists` → `SQLITE_CANTOPEN`
 /// - Anything else    → `default_code`
 fn map_vfs_err(err: Error, not_found_code: i32, default_code: i32) -> i32 {
-    match err.kind() {
+    let code = match err.kind() {
         ErrorKind::NotFound => not_found_code,
         ErrorKind::PermissionDenied | ErrorKind::AlreadyExists => SQLITE_CANTOPEN,
         _ => default_code,
-    }
+    };
+    os_error(code, err)
+}
+
+/// Records `err` as the OS error behind `code`, and returns `code`.
+///
+/// SQLite keeps only the code, so the error waits here for the failure to be
+/// raised; see [`take_last_error`].
+fn os_error(code: SqliteErr, err: impl Into<io::Error>) -> SqliteErr {
+    LAST_ERROR.with(|last| *last.borrow_mut() = Some((code, err.into())));
+    code
+}
+
+/// Takes the OS error recorded on this thread, if it was recorded for a code
+/// with the primary code `primary`. An error SQLite recovered from is left
+/// behind by a later, unrelated failure, which this check keeps from being
+/// blamed on it.
+pub(crate) fn take_last_error(primary: SqliteErr) -> Option<io::Error> {
+    LAST_ERROR
+        .with(|last| last.borrow_mut().take())
+        .and_then(|(code, err)| (code & 0xff == primary).then_some(err))
 }
 
 // SQLite lock byte ranges (from os_unix.c lines 7465-7467)
@@ -107,6 +128,9 @@ type SqliteErr = i32;
 thread_local! {
     /// Thread-local shell VFS client for VFS callbacks.
     static SHELL_VFS: RefCell<Option<VfsVfs>> = const { RefCell::new(None) };
+    /// The OS error behind the last failure a VFS callback reported, with its
+    /// code.
+    static LAST_ERROR: RefCell<Option<(SqliteErr, io::Error)>> = const { RefCell::new(None) };
 }
 
 /// Set the shell VFS in thread-local storage for the duration of the closure.
@@ -122,6 +146,7 @@ where
     }
 
     SHELL_VFS.with(|current| *current.borrow_mut() = Some(vfs));
+    LAST_ERROR.with(|last| *last.borrow_mut() = None);
     let _guard = ClearOnDrop;
     f()
 }
@@ -283,11 +308,12 @@ fn fcntl_set_lock(fd: RawFd, lock_type: c_short, start: off_t, len: off_t) -> Vf
     if ret == 0 {
         Ok(())
     } else {
-        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        let err = io::Error::last_os_error();
+        let errno = err.raw_os_error().unwrap_or(0);
         if errno == libc::EAGAIN || errno == libc::EACCES {
             Err(SQLITE_BUSY)
         } else {
-            Err(SQLITE_IOERR_LOCK)
+            Err(os_error(SQLITE_IOERR_LOCK, err))
         }
     }
 }
@@ -309,7 +335,7 @@ fn fcntl_unlock(fd: RawFd, start: off_t, len: off_t) -> VfsResult<()> {
     if ret == 0 {
         Ok(())
     } else {
-        Err(SQLITE_IOERR_UNLOCK)
+        Err(os_error(SQLITE_IOERR_UNLOCK, io::Error::last_os_error()))
     }
 }
 
@@ -476,7 +502,9 @@ fn lock_shm_dms(shm_file: &File, is_readonly: bool) -> VfsResult<()> {
             // Take exclusive write lock on DMS.
             shm_fcntl_lock(fd, F_WRLCK, UNIX_SHM_DMS, 1)?;
             // Truncate to 3 bytes to signal a fresh initialisation.
-            shm_file.set_len(3).map_err(|_| SQLITE_IOERR_SHMOPEN)?;
+            shm_file
+                .set_len(3)
+                .map_err(|e| os_error(SQLITE_IOERR_SHMOPEN, e))?;
             // Fall through to take the shared read lock below.
         }
         _ => {
@@ -687,7 +715,9 @@ impl Vfs for ShellVfs {
         };
 
         // Identify the file by device+inode for the global inode table.
-        let meta = std_file.metadata().map_err(|_| SQLITE_IOERR_FSTAT)?;
+        let meta = std_file
+            .metadata()
+            .map_err(|e| os_error(SQLITE_IOERR_FSTAT, e))?;
         let inode_id = InodeId {
             dev: meta.dev(),
             ino: meta.ino(),
@@ -759,28 +789,28 @@ impl Vfs for ShellVfs {
             .file
             .metadata()
             .map(|m| m.len() as usize)
-            .map_err(|_| SQLITE_IOERR_FSTAT)
+            .map_err(|e| os_error(SQLITE_IOERR_FSTAT, e))
     }
 
     fn truncate(&self, handle: &mut Self::Handle, size: usize) -> VfsResult<()> {
         handle
             .file
             .set_len(size as u64)
-            .map_err(|_| SQLITE_IOERR_TRUNCATE)
+            .map_err(|e| os_error(SQLITE_IOERR_TRUNCATE, e))
     }
 
     fn write(&self, handle: &mut Self::Handle, offset: usize, data: &[u8]) -> VfsResult<usize> {
         handle
             .file
             .write_at(data, offset as u64)
-            .map_err(|_| SQLITE_IOERR_WRITE)
+            .map_err(|e| os_error(SQLITE_IOERR_WRITE, e))
     }
 
     fn read(&self, handle: &mut Self::Handle, offset: usize, buf: &mut [u8]) -> VfsResult<usize> {
         handle
             .file
             .read_at(buf, offset as u64)
-            .map_err(|_| SQLITE_IOERR_READ)
+            .map_err(|e| os_error(SQLITE_IOERR_READ, e))
     }
 
     /// Replicates `unixLock` in os_unix.c.
@@ -918,7 +948,7 @@ impl Vfs for ShellVfs {
         if ret == 0 {
             Ok(())
         } else {
-            Err(SQLITE_IOERR_FSYNC)
+            Err(os_error(SQLITE_IOERR_FSYNC, io::Error::last_os_error()))
         }
     }
 
@@ -1044,7 +1074,10 @@ impl Vfs for ShellVfs {
             let shm_file = node.shm_file.as_ref().unwrap();
             let needed_bytes = needed * region_size;
 
-            let file_size = shm_file.metadata().map_err(|_| SQLITE_IOERR_SHMSIZE)?.len() as usize;
+            let file_size = shm_file
+                .metadata()
+                .map_err(|e| os_error(SQLITE_IOERR_SHMSIZE, e))?
+                .len() as usize;
 
             if file_size < needed_bytes {
                 if !extend || node.is_readonly {
@@ -1059,7 +1092,7 @@ impl Vfs for ShellVfs {
                 for blk in start_blk..end_blk {
                     shm_file
                         .write_at(&[0u8], blk * EXT_BLK + EXT_BLK - 1)
-                        .map_err(|_| SQLITE_IOERR_SHMSIZE)?;
+                        .map_err(|e| os_error(SQLITE_IOERR_SHMSIZE, e))?;
                 }
             }
 

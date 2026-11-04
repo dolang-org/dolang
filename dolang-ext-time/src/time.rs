@@ -281,10 +281,7 @@ impl DurationAnnex {
         strand: &mut Strand<'v, 's>,
     ) -> Result<'v, 's, std::time::Duration> {
         if self.total_nanos < 0 {
-            return Err(Error::runtime(
-                strand,
-                "sleep duration must be non-negative",
-            ));
+            return Err(Error::value(strand, "sleep duration must be non-negative"));
         }
         let total_nanos = self.total_nanos as u128;
         let secs = total_nanos / (NANOS_PER_SEC_I128 as u128);
@@ -340,10 +337,10 @@ fn format_datetime_rfc3339<'v, 's>(
     datetime: &DateTimeAnnex,
 ) -> Result<'v, 's, String> {
     let datetime = OffsetDateTime::from_unix_timestamp_nanos(datetime.total_nanos())
-        .map_err(|_| Error::runtime(strand, "invalid DateTime"))?;
+        .map_err(|_| Error::overflow(strand))?;
     datetime
         .format(&Rfc3339)
-        .map_err(|err| Error::runtime(strand, err))
+        .map_err(|err| Error::value(strand, err.to_string()))
 }
 
 pub(crate) fn coerce_duration<'v, 's>(
@@ -360,7 +357,7 @@ pub(crate) fn coerce_duration<'v, 's>(
 
     if let Some(i) = value.as_int(strand) {
         if i < 0 {
-            return Err(Error::runtime(
+            return Err(Error::value(
                 strand,
                 format!("{context} must be non-negative"),
             ));
@@ -371,7 +368,7 @@ pub(crate) fn coerce_duration<'v, 's>(
 
     if let Some(f) = value.as_f64(strand) {
         if !f.is_finite() || f < 0.0 {
-            return Err(Error::runtime(
+            return Err(Error::value(
                 strand,
                 format!("{context} must be a non-negative finite number"),
             ));
@@ -487,7 +484,7 @@ impl<'v> Object<'v> for Date {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let now = DateTimeAnnex::now().into_do_io(strand)?;
                 let date = OffsetDateTime::from_unix_timestamp_nanos(now.total_nanos())
-                    .map_err(|_| Error::runtime(strand, "invalid DateTime"))?
+                    .map_err(|_| Error::overflow(strand))?
                     .date();
                 this.create_with_annex(strand, Date, date, out);
                 Ok(())
@@ -899,7 +896,7 @@ impl<'v> Object<'v> for DateTime {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let datetime =
                     OffsetDateTime::from_unix_timestamp_nanos(this.annex().total_nanos())
-                        .map_err(|_| Error::runtime(strand, "invalid DateTime"))?;
+                        .map_err(|_| Error::overflow(strand))?;
                 let global = strand.state::<Tag>();
                 create_date(strand, global, datetime.date(), out);
                 Ok(())

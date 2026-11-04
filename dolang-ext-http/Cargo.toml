@@ -55,3 +55,11 @@ workspace = true
 
 [dependencies.dolang-ext-time]
 workspace = true
+
+
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies.hyper]
+version = "1"
+
+
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies.native-tls]
+version = "0.2"

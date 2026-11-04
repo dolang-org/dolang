@@ -6,6 +6,7 @@ extern crate dolang_ext_json;
 
 mod body;
 mod body_io;
+mod error;
 mod extension;
 mod global;
 mod http;

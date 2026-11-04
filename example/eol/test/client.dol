@@ -124,7 +124,7 @@ def server_errors_propagate()
           status: 500
       do |_handle|
         let client = eol.Client base_url: $server.url
-        let err = assert_throws $http.Status do client.product python
+        let err = assert_throws $http.StatusError do client.product python
         assert_eq $err.status 500
 
 #[test]

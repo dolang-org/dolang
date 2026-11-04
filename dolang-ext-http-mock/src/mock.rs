@@ -20,7 +20,7 @@ use http::{HeaderName, HeaderValue, StatusCode};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::global::Global;
-use crate::serve::{self, Dispatch, RequestSnapshot, Response};
+use crate::serve::{self, Dispatch, Fault, RequestSnapshot, Response};
 
 fn header_value_to_str(value: &HeaderValue) -> Cow<'_, str> {
     match value.to_str() {
@@ -35,10 +35,10 @@ fn header_value_from_slot<'v, 's>(
 ) -> Result<'v, 's, HeaderValue> {
     if let Some(time) = as_datetime(strand, value) {
         return HeaderValue::from_str(&httpdate::fmt_http_date(time))
-            .map_err(|err| Error::runtime(strand, err));
+            .map_err(|err| Error::value(strand, err.to_string()));
     }
     HeaderValue::from_bytes(value.to_string(strand)?.as_bytes())
-        .map_err(|err| Error::runtime(strand, err))
+        .map_err(|err| Error::value(strand, err.to_string()))
 }
 
 /// Writes `value` to `out`, auto-detecting HTTP-date-formatted values and
@@ -299,13 +299,13 @@ fn verify_expect(entry: &MockEntry) -> Option<String> {
     }
 }
 
-/// Checks every entry's `expect:`, raising one error listing every failure.
-/// Entries of an unmounted `Mock` (by `.unmount()` or `server.reset()`) fail
-/// their `expect:`.
+/// Checks every entry's `expect:`, returning one message listing every
+/// failure, or `None` if all are satisfied. Entries of an unmounted `Mock` (by
+/// `.unmount()` or `server.reset()`) fail their `expect:`.
 fn verify_mock<'v, 's>(
     strand: &mut Strand<'v, 's>,
     mock: Instance<'v, '_, MockObject>,
-) -> Result<'v, 's, ()> {
+) -> Result<'v, 's, Option<String>> {
     let messages = {
         let mock = mock.borrow(strand)?;
         let mut messages = Vec::new();
@@ -322,11 +322,27 @@ fn verify_mock<'v, 's>(
         }
         messages
     };
-    if messages.is_empty() {
-        Ok(())
-    } else {
-        Err(Error::runtime(strand, messages.join("\n")))
-    }
+    Ok((!messages.is_empty()).then(|| messages.join("\n")))
+}
+
+/// Raises the failure [`verify_mock`] found as a `test.Assert`, so a test
+/// reports an unmet `expect:` as a failed assertion.
+async fn raise_verify_failure<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, Global<'v>>,
+    failure: Result<'v, 's, Option<String>>,
+) -> Result<'v, 's, ()> {
+    let Some(message) = failure? else {
+        return Ok(());
+    };
+    let assert = global.syms.assert;
+    strand
+        .with_slots(async move |strand, [mut test, mut error]| {
+            strand.import("test", &mut test).await?;
+            method!(strand, test, assert, &mut error, message.as_str()).await?;
+            Err(Error::from_value(strand, &error))
+        })
+        .await
 }
 
 /// Combines two independent cleanup-step outcomes into one, chaining the
@@ -427,7 +443,7 @@ async fn parse_mock_spec<'v, 's>(
                         Slot::reborrow(&mut tmp3),
                         |strand, key, value| {
                             let name = HeaderName::from_bytes(key.to_string(strand)?.as_bytes())
-                                .map_err(|err| Error::runtime(strand, err))?;
+                                .map_err(|err| Error::value(strand, err.to_string()))?;
                             let hvalue = header_value_from_slot(strand, value)?;
                             matchers.push(Matcher::Header(name, hvalue));
                             Ok(())
@@ -538,8 +554,26 @@ async fn build_response<'v, 's>(
         .as_dict(strand)
         .ok_or_else(|| Error::type_error(strand, "respond must be a dict"))?;
 
-    let (status, headers, body) = strand
+    let (status, headers, body, fault) = strand
         .with_slots(async move |strand, [mut tmp, mut tmp2, mut tmp3]| {
+            let mut fault = None;
+            if dict.get(strand, global.syms.fault, None, &mut tmp)? {
+                let sym = tmp.as_sym(strand.vm());
+                let faults = &global.syms.faults;
+                fault = Some(match sym {
+                    Some(sym) if sym == faults.reset => Fault::Reset,
+                    Some(sym) if sym == faults.close => Fault::Close,
+                    Some(sym) if sym == faults.garbage => Fault::Garbage,
+                    Some(sym) if sym == faults.truncate => Fault::Truncate,
+                    Some(sym) if sym == faults.bad_chunk => Fault::BadChunk,
+                    _ => {
+                        return Err(Error::value(
+                            strand,
+                            "respond.fault: expected :RESET:, :CLOSE:, :GARBAGE:, :TRUNCATE: or :BAD_CHUNK:",
+                        ));
+                    }
+                });
+            }
             let mut status: Option<u16> = None;
             let mut headers: Vec<(HeaderName, HeaderValue)> = Vec::new();
             let mut body: Option<Vec<u8>> = None;
@@ -565,7 +599,7 @@ async fn build_response<'v, 's>(
                     Slot::reborrow(&mut tmp3),
                     |strand, key, value| {
                         let name = HeaderName::from_bytes(key.to_string(strand)?.as_bytes())
-                            .map_err(|err| Error::runtime(strand, err))?;
+                            .map_err(|err| Error::value(strand, err.to_string()))?;
                         let hvalue = header_value_from_slot(strand, value)?;
                         headers.push((name, hvalue));
                         Ok(())
@@ -593,7 +627,7 @@ async fn build_response<'v, 's>(
                 ));
             }
 
-            Ok((status, headers, body))
+            Ok((status, headers, body, fault))
         })
         .await?;
 
@@ -603,6 +637,7 @@ async fn build_response<'v, 's>(
         status,
         headers,
         body: body.map(Bytes::from).unwrap_or_default(),
+        fault,
     })
 }
 
@@ -1040,10 +1075,7 @@ impl<'v> Object<'v> for Server {
                             }
                         }
                         if specs.is_empty() {
-                            return Err(Error::runtime(
-                                strand,
-                                "mock: at least one matcher/response dict is required",
-                            ));
+                            return Err(Error::missing_positional(strand, 0));
                         }
                         this.borrow(strand)?.check_open(strand)?;
 
@@ -1095,14 +1127,19 @@ impl<'v> Object<'v> for Server {
                             let result = call!(strand, block, out, &item).await;
                             let cleanup = strand
                                 .with_interrupt_mask(InterruptMask::all(), async |strand| {
-                                    global.types.mock.cast(&item).unwrap().enter_sync(
-                                        strand,
-                                        |strand, instance| {
-                                            let verified = verify_mock(strand, instance);
+                                    let (failure, unmounted) = global
+                                        .types
+                                        .mock
+                                        .cast(&item)
+                                        .unwrap()
+                                        .enter_sync(strand, |strand, instance| {
+                                            let failure = verify_mock(strand, instance);
                                             let unmounted = unmount_mock(strand, instance, global);
-                                            combine_results(strand, verified, unmounted)
-                                        },
-                                    )
+                                            (failure, unmounted)
+                                        });
+                                    let verified =
+                                        raise_verify_failure(strand, global, failure).await;
+                                    combine_results(strand, verified, unmounted)
                                 })
                                 .await;
                             combine_results(strand, result, cleanup)
@@ -1181,7 +1218,9 @@ impl<'v> Object<'v> for MockObject {
             })
             .method("verify", async move |this, strand, args, _out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                verify_mock(strand, this)
+                let global = *this.annex();
+                let failure = verify_mock(strand, this);
+                raise_verify_failure(strand, global, failure).await
             })
             .method("unmount", async move |this, strand, args, _out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;

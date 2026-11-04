@@ -6,7 +6,6 @@ use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
     Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value, call,
-    error::ResultExt,
     object::{Mut, Ref, Rest, TypeBuilder, Unpack, UnpackItem},
     unpack,
     value::{
@@ -23,12 +22,89 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
     builder
         .module("regex")
         .value("Regex", global.types.regex)
+        .value("PatternError", global.types.pattern_error)
         .value("Captures", global.types.captures)
         .value("Match", global.types.match_)
         .commit();
 }
 
 pub(crate) struct Regex;
+
+/// `regex.PatternError`: a pattern that `Regex` cannot compile.
+pub(crate) struct PatternError;
+
+/// Why the pattern was rejected.
+#[derive(Clone, Copy)]
+enum PatternKind {
+    /// The pattern is not valid syntax.
+    Syntax,
+    /// The compiled pattern would exceed the size limit.
+    TooBig,
+}
+
+pub(crate) struct PatternAnnex {
+    message: String,
+    kind: PatternKind,
+}
+
+/// Raises `regex.PatternError` for `error`.
+fn pattern_error<'v, 's>(strand: &mut Strand<'v, 's>, error: rx::Error) -> Error<'v, 's> {
+    let kind = match error {
+        rx::Error::CompiledTooBig(_) => PatternKind::TooBig,
+        _ => PatternKind::Syntax,
+    };
+    let global = strand.state::<Tag>();
+    Error::object_with_annex(
+        strand,
+        global.types.pattern_error,
+        PatternError,
+        PatternAnnex {
+            message: error.to_string(),
+            kind,
+        },
+    )
+}
+
+impl<'v> Object<'v> for PatternError {
+    const NAME: &'v str = "PatternError";
+    const MODULE: &'v str = "regex";
+    type Annex = PatternAnnex;
+    type Type = ();
+    type TypeAnnex = ();
+
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let syntax = builder.sym("SYNTAX");
+        let too_big = builder.sym("TOO_BIG");
+        builder
+            .nominal_supertype(TypeObject::ValueError)
+            .get("kind", move |this, strand, out| {
+                let kind = match this.annex().kind {
+                    PatternKind::Syntax => syntax,
+                    PatternKind::TooBig => too_big,
+                };
+                Output::set(strand, out, kind);
+                Ok(())
+            })
+    }
+
+    fn display<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        fmt!(strand, w, "{}", this.annex().message)
+    }
+
+    fn debug<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        fmt!(strand, w, "<regex.PatternError ")?;
+        Self::display(this, strand, w)?;
+        fmt!(strand, w, ">")
+    }
+}
 
 pub(crate) struct RegexAnnex<'v> {
     global: State<'v, Global<'v>>,
@@ -53,7 +129,7 @@ impl<'v> Object<'v> for Regex {
             .as_str(strand.vm())
             .ok_or_else(|| Error::type_error(strand, "pattern: expected Str"))?
             .pin();
-        let regex = rx::Regex::new(&pattern).into_do_value(strand)?;
+        let regex = rx::Regex::new(&pattern).map_err(|err| pattern_error(strand, err))?;
         let global = strand.state::<Tag>();
         this.create_with_annex(strand, Regex, RegexAnnex { global, regex }, out);
         Ok(())

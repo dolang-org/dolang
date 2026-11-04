@@ -19,8 +19,8 @@ use dolang::runtime::{
 #[cfg(unix)]
 use dolang_vfs::Vfs;
 use libsqlite3_sys::{
-    SQLITE_OK, sqlite3, sqlite3_exec, sqlite3_finalize, sqlite3_prepare_v2, sqlite3_randomness,
-    sqlite3_stmt,
+    SQLITE_OK, sqlite3, sqlite3_exec, sqlite3_finalize, sqlite3_interrupt, sqlite3_prepare_v2,
+    sqlite3_randomness, sqlite3_stmt,
 };
 
 unsafe extern "C" {
@@ -30,7 +30,8 @@ unsafe extern "C" {
 use crate::global::Global;
 
 use super::{
-    AssertSend, Epoch, map_sqlite_error,
+    AssertSend, Epoch,
+    error::Failure,
     statement::{Statement, StatementAnnex, Template, bind_template, compile_template},
 };
 
@@ -99,39 +100,46 @@ impl ConnectionAnnex<'_> {
         let pending_close = self.pending_close.get();
 
         let raw = AssertSend(raw);
+        // The failure is captured before the handle can be closed, and inside
+        // `with_shell`, where the shell VFS keeps the OS error behind it.
+        let run = move || {
+            let raw = raw.into_inner();
+            let res = f(raw).map_err(|rc| unsafe { Failure::capture(raw, rc) });
+            if pending_close {
+                unsafe { sqlite3_close_v2(raw) };
+            }
+            res
+        };
         #[cfg(unix)]
         let agent = self.agent.clone();
-        let result = tokio::task::spawn_blocking(move || {
+        let mut task = tokio::task::spawn_blocking(move || {
             #[cfg(unix)]
-            {
-                if let Some(agent) = agent {
-                    crate::vfs::with_shell(agent, || {
-                        let res = f(raw.into_inner());
-                        if pending_close {
-                            unsafe { sqlite3_close_v2(raw.into_inner()) };
-                        }
-                        res
-                    })
-                } else {
-                    let res = f(raw.into_inner());
-                    if pending_close {
-                        unsafe { sqlite3_close_v2(raw.into_inner()) };
-                    }
-                    res
-                }
+            if let Some(agent) = agent {
+                return crate::vfs::with_shell(agent, run);
             }
-            #[cfg(not(unix))]
-            {
-                let res = f(raw.into_inner());
-                if pending_close {
-                    unsafe { sqlite3_close_v2(raw.into_inner()) };
+            run()
+        });
+        // An interrupt of the strand interrupts the running statement, and the
+        // strand's own interrupt error replaces the `SQLITE_INTERRUPT` that
+        // follows. A closing task frees the handle itself, so it is left to
+        // finish.
+        let result = match strand
+            .interrupt_guard(async |_| Ok((&mut task).await))
+            .await
+        {
+            Ok(joined) => joined
+                .map_err(|err| super::join_error(strand, err))
+                .and_then(|res| res.map_err(|failure| failure.raise(strand))),
+            Err(interrupt) => {
+                if !pending_close {
+                    unsafe { sqlite3_interrupt(raw.into_inner()) };
                 }
-                res
+                let _ = strand
+                    .with_interrupt_mask(InterruptMask::all(), async |_| task.await)
+                    .await;
+                Err(interrupt)
             }
-        })
-        .await
-        .map_err(|err| Error::runtime(strand, err))?
-        .map_err(|e| unsafe { map_sqlite_error(strand, e, raw.into_inner()) });
+        };
 
         if pending_close {
             self.raw.set(ptr::null_mut())

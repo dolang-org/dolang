@@ -1759,7 +1759,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                             .to_i64(strand)
                             .map_err(|_| Error::type_error(strand, "start must be an integer"))?;
                         SeekFrom::Start(u64::try_from(start).map_err(|_| {
-                            Error::runtime(strand, "start offset must be non-negative")
+                            Error::value(strand, "start offset must be non-negative")
                         })?)
                     }
                     (None, None, Some(end)) => SeekFrom::End(
