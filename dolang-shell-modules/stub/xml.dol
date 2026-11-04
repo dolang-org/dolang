@@ -7,6 +7,78 @@ import std:
 # A child of an XML element.
 pub @let Node = (Element | Comment | Str)
 
+# Raised when [`decode`](xml.decode) is given XML that is not well-formed, or
+# that uses a feature it doesn't support.
+#
+# ## Example
+#
+# ```
+# try
+#   decode "<a><b></a>"
+# catch DecodeError: err
+#   echo "bad XML at line $(err.line), column $(err.column)"
+# ```
+pub class DecodeError: std.DataError
+  # What is wrong with the document.
+  #
+  # | Kind | Meaning |
+  # | --- | --- |
+  # | `:SYNTAX:` | A character is out of place, such as in malformed attribute markup. |
+  # | `:EOF:` | The input ends inside markup, an element, or a reference. |
+  # | `:ILL_FORMED:` | The markup breaks an XML rule, such as a mismatched end tag, an invalid name, a duplicate attribute, a forbidden character, or a root count other than one. |
+  # | `:REFERENCE:` | A reference names an entity other than the five predefined ones, or a character that is invalid or forbidden. |
+  # | `:NAMESPACE:` | A prefix is not bound, or a namespace binding is forbidden. |
+  #[getter]
+  pub def kind self -> (:SYNTAX: | :EOF: | :ILL_FORMED: | :REFERENCE: | :NAMESPACE:)
+    ...
+
+  # Line of the fault, counting from 1.
+  #
+  # When the fault is in a tag, text, or reference as a whole, such as an
+  # invalid name, this is where that tag, text, or reference starts.
+  #[getter]
+  pub def line self -> Int
+    ...
+
+  # Column of the fault, counting characters from 1.
+  #[getter]
+  pub def column self -> Int
+    ...
+
+# Raised when [`encode`](xml.encode) is given a document whose tree contains
+# itself.
+#
+# Mutation checks keep every other fault out of a tree.
+#
+# ## Example
+#
+# ```
+# let root = Element root
+# root.push $root
+# try
+#   encode (Document $root)
+# catch EncodeError: err
+#   echo "cycle at $(err.path)"
+# ```
+pub class EncodeError: std.ValueError
+  # Why the document can't be written.
+  #
+  # | Kind | Meaning |
+  # | --- | --- |
+  # | `:CYCLE:` | An element contains itself. |
+  #[getter]
+  pub def kind self -> :CYCLE:
+    ...
+
+  # Child indices that lead from the document to the repeated element.
+  #
+  # The first is an index into [`children`](xml.Document.children) of the
+  # document, and each further one an index into the children of the element
+  # before.
+  #[getter]
+  pub def path self -> Tuple[...Int]
+    ...
+
 # An XML element: a name, attributes, and children.
 #
 # An element has no link to a parent, so the same element can appear in several
@@ -164,16 +236,23 @@ pub class Document
 # Parses a complete XML document, preserving comments and whitespace.
 #
 # Predefined entities and numeric character references are expanded. Custom
-# DTD entities are not resolved. Invalid documents raise
-# [`DataError`](std.DataError), including the checks that raise `ValueError`
-# when constructing the same nodes directly.
+# DTD entities are not resolved.
+#
+# ## Errors
+#
+# [`DecodeError`](xml.DecodeError) if the document is not well-formed XML,
+# refers to a custom entity, or breaks a check that raises `ValueError` when
+# constructing the same nodes directly.
 pub def decode xml @ Str -> Document
   ...
 
 # Serializes a complete XML document.
 #
 # Namespace spelling may differ while preserving expanded names.
-# Cycles raise `ValueError`.
+#
+# ## Errors
+#
+# [`EncodeError`](xml.EncodeError) if an element contains itself.
 #
 # ## Example
 #

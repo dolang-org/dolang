@@ -1,4 +1,7 @@
-use crate::{check::validate_text, global::Tag};
+use crate::{
+    check::{OrValue, validate_text},
+    global::Tag,
+};
 use dolang::runtime::{
     Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, Value,
     object::{ArrayLike, ArrayView, Mut, Ref, TypeBuilder},
@@ -21,7 +24,7 @@ fn child_root<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Result<
         .as_str(strand)
         .ok_or_else(|| Error::type_error(strand, "expected Element, Comment, or Str"))?
         .pin();
-    validate_text(strand, &text, "XML document text")?;
+    validate_text(&text, "XML document text").or_value(strand)?;
     if !text
         .bytes()
         .all(|c| matches!(c, b' ' | b'\t' | b'\r' | b'\n'))

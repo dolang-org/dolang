@@ -7,7 +7,6 @@ import xml
   std:
     - StateError
     - TypeError
-    - DataError
     - ValueError
 
 #[test]
@@ -104,6 +103,6 @@ def document_validation()
   assert_throws $TypeError do xml.Document 1 $root
   assert_throws $TypeError do xml.Document (xml.Document root) $root
   for input = ["", "<!--only-->", "<a/><b/>", "x<a/>", "<a/>x", "<a/><", "<a/><!--bad--body-->", "<a/><!--bad--->", "<![CDATA[ ]]><a/>", "<a/>&#32;"]
-    assert_throws $DataError do xml.decode $input
+    assert_throws $xml.DecodeError do xml.decode $input
   for value = [root, (xml.Comment "hi"), "text", nil]
     assert_throws $TypeError do xml.encode $value

@@ -13,8 +13,8 @@ use dolang::runtime::{
 use crate::{
     attr::{Attr, Name, attr_key, attr_name, key_string, optional_string, required_string},
     check::{
-        validate_name, validate_namespace, validate_namespace_binding, validate_ncname,
-        validate_text,
+        Checked, Invalid, OrValue, validate_name, validate_namespace, validate_namespace_binding,
+        validate_ncname, validate_text,
     },
 };
 
@@ -49,7 +49,7 @@ fn check_child<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Result
         ));
     };
     let text = text.pin();
-    validate_text(strand, &text, "XML text")
+    validate_text(&text, "XML text").or_value(strand)
 }
 
 impl<'v> ArrayLike<'v> for Children {
@@ -213,7 +213,7 @@ impl<'v> DictLike<'v> for Attrs {
     ) -> Result<'v, 's, ()> {
         let name = attr_key(strand, &key)?;
         let value = required_string(strand, &value, "attribute value")?;
-        let attr = Attr::checked(strand, name, value)?;
+        let attr = Attr::checked(name, value).or_value(strand)?;
         set_attr(this, strand, attr)
     }
 
@@ -318,7 +318,7 @@ impl<'v> DictLike<'v> for Namespaces {
     ) -> Result<'v, 's, ()> {
         let prefix = required_string(strand, &key, "namespace prefix")?;
         let namespace = required_string(strand, &value, "namespace URI")?;
-        validate_namespace_binding(strand, &prefix, &namespace)?;
+        validate_namespace_binding(&prefix, &namespace).or_value(strand)?;
         let mut node = this.borrow_mut(strand)?;
         match find_namespace(&node.namespaces, &prefix) {
             Some(index) => node.namespaces[index].1 = namespace,
@@ -384,12 +384,11 @@ fn find_namespace(namespaces: &[(String, String)], prefix: &str) -> Option<usize
 
 /// Rejects `new` attributes whose expanded names repeat each other or one in
 /// `existing`, ignoring the one at `replacing`.
-pub(crate) fn check_new_attrs<'v, 's>(
-    strand: &mut Strand<'v, 's>,
+pub(crate) fn check_new_attrs(
     existing: &[Attr],
     replacing: Option<usize>,
     new: &[Attr],
-) -> Result<'v, 's, ()> {
+) -> Checked {
     for (i, attr) in new.iter().enumerate() {
         let is = |other: &Attr| other.name.is(&attr.name);
         let clash = existing
@@ -398,10 +397,10 @@ pub(crate) fn check_new_attrs<'v, 's>(
             .any(|(j, other)| Some(j) != replacing && is(other))
             || new[..i].iter().any(is);
         if clash {
-            return Err(Error::value(
-                strand,
-                format!("duplicate XML attribute {}", attr.name.clark()),
-            ));
+            return Err(Invalid(format!(
+                "duplicate XML attribute {}",
+                attr.name.clark()
+            )));
         }
     }
     Ok(())
@@ -507,10 +506,10 @@ fn constructor_attrs<'v, 's>(
                 attr_key(strand, &key)?
             };
             let value = required_string(strand, &value, "attribute value")?;
-            Attr::checked(strand, name, value).map(Some)
+            Attr::checked(name, value).or_value(strand).map(Some)
         })?;
         let Some(attr) = attr else { break };
-        check_new_attrs(strand, &attrs, None, std::slice::from_ref(&attr))?;
+        check_new_attrs(&attrs, None, std::slice::from_ref(&attr)).or_value(strand)?;
         attrs.push(attr);
     }
     Ok(attrs)
@@ -548,11 +547,11 @@ impl<'v> Object<'v> for Element {
             local: required_string(strand, &tag, "tag")?,
             namespace: optional_string(strand, namespace.as_deref(), "namespace")?,
         };
-        validate_name(strand, &name, "element name")?;
+        validate_name(&name, "element name").or_value(strand)?;
         let mut declarations = Vec::new();
         if let Some(namespaces) = namespaces {
             for (prefix, namespace) in dict_pairs(strand, &namespaces, "namespaces")? {
-                validate_namespace_binding(strand, &prefix, &namespace)?;
+                validate_namespace_binding(&prefix, &namespace).or_value(strand)?;
                 match find_namespace(&declarations, &prefix) {
                     Some(index) => declarations[index].1 = namespace,
                     None => declarations.push((prefix, namespace)),
@@ -639,7 +638,7 @@ impl<'v> Object<'v> for Element {
     ) -> Result<'v, 's, ()> {
         let name = attr_key(strand, &index)?;
         let value = required_string(strand, &value, "value")?;
-        let attr = Attr::checked(strand, name, value)?;
+        let attr = Attr::checked(name, value).or_value(strand)?;
         set_attr(this, strand, attr)
     }
 
@@ -652,7 +651,7 @@ impl<'v> Object<'v> for Element {
             })
             .set("tag", |this, strand, value| {
                 let tag = required_string(strand, &value, "tag")?;
-                validate_ncname(strand, &tag, "element name")?;
+                validate_ncname(&tag, "element name").or_value(strand)?;
                 this.borrow_mut(strand)?.name.local = tag;
                 Ok(())
             })
@@ -666,7 +665,7 @@ impl<'v> Object<'v> for Element {
             })
             .set("namespace", |this, strand, value| {
                 let namespace = optional_string(strand, Some(&value), "namespace")?;
-                validate_namespace(strand, namespace.as_deref(), "element name")?;
+                validate_namespace(namespace.as_deref(), "element name").or_value(strand)?;
                 this.borrow_mut(strand)?.name.namespace = namespace;
                 Ok(())
             })
