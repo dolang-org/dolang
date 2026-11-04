@@ -85,6 +85,17 @@ pub def compared_alias v @ (Archive | :GZIP: | :XZ:)
     let _ = v
     #       ^: flow :TAR: | :XZ: | :ZIP:
 
+# An alias of a literal is compared as the literal, and kept by name
+pub class Settings
+pub @let Unset = :UNSET:
+pub def compared_literal_alias v @ (Settings | Unset)
+  if (v == :UNSET:)
+    let _ = v
+    #       ^: flow m.Settings | m.Unset
+  else
+    let _ = v
+    #       ^: flow m.Settings
+
 pub def typed v @ (Int | Str)
   if (type(v, Int))
     let _ = v
