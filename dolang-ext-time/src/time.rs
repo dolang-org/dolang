@@ -607,7 +607,7 @@ impl<'v> Object<'v> for Date {
         if let Some(other) = global.types.date.cast(other) {
             Ok(other.enter_sync(strand, |_strand, other| *this.annex() == *other.annex()))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`==`"))
         }
     }
 
@@ -620,7 +620,7 @@ impl<'v> Object<'v> for Date {
         if let Some(other) = global.types.date.cast(other) {
             Ok(other.enter_sync(strand, |_strand, other| *this.annex() < *other.annex()))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`<`"))
         }
     }
     fn sub<'a, 's>(
@@ -644,7 +644,7 @@ impl<'v> Object<'v> for Date {
                 Ok(())
             })
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`-`"))
         }
     }
 }
@@ -740,7 +740,7 @@ macro_rules! calendar_enum {
                 if let Some(other) = global.types.$field.cast(other) {
                     Ok(other.enter_sync(strand, |_strand, other| *this.annex() == *other.annex()))
                 } else {
-                    Err(Error::not_supported(strand))
+                    Err(Error::unsupported(strand, "`==`"))
                 }
             }
         }
@@ -852,7 +852,7 @@ impl<'v> Object<'v> for Month {
         if let Some(other) = global.types.month.cast(other) {
             Ok(other.enter_sync(strand, |_strand, other| *this.annex() == *other.annex()))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`==`"))
         }
     }
 
@@ -865,7 +865,7 @@ impl<'v> Object<'v> for Month {
         if let Some(other) = global.types.month.cast(other) {
             Ok(other.enter_sync(strand, |_strand, other| *this.annex() < *other.annex()))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`<`"))
         }
     }
 }
@@ -995,7 +995,7 @@ impl<'v> Object<'v> for DateTime {
                 this.annex().total_nanos == other.annex().total_nanos
             }))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`==`"))
         }
     }
 
@@ -1010,7 +1010,7 @@ impl<'v> Object<'v> for DateTime {
                 this.annex().total_nanos < other.annex().total_nanos
             }))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`<`"))
         }
     }
 
@@ -1034,7 +1034,7 @@ impl<'v> Object<'v> for DateTime {
                 Ok(())
             })
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`-`"))
         }
     }
 }
@@ -1096,7 +1096,7 @@ impl<'v> Object<'v> for Duration {
                 this.annex().total_nanos == other.annex().total_nanos
             }))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`==`"))
         }
     }
 
@@ -1111,7 +1111,7 @@ impl<'v> Object<'v> for Duration {
                 this.annex().total_nanos < other.annex().total_nanos
             }))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`<`"))
         }
     }
 }

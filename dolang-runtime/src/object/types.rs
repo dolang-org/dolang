@@ -43,7 +43,7 @@ impl<'v> Protocol<'v> for Value {
         other: &DoValue<'v>,
     ) -> Result<'v, 's, DoValue<'v>> {
         this.delegator()
-            .ok_or_else(|| Error::not_supported(strand))?
+            .ok_or_else(|| Error::unsupported(strand, "reflected `==`"))?
             .op_eq_direct(strand, other)
     }
 
@@ -53,7 +53,7 @@ impl<'v> Protocol<'v> for Value {
         other: &DoValue<'v>,
     ) -> Result<'v, 's, DoValue<'v>> {
         this.delegator()
-            .ok_or_else(|| Error::not_supported(strand))?
+            .ok_or_else(|| Error::unsupported(strand, "reflected `!=`"))?
             .op_ne_direct(strand, other)
     }
 

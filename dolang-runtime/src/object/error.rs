@@ -25,7 +25,7 @@ use super::protocol::{Inspect, Protocol, Recv};
 
 #[derive(Debug)]
 pub(crate) enum Boxed<'v> {
-    Unsupported,
+    Unsupported(Option<Cow<'v, str>>),
     Immutable,
     Concurrency(Option<Cow<'v, str>>),
     Type(Cow<'v, str>),
@@ -56,7 +56,7 @@ impl<'v> Boxed<'v> {
     pub(crate) fn kind(&self) -> ErrorKind {
         use Boxed::*;
         match self {
-            Unsupported => ErrorKind::Unsupported,
+            Unsupported(_) => ErrorKind::Unsupported,
             Immutable => ErrorKind::Immutable,
             Concurrency(_) => ErrorKind::Concurrency,
             Type(_) => ErrorKind::Type,
@@ -89,7 +89,8 @@ impl<'v> Display for Boxed<'v> {
         use Boxed::*;
 
         match self {
-            Unsupported => write!(f, "unsupported operation"),
+            Unsupported(None) => write!(f, "unsupported operation"),
+            Unsupported(Some(msg)) => write!(f, "unsupported operation: {msg}"),
             Immutable => write!(f, "object is immutable"),
             Concurrency(None) => write!(f, "conflicting concurrent operation"),
             Concurrency(Some(msg)) => write!(f, "conflicting concurrent operation: {msg}"),
@@ -355,8 +356,12 @@ fn construct<'v, 's>(
 ) -> Result<'v, 's, Error<'v, 's>> {
     Ok(match kind {
         ErrorKind::Unsupported => {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
-            Error::not_supported(strand)
+            let ([], [msg]) = unpack!(strand, args, 0, 1)?;
+            let msg = match msg {
+                Some(msg) => Some(expect_string(strand, &msg)?.into()),
+                None => None,
+            };
+            Error::unsupported_boxed(strand, msg)
         }
         ErrorKind::Immutable => {
             let ([], []) = unpack!(strand, args, 0, 0)?;

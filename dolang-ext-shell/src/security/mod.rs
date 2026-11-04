@@ -265,7 +265,7 @@ pub(crate) async fn resolve_acl_input<'v, 's>(
             let global = strand.force_state::<MacosSecurityTag>();
             VfsAnyAcl::Macos(macos::coerce_acl(strand, global, value, path).await?)
         }
-        _ => return Err(Error::not_supported(strand)),
+        _ => return Err(Error::unsupported(strand, "this ACL kind is not supported")),
     };
     Ok((kind, Some(acl)))
 }

@@ -306,7 +306,9 @@ async fn helper_mcall<'v, 'a, 's>(
             put(strand, &stream, &value).await
         }
         // The stream methods are the subclass's to define.
-        sym::READ | sym::WRITE | sym::SEEK | sym::CLOSE => Err(Error::not_supported(strand)),
+        sym::READ | sym::WRITE | sym::SEEK | sym::CLOSE => {
+            Err(Error::unsupported(strand, "abstract stream method"))
+        }
         _ => Err(Error::field(strand, method)),
     }
 }

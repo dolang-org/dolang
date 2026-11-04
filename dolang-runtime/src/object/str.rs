@@ -139,7 +139,7 @@ impl<'v> Protocol<'v> for str {
         if let Some(ostr) = other.downcast_ref(strand.builtin_types().str) {
             Ok(Value::from_bool(this.get() < ostr.get()))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`<`"))
         }
     }
 

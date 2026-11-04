@@ -285,7 +285,7 @@ pub(crate) fn create<'v, 's>(
         receiver.op_type(strand, Slot::reborrow(&mut ty));
         let inspect = ty
             .op_inspect(strand)
-            .ok_or_else(|| Error::not_supported(strand))?;
+            .ok_or_else(|| Error::unsupported(strand, "field iteration"))?;
         let mut fields = FieldIter::new(receiver.dup(), VecDeque::new());
         for member in inspect.members {
             if strand.sym_obj(member.sym).private {

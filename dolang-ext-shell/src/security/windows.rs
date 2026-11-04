@@ -561,7 +561,10 @@ impl<'v> Object<'v> for Sid {
                 let global = strand.state::<WindowsSecurityTag>();
                 if global.local.get(strand).target().os().family() != OperatingSystemFamily::Windows
                 {
-                    return Err(Error::not_supported(strand));
+                    return Err(Error::unsupported(
+                        strand,
+                        "SID lookup is only supported on Windows targets",
+                    ));
                 }
                 let vfs = global.local.get(strand).vfs();
                 let name = error::io_result(strand, vfs.sid_name(&sid).await)?;
@@ -580,7 +583,7 @@ impl<'v> Object<'v> for Sid {
     ) -> Result<'v, 's, bool> {
         let global = strand.state::<WindowsSecurityTag>();
         let Some(other) = global.types.sid.cast(other) else {
-            return Err(Error::not_supported(strand));
+            return Err(Error::unsupported(strand, "`==`"));
         };
         Ok(other.enter_sync(strand, |_strand, other| *this.annex() == *other.annex()))
     }
@@ -1041,7 +1044,10 @@ impl<'v, const KIND: u8> Object<'v> for Ace<KIND> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         if KIND != ACE_COMMON && KIND != ACE_OBJECT {
-            return Err(Error::not_supported(strand));
+            return Err(Error::unsupported(
+                strand,
+                "constructing this ACE type directly",
+            ));
         }
         let global = strand.state::<WindowsSecurityTag>();
         let mask_sym = global.syms.mask;
@@ -3300,7 +3306,10 @@ impl<'v> Object<'v> for SidName {
                 let global = strand.state::<WindowsSecurityTag>();
                 if global.local.get(strand).target().os().family() != OperatingSystemFamily::Windows
                 {
-                    return Err(Error::not_supported(strand));
+                    return Err(Error::unsupported(
+                        strand,
+                        "SID lookup is only supported on Windows targets",
+                    ));
                 }
                 let vfs = global.local.get(strand).vfs();
                 // A `Str` is the account name to resolve, so only the
@@ -3616,7 +3625,10 @@ pub(crate) fn configure_vm<'v>(
             let ([], []) = unpack!(strand, args, 0, 0)?;
             let security = security_info(strand, global.local)?;
             let Some(info) = security.windows() else {
-                return Err(Error::not_supported(strand));
+                return Err(Error::unsupported(
+                    strand,
+                    "Windows token info is only available on Windows targets",
+                ));
             };
             create_token_info(strand, global, info, &mut out);
             Ok(())

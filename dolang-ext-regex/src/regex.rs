@@ -821,7 +821,7 @@ impl<'v> Object<'v> for Find<'v> {
         strand: &'a mut Strand<'v, 's>,
         _unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "unpacking a `Regex`"))
     }
 
     async fn next<'a, 's>(

@@ -207,7 +207,7 @@ impl<'v> Object<'v> for Event {
                     && this.retry == other.retry
             }))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`==`"))
         }
     }
 

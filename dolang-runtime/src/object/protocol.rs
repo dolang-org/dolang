@@ -217,7 +217,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "`==`"))
     }
     fn op_req<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -263,7 +263,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "`&`"))
     }
     fn op_rband<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -278,7 +278,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "`|`"))
     }
     fn op_rbor<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -293,7 +293,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "`^`"))
     }
     fn op_rbxor<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -308,14 +308,14 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "`<<`"))
     }
     fn op_rshl<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "reflected `<<`"))
     }
 
     fn op_shr<'a, 's>(
@@ -323,14 +323,14 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "`>>`"))
     }
     fn op_rshr<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "reflected `>>`"))
     }
 
     fn op_add<'a, 's>(
@@ -338,7 +338,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "`+`"))
     }
     fn op_radd<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -353,7 +353,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "`-`"))
     }
 
     fn op_rsub<'a, 's>(
@@ -361,7 +361,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "reflected `-`"))
     }
 
     fn op_mul<'a, 's>(
@@ -369,7 +369,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "`*`"))
     }
     fn op_rmul<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -384,7 +384,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "`/`"))
     }
 
     fn op_rdiv<'a, 's>(
@@ -392,7 +392,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "reflected `/`"))
     }
 
     fn op_ediv<'a, 's>(
@@ -400,7 +400,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "`//`"))
     }
 
     fn op_rediv<'a, 's>(
@@ -408,7 +408,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "reflected `//`"))
     }
 
     fn op_mod<'a, 's>(
@@ -416,7 +416,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "`%`"))
     }
 
     fn op_rmod<'a, 's>(
@@ -424,7 +424,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "reflected `%`"))
     }
 
     fn op_lt<'a, 's>(
@@ -432,7 +432,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "`<`"))
     }
 
     fn op_lte<'a, 's>(
@@ -576,7 +576,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         sig: &'a Unpack<'v, 'a>,
         out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "unpacking"))
     }
 }
 

@@ -581,7 +581,10 @@ pub(crate) fn configure_vm<'v>(
             let ([], []) = unpack!(strand, args, 0, 0)?;
             let security = security_info(strand, global.local)?;
             let Some(info) = security.unix() else {
-                return Err(Error::not_supported(strand));
+                return Err(Error::unsupported(
+                    strand,
+                    "Unix identity is only available on Unix targets",
+                ));
             };
             create_identity(strand, global, info, &mut out);
             Ok(())
@@ -589,7 +592,10 @@ pub(crate) fn configure_vm<'v>(
         .function("user_name", async move |strand, args, out| {
             let ([uid], []) = unpack!(strand, args, 1, 0)?;
             if global.local.get(strand).target().os().family() != OperatingSystemFamily::Unix {
-                return Err(Error::not_supported(strand));
+                return Err(Error::unsupported(
+                    strand,
+                    "`user_name` is only supported on Unix targets",
+                ));
             }
             let vfs = global.local.get(strand).vfs();
             let uid =
@@ -601,7 +607,10 @@ pub(crate) fn configure_vm<'v>(
         .function("user_id", async move |strand, args, out| {
             let ([name], []) = unpack!(strand, args, 1, 0)?;
             if global.local.get(strand).target().os().family() != OperatingSystemFamily::Unix {
-                return Err(Error::not_supported(strand));
+                return Err(Error::unsupported(
+                    strand,
+                    "`user_id` is only supported on Unix targets",
+                ));
             }
             let name = name
                 .as_str(strand)
@@ -615,7 +624,10 @@ pub(crate) fn configure_vm<'v>(
         .function("group_name", async move |strand, args, out| {
             let ([gid], []) = unpack!(strand, args, 1, 0)?;
             if global.local.get(strand).target().os().family() != OperatingSystemFamily::Unix {
-                return Err(Error::not_supported(strand));
+                return Err(Error::unsupported(
+                    strand,
+                    "`group_name` is only supported on Unix targets",
+                ));
             }
             let vfs = global.local.get(strand).vfs();
             let gid =
@@ -627,7 +639,10 @@ pub(crate) fn configure_vm<'v>(
         .function("group_id", async move |strand, args, out| {
             let ([name], []) = unpack!(strand, args, 1, 0)?;
             if global.local.get(strand).target().os().family() != OperatingSystemFamily::Unix {
-                return Err(Error::not_supported(strand));
+                return Err(Error::unsupported(
+                    strand,
+                    "`group_id` is only supported on Unix targets",
+                ));
             }
             let name = name
                 .as_str(strand)

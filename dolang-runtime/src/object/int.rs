@@ -318,7 +318,7 @@ impl<'v> Protocol<'v> for i128 {
     ) -> Result<'v, 's, Value<'v>> {
         let prim = other
             .to_prim(strand)
-            .map_err(|_| Error::not_supported(strand))?;
+            .map_err(|_| Error::unsupported(strand, "`==`"))?;
         Ok(Value::from_bool(
             Prim::from(*this.get()).op_eq(strand, &prim),
         ))
@@ -659,7 +659,7 @@ impl<'v> Protocol<'v> for Verbatim {
     ) -> Result<'v, 's, Value<'v>> {
         let prim = other
             .to_prim(strand)
-            .map_err(|_| Error::not_supported(strand))?;
+            .map_err(|_| Error::unsupported(strand, "`==`"))?;
         Ok(Value::from_bool(
             Prim::from(this.get().value).op_eq(strand, &prim),
         ))

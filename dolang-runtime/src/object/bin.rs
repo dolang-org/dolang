@@ -203,7 +203,7 @@ impl<'v> Protocol<'v> for [u8] {
         if let Some(oslice) = other.downcast_ref(strand.builtin_types().bin) {
             Ok(Value::from_bool(this.receiver.get() < oslice.get()))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`<`"))
         }
     }
 

@@ -163,7 +163,8 @@ async fn fallback_mcall<'v, 'a, 's>(
     match method.tag() {
         sym::MIN | sym::MAX | sym::CLAMP => default_mcall(strand, rcvr, method, args, out).await,
         sym::ABS | sym::SIGNUM | sym::ROUND | sym::FLOOR | sym::CEIL | sym::TRUNC => {
-            Err(Error::not_supported(strand))
+            let msg = format!("abstract method `{}`", method.as_str(strand));
+            Err(Error::unsupported(strand, msg))
         }
         _ => {
             let mut args = args;
@@ -248,7 +249,7 @@ impl<'v> Protocol<'v> for Num {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         this.delegator()
-            .ok_or_else(|| Error::not_supported(strand))?
+            .ok_or_else(|| Error::unsupported(strand, "reflected `+`"))?
             .op_add_direct(strand, other)
     }
 
@@ -258,7 +259,7 @@ impl<'v> Protocol<'v> for Num {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         this.delegator()
-            .ok_or_else(|| Error::not_supported(strand))?
+            .ok_or_else(|| Error::unsupported(strand, "reflected `*`"))?
             .op_mul_direct(strand, other)
     }
 

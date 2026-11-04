@@ -4873,7 +4873,11 @@ pub class UnexpectedPosError: UnexpectedItemError
 #[mixable]
 pub class UnsupportedError: RuntimeError
   # Builds an error reporting that an operation is not supported.
-  pub def (init) self
+  pub def (init)
+    self
+    # detail appended to the generic message
+    message @ Str = ...
+  do
     ...
 
 

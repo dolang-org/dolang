@@ -191,7 +191,7 @@ impl<'v> Object<'v> for Uuid {
                 this.annex().inner == other.annex().inner
             }))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`==`"))
         }
     }
 
@@ -214,7 +214,7 @@ impl<'v> Object<'v> for Uuid {
                 this.annex().inner < other.annex().inner
             }))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`<`"))
         }
     }
 }

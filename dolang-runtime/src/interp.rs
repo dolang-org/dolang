@@ -156,7 +156,7 @@ impl<'v> Vm<'v> {
                     .await?;
                 }
 
-                let mut err = Error::not_supported(strand);
+                let mut err = Error::unsupported(strand, "no importer");
                 {
                     let mut borrow = self.import_cache.borrow_mut();
                     borrow.insert(

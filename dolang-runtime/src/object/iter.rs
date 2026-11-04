@@ -1452,7 +1452,7 @@ impl<'v> Protocol<'v> for Iter {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let Some(delegator) = this.delegator() else {
-            return Err(Error::not_supported(strand));
+            return Err(Error::unsupported(strand, "spread"));
         };
         spread_iter(strand, delegator, sink).await
     }

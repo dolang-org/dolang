@@ -606,7 +606,7 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, Value<'v>> {
         match self.case() {
             Case::Object(this) => op(&this, strand, other),
-            Case::Prim(_) => Err(Error::not_supported(strand)),
+            Case::Prim(_) => Err(Error::unsupported(strand, "operator")),
         }
     }
 

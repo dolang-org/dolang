@@ -142,7 +142,12 @@ impl<'v, T: CodeType<'v>> Object<'v> for CodeObject<T> {
                     Some(OperatingSystem::Linux) => linux,
                     Some(OperatingSystem::Macos) => macos,
                     Some(OperatingSystem::Windows) | None => unreachable!("invalid errno OS"),
-                    Some(_) => return Err(Error::not_supported(strand)),
+                    Some(_) => {
+                        return Err(Error::unsupported(
+                            strand,
+                            "this errno operating system is not representable",
+                        ));
+                    }
                 };
                 Output::set(strand, out, os);
                 Ok(())

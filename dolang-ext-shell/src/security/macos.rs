@@ -456,7 +456,10 @@ pub(super) async fn resolve_uid_or_gid_arg<'v, 's>(
         return value.to_u32(strand);
     };
     if local.get(strand).target().os() != OperatingSystem::Macos {
-        return Err(Error::not_supported(strand));
+        return Err(Error::unsupported(
+            strand,
+            "UUID principals are only supported on macOS",
+        ));
     }
     let vfs = local.get(strand).vfs();
     let id = error::io_result(
@@ -470,7 +473,12 @@ pub(super) async fn resolve_uid_or_gid_arg<'v, 's>(
         VfsPrincipalId::Uuid(_) => {
             unreachable!("resolve_principal_id(Uuid, Uid|Gid) returned a Uuid")
         }
-        _ => return Err(Error::not_supported(strand)),
+        _ => {
+            return Err(Error::unsupported(
+                strand,
+                "this principal ID kind is not supported",
+            ));
+        }
     })
 }
 
@@ -513,7 +521,10 @@ pub(crate) fn configure_vm<'v>(
         .function("uuid_for_uid", async move |strand, args, out| {
             let ([uid], []) = unpack!(strand, args, 1, 0)?;
             if global.local.get(strand).target().os() != OperatingSystem::Macos {
-                return Err(Error::not_supported(strand));
+                return Err(Error::unsupported(
+                    strand,
+                    "`uuid_for_uid` is only supported on macOS",
+                ));
             }
             let uid = uid.to_u32(strand)?;
             let vfs = global.local.get(strand).vfs();
@@ -531,7 +542,10 @@ pub(crate) fn configure_vm<'v>(
         .function("uuid_for_gid", async move |strand, args, out| {
             let ([gid], []) = unpack!(strand, args, 1, 0)?;
             if global.local.get(strand).target().os() != OperatingSystem::Macos {
-                return Err(Error::not_supported(strand));
+                return Err(Error::unsupported(
+                    strand,
+                    "`uuid_for_gid` is only supported on macOS",
+                ));
             }
             let gid = gid.to_u32(strand)?;
             let vfs = global.local.get(strand).vfs();
@@ -549,7 +563,10 @@ pub(crate) fn configure_vm<'v>(
         .function("id_for_uuid", async move |strand, args, out| {
             let ([uuid], []) = unpack!(strand, args, 1, 0)?;
             if global.local.get(strand).target().os() != OperatingSystem::Macos {
-                return Err(Error::not_supported(strand));
+                return Err(Error::unsupported(
+                    strand,
+                    "`id_for_uuid` is only supported on macOS",
+                ));
             }
             let uuid = dolang_ext_uuid::value_to_uuid(strand, &uuid)?;
             let vfs = global.local.get(strand).vfs();
@@ -564,7 +581,12 @@ pub(crate) fn configure_vm<'v>(
                 VfsPrincipalId::Uuid(_) => {
                     unreachable!("resolve_principal_id(_, Uid|Gid) returned a Uuid")
                 }
-                _ => return Err(Error::not_supported(strand)),
+                _ => {
+                    return Err(Error::unsupported(
+                        strand,
+                        "this principal ID kind is not supported",
+                    ));
+                }
             };
             Output::set(strand, out, (kind, id));
             Ok(())

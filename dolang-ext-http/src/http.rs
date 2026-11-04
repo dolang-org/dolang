@@ -264,22 +264,6 @@ fn status_message(status: reqwest::StatusCode, url: Option<&url::Url>) -> String
     message
 }
 
-/// Raises `std.UnsupportedError` with `message`.
-#[cfg(any(not(unix), all(target_arch = "wasm32", target_os = "unknown")))]
-async fn unsupported<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    message: impl AsRef<str>,
-) -> Error<'v, 's> {
-    let result = strand
-        .with_slots(async |strand, [mut ty, mut err]| {
-            Output::set(strand, &mut ty, TypeObject::UnsupportedError);
-            call!(strand, ty, &mut err, message.as_ref()).await?;
-            Ok(Error::from_value(strand, &err))
-        })
-        .await;
-    result.unwrap_or_else(|err| err)
-}
-
 fn invalid_status_policy<'v, 's>(strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
     Error::type_error(strand, r#"status: expected :IGNORE: or "IGNORE""#)
 }
@@ -848,9 +832,10 @@ impl<'v> Object<'v> for Client {
                 ("invalid_certs", invalid_certs),
             ];
             if let Some((name, _)) = options.into_iter().find(|(_, value)| value.is_some()) {
-                return Err(
-                    unsupported(strand, format!("{name} is not supported in the browser")).await,
-                );
+                return Err(Error::unsupported(
+                    strand,
+                    format!("{name} is not supported in the browser"),
+                ));
             }
             reqwest::ClientBuilder::new()
         };
@@ -872,7 +857,10 @@ impl<'v> Object<'v> for Client {
                 #[cfg(not(unix))]
                 {
                     let _ = unix_socket;
-                    return Err(unsupported(strand, "unix_socket is only available on Unix").await);
+                    return Err(Error::unsupported(
+                        strand,
+                        "unix_socket is only available on Unix",
+                    ));
                 }
             } else {
                 builder

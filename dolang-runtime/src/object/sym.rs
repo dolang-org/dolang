@@ -100,7 +100,7 @@ impl<'v> Protocol<'v> for SymObj {
         if let Some(osym) = other.downcast_ref(strand.builtin_types().sym) {
             Ok(Value::from_bool(this.receiver.get().name < osym.get().name))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`<`"))
         }
     }
 }

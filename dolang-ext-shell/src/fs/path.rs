@@ -1122,7 +1122,7 @@ macro_rules! impl_concrete_path {
                 if let Some(other) = path_object_from_value(strand, global, other) {
                     Ok(borrow.path_buf() == other)
                 } else {
-                    Err(Error::not_supported(strand))
+                    Err(Error::unsupported(strand, "`==`"))
                 }
             }
 
@@ -1145,7 +1145,7 @@ macro_rules! impl_concrete_path {
                 if let Some(other) = path_object_from_value(strand, global, other) {
                     Ok(borrow.path_buf() < other)
                 } else {
-                    Err(Error::not_supported(strand))
+                    Err(Error::unsupported(strand, "`<`"))
                 }
             }
 
@@ -1177,7 +1177,7 @@ macro_rules! impl_concrete_path {
                     create_path_annex(strand, annex, out);
                     Ok(())
                 } else {
-                    Err(Error::not_supported(strand))
+                    Err(Error::unsupported(strand, "`/`"))
                 }
             }
 
@@ -1197,7 +1197,7 @@ macro_rules! impl_concrete_path {
                     create_path_annex(strand, annex, out);
                     Ok(())
                 } else {
-                    Err(Error::not_supported(strand))
+                    Err(Error::unsupported(strand, "reflected `/`"))
                 }
             }
         }

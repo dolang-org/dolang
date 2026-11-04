@@ -55,7 +55,7 @@ impl<'v> Object<'v> for Rows {
         strand: &'a mut Strand<'v, 's>,
         _unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "unpacking a row"))
     }
 
     async fn spread<'a, 's>(
@@ -839,7 +839,7 @@ impl<'v> Object<'v> for RowRestIter {
         strand: &'a mut Strand<'v, 's>,
         _unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "unpacking a row"))
     }
 
     async fn spread<'a, 's>(
