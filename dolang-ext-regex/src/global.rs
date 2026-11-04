@@ -3,10 +3,11 @@ use dolang::runtime::{
     vm::{Register, StateTag},
 };
 
-use crate::regex::{Captures, Find, Match, Regex, RegexSplit};
+use crate::regex::{Captures, Find, Match, PatternError, Regex, RegexSplit};
 
 pub(crate) struct Types<'v> {
     pub(crate) regex: Type<'v, Regex>,
+    pub(crate) pattern_error: Type<'v, PatternError>,
     pub(crate) captures: Type<'v, Captures<'v>>,
     pub(crate) find: Type<'v, Find<'v>>,
     pub(crate) match_: Type<'v, Match<'v>>,
@@ -27,6 +28,7 @@ impl<'v> Global<'v> {
     pub(crate) fn new(builder: &mut Register<'v>) -> Self {
         let types = Types {
             regex: builder.register_type(),
+            pattern_error: builder.register_type(),
             captures: builder.register_type(),
             find: builder.register_type(),
             match_: builder.register_type(),

@@ -27,13 +27,34 @@
 import std:
   - @Fmt
 
+# Raised when [`Regex`](regex.Regex) is given a pattern it can't compile.
+#
+# ## Example
+#
+# ```
+# try
+#   Regex $pattern
+# catch PatternError: err
+#   echo "bad pattern: $err"
+# ```
+pub class PatternError: std.ValueError
+  # Why the pattern was rejected.
+  #
+  # | Kind | Meaning |
+  # | --- | --- |
+  # | `:SYNTAX:` | The pattern is not valid syntax. |
+  # | `:TOO_BIG:` | The compiled pattern would exceed the size limit. |
+  #[getter]
+  pub def kind self -> (:SYNTAX: | :TOO_BIG:)
+    ...
+
 # A compiled regular expression.
 pub class Regex
   # Compiles a regular expression pattern.
   #
   # ## Errors
   #
-  # `ValueError` if the pattern is invalid.
+  # [`PatternError`](regex.PatternError) if the pattern can't be compiled.
   #
   # ## Example
   #

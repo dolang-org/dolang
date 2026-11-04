@@ -1,4 +1,5 @@
 import fs
+  sys
   compress
   io
   zip
@@ -13,6 +14,7 @@ import fs
   std:
     - ConcurrencyError
     - DataError
+    - StateError
     - TypeError
     - ValueError
 
@@ -181,6 +183,33 @@ def zip64_size_hint()
     assert_eq $entries[0].size 13
     entries[0].open do |file|
       assert_eq (str (file.read 1024)) "Hello, World!"
+
+#[test]
+#[vfs]
+def mode_and_lookup_errors()
+  zip.open "modes.zip" "w" do |archive|
+    assert_throws $StateError do archive.entries
+    archive.open "hello.txt" do |file|
+      file.write "Hello, World!"
+
+  zip.open "modes.zip" do |archive|
+    assert_throws $sys.NotFoundError do
+      archive.open "missing.txt" do |_| nil
+    assert_throws $StateError do archive.create_dir "dir"
+    assert_throws $StateError do archive.symlink "hello.txt" "link"
+
+#[test]
+#[vfs]
+def crc_mismatch_raises_data_error()
+  zip.open "crc.zip" "w" do |archive|
+    archive.open "data.txt" compression: :STORED: do |file|
+      file.write "abcdefgh"
+  # Altering the stored bytes leaves the header's CRC-32 stale.
+  let bytes = fs.read "crc.zip"
+  fs.write "crc.zip" (b"Abcdefgh".join (bytes.split b"abcdefgh"))
+  zip.open "crc.zip" do |archive|
+    archive.open "data.txt" do |file|
+      assert_throws $DataError do file.read()
 
 #[test]
 #[vfs]

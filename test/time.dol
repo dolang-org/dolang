@@ -8,8 +8,10 @@ import strand
   std:
     - CanceledError
     - DataError
+    - OverflowError
     - RuntimeError
     - TimedOutError
+    - ValueError
   time:
     - Date
     - DateTime
@@ -103,8 +105,10 @@ def sleep_accepts_zero_and_rejects_negative()
   sleep 0.0
   sleep (DateTime.from_unix(1) - DateTime.from_unix(1))
 
-  assert_throws $RuntimeError do
+  assert_throws $ValueError do
     sleep -1
+  assert_throws $ValueError do
+    sleep $Float.INF
 
 #[test]
 def timeout_handles_completion_and_cancellation()
@@ -213,3 +217,9 @@ def canceled_resource_acquisition_retains_outer_resource()
   release_send.put ok
   holder.join()
   contender.join()
+
+#[test]
+def out_of_range_datetime_overflows()
+  let dt = DateTime.from_unix 1000000000000000
+  assert_throws $OverflowError do dt.date()
+  assert_throws $OverflowError do str $dt

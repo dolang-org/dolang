@@ -26,6 +26,7 @@ use dolang::runtime::{
     value::{BinEmbryo, PinBin, PinStr, TypeObject, View},
     vm::Register,
 };
+use dolang_ext_shell::ErrorExt as _;
 use futures_lite::io::{AsyncWriteExt as _, BufReader};
 use tokio::io::{AsyncRead as _, ReadBuf};
 use tokio_util::compat::FuturesAsyncReadCompatExt as _;
@@ -288,7 +289,10 @@ impl<'v> Object<'v> for Archive {
             .get("entries", |this, strand, out| {
                 let annex = this.annex();
                 if annex.entries.is_none() {
-                    return Err(Error::runtime(strand, "cannot list entries in write mode"));
+                    return Err(Error::state_error(
+                        strand,
+                        "cannot list entries in write mode",
+                    ));
                 }
                 if annex.closed.get() {
                     return Err(Error::state_error(strand, "archive closed"));
@@ -349,7 +353,11 @@ impl<'v> Object<'v> for Archive {
                                     }
                                 }
                                 let index = index.ok_or_else(|| {
-                                    Error::runtime(strand, "specified file not found in archive")
+                                    io::Error::new(
+                                        io::ErrorKind::NotFound,
+                                        format!("no entry named {name:?} in archive"),
+                                    )
+                                    .into_sys(strand)
                                 })?;
                                 open_read_entry_by_index(strand, archive, index).await?
                             }
@@ -434,7 +442,7 @@ impl<'v> Object<'v> for Archive {
                         .ok_or_else(|| Error::state_error(strand, "archive closed"))?
                 };
                 let ArchiveInner::Write(writer) = inner else {
-                    return Err(Error::runtime(
+                    return Err(Error::state_error(
                         strand,
                         "cannot create directory entries in read mode",
                     ));
@@ -468,7 +476,7 @@ impl<'v> Object<'v> for Archive {
                         .ok_or_else(|| Error::state_error(strand, "archive closed"))?
                 };
                 let ArchiveInner::Write(writer) = inner else {
-                    return Err(Error::runtime(
+                    return Err(Error::state_error(
                         strand,
                         "cannot create symlink entries in read mode",
                     ));
@@ -911,7 +919,7 @@ impl<'v> Object<'v> for File {
                     if n == 0 {
                         if !*validated {
                             if entry.compute_hash() != entry.entry().crc32() {
-                                return Err(Error::runtime(strand, "CRC32 checksum mismatch"));
+                                return Err(Error::data(strand, "CRC32 checksum mismatch"));
                             }
                             *validated = true;
                         }

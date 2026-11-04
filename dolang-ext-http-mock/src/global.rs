@@ -30,6 +30,7 @@ pub(crate) struct Syms<'v> {
     pub(crate) name: Sym<'v, 'v>,
     pub(crate) close: Sym<'v, 'v>,
     pub(crate) cancel: Sym<'v, 'v>,
+    pub(crate) assert: Sym<'v, 'v>,
 }
 
 pub(crate) struct Global<'v> {
@@ -70,6 +71,7 @@ impl<'v> Global<'v> {
                 name: builder.sym("name"),
                 close: builder.sym("close"),
                 cancel: builder.sym("cancel"),
+                assert: builder.sym("Assert"),
             },
         }
     }

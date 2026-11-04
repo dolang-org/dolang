@@ -23,7 +23,7 @@ pub class Archive
   # in the archive.
   #
   # Available in read mode only; reading it on an archive opened in write mode
-  # raises [`RuntimeError`](std.RuntimeError). A view obtained before the
+  # raises [`StateError`](std.StateError). A view obtained before the
   # archive is closed is empty afterward.
   #
   # ## Example
@@ -57,6 +57,10 @@ pub class Archive
 
   # Creates a directory entry. Write mode only.
   #
+  # ## Errors
+  #
+  # [`StateError`](std.StateError) if the archive was opened in read mode.
+  #
   # ## Example
   #
   # ```
@@ -82,6 +86,13 @@ pub class Archive
   #
   # `mode`, `size`, and `compression` apply to entries being created; passing
   # any of them in read mode raises [`TypeError`](std.TypeError).
+  #
+  # ## Errors
+  #
+  # | Exception                                  | Condition                                     |
+  # | ------------------------------------------ | --------------------------------------------- |
+  # | [`NotFoundError`](sys.NotFoundError)       | In read mode, the archive has no entry `name` |
+  # | [`ConcurrencyError`](std.ConcurrencyError) | Another file is already open in the archive   |
   #
   # ## Example
   #
@@ -146,6 +157,10 @@ pub class Archive
   #
   # Argument order matches
   # [`fs.symlink_file`](fs.symlink_file).
+  #
+  # ## Errors
+  #
+  # [`StateError`](std.StateError) if the archive was opened in read mode.
   #
   # ## Example
   #
@@ -287,7 +302,10 @@ pub class File: Io
   #
   # ## Errors
   #
-  # [`StateError`](std.StateError) if the file was opened in write mode.
+  # | Exception                      | Condition                                           |
+  # | ------------------------------ | --------------------------------------------------- |
+  # | [`StateError`](std.StateError) | The file was opened in write mode                   |
+  # | [`DataError`](std.DataError)   | The entry's data does not match its CRC-32 checksum |
   #
   # ## Example
   #

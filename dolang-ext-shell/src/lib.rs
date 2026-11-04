@@ -100,13 +100,13 @@ pub async fn flush<'v, 's>(strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
         Ok(mut stream) => futures::AsyncWriteExt::flush(&mut *stream).await,
         Err(error) => Err(error),
     };
-    result.map_err(|error| Error::runtime(strand, error))?;
+    result.into_sys(strand)?;
     let mut stderr = global.stdio.stderr.clone();
     let result = match stderr.lock().await {
         Ok(mut stream) => futures::AsyncWriteExt::flush(&mut *stream).await,
         Err(error) => Err(error),
     };
-    result.map_err(|error| Error::runtime(strand, error))?;
+    result.into_sys(strand)?;
     global
         .terminal
         .writer
@@ -114,7 +114,7 @@ pub async fn flush<'v, 's>(strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
         .await
         .flush()
         .await
-        .map_err(|error| Error::runtime(strand, error))
+        .into_sys(strand)
 }
 
 /// Extracts a `security.windows.Sid` runtime value.
@@ -380,10 +380,10 @@ pub async fn with_terminal<'v, 's>(
     let global = strand.state::<Tag>();
 
     if !stderr_is_tty(strand) {
-        return Err(Error::runtime(strand, "stderr is not a terminal"));
+        return Err(Error::state_error(strand, "stderr is not a terminal"));
     }
     if global.terminal.redirected.get() {
-        return Err(Error::runtime(strand, "terminal already redirected"));
+        return Err(Error::state_error(strand, "terminal already redirected"));
     }
     global.terminal.redirected.set(true);
 
@@ -392,10 +392,7 @@ pub async fn with_terminal<'v, 's>(
         Ok(guard) => guard,
         Err(e) => {
             global.terminal.redirected.set(false);
-            return Err(Error::runtime(
-                strand,
-                format!("failed to disable terminal echo: {e}"),
-            ));
+            return Err(e.into_sys(strand));
         }
     };
 
@@ -419,7 +416,7 @@ pub async fn with_terminal<'v, 's>(
             .await
             .flush()
             .await
-            .map_err(|error| Error::runtime(strand, error))
+            .into_sys(strand)
     };
 
     // Restore
@@ -445,10 +442,10 @@ impl TerminalEchoGuard {
     fn disable() -> io::Result<Self> {
         let stderr = stderr();
         let fd = stderr.as_fd();
-        let mut termios = tcgetattr(fd).map_err(io::Error::other)?;
+        let mut termios = tcgetattr(fd)?;
         let original = termios.clone();
         termios.local_flags.remove(LocalFlags::ECHO);
-        tcsetattr(fd, SetArg::TCSANOW, &termios).map_err(io::Error::other)?;
+        tcsetattr(fd, SetArg::TCSANOW, &termios)?;
         Ok(Self { termios: original })
     }
 }

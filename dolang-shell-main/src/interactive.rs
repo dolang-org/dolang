@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    io,
     path::{Path, PathBuf},
 };
 
@@ -7,7 +8,6 @@ use dolang::{
     compile::{Config, Context, Mode, NodeId, Span, Token},
     runtime::{
         Error, Object, Output, Result, Strand, Type,
-        io::IoErrorExt as _,
         object::{Mut, TypeBuilder},
         strand::InterruptMask,
         unpack,
@@ -15,6 +15,9 @@ use dolang::{
     },
 };
 use dolang_ext_compile::apply_prelude_value;
+use dolang_ext_shell::ErrorExt as _;
+#[cfg(unix)]
+use rustyline::error::Signal;
 use rustyline::{
     Editor, Helper,
     completion::{Candidate, Completer},
@@ -252,7 +255,12 @@ impl<'v> Object<'v> for LineEditor {
                             (editor, result)
                         })
                         .await
-                        .map_err(|err| Error::runtime(strand, err))
+                        .map_err(|err| {
+                            if err.is_panic() {
+                                std::panic::resume_unwind(err.into_panic())
+                            }
+                            Error::canceled(strand)
+                        })
                     })
                     .await?;
                 let (editor, result) = result;
@@ -261,6 +269,12 @@ impl<'v> Object<'v> for LineEditor {
                     Ok(line) => Output::set(strand, out, line.as_str()),
                     Err(ReadlineError::Eof) => Output::set(strand, out, eof),
                     Err(ReadlineError::Interrupted) => Output::set(strand, out, interrupted),
+                    // A SIGINT that arrives before the read loop starts is reported
+                    // as a signal rather than as an interrupted read.
+                    #[cfg(unix)]
+                    Err(ReadlineError::Signal(Signal::Interrupt)) => {
+                        Output::set(strand, out, interrupted)
+                    }
                     Err(error) => return Err(readline_error(strand, error)),
                 }
                 Ok(())
@@ -282,10 +296,18 @@ impl<'v> Object<'v> for LineEditor {
     }
 }
 
-/// Maps an editor error, keeping the class of an I/O error.
+/// Maps an editor error, raising a `sys` class for an OS error.
 fn readline_error<'v, 's>(strand: &mut Strand<'v, 's>, error: ReadlineError) -> Error<'v, 's> {
     match error {
-        ReadlineError::Io(error) => error.into_do_io(strand),
+        ReadlineError::Io(error) => error.into_sys(strand),
+        #[cfg(unix)]
+        ReadlineError::Errno(errno) => io::Error::from(errno).into_sys(strand),
+        #[cfg(windows)]
+        ReadlineError::Decode(error) => Error::data(strand, error.to_string()),
+        #[cfg(windows)]
+        ReadlineError::SystemError(code) => {
+            io::Error::from_raw_os_error(code.raw_code()).into_sys(strand)
+        }
         error => Error::runtime(strand, error),
     }
 }

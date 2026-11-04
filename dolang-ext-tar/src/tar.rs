@@ -251,6 +251,28 @@ fn unix_path_string<'v, 's>(
     }
 }
 
+/// Converts an entry path like [`unix_path_string`], rejecting the paths the
+/// tar builder refuses before the writer is touched. The builder reports them
+/// as untyped I/O errors after it has been taken, which would poison the
+/// writer for what is a bad argument.
+fn entry_path<'v, 's>(strand: &mut Strand<'v, 's>, value: Slot<'v, '_>) -> Result<'v, 's, String> {
+    let path = unix_path_string(strand, value, "path")?;
+    if path.starts_with('/') {
+        return Err(Error::value(strand, "tar entry path must be relative"));
+    }
+    if path.contains('\0') {
+        return Err(Error::value(strand, "tar entry path must not contain NUL"));
+    }
+    let mut components = path.split('/').filter(|c| !c.is_empty() && *c != ".");
+    if components.clone().any(|c| c == "..") {
+        return Err(Error::value(strand, "tar entry path must not contain `..`"));
+    }
+    if components.next().is_none() {
+        return Err(Error::value(strand, "tar entry path must not be empty"));
+    }
+    Ok(path)
+}
+
 /// Metadata common to every tar entry, shared by `entry`, `create_dir`,
 /// `symlink`, and `hard_link`.
 struct CommonEntryOptions {
@@ -878,7 +900,7 @@ impl<'v> Object<'v> for TarWriter {
                         owner_name_sym = None,
                         group_name_sym = None
                     )?;
-                    let path = unix_path_string(strand, path, "path")?;
+                    let path = entry_path(strand, path)?;
                     let size = size.ok_or_else(|| Error::value(strand, "size is required"))?;
                     let size = nonnegative_u64(strand, size, "size")?;
                     let opts = parse_common_entry_options(
@@ -989,7 +1011,7 @@ impl<'v> Object<'v> for TarWriter {
                     owner_name_sym = None,
                     group_name_sym = None
                 )?;
-                let path = unix_path_string(strand, path, "path")?;
+                let path = entry_path(strand, path)?;
                 let opts = parse_common_entry_options(
                     strand, 0o755, mode, uid, gid, mtime, owner_name, group_name,
                 )?;
@@ -1010,7 +1032,7 @@ impl<'v> Object<'v> for TarWriter {
                     group_name_sym = None
                 )?;
                 let target = unix_path_string(strand, target, "target")?;
-                let path = unix_path_string(strand, path, "path")?;
+                let path = entry_path(strand, path)?;
                 let opts = parse_common_entry_options(
                     strand, 0o777, mode, uid, gid, mtime, owner_name, group_name,
                 )?;
@@ -1031,7 +1053,7 @@ impl<'v> Object<'v> for TarWriter {
                     group_name_sym = None
                 )?;
                 let target = unix_path_string(strand, target, "target")?;
-                let path = unix_path_string(strand, path, "path")?;
+                let path = entry_path(strand, path)?;
                 let opts = parse_common_entry_options(
                     strand, 0o644, mode, uid, gid, mtime, owner_name, group_name,
                 )?;

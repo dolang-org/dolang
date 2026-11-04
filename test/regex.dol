@@ -226,5 +226,10 @@ def replace()
   assert_eq (re.replace "" "X") ""
 
 #[test]
-def invalid_patterns_raise_value_errors()
-  assert_throws $std.ValueError do Regex "("
+def invalid_patterns_raise_pattern_errors()
+  let syntax = assert_throws $std.ValueError do Regex "("
+  assert_type $regex.PatternError $syntax
+  assert_eq $syntax.kind :SYNTAX:
+
+  let too_big = assert_throws $regex.PatternError do Regex r"\w{1000}{1000}"
+  assert_eq $too_big.kind :TOO_BIG:

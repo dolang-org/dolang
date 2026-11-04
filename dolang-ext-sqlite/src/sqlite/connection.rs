@@ -130,7 +130,7 @@ impl ConnectionAnnex<'_> {
             }
         })
         .await
-        .map_err(|err| Error::runtime(strand, err))?
+        .map_err(|err| super::join_error(strand, err))?
         .map_err(|e| unsafe { map_sqlite_error(strand, e, raw.into_inner()) });
 
         if pending_close {

@@ -22,6 +22,18 @@ use libsqlite3_sys::{
 
 use crate::global::Global;
 
+/// Maps a failed blocking task: a panic resumes on this thread, and a task
+/// dropped by a shutting-down runtime raises `CanceledError`.
+pub(crate) fn join_error<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    err: tokio::task::JoinError,
+) -> Error<'v, 's> {
+    if err.is_panic() {
+        std::panic::resume_unwind(err.into_panic())
+    }
+    Error::canceled(strand)
+}
+
 pub(crate) mod connection;
 pub(crate) mod row;
 pub(crate) mod statement;
@@ -178,7 +190,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                         })
                     })
                     .await
-                    .map_err(|err| Error::runtime(strand, err))?
+                    .map_err(|err| join_error(strand, err))?
                     .map_err(|rc| map_sqlite_errcode(strand, rc))?
                     .into_inner()
                 }
@@ -205,7 +217,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                     }
                 })
                 .await
-                .map_err(|err| Error::runtime(strand, err))?
+                .map_err(|err| join_error(strand, err))?
                 .map_err(|rc| map_sqlite_errcode(strand, rc))?
                 .into_inner()
             }

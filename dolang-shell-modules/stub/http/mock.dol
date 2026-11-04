@@ -101,8 +101,8 @@ pub class Mock
   #
   # ## Errors
   #
-  # Raises when any item's `expect:` is unsatisfied. The message lists every
-  # unsatisfied item, one per line.
+  # [`Assert`](test.Assert) when any item's `expect:` is unsatisfied. The
+  # message lists every unsatisfied item, one per line.
   pub def verify self
     ...
 
@@ -207,14 +207,15 @@ pub class Server: Func
   #
   # ## Errors
   #
-  # | Exception                                       | Condition                                     |
-  # | ----------------------------------------------- | --------------------------------------------- |
-  # | `RuntimeError`                                  | No items were given                           |
-  # | [`MissingKeyError`](std.MissingKeyError) | An item has no `respond:`                    |
-  # | [`ValueError`](std.ValueError)           | An item's `path_regex` is invalid             |
-  # | [`ValueError`](std.ValueError)           | An item's `method` is not a valid HTTP method |
-  # | [`ValueError`](std.ValueError)           | An item's `path` contains `?` or a host       |
-  # | `RuntimeError`                                  | An item's `expect:` is unsatisfied at block end |
+  # | Exception                                | Condition                                       |
+  # | ---------------------------------------- | ----------------------------------------------- |
+  # | [`MissingPosError`](std.MissingPosError) | No items were given                             |
+  # | [`MissingKeyError`](std.MissingKeyError) | An item has no `respond:`                       |
+  # | [`ValueError`](std.ValueError)           | An item's `path_regex` is invalid               |
+  # | [`ValueError`](std.ValueError)           | An item's `method` is not a valid HTTP method   |
+  # | [`ValueError`](std.ValueError)           | An item's `path` contains `?` or a host         |
+  # | [`ValueError`](std.ValueError)           | A header name or value is invalid               |
+  # | [`Assert`](test.Assert)                  | An item's `expect:` is unsatisfied at block end |
   #
   # ## Example
   #

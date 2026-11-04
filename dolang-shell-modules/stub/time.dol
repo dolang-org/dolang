@@ -463,7 +463,7 @@ pub class Duration
 #
 # ## Errors
 #
-# [`RuntimeError`](std.RuntimeError) if the duration is negative, or a
+# [`ValueError`](std.ValueError) if the duration is negative, or a
 # non-finite float.
 #
 # ## Example
@@ -488,10 +488,10 @@ do
 #
 # ## Errors
 #
-# | Exception                                    | Condition                                          |
-# | -------------------------------------------- | -------------------------------------------------- |
-# | `RuntimeError`                               | The duration is negative, or a non-finite float    |
-# | [`TimedOutError`](std.TimedOutError) | The timeout elapsed before the block completed     |
+# | Exception                            | Condition                                       |
+# | ------------------------------------ | ----------------------------------------------- |
+# | [`ValueError`](std.ValueError)       | The duration is negative, or a non-finite float |
+# | [`TimedOutError`](std.TimedOutError) | The timeout elapsed before the block completed  |
 #
 # ## Example
 #

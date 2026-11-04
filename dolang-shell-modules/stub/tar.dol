@@ -215,6 +215,7 @@ pub class Writer
   #
   # | Exception    | Condition                                                       |
   # | ------------ | --------------------------------------------------------------- |
+  # | `ValueError` | `path` is absolute, empty, or contains `..` or a NUL            |
   # | `ValueError` | `owner_name` or `group_name` exceeds 32 bytes or contains a NUL |
   #
   # ## Example
@@ -255,6 +256,7 @@ pub class Writer
   #
   # | Exception          | Condition                                                       |
   # | ------------------ | --------------------------------------------------------------- |
+  # | `ValueError`       | `path` is absolute, empty, or contains `..` or a NUL            |
   # | `ConcurrencyError` | Another entry is created while an entry scope is active         |
   # | `ValueError`       | The number of bytes written differs from the declared `size`    |
   # | `ValueError`       | `owner_name` or `group_name` exceeds 32 bytes or contains a NUL |
@@ -299,6 +301,7 @@ pub class Writer
   #
   # | Exception    | Condition                                                       |
   # | ------------ | --------------------------------------------------------------- |
+  # | `ValueError` | `path` is absolute, empty, or contains `..` or a NUL            |
   # | `ValueError` | `target` is empty, exceeds 100 bytes, or contains a NUL         |
   # | `ValueError` | `owner_name` or `group_name` exceeds 32 bytes or contains a NUL |
   #
@@ -340,6 +343,7 @@ pub class Writer
   #
   # | Exception    | Condition                                                       |
   # | ------------ | --------------------------------------------------------------- |
+  # | `ValueError` | `path` is absolute, empty, or contains `..` or a NUL            |
   # | `ValueError` | `target` is empty, exceeds 100 bytes, or contains a NUL         |
   # | `ValueError` | `owner_name` or `group_name` exceeds 32 bytes or contains a NUL |
   #

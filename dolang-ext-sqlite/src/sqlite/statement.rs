@@ -268,7 +268,7 @@ impl<'v> Object<'v> for Statement {
                         sqlite3_finalize(raw.into_inner());
                     })
                     .await
-                    .map_err(|err| Error::runtime(strand, err))?;
+                    .map_err(|err| super::join_error(strand, err))?;
                     annex.raw.set(ptr::null_mut());
                 }
                 Ok(())
