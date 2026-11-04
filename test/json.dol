@@ -9,8 +9,8 @@ import
     - test
   std:
     - @BaseArray
-    - RuntimeError
     - TypeError
+    - ValueError
 
 #[test]
 def parse_primitives()
@@ -74,7 +74,7 @@ def structs_as_objects()
 
   let cyclic = struct()
   cyclic.self = cyclic
-  let err = assert_throws $RuntimeError do
+  let err = assert_throws $ValueError do
     encode $cyclic
   assert ((str err).contains "cyclic reference to struct")
 
@@ -92,7 +92,7 @@ def numbers()
   assert_eq (decode "18446744073709551615") 18446744073709551615
   assert (type (decode "18446744073709551616") Float)
 
-  let err = assert_throws $RuntimeError do
+  let err = assert_throws $ValueError do
     encode 170141183460469231731687303715884105727
   assert ((str err).contains "outside i64 range")
 
@@ -113,3 +113,62 @@ def encode_array_read_view()
   let values @ Array[Array[Int]] = [[1, 2], [3]]
   let view @ BaseArray[BaseArray[Int]] = values
   assert_eq (decode $ encode view) $values
+
+#[test]
+def string_escapes()
+  assert_eq (encode "a\"b\\c") r#""a\"b\\c""#
+  assert_eq (encode "\n\t\u{d}\u{8}\u{c}") r#""\n\t\r\b\f""#
+  assert_eq (encode "x\u{1}y\u{1f}") r#""x\u0001y\u001f""#
+  # Multibyte characters next to escapes stay whole.
+  assert_eq (encode "é\"ü\n☃") "\"é\\\"ü\\n☃\""
+  let text = "ünï\u{0}cødé\"\\"
+  assert_eq (decode(encode(text))) $text
+
+#[test]
+def non_finite_floats_as_null()
+  assert_eq (encode [Float.NAN, Float.INF, (-Float.INF)]) "[null,null,null]"
+
+#[test]
+def scalar_keys_quoted()
+  assert_eq (encode {1: true}) r#"{"1":true}"#
+  assert_eq (encode {true: 1}) r#"{"true":1}"#
+  assert_eq (encode {1.5: 1}) r#"{"1.5":1}"#
+  assert_eq (encode {sym: 1}) r#"{"sym":1}"#
+  assert_eq (encode((a: 1, b: []))) r#"{"a":1,"b":[]}"#
+
+  let err = assert_throws $ValueError do
+    encode {(Float.NAN): 1}
+  assert ((str err).contains "float key must be finite")
+  assert_throws $TypeError do
+    encode {(nil): 1}
+  assert_throws $TypeError do
+    encode {(1, 2): 1}
+
+#[test]
+def unsupported_values()
+  let err = assert_throws $TypeError do
+    encode b"\x01"
+  assert ((str err).contains "binary")
+  assert_throws $TypeError do
+    encode $ (do 1)
+
+  let array = []
+  array.push $array
+  let err = assert_throws $ValueError do
+    encode $array
+  assert ((str err).contains "cyclic reference to array")
+  let dict = {}
+  dict["self"] = dict
+  assert_throws $ValueError do
+    encode $dict
+
+  # Shared, acyclic values are not cycles.
+  let shared = [1]
+  assert_eq (encode [shared, shared]) "[[1],[1]]"
+
+#[test]
+def indented_containers()
+  assert_eq (encode {} indent: 2) "{}"
+  assert_eq (encode {}) "{}"
+  assert_eq (encode(struct(a: [1], b: {}), indent: 2)) "{\n  \"a\": [\n    1\n  ],\n  \"b\": {}\n}"
+  assert_eq (encode((a: "x",), indent: 0)) "{\n\"a\": \"x\"\n}"

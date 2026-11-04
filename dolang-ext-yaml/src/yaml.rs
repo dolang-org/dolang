@@ -1,13 +1,13 @@
-use std::{borrow::Cow, collections::HashSet, num::NonZero};
+use std::{borrow::Cow, collections::HashSet, fmt, mem, num::NonZero};
 
 use ordered_float::OrderedFloat;
 use saphyr::{Mapping as YamlMapping, Scalar, Yaml, YamlEmitter};
 
 use dolang::runtime::{
-    Output, Slot, Strand, Value,
+    Alloc, Output, Slot, Strand, Value,
     error::{Error, Result, ResultExt},
     unpack,
-    value::{Empty, Nil, View},
+    value::{Array, Empty, Nil, PinStr, StrEmbryo, View},
     vm::Register,
 };
 use saphyr_parser::{Event, Parser, ScalarStyle, Span, StrInput};
@@ -26,126 +26,196 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
         })
         .function("encode", async move |strand, args, out| {
             let ([arg], []) = unpack!(strand, args, 1, 0)?;
-            let mut seen = HashSet::new();
-            let yaml = value_to_yaml(strand, &arg, &mut seen)?;
-            let mut output = String::new();
-            YamlEmitter::new(&mut output).dump(&yaml).into_do(strand)?;
-            let result = output.strip_prefix("---\n").unwrap_or(&output);
-            Output::set(strand, out, result);
-            Ok(())
+            strand.with_slots_sync(|strand, [mut keep]| {
+                Output::set(strand, &mut keep, Empty::Array);
+                let mut builder = Builder {
+                    keep: keep.as_array(strand.vm()).expect("keep must be an array"),
+                    pins: Vec::new(),
+                    seen: HashSet::new(),
+                };
+                // Declared after `builder`, so it drops first, even on error.
+                let yaml = builder.value(strand, &arg)?;
+                let mut buf = StrEmbryo::new();
+                let mut writer = EmbryoWriter {
+                    embryo: &mut buf,
+                    alloc: strand,
+                    skip: "---\n",
+                };
+                let result = YamlEmitter::new(&mut writer).dump(&yaml);
+                result.into_do(strand)?;
+                buf.finish(strand, out);
+                Ok(())
+            })
         })
         .commit();
 }
 
-fn value_to_yaml<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    value: &Value<'v>,
-    seen: &mut HashSet<NonZero<usize>>,
-) -> Result<'v, 's, Yaml<'static>> {
-    match value.view(strand.vm()) {
-        View::Nil => Ok(Yaml::Value(Scalar::Null)),
-        View::Bool(b) => Ok(Yaml::Value(Scalar::Boolean(b))),
-        View::Int(i) => Ok(Yaml::Value(Scalar::Integer(
-            i64::try_from(i).map_err(|_| Error::overflow(strand))?,
-        ))),
-        View::Float(f) => Ok(Yaml::Value(Scalar::FloatingPoint(OrderedFloat(f)))),
-        View::Str(s) => Ok(Yaml::Value(Scalar::String(Cow::Owned(s.into())))),
-        View::Sym(sym) => Ok(Yaml::Value(Scalar::String(Cow::Owned(
-            sym.as_str(strand.vm()).to_owned(),
-        )))),
-        View::Bin(_) => Err(Error::type_error(
-            strand,
-            "binary values are not YAML-representable",
-        )),
-        View::Array(handle) => {
-            let id = handle.id();
-            if !seen.insert(id.addr()) {
-                return Err(Error::type_error(strand, "cyclic reference to array"));
+/// Appends emitter output to an embryo, discarding the leading document
+/// marker.
+struct EmbryoWriter<'a, 'v> {
+    embryo: &'a mut StrEmbryo<'v>,
+    alloc: &'a mut dyn Alloc<'v>,
+    /// The part of the document marker not yet discarded.
+    skip: &'static str,
+}
+
+impl fmt::Write for EmbryoWriter<'_, '_> {
+    fn write_str(&mut self, mut s: &str) -> fmt::Result {
+        if !self.skip.is_empty() {
+            if let Some(rest) = s.strip_prefix(self.skip) {
+                self.skip = "";
+                s = rest;
+            } else if let Some(rest) = self.skip.strip_prefix(s) {
+                self.skip = rest;
+                return Ok(());
+            } else {
+                debug_assert!(false, "YAML emitter output must start with the marker");
+                self.skip = "";
             }
-            let len = handle.len(strand)?;
-            let mut seq = Vec::with_capacity(len);
-            for i in 0..len {
+        }
+        self.embryo.extend(self.alloc, s);
+        Ok(())
+    }
+}
+
+/// Builds a saphyr tree whose strings borrow from the encoded values.
+struct Builder<'k, 'v> {
+    /// Holds every `Str` and `Sym` whose text the tree borrows.
+    keep: Array<'v, 'k>,
+    /// Pins of the borrowed `Str` texts.
+    pins: Vec<PinStr<'v, 'static>>,
+    seen: HashSet<NonZero<usize>>,
+}
+
+impl<'v> Builder<'_, 'v> {
+    fn value<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        value: &Value<'v>,
+    ) -> Result<'v, 's, Yaml<'static>> {
+        match value.view(strand.vm()) {
+            View::Nil => Ok(Yaml::Value(Scalar::Null)),
+            View::Bool(b) => Ok(Yaml::Value(Scalar::Boolean(b))),
+            View::Int(i) => Ok(Yaml::Value(Scalar::Integer(
+                i64::try_from(i).map_err(|_| Error::overflow(strand))?,
+            ))),
+            View::Float(f) => Ok(Yaml::Value(Scalar::FloatingPoint(OrderedFloat(f)))),
+            View::Str(s) => {
+                self.keep.push(strand, value)?;
+                // SAFETY: `keep` roots the string until the encode ends, and the
+                // pin is dropped only after the tree that borrows its text.
+                let pin = unsafe { s.pin().into_static_unchecked() };
+                // SAFETY: as above; the text lives as long as the pin.
+                let text = unsafe { mem::transmute::<&str, &'static str>(&pin) };
+                self.pins.push(pin);
+                Ok(Yaml::Value(Scalar::String(Cow::Borrowed(text))))
+            }
+            View::Sym(sym) => {
+                let text = sym.as_str(strand.vm());
+                // SAFETY: the name lives in the symbol object, which `keep`
+                // roots until the tree that borrows it is dropped.
+                let text = unsafe { mem::transmute::<&str, &'static str>(text) };
+                self.keep.push(strand, value)?;
+                Ok(Yaml::Value(Scalar::String(Cow::Borrowed(text))))
+            }
+            View::Bin(_) => Err(Error::type_error(
+                strand,
+                "binary values are not YAML-representable",
+            )),
+            View::Array(handle) => {
+                let id = handle.id().addr();
+                self.enter(strand, id, "array")?;
+                let mut seq = Vec::new();
                 strand.with_slots_sync(|strand, [mut elem]| {
-                    handle.get(strand, i, &mut elem)?;
-                    seq.push(value_to_yaml(strand, &elem, seen)?);
+                    let len = handle.len(strand)?;
+                    seq.reserve(len);
+                    for i in 0..len {
+                        if !handle.get(strand, i, &mut elem)? {
+                            break;
+                        }
+                        seq.push(self.value(strand, &elem)?);
+                    }
                     Ok(())
                 })?;
+                self.seen.remove(&id);
+                Ok(Yaml::Sequence(seq))
             }
-            seen.remove(&id.addr());
-            Ok(Yaml::Sequence(seq))
-        }
-        View::Dict(handle) => {
-            let id = handle.id();
-            if !seen.insert(id.addr()) {
-                return Err(Error::type_error(strand, "cyclic reference to dict"));
-            }
-            let mut map = YamlMapping::new();
-            let mut pairs = handle.pairs();
-            strand.with_slots_sync(|strand, [mut key, mut val]| {
-                while pairs.next(strand, &mut key, &mut val)? {
-                    let yaml_key = value_to_yaml(strand, &key, seen)?;
-                    let yaml_val = value_to_yaml(strand, &val, seen)?;
-                    map.insert(yaml_key, yaml_val);
-                }
-                Ok(())
-            })?;
-            seen.remove(&id.addr());
-            Ok(Yaml::Mapping(map))
-        }
-        View::Record(handle) => {
-            let id = handle.id();
-            if !seen.insert(id.addr()) {
-                return Err(Error::type_error(strand, "cyclic reference to record"));
-            }
-            let mut map = YamlMapping::new();
-            let mut pairs = handle.pairs();
-            strand.with_slots_sync(|strand, [mut key, mut val]| {
-                while pairs.next(strand, &mut key, &mut val)? {
-                    let yaml_key = value_to_yaml(strand, &key, seen)?;
-                    let yaml_val = value_to_yaml(strand, &val, seen)?;
-                    map.insert(yaml_key, yaml_val);
-                }
-                Ok(())
-            })?;
-            seen.remove(&id.addr());
-            Ok(Yaml::Mapping(map))
-        }
-        View::Struct(handle) => {
-            let id = handle.id();
-            if !seen.insert(id.addr()) {
-                return Err(Error::type_error(strand, "cyclic reference to struct"));
-            }
-            let mut map = YamlMapping::new();
-            let mut pairs = handle.pairs();
-            strand.with_slots_sync(|strand, [mut key, mut val]| {
-                while pairs.next(strand, &mut key, &mut val)? {
-                    let yaml_key = value_to_yaml(strand, &key, seen)?;
-                    let yaml_val = value_to_yaml(strand, &val, seen)?;
-                    map.insert(yaml_key, yaml_val);
-                }
-                Ok(())
-            })?;
-            seen.remove(&id.addr());
-            Ok(Yaml::Mapping(map))
-        }
-        View::Tuple(handle) => {
-            let id = handle.id();
-            if !seen.insert(id.addr()) {
-                return Err(Error::type_error(strand, "cyclic reference to tuple"));
-            }
-            let len = handle.len();
-            let mut seq = Vec::with_capacity(len);
-            for i in 0..len {
+            View::Tuple(handle) => {
+                let id = handle.id().addr();
+                self.enter(strand, id, "tuple")?;
+                let mut seq = Vec::with_capacity(handle.len());
                 strand.with_slots_sync(|strand, [mut elem]| {
-                    handle.get(strand, i, &mut elem)?;
-                    seq.push(value_to_yaml(strand, &elem, seen)?);
+                    for i in 0..handle.len() {
+                        if !handle.get(strand, i, &mut elem)? {
+                            break;
+                        }
+                        seq.push(self.value(strand, &elem)?);
+                    }
                     Ok(())
                 })?;
+                self.seen.remove(&id);
+                Ok(Yaml::Sequence(seq))
             }
-            seen.remove(&id.addr());
-            Ok(Yaml::Sequence(seq))
+            View::Dict(handle) => {
+                let id = handle.id().addr();
+                self.enter(strand, id, "dict")?;
+                let mut pairs = handle.pairs();
+                let map = self.mapping(strand, |strand, key, val| pairs.next(strand, key, val))?;
+                self.seen.remove(&id);
+                Ok(Yaml::Mapping(map))
+            }
+            View::Record(handle) => {
+                let id = handle.id().addr();
+                self.enter(strand, id, "record")?;
+                let mut pairs = handle.pairs();
+                let map = self.mapping(strand, |strand, key, val| pairs.next(strand, key, val))?;
+                self.seen.remove(&id);
+                Ok(Yaml::Mapping(map))
+            }
+            View::Struct(handle) => {
+                let id = handle.id().addr();
+                self.enter(strand, id, "struct")?;
+                let mut pairs = handle.pairs();
+                let map = self.mapping(strand, |strand, key, val| pairs.next(strand, key, val))?;
+                self.seen.remove(&id);
+                Ok(Yaml::Mapping(map))
+            }
+            _ => Err(Error::type_error(strand, "unsupported YAML type")),
         }
-        _ => Err(Error::type_error(strand, "unsupported YAML type")),
+    }
+
+    fn enter<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        id: NonZero<usize>,
+        kind: &str,
+    ) -> Result<'v, 's, ()> {
+        if self.seen.insert(id) {
+            Ok(())
+        } else {
+            Err(Error::type_error(
+                strand,
+                format!("cyclic reference to {kind}"),
+            ))
+        }
+    }
+
+    /// Builds a mapping from the pairs `next` yields.
+    fn mapping<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        mut next: impl FnMut(&mut Strand<'v, 's>, Slot<'v, '_>, Slot<'v, '_>) -> Result<'v, 's, bool>,
+    ) -> Result<'v, 's, YamlMapping<'static>> {
+        let mut map = YamlMapping::new();
+        strand.with_slots_sync(|strand, [mut key, mut val]| {
+            while next(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut val))? {
+                let yaml_key = self.value(strand, &key)?;
+                let yaml_val = self.value(strand, &val)?;
+                map.insert(yaml_key, yaml_val);
+            }
+            Ok(())
+        })?;
+        Ok(map)
     }
 }
 
