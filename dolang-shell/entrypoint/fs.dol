@@ -42,6 +42,7 @@ let RAW_MASK_FIELDS = $
 # owner and group SIDs in the security descriptor.
 let SKIP_FIELDS = ["owner", "group"]
 let FS_FIELDS = $
+  - type
   - capacity
   - free
   - available

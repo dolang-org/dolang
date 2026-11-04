@@ -293,15 +293,18 @@ def fs_basic()
   assert (direct.free > 0)
   assert (direct.available > 0)
   assert_eq $direct.read_only false
+  assert_type $Str $direct.type
 
   let path_meta = Path(test_path).fs_metadata()
   assert_type $FsMetadata $path_meta
   assert_eq $path_meta.capacity $direct.capacity
+  assert_eq $path_meta.type $direct.type
 
   open $test_path r do |f|
     let file_meta = f.fs_metadata()
     assert_type $FsMetadata $file_meta
     assert_eq $file_meta.capacity $direct.capacity
+    assert_eq $file_meta.type $direct.type
 
   remove $test_path
 

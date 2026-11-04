@@ -805,6 +805,18 @@ pub class FsMetadata
   pub def read_only self -> Bool
     ...
 
+  # Filesystem type name as the platform reports it, such as `ext4`,
+  # `fuse.sshfs`, `apfs`, or `NTFS`, or `nil` when it can't be determined.
+  #
+  # Names aren't normalized across platforms.
+  #
+  # ```
+  # echo $fs_metadata(".").type
+  # ```
+  #[getter]
+  pub def type self -> (Str | nil)
+    ...
+
 # Metadata about a single filesystem entry.
 #
 # Returned by [`metadata`](fs.metadata),

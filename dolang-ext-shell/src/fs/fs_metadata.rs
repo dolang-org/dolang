@@ -66,6 +66,9 @@ impl<'v, const FAMILY: u8> Object<'v> for FsMetadata<FAMILY> {
             .get("read_only", |this, strand, out| {
                 Output::set(strand, out, this.annex().inner.read_only());
                 Ok(())
+            })
+            .get("type", |this, strand, out| {
+                util::nullable_field(strand, this.annex().inner.fs_type(), out)
             });
         if FAMILY == FS_UNIX {
             builder = builder

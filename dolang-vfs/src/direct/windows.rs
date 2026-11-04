@@ -40,7 +40,7 @@ use windows_sys::{
             ERROR_FILE_NOT_FOUND, ERROR_HANDLE_EOF, ERROR_INSUFFICIENT_BUFFER,
             ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER, ERROR_MORE_DATA, ERROR_NONE_MAPPED,
             ERROR_NOT_SUPPORTED, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE, LocalFree,
-            RtlNtStatusToDosError, S_OK, STATUS_BUFFER_OVERFLOW, STATUS_BUFFER_TOO_SMALL,
+            MAX_PATH, RtlNtStatusToDosError, S_OK, STATUS_BUFFER_OVERFLOW, STATUS_BUFFER_TOO_SMALL,
             STATUS_NO_EAS_ON_FILE, STATUS_NO_MORE_EAS, STATUS_SUCCESS,
         },
         Security::{
@@ -750,7 +750,7 @@ impl Direct {
         }
     }
 
-    fn fs_query_root_metadata(root: &Path) -> Result<(u64, u64, u64, u32, u32, u32)> {
+    fn fs_query_root_metadata(root: &Path) -> Result<FsMetadata> {
         let root_str = Self::path_wide(root);
         let mut available = 0u64;
         let mut capacity = 0u64;
@@ -767,6 +767,7 @@ impl Direct {
         let mut serial = 0u32;
         let mut max_component = 0u32;
         let mut flags = 0u32;
+        let mut fs_name = [0u16; MAX_PATH as usize + 1];
         let ok = unsafe {
             GetVolumeInformationByHandleW(
                 root_handle.as_raw_handle(),
@@ -775,33 +776,38 @@ impl Direct {
                 &mut serial,
                 &mut max_component,
                 &mut flags,
-                ptr::null_mut(),
-                0,
+                fs_name.as_mut_ptr(),
+                fs_name.len() as u32,
             )
         };
         if ok == 0 {
             return Err(Error::last_os_error());
         }
-
-        Ok((available, capacity, free, serial, max_component, flags))
-    }
-
-    fn fs_metadata_from_handle(handle: BorrowedHandle<'_>) -> Result<FsMetadata> {
-        let root = Self::volume_root_path(&Self::final_path_from_handle(handle)?)?;
-        let (available, capacity, free, serial, max_component, flags) =
-            Self::fs_query_root_metadata(&root)?;
+        let fs_name_len = fs_name
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(fs_name.len());
+        let fs_type = String::from_utf16(&fs_name[..fs_name_len])
+            .ok()
+            .filter(|name| !name.is_empty());
 
         Ok(FsMetadata {
             capacity,
             free,
             available,
             block_size: 0,
+            fs_type,
             family: FsMetadataFamily::Windows(WindowsFsMetadata {
                 flags,
                 volume_serial_number: serial,
                 component_length_max: max_component,
             }),
         })
+    }
+
+    fn fs_metadata_from_handle(handle: BorrowedHandle<'_>) -> Result<FsMetadata> {
+        let root = Self::volume_root_path(&Self::final_path_from_handle(handle)?)?;
+        Self::fs_query_root_metadata(&root)
     }
 
     pub(super) fn fs_metadata_from_file(file: &std::fs::File) -> Result<FsMetadata> {
@@ -860,20 +866,7 @@ impl Direct {
         } else {
             Self::volume_root_path(path)?
         };
-        let (available, capacity, free, serial, max_component, flags) =
-            Self::fs_query_root_metadata(&root)?;
-
-        Ok(FsMetadata {
-            capacity,
-            free,
-            available,
-            block_size: 0,
-            family: FsMetadataFamily::Windows(WindowsFsMetadata {
-                flags,
-                volume_serial_number: serial,
-                component_length_max: max_component,
-            }),
-        })
+        Self::fs_query_root_metadata(&root)
     }
 
     fn path_wide(path: &Path) -> Vec<u16> {
