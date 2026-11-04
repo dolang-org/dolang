@@ -73,6 +73,10 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     let error_concurrency = bc.error_concurrency.dup();
     let error_type = bc.error_type.dup();
     let error_value = bc.error_value.dup();
+    let error_data = bc.error_data.dup();
+    let error_shape = bc.error_shape.dup();
+    let error_missing_item = bc.error_missing_item.dup();
+    let error_unexpected_item = bc.error_unexpected_item.dup();
     let error_state = bc.error_state.dup();
     let error_index = bc.error_index.dup();
     let error_field = bc.error_field.dup();
@@ -160,6 +164,10 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .value("ConcurrencyError", &error_concurrency)
         .value("TypeError", &error_type)
         .value("ValueError", &error_value)
+        .value("DataError", &error_data)
+        .value("ShapeError", &error_shape)
+        .value("MissingItemError", &error_missing_item)
+        .value("UnexpectedItemError", &error_unexpected_item)
         .value("StateError", &error_state)
         .value("IndexError", &error_index)
         .value("FieldError", &error_field)

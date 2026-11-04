@@ -6,6 +6,7 @@ import sys sys.freebsd sys.linux sys.macos sys.unix sys.windows
     - assert_throws
     - test
   std:
+    - DataError
     - FieldError
     - TypeError
     - ValueError
@@ -116,6 +117,12 @@ def system_errors_are_constructible_and_subclassable()
   assert_type $InvalidInputError $invalid
   assert_type $Error $invalid
   assert_type $ValueError $invalid
+
+  let bad_data = InvalidDataError "corrupt stream"
+  assert_type $InvalidDataError $bad_data
+  assert_type $Error $bad_data
+  assert_type $DataError $bad_data
+  assert (!(type bad_data ValueError))
 
   let portable_types = $
     - $ConnectionRefusedError

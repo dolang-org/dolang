@@ -1294,4 +1294,29 @@ mod tests {
             assert_eq!(got, b"ab\n7\n");
         });
     }
+
+    #[test]
+    fn data_errors_cross_io_bridge() {
+        use crate::error::{Error, ErrorKind};
+
+        with_vm(async |strand, []| {
+            let err = io::error(
+                strand,
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "bad"),
+            );
+            assert_eq!(err.kind(), ErrorKind::Data);
+            let err = io::error(
+                strand,
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "bad"),
+            );
+            assert_eq!(err.kind(), ErrorKind::Value);
+
+            let err = Error::data(strand, "bad");
+            let bridged = io::from_do(strand, err);
+            assert_eq!(bridged.kind(), std::io::ErrorKind::InvalidData);
+            let back = io::error(strand, bridged);
+            assert_eq!(back.kind(), ErrorKind::Data);
+            assert_eq!(back.value_message().as_deref(), Some("bad"));
+        });
+    }
 }

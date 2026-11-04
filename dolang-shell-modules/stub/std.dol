@@ -394,14 +394,23 @@ pub def verbatim value @ Value -> Str
 # The abstract base type for all errors. All error types in `std` inherit
 # from `Error`, so it can be used as a catch-all in typed `catch` handlers.
 #
-# `Error` is abstract: it has no representation of its own, so it can be neither
-# constructed nor inherited from directly. Subclass one of its concrete subtypes
-# instead — usually [`RuntimeError`](std.RuntimeError).
+# `Error` is abstract: it has no representation of its own, so it can't be
+# constructed. A class can inherit from it directly, but has no constructor to
+# chain to and must define its own `(str)`. Such a class is not a
+# [`RuntimeError`](std.RuntimeError), so `catch RuntimeError` doesn't handle
+# it; subclass `RuntimeError` or one of its subtypes for ordinary errors.
 pub class Error
 
 
 # Supertype of ordinary catchable runtime failures, and a generic runtime error
 # in its own right when no more specific type applies.
+#
+# `catch RuntimeError` handles any failure a program might expect to recover
+# from. [`AbortError`](std.AbortError) and
+# [`CanceledError`](std.CanceledError) derive from [`Error`](std.Error)
+# instead, so a broad handler never swallows them; they propagate to a strand
+# boundary or end the program. A library's error classes always derive from
+# `RuntimeError` or one of its subtypes.
 #
 # ## Subclassing
 #
@@ -433,6 +442,16 @@ pub class RuntimeError: Error
     message @ Str
   do
     ...
+
+
+# Supertype of errors where items are missing or unexpected, in a call's
+# arguments or a destructured value.
+#
+# Binding arguments and destructuring share one mechanism, so `def f x y`,
+# `bind args`, and `let a b = parts` all raise the same errors. `ShapeError`
+# is abstract: catch it, but construct or subclass one of its concrete
+# subtypes.
+pub class ShapeError: RuntimeError
 
 
 # A value that implements the [`(iter)`](../../language/classes.md#iter-obtain-iterator)
@@ -1974,6 +1993,24 @@ pub class CyclicImportError: RuntimeError
     ...
 
 
+# Raised when an external document or stream being parsed, decoded, or read is
+# invalid.
+#
+# Module parse and decode errors subclass `DataError`. It is a sibling of
+# [`ValueError`](std.ValueError), which covers values the caller passes to
+# control an operation. A class may also mix in a shape error where both
+# apply, such as a key missing from a decoded document.
+#[mixable]
+pub class DataError: RuntimeError
+  # Builds an error reporting invalid data.
+  pub def (init)
+    self
+    # description of the problem with the data
+    message @ Str
+  do
+    ...
+
+
 # The read-only half of a [`Dict`](std.Dict), whose items it holds covariantly:
 # a `Dict[{a: Int}]` is a `BaseDict[{a: (Int | Str)}]`. A parameter that only
 # reads a dict takes a `BaseDict`, so it accepts dicts with narrower items.
@@ -3354,9 +3391,14 @@ pub @class UnpackIter[T]: Iter[T] Unpack[T, Rest: UnpackIter[T]]
   pub def (iter) self -> UnpackIter[T]
 
 
-# Raised when a required key argument is not provided.
+# Supertype of errors for a missing positional or key item. Abstract, like
+# [`ShapeError`](std.ShapeError).
+pub class MissingItemError: ShapeError
+
+
+# Raised when a required key item is not provided.
 #[mixable]
-pub class MissingKeyError: RuntimeError
+pub class MissingKeyError: MissingItemError
   # Builds an error naming a missing key item.
   pub def (init)
     self
@@ -3366,9 +3408,9 @@ pub class MissingKeyError: RuntimeError
     ...
 
 
-# Raised when a required positional argument is not provided.
+# Raised when a required positional item is not provided.
 #[mixable]
-pub class MissingPosError: RuntimeError
+pub class MissingPosError: MissingItemError
   # Builds an error naming a missing positional item.
   pub def (init)
     self
@@ -4793,9 +4835,14 @@ pub class TypeError: RuntimeError
 pub class Type[T]: Func
   field instance @ Phantom[T]
 
-# Raised when a key argument is unexpected or repeats a named parameter.
+# Supertype of errors for an unexpected positional or key item. Abstract, like
+# [`ShapeError`](std.ShapeError).
+pub class UnexpectedItemError: ShapeError
+
+
+# Raised when a key item is unexpected or repeats a named parameter.
 #[mixable]
-pub class UnexpectedKeyError: RuntimeError
+pub class UnexpectedKeyError: UnexpectedItemError
   # Builds an error naming an unexpected key item.
   pub def (init)
     self
@@ -4805,9 +4852,9 @@ pub class UnexpectedKeyError: RuntimeError
     ...
 
 
-# Raised when an unexpected positional argument is passed.
+# Raised when an unexpected positional item is passed.
 #[mixable]
-pub class UnexpectedPosError: RuntimeError
+pub class UnexpectedPosError: UnexpectedItemError
   # Builds an error naming an unexpected positional item.
   pub def (init)
     self
@@ -4825,8 +4872,14 @@ pub class UnsupportedError: RuntimeError
     ...
 
 
-# Raised when a value has an acceptable type but invalid contents, range, or
-# meaning for the operation.
+# Raised when the caller passes a value with an acceptable type but invalid
+# contents, range, or meaning for the operation.
+#
+# `ValueError` covers the options, modes, and settings that control how an
+# operation works. Invalid contents in what the operation exists to parse or
+# decode raise [`DataError`](std.DataError), which is deliberately a sibling of
+# `ValueError` rather than a subtype: `Int "abc"` raises `DataError`, and
+# `indent: -1` raises `ValueError`.
 #[mixable]
 pub class ValueError: RuntimeError
   # Builds an error reporting a value of the right type but unusable contents.

@@ -3490,6 +3490,14 @@ pub enum TypeObject {
     TypeError,
     /// `std.ValueError`
     ValueError,
+    /// `std.DataError`
+    DataError,
+    /// `std.ShapeError`
+    ShapeError,
+    /// `std.MissingItemError`
+    MissingItemError,
+    /// `std.UnexpectedItemError`
+    UnexpectedItemError,
     /// `std.StateError`
     StateError,
     /// `std.IndexError`
@@ -3558,6 +3566,10 @@ impl<'v> Input<'v> for TypeObject {
             TypeObject::ConcurrencyError => &builtins.error_concurrency,
             TypeObject::TypeError => &builtins.error_type,
             TypeObject::ValueError => &builtins.error_value,
+            TypeObject::DataError => &builtins.error_data,
+            TypeObject::ShapeError => &builtins.error_shape,
+            TypeObject::MissingItemError => &builtins.error_missing_item,
+            TypeObject::UnexpectedItemError => &builtins.error_unexpected_item,
             TypeObject::StateError => &builtins.error_state,
             TypeObject::IndexError => &builtins.error_index,
             TypeObject::FieldError => &builtins.error_field,

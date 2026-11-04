@@ -410,6 +410,10 @@ pub(crate) struct Singletons<'v> {
     pub(crate) error_concurrency: Value<'v>,
     pub(crate) error_type: Value<'v>,
     pub(crate) error_value: Value<'v>,
+    pub(crate) error_data: Value<'v>,
+    pub(crate) error_shape: Value<'v>,
+    pub(crate) error_missing_item: Value<'v>,
+    pub(crate) error_unexpected_item: Value<'v>,
     pub(crate) error_state: Value<'v>,
     pub(crate) error_index: Value<'v>,
     pub(crate) error_field: Value<'v>,
@@ -508,6 +512,22 @@ impl<'v> Singletons<'v> {
             error_value: v!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Value)
+            ),
+            error_data: v!(
+                builtin_types.error_variant_type,
+                error::VariantType(ErrorKind::Data)
+            ),
+            error_shape: v!(
+                builtin_types.error_variant_type,
+                error::VariantType(ErrorKind::Shape)
+            ),
+            error_missing_item: v!(
+                builtin_types.error_variant_type,
+                error::VariantType(ErrorKind::MissingItem)
+            ),
+            error_unexpected_item: v!(
+                builtin_types.error_variant_type,
+                error::VariantType(ErrorKind::UnexpectedItem)
             ),
             error_state: v!(
                 builtin_types.error_variant_type,
