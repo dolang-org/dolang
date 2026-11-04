@@ -1,4 +1,7 @@
 import sqlite
+  sys
+  time:
+    - timeout
   testlib.vfs:
     - vfs
   test:
@@ -9,8 +12,11 @@ import sqlite
   fs:
     - Path
   std:
+    - DataError
     - MissingKeyError
     - MissingPosError
+    - RuntimeError
+    - TimedOutError
     - TypeError
     - UnexpectedKeyError
     - UnexpectedPosError
@@ -387,3 +393,69 @@ def quoted_interpolation_rejected()
 def nul_in_sql_text_raises_value_error()
   sqlite.open ":memory:" do |conn|
     assert_throws $ValueError do conn.execute t"SELECT 1\u{0}"
+
+#[test]
+def nul_in_bound_string_raises_value_error()
+  sqlite.open ":memory:" do |conn|
+    let text = "a\u{0}b"
+    assert_throws $ValueError do conn.execute t"SELECT $text"
+
+#[test]
+#[vfs windows: false remote: false]
+def constraint_violations()
+  sqlite.open "test.db" do |conn|
+    conn.execute t"PRAGMA foreign_keys = ON"
+    conn.execute t"CREATE TABLE parent (id INTEGER PRIMARY KEY)"
+    conn.execute t"CREATE TABLE child (name TEXT UNIQUE NOT NULL, parent INTEGER REFERENCES parent (id))"
+    conn.execute t"INSERT INTO child (name) VALUES ('a')"
+
+    def check kind code block
+      let err = assert_throws $sqlite.ConstraintError $block
+      assert_type $sqlite.Error $err
+      assert_type $RuntimeError $err
+      assert_eq (err.kind, err.code) (kind, code)
+
+    check :UNIQUE: 2067 do conn.execute t"INSERT INTO child (name) VALUES ('a')"
+    check :NOT_NULL: 1299 do conn.execute t"INSERT INTO child (name) VALUES (NULL)"
+    check :FOREIGN_KEY: 787 do conn.execute t"INSERT INTO child (name, parent) VALUES ('b', 1)"
+
+#[test]
+def sql_errors_have_sql_kind()
+  sqlite.open ":memory:" do |conn|
+    let err = assert_throws $sqlite.Error do conn.execute t"SELECT * FROM missing"
+    assert_eq (err.kind, err.code) (:SQL:, 1)
+
+#[test]
+#[vfs windows: false remote: false]
+def non_database_raises_corrupt_error()
+  Path("junk.db").write ("x".repeat 4096)
+  sqlite.open "junk.db" do |conn|
+    let err = assert_throws $sqlite.CorruptError do conn.execute t"SELECT * FROM sqlite_master"
+    assert_type $DataError $err
+    assert_eq (err.kind, err.code) (:NOTADB:, 26)
+
+#[test]
+#[vfs windows: false remote: false]
+def missing_directory_raises_not_found()
+  assert_throws $sys.NotFoundError do
+    sqlite.open "missing/test.db" do |_| nil
+
+# A query that never finishes on its own.
+let endless = t"WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT count(*) FROM c"
+
+#[test]
+#[vfs windows: false remote: false]
+def interrupt_stops_running_statement()
+  sqlite.open "test.db" do |conn|
+    conn.execute t"CREATE TABLE t (a INTEGER)"
+    assert_throws $TimedOutError do
+      timeout 0.1 do conn.execute $endless
+    assert_eq (conn.execute t"INSERT INTO t VALUES (1)") 1
+
+    # Interrupting a statement in a transaction rolls the transaction back.
+    assert_throws $TimedOutError do
+      conn.transaction do |_|
+        conn.execute t"INSERT INTO t VALUES (2)"
+        timeout 0.1 do conn.execute $endless
+    conn.prepare t"SELECT a FROM t" do |stmt|
+      assert_eq [...stmt.query().map(do |row| row["a"])] [1]

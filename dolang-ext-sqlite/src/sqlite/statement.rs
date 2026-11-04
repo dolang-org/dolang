@@ -503,7 +503,7 @@ fn to_scalar<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Result<'
     } else if let Some(b) = value.as_bin(strand) {
         let bytes = strand.access(|access| b.as_slice(access).to_vec());
         if bytes.len() > i32::MAX as usize {
-            return Err(Error::runtime(strand, "binary value too large to bind"));
+            return Err(Error::value(strand, "binary value too large to bind"));
         }
         Ok(Scalar::Blob(bytes.into_boxed_slice()))
     } else {
@@ -515,8 +515,10 @@ fn to_scalar<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Result<'
 }
 
 fn check_text<'v, 's>(strand: &mut Strand<'v, 's>, text: &str) -> Result<'v, 's, ()> {
-    if text.len() > i32::MAX as usize || text.contains('\0') {
-        Err(Error::runtime(strand, "invalid string"))
+    if text.contains('\0') {
+        Err(Error::value(strand, "string contains a NUL"))
+    } else if text.len() > i32::MAX as usize {
+        Err(Error::value(strand, "string too large to bind"))
     } else {
         Ok(())
     }
