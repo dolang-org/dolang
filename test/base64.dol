@@ -2,6 +2,7 @@ import
   base64:
     - encode
     - decode
+    - DecodeError
   test:
     - assert
     - assert_eq
@@ -37,11 +38,16 @@ def decode_type_error()
     decode 123
   assert_eq (str err) "type error: expected Str or Bin"
 
+def assert_decode_error err kind offset
+  assert_eq (err.kind, err.offset) (kind, offset)
+
 #[test]
 def decode_invalid()
   let err = assert_throws $DataError do
     decode "%%%not base64%%%"
-  assert $ (str err).contains "Invalid"
+  assert ((type err) == DecodeError)
+  assert_decode_error $err :BYTE: 0
+  assert_eq (str err) "invalid base64 character '%' at offset 0"
 
 #[test]
 def encode_url_alphabet()
@@ -70,25 +76,49 @@ def decode_auto_alphabet()
 def decode_strict_alphabet()
   assert_eq (decode "-_8" alphabet: :URL:) b"\xfb\xff"
   assert_eq (decode "+/8" alphabet: :STANDARD:) b"\xfb\xff"
-  assert_throws $DataError do
+  let err = assert_throws $DecodeError do
     decode "-_8" alphabet: :STANDARD:
-  assert_throws $DataError do
+  assert_decode_error $err :BYTE: 0
+  let err = assert_throws $DecodeError do
     decode "+/8" alphabet: :URL:
+  assert_decode_error $err :BYTE: 0
 
 #[test]
 def decode_ambiguous_alphabet()
-  let err = assert_throws $DataError do
+  # The first alphabet-specific character decides
+  let err = assert_throws $DecodeError do
     decode "-/8"
-  assert $ (str err).contains "mixes standard and URL-safe"
+  assert_decode_error $err :BYTE: 1
+  let err = assert_throws $DecodeError do
+    decode "a+b_"
+  assert_decode_error $err :BYTE: 3
 
 #[test]
 def decode_strict_pad()
   assert_eq (decode "aGVsbG8=" pad: true) b"hello"
   assert_eq (decode "aGVsbG8" pad: false) b"hello"
-  assert_throws $DataError do
+  let err = assert_throws $DecodeError do
     decode "aGVsbG8" pad: true
-  assert_throws $DataError do
+  assert_decode_error $err :PADDING: nil
+  let err = assert_throws $DecodeError do
     decode "aGVsbG8=" pad: false
+  assert_decode_error $err :PADDING: nil
+
+#[test]
+def decode_error_kinds()
+  let cases = $
+    - ("a", :LENGTH:, nil)
+    - ("aGVsbG9=", :LAST_SYMBOL:, 6)
+    - ("aG=Vs", :BYTE:, 2)
+    - ("aGVs bG8=", :BYTE:, 4)
+    - (b"\xff", :BYTE:, 0)
+  for input kind offset = cases
+    let err = assert_throws $DecodeError do
+      decode $input
+    assert_decode_error $err $kind $offset
+  let err = assert_throws $DecodeError do
+    decode b"\xff"
+  assert_eq (str err) "invalid base64 character 0xff at offset 0"
 
 #[test]
 def decode_bin_input()
