@@ -497,7 +497,7 @@ pub(crate) fn coerce<'v, 's>(
 ) -> Result<'v, 's, f64> {
     if let Some(str) = value.as_str_raw(strand) {
         str.parse::<f64>()
-            .map_err(|_| Error::value(strand, format!("float: not a valid float: {:?}", str)))
+            .map_err(|_| Error::data(strand, format!("float: not a valid float: {:?}", str)))
     } else {
         match value.to_prim(strand)? {
             Prim::Int(v) => Ok(v as f64),

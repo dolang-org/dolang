@@ -42,8 +42,8 @@ pub @let EncodeValue = $
 #
 # ## Errors
 #
-# `ValueError` if the input is invalid, contains more than one document, or
-# uses unsupported YAML features such as tags or aliases.
+# [`DataError`](std.DataError) if the input is invalid, contains more than one
+# document, or uses unsupported YAML features such as tags or aliases.
 #
 # ## Example
 #

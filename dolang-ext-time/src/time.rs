@@ -422,21 +422,21 @@ fn create_date<'v, 's>(
 fn date_from_rfc<'v, 's>(strand: &mut Strand<'v, 's>, text: &str) -> Result<'v, 's, TimeDate> {
     let bytes = text.as_bytes();
     if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
-        return Err(Error::value(strand, "expected RFC full-date (YYYY-MM-DD)"));
+        return Err(Error::data(strand, "expected RFC full-date (YYYY-MM-DD)"));
     }
     let year = text[..4]
         .parse::<i32>()
-        .map_err(|_| Error::value(strand, "expected RFC full-date (YYYY-MM-DD)"))?;
+        .map_err(|_| Error::data(strand, "expected RFC full-date (YYYY-MM-DD)"))?;
     let month = text[5..7]
         .parse::<u8>()
         .ok()
         .and_then(|month| TimeMonth::try_from(month).ok())
-        .ok_or_else(|| Error::value(strand, "expected RFC full-date (YYYY-MM-DD)"))?;
+        .ok_or_else(|| Error::data(strand, "expected RFC full-date (YYYY-MM-DD)"))?;
     let day = text[8..10]
         .parse::<u8>()
-        .map_err(|_| Error::value(strand, "expected RFC full-date (YYYY-MM-DD)"))?;
+        .map_err(|_| Error::data(strand, "expected RFC full-date (YYYY-MM-DD)"))?;
     TimeDate::from_calendar_date(year, month, day)
-        .map_err(|_| Error::value(strand, "invalid calendar date"))
+        .map_err(|_| Error::data(strand, "invalid calendar date"))
 }
 
 fn format_date_rfc(date: TimeDate) -> String {
@@ -946,7 +946,7 @@ impl<'v> Object<'v> for DateTime {
                     .ok_or_else(|| Error::type_error(strand, "parse_rfc: expected string"))?
                     .to_string();
                 let datetime = OffsetDateTime::parse(&text, &Rfc3339)
-                    .map_err(|err| Error::runtime(strand, err))?;
+                    .map_err(|err| Error::data(strand, err.to_string()))?;
                 let annex = DateTimeAnnex::from_total_nanos(datetime.unix_timestamp_nanos());
                 this.create_with_annex(strand, DateTime, annex, out);
                 Ok(())

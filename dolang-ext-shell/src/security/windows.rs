@@ -456,10 +456,10 @@ fn sid_from_value<'v, 's>(
         value
             .to_string()
             .parse::<VfsSid>()
-            .map_err(|error| Error::value(strand, format!("{path}: {error}")))
+            .map_err(|error| Error::data(strand, format!("{path}: {error}")))
     } else if let Some(value) = value.as_bin(strand) {
         let bytes = value.to_vec();
-        VfsSid::from_bytes(&bytes).map_err(|error| Error::value(strand, format!("{path}: {error}")))
+        VfsSid::from_bytes(&bytes).map_err(|error| Error::data(strand, format!("{path}: {error}")))
     } else {
         Err(Error::type_error(
             strand,
@@ -1670,7 +1670,7 @@ fn coerce_sid_non_str<'v, 's>(
         let bytes = value.to_vec();
         VfsSid::from_bytes(&bytes)
             .map(Some)
-            .map_err(|error| Error::value(strand, format!("{path}: {error}")))
+            .map_err(|error| Error::data(strand, format!("{path}: {error}")))
     } else {
         Ok(None)
     }
@@ -2439,7 +2439,7 @@ async fn coerce_sec_desc<'v, 's>(
     if let Some(packet) = value.as_bin(strand) {
         let bytes = packet.to_vec();
         return VfsSecDesc::from_bytes(&bytes)
-            .map_err(|error| Error::value(strand, format!("{path}: {error}")));
+            .map_err(|error| Error::data(strand, format!("{path}: {error}")));
     }
 
     let Some(dict) = value.as_dict(strand.vm()) else {
@@ -2761,7 +2761,7 @@ impl<'v> Object<'v> for SecDesc {
                 .as_bin(strand)
                 .ok_or_else(|| Error::type_error(strand, "SecDesc: expected Bin"))?;
             VfsSecDesc::from_bytes(&value.to_vec())
-                .map_err(|error| Error::value(strand, error.to_string()))?
+                .map_err(|error| Error::data(strand, error.to_string()))?
         } else {
             let rm_control = match rm_control_value.as_deref() {
                 Some(value) if value.is_nil() => NullableComponent::Clear,

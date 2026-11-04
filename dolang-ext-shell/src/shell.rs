@@ -909,7 +909,7 @@ impl<'v> Object<'v> for Capture {
     ) -> Result<'v, 's, ()> {
         let bytes = encode_value(strand, &value)?;
         let value = std::str::from_utf8(&bytes)
-            .map_err(|_| Error::runtime(strand, "sub: captured invalid UTF-8"))?;
+            .map_err(|_| Error::data(strand, "sub: captured invalid UTF-8"))?;
         let mut capture = this.borrow_mut(strand)?;
         capture.append(value);
         Ok(())

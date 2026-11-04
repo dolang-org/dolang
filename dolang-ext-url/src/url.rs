@@ -54,7 +54,7 @@ impl<'v, 'a> UrlOrStr<'v, 'a> {
             }
             Self::Str(str) => strand
                 .access(|x| url::Url::parse(str.as_str(x)))
-                .into_do(strand),
+                .into_do_data(strand),
         }
     }
 }
@@ -422,10 +422,10 @@ impl<'v> Object<'v> for Url {
             .to_string();
         let mut url = this.annex().inner.clone();
         if segment.starts_with('/') {
-            url = url.join(&segment).into_do(strand)?;
+            url = url.join(&segment).into_do_data(strand)?;
         } else {
             url.path_segments_mut()
-                .map_err(|_| Error::runtime(strand, "URL cannot be extended with path segments"))?
+                .map_err(|_| Error::value(strand, "URL cannot be extended with path segments"))?
                 .push(&segment);
         }
         create_url_with_global(this.annex().global, strand, url, out);

@@ -164,7 +164,9 @@ pub class Document
 # Parses a complete XML document, preserving comments and whitespace.
 #
 # Predefined entities and numeric character references are expanded. Custom
-# DTD entities are not resolved. Invalid documents raise `ValueError`.
+# DTD entities are not resolved. Invalid documents raise
+# [`DataError`](std.DataError), including the checks that raise `ValueError`
+# when constructing the same nodes directly.
 pub def decode xml @ Str -> Document
   ...
 

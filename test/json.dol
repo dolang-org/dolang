@@ -9,6 +9,7 @@ import
     - test
   std:
     - @BaseArray
+    - DataError
     - TypeError
     - ValueError
 
@@ -19,6 +20,11 @@ def parse_primitives()
   assert_eq (decode "42") 42
   assert_eq (decode "3.14") 3.14
   assert_eq (decode "\"hello\"") "hello"
+
+#[test]
+def decode_rejects_invalid_json()
+  for input = ["", "{", "[1,]", "nul", "{\"a\" 1}"]
+    assert_throws $DataError do decode $input
 
 #[test]
 def round_trip_primitives()

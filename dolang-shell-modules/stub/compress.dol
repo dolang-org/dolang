@@ -104,7 +104,8 @@ pub class Compressor: Io
 # | Exception | Condition |
 # | --- | --- |
 # | [`TypeError`](std.TypeError) | `source` is not a path or an [`Io`](io.Io) |
-# | [`ValueError`](std.ValueError) | `source` is not readable, and is left open; or `:AUTO:` does not recognize the format |
+# | [`ValueError`](std.ValueError) | `source` is not readable, and is left open |
+# | [`DataError`](std.DataError) | `:AUTO:` does not recognize the format |
 #
 # ## Example
 #

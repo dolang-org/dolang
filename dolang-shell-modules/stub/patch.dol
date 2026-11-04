@@ -3,7 +3,7 @@
 
 import std:
   - RuntimeError
-  - ValueError
+  - DataError
 import fs:
   - @Path
 
@@ -43,7 +43,7 @@ pub class ApplyError: RuntimeError
 # catch patch.ParseError: err
 #   echo "bad patch: $err"
 # ```
-pub class ParseError: ValueError
+pub class ParseError: DataError
 
 # One file-level patch operation.
 #

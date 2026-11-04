@@ -62,7 +62,7 @@ impl<'v> Object<'v> for Iter<'v> {
             None => {
                 // Check if there was an error
                 if borrow.shlex.had_error {
-                    return Err(Error::runtime(strand, "parse error"));
+                    return Err(Error::data(strand, "parse error"));
                 }
                 Ok(false)
             }
@@ -82,7 +82,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>) {
         .function("quote", async move |strand, args, out| {
             let ([arg], []) = unpack!(strand, args, 1, 0)?;
             let s = arg.to_verbatim(strand)?;
-            let quoted = shlex::try_quote(&s).into_do(strand)?;
+            let quoted = shlex::try_quote(&s).into_do_value(strand)?;
             Output::set(strand, out, quoted.as_ref());
             Ok(())
         })
@@ -121,7 +121,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>) {
                 }
 
                 // Join with quoting
-                let joined = shlex::try_join(items.iter().map(|s| s.as_str())).into_do(strand)?;
+                let joined =
+                    shlex::try_join(items.iter().map(|s| s.as_str())).into_do_value(strand)?;
                 Output::set(strand, out, joined.as_str());
                 Ok(())
             },

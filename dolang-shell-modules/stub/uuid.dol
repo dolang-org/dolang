@@ -18,7 +18,8 @@ pub class Uuid
   #
   # ## Errors
   #
-  # `ValueError` if the text is invalid or bytes are not exactly 16 long.
+  # [`DataError`](std.DataError) if the text is invalid or bytes are not exactly
+  # 16 long.
   #
   # ## Example
   #
@@ -90,7 +91,8 @@ pub class Guid
   #
   # ## Errors
   #
-  # `ValueError` if the text is invalid or bytes are not exactly 16 long.
+  # [`DataError`](std.DataError) if the text is invalid or bytes are not exactly
+  # 16 long.
   #
   # ## Example
   #

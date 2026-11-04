@@ -201,7 +201,7 @@ pub def mixable[T] cls @ Type[T] -> Type[T]
 #
 # | Exception | Condition |
 # | --- | --- |
-# | [`ValueError`](std.ValueError) | The string is empty or malformed. |
+# | [`DataError`](std.DataError) | The string is empty or malformed. |
 # | [`TypeError`](std.TypeError) | The value cannot be converted. |
 pub def float value @ (Num | Str) -> Float
   ...
@@ -264,7 +264,8 @@ do -> Int
 #
 # | Exception | Condition |
 # | --- | --- |
-# | [`ValueError`](std.ValueError) | The string is empty or malformed, or the base is outside 2–36. |
+# | [`DataError`](std.DataError) | The string is empty or malformed. |
+# | [`ValueError`](std.ValueError) | The base is outside 2–36. |
 # | [`OverflowError`](std.OverflowError) | The integer string is out of range. |
 # | [`TypeError`](std.TypeError) | The value cannot be converted, the base is not an integer, or `base:` is supplied with a non-string value. |
 #
@@ -3870,6 +3871,10 @@ pub let static @ Value = ...
 pub class Str: @Index[Range[Int], Str]
   # Accepts a string or decodes UTF-8 binary data. The lowercase `str` function
   # instead returns the general-purpose textual representation of any value.
+  #
+  # ## Errors
+  #
+  # [`DataError`](std.DataError) if binary data is not valid UTF-8.
   #
   # ```
   # assert_eq (Str b"hello") "hello"

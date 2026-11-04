@@ -1,9 +1,11 @@
 import http
 import http.mock
 import std:
+  - DataError
   - hash
 import test:
   - assert_eq
+  - assert_throws
   - test
 
 def assert_err msg block
@@ -85,4 +87,4 @@ def invalid_utf8_event()
           body: b"data: \xff\n"
       do |_handle|
         let invalid = http.get (server.url / "/events-invalid")
-        assert_err "invalid UTF-8" do invalid.events().next()
+        assert_throws $DataError do invalid.events().next()

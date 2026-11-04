@@ -434,7 +434,7 @@ impl<'v> IntoByteIo<'v> for Buffered {
 }
 
 fn invalid_utf8<'v, 's>(strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
-    Error::runtime(strand, "invalid UTF-8 data")
+    Error::data(strand, "invalid UTF-8 data")
 }
 
 /// Parses a byte count.
@@ -1317,6 +1317,33 @@ mod tests {
             let back = io::error(strand, bridged);
             assert_eq!(back.kind(), ErrorKind::Data);
             assert_eq!(back.value_message().as_deref(), Some("bad"));
+        });
+    }
+
+    #[test]
+    fn decode_errors_describe_the_input() {
+        use crate::error::{Error, ErrorKind};
+
+        with_vm(async |strand, []| {
+            let err = io::decode_error(strand, std::io::Error::other("bad header"));
+            assert_eq!(err.kind(), ErrorKind::Data);
+            let err = io::decode_error(
+                strand,
+                std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "short"),
+            );
+            assert_eq!(err.kind(), ErrorKind::Data);
+            let err = io::decode_error(
+                strand,
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "bad"),
+            );
+            assert_eq!(err.kind(), ErrorKind::Value);
+
+            // A Do stream's own error keeps its class.
+            let err = Error::runtime(strand, "source failed");
+            let bridged = io::from_do(strand, err);
+            assert_eq!(bridged.kind(), std::io::ErrorKind::Other);
+            let back = io::decode_error(strand, bridged);
+            assert_eq!(back.kind(), ErrorKind::Runtime);
         });
     }
 }

@@ -710,7 +710,7 @@ pub class Sid
   #
   # ## Errors
   #
-  # `ValueError` for a malformed representation.
+  # [`DataError`](std.DataError) for a malformed representation.
   pub def (init)
     self
     # Canonical string, binary form, or well-known SID.
@@ -1069,7 +1069,7 @@ pub class SecDesc
   #
   # ## Errors
   #
-  # `ValueError` if `packet` is malformed or not self-relative.
+  # [`DataError`](std.DataError) if `packet` is malformed or not self-relative.
   @def (init)
     self
     # Self-relative binary form.

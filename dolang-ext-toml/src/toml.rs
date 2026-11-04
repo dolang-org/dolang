@@ -637,14 +637,14 @@ fn parse<'v, 's>(strand: &mut Strand<'v, 's>, src: &str, out: Slot<'v, '_>) -> R
     if let Ok(de) = toml::de::Deserializer::parse(src) {
         return Seed(strand, out)
             .deserialize(de)
-            .map_err(|e| Error::value(strand, e.to_string()));
+            .map_err(|e| Error::data(strand, e.to_string()));
     }
 
     let de =
-        toml::de::ValueDeserializer::parse(src).map_err(|e| Error::value(strand, e.to_string()))?;
+        toml::de::ValueDeserializer::parse(src).map_err(|e| Error::data(strand, e.to_string()))?;
     Seed(strand, out)
         .deserialize(de)
-        .map_err(|e| Error::value(strand, e.to_string()))
+        .map_err(|e| Error::data(strand, e.to_string()))
 }
 
 pub(crate) fn configure<'v>(builder: &mut Register<'v>) {

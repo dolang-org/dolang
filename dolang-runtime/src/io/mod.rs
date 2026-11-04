@@ -260,6 +260,26 @@ pub fn error<'v, 's>(strand: &mut Strand<'v, 's>, err: io::Error) -> Error<'v, '
     core_error(strand, class, err.to_string())
 }
 
+/// Maps an I/O error from a decoder to a Do error.
+///
+/// Like [`error`], except that a library error describing the input raises a
+/// `DataError`. Many decoders report malformed input as
+/// [`io::ErrorKind::Other`] and truncated input as
+/// [`io::ErrorKind::UnexpectedEof`]. An error of either kind that has no OS code
+/// and did not come from a Do stream is taken to be such a report.
+pub fn decode_error<'v, 's>(strand: &mut Strand<'v, 's>, err: io::Error) -> Error<'v, 's> {
+    let described = matches!(
+        err.kind(),
+        io::ErrorKind::Other | io::ErrorKind::UnexpectedEof
+    ) && err.raw_os_error().is_none()
+        && !err.get_ref().is_some_and(|inner| inner.is::<CoreError>());
+    if described {
+        Error::data(strand, err.to_string())
+    } else {
+        error(strand, err)
+    }
+}
+
 fn core_error<'v, 's>(
     strand: &mut Strand<'v, 's>,
     class: CoreClass,
@@ -277,11 +297,18 @@ fn core_error<'v, 's>(
 pub trait IoErrorExt {
     /// Maps the error to a Do error with [`error`].
     fn into_do_io<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's>;
+
+    /// Maps the error to a Do error with [`decode_error`].
+    fn into_do_decode<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's>;
 }
 
 impl IoErrorExt for io::Error {
     fn into_do_io<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
         error(strand, self)
+    }
+
+    fn into_do_decode<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
+        decode_error(strand, self)
     }
 }
 
@@ -289,11 +316,22 @@ impl IoErrorExt for io::Error {
 pub trait IoResultExt<T> {
     /// Maps the error to a Do error with [`error`].
     fn into_do_io<'v, 's>(self, strand: &mut Strand<'v, 's>) -> crate::error::Result<'v, 's, T>;
+
+    /// Maps the error to a Do error with [`decode_error`].
+    fn into_do_decode<'v, 's>(self, strand: &mut Strand<'v, 's>)
+    -> crate::error::Result<'v, 's, T>;
 }
 
 impl<T> IoResultExt<T> for io::Result<T> {
     fn into_do_io<'v, 's>(self, strand: &mut Strand<'v, 's>) -> crate::error::Result<'v, 's, T> {
         self.map_err(|err| error(strand, err))
+    }
+
+    fn into_do_decode<'v, 's>(
+        self,
+        strand: &mut Strand<'v, 's>,
+    ) -> crate::error::Result<'v, 's, T> {
+        self.map_err(|err| decode_error(strand, err))
     }
 }
 

@@ -1595,7 +1595,7 @@ do -> Bin
 #
 # ## Errors
 #
-# `RuntimeError` if the file is not valid UTF-8.
+# [`DataError`](std.DataError) if the file is not valid UTF-8.
 #
 # ## Example
 #

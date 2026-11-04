@@ -15,6 +15,7 @@ import fs
     - test
   std:
     - ConcurrencyError
+    - DataError
     - Error
     - RuntimeError
     - StateError
@@ -231,6 +232,20 @@ def rejects_wrong_values()
     assert_throws $ValueError str: "value error: sink must be writable" do
       tar.write $file do |_| nil
     assert_eq $file.read() b"still-open"
+
+#[test]
+#[vfs]
+def corrupt_archives_raise_data_errors()
+  fs.Path("garbage.tar").write ("x".repeat(1024))
+  assert_throws $DataError do
+    tar.read garbage.tar do |archive|
+      for _ = archive
+        nil
+  fs.Path("short.tar").write ("\u{0}".repeat(100))
+  assert_throws $DataError do
+    tar.read short.tar do |archive|
+      for _ = archive
+        nil
 
 #[test]
 #[vfs]

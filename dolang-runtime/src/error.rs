@@ -901,6 +901,22 @@ impl<'v, 's> Error<'v, 's> {
         }
     }
 
+    /// Reclassify a core `ValueError` as a `DataError` with the same message.
+    ///
+    /// For decoders that share validators with constructors: the validators
+    /// raise `ValueError`, which is right for a constructor argument, but the
+    /// same failure while decoding means the document is bad. Any other error
+    /// is returned unchanged.
+    pub fn value_into_data(self, strand: &mut Strand<'v, 's>) -> Self {
+        if self.kind() != ErrorKind::Value {
+            return self;
+        }
+        match self.value_message() {
+            Some(msg) => Self::data(strand, msg),
+            None => self,
+        }
+    }
+
     /// Is error ordinarily catchable by Do programs?
     pub fn catchable(&self) -> bool {
         !matches!(self.inner, Variant::NonLocalJump(..)) && !matches!(self.kind(), ErrorKind::Abort)

@@ -6,6 +6,7 @@ import
     - test
   std:
     - TypeError
+    - DataError
     - ValueError
   xml:
     decode: decode_document
@@ -136,7 +137,7 @@ def entity_references_are_expanded()
   assert_eq $node[0] "a&bABcd"
   assert_eq $encode(node) "<root>a&amp;bABcd</root>"
 
-  assert_throws $ValueError do
+  assert_throws $DataError do
     decode "<!DOCTYPE root [<!ENTITY custom \"value\">]><root>&custom;</root>"
 
 #[test]
@@ -277,7 +278,7 @@ def namespaced_attributes()
   assert_throws $ValueError do el[("", "id")] = "1"
   assert_throws $ValueError do el[("urn:x", "a:b")] = "1"
 
-  assert_throws $ValueError do
+  assert_throws $DataError do
     decode r#"<root xmlns:a="urn:x" xmlns:b="urn:x" a:id="1" b:id="2"/>"#
 
 #[test]
@@ -370,7 +371,7 @@ def mutations_reject_malformed_trees()
   assert_eq $node.children.len 0
   node.push "ok"
   assert_throws $TypeError do node.children[0] = 42
-  assert_throws $ValueError do decode "<root>&#1;</root>"
+  assert_throws $DataError do decode "<root>&#1;</root>"
   assert_throws $ValueError do encode "\u{1}"
 
   let cyclic = Element "root"

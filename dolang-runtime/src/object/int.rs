@@ -742,7 +742,7 @@ pub(crate) fn coerce<'v, 's>(
             if matches!(error, IntErrorKind::PosOverflow | IntErrorKind::NegOverflow) {
                 Error::overflow(strand)
             } else {
-                Error::value(strand, format!("int: not a valid integer: {:?}", text))
+                Error::data(strand, format!("int: not a valid integer: {:?}", text))
             }
         })
     } else if base.is_some() {

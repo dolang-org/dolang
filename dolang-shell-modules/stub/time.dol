@@ -68,7 +68,7 @@ pub class DateTime
   #
   # ## Errors
   #
-  # [`RuntimeError`](std.RuntimeError) if the input is not a valid RFC 3339
+  # [`DataError`](std.DataError) if the input is not a valid RFC 3339
   # string.
   #
   # ## Example
@@ -183,7 +183,7 @@ pub class Date
   #
   # ## Errors
   #
-  # [`ValueError`](std.ValueError) if the input is not a valid `YYYY-MM-DD`
+  # [`DataError`](std.DataError) if the input is not a valid `YYYY-MM-DD`
   # date.
   #[class]
   pub def parse_rfc

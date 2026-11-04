@@ -232,7 +232,7 @@ impl<'v> Object<'v> for ShareInfo {
             })
             .get("path", |this, strand, out| match this.annex().info.path() {
                 Some(path) => dolang_ext_shell::windows_path(strand, path.as_str(), out),
-                None => Err(Error::value(
+                None => Err(Error::data(
                     strand,
                     "share path does not use Windows path syntax",
                 )),

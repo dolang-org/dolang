@@ -366,6 +366,7 @@ pub class Writer
 # | --- | --- |
 # | [`TypeError`](std.TypeError) | `source` is not a path or an [`Io`](io.Io) |
 # | [`ValueError`](std.ValueError) | `source` is not readable, and is left open |
+# | [`DataError`](std.DataError) | The archive is malformed or truncated, raised as it is read |
 #
 # ## Example
 #

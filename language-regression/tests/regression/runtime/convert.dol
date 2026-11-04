@@ -58,7 +58,7 @@ assert_throws $std.RuntimeError str: "type error: Float: expected Float or Int" 
 
 assert_eq (Str "foo") "foo"
 assert_eq (Str b"foo") "foo"
-assert_throws $std.RuntimeError str: "value error: Str: invalid UTF-8" do Str b"\xff"
+assert_throws $std.DataError str: "data error: Str: invalid UTF-8" do Str b"\xff"
 assert_throws $std.RuntimeError str: "type error: Str: expected Str or Bin" do Str 5
 
 assert_eq (Sym :foo:) :foo:

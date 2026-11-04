@@ -69,19 +69,19 @@ pub fn value_to_guid<'v, 's>(
     if let Some(str) = value.as_str(strand) {
         return strand
             .access(|x| str.as_str(x).parse::<dolang_winterop::guid::Guid>())
-            .map_err(|e| Error::value(strand, e.to_string()));
+            .map_err(|e| Error::data(strand, e.to_string()));
     }
     match value.view(strand.vm()) {
         View::Bin(bin) => {
             if bin.len() != 16 {
-                return Err(Error::value(
+                return Err(Error::data(
                     strand,
                     "guid binary form must be exactly 16 bytes",
                 ));
             }
             let bytes = bin.to_vec();
             dolang_winterop::guid::Guid::from_bytes(&bytes)
-                .map_err(|e| Error::value(strand, e.to_string()))
+                .map_err(|e| Error::data(strand, e.to_string()))
         }
         _ => Err(Error::type_error(strand, "expected Guid, Str, or Bin")),
     }

@@ -12,6 +12,7 @@ import fs
     - test
   std:
     - ConcurrencyError
+    - DataError
     - TypeError
     - ValueError
 
@@ -87,6 +88,14 @@ def nested_file_is_rejected()
         entries[1].open do |_| nil
       assert_throws $ConcurrencyError do
         archive.open (str entries[1].name) do |_| nil
+
+#[test]
+#[vfs]
+def corrupt_archives_raise_data_errors()
+  fs.Path("garbage.zip").write ("x".repeat(1024))
+  assert_throws $DataError do
+    zip.open garbage.zip do |archive|
+      archive.entries
 
 #[test]
 #[vfs]

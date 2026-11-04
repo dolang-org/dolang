@@ -123,11 +123,16 @@ pub class Status: Error
   #
   # | Exception                             | Condition                    |
   # | ------------------------------------- | ---------------------------- |
-  # | [`ValueError`](std.ValueError) | The excerpt is not valid UTF-8 |
+  # | [`DataError`](std.DataError) | The excerpt is not valid UTF-8 |
   pub def text self -> Str
     ...
 
   # The saved body excerpt, parsed as JSON.
+  #
+  # ## Errors
+  #
+  # [`DataError`](std.DataError) if the excerpt is not valid UTF-8 or not valid
+  # JSON. A truncated excerpt is usually not valid JSON.
   pub def json self -> JsonDecodeValue
     ...
 
@@ -209,7 +214,7 @@ pub class Response
   pub def body self -> Bin
     ...
 
-  # Reads the whole body as text.
+  # Reads the whole body as text, replacing invalid UTF-8 with U+FFFD.
   #
   # ## Errors
   #
@@ -217,7 +222,6 @@ pub class Response
   # | --------------------------------- | ------------------------------------- |
   # | [`StateError`](std.StateError)    | The body was read or the response closed |
   # | [`Error`](http.Error)             | A transport or protocol failure       |
-  # | [`ValueError`](std.ValueError) | The body is not valid UTF-8       |
   pub def text self -> Str
     ...
 
@@ -229,7 +233,7 @@ pub class Response
   # | ------------------------------------- | ------------------------------- |
   # | [`StateError`](std.StateError)        | The body was read or the response closed |
   # | [`Error`](http.Error)                 | A transport or protocol failure |
-  # | [`ValueError`](std.ValueError) | The body is not valid JSON      |
+  # | [`DataError`](std.DataError)   | The body is not valid JSON      |
   #
   # ## Example
   #
@@ -302,7 +306,7 @@ pub class Response
   # | ------------------------------------- | ------------------------------------ |
   # | [`StateError`](std.StateError)        | The body was read or the response closed |
   # | [`Error`](http.Error)                 | The underlying body read fails       |
-  # | [`ValueError`](std.ValueError) | The stream contains invalid UTF-8    |
+  # | [`DataError`](std.DataError) | The stream contains invalid UTF-8    |
   #
   # ## Example
   #

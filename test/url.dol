@@ -2,10 +2,12 @@ import
   std:
     - hash
     - Iterable
+    - DataError
     - ImmutableError
     - TypeError
     - UnexpectedKeyError
     - UnexpectedPosError
+    - ValueError
   test:
     - assert
     - assert_eq
@@ -156,3 +158,10 @@ def constructor_bad_type()
   let err = assert_throws $TypeError do
     Url 1
   assert_eq (str err) "type error: expected Url or Str"
+
+#[test]
+def parse_and_join_errors()
+  assert_throws $DataError do Url "not a url"
+  assert_throws $DataError do Url "http://[::1"
+  let mail = Url "mailto:a@example.com"
+  assert_throws $ValueError do (mail / "x")

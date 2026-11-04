@@ -537,7 +537,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                         magic.extend_from_slice(&byte[..read]);
                     }
                     let format = Format::detect(&magic)
-                        .ok_or_else(|| Error::value(strand, "unrecognized compression format"))?;
+                        .ok_or_else(|| Error::data(strand, "unrecognized compression format"))?;
                     let format = format.check_available(strand)?;
                     // Replay the detected bytes ahead of the rest of the stream.
                     let inner = ByteHandle::read(inner)

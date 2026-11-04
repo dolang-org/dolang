@@ -206,7 +206,7 @@ assert_eq (t.freeze_str()) ""
 
 # invalid contents raise and stay in the buffer
 let t2 = BinBuf(b"\xff")
-assert_throws $std.RuntimeError str: "invalid UTF-8 data" do t2.freeze_str()
+assert_throws $std.DataError str: "data error: invalid UTF-8 data" do t2.freeze_str()
 assert_eq $t2.freeze() b"\xff"
 
 # a native consumer writes through the stream's own `write`
