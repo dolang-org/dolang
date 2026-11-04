@@ -118,7 +118,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             } else {
                 dolang_ext_shell::cwd(strand).join(path)
             };
-            let path = CString::new(path.to_string_lossy().as_ref()).into_do(strand)?;
+            let path = CString::new(path.to_string_lossy().as_ref()).into_do_value(strand)?;
 
             // Parse retry configuration with defaults
             let busy_retries = if let Some(v) = retries {
@@ -178,7 +178,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                         })
                     })
                     .await
-                    .into_do(strand)?
+                    .map_err(|err| Error::runtime(strand, err))?
                     .map_err(|rc| map_sqlite_errcode(strand, rc))?
                     .into_inner()
                 }
@@ -205,7 +205,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                     }
                 })
                 .await
-                .into_do(strand)?
+                .map_err(|err| Error::runtime(strand, err))?
                 .map_err(|rc| map_sqlite_errcode(strand, rc))?
                 .into_inner()
             }

@@ -12,6 +12,7 @@ use serde_json::ser::{CharEscape, CompactFormatter, Formatter as JsonFormatter, 
 use dolang::runtime::{
     Alloc, Output, Slot, Strand, Value,
     error::{Error, Result, ResultExt},
+    io::IoResultExt as _,
     unpack,
     value::{BinEmbryo, Empty, Nil, View},
     vm::Register,
@@ -54,7 +55,7 @@ impl<'v> Sink<'v> for BinEmbryo<'v> {
             embryo: self,
             alloc: strand,
         });
-        result.into_do(strand)
+        result.into_do_io(strand)
     }
 }
 

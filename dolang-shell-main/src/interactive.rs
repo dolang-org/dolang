@@ -7,7 +7,7 @@ use dolang::{
     compile::{Config, Context, Mode, NodeId, Span, Token},
     runtime::{
         Error, Object, Output, Result, Strand, Type,
-        error::ResultExt,
+        io::IoErrorExt as _,
         object::{Mut, TypeBuilder},
         strand::InterruptMask,
         unpack,
@@ -166,7 +166,8 @@ impl<'v> Object<'v> for LineEditor {
         if let Some(prelude) = prelude.as_ref().filter(|value| !value.is_nil()) {
             apply_prelude_value(strand, &mut config, prelude)?;
         }
-        let editor = create_editor(history_path.as_deref(), config).into_do(strand)?;
+        let editor = create_editor(history_path.as_deref(), config)
+            .map_err(|error| readline_error(strand, error))?;
         this.create(
             strand,
             Self {
@@ -251,7 +252,7 @@ impl<'v> Object<'v> for LineEditor {
                             (editor, result)
                         })
                         .await
-                        .into_do(strand)
+                        .map_err(|err| Error::runtime(strand, err))
                     })
                     .await?;
                 let (editor, result) = result;
@@ -260,7 +261,7 @@ impl<'v> Object<'v> for LineEditor {
                     Ok(line) => Output::set(strand, out, line.as_str()),
                     Err(ReadlineError::Eof) => Output::set(strand, out, eof),
                     Err(ReadlineError::Interrupted) => Output::set(strand, out, interrupted),
-                    Err(error) => return Err(Error::runtime(strand, error)),
+                    Err(error) => return Err(readline_error(strand, error)),
                 }
                 Ok(())
             })
@@ -278,6 +279,14 @@ impl<'v> Object<'v> for LineEditor {
                 Output::set(strand, out, Nil);
                 Ok(())
             })
+    }
+}
+
+/// Maps an editor error, keeping the class of an I/O error.
+fn readline_error<'v, 's>(strand: &mut Strand<'v, 's>, error: ReadlineError) -> Error<'v, 's> {
+    match error {
+        ReadlineError::Io(error) => error.into_do_io(strand),
+        error => Error::runtime(strand, error),
     }
 }
 

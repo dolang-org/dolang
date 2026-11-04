@@ -115,6 +115,10 @@ pub class Connection
   #
   # The number of rows affected.
   #
+  # ## Errors
+  #
+  # [`ValueError`](std.ValueError) if the SQL text contains a NUL.
+  #
   # ## Example
   #
   # ```
@@ -139,6 +143,10 @@ pub class Connection
   # An interpolated value is bound once, here. A parameter written `${#name}`
   # or `${#0}` stays unfilled and is supplied at each
   # [`query`](sqlite.Statement.query) or [`execute`](sqlite.Statement.execute).
+  #
+  # ## Errors
+  #
+  # [`ValueError`](std.ValueError) if the SQL text contains a NUL.
   #
   # ## Example
   #
@@ -472,6 +480,10 @@ pub class Transaction
     ...
 
 # Opens a database connection, creating the database if it does not exist.
+#
+# ## Errors
+#
+# [`ValueError`](std.ValueError) if `path` contains a NUL.
 #
 # ## Example
 #

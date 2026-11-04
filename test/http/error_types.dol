@@ -2,9 +2,11 @@ import http
 import http.mock
 import std:
   - RuntimeError
+  - ValueError
 import test:
   - assert
   - assert_eq
+  - assert_throws
   - test
 
 #[test]
@@ -29,3 +31,10 @@ def redirect_loop_error()
           true
 
         assert $redirect_caught
+
+#[test]
+def invalid_request_headers_raise_value_errors()
+  http.mock.Server do |server|
+    let url = (server.url / "/never")
+    assert_throws $ValueError do http.get $url headers: {"bad name": "x"}
+    assert_throws $ValueError do http.get $url headers: {"x-ok": "a\nb"}

@@ -88,10 +88,11 @@ fn header_value_from_slot<'v, 's>(
     value: &Value<'v>,
 ) -> Result<'v, 's, HeaderValue> {
     if let Some(time) = as_datetime(strand, value) {
-        return HeaderValue::from_str(&httpdate::fmt_http_date(time)).into_do(strand);
+        return Ok(HeaderValue::from_str(&httpdate::fmt_http_date(time))
+            .expect("an HTTP date is a valid header value"));
     }
 
-    HeaderValue::from_bytes(value.to_string(strand)?.as_bytes()).into_do(strand)
+    HeaderValue::from_bytes(value.to_string(strand)?.as_bytes()).into_do_value(strand)
 }
 
 fn header_value_or_datetime<'v, 's>(
@@ -684,7 +685,7 @@ async fn request<'v, 's>(
                             item.index(st, 0, &mut key)?;
                             item.index(st, 1, &mut value)?;
                             let name = HeaderName::from_bytes(key.to_string(st)?.as_bytes())
-                                .into_do(st)?;
+                                .into_do_value(st)?;
                             let value = header_value_from_slot(st, &value)?;
                             headers.append(name, value);
                         }
