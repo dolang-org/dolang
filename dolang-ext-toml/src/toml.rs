@@ -10,7 +10,7 @@ use toml_writer::TomlWrite;
 
 use dolang::runtime::{
     Alloc, Output, Slot, Strand, Value,
-    error::{Error, Result, ResultExt},
+    error::{Error, Result},
     unpack,
     value::{Empty, StrEmbryo, View},
     vm::Register,
@@ -73,7 +73,8 @@ fn write<'v, 's>(
         embryo,
         alloc: strand,
     });
-    result.into_do(strand)
+    result.expect("writing to a StrEmbryo cannot fail");
+    Ok(())
 }
 
 impl<'v> Encoder<'_, 'v> {

@@ -5,7 +5,7 @@ use saphyr::{Mapping as YamlMapping, Scalar, Yaml, YamlEmitter};
 
 use dolang::runtime::{
     Alloc, Output, Slot, Strand, Value,
-    error::{Error, Result, ResultExt},
+    error::{Error, Result},
     unpack,
     value::{Array, Empty, Nil, PinStr, StrEmbryo, View},
     vm::Register,
@@ -42,7 +42,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
                     skip: "---\n",
                 };
                 let result = YamlEmitter::new(&mut writer).dump(&yaml);
-                result.into_do(strand)?;
+                result.expect("writing to a StrEmbryo cannot fail");
                 buf.finish(strand, out);
                 Ok(())
             })

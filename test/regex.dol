@@ -224,3 +224,7 @@ def replace()
   result = re.replace "abc 123 def 456 ghi 789" (do |_| "X") limit: 2
   assert_eq $result "abc X def X ghi 789"
   assert_eq (re.replace "" "X") ""
+
+#[test]
+def invalid_patterns_raise_value_errors()
+  assert_throws $std.ValueError do Regex "("

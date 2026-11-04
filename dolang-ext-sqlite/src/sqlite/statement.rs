@@ -268,7 +268,7 @@ impl<'v> Object<'v> for Statement {
                         sqlite3_finalize(raw.into_inner());
                     })
                     .await
-                    .into_do(strand)?;
+                    .map_err(|err| Error::runtime(strand, err))?;
                     annex.raw.set(ptr::null_mut());
                 }
                 Ok(())
@@ -586,7 +586,7 @@ pub(super) unsafe fn bind_template<'v, 's>(
 
     let mut prebound = Vec::with_capacity(template.values.len());
     for (k, scalar) in template.values.into_iter().enumerate() {
-        let name = CString::new(value_placeholder(k)).into_do(strand)?;
+        let name = CString::new(value_placeholder(k)).expect("placeholders contain no NUL");
         let idx = unsafe { sqlite3_bind_parameter_index(raw, name.as_ptr()) };
         if idx == 0 {
             return Err(Error::runtime(strand, "interpolated value went missing"));
@@ -632,7 +632,7 @@ unsafe fn bind_params<'v, 's>(
             }
             Arg::Key(sym, value) => (format!(":{}", sym.as_str(strand)), value, Some(sym)),
         };
-        let name = CString::new(placeholder).into_do(strand)?;
+        let name = CString::new(placeholder).into_do_value(strand)?;
         let idx = unsafe { sqlite3_bind_parameter_index(raw, name.as_ptr()) };
         if idx == 0 {
             return Err(match key {

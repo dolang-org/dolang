@@ -297,3 +297,13 @@ def native_consumers_use_entries()
       assert_eq (stream.read_all_str()) "hello\n"
     archive.next()
     assert_throws $Error do compress.decompress $entry :GZIP: do |stream| stream.read_all()
+
+#[test]
+#[vfs]
+def header_names_that_do_not_fit_raise_value_errors()
+  assert_throws $ValueError do
+    tar.write long-owner.tar do |archive|
+      archive.create_dir dir owner_name: ooooooooooooooooooooooooooooooooo
+  assert_throws $ValueError do
+    tar.write long-target.tar do |archive|
+      archive.symlink ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt link

@@ -312,13 +312,13 @@ fn build_header<'v, 's>(
     header.set_gid(opts.gid);
     header.set_mtime(opts.mtime);
     if let Some(value) = &opts.owner_name {
-        header.set_username(value).into_do(strand)?;
+        header.set_username(value).into_do_value(strand)?;
     }
     if let Some(value) = &opts.group_name {
-        header.set_groupname(value).into_do(strand)?;
+        header.set_groupname(value).into_do_value(strand)?;
     }
     if let Some(value) = link_name {
-        header.set_link_name(value).into_do(strand)?;
+        header.set_link_name(value).into_do_value(strand)?;
     }
     Ok(header)
 }
@@ -358,7 +358,7 @@ async fn append_metadata_only_entry<'v, 's>(
         parent.poisoned = true;
     }
     drop(parent);
-    append_result.into_do(strand)
+    append_result.into_do_io(strand)
 }
 
 /// Validates that the reader-backed entry `$this` is still active, binds
@@ -808,9 +808,9 @@ impl<'v> Object<'v> for TarEntryWriter {
                 let mut slices = &mut slices[..];
                 IoSlice::advance_slices(&mut slices, 0);
                 while !slices.is_empty() {
-                    let n = sink.write_vectored(slices).await.into_do(strand)?;
+                    let n = sink.write_vectored(slices).await.into_do_io(strand)?;
                     if n == 0 {
-                        return Err(io::Error::from(io::ErrorKind::WriteZero)).into_do(strand);
+                        return Err(io::Error::from(io::ErrorKind::WriteZero)).into_do_io(strand);
                     }
                     IoSlice::advance_slices(&mut slices, n);
                 }
@@ -966,7 +966,7 @@ impl<'v> Object<'v> for TarWriter {
                     }
 
                     block_result?;
-                    append_result.into_do(strand)?;
+                    append_result.into_do_io(strand)?;
                     if written != size {
                         return Err(Error::value(
                             strand,
@@ -1247,8 +1247,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                                 .ok_or_else(|| Error::state_error(strand, "tar writer is closed"))?
                                 .into_inner()
                                 .await
-                                .into_do(strand)?;
-                            inner.shutdown().await.into_do(strand)?;
+                                .into_do_io(strand)?;
+                            inner.shutdown().await.into_do_io(strand)?;
                             Ok(())
                         }
                         .await

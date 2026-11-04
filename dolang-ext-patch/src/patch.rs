@@ -18,6 +18,7 @@ use dolang::runtime::object::fmt;
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
     error::ResultExt,
+    io::IoResultExt as _,
     object::{Mut, TypeBuilder},
     unpack,
     value::{Nil, PinBin, PinStr, TypeObject},
@@ -300,7 +301,7 @@ impl<'v> Object<'v> for Patch<'v> {
                 let Some(source) = borrow.payload.source_bytes() else {
                     return Err(Error::field(strand, source));
                 };
-                let path = bytes_to_pathbuf(source).into_do(strand)?;
+                let path = bytes_to_pathbuf(source).into_do_data(strand)?;
                 dolang_ext_shell::path(strand, path, out)
             })
             .get("target", move |this, strand, out| {
@@ -308,7 +309,7 @@ impl<'v> Object<'v> for Patch<'v> {
                 let Some(target) = borrow.payload.target_bytes() else {
                     return Err(Error::field(strand, target));
                 };
-                let path = bytes_to_pathbuf(target).into_do(strand)?;
+                let path = bytes_to_pathbuf(target).into_do_data(strand)?;
                 dolang_ext_shell::path(strand, path, out)
             })
             .method("apply", async move |this, strand, args, out| {
@@ -582,7 +583,7 @@ fn encode_text_payload<'v, 's>(
     }
     PatchFormatter::new()
         .write_patch_into(patch, &mut out)
-        .into_do(strand)?;
+        .into_do_io(strand)?;
     Ok(out)
 }
 

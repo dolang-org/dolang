@@ -462,9 +462,7 @@ decode result through `Error::value_into_data`, so a check that raises
 `ValueError` for a constructor argument raises `DataError` when it rejects a
 document.
 
-Avoid `into_do`: it produces an untyped `RuntimeError`, and it also accepts an
-`io::Error`, silently dropping its class. Use `Error::runtime` when an untyped
-error is really intended, so that the choice is visible at the call.
+Use `Error::runtime` when an untyped error is really intended.
 
 A `kind` field that distinguishes cases of one error class takes uppercase
 symbols, such as `:SYNTAX:` or `:CYCLE:`.
