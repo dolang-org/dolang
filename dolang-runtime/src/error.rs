@@ -40,8 +40,10 @@ pub enum ErrorKind {
     Concurrency,
     /// Value used in a way inappropriate to its type
     Type,
-    /// Value has correct type but invalid contents or meaning
+    /// Caller passed a value of the correct type but invalid contents or meaning
     Value,
+    /// External document or stream being parsed, decoded, or read is invalid
+    Data,
     /// Operation is invalid for the current object or runtime state
     State,
     /// Index did not exist in index access or assignment operation
@@ -56,6 +58,15 @@ pub enum ErrorKind {
     MissingPos,
     /// Missing key argument (in call) or element (in destructuring bind)
     MissingKey,
+    /// Abstract supertype of [`MissingItem`](Self::MissingItem) and
+    /// [`UnexpectedItem`](Self::UnexpectedItem); never the kind of a concrete error
+    Shape,
+    /// Abstract supertype of [`MissingPos`](Self::MissingPos) and
+    /// [`MissingKey`](Self::MissingKey); never the kind of a concrete error
+    MissingItem,
+    /// Abstract supertype of [`UnexpectedPos`](Self::UnexpectedPos) and
+    /// [`UnexpectedKey`](Self::UnexpectedKey); never the kind of a concrete error
+    UnexpectedItem,
     /// Numeric overflow
     Overflow,
     /// Integer zero divisor
@@ -78,6 +89,37 @@ pub enum ErrorKind {
     Abort,
     /// Strand canceled
     Canceled,
+}
+
+impl ErrorKind {
+    /// The kind's immediate supertype below `std.Error`, if any.
+    ///
+    /// `None` means the kind's class derives from `std.Error` directly.
+    pub fn parent(self) -> Option<ErrorKind> {
+        use ErrorKind::*;
+        match self {
+            MissingPos | MissingKey => Some(MissingItem),
+            UnexpectedPos | UnexpectedKey => Some(UnexpectedItem),
+            MissingItem | UnexpectedItem => Some(Shape),
+            Unsupported | Immutable | Concurrency | Type | Value | Data | State | Index | Field
+            | Shape | Overflow | ZeroDiv | TimedOut | CyclicImport | Import | Compile => {
+                Some(Runtime)
+            }
+            SinkStop | IterStop | Runtime | Abort | Canceled => None,
+        }
+    }
+
+    /// Is this kind `other`, or a subkind of it?
+    pub fn is_subkind_of(self, other: ErrorKind) -> bool {
+        let mut kind = Some(self);
+        while let Some(k) = kind {
+            if k == other {
+                return true;
+            }
+            kind = k.parent();
+        }
+        false
+    }
 }
 
 #[derive(Clone)]
@@ -662,6 +704,11 @@ impl<'v, 's> Error<'v, 's> {
         Self::new_info(strand.inner, Boxed::Value(msg.into()))
     }
 
+    /// Create error: invalid external document or stream contents
+    pub fn data(strand: &mut Strand<'v, 's>, msg: impl Into<Cow<'v, str>>) -> Self {
+        Self::new_info(strand.inner, Boxed::Data(msg.into()))
+    }
+
     /// Create error: invalid operation for the current state
     pub fn state_error(strand: &mut Strand<'v, 's>, msg: impl Into<Cow<'v, str>>) -> Self {
         Self::new_info(strand.inner, Boxed::State(msg.into()))
@@ -841,7 +888,7 @@ impl<'v, 's> Error<'v, 's> {
         }
     }
 
-    /// The message of a core value error, without its kind prefix.
+    /// The message of a core value or data error, without its kind prefix.
     pub(crate) fn value_message(&self) -> Option<String> {
         let Variant::Boxed(root, info) = &self.inner else {
             return None;
@@ -849,7 +896,7 @@ impl<'v, 's> Error<'v, 's> {
         let val = root.get();
         let boxed = val.downcast_native(info.vm, info.vm.builtin_types().error)?;
         match boxed.get() {
-            Boxed::Value(msg) => Some(msg.to_string()),
+            Boxed::Value(msg) | Boxed::Data(msg) => Some(msg.to_string()),
             _ => None,
         }
     }
@@ -874,13 +921,7 @@ impl<'v, 's> Error<'v, 's> {
     /// receiver, and is likewise treated as a failed match.
     pub fn is_unpack_mismatch(&self) -> bool {
         !matches!(self.inner, Variant::NonLocalJump(..))
-            && matches!(
-                self.kind(),
-                ErrorKind::MissingPos
-                    | ErrorKind::MissingKey
-                    | ErrorKind::UnexpectedPos
-                    | ErrorKind::UnexpectedKey
-            )
+            && self.kind().is_subkind_of(ErrorKind::Shape)
     }
 
     /// Iterate over backtrace associated with error, deepest entries first.
@@ -1026,25 +1067,63 @@ impl<'v, 's> Error<'v, 's> {
 }
 
 /// [`std::error::Error`] extension trait.
+///
+/// Prefer [`into_do_value`](Self::into_do_value) or
+/// [`into_do_data`](Self::into_do_data), which choose the Do class at the call
+/// site. For an [`io::Error`](std::io::Error), use
+/// [`IoErrorExt::into_do_io`](crate::io::IoErrorExt::into_do_io), which keeps its
+/// class.
 pub trait ErrorExt {
     /// Convert into Do runtime error ([`Error::runtime`]).
     fn into_do<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's>;
+
+    /// Convert into a Do value error ([`Error::value`]) carrying the error's message.
+    fn into_do_value<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's>;
+
+    /// Convert into a Do data error ([`Error::data`]) carrying the error's message.
+    fn into_do_data<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's>;
 }
 
 impl<T: Into<Box<dyn error::Error + 'static>>> ErrorExt for T {
     fn into_do<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
         Error::runtime(strand, self)
     }
+
+    fn into_do_value<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
+        let err: Box<dyn error::Error> = self.into();
+        Error::value(strand, err.to_string())
+    }
+
+    fn into_do_data<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
+        let err: Box<dyn error::Error> = self.into();
+        Error::data(strand, err.to_string())
+    }
 }
 
 /// [`std::result::Result`] extension trait.
+///
+/// See [`ErrorExt`] for which conversion to prefer.
 pub trait ResultExt<T> {
     /// Convert error into Do runtime error ([`Error::runtime`]).
     fn into_do<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T>;
+
+    /// Convert error into a Do value error ([`Error::value`]).
+    fn into_do_value<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T>;
+
+    /// Convert error into a Do data error ([`Error::data`]).
+    fn into_do_data<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T>;
 }
 
 impl<T, E: ErrorExt> ResultExt<T> for result::Result<T, E> {
     fn into_do<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T> {
         self.map_err(|e| e.into_do(strand))
+    }
+
+    fn into_do_value<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T> {
+        self.map_err(|e| e.into_do_value(strand))
+    }
+
+    fn into_do_data<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T> {
+        self.map_err(|e| e.into_do_data(strand))
     }
 }

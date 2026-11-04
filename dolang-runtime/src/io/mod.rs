@@ -172,6 +172,7 @@ pub trait IntoIoError {
 #[derive(Clone, Copy, Debug)]
 enum CoreClass {
     Value,
+    Data,
     TimedOut,
     Runtime,
 }
@@ -213,6 +214,14 @@ pub(crate) fn from_do<'v, 's>(strand: &mut Strand<'v, 's>, mut err: Error<'v, 's
                 err.display(strand).to_string(),
             ),
         },
+        ErrorKind::Data => match err.value_message() {
+            Some(message) => (io::ErrorKind::InvalidData, CoreClass::Data, message),
+            None => (
+                io::ErrorKind::InvalidData,
+                CoreClass::Data,
+                err.display(strand).to_string(),
+            ),
+        },
         ErrorKind::TimedOut => (
             io::ErrorKind::TimedOut,
             CoreClass::TimedOut,
@@ -231,9 +240,9 @@ pub(crate) fn from_do<'v, 's>(strand: &mut Strand<'v, 's>, mut err: Error<'v, 's
 ///
 /// An error a Do stream raised through the bridge comes back as its core class. The
 /// VM's [I/O error handler](crate::vm::Register::io_error_handler) maps anything else,
-/// and without one, the core table applies: malformed input raises a `ValueError`, a
-/// timeout a `TimedOutError`, and anything else a `RuntimeError` with the error's
-/// message.
+/// and without one, the core table applies: invalid input raises a `ValueError`,
+/// invalid data a `DataError`, a timeout a `TimedOutError`, and anything else a
+/// `RuntimeError` with the error's message.
 pub fn error<'v, 's>(strand: &mut Strand<'v, 's>, err: io::Error) -> Error<'v, 's> {
     let err = match err.downcast::<CoreError>() {
         Ok(CoreError { class, message }) => return core_error(strand, class, message),
@@ -243,7 +252,8 @@ pub fn error<'v, 's>(strand: &mut Strand<'v, 's>, err: io::Error) -> Error<'v, '
         return handler(strand, err);
     }
     let class = match err.kind() {
-        io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => CoreClass::Value,
+        io::ErrorKind::InvalidInput => CoreClass::Value,
+        io::ErrorKind::InvalidData => CoreClass::Data,
         io::ErrorKind::TimedOut => CoreClass::TimedOut,
         _ => CoreClass::Runtime,
     };
@@ -257,6 +267,7 @@ fn core_error<'v, 's>(
 ) -> Error<'v, 's> {
     match class {
         CoreClass::Value => Error::value(strand, message),
+        CoreClass::Data => Error::data(strand, message),
         CoreClass::TimedOut => Error::timed_out(strand),
         CoreClass::Runtime => Error::runtime(strand, message),
     }

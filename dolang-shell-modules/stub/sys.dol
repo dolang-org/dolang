@@ -310,8 +310,9 @@ pub class InterruptedError: Error
   do
     ...
 
-# Input data is malformed or violates a protocol.
-pub class InvalidDataError: Error
+# Input data is malformed or violates a protocol. Also a
+# [`DataError`](std.DataError).
+pub class InvalidDataError: Error std.DataError
   # Creates the error. Parameters match [`Error`](sys.Error.(init)).
   pub def (init)
     self

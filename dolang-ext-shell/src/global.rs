@@ -507,6 +507,7 @@ impl<'v> ErrorGlobal<'v> {
                 invalid_data: builder
                     .build_type::<SysErrorObject<InvalidDataError>>((), ())
                     .nominal_supertype(sys_error)
+                    .nominal_supertype(TypeObject::DataError)
                     .build(),
                 interrupted: builder
                     .build_type::<SysErrorObject<InterruptedError>>((), ())

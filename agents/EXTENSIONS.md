@@ -429,6 +429,37 @@ To stream a Do iterable into a native consumer, such as a request body, call
 bytes, converted as `io.Concat` converts them, without the caller holding a
 slot.
 
+## Raising Errors
+
+Pick the class by asking whether a type checker could have ruled the failure
+out (the hierarchy is in
+[Error Handling](../docs/language/error-handling.md#error-types)):
+
+- **Yes**: `Error::type_error`, `Error::value`, or a shape error
+  (`Error::missing_key` and friends). These are bugs in the calling script and
+  are rarely caught.
+- **No**: a class callers can catch. Use `Error::data` (or a module subclass
+  of `std.DataError`) when a bad external document or stream caused it, and
+  otherwise a module subclass of `std.RuntimeError`.
+
+Classify by what the function is for: bad contents in what it parses or
+decodes are data errors, and bad options or settings that control how it works
+are value errors.
+
+Convert foreign errors with a method that names the class:
+
+- `into_do_io` for an `io::Error`, which keeps its `sys` class.
+- `into_do_value` / `into_do_data` for other errors, keeping only the message.
+- A conversion into the module's error class when the error carries structure
+  callers need, such as a line and column.
+
+Avoid `into_do`: it produces an untyped `RuntimeError`, and it also accepts an
+`io::Error`, silently dropping its class. Use `Error::runtime` when an untyped
+error is really intended, so that the choice is visible at the call.
+
+A `kind` field that distinguishes cases of one error class takes uppercase
+symbols, such as `:SYNTAX:` or `:CYCLE:`.
+
 ## GC Slots and Lifetime Transmuting
 
 When wrapping types that borrow from GC-managed values (e.g. a regex iterator

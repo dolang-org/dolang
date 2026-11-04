@@ -107,6 +107,51 @@ finally
   disconnect()
 ```
 
+## Error Types
+
+The `std` error types form a hierarchy rooted at [`Error`](std.Error):
+
+```
+Error
+├── AbortError
+├── CanceledError
+└── RuntimeError
+    ├── TypeError
+    ├── ValueError
+    ├── ShapeError
+    │   ├── MissingItemError
+    │   │   ├── MissingKeyError
+    │   │   └── MissingPosError
+    │   └── UnexpectedItemError
+    │       ├── UnexpectedKeyError
+    │       └── UnexpectedPosError
+    ├── DataError
+    └── FieldError, IndexError, StateError, ...
+```
+
+[`RuntimeError`](std.RuntimeError) is the supertype of every failure a program
+might expect to recover from. [`AbortError`](std.AbortError) and
+[`CanceledError`](std.CanceledError) sit outside it, so `catch RuntimeError`
+never swallows them.
+
+[`TypeError`](std.TypeError), [`ShapeError`](std.ShapeError), and
+[`ValueError`](std.ValueError) say what is wrong with a value a caller passed:
+its kind, its items (missing or unexpected, in a call's arguments or a
+destructured value), or its contents. Failures like these are bugs in the
+calling code, mostly caught by type checking, and are seldom worth catching.
+
+A failure that type checking can't rule out needs a type callers can catch:
+
+- [`DataError`](std.DataError) when an external document or stream is invalid.
+  Module parse and decode errors subclass it. It is a sibling of `ValueError`,
+  not a subtype.
+- Otherwise a module's own subtype of `RuntimeError`.
+
+The distinction between `ValueError` and `DataError` follows what the operation
+is for. Bad contents in what it exists to parse or decode raise `DataError`, as
+`Int "abc"` does. Bad options or settings that control how it works raise
+`ValueError`, as `indent: -1` does.
+
 ## Subclassing Error Types
 
 A module that wants callers to be able to catch its failures specifically can
@@ -138,7 +183,9 @@ catch NoDomainError: err
   echo "missing: $(err.name)"
 ```
 
-Inherit from the type that describes the failure — `ValueError` for a malformed
-value, `RuntimeError` when nothing more specific fits. Every `std` error type is
-subclassable except [`AbortError`](std.AbortError), which can be neither
-subclassed nor constructed.
+Inherit from the type that describes the failure — `DataError` for a malformed
+document, `RuntimeError` when nothing more specific fits. Every concrete `std`
+error type is subclassable. [`AbortError`](std.AbortError) can be neither
+subclassed nor constructed, and neither can the abstract `ShapeError`,
+`MissingItemError`, and `UnexpectedItemError`; subclass one of their concrete
+subtypes instead.

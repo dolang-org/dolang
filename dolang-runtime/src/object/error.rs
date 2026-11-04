@@ -30,6 +30,7 @@ pub(crate) enum Boxed<'v> {
     Concurrency(Option<Cow<'v, str>>),
     Type(Cow<'v, str>),
     Value(Cow<'v, str>),
+    Data(Cow<'v, str>),
     State(Cow<'v, str>),
     Overflow,
     ZeroDiv,
@@ -60,6 +61,7 @@ impl<'v> Boxed<'v> {
             Concurrency(_) => ErrorKind::Concurrency,
             Type(_) => ErrorKind::Type,
             Value(_) => ErrorKind::Value,
+            Data(_) => ErrorKind::Data,
             State(_) => ErrorKind::State,
             Index => ErrorKind::Index,
             Field(_) => ErrorKind::Field,
@@ -93,6 +95,7 @@ impl<'v> Display for Boxed<'v> {
             Concurrency(Some(msg)) => write!(f, "conflicting concurrent operation: {msg}"),
             Type(msg) => write!(f, "type error: {msg}"),
             Value(msg) => write!(f, "value error: {msg}"),
+            Data(msg) => write!(f, "data error: {msg}"),
             State(msg) => write!(f, "state error: {msg}"),
             Overflow => write!(f, "numeric overflow"),
             ZeroDiv => write!(f, "integer zero divisor"),
@@ -247,18 +250,25 @@ impl<'v> Protocol<'v> for VariantType {
         strand: &'a mut Strand<'v, 's>,
         supertype: &crate::value::Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &this).unwrap_or(false)
-            || strand
-                .singletons()
-                .error
+        if strand
+            .singletons()
+            .error
+            .eq(strand, supertype)
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        let mut kind = Some(this.get().0);
+        while let Some(k) = kind {
+            if variant_singleton(strand, k)
                 .eq(strand, supertype)
                 .unwrap_or(false)
-            || (is_runtime_superkind(this.get().0)
-                && strand
-                    .singletons()
-                    .error_runtime
-                    .eq(strand, supertype)
-                    .unwrap_or(false))
+            {
+                return true;
+            }
+            kind = k.parent();
+        }
+        false
     }
 
     fn op_debug<'a, 's>(
@@ -372,6 +382,11 @@ fn construct<'v, 's>(
             let msg = expect_string(strand, &msg)?;
             Error::value(strand, msg)
         }
+        ErrorKind::Data => {
+            let ([msg], []) = unpack!(strand, args, 1, 0)?;
+            let msg = expect_string(strand, &msg)?;
+            Error::data(strand, msg)
+        }
         ErrorKind::State => {
             let ([msg], []) = unpack!(strand, args, 1, 0)?;
             let msg = expect_string(strand, &msg)?;
@@ -437,7 +452,10 @@ fn construct<'v, 's>(
             let msg = expect_string(strand, &msg)?;
             Error::compile(strand, msg)
         }
-        ErrorKind::Abort => {
+        ErrorKind::Abort
+        | ErrorKind::Shape
+        | ErrorKind::MissingItem
+        | ErrorKind::UnexpectedItem => {
             return Err(Error::type_error(
                 strand,
                 format!("{} is not instantiable", variant_name(kind)),
@@ -463,9 +481,13 @@ fn construct<'v, 's>(
 ///
 /// `Abort` is sealed: it carries native content nothing in Do can supply, and
 /// letting it be subclassed would let a script mint values that
-/// [`Error::catchable`] reports as uncatchable.
+/// [`Error::catchable`] reports as uncatchable. The abstract shape kinds have no
+/// content of their own; a subclass derives from one of their concrete subtypes.
 fn is_constructible(kind: ErrorKind) -> bool {
-    !matches!(kind, ErrorKind::Abort)
+    !matches!(
+        kind,
+        ErrorKind::Abort | ErrorKind::Shape | ErrorKind::MissingItem | ErrorKind::UnexpectedItem
+    )
 }
 
 fn variant_singleton<'v>(strand: &Strand<'v, '_>, kind: ErrorKind) -> &'v Value<'v> {
@@ -476,6 +498,10 @@ fn variant_singleton<'v>(strand: &Strand<'v, '_>, kind: ErrorKind) -> &'v Value<
         ErrorKind::Concurrency => &class.error_concurrency,
         ErrorKind::Type => &class.error_type,
         ErrorKind::Value => &class.error_value,
+        ErrorKind::Data => &class.error_data,
+        ErrorKind::Shape => &class.error_shape,
+        ErrorKind::MissingItem => &class.error_missing_item,
+        ErrorKind::UnexpectedItem => &class.error_unexpected_item,
         ErrorKind::State => &class.error_state,
         ErrorKind::Index => &class.error_index,
         ErrorKind::Field => &class.error_field,
@@ -504,6 +530,10 @@ fn variant_name(kind: ErrorKind) -> &'static str {
         ErrorKind::Concurrency => "Concurrency",
         ErrorKind::Type => "Type",
         ErrorKind::Value => "Value",
+        ErrorKind::Data => "Data",
+        ErrorKind::Shape => "Shape",
+        ErrorKind::MissingItem => "MissingItem",
+        ErrorKind::UnexpectedItem => "UnexpectedItem",
         ErrorKind::State => "State",
         ErrorKind::Index => "Index",
         ErrorKind::Field => "Field",
@@ -523,31 +553,6 @@ fn variant_name(kind: ErrorKind) -> &'static str {
         ErrorKind::Canceled => "Canceled",
         ErrorKind::TimedOut => "TimedOut",
     }
-}
-
-fn is_runtime_superkind(kind: ErrorKind) -> bool {
-    matches!(
-        kind,
-        ErrorKind::Unsupported
-            | ErrorKind::Immutable
-            | ErrorKind::Concurrency
-            | ErrorKind::Type
-            | ErrorKind::Value
-            | ErrorKind::State
-            | ErrorKind::Index
-            | ErrorKind::Field
-            | ErrorKind::UnexpectedPos
-            | ErrorKind::UnexpectedKey
-            | ErrorKind::MissingPos
-            | ErrorKind::MissingKey
-            | ErrorKind::Overflow
-            | ErrorKind::ZeroDiv
-            | ErrorKind::CyclicImport
-            | ErrorKind::Import
-            | ErrorKind::Compile
-            | ErrorKind::Runtime
-            | ErrorKind::TimedOut
-    )
 }
 
 fn expect_index<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Result<'v, 's, usize> {

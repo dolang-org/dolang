@@ -1,7 +1,11 @@
 import
   std:
     - AbortError
+    - DataError
+    - MissingKeyError
     - RuntimeError
+    - ShapeError
+    - TypeError
     - TimedOutError
     - ValueError
 
@@ -86,3 +90,50 @@ let sealed = try
 catch e
   str $e
 assert_eq $sealed "type error: Abort cannot be subclassed"
+
+# `DataError` is subclassable like `ValueError`, and is not a `ValueError`.
+class DocError: DataError
+  pub field line = nil
+
+  def (init) self line
+    DataError.(init) $self "bad document at line $line"
+    self.line = line
+
+let doc = DocError 3
+assert_eq (str doc) "data error: bad document at line 3"
+assert (type doc DataError)
+assert (type doc RuntimeError)
+assert (!(type doc ValueError))
+
+# A class can mix `DataError` with a shape error, as for a key missing from a
+# decoded document.
+class MissingDocKey: DataError MissingKeyError
+  def (init) self key
+    DataError.(init) $self "missing key: $key"
+    MissingKeyError.(init) $self $key
+
+let missing = MissingDocKey :name:
+assert (type missing DataError)
+assert (type missing MissingKeyError)
+assert (type missing ShapeError)
+
+# The abstract shape types have no constructor to chain to.
+class SubShape: ShapeError
+  def (init) self
+    ShapeError.(init) $self
+
+assert_throws $TypeError str: "type error: Shape cannot be subclassed" do SubShape()
+
+# `ShapeError` covers arity mismatches from calls and destructuring.
+def two a b
+  (a + b)
+
+assert_throws $ShapeError do two 1
+assert_throws $ShapeError do two 1 2 3
+assert_throws $ShapeError do two 1 2 c: 3
+assert_throws $ShapeError do
+  let x _y = [1]
+  x
+assert_throws $ShapeError do
+  let :name = {age: 1}
+  name

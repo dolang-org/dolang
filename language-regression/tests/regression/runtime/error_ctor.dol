@@ -5,6 +5,7 @@ import
     - ConcurrencyError
     - TypeError
     - ValueError
+    - DataError
     - StateError
     - IndexError
     - FieldError
@@ -12,6 +13,9 @@ import
     - UnexpectedKeyError
     - MissingPosError
     - MissingKeyError
+    - ShapeError
+    - MissingItemError
+    - UnexpectedItemError
     - OverflowError
     - ZeroDivError
     - CyclicImportError
@@ -49,6 +53,30 @@ assert_eq (type value_err) $ValueError
 assert_eq (str value_err) "value error: bad"
 assert (type value_err RuntimeError)
 
+let data_err = DataError "bad"
+assert_eq (type data_err) $DataError
+assert_eq (str data_err) "data error: bad"
+assert (type data_err RuntimeError)
+
+# `DataError` and `ValueError` are siblings: neither is the other.
+assert (!(type data_err ValueError))
+assert (!(type value_err DataError))
+
+# Shape errors sit under the abstract `MissingItemError` / `UnexpectedItemError`,
+# which sit under `ShapeError`.
+for err = [MissingPosError(0), MissingKeyError(:k:)]
+  assert (type err MissingItemError)
+  assert (type err ShapeError)
+  assert (type err RuntimeError)
+  assert (!(type err UnexpectedItemError))
+for err = [UnexpectedPosError(0), UnexpectedKeyError(:k:)]
+  assert (type err UnexpectedItemError)
+  assert (type err ShapeError)
+  assert (type err RuntimeError)
+  assert (!(type err MissingItemError))
+assert (!(type value_err ShapeError))
+assert (!(type type_err ShapeError))
+
 let state_err = StateError "closed"
 assert_eq (type state_err) $StateError
 assert_eq (str state_err) "state error: closed"
@@ -68,6 +96,7 @@ assert_ctor $ConcurrencyError msg: "conflicting concurrent operation"
 assert_ctor $ConcurrencyError msg: "conflicting concurrent operation: shared" "shared"
 assert_ctor $TypeError msg: "type error: expected Int" "expected Int"
 assert_ctor $ValueError msg: "value error: expected mode" "expected mode"
+assert_ctor $DataError msg: "data error: bad syntax" "bad syntax"
 assert_ctor $StateError msg: "state error: closed" "closed"
 assert_ctor $IndexError msg: "index out of range or invalid"
 assert_ctor $FieldError msg: "no such field: name" :name:
@@ -90,6 +119,7 @@ assert_ctor_fail $MissingPosError type: $TypeError msg: "type error: expected `I
 assert_ctor_fail $UnexpectedPosError type: $ValueError msg: "value error: expected non-negative value" -1
 assert_ctor_fail $TypeError type: $TypeError msg: "type error: expected `Str`" 123
 assert_ctor_fail $ValueError type: $TypeError msg: "type error: expected `Str`" 123
+assert_ctor_fail $DataError type: $TypeError msg: "type error: expected `Str`" 123
 assert_ctor_fail $StateError type: $TypeError msg: "type error: expected `Str`" 123
 assert_ctor_fail $FieldError type: $TypeError msg: "type error: expected `Sym`" 123
 assert_ctor_fail $ImportError type: $TypeError msg: "type error: expected `Str`" 123
@@ -97,3 +127,6 @@ assert_ctor_fail $CompileError type: $TypeError msg: "type error: expected `Str`
 assert_ctor_fail $RuntimeError type: $TypeError msg: "type error: expected `Str`" 123
 
 assert_ctor_fail $AbortError type: $TypeError msg: "type error: Abort is not instantiable" "stop"
+assert_throws $TypeError str: "type error: Shape is not instantiable" do ShapeError()
+assert_throws $TypeError str: "type error: MissingItem is not instantiable" do MissingItemError()
+assert_throws $TypeError str: "type error: UnexpectedItem is not instantiable" do UnexpectedItemError()
