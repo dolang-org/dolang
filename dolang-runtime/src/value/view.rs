@@ -18,7 +18,7 @@ use crate::{
         protocol::{GcObjBorrow, Header},
         range,
         record::{self, ArgItem},
-        set, structure,
+        set, structure, tuple,
     },
     stdlib::fmt as stdfmt,
     strand::{Access, Strand},
@@ -460,6 +460,33 @@ impl<'v, 'a> Array<'v, 'a> {
             None => return Err(Error::concurrency(strand)),
         };
         borrow.inner.clear();
+        Ok(())
+    }
+
+    /// Reverse the elements in place.
+    pub fn reverse<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
+        let mut borrow = match self.0.borrow_mut() {
+            Some(b) => b,
+            None => return Err(Error::concurrency(strand)),
+        };
+        borrow.inner.reverse();
+        Ok(())
+    }
+
+    /// Write a tuple of the current elements to `out`.
+    pub fn to_tuple<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        out: impl Output<'v>,
+    ) -> Result<'v, 's, ()> {
+        let tuple = {
+            let borrow = match self.0.borrow() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            tuple::tuple(strand.vm(), borrow.inner.iter().map(Value::dup))
+        };
+        Output::set(strand, out, &Value::from_object(tuple));
         Ok(())
     }
 }
