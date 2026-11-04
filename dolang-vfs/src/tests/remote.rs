@@ -1185,7 +1185,10 @@ async fn security_descriptor_round_trip_over_generic_stream() {
         .sec_desc(path.to_path(), SecInfo::DACL, true)
         .await
         .unwrap();
-    assert_eq!(round_trip.dacl(), dacl.dacl());
+    // Wine quirk — see `direct.rs`'s `direct_security_descriptor_path_and_file`.
+    if !dolang_winterop::is_wine() {
+        assert_eq!(round_trip.dacl(), dacl.dacl());
+    }
 
     let mut options = client.open_options();
     options.read(true);
