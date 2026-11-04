@@ -2,7 +2,7 @@
 //! hand-off of each request to the server's dispatcher strand (see
 //! ARCHITECTURE.md). Nothing here touches the VM.
 
-use std::future::Future;
+use std::{future::Future, time::Duration};
 
 use bytes::Bytes;
 use futures::{
@@ -13,6 +13,7 @@ use http_body_util::{BodyExt as _, Full};
 use hyper::{body::Incoming, rt::Executor, service::service_fn};
 use hyper_util::{rt::TokioIo, server::conn::auto};
 use tokio::{
+    io::AsyncWriteExt as _,
     net::{TcpListener, TcpStream},
     sync::{mpsc, oneshot},
 };
@@ -31,6 +32,23 @@ pub(crate) struct Response {
     pub(crate) status: StatusCode,
     pub(crate) headers: Vec<(HeaderName, HeaderValue)>,
     pub(crate) body: Bytes,
+    /// Breaks the connection instead of sending the response.
+    pub(crate) fault: Option<Fault>,
+}
+
+/// A way to break a connection after reading a request.
+#[derive(Clone, Copy)]
+pub(crate) enum Fault {
+    /// Reset the connection.
+    Reset,
+    /// Close the connection.
+    Close,
+    /// Send bytes that are not an HTTP response.
+    Garbage,
+    /// Send a head promising more body than follows, then close.
+    Truncate,
+    /// Send a chunked head and a malformed chunk.
+    BadChunk,
 }
 
 impl Response {
@@ -39,6 +57,7 @@ impl Response {
             status,
             headers: Vec::new(),
             body: body.into(),
+            fault: None,
         }
     }
 
@@ -102,17 +121,48 @@ pub(crate) async fn serve(
     drop(stopped);
 }
 
+/// Serves one connection. A duplicate of its socket outlives hyper's, so a
+/// [`Fault`] can break the connection after hyper is dropped.
 async fn connection(stream: TcpStream, exec: LocalExec, dispatch: mpsc::UnboundedSender<Dispatch>) {
+    let Ok((stream, dup)) = stream.into_std().and_then(|stream| {
+        let dup = stream.try_clone()?;
+        Ok((TcpStream::from_std(stream)?, dup))
+    }) else {
+        return;
+    };
+    let (faults, mut fault) = local::unbounded();
     let builder = auto::Builder::new(exec);
-    let service = service_fn(move |request| handle(request, dispatch.clone()));
-    let _ = builder
-        .serve_connection(TokioIo::new(stream), service)
-        .await;
+    let service = service_fn(move |request| handle(request, dispatch.clone(), faults.clone()));
+    let fault = tokio::select! {
+        _ = builder.serve_connection(TokioIo::new(stream), service) => None,
+        fault = fault.next() => fault,
+    };
+    let Some(fault) = fault else {
+        return;
+    };
+    let Ok(mut stream) = TcpStream::from_std(dup) else {
+        return;
+    };
+    let bytes: &[u8] = match fault {
+        Fault::Reset => {
+            // A zero linger resets on close without blocking.
+            #[allow(deprecated)]
+            let _ = stream.set_linger(Some(Duration::ZERO));
+            return;
+        }
+        Fault::Close => return,
+        Fault::Garbage => b"not http\r\n\r\n",
+        Fault::Truncate => b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\n\r\npartial",
+        Fault::BadChunk => b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\nzz\r\n",
+    };
+    let _ = stream.write_all(bytes).await;
+    let _ = stream.shutdown().await;
 }
 
 async fn handle(
     request: hyper::Request<Incoming>,
     dispatch: mpsc::UnboundedSender<Dispatch>,
+    faults: local::UnboundedSender<Fault>,
 ) -> Result<hyper::Response<Full<Bytes>>, hyper::Error> {
     let (parts, body) = request.into_parts();
     // A body that fails to arrive fails the service, and hyper drops the
@@ -141,5 +191,11 @@ async fn handle(
     if dispatch.send(Dispatch { request, reply }).is_err() {
         return Ok(closed().into_hyper());
     }
-    Ok(response.await.unwrap_or_else(|_| closed()).into_hyper())
+    let response = response.await.unwrap_or_else(|_| closed());
+    if let Some(fault) = response.fault {
+        // `connection` drops this future when it receives the fault.
+        let _ = faults.unbounded_send(fault);
+        return futures::future::pending().await;
+    }
+    Ok(response.into_hyper())
 }

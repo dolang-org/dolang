@@ -23,7 +23,7 @@ def not_found_error()
           http.get (server.url / "/not-found")
           false
         catch err
-          assert (type err http.Status)
+          assert (type err http.StatusError)
           assert (type err http.Error)
           assert (type err RuntimeError)
           assert_eq $err.status 404
@@ -49,7 +49,7 @@ def server_error_json()
           http.get (server.url / "/error")
           false
         catch err
-          assert (type err http.Status)
+          assert (type err http.StatusError)
           assert_eq $err.status 500
           assert_eq $err.headers["x-error"] "boom"
           let data = err.json()
@@ -71,7 +71,7 @@ def not_modified()
           http.get (server.url / "/not-modified")
           false
         catch err
-          assert (type err http.Status)
+          assert (type err http.StatusError)
           assert_eq $err.status 304
           assert_eq $err.truncated false
           true
@@ -91,7 +91,7 @@ def truncated_body()
           http.get (server.url / "/large-error")
           false
         catch err
-          assert (type err http.Status)
+          assert (type err http.StatusError)
           assert_eq $err.status 500
           assert_eq $err.truncated true
           assert_eq (err.body().len) 65536
@@ -124,7 +124,7 @@ def status_ignore_policy()
             res.throw_for_status()
             false
           catch err
-            assert (type err http.Status)
+            assert (type err http.StatusError)
             assert_eq $err.status 404
             assert_eq (err.text()) "missing"
             true

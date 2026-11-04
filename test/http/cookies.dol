@@ -57,7 +57,7 @@ def cookie_jar_session()
           plain.get (server.url / "/session")
           false
         catch e
-          assert (type e http.Status)
+          assert (type e http.StatusError)
           assert_eq $e.status 401
           true
         assert $plain_missing_session
@@ -69,7 +69,7 @@ def cookie_jar_session()
           second.get (server.url / "/session")
           false
         catch e
-          assert (type e http.Status)
+          assert (type e http.StatusError)
           assert_eq $e.status 401
           true
         assert $isolated_clients
@@ -82,7 +82,7 @@ def cookie_jar_session()
           http.get (server.url / "/session")
           false
         catch e
-          assert (type e http.Status)
+          assert (type e http.StatusError)
           assert_eq $e.status 401
           true
         assert $top_level_stateless

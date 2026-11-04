@@ -31,6 +31,8 @@ use bytes::Bytes;
 use dolang_ext_url::{create_url, value_to_url};
 use futures::stream::StreamExt as _;
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+use crate::error;
 use crate::{
     body::{self, Bodies},
     body_io::{self, ByteStream},
@@ -42,12 +44,7 @@ pub(crate) struct Client {
     inner: Option<reqwest::Client>,
 }
 
-pub(crate) struct ErrorObject;
 pub(crate) struct StatusObject;
-
-pub(crate) struct ErrorAnnex {
-    inner: reqwest::Error,
-}
 
 pub(crate) struct StatusAnnex {
     message: String,
@@ -267,6 +264,22 @@ fn status_message(status: reqwest::StatusCode, url: Option<&url::Url>) -> String
     message
 }
 
+/// Raises `std.UnsupportedError` with `message`.
+#[cfg(any(not(unix), all(target_arch = "wasm32", target_os = "unknown")))]
+async fn unsupported<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    message: impl AsRef<str>,
+) -> Error<'v, 's> {
+    let result = strand
+        .with_slots(async |strand, [mut ty, mut err]| {
+            Output::set(strand, &mut ty, TypeObject::UnsupportedError);
+            call!(strand, ty, &mut err, message.as_ref()).await?;
+            Ok(Error::from_value(strand, &err))
+        })
+        .await;
+    result.unwrap_or_else(|err| err)
+}
+
 fn invalid_status_policy<'v, 's>(strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
     Error::type_error(strand, r#"status: expected :IGNORE: or "IGNORE""#)
 }
@@ -355,43 +368,8 @@ fn status_text<'v, 's, 'a>(
     str::from_utf8(&annex.body).map_err(|_| Error::data(strand, "invalid UTF-8"))
 }
 
-impl<'v> Object<'v> for ErrorObject {
-    const NAME: &'v str = "Error";
-    const MODULE: &'v str = "http";
-    type Annex = ErrorAnnex;
-    type Type = ();
-    type TypeAnnex = ();
-
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder
-            .nominal_supertype(TypeObject::RuntimeError)
-            .get("url", |this, strand, out| {
-                output_url(strand, this.annex().inner.url(), out);
-                Ok(())
-            })
-    }
-
-    fn display<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        fmt!(strand, w, "{}", this.annex().inner)
-    }
-
-    fn debug<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        fmt!(strand, w, "<http.Error ")?;
-        Self::display(this, strand, w)?;
-        fmt!(strand, w, ">")
-    }
-}
-
 impl<'v> Object<'v> for StatusObject {
-    const NAME: &'v str = "Status";
+    const NAME: &'v str = "StatusError";
     const MODULE: &'v str = "http";
     type Annex = StatusAnnex;
     type Type = ();
@@ -417,6 +395,10 @@ impl<'v> Object<'v> for StatusObject {
         builder
             .get("url", |this, strand, out| {
                 output_url(strand, this.annex().url.as_ref(), out);
+                Ok(())
+            })
+            .get("cause", |_this, strand, out| {
+                Output::set(strand, out, Nil);
                 Ok(())
             })
             .get("status", |this, strand, out| {
@@ -458,20 +440,10 @@ impl<'v> Object<'v> for StatusObject {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        fmt!(strand, w, "<http.Status ")?;
+        fmt!(strand, w, "<http.StatusError ")?;
         Self::display(this, strand, w)?;
         fmt!(strand, w, ">")
     }
-}
-
-fn reqwest_error<'v, 's>(strand: &mut Strand<'v, 's>, error: reqwest::Error) -> Error<'v, 's> {
-    let global = strand.state::<Tag>();
-    Error::object_with_annex(
-        strand,
-        global.types.error,
-        ErrorObject,
-        ErrorAnnex { inner: error },
-    )
 }
 
 trait ErrorExt {
@@ -480,7 +452,7 @@ trait ErrorExt {
 
 impl ErrorExt for reqwest::Error {
     fn into_http<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
-        reqwest_error(strand, self)
+        crate::error::raise(strand, self)
     }
 }
 
@@ -550,7 +522,7 @@ async fn multipart_part<'v, 's>(
                     } else if key_sym == global.syms.body {
                         #[cfg(feature = "json")]
                         if body_kind == Some(BodyKind::Json) {
-                            return Err(Error::runtime(
+                            return Err(Error::value(
                                 strand,
                                 "multipart part may specify at most one of `body` or `json`",
                             ));
@@ -573,7 +545,7 @@ async fn multipart_part<'v, 's>(
                         #[cfg(feature = "json")]
                         if key_sym == global.syms.json {
                             if body_kind == Some(BodyKind::Body) {
-                                return Err(Error::runtime(
+                                return Err(Error::value(
                                     strand,
                                     "multipart part may specify at most one of `body` or `json`",
                                 ));
@@ -711,7 +683,7 @@ async fn request<'v, 's>(
                 + multipart.is_some() as usize
                 > 1
             {
-                return Err(Error::runtime(
+                return Err(Error::value(
                     st,
                     "at most one of `body`, `lines`, `json`, or `multipart` arguments may be specified",
                 ));
@@ -719,7 +691,7 @@ async fn request<'v, 's>(
             #[cfg(not(feature = "json"))]
             if body.is_some() as usize + lines.is_some() as usize + multipart.is_some() as usize > 1
             {
-                return Err(Error::runtime(
+                return Err(Error::value(
                     st,
                     "at most one of `body`, `lines`, or `multipart` arguments may be specified",
                 ));
@@ -768,7 +740,7 @@ async fn request<'v, 's>(
 
             if let Some(multipart) = multipart {
                 if headers.contains_key("content-type") {
-                    return Err(Error::runtime(
+                    return Err(Error::value(
                         st,
                         "multipart requests must not set content-type manually",
                     ));
@@ -876,10 +848,9 @@ impl<'v> Object<'v> for Client {
                 ("invalid_certs", invalid_certs),
             ];
             if let Some((name, _)) = options.into_iter().find(|(_, value)| value.is_some()) {
-                return Err(Error::runtime(
-                    strand,
-                    format!("{name} is not supported in the browser"),
-                ));
+                return Err(
+                    unsupported(strand, format!("{name} is not supported in the browser")).await,
+                );
             }
             reqwest::ClientBuilder::new()
         };
@@ -901,7 +872,7 @@ impl<'v> Object<'v> for Client {
                 #[cfg(not(unix))]
                 {
                     let _ = unix_socket;
-                    return Err(Error::runtime(strand, "unix_socket only available on Unix"));
+                    return Err(unsupported(strand, "unix_socket is only available on Unix").await);
                 }
             } else {
                 builder
@@ -912,7 +883,10 @@ impl<'v> Object<'v> for Client {
                     builder = builder.no_proxy();
                 } else {
                     let url = value_to_url(strand, &proxy)?;
-                    builder = builder.proxy(reqwest::Proxy::all(url.as_str()).into_http(strand)?);
+                    builder = builder.proxy(
+                        reqwest::Proxy::all(url.as_str())
+                            .map_err(|err| Error::value(strand, error::message(&err)))?,
+                    );
                 }
             }
 
@@ -932,7 +906,7 @@ impl<'v> Object<'v> for Client {
                     View::Bin(b) => strand.access(|x| Certificate::from_pem(b.as_slice(x))),
                     _ => return Err(Error::type_error(strand, "ca_cert: expected Str or Bin")),
                 }
-                .into_http(strand)?;
+                .map_err(|err| Error::data(strand, error::message(&err)))?;
                 builder = builder.add_root_certificate(cert);
             }
 
@@ -949,7 +923,7 @@ impl<'v> Object<'v> for Client {
                 };
                 let id = strand
                     .access(|x| Identity::from_pkcs12_der(id_bytes.as_slice(x), &pass))
-                    .into_http(strand)?;
+                    .map_err(|err| Error::data(strand, error::message(&err)))?;
                 builder = builder.identity(id);
             } else if password.is_some() {
                 return Err(Error::value(strand, "password requires identity"));
@@ -1275,10 +1249,13 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
 
     http = http
         .value("Client", global.types.client)
+        .value("DataError", global.types.data)
         .value("Error", global.types.error)
         .value("Event", global.types.event)
+        .value("RequestError", global.types.request)
         .value("Response", global.types.response)
-        .value("Status", global.types.status);
+        .value("StatusError", global.types.status)
+        .value("TransportError", global.types.transport);
 
     for method in global.http_methods.values() {
         let name = method.as_str().to_ascii_lowercase();

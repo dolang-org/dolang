@@ -380,3 +380,19 @@ def invalid_mock_arguments()
             status: 200
             headers:
               "x-ok": "bad\nvalue"
+
+#[test]
+def fault_responses_count_as_matches()
+  http.mock.Server do |server|
+    server.mock
+      - method: GET
+        path: /broken
+        expect: 1
+        respond:
+          fault: :CLOSE:
+      do |_handle|
+        assert_throws $http.TransportError do http.get (server.url / "/broken")
+    assert_throws $ValueError do
+      server.mock
+        - respond:
+            fault: :BOGUS:

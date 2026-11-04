@@ -194,6 +194,18 @@ pub class Server: Func
   # | `headers` | [`Dict`](std.Dict)                       | Response headers               |
   # | `body`    | [`Str`](std.Str)\|[`Bin`](std.Bin) | Raw response body              |
   # | `json`    |                                                | Response body, JSON-serialized |
+  # | `fault`   | [`Sym`](std.Sym)                         | Break the connection instead   |
+  #
+  # `fault:` breaks the connection after the request is read, to exercise a
+  # client's error handling. The other keys are ignored.
+  #
+  # | Fault          | Effect                                                            |
+  # | -------------- | ----------------------------------------------------------------- |
+  # | `:RESET:`      | Resets the connection                                             |
+  # | `:CLOSE:`      | Closes the connection without a response                          |
+  # | `:GARBAGE:`    | Sends bytes that are not an HTTP response                         |
+  # | `:TRUNCATE:`   | Sends a head promising a longer body than follows, then closes    |
+  # | `:BAD_CHUNK:`  | Sends a chunked head followed by a malformed chunk                |
   #
   # ## Expectations
   #
@@ -215,6 +227,7 @@ pub class Server: Func
   # | [`ValueError`](std.ValueError)           | An item's `method` is not a valid HTTP method   |
   # | [`ValueError`](std.ValueError)           | An item's `path` contains `?` or a host         |
   # | [`ValueError`](std.ValueError)           | A header name or value is invalid               |
+  # | [`ValueError`](std.ValueError)           | An item's `fault:` is not one of the above      |
   # | [`Assert`](test.Assert)                  | An item's `expect:` is unsatisfied at block end |
   #
   # ## Example

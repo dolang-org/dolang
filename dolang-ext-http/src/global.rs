@@ -2,18 +2,23 @@ use std::collections::HashMap;
 
 use dolang::runtime::{
     Sym, Type,
+    value::TypeObject,
     vm::{Register, StateTag},
 };
 use reqwest::Method;
 
 use crate::{
-    http::{Client, ErrorObject, Response, StatusObject},
+    error::{Base, DataClass, HttpError, RequestClass, TransportClass},
+    http::{Client, Response, StatusObject},
     sse::{Event, EventIter},
 };
 
 pub(crate) struct Types<'v> {
     pub(crate) client: Type<'v, Client>,
-    pub(crate) error: Type<'v, ErrorObject>,
+    pub(crate) error: Type<'v, HttpError<Base>>,
+    pub(crate) transport: Type<'v, HttpError<TransportClass>>,
+    pub(crate) data: Type<'v, HttpError<DataClass>>,
+    pub(crate) request: Type<'v, HttpError<RequestClass>>,
     pub(crate) event: Type<'v, Event>,
     pub(crate) status: Type<'v, StatusObject>,
     pub(crate) response: Type<'v, Response>,
@@ -78,13 +83,29 @@ impl<'v> Global<'v> {
             (builder.sym("trace"), Method::TRACE),
         ]);
 
-        let error = builder.register_type::<ErrorObject>();
+        let error = builder
+            .build_type::<HttpError<Base>>((), ())
+            .nominal_supertype(TypeObject::RuntimeError)
+            .build();
 
         Self {
             http_methods,
             types: Types {
                 client: builder.register_type(),
                 error,
+                transport: builder
+                    .build_type::<HttpError<TransportClass>>((), ())
+                    .nominal_supertype(error)
+                    .build(),
+                data: builder
+                    .build_type::<HttpError<DataClass>>((), ())
+                    .nominal_supertype(error)
+                    .nominal_supertype(TypeObject::DataError)
+                    .build(),
+                request: builder
+                    .build_type::<HttpError<RequestClass>>((), ())
+                    .nominal_supertype(error)
+                    .build(),
                 event: builder.register_type(),
                 status: builder
                     .build_type::<StatusObject>((), ())

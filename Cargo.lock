@@ -893,6 +893,8 @@ dependencies = [
  "dolang-ext-url",
  "futures",
  "httpdate",
+ "hyper",
+ "native-tls",
  "reqwest",
  "url",
 ]

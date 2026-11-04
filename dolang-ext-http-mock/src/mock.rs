@@ -20,7 +20,7 @@ use http::{HeaderName, HeaderValue, StatusCode};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::global::Global;
-use crate::serve::{self, Dispatch, RequestSnapshot, Response};
+use crate::serve::{self, Dispatch, Fault, RequestSnapshot, Response};
 
 fn header_value_to_str(value: &HeaderValue) -> Cow<'_, str> {
     match value.to_str() {
@@ -554,8 +554,26 @@ async fn build_response<'v, 's>(
         .as_dict(strand)
         .ok_or_else(|| Error::type_error(strand, "respond must be a dict"))?;
 
-    let (status, headers, body) = strand
+    let (status, headers, body, fault) = strand
         .with_slots(async move |strand, [mut tmp, mut tmp2, mut tmp3]| {
+            let mut fault = None;
+            if dict.get(strand, global.syms.fault, None, &mut tmp)? {
+                let sym = tmp.as_sym(strand.vm());
+                let faults = &global.syms.faults;
+                fault = Some(match sym {
+                    Some(sym) if sym == faults.reset => Fault::Reset,
+                    Some(sym) if sym == faults.close => Fault::Close,
+                    Some(sym) if sym == faults.garbage => Fault::Garbage,
+                    Some(sym) if sym == faults.truncate => Fault::Truncate,
+                    Some(sym) if sym == faults.bad_chunk => Fault::BadChunk,
+                    _ => {
+                        return Err(Error::value(
+                            strand,
+                            "respond.fault: expected :RESET:, :CLOSE:, :GARBAGE:, :TRUNCATE: or :BAD_CHUNK:",
+                        ));
+                    }
+                });
+            }
             let mut status: Option<u16> = None;
             let mut headers: Vec<(HeaderName, HeaderValue)> = Vec::new();
             let mut body: Option<Vec<u8>> = None;
@@ -609,7 +627,7 @@ async fn build_response<'v, 's>(
                 ));
             }
 
-            Ok((status, headers, body))
+            Ok((status, headers, body, fault))
         })
         .await?;
 
@@ -619,6 +637,7 @@ async fn build_response<'v, 's>(
         status,
         headers,
         body: body.map(Bytes::from).unwrap_or_default(),
+        fault,
     })
 }
 

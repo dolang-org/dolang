@@ -166,7 +166,7 @@ pub class Client
       timeout $self.#timeout do
         let response = http.get $target headers: {accept: "application/json"}
         response.json()
-    catch http.Status: err
+    catch http.StatusError: err
       if (err.status == 404 && missing != nil)
         throw missing
       throw err

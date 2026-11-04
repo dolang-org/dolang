@@ -19,8 +19,8 @@ response is closed. Each consumer except `events()` takes the body:
 - `io()` returns it as a Do `io.Io` (`body_io.rs`) and keeps that stream in the
   response's slot, so closing the response closes it too. `chunks()` and
   `lines()` are `chunks` and `io.Buffered` lines over it.
-- `events()` reads the body in place, and the body excerpt kept on `Status` is
-  read from it directly.
+- `events()` reads the body in place, and the body excerpt kept on
+    `StatusError` is read from it directly.
 
 On native targets the `Io` is a `ByteHandle` over the stream, so native
 consumers such as `compress.decompress` read it without entering the VM. The
@@ -43,3 +43,33 @@ On `wasm32-unknown-unknown`, reqwest uses the browser's fetch API, which cannot
 stream request bodies, so each handle is read to the end before sending. The
 browser build also rejects the `Client` options that fetch has no equivalent
 for: Unix sockets, proxies, cookie jars, and TLS configuration.
+
+## Errors
+
+`error.rs` raises a failed request as a subclass of `http.Error`, chosen by
+walking the `reqwest::Error`'s source chain, since reqwest's own kind doesn't
+decide it (a truncated body is `Kind::Decode`). In order:
+
+1. A builder error comes from the caller's arguments and raises `ValueError`.
+2. A redirect error is `RequestError :REDIRECT:`.
+3. A `native_tls::Error` anywhere in the chain is `TransportError :TLS:`. It
+   comes before `is_connect`, which a handshake failure also satisfies.
+4. A `hyper::Error` decides by its predicates: a parse error is a
+   `DataError`, and an incomplete message is `TransportError :CLOSED:`.
+5. `is_connect` is `TransportError :CONNECT:`.
+6. Otherwise the innermost `io::Error` decides. hyper's body decoder reports
+   bad framing as `InvalidData` or `InvalidInput`, which is
+   `DataError :BODY:`, and a short body as `UnexpectedEof`, which is
+   `:CLOSED:`. Any other I/O error is `:IO:`, and no I/O error at all is
+   `RequestError :OTHER:`.
+
+The browser build has neither hyper nor native-tls, and fetch reports no
+detail, so it uses only reqwest's predicates.
+
+The annex keeps the innermost `io::Error` as its kind, OS code and message.
+The `cause` getter rebuilds it and maps it through `io::error`, so the shell's
+handler gives it its `sys` class. The message is the source chain, joined
+with `": "`, without the links that repeat text already in it.
+
+The `io()` stream can't carry an `http.Error`, so `BodyRead` reports the
+innermost `io::Error` instead, keeping its OS code or kind.

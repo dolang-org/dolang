@@ -1,6 +1,8 @@
 import http
 import http.mock
+import sys
 import std:
+  - DataError
   - RuntimeError
   - ValueError
 import test:
@@ -8,6 +10,18 @@ import test:
   - assert_eq
   - assert_throws
   - test
+
+# Mocks one response that breaks the connection with `fault`, and calls `block`
+# with its URL.
+def with_fault fault block
+  http.mock.Server do |server|
+    server.mock
+      - method: GET
+        path: /fault
+        respond:
+          :fault
+      do |_handle|
+        block (server.url / "/fault")
 
 #[test]
 def redirect_loop_error()
@@ -20,17 +34,84 @@ def redirect_loop_error()
           headers:
             location: /redirect-loop
       do |_handle|
-        let redirect_caught = try
+        let err = assert_throws $http.RequestError do
           http.get (server.url / "/redirect-loop")
-          false
-        catch err
-          assert (type err http.Error)
-          assert (type err RuntimeError)
-          assert_eq ((err.url).path) "/redirect-loop"
-          assert ((str err).contains "redirect")
-          true
+        assert (type err http.Error)
+        assert (type err RuntimeError)
+        assert_eq $err.kind :REDIRECT:
+        assert_eq ((err.url).path) "/redirect-loop"
 
-        assert $redirect_caught
+#[test]
+def refused_connection_is_a_connect_failure()
+  let url = http.mock.Server do |server| (server.url / "/gone")
+  let err = assert_throws $http.TransportError do http.get $url
+  assert (type err http.Error)
+  assert_eq $err.kind :CONNECT:
+  assert (type err.cause sys.ConnectionRefusedError)
+  assert_eq $err.url $url
+
+#[test]
+def broken_connections_are_transport_errors()
+  with_fault :CLOSE: do |url|
+    let err = assert_throws $http.TransportError do http.get $url
+    assert_eq $err.kind :CLOSED:
+
+  with_fault :RESET: do |url|
+    let err = assert_throws $http.TransportError do http.get $url
+    assert_eq $err.kind :IO:
+    assert (type err.cause sys.ConnectionResetError)
+
+  with_fault :TRUNCATE: do |url|
+    let response = http.get $url
+    let err = assert_throws $http.TransportError do response.text()
+    assert_eq $err.kind :CLOSED:
+
+#[test]
+def malformed_responses_are_data_errors()
+  with_fault :GARBAGE: do |url|
+    let err = assert_throws $http.DataError do http.get $url
+    assert (type err DataError)
+    assert (type err http.Error)
+    assert_eq $err.kind :PARSE:
+
+  with_fault :BAD_CHUNK: do |url|
+    let response = http.get $url
+    let err = assert_throws $http.DataError do response.body()
+    assert_eq $err.kind :BODY:
+
+  # Far past hyper's limit of about 400 KB: one read can take in more than the
+  # limit, and a head that fits in it parses.
+  http.mock.Server do |server|
+    server.mock
+      - method: GET
+        path: /big
+        respond:
+          headers: {"x-big": "a".repeat(4000000)}
+      do |_handle|
+        let err = assert_throws $http.DataError do http.get (server.url / "/big")
+        assert_eq $err.kind :TOO_LARGE:
+
+#[test]
+def tls_to_a_plain_port_is_a_tls_failure()
+  http.mock.Server do |server|
+    let url = str(server.url).replace("http:", "https:")
+    let err = assert_throws $http.TransportError do http.get $url
+    assert_eq $err.kind :TLS:
+
+# The body stream raises the error behind a failure, not an `http.Error`.
+#[test]
+def body_streams_raise_io_errors()
+  with_fault :TRUNCATE: do |url|
+    let response = http.get $url
+    let err = assert_throws $sys.UnexpectedEofError do response.io().read_all()
+    assert (!(type err http.Error))
+
+#[test]
+def status_errors_have_no_cause()
+  http.mock.Server do |server|
+    let err = assert_throws $http.StatusError do http.get (server.url / "/missing")
+    assert (type err http.Error)
+    assert_eq $err.cause nil
 
 #[test]
 def invalid_request_headers_raise_value_errors()
@@ -38,3 +119,14 @@ def invalid_request_headers_raise_value_errors()
     let url = (server.url / "/never")
     assert_throws $ValueError do http.get $url headers: {"bad name": "x"}
     assert_throws $ValueError do http.get $url headers: {"x-ok": "a\nb"}
+
+#[test]
+def bad_arguments_raise_std_errors()
+  http.mock.Server do |server|
+    let url = (server.url / "/never")
+    let err = assert_throws $ValueError do http.get "ftp://example.com/x"
+    assert (!(type err http.Error))
+    assert_throws $ValueError do http.post $url body: x lines: ["y"]
+    assert_throws $ValueError do http.Client proxy: "x:y:z"
+    let cert_err = assert_throws $DataError do http.Client ca_cert: garbage
+    assert (!(type cert_err http.Error))
