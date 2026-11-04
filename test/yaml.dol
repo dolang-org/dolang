@@ -76,6 +76,14 @@ def round_trip_structures()
   assert_eq $rt["meta"]["key"] "val"
 
 #[test]
+def encode_layout()
+  assert_eq (encode "true") "\"true\""
+  assert_eq (encode :sym:) "sym"
+  assert_eq (encode {a: [1, 2], b: {c: "x y"}, d: {}}) "a:\n  - 1\n  - 2\nb:\n  c: x y\nd: {}"
+  assert_eq (encode {k: :v:, "s": "a: b"}) "k: v\ns: \"a: b\""
+  assert_eq (encode [{a: 1}, []]) "- a: 1\n- []"
+
+#[test]
 def structs_as_mappings()
   assert_eq (encode $ struct name: "alice" port: 22) "name: alice\nport: 22"
   let rt = decode $ encode $ struct inner: (struct a: 1)
