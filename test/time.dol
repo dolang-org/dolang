@@ -7,6 +7,7 @@ import strand
     - test
   std:
     - CanceledError
+    - DataError
     - RuntimeError
     - TimedOutError
   time:
@@ -55,9 +56,9 @@ def datetime_conversions()
   assert_eq (combined.rfc()) "1970-01-01T00:00:01.25Z"
   assert_eq $combined.unix_nanos 1250000000
 
-  assert_throws $RuntimeError do
+  assert_throws $DataError do
     DateTime.parse_rfc("not-a-timestamp")
-  assert_throws $RuntimeError do
+  assert_throws $DataError do
     DateTime.parse_rfc("2024-01-02T03:04:05Z[UTC]")
 
 #[test]
@@ -89,9 +90,9 @@ def dates_and_calendar_enums()
 
   assert_throws $RuntimeError do
     Date.from_ymd 2023 2 29
-  assert_throws $RuntimeError do
+  assert_throws $DataError do
     Date.parse_rfc("2024-02-30")
-  assert_throws $RuntimeError do
+  assert_throws $DataError do
     Date.parse_rfc("2024-02-28[UTC]")
   assert_throws $RuntimeError do
     Month[0]

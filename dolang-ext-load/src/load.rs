@@ -224,7 +224,7 @@ impl<'v> Object<'v> for BytecodeError {
     type TypeAnnex = ();
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder.nominal_supertype(TypeObject::RuntimeError)
+        builder.nominal_supertype(TypeObject::DataError)
     }
 
     fn display<'a, 's>(

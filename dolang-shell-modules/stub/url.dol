@@ -8,7 +8,7 @@ pub class Url
   #
   # ## Errors
   #
-  # `ValueError` if the string is not a valid URL.
+  # [`DataError`](std.DataError) if the string is not a valid URL.
   #
   # ## Example
   #
@@ -160,6 +160,13 @@ pub class Url
   # The segment is percent-encoded as needed. A value starting with `/` is an
   # absolute path, with optional query and fragment, relative to this URL's
   # scheme and authority.
+  #
+  # ## Errors
+  #
+  # | Exception | Condition |
+  # | --- | --- |
+  # | [`ValueError`](std.ValueError) | This URL has no path to extend, such as a `mailto:` URL |
+  # | [`DataError`](std.DataError) | An absolute path is not a valid URL reference |
   #
   # ## Example
   #

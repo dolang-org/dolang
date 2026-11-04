@@ -441,6 +441,10 @@ pub def cd ...args @ Value -> Value
 # captures `echo` and `print` instead, use
 # [`term.sub`](term.sub).
 #
+# ## Errors
+#
+# [`DataError`](std.DataError) if the output is not valid UTF-8.
+#
 # ## Example
 #
 # ```

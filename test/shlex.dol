@@ -1,0 +1,18 @@
+import shlex
+  test:
+    - assert_eq
+    - assert_throws
+    - test
+  std:
+    - DataError
+    - ValueError
+
+#[test]
+def split_rejects_malformed_lines()
+  assert_eq [...(shlex.split "a 'b c'")] ["a", "b c"]
+  assert_throws $DataError do [...(shlex.split "a 'unterminated")]
+
+#[test]
+def quote_rejects_nul()
+  assert_throws $ValueError do shlex.quote "a\u{0}b"
+  assert_throws $ValueError do shlex.join ["a\u{0}b"]

@@ -42,7 +42,7 @@ type ZipWriteEntry = EntrySeekableWriter<'static, Box<dyn WriteSeek>>;
 trait ZipResultExt<T> {
     /// Maps an I/O failure of the underlying handle with
     /// [`io::error`](dolang::runtime::io::error), and a malformed archive to a
-    /// `RuntimeError`.
+    /// `DataError`.
     fn into_do_zip<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T>;
 }
 
@@ -50,7 +50,7 @@ impl<T> ZipResultExt<T> for std::result::Result<T, ZipError> {
     fn into_do_zip<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T> {
         match self {
             Err(ZipError::UpstreamReadError(err)) => Err(err).into_do_io(strand),
-            res => res.into_do(strand),
+            res => res.into_do_data(strand),
         }
     }
 }
@@ -343,7 +343,7 @@ impl<'v> Object<'v> for Archive {
                                 }
                                 let mut index = None;
                                 for (i, entry) in archive.file().entries().iter().enumerate() {
-                                    if entry.filename().as_str().into_do(strand)? == name {
+                                    if entry.filename().as_str().into_do_data(strand)? == name {
                                         index = Some(i);
                                         break;
                                     }
@@ -605,7 +605,7 @@ impl<'v> Object<'v> for Entry {
                     entry
                         .filename()
                         .as_str()
-                        .into_do(strand)
+                        .into_do_data(strand)
                         .map(|s| s.to_string())
                 })?;
                 dolang_ext_shell::unix_path(strand, name, out)
@@ -648,7 +648,7 @@ impl<'v> Object<'v> for Entry {
             })
             .get("type", move |this, strand, out| {
                 let sym = with_entry(this, strand, |strand, entry| {
-                    if entry.dir().into_do(strand)? {
+                    if entry.dir().into_do_data(strand)? {
                         return Ok(type_syms.dir);
                     }
                     Ok(type_syms.bits_to_sym(entry.unix_permissions()))
@@ -661,7 +661,7 @@ impl<'v> Object<'v> for Entry {
                     entry
                         .comment()
                         .as_str()
-                        .into_do(strand)
+                        .into_do_data(strand)
                         .map(|s| s.to_string())
                 })?;
                 Output::set(strand, out, comment.as_str());
@@ -683,7 +683,7 @@ impl<'v> Object<'v> for Entry {
                 };
                 let system_time = std::time::SystemTime::UNIX_EPOCH
                     + std::time::Duration::new(secs, timestamp.subsec_nanosecond() as u32);
-                dolang_ext_time::datetime(strand, system_time, out).into_do(strand)
+                dolang_ext_time::datetime(strand, system_time, out).into_do_data(strand)
             })
             .method_with_slots(
                 "open",

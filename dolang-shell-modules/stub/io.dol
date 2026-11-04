@@ -137,7 +137,7 @@ pub class Io: Sink[Value]
   #
   # | Exception | Condition |
   # | --- | --- |
-  # | [`RuntimeError`](std.RuntimeError) | The text is not valid UTF-8 |
+  # | [`DataError`](std.DataError) | The text is not valid UTF-8 |
   pub def read_all_str self -> Str
     ...
 
@@ -221,7 +221,7 @@ pub class Io: Sink[Value]
 # | Exception | Condition |
 # | --- | --- |
 # | [`StateError`](std.StateError) | The buffer is closed, or its source does not read, write, or seek as the method needs |
-# | [`RuntimeError`](std.RuntimeError) | Text read is not valid UTF-8 |
+# | [`DataError`](std.DataError) | Text read is not valid UTF-8 |
 #
 # A failure of the source raises its own error, such as a
 # [`sys.Error`](sys.Error) from a file, or the exception a Do stream raised.
@@ -455,7 +455,8 @@ pub class Concat: Io
 # | [`TypeError`](std.TypeError) | `target` is not one of the types above, or `range` is not a `Range` |
 # | [`ValueError`](std.ValueError) | An `Io` target doesn't read and seek |
 # | [`ValueError`](std.ValueError) | `range` has a negative or non-integer bound, runs backward, or steps by other than 1 |
-# | [`ValueError`](std.ValueError) | A `StrBuf` write is not valid UTF-8 or would split a character, a seek moves while bytes are held, or the cursor is closed while they are |
+# | [`ValueError`](std.ValueError) | A `StrBuf` write would split a character, or a seek moves while bytes are held |
+# | [`DataError`](std.DataError) | A `StrBuf` write is not valid UTF-8, or the cursor is closed while bytes are held |
 # | [`StateError`](std.StateError) | The cursor is closed, or a write targets a `Str`, a `Bin` or an `Io` that doesn't write |
 #
 # ## Example

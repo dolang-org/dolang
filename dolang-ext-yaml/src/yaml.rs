@@ -235,17 +235,17 @@ fn parse_yaml<'v, 's, 'i>(
                 "internal YAML parse error: expected stream start",
             ));
         }
-        None => return Err(Error::type_error(strand, "no YAML document")),
+        None => return Err(Error::data(strand, "no YAML document")),
     }
 
     let (event, span) = match next_event(strand, &mut parser)? {
         Some(pair) => pair,
-        None => return Err(Error::type_error(strand, "no YAML document")),
+        None => return Err(Error::data(strand, "no YAML document")),
     };
 
     match event {
         Event::DocumentStart(_explicit) => {}
-        Event::StreamEnd => return Err(Error::type_error(strand, "no YAML document")),
+        Event::StreamEnd => return Err(Error::data(strand, "no YAML document")),
         _ => {
             return Err(error_at(
                 strand,
@@ -256,7 +256,7 @@ fn parse_yaml<'v, 's, 'i>(
     }
 
     let first = next_event(strand, &mut parser)?
-        .ok_or_else(|| Error::type_error(strand, "invalid YAML document"))?;
+        .ok_or_else(|| Error::data(strand, "invalid YAML document"))?;
     parse_event_into(strand, &mut parser, first, out)?;
 
     match next_event(strand, &mut parser)? {
@@ -275,7 +275,7 @@ fn parse_yaml<'v, 's, 'i>(
                 "internal YAML parse error: expected document end",
             ));
         }
-        None => return Err(Error::type_error(strand, "invalid YAML document")),
+        None => return Err(Error::data(strand, "invalid YAML document")),
     }
 
     match next_event(strand, &mut parser)? {
@@ -341,7 +341,7 @@ fn parse_event_into<'v, 's, 'i>(
 
             loop {
                 let next = next_event(strand, parser)?
-                    .ok_or_else(|| Error::type_error(strand, "invalid YAML sequence"))?;
+                    .ok_or_else(|| Error::data(strand, "invalid YAML sequence"))?;
                 if matches!(next.0, Event::SequenceEnd) {
                     break;
                 }
@@ -371,7 +371,7 @@ fn parse_event_into<'v, 's, 'i>(
 
             loop {
                 let next = next_event(strand, parser)?
-                    .ok_or_else(|| Error::type_error(strand, "invalid YAML mapping"))?;
+                    .ok_or_else(|| Error::data(strand, "invalid YAML mapping"))?;
                 if matches!(next.0, Event::MappingEnd) {
                     break;
                 }
@@ -379,7 +379,7 @@ fn parse_event_into<'v, 's, 'i>(
                 strand.with_slots_sync(|strand, [mut key, mut value]| {
                     parse_event_into(strand, parser, next, Slot::reborrow(&mut key))?;
                     let value_event = next_event(strand, parser)?.ok_or_else(|| {
-                        Error::type_error(strand, "invalid YAML mapping: missing value for key")
+                        Error::data(strand, "invalid YAML mapping: missing value for key")
                     })?;
                     if matches!(value_event.0, Event::MappingEnd) {
                         return Err(error_at(
@@ -406,7 +406,7 @@ fn next_event<'v, 's, 'i>(
         let Some(event) = parser.next() else {
             return Ok(None);
         };
-        let (event, span) = event.map_err(|err| Error::runtime(strand, err))?;
+        let (event, span) = event.map_err(|err| Error::data(strand, err.to_string()))?;
         if !matches!(event, Event::Nothing) {
             return Ok(Some((event, span)));
         }
@@ -444,7 +444,7 @@ fn error_at<'v, 's>(
     span: Span,
     message: impl Into<String>,
 ) -> Error<'v, 's> {
-    Error::type_error(
+    Error::data(
         strand,
         format!(
             "{} at line {} column {}",
@@ -512,10 +512,9 @@ fn parse_int<'v, 's>(strand: &mut Strand<'v, 's>, value: &str) -> Result<'v, 's,
     let unsigned = if negative {
         i128::from_str_radix(digits, radix)
             .map(|value| -value)
-            .map_err(|_| Error::type_error(strand, "numeric overflow"))?
+            .map_err(|_| Error::data(strand, "numeric overflow"))?
     } else {
-        i128::from_str_radix(digits, radix)
-            .map_err(|_| Error::type_error(strand, "numeric overflow"))?
+        i128::from_str_radix(digits, radix).map_err(|_| Error::data(strand, "numeric overflow"))?
     };
     Ok(Some(unsigned))
 }

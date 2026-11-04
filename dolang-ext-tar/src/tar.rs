@@ -442,7 +442,13 @@ impl<'v> Object<'v> for TarReader {
         }
         borrow.current = None;
         borrow.generation = borrow.generation.wrapping_add(1);
-        let Some(entry) = borrow.entries.next().await.transpose().into_do(strand)? else {
+        let Some(entry) = borrow
+            .entries
+            .next()
+            .await
+            .transpose()
+            .into_do_decode(strand)?
+        else {
             return Ok(false);
         };
         let generation = borrow.generation;
@@ -505,8 +511,8 @@ impl<'v> Object<'v> for TarEntry {
                         .as_ref()
                         .unwrap()
                         .path_bytes()
-                        .into_do(strand)?;
-                    let path = str::from_utf8(&bytes).into_do(strand)?;
+                        .into_do_decode(strand)?;
+                    let path = str::from_utf8(&bytes).into_do_data(strand)?;
                     dolang_ext_shell::unix_path(strand, path, out)
                 })
             })
@@ -525,7 +531,7 @@ impl<'v> Object<'v> for TarEntry {
                         .unwrap()
                         .header()
                         .size()
-                        .into_do(strand)?;
+                        .into_do_decode(strand)?;
                     Output::set(strand, out, value);
                     Ok(())
                 })
@@ -538,7 +544,7 @@ impl<'v> Object<'v> for TarEntry {
                         .unwrap()
                         .header()
                         .mode()
-                        .into_do(strand)?;
+                        .into_do_decode(strand)?;
                     Output::set(strand, out, value);
                     Ok(())
                 })
@@ -551,7 +557,7 @@ impl<'v> Object<'v> for TarEntry {
                         .unwrap()
                         .header()
                         .uid()
-                        .into_do(strand)?;
+                        .into_do_decode(strand)?;
                     Output::set(strand, out, value);
                     Ok(())
                 })
@@ -564,7 +570,7 @@ impl<'v> Object<'v> for TarEntry {
                         .unwrap()
                         .header()
                         .gid()
-                        .into_do(strand)?;
+                        .into_do_decode(strand)?;
                     Output::set(strand, out, value);
                     Ok(())
                 })
@@ -577,13 +583,13 @@ impl<'v> Object<'v> for TarEntry {
                         .unwrap()
                         .header()
                         .mtime()
-                        .into_do(strand)?;
+                        .into_do_decode(strand)?;
                     dolang_ext_time::datetime(
                         strand,
                         SystemTime::UNIX_EPOCH + Duration::from_secs(seconds),
                         out,
                     )
-                    .into_do(strand)
+                    .into_do_decode(strand)
                 })
             })
             .get("owner_name", |this, strand, out| {
@@ -593,7 +599,7 @@ impl<'v> Object<'v> for TarEntry {
                         .as_ref()
                         .unwrap()
                         .username()
-                        .into_do(strand)?
+                        .into_do_data(strand)?
                     {
                         Some(value) => Output::set(strand, out, value),
                         None => Output::set(strand, out, Nil),
@@ -608,7 +614,7 @@ impl<'v> Object<'v> for TarEntry {
                         .as_ref()
                         .unwrap()
                         .groupname()
-                        .into_do(strand)?
+                        .into_do_data(strand)?
                     {
                         Some(value) => Output::set(strand, out, value),
                         None => Output::set(strand, out, Nil),
@@ -623,10 +629,10 @@ impl<'v> Object<'v> for TarEntry {
                         .as_ref()
                         .unwrap()
                         .link_name_bytes()
-                        .into_do(strand)?
+                        .into_do_decode(strand)?
                     {
                         Some(value) => {
-                            let value = str::from_utf8(&value).into_do(strand)?;
+                            let value = str::from_utf8(&value).into_do_data(strand)?;
                             dolang_ext_shell::unix_path(strand, value, out)?
                         }
                         None => Output::set(strand, out, Nil),
@@ -642,7 +648,7 @@ impl<'v> Object<'v> for TarEntry {
                         .unwrap()
                         .header()
                         .device_major()
-                        .into_do(strand)?
+                        .into_do_decode(strand)?
                     {
                         Some(value) => Output::set(strand, out, value),
                         None => Output::set(strand, out, Nil),
@@ -658,7 +664,7 @@ impl<'v> Object<'v> for TarEntry {
                         .unwrap()
                         .header()
                         .device_minor()
-                        .into_do(strand)?
+                        .into_do_decode(strand)?
                     {
                         Some(value) => Output::set(strand, out, value),
                         None => Output::set(strand, out, Nil),
@@ -688,7 +694,7 @@ impl<'v> Object<'v> for TarEntry {
                         let mut data = BinEmbryo::new_with_capacity(strand, size);
                         read_into_embryo(borrow.current.as_mut().unwrap(), &mut data)
                             .await
-                            .into_do(strand)?;
+                            .into_do_decode(strand)?;
                         data.finish(strand, out);
                         Ok(())
                     })
@@ -725,7 +731,7 @@ impl<'v> Object<'v> for TarEntry {
                 let mut data = BinEmbryo::new_with_capacity(strand, BYTE_STREAM_CHUNK_SIZE);
                 let count = read_into_embryo(borrow.current.as_mut().unwrap(), &mut data)
                     .await
-                    .into_do(strand)?;
+                    .into_do_decode(strand)?;
                 if count == 0 {
                     return Ok(false);
                 }
@@ -1083,7 +1089,7 @@ async fn open_reader<'v, 's>(
     while magic.len() < ZSTD_MAGIC.len() {
         let mut bytes = [0; ZSTD_MAGIC.len()];
         let want = ZSTD_MAGIC.len() - magic.len();
-        let read = source.read(&mut bytes[..want]).await.into_do(strand)?;
+        let read = source.read(&mut bytes[..want]).await.into_do_io(strand)?;
         if read == 0 {
             break;
         }
@@ -1109,7 +1115,7 @@ async fn open_reader<'v, 's>(
         Compression::Zstd => Box::pin(ZstdDecoder::new(buffered)),
     };
     let mut archive = Archive::new(reader);
-    let entries = archive.entries().into_do(strand)?;
+    let entries = archive.entries().into_do_decode(strand)?;
     Ok((entries, compression))
 }
 

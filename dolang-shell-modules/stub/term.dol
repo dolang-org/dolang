@@ -628,8 +628,11 @@ do
 # Runs a block and returns its console output as a string.
 #
 # The console counterpart to [`shell.sub`](shell.sub), which captures
-# a strand's implicit output stream instead. Verbatim output is captured, which
-# must be valid UTF-8.
+# a strand's implicit output stream instead. Verbatim output is captured.
+#
+# ## Errors
+#
+# [`DataError`](std.DataError) if the output is not valid UTF-8.
 #
 # ## Example
 #

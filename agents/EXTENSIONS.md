@@ -449,9 +449,18 @@ are value errors.
 Convert foreign errors with a method that names the class:
 
 - `into_do_io` for an `io::Error`, which keeps its `sys` class.
+- `into_do_decode` for an `io::Error` from a decoder library that reports
+  malformed input as `ErrorKind::Other` or truncated input as
+  `UnexpectedEof`, as the tar crate does. Those become `DataError`s, and other
+  errors map as with `into_do_io`.
 - `into_do_value` / `into_do_data` for other errors, keeping only the message.
 - A conversion into the module's error class when the error carries structure
   callers need, such as a line and column.
+
+A decoder whose validators are shared with constructors can map the whole
+decode result through `Error::value_into_data`, so a check that raises
+`ValueError` for a constructor argument raises `DataError` when it rejects a
+document.
 
 Avoid `into_do`: it produces an untyped `RuntimeError`, and it also accepts an
 `io::Error`, silently dropping its class. Use `Error::runtime` when an untyped

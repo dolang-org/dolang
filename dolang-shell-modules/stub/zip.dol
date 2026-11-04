@@ -353,6 +353,7 @@ pub @let OpenMode = $
 # | --- | --- |
 # | [`TypeError`](std.TypeError) | `source` is not a path or an [`Io`](io.Io) |
 # | [`ValueError`](std.ValueError) | `source` cannot be read or written as `mode` needs; it is left open |
+# | [`DataError`](std.DataError) | The archive, or an entry's name or comment, is malformed |
 #
 # ## Example
 #

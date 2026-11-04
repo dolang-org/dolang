@@ -319,7 +319,7 @@ class Project
       return
     let doc = try
       toml.decode $file.read_str()
-    catch std.ValueError: e
+    catch std.DataError: e
       throw ProjectError "invalid TOML in $file: $e"
     # A document is always a table
     let Dict(table) = doc

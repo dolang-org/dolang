@@ -9,6 +9,7 @@ import
     - test
   std:
     - @BaseArray
+    - DataError
     - RuntimeError
 
 #[test]
@@ -42,11 +43,11 @@ def parse_arbitrary_keys()
 
 #[test]
 def parse_error_cases()
-  let empty_err = assert_throws $RuntimeError do
+  let empty_err = assert_throws $DataError do
     decode ""
   assert ((str empty_err).contains "no YAML document")
 
-  let multi_err = assert_throws $RuntimeError do
+  let multi_err = assert_throws $DataError do
     decode "---\n1\n---\n2\n"
   assert ((str multi_err).contains "single document")
 

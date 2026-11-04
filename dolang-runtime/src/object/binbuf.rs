@@ -206,7 +206,7 @@ impl<'v> BinBuf<'v> {
     ) -> Result<'v, 's, ()> {
         self.settle(strand);
         if str::from_utf8(self.embryo.as_slice()).is_err() {
-            return Err(Error::runtime(strand, "invalid UTF-8 data"));
+            return Err(Error::data(strand, "invalid UTF-8 data"));
         }
         self.grow_hint = self.grow_hint.max(self.embryo.capacity());
         // SAFETY: validated above.

@@ -42,7 +42,7 @@ pub @let EncodeValue = $
 #
 # ## Errors
 #
-# [`ValueError`](std.ValueError) if the input is invalid TOML or contains a
+# [`DataError`](std.DataError) if the input is invalid TOML or contains a
 # datetime, date, or time value, which this module does not support.
 #
 # ## Example

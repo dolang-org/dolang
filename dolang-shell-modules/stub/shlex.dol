@@ -14,9 +14,9 @@
 #
 # ## Errors
 #
-# | Exception      | Condition                                                    |
-# | -------------- | ------------------------------------------------------------ |
-# | `RuntimeError` | The value contains a NUL byte, which no shell word can carry |
+# | Exception                      | Condition                                                    |
+# | ------------------------------ | ------------------------------------------------------------ |
+# | [`ValueError`](std.ValueError) | The value contains a NUL byte, which no shell word can carry |
 #
 # ## Example
 #
@@ -35,9 +35,9 @@ do -> Str
 #
 # ## Errors
 #
-# | Exception      | Condition                    |
-# | -------------- | ---------------------------- |
-# | `RuntimeError` | A value contains a NUL byte  |
+# | Exception                      | Condition                   |
+# | ------------------------------ | --------------------------- |
+# | [`ValueError`](std.ValueError) | A value contains a NUL byte |
 #
 # ## Example
 #
@@ -59,8 +59,7 @@ do -> Str
 #
 # ## Errors
 #
-# [`RuntimeError`](std.RuntimeError) during iteration if the line is
-# malformed.
+# [`DataError`](std.DataError) during iteration if the line is malformed.
 #
 # ## Example
 #

@@ -1,6 +1,6 @@
 for value = ["", "x", "+", "1x"]
-  assert_throws $std.ValueError do int $value
-  assert_throws $std.ValueError do float $value
+  assert_throws $std.DataError do int $value
+  assert_throws $std.DataError do float $value
 
 for value = [nil, [], {}]
   assert_throws $std.TypeError do int $value
@@ -71,10 +71,10 @@ assert_eq (int 3.5) 3
 assert_eq (int true) 1
 
 for value = ["_1", "1_", "1__0", "0x_FF", "-_1", "+_1", "0x", "-0b", " 1", "1 ", "\t1", "1\n", "0b2", "0o8"]
-  assert_throws $std.ValueError do int $value
+  assert_throws $std.DataError do int $value
 
 for value = ["_1", "1_", "1__0", "-_1", "0x1F", "G", " 1", "1 "]
-  assert_throws $std.ValueError do int $value base: 16
+  assert_throws $std.DataError do int $value base: 16
 
 for base = [-1, 0, 1, 37, 170141183460469231731687303715884105727]
   assert_throws $std.ValueError do int "1" :base
@@ -97,6 +97,6 @@ assert_throws $std.OverflowError do int "80000000000000000000000000000000" base:
 assert_throws $std.OverflowError do int "-80000000000000000000000000000001" base: 16
 
 assert_eq (int "0x1F" base: 36) 42819
-assert_throws $std.ValueError do int "2" base: 2
-assert_throws $std.ValueError do int "999999999999999999999999999999999999999999999x"
-assert_throws $std.ValueError do int "999999999999999999999999999999999999999999999_"
+assert_throws $std.DataError do int "2" base: 2
+assert_throws $std.DataError do int "999999999999999999999999999999999999999999999x"
+assert_throws $std.DataError do int "999999999999999999999999999999999999999999999_"

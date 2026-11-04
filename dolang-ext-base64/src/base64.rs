@@ -167,7 +167,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
                 }
                 _ => return Err(Error::type_error(strand, "expected Str or Bin")),
             }
-            .map_err(|e| Error::value(strand, e))?;
+            .map_err(|e| Error::data(strand, e))?;
             Output::set(strand, out, decoded.as_slice());
             Ok(())
         })

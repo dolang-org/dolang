@@ -255,7 +255,7 @@ async fn helper_mcall<'v, 'a, 's>(
             let mut buf = BinEmbryo::new();
             read_to_end(strand, &stream, &mut buf).await?;
             if str::from_utf8(buf.as_slice()).is_err() {
-                return Err(Error::runtime(strand, "invalid UTF-8 data"));
+                return Err(Error::data(strand, "invalid UTF-8 data"));
             }
             // SAFETY: validated above.
             unsafe { buf.finish_str_unchecked(strand, out) };

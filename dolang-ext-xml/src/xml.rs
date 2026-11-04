@@ -55,52 +55,59 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, state: State<'v, Global<
             let mut reader = NsReader::from_str(&src);
             reader.config_mut().trim_text(false);
 
-            strand.with_slots_sync(|strand, [mut children, mut child]| {
-                Output::set(strand, &mut children, Empty::Array);
-                let array = children.as_array(strand).unwrap();
-                loop {
-                    match reader
-                        .read_event()
-                        .map_err(|error| Error::value(strand, error.to_string()))?
-                    {
-                        Event::Start(start) => {
-                            parse_element(strand, &mut reader, &start, state, &mut child)?;
-                            array.push(strand, &mut child)?;
+            strand
+                .with_slots_sync(|strand, [mut children, mut child]| {
+                    Output::set(strand, &mut children, Empty::Array);
+                    let array = children.as_array(strand).unwrap();
+                    loop {
+                        match reader
+                            .read_event()
+                            .map_err(|error| Error::data(strand, error.to_string()))?
+                        {
+                            Event::Start(start) => {
+                                parse_element(strand, &mut reader, &start, state, &mut child)?;
+                                array.push(strand, &mut child)?;
+                            }
+                            Event::Empty(start) => {
+                                create_parsed_element(strand, &reader, &start, state, &mut child)?;
+                                array.push(strand, &mut child)?;
+                            }
+                            Event::Comment(content) => {
+                                let text = content
+                                    .xml_content(XmlVersion::Implicit1_0)
+                                    .into_do_data(strand)?
+                                    .into_owned();
+                                validate_comment(strand, &text)?;
+                                state
+                                    .comment_type
+                                    .create(strand, Comment { text }, &mut child);
+                                array.push(strand, &mut child)?;
+                            }
+                            Event::Text(content) => {
+                                let text = content
+                                    .xml_content(XmlVersion::Implicit1_0)
+                                    .into_do_data(strand)?;
+                                Output::set(strand, &mut child, text.as_ref());
+                                array.push(strand, &mut child)?;
+                            }
+                            Event::Eof => break,
+                            Event::Decl(_) | Event::PI(_) | Event::DocType(_) => {}
+                            _ => {
+                                return Err(Error::data(
+                                    strand,
+                                    "invalid content outside XML root",
+                                ));
+                            }
                         }
-                        Event::Empty(start) => {
-                            create_parsed_element(strand, &reader, &start, state, &mut child)?;
-                            array.push(strand, &mut child)?;
-                        }
-                        Event::Comment(content) => {
-                            let text = content
-                                .xml_content(XmlVersion::Implicit1_0)
-                                .into_do(strand)?
-                                .into_owned();
-                            validate_comment(strand, &text)?;
-                            state
-                                .comment_type
-                                .create(strand, Comment { text }, &mut child);
-                            array.push(strand, &mut child)?;
-                        }
-                        Event::Text(content) => {
-                            let text = content
-                                .xml_content(XmlVersion::Implicit1_0)
-                                .into_do(strand)?;
-                            Output::set(strand, &mut child, text.as_ref());
-                            array.push(strand, &mut child)?;
-                        }
-                        Event::Eof => break,
-                        Event::Decl(_) | Event::PI(_) | Event::DocType(_) => {}
-                        _ => return Err(Error::value(strand, "invalid content outside XML root")),
                     }
-                }
-                create_document(
-                    strand,
-                    state.document_type,
-                    &children,
-                    Slot::reborrow(&mut out),
-                )
-            })?;
+                    create_document(
+                        strand,
+                        state.document_type,
+                        &children,
+                        Slot::reborrow(&mut out),
+                    )
+                })
+                .map_err(|error| error.value_into_data(strand))?;
             Ok(())
         })
         .function("encode", async move |strand, args, out| {
@@ -134,13 +141,13 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, state: State<'v, Global<
 }
 
 fn bytes_string<'v, 's>(strand: &mut Strand<'v, 's>, bytes: &[u8]) -> Result<'v, 's, String> {
-    Ok(str::from_utf8(bytes).into_do(strand)?.to_owned())
+    Ok(str::from_utf8(bytes).into_do_data(strand)?.to_owned())
 }
 
 /// Decodes a namespace URI; the resolver yields it still escaped.
 fn namespace_string<'v, 's>(strand: &mut Strand<'v, 's>, bytes: &[u8]) -> Result<'v, 's, String> {
-    let raw = str::from_utf8(bytes).into_do(strand)?;
-    Ok(unescape(raw).into_do(strand)?.into_owned())
+    let raw = str::from_utf8(bytes).into_do_data(strand)?;
+    Ok(unescape(raw).into_do_data(strand)?.into_owned())
 }
 
 fn resolved_namespace<'v, 's>(
@@ -150,7 +157,7 @@ fn resolved_namespace<'v, 's>(
     match resolved {
         ResolveResult::Unbound => Ok(None),
         ResolveResult::Bound(namespace) => namespace_string(strand, namespace.as_ref()).map(Some),
-        ResolveResult::Unknown(prefix) => Err(Error::value(
+        ResolveResult::Unknown(prefix) => Err(Error::data(
             strand,
             format!(
                 "unknown XML namespace prefix {}",
@@ -176,7 +183,7 @@ fn parse_start<'v, 's>(
     let mut attrs = Vec::new();
     let mut namespaces = Vec::new();
     for attr in start.attributes() {
-        let attr = attr.into_do(strand)?;
+        let attr = attr.into_do_data(strand)?;
         if let Some(binding) = attr.key.as_namespace_binding() {
             let prefix = match binding {
                 PrefixDeclaration::Default => String::new(),
@@ -194,7 +201,7 @@ fn parse_start<'v, 's>(
         };
         let value = attr
             .normalized_value(XmlVersion::Implicit1_0)
-            .into_do(strand)?
+            .into_do_data(strand)?
             .into_owned();
         let attr = Attr::checked(strand, name, value)?;
         // Distinct prefixes can bind the same namespace.
@@ -263,7 +270,7 @@ fn parse_element<'v, 's>(
                 loop {
                     match reader
                         .read_event()
-                        .map_err(|error| Error::value(strand, error.to_string()))?
+                        .map_err(|error| Error::data(strand, error.to_string()))?
                     {
                         Event::Start(start) => {
                             flush_text(strand, &children, &mut text, &mut chunk)?;
@@ -279,7 +286,7 @@ fn parse_element<'v, 's>(
                             flush_text(strand, &children, &mut text, &mut chunk)?;
                             let text = content
                                 .xml_content(XmlVersion::Implicit1_0)
-                                .into_do(strand)?
+                                .into_do_data(strand)?
                                 .into_owned();
                             validate_comment(strand, &text)?;
                             state
@@ -290,22 +297,24 @@ fn parse_element<'v, 's>(
                         Event::Text(content) => {
                             let content = content
                                 .xml_content(XmlVersion::Implicit1_0)
-                                .into_do(strand)?;
+                                .into_do_data(strand)?;
                             text.extend(strand, &content);
                         }
                         Event::CData(content) => {
-                            let content = str::from_utf8(content.as_ref()).into_do(strand)?;
+                            let content = str::from_utf8(content.as_ref()).into_do_data(strand)?;
                             text.extend(strand, content);
                         }
                         Event::GeneralRef(reference) => {
-                            if let Some(character) = reference.resolve_char_ref().into_do(strand)? {
+                            if let Some(character) =
+                                reference.resolve_char_ref().into_do_data(strand)?
+                            {
                                 text.extend(strand, character.encode_utf8(&mut [0; 4]));
                             } else {
-                                let decoded = reference.decode().into_do(strand)?;
+                                let decoded = reference.decode().into_do_data(strand)?;
                                 if let Some(resolved) = resolve_predefined_entity(&decoded) {
                                     text.extend(strand, resolved);
                                 } else {
-                                    return Err(Error::value(
+                                    return Err(Error::data(
                                         strand,
                                         "custom XML entities are not supported",
                                     ));
@@ -317,7 +326,7 @@ fn parse_element<'v, 's>(
                             break;
                         }
                         Event::Eof => {
-                            return Err(Error::value(strand, "unexpected end of XML document"));
+                            return Err(Error::data(strand, "unexpected end of XML document"));
                         }
                         _ => {}
                     }

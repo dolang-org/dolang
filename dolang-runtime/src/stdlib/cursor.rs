@@ -162,7 +162,7 @@ impl Memory {
         bytes.extend_from_slice(data);
         bytes.truncate(room);
         let Ok(text) = utf8::complete_prefix(&bytes) else {
-            return Err(Error::value(strand, "invalid UTF-8 data"));
+            return Err(Error::data(strand, "invalid UTF-8 data"));
         };
         if !text.is_empty() {
             let buf = target
@@ -282,7 +282,7 @@ impl Cursor {
                 memory.open = false;
                 memory.held = Vec::new();
                 if unfinished {
-                    return Err(Error::value(
+                    return Err(Error::data(
                         strand,
                         "stream closed with an unfinished character",
                     ));

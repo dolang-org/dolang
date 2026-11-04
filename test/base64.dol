@@ -9,6 +9,7 @@ import
     - test
   std:
     - TypeError
+    - DataError
     - ValueError
 
 #[test]
@@ -38,7 +39,7 @@ def decode_type_error()
 
 #[test]
 def decode_invalid()
-  let err = assert_throws $ValueError do
+  let err = assert_throws $DataError do
     decode "%%%not base64%%%"
   assert $ (str err).contains "Invalid"
 
@@ -69,14 +70,14 @@ def decode_auto_alphabet()
 def decode_strict_alphabet()
   assert_eq (decode "-_8" alphabet: :URL:) b"\xfb\xff"
   assert_eq (decode "+/8" alphabet: :STANDARD:) b"\xfb\xff"
-  assert_throws $ValueError do
+  assert_throws $DataError do
     decode "-_8" alphabet: :STANDARD:
-  assert_throws $ValueError do
+  assert_throws $DataError do
     decode "+/8" alphabet: :URL:
 
 #[test]
 def decode_ambiguous_alphabet()
-  let err = assert_throws $ValueError do
+  let err = assert_throws $DataError do
     decode "-/8"
   assert $ (str err).contains "mixes standard and URL-safe"
 
@@ -84,9 +85,9 @@ def decode_ambiguous_alphabet()
 def decode_strict_pad()
   assert_eq (decode "aGVsbG8=" pad: true) b"hello"
   assert_eq (decode "aGVsbG8" pad: false) b"hello"
-  assert_throws $ValueError do
+  assert_throws $DataError do
     decode "aGVsbG8" pad: true
-  assert_throws $ValueError do
+  assert_throws $DataError do
     decode "aGVsbG8=" pad: false
 
 #[test]

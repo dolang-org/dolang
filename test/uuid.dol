@@ -3,7 +3,7 @@ import
   std:
     - hash
     - TypeError
-    - ValueError
+    - DataError
   test:
     - assert_eq
     - assert_ne
@@ -49,13 +49,13 @@ def bytes_round_trip()
 
 #[test]
 def bad_bytes_length()
-  let err = assert_throws $ValueError do
+  let err = assert_throws $DataError do
     uuid.Uuid b"\x01\x02\x03"
-  assert_eq (str err) "value error: uuid binary form must be exactly 16 bytes"
+  assert_eq (str err) "data error: uuid binary form must be exactly 16 bytes"
 
 #[test]
 def bad_text()
-  assert_throws $ValueError do
+  assert_throws $DataError do
     uuid.Uuid "not-a-uuid"
 
 #[test]
@@ -113,13 +113,13 @@ def guid_bytes_round_trip()
 
 #[test]
 def guid_bad_bytes_length()
-  let err = assert_throws $ValueError do
+  let err = assert_throws $DataError do
     uuid.Guid b"\x01\x02\x03"
-  assert_eq (str err) "value error: guid binary form must be exactly 16 bytes"
+  assert_eq (str err) "data error: guid binary form must be exactly 16 bytes"
 
 #[test]
 def guid_bad_text()
-  assert_throws $ValueError do
+  assert_throws $DataError do
     uuid.Guid "not-a-guid"
 
 #[test]

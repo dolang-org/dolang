@@ -351,7 +351,7 @@ fn status_text<'v, 's, 'a>(
     strand: &mut Strand<'v, 's>,
     annex: &'a StatusAnnex,
 ) -> Result<'v, 's, &'a str> {
-    str::from_utf8(&annex.body).map_err(|_| Error::runtime(strand, "invalid UTF-8"))
+    str::from_utf8(&annex.body).map_err(|_| Error::data(strand, "invalid UTF-8"))
 }
 
 impl<'v> Object<'v> for ErrorObject {

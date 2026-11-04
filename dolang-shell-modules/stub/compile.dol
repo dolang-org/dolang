@@ -182,7 +182,7 @@ pub class Typelib
   #
   # ## Errors
   #
-  # [`ValueError`](std.ValueError) if `bytes` is malformed, or from another
+  # [`DataError`](std.DataError) if `bytes` is malformed, or from another
   # version of Do.
   pub def (init)
     self

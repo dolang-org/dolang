@@ -544,7 +544,7 @@ async fn read<'v, 's>(
     if text {
         embryo
             .finish_str(strand, out)
-            .map_err(|_| Error::runtime(strand, "invalid UTF-8 data"))?;
+            .map_err(|_| Error::data(strand, "invalid UTF-8 data"))?;
     } else {
         embryo.finish(strand, out);
     }

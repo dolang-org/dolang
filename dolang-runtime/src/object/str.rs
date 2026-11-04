@@ -1003,7 +1003,7 @@ impl<'v> Protocol<'v> for Type {
             Ok(())
         } else if let Some(value) = value.as_bin_raw(strand) {
             let value = std::str::from_utf8(value)
-                .map_err(|_| Error::value(strand, "Str: invalid UTF-8"))?;
+                .map_err(|_| Error::data(strand, "Str: invalid UTF-8"))?;
             Output::set(strand, out, value);
             Ok(())
         } else {
@@ -1112,7 +1112,7 @@ impl<'v> Protocol<'v> for Type {
                     Output::set(strand, &mut out, value);
                 } else if let Some(value) = value.as_bin_raw(strand) {
                     let value = std::str::from_utf8(value)
-                        .map_err(|_| Error::value(strand, "Str: invalid UTF-8"))?;
+                        .map_err(|_| Error::data(strand, "Str: invalid UTF-8"))?;
                     Output::set(strand, &mut out, value);
                 } else {
                     return Err(Error::type_error(strand, "Str: expected Str or Bin"));

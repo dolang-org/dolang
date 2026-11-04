@@ -477,7 +477,9 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
                 .ok_or_else(|| Error::type_error(strand, "expected Str"))?
                 .pin();
             let mut dejson = serde_json::Deserializer::from_str(&src);
-            Seed(strand, out).deserialize(&mut dejson).into_do(strand)
+            Seed(strand, out)
+                .deserialize(&mut dejson)
+                .into_do_data(strand)
         })
         .commit();
 }

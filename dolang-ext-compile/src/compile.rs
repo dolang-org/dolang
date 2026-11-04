@@ -1630,7 +1630,7 @@ impl<'v> Object<'v> for TypelibObject<'v> {
         // it.
         let static_bytes: &'static [u8] = unsafe { mem::transmute::<&[u8], _>(&*backing) };
         let typelib = compile::typeck::Typelib::read(static_bytes)
-            .map_err(|error| Error::value(strand, error.to_string()))?;
+            .map_err(|error| Error::data(strand, error.to_string()))?;
         this.create(
             strand,
             TypelibObject {

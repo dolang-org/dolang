@@ -46,7 +46,7 @@ pub @let EncodeValue = $
 #
 # ## Errors
 #
-# `ValueError` if the JSON is invalid.
+# [`DataError`](std.DataError) if the JSON is invalid.
 #
 # ## Example
 #

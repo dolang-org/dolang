@@ -45,7 +45,7 @@ pub class Bytecode
 # catch BytecodeError: err
 #   echo "invalid bytecode: $err"
 # ```
-pub class BytecodeError: std.RuntimeError
+pub class BytecodeError: std.DataError
 
 # A registered runtime import handler.
 pub class ImportHandler

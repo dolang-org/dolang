@@ -61,18 +61,18 @@ pub fn value_to_uuid<'v, 's>(
     if let Some(str) = value.as_str(strand) {
         return strand
             .access(|x| uuid::Uuid::parse_str(str.as_str(x)))
-            .map_err(|e| Error::value(strand, e.to_string()));
+            .map_err(|e| Error::data(strand, e.to_string()));
     }
     match value.view(strand.vm()) {
         View::Bin(bin) => {
             if bin.len() != 16 {
-                return Err(Error::value(
+                return Err(Error::data(
                     strand,
                     "uuid binary form must be exactly 16 bytes",
                 ));
             }
             let bytes = bin.to_vec();
-            uuid::Uuid::from_slice(&bytes).map_err(|e| Error::value(strand, e.to_string()))
+            uuid::Uuid::from_slice(&bytes).map_err(|e| Error::data(strand, e.to_string()))
         }
         _ => Err(Error::type_error(strand, "expected Uuid, Str, or Bin")),
     }

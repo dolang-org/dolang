@@ -998,7 +998,7 @@ pub(crate) async fn open_file<'v, 's>(
 }
 
 fn invalid_utf8<'v, 's>(strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
-    Error::runtime(strand, "invalid UTF-8 data")
+    Error::data(strand, "invalid UTF-8 data")
 }
 
 /// Parses an optional byte count.

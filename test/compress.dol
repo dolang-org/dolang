@@ -12,6 +12,7 @@ import compress
   std:
     - StateError
     - TypeError
+    - DataError
     - ValueError
 
 let FORMATS = $
@@ -81,9 +82,9 @@ def auto_detects_format()
       assert_eq $stream.format $format
 
   fs.Path("plain.txt").write "not compressed"
-  assert_throws $ValueError do compress.decompress plain.txt
+  assert_throws $DataError do compress.decompress plain.txt
   fs.Path("empty").write ""
-  assert_throws $ValueError do compress.decompress empty
+  assert_throws $DataError do compress.decompress empty
 
 #[test]
 #[vfs]

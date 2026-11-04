@@ -6,8 +6,8 @@ import compile load strand
     - parametrize
     - test
   std:
+    - DataError
     - ImportError
-    - RuntimeError
     - StateError
     - TypeError
 import load:
@@ -104,7 +104,7 @@ def execute()
 #[test]
 def load_rejects_invalid_bytecode()
   let err = assert_throws $load.BytecodeError do load.load b"not bytecode"
-  assert_type $RuntimeError $err
+  assert_type $DataError $err
   assert_throws $load.BytecodeError do load.run b"not bytecode"
 
 #[test]

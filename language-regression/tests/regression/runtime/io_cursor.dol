@@ -133,7 +133,7 @@ let text = StrBuf()
 let c = Cursor $text
 c.write b"\xe2\x82"
 assert_throws $std.ValueError do c.seek start: 0
-assert_throws $std.ValueError do c.close()
+assert_throws $std.DataError do c.close()
 assert (!c.writable)
 assert_eq $text.freeze() ""
 
@@ -143,7 +143,7 @@ text.append "ok"
 let c = Cursor $text
 c.seek end: 0
 c.write b"\xc3"
-assert_throws $std.ValueError do c.write b"\xff"
+assert_throws $std.DataError do c.write b"\xff"
 assert_eq $text[0..2] "ok"
 c.write b"\xa9"
 assert_eq $text.freeze() "oké"

@@ -7,7 +7,7 @@ import
     - test
   std:
     - RuntimeError
-    - ValueError
+    - DataError
 
 let BAD_PATCH = |
   not a patch
@@ -43,7 +43,7 @@ def parse_errors_are_typed()
   let err = assert_throws $patch.ParseError do
     patch.decode(BAD_PATCH).next()
   assert (type err patch.ParseError)
-  assert (type err ValueError)
+  assert (type err DataError)
   assert (((str err).len) > 0)
 
 #[test]

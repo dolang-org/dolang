@@ -15,6 +15,7 @@ import strand sys sys.unix sys.freebsd sys.linux sys.macos sys.windows
     - remove
     - Path
   std:
+    - DataError
     - RuntimeError
 
 let is_windows = (sys.os_info().family == :WINDOWS:)
@@ -200,9 +201,9 @@ def fs_read_grows_for_large_full_reads()
 def fs_read_rejects_invalid_utf_8_data()
   let test_path = "test_fs_read_invalid.bin"
   write $test_path b"\xff\xfe"
-  let err = assert_throws $RuntimeError do
+  let err = assert_throws $DataError do
     read_str $test_path
-  assert_eq (str err) "invalid UTF-8 data"
+  assert_eq (str err) "data error: invalid UTF-8 data"
   remove $test_path
 
 #[test]

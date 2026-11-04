@@ -258,7 +258,7 @@ impl<'v> Object<'v> for EventIter {
                 let mut borrow = this.borrow_mut(strand)?;
                 match borrow.parser.next_event(false) {
                     Ok(next) => next,
-                    Err(_) => return Err(Error::runtime(strand, "invalid UTF-8")),
+                    Err(_) => return Err(Error::data(strand, "invalid UTF-8")),
                 }
             };
 
@@ -304,7 +304,7 @@ impl<'v> Object<'v> for EventIter {
                         let mut borrow = this.borrow_mut(strand)?;
                         match borrow.parser.next_event(true) {
                             Ok(next) => next,
-                            Err(_) => return Err(Error::runtime(strand, "invalid UTF-8")),
+                            Err(_) => return Err(Error::data(strand, "invalid UTF-8")),
                         }
                     };
 

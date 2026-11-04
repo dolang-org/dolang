@@ -9,6 +9,7 @@ import
     - test
   std:
     - @BaseArray
+    - DataError
     - ValueError
     - TypeError
 
@@ -132,7 +133,7 @@ def decode_and_encode_errors()
     encode $table
   assert ((str table_err).contains "cyclic reference to dict")
 
-  let parse_err = assert_throws $ValueError do
+  let parse_err = assert_throws $DataError do
     decode "{ a = "
   assert ((str parse_err).contains "expected")
 

@@ -366,7 +366,7 @@ impl SubConsole {
             return Ok(());
         };
         let bytes = std::str::from_utf8(bytes)
-            .map_err(|_| Error::runtime(strand, "term.sub: captured invalid UTF-8"))?;
+            .map_err(|_| Error::data(strand, "term.sub: captured invalid UTF-8"))?;
         text.push_str(bytes);
         Ok(())
     }
