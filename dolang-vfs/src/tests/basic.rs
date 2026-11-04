@@ -642,6 +642,13 @@ async fn fs_metadata_basic() {
     assert!(metadata.capacity() > 0);
     assert!(metadata.free() > 0);
     assert!(metadata.available() > 0);
+    let local = Vfs::direct()
+        .unwrap()
+        .fs_metadata(typed(&test_file), true)
+        .await
+        .unwrap();
+    assert!(metadata.fs_type().is_some());
+    assert_eq!(metadata.fs_type(), local.fs_type());
 
     server_task.abort();
     let _ = server_task.await;

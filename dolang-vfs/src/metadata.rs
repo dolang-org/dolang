@@ -318,6 +318,7 @@ pub struct FsMetadata {
     pub(crate) free: u64,
     pub(crate) available: u64,
     pub(crate) block_size: u32,
+    pub(crate) fs_type: Option<String>,
     pub(crate) family: FsMetadataFamily,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -369,6 +370,10 @@ impl FsMetadata {
     /// Returns the fundamental filesystem block size in bytes.
     pub const fn block_size(&self) -> u32 {
         self.block_size
+    }
+    /// Returns the filesystem type name as reported by the platform, if known.
+    pub fn fs_type(&self) -> Option<&str> {
+        self.fs_type.as_deref()
     }
     /// Returns the Unix-specific filesystem metadata, if present.
     pub fn unix(&self) -> Option<&UnixFsMetadata> {

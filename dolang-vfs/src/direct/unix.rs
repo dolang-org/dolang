@@ -17,7 +17,7 @@ use crate::{
 };
 use dolang_winterop::security::SecDesc;
 #[cfg(target_os = "linux")]
-use std::os::fd::RawFd;
+use std::os::{fd::RawFd, unix::fs::OpenOptionsExt};
 use std::{
     collections::HashMap,
     ffi::{CStr, CString, OsString},
@@ -342,6 +342,7 @@ impl Direct {
         }
     }
 
+    #[cfg(any(target_os = "freebsd", target_os = "macos"))]
     fn statvfs_from_path(path: &Path) -> Result<libc::statvfs> {
         let path = CString::new(path.as_os_str().as_bytes())?;
         let mut stat = MaybeUninit::<libc::statvfs>::uninit();
@@ -354,7 +355,11 @@ impl Direct {
     }
 
     #[allow(clippy::useless_conversion)]
-    fn fs_metadata_from_statvfs(stat: libc::statvfs) -> FsMetadata {
+    fn fs_metadata_from_statvfs(
+        stat: libc::statvfs,
+        fs_type: Option<String>,
+        fsid: Option<u64>,
+    ) -> FsMetadata {
         let unit_size = if stat.f_frsize != 0 {
             u64::from(stat.f_frsize)
         } else {
@@ -365,6 +370,7 @@ impl Direct {
             free: u64::from(stat.f_bfree).saturating_mul(unit_size),
             available: u64::from(stat.f_bavail).saturating_mul(unit_size),
             block_size: u32::try_from(stat.f_bsize).unwrap_or(u32::MAX),
+            fs_type,
             family: FsMetadataFamily::Unix(UnixFsMetadata {
                 blocks: stat.f_blocks.into(),
                 blocks_free: stat.f_bfree.into(),
@@ -373,10 +379,7 @@ impl Direct {
                 files_free: stat.f_ffree.into(),
                 files_available: stat.f_favail.into(),
                 fragment_size: u32::try_from(stat.f_frsize).unwrap_or(u32::MAX),
-                #[cfg(target_os = "linux")]
-                fsid: Some(stat.f_fsid),
-                #[cfg(not(target_os = "linux"))]
-                fsid: None,
+                fsid,
                 name_max: u32::try_from(stat.f_namemax).unwrap_or(u32::MAX),
                 #[cfg(target_os = "linux")]
                 platform: UnixFsMetadataPlatform::Linux {
@@ -395,7 +398,13 @@ impl Direct {
     }
 
     pub(super) fn fs_metadata_from_file(file: &std::fs::File) -> Result<FsMetadata> {
-        Self::statvfs_from_fd(file.as_fd()).map(Self::fs_metadata_from_statvfs)
+        let fd = file.as_fd();
+        let stat = Self::statvfs_from_fd(fd)?;
+        #[cfg(target_os = "linux")]
+        let (fs_type, fsid) = (Self::linux_fs_type(fd), Some(stat.f_fsid));
+        #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+        let (fs_type, fsid) = Self::bsd_fs_identity(&Self::statfs_from_fd(fd)?);
+        Ok(Self::fs_metadata_from_statvfs(stat, fs_type, fsid))
     }
 
     pub(super) fn fs_metadata_from_path(path: &Path, follow: bool) -> Result<FsMetadata> {
@@ -405,7 +414,106 @@ impl Direct {
                 "fs_metadata follow: false is not implemented on this platform",
             ));
         }
-        Self::statvfs_from_path(path).map(Self::fs_metadata_from_statvfs)
+        #[cfg(target_os = "linux")]
+        {
+            // One `O_PATH` descriptor keeps the capacity query and the
+            // mount lookup on the same mount even if the path is remounted.
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_PATH)
+                .open(path)?;
+            Self::fs_metadata_from_file(&file)
+        }
+        #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+        {
+            let stat = Self::statvfs_from_path(path)?;
+            let (fs_type, fsid) = Self::bsd_fs_identity(&Self::statfs_from_path(path)?);
+            Ok(Self::fs_metadata_from_statvfs(stat, fs_type, fsid))
+        }
+    }
+
+    /// Resolves the filesystem type name by finding the descriptor's mount in
+    /// `/proc/self/mountinfo`. Returns `None` when the kernel lacks
+    /// `STATX_MNT_ID` (before 5.8), `/proc` is unavailable, or no mount matches.
+    #[cfg(target_os = "linux")]
+    fn linux_fs_type(fd: BorrowedFd<'_>) -> Option<String> {
+        let mount_id = Self::linux_mount_id(fd)?;
+        let mountinfo = std::fs::read("/proc/self/mountinfo").ok()?;
+        mountinfo_fs_type(&mountinfo, mount_id)
+    }
+
+    /// Calls `statx` through the raw syscall: the libc wrapper and struct are
+    /// missing on older musl.
+    #[cfg(target_os = "linux")]
+    fn linux_mount_id(fd: BorrowedFd<'_>) -> Option<u64> {
+        // Prefix of `struct statx` up to `stx_mnt_id`, padded to the full
+        // 256-byte size the kernel writes.
+        #[repr(C)]
+        struct StatxMountId {
+            mask: u32,
+            _head: [u32; 35],
+            mnt_id: u64,
+            _tail: [u64; 13],
+        }
+        const _: () = assert!(std::mem::size_of::<StatxMountId>() == 0x100);
+        const _: () = assert!(std::mem::offset_of!(StatxMountId, mnt_id) == 0x90);
+        const STATX_MNT_ID: u32 = 0x1000;
+
+        let mut buf = MaybeUninit::<StatxMountId>::zeroed();
+        let rc = unsafe {
+            libc::syscall(
+                libc::SYS_statx,
+                fd.as_raw_fd(),
+                c"".as_ptr(),
+                libc::AT_EMPTY_PATH,
+                STATX_MNT_ID,
+                buf.as_mut_ptr(),
+            )
+        };
+        if rc != 0 {
+            return None;
+        }
+        let buf = unsafe { buf.assume_init() };
+        (buf.mask & STATX_MNT_ID != 0).then_some(buf.mnt_id)
+    }
+
+    #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+    fn statfs_from_fd(fd: BorrowedFd<'_>) -> Result<libc::statfs> {
+        let mut stat = MaybeUninit::<libc::statfs>::uninit();
+        let rc = unsafe { libc::fstatfs(fd.as_raw_fd(), stat.as_mut_ptr()) };
+        if rc == 0 {
+            Ok(unsafe { stat.assume_init() })
+        } else {
+            Err(Error::last_os_error())
+        }
+    }
+
+    #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+    fn statfs_from_path(path: &Path) -> Result<libc::statfs> {
+        let path = CString::new(path.as_os_str().as_bytes())?;
+        let mut stat = MaybeUninit::<libc::statfs>::uninit();
+        let rc = unsafe { libc::statfs(path.as_ptr(), stat.as_mut_ptr()) };
+        if rc == 0 {
+            Ok(unsafe { stat.assume_init() })
+        } else {
+            Err(Error::last_os_error())
+        }
+    }
+
+    /// Extracts the filesystem type name and ID from `statfs`.
+    #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+    fn bsd_fs_identity(stat: &libc::statfs) -> (Option<String>, Option<u64>) {
+        let name: Vec<u8> = stat
+            .f_fstypename
+            .iter()
+            .map(|&c| c as u8)
+            .take_while(|&b| b != 0)
+            .collect();
+        let fs_type = String::from_utf8(name).ok().filter(|name| !name.is_empty());
+        // `fsid_t` is two `int32_t`s; its field is private in `libc`.
+        let [lo, hi]: [i32; 2] = unsafe { std::mem::transmute(stat.f_fsid) };
+        let fsid = u64::from(lo as u32) | (u64::from(hi as u32) << 32);
+        (fs_type, Some(fsid))
     }
 
     #[cfg(target_os = "linux")]
@@ -2100,5 +2208,64 @@ impl super::OpenOptions {
         if self.no_follow {
             opts.custom_flags(libc::O_NOFOLLOW);
         }
+    }
+}
+
+/// Finds the filesystem type of mount `mount_id` in `/proc/self/mountinfo`
+/// content: the field after the ` - ` separator, with octal escapes decoded.
+#[cfg(target_os = "linux")]
+fn mountinfo_fs_type(mountinfo: &[u8], mount_id: u64) -> Option<String> {
+    mountinfo.split(|&b| b == b'\n').find_map(|line| {
+        let mut fields = line.split(|&b| b == b' ');
+        let id: u64 = std::str::from_utf8(fields.next()?).ok()?.parse().ok()?;
+        if id != mount_id {
+            return None;
+        }
+        // Skip parent ID, major:minor, root, and mount point, then the
+        // variable-length optional fields up to the separator.
+        fields.nth(3)?;
+        fields.find(|field| *field == b"-")?;
+        let fs_type = fields.next()?;
+        let mut name = Vec::with_capacity(fs_type.len());
+        let mut i = 0;
+        while i < fs_type.len() {
+            let escaped = fs_type
+                .get(i + 1..i + 4)
+                .filter(|_| fs_type[i] == b'\\')
+                .and_then(|digits| std::str::from_utf8(digits).ok())
+                .and_then(|digits| u8::from_str_radix(digits, 8).ok());
+            if let Some(byte) = escaped {
+                name.push(byte);
+                i += 4;
+            } else {
+                name.push(fs_type[i]);
+                i += 1;
+            }
+        }
+        String::from_utf8(name).ok().filter(|name| !name.is_empty())
+    })
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::mountinfo_fs_type;
+
+    const MOUNTINFO: &[u8] = b"\
+22 1 0:21 / /proc rw,nosuid,nodev,noexec,relatime shared:12 - proc proc rw
+36 22 0:32 / / rw,relatime shared:1 master:2 - btrfs /dev/sda2 rw,subvol=/root
+41 36 0:40 / /mnt/a\\040b rw,relatime - fuse.my\\040fs remote:/ rw,user_id=0
+42 36 0:41 / /mnt/- rw - tmpfs tmpfs rw
+";
+
+    #[test]
+    fn mountinfo_lookup() {
+        assert_eq!(mountinfo_fs_type(MOUNTINFO, 22).as_deref(), Some("proc"));
+        assert_eq!(mountinfo_fs_type(MOUNTINFO, 36).as_deref(), Some("btrfs"));
+        assert_eq!(
+            mountinfo_fs_type(MOUNTINFO, 41).as_deref(),
+            Some("fuse.my fs")
+        );
+        assert_eq!(mountinfo_fs_type(MOUNTINFO, 42).as_deref(), Some("tmpfs"));
+        assert_eq!(mountinfo_fs_type(MOUNTINFO, 99), None);
     }
 }
