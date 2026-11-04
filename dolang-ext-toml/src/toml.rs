@@ -1,226 +1,404 @@
 use std::{
-    cell::RefCell,
     collections::HashSet,
-    fmt::{self, Formatter},
+    fmt::{self, Formatter, Write as _},
     num::NonZero,
+    result,
 };
 
-use serde::{
-    Serialize, Serializer,
-    de::{self, DeserializeSeed, Visitor},
-    ser::{self, SerializeMap, SerializeSeq},
-};
+use serde::de::{self, DeserializeSeed, Visitor};
+use toml_writer::TomlWrite;
 
 use dolang::runtime::{
-    Output, Slot, Strand, Value,
-    error::Error,
+    Alloc, Output, Slot, Strand, Value,
+    error::{Error, Result, ResultExt},
     unpack,
-    value::{Empty, View},
+    value::{Empty, StrEmbryo, View},
     vm::Register,
 };
 
 const DATETIME_FIELD: &str = "$__toml_private_datetime";
 
-struct SeenGuard<'a> {
-    seen: &'a RefCell<HashSet<NonZero<usize>>>,
-    id: NonZero<usize>,
+/// [`fmt::Write`] adapter growing an embryo.
+struct EmbryoWriter<'a, 'v> {
+    embryo: &'a mut StrEmbryo<'v>,
+    alloc: &'a mut dyn Alloc<'v>,
 }
 
-impl Drop for SeenGuard<'_> {
-    fn drop(&mut self) {
-        self.seen.borrow_mut().remove(&self.id);
+impl fmt::Write for EmbryoWriter<'_, '_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.embryo.extend(self.alloc, s);
+        Ok(())
     }
 }
 
-fn enter_seen<'a, E>(
-    seen: &'a RefCell<HashSet<NonZero<usize>>>,
-    id: NonZero<usize>,
-    err: impl FnOnce() -> E,
-) -> Result<SeenGuard<'a>, E> {
-    if !seen.borrow_mut().insert(id) {
-        return Err(err());
+/// How a table entry is laid out in a document.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Layout {
+    /// `key = value` in the table's body.
+    Inline,
+    /// A `[path.key]` section.
+    Table,
+    /// One `[[path.key]]` section per element.
+    ArrayOfTables,
+}
+
+fn is_table(view: &View<'_, '_>) -> bool {
+    matches!(view, View::Dict(_) | View::Record(_) | View::Struct(_))
+}
+
+/// Walks a value, writing TOML into an embryo.
+///
+/// Documents follow `toml::Serializer`'s layout: a table's inline entries
+/// first, then its sub-tables and arrays of tables as sections, in order.
+/// Lines are separated rather than terminated, so there is no trailing
+/// newline.
+struct Encoder<'a, 'v> {
+    out: &'a mut StrEmbryo<'v>,
+    /// Containers being written, for cycle detection.
+    seen: HashSet<NonZero<usize>>,
+    /// Encoded keys of the current section.
+    path: Vec<String>,
+    /// Whether anything has been written yet.
+    started: bool,
+}
+
+/// Runs `f` with a writer into `embryo` that borrows `strand` only for this
+/// call.
+fn write<'v, 's>(
+    embryo: &mut StrEmbryo<'v>,
+    strand: &mut Strand<'v, 's>,
+    f: impl FnOnce(&mut EmbryoWriter<'_, 'v>) -> fmt::Result,
+) -> Result<'v, 's, ()> {
+    let result = f(&mut EmbryoWriter {
+        embryo,
+        alloc: strand,
+    });
+    result.into_do(strand)
+}
+
+impl<'v> Encoder<'_, 'v> {
+    fn emit<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        f: impl FnOnce(&mut EmbryoWriter<'_, 'v>) -> fmt::Result,
+    ) -> Result<'v, 's, ()> {
+        write(self.out, strand, f)
     }
-    Ok(SeenGuard { seen, id })
-}
 
-struct SerializeValue<'v, 's, 'a> {
-    strand: RefCell<&'a mut Strand<'v, 's>>,
-    seen: &'a RefCell<HashSet<NonZero<usize>>>,
-    value: &'a Value<'v>,
-}
-
-struct SerializeKey<'v, 's, 'a> {
-    strand: RefCell<&'a mut Strand<'v, 's>>,
-    value: &'a Value<'v>,
-}
-
-impl<'v, 's, 'a> Serialize for SerializeKey<'v, 's, 'a> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let strand = &mut *self.strand.borrow_mut();
-        match self.value.view(strand.vm()) {
-            View::Str(s) => strand.access(|access| serializer.serialize_str(s.as_str(access))),
-            View::Sym(sym) => serializer.serialize_str(sym.as_str(strand.vm())),
-            _ => Err(ser::Error::custom(
+    /// Calls `f` with the name of a table key.
+    fn with_key<'s, R>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        key: &Value<'v>,
+        f: impl FnOnce(&mut Self, &mut Strand<'v, 's>, &str) -> Result<'v, 's, R>,
+    ) -> Result<'v, 's, R> {
+        match key.view(strand.vm()) {
+            View::Str(s) => f(self, strand, &s.pin()),
+            View::Sym(sym) => {
+                let name = sym.as_str(strand.vm());
+                f(self, strand, name)
+            }
+            _ => Err(Error::type_error(
+                strand,
                 "TOML table keys must be Str or Sym values",
             )),
         }
     }
-}
 
-impl<'v, 's, 'a> Serialize for SerializeValue<'v, 's, 'a> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let strand = &mut *self.strand.borrow_mut();
-        match self.value.view(strand.vm()) {
-            View::Nil => Err(ser::Error::custom("nil values are not TOML-representable")),
-            View::Bool(b) => serializer.serialize_bool(b),
-            View::Int(i) => serializer.serialize_i64(i64::try_from(i).map_err(|_| {
-                ser::Error::custom("TOML integers outside i64 range are not supported")
-            })?),
-            View::Float(f) => serializer.serialize_f64(f),
-            View::Str(s) => strand.access(|access| serializer.serialize_str(s.as_str(access))),
-            View::Bin(_) => Err(ser::Error::custom(
+    /// Marks a container as being written, rejecting cycles.
+    fn enter<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        value: &Value<'v>,
+    ) -> Result<'v, 's, NonZero<usize>> {
+        let (id, kind) = match value.view(strand.vm()) {
+            View::Array(handle) => (handle.id().addr(), "array"),
+            View::Tuple(handle) => (handle.id().addr(), "tuple"),
+            View::Dict(handle) => (handle.id().addr(), "dict"),
+            View::Record(handle) => (handle.id().addr(), "record"),
+            View::Struct(handle) => (handle.id().addr(), "struct"),
+            _ => unreachable!("not a container"),
+        };
+        if self.seen.insert(id) {
+            Ok(id)
+        } else {
+            Err(Error::value(strand, format!("cyclic reference to {kind}")))
+        }
+    }
+
+    /// Calls `f` with each element of an array or tuple.
+    fn each_elem<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        seq: &Value<'v>,
+        mut f: impl FnMut(&mut Self, &mut Strand<'v, 's>, &Value<'v>) -> Result<'v, 's, ()>,
+    ) -> Result<'v, 's, ()> {
+        strand.with_slots_sync(|strand, [mut elem]| {
+            match seq.view(strand.vm()) {
+                View::Array(handle) => {
+                    let len = handle.len(strand)?;
+                    for i in 0..len {
+                        if !handle.get(strand, i, &mut elem)? {
+                            break;
+                        }
+                        f(self, strand, &elem)?;
+                    }
+                }
+                View::Tuple(handle) => {
+                    for i in 0..handle.len() {
+                        if !handle.get(strand, i, &mut elem)? {
+                            break;
+                        }
+                        f(self, strand, &elem)?;
+                    }
+                }
+                _ => unreachable!("not a sequence"),
+            }
+            Ok(())
+        })
+    }
+
+    /// Calls `f` with each key and value of a dict, record, or struct.
+    fn each_pair<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        table: &Value<'v>,
+        mut f: impl FnMut(&mut Self, &mut Strand<'v, 's>, &Value<'v>, &Value<'v>) -> Result<'v, 's, ()>,
+    ) -> Result<'v, 's, ()> {
+        strand.with_slots_sync(|strand, [mut key, mut val]| {
+            match table.view(strand.vm()) {
+                View::Dict(handle) => {
+                    let mut pairs = handle.pairs();
+                    while pairs.next(strand, &mut key, &mut val)? {
+                        f(self, strand, &key, &val)?;
+                    }
+                }
+                View::Record(handle) => {
+                    let mut pairs = handle.pairs();
+                    while pairs.next(strand, &mut key, &mut val)? {
+                        f(self, strand, &key, &val)?;
+                    }
+                }
+                View::Struct(handle) => {
+                    let mut pairs = handle.pairs();
+                    while pairs.next(strand, &mut key, &mut val)? {
+                        f(self, strand, &key, &val)?;
+                    }
+                }
+                _ => unreachable!("not a table"),
+            }
+            Ok(())
+        })
+    }
+
+    /// Chooses how a table entry's value is laid out, as `toml::Serializer`
+    /// does: tables become sections, and so does a non-empty array whose
+    /// elements are all tables.
+    fn layout<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        value: &Value<'v>,
+    ) -> Result<'v, 's, Layout> {
+        let view = value.view(strand.vm());
+        if is_table(&view) {
+            return Ok(Layout::Table);
+        }
+        if !matches!(view, View::Array(_) | View::Tuple(_)) {
+            return Ok(Layout::Inline);
+        }
+        let mut any = false;
+        let mut all_tables = true;
+        self.each_elem(strand, value, |_, strand, elem| {
+            any = true;
+            all_tables &= is_table(&elem.view(strand.vm()));
+            Ok(())
+        })?;
+        Ok(if any && all_tables {
+            Layout::ArrayOfTables
+        } else {
+            Layout::Inline
+        })
+    }
+
+    /// Starts a new line.
+    fn line<'s>(&mut self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
+        if std::mem::replace(&mut self.started, true) {
+            self.emit(strand, |w| w.newline())?;
+        }
+        Ok(())
+    }
+
+    /// Writes the header for the current path, after a blank line.
+    fn header<'s>(&mut self, strand: &mut Strand<'v, 's>, array: bool) -> Result<'v, 's, ()> {
+        if std::mem::replace(&mut self.started, true) {
+            self.emit(strand, |w| {
+                w.newline()?;
+                w.newline()
+            })?;
+        }
+        let path = &self.path;
+        write(self.out, strand, |w| {
+            if array {
+                w.open_array_of_tables_header()?;
+            } else {
+                w.open_table_header()?;
+            }
+            for (i, key) in path.iter().enumerate() {
+                if i > 0 {
+                    w.key_sep()?;
+                }
+                w.write_str(key)?;
+            }
+            if array {
+                w.close_array_of_tables_header()
+            } else {
+                w.close_table_header()
+            }
+        })
+    }
+
+    /// Writes a value in inline form.
+    fn inline<'s>(&mut self, strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Result<'v, 's, ()> {
+        match value.view(strand.vm()) {
+            View::Nil => Err(Error::type_error(
+                strand,
+                "nil values are not TOML-representable",
+            )),
+            View::Bool(b) => self.emit(strand, |w| w.value(b)),
+            View::Int(i) => {
+                let i = i64::try_from(i).map_err(|_| {
+                    Error::value(strand, "TOML integers outside i64 range are not supported")
+                })?;
+                self.emit(strand, |w| w.value(i))
+            }
+            // Drop the sign of NaN, as `toml`'s serializer does.
+            View::Float(x) if x.is_nan() => self.emit(strand, |w| w.value(x.copysign(1.0))),
+            View::Float(x) => self.emit(strand, |w| w.value(x)),
+            View::Str(s) => self.emit(strand, |w| w.value(&*s.pin())),
+            View::Sym(sym) => {
+                let name = sym.as_str(strand.vm());
+                self.emit(strand, |w| w.value(name))
+            }
+            View::Bin(_) => Err(Error::type_error(
+                strand,
                 "binary values are not TOML-representable",
             )),
-            View::Sym(sym) => serializer.serialize_str(sym.as_str(strand.vm())),
-
-            View::Array(handle) => {
-                let id = handle.id();
-                let _guard = enter_seen(self.seen, id.addr(), || {
-                    ser::Error::custom("cyclic reference to array")
+            View::Array(_) | View::Tuple(_) => {
+                let id = self.enter(strand, value)?;
+                self.emit(strand, |w| w.open_array())?;
+                let mut first = true;
+                self.each_elem(strand, value, |this, strand, elem| {
+                    if !std::mem::take(&mut first) {
+                        this.emit(strand, |w| {
+                            w.val_sep()?;
+                            w.space()
+                        })?;
+                    }
+                    this.inline(strand, elem)
                 })?;
-                let len = handle
-                    .len(strand)
-                    .map_err(|_| ser::Error::custom("concurrent access to array"))?;
-                let mut seq = serializer.serialize_seq(Some(len))?;
-                for i in 0..len {
-                    strand.with_slots_sync(|strand, [mut elem]| {
-                        handle
-                            .get(strand, i, &mut elem)
-                            .map_err(|_| ser::Error::custom("concurrent access to array"))?;
-                        seq.serialize_element(&SerializeValue {
-                            strand: RefCell::new(strand),
-                            seen: self.seen,
-                            value: &elem,
-                        })
-                    })?;
+                self.emit(strand, |w| w.close_array())?;
+                self.seen.remove(&id);
+                Ok(())
+            }
+            View::Dict(_) | View::Record(_) | View::Struct(_) => {
+                let id = self.enter(strand, value)?;
+                self.emit(strand, |w| w.open_inline_table())?;
+                let mut first = true;
+                self.each_pair(strand, value, |this, strand, key, val| {
+                    if !std::mem::take(&mut first) {
+                        this.emit(strand, |w| w.val_sep())?;
+                    }
+                    this.emit(strand, |w| w.space())?;
+                    this.keyval(strand, key, val)
+                })?;
+                if !first {
+                    self.emit(strand, |w| w.space())?;
                 }
-                seq.end()
+                self.emit(strand, |w| w.close_inline_table())?;
+                self.seen.remove(&id);
+                Ok(())
             }
-
-            View::Dict(handle) => {
-                let id = handle.id();
-                let _guard = enter_seen(self.seen, id.addr(), || {
-                    ser::Error::custom("cyclic reference to dict")
-                })?;
-                let len = handle
-                    .len(strand)
-                    .map_err(|_| ser::Error::custom("concurrent access to dict"))?;
-                let mut ser = serializer.serialize_map(Some(len))?;
-                let mut pairs = handle.pairs();
-                strand.with_slots_sync(|strand, [mut key, mut value]| {
-                    while pairs
-                        .next(strand, &mut key, &mut value)
-                        .map_err(|_| ser::Error::custom("concurrent access to dict"))?
-                    {
-                        ser.serialize_key(&SerializeKey {
-                            strand: RefCell::new(strand),
-                            value: &key,
-                        })?;
-                        ser.serialize_value(&SerializeValue {
-                            strand: RefCell::new(strand),
-                            seen: self.seen,
-                            value: &value,
-                        })?;
-                    }
-                    Ok(())
-                })?;
-                ser.end()
-            }
-
-            View::Record(handle) => {
-                let id = handle.id();
-                let _guard = enter_seen(self.seen, id.addr(), || {
-                    ser::Error::custom("cyclic reference to record")
-                })?;
-                let len = handle
-                    .len(strand)
-                    .map_err(|_| ser::Error::custom("concurrent access to record"))?;
-                let mut ser = serializer.serialize_map(Some(len))?;
-                let mut pairs = handle.pairs();
-                strand.with_slots_sync(|strand, [mut key, mut value]| {
-                    while pairs
-                        .next(strand, &mut key, &mut value)
-                        .map_err(|_| ser::Error::custom("concurrent access to record"))?
-                    {
-                        ser.serialize_key(&SerializeKey {
-                            strand: RefCell::new(strand),
-                            value: &key,
-                        })?;
-                        ser.serialize_value(&SerializeValue {
-                            strand: RefCell::new(strand),
-                            seen: self.seen,
-                            value: &value,
-                        })?;
-                    }
-                    Ok(())
-                })?;
-                ser.end()
-            }
-
-            View::Struct(handle) => {
-                let id = handle.id();
-                let _guard = enter_seen(self.seen, id.addr(), || {
-                    ser::Error::custom("cyclic reference to struct")
-                })?;
-                let len = handle
-                    .len(strand)
-                    .map_err(|_| ser::Error::custom("concurrent access to struct"))?;
-                let mut ser = serializer.serialize_map(Some(len))?;
-                let mut pairs = handle.pairs();
-                strand.with_slots_sync(|strand, [mut key, mut value]| {
-                    while pairs
-                        .next(strand, &mut key, &mut value)
-                        .map_err(|_| ser::Error::custom("concurrent access to struct"))?
-                    {
-                        ser.serialize_key(&SerializeKey {
-                            strand: RefCell::new(strand),
-                            value: &key,
-                        })?;
-                        ser.serialize_value(&SerializeValue {
-                            strand: RefCell::new(strand),
-                            seen: self.seen,
-                            value: &value,
-                        })?;
-                    }
-                    Ok(())
-                })?;
-                ser.end()
-            }
-
-            View::Tuple(handle) => {
-                let id = handle.id();
-                let _guard = enter_seen(self.seen, id.addr(), || {
-                    ser::Error::custom("cyclic reference to tuple")
-                })?;
-                let len = handle.len();
-                let mut seq = serializer.serialize_seq(Some(len))?;
-                for i in 0..len {
-                    strand.with_slots_sync(|strand, [mut elem]| {
-                        handle
-                            .get(strand, i, &mut elem)
-                            .map_err(|_| ser::Error::custom("concurrent access to tuple"))?;
-                        seq.serialize_element(&SerializeValue {
-                            strand: RefCell::new(strand),
-                            seen: self.seen,
-                            value: &elem,
-                        })
-                    })?;
-                }
-                seq.end()
-            }
-
-            _ => Err(ser::Error::custom("unsupported TOML type")),
+            _ => Err(Error::type_error(strand, "unsupported TOML type")),
         }
+    }
+
+    /// Writes `key = value` with the value inline.
+    fn keyval<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        key: &Value<'v>,
+        val: &Value<'v>,
+    ) -> Result<'v, 's, ()> {
+        self.with_key(strand, key, |this, strand, name| {
+            this.emit(strand, |w| {
+                w.key(name)?;
+                w.space()?;
+                w.keyval_sep()?;
+                w.space()
+            })
+        })?;
+        self.inline(strand, val)
+    }
+
+    /// Writes a table as a document section at the current path: inline
+    /// entries first, then sub-tables and arrays of tables.
+    ///
+    /// The root has no header. Other headers follow `toml::Serializer`: an
+    /// array element always gets `[[path]]`; a plain table gets `[path]` when
+    /// it has inline entries or nothing else to imply it.
+    fn table<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        table: &Value<'v>,
+        array: bool,
+    ) -> Result<'v, 's, ()> {
+        let id = self.enter(strand, table)?;
+        let root = self.path.is_empty();
+        let mut headed = root;
+        if array {
+            self.header(strand, true)?;
+            headed = true;
+        }
+        let mut sections = false;
+        self.each_pair(strand, table, |this, strand, key, val| {
+            if this.layout(strand, val)? != Layout::Inline {
+                sections = true;
+                return Ok(());
+            }
+            if !std::mem::replace(&mut headed, true) {
+                this.header(strand, false)?;
+            }
+            this.line(strand)?;
+            this.keyval(strand, key, val)
+        })?;
+        if !headed && !sections {
+            self.header(strand, false)?;
+        }
+        if sections {
+            self.each_pair(strand, table, |this, strand, key, val| {
+                let layout = this.layout(strand, val)?;
+                if layout == Layout::Inline {
+                    return Ok(());
+                }
+                let mut encoded = String::new();
+                this.with_key(strand, key, |_, _, name| {
+                    let _ = encoded.key(name);
+                    Ok(())
+                })?;
+                this.path.push(encoded);
+                if layout == Layout::Table {
+                    this.table(strand, val, false)?;
+                } else {
+                    this.each_elem(strand, val, |this, strand, elem| {
+                        this.table(strand, elem, true)
+                    })?;
+                }
+                this.path.pop();
+                Ok(())
+            })?;
+        }
+        self.seen.remove(&id);
+        Ok(())
     }
 }
 
@@ -235,7 +413,7 @@ struct MapKeySeed<'v, 'a, 'b, 't> {
 impl<'v, 'a, 'b, 'de> DeserializeSeed<'de> for Seed<'v, 'a, 'b> {
     type Value = ();
 
-    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    fn deserialize<D>(self, deserializer: D) -> result::Result<Self::Value, D::Error>
     where
         D: de::Deserializer<'de>,
     {
@@ -246,7 +424,7 @@ impl<'v, 'a, 'b, 'de> DeserializeSeed<'de> for Seed<'v, 'a, 'b> {
 impl<'v, 'a, 'b, 'de> DeserializeSeed<'de> for MapKeySeed<'v, 'a, 'b, '_> {
     type Value = ();
 
-    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    fn deserialize<D>(self, deserializer: D) -> result::Result<Self::Value, D::Error>
     where
         D: de::Deserializer<'de>,
     {
@@ -261,7 +439,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
         write!(formatter, "TOML-like values")
     }
 
-    fn visit_i64<E>(mut self, v: i64) -> Result<Self::Value, E>
+    fn visit_i64<E>(mut self, v: i64) -> result::Result<Self::Value, E>
     where
         E: de::Error,
     {
@@ -269,7 +447,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
         Ok(())
     }
 
-    fn visit_i128<E>(mut self, v: i128) -> Result<Self::Value, E>
+    fn visit_i128<E>(mut self, v: i128) -> result::Result<Self::Value, E>
     where
         E: de::Error,
     {
@@ -277,7 +455,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
         Ok(())
     }
 
-    fn visit_u64<E>(mut self, v: u64) -> Result<Self::Value, E>
+    fn visit_u64<E>(mut self, v: u64) -> result::Result<Self::Value, E>
     where
         E: de::Error,
     {
@@ -286,7 +464,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
         Ok(())
     }
 
-    fn visit_u128<E>(mut self, v: u128) -> Result<Self::Value, E>
+    fn visit_u128<E>(mut self, v: u128) -> result::Result<Self::Value, E>
     where
         E: de::Error,
     {
@@ -295,7 +473,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
         Ok(())
     }
 
-    fn visit_f64<E>(mut self, v: f64) -> Result<Self::Value, E>
+    fn visit_f64<E>(mut self, v: f64) -> result::Result<Self::Value, E>
     where
         E: de::Error,
     {
@@ -303,7 +481,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
         Ok(())
     }
 
-    fn visit_bool<E>(mut self, v: bool) -> Result<Self::Value, E>
+    fn visit_bool<E>(mut self, v: bool) -> result::Result<Self::Value, E>
     where
         E: de::Error,
     {
@@ -311,7 +489,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
         Ok(())
     }
 
-    fn visit_str<E>(mut self, v: &str) -> Result<Self::Value, E>
+    fn visit_str<E>(mut self, v: &str) -> result::Result<Self::Value, E>
     where
         E: de::Error,
     {
@@ -319,35 +497,35 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
         Ok(())
     }
 
-    fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
+    fn visit_borrowed_str<E>(self, v: &'de str) -> result::Result<Self::Value, E>
     where
         E: de::Error,
     {
         self.visit_str(v)
     }
 
-    fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+    fn visit_string<E>(self, v: String) -> result::Result<Self::Value, E>
     where
         E: de::Error,
     {
         self.visit_str(&v)
     }
 
-    fn visit_none<E>(self) -> Result<Self::Value, E>
+    fn visit_none<E>(self) -> result::Result<Self::Value, E>
     where
         E: de::Error,
     {
         Err(de::Error::custom("nil values are not TOML-representable"))
     }
 
-    fn visit_unit<E>(self) -> Result<Self::Value, E>
+    fn visit_unit<E>(self) -> result::Result<Self::Value, E>
     where
         E: de::Error,
     {
         Err(de::Error::custom("nil values are not TOML-representable"))
     }
 
-    fn visit_seq<A>(mut self, mut seq: A) -> Result<Self::Value, A::Error>
+    fn visit_seq<A>(mut self, mut seq: A) -> result::Result<Self::Value, A::Error>
     where
         A: de::SeqAccess<'de>,
     {
@@ -361,7 +539,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
         })
     }
 
-    fn visit_map<A>(mut self, mut map: A) -> Result<Self::Value, A::Error>
+    fn visit_map<A>(mut self, mut map: A) -> result::Result<Self::Value, A::Error>
     where
         A: de::MapAccess<'de>,
     {
@@ -422,7 +600,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for MapKeySeed<'v, 'a, 'b, '_> {
         write!(formatter, "a TOML key")
     }
 
-    fn visit_str<E>(mut self, v: &str) -> Result<Self::Value, E>
+    fn visit_str<E>(mut self, v: &str) -> result::Result<Self::Value, E>
     where
         E: de::Error,
     {
@@ -431,14 +609,14 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for MapKeySeed<'v, 'a, 'b, '_> {
         Ok(())
     }
 
-    fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
+    fn visit_borrowed_str<E>(self, v: &'de str) -> result::Result<Self::Value, E>
     where
         E: de::Error,
     {
         self.visit_str(v)
     }
 
-    fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+    fn visit_string<E>(self, v: String) -> result::Result<Self::Value, E>
     where
         E: de::Error,
     {
@@ -455,18 +633,7 @@ fn looks_like_datetime<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -
     }
 }
 
-fn is_document<'v>(value: &Value<'v>, vm: &dolang::runtime::vm::Vm<'v>) -> bool {
-    matches!(
-        value.view(vm),
-        View::Dict(_) | View::Record(_) | View::Struct(_)
-    )
-}
-
-fn parse<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    src: &str,
-    out: Slot<'v, '_>,
-) -> Result<(), Error<'v, 's>> {
+fn parse<'v, 's>(strand: &mut Strand<'v, 's>, src: &str, out: Slot<'v, '_>) -> Result<'v, 's, ()> {
     if let Ok(de) = toml::de::Deserializer::parse(src) {
         return Seed(strand, out)
             .deserialize(de)
@@ -485,40 +652,19 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
         .module("toml")
         .function("encode", async move |strand, args, out| {
             let ([arg], []) = unpack!(strand, args, 1, 0)?;
-            let as_document = is_document(&arg, strand.vm());
-            let seen = RefCell::new(HashSet::new());
-            let value = SerializeValue {
-                strand: RefCell::new(strand),
-                seen: &seen,
-                value: &arg,
+            let mut buf = StrEmbryo::new();
+            let mut encoder = Encoder {
+                out: &mut buf,
+                seen: HashSet::new(),
+                path: Vec::new(),
+                started: false,
             };
-
-            let res = if as_document {
-                toml::to_string(&value)
+            if is_table(&arg.view(strand.vm())) {
+                encoder.table(strand, &arg, false)?;
             } else {
-                let mut dst = String::new();
-                Serialize::serialize(&value, toml::ser::ValueSerializer::new(&mut dst))
-                    .map(|_| ())
-                    .map(|_| dst)
-            };
-            let dst = match res {
-                Ok(dst) => dst,
-                Err(err) => {
-                    let msg = err.to_string();
-                    return Err(match msg.as_ref() {
-                        "nil values are not TOML representable" | "unsupported TOML type" => {
-                            Error::type_error(strand, msg)
-                        }
-                        _ => Error::value(strand, msg),
-                    });
-                }
-            };
-
-            // `toml::to_string` terminates the last top-level entry with a
-            // newline like every other; the other formats don't, so trim it
-            // for consistency.
-            let dst = dst.strip_suffix('\n').unwrap_or(&dst);
-            Output::set(strand, out, dst);
+                encoder.inline(strand, &arg)?;
+            }
+            buf.finish(strand, out);
             Ok(())
         })
         .function("decode", async move |strand, args, out| {

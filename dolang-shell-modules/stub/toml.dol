@@ -86,12 +86,17 @@ do -> DecodeValue
 # | `Record` | table      |
 #
 # Top-level dicts, records, and structs serialize as documents, while other values
-# serialize as values.
+# serialize as values. In a document, each table's plain keys come first. Nested
+# tables follow as `[a.b]` sections, and non-empty arrays whose elements are all
+# tables as `[[a.b]]` sections. Values inside arrays are written inline. The
+# result has no trailing newline.
 #
 # ## Errors
 #
-# `TypeError` if a value is not TOML-representable, including `nil`, binary
-# data, custom objects, or tables with non-string and non-symbol keys.
+# | Exception | Condition |
+# | --- | --- |
+# | [`TypeError`](std.TypeError) | A value has no TOML form, such as `nil`, a `Bin`, or a custom object, or a key is not a `Str` or `Sym`. |
+# | [`ValueError`](std.ValueError) | The value contains itself, or an `Int` is outside the signed 64-bit range. |
 #
 # ## Example
 #

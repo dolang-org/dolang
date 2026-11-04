@@ -21,5 +21,8 @@ workspace = true
 workspace = true
 features = ["parse", "display", "serde"]
 
+[dependencies.toml_writer]
+workspace = true
+
 [dependencies.dolang]
 workspace = true
