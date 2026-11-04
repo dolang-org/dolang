@@ -2,6 +2,8 @@ import
   toml:
     - decode
     - encode
+    - DecodeError
+    - EncodeError
   test:
     - assert
     - assert_eq
@@ -69,9 +71,10 @@ def round_trip_structs()
 
   let cyclic = struct()
   cyclic.self = cyclic
-  let err = assert_throws $ValueError do
+  let err = assert_throws $EncodeError do
     encode $cyclic
-  assert ((str err).contains "cyclic reference to struct")
+  assert_eq $err.kind :CYCLE:
+  assert_eq $err.path (:self:,)
 
 #[test]
 def symbol_keys_stringify()
@@ -115,9 +118,10 @@ def encode_unsupported()
     encode $ Range 10
   assert ((str type_err).contains "unsupported TOML type")
 
-  let int_err = assert_throws $ValueError do
+  let int_err = assert_throws $EncodeError do
     encode {a: 99999999999999999999}
-  assert ((str int_err).contains "outside i64 range")
+  assert_eq $int_err.kind :RANGE:
+  assert_eq $int_err.path (:a:,)
 
 #[test]
 def decode_and_encode_errors()
@@ -125,17 +129,59 @@ def decode_and_encode_errors()
   arr.push $arr
   let cycle_err = assert_throws $ValueError do
     encode $arr
-  assert ((str cycle_err).contains "cyclic reference to array")
+  assert ((type cycle_err) == EncodeError)
+  assert_eq $cycle_err.kind :CYCLE:
+  assert_eq $cycle_err.path (0,)
 
   let table = {}
   table["self"] = table
-  let table_err = assert_throws $ValueError do
+  let table_err = assert_throws $EncodeError do
     encode $table
-  assert ((str table_err).contains "cyclic reference to dict")
+  assert_eq $table_err.kind :CYCLE:
+  assert_eq $table_err.path ("self",)
 
   let parse_err = assert_throws $DataError do
     decode "{ a = "
-  assert ((str parse_err).contains "expected")
+  assert ((type parse_err) == DecodeError)
+  assert_eq $parse_err.kind :SYNTAX:
+
+#[test]
+def decode_error_kind_and_position()
+  def check src kind line column
+    let err = assert_throws $DecodeError do
+      decode $src
+    assert_eq (err.kind, err.line, err.column) (kind, line, column)
+
+  check "a = 1\na = 2" :SYNTAX: 2 1
+  # The bare-value attempt gets further than the document attempt.
+  check "[1," :SYNTAX: 1 4
+  check "{a = 1" :SYNTAX: 1 7
+  check "x = 1\nb = 1979-05-27" :UNSUPPORTED: 2 5
+  check "07:32:00" :UNSUPPORTED: 1 1
+  check "a = 1e999" :RANGE: 1 5
+  check "a = 999999999999999999999999999999999999999999" :RANGE: 1 5
+  # Columns count characters, not bytes.
+  check r#"a = "é" b"# :SYNTAX: 1 9
+
+#[test]
+def decode_large_ints()
+  assert_eq (decode "a = 9223372036854775808") {"a": 9223372036854775808}
+  assert_eq (decode "0xffffffffffffffff") 18446744073709551615
+
+#[test]
+def encode_error_paths()
+  def check value kind path
+    let err = assert_throws $EncodeError do
+      encode $value
+    assert_eq (err.kind, err.path) (kind, path)
+
+  let items = [{n: 1}]
+  items.push {n: items}
+  check {a: items} :CYCLE: (:a:, 1, :n:, 1)
+  check {a: [{n: 1}, {n: 99999999999999999999}]} :RANGE: (:a:, 1, :n:)
+  check {x: {a: 1, "a": 2}} :KEY: (:x:,)
+  check {a: 1, "a": {b: 2}} :KEY: ()
+  check {a: [1, {b: 1, "b": 2}]} :KEY: (:a:, 1)
 
 #[test]
 def document_layout()
