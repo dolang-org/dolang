@@ -24,8 +24,8 @@
 #
 # A function can also use a Do subclass's instance, which must report its
 # capabilities. Strands call its `read`, `write` and `seek` as the function
-# needs bytes, and its `fork` if it is forkable, never its `close`. Don't use the stream yourself until the
-# function is done with it.
+# needs bytes, and its `fork` if it is forkable, never its `close`. Don't use
+# the stream yourself until the function is done with it.
 #
 # An exception from one of its methods fails the function. A
 # [`ValueError`](std.ValueError) or [`TimedOutError`](std.TimedOutError) fails
@@ -81,9 +81,9 @@ pub class Io: Sink[Value]
   # Whether the stream [forks](io.Io.fork). A closed stream does not, and
   # one that doesn't seek never does.
   #
-  # A fork, and a [`Cursor`](io.Cursor) over a forkable stream, has a position
-  # of its own in the stream's data, so the stream and its forks may be used
-  # at once, including from different strands. Each fork behaves like a
+  # A fork has a position of its own in the stream's data, so the stream and
+  # its forks may be used at once, including from different strands, such as
+  # through a [`Window`](io.Window) over each fork. Each fork behaves like a
   # separate open of the data taken when the fork is created: a buffered
   # stream writes out pending writes first, and its later writes reach the
   # fork once they are flushed.
@@ -447,28 +447,20 @@ pub class Concat: Io
   pub def close self
     ...
 
-# Reads, writes and seeks a window of in-memory data or another stream.
+# Reads, writes and seeks a window of in-memory data.
 #
 # The target is a [`Str`](std.Str), [`Bin`](std.Bin),
-# [`BinBuf`](std.BinBuf), [`StrBuf`](std.StrBuf), or an `Io` that reads and
-# seeks. A `Str` or `Bin` is only read. A buffer is read and written in place, so the cursor sees changes
-# made to it by other means: reads stop at its current length, and a write
+# [`BinBuf`](std.BinBuf) or [`StrBuf`](std.StrBuf). A `Str` or `Bin` is only
+# read. A buffer is read and written in place, so the cursor sees changes made
+# to it by other means: reads stop at its current length, and a write
 # overwrites from the position and extends the buffer when it reaches the end.
 # A `BinBuf` is padded with zero bytes up to a position past its end before a
-# write there.
+# write there. For a window of a stream, use a [`Window`](io.Window).
 #
 # `range` limits the cursor to a window of the target. Positions count from
 # the window's start, and seeking to the end lands on the window's end, or the
 # target's end when the window is open. Reads stop at the window's end, and a
 # write is cut short there.
-#
-# An `Io` target is read and written through, and written only if it writes.
-# A [forkable](io.Io.forkable) target gives the cursor a position of its
-# own, so the target and its cursors may be used at once. Over any other
-# target, the cursor keeps its own position and seeks the target before each
-# read or write, so the target's position changes but doesn't matter. Don't
-# use the target while a read or write through the cursor is in progress,
-# such as from another strand.
 #
 # A `StrBuf` stays valid UTF-8, so a cursor over one also lets text written
 # in arbitrary pieces reach it:
@@ -486,11 +478,10 @@ pub class Concat: Io
 # | Exception | Condition |
 # | --- | --- |
 # | [`TypeError`](std.TypeError) | `target` is not one of the types above, or `range` is not a `Range` |
-# | [`ValueError`](std.ValueError) | An `Io` target doesn't read and seek |
 # | [`ValueError`](std.ValueError) | `range` has a negative or non-integer bound, runs backward, or steps by other than 1 |
 # | [`ValueError`](std.ValueError) | A `StrBuf` write would split a character, or a seek moves while bytes are held |
 # | [`DataError`](std.DataError) | A `StrBuf` write is not valid UTF-8, or the cursor is closed while bytes are held |
-# | [`StateError`](std.StateError) | The cursor is closed, or a write targets a `Str`, a `Bin` or an `Io` that doesn't write |
+# | [`StateError`](std.StateError) | The cursor is closed, or a write targets a `Str` or a `Bin` |
 #
 # ## Example
 #
@@ -505,19 +496,13 @@ pub class Concat: Io
 # compress.decompress (Cursor $data) do |stream|
 #   stream.copy_to $out
 # out.close()
-#
-# # An archive stored at `offset` within a file
-# fs.open bundle.bin do |file|
-#   zip.open (Cursor $file (offset..(offset + size))) do |archive|
-#     archive.open README do |entry|
-#       echo (entry.read_all_str())
 # ```
 pub class Cursor: Io
   # Opens a cursor over `target`.
   pub def (init)
     self
     # Data to read and write.
-    target @ (Str | Bin | BinBuf | StrBuf | Io)
+    target @ (Str | Bin | BinBuf | StrBuf)
     # Byte range of the window, such as `(offset..)` or
     # `(offset..(offset + size))`; the whole target when omitted.
     range @ (Range[Int] | nil) = ...
@@ -529,8 +514,7 @@ pub class Cursor: Io
   pub def readable self -> Bool
     ...
 
-  # Whether the cursor writes: while open, when the target is a buffer or an
-  # `Io` that writes.
+  # Whether the cursor writes: while open, when the target is a buffer.
   #[getter]
   pub def writable self -> Bool
     ...
@@ -544,8 +528,8 @@ pub class Cursor: Io
   #
   # ## Returns
   #
-  # At most `size` bytes. A memory target gives fewer only at the end of the
-  # window or the target. An empty result means the end.
+  # At most `size` bytes, fewer only at the end of the window or the target.
+  # An empty result means the end.
   pub def read
     self
     # Number of bytes to read.
@@ -557,8 +541,8 @@ pub class Cursor: Io
   #
   # ## Returns
   #
-  # The number of bytes written. A memory target writes fewer only at the end
-  # of a bounded window. Bytes a `StrBuf` cursor holds back count as written.
+  # The number of bytes written, fewer only at the end of a bounded window.
+  # Bytes a `StrBuf` cursor holds back count as written.
   pub def write
     self
     # Data to write.
@@ -582,12 +566,131 @@ pub class Cursor: Io
   do -> Int
     ...
 
-  # Flushes an `Io` target. Writes reach a memory target at once, and held
-  # bytes stay held.
+  # Does nothing: writes reach the target at once, and held bytes stay held.
   pub def flush self
     ...
 
-  # Closes the cursor, dropping any held bytes, after flushing an `Io` target.
-  # The target stays open. Closing a closed cursor does nothing.
+  # Closes the cursor, dropping any held bytes. Closing a closed cursor does
+  # nothing.
+  pub def close self
+    ...
+
+# Reads, writes and seeks a window of a seekable stream.
+#
+# `range` limits the window to part of the target. Positions count from the
+# window's start, and seeking to the end lands on the window's end, or the
+# target's end when the window is open. Reads stop at the window's end, and a
+# write is cut short there. The window writes only if the target writes.
+#
+# The window starts at the target's position, moved to the nearer edge of the
+# window if it lies outside. From then on the window assumes it alone moves
+# the target's position, and seeks the target only when its own position
+# moves. Moving the target's position by other means while the window is in
+# use, by seeking, reading or writing the target, has unspecified results: the
+# window may read or write at the wrong offset, though never past its end.
+# That includes using two windows over one target at once. Give each window a
+# [fork](io.Io.fork) of a [forkable](io.Io.forkable) target instead.
+#
+# Closing the window flushes it and leaves the target open.
+#
+# ## Errors
+#
+# | Exception | Condition |
+# | --- | --- |
+# | [`TypeError`](std.TypeError) | `target` is not an `Io`, or `range` is not a `Range` |
+# | [`ValueError`](std.ValueError) | `target` doesn't seek |
+# | [`ValueError`](std.ValueError) | `range` has a negative or non-integer bound, runs backward, or steps by other than 1 |
+# | [`StateError`](std.StateError) | The window is closed, or a read or write targets a stream that doesn't support it |
+#
+# ## Example
+#
+# ```
+# # An archive stored at `offset` within a file
+# fs.open bundle.bin do |file|
+#   zip.open (Window $file (offset..(offset + size))) do |archive|
+#     archive.open README do |entry|
+#       echo (entry.read_all_str())
+#
+# # Hash the halves of a file at once
+# fs.open data.bin do |file|
+#   let half = (file.metadata().size // 2)
+#   let digests = fork
+#     do digest.sha256 $ Window $file.fork() (..half)
+#     do digest.sha256 $ Window $file.fork() (half..)
+# ```
+pub class Window: Io
+  # Opens a window of `target`.
+  pub def (init)
+    self
+    # Stream to read and write.
+    target @ Io
+    # Byte range of the window, such as `(offset..)` or
+    # `(offset..(offset + size))`; the whole target when omitted.
+    range @ (Range[Int] | nil) = ...
+  do
+    ...
+
+  # Whether the window reads: while open, when the target reads.
+  #[getter]
+  pub def readable self -> Bool
+    ...
+
+  # Whether the window writes: while open, when the target writes.
+  #[getter]
+  pub def writable self -> Bool
+    ...
+
+  # Whether the window seeks, which it does until it is closed.
+  #[getter]
+  pub def seekable self -> Bool
+    ...
+
+  # Reads bytes.
+  #
+  # ## Returns
+  #
+  # At most `size` bytes. An empty result means the end of the window or the
+  # target.
+  pub def read
+    self
+    # Number of bytes to read.
+    size @ Int
+  do -> Bin
+    ...
+
+  # Writes data, given in pieces.
+  #
+  # ## Returns
+  #
+  # The number of bytes written, cut short at the end of a bounded window.
+  pub def write
+    self
+    # Data to write.
+    *data @ (Str | Bin)
+  do -> Int
+    ...
+
+  # Moves the position.
+  #
+  # ## Returns
+  #
+  # The new position within the window.
+  pub def seek
+    self
+    # Byte offset relative to the current position.
+    offset @ Int = ...
+    # Byte offset from the start of the window.
+    :start @ Int = ...
+    # Byte offset relative to the end of the window.
+    :end @ Int = ...
+  do -> Int
+    ...
+
+  # Flushes the target.
+  pub def flush self
+    ...
+
+  # Closes the window after flushing the target. The target stays open.
+  # Closing a closed window does nothing.
   pub def close self
     ...

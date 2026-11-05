@@ -165,7 +165,7 @@ class Bundle
 def read_bundle path @ fs.Path offset @ Int -> Bundle
   let members @ Dict[Str, Bin] = {}
   path.open do |file|
-    zip.open (io.Cursor(file, (offset..))) r do |archive|
+    zip.open (io.Window(file, (offset..))) r do |archive|
       for entry = archive.entries
         let name = str $entry.name
         if (entry.type == :FILE: && is_member(name))

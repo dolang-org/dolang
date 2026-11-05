@@ -1,6 +1,7 @@
 //! The `io` module, `io.Buffered`, a buffer over a [`ByteHandle`], [`Stream`], the
-//! anonymous `io.Io` a handle becomes as an [`Input`], and `io.Concat`, an iterable read as
-//! bytes.
+//! anonymous `io.Io` a handle becomes as an [`Input`], `io.Concat`, an iterable read as
+//! bytes, [`Cursor`], a stream over in-memory data, and [`Window`], a window of a seekable
+//! stream.
 //!
 //! A seekable handle that reads and writes holds read-ahead or pending writes, never both:
 //! a write first moves the handle back over unread bytes, and a read or seek first flushes.
@@ -26,7 +27,6 @@ use futures::io::{
     AsyncWriteExt,
 };
 
-use super::cursor::Cursor;
 use crate::{
     BYTE_STREAM_CHUNK_SIZE,
     arg::{Arg, Args},
@@ -187,7 +187,7 @@ impl BufIo {
 }
 
 /// Reads once from `reader` into at most `n` bytes appended to `out`, returning the count.
-pub(super) async fn read_spare<'v>(
+async fn read_spare<'v>(
     reader: &mut (impl AsyncRead + Unpin),
     alloc: &mut dyn Alloc<'v>,
     out: &mut BinEmbryo<'v>,
@@ -382,7 +382,7 @@ impl Buffered {
 }
 
 /// Raises unless the stream, called `noun` in messages, is open and has `need`.
-pub(super) fn check_caps<'v, 's>(
+fn check_caps<'v, 's>(
     strand: &mut Strand<'v, 's>,
     noun: &str,
     open: bool,
@@ -405,15 +405,13 @@ pub(super) fn check_caps<'v, 's>(
 }
 
 /// Capabilities while open; a closed stream has none.
-pub(super) fn open_caps<T>(io: &Option<Shared<T>>, caps: IoCaps) -> IoCaps {
+fn open_caps<T>(io: &Option<Shared<T>>, caps: IoCaps) -> IoCaps {
     if io.is_some() { caps } else { IoCaps::empty() }
 }
 
 /// Closes a shared stream for every handle, then closes the stream itself. Closing a closed
 /// stream does nothing.
-pub(super) async fn close_shared<T: AsyncWrite + Unpin>(
-    io: &mut Option<Shared<T>>,
-) -> io::Result<()> {
+async fn close_shared<T: AsyncWrite + Unpin>(io: &mut Option<Shared<T>>) -> io::Result<()> {
     let Some(mut shared) = io.take() else {
         return Ok(());
     };
@@ -440,10 +438,7 @@ fn invalid_utf8<'v, 's>(strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
 }
 
 /// Parses a byte count.
-pub(super) fn size_value<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    size: Slot<'v, '_>,
-) -> Result<'v, 's, usize> {
+fn size_value<'v, 's>(strand: &mut Strand<'v, 's>, size: Slot<'v, '_>) -> Result<'v, 's, usize> {
     size.to_i64(strand)
         .ok()
         .and_then(|n| usize::try_from(n).ok())
@@ -476,7 +471,7 @@ impl Deref for Piece<'_, '_> {
 }
 
 /// Pins the arguments of a `write`: any number of `Str` or `Bin` pieces.
-pub(super) fn pieces<'v, 's, 'a>(
+fn pieces<'v, 's, 'a>(
     strand: &mut Strand<'v, 's>,
     args: Args<'v, 'a>,
 ) -> Result<'v, 's, Vec<Piece<'v, 'a>>> {
@@ -499,7 +494,7 @@ pub(super) fn pieces<'v, 's, 'a>(
 }
 
 /// Slices over pinned pieces, and their total length.
-pub(super) fn slices<'a>(pieces: &'a [Piece<'_, '_>]) -> (Vec<IoSlice<'a>>, usize) {
+fn slices<'a>(pieces: &'a [Piece<'_, '_>]) -> (Vec<IoSlice<'a>>, usize) {
     let slices = pieces
         .iter()
         .map(|piece| IoSlice::new(piece))
@@ -509,7 +504,7 @@ pub(super) fn slices<'a>(pieces: &'a [Piece<'_, '_>]) -> (Vec<IoSlice<'a>>, usiz
 }
 
 /// Parses `seek`'s arguments: exactly one of a relative `offset`, `start:` or `end:`.
-pub(super) fn seek_arg<'v, 's>(
+fn seek_arg<'v, 's>(
     strand: &mut Strand<'v, 's>,
     offset: Option<Slot<'v, '_>>,
     start: Option<Slot<'v, '_>>,
@@ -624,6 +619,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     let concat = builder.register_type::<Concat>();
     builder.register_state::<ConcatType>(concat);
     let cursor = builder.register_type::<Cursor>();
+    let window = builder.register_type::<Window>();
     let io = builder.singletons().io.dup();
     builder
         .module("io")
@@ -631,6 +627,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .value("Buffered", buffered)
         .value("Concat", concat)
         .value("Cursor", cursor)
+        .value("Window", window)
         .commit();
 }
 
@@ -1124,10 +1121,732 @@ impl<'v> Object<'v> for Concat {
     }
 }
 
+/// The kind of memory a cursor reads and writes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MemTarget {
+    Str,
+    Bin,
+    BinBuf,
+    StrBuf,
+}
+
+/// `io.Cursor`, a seekable `io.Io` over a window of in-memory data.
+///
+/// Slot 0 holds the target until the cursor is closed. The target is read and written live,
+/// so the cursor sees changes made to a buffer by other means. The cursor answers no
+/// [`ByteIo`] for it, since GC data can't leave the VM: `Io` serves it through the
+/// cursor's own methods, as it does `io.Concat`. The bytes a `StrBuf` cursor holds back
+/// therefore live here, not in a handle.
+pub(crate) struct Cursor {
+    target: MemTarget,
+    /// The window's absolute start.
+    start: u64,
+    /// The window's absolute end, when it is bounded.
+    end: Option<u64>,
+    /// Position within the window.
+    pos: u64,
+    /// The start of an unfinished character written to a `StrBuf`, held back until it is
+    /// complete. `pos` does not count it.
+    held: Vec<u8>,
+    open: bool,
+}
+
+impl Cursor {
+    /// Capabilities of the target, open or not.
+    fn target_caps(&self) -> IoCaps {
+        match self.target {
+            MemTarget::Str | MemTarget::Bin => IoCaps::READ | IoCaps::SEEK,
+            MemTarget::BinBuf | MemTarget::StrBuf => IoCaps::READ | IoCaps::WRITE | IoCaps::SEEK,
+        }
+    }
+
+    /// Capabilities while open; a closed cursor has none.
+    fn caps(&self) -> IoCaps {
+        if self.open {
+            self.target_caps()
+        } else {
+            IoCaps::empty()
+        }
+    }
+
+    /// Raises unless the cursor is open and has `need`.
+    fn check<'v, 's>(&self, strand: &mut Strand<'v, 's>, need: IoCaps) -> Result<'v, 's, ()> {
+        check_caps(strand, "stream", self.open, self.target_caps(), need)
+    }
+
+    /// The absolute position, which may lie past the end of the target.
+    fn abs(&self) -> u64 {
+        self.start.saturating_add(self.pos)
+    }
+
+    /// Bytes left before the end of a bounded window.
+    fn room(&self) -> usize {
+        match self.end {
+            Some(end) => usize::try_from(end.saturating_sub(self.abs())).unwrap_or(usize::MAX),
+            None => usize::MAX,
+        }
+    }
+
+    /// Reads up to `size` bytes as a `Bin`, stopping at the end of the window or the
+    /// target.
+    fn read<'v, 's>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        target: &Value<'v>,
+        size: usize,
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        let at = self.abs();
+        let room = self.room();
+        let n = with_bytes(strand, target, self.target, |strand, bytes| {
+            let at = usize::try_from(at).unwrap_or(usize::MAX).min(bytes.len());
+            let n = size.min(room).min(bytes.len() - at);
+            Output::set(strand, out, &bytes[at..at + n]);
+            n
+        })?;
+        self.pos += n as u64;
+        Ok(())
+    }
+
+    /// Writes `data` at the position, cut short at the end of a bounded window, and returns
+    /// how much of it was taken.
+    fn write<'v, 's>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        target: &Value<'v>,
+        data: &[u8],
+    ) -> Result<'v, 's, usize> {
+        let at = usize::try_from(self.abs()).map_err(|_| Error::overflow(strand))?;
+        let room = self.room();
+        match self.target {
+            MemTarget::BinBuf => {
+                let n = data.len().min(room);
+                if n > 0 {
+                    let buf = target
+                        .downcast_native(strand, strand.builtin_types().binbuf)
+                        .expect("target is a `BinBuf`");
+                    let mut buf = buf.borrow_mut().ok_or_else(|| Error::concurrency(strand))?;
+                    buf.overwrite(strand, at, &data[..n]);
+                }
+                self.pos += n as u64;
+                Ok(n)
+            }
+            MemTarget::StrBuf => self.write_str(strand, target, at, room, data),
+            MemTarget::Str | MemTarget::Bin => unreachable!("an immutable target is not writable"),
+        }
+    }
+
+    /// Writes the complete characters of the held bytes and `data` to a `StrBuf`, and holds
+    /// back an unfinished final character. Invalid UTF-8, or a write that would split a
+    /// character of the contents, raises and changes nothing.
+    fn write_str<'v, 's>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        target: &Value<'v>,
+        at: usize,
+        room: usize,
+        data: &[u8],
+    ) -> Result<'v, 's, usize> {
+        let mut bytes = self.held.clone();
+        bytes.extend_from_slice(data);
+        bytes.truncate(room);
+        let Ok(text) = utf8::complete_prefix(&bytes) else {
+            return Err(Error::data(strand, "invalid UTF-8 data"));
+        };
+        if !text.is_empty() {
+            let buf = target
+                .downcast_native(strand, strand.builtin_types().strbuf)
+                .expect("target is a `StrBuf`");
+            let mut buf = buf.borrow_mut().ok_or_else(|| Error::concurrency(strand))?;
+            if !buf.overwrite(strand, at, text) {
+                return Err(Error::value(strand, "write would split a character"));
+            }
+        }
+        let taken = bytes.len().saturating_sub(self.held.len());
+        self.pos += text.len() as u64;
+        self.held = bytes[text.len()..].to_vec();
+        Ok(taken)
+    }
+
+    /// Moves the position, returning the new one.
+    fn seek<'v, 's>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        target: &Value<'v>,
+        pos: SeekFrom,
+    ) -> Result<'v, 's, u64> {
+        // Reporting the position moves nothing, so it needn't wait for a held character.
+        if !self.held.is_empty() && pos != SeekFrom::Current(0) {
+            return Err(Error::value(
+                strand,
+                "cannot seek while an unfinished character is held",
+            ));
+        }
+        let (base, offset) = match pos {
+            SeekFrom::Start(n) => (0, i128::from(n)),
+            SeekFrom::Current(n) => (self.pos, i128::from(n)),
+            SeekFrom::End(n) => {
+                let len = match self.end {
+                    Some(end) => end - self.start,
+                    None => {
+                        let start = self.start;
+                        with_bytes(strand, target, self.target, |_, bytes| {
+                            (bytes.len() as u64).saturating_sub(start)
+                        })?
+                    }
+                };
+                (len, i128::from(n))
+            }
+        };
+        let pos = u64::try_from(i128::from(base) + offset)
+            .map_err(|_| Error::value(strand, "seek position must be non-negative"))?;
+        self.pos = pos;
+        Ok(pos)
+    }
+}
+
+/// Calls `f` with the target's current bytes.
+fn with_bytes<'v, 's, R>(
+    strand: &mut Strand<'v, 's>,
+    target: &Value<'v>,
+    kind: MemTarget,
+    f: impl FnOnce(&mut Strand<'v, 's>, &[u8]) -> R,
+) -> Result<'v, 's, R> {
+    match kind {
+        MemTarget::Str => {
+            let s = target.as_str(strand.vm()).expect("target is a `Str`").pin();
+            Ok(f(strand, s.as_bytes()))
+        }
+        MemTarget::Bin => {
+            let b = target.as_bin(strand.vm()).expect("target is a `Bin`").pin();
+            Ok(f(strand, &b))
+        }
+        MemTarget::BinBuf => {
+            let buf = target
+                .downcast_native(strand, strand.builtin_types().binbuf)
+                .expect("target is a `BinBuf`");
+            let buf = buf.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            Ok(f(strand, buf.as_slice()))
+        }
+        MemTarget::StrBuf => {
+            let buf = target
+                .downcast_native(strand, strand.builtin_types().strbuf)
+                .expect("target is a `StrBuf`");
+            let buf = buf.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            Ok(f(strand, buf.as_str().as_bytes()))
+        }
+    }
+}
+
+/// Parses a window: a `Range` of non-negative `Int`s with step 1, or everything.
+fn range_arg<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    range: Option<Slot<'v, '_>>,
+) -> Result<'v, 's, (u64, Option<u64>)> {
+    let Some(range) = range.filter(|range| !range.is_nil()) else {
+        return Ok((0, None));
+    };
+    let Some(range) = range.downcast_ref(strand.builtin_types().range) else {
+        return Err(Error::type_error(strand, "expected `Range` for `range`"));
+    };
+    let (start, end, step) = range.get().parts();
+    if !step.is_nil() && step.to_i64(strand).ok() != Some(1) {
+        return Err(Error::value(strand, "range step must be 1"));
+    }
+    let start = bound(strand, start)?.unwrap_or(0);
+    let end = bound(strand, end)?;
+    if end.is_some_and(|end| end < start) {
+        return Err(Error::value(strand, "range must not run backward"));
+    }
+    Ok((start, end))
+}
+
+/// Parses a range bound, `None` when it is open.
+fn bound<'v, 's>(strand: &mut Strand<'v, 's>, bound: &Value<'v>) -> Result<'v, 's, Option<u64>> {
+    if bound.is_nil() {
+        return Ok(None);
+    }
+    let bound = bound
+        .to_i64(strand)
+        .map_err(|_| Error::value(strand, "range bounds must be integers"))?;
+    u64::try_from(bound)
+        .map(Some)
+        .map_err(|_| Error::value(strand, "range bounds must be non-negative"))
+}
+
+impl<'v> Object<'v> for Cursor {
+    const NAME: &'v str = "Cursor";
+    const MODULE: &'v str = "io";
+    const SLOTS: usize = 1;
+    type Annex = ();
+    type Type = ();
+    type TypeAnnex = ();
+
+    async fn new<'a, 's>(
+        this: Type<'v, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        args: Args<'v, 'a>,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let ([target], [range]) = unpack!(strand, args, 1, 1)?;
+        let (start, end) = range_arg(strand, range)?;
+        let vm = strand.vm();
+        let kind = if target.as_str(vm).is_some() {
+            MemTarget::Str
+        } else if target.as_bin(vm).is_some() {
+            MemTarget::Bin
+        } else if target
+            .downcast_native(vm, vm.builtin_types().binbuf)
+            .is_some()
+        {
+            MemTarget::BinBuf
+        } else if target
+            .downcast_native(vm, vm.builtin_types().strbuf)
+            .is_some()
+        {
+            MemTarget::StrBuf
+        } else {
+            return Err(Error::type_error(
+                strand,
+                "expected `Str`, `Bin`, `BinBuf` or `StrBuf` for `target`",
+            ));
+        };
+        let cursor = Cursor {
+            target: kind,
+            start,
+            end,
+            pos: 0,
+            held: Vec::new(),
+            open: true,
+        };
+        this.create(strand, cursor, &mut out);
+        this.cast(&out).unwrap().enter_sync(strand, |strand, inst| {
+            let mut borrow = inst.borrow_mut_unwrap();
+            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &target);
+        });
+        Ok(())
+    }
+
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let start_sym = builder.sym("start");
+        let end_sym = builder.sym("end");
+        builder
+            .supertype(TypeObject::Io)
+            .get("readable", |this, strand, out| {
+                let caps = this.borrow(strand)?.caps();
+                Output::set(strand, out, caps.contains(IoCaps::READ));
+                Ok(())
+            })
+            .get("writable", |this, strand, out| {
+                let caps = this.borrow(strand)?.caps();
+                Output::set(strand, out, caps.contains(IoCaps::WRITE));
+                Ok(())
+            })
+            .get("seekable", |this, strand, out| {
+                let caps = this.borrow(strand)?.caps();
+                Output::set(strand, out, caps.contains(IoCaps::SEEK));
+                Ok(())
+            })
+            .method("read", async move |this, strand, args, out| {
+                let ([size], []) = unpack!(strand, args, 1, 0)?;
+                let size = size_value(strand, size)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.check(strand, IoCaps::READ)?;
+                strand.with_slots_sync(|strand, [mut target]| {
+                    Output::set(strand, &mut target, Mut::slot::<0>(&borrow));
+                    borrow.read(strand, &target, size, out)
+                })
+            })
+            .method("write", async move |this, strand, args, out| {
+                let pieces = pieces(strand, args)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.check(strand, IoCaps::WRITE)?;
+                let data = pieces
+                    .iter()
+                    .map(|piece| &**piece)
+                    .collect::<Vec<_>>()
+                    .concat();
+                let n = strand.with_slots_sync(|strand, [mut target]| {
+                    Output::set(strand, &mut target, Mut::slot::<0>(&borrow));
+                    borrow.write(strand, &target, &data)
+                })?;
+                Output::set(strand, out, n);
+                Ok(())
+            })
+            .method("seek", async move |this, strand, args, out| {
+                let ([], [offset, start, end]) =
+                    unpack!(strand, args, 0, 1, start_sym = None, end_sym = None)?;
+                let pos = seek_arg(strand, offset, start, end, start_sym, end_sym)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.check(strand, IoCaps::SEEK)?;
+                let pos = strand.with_slots_sync(|strand, [mut target]| {
+                    Output::set(strand, &mut target, Mut::slot::<0>(&borrow));
+                    borrow.seek(strand, &target, pos)
+                })?;
+                Output::set(strand, out, pos);
+                Ok(())
+            })
+            .method("flush", async move |this, strand, args, _out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                this.borrow(strand)?.check(strand, IoCaps::empty())
+            })
+            .method("close", async move |this, strand, args, _out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                Mut::slot_mut::<0>(&mut borrow).store(Value::NIL);
+                let unfinished = !borrow.held.is_empty();
+                borrow.open = false;
+                borrow.held = Vec::new();
+                if unfinished {
+                    return Err(Error::data(
+                        strand,
+                        "stream closed with an unfinished character",
+                    ));
+                }
+                Ok(())
+            })
+    }
+}
+
+/// A window of a seekable stream, with a position of its own.
+///
+/// The span assumes nothing else moves the stream: it seeks only when its own position
+/// moves, or to bring a stream that started outside the window into it.
+pub(crate) struct Span<B> {
+    io: B,
+    /// The window's absolute start.
+    start: u64,
+    /// The window's absolute end, when it is bounded.
+    end: Option<u64>,
+    /// Position within the window.
+    pos: u64,
+    /// Whether the stream sits at the position.
+    aligned: bool,
+}
+
+impl<B: AsyncSeek + Unpin> Span<B> {
+    /// A span over `io`, whose absolute position is `at`. The span starts there, clamped to
+    /// the window.
+    fn new(io: B, start: u64, end: Option<u64>, at: u64) -> Self {
+        let clamped = at.max(start).min(end.unwrap_or(u64::MAX));
+        Self {
+            io,
+            start,
+            end,
+            pos: clamped - start,
+            aligned: clamped == at,
+        }
+    }
+
+    /// Bytes left before the end of a bounded window.
+    fn room(&self) -> usize {
+        match self.end {
+            Some(end) => {
+                let at = self.start.saturating_add(self.pos);
+                usize::try_from(end.saturating_sub(at)).unwrap_or(usize::MAX)
+            }
+            None => usize::MAX,
+        }
+    }
+
+    /// Seeks the stream to the position if it isn't there, then runs `op` and advances past
+    /// what it moved.
+    fn poll_op(
+        &mut self,
+        cx: &mut Context<'_>,
+        op: impl FnOnce(Pin<&mut B>, &mut Context<'_>) -> Poll<io::Result<usize>>,
+    ) -> Poll<io::Result<usize>> {
+        if !self.aligned {
+            let at = self
+                .start
+                .checked_add(self.pos)
+                .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+            ready!(Pin::new(&mut self.io).poll_seek(cx, SeekFrom::Start(at)))?;
+            self.aligned = true;
+        }
+        let res = ready!(op(Pin::new(&mut self.io), cx));
+        // A failed operation may have moved the stream by any amount.
+        self.aligned = res.is_ok();
+        if let Ok(n) = res {
+            self.pos += n as u64;
+        }
+        Poll::Ready(res)
+    }
+}
+
+impl<B: AsyncRead + AsyncSeek + Unpin> AsyncRead for Span<B> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        let n = buf.len().min(this.room());
+        if n == 0 {
+            return Poll::Ready(Ok(0));
+        }
+        this.poll_op(cx, |io, cx| io.poll_read(cx, &mut buf[..n]))
+    }
+}
+
+/// Cuts writes short at the end of a bounded window. Closing only flushes, since the stream
+/// is the target's.
+impl<B: AsyncWrite + AsyncSeek + Unpin> AsyncWrite for Span<B> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        let n = buf.len().min(this.room());
+        if n == 0 {
+            return Poll::Ready(Ok(0));
+        }
+        this.poll_op(cx, |io, cx| io.poll_write(cx, &buf[..n]))
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        let mut room = this.room();
+        let bufs = bufs
+            .iter()
+            .map_while(|buf| {
+                let n = buf.len().min(room);
+                room -= n;
+                (n > 0).then(|| IoSlice::new(&buf[..n]))
+            })
+            .collect::<Vec<_>>();
+        if bufs.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
+        this.poll_op(cx, |io, cx| io.poll_write_vectored(cx, &bufs))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().io).poll_flush(cx)
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().io).poll_flush(cx)
+    }
+}
+
+/// Seeks within the window. Only an end seek on an open window touches the stream, to
+/// measure it.
+impl<B: AsyncSeek + Unpin> AsyncSeek for Span<B> {
+    fn poll_seek(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        pos: SeekFrom,
+    ) -> Poll<io::Result<u64>> {
+        let this = self.get_mut();
+        let pos = match pos {
+            SeekFrom::Start(n) => i128::from(n),
+            SeekFrom::Current(n) => i128::from(this.pos) + i128::from(n),
+            SeekFrom::End(n) => {
+                let len = match this.end {
+                    Some(end) => end - this.start,
+                    None => {
+                        let end = ready!(Pin::new(&mut this.io).poll_seek(cx, SeekFrom::End(0)))?;
+                        this.aligned = false;
+                        end.saturating_sub(this.start)
+                    }
+                };
+                i128::from(len) + i128::from(n)
+            }
+        };
+        let pos = u64::try_from(pos).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek position must be non-negative",
+            )
+        })?;
+        if pos != this.pos {
+            this.aligned = false;
+        }
+        this.pos = pos;
+        Poll::Ready(Ok(pos))
+    }
+}
+
+/// `io.Window`, a window of a seekable stream.
+///
+/// The window wraps the handle it took from its target, so it holds no reference to the
+/// target itself.
+pub(crate) struct Window {
+    /// The span, until the window is closed.
+    io: Option<Shared<Span<Prefixed>>>,
+    caps: IoCaps,
+}
+
+impl Window {
+    /// Capabilities while open; a closed window has none.
+    fn caps(&self) -> IoCaps {
+        open_caps(&self.io, self.caps)
+    }
+
+    /// Raises unless the window is open and has `need`.
+    fn check<'v, 's>(&self, strand: &mut Strand<'v, 's>, need: IoCaps) -> Result<'v, 's, ()> {
+        check_caps(strand, "stream", self.io.is_some(), self.caps, need)
+    }
+
+    /// Holds the span for a method.
+    async fn lock<'v, 's>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, Locked<'_, Span<Prefixed>>> {
+        let io = self.io.as_mut().expect("stream is closed");
+        io.lock().await.into_do_io(strand)
+    }
+}
+
+impl<'v> IntoByteIo<'v> for Window {
+    fn caps<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, IoCaps> {
+        Ok(Window::caps(self))
+    }
+
+    /// Lends the span, so the handle shares the window's position.
+    fn get<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
+        let io = self.io.as_ref().expect("stream is closed").clone();
+        Ok(ByteHandle::with_caps(io, self.caps))
+    }
+}
+
+impl<'v> Object<'v> for Window {
+    const NAME: &'v str = "Window";
+    const MODULE: &'v str = "io";
+    type Annex = ();
+    type Type = ();
+    type TypeAnnex = ();
+
+    async fn new<'a, 's>(
+        this: Type<'v, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        args: Args<'v, 'a>,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let ([target], [range]) = unpack!(strand, args, 1, 1)?;
+        let (start, end) = range_arg(strand, range)?;
+        let handle = crate::io::get(strand, &target, |strand, caps| {
+            if caps.contains(IoCaps::SEEK) {
+                Ok(())
+            } else {
+                Err(Error::value(strand, "target must be seekable"))
+            }
+        })
+        .map_err(|err| {
+            if err.kind() == ErrorKind::Unsupported {
+                Error::type_error(strand, "expected `io.Io` for `target`")
+            } else {
+                err
+            }
+        })?;
+        let (mut io, caps) = handle.into_prefixed();
+        let at = io.stream_position().await.into_do_io(strand)?;
+        let window = Window {
+            io: Some(Shared::new(Span::new(io, start, end, at))),
+            caps,
+        };
+        this.create(strand, window, &mut out);
+        Ok(())
+    }
+
+    fn provide<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        request: &mut Request<'v, 's, '_>,
+    ) -> Result<'v, 's, ()> {
+        if request.wants::<ByteIo>() {
+            let mut borrow = this.borrow_mut(request)?;
+            borrow.check(request, IoCaps::empty())?;
+            request.provide::<ByteIo>(&mut *borrow)?;
+        }
+        Ok(())
+    }
+
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let start_sym = builder.sym("start");
+        let end_sym = builder.sym("end");
+        builder
+            .supertype(TypeObject::Io)
+            .get("readable", |this, strand, out| {
+                let caps = this.borrow(strand)?.caps();
+                Output::set(strand, out, caps.contains(IoCaps::READ));
+                Ok(())
+            })
+            .get("writable", |this, strand, out| {
+                let caps = this.borrow(strand)?.caps();
+                Output::set(strand, out, caps.contains(IoCaps::WRITE));
+                Ok(())
+            })
+            .get("seekable", |this, strand, out| {
+                let caps = this.borrow(strand)?.caps();
+                Output::set(strand, out, caps.contains(IoCaps::SEEK));
+                Ok(())
+            })
+            .method("read", async move |this, strand, args, out| {
+                let ([size], []) = unpack!(strand, args, 1, 0)?;
+                let size = size_value(strand, size)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.check(strand, IoCaps::READ)?;
+                let mut io = borrow.lock(strand).await?;
+                let mut buf = BinEmbryo::new();
+                let chunk = size.min(BYTE_STREAM_CHUNK_SIZE);
+                read_spare(&mut *io, strand, &mut buf, chunk)
+                    .await
+                    .into_do_io(strand)?;
+                buf.finish(strand, out);
+                Ok(())
+            })
+            .method("write", async move |this, strand, args, out| {
+                let pieces = pieces(strand, args)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.check(strand, IoCaps::WRITE)?;
+                let mut io = borrow.lock(strand).await?;
+                let (slices, _) = slices(&pieces);
+                let n = io.write_vectored(&slices).await.into_do_io(strand)?;
+                Output::set(strand, out, n);
+                Ok(())
+            })
+            .method("seek", async move |this, strand, args, out| {
+                let ([], [offset, start, end]) =
+                    unpack!(strand, args, 0, 1, start_sym = None, end_sym = None)?;
+                let pos = seek_arg(strand, offset, start, end, start_sym, end_sym)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.check(strand, IoCaps::SEEK)?;
+                let mut io = borrow.lock(strand).await?;
+                let pos = io.seek(pos).await.into_do_io(strand)?;
+                Output::set(strand, out, pos);
+                Ok(())
+            })
+            .method("flush", async move |this, strand, args, _out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.check(strand, IoCaps::empty())?;
+                let mut io = borrow.lock(strand).await?;
+                io.flush().await.into_do_io(strand)
+            })
+            .method("close", async move |this, strand, args, _out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                close_shared(&mut borrow.io).await.into_do_io(strand)
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use futures::io::{AsyncReadExt as _, Cursor};
+    use std::io::{IoSlice, SeekFrom};
 
+    use futures::{
+        executor::block_on,
+        io::{AsyncReadExt as _, AsyncSeekExt as _, AsyncWriteExt as _, Cursor},
+    };
+
+    use super::Span;
     use crate::{
         io::{self, ByteHandle},
         method,
@@ -1346,6 +2065,74 @@ mod tests {
             assert_eq!(bridged.kind(), std::io::ErrorKind::Other);
             let back = io::decode_error(strand, bridged);
             assert_eq!(back.kind(), ErrorKind::Runtime);
+        });
+    }
+
+    #[test]
+    fn bounded_span_cuts_reads_and_writes() {
+        block_on(async {
+            let mut io = Cursor::new(b"0123456789".to_vec());
+            let mut span = Span::new(&mut io, 2, Some(6), 0);
+            let mut buf = [0; 8];
+            assert_eq!(span.read(&mut buf).await.unwrap(), 4);
+            assert_eq!(&buf[..4], b"2345");
+            assert_eq!(span.read(&mut buf).await.unwrap(), 0);
+            assert_eq!(span.seek(SeekFrom::End(-1)).await.unwrap(), 3);
+            assert_eq!(span.seek(SeekFrom::Start(1)).await.unwrap(), 1);
+            let bufs = [IoSlice::new(b"ab"), IoSlice::new(b"cd")];
+            assert_eq!(span.write_vectored(&bufs).await.unwrap(), 3);
+            assert_eq!(span.write(b"e").await.unwrap(), 0);
+            assert!(span.seek(SeekFrom::Current(-5)).await.is_err());
+            assert_eq!(io.get_ref(), b"012abc6789");
+        });
+    }
+
+    #[test]
+    fn open_span_seeks_from_stream_end() {
+        block_on(async {
+            let mut io = Cursor::new(b"0123456789".to_vec());
+            let mut span = Span::new(&mut io, 7, None, 0);
+            assert_eq!(span.seek(SeekFrom::End(0)).await.unwrap(), 3);
+            span.write_all(b"abc").await.unwrap();
+            span.seek(SeekFrom::Start(0)).await.unwrap();
+            let mut got = Vec::new();
+            span.read_to_end(&mut got).await.unwrap();
+            assert_eq!(got, b"789abc");
+        });
+    }
+
+    /// A span inside the window starts where the stream is and seeks only when it moves.
+    #[test]
+    fn span_inside_window_seeks_only_when_moved() {
+        block_on(async {
+            let mut io = Cursor::new(b"0123456789".to_vec());
+            io.set_position(4);
+            let mut span = Span::new(&mut io, 2, Some(8), 4);
+            assert_eq!(span.seek(SeekFrom::Current(0)).await.unwrap(), 2);
+            let mut buf = [0; 2];
+            span.read_exact(&mut buf).await.unwrap();
+            assert_eq!(&buf, b"45");
+            span.write_all(b"ab").await.unwrap();
+            assert_eq!(span.seek(SeekFrom::Current(-3)).await.unwrap(), 3);
+            span.read_exact(&mut buf).await.unwrap();
+            assert_eq!(&buf, b"5a");
+            assert_eq!(io.get_ref(), b"012345ab89");
+        });
+    }
+
+    /// A stream outside the window is brought to its nearer edge.
+    #[test]
+    fn span_clamps_into_window() {
+        block_on(async {
+            let mut io = Cursor::new(b"0123456789".to_vec());
+            io.set_position(9);
+            let mut span = Span::new(&mut io, 2, Some(6), 9);
+            let mut buf = [0; 2];
+            assert_eq!(span.seek(SeekFrom::Current(0)).await.unwrap(), 4);
+            assert_eq!(span.read(&mut buf).await.unwrap(), 0);
+            let mut span = Span::new(&mut io, 2, Some(6), 0);
+            span.read_exact(&mut buf).await.unwrap();
+            assert_eq!(&buf, b"23");
         });
     }
 }

@@ -2,11 +2,12 @@ import std: error
 import io:
   - Io
   - Buffered
-  - Cursor
+  - Window
 import strand:
   - channel
 import regression2:
   - byte_duplex
+  - byte_fork
   - byte_overwrite
   - byte_read
   - byte_seek
@@ -185,7 +186,7 @@ class Echo: Io
 
 assert_eq (byte_duplex (Echo()) b"ping") b"ping"
 
-# A forkable Do stream gives each cursor over it a position of its own
+# A forkable Do stream's forks have positions of their own
 class ForkIo: MemIo
   #[getter]
   pub def forkable _self
@@ -201,17 +202,21 @@ class ForkIo: MemIo
 
 let source = ForkIo b"0123456789"
 source.seek start: 1
-let low = Cursor $source (2..5)
-let high = Cursor $source (6..)
+let low = Window $source.fork() (2..5)
+let high = Window $source.fork() (6..)
 assert_eq $high.read(2) b"67"
 assert_eq $low.read(10) b"234"
 assert_eq $high.read_all() b"89"
 assert_eq $source.pos 1
 
-# Claiming to fork without defining `fork` fails the consumer
+# A native consumer forks a Do stream through the bridge
+assert_eq (byte_fork source 3) b"3456789"
+assert_eq $source.pos 1
+
+# Claiming to fork without defining `fork` fails a native consumer
 class NoFork: MemIo
   #[getter]
   pub def forkable _self
     true
 
-assert_throws $error.RuntimeError do Cursor (NoFork b"abc")
+assert_throws $error.RuntimeError do byte_fork (NoFork b"abc") 0

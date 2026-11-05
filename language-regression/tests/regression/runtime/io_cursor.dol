@@ -3,6 +3,7 @@ import io:
   - Concat
   - Cursor
   - Io
+  - Window
 import regression2:
   - byte_write
 
@@ -195,9 +196,9 @@ let c = Cursor $buf (1..)
 byte_write $c b"native"
 assert_eq $buf.freeze() b"xnative"
 
-# An Io target: a window of another stream
+# io.Window: a window of another stream
 let inner = Cursor b"0123456789"
-let c = Cursor $inner (2..6)
+let c = Window $inner (2..6)
 assert_eq (c.readable, c.writable, c.seekable) (true, false, true)
 assert_eq $c.read(10) b"2345"
 assert_eq $c.read(10) b""
@@ -209,18 +210,16 @@ c.close()
 assert_throws $std.StateError do c.read 1
 assert $inner.readable
 
-# The cursor seeks the target before each operation, wherever it was left
+# The window starts at the target's position when it lies inside
 let inner = Cursor b"0123456789"
-let c = Cursor $inner (5..)
-inner.seek start: 1
-assert_eq $c.read(2) b"56"
-inner.seek start: 9
+inner.seek start: 7
+let c = Window $inner (5..)
 assert_eq $c.read(2) b"78"
 assert_eq $c.seek(end: 0) 5
 
 # Writes go through, cut short at the end of a bounded window
 let buf = BinBuf(b"0123456789")
-let c = Cursor (Cursor buf) (4..7)
+let c = Window (Cursor buf) (4..7)
 assert $c.writable
 assert_eq $c.write("ab", "cdef") 3
 assert_eq $c.write("g") 0
@@ -229,12 +228,13 @@ assert_eq $c.read(10) b"abc"
 c.flush()
 assert_eq $buf.freeze() b"0123abc789"
 
-# A native consumer shares the cursor's position
+# A native consumer shares the window's position
 let buf = BinBuf(b"xxxxxxxx")
-let c = Cursor (Cursor buf) (2..)
+let c = Window (Cursor buf) (2..)
 byte_write $c b"abc"
 assert_eq $c.seek(0) 3
 assert_eq $buf.freeze() b"xxabcxxx"
 
-# The target must read and seek
-assert_throws $std.ValueError do Cursor $Concat(["a"])
+# The target must seek, and a cursor takes only memory
+assert_throws $std.ValueError do Window $Concat(["a"])
+assert_throws $std.TypeError do Cursor $inner

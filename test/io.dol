@@ -8,6 +8,7 @@ import compress
     - Concat
     - Cursor
     - Io
+    - Window
   strand:
     - channel
     - spawn
@@ -450,16 +451,16 @@ def zip_embedded_in_file()
     file.write $archive
     file.write "trailer"
   fs.open bundle.bin do |file|
-    zip.open (Cursor file (6..(6 + archive.len))) do |source|
+    zip.open (Window file (6..(6 + archive.len))) do |source|
       source.open "inner.txt" do |entry|
         assert_eq (entry.read_all_str()) "inside"
 
 #[test]
 #[vfs]
-def cursor_writes_file_window()
+def window_writes_file()
   fs.open data.bin w do |file| file.write "0123456789"
   fs.open data.bin r+ do |file|
-    let window = Cursor $file (3..6)
+    let window = Window $file (3..6)
     assert_eq (window.write("abcdef")) 3
     window.seek start: 1
     assert_eq (window.read(10)) b"bc"
@@ -469,9 +470,9 @@ def cursor_writes_file_window()
     assert_eq (file.read_all()) b"012abc6789"
 
 #[test]
-def cursor_over_do_stream()
+def window_over_do_stream()
   let source = MemIo b"0123456789"
-  let window = Cursor $source (2..5)
+  let window = Window $source (2..5)
   assert_eq (window.read_all()) b"234"
   assert_eq (window.write("xy")) 0
   window.seek start: 0
@@ -480,4 +481,23 @@ def cursor_over_do_stream()
   assert_eq $source.data b"01xy456789"
   window.close()
   assert_eq $source.closed false
-  assert_throws $ValueError do Cursor (MemIo seek: false)
+  assert_throws $ValueError do Window (MemIo seek: false)
+  assert_throws $TypeError do Window 42
+  assert_throws $TypeError do Cursor $source
+
+# A window starts at the target's position, moved into the window if outside
+#[test]
+def window_starts_at_target_position()
+  let inside = MemIo b"0123456789"
+  inside.seek start: 4
+  let window = Window $inside (2..8)
+  assert_eq (window.seek 0) 2
+  assert_eq (window.read 2) b"45"
+  let window = Window (MemIo b"0123456789") (2..8)
+  assert_eq (window.seek 0) 0
+  assert_eq (window.read 2) b"23"
+  let past = MemIo b"0123456789"
+  past.seek start: 9
+  let window = Window $past (2..8)
+  assert_eq (window.seek 0) 6
+  assert_eq (window.read 2) b""
