@@ -834,7 +834,7 @@ impl<'v> Object<'v> for Client {
             if let Some((name, _)) = options.into_iter().find(|(_, value)| value.is_some()) {
                 return Err(Error::unsupported(
                     strand,
-                    format!("{name} is not supported in the browser"),
+                    format!("`{name}` in the browser"),
                 ));
             }
             reqwest::ClientBuilder::new()
@@ -857,10 +857,7 @@ impl<'v> Object<'v> for Client {
                 #[cfg(not(unix))]
                 {
                     let _ = unix_socket;
-                    return Err(Error::unsupported(
-                        strand,
-                        "unix_socket is only available on Unix",
-                    ));
+                    return Err(Error::unsupported(strand, "`unix_socket` outside Unix"));
                 }
             } else {
                 builder

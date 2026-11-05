@@ -78,7 +78,7 @@ let unsupported = try
   nil
 catch std.RuntimeError: err
   str $err
-assert_eq $unsupported "cookies is not supported in the browser"
+assert_eq $unsupported "unsupported operation: `cookies` in the browser"
 
 echo "http passed"
 "http passed"

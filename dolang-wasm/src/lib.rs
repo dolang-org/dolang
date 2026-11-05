@@ -391,7 +391,7 @@ term.console.write c b"d\n"
             let (result, _) = run_source(&format!("import http\nhttp.Client {option}: nil")).await;
             let error = result.error.expect(option);
             assert!(
-                error.contains(&format!("{option} is not supported in the browser")),
+                error.contains(&format!("unsupported operation: `{option}` in the browser")),
                 "{error}"
             );
         }
