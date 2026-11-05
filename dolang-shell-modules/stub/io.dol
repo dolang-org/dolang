@@ -24,7 +24,7 @@
 #
 # A function can also use a Do subclass's instance, which must report its
 # capabilities. Strands call its `read`, `write` and `seek` as the function
-# needs bytes, never its `close`. Don't use the stream yourself until the
+# needs bytes, and its `fork` if it is forkable, never its `close`. Don't use the stream yourself until the
 # function is done with it.
 #
 # An exception from one of its methods fails the function. A
@@ -78,6 +78,19 @@ pub class Io: Sink[Value]
   pub def seekable self -> Bool
     ...
 
+  # Whether the stream [forks](io.Io.fork). A closed stream does not, and
+  # one that doesn't seek never does.
+  #
+  # A fork, and a [`Cursor`](io.Cursor) over a forkable stream, has a position
+  # of its own in the stream's data, so the stream and its forks may be used
+  # at once, including from different strands. Each fork behaves like a
+  # separate open of the data taken when the fork is created: a buffered
+  # stream writes out pending writes first, and its later writes reach the
+  # fork once they are flushed.
+  #[getter]
+  pub def forkable self -> Bool
+    ...
+
   # Reads bytes.
   #
   # ## Returns
@@ -121,6 +134,24 @@ pub class Io: Sink[Value]
     # Byte offset relative to the end of the stream.
     :end @ Int = ...
   do -> Int
+    ...
+
+  # Opens another stream over the same data with a position of its own, as
+  # [`forkable`](io.Io.forkable) describes. Closing the fork leaves this
+  # stream open.
+  #
+  # ## Errors
+  #
+  # | Exception | Condition |
+  # | --- | --- |
+  # | [`UnsupportedError`](std.UnsupportedError) | The stream doesn't fork |
+  # | [`StateError`](std.StateError) | The stream is closed |
+  pub def fork
+    self
+    # Absolute byte offset where the fork's position starts; this stream's
+    # position when omitted.
+    offset @ Int = ...
+  do -> Io
     ...
 
   # Closes the stream.
@@ -432,10 +463,12 @@ pub class Concat: Io
 # write is cut short there.
 #
 # An `Io` target is read and written through, and written only if it writes.
-# The cursor keeps its own position and seeks the target before each read or
-# write, so the target's position changes but doesn't matter. Don't use the
-# target while a read or write through the cursor is in progress, such as
-# from another strand.
+# A [forkable](io.Io.forkable) target gives the cursor a position of its
+# own, so the target and its cursors may be used at once. Over any other
+# target, the cursor keeps its own position and seeks the target before each
+# read or write, so the target's position changes but doesn't matter. Don't
+# use the target while a read or write through the cursor is in progress,
+# such as from another strand.
 #
 # A `StrBuf` stays valid UTF-8, so a cursor over one also lets text written
 # in arbitrary pieces reach it:

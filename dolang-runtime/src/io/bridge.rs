@@ -3,10 +3,12 @@
 //! A [`Handle`] sends each read, write and seek as a [`Request`] to a server strand
 //! that calls the stream's methods, and the servers' ends are [`Lanes`]. The handle
 //! buffers reads and writes. Closing the handle closes its lanes and waits for the
-//! servers to stop, but leaves the stream open.
+//! servers to stop, but leaves the stream open. Dropping it tells the owner of the
+//! servers to interrupt them.
 //!
 //! A seekable stream has one position, so its requests share one lane. Otherwise reads
-//! and writes are independent, and a stream that does both has a lane for each.
+//! and writes are independent, and a stream that does both has a lane for each. A fork is
+//! a request on the shared lane, so it follows writes sent before it.
 
 use std::{
     future::Future,
@@ -20,7 +22,7 @@ use futures::{
     io::{AsyncRead, AsyncSeek, AsyncWrite},
 };
 
-use super::{ByteHandle, IoCaps};
+use super::{AsyncFork, ByteHandle, IoCaps};
 
 /// The least a read requests from the stream.
 const READ_SIZE: usize = 8192;
@@ -37,6 +39,7 @@ pub(crate) enum Request {
     Read(usize, Reply<Vec<u8>>),
     Write(Vec<u8>, Reply<usize>),
     Seek(SeekFrom, Reply<u64>),
+    Fork(u64, Reply<ByteHandle>),
 }
 
 /// The servers' ends of a handle.
@@ -45,9 +48,12 @@ pub(crate) struct Lanes {
     pub(crate) servers: Vec<mpsc::UnboundedReceiver<Request>>,
     /// Where the owner reports that the servers stopped.
     pub(crate) done: Reply<()>,
+    /// Resolves once the handle is dropped.
+    pub(crate) dropped: oneshot::Receiver<()>,
 }
 
-/// Creates a handle with `caps`, and the lanes its servers serve.
+/// Creates a handle with `caps`, and the lanes its servers serve. It forks only if `caps`
+/// also seeks.
 ///
 /// # Panics
 ///
@@ -65,6 +71,7 @@ pub(crate) fn handle(caps: IoCaps) -> (ByteHandle, Lanes) {
         (Some(read_tx), Some(write_tx), vec![read_rx, write_rx])
     };
     let (done_tx, done_rx) = oneshot::channel();
+    let (alive, dropped) = oneshot::channel();
     let io = Handle {
         reads,
         writes,
@@ -75,13 +82,21 @@ pub(crate) fn handle(caps: IoCaps) -> (ByteHandle, Lanes) {
         write_buf: Vec::new(),
         write: None,
         seek: None,
+        fork: None,
         done: Some(done_rx),
+        _alive: alive,
     };
     let lanes = Lanes {
         servers,
         done: done_tx,
+        dropped,
     };
-    (ByteHandle::with_caps(io, caps), lanes)
+    let handle = if seek && caps.contains(IoCaps::FORK) {
+        ByteHandle::forking(io, caps)
+    } else {
+        ByteHandle::with_caps(io, caps)
+    };
+    (handle, lanes)
 }
 
 fn closed() -> io::Error {
@@ -116,7 +131,10 @@ struct Handle {
     write_buf: Vec<u8>,
     write: Pending<usize>,
     seek: Pending<u64>,
+    fork: Pending<ByteHandle>,
     done: Pending<()>,
+    /// Never sent; dropping it with the handle resolves [`Lanes::dropped`].
+    _alive: oneshot::Sender<()>,
 }
 
 impl Handle {
@@ -276,6 +294,24 @@ impl AsyncSeek for Handle {
             this.read_pos = 0;
         }
         Poll::Ready(res)
+    }
+}
+
+/// Writes out the write buffer first, so the fork sees those writes. Unread bytes stay, since
+/// forking leaves the stream's position alone.
+impl AsyncFork for Handle {
+    fn poll_fork(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        offset: u64,
+    ) -> Poll<io::Result<ByteHandle>> {
+        let this = self.get_mut();
+        if this.fork.is_none() {
+            ready!(this.poll_drain(cx))?;
+            let lane = this.reads.as_ref().or(this.writes.as_ref());
+            this.fork = Some(send(lane, |tx| Request::Fork(offset, tx))?);
+        }
+        poll_reply(&mut this.fork, cx)
     }
 }
 

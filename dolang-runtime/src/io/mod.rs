@@ -23,6 +23,7 @@ pub(crate) mod bridge;
 use std::{
     fmt,
     io::{self, IoSlice, SeekFrom},
+    marker::PhantomData,
     pin::Pin,
     task::{Context, Poll, ready},
 };
@@ -48,6 +49,9 @@ bitflags::bitflags! {
         const WRITE = 1 << 1;
         /// The handle seeks.
         const SEEK = 1 << 2;
+        /// The handle [forks](ByteHandle::fork): it creates handles over the same backing
+        /// store, each with a position of its own.
+        const FORK = 1 << 3;
     }
 }
 
@@ -99,7 +103,8 @@ pub trait IntoByteIo<'v> {
     /// Returns a handle sharing the provider's stream.
     ///
     /// A provider that buffers shares its buffer with the handle, so reads and writes
-    /// through either see the other's.
+    /// through either see the other's. The handle's [forks](ByteHandle::fork) are the
+    /// exception: they don't share it.
     fn get<'s>(&mut self, strand: &mut Strand<'v, 's>) -> crate::error::Result<'v, 's, ByteHandle>;
 }
 
@@ -335,27 +340,183 @@ impl<T> IoResultExt<T> for io::Result<T> {
     }
 }
 
-pub(crate) enum Io {
-    Read(Box<dyn Read>),
-    Write(Box<dyn Write>),
-    ReadSeek(Box<dyn ReadSeek>),
-    WriteSeek(Box<dyn WriteSeek>),
-    ReadWrite(Box<dyn ReadWrite>),
-    ReadWriteSeek(Box<dyn ReadWriteSeek>),
+/// Forks a seekable stream: creates a handle over the same backing store with a position of
+/// its own.
+///
+/// A fork and the stream it came from may be used at once, including from different strands,
+/// and each behaves like a separate open of the store taken when the fork was created. A
+/// stream that buffers writes out pending writes first and doesn't share its buffer with the
+/// fork.
+pub trait AsyncFork {
+    /// Attempts to create a fork whose position starts at the absolute `offset`, whatever
+    /// this stream's own position.
+    fn poll_fork(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        offset: u64,
+    ) -> Poll<io::Result<ByteHandle>>;
 }
 
-impl Io {
-    pub(crate) fn caps(&self) -> IoCaps {
-        match self {
-            Io::Read(_) => IoCaps::READ,
-            Io::Write(_) => IoCaps::WRITE,
-            Io::ReadSeek(_) => IoCaps::READ | IoCaps::SEEK,
-            Io::WriteSeek(_) => IoCaps::WRITE | IoCaps::SEEK,
-            Io::ReadWrite(_) => IoCaps::READ | IoCaps::WRITE,
-            Io::ReadWriteSeek(_) => IoCaps::READ | IoCaps::WRITE | IoCaps::SEEK,
+impl<T: AsyncFork + Unpin + ?Sized> AsyncFork for Box<T> {
+    fn poll_fork(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        offset: u64,
+    ) -> Poll<io::Result<ByteHandle>> {
+        Pin::new(&mut **self.get_mut()).poll_fork(cx, offset)
+    }
+}
+
+/// Forks the stream while holding it, after any operation through another handle.
+impl<T: AsyncFork + Unpin> AsyncFork for Shared<T> {
+    fn poll_fork(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        offset: u64,
+    ) -> Poll<io::Result<ByteHandle>> {
+        self.get_mut()
+            .poll_op(cx, |io, cx| io.poll_fork(cx, offset))
+    }
+}
+
+/// An erased byte stream: every futures-io trait and [`AsyncFork`], whatever the handle's
+/// [`IoCaps`].
+///
+/// A method outside the capabilities fails with [`io::ErrorKind::Unsupported`], except that
+/// flushing and closing succeed trivially on a stream that does not write. The `into_*`
+/// conversions of [`ByteHandle`] check the capabilities and upcast.
+pub(crate) trait ByteStream: ReadWriteSeek + AsyncFork {}
+
+/// Marks a trait [`Adapt`] forwards.
+struct Yes;
+
+/// Marks a trait [`Adapt`] answers with [`io::ErrorKind::Unsupported`].
+struct No;
+
+/// [`Adapt`]'s markers, held without owning them, so they don't affect its auto traits.
+type Markers<R, W, S, F> = fn() -> (R, W, S, F);
+
+/// Adapts a stream with some of the futures-io traits and [`AsyncFork`] to [`ByteStream`].
+/// `R`, `W`, `S` and `F` say whether it reads, writes, seeks and forks.
+struct Adapt<T, R, W, S, F = No> {
+    io: T,
+    marker: PhantomData<Markers<R, W, S, F>>,
+}
+
+impl<T, R, W, S, F> Adapt<T, R, W, S, F> {
+    fn new(io: T) -> Self {
+        Self {
+            io,
+            marker: PhantomData,
         }
     }
 }
+
+impl<T: AsyncRead + Unpin, W, S, F> AsyncRead for Adapt<T, Yes, W, S, F> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.get_mut().io).poll_read(cx, buf)
+    }
+}
+
+impl<T, W, S, F> AsyncRead for Adapt<T, No, W, S, F> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        Poll::Ready(Err(io::ErrorKind::Unsupported.into()))
+    }
+}
+
+impl<T: AsyncWrite + Unpin, R, S, F> AsyncWrite for Adapt<T, R, Yes, S, F> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.get_mut().io).poll_write(cx, buf)
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.get_mut().io).poll_write_vectored(cx, bufs)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().io).poll_flush(cx)
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().io).poll_close(cx)
+    }
+}
+
+impl<T, R, S, F> AsyncWrite for Adapt<T, R, No, S, F> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Poll::Ready(Err(io::ErrorKind::Unsupported.into()))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl<T: AsyncSeek + Unpin, R, W, F> AsyncSeek for Adapt<T, R, W, Yes, F> {
+    fn poll_seek(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        pos: SeekFrom,
+    ) -> Poll<io::Result<u64>> {
+        Pin::new(&mut self.get_mut().io).poll_seek(cx, pos)
+    }
+}
+
+impl<T, R, W, F> AsyncSeek for Adapt<T, R, W, No, F> {
+    fn poll_seek(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _pos: SeekFrom,
+    ) -> Poll<io::Result<u64>> {
+        Poll::Ready(Err(io::ErrorKind::Unsupported.into()))
+    }
+}
+
+impl<T: AsyncFork + Unpin, R, W, S> AsyncFork for Adapt<T, R, W, S, Yes> {
+    fn poll_fork(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        offset: u64,
+    ) -> Poll<io::Result<ByteHandle>> {
+        Pin::new(&mut self.get_mut().io).poll_fork(cx, offset)
+    }
+}
+
+impl<T, R, W, S> AsyncFork for Adapt<T, R, W, S, No> {
+    fn poll_fork(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _offset: u64,
+    ) -> Poll<io::Result<ByteHandle>> {
+        Poll::Ready(Err(io::ErrorKind::Unsupported.into()))
+    }
+}
+
+impl<T, R, W, S, F> ByteStream for Adapt<T, R, W, S, F> where Self: ReadWriteSeek + AsyncFork {}
 
 /// An owned, erased byte I/O handle.
 ///
@@ -365,59 +526,60 @@ impl Io {
 /// As an [`Input`](crate::value::Input), a handle becomes a Do `io.Io` that owns it: its
 /// methods read, write and seek the handle, and its `close` closes it.
 pub struct ByteHandle {
-    pub(crate) io: Io,
-    pub(crate) prefix: Vec<u8>,
-}
-
-/// Boxes `io` as `$target`, serving `prefix` first if it is not empty.
-macro_rules! narrow {
-    ($target:ty; $io:expr, $prefix:expr) => {{
-        let prefix = $prefix;
-        let io: Box<$target> = if prefix.is_empty() {
-            $io
-        } else {
-            Box::new(Prefixed::new($io, prefix))
-        };
-        io
-    }};
+    io: Box<dyn ByteStream>,
+    caps: IoCaps,
+    prefix: Vec<u8>,
 }
 
 impl ByteHandle {
-    fn new(io: Io) -> Self {
+    fn new(io: impl ByteStream, caps: IoCaps) -> Self {
         Self {
-            io,
+            io: Box::new(io),
+            caps,
             prefix: Vec::new(),
         }
     }
 
     /// Creates a reading handle.
     pub fn read(io: impl Read) -> Self {
-        Self::new(Io::Read(Box::new(io)))
+        Self::new(Adapt::<_, Yes, No, No>::new(io), IoCaps::READ)
     }
 
     /// Creates a writing handle.
     pub fn write(io: impl Write) -> Self {
-        Self::new(Io::Write(Box::new(io)))
+        Self::new(Adapt::<_, No, Yes, No>::new(io), IoCaps::WRITE)
     }
 
     /// Creates a seekable reading handle.
     pub fn read_seek(io: impl ReadSeek) -> Self {
-        Self::new(Io::ReadSeek(Box::new(io)))
+        Self::new(
+            Adapt::<_, Yes, No, Yes>::new(io),
+            IoCaps::READ | IoCaps::SEEK,
+        )
     }
 
     /// Creates a seekable writing handle.
     pub fn write_seek(io: impl WriteSeek) -> Self {
-        Self::new(Io::WriteSeek(Box::new(io)))
+        Self::new(
+            Adapt::<_, No, Yes, Yes>::new(io),
+            IoCaps::WRITE | IoCaps::SEEK,
+        )
     }
 
     /// Creates a reading and writing handle.
     pub fn read_write(io: impl ReadWrite) -> Self {
-        Self::new(Io::ReadWrite(Box::new(io)))
+        Self::new(
+            Adapt::<_, Yes, Yes, No>::new(io),
+            IoCaps::READ | IoCaps::WRITE,
+        )
     }
 
     /// Creates a seekable reading and writing handle.
     pub fn read_write_seek(io: impl ReadWriteSeek) -> Self {
-        Self::new(Io::ReadWriteSeek(Box::new(io)))
+        Self::new(
+            Adapt::<_, Yes, Yes, Yes>::new(io),
+            IoCaps::READ | IoCaps::WRITE | IoCaps::SEEK,
+        )
     }
 
     /// Creates a handle with `caps` over `io`, which implements every trait.
@@ -458,159 +620,107 @@ impl ByteHandle {
         self
     }
 
+    /// Creates a handle with `caps` over `io`, which implements every trait and forks, as
+    /// [`with_caps`](Self::with_caps) does, and adds [`IoCaps::FORK`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `caps` neither reads nor writes, or does not seek.
+    pub fn forking(io: impl ReadWriteSeek + AsyncFork, caps: IoCaps) -> Self {
+        assert!(
+            caps.contains(IoCaps::SEEK),
+            "fork of a handle that does not seek"
+        );
+        let read = caps.contains(IoCaps::READ);
+        let write = caps.contains(IoCaps::WRITE);
+        let io: Box<dyn ByteStream> = match (read, write) {
+            (true, false) => Box::new(Adapt::<_, Yes, No, Yes, Yes>::new(io)),
+            (false, true) => Box::new(Adapt::<_, No, Yes, Yes, Yes>::new(io)),
+            (true, true) => Box::new(Adapt::<_, Yes, Yes, Yes, Yes>::new(io)),
+            (false, false) => panic!("handle neither reads nor writes"),
+        };
+        Self {
+            io,
+            caps: caps & (IoCaps::READ | IoCaps::WRITE) | IoCaps::SEEK | IoCaps::FORK,
+            prefix: Vec::new(),
+        }
+    }
+
     /// The handle's capabilities.
     pub fn caps(&self) -> IoCaps {
-        self.io.caps()
+        self.caps
+    }
+
+    /// Creates a [fork](AsyncFork) whose position starts at the absolute `offset`. Without
+    /// [`IoCaps::FORK`] it fails with [`io::ErrorKind::Unsupported`].
+    pub async fn fork(&mut self, offset: u64) -> io::Result<ByteHandle> {
+        std::future::poll_fn(|cx| Pin::new(&mut self.io).poll_fork(cx, offset)).await
+    }
+
+    /// The stream with its prefix, and the capabilities without forking, for a holder that
+    /// keeps them beside it.
+    pub(crate) fn into_prefixed(self) -> (Prefixed, IoCaps) {
+        let caps = self.caps - IoCaps::FORK;
+        (Prefixed::new(self.io, caps, self.prefix), caps)
+    }
+
+    /// The stream, its capabilities without forking, and its prefix.
+    pub(crate) fn into_parts(self) -> (Box<dyn ByteStream>, IoCaps, Vec<u8>) {
+        (self.io, self.caps - IoCaps::FORK, self.prefix)
+    }
+
+    /// The stream, serving the prefix first, if the handle has `need`. A handle that cannot
+    /// seek drops its prefix unless `keep_prefix`.
+    fn narrow(mut self, need: IoCaps, keep_prefix: bool) -> Result<Box<dyn ByteStream>, Self> {
+        if !self.caps.contains(need) {
+            return Err(self);
+        }
+        if !keep_prefix && !self.caps.contains(IoCaps::SEEK) {
+            self.prefix = Vec::new();
+        }
+        Ok(if self.prefix.is_empty() {
+            self.io
+        } else {
+            Box::new(self.into_prefixed().0)
+        })
     }
 
     /// Converts to a reader.
     pub fn into_read(self) -> Result<Box<dyn Read>, Self> {
-        let Self { io, prefix } = self;
-        Ok(match io {
-            Io::Read(io) => narrow!(dyn Read; io, prefix),
-            Io::ReadSeek(io) => narrow!(dyn Read; io, prefix),
-            Io::ReadWrite(io) => narrow!(dyn Read; io, prefix),
-            Io::ReadWriteSeek(io) => narrow!(dyn Read; io, prefix),
-            io => return Err(Self { io, prefix }),
-        })
+        self.narrow(IoCaps::READ, true)
+            .map(|io| io as Box<dyn Read>)
     }
 
     /// Converts to a writer.
     ///
     /// A non-seekable handle discards its prefix.
     pub fn into_write(self) -> Result<Box<dyn Write>, Self> {
-        let Self { io, prefix } = self;
-        Ok(match io {
-            Io::Write(io) => io,
-            Io::WriteSeek(io) => io,
-            Io::ReadWrite(io) => io,
-            Io::ReadWriteSeek(io) => narrow!(dyn Write; io, prefix),
-            io => return Err(Self { io, prefix }),
-        })
+        self.narrow(IoCaps::WRITE, false)
+            .map(|io| io as Box<dyn Write>)
     }
 
     /// Converts to a seekable reader.
     pub fn into_read_seek(self) -> Result<Box<dyn ReadSeek>, Self> {
-        let Self { io, prefix } = self;
-        Ok(match io {
-            Io::ReadSeek(io) => narrow!(dyn ReadSeek; io, prefix),
-            Io::ReadWriteSeek(io) => narrow!(dyn ReadSeek; io, prefix),
-            io => return Err(Self { io, prefix }),
-        })
+        self.narrow(IoCaps::READ | IoCaps::SEEK, true)
+            .map(|io| io as Box<dyn ReadSeek>)
     }
 
     /// Converts to a seekable writer.
     pub fn into_write_seek(self) -> Result<Box<dyn WriteSeek>, Self> {
-        let Self { io, prefix } = self;
-        Ok(match io {
-            Io::WriteSeek(io) => io,
-            Io::ReadWriteSeek(io) => narrow!(dyn WriteSeek; io, prefix),
-            io => return Err(Self { io, prefix }),
-        })
+        self.narrow(IoCaps::WRITE | IoCaps::SEEK, true)
+            .map(|io| io as Box<dyn WriteSeek>)
     }
 
     /// Converts to a reader and writer.
     pub fn into_read_write(self) -> Result<Box<dyn ReadWrite>, Self> {
-        let Self { io, prefix } = self;
-        Ok(match io {
-            Io::ReadWrite(io) => narrow!(dyn ReadWrite; io, prefix),
-            Io::ReadWriteSeek(io) => narrow!(dyn ReadWrite; io, prefix),
-            io => return Err(Self { io, prefix }),
-        })
+        self.narrow(IoCaps::READ | IoCaps::WRITE, true)
+            .map(|io| io as Box<dyn ReadWrite>)
     }
 
     /// Converts to a seekable reader and writer.
     pub fn into_read_write_seek(self) -> Result<Box<dyn ReadWriteSeek>, Self> {
-        let Self { io, prefix } = self;
-        Ok(match io {
-            Io::ReadWriteSeek(io) => narrow!(dyn ReadWriteSeek; io, prefix),
-            io => return Err(Self { io, prefix }),
-        })
-    }
-}
-
-/// Forwards to the handle's traits, failing with [`io::ErrorKind::Unsupported`] where it
-/// has none. Flushing and closing succeed trivially on a handle that does not write.
-impl AsyncRead for Io {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
-        match self.get_mut() {
-            Io::Read(io) => Pin::new(io).poll_read(cx, buf),
-            Io::ReadSeek(io) => Pin::new(io).poll_read(cx, buf),
-            Io::ReadWrite(io) => Pin::new(io).poll_read(cx, buf),
-            Io::ReadWriteSeek(io) => Pin::new(io).poll_read(cx, buf),
-            Io::Write(_) | Io::WriteSeek(_) => Poll::Ready(Err(io::ErrorKind::Unsupported.into())),
-        }
-    }
-}
-
-impl AsyncWrite for Io {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        match self.get_mut() {
-            Io::Write(io) => Pin::new(io).poll_write(cx, buf),
-            Io::WriteSeek(io) => Pin::new(io).poll_write(cx, buf),
-            Io::ReadWrite(io) => Pin::new(io).poll_write(cx, buf),
-            Io::ReadWriteSeek(io) => Pin::new(io).poll_write(cx, buf),
-            Io::Read(_) | Io::ReadSeek(_) => Poll::Ready(Err(io::ErrorKind::Unsupported.into())),
-        }
-    }
-
-    fn poll_write_vectored(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[IoSlice<'_>],
-    ) -> Poll<io::Result<usize>> {
-        match self.get_mut() {
-            Io::Write(io) => Pin::new(io).poll_write_vectored(cx, bufs),
-            Io::WriteSeek(io) => Pin::new(io).poll_write_vectored(cx, bufs),
-            Io::ReadWrite(io) => Pin::new(io).poll_write_vectored(cx, bufs),
-            Io::ReadWriteSeek(io) => Pin::new(io).poll_write_vectored(cx, bufs),
-            Io::Read(_) | Io::ReadSeek(_) => Poll::Ready(Err(io::ErrorKind::Unsupported.into())),
-        }
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        match self.get_mut() {
-            Io::Write(io) => Pin::new(io).poll_flush(cx),
-            Io::WriteSeek(io) => Pin::new(io).poll_flush(cx),
-            Io::ReadWrite(io) => Pin::new(io).poll_flush(cx),
-            Io::ReadWriteSeek(io) => Pin::new(io).poll_flush(cx),
-            Io::Read(_) | Io::ReadSeek(_) => Poll::Ready(Ok(())),
-        }
-    }
-
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        match self.get_mut() {
-            Io::Write(io) => Pin::new(io).poll_close(cx),
-            Io::WriteSeek(io) => Pin::new(io).poll_close(cx),
-            Io::ReadWrite(io) => Pin::new(io).poll_close(cx),
-            Io::ReadWriteSeek(io) => Pin::new(io).poll_close(cx),
-            Io::Read(_) | Io::ReadSeek(_) => Poll::Ready(Ok(())),
-        }
-    }
-}
-
-impl AsyncSeek for Io {
-    fn poll_seek(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        pos: SeekFrom,
-    ) -> Poll<io::Result<u64>> {
-        match self.get_mut() {
-            Io::ReadSeek(io) => Pin::new(io).poll_seek(cx, pos),
-            Io::WriteSeek(io) => Pin::new(io).poll_seek(cx, pos),
-            Io::ReadWriteSeek(io) => Pin::new(io).poll_seek(cx, pos),
-            Io::Read(_) | Io::Write(_) | Io::ReadWrite(_) => {
-                Poll::Ready(Err(io::ErrorKind::Unsupported.into()))
-            }
-        }
+        self.narrow(IoCaps::READ | IoCaps::WRITE | IoCaps::SEEK, true)
+            .map(|io| io as Box<dyn ReadWriteSeek>)
     }
 }
 
@@ -623,18 +733,24 @@ impl fmt::Debug for ByteHandle {
     }
 }
 
-/// Serves an unread prefix before `inner`.
-pub(crate) struct Prefixed<B> {
+/// Serves an unread prefix before a stream.
+///
+/// On a seekable stream, writes and seeks first move the stream back over the unread prefix
+/// and drop it, so they land at the logical position. On one that cannot seek, the prefix
+/// belongs to the read side and writes pass through.
+pub(crate) struct Prefixed {
     prefix: Vec<u8>,
     pos: usize,
-    inner: B,
+    caps: IoCaps,
+    inner: Box<dyn ByteStream>,
 }
 
-impl<B> Prefixed<B> {
-    pub(crate) fn new(inner: B, prefix: Vec<u8>) -> Self {
+impl Prefixed {
+    pub(crate) fn new(inner: Box<dyn ByteStream>, caps: IoCaps, prefix: Vec<u8>) -> Self {
         Self {
             prefix,
             pos: 0,
+            caps,
             inner,
         }
     }
@@ -647,11 +763,12 @@ impl<B> Prefixed<B> {
         self.prefix = Vec::new();
         self.pos = 0;
     }
-}
 
-impl<B: AsyncSeek + Unpin> Prefixed<B> {
-    /// Moves the underlying position back over the unread prefix and drops it.
+    /// Moves a seekable stream back over the unread prefix and drops it.
     fn poll_realign(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if !self.caps.contains(IoCaps::SEEK) {
+            return Poll::Ready(Ok(()));
+        }
         if self.unread() > 0 {
             let back = -i64::try_from(self.unread()).map_err(io::Error::other)?;
             ready!(Pin::new(&mut self.inner).poll_seek(cx, SeekFrom::Current(back)))?;
@@ -661,7 +778,7 @@ impl<B: AsyncSeek + Unpin> Prefixed<B> {
     }
 }
 
-impl<B: AsyncRead + Unpin> AsyncRead for Prefixed<B> {
+impl AsyncRead for Prefixed {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -682,7 +799,7 @@ impl<B: AsyncRead + Unpin> AsyncRead for Prefixed<B> {
     }
 }
 
-impl<B: AsyncSeek + Unpin> AsyncSeek for Prefixed<B> {
+impl AsyncSeek for Prefixed {
     fn poll_seek(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -707,70 +824,7 @@ impl<B: AsyncSeek + Unpin> AsyncSeek for Prefixed<B> {
     }
 }
 
-impl AsyncWrite for Prefixed<Box<dyn ReadWrite>> {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.get_mut().inner).poll_write(cx, buf)
-    }
-
-    fn poll_write_vectored(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[IoSlice<'_>],
-    ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.get_mut().inner).poll_write_vectored(cx, bufs)
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
-    }
-
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().inner).poll_close(cx)
-    }
-}
-
-/// Realigns a seekable handle before writing, so writes land at the logical position. On
-/// one that cannot seek, the prefix belongs to the read side and writes pass through.
-impl AsyncWrite for Prefixed<Io> {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        let this = self.get_mut();
-        if this.inner.caps().contains(IoCaps::SEEK) {
-            ready!(this.poll_realign(cx))?;
-        }
-        Pin::new(&mut this.inner).poll_write(cx, buf)
-    }
-
-    fn poll_write_vectored(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[IoSlice<'_>],
-    ) -> Poll<io::Result<usize>> {
-        let this = self.get_mut();
-        if this.inner.caps().contains(IoCaps::SEEK) {
-            ready!(this.poll_realign(cx))?;
-        }
-        Pin::new(&mut this.inner).poll_write_vectored(cx, bufs)
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
-    }
-
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().inner).poll_close(cx)
-    }
-}
-
-/// Realigns before writing, so writes land at the logical position.
-impl AsyncWrite for Prefixed<Box<dyn ReadWriteSeek>> {
+impl AsyncWrite for Prefixed {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -799,3 +853,16 @@ impl AsyncWrite for Prefixed<Box<dyn ReadWriteSeek>> {
         Pin::new(&mut self.get_mut().inner).poll_close(cx)
     }
 }
+
+/// A fork starts at an absolute offset, so the prefix doesn't matter.
+impl AsyncFork for Prefixed {
+    fn poll_fork(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        offset: u64,
+    ) -> Poll<io::Result<ByteHandle>> {
+        Pin::new(&mut self.get_mut().inner).poll_fork(cx, offset)
+    }
+}
+
+impl ByteStream for Prefixed {}

@@ -1,0 +1,137 @@
+import test:
+  - assert_eq
+  - assert_throws
+  - test
+
+import fs:
+  - open
+  - remove
+  - write
+
+import io:
+  - Cursor
+
+import digest
+
+import testlib.vfs:
+  - vfs
+import std:
+  - StateError
+  - UnsupportedError
+
+# Distinct bytes at every offset, longer than a file buffer.
+def numbered()
+  "".join ((0..20000).map(do |i| "$i\n"))
+
+#[test]
+#[vfs]
+def cursors_read_windows_concurrently()
+  let path = "test_fs_cursor_windows.bin"
+  write $path $numbered()
+  let data = open $path do |file| file.read_all()
+  let chunk = (data.len // 4)
+  for buffer = [true, false]
+    open $path buffer: $buffer do |file|
+      let strands = []
+      for i = 0..4
+        let start = (i * chunk)
+        let c = Cursor $file (start..(start + chunk))
+        let s = spawn do
+          digest.sha256 $c
+        strands.push $s
+      # The cursors' reads and the file's own interleave.
+      assert_eq (file.read 6) $data[..6]
+      assert_eq (file.seek start: 100) 100
+      assert_eq (file.read 4) $data[100..104]
+      for i s = strands.enumerate()
+        let start = (i * chunk)
+        assert_eq (s.join()) (digest.sha256 data[start..(start + chunk)])
+      assert_eq (file.read 4) $data[104..108]
+  remove $path
+
+#[test]
+#[vfs]
+def cursor_leaves_file_position()
+  let path = "test_fs_cursor_position.bin"
+  write $path b"abcdefgh"
+  for buffer = [true, false]
+    open $path buffer: $buffer do |file|
+      assert_eq (file.read 2) b"ab"
+      let c = Cursor $file (4..)
+      assert_eq (c.read 2) b"ef"
+      assert_eq (file.read 2) b"cd"
+      assert_eq (c.read_all()) b"gh"
+      assert_eq (file.tell()) 4
+  remove $path
+
+#[test]
+#[vfs]
+def cursor_sees_pending_writes()
+  let path = "test_fs_cursor_pending.bin"
+  open $path "w+" do |file|
+    file.write "hello"
+    let c = Cursor $file
+    assert_eq (c.read_all()) b"hello"
+    assert_eq (file.tell()) 5
+  remove $path
+
+#[test]
+#[vfs]
+def cursor_writes_file()
+  let path = "test_fs_cursor_write.bin"
+  for buffer = [true, false]
+    write $path b"abcdef"
+    open $path "r+" buffer: $buffer do |file|
+      let c = Cursor $file (2..4)
+      assert_eq (c.write "XYZ") 2
+      assert_eq (file.read_all()) b"abXYef"
+  remove $path
+
+#[test]
+#[vfs]
+def seekable_files_fork()
+  let path = "test_fs_cursor_forkable.bin"
+  write $path b"abc"
+  for buffer = [true, false]
+    for mode forkable = [("r", true), ("r+", true), ("w", true), ("a", false), ("a+", false)]
+      let file = open $path $mode buffer: $buffer
+      assert_eq $file.forkable $forkable
+      if (file.seekable && file.readable)
+        let c = Cursor $file
+        assert_eq $c.forkable false
+      file.close()
+      assert_eq $file.forkable false
+  remove $path
+
+#[test]
+#[vfs]
+def fork_has_its_own_position()
+  let path = "test_fs_cursor_fork.bin"
+  for buffer = [true, false]
+    write $path b"abcdefgh"
+    open $path "r+" buffer: $buffer do |file|
+      assert_eq (file.read 2) b"ab"
+      let here = file.fork()
+      let there = file.fork 6
+      assert_eq (there.read 2) b"gh"
+      assert_eq (here.read 2) b"cd"
+      assert_eq (file.read 2) b"cd"
+      file.write "XY"
+      let later = file.fork 4
+      assert_eq (later.read 2) b"XY"
+      later.close()
+      here.close()
+      there.close()
+      assert_eq (file.read 2) b"gh"
+  remove $path
+
+#[test]
+#[vfs]
+def append_file_does_not_fork()
+  let path = "test_fs_cursor_no_fork.bin"
+  open $path "a" do |file|
+    assert_throws $UnsupportedError do file.fork()
+  open $path "r" do |file|
+    file.close()
+    assert_throws $StateError do file.fork()
+  remove $path

@@ -2,6 +2,7 @@ import std: error
 import io:
   - Io
   - Buffered
+  - Cursor
 import strand:
   - channel
 import regression2:
@@ -183,3 +184,34 @@ class Echo: Io
     nil
 
 assert_eq (byte_duplex (Echo()) b"ping") b"ping"
+
+# A forkable Do stream gives each cursor over it a position of its own
+class ForkIo: MemIo
+  #[getter]
+  pub def forkable _self
+    true
+
+  pub def fork self offset = nil
+    let fork = ForkIo $self.data
+    fork.pos = if (offset == nil)
+      self.pos
+    else
+      offset
+    fork
+
+let source = ForkIo b"0123456789"
+source.seek start: 1
+let low = Cursor $source (2..5)
+let high = Cursor $source (6..)
+assert_eq $high.read(2) b"67"
+assert_eq $low.read(10) b"234"
+assert_eq $high.read_all() b"89"
+assert_eq $source.pos 1
+
+# Claiming to fork without defining `fork` fails the consumer
+class NoFork: MemIo
+  #[getter]
+  pub def forkable _self
+    true
+
+assert_throws $error.RuntimeError do Cursor (NoFork b"abc")

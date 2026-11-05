@@ -186,7 +186,9 @@ impl<T> Shared<T> {
         }
     }
 
-    fn poll_op<R>(
+    /// Runs `op` on the stream once it is ready for an operation on this handle, as each
+    /// futures-io method does. The handle holds the stream until `op` is ready.
+    pub fn poll_op<R>(
         &mut self,
         cx: &mut Context<'_>,
         op: impl FnOnce(Pin<&mut T>, &mut Context<'_>) -> Poll<io::Result<R>>,

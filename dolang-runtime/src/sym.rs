@@ -155,6 +155,8 @@ well_known_symbols! {
     (Reverse, "reverse", REVERSE),
     (Seek, "seek", SEEK),
     (Seekable, "seekable", SEEKABLE),
+    (Forkable, "forkable", FORKABLE),
+    (Fork, "fork", FORK),
     (Set, "set", SET),
     (Skip, "skip", SKIP),
     (Split, "split", SPLIT),

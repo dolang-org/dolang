@@ -28,7 +28,7 @@ use crate::{
     BYTE_STREAM_CHUNK_SIZE,
     arg::Args,
     error::{Error, ErrorKind, Result},
-    io::{ByteHandle, ByteIo, IntoByteIo, Io, IoCaps, IoResultExt as _, Prefixed, Shared},
+    io::{ByteHandle, ByteIo, IntoByteIo, IoCaps, IoResultExt as _, Prefixed, Shared},
     object::{
         interface::Request,
         native::{Instance, Mut, Object, Type, TypeBuilder},
@@ -225,7 +225,7 @@ enum Kind {
     Memory(Memory),
     Stream {
         /// The window, until the cursor is closed.
-        io: Option<Shared<Window<Prefixed<Io>>>>,
+        io: Option<Shared<Window<Prefixed>>>,
         caps: IoCaps,
     },
 }
@@ -259,7 +259,7 @@ impl Cursor {
     async fn lock<'v, 's>(
         &mut self,
         strand: &mut Strand<'v, 's>,
-    ) -> Result<'v, 's, Option<Locked<'_, Window<Prefixed<Io>>>>> {
+    ) -> Result<'v, 's, Option<Locked<'_, Window<Prefixed>>>> {
         match &mut self.kind {
             Kind::Memory(_) => Ok(None),
             Kind::Stream { io, .. } => {
@@ -313,7 +313,8 @@ impl<'v> IntoByteIo<'v> for Cursor {
 ///
 /// Each read or write first seeks the stream to the window's position, so the stream's own
 /// position doesn't matter between operations. Another user of the stream must not move
-/// it during one.
+/// it during one. A private stream, such as a [fork](crate::io::AsyncFork) of the
+/// target, has no other user, so it is seeked only when the window's position moves.
 pub(crate) struct Window<B> {
     io: B,
     /// The window's absolute start.
@@ -325,16 +326,20 @@ pub(crate) struct Window<B> {
     /// Whether the stream sits at the position, so an operation that was pending doesn't
     /// seek again.
     aligned: bool,
+    /// Whether nothing else moves the stream, so it stays aligned between operations.
+    private: bool,
 }
 
 impl<B: AsyncSeek + Unpin> Window<B> {
-    fn new(io: B, start: u64, end: Option<u64>) -> Self {
+    /// A private stream must start at the window's start.
+    fn new(io: B, start: u64, end: Option<u64>, private: bool) -> Self {
         Self {
             io,
             start,
             end,
             pos: 0,
-            aligned: false,
+            aligned: private,
+            private,
         }
     }
 
@@ -364,7 +369,7 @@ impl<B: AsyncSeek + Unpin> Window<B> {
             self.aligned = true;
         }
         let res = ready!(op(Pin::new(&mut self.io), cx));
-        self.aligned = false;
+        self.aligned = self.private && res.is_ok();
         if let Ok(n) = res {
             self.pos += n as u64;
         }
@@ -463,6 +468,9 @@ impl<B: AsyncSeek + Unpin> AsyncSeek for Window<B> {
                 "seek position must be non-negative",
             )
         })?;
+        if pos != this.pos {
+            this.aligned = false;
+        }
         this.pos = pos;
         Poll::Ready(Ok(pos))
     }
@@ -583,7 +591,7 @@ impl<'v> Object<'v> for Cursor {
             }),
             None => {
                 let need = IoCaps::READ | IoCaps::SEEK;
-                let handle = crate::io::get(strand, &target, |strand, caps| {
+                let mut handle = crate::io::get(strand, &target, |strand, caps| {
                     if caps.contains(need) {
                         Ok(())
                     } else {
@@ -600,14 +608,16 @@ impl<'v> Object<'v> for Cursor {
                         err
                     }
                 })?;
-                let ByteHandle { io, prefix } = handle;
+                // A fork has a position of its own, so the cursor doesn't move the target's.
+                let (handle, private) = if handle.caps().contains(IoCaps::FORK) {
+                    (handle.fork(start).await.into_do_io(strand)?, true)
+                } else {
+                    (handle, false)
+                };
+                let (io, caps) = handle.into_prefixed();
                 Kind::Stream {
-                    caps: io.caps(),
-                    io: Some(Shared::new(Window::new(
-                        Prefixed::new(io, prefix),
-                        start,
-                        end,
-                    ))),
+                    caps,
+                    io: Some(Shared::new(Window::new(io, start, end, private))),
                 }
             }
         };
@@ -744,7 +754,7 @@ mod tests {
     fn bounded_window_cuts_reads_and_writes() {
         block_on(async {
             let mut io = Cursor::new(b"0123456789".to_vec());
-            let mut window = Window::new(&mut io, 2, Some(6));
+            let mut window = Window::new(&mut io, 2, Some(6), false);
             let mut buf = [0; 8];
             assert_eq!(window.read(&mut buf).await.unwrap(), 4);
             assert_eq!(&buf[..4], b"2345");
@@ -763,13 +773,33 @@ mod tests {
     fn open_window_seeks_from_stream_end() {
         block_on(async {
             let mut io = Cursor::new(b"0123456789".to_vec());
-            let mut window = Window::new(&mut io, 7, None);
+            let mut window = Window::new(&mut io, 7, None, false);
             assert_eq!(window.seek(SeekFrom::End(0)).await.unwrap(), 3);
             window.write_all(b"abc").await.unwrap();
             window.seek(SeekFrom::Start(0)).await.unwrap();
             let mut got = Vec::new();
             window.read_to_end(&mut got).await.unwrap();
             assert_eq!(got, b"789abc");
+        });
+    }
+
+    #[test]
+    fn private_window_seeks_only_when_moved() {
+        block_on(async {
+            let mut io = Cursor::new(b"0123456789".to_vec());
+            io.set_position(2);
+            let mut window = Window::new(&mut io, 2, Some(8), true);
+            let mut buf = [0; 2];
+            window.read_exact(&mut buf).await.unwrap();
+            assert_eq!(&buf, b"23");
+            window.write_all(b"ab").await.unwrap();
+            assert_eq!(window.seek(SeekFrom::Current(-3)).await.unwrap(), 1);
+            window.read_exact(&mut buf).await.unwrap();
+            assert_eq!(&buf, b"3a");
+            assert_eq!(window.seek(SeekFrom::Current(0)).await.unwrap(), 3);
+            window.read_exact(&mut buf).await.unwrap();
+            assert_eq!(&buf, b"b6");
+            assert_eq!(io.get_ref(), b"0123ab6789");
         });
     }
 }

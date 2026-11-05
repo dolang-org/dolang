@@ -5,7 +5,8 @@
 //! offset and drive it to completion, and where to store the position, which
 //! every clone of a file shares. Everything else about the cursor lives here:
 //! seek resolution, read-ahead, and the rule that one operation is in flight
-//! at a time.
+//! at a time. The same logic serves a [`Cursor`], which keeps a position of
+//! its own.
 //!
 //! Operations are per clone. Clones moving the one cursor at once are not
 //! serialized, as with file descriptors: each operation reads the position
@@ -91,12 +92,12 @@ type Body = Either<direct::Body, client::Body>;
 type Write = Either<direct::WriteOp, client::WriteOp>;
 type SizeOp = Either<direct::SizeOp, client::SizeOp>;
 
-/// One clone's state for the cursor-based traits, allocated on first use.
+/// One clone's or [`Cursor`]'s state for the cursor-based traits.
 ///
 /// The position advances only as bytes are delivered, so read-ahead can simply
 /// be dropped on a seek.
 #[derive(Default)]
-pub(super) struct Cursor {
+pub(super) struct CursorState {
     op: Op,
     /// Buffer recycled across reads and writes by backends that copy, so
     /// streaming does not allocate per call.
@@ -132,7 +133,7 @@ enum Op {
     Size(SizeOp, i64),
 }
 
-impl fmt::Debug for Cursor {
+impl fmt::Debug for CursorState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let op = match self.op {
             Op::Idle => "idle",
@@ -141,13 +142,13 @@ impl fmt::Debug for Cursor {
             Op::Write { .. } => "write",
             Op::Size(..) => "size",
         };
-        f.debug_struct("Cursor")
+        f.debug_struct("CursorState")
             .field("op", &op)
             .finish_non_exhaustive()
     }
 }
 
-impl Cursor {
+impl CursorState {
     /// Drops unread read-ahead, keeping its buffer.
     fn drop_body(&mut self) {
         if !matches!(self.op, Op::Body { .. }) {
@@ -258,7 +259,7 @@ impl FileInner {
 }
 
 impl File {
-    fn parts(&mut self) -> (&FileInner, &mut Cursor) {
+    fn parts(&mut self) -> (&FileInner, &mut CursorState) {
         (&self.inner, self.cursor.get_or_insert_default())
     }
 
@@ -280,6 +281,217 @@ impl File {
     }
 }
 
+/// Reads at `pos` into uninitialized storage, as [`File::poll_read_uninit`].
+fn poll_read_uninit(
+    inner: &FileInner,
+    pos: &AtomicU64,
+    cursor: &mut CursorState,
+    cx: &mut Context<'_>,
+    buf: &mut [MaybeUninit<u8>],
+) -> Poll<io::Result<usize>> {
+    if buf.is_empty() {
+        return Poll::Ready(Ok(0));
+    }
+    loop {
+        match &mut cursor.op {
+            Op::Body { at, .. } if pos.load(Ordering::Relaxed) != *at => cursor.drop_body(),
+            Op::Body {
+                body,
+                at,
+                delivered,
+            } => {
+                let read = match ready!(body.poll_read_uninit(cx, buf)) {
+                    Ok(read) => read,
+                    Err(error) => {
+                        cursor.drop_body();
+                        return Poll::Ready(Err(error));
+                    }
+                };
+                if read > 0 {
+                    *delivered = true;
+                    *at += read as u64;
+                    pos.store(*at, Ordering::Relaxed);
+                    return Poll::Ready(Ok(read));
+                }
+                let end_of_file = !*delivered;
+                cursor.drop_body();
+                if end_of_file {
+                    return Poll::Ready(Ok(0));
+                }
+            }
+            Op::Read(op, at) => {
+                let at = *at;
+                let result = ready!(poll_read_op(op, cx));
+                cursor.op = Op::Idle;
+                cursor.op = Op::Body {
+                    body: result?,
+                    at,
+                    delivered: false,
+                };
+            }
+            Op::Idle => {
+                let at = pos.load(Ordering::Relaxed);
+                let op = inner.start_read(at, buf.len(), &mut cursor.scratch)?;
+                cursor.op = Op::Read(op, at);
+            }
+            _ => return Poll::Ready(Err(in_progress("read polled"))),
+        }
+    }
+}
+
+/// Writes at `pos`, as [`AsyncWrite::poll_write`].
+fn poll_write(
+    inner: &FileInner,
+    pos: &AtomicU64,
+    cursor: &mut CursorState,
+    cx: &mut Context<'_>,
+    buf: &[u8],
+) -> Poll<io::Result<usize>> {
+    if buf.is_empty() {
+        return Poll::Ready(Ok(0));
+    }
+    loop {
+        match &mut cursor.op {
+            // A write invalidates whatever was read ahead of it.
+            Op::Body { .. } => cursor.drop_body(),
+            Op::Idle => {
+                let (op, target) = inner.start_write(
+                    pos.load(Ordering::Relaxed),
+                    buf.len(),
+                    &mut cursor.scratch,
+                )?;
+                cursor.op = Op::Write {
+                    op,
+                    target,
+                    sent: 0,
+                    reported: 0,
+                };
+            }
+            Op::Write {
+                op,
+                target,
+                sent,
+                reported,
+            } => {
+                if *sent < *target {
+                    let chunk = &buf[..buf.len().min(*target - *sent)];
+                    let sent_now = match ready!(op.poll_send(cx, chunk)) {
+                        Ok(0) => Err(io::ErrorKind::WriteZero.into()),
+                        result => result,
+                    };
+                    let sent_now = match sent_now {
+                        Ok(sent_now) => sent_now,
+                        Err(error) => {
+                            cursor.end_write();
+                            return Poll::Ready(Err(error));
+                        }
+                    };
+                    *sent += sent_now;
+                    if *sent < *target {
+                        *reported += sent_now;
+                        return Poll::Ready(Ok(sent_now));
+                    }
+                }
+                let result = ready!(op.poll_finish(cx));
+                let reported = *reported;
+                cursor.end_write();
+                let (written, end) = result?;
+                pos.store(end, Ordering::Relaxed);
+                return Poll::Ready(written.checked_sub(reported).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "file write acknowledged fewer bytes than were accepted",
+                    )
+                }));
+            }
+            _ => return Poll::Ready(Err(in_progress("write polled"))),
+        }
+    }
+}
+
+/// Settles work in flight, as [`AsyncWrite::poll_flush`]. Each write reaches
+/// the file when it completes, so there is nothing buffered to push.
+fn poll_flush(
+    pos: &AtomicU64,
+    cursor: &mut CursorState,
+    cx: &mut Context<'_>,
+) -> Poll<io::Result<()>> {
+    match &mut cursor.op {
+        Op::Idle | Op::Body { .. } => Poll::Ready(Ok(())),
+        Op::Read(op, at) => {
+            let at = *at;
+            let result = ready!(poll_read_op(op, cx));
+            cursor.op = Op::Idle;
+            cursor.op = Op::Body {
+                body: result?,
+                at,
+                delivered: false,
+            };
+            Poll::Ready(Ok(()))
+        }
+        Op::Write { op, .. } => {
+            let result = ready!(op.poll_finish(cx));
+            cursor.end_write();
+            let (_, end) = result?;
+            pos.store(end, Ordering::Relaxed);
+            Poll::Ready(Ok(()))
+        }
+        Op::Size(op, delta) => {
+            let delta = *delta;
+            let result = ready!(Pin::new(op).poll(cx));
+            cursor.op = Op::Idle;
+            let end = offset_delta(result?, delta)?;
+            pos.store(end, Ordering::Relaxed);
+            Poll::Ready(Ok(()))
+        }
+    }
+}
+
+/// Moves `pos`, as [`AsyncSeek::poll_seek`]. An end-relative seek has to ask
+/// for the file's length, so it may be pending; polling again with the same
+/// `position` drives that query.
+fn poll_seek(
+    inner: &FileInner,
+    pos: &AtomicU64,
+    cursor: &mut CursorState,
+    cx: &mut Context<'_>,
+    position: io::SeekFrom,
+) -> Poll<io::Result<u64>> {
+    loop {
+        match (&mut cursor.op, position) {
+            (Op::Size(op, delta), io::SeekFrom::End(requested)) if *delta == requested => {
+                let result = ready!(Pin::new(op).poll(cx));
+                cursor.op = Op::Idle;
+                pos.store(offset_delta(result?, requested)?, Ordering::Relaxed);
+                return Poll::Ready(Ok(pos.load(Ordering::Relaxed)));
+            }
+            _ => cursor.drop_body(),
+        }
+        if cursor.is_busy() {
+            return Poll::Ready(Err(in_progress("seek started")));
+        }
+        match position {
+            // Both of these resolve locally: no syscall, and for the remote
+            // backend no round trip either.
+            io::SeekFrom::Start(offset) => pos.store(offset, Ordering::Relaxed),
+            io::SeekFrom::Current(delta) => {
+                pos.store(
+                    offset_delta(pos.load(Ordering::Relaxed), delta)?,
+                    Ordering::Relaxed,
+                );
+            }
+            // Only an end-relative seek needs the file's current length,
+            // and that answer is stale the moment it is produced — as it
+            // is for `lseek(SEEK_END)` too.
+            io::SeekFrom::End(delta) => {
+                cursor.op = Op::Size(inner.start_size()?, delta);
+                continue;
+            }
+        }
+        return Poll::Ready(Ok(pos.load(Ordering::Relaxed)));
+    }
+}
+
 impl File {
     /// Reads at the cursor into uninitialized storage, returning how many
     /// bytes at its front were filled. Zero means end of file, unless `buf`
@@ -293,57 +505,25 @@ impl File {
         cx: &mut Context<'_>,
         buf: &mut [MaybeUninit<u8>],
     ) -> Poll<io::Result<usize>> {
-        if buf.is_empty() {
-            return Poll::Ready(Ok(0));
-        }
         let (inner, cursor) = self.parts();
-        let pos = inner.position();
-        loop {
-            match &mut cursor.op {
-                Op::Body { at, .. } if pos.load(Ordering::Relaxed) != *at => cursor.drop_body(),
-                Op::Body {
-                    body,
-                    at,
-                    delivered,
-                } => {
-                    let read = match ready!(body.poll_read_uninit(cx, buf)) {
-                        Ok(read) => read,
-                        Err(error) => {
-                            cursor.drop_body();
-                            return Poll::Ready(Err(error));
-                        }
-                    };
-                    if read > 0 {
-                        *delivered = true;
-                        *at += read as u64;
-                        pos.store(*at, Ordering::Relaxed);
-                        return Poll::Ready(Ok(read));
-                    }
-                    let end_of_file = !*delivered;
-                    cursor.drop_body();
-                    if end_of_file {
-                        return Poll::Ready(Ok(0));
-                    }
-                }
-                Op::Read(op, at) => {
-                    let at = *at;
-                    let result = ready!(poll_read_op(op, cx));
-                    cursor.op = Op::Idle;
-                    cursor.op = Op::Body {
-                        body: result?,
-                        at,
-                        delivered: false,
-                    };
-                }
-                Op::Idle => {
-                    let at = pos.load(Ordering::Relaxed);
-                    let op = inner.start_read(at, buf.len(), &mut cursor.scratch)?;
-                    cursor.op = Op::Read(op, at);
-                }
-                _ => return Poll::Ready(Err(in_progress("read polled"))),
-            }
+        poll_read_uninit(inner, inner.position(), cursor, cx, buf)
+    }
+
+    /// Creates a [`Cursor`] over the file, starting at `offset`.
+    pub fn cursor(&self, offset: u64) -> Cursor {
+        Cursor {
+            inner: self.inner.clone(),
+            pos: AtomicU64::new(offset),
+            state: CursorState::default(),
         }
     }
+}
+
+/// Casts an initialized buffer for [`poll_read_uninit`].
+fn uninit(buf: &mut [u8]) -> &mut [MaybeUninit<u8>] {
+    // SAFETY: `poll_read_uninit` only writes initialized bytes, so `buf`
+    // stays initialized.
+    unsafe { &mut *(buf as *mut [u8] as *mut [MaybeUninit<u8>]) }
 }
 
 impl AsyncRead for File {
@@ -352,10 +532,7 @@ impl AsyncRead for File {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        // SAFETY: `poll_read_uninit` only writes initialized bytes, so `buf`
-        // stays initialized.
-        let buf = unsafe { &mut *(buf as *mut [u8] as *mut [MaybeUninit<u8>]) };
-        self.get_mut().poll_read_uninit(cx, buf)
+        self.get_mut().poll_read_uninit(cx, uninit(buf))
     }
 }
 
@@ -365,102 +542,13 @@ impl AsyncWrite for File {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        if buf.is_empty() {
-            return Poll::Ready(Ok(0));
-        }
         let (inner, cursor) = self.get_mut().parts();
-        loop {
-            match &mut cursor.op {
-                // A write invalidates whatever was read ahead of it.
-                Op::Body { .. } => cursor.drop_body(),
-                Op::Idle => {
-                    let (op, target) = inner.start_write(
-                        inner.position().load(Ordering::Relaxed),
-                        buf.len(),
-                        &mut cursor.scratch,
-                    )?;
-                    cursor.op = Op::Write {
-                        op,
-                        target,
-                        sent: 0,
-                        reported: 0,
-                    };
-                }
-                Op::Write {
-                    op,
-                    target,
-                    sent,
-                    reported,
-                } => {
-                    if *sent < *target {
-                        let chunk = &buf[..buf.len().min(*target - *sent)];
-                        let sent_now = match ready!(op.poll_send(cx, chunk)) {
-                            Ok(0) => Err(io::ErrorKind::WriteZero.into()),
-                            result => result,
-                        };
-                        let sent_now = match sent_now {
-                            Ok(sent_now) => sent_now,
-                            Err(error) => {
-                                cursor.end_write();
-                                return Poll::Ready(Err(error));
-                            }
-                        };
-                        *sent += sent_now;
-                        if *sent < *target {
-                            *reported += sent_now;
-                            return Poll::Ready(Ok(sent_now));
-                        }
-                    }
-                    let result = ready!(op.poll_finish(cx));
-                    let reported = *reported;
-                    cursor.end_write();
-                    let (written, end) = result?;
-                    inner.position().store(end, Ordering::Relaxed);
-                    return Poll::Ready(written.checked_sub(reported).ok_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "file write acknowledged fewer bytes than were accepted",
-                        )
-                    }));
-                }
-                _ => return Poll::Ready(Err(in_progress("write polled"))),
-            }
-        }
+        poll_write(inner, inner.position(), cursor, cx, buf)
     }
 
-    /// Each write reaches the file when it completes, so there is nothing
-    /// buffered to push; flushing only has to settle work in flight.
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         let (inner, cursor) = self.get_mut().parts();
-        match &mut cursor.op {
-            Op::Idle | Op::Body { .. } => Poll::Ready(Ok(())),
-            Op::Read(op, at) => {
-                let at = *at;
-                let result = ready!(poll_read_op(op, cx));
-                cursor.op = Op::Idle;
-                cursor.op = Op::Body {
-                    body: result?,
-                    at,
-                    delivered: false,
-                };
-                Poll::Ready(Ok(()))
-            }
-            Op::Write { op, .. } => {
-                let result = ready!(op.poll_finish(cx));
-                cursor.end_write();
-                let (_, end) = result?;
-                inner.position().store(end, Ordering::Relaxed);
-                Poll::Ready(Ok(()))
-            }
-            Op::Size(op, delta) => {
-                let delta = *delta;
-                let result = ready!(Pin::new(op).poll(cx));
-                cursor.op = Op::Idle;
-                let end = offset_delta(result?, delta)?;
-                inner.position().store(end, Ordering::Relaxed);
-                Poll::Ready(Ok(()))
-            }
-        }
+        poll_flush(inner.position(), cursor, cx)
     }
 
     /// Only flushes: the file is closed by [`File::close`], or when dropped.
@@ -470,47 +558,86 @@ impl AsyncWrite for File {
 }
 
 impl AsyncSeek for File {
-    /// An end-relative seek has to ask for the file's length, so it may be
-    /// pending; polling again with the same `position` drives that query.
     fn poll_seek(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         position: io::SeekFrom,
     ) -> Poll<io::Result<u64>> {
         let (inner, cursor) = self.get_mut().parts();
-        let pos = inner.position();
-        loop {
-            match (&mut cursor.op, position) {
-                (Op::Size(op, delta), io::SeekFrom::End(requested)) if *delta == requested => {
-                    let result = ready!(Pin::new(op).poll(cx));
-                    cursor.op = Op::Idle;
-                    pos.store(offset_delta(result?, requested)?, Ordering::Relaxed);
-                    return Poll::Ready(Ok(pos.load(Ordering::Relaxed)));
-                }
-                _ => cursor.drop_body(),
-            }
-            if cursor.is_busy() {
-                return Poll::Ready(Err(in_progress("seek started")));
-            }
-            match position {
-                // Both of these resolve locally: no syscall, and for the remote
-                // backend no round trip either.
-                io::SeekFrom::Start(offset) => pos.store(offset, Ordering::Relaxed),
-                io::SeekFrom::Current(delta) => {
-                    pos.store(
-                        offset_delta(pos.load(Ordering::Relaxed), delta)?,
-                        Ordering::Relaxed,
-                    );
-                }
-                // Only an end-relative seek needs the file's current length,
-                // and that answer is stale the moment it is produced — as it
-                // is for `lseek(SEEK_END)` too.
-                io::SeekFrom::End(delta) => {
-                    cursor.op = Op::Size(inner.start_size()?, delta);
-                    continue;
-                }
-            }
-            return Poll::Ready(Ok(pos.load(Ordering::Relaxed)));
-        }
+        poll_seek(inner, inner.position(), cursor, cx, position)
+    }
+}
+
+/// A stream over an open [`File`] with a position of its own.
+///
+/// It reads, writes and seeks like the file, but moving it moves no other
+/// handle, and moving the file or its clones leaves it alone. Cursors and the
+/// file may be used at once, each operation landing where its own position
+/// says; operations on the same region are not ordered with respect to each
+/// other.
+///
+/// It shares the open file, so closing or handing off the file through any
+/// clone ends it too: its later operations fail with
+/// [`ErrorKind::Closed`](crate::error::ErrorKind::Closed). It cannot itself be
+/// closed or handed off. On a file opened for appending, its writes land at
+/// the end, as the file's do.
+#[derive(Debug)]
+pub struct Cursor {
+    inner: FileInner,
+    pos: AtomicU64,
+    state: CursorState,
+}
+
+impl Cursor {
+    /// Reads at the position into uninitialized storage, as
+    /// [`File::poll_read_uninit`] does.
+    pub fn poll_read_uninit(
+        &mut self,
+        cx: &mut Context<'_>,
+        buf: &mut [MaybeUninit<u8>],
+    ) -> Poll<io::Result<usize>> {
+        poll_read_uninit(&self.inner, &self.pos, &mut self.state, cx, buf)
+    }
+}
+
+impl AsyncRead for Cursor {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        self.get_mut().poll_read_uninit(cx, uninit(buf))
+    }
+}
+
+impl AsyncWrite for Cursor {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        poll_write(&this.inner, &this.pos, &mut this.state, cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        poll_flush(&this.pos, &mut this.state, cx)
+    }
+
+    /// Only flushes: the file is closed through [`File::close`].
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.poll_flush(cx)
+    }
+}
+
+impl AsyncSeek for Cursor {
+    fn poll_seek(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        position: io::SeekFrom,
+    ) -> Poll<io::Result<u64>> {
+        let this = self.get_mut();
+        poll_seek(&this.inner, &this.pos, &mut this.state, cx, position)
     }
 }
