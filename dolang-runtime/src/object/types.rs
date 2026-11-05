@@ -11,8 +11,8 @@ use crate::{
     object::{
         BoundMethod, class,
         protocol::{
-            Inspect, Protocol, Recv, instance_get_fallback, members, recv_special_mcall,
-            type_mcall_fallback, value_members,
+            Inspect, Protocol, Recv, abstract_call, abstract_init, instance_get_fallback, members,
+            recv_special_mcall, type_mcall_fallback, value_members,
         },
     },
     strand::Strand,
@@ -82,13 +82,40 @@ impl<'v> Protocol<'v> for Value {
         crate::fmt!(strand, w, "<type Value>")
     }
 
+    fn op_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        if field.tag() == sym::INIT_METHOD && this.delegator().is_none() {
+            BoundMethod::create(strand, &this, field, out);
+            Ok(())
+        } else {
+            instance_get_fallback(strand, &this, field, out)
+        }
+    }
+
+    async fn op_mcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        match method.tag() {
+            sym::INIT_METHOD if this.delegator().is_none() => abstract_init(strand, &this, args),
+            _ => recv_special_mcall(strand, &this, method, args, out).await,
+        }
+    }
+
     async fn op_call<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         _args: Args<'v, 'a>,
         _out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::type_error(strand, "Value is not instantiable"))
+        Err(abstract_call(strand, "Value"))
     }
 }
 
@@ -176,7 +203,22 @@ impl<'v> Protocol<'v> for Type {
                     None => receiver.op_call(strand, trailing, out).await,
                 }
             }
+            sym::INIT_METHOD if this.delegator().is_none() => abstract_init(strand, &this, args),
             _ => recv_special_mcall(strand, &this, method, args, out).await,
+        }
+    }
+
+    fn op_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        if field.tag() == sym::INIT_METHOD && this.delegator().is_none() {
+            BoundMethod::create(strand, &this, field, out);
+            Ok(())
+        } else {
+            instance_get_fallback(strand, &this, field, out)
         }
     }
 
@@ -186,7 +228,7 @@ impl<'v> Protocol<'v> for Type {
         _args: Args<'v, 'a>,
         _out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::type_error(strand, "Type is not instantiable"))
+        Err(abstract_call(strand, "Type"))
     }
 }
 

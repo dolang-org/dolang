@@ -7,8 +7,8 @@ use crate::{
     object::{
         BoundMethod,
         protocol::{
-            Inspect, Member, Protocol, Recv, instance_get_fallback, instance_mcall_fallback,
-            members, type_mcall_fallback,
+            Inspect, Member, Protocol, Recv, abstract_call, abstract_init, instance_get_fallback,
+            instance_mcall_fallback, members, type_mcall_fallback,
         },
     },
     strand::Strand,
@@ -298,7 +298,12 @@ impl<'v> Protocol<'v> for Num {
         field: Sym<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        int_get(strand, &this, field, out)
+        if field.tag() == sym::INIT_METHOD && this.delegator().is_none() {
+            BoundMethod::create(strand, &this, field, out);
+            Ok(())
+        } else {
+            int_get(strand, &this, field, out)
+        }
     }
 
     async fn op_mcall<'a, 's>(
@@ -308,6 +313,18 @@ impl<'v> Protocol<'v> for Num {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        if method.tag() == sym::INIT_METHOD && this.delegator().is_none() {
+            return abstract_init(strand, &this, args);
+        }
         fallback_mcall(strand, &this, method, args, out).await
+    }
+
+    async fn op_call<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _args: Args<'v, 'a>,
+        _out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Err(abstract_call(strand, "std.Num"))
     }
 }

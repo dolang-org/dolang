@@ -45,8 +45,8 @@ use crate::{
         interface::Request,
         iter::{Surface, classify, iter_get, iter_mcall, sink_get, sink_mcall, spread_iter},
         protocol::{
-            Inspect, Protocol, Recv, Spread, SpreadContext, is_special_mcall, members,
-            recv_special_mcall,
+            Inspect, Protocol, Recv, Spread, SpreadContext, abstract_call, abstract_init,
+            is_special_mcall, members, recv_special_mcall,
         },
     },
     strand::Strand,
@@ -176,6 +176,9 @@ impl<'v> Protocol<'v> for Io {
         mut args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        if method.tag() == sym::INIT_METHOD && this.delegator().is_none() {
+            return abstract_init(strand, &this, args);
+        }
         if is_special_mcall(method.tag()) {
             return recv_special_mcall(strand, &this, method, args, out).await;
         }
@@ -190,13 +193,7 @@ impl<'v> Protocol<'v> for Io {
         if let Some(delegator) = this.delegator() {
             args.prepend_self(delegator.dup());
         }
-        match method.tag() {
-            sym::INIT_METHOD => {
-                let ([_self_val], []) = unpack!(strand, args, 1, 0)?;
-                Ok(())
-            }
-            _ => helper_mcall(strand, method, args, out).await,
-        }
+        helper_mcall(strand, method, args, out).await
     }
 
     /// A Do subclass's instance provides [`ByteIo`] by calling its own methods.
@@ -231,6 +228,15 @@ impl<'v> Protocol<'v> for Io {
             return Err(Error::type_error(strand, "sink protocol not supported"));
         };
         put(strand, stream, &item).await
+    }
+
+    async fn op_call<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _args: Args<'v, 'a>,
+        _out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Err(abstract_call(strand, "io.Io"))
     }
 }
 

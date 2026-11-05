@@ -2304,6 +2304,26 @@ impl<'v, 'a, T: AsRecv<'v, 'a>> Dispatch<'v, 'a> for T {
     }
 }
 
+/// The `(init)` of an abstract native type object, which has no representation to
+/// initialize. It accepts an instance and does nothing, so a subclass can chain to it.
+pub(crate) fn abstract_init<'v, 's, T: ?Sized + Protocol<'v>>(
+    strand: &mut Strand<'v, 's>,
+    this: &Recv<'v, '_, T>,
+    args: Args<'v, '_>,
+) -> Result<'v, 's, ()> {
+    let ([instance], []) = unpack!(strand, args, 1, 0)?;
+    let ty = Value::from_object(this.receiver.to_strong());
+    if !instance.is_instance_of(strand, &ty) {
+        return Err(Error::type_error(strand, "invalid type for unbound method"));
+    }
+    Ok(())
+}
+
+/// The error from calling an abstract native type object, named `name`.
+pub(crate) fn abstract_call<'v, 's>(strand: &mut Strand<'v, 's>, name: &str) -> Error<'v, 's> {
+    Error::type_error(strand, format!("{name} is abstract"))
+}
+
 /// Dispatch a type-object method call, converting from explicit-self calling convention to
 /// normal receiver convention.
 ///

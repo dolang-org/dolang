@@ -1,0 +1,104 @@
+import io
+
+# An abstract native type has no representation, so its `(init)` does nothing
+# and a subclass may chain to it. Calling the type itself raises.
+
+class MyError: std.Error
+  def (init) self
+    std.Error.(init) $self
+
+  pub def (str) _self
+    "mine"
+
+class MyNum: std.Num
+  def (init) self
+    std.Num.(init) $self
+
+class MyValue: Value
+  def (init) self
+    Value.(init) $self
+
+class MyFunc: Func
+  def (init) self
+    Func.(init) $self
+
+  pub def (call) _self
+    1
+
+class MyIterable: Iterable
+  def (init) self
+    Iterable.(init) $self
+
+  pub def (iter) _self
+    [1, 2].iter()
+
+class MySinkable: Sinkable
+  def (init) self
+    Sinkable.(init) $self
+
+class MyIter: Iter
+  def (init) self
+    Iter.(init) $self
+
+  pub def (next) _self
+    nil
+
+class MySink: Sink
+  def (init) self
+    Sink.(init) $self
+
+  pub def (put) _self _value
+    nil
+
+class MyIo: io.Io
+  def (init) self
+    io.Io.(init) $self
+
+class MyType: Type
+  def (init) self
+    Type.(init) $self
+
+let my_error = MyError()
+assert_eq (str my_error) "mine"
+let my_num = MyNum()
+assert (type my_num std.Num)
+let my_value = MyValue()
+assert (type my_value MyValue)
+let my_func = MyFunc()
+assert_eq (my_func()) 1
+let my_iterable = MyIterable()
+assert (type my_iterable Iterable)
+let my_sinkable = MySinkable()
+assert (type my_sinkable Sinkable)
+let my_iter = MyIter()
+assert (type my_iter Iter)
+let my_sink = MySink()
+assert (type my_sink Sink)
+let my_io = MyIo()
+assert (type my_io io.Io)
+let my_type = MyType()
+assert (type my_type Type)
+
+assert_throws $std.TypeError str: "type error: std.Error is abstract" do std.Error()
+assert_throws $std.TypeError str: "type error: std.Error is abstract" do std.Error "x"
+assert_throws $std.TypeError str: "type error: std.Num is abstract" do std.Num()
+assert_throws $std.TypeError str: "type error: Value is abstract" do Value()
+assert_throws $std.TypeError str: "type error: Func is abstract" do Func()
+assert_throws $std.TypeError str: "type error: Iterable is abstract" do Iterable()
+assert_throws $std.TypeError str: "type error: Sinkable is abstract" do Sinkable()
+assert_throws $std.TypeError str: "type error: Iter is abstract" do Iter()
+assert_throws $std.TypeError str: "type error: Sink is abstract" do Sink()
+assert_throws $std.TypeError str: "type error: io.Io is abstract" do io.Io()
+assert_throws $std.TypeError str: "type error: Type is abstract" do Type()
+
+# Chaining from a class that doesn't inherit the type is an error
+class NotError
+  def (init) self
+    std.Error.(init) $self
+
+class NotIter
+  def (init) self
+    Iter.(init) $self
+
+assert_throws $std.TypeError str: "type error: invalid type for unbound method" do NotError()
+assert_throws $std.TypeError str: "type error: invalid type for unbound method" do NotIter()

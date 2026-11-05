@@ -1140,8 +1140,8 @@ impl<'v> Protocol<'v> for Type {
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
-            is_abstract: true,
-            is_final: false,
+            is_abstract: false,
+            is_final: true,
             members: &[],
             type_members: members![
                 Method(sym::VERBATIM_METHOD),
@@ -1149,6 +1149,18 @@ impl<'v> Protocol<'v> for Type {
                 Method(sym::DBG_METHOD),
             ],
         })
+    }
+
+    async fn op_call<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _args: Args<'v, 'a>,
+        _out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Err(Error::type_error(
+            strand,
+            "std.ArrayView is not instantiable",
+        ))
     }
 }
 
