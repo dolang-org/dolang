@@ -1,5 +1,5 @@
 use dolang::runtime::{
-    Instance, Object, Output, Result, Strand, object::TypeBuilder, strand::InterruptMask, unpack,
+    Instance, Object, Result, Strand, object::TypeBuilder, strand::InterruptMask, unpack,
 };
 
 use crate::error::ResultExt as _;
@@ -41,19 +41,13 @@ impl<'v> Object<'v> for FileLock {
     type TypeAnnex = ();
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder
-            .get("held", |this, strand, out| {
-                let held = this.borrow(strand)?.lock.is_some();
-                Output::set(strand, out, held);
-                Ok(())
-            })
-            .method("release", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
-                strand
-                    .with_interrupt_mask(InterruptMask::all(), async move |strand| {
-                        FileLock::release(this, strand).await
-                    })
-                    .await
-            })
+        builder.method("release", async move |this, strand, args, _out| {
+            let ([], []) = unpack!(strand, args, 0, 0)?;
+            strand
+                .with_interrupt_mask(InterruptMask::all(), async move |strand| {
+                    FileLock::release(this, strand).await
+                })
+                .await
+        })
     }
 }
