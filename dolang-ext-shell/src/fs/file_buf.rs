@@ -15,7 +15,11 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use dolang::runtime::{BYTE_STREAM_CHUNK_SIZE, Strand, value::BinEmbryo};
+use dolang::runtime::{
+    BYTE_STREAM_CHUNK_SIZE, Strand,
+    io::{AsyncFork, ByteHandle, IoCaps},
+    value::BinEmbryo,
+};
 use dolang_vfs::file::File as VfsFile;
 use futures::io::{AsyncBufRead, AsyncRead, AsyncSeek, AsyncWrite};
 
@@ -27,6 +31,8 @@ pub(crate) const CAPACITY: usize = 8 * 1024;
 /// A buffer over a clone of an open file.
 pub(crate) struct FileBuf {
     file: VfsFile,
+    /// What the file was opened with, for its forks.
+    caps: IoCaps,
     /// Read-ahead unread from `pos`, or pending writes when `writing`.
     buf: Vec<u8>,
     pos: usize,
@@ -53,9 +59,10 @@ pub(crate) async fn read_chunk<'v>(
 }
 
 impl FileBuf {
-    pub(crate) fn new(file: VfsFile) -> Self {
+    pub(crate) fn new(file: VfsFile, caps: IoCaps) -> Self {
         Self {
             file,
+            caps,
             buf: Vec::new(),
             pos: 0,
             writing: false,
@@ -257,6 +264,21 @@ impl FileBuf {
             }
         }
         Poll::Ready(Ok(self.unread()))
+    }
+}
+
+/// Writes out pending writes, then forks the file itself: the fork reads and
+/// writes it directly, without the buffer.
+impl AsyncFork for FileBuf {
+    fn poll_fork(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        offset: u64,
+    ) -> Poll<io::Result<ByteHandle>> {
+        let this = self.get_mut();
+        ready!(this.poll_flush_buf(cx))?;
+        let caps = this.caps - IoCaps::FORK;
+        Poll::Ready(Ok(ByteHandle::with_caps(this.file.cursor(offset), caps)))
     }
 }
 

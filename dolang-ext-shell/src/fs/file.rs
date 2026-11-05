@@ -1,12 +1,14 @@
 use std::{
     io::{self, IoSlice, SeekFrom},
     ops::{Deref, DerefMut},
+    pin::Pin,
+    task::{Context, Poll},
 };
 
 use dolang::runtime::{
     AllocExt, Arg, Args, BYTE_STREAM_CHUNK_SIZE, Error, Instance, Object, Output, Result, Slot,
     State, Strand, Sym, Value, call,
-    io::{ByteHandle, ByteIo, IntoByteIo, IoCaps, Shared},
+    io::{AsyncFork, ByteHandle, ByteIo, IntoByteIo, IoCaps, Shared},
     method,
     object::{Cast, Mut, Ref, Request, TypeBuilder},
     strand::InterruptMask,
@@ -17,7 +19,7 @@ use dolang_util::{shared::Locked, utf8};
 use dolang_vfs::file::{
     CopyDest, CopyMode, File as VfsFile, FileLockBehavior, FileLockMode, FileLockRange, OpenOptions,
 };
-use futures::io::{AsyncSeekExt as _, AsyncWriteExt as _};
+use futures::io::{AsyncRead, AsyncSeek, AsyncSeekExt as _, AsyncWrite, AsyncWriteExt as _};
 
 use dolang_vfs::path as vfs_path;
 
@@ -528,7 +530,7 @@ pub(crate) struct FileAnnex<'v> {
 /// Capabilities of a file opened with `mode`.
 ///
 /// An append-mode file is not seekable as a handle: its writes land at the end
-/// whatever the position.
+/// whatever the position. A seekable one also forks.
 fn mode_caps(mode: &str) -> IoCaps {
     let mut caps = if mode.starts_with('r') {
         IoCaps::READ
@@ -539,7 +541,7 @@ fn mode_caps(mode: &str) -> IoCaps {
         caps |= IoCaps::READ | IoCaps::WRITE;
     }
     if !mode.starts_with('a') {
-        caps |= IoCaps::SEEK;
+        caps |= IoCaps::SEEK | IoCaps::FORK;
     }
     caps
 }
@@ -553,7 +555,8 @@ fn mode_caps(mode: &str) -> IoCaps {
 pub(crate) trait FileKind<'v>: Sized + 'v {
     const NAME: &'v str;
 
-    fn new(file: VfsFile) -> Self;
+    /// Wraps `file`, opened with `caps`.
+    fn new(file: VfsFile, caps: IoCaps) -> Self;
 
     /// The open file, until it is closed.
     fn file(&self) -> Option<&VfsFile>;
@@ -635,9 +638,9 @@ pub(crate) trait FileKind<'v>: Sized + 'v {
 impl<'v> FileKind<'v> for File {
     const NAME: &'v str = "File";
 
-    fn new(file: VfsFile) -> Self {
+    fn new(file: VfsFile, caps: IoCaps) -> Self {
         File {
-            buf: Some(Shared::new(FileBuf::new(file.clone()))),
+            buf: Some(Shared::new(FileBuf::new(file.clone(), caps))),
             file: Some(file),
         }
     }
@@ -737,8 +740,12 @@ impl<'v> FileKind<'v> for File {
 
     /// The buffer, so the consumer reads and writes through it.
     fn byte_handle(&self, caps: IoCaps) -> ByteHandle {
-        let buf = self.buf.as_ref().expect("file is closed");
-        ByteHandle::with_caps(buf.clone(), caps)
+        let buf = self.buf.as_ref().expect("file is closed").clone();
+        if caps.contains(IoCaps::FORK) {
+            ByteHandle::forking(buf, caps)
+        } else {
+            ByteHandle::with_caps(buf, caps)
+        }
     }
 
     /// Lines, as `read_line` reads them.
@@ -788,7 +795,7 @@ impl<'v> FileKind<'v> for File {
 impl<'v> FileKind<'v> for RawFile {
     const NAME: &'v str = "RawFile";
 
-    fn new(file: VfsFile) -> Self {
+    fn new(file: VfsFile, _caps: IoCaps) -> Self {
         RawFile { file: Some(file) }
     }
 
@@ -856,8 +863,12 @@ impl<'v> FileKind<'v> for RawFile {
     }
 
     fn byte_handle(&self, caps: IoCaps) -> ByteHandle {
-        let file = self.file.as_ref().expect("file is closed");
-        ByteHandle::with_caps(file.clone(), caps)
+        let file = self.file.as_ref().expect("file is closed").clone();
+        if caps.contains(IoCaps::FORK) {
+            ByteHandle::forking(RawForks { file, caps }, caps)
+        } else {
+            ByteHandle::with_caps(file, caps)
+        }
     }
 
     /// Chunks, as one read returns them.
@@ -878,6 +889,62 @@ impl<'v> FileKind<'v> for RawFile {
         unsafe { buf.advance(read) };
         buf.finish(strand, out);
         Ok(true)
+    }
+}
+
+/// A raw file's handle, which forks [`Cursor`](dolang_vfs::file::Cursor)s with
+/// the capabilities its open mode fixed.
+struct RawForks {
+    file: VfsFile,
+    caps: IoCaps,
+}
+
+impl AsyncRead for RawForks {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.get_mut().file).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for RawForks {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.get_mut().file).poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().file).poll_flush(cx)
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().file).poll_close(cx)
+    }
+}
+
+impl AsyncSeek for RawForks {
+    fn poll_seek(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        pos: SeekFrom,
+    ) -> Poll<io::Result<u64>> {
+        Pin::new(&mut self.get_mut().file).poll_seek(cx, pos)
+    }
+}
+
+impl AsyncFork for RawForks {
+    fn poll_fork(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        offset: u64,
+    ) -> Poll<io::Result<ByteHandle>> {
+        let caps = self.caps - IoCaps::FORK;
+        Poll::Ready(Ok(ByteHandle::with_caps(self.file.cursor(offset), caps)))
     }
 }
 
@@ -1377,6 +1444,11 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                 Output::set(strand, out, caps.contains(IoCaps::SEEK));
                 Ok(())
             })
+            .get("forkable", |this, strand, out| {
+                let caps = Self::open_caps(this, strand)?;
+                Output::set(strand, out, caps.contains(IoCaps::FORK));
+                Ok(())
+            })
             .method("close", async move |this, strand, _args, _out| {
                 this.borrow_mut(strand)?.close(strand).await
             })
@@ -1743,6 +1815,34 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                 Output::set(strand, out, i128::from(pos));
                 Ok(())
             })
+            .method("fork", async move |this, strand, args, out| {
+                let ([], [offset]) = unpack!(strand, args, 0, 1)?;
+                let offset = offset
+                    .map(|offset| {
+                        let offset = offset.to_i64(strand).map_err(|_| {
+                            Error::type_error(strand, "fork offset must be an integer")
+                        })?;
+                        u64::try_from(offset)
+                            .map_err(|_| Error::value(strand, "fork offset must be non-negative"))
+                    })
+                    .transpose()?;
+                let (mut handle, offset) = {
+                    let mut borrow = this.borrow_mut(strand)?;
+                    borrow.check_open(strand)?;
+                    let caps = this.annex().caps;
+                    if !caps.contains(IoCaps::FORK) {
+                        return Err(Error::unsupported(strand, "file does not fork"));
+                    }
+                    let offset = match offset {
+                        Some(offset) => offset,
+                        None => borrow.tell().await.into_sys(strand)?,
+                    };
+                    (borrow.byte_handle(caps), offset)
+                };
+                let fork = handle.fork(offset).await.into_sys(strand)?;
+                Output::set(strand, out, fork);
+                Ok(())
+            })
             .method("seek", async move |this, strand, args, out| {
                 let ([], [offset, start, end]) =
                     unpack!(strand, args, 0, 1, start_sym = None, end_sym = None)?;
@@ -1795,17 +1895,18 @@ pub(crate) fn create_file<'v>(
     buffered: bool,
     out: impl Output<'v>,
 ) {
+    let caps = mode_caps(mode);
     let annex = FileAnnex {
         global,
         is_append: mode.starts_with('a'),
-        caps: mode_caps(mode),
+        caps,
     };
     if buffered {
         let ty = global.types.file;
-        ty.create_with_annex(strand, FileObject(File::new(file)), annex, out);
+        ty.create_with_annex(strand, FileObject(File::new(file, caps)), annex, out);
     } else {
         let ty = global.types.raw_file;
-        ty.create_with_annex(strand, FileObject(RawFile::new(file)), annex, out);
+        ty.create_with_annex(strand, FileObject(RawFile::new(file, caps)), annex, out);
     }
 }
 

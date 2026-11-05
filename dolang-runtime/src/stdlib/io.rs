@@ -32,8 +32,8 @@ use crate::{
     arg::{Arg, Args},
     error::{Error, ErrorKind, Result},
     io::{
-        ByteHandle, ByteIo, IntoByteIo, Io, IoCaps, IoErrorExt as _, IoResultExt as _, Prefixed,
-        Shared,
+        ByteHandle, ByteIo, ByteStream, IntoByteIo, IoCaps, IoErrorExt as _, IoResultExt as _,
+        Prefixed, Shared,
     },
     object::{
         interface::Request,
@@ -55,7 +55,8 @@ const CAPACITY: usize = 8 * 1024;
 
 /// A buffer over an owned byte handle.
 struct BufIo {
-    io: Io,
+    io: Box<dyn ByteStream>,
+    caps: IoCaps,
     /// Read-ahead, unread from `rpos`.
     rbuf: Vec<u8>,
     rpos: usize,
@@ -69,7 +70,7 @@ impl BufIo {
     }
 
     fn seekable(&self) -> bool {
-        self.io.caps().contains(IoCaps::SEEK)
+        self.caps.contains(IoCaps::SEEK)
     }
 
     fn consume(&mut self, n: usize) {
@@ -340,11 +341,12 @@ pub(crate) struct Buffered {
 impl Buffered {
     /// Wraps `handle`, serving its prefix first.
     fn new(handle: ByteHandle) -> Self {
-        let ByteHandle { io, prefix } = handle;
+        let (io, caps, prefix) = handle.into_parts();
         Self {
-            caps: io.caps(),
+            caps,
             io: Some(Shared::new(BufIo {
                 io,
+                caps,
                 rbuf: prefix,
                 rpos: 0,
                 wbuf: Vec::new(),
@@ -833,7 +835,7 @@ impl<'v> Object<'v> for Buffered {
 /// its stream, so `close` closes the handle.
 pub(crate) struct Stream {
     /// The handle, until it is closed.
-    io: Option<Shared<Prefixed<Io>>>,
+    io: Option<Shared<Prefixed>>,
     caps: IoCaps,
 }
 
@@ -846,10 +848,10 @@ impl StateTag for StreamType {
 
 impl Stream {
     fn new(handle: ByteHandle) -> Self {
-        let ByteHandle { io, prefix } = handle;
+        let (io, caps) = handle.into_prefixed();
         Self {
-            caps: io.caps(),
-            io: Some(Shared::new(Prefixed::new(io, prefix))),
+            caps,
+            io: Some(Shared::new(io)),
         }
     }
 
@@ -862,7 +864,7 @@ impl Stream {
     async fn lock<'v, 's>(
         &mut self,
         strand: &mut Strand<'v, 's>,
-    ) -> Result<'v, 's, Locked<'_, Prefixed<Io>>> {
+    ) -> Result<'v, 's, Locked<'_, Prefixed>> {
         let io = self.io.as_mut().expect("stream is closed");
         io.lock().await.into_do_io(strand)
     }

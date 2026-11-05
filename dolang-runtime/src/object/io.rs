@@ -16,19 +16,28 @@
 //! handle that the servers stopped. The stream stays open.
 //!
 //! The owner holds the [`Root`] of its own strand handle, which keeps it alive until the
-//! handle's end of the lanes shuts down. It runs under an interrupt nested from the
-//! consumer's, so cancelling the consumer, or shutting down the VM, interrupts the
-//! servers. An exception from a stream method reaches the handle as an [`std::io::Error`]
+//! handle's end of the lanes shuts down. The handle's holder is the consumer, whatever
+//! strand got it, so the owner runs under an interrupt of its own: closing the handle
+//! stops the servers once they are idle, and dropping it interrupts them, even in the
+//! middle of a stream method. An exception from a stream method reaches the handle as an [`std::io::Error`]
 //! made by [`from_do`](crate::io::from_do).
+//!
+//! A forkable stream's `fork` is served like the other methods. The handle of the stream
+//! it returns has its own owner, so it outlives this stream's handle.
 
 use std::{
     cell::{Cell, UnsafeCell},
     io::SeekFrom,
     ops::ControlFlow,
+    pin::pin,
     rc::Rc,
 };
 
-use futures::{StreamExt as _, channel::mpsc, future::join_all};
+use futures::{
+    StreamExt as _,
+    channel::mpsc,
+    future::{Either, join_all, select},
+};
 
 use crate::{
     arg::{Arg, Args, OwnedItem},
@@ -49,7 +58,7 @@ use crate::{
             is_special_mcall, members, recv_special_mcall,
         },
     },
-    strand::Strand,
+    strand::{InterruptMask, Strand},
     sym::{self, Sym},
     unpack,
     value::{BinEmbryo, Input, Output, Root, Slot, TypeObject, Value, fmt::Format},
@@ -120,9 +129,11 @@ impl<'v> Protocol<'v> for Io {
                 Getter(sym::READABLE),
                 Getter(sym::WRITABLE),
                 Getter(sym::SEEKABLE),
+                Getter(sym::FORKABLE),
                 Method(sym::READ),
                 Method(sym::WRITE),
                 Method(sym::SEEK),
+                Method(sym::FORK),
                 Method(sym::CLOSE),
                 Method(sym::READ_ALL),
                 Method(sym::READ_ALL_STR),
@@ -158,7 +169,9 @@ impl<'v> Protocol<'v> for Io {
                 Ok(())
             }
             // A capability the subclass does not declare is absent.
-            sym::READABLE | sym::WRITABLE | sym::SEEKABLE if this.delegator().is_some() => {
+            sym::READABLE | sym::WRITABLE | sym::SEEKABLE | sym::FORKABLE
+                if this.delegator().is_some() =>
+            {
                 Output::set(strand, out, false);
                 Ok(())
             }
@@ -312,7 +325,7 @@ async fn helper_mcall<'v, 'a, 's>(
             put(strand, &stream, &value).await
         }
         // The stream methods are the subclass's to define.
-        sym::READ | sym::WRITE | sym::SEEK | sym::CLOSE => {
+        sym::READ | sym::WRITE | sym::SEEK | sym::FORK | sym::CLOSE => {
             Err(Error::unsupported(strand, "abstract stream method"))
         }
         _ => Err(Error::field(strand, method)),
@@ -653,6 +666,7 @@ impl<'v> IntoByteIo<'v> for DoIo<'_, 'v> {
             (sym::READABLE, IoCaps::READ),
             (sym::WRITABLE, IoCaps::WRITE),
             (sym::SEEKABLE, IoCaps::SEEK),
+            (sym::FORKABLE, IoCaps::FORK),
         ] {
             let set = strand.with_slots_sync(|strand, [mut value]| {
                 self.stream
@@ -660,6 +674,10 @@ impl<'v> IntoByteIo<'v> for DoIo<'_, 'v> {
                 value.to_bool(strand)
             })?;
             caps.set(cap, set);
+        }
+        // Only a seekable stream forks.
+        if !caps.contains(IoCaps::SEEK) {
+            caps.remove(IoCaps::FORK);
         }
         self.caps = Some(caps);
         Ok(caps)
@@ -676,8 +694,7 @@ impl<'v> IntoByteIo<'v> for DoIo<'_, 'v> {
         // it.
         let keep = Rc::new(Cell::new(None::<Root<'v>>));
         let mut root = Root::new(strand);
-        let token = strand.interrupt_token();
-        strand.spawn_background(self.stream, Some(&token), &mut root, {
+        strand.spawn_background(self.stream, None, &mut root, {
             let keep = keep.clone();
             async move |strand, stream, _out| {
                 let _root = keep.take();
@@ -690,19 +707,29 @@ impl<'v> IntoByteIo<'v> for DoIo<'_, 'v> {
     }
 }
 
-/// Serves `lanes` until they close, then reports that the servers stopped.
+/// Serves `lanes` until they close, then reports that the servers stopped. If the handle
+/// is dropped first, interrupts the servers.
 async fn own<'v>(strand: &mut Strand<'v, '_>, stream: &Value<'v>, lanes: Lanes) {
-    let Lanes { servers, done } = lanes;
+    let Lanes {
+        servers,
+        done,
+        dropped,
+    } = lanes;
+    let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
     let servers = servers
         .into_iter()
         .map(|lane| {
-            strand.spawn_scoped(None, async move |strand| {
+            strand.spawn_scoped(Some(interrupt.clone()), async move |strand| {
                 serve(strand, stream, lane).await;
                 Ok(())
             })
         })
         .collect::<Vec<_>>();
-    join_all(servers).await;
+    let servers = pin!(join_all(servers));
+    if let Either::Left((_, servers)) = select(dropped, servers).await {
+        interrupt.cancel();
+        servers.await;
+    }
     let _ = done.send(Ok(()));
 }
 
@@ -729,6 +756,10 @@ async fn serve<'v>(
                 let res = serve_seek(strand, stream, pos).await;
                 reply(strand, tx, res);
             }
+            bridge::Request::Fork(offset, tx) => {
+                let res = serve_fork(strand, stream, offset).await;
+                reply(strand, tx, res);
+            }
         }
     }
 }
@@ -751,6 +782,41 @@ async fn serve_read<'v, 's>(
                 .as_bin(strand.vm())
                 .expect("read_chunk checks for `Bin`");
             Ok(bytes.pin().to_vec())
+        })
+        .await
+}
+
+/// Calls the stream's `fork` and gets the handle of the stream it returns.
+async fn serve_fork<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    stream: &Value<'v>,
+    offset: u64,
+) -> Result<'v, 's, ByteHandle> {
+    let offset = i64::try_from(offset).map_err(|_| Error::overflow(strand))?;
+    strand
+        .with_slots(async move |strand, [mut fork]| {
+            method!(
+                strand,
+                stream,
+                Sym::well_known(sym::FORK),
+                &mut fork,
+                offset
+            )
+            .await?;
+            crate::io::get(strand, &fork, |strand, caps| {
+                if caps.intersects(IoCaps::READ | IoCaps::WRITE) {
+                    Ok(())
+                } else {
+                    Err(Error::value(strand, "fork must be readable or writable"))
+                }
+            })
+            .map_err(|err| {
+                if err.kind() == crate::error::ErrorKind::Unsupported {
+                    Error::type_error(strand, "fork: expected `io.Io`")
+                } else {
+                    err
+                }
+            })
         })
         .await
 }

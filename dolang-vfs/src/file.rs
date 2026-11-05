@@ -24,6 +24,7 @@ mod copy;
 mod cursor;
 
 pub(crate) use copy::{COPY_LIMIT, FileId};
+pub use cursor::Cursor;
 pub(crate) use cursor::WriteOp;
 
 /// Selects an extended-attribute namespace when listing attributes.
@@ -322,7 +323,7 @@ pub(crate) enum FileInner {
 #[derive(Debug)]
 pub struct File {
     pub(crate) inner: FileInner,
-    cursor: Option<Box<cursor::Cursor>>,
+    cursor: Option<Box<cursor::CursorState>>,
 }
 
 impl Clone for File {
@@ -340,7 +341,7 @@ impl File {
         Self::with_cursor(FileInner::Direct(file), None)
     }
 
-    fn with_cursor(inner: FileInner, cursor: Option<Box<cursor::Cursor>>) -> Self {
+    fn with_cursor(inner: FileInner, cursor: Option<Box<cursor::CursorState>>) -> Self {
         Self { inner, cursor }
     }
 }

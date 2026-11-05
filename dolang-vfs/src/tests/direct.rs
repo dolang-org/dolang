@@ -895,6 +895,47 @@ async fn clones_share_the_position() {
 }
 
 #[tokio::test]
+async fn cursors_have_their_own_positions() {
+    use futures::io::{AsyncReadExt as _, AsyncSeekExt as _, AsyncWriteExt as _};
+
+    let direct = Vfs::direct().unwrap();
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("cursor.bin");
+    std::fs::write(&path, b"abcdefgh").unwrap();
+
+    let mut options = direct.open_options();
+    let mut file = options
+        .read(true)
+        .write(true)
+        .open(typed(&path))
+        .await
+        .unwrap();
+    let mut buf = [0u8; 2];
+    file.read_exact(&mut buf).await.unwrap();
+
+    let mut low = file.cursor(2);
+    let mut high = file.cursor(6);
+    high.read_exact(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"gh");
+    low.read_exact(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"cd");
+    file.read_exact(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"cd");
+    assert_eq!(high.stream_position().await.unwrap(), 8);
+
+    low.write_all(b"XY").await.unwrap();
+    let mut bytes = bytes::BytesMut::with_capacity(8);
+    file.read_at(&mut bytes, 0).await.unwrap();
+    assert_eq!(&bytes[..], b"abcdXYgh");
+    assert_eq!(file.stream_position().await.unwrap(), 4);
+
+    file.close().await.unwrap();
+    low.seek(io::SeekFrom::Start(0)).await.unwrap();
+    let error = low.read_exact(&mut buf).await.unwrap_err();
+    assert_eq!(crate::error::Error::from(error).kind(), ErrorKind::Closed);
+}
+
+#[tokio::test]
 async fn read_ahead_is_dropped_when_a_clone_moves_the_cursor() {
     let direct = Vfs::direct().unwrap();
     let dir = tempdir().unwrap();

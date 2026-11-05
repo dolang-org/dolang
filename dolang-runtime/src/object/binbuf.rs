@@ -566,7 +566,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 Output::set(strand, out, len);
                 Ok(())
             }
-            sym::READABLE | sym::SEEKABLE => {
+            sym::READABLE | sym::SEEKABLE | sym::FORKABLE => {
                 Output::set(strand, out, false);
                 Ok(())
             }
@@ -726,6 +726,7 @@ impl<'v> Protocol<'v> for Class {
                 Getter(sym::READABLE),
                 Getter(sym::WRITABLE),
                 Getter(sym::SEEKABLE),
+                Getter(sym::FORKABLE),
                 Method(sym::WRITE),
                 Method(sym::FLUSH),
                 Method(sym::READ_ALL),

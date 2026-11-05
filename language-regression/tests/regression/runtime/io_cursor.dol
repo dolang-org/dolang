@@ -12,6 +12,7 @@ import regression2:
 let c = Cursor b"hello world"
 assert (type c Io)
 assert_eq (c.readable, c.writable, c.seekable) (true, false, true)
+assert $!c.forkable
 assert_eq $c.read(5) b"hello"
 assert_eq $c.read(100) b" world"
 assert_eq $c.read(1) b""
