@@ -42,7 +42,7 @@ do
       - ("lib/$(name.replace(".", "/"))", program)
   path.open w+ do |file|
     file.write $prefix
-    zip.open (io.Cursor(file, (prefix.len..))) w do |archive|
+    zip.open (io.Window(file, (prefix.len..))) w do |archive|
       for stem program = programs
         let :source :bytecode = program
         archive.open "$stem.dol" do |member| member.write $source

@@ -19,7 +19,6 @@ use crate::{
 pub(crate) mod fmt;
 pub(crate) mod io;
 
-mod cursor;
 pub(crate) mod inspect;
 mod math;
 mod strand;

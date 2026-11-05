@@ -15,7 +15,7 @@ import fs io proc sys zip
 def make_bundle path members :prefix = b""
   fs.open $path w+ do |file|
     file.write $prefix
-    zip.open (io.Cursor(file, (prefix.len..))) w do |archive|
+    zip.open (io.Window(file, (prefix.len..))) w do |archive|
       for name data = members
         archive.open $name do |member| member.write $data
 

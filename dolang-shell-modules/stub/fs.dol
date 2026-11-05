@@ -627,8 +627,7 @@ pub class BaseFile: Io
 # A function the file is passed to, such as [`zip.open`](zip.open), reads and
 # writes through the same buffer, so the file and the function see each
 # other's reads and writes. A seekable file is also
-# [forkable](io.Io.forkable), so an [`io.Cursor`](io.Cursor) over it has a
-# position of its own and doesn't share the buffer.
+# [forkable](io.Io.forkable), and a fork doesn't share the buffer.
 #
 # Positional reads and writes run concurrently, as on a
 # [`RawFile`](fs.RawFile), unless the file holds pending writes or a function

@@ -779,6 +779,22 @@ mod detail {
                         Output::set(strand, out, &buf[..]);
                         Ok(())
                     })
+                    // Reads a fork of `value` from `offset` to the end.
+                    .function("byte_fork", async move |strand, args, out| {
+                        let ([value, offset], []) = unpack!(strand, args, 2, 0)?;
+                        let offset = offset
+                            .as_int(strand)
+                            .and_then(|n| u64::try_from(n).ok())
+                            .ok_or_else(|| Error::value(strand, "bad offset"))?;
+                        let mut handle = byte_handle(strand, &value, IoCaps::READ | IoCaps::SEEK)?;
+                        let fork = handle.fork(offset).await.into_do_io(strand)?;
+                        let mut io = fork.into_read().unwrap();
+                        let mut buf = Vec::new();
+                        let res = io.read_to_end(&mut buf).await;
+                        res.into_do_io(strand)?;
+                        Output::set(strand, out, &buf[..]);
+                        Ok(())
+                    })
                     .function("byte_overwrite", async move |strand, args, out| {
                         let ([value, bytes], []) = unpack!(strand, args, 2, 0)?;
                         let bytes = bin_arg(strand, &bytes)?;
