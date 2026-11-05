@@ -5069,6 +5069,10 @@ pub class Value
     ...
 
   # Compares with another value of any type.
+  #
+  # Called unbound as `Value.(eq) a b`, it skips the operands' own comparisons
+  # and is true only when `a` and `b` are the same value: the same object, or
+  # immediates of the same type and value.
   pub def (eq) self other @ Value -> Bool
     ...
 
@@ -5077,6 +5081,8 @@ pub class Value
     ...
 
   # Compares with another value for inequality.
+  #
+  # Called unbound as `Value.(ne) a b`, it negates `Value.(eq) a b`.
   pub def (ne) self other @ Value -> Bool
     ...
 

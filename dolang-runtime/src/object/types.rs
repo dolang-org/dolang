@@ -105,6 +105,14 @@ impl<'v> Protocol<'v> for Value {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD if this.delegator().is_none() => abstract_init(strand, &this, args),
+            // Unbound `Value.(eq)` and `Value.(ne)` skip the operands' own
+            // comparisons and test for the same value.
+            tag @ (sym::EQ_METHOD | sym::NE_METHOD) if this.delegator().is_none() => {
+                let ([left, right], []) = unpack!(strand, args, 2, 0)?;
+                let same = left.repr_eq(strand, &right);
+                Output::set(strand, out, same == (tag == sym::EQ_METHOD));
+                Ok(())
+            }
             _ => recv_special_mcall(strand, &this, method, args, out).await,
         }
     }

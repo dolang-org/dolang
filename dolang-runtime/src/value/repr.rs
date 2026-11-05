@@ -146,19 +146,10 @@ mod floating {
 #[cfg(target_pointer_width = "64")]
 use floating::*;
 
-#[derive(Clone)]
+/// Equality compares encodings exactly, so it is not floating-point
+/// equality: the immediate NaN equals itself.
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Repr(NonNull<u8>);
-
-impl PartialEq for Repr {
-    fn eq(&self, other: &Self) -> bool {
-        // Preserve NaN behavior
-        #[cfg(target_pointer_width = "64")]
-        if self.0 == Self::NAN.0 || other.0 == Self::NAN.0 {
-            return false;
-        }
-        self.0 == other.0
-    }
-}
 
 impl Repr {
     // Special value which is used when a transient "not a valid value" state

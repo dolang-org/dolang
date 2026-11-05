@@ -661,6 +661,20 @@ back to strict equality. When `(ne)` is absent, it negates `(eq)`; when
 `UnsupportedError` from the left method triggers the reflected method. Other
 errors propagate.
 
+Calling `Value.(eq)` unbound tests strict equality directly, without either
+operand's own comparison: it is true only for the same object, or for two
+immediate values of the same type and value. `Value.(ne)` is its negation:
+
+```playground
+#> import test:
+#>   - assert
+let a = [1]
+assert (a == [1])
+assert (Value.(eq) a a)
+assert (!Value.(eq)(a, [1]))
+assert (!Value.(eq)(1, 1.0))
+```
+
 Defining `(lt)` and `(eq)` is sufficient for all four comparison operators;
 `<=`, `>`, and `>=` are derived from them:
 

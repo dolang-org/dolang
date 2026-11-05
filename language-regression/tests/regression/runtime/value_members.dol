@@ -26,7 +26,8 @@ def check value
   assert_eq (Value.(dbg) value) (dbg value)
   assert_eq (Value.(verbatim) value) (verbatim value)
   assert_eq (Value.(hash) value) (hash value)
-  assert_eq (Value.(eq) value value) (value == value)
+  assert (Value.(eq) value value)
+  assert_eq (Value.(ne) value value) false
 
 class Plain
 class Explicit: Value
@@ -158,3 +159,44 @@ class Wide
   pub def (str) _self extra = "none"
     "wide $extra"
 assert_eq (Wide().(str)("x")) "wide x"
+
+# Unbound `Value.(eq)` and `Value.(ne)` test for the same value, skipping the
+# operands' own comparisons.
+def same a b
+  let result = Value.(eq) $a $b
+  assert_eq (Value.(ne) a b) (!result)
+  result
+
+let one = [1]
+assert (same one one)
+assert (!same(one, [1]))
+assert (one == [1])
+assert (same 1 1)
+assert (!same(1, 1.0))
+assert (1 == 1.0)
+assert (same Float.NAN Float.NAN)
+assert (Float.NAN != Float.NAN)
+assert (same :symbol: :symbol:)
+assert (!same(nil, false))
+
+class AlwaysEqual
+  pub def (eq) _self _other
+    true
+let left = AlwaysEqual()
+let right = AlwaysEqual()
+assert (left == right)
+assert (same left left)
+assert (!same(left, right))
+
+# An override can delegate to identity without re-entering itself.
+class Identity
+  pub def (eq) self other
+    Value.(eq) $self $other
+let identity = Identity()
+assert (identity == identity)
+assert (identity != Identity())
+
+let saved_eq = Value.(eq)
+assert (saved_eq one one)
+assert (!saved_eq(one, [1]))
+assert_throws $std.MissingPosError do Value.(ne) 1
