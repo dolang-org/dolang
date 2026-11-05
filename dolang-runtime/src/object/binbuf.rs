@@ -267,7 +267,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         let Some(other) = other.downcast_native(strand, strand.builtin_types().binbuf) else {
-            return Err(Error::not_supported(strand));
+            return Err(Error::unsupported(strand, "`<`"));
         };
         let this_borrow = this.borrow(strand)?;
         let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;

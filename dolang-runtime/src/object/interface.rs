@@ -175,5 +175,7 @@ pub(crate) fn query<'v, 's, K: InterfaceTag, R>(
     if let Case::Object(o) = value.case() {
         o.op_provide(&mut Request::new(strand, &mut query))?;
     }
-    query.result.ok_or_else(|| Error::not_supported(strand))
+    query
+        .result
+        .ok_or_else(|| Error::unsupported(strand, "native interface"))
 }

@@ -1951,7 +1951,7 @@ fn class_sync_binary_op<'v, 'a, 's>(
     if let Some(entry) = entry {
         class_sync_binary_op_entry(this, strand, method_sym, other, entry)
     } else {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "operator"))
     }
 }
 
@@ -2106,7 +2106,7 @@ fn class_sync_unary_op<'v, 'a, 's>(
                 }
             })
         }
-        _ => Err(Error::not_supported(strand)),
+        _ => Err(Error::unsupported(strand, "operator")),
     }
 }
 
@@ -2568,7 +2568,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     })
                     .await
             }
-            _ => Err(Error::not_supported(strand)),
+            _ => Err(Error::unsupported(strand, "call")),
         }
     }
 
@@ -2601,7 +2601,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     })
                     .await
             }
-            _ => Err(Error::not_supported(strand)),
+            _ => Err(Error::unsupported(strand, "unpacking")),
         }
     }
 
@@ -2626,7 +2626,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     })
                     .await
             }
-            _ => Err(Error::not_supported(strand)),
+            _ => Err(Error::unsupported(strand, "iteration")),
         }
     }
 
@@ -2661,7 +2661,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     })
                     .await
             }
-            _ => Err(Error::not_supported(strand)),
+            _ => Err(Error::unsupported(strand, "sink")),
         }
     }
 
@@ -2705,7 +2705,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     })
                     .await
             }
-            _ => Err(Error::not_supported(strand)),
+            _ => Err(Error::unsupported(strand, "spread")),
         }
     }
 
@@ -2734,7 +2734,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     })
                     .await
             }
-            _ => Err(Error::not_supported(strand)),
+            _ => Err(Error::unsupported(strand, "`next`")),
         }
     }
 
@@ -2775,7 +2775,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     })
                     .await
             }
-            _ => Err(Error::not_supported(strand)),
+            _ => Err(Error::unsupported(strand, "`put`")),
         }
     }
 

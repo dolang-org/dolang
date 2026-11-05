@@ -164,5 +164,8 @@ pub(crate) fn path_with_entry<'v, 's>(
             path.join(entry.annex().name.as_str())
         }));
     }
-    Err(Error::not_supported(strand))
+    Err(Error::unsupported(
+        strand,
+        "joining a path with a non-directory-entry value",
+    ))
 }

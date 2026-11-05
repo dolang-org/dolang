@@ -12,8 +12,8 @@ use crate::{
         BoundMethod,
         protocol::{
             Delegated, Dispatch, Inspect, Member, Protocol, Recv, Spread, SpreadContext,
-            instance_get_fallback, instance_mcall_fallback, is_special_mcall, members,
-            recv_special_mcall,
+            abstract_call, abstract_init, instance_get_fallback, instance_mcall_fallback,
+            is_special_mcall, members, recv_special_mcall,
         },
         tuple,
     },
@@ -579,6 +579,9 @@ impl<'v> Protocol<'v> for Iterable {
         mut args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        if method.tag() == sym::INIT_METHOD && this.delegator().is_none() {
+            return abstract_init(strand, &this, args);
+        }
         if is_special_mcall(method.tag()) {
             return recv_special_mcall(strand, &this, method, args, out).await;
         }
@@ -587,10 +590,6 @@ impl<'v> Protocol<'v> for Iterable {
             args.prepend_self(delegator.dup());
         }
         match method.tag() {
-            sym::INIT_METHOD => {
-                let ([_self_val], []) = unpack!(strand, args, 1, 0)?;
-                Ok(())
-            }
             sym::ITER => {
                 let ([obj], []) = unpack!(strand, args, 1, 0)?;
                 obj.iter(strand, out).await
@@ -603,6 +602,15 @@ impl<'v> Protocol<'v> for Iterable {
             }
             _ => Err(Error::field(strand, method)),
         }
+    }
+
+    async fn op_call<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _args: Args<'v, 'a>,
+        _out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Err(abstract_call(strand, "Iterable"))
     }
 }
 
@@ -657,6 +665,9 @@ impl<'v> Protocol<'v> for Sinkable {
         mut args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        if method.tag() == sym::INIT_METHOD && this.delegator().is_none() {
+            return abstract_init(strand, &this, args);
+        }
         if is_special_mcall(method.tag()) {
             return recv_special_mcall(strand, &this, method, args, out).await;
         }
@@ -665,10 +676,6 @@ impl<'v> Protocol<'v> for Sinkable {
             args.prepend_self(delegator.dup());
         }
         match method.tag() {
-            sym::INIT_METHOD => {
-                let ([_self_val], []) = unpack!(strand, args, 1, 0)?;
-                Ok(())
-            }
             sym::SINK => {
                 let ([obj], []) = unpack!(strand, args, 1, 0)?;
                 obj.sink(strand, out).await
@@ -679,6 +686,15 @@ impl<'v> Protocol<'v> for Sinkable {
             }
             _ => Err(Error::field(strand, method)),
         }
+    }
+
+    async fn op_call<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _args: Args<'v, 'a>,
+        _out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Err(abstract_call(strand, "Sinkable"))
     }
 }
 
@@ -1452,7 +1468,7 @@ impl<'v> Protocol<'v> for Iter {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let Some(delegator) = this.delegator() else {
-            return Err(Error::not_supported(strand));
+            return Err(Error::unsupported(strand, "spread"));
         };
         spread_iter(strand, delegator, sink).await
     }
@@ -1521,6 +1537,9 @@ impl<'v> Protocol<'v> for Iter {
         mut args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        if method.tag() == sym::INIT_METHOD && this.delegator().is_none() {
+            return abstract_init(strand, &this, args);
+        }
         if is_special_mcall(method.tag()) {
             return recv_special_mcall(strand, &this, method, args, out).await;
         }
@@ -1531,10 +1550,6 @@ impl<'v> Protocol<'v> for Iter {
         let default = Sym::well_known(sym::DEFAULT);
         let else_key = Sym::well_known(sym::ELSE);
         match method.tag() {
-            sym::INIT_METHOD => {
-                let ([_self_val], []) = unpack!(strand, args, 1, 0)?;
-                Ok(())
-            }
             sym::SPREAD_METHOD => {
                 let ([obj], []) = unpack!(strand, args, 1, 0)?;
                 Output::set(strand, out, obj);
@@ -1620,6 +1635,15 @@ impl<'v> Protocol<'v> for Iter {
             _ => Err(Error::field(strand, method)),
         }
     }
+
+    async fn op_call<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _args: Args<'v, 'a>,
+        _out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Err(abstract_call(strand, "Iter"))
+    }
 }
 
 impl<'v> Protocol<'v> for Sink {
@@ -1687,6 +1711,9 @@ impl<'v> Protocol<'v> for Sink {
         mut args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        if method.tag() == sym::INIT_METHOD && this.delegator().is_none() {
+            return abstract_init(strand, &this, args);
+        }
         if is_special_mcall(method.tag()) {
             return recv_special_mcall(strand, &this, method, args, out).await;
         }
@@ -1695,10 +1722,6 @@ impl<'v> Protocol<'v> for Sink {
             args.prepend_self(delegator.dup());
         }
         match method.tag() {
-            sym::INIT_METHOD => {
-                let ([_self_val], []) = unpack!(strand, args, 1, 0)?;
-                Ok(())
-            }
             sym::PUT => {
                 let ([obj, value], []) = unpack!(strand, args, 2, 0)?;
                 obj.put(strand, value).await
@@ -1724,6 +1747,15 @@ impl<'v> Protocol<'v> for Sink {
             }
             _ => Err(Error::field(strand, method)),
         }
+    }
+
+    async fn op_call<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _args: Args<'v, 'a>,
+        _out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Err(abstract_call(strand, "Sink"))
     }
 }
 

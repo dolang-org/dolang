@@ -21,11 +21,17 @@ use crate::{
     vm::Vm,
 };
 
-use super::protocol::{Inspect, Protocol, Recv};
+use super::{
+    BoundMethod,
+    protocol::{
+        Inspect, Protocol, Recv, abstract_call, abstract_init, instance_get_fallback,
+        recv_special_mcall,
+    },
+};
 
 #[derive(Debug)]
 pub(crate) enum Boxed<'v> {
-    Unsupported,
+    Unsupported(Option<Cow<'v, str>>),
     Immutable,
     Concurrency(Option<Cow<'v, str>>),
     Type(Cow<'v, str>),
@@ -56,7 +62,7 @@ impl<'v> Boxed<'v> {
     pub(crate) fn kind(&self) -> ErrorKind {
         use Boxed::*;
         match self {
-            Unsupported => ErrorKind::Unsupported,
+            Unsupported(_) => ErrorKind::Unsupported,
             Immutable => ErrorKind::Immutable,
             Concurrency(_) => ErrorKind::Concurrency,
             Type(_) => ErrorKind::Type,
@@ -89,7 +95,8 @@ impl<'v> Display for Boxed<'v> {
         use Boxed::*;
 
         match self {
-            Unsupported => write!(f, "unsupported operation"),
+            Unsupported(None) => write!(f, "unsupported operation"),
+            Unsupported(Some(msg)) => write!(f, "unsupported operation: {msg}"),
             Immutable => write!(f, "object is immutable"),
             Concurrency(None) => write!(f, "conflicting concurrent operation"),
             Concurrency(Some(msg)) => write!(f, "conflicting concurrent operation: {msg}"),
@@ -192,7 +199,7 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type Error>")
+        crate::fmt!(strand, w, "<type std.Error>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -204,19 +211,44 @@ impl<'v> Protocol<'v> for Type {
                 Method(sym::VERBATIM_METHOD),
                 Method(sym::STR_METHOD),
                 Method(sym::DBG_METHOD),
-                Method(sym::CALL_METHOD),
             ],
         })
+    }
+
+    fn op_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        if field.tag() == sym::INIT_METHOD {
+            BoundMethod::create(strand, &this, field, out);
+            Ok(())
+        } else {
+            instance_get_fallback(strand, &this, field, out)
+        }
+    }
+
+    async fn op_mcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        match method.tag() {
+            sym::INIT_METHOD => abstract_init(strand, &this, args),
+            _ => recv_special_mcall(strand, &this, method, args, out).await,
+        }
     }
 
     async fn op_call<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        args: Args<'v, 'a>,
+        _args: Args<'v, 'a>,
         _out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([value], []) = unpack!(strand, args, 1, 0)?;
-        Err(Error::from_value(strand, value))
+        Err(abstract_call(strand, "std.Error"))
     }
 }
 
@@ -355,8 +387,12 @@ fn construct<'v, 's>(
 ) -> Result<'v, 's, Error<'v, 's>> {
     Ok(match kind {
         ErrorKind::Unsupported => {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
-            Error::not_supported(strand)
+            let ([], [msg]) = unpack!(strand, args, 0, 1)?;
+            let msg = match msg {
+                Some(msg) => Some(expect_string(strand, &msg)?.into()),
+                None => None,
+            };
+            Error::unsupported_boxed(strand, msg)
         }
         ErrorKind::Immutable => {
             let ([], []) = unpack!(strand, args, 0, 0)?;

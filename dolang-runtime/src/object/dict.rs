@@ -551,7 +551,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         _sig: &'a sig::Unpack<'v, 'a>,
         _out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "unpacking"))
     }
 
     async fn op_next<'a, 's>(
@@ -1696,7 +1696,7 @@ impl<'v> Protocol<'v> for UnpackIter<'v> {
         _sig: &'a sig::Unpack<'v, 'a>,
         _out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "unpacking"))
     }
 
     async fn op_next<'a, 's>(
@@ -1943,7 +1943,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
         let other = if let Some(other) = other.downcast_ref(strand.builtin_types().dict) {
             other
         } else {
-            return Err(Error::not_supported(strand));
+            return Err(Error::unsupported(strand, "`<`"));
         };
         let left = this.borrow(strand)?;
         let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;

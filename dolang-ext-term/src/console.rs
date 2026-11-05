@@ -56,11 +56,11 @@ impl<'v> Object<'v> for Console {
         builder
             .supertype(TypeObject::Io)
             .method("write", async move |_this, strand, _args, _out| {
-                Err(Error::not_supported(strand))
+                Err(Error::unsupported(strand, "`write` on the console"))
             })
             .method("flush", async move |_this, strand, args, _out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                Err(Error::not_supported(strand))
+                Err(Error::unsupported(strand, "`flush` on the console"))
             })
             // Unlike the write methods, the capability members have a safe
             // default, so a Do subclass that supplies only the two above still

@@ -72,7 +72,7 @@ pub(crate) fn path_with_stream<'v, 's>(
         .types
         .stream_entry
         .cast(stream)
-        .ok_or_else(|| Error::not_supported(strand))?;
+        .ok_or_else(|| Error::unsupported(strand, "joining a path with a non-stream value"))?;
     Ok(stream.enter_sync(strand, |_strand, stream| {
         stream_path(path, &stream.annex().inner)
     }))

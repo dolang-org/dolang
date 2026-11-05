@@ -265,7 +265,7 @@ impl<'v, 's> Drop for FloatingRoot<'v, 's> {
 }
 
 enum Variant<'v, 's> {
-    Unsupported,
+    Unsupported(&'static str),
     Immutable,
     Overflow,
     ZeroDiv,
@@ -440,7 +440,7 @@ impl<'v, 's> Debug for Error<'v, 's> {
 impl<'v, 's> fmt::Display for Error<'v, 's> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match &self.inner {
-            Variant::Unsupported => write!(f, "unsupported operation"),
+            Variant::Unsupported(msg) => write!(f, "unsupported operation: {msg}"),
             Variant::Immutable => write!(f, "object is immutable"),
             Variant::Overflow => write!(f, "numeric overflow"),
             Variant::ZeroDiv => write!(f, "integer zero divisor"),
@@ -527,8 +527,10 @@ impl<'v, 's> Error<'v, 's> {
     }
 
     fn expand(&mut self, inner: &'s StrandInner<'v>) {
-        self.inner = match mem::replace(&mut self.inner, Variant::Unsupported) {
-            Variant::Unsupported => Self::new_info(inner, Boxed::Unsupported).inner,
+        self.inner = match mem::replace(&mut self.inner, Variant::Immutable) {
+            Variant::Unsupported(msg) => {
+                Self::new_info(inner, Boxed::Unsupported(Some(msg.into()))).inner
+            }
             Variant::Immutable => Self::new_info(inner, Boxed::Immutable).inner,
             Variant::Overflow => Self::new_info(inner, Boxed::Overflow).inner,
             Variant::ZeroDiv => Self::new_info(inner, Boxed::ZeroDiv).inner,
@@ -557,9 +559,23 @@ impl<'v, 's> Error<'v, 's> {
         }
     }
 
-    /// Create error: operation not supported
-    pub fn not_supported(#[allow(unused_variables)] strand: &mut Strand<'v, 's>) -> Self {
-        Self::new_variant(Variant::Unsupported)
+    /// Create error: operation not supported.
+    ///
+    /// `msg` names what is unsupported; it is appended to the generic message.
+    /// A static message does not allocate, so this is cheap enough to signal a
+    /// declined operator before falling back to the reflected method.
+    pub fn unsupported(strand: &mut Strand<'v, 's>, msg: impl Into<Cow<'static, str>>) -> Self {
+        match msg.into() {
+            Cow::Borrowed(msg) => Self::new_variant(Variant::Unsupported(msg)),
+            Cow::Owned(msg) => Self::new_info(strand.inner, Boxed::Unsupported(Some(msg.into()))),
+        }
+    }
+
+    pub(crate) fn unsupported_boxed(
+        strand: &mut Strand<'v, 's>,
+        msg: Option<Cow<'v, str>>,
+    ) -> Self {
+        Self::new_info(strand.inner, Boxed::Unsupported(msg))
     }
 
     /// Create error: immutable structure
@@ -850,7 +866,7 @@ impl<'v, 's> Error<'v, 's> {
     /// Get category of error
     pub fn kind(&self) -> ErrorKind {
         match &self.inner {
-            Variant::Unsupported => ErrorKind::Unsupported,
+            Variant::Unsupported(_) => ErrorKind::Unsupported,
             Variant::Immutable => ErrorKind::Immutable,
             Variant::Overflow => ErrorKind::Overflow,
             Variant::ZeroDiv => ErrorKind::ZeroDiv,
@@ -1066,7 +1082,7 @@ impl<'v, 's> Error<'v, 's> {
                     let val = root.take();
                     Variant::Boxed(FloatingRoot::new(strand.inner, val), info)
                 }
-                Variant::Unsupported => Variant::Unsupported,
+                Variant::Unsupported(msg) => Variant::Unsupported(msg),
                 Variant::Immutable => Variant::Immutable,
                 Variant::Overflow => Variant::Overflow,
                 Variant::ZeroDiv => Variant::ZeroDiv,
@@ -1126,5 +1142,29 @@ impl<T, E: ErrorExt> ResultExt<T> for result::Result<T, E> {
 
     fn into_do_data<'v, 's>(self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, T> {
         self.map_err(|e| e.into_do_data(strand))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{test_support::with_vm, value::Slot};
+
+    #[test]
+    fn unsupported_message_survives_boxing() {
+        with_vm(async |strand, [mut out]| {
+            let mut static_err = Error::unsupported(strand, "`+`");
+            let mut owned_err = Error::unsupported(strand, format!("{} feature", "dynamic"));
+            for (err, expected) in [
+                (&mut static_err, "unsupported operation: `+`"),
+                (&mut owned_err, "unsupported operation: dynamic feature"),
+            ] {
+                assert_eq!(err.kind(), ErrorKind::Unsupported);
+                assert_eq!(err.to_string(), expected);
+                err.get_value(strand, Slot::reborrow(&mut out));
+                assert_eq!(err.kind(), ErrorKind::Unsupported);
+                assert_eq!(err.to_string(), expected);
+            }
+        });
     }
 }

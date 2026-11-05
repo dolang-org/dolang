@@ -5,6 +5,7 @@ import
     - decode
     - encode
   test:
+    - assert
     - assert_eq
     - assert_throws
     - test
@@ -168,9 +169,13 @@ def encode_error_paths()
   assert_eq $key.kind :RANGE:
   assert_eq $key.path (:a:,)
 
+  let composite_key = (1, :a:)
   let composite = assert_throws $EncodeError do
-    encode {(1, :a:): [0, big]}
+    encode {(composite_key): [0, big]}
   assert_eq $composite.path ((1, :a:), 1)
+  # The path holds the caller's own key, not an equal copy.
+  assert (Value.(eq) composite.path[0] composite_key)
+  assert (!Value.(eq)(composite.path[0], (1, :a:)))
 
   let scalars = assert_throws $EncodeError do
     encode {(nil): {(true): {(1.5): [big]}}}

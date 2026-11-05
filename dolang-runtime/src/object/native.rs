@@ -1031,7 +1031,7 @@ pub trait Object<'v>: Sized + 'v {
     ///
     /// Dispatches to a `(spread)` inherited from an abstract supertype, such as
     /// [`Iter`](TypeObject::Iter)'s positional spreading. Otherwise returns
-    /// [`Error::not_supported`]; iterable types must implement spreading explicitly.
+    /// an unsupported-operation error; iterable types must implement spreading explicitly.
     fn spread<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1064,7 +1064,7 @@ pub trait Object<'v>: Sized + 'v {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "`==`"))
     }
     /// Implements reflected eq: `other` is the left operand and this object is the right.
     ///
@@ -1431,7 +1431,7 @@ pub trait Object<'v>: Sized + 'v {
         other: &Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "reflected `<<`"))
     }
 
     /// Computes the right shift of this object and another.
@@ -1460,7 +1460,7 @@ pub trait Object<'v>: Sized + 'v {
         other: &Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::not_supported(strand))
+        Err(Error::unsupported(strand, "reflected `>>`"))
     }
 
     /// Compares this object to another for less-than ordering.
@@ -1557,7 +1557,7 @@ pub trait Object<'v>: Sized + 'v {
         strand: &'a mut Strand<'v, 's>,
         _unpack: Unpack<'v, 'a>,
     ) -> impl Future<Output = Result<'v, 's, ()>> {
-        async move { Err(Error::not_supported(strand)) }
+        async move { Err(Error::unsupported(strand, "unpacking")) }
     }
 
     /// Offers Rust interfaces to an interface query ([`Value::query`]).
@@ -1666,7 +1666,7 @@ async fn default_object_spread<'v, 'a, 's, T: Object<'v>>(
     let Some(&Entry::Delegate(supertype_index, MemberKind::Method)) =
         recv.vtbl().entry(Sym::well_known(sym::SPREAD_METHOD))
     else {
-        return Err(Error::not_supported(strand));
+        return Err(Error::unsupported(strand, "spread"));
     };
     let supertype = instance_supertype::<T>(recv, strand, supertype_index);
     strand

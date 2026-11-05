@@ -13,14 +13,16 @@ use crate::{
     object::protocol::members,
     strand::{Pinned, Strand},
     sym::{self, Sym},
-    unpack,
     value::{Output, Slot, Value},
     vm::Vm,
 };
 
 use super::{
     BoundMethod,
-    protocol::{Inspect, Protocol, Recv, instance_get_fallback, recv_special_mcall},
+    protocol::{
+        Inspect, Protocol, Recv, abstract_call, abstract_init, instance_get_fallback,
+        recv_special_mcall,
+    },
 };
 
 /// Type-erased native function. The closure `F` is stored behind a `NonNull<()>`
@@ -429,11 +431,17 @@ impl<'v> Protocol<'v> for Type {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match method.tag() {
-            sym::INIT_METHOD => {
-                let ([_self_val], []) = unpack!(strand, args, 1, 0)?;
-                Ok(())
-            }
+            sym::INIT_METHOD => abstract_init(strand, &this, args),
             _ => recv_special_mcall(strand, &this, method, args, out).await,
         }
+    }
+
+    async fn op_call<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _args: Args<'v, 'a>,
+        _out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Err(abstract_call(strand, "Func"))
     }
 }

@@ -809,7 +809,7 @@ impl<'v> Protocol<'v> for Array<'v> {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         let Some(other) = other.downcast_ref(strand.builtin_types().array) else {
-            return Err(Error::not_supported(strand));
+            return Err(Error::unsupported(strand, "`<`"));
         };
         let this_borrow = this.borrow(strand)?;
         let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;

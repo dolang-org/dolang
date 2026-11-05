@@ -173,7 +173,7 @@ impl<'v> Object<'v> for Guid {
                 this.annex().inner == other.annex().inner
             }))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`==`"))
         }
     }
 
@@ -196,7 +196,7 @@ impl<'v> Object<'v> for Guid {
                 this.annex().inner.to_bytes() < other.annex().inner.to_bytes()
             }))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`<`"))
         }
     }
 }

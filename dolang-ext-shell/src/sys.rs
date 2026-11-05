@@ -94,7 +94,12 @@ pub(crate) fn configure_vm<'v>(
                 OperatingSystem::Linux => linux,
                 OperatingSystem::Macos => macos,
                 OperatingSystem::Windows => windows,
-                _ => return Err(Error::not_supported(strand)),
+                _ => {
+                    return Err(Error::unsupported(
+                        strand,
+                        "this operating system is not representable",
+                    ));
+                }
             };
             let family = match target.os().family() {
                 OperatingSystemFamily::Unix => unix,
@@ -118,7 +123,12 @@ pub(crate) fn configure_vm<'v>(
             let arch = match target.arch() {
                 Architecture::X86_64 => x86_64,
                 Architecture::Aarch64 => aarch64,
-                _ => return Err(Error::not_supported(strand)),
+                _ => {
+                    return Err(Error::unsupported(
+                        strand,
+                        "this CPU architecture is not representable",
+                    ));
+                }
             };
             global.types.cpu_info.create_with_annex(
                 strand,

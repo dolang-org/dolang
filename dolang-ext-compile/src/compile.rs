@@ -2015,13 +2015,23 @@ fn create_node<'v, 's>(
             compile::Kind::ImplicitParam { kind } => match kind {
                 compile::ImplicitKind::In => Which::InputParam,
                 compile::ImplicitKind::Out => Which::OutputParam,
-                _ => return Err(Error::not_supported(strand)),
+                _ => {
+                    return Err(Error::unsupported(
+                        strand,
+                        "this implicit parameter kind is not representable",
+                    ));
+                }
             },
             compile::Kind::RestParam { kind, .. } => match kind {
                 compile::RestKind::Mixed => Which::MixedRestParam,
                 compile::RestKind::Pos => Which::PosRestParam,
                 compile::RestKind::Key => Which::KeyRestParam,
-                _ => return Err(Error::not_supported(strand)),
+                _ => {
+                    return Err(Error::unsupported(
+                        strand,
+                        "this rest parameter kind is not representable",
+                    ));
+                }
             },
             compile::Kind::Lambda => Which::Lambda,
             compile::Kind::If => Which::If,
@@ -2045,7 +2055,12 @@ fn create_node<'v, 's>(
                 compile::BinderKind::Rest(compile::RestKind::Mixed) => Which::MixedRestBinder,
                 compile::BinderKind::Rest(compile::RestKind::Pos) => Which::PosRestBinder,
                 compile::BinderKind::Rest(compile::RestKind::Key) => Which::KeyRestBinder,
-                _ => return Err(Error::not_supported(strand)),
+                _ => {
+                    return Err(Error::unsupported(
+                        strand,
+                        "this binder kind is not representable",
+                    ));
+                }
             },
             compile::Kind::NameType { .. } => Which::NameType,
             compile::Kind::ConstType(_) => Which::ConstType,
@@ -2059,7 +2074,12 @@ fn create_node<'v, 's>(
                 compile::TypeArgKind::Pos => Which::PosTypeArg,
                 compile::TypeArgKind::Key { .. } => Which::KeyTypeArg,
                 compile::TypeArgKind::Expand => Which::ExpandTypeArg,
-                _ => return Err(Error::not_supported(strand)),
+                _ => {
+                    return Err(Error::unsupported(
+                        strand,
+                        "this type argument kind is not representable",
+                    ));
+                }
             },
             compile::Kind::TypeItem { kind, .. } => match kind {
                 compile::TypeItemKind::Pos { .. } => Which::PosTypeItem,
@@ -2067,7 +2087,12 @@ fn create_node<'v, 's>(
                 compile::TypeItemKind::AnyPos => Which::AnyPosTypeItem,
                 compile::TypeItemKind::AnyKey => Which::AnyKeyTypeItem,
                 compile::TypeItemKind::Open => Which::OpenTypeItem,
-                _ => return Err(Error::not_supported(strand)),
+                _ => {
+                    return Err(Error::unsupported(
+                        strand,
+                        "this type item kind is not representable",
+                    ));
+                }
             },
             _ => unreachable!(),
         };
@@ -2445,12 +2470,18 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                     }),
                     _ => unreachable!(),
                 })?;
-                match value.ok_or_else(|| Error::not_supported(strand))? {
+                match value.ok_or_else(|| {
+                    Error::unsupported(strand, "this constant type is not representable")
+                })? {
                     Value::Sym(name) => Output::set(strand, out, AsSym::new(&name)),
                     Value::Str(value) => Output::set(strand, out, value.as_str()),
                     Value::Int(value) => {
-                        let value =
-                            i64::try_from(value).map_err(|_| Error::not_supported(strand))?;
+                        let value = i64::try_from(value).map_err(|_| {
+                            Error::unsupported(
+                                strand,
+                                "constant type integer does not fit in `Int`",
+                            )
+                        })?;
                         Output::set(strand, out, value)
                     }
                     Value::Bool(value) => Output::set(strand, out, value),
@@ -2914,7 +2945,7 @@ impl<'v> Object<'v> for Span {
                 this.annex().span == other.annex().span
             }))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`==`"))
         }
     }
 
@@ -2937,7 +2968,7 @@ impl<'v> Object<'v> for Span {
                 this.annex().span < other.annex().span
             }))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`<`"))
         }
     }
 }
@@ -2975,7 +3006,7 @@ impl<'v> Object<'v> for SourceSpan {
                 this.annex().location == other.annex().location
             }))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`==`"))
         }
     }
 
@@ -2998,7 +3029,7 @@ impl<'v> Object<'v> for SourceSpan {
                 this.annex().location < other.annex().location
             }))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`<`"))
         }
     }
 }
@@ -3032,7 +3063,7 @@ impl<'v> Object<'v> for Pos {
                 this.annex().pos == other.annex().pos
             }))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`==`"))
         }
     }
 
@@ -3055,7 +3086,7 @@ impl<'v> Object<'v> for Pos {
                 this.annex().pos < other.annex().pos
             }))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`<`"))
         }
     }
 }

@@ -900,7 +900,7 @@ impl<'v> Protocol<'v> for Record<'v> {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         let Some(other) = other.downcast_ref(strand.builtin_types().record) else {
-            return Err(Error::not_supported(strand));
+            return Err(Error::unsupported(strand, "`<`"));
         };
         let left = this.borrow(strand)?;
         let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;

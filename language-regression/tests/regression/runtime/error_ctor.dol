@@ -91,6 +91,7 @@ assert_eq (type sink_stop) $SinkStop
 assert_eq (str sink_stop) "sink stopped"
 
 assert_ctor $UnsupportedError msg: "unsupported operation"
+assert_ctor $UnsupportedError msg: "unsupported operation: nope" "nope"
 assert_ctor $ImmutableError msg: "object is immutable"
 assert_ctor $ConcurrencyError msg: "conflicting concurrent operation"
 assert_ctor $ConcurrencyError msg: "conflicting concurrent operation: shared" "shared"

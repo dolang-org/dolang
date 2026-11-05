@@ -52,10 +52,15 @@ def decode_error_kind_and_position()
 def encode_error_paths()
   let inner = {}
   inner["name"] = inner
+  let prefix = "it"
+  let key = "$(prefix)ems"
   let err = assert_throws $EncodeError do
-    encode {"items": [0, 0, 0, inner]}
+    encode {(key): [0, 0, 0, inner]}
   assert_eq $err.kind :CYCLE:
   assert_eq $err.path ("items", 3, "name")
+  # The path holds the caller's own key, not an equal copy.
+  assert (Value.(eq) err.path[0] key)
+  assert (!Value.(eq)(err.path[0], "$(prefix)ems"))
   # Faults in the encoded value are value errors.
   assert_throws $ValueError do
     encode {"items": [0, 0, 0, inner]}

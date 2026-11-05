@@ -37,6 +37,28 @@ assert_eq ("banana".replace "na" "") "ba"
 assert_eq ("abc".replace "" "-") "-a-b-c-"
 assert_eq ("ab".repeat 3) "ababab"
 assert_eq ("ab".repeat 0) ""
+assert_eq ("aaaa".replace "a" "b" range: (1..3)) "abba"
+assert_eq ("abc".replace "" "-" range: (1..2)) "a-b-c"
+assert_eq ("aé".replace "" "-") "-a-é-"
+let str_replace = "aXa".replace
+assert_eq (str_replace "X" "-") "a-a"
+
+# find/rfind return byte offsets, the units of `Str` indexing.
+assert_eq ("key=value".find "=") 3
+assert_eq ("a/b/c".rfind "/") 3
+assert_eq ("abc".find "x") nil
+assert_eq ("abc".rfind "x") nil
+assert_eq ("key=value".find "e" range: (2..)) 8
+assert_eq ("a/b/c".rfind "/" range: (..3)) 1
+assert_eq ("abc".find "") 0
+assert_eq ("abc".rfind "") 3
+assert_eq ("é=é".find "=") 2
+assert_eq ("é=é".rfind "é") 3
+let accented = "é=é"
+let eq = (accented.find "=")
+assert_eq (accented[(eq + 1)..]) "é"
+let str_find = "ab".find
+assert_eq (str_find "b") 1
 
 assert_eq $"foo".upper() FOO
 assert_eq $"FOO".lower() foo
@@ -56,6 +78,12 @@ assert_throws $std.RuntimeError str: "numeric overflow" do "ab".repeat -1
 assert_throws $std.RuntimeError str: "index out of range or invalid" do "foobar"[-99..]
 assert_throws $std.RuntimeError str: "index out of range or invalid" do "foobar"[0..-99]
 assert_throws $std.RuntimeError str: "invalid UTF-8 substring boundaries" do "é"[0..1]
+assert_throws $std.RuntimeError str: "invalid UTF-8 substring boundaries" do
+  "é".find "x" range: (1..)
+assert_throws $std.RuntimeError str: "invalid UTF-8 substring boundaries" do
+  "é".replace "x" "y" range: (..1)
+assert_throws $std.RuntimeError str: "index out of range or invalid" do
+  "abc".rfind "x" range: (..5)
 assert_throws $std.RuntimeError str: "type error: iteration protocol not supported" do
   "foobar".trim 1
 assert_throws $std.RuntimeError str: "type error: invalid pattern: not a string" do

@@ -12,6 +12,20 @@ assert_throws $std.TypeError do
 assert_throws $std.TypeError do
   import class_final_mixedbool: _
 
+# `inspect.Backtrace` and `inspect.Frame` have native instances but no
+# constructor, so they are final and can't be called
+let message = "type error: cannot inherit from final type <type inspect.Backtrace>"
+assert_throws $std.TypeError str: $message do
+  import class_final_mybacktrace: _
+let message = "type error: cannot inherit from final type <type inspect.Frame>"
+assert_throws $std.TypeError str: $message do
+  import class_final_myframe: _
+import inspect
+let message = "type error: inspect.Backtrace is not instantiable"
+assert_throws $std.TypeError str: $message do inspect.Backtrace()
+let message = "type error: inspect.Frame is not instantiable"
+assert_throws $std.TypeError str: $message do inspect.Frame()
+
 # A final class's binding is the class, so its methods reach its private
 # static fields through it
 import class_final_bases:

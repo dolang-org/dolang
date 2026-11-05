@@ -7,8 +7,8 @@ use crate::{
     object::{
         BoundMethod,
         protocol::{
-            Inspect, Member, Protocol, Recv, instance_get_fallback, instance_mcall_fallback,
-            members, type_mcall_fallback,
+            Inspect, Member, Protocol, Recv, abstract_call, abstract_init, instance_get_fallback,
+            instance_mcall_fallback, members, type_mcall_fallback,
         },
     },
     strand::Strand,
@@ -163,7 +163,8 @@ async fn fallback_mcall<'v, 'a, 's>(
     match method.tag() {
         sym::MIN | sym::MAX | sym::CLAMP => default_mcall(strand, rcvr, method, args, out).await,
         sym::ABS | sym::SIGNUM | sym::ROUND | sym::FLOOR | sym::CEIL | sym::TRUNC => {
-            Err(Error::not_supported(strand))
+            let msg = format!("abstract method `{}`", method.as_str(strand));
+            Err(Error::unsupported(strand, msg))
         }
         _ => {
             let mut args = args;
@@ -248,7 +249,7 @@ impl<'v> Protocol<'v> for Num {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         this.delegator()
-            .ok_or_else(|| Error::not_supported(strand))?
+            .ok_or_else(|| Error::unsupported(strand, "reflected `+`"))?
             .op_add_direct(strand, other)
     }
 
@@ -258,7 +259,7 @@ impl<'v> Protocol<'v> for Num {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         this.delegator()
-            .ok_or_else(|| Error::not_supported(strand))?
+            .ok_or_else(|| Error::unsupported(strand, "reflected `*`"))?
             .op_mul_direct(strand, other)
     }
 
@@ -297,7 +298,12 @@ impl<'v> Protocol<'v> for Num {
         field: Sym<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        int_get(strand, &this, field, out)
+        if field.tag() == sym::INIT_METHOD && this.delegator().is_none() {
+            BoundMethod::create(strand, &this, field, out);
+            Ok(())
+        } else {
+            int_get(strand, &this, field, out)
+        }
     }
 
     async fn op_mcall<'a, 's>(
@@ -307,6 +313,18 @@ impl<'v> Protocol<'v> for Num {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        if method.tag() == sym::INIT_METHOD && this.delegator().is_none() {
+            return abstract_init(strand, &this, args);
+        }
         fallback_mcall(strand, &this, method, args, out).await
+    }
+
+    async fn op_call<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _args: Args<'v, 'a>,
+        _out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Err(abstract_call(strand, "std.Num"))
     }
 }

@@ -38,6 +38,7 @@ pub class Location
 # Obtained from [`strand.backtrace`](strand.backtrace) or
 # [`strand.error_backtrace`](strand.error_backtrace). Iterating it gives a
 # [`Frame`](inspect.Frame) for each call.
+#[final]
 pub class Backtrace: std.Iterable[Frame] @Spread[Frame]
   # Spreads the frames positionally.
   pub def (spread) self -> Spread[Frame]

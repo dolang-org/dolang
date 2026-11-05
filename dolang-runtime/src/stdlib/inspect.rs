@@ -89,7 +89,7 @@ impl<'v> Object<'v> for Location {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         let Some(other) = strand.state::<InspectStateTag>().location.cast(other) else {
-            return Err(Error::not_supported(strand));
+            return Err(Error::unsupported(strand, "`==`"));
         };
         Ok(other.enter_sync(strand, |_strand, other| {
             let (this, other) = (this.annex(), other.annex());

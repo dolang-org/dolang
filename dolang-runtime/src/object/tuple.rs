@@ -217,7 +217,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
             }
             Ok(Value::from_bool(right.len() > left.len()))
         } else {
-            Err(Error::not_supported(strand))
+            Err(Error::unsupported(strand, "`<`"))
         }
     }
 

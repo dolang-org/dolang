@@ -68,6 +68,44 @@ assert (b"foobar".contains b"oba")
 assert (b"foobar".contains b"")
 assert (!(b"foobar".contains b"baz"))
 
+# find/rfind: byte offsets, `nil` on a miss, optionally within a `range:`
+# window whose bounds behave as slicing's do.
+assert_eq (b"abcabc".find b"bc") 1
+assert_eq (b"abcabc".rfind b"bc") 4
+assert_eq (b"abcabc".find b"xyz") nil
+assert_eq (b"abcabc".rfind b"xyz") nil
+assert_eq (b"abcabc".find b"bc" range: (2..)) 4
+assert_eq (b"abcabc".rfind b"bc" range: (..4)) 1
+assert_eq (b"abcabc".find b"bc" range: (-3..)) 4
+assert_eq (b"abcabc".find b"bc" range: (2..4)) nil
+assert_eq (b"abcabc".find b"a" range: (4..2)) nil
+assert_eq (b"abc".find b"") 0
+assert_eq (b"abc".rfind b"") 3
+assert_eq (b"abc".find b"" range: (1..2)) 1
+assert_eq (b"abc".rfind b"" range: (1..2)) 2
+assert_eq (b"\x00\xff\x00\xff".rfind b"\xff") 3
+let bin_find = b"ab".find
+assert_eq (bin_find b"b") 1
+assert_throws $std.RuntimeError str: "index out of range or invalid" do
+  b"abc".find b"a" range: (5..)
+assert_throws $std.RuntimeError str: "index out of range or invalid" do
+  b"abc".find b"a" range: (Range start: 0 end: 3 step: 2)
+assert_throws $std.RuntimeError str: "type error: range: expected `Range`" do
+  b"abc".find b"a" range: 1
+
+# replace/repeat mirror `Str`; `range:` limits replacement to a window.
+assert_eq (b"foo bar foo".replace b"foo" b"baz") b"baz bar baz"
+assert_eq (b"banana".replace b"na" b"") b"ba"
+assert_eq (b"abc".replace b"" b"-") b"-a-b-c-"
+assert_eq (b"abc".replace b"" b"-" range: (1..2)) b"a-b-c"
+assert_eq (b"aaaa".replace b"a" b"b" range: (1..3)) b"abba"
+assert_eq (b"aaaa".replace b"a" b"b" range: (2..2)) b"aaaa"
+assert_eq (b"\xff\x00\xff".replace b"\xff" b"\x01\x02") b"\x01\x02\x00\x01\x02"
+assert_eq (b"ab".repeat 3) b"ababab"
+assert_eq (b"ab".repeat 0) b""
+assert_eq (b"".repeat 5) b""
+assert_throws $std.RuntimeError str: "numeric overflow" do b"ab".repeat -1
+
 # Split and join
 assert_eq [..."a,b,c".split ","] ["a", "b", "c"]
 assert_eq [...b"a,b,c".split b","] [b"a", b"b", b"c"]
