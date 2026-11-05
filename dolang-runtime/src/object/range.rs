@@ -186,6 +186,22 @@ pub(crate) fn slice_bounds<'v, 's>(
     range.get().slice_bounds(strand, len).map(Some)
 }
 
+/// Resolves an optional `range:` window over a sequence of length `len`.
+///
+/// An omitted range is the whole sequence; otherwise it is bounded like a
+/// slice, as with [`slice_bounds`].
+pub(crate) fn window<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    range: Option<&Value<'v>>,
+    len: usize,
+) -> Result<'v, 's, (usize, usize)> {
+    let Some(range) = range else {
+        return Ok((0, len));
+    };
+    slice_bounds(range, strand, len)?
+        .ok_or_else(|| Error::type_error(strand, "range: expected `Range`"))
+}
+
 pub(crate) fn slice<'v, 's>(
     index: &Value<'v>,
     strand: &mut Strand<'v, 's>,

@@ -206,7 +206,7 @@ def crc_mismatch_raises_data_error()
       file.write "abcdefgh"
   # Altering the stored bytes leaves the header's CRC-32 stale.
   let bytes = fs.read "crc.zip"
-  fs.write "crc.zip" (b"Abcdefgh".join (bytes.split b"abcdefgh"))
+  fs.write "crc.zip" (bytes.replace b"abcdefgh" b"Abcdefgh")
   zip.open "crc.zip" do |archive|
     archive.open "data.txt" do |file|
       assert_throws $DataError do file.read()

@@ -19,7 +19,7 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{Output, Slot, Slots, StrEmbryo, Value, view::PinStr},
+    value::{Nil, Output, Slot, Slots, StrEmbryo, Value, view::PinStr},
     vm::Vm,
 };
 
@@ -405,15 +405,51 @@ impl<'v> Protocol<'v> for str {
                 Output::set(strand, out, me.to_lowercase().as_str());
                 Ok(())
             }
+            sym::FIND | sym::RFIND => {
+                let range = Sym::well_known(sym::RANGE);
+                let ([needle], [range]) = unpack!(strand, args, 1, 0, range = None)?;
+                let needle = needle
+                    .as_str_raw(strand)
+                    .ok_or_else(|| Error::type_error(strand, "not a string"))?;
+                let (start, end) = range::window(strand, range.as_deref(), me.len())?;
+                let window = me
+                    .get(start..end)
+                    .ok_or_else(|| Error::runtime(strand, "invalid UTF-8 substring boundaries"))?;
+                let found = if method.tag() == sym::FIND {
+                    window.find(needle)
+                } else {
+                    window.rfind(needle)
+                };
+                match found {
+                    Some(offset) => Output::set(strand, out, start + offset),
+                    None => Output::set(strand, out, Nil),
+                }
+                Ok(())
+            }
             sym::REPLACE => {
-                let ([from, to], []) = unpack!(strand, args, 2, 0)?;
+                let range = Sym::well_known(sym::RANGE);
+                let ([from, to], [range]) = unpack!(strand, args, 2, 0, range = None)?;
                 let from = from
                     .as_str_raw(strand)
                     .ok_or_else(|| Error::type_error(strand, "old value is not a string"))?;
                 let to = to
                     .as_str_raw(strand)
                     .ok_or_else(|| Error::type_error(strand, "new value is not a string"))?;
-                Output::set(strand, out, me.replace(from, to).as_str());
+                let (start, end) = range::window(strand, range.as_deref(), me.len())?;
+                let window = me
+                    .get(start..end)
+                    .ok_or_else(|| Error::runtime(strand, "invalid UTF-8 substring boundaries"))?;
+                let mut acc = StrEmbryo::new_with_capacity(strand, me.len());
+                acc.extend(strand, &me[..start]);
+                let mut last = 0;
+                for (at, _) in window.match_indices(from) {
+                    acc.extend(strand, &window[last..at]);
+                    acc.extend(strand, to);
+                    last = at + from.len();
+                }
+                acc.extend(strand, &window[last..]);
+                acc.extend(strand, &me[end..]);
+                acc.finish(strand, out);
                 Ok(())
             }
             sym::REPEAT => {
@@ -426,7 +462,11 @@ impl<'v> Protocol<'v> for str {
                 if len > isize::MAX as usize {
                     return Err(Error::overflow(strand));
                 }
-                Output::set(strand, out, me.repeat(count).as_str());
+                let mut acc = StrEmbryo::new_with_capacity(strand, len);
+                for _ in 0..count {
+                    acc.extend(strand, me);
+                }
+                acc.finish(strand, out);
                 Ok(())
             }
             sym::CONTAINS => {
@@ -476,7 +516,10 @@ impl<'v> Protocol<'v> for str {
             | sym::TRIM
             | sym::TRIM_START
             | sym::TRIM_END
+            | sym::REPLACE
             | sym::REPEAT
+            | sym::FIND
+            | sym::RFIND
             | sym::CONTAINS => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
@@ -1049,7 +1092,10 @@ impl<'v> Protocol<'v> for Type {
                 Method(sym::TRIM_END),
                 Method(sym::UPPER),
                 Method(sym::LOWER),
+                Method(sym::REPLACE),
                 Method(sym::REPEAT),
+                Method(sym::FIND),
+                Method(sym::RFIND),
                 Method(sym::CONTAINS),
             ],
         })
@@ -1089,7 +1135,10 @@ impl<'v> Protocol<'v> for Type {
             | sym::TRIM_END
             | sym::UPPER
             | sym::LOWER
+            | sym::REPLACE
             | sym::REPEAT
+            | sym::FIND
+            | sym::RFIND
             | sym::CONTAINS => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())

@@ -1396,6 +1396,30 @@ pub class Bin: @Index[Range[Int], Bin]
   do -> Bool
     ...
 
+  # Returns the offset of the first occurrence of `needle`, or `nil` if there
+  # is none.
+  #
+  # An empty `needle` matches at the start of the window.
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq (b"abcabc".find b"bc") 1
+  # assert_eq (b"abcabc".find b"bc" range: (2..)) 4
+  # assert_eq (b"abcabc".find b"xyz") nil
+  # ```
+  pub def find
+    self
+    # the bytes to find
+    needle @ Bin
+    # byte window to search; the whole value when omitted
+    #
+    # Bounded as a slice is: negative bounds count from the end, and an
+    # out-of-range bound raises [`IndexError`](std.IndexError).
+    :range @ Range[Int] = ...
+  do -> (Int | nil)
+    ...
+
   # Joins values from an input source using this binary data as a separator.
   #
   # ## Example
@@ -1408,6 +1432,68 @@ pub class Bin: @Index[Range[Int], Bin]
     # iterable to join; uses the default input when omitted
     iter @ Iterable[Str | Bin] = ...
   do -> Bin
+    ...
+
+  # Returns the binary data repeated `count` times.
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq (b"ab".repeat 3) b"ababab"
+  # assert_eq (b"ab".repeat 0) b""
+  # ```
+  pub def repeat
+    self
+    # non-negative repetition count
+    count @ Int
+  do -> Bin
+    ...
+
+  # Returns a copy with all non-overlapping occurrences of `from` replaced with
+  # `to`. Mirrors [`Str.replace`](std.Str.replace).
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq (b"foo bar foo".replace b"foo" b"baz") b"baz bar baz"
+  # assert_eq (b"abc".replace b"" b"-") b"-a-b-c-"
+  # assert_eq (b"aaaa".replace b"a" b"b" range: (1..3)) b"abba"
+  # ```
+  pub def replace
+    self
+    # bytes to replace
+    from @ Bin
+    # replacement bytes
+    to @ Bin
+    # byte window to replace within; the whole value when omitted
+    #
+    # Bytes outside the window are copied unchanged. Bounded as a slice is.
+    :range @ Range[Int] = ...
+  do -> Bin
+    ...
+
+  # Returns the offset of the last occurrence of `needle`, or `nil` if there is
+  # none.
+  #
+  # An empty `needle` matches at the end of the window.
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq (b"abcabc".rfind b"bc") 4
+  # assert_eq (b"abcabc".rfind b"bc" range: (..4)) 1
+  # assert_eq (b"abcabc".rfind b"xyz") nil
+  # ```
+  pub def rfind
+    self
+    # the bytes to find
+    needle @ Bin
+    # byte window to search; the whole value when omitted
+    #
+    # Bounded as a slice is: negative bounds count from the end, and an
+    # out-of-range bound raises [`IndexError`](std.IndexError).
+    :range @ Range[Int] = ...
+  do -> (Int | nil)
     ...
 
   # Like `split`, but yields segments in **right-to-left** order. Mirrors
@@ -3991,6 +4077,39 @@ pub class Str: @Index[Range[Int], Str]
   do -> Bool
     ...
 
+  # Returns the byte offset of the first occurrence of `needle`, or `nil` if
+  # there is none.
+  #
+  # Offsets are in the same units as `Str` indexing, so a result can slice the
+  # string directly. An empty `needle` matches at the start of the window.
+  #
+  # ## Example
+  #
+  # ```
+  # let s = "key=value"
+  # let i = (s.find "=")
+  # assert_eq (s[..i]) "key"
+  # assert_eq ("aé=b".find "=") 3
+  # assert_eq (s.find "e" range: (2..)) 8
+  # assert_eq (s.find "x") nil
+  # ```
+  #
+  # ## Errors
+  #
+  # Raises [`RuntimeError`](std.RuntimeError) if a bound of `range` does not
+  # fall on a UTF-8 boundary.
+  pub def find
+    self
+    # the substring to find
+    needle @ Str
+    # byte window to search; the whole value when omitted
+    #
+    # Bounded as a slice is: negative bounds count from the end, and an
+    # out-of-range bound raises [`IndexError`](std.IndexError).
+    :range @ Range[Int] = ...
+  do -> (Int | nil)
+    ...
+
   # Iterates over the string's extended grapheme clusters.
   #
   # Keeps combining sequences and emoji sequences together. Destructuring reads
@@ -4070,14 +4189,54 @@ pub class Str: @Index[Range[Int], Str]
   # assert_eq ("foo bar foo".replace "foo" "baz") "baz bar baz"
   # assert_eq ("banana".replace "na" "") "ba"
   # assert_eq ("abc".replace "" "-") "-a-b-c-"
+  # assert_eq ("aaaa".replace "a" "b" range: (1..3)) "abba"
   # ```
+  #
+  # ## Errors
+  #
+  # Raises [`RuntimeError`](std.RuntimeError) if a bound of `range` does not
+  # fall on a UTF-8 boundary.
   pub def replace
     self
     # substring to replace
     from @ Str
     # replacement string
     to @ Str
+    # byte window to replace within; the whole string when omitted
+    #
+    # Text outside the window is copied unchanged. Bounded as a slice is.
+    :range @ Range[Int] = ...
   do -> Str
+    ...
+
+  # Returns the byte offset of the last occurrence of `needle`, or `nil` if
+  # there is none.
+  #
+  # Offsets are in the same units as `Str` indexing. An empty `needle` matches
+  # at the end of the window.
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq ("a/b/c".rfind "/") 3
+  # assert_eq ("a/b/c".rfind "/" range: (..3)) 1
+  # assert_eq ("abc".rfind "/") nil
+  # ```
+  #
+  # ## Errors
+  #
+  # Raises [`RuntimeError`](std.RuntimeError) if a bound of `range` does not
+  # fall on a UTF-8 boundary.
+  pub def rfind
+    self
+    # the substring to find
+    needle @ Str
+    # byte window to search; the whole value when omitted
+    #
+    # Bounded as a slice is: negative bounds count from the end, and an
+    # out-of-range bound raises [`IndexError`](std.IndexError).
+    :range @ Range[Int] = ...
+  do -> (Int | nil)
     ...
 
   # Like `split`, but yields segments in **right-to-left** order (rightmost segment

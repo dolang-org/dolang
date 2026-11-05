@@ -14,7 +14,7 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{BinEmbryo, Output, Slot, Slots, Value},
+    value::{BinEmbryo, Nil, Output, Slot, Slots, Value},
     vm::Vm,
 };
 
@@ -454,6 +454,70 @@ impl<'v> Protocol<'v> for [u8] {
                 Output::set(strand, out, input);
                 Ok(())
             }
+            sym::FIND | sym::RFIND => {
+                let range = Sym::well_known(sym::RANGE);
+                let ([needle], [range]) = unpack!(strand, args, 1, 0, range = None)?;
+                let needle = needle.as_u8_slice_raw(strand).ok_or_else(|| {
+                    let msg = "not binary data: unknown".to_string();
+                    Error::type_error(strand, msg)
+                })?;
+                let me = this.receiver.get();
+                let (start, end) = range::window(strand, range.as_deref(), me.len())?;
+                let window = &me[start..end];
+                let found = if method.tag() == sym::FIND {
+                    window.find(needle)
+                } else {
+                    window.rfind(needle)
+                };
+                match found {
+                    Some(offset) => Output::set(strand, out, start + offset),
+                    None => Output::set(strand, out, Nil),
+                }
+                Ok(())
+            }
+            sym::REPLACE => {
+                let range = Sym::well_known(sym::RANGE);
+                let ([from, to], [range]) = unpack!(strand, args, 2, 0, range = None)?;
+                let from = from
+                    .as_u8_slice_raw(strand)
+                    .ok_or_else(|| Error::type_error(strand, "old value is not binary data"))?;
+                let to = to
+                    .as_u8_slice_raw(strand)
+                    .ok_or_else(|| Error::type_error(strand, "new value is not binary data"))?;
+                let me = this.receiver.get();
+                let (start, end) = range::window(strand, range.as_deref(), me.len())?;
+                let window = &me[start..end];
+                let mut acc = BinEmbryo::new_with_capacity(strand, me.len());
+                acc.extend(strand, &me[..start]);
+                let mut last = 0;
+                for at in window.find_iter(from) {
+                    acc.extend(strand, &window[last..at]);
+                    acc.extend(strand, to);
+                    last = at + from.len();
+                }
+                acc.extend(strand, &window[last..]);
+                acc.extend(strand, &me[end..]);
+                acc.finish(strand, out);
+                Ok(())
+            }
+            sym::REPEAT => {
+                let ([count], []) = unpack!(strand, args, 1, 0)?;
+                let count = count.to_index(strand)?;
+                let me = this.receiver.get();
+                let len = me
+                    .len()
+                    .checked_mul(count)
+                    .ok_or_else(|| Error::overflow(strand))?;
+                if len > isize::MAX as usize {
+                    return Err(Error::overflow(strand));
+                }
+                let mut acc = BinEmbryo::new_with_capacity(strand, len);
+                for _ in 0..count {
+                    acc.extend(strand, me);
+                }
+                acc.finish(strand, out);
+                Ok(())
+            }
             sym::UNPACK => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 super::array_view::unpack_bin(strand, Value::from_object(this.to_strong()), out);
@@ -487,6 +551,10 @@ impl<'v> Protocol<'v> for [u8] {
             | sym::TRIM_START
             | sym::TRIM_END
             | sym::CONTAINS
+            | sym::FIND
+            | sym::RFIND
+            | sym::REPLACE
+            | sym::REPEAT
             | sym::UNPACK => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
@@ -812,6 +880,10 @@ impl<'v> Protocol<'v> for Class {
                 Method(sym::TRIM_START),
                 Method(sym::TRIM_END),
                 Method(sym::CONTAINS),
+                Method(sym::FIND),
+                Method(sym::RFIND),
+                Method(sym::REPLACE),
+                Method(sym::REPEAT),
                 Method(sym::UNPACK),
             ],
         })
@@ -888,6 +960,10 @@ impl<'v> Protocol<'v> for Class {
             | sym::TRIM_START
             | sym::TRIM_END
             | sym::CONTAINS
+            | sym::FIND
+            | sym::RFIND
+            | sym::REPLACE
+            | sym::REPEAT
             | sym::UNPACK => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
