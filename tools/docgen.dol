@@ -5,7 +5,7 @@
 # binary that does the extracting, so nothing here reaches back into
 # dodo.dol.
 
-import json strand sys
+import dodo json strand sys
   fs:
     - Path
 
@@ -241,18 +241,30 @@ def generate_doc_pages modules name entities
         $heading
         "$name.$(entry[0])"
 
+# What the doc JSON and typelibs are generated from: the extracting binary,
+# this generator and every bundled module.
+def doc_inputs spec
+  $
+    - $spec.bin("dolang")
+    - tools/docgen.dol
+    for dir = doc_paths()
+      - glob: "$dir/**/*.dol"
+
 # Runs `dolang -m doc` once per module, in parallel, writing each result as
-# `<out_dir>/<module name>.json`. This is the JSON-only half of extract_docs
-# (see there for the full doc comment on why extraction is parallelized) --
-# used by `install` to feed dolang-lsp's build-time static doc index (see
-# dolang-lsp/build.rs) without also touching the docs/api page tree.
-pub def extract_doc_json spec out_dir
-  out_dir.remove all: true ignore: true
-  out_dir.create_dir all: true
-  let workers = sys.cpu_info().logical_count
-  strand.pool $workers $collect_doc_jobs() do |job|
-    let :name :path = job
-    spec.dolang -m compile extract --doc --strict --module $name $path stdout: (out_dir / "$name.json")
+# `<module name>.json` in the spec's `doc-json` directory, and returns that
+# directory. The extraction reruns only when an input changes, so the docs
+# site, the playground and dolang-lsp's build-time doc index (see
+# dolang-lsp/build.rs) share one copy.
+pub def extract_doc_json spec
+  let out_dir = (spec.target_dir / "doc-json").absolute()
+  dodo.make inputs: $doc_inputs(spec) outputs: [out_dir] do |_ctx|
+    out_dir.remove all: true ignore: true
+    out_dir.create_dir all: true
+    let workers = sys.cpu_info().logical_count
+    strand.pool $workers $collect_doc_jobs() do |job|
+      let :name :path = job
+      spec.dolang -m compile extract --doc --strict --module $name $path stdout: (out_dir / "$name.json")
+  out_dir
 
 # The playground's hover docs (see playground/src/docs.ts), written to
 # `out_dir`: the doc projection of each stub module as `modules/<name>.json`,
@@ -262,8 +274,7 @@ pub def extract_doc_json spec out_dir
 # for mkdocs, since a link can point anywhere on the site. The `lib/` modules
 # need the shell, which the playground lacks, so their docs aren't shipped.
 pub def extract_playground_docs spec out_dir
-  let json_dir = (spec.target_dir / "playground-doc-json").absolute()
-  extract_doc_json $spec $json_dir
+  let json_dir = extract_doc_json $spec
   let modules = $
     for doc = json_dir.glob("*.json").map do |p| (json.decode(str(p.read()))["doc"])
       $doc["module"]: $doc
@@ -290,9 +301,10 @@ pub def extract_playground_docs spec out_dir
   let test_doc = json.decode(str(test.read()))["doc"]
   (modules_dir / "test.json").write $json.encode(test_doc)
 
-# Regenerates every bundled library's typelib for the LSP build. Keep private
-# modules too: public declarations may refer to them.
-pub def extract_typelibs spec out_dir
+# Regenerates every bundled library's typelib for the LSP build in the spec's
+# `typelibs` directory, when an input changes, and returns that directory.
+# Keep private modules too: public declarations may refer to them.
+pub def extract_typelibs spec
   let jobs = [...collect_doc_jobs()]
   let names = Set []
   let paths = []
@@ -302,24 +314,29 @@ pub def extract_typelibs spec out_dir
       throw "duplicate bundled module: $name"
     names.add $name
     paths.push $path
-  out_dir.remove all: true ignore: true
-  out_dir.create_dir all: true
-  # Checked together, each module named as `dol_module_name` names it
-  spec.dolang -m compile typelib --no-bundled --output $out_dir
-    for dir = doc_paths()
-      --path $dir
-    ...paths
+  let out_dir = (spec.target_dir / "typelibs").absolute()
+  dodo.make inputs: $doc_inputs(spec) outputs: [out_dir] do |_ctx|
+    out_dir.remove all: true ignore: true
+    out_dir.create_dir all: true
+    # Checked together, each module named as `dol_module_name` names it
+    spec.dolang -m compile typelib --no-bundled --output $out_dir
+      for dir = doc_paths()
+        --path $dir
+      ...paths
+  out_dir
 
-# Extracts the JSON cache and regenerates the docs/api page tree from it.
+# Extracts the JSON cache, regenerates the docs/api page tree from it and
+# returns the cache directory.
 #
 # `dolang -m compile extract --doc` nests the cooked documentation projection
 # under "doc" alongside the raw nodes/tokens/diagnostics dump; only the
 # former is relevant here, so it's unwrapped once when the cache is loaded.
-pub def extract_docs spec out_dir
-  extract_doc_json $spec $out_dir
+pub def extract_docs spec
+  let out_dir = extract_doc_json $spec
   MKDOCS_API_DIR.remove all: true ignore: true
   let modules = $
     for doc = out_dir.glob("*.json").map do |p| (json.decode(str(p.read()))["doc"])
       $doc["module"]: $doc
   for name document = modules
     generate_doc_pages $modules $name $document["entities"]
+  out_dir

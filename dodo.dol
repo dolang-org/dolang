@@ -189,9 +189,9 @@ def wasm_tool name
 def wasm_build()
   let bindgen = wasm_tool wasm-bindgen
   run_cargo build -p dolang-wasm --target wasm32-unknown-unknown --release --locked
-  dodo.show $bindgen
-    --target web --out-dir playground/pkg
-    target/wasm32-unknown-unknown/release/dolang_wasm.wasm
+  let wasm = "target/wasm32-unknown-unknown/release/dolang_wasm.wasm"
+  dodo.make inputs: [bindgen, wasm] outputs: ["playground/pkg"] do |_ctx|
+    dodo.show $bindgen --target web --out-dir playground/pkg $wasm
 
 def wasm_test()
   let runner = wasm_tool wasm-bindgen-test-runner
@@ -203,7 +203,10 @@ def playground_build()
   native.cargo build --bin dolang
   docgen().extract_playground_docs $native $Path("playground/public/docs").absolute()
   wasm_build()
-  dodo.show npm --prefix playground ci
+  dodo.make
+    inputs: ["playground/package.json", "playground/package-lock.json"]
+    outputs: ["playground/node_modules"]
+    do |_ctx| dodo.show npm --prefix playground ci
   dodo.show npm --prefix playground run build
 
 def vim_test()
@@ -253,8 +256,7 @@ def with_mkdocs func
   # The handler reads a pre-extracted JSON cache -- one file per module,
   # produced by extract_docs (see there for why) -- rather than running the
   # `dolang` extractor itself.
-  let doc_cache = (native.target_dir / "mkdocs-doc")
-  docgen().extract_docs $native $doc_cache
+  let doc_cache = docgen().extract_docs $native
   env
     DOLANG_HIGHLIGHT: "$(native.bin "dolang") -m compile extract"
     DOLANG_DOC_CACHE: $doc_cache
@@ -272,10 +274,8 @@ def cargo_test spec rest
 # builds and tests don't build it a second time without them.
 def with_lsp_bundle spec block
   spec.cargo build --bin dolang
-  let doc_json = (spec.target_dir / "lsp-doc-json").absolute()
-  docgen().extract_doc_json $spec $doc_json
-  let typelibs = (spec.target_dir / "lsp-typelibs").absolute()
-  docgen().extract_typelibs $spec $typelibs
+  let doc_json = docgen().extract_doc_json $spec
+  let typelibs = docgen().extract_typelibs $spec
   env DOLANG_LSP_DOC_JSON_DIR: $doc_json DOLANG_LSP_TYPELIB_DIR: $typelibs do block()
 
 def lsp_test spec rest
