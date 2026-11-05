@@ -88,6 +88,21 @@ pub class Permission: Iterable[PermissionBit]
     ...
 
 
+# A POSIX.1e entry's qualifier: whom an [`Ace`](security.unix.Ace) applies to.
+pub @let AceType = $
+  # The file owner
+  | :USER_OBJ:
+  # A named user
+  | :USER:
+  # The file group
+  | :GROUP_OBJ:
+  # A named group
+  | :GROUP:
+  # The effective-rights mask
+  | :MASK:
+  # All other users
+  | :OTHER:
+
 # Immutable POSIX.1e access-control entry.
 #
 # The class methods below accept only a built [`Permission`](security.unix.Permission);
@@ -153,7 +168,7 @@ pub class Ace
 
   # Entry qualifier.
   #[getter]
-  pub def type self -> (:USER_OBJ: | :USER: | :GROUP_OBJ: | :GROUP: | :MASK: | :OTHER:)
+  pub def type self -> AceType
     ...
 
   # Numeric user or group ID.

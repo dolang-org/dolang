@@ -76,35 +76,31 @@ pub @let Data = $
 # composite, or a generic Windows
 # [`AccessRight`](security.windows.AccessRight).
 #
-# | Symbol                 | Meaning                       |
-# | ---------------------- | ----------------------------- |
-# | `:QUERY_VALUE:`        | Queries key values            |
-# | `:SET_VALUE:`          | Sets key values               |
-# | `:CREATE_SUB_KEY:`     | Creates subkeys               |
-# | `:ENUMERATE_SUB_KEYS:` | Enumerates subkeys            |
-# | `:NOTIFY:`             | Receives change notifications |
-# | `:CREATE_LINK:`        | Creates symbolic-link keys    |
-# | `:WOW64_64KEY:`        | Uses the 64-bit registry view |
-# | `:WOW64_32KEY:`        | Uses the 32-bit registry view |
-#
-# Registry composites, the ones worth reaching for by default:
-#
-# | Symbol         | Equivalent to                                                                                |
-# | -------------- | -------------------------------------------------------------------------------------------- |
-# | `:READ:`       | Query values, enumerate subkeys, receive change notifications, and read security information |
-# | `:WRITE:`      | Set values, create subkeys, and read security information                                    |
-# | `:READ_WRITE:` | `:READ:` and `:WRITE:` together                                                              |
+# The registry composites, `:READ:`, `:WRITE:`, and `:READ_WRITE:`, are the
+# ones worth reaching for by default.
 pub @let AccessRight = $
+  # Queries key values
   | :QUERY_VALUE:
+  # Sets key values
   | :SET_VALUE:
+  # Creates subkeys
   | :CREATE_SUB_KEY:
+  # Enumerates subkeys
   | :ENUMERATE_SUB_KEYS:
+  # Receives change notifications
   | :NOTIFY:
+  # Creates symbolic-link keys
   | :CREATE_LINK:
+  # Uses the 64-bit registry view
   | :WOW64_64KEY:
+  # Uses the 32-bit registry view
   | :WOW64_32KEY:
+  # Query values, enumerate subkeys, receive change notifications, and read
+  # security information
   | :READ:
+  # Set values, create subkeys, and read security information
   | :WRITE:
+  # `:READ:` and `:WRITE:` together
   | :READ_WRITE:
   | WindowsAccessRight
 
@@ -501,11 +497,6 @@ pub class Key
   #
   # The enumeration is live: entries are fetched as iteration advances.
   #
-  # ## Returns
-  #
-  # An [`Iter`](std.Iter) yielding [`Str`](std.Str). Its `len` is
-  # the count captured when the enumeration was opened.
-  #
   # ## Example
   #
   # ```
@@ -539,11 +530,6 @@ pub class Key
   #
   # The enumeration is live: entries are fetched as iteration advances.
   #
-  # ## Returns
-  #
-  # An [`Iter`](std.Iter) yielding [`Value`](winreg.Value)s. Its `len` is
-  # the count captured when the enumeration was opened.
-  #
   # ## Example
   #
   # ```
@@ -565,7 +551,7 @@ pub class LinkTarget
   # The canonical registry root the target lives under, or `nil` when the
   # native path is not one this module recognizes.
   #[getter]
-  pub def root self -> (:CURRENT_USER: | :USERS: | :LOCAL_MACHINE: | nil)
+  pub def root self -> (RegistryRoot | nil)
     ...
 
   # The target path relative to [`root`](winreg.LinkTarget.root), or `nil` when the native

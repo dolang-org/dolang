@@ -48,24 +48,59 @@ pub @let SqlValue = $
   | Str
   | Bin
 
+# Why the database was locked; see [`Busy.kind`](sqlite.Busy.kind).
+pub @let BusyKind = $
+  # Another connection holds a lock
+  | :BUSY:
+  # The conflict is within this connection
+  | :LOCKED:
+
+# The constraint a statement violated; see
+# [`ConstraintError.kind`](sqlite.ConstraintError.kind).
+pub @let ConstraintKind = $
+  # `UNIQUE`
+  | :UNIQUE:
+  # `PRIMARY KEY`
+  | :PRIMARY_KEY:
+  # `REFERENCES` or `FOREIGN KEY`
+  | :FOREIGN_KEY:
+  # `NOT NULL`
+  | :NOT_NULL:
+  # `CHECK`
+  | :CHECK:
+  # Any other, such as one a trigger raises
+  | :CONSTRAINT:
+
+# What is wrong with the database file; see
+# [`CorruptError.kind`](sqlite.CorruptError.kind).
+pub @let CorruptKind = $
+  # The file is a damaged database
+  | :CORRUPT:
+  # The file is not a database
+  | :NOTADB:
+
 # Why a SQLite operation failed; see [`Error.kind`](sqlite.Error.kind).
 pub @let ErrorKind = $
-  | :BUSY:
-  | :LOCKED:
-  | :UNIQUE:
-  | :PRIMARY_KEY:
-  | :FOREIGN_KEY:
-  | :NOT_NULL:
-  | :CHECK:
-  | :CONSTRAINT:
-  | :CORRUPT:
-  | :NOTADB:
+  # The database is locked; see [`Busy`](sqlite.Busy)
+  | BusyKind
+  # A constraint was violated; see [`ConstraintError`](sqlite.ConstraintError)
+  | ConstraintKind
+  # The file is damaged or not a database; see
+  # [`CorruptError`](sqlite.CorruptError)
+  | CorruptKind
+  # The SQL is invalid, or names a table or column that does not exist
   | :SQL:
+  # The database or disk is full
   | :FULL:
+  # The database cannot be written
   | :READONLY:
+  # Access was denied
   | :PERM:
+  # The database file cannot be opened
   | :CANTOPEN:
+  # An I/O operation failed
   | :IO:
+  # Any other failure
   | :OTHER:
 
 # Raised when a SQLite operation fails.
@@ -87,19 +122,6 @@ pub @let ErrorKind = $
 # ```
 pub class Error: RuntimeError
   # Why the operation failed.
-  #
-  # | Kind                                                    | Meaning                                                                          |
-  # | ------------------------------------------------------- | -------------------------------------------------------------------------------- |
-  # | `:BUSY:`, `:LOCKED:`                                    | The database is locked; see [`Busy`](sqlite.Busy)                                |
-  # | A [`ConstraintError`](sqlite.ConstraintError.kind) kind | A constraint was violated                                                        |
-  # | `:CORRUPT:`, `:NOTADB:`                                 | The file is damaged or not a database; see [`CorruptError`](sqlite.CorruptError) |
-  # | `:SQL:`                                                 | The SQL is invalid, or names a table or column that does not exist               |
-  # | `:FULL:`                                                | The database or disk is full                                                     |
-  # | `:READONLY:`                                            | The database cannot be written                                                   |
-  # | `:PERM:`                                                | Access was denied                                                                |
-  # | `:CANTOPEN:`                                            | The database file cannot be opened                                               |
-  # | `:IO:`                                                  | An I/O operation failed                                                          |
-  # | `:OTHER:`                                               | Any other failure                                                                |
   #[getter]
   pub def kind self -> ErrorKind
     ...
@@ -117,10 +139,9 @@ pub class Error: RuntimeError
 # retry](sqlite.Connection.busy-retry). Inside a transaction the whole block is
 # retried instead; see [`Connection.transaction`](sqlite.Connection.transaction).
 pub class Busy: Error
-  # `:BUSY:` when another connection holds a lock, `:LOCKED:` when the
-  # conflict is within this connection.
+  # Why the database was locked.
   #[getter]
-  pub def kind self -> (:BUSY: | :LOCKED:)
+  pub def kind self -> BusyKind
     ...
 
 # Raised when a statement violates a constraint.
@@ -137,17 +158,8 @@ pub class Busy: Error
 # ```
 pub class ConstraintError: Error
   # The constraint violated.
-  #
-  # | Kind            | Constraint                              |
-  # | --------------- | --------------------------------------- |
-  # | `:UNIQUE:`      | `UNIQUE`                                |
-  # | `:PRIMARY_KEY:` | `PRIMARY KEY`                           |
-  # | `:FOREIGN_KEY:` | `REFERENCES` or `FOREIGN KEY`           |
-  # | `:NOT_NULL:`    | `NOT NULL`                              |
-  # | `:CHECK:`       | `CHECK`                                 |
-  # | `:CONSTRAINT:`  | Any other, such as one a trigger raises |
   #[getter]
-  pub def kind self -> (:UNIQUE: | :PRIMARY_KEY: | :FOREIGN_KEY: | :NOT_NULL: | :CHECK: | :CONSTRAINT:)
+  pub def kind self -> ConstraintKind
     ...
 
 # Raised when the database file is damaged, or is not a SQLite database.
@@ -159,10 +171,9 @@ pub class CorruptError: Error DataError
   def (init) self
     ...
 
-  # `:NOTADB:` when the file is not a database, `:CORRUPT:` when it is a
-  # damaged one.
+  # What is wrong with the file.
   #[getter]
-  pub def kind self -> (:CORRUPT: | :NOTADB:)
+  pub def kind self -> CorruptKind
     ...
 
 # An open database connection.

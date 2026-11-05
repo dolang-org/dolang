@@ -224,7 +224,12 @@ pub @let AceType = $
 
 # A named ACL revision. A native revision number is accepted wherever one of
 # these is.
-pub @let AclRevision = (:BASIC: | :DIRECTORY_SERVICE:)
+pub @let AclRevision = $
+  # Revision 2, `ACL_REVISION`
+  | :BASIC:
+  # Revision 4, `ACL_REVISION_DS`, which an
+  # [`ObjectAce`](security.windows.ObjectAce) requires
+  | :DIRECTORY_SERVICE:
 
 # An access mask, built or given as right symbols or native bits. A subtype
 # such as [`winreg.AccessMask`](winreg.AccessMask) is accepted too.
@@ -887,7 +892,15 @@ pub class KnownAce: Ace
     ...
 
 # Qualifier of an access-control entry.
-pub @let AceQualifier = (:ALLOW: | :DENY: | :AUDIT: | :ALARM:)
+pub @let AceQualifier = $
+  # Grants the access in the entry's mask
+  | :ALLOW:
+  # Denies the access in the entry's mask
+  | :DENY:
+  # Audits attempts at the access in the entry's mask
+  | :AUDIT:
+  # Raises an alarm on attempts at the access in the entry's mask
+  | :ALARM:
 
 # Inspects an allow, deny, audit, or alarm entry, including callback forms.
 pub class QualifiedAce: KnownAce

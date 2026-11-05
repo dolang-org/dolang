@@ -108,6 +108,19 @@ pub class Error: RuntimeError
   pub def cause self -> (std.Error | nil)
     ...
 
+# Where an exchange failed; see
+# [`TransportError.kind`](http.TransportError.kind).
+pub @let TransportErrorKind = $
+  # Connecting failed: the name did not resolve, or the host refused or was
+  # unreachable
+  | :CONNECT:
+  # The TLS handshake failed, or the certificate was rejected
+  | :TLS:
+  # The server closed the connection before the response was complete
+  | :CLOSED:
+  # Another I/O failure, such as a reset; [`cause`](http.Error.cause) says which
+  | :IO:
+
 # Raised when the exchange with the server breaks down: connecting, the TLS
 # handshake, or the connection failing before the response is complete.
 #
@@ -126,16 +139,18 @@ pub class Error: RuntimeError
 # ```
 pub class TransportError: Error
   # Where the exchange failed.
-  #
-  # | Kind        | Meaning                                                                             |
-  # | ----------- | ----------------------------------------------------------------------------------- |
-  # | `:CONNECT:` | Connecting failed: the name did not resolve, or the host refused or was unreachable |
-  # | `:TLS:`     | The TLS handshake failed, or the certificate was rejected                           |
-  # | `:CLOSED:`  | The server closed the connection before the response was complete                   |
-  # | `:IO:`      | Another I/O failure, such as a reset; [`cause`](http.Error.cause) says which        |
   #[getter]
-  pub def kind self -> (:CONNECT: | :TLS: | :CLOSED: | :IO:)
+  pub def kind self -> TransportErrorKind
     ...
+
+# What was malformed in a response; see [`DataError.kind`](http.DataError.kind).
+pub @let DataErrorKind = $
+  # The status line or headers
+  | :PARSE:
+  # The status line and headers exceed the size limit
+  | :TOO_LARGE:
+  # The body's framing, such as a malformed chunk
+  | :BODY:
 
 # Raised when the server's response is malformed.
 #
@@ -146,27 +161,23 @@ pub class DataError: Error std.DataError
     ...
 
   # What was malformed.
-  #
-  # | Kind          | Meaning                                           |
-  # | ------------- | ------------------------------------------------- |
-  # | `:PARSE:`     | The status line or headers                        |
-  # | `:TOO_LARGE:` | The status line and headers exceed the size limit |
-  # | `:BODY:`      | The body's framing, such as a malformed chunk     |
   #[getter]
-  pub def kind self -> (:PARSE: | :TOO_LARGE: | :BODY:)
+  pub def kind self -> DataErrorKind
     ...
+
+# Why a request failed; see [`RequestError.kind`](http.RequestError.kind).
+pub @let RequestErrorKind = $
+  # Following redirects failed, such as on a redirect loop
+  | :REDIRECT:
+  # Any other failure
+  | :OTHER:
 
 # Raised when a request fails for a reason other than the transport, the
 # response's format, or its status.
 pub class RequestError: Error
   # Why the request failed.
-  #
-  # | Kind         | Meaning                                                |
-  # | ------------ | ------------------------------------------------------ |
-  # | `:REDIRECT:` | Following redirects failed, such as on a redirect loop |
-  # | `:OTHER:`    | Any other failure                                      |
   #[getter]
-  pub def kind self -> (:REDIRECT: | :OTHER:)
+  pub def kind self -> RequestErrorKind
     ...
 
 # A response whose status is outside `200..=299`.

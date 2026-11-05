@@ -11,6 +11,15 @@ import
   time:
     - @DateTime
 
+# A TAR archive's compression.
+pub @let Compression = $
+  # Uncompressed
+  | :NONE:
+  # gzip
+  | :GZIP:
+  # Zstandard
+  | :ZSTD:
+
 # The type of a TAR entry.
 pub @let EntryType = $
   # Regular file
@@ -192,9 +201,9 @@ pub class EntryWriter: Io
 #     echo $entry.path
 # ```
 pub class Reader: Iter[Entry]
-  # Detected compression as `:NONE:`, `:GZIP:`, or `:ZSTD:`.
+  # Detected compression.
   #[getter]
-  pub def compression self -> (:NONE: | :GZIP: | :ZSTD:)
+  pub def compression self -> Compression
     ...
 
   # Yields the next [`Entry`](tar.Entry), ending iteration at the end of the
@@ -204,9 +213,9 @@ pub class Reader: Iter[Entry]
 
 # Sequential writer for a new TAR archive.
 pub class Writer
-  # Selected compression as `:NONE:`, `:GZIP:`, or `:ZSTD:`.
+  # Selected compression.
   #[getter]
-  pub def compression self -> (:NONE: | :GZIP: | :ZSTD:)
+  pub def compression self -> Compression
     ...
 
   # Creates a directory entry.
@@ -438,7 +447,7 @@ pub def write[R]
   # zstd, and other extensions select no compression. Extension matching is
   # case-insensitive. An explicit `compression` overrides the path. An
   # [`Io`](io.Io) sink has no extension, so it defaults to no compression.
-  :compression @ (:NONE: | :GZIP: | :ZSTD:) = ...
+  :compression @ Compression = ...
   # Writer scope, called with a [`Writer`](tar.Writer).
   func @ (Writer -> R)
 do -> R

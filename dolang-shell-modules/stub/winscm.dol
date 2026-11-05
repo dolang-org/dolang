@@ -82,23 +82,20 @@ pub @let StateFilter = $
 # A right of a [`ManagerAccessMask`](winscm.ManagerAccessMask): a
 # manager-specific right, or a generic Windows
 # [`AccessRight`](security.windows.AccessRight).
-#
-# | Symbol                            | Meaning                                     |
-# | --------------------------------- | ------------------------------------------- |
-# | `:SC_MANAGER_CONNECT:`            | Connects to the Service Control Manager     |
-# | `:SC_MANAGER_CREATE_SERVICE:`     | Creates services                            |
-# | `:SC_MANAGER_ENUMERATE_SERVICE:`  | Enumerates services                         |
-# | `:SC_MANAGER_LOCK:`               | Locks the service database                  |
-# | `:SC_MANAGER_QUERY_LOCK_STATUS:`  | Queries the service database lock status    |
-# | `:SC_MANAGER_MODIFY_BOOT_CONFIG:` | Modifies boot configuration information     |
-# | `:SC_MANAGER_ALL_ACCESS:`         | All Service Control Manager-specific rights |
 pub @let ManagerAccessRight = $
+  # Connects to the Service Control Manager
   | :SC_MANAGER_CONNECT:
+  # Creates services
   | :SC_MANAGER_CREATE_SERVICE:
+  # Enumerates services
   | :SC_MANAGER_ENUMERATE_SERVICE:
+  # Locks the service database
   | :SC_MANAGER_LOCK:
+  # Queries the service database lock status
   | :SC_MANAGER_QUERY_LOCK_STATUS:
+  # Modifies boot configuration information
   | :SC_MANAGER_MODIFY_BOOT_CONFIG:
+  # All Service Control Manager-specific rights
   | :SC_MANAGER_ALL_ACCESS:
   | AccessRight
 
@@ -158,29 +155,26 @@ pub class ManagerAccessMask: AccessMask
 # A right of a [`ServiceAccessMask`](winscm.ServiceAccessMask): a
 # service-specific right, or a generic Windows
 # [`AccessRight`](security.windows.AccessRight).
-#
-# | Symbol                           | Meaning                                        |
-# | -------------------------------- | ---------------------------------------------- |
-# | `:SERVICE_QUERY_CONFIG:`         | Queries the service configuration              |
-# | `:SERVICE_CHANGE_CONFIG:`        | Changes the service configuration              |
-# | `:SERVICE_QUERY_STATUS:`         | Queries the current service status             |
-# | `:SERVICE_ENUMERATE_DEPENDENTS:` | Enumerates dependent services                  |
-# | `:SERVICE_START:`                | Starts the service                             |
-# | `:SERVICE_STOP:`                 | Stops the service                              |
-# | `:SERVICE_PAUSE_CONTINUE:`       | Pauses or resumes the service                  |
-# | `:SERVICE_INTERROGATE:`          | Requests that the service report its status    |
-# | `:SERVICE_USER_DEFINED_CONTROL:` | Sends user-defined control codes to the service |
-# | `:SERVICE_ALL_ACCESS:`           | All service-specific rights                    |
 pub @let ServiceAccessRight = $
+  # Queries the service configuration
   | :SERVICE_QUERY_CONFIG:
+  # Changes the service configuration
   | :SERVICE_CHANGE_CONFIG:
+  # Queries the current service status
   | :SERVICE_QUERY_STATUS:
+  # Enumerates dependent services
   | :SERVICE_ENUMERATE_DEPENDENTS:
+  # Starts the service
   | :SERVICE_START:
+  # Stops the service
   | :SERVICE_STOP:
+  # Pauses or resumes the service
   | :SERVICE_PAUSE_CONTINUE:
+  # Requests that the service report its status
   | :SERVICE_INTERROGATE:
+  # Sends user-defined control codes to the service
   | :SERVICE_USER_DEFINED_CONTROL:
+  # All service-specific rights
   | :SERVICE_ALL_ACCESS:
   | AccessRight
 

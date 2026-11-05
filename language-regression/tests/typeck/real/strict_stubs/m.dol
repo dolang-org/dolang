@@ -36,7 +36,7 @@ pub def values u @ url.Url p @ patch.Patch -> nil
   let _month = time.Month.JANUARY
   #   ^~~~~~: flow time.Month
   let _kind = p.type
-  #   ^~~~~: flow :COPY: | :CREATE: | :DELETE: | :MODIFY: | :MOVE:
+  #   ^~~~~: flow patch.PatchType
   nil
 
 # Scoped blocks run with their caller's channels
@@ -89,7 +89,7 @@ pub def entries z @ zip.Entry t @ tar.Entry r @ tar.Reader -> nil
   let _owner = t.owner_name
   #   ^~~~~~: flow nil | std.Str
   let _compression = r.compression
-  #   ^~~~~~~~~~~~: flow :GZIP: | :NONE: | :ZSTD:
+  #   ^~~~~~~~~~~~: flow tar.Compression
   nil
 
 # File scopes run with their caller's channels and return the block's result

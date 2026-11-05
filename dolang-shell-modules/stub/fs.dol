@@ -33,22 +33,34 @@ import
   time:
     - @DateTime
 
-# Resolution mode
+# Resolution mode.
 #
 # Many functions accept a `resolve:` parameter that controls how symbolic links
-# and other recursive path resolution is handled. Two values are accepted:
-#
-# - **`:TARGET:`** — Resolve all links to their final target. This is the
-#   default for most functions.
-# - **`:LINK:`** — Resolve all links except the final component. For example,
-#   given a symlink `link -> target`, `metadata link resolve: :LINK:` returns
-#   the link's own metadata rather than the target's. This is the default for
-#   `glob`.
+# and other recursive path resolution is handled.
 #
 # On Unix, `:LINK:` corresponds to `lstat`-style behavior. On Windows, it
 # applies to both symbolic links and other reparse points such as directory
 # junctions.
-pub @let Resolve = (:TARGET: | :LINK:)
+pub @let Resolve = $
+  # Resolve all links to their final target. This is the default for most
+  # functions.
+  | :TARGET:
+  # Resolve all links except the final component. For example, given a symlink
+  # `link -> target`, `metadata link resolve: :LINK:` returns the link's own
+  # metadata rather than the target's. This is the default for `glob`.
+  | :LINK:
+
+# An ACL format.
+pub @let AclKind = $
+  # POSIX ACL, as [`security.unix.Acl`](security.unix.Acl); supported on Linux
+  # and FreeBSD
+  | :POSIX:
+  # NFSv4 ACL, as [`security.nfs4.Acl`](security.nfs4.Acl); supported on
+  # FreeBSD
+  | :NFS4:
+  # macOS ACL, as [`security.macos.Acl`](security.macos.Acl); supported on
+  # macOS
+  | :MACOS:
 
 # The type of a file.
 pub @let FileType = $
@@ -445,7 +457,7 @@ pub class BaseFile: Io
     self
     # ACL format to query. Defaults to
     # `:POSIX:`.
-    :kind @ (:POSIX: | :NFS4: | :MACOS:) = ...
+    :kind @ AclKind = ...
     # Query the directory's inheritable default
     # ACL.
     :default @ Bool = ...
@@ -459,11 +471,11 @@ pub class BaseFile: Io
   # `nil`, the omitted kind remains POSIX.
   pub def set_acl
     self
-    # ACL or declarative ACE sequence.
+    # ACL or declarative ACE sequence, or `nil` to remove the ACL.
     acl @ (security.AclSpec | nil)
     # Required for an untyped ACL
     # specification.
-    :kind @ (:POSIX: | :NFS4: | :MACOS:) = ...
+    :kind @ AclKind = ...
     # Update the directory's inheritable default
     # ACL.
     :default @ Bool = ...
@@ -1365,7 +1377,7 @@ pub class Path
     self
     # ACL format to query. Defaults to
     # `:POSIX:`.
-    :kind @ (:POSIX: | :NFS4: | :MACOS:) = ...
+    :kind @ AclKind = ...
     # Query the directory's inheritable default
     # ACL.
     :default @ Bool = ...
@@ -1380,11 +1392,11 @@ pub class Path
   # ACL supplies its kind and must match one when provided.
   pub def set_acl
     self
-    # ACL or declarative ACE sequence.
+    # ACL or declarative ACE sequence, or `nil` to remove the ACL.
     acl @ (security.AclSpec | nil)
     # Required for an untyped ACL
     # specification.
-    :kind @ (:POSIX: | :NFS4: | :MACOS:) = ...
+    :kind @ AclKind = ...
     # Update the directory's inheritable default
     # ACL.
     :default @ Bool = ...
@@ -2017,7 +2029,7 @@ pub def acl
   path @ (Str | Path)
   # ACL format to query. Defaults to
   # `:POSIX:`.
-  :kind @ (:POSIX: | :NFS4: | :MACOS:) = ...
+  :kind @ AclKind = ...
   # Query the directory's inheritable default ACL.
   :default @ Bool = ...
   # Resolution mode. Defaults to
@@ -2048,11 +2060,11 @@ do -> (security.AnyAcl | nil)
 pub def set_acl
   # Path to update.
   path @ (Str | Path)
-  # ACL or declarative ACE sequence.
+  # ACL or declarative ACE sequence, or `nil` to remove the ACL.
   acl @ (security.AclSpec | nil)
   # Required for an untyped ACL
   # specification.
-  :kind @ (:POSIX: | :NFS4: | :MACOS:) = ...
+  :kind @ AclKind = ...
   # Update the directory's inheritable default ACL.
   :default @ Bool = ...
   # Resolution mode. Defaults to

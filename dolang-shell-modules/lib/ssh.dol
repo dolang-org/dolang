@@ -4,6 +4,15 @@ import _ssh
   fs:
     - @Path
 
+# A host-key verification policy.
+pub @let HostKeyPolicy = $
+  # Use SSH's own configured checking policy
+  | :DEFAULT:
+  # Reject any host key not already in the known-hosts file
+  | :STRICT:
+  # Accept and record an unknown host key; reject a changed one
+  | :ACCEPT_NEW:
+
 # Runs `block` on `host` through SSH and a remote VFS. Filesystem access,
 # spawned programs, environment, working directory, system information, and
 # security queries use the remote target for the duration of the block.
@@ -70,13 +79,7 @@ pub def with[R]
   # Disable interactive prompts.
   :batch @ Bool = false
   # Host-key verification policy.
-  #
-  # | Value          | Meaning                                                  |
-  # | -------------- | --------------------------------------------------------- |
-  # | `:DEFAULT:`    | Use SSH's own configured checking policy                 |
-  # | `:STRICT:`     | Reject any host key not already in the known-hosts file  |
-  # | `:ACCEPT_NEW:` | Accept and record an unknown host key; reject a changed one |
-  :host_key @ (:DEFAULT: | :STRICT: | :ACCEPT_NEW:) = :DEFAULT:
+  :host_key @ HostKeyPolicy = :DEFAULT:
   # Override the known-hosts file.
   :known_hosts @ (Str | Path) = nil
   # Remote VFS launcher command and arguments.

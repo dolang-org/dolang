@@ -2,9 +2,18 @@
 # The `sys.unix` module exposes Unix-specific system types.
 import sys
 
+# A Unix operating system.
+pub @let Os = $
+  # Linux
+  | :LINUX:
+  # macOS
+  | :MACOS:
+  # FreeBSD
+  | :FREEBSD:
+
 # [`sys.ErrorCode`](sys.ErrorCode) originating from a Unix system.
 pub class Errno: sys.ErrorCode
-  # The originating operating system, as `:LINUX:`, `:MACOS:`, or `:FREEBSD:`.
+  # The originating operating system.
   #[getter]
-  pub def os self -> (:LINUX: | :MACOS: | :FREEBSD:)
+  pub def os self -> Os
     ...

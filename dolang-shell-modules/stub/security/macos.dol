@@ -140,6 +140,13 @@ pub class Flags: Iterable[FlagBit]
     ...
 
 
+# The type of an entry.
+pub @let AceType = $
+  # Grants the permissions in the entry's mask
+  | :ALLOW:
+  # Denies the permissions in the entry's mask
+  | :DENY:
+
 # Immutable macOS extended access-control entry.
 #
 # Unlike NFSv4 or POSIX.1e ACL entries, a macOS entry names every principal,
@@ -186,7 +193,7 @@ pub class Ace
 
   # Entry type.
   #[getter]
-  pub def type self -> (:ALLOW: | :DENY:)
+  pub def type self -> AceType
     ...
 
   # The entry's principal.

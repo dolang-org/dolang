@@ -4,6 +4,18 @@
 import std:
   - @BaseStruct
 
+# What is wrong with a YAML document; see
+# [`DecodeError.kind`](yaml.DecodeError.kind).
+pub @let DecodeErrorKind = $
+  # The text is not well-formed YAML, or ends inside a value
+  | :SYNTAX:
+  # The document uses a tag or an alias
+  | :UNSUPPORTED:
+  # The input holds no document, or more than one
+  | :DOCUMENTS:
+  # An integer is too large for an `Int`
+  | :RANGE:
+
 # Raised when [`decode`](yaml.decode) is given invalid YAML, or YAML that uses
 # a feature it doesn't support.
 #
@@ -17,15 +29,8 @@ import std:
 # ```
 pub class DecodeError: std.DataError
   # What is wrong with the document.
-  #
-  # | Kind | Meaning |
-  # | --- | --- |
-  # | `:SYNTAX:` | The text is not well-formed YAML, or ends inside a value. |
-  # | `:UNSUPPORTED:` | The document uses a tag or an alias. |
-  # | `:DOCUMENTS:` | The input holds no document, or more than one. |
-  # | `:RANGE:` | An integer is too large for an `Int`. |
   #[getter]
-  pub def kind self -> (:SYNTAX: | :UNSUPPORTED: | :DOCUMENTS: | :RANGE:)
+  pub def kind self -> DecodeErrorKind
     ...
 
   # Line of the fault, counting from 1.
@@ -38,6 +43,14 @@ pub class DecodeError: std.DataError
   pub def column self -> Int
     ...
 
+# Why a value can't be written as YAML; see
+# [`EncodeError.kind`](yaml.EncodeError.kind).
+pub @let EncodeErrorKind = $
+  # The value contains itself
+  | :CYCLE:
+  # An `Int` is outside the signed 64-bit range
+  | :RANGE:
+
 # Raised when [`encode`](yaml.encode) is given a value that can't be written as
 # YAML as it stands.
 #
@@ -47,19 +60,14 @@ pub class DecodeError: std.DataError
 # let items = []
 # items.push $items
 # try
-#   encode {items: $items}
+#   encode {items: items}
 # catch EncodeError: err
 #   echo "can't encode $(err.path): $err"
 # ```
 pub class EncodeError: std.ValueError
   # Why the value can't be written.
-  #
-  # | Kind | Meaning |
-  # | --- | --- |
-  # | `:CYCLE:` | The value contains itself. |
-  # | `:RANGE:` | An `Int` is outside the signed 64-bit range. |
   #[getter]
-  pub def kind self -> (:CYCLE: | :RANGE:)
+  pub def kind self -> EncodeErrorKind
     ...
 
   # Keys and indices that lead from the encoded value to the fault.

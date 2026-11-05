@@ -111,7 +111,7 @@ finally
 
 The `std` error types form a hierarchy rooted at [`Error`](std.Error):
 
-```
+```text
 Error
 ├── AbortError
 ├── CanceledError

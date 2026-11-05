@@ -27,6 +27,14 @@
 import std:
   - @Fmt
 
+# Why a pattern was rejected; see
+# [`PatternError.kind`](regex.PatternError.kind).
+pub @let PatternErrorKind = $
+  # The pattern is not valid syntax
+  | :SYNTAX:
+  # The compiled pattern would exceed the size limit
+  | :TOO_BIG:
+
 # Raised when [`Regex`](regex.Regex) is given a pattern it can't compile.
 #
 # ## Example
@@ -39,13 +47,8 @@ import std:
 # ```
 pub class PatternError: std.ValueError
   # Why the pattern was rejected.
-  #
-  # | Kind | Meaning |
-  # | --- | --- |
-  # | `:SYNTAX:` | The pattern is not valid syntax. |
-  # | `:TOO_BIG:` | The compiled pattern would exceed the size limit. |
   #[getter]
-  pub def kind self -> (:SYNTAX: | :TOO_BIG:)
+  pub def kind self -> PatternErrorKind
     ...
 
 # A compiled regular expression.
