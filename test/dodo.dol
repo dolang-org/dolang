@@ -1,9 +1,17 @@
-import dodo shell
+import dodo fs shell strand sys
   fs:
     - with_temp_dir
+  std:
+    - RuntimeError
+    - ValueError
   test:
+    - assert
     - assert_eq
+    - assert_throws
     - test
+  time:
+    - DateTime
+    - sleep
 
 #[test]
 def run_reuses_loaded_rules_when_reentered()
@@ -22,3 +30,203 @@ def run_reuses_loaded_rules_when_reentered()
 
     cd $dir do dodo.run outer
     assert_eq $marker.read_str() x
+
+# Builds `out` from `in`, counting runs in `runs`; returns the context, or nil
+# when the block didn't run.
+def build_out *inputs
+  dodo.make
+    inputs: ["in", ...inputs]
+    outputs: ["out"]
+    do |ctx|
+      fs.append runs x
+      fs.write out $ fs.read_str in
+      ctx
+
+def runs()
+  (fs.exists("runs") && fs.read_str("runs") || "").len
+
+#[test]
+def make_skips_until_input_content_changes()
+  with_temp_dir do |dir|
+    cd $dir do
+      fs.write in one
+      let ctx = build_out()
+      assert_eq $ctx.reason :NO_STAMP:
+      assert_eq $ctx.outputs (Tuple([(dir / "out").absolute().normalize()]))
+      assert_eq $ctx.changed $ctx.inputs
+      assert_eq (build_out()) nil
+      fs.update_metadata in modified: $DateTime.from_unix(1)
+      assert_eq (build_out()) nil
+      fs.write in two
+      let ctx = build_out()
+      assert_eq $ctx.reason :CHANGED:
+      assert_eq $ctx.changed.len 1
+      assert_eq (fs.read_str "out") two
+      assert_eq (runs()) 2
+
+#[test]
+def make_context_paths_are_tuples()
+  with_temp_dir do |dir|
+    cd $dir do
+      fs.write in one
+      let ctx = build_out()
+      assert (type ctx.outputs Tuple)
+      assert (type ctx.inputs Tuple)
+      assert (type ctx.changed Tuple)
+      assert_throws $std.RuntimeError do
+        dodo.MakeContext nil $ctx.outputs $ctx.inputs $ctx.changed :CHANGED:
+
+#[test]
+def make_rehashes_racy_entries()
+  with_temp_dir do |dir|
+    cd $dir do
+      # A modification time at or after the cache's means the cached hash may
+      # predate a later write with the same size and time
+      let future = DateTime.from_unix 4000000000
+      fs.write in one
+      fs.update_metadata in modified: $future
+      build_out()
+      fs.write in two
+      fs.update_metadata in modified: $future
+      assert (build_out())
+      assert_eq (fs.read_str "out") two
+
+#[test]
+def make_reruns_for_missing_output()
+  with_temp_dir do |dir|
+    cd $dir do
+      fs.write in one
+      build_out()
+      fs.remove out
+      let ctx = build_out()
+      assert_eq $ctx.reason :MISSING_OUTPUT:
+      assert_eq $ctx.changed.len 0
+
+#[test]
+def make_tracks_globbed_inputs()
+  with_temp_dir do |dir|
+    cd $dir do
+      fs.write in one
+      fs.create_dir src
+      fs.write src/a.txt a
+      assert (build_out({glob: "src/*.txt"}))
+      assert_eq (build_out({glob: "src/*.txt"})) nil
+      fs.write src/b.txt b
+      let ctx = build_out {glob: "src/*.txt"}
+      assert_eq $ctx.inputs.len 3
+      assert_eq $ctx.changed (Tuple([(dir / "src/b.txt").absolute().normalize()]))
+
+#[test]
+def make_digests_data_inputs()
+  with_temp_dir do |dir|
+    cd $dir do
+      fs.write in one
+      let value = {flags: ["-O", 2], sym: :X:, none: nil, bin: b"\x00"}
+      assert (build_out({data: value}))
+      assert_eq (build_out({data: {flags: ["-O", 2], sym: :X:, none: nil, bin: b"\x00"}})) nil
+      assert (build_out({data: {flags: ["-O", 3], sym: :X:, none: nil, bin: b"\x00"}}))
+      # Framing keeps adjacent strings apart
+      assert (build_out({data: ["ab", "c"]}))
+      assert (build_out({data: ["a", "bc"]}))
+
+#[test]
+def make_reruns_after_failed_block()
+  with_temp_dir do |dir|
+    cd $dir do
+      fs.write in one
+      build_out()
+      fs.write in two
+      assert_throws $RuntimeError do
+        dodo.make
+          inputs: ["in"]
+          outputs: ["out"]
+          do |_ctx|
+            throw RuntimeError failed
+      fs.write in one
+      let ctx = build_out()
+      assert_eq $ctx.reason :NO_STAMP:
+
+#[test]
+def make_reports_overlapping_rules()
+  with_temp_dir do |dir|
+    cd $dir do
+      fs.write in one
+      build_out()
+      dodo.make
+        inputs: ["in"]
+        outputs: ["out", "other"]
+        do |ctx|
+          fs.write out x
+          fs.write other x
+          assert_eq $ctx.reason :OWNER:
+      let ctx = build_out()
+      assert_eq $ctx.reason :OWNER:
+
+#[test]
+def make_dedupes_outputs()
+  with_temp_dir do |dir|
+    cd $dir do
+      fs.write in one
+      dodo.make
+        inputs: ["in"]
+        outputs: ["out", "./out", "sub/../out"]
+        do |ctx|
+          fs.write out x
+          assert_eq $ctx.outputs.len 1
+
+#[test]
+def make_rejects_reentry_on_held_output()
+  with_temp_dir do |dir|
+    cd $dir do
+      fs.write in one
+      let err = assert_throws $RuntimeError do
+        dodo.make
+          inputs: ["in"]
+          outputs: ["out"]
+          do |_ctx| build_out()
+      assert (str(err).contains("already building"))
+
+#[test]
+def make_directory_output_only_needs_to_exist()
+  with_temp_dir do |dir|
+    cd $dir do
+      fs.write in one
+      let build = do dodo.make
+        inputs: ["in"]
+        outputs: ["gen"]
+        do |_ctx|
+          fs.create_dir gen all: true
+          fs.write gen/a x
+          true
+      assert (build())
+      fs.remove gen/a
+      assert_eq (build()) nil
+
+#[test]
+def make_serializes_concurrent_builds()
+  with_temp_dir do |dir|
+    cd $dir do
+      fs.write in one
+      let build = do
+        dodo.make
+          inputs: ["in"]
+          outputs: ["out"]
+          do |_ctx|
+            fs.append runs x
+            sleep 0.2
+            fs.write out x
+      let first = spawn $build
+      let second = spawn $build
+      first.join()
+      second.join()
+      assert_eq (runs()) 1
+
+#[test]
+def make_rejects_bad_specs()
+  with_temp_dir do |dir|
+    cd $dir do
+      fs.write in one
+      assert_throws $ValueError do
+        dodo.make inputs: ["in"] outputs: [] do |_ctx| nil
+      assert_throws $sys.NotFoundError do
+        dodo.make inputs: ["missing"] outputs: ["out"] do |_ctx| nil
