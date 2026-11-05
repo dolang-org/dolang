@@ -23,20 +23,21 @@ def scoped_file_locks()
   let path = "file_lock.bin"
   open $path w+ do |first|
     open $path r+ do |second|
-      let result = first.lock (0..10) do |guard|
-        assert $guard.held
+      let result = first.lock (0..10) do |_|
         second.try_lock (0..10) do |other|
-          assert $!other.held
+          assert_eq $other nil
         second.try_lock (10..20) do |other|
-          assert $other.held
+          assert $other
         :LOCKED:
       assert_eq $result :LOCKED:
 
-      second.try_lock (0..10) do |guard|
-        assert $guard.held
+      second.try_lock (0..10) do |acquired|
+        let guard = acquired
+        else throw RuntimeError "lock was not acquired"
         guard.release()
-        assert $!guard.held
         guard.release()
+        first.try_lock (0..10) do |other|
+          assert $other
 
 #[test]
 #[vfs]
@@ -45,12 +46,11 @@ def shared_file_locks()
   open $path w+ do |first|
     open $path r+ do |second|
       open $path r+ do |third|
-        first.lock (..) shared: true do |first_guard|
-          assert $first_guard.held
+        first.lock (..) shared: true do |_|
           second.try_lock (..) shared: true do |second_guard|
-            assert $second_guard.held
+            assert $second_guard
             third.try_lock (..) do |exclusive|
-              assert $!exclusive.held
+              assert_eq $exclusive nil
 
 #[test]
 #[vfs]
@@ -62,16 +62,15 @@ def finite_empty_range_behavior()
         assert_throws $RuntimeError do
           first.lock (0..0) do |_|
             nil
-        first.lock (4..4) do |empty|
-          assert $empty.held
+        first.lock (4..4) do |_|
           second.try_lock (..) do |whole|
-            assert $!whole.held
+            assert_eq $whole nil
           second.try_lock (4..4) do |same|
-            assert $same.held
+            assert $same
           second.try_lock (4..8) do |starting_at_offset|
-            assert $starting_at_offset.held
+            assert $starting_at_offset
           second.try_lock (3..5) do |containing|
-            assert $!containing.held
+            assert_eq $containing nil
     else
       assert_throws $RuntimeError do
         first.lock (4..4) do |_|
@@ -92,7 +91,7 @@ def cancellation_awaits_unlock()
       worker.cancel()
       assert_throws $CanceledError do worker.join()
       second.try_lock (..) do |guard|
-        assert $guard.held
+        assert $guard
 
 #[test]
 #[vfs]
@@ -102,6 +101,52 @@ def closing_file_releases_scoped_locks()
     open $path r+ do |second|
       first.lock (..) do |guard|
         first.close()
+        second.try_lock (..) do |other|
+          assert $other
         guard.release()
-      second.try_lock (..) do |guard|
-        assert $guard.held
+
+#[test]
+#[vfs]
+def unscoped_lock_excludes_until_released()
+  let path = "unscoped_file_lock.bin"
+  open $path w+ do |first|
+    open $path r+ do |second|
+      let lock = first.lock (..)
+      second.try_lock (..) do |other|
+        assert_eq $other nil
+      lock.release()
+      lock.release()
+      second.try_lock (..) do |other|
+        assert $other
+
+#[test]
+#[vfs]
+def unscoped_try_lock_returns_lock_or_nil()
+  let path = "unscoped_try_file_lock.bin"
+  open $path w+ do |first|
+    open $path r+ do |second|
+      open $path r+ do |third|
+        first.lock (..) do |_|
+          assert_eq (second.try_lock (..)) nil
+        let first_shared = first.try_lock (..) shared: true
+        else throw RuntimeError "first shared lock was not acquired"
+        let second_shared = second.try_lock (..) shared: true
+        else throw RuntimeError "second shared lock was not acquired"
+        assert_eq (third.try_lock (..)) nil
+        first_shared.release()
+        second_shared.release()
+        let acquired = third.try_lock (..)
+        else throw RuntimeError "exclusive lock was not acquired"
+        acquired.release()
+
+#[test]
+#[vfs]
+def closing_file_releases_unscoped_locks()
+  let path = "closed_unscoped_file_lock.bin"
+  let first = open $path w+
+  open $path r+ do |second|
+    let lock = first.lock (..)
+    first.close()
+    second.try_lock (..) do |other|
+      assert $other
+    lock.release()

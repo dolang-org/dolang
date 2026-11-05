@@ -201,7 +201,7 @@ pub class BaseFile: Io
   # file.lock (0..128) do |lock|
   #   update_header()
   # ```
-  pub def lock[R]
+  @def lock[R]
     self
     # Half-open byte range; `..` is the whole
     # file.
@@ -212,6 +212,36 @@ pub class BaseFile: Io
     # Acquire a shared rather than exclusive lock.
     :shared @ Bool = ...
   do -> R
+
+  # Acquires a byte-range lock and returns it.
+  #
+  # The lock is held until [`release`](fs.FileLock.release) is called or the
+  # file is closed. A lock that is no longer referenced is also released, but
+  # only once it is garbage-collected, so release it explicitly or use the block
+  # form. Waiting and range restrictions are as for the block form.
+  #
+  # ## Example
+  #
+  # ```
+  # let locks = []
+  # try
+  #   for file = files
+  #     locks.push $ file.lock (..)
+  #   update_all()
+  # finally
+  #   for lock = locks
+  #     lock.release()
+  # ```
+  @def lock
+    self
+    # Half-open byte range; `..` is the whole
+    # file.
+    range @ Range[Int]
+    # Acquire a shared rather than exclusive lock.
+    :shared @ Bool = ...
+  do -> FileLock
+
+  pub def lock self ...options @ Value -> Value
     ...
 
   # Attempts to acquire a byte-range lock without waiting.
@@ -220,28 +250,56 @@ pub class BaseFile: Io
   #
   # The block's result.
   #
-  # The block always runs. [`lock.held`](fs.FileLock.held) is false when
-  # another handle holds a conflicting lock. Other acquisition failures raise
-  # errors.
+  # The block always runs. It receives nil when another handle holds a
+  # conflicting lock. Other acquisition failures raise errors.
   #
   # ## Example
   #
   # ```
   # file.try_lock (..) do |lock|
-  #   if lock.held
+  #   if lock
   #     update_index()
   # ```
-  pub def try_lock[R]
+  @def try_lock[R]
     self
     # Half-open byte range; `..` is the whole
     # file.
     range @ Range[Int]
-    # Block receiving a
-    # [`FileLock`](fs.FileLock).
-    func @ (FileLock -> R)
+    # Block receiving a [`FileLock`](fs.FileLock),
+    # or nil when the lock is not acquired.
+    func @ ((FileLock | nil) -> R)
     # Acquire a shared rather than exclusive lock.
     :shared @ Bool = ...
   do -> R
+
+  # Attempts to acquire a byte-range lock without waiting, and returns it.
+  #
+  # ## Returns
+  #
+  # The lock, or nil when another handle holds a conflicting lock. Other
+  # acquisition failures raise errors. The lock is released as with
+  # [`lock`](fs.BaseFile.lock) without a block.
+  #
+  # ## Example
+  #
+  # ```
+  # let lock = file.try_lock (..)
+  # if lock
+  #   try
+  #     update_index()
+  #   finally
+  #     lock.release()
+  # ```
+  @def try_lock
+    self
+    # Half-open byte range; `..` is the whole
+    # file.
+    range @ Range[Int]
+    # Acquire a shared rather than exclusive lock.
+    :shared @ Bool = ...
+  do -> (FileLock | nil)
+
+  pub def try_lock self ...options @ Value -> Value
     ...
 
   # Reads bytes from the file.
@@ -768,22 +826,14 @@ pub class RawFile: Iter[Bin] BaseFile
   do
     ...
 
-# The state of a scoped [`File`](fs.File) lock.
+# A byte-range lock on a [`File`](fs.File).
 #
-# Passed to the block given to [`File.lock`](fs.BaseFile.lock) and
-# [`File.try_lock`](fs.BaseFile.try_lock).
+# Returned by [`File.lock`](fs.BaseFile.lock) and
+# [`File.try_lock`](fs.BaseFile.try_lock), or passed to their block.
 pub class FileLock
-  # Whether the lock is currently held.
+  # Releases the lock.
   #
-  # The value is false when [`try_lock`](fs.BaseFile.try_lock) does not acquire
-  # the lock, and after releasing it.
-  #[getter]
-  pub def held self -> Bool
-    ...
-
-  # Releases the lock before the surrounding scope exits.
-  #
-  # Repeated calls have no effect.
+  # Calling it again, or after the file is closed, has no effect.
   pub def release self
     ...
 
