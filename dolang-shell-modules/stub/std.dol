@@ -2553,7 +2553,11 @@ pub @let FmtFill = (Str | :ZERO:)
 pub @let FmtAlign = (:LEFT: | :RIGHT: | :CENTER:)
 
 # A sign display for formatted numbers.
-pub @let FmtSign = (:PLUS: | :SPACE:)
+pub @let FmtSign = $
+  # Shows `+` before a non-negative number
+  | :PLUS:
+  # Shows a space before a non-negative number
+  | :SPACE:
 
 # A representation kind for formatted output. See
 # [`FmtSpec.kind`](std.FmtSpec.kind).
@@ -2635,8 +2639,9 @@ pub class FmtParam: Func
     ...
 
   # Returns a new `FmtParam` naming the same parameter with the supplied options
-  # merged. Positional arguments are not accepted. The result wasn't written in
-  # source, so its [`source`](std.FmtParam.source) is nil.
+  # merged. Omitted options retain their current values; nil resets an option.
+  # Positional arguments are not accepted. The result wasn't written in source,
+  # so its [`source`](std.FmtParam.source) is nil.
   pub def (call)
     self
     # Padding fill
@@ -2946,8 +2951,9 @@ pub class FmtValue[T]: Func
   pub def source self -> (Str | nil)
     ...
 
-  # Returns a new `FmtValue` with the supplied options merged. Positional
-  # arguments are not accepted. The result wasn't written in source, so its
+  # Returns a new `FmtValue` with the supplied options merged. Omitted options
+  # retain their current values; nil resets an option. Positional arguments are
+  # not accepted. The result wasn't written in source, so its
   # [`source`](std.FmtValue.source) is nil.
   pub def (call)
     self

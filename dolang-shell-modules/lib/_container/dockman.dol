@@ -83,18 +83,22 @@ pub @let PortSpec = BaseDict $
   # Protocol. Defaults to `:TCP:`
   ?protocol: PortProtocol
 
+# When a container restarts.
+pub @let RestartPolicy = $
+  # Do not restart the container
+  | :NO:
+  # Restart after an unsuccessful exit
+  | :ON_FAILURE:
+  # Always restart the container
+  | :ALWAYS:
+  # Restart unless explicitly stopped
+  | :UNLESS_STOPPED:
+
 # A container restart policy.
-#
-# | Value              | Meaning                            |
-# | ------------------ | ---------------------------------- |
-# | `:NO:`             | Do not restart the container       |
-# | `:ON_FAILURE:`     | Restart after an unsuccessful exit |
-# | `:ALWAYS:`         | Always restart the container       |
-# | `:UNLESS_STOPPED:` | Restart unless explicitly stopped  |
 #
 # `max_retries` limits restarts, and applies only to `:ON_FAILURE:`.
 pub @let RestartSpec = BaseDict $
-  policy: (:NO: | :ON_FAILURE: | :ALWAYS: | :UNLESS_STOPPED:)
+  policy: RestartPolicy
   ?max_retries: Int
 
 # A target platform: an `os/arch[/variant]` string, or its parts.
@@ -210,7 +214,20 @@ pub class PortBinding
     self.#host_port
 
 # A mount type a runtime reports, or its own name for an unrecognized one.
-pub @let MountType = (:BIND: | :VOLUME: | :TMPFS: | :IMAGE: | :NPIPE: | :CLUSTER: | Str)
+pub @let MountType = $
+  # `bind`: a host path
+  | :BIND:
+  # `volume`: a named volume
+  | :VOLUME:
+  # `tmpfs`: an in-memory filesystem
+  | :TMPFS:
+  # `image`: an image's filesystem
+  | :IMAGE:
+  # `npipe`: a Windows named pipe
+  | :NPIPE:
+  # `cluster`: a Swarm cluster volume
+  | :CLUSTER:
+  | Str
 
 # A mount of a container, as reported by
 # [`Container.state`](_container.dockman.Container.state).

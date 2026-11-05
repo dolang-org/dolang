@@ -905,12 +905,19 @@ pub class Diagnostic
   pub def render self -> Text
     ...
 
+# The role of an [`Annotation`](compile.Annotation).
+pub @let AnnotationKind = $
+  # The primary cause of the diagnostic
+  | :PRIMARY:
+  # Additional context relevant to the diagnostic
+  | :CONTEXT:
+
 # An additional highlighted region attached to a
 # [`Diagnostic`](compile.Diagnostic).
 pub class Annotation
   # The annotation kind.
   #[getter]
-  pub def kind self -> (:PRIMARY: | :CONTEXT:)
+  pub def kind self -> AnnotationKind
     ...
 
   # The annotation label.
@@ -923,11 +930,18 @@ pub class Annotation
   pub def span self -> SourceSpan
     ...
 
+# The role of a [`Note`](compile.Note).
+pub @let NoteKind = $
+  # Additional information
+  | :INFO:
+  # Help resolving the issue
+  | :HELP:
+
 # An auxiliary note attached to a [`Diagnostic`](compile.Diagnostic).
 pub class Note
   # The note kind.
   #[getter]
-  pub def kind self -> (:INFO: | :HELP:)
+  pub def kind self -> NoteKind
     ...
 
   # The note text.
@@ -1135,7 +1149,7 @@ do -> Checked
 #
 # ```
 # let check = Check()
-# check.add $(compile "main.dol" $source typecheck: true)
+# check.add $ compile "main.dol" $source typecheck: true
 # let tried = Set []
 # let more = true
 # while more
@@ -1147,7 +1161,7 @@ do -> Checked
 #     more = true
 #     let path = Path "lib/$name.dol"
 #     if path.exists()
-#       check.add $(compile "$path" $path.read_str() module: $name typecheck: true)
+#       check.add $ compile "$path" $path.read_str() module: $name typecheck: true
 # for diag = check.run().diagnostics
 #   echo $diag.render()
 # ```

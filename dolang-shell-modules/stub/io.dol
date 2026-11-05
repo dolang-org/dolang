@@ -14,18 +14,21 @@
 # but not iterable: iterate [`chunks`](io.Io.chunks), or iterate a subclass
 # that supports it.
 #
-# A function may return an `Io` over a native stream, such as a response body.
-# Its `close` closes that stream.
+# Closing an `Io` a function returns, such as a response body, closes the
+# stream it reads or writes.
 #
 # A function that accepts an `Io`, such as [`zip.open`](zip.open), uses the
 # stream without closing it. Afterward its position reflects what the function
 # read or wrote, though a reader may have read ahead past what it used. Only
 # the stream's own `close` closes it.
 #
-# A function can also use a Do subclass's instance, which must report its
-# capabilities. Strands call its `read`, `write` and `seek` as the function
-# needs bytes, and its `fork` if it is forkable, never its `close`. Don't use
-# the stream yourself until the function is done with it.
+# ## Native functions and Do subclasses
+#
+# A native function that accepts an `Io` also accepts an instance of a Do
+# subclass, which must report its capabilities. Strands call its `read`,
+# `write` and `seek` as the function needs bytes, and its `fork` if it is
+# forkable, never its `close`. Don't use the stream yourself until the function
+# is done with it.
 #
 # An exception from one of its methods fails the function. A
 # [`ValueError`](std.ValueError) or [`TimedOutError`](std.TimedOutError) fails
@@ -505,7 +508,7 @@ pub class Cursor: Io
     target @ (Str | Bin | BinBuf | StrBuf)
     # Byte range of the window, such as `(offset..)` or
     # `(offset..(offset + size))`; the whole target when omitted.
-    range @ (Range[Int] | nil) = ...
+    range @ Range[Int] = ...
   do
     ...
 
@@ -626,7 +629,7 @@ pub class Window: Io
     target @ Io
     # Byte range of the window, such as `(offset..)` or
     # `(offset..(offset + size))`; the whole target when omitted.
-    range @ (Range[Int] | nil) = ...
+    range @ Range[Int] = ...
   do
     ...
 

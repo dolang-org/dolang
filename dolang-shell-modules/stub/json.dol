@@ -4,6 +4,14 @@
 import std:
   - @BaseStruct
 
+# What is wrong with a JSON document; see
+# [`DecodeError.kind`](json.DecodeError.kind).
+pub @let DecodeErrorKind = $
+  # A character is out of place, or text follows the value
+  | :SYNTAX:
+  # The document ends inside a value
+  | :EOF:
+
 # Raised when [`decode`](json.decode) is given invalid JSON.
 #
 # ## Example
@@ -16,13 +24,8 @@ import std:
 # ```
 pub class DecodeError: std.DataError
   # What is wrong with the document.
-  #
-  # | Kind | Meaning |
-  # | --- | --- |
-  # | `:SYNTAX:` | A character is out of place, or text follows the value. |
-  # | `:EOF:` | The document ends inside a value. |
   #[getter]
-  pub def kind self -> (:SYNTAX: | :EOF:)
+  pub def kind self -> DecodeErrorKind
     ...
 
   # Line of the fault, counting from 1.
@@ -35,6 +38,16 @@ pub class DecodeError: std.DataError
   pub def column self -> Int
     ...
 
+# Why a value can't be written as JSON; see
+# [`EncodeError.kind`](json.EncodeError.kind).
+pub @let EncodeErrorKind = $
+  # The value contains itself
+  | :CYCLE:
+  # An `Int` is outside the signed 64-bit range
+  | :RANGE:
+  # A `Float` key is not finite
+  | :KEY:
+
 # Raised when [`encode`](json.encode) is given a value that can't be written as
 # JSON as it stands.
 #
@@ -44,20 +57,14 @@ pub class DecodeError: std.DataError
 # let items = []
 # items.push $items
 # try
-#   encode {items: $items}
+#   encode {items: items}
 # catch EncodeError: err
 #   echo "can't encode $(err.path): $err"
 # ```
 pub class EncodeError: std.ValueError
   # Why the value can't be written.
-  #
-  # | Kind | Meaning |
-  # | --- | --- |
-  # | `:CYCLE:` | The value contains itself. |
-  # | `:RANGE:` | An `Int` is outside the signed 64-bit range. |
-  # | `:KEY:` | A `Float` key is not finite. |
   #[getter]
-  pub def kind self -> (:CYCLE: | :RANGE: | :KEY:)
+  pub def kind self -> EncodeErrorKind
     ...
 
   # Keys and indices that lead from the encoded value to the fault.

@@ -31,7 +31,9 @@ pub import _container.dockman:
   - @Platform
   - @PortProtocol
   - @PortSpec
+  - @MountType
   - @PullPolicy
+  - @RestartPolicy
   - @RestartSpec
 
 let docker = dockman.Runtime :DOCKER:

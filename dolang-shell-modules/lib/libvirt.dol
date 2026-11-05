@@ -225,14 +225,6 @@ pub @let DolangSpec = $
 # honors guest flushes, applies when none is given. A `Str` is matched
 # ignoring case.
 #
-# | Value            | Behavior                                              |
-# | ---------------- | ----------------------------------------------------- |
-# | `:NONE:`         | `O_DIRECT`; no host page cache, guest flushes honored |
-# | `:WRITEBACK:`    | Host page cache, guest flushes honored                |
-# | `:WRITETHROUGH:` | Host page cache, every write flushed                  |
-# | `:DIRECTSYNC:`   | `O_DIRECT` and every write flushed                    |
-# | `:UNSAFE:`       | Host page cache, guest flushes **ignored**            |
-#
 # `:UNSAFE:` loses the disk's contents if the host or the domain dies
 # uncleanly, since nothing the guest wrote is guaranteed to have reached
 # storage until the domain shuts down. That is a fair trade for a disposable
@@ -240,40 +232,46 @@ pub @let DolangSpec = $
 # files written and deleted within one run need never reach storage at all —
 # but it is not a safe default for a domain whose disk matters.
 pub @let DiskCache = $
+  # `O_DIRECT`; no host page cache, guest flushes honored
   | :NONE:
+  # Host page cache, guest flushes honored
   | :WRITEBACK:
+  # Host page cache, every write flushed
   | :WRITETHROUGH:
+  # `O_DIRECT` and every write flushed
   | :DIRECTSYNC:
+  # Host page cache, guest flushes **ignored**
   | :UNSAFE:
   | Str
 
 # A disk I/O submission mode. Defaults to `:IO_URING:`. A `Str` is matched
 # ignoring case.
 #
-# | Value        | Behavior                                                                 |
-# | ------------ | ------------------------------------------------------------------------ |
-# | `:IO_URING:` | `io_uring`; needs QEMU 6.0+ on a 5.1+ kernel                             |
-# | `:THREADS:`  | Thread pool                                                              |
-# | `:NATIVE:`   | Linux AIO; only asynchronous with `cache:` `:NONE:` or `:DIRECTSYNC:`    |
-#
 # An older host fails at domain start rather than falling back, so select
 # `:THREADS:` there. `:NATIVE:` needs `O_DIRECT` to be asynchronous; paired
 # with a cache mode that uses the host page cache it quietly degrades to
 # blocking submission.
-pub @let DiskIo = (:IO_URING: | :THREADS: | :NATIVE: | Str)
+pub @let DiskIo = $
+  # `io_uring`; needs QEMU 6.0+ on a 5.1+ kernel
+  | :IO_URING:
+  # Thread pool
+  | :THREADS:
+  # Linux AIO; only asynchronous with `cache:` `:NONE:` or `:DIRECTSYNC:`
+  | :NATIVE:
+  | Str
 
 # qcow2 compression for an exported disk.
 #
-# | Value    | Behavior                                                          |
-# | -------- | ----------------------------------------------------------------- |
-# | `true`   | Compress with the default algorithm, currently `:ZSTD:`           |
-# | `:ZSTD:` | zstd; needs QEMU 5.1+ to read the result                          |
-# | `:ZLIB:` | zlib; readable by any QEMU, and around nine times slower to write |
-# | `false`  | No compression                                                    |
-#
 # The disk is compressed rather than its ZIP member. It stays compressed when
 # extracted into the image store, where it backs every domain laid over it.
-pub @let Compress = (Bool | :ZSTD: | :ZLIB:)
+pub @let Compress = $
+  # zstd; needs QEMU 5.1+ to read the result
+  | :ZSTD:
+  # zlib; readable by any QEMU, and around nine times slower to write
+  | :ZLIB:
+  # `true` compresses with the default algorithm, currently `:ZSTD:`; `false`
+  # disables compression
+  | Bool
 
 # A readiness probe.
 @let Probe = $

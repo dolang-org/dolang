@@ -19,9 +19,16 @@ pub @let Format = $
   # XZ.
   | :XZ:
 
-# A compression level: the format's fastest, best, or default setting, or a
-# format-specific number.
-pub @let Level = (:FASTEST: | :BEST: | :DEFAULT: | Int)
+# A compression level.
+pub @let Level = $
+  # The format's fastest setting
+  | :FASTEST:
+  # The format's best compression
+  | :BEST:
+  # The format's default setting
+  | :DEFAULT:
+  # A format-specific level
+  | Int
 
 # A stream reading decompressed bytes from a compressed source.
 #

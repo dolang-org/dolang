@@ -141,7 +141,28 @@ pub class Flags: Iterable[FlagBit]
 
 
 # The type of an entry.
-pub @let AceType = (:ALLOW: | :DENY: | :AUDIT: | :ALARM:)
+pub @let AceType = $
+  # Grants the access in the entry's mask
+  | :ALLOW:
+  # Denies the access in the entry's mask
+  | :DENY:
+  # Audits attempts at the access in the entry's mask
+  | :AUDIT:
+  # Raises an alarm on attempts at the access in the entry's mask
+  | :ALARM:
+
+# Whom an entry applies to.
+pub @let Principal = $
+  # The file owner, `OWNER@`
+  | :OWNER:
+  # The file group, `GROUP@`
+  | :OWNING_GROUP:
+  # Everyone, `EVERYONE@`
+  | :EVERYONE:
+  # A named user
+  | :USER:
+  # A named group
+  | :GROUP:
 
 # Immutable NFSv4 access-control entry.
 #
@@ -232,7 +253,7 @@ pub class Ace
 
   # Entry qualifier.
   #[getter]
-  pub def principal self -> (:OWNER: | :OWNING_GROUP: | :EVERYONE: | :USER: | :GROUP:)
+  pub def principal self -> Principal
     ...
 
   # Numeric user or group ID.

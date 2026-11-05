@@ -4,6 +4,16 @@
 import std:
   - @BaseStruct
 
+# What is wrong with TOML input; see
+# [`DecodeError.kind`](toml.DecodeError.kind).
+pub @let DecodeErrorKind = $
+  # The text is not valid TOML
+  | :SYNTAX:
+  # The input has a datetime, date, or time value
+  | :UNSUPPORTED:
+  # An integer is too large for an `Int`, or a float for a `Float`
+  | :RANGE:
+
 # Raised when [`decode`](toml.decode) is given invalid TOML, or TOML that uses
 # a feature it doesn't support.
 #
@@ -17,14 +27,8 @@ import std:
 # ```
 pub class DecodeError: std.DataError
   # What is wrong with the input.
-  #
-  # | Kind | Meaning |
-  # | --- | --- |
-  # | `:SYNTAX:` | The text is not valid TOML. |
-  # | `:UNSUPPORTED:` | The input has a datetime, date, or time value. |
-  # | `:RANGE:` | An integer is too large for an `Int`, or a float for a `Float`. |
   #[getter]
-  pub def kind self -> (:SYNTAX: | :UNSUPPORTED: | :RANGE:)
+  pub def kind self -> DecodeErrorKind
     ...
 
   # Line of the fault, counting from 1.
@@ -37,6 +41,16 @@ pub class DecodeError: std.DataError
   pub def column self -> Int
     ...
 
+# Why a value can't be written as TOML; see
+# [`EncodeError.kind`](toml.EncodeError.kind).
+pub @let EncodeErrorKind = $
+  # The value contains itself
+  | :CYCLE:
+  # An `Int` is outside the signed 64-bit range
+  | :RANGE:
+  # Two keys of one table have the same name, such as `:a:` and `"a"`
+  | :KEY:
+
 # Raised when [`encode`](toml.encode) is given a value that can't be written as
 # TOML as it stands.
 #
@@ -46,20 +60,14 @@ pub class DecodeError: std.DataError
 # let items = []
 # items.push $items
 # try
-#   encode {items: $items}
+#   encode {items: items}
 # catch EncodeError: err
 #   echo "can't encode $(err.path): $err"
 # ```
 pub class EncodeError: std.ValueError
   # Why the value can't be written.
-  #
-  # | Kind | Meaning |
-  # | --- | --- |
-  # | `:CYCLE:` | The value contains itself. |
-  # | `:RANGE:` | An `Int` is outside the signed 64-bit range. |
-  # | `:KEY:` | Two keys of one table have the same name, such as `:a:` and `"a"`. |
   #[getter]
-  pub def kind self -> (:CYCLE: | :RANGE: | :KEY:)
+  pub def kind self -> EncodeErrorKind
     ...
 
   # Keys and indices that lead from the encoded value to the fault.

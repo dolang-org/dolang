@@ -158,13 +158,35 @@ def fancy_value value @ (Str | nil) -> (term.Text | nil)
 
 # A system- or configuration-extension scope. An unrecognized scope is kept as
 # written.
-pub @let ExtensionScope = (:SYSTEM: | :INITRD: | :PORTABLE: | Str)
+pub @let ExtensionScope = $
+  # `system`: the host system
+  | :SYSTEM:
+  # `initrd`: the initrd
+  | :INITRD:
+  # `portable`: portable service images
+  | :PORTABLE:
+  | Str
 
 # An operating system's release channel.
-pub @let ReleaseType = (:STABLE: | :LTS: | :DEVELOPMENT: | :EXPERIMENT:)
+pub @let ReleaseType = $
+  # `stable`: a stable release
+  | :STABLE:
+  # `lts`: a long-term support release
+  | :LTS:
+  # `development`: a release still in development
+  | :DEVELOPMENT:
+  # `experiment`: an experimental release, not intended for production
+  | :EXPERIMENT:
 
 # A portable-service scope. An unrecognized scope is kept as written.
-pub @let PortableScope = (:SYSTEM: | :USER: | :ANY: | Str)
+pub @let PortableScope = $
+  # `system`: attaches only to the system instance of `systemd-portabled`
+  | :SYSTEM:
+  # `user`: attaches only to a user instance of `systemd-portabled`
+  | :USER:
+  # `any`: attaches to the system instance or a user instance
+  | :ANY:
+  | Str
 
 # Parsed operating-system identification data with standard-aware projections.
 #

@@ -13,6 +13,15 @@ import fs.unix:
 import time:
   - @DateTime
 
+# A ZIP compression method.
+pub @let Compression = $
+  # Uncompressed
+  | :STORED:
+  # Deflate
+  | :DEFLATE:
+  # Zstandard
+  | :ZSTD:
+
 # An open ZIP archive.
 #
 # Returned by [`open`](zip.open). Only one file can be open at a time
@@ -128,7 +137,7 @@ pub class Archive
     # known; it is a hint, and the actual sizes are what end up recorded.
     :size @ Int = ...
     # Compression method. Defaults to `:DEFLATE:`.
-    :compression @ (:STORED: | :DEFLATE: | :ZSTD:) = ...
+    :compression @ Compression = ...
   do -> File
 
   # Opens a file within the archive and calls `func` with it. The file is
@@ -145,7 +154,7 @@ pub class Archive
     # Expected uncompressed size.
     :size @ Int = ...
     # Compression method. Defaults to `:DEFLATE:`.
-    :compression @ (:STORED: | :DEFLATE: | :ZSTD:) = ...
+    :compression @ Compression = ...
     # Called with the [`File`](zip.File).
     func @ (File -> R)
   do -> R
@@ -194,9 +203,9 @@ pub class Entry
   pub def compressed_size self -> Int
     ...
 
-  # Compression method as `:STORED:`, `:DEFLATE:`, `:ZSTD:`, or `:UNKNOWN:`.
+  # Compression method, or `:UNKNOWN:` for any other.
   #[getter]
-  pub def compression self -> (:STORED: | :DEFLATE: | :ZSTD: | :UNKNOWN:)
+  pub def compression self -> (Compression | :UNKNOWN:)
     ...
 
   # CRC-32 checksum of the uncompressed data.

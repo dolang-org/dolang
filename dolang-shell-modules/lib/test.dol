@@ -1091,7 +1091,7 @@ pub def run
   # `:HUMAN:` for a report on the console, or `:JSONL:` for progress events.
   :format @ (:HUMAN: | :JSONL:) = :HUMAN:
   # File to write progress events to instead of standard output.
-  :output @ (Str | Path | nil) = nil
+  :output @ (Str | Path) = nil
   # Test file or directory.
   *paths @ (Str | Path)
 do -> Int
@@ -1139,7 +1139,7 @@ pub def list
   # `:HUMAN:` for a report on the console, or `:JSON:` for a JSON document.
   :format @ (:HUMAN: | :JSON:) = :HUMAN:
   # File to write the JSON document to instead of standard output.
-  :output @ (Str | Path | nil) = nil
+  :output @ (Str | Path) = nil
   # Test file or directory.
   *paths @ (Str | Path)
 do -> Int

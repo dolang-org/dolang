@@ -47,7 +47,13 @@ pub @let ShareKind = $
   | :IPC:
 
 # The kind of resource a network connection reaches.
-pub @let ConnectionKind = (:DISK: | :PRINT: | :ANY:)
+pub @let ConnectionKind = $
+  # A disk resource, such as a shared directory
+  | :DISK:
+  # A printer
+  | :PRINT:
+  # Any kind of resource
+  | :ANY:
 
 # A Windows local user, identified by immutable SID.
 #
@@ -586,6 +592,14 @@ pub class Connection
   do
     ...
 
+# The state of an SMB client connection.
+pub @let ConnectionState = $
+  # The connection is established
+  | :CONNECTED:
+  # The connection is saved in the profile but not currently connected, which
+  # `net use` shows as `Unavailable`
+  | :REMEMBERED:
+
 # A snapshot of an SMB client connection.
 #
 # Returned by [`Connection.info`](winnet.Connection.info) and
@@ -621,11 +635,9 @@ pub class ConnectionInfo
   pub def kind self -> ConnectionKind
     ...
 
-  # `:CONNECTED:` when the connection is established,
-  # `:REMEMBERED:` when it is saved in the profile but not currently connected
-  # -- what `net use` shows as `Unavailable`.
+  # Whether the connection is established.
   #[getter]
-  pub def state self -> (:CONNECTED: | :REMEMBERED:)
+  pub def state self -> ConnectionState
     ...
 
   # Whether the connection is recorded in the
@@ -635,6 +647,17 @@ pub class ConnectionInfo
   #[getter]
   pub def persistent self -> Bool
     ...
+
+# How a machine is named on the network.
+pub @let JoinKind = $
+  # Joined to a domain
+  | :DOMAIN:
+  # A member of a workgroup
+  | :WORKGROUP:
+  # Neither joined to a domain nor in a workgroup
+  | :UNJOINED:
+  # The state could not be determined
+  | :UNKNOWN:
 
 # The machine's workgroup or domain membership.
 #
@@ -650,10 +673,9 @@ pub class ConnectionInfo
 #   echo "not domain-joined"
 # ```
 pub class JoinStatus
-  # How the machine is named on the network, or `:UNKNOWN:` when the state
-  # could not be determined.
+  # How the machine is named on the network.
   #[getter]
-  pub def kind self -> (:DOMAIN: | :WORKGROUP: | :UNJOINED: | :UNKNOWN:)
+  pub def kind self -> JoinKind
     ...
 
   # Domain or workgroup name, or `nil` when

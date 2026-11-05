@@ -45,6 +45,19 @@ pub class ApplyError: RuntimeError
 # ```
 pub class ParseError: DataError
 
+# The kind of a [`Patch`](patch.Patch) operation.
+pub @let PatchType = $
+  # Creates [`target`](patch.Patch.target)
+  | :CREATE:
+  # Deletes [`source`](patch.Patch.source)
+  | :DELETE:
+  # Changes a file's contents
+  | :MODIFY:
+  # Moves `source` to `target`
+  | :MOVE:
+  # Copies `source` to `target`
+  | :COPY:
+
 # One file-level patch operation.
 #
 # `Patch` values are returned by [`diff`](patch.diff) and yielded by
@@ -80,9 +93,7 @@ pub class Patch
   pub def target self -> Path
     ...
 
-  # Operation kind as a symbol.
-  #
-  # One of `:CREATE:`, `:DELETE:`, `:MODIFY:`, `:MOVE:`, or `:COPY:`.
+  # Operation kind.
   #
   # ## Example
   #
@@ -91,7 +102,7 @@ pub class Patch
   # assert_eq $p.type :MODIFY:
   # ```
   #[getter]
-  pub def type self -> (:CREATE: | :DELETE: | :MODIFY: | :MOVE: | :COPY:)
+  pub def type self -> PatchType
     ...
 
   # Applies the patch to `base`.

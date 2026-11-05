@@ -7,6 +7,23 @@ import std:
 # A child of an XML element.
 pub @let Node = (Element | Comment | Str)
 
+# What is wrong with an XML document; see
+# [`DecodeError.kind`](xml.DecodeError.kind).
+pub @let DecodeErrorKind = $
+  # A character is out of place, such as in malformed attribute markup
+  | :SYNTAX:
+  # The input ends inside markup, an element, or a reference
+  | :EOF:
+  # The markup breaks an XML rule, such as a mismatched end tag, an invalid
+  # name, a duplicate attribute, a forbidden character, or a root count other
+  # than one
+  | :ILL_FORMED:
+  # A reference names an entity other than the five predefined ones, or a
+  # character that is invalid or forbidden
+  | :REFERENCE:
+  # A prefix is not bound, or a namespace binding is forbidden
+  | :NAMESPACE:
+
 # Raised when [`decode`](xml.decode) is given XML that is not well-formed, or
 # that uses a feature it doesn't support.
 #
@@ -20,16 +37,8 @@ pub @let Node = (Element | Comment | Str)
 # ```
 pub class DecodeError: std.DataError
   # What is wrong with the document.
-  #
-  # | Kind | Meaning |
-  # | --- | --- |
-  # | `:SYNTAX:` | A character is out of place, such as in malformed attribute markup. |
-  # | `:EOF:` | The input ends inside markup, an element, or a reference. |
-  # | `:ILL_FORMED:` | The markup breaks an XML rule, such as a mismatched end tag, an invalid name, a duplicate attribute, a forbidden character, or a root count other than one. |
-  # | `:REFERENCE:` | A reference names an entity other than the five predefined ones, or a character that is invalid or forbidden. |
-  # | `:NAMESPACE:` | A prefix is not bound, or a namespace binding is forbidden. |
   #[getter]
-  pub def kind self -> (:SYNTAX: | :EOF: | :ILL_FORMED: | :REFERENCE: | :NAMESPACE:)
+  pub def kind self -> DecodeErrorKind
     ...
 
   # Line of the fault, counting from 1.

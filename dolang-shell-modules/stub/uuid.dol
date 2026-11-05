@@ -1,6 +1,17 @@
 # dolang: strict
 # UUID and Windows GUID generation, parsing, and field access.
 
+# A UUID variant, from the high bits of byte 8 (RFC 9562 section 4.1).
+pub @let Variant = $
+  # Reserved for NCS backward compatibility
+  | :NCS:
+  # The layout RFC 4122 and RFC 9562 define
+  | :RFC4122:
+  # Reserved for Microsoft backward compatibility
+  | :MICROSOFT:
+  # Reserved for future definition
+  | :FUTURE:
+
 # Parsed or generated UUID value.
 pub class Uuid
   # The max `Uuid`, `ffffffff-ffff-ffff-ffff-ffffffffffff`.
@@ -57,9 +68,9 @@ pub class Uuid
   pub def hex self -> Str
     ...
 
-  # The UUID variant: `:NCS:`, `:RFC4122:`, `:MICROSOFT:`, or `:FUTURE:`.
+  # The UUID variant.
   #[getter]
-  pub def variant self -> (:NCS: | :RFC4122: | :MICROSOFT: | :FUTURE:)
+  pub def variant self -> Variant
     ...
 
   # The UUID version number, such as `4` for a randomly generated UUID.

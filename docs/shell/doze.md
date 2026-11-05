@@ -7,7 +7,7 @@ through a `doze` symlink to `dolang`, which an installation provides on Unix.
 
 A project is a directory, laid out by convention:
 
-```
+```text
 app/
   main.dol       # the program
   lib/
@@ -69,7 +69,7 @@ errors, so a misspelled key doesn't go unnoticed.
 of the tests, together. Imports resolve to the project's modules, then to the
 bundled modules. With `--strict`, warnings fail the check too.
 
-```
+```bash
 doze check
 doze --project path/to/app check
 ```
@@ -83,14 +83,14 @@ goes to it unchanged, and its exit status is `doze`'s. It runs in the project's
 directory, so test IDs such as `test/util/parses` are the same wherever `doze`
 was run from. For a project in `app`, these are the same:
 
-```
+```bash
 doze --project app test --filter 'util/*'
 (cd app && dolang --module-path lib -m test test --filter 'util/*')
 ```
 
 `--list` lists the tests instead, and `--format` gives JSON for tools:
 
-```
+```bash
 doze test --list --format json
 ```
 
@@ -108,7 +108,7 @@ project: its configured [`name`](./doze.md#configuration), else its directory.
 bundle elsewhere, and `--shebang` starts it with a `#!` line and makes it
 executable where the platform allows:
 
-```
+```bash
 doze bundle
 dolang build/app.dolz
 doze bundle -o app --shebang '/usr/bin/env dolang'
@@ -126,7 +126,7 @@ whenever the sources were compiled, whether or not they passed. Nothing is
 written if the project can't be read, such as for an invalid module path or,
 when bundling, a missing `main.dol`.
 
-```
+```bash
 doze check --json build/report.json
 ```
 
@@ -157,6 +157,6 @@ A span is as `compile.Span` describes it: a `start` with zero-based `line` and
 `column`, and a `len`, both in characters. It doesn't give an end; find one from
 the source text.
 
-```
+```json
 {"start": {"line": 1, "column": 4}, "len": 3}
 ```

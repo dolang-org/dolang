@@ -1214,7 +1214,7 @@ pub class ArchiveError: std.RuntimeError
   # The decompressor's error message.
   pub field detail @ (Str | nil) = nil
 
-  def (init) self source @ Path detail @ (Str | nil) = nil
+  def (init) self source @ Path detail @ Str = nil
     self.source = source
     self.detail = detail
     std.RuntimeError.(init) $self
