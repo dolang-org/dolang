@@ -130,8 +130,9 @@ value is a function executed inside the build container's VFS context.
 concurrency, cancellation, channels, pipelines, streams, background work, and
 scoped resources.
 
-**Tooling** — [LSP server and VS Code extension](./lsp.md), compiler and loading
-APIs, and a REPL.
+**Tooling** — [projects](./tooling/index.md), [`doze`](./tooling/doze.md), the
+[language server](./tooling/lsp.md) and
+[VS Code extension](./tooling/vscode.md), compiler and loading APIs, and a REPL.
 
 ## Platform Support
 

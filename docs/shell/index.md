@@ -37,7 +37,7 @@ directory and bundled modules. See [Modules and Caching](./modules.md).
 Prelude options supplement [the default](#shell-prelude). An alias after `=`
 changes the name bound in the script:
 
-```
+```bash
 dolang --import fs \
   --import-item fs.open \
   --import-item fs.append=append_file \
@@ -77,74 +77,29 @@ module is found. With `--strict`, warnings fail the check too.
 
 ### Script Bundles
 
-A script bundle packages a program and its modules as one file: a zip archive,
-optionally preceded by a `#!` line. `dolang` runs a bundle as it runs a script:
+A script bundle packages a program and its modules as one file. `dolang` runs a
+bundle as it runs a script:
 
 ```bash
 dolang app world
 ./app world
 ```
 
-The archive holds:
-
-- `main.dol` -- the program
-- `lib/` -- modules; `foo.bar` is `lib/foo/bar.dol` or `lib/foo/bar/mod.dol`
-- `.dolc` files -- precompiled bytecode, used in place of a `.dol` source of
-  the same name
-
-Other members are ignored. Imports resolve inside the bundle first, then through
-the [module search paths](./modules.md#module-search-paths). Each module in the
-bundle runs once. Bytecode for `main.dol` is compiled as a script, and bytecode
-for a module in module mode under the module's name, as
-`dolang -m compile bytecode --module` does. Bytecode that fails verification is
-recompiled from its source when the bundle has one. Sources in a bundle compile
-with no prelude, whatever the prelude options and `--strict` say, so a bundle
-runs the same however it is invoked.
-
-`dolang -m compile bundle` builds a bundle from a main module and the modules
-named with `--module NAME=PATH`, writing each source beside its bytecode:
-
-```bash
-dolang -m compile bundle src/main.dol \
-  --module util=src/util.dol \
-  --module util.net=src/util/net.dol \
-  --shebang '/usr/bin/env dolang' \
-  -o app
-```
-
-With `--shebang`, the bundle starts with that `#!` line and is made executable
-where the platform allows. The builder only compiles; run
-`dolang -m compile check` first to check types. [`doze`](./doze.md) checks and
-bundles a project laid out by convention instead.
-
-Archive offsets count from the start of the archive, so any zip tool can build a
-bundle too, with the `#!` line prepended:
-
-```bash
-(cd src && zip -r ../app.zip main.dol lib)
-{ echo '#!/usr/bin/env dolang'; cat app.zip; } > app
-chmod +x app
-```
+[`doze bundle`](../tooling/doze.md#bundling) builds one from a project.
+[Script Bundles](../tooling/bundles.md) describes the format and
+`dolang -m compile bundle`.
 
 ### Bundled Entrypoints
 
 `-m` runs an entrypoint bundled with `dolang`:
 
-```
+```bash
 dolang -m dodo --list
 dolang -m test -- test
 ```
 
 Symlink aliases such as `dodo` and `dolang-test` select the corresponding
 entrypoint implicitly when available.
-
-### Companion Programs
-
-A complete installation contains three main executables:
-
-- `dolang` -- script executor, bundled entrypoints, and REPL
-- `dolang-lsp` -- language server
-- `dolang-vfs` -- VFS server
 
 ## REPL
 
@@ -160,6 +115,14 @@ within a session.
 
 `dolang -m repl` also starts the REPL. Use `dolang --no-history` to leave
 history files untouched.
+
+## Companion Programs
+
+A complete installation contains three main executables:
+
+- `dolang` -- script executor, bundled entrypoints, and REPL
+- `dolang-lsp` -- language server
+- `dolang-vfs` -- VFS server
 
 ## Shell Prelude
 

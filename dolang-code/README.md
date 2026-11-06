@@ -9,7 +9,7 @@ VS Code extension providing language support for the Do programming language.
 - Language server integration for:
     - Diagnostics, with quick fixes
     - Hover documentation
-    - Go to definition, find references and document highlights
+    - Go to definition and document highlights
     - Document outline
     - Semantic highlighting
 - Extensionless scripts are recognized by a `dolang` shebang line, such as

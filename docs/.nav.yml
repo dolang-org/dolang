@@ -39,7 +39,6 @@ nav:
     - shell/system-errors.md
     - shell/modules.md
     - shell/cli-tools.md
-    - shell/doze.md
     - shell/vfs.md
     - shell/containers.md
     - shell/ssh.md
@@ -53,6 +52,12 @@ nav:
     - vm/windows.md
     - vm/gold-images.md
     - vm/caching.md
-  - lsp.md
+  - Tooling Guide:
+    - tooling/index.md
+    - tooling/doze.md
+    - tooling/bundles.md
+    - tooling/lsp.md
+    - tooling/lsp-config.md
+    - tooling/vscode.md
   - Reference: api
   - Rust API: rust-api.md

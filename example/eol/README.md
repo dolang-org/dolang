@@ -1,6 +1,6 @@
 # eol
 
-An example [Do project](../../docs/shell/doze.md): a command-line client for
+An example [Do project](../../docs/tooling/index.md): a command-line client for
 the [endoflife.date](https://endoflife.date) API, which reports when releases of
 products such as Python, Ubuntu and PostgreSQL stop being supported.
 
