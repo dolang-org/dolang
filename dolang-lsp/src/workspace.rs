@@ -17,6 +17,12 @@
 //! change itself.  A check of the workspace checks together the members whose
 //! checks aren't valid, and the closure of their imports.
 //!
+//! A check of a module writes its typelib, which is part of the check and as
+//! valid as it is.  A later check takes a member with a valid typelib as that
+//! typelib, not its source.  A module whose source fails to compile keeps the
+//! typelib of the last revision that had one, its last good, which its
+//! importers are checked against until its source compiles again.
+//!
 //! A buffer the client has open with no file of its own, an `untitled:`
 //! document, is a script in the workspace of the client's first folder, else
 //! in the detached workspace, whose module path is the bundled modules alone.
@@ -241,12 +247,16 @@ pub(crate) struct Member {
     /// Compiled when first needed, which for an open document is on the
     /// worker rather than in the handler that made it
     unit: OnceLock<Arc<Unit<'static>>>,
-    /// The modules a check of its unit needs, once a check has gathered it
-    depends: OnceLock<Vec<String>>,
+    /// The modules a check of its unit needs, once a check has gathered it,
+    /// or `None` if the checker can't take its unit
+    depends: OnceLock<Option<Vec<String>>>,
     results: Mutex<Option<Results>>,
     /// The closure of the latest check of an earlier revision, which keeps
     /// its modules loaded until this one is checked
     earlier: Option<Deps>,
+    /// The typelib of the latest earlier revision that had one, which stands
+    /// in for its module while its unit fails to compile
+    last_good: Option<Arc<Written>>,
 }
 
 /// Where a member's text comes from, and which of its texts it is.
@@ -270,6 +280,19 @@ type Deps = Arc<[(String, Resolution)]>;
 struct Results {
     checked: Checked,
     deps: Deps,
+    /// The typelib the check wrote of it, if it is a module the check could
+    /// write one for
+    typelib: Option<Arc<Written>>,
+}
+
+/// The typelib a check wrote of each of its members it could write one for.
+pub(crate) type Typelibs = Vec<Option<Box<[u8]>>>;
+
+/// A workspace module's typelib, as a check of it wrote it, and the modules a
+/// check of it needs.
+pub(crate) struct Written {
+    bytes: Box<[u8]>,
+    depends: Vec<String>,
 }
 
 /// What a module name looks up to in a workspace.
@@ -292,7 +315,10 @@ impl Resolution {
 
 /// What a check found a module to be.
 enum Found {
+    /// A member, checked from source
     Member(Arc<Member>),
+    /// A member, checked against a typelib of it
+    Typelib(Arc<Member>, Arc<Written>),
     Bundled(Arc<Library>),
     Missing,
 }
@@ -311,10 +337,12 @@ pub(crate) enum Round {
     Checks(Vec<Check>),
 }
 
-/// Members to check together, and the bundled typelibs of the rest of what
-/// they import.
+/// Members to check together, and the typelibs of the rest of what they
+/// import.
 pub(crate) struct Check {
     members: Vec<Arc<Member>>,
+    /// The members checked against their typelibs
+    written: Vec<Interface>,
     typelibs: Vec<Arc<Library>>,
     /// The members the check is of, as indexes into `members`, and the
     /// closures it is checked against
@@ -327,9 +355,41 @@ impl Check {
         &self.members
     }
 
+    /// The members checked against their typelibs.  A member whose unit
+    /// fails to compile may be both: checked from source, and its last good
+    /// typelib checked against.
+    pub(crate) fn written(&self) -> &[Interface] {
+        &self.written
+    }
+
     /// The bundled typelibs checked against, sorted by module.
     pub(crate) fn typelibs(&self) -> impl Iterator<Item = &typeck::Typelib<'static>> {
         self.typelibs.iter().map(|library| &library.typelib)
+    }
+}
+
+/// A member a check takes as a typelib.
+pub(crate) struct Interface {
+    member: Arc<Member>,
+    written: Arc<Written>,
+    /// Whether the typelib was written of the member's own unit, rather than
+    /// being its last good
+    own: bool,
+}
+
+impl Interface {
+    pub(crate) fn member(&self) -> &Arc<Member> {
+        &self.member
+    }
+
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.written.bytes
+    }
+
+    /// Whether the typelib was written of the member's own unit, which then
+    /// locates its declarations, rather than being its last good.
+    pub(crate) fn own(&self) -> bool {
+        self.own
     }
 }
 
@@ -354,6 +414,11 @@ impl Member {
         &self.path
     }
 
+    /// The module it is on the module path, or `None` for a script.
+    pub(crate) fn module(&self) -> Option<&str> {
+        self.module.as_deref()
+    }
+
     pub(crate) fn uri(&self) -> Option<&Uri> {
         match &self.source {
             Source::Open { uri, .. } => Some(uri),
@@ -374,6 +439,13 @@ impl Member {
             .map_or(self.earlier.clone(), |results| Some(results.deps.clone()))
     }
 
+    /// The typelib its latest check wrote, if it has one, else its last good.
+    fn last_good(&self) -> Option<Arc<Written>> {
+        let results = self.results();
+        let typelib = results.as_ref().and_then(|results| results.typelib.clone());
+        typelib.or_else(|| self.last_good.clone())
+    }
+
     fn results(&self) -> MutexGuard<'_, Option<Results>> {
         self.results.lock().expect("results lock poisoned")
     }
@@ -386,14 +458,23 @@ impl Member {
     /// The modules a check of its unit needs, which a member has once a check
     /// has gathered it. A unit that failed to compile needs none.
     fn depends(&self) -> &[String] {
-        self.depends.get_or_init(|| {
-            let mut check = typeck::Check::new();
-            check.pipes(PIPES[0], PIPES[1]);
-            match check.unit(self.compiled()) {
-                Ok(id) => owned(check.depends(id)),
-                Err(_) => Vec::new(),
-            }
-        })
+        self.checkable().map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether the checker can't take its unit, which failed to compile.
+    fn fails(&self) -> bool {
+        self.checkable().is_none()
+    }
+
+    fn checkable(&self) -> Option<&Vec<String>> {
+        self.depends
+            .get_or_init(|| {
+                let mut check = typeck::Check::new();
+                check.pipes(PIPES[0], PIPES[1]);
+                let id = check.unit(self.compiled()).ok()?;
+                Some(owned(check.depends(id)))
+            })
+            .as_ref()
     }
 
     /// Of the members of a module, the one it looks up to: the client's
@@ -535,6 +616,7 @@ impl Workspace {
             depends: OnceLock::new(),
             results: Mutex::new(results),
             earlier: old.and_then(|old| old.deps()),
+            last_good: old.and_then(|old| old.last_good()),
         });
         members.insert(member.key.clone(), member.clone());
         Some(member)
@@ -593,17 +675,20 @@ impl Workspace {
                 _ => roots.push(member.clone()),
             }
         }
-        let whole = (!roots.is_empty()).then(|| self.gather(roots, true));
+        let whole = (!roots.is_empty()).then(|| self.gather(roots, true, &index));
         let checks: Vec<_> = whole
             .into_iter()
-            .chain(shadowed.into_iter().map(|roots| self.gather(roots, false)))
+            .chain((shadowed.into_iter()).map(|roots| self.gather(roots, false, &index)))
             .collect();
         // A member replaced meanwhile makes the check moot, and its
         // replacement will be checked once the table settles
         let members = self.members();
         let replaced = checks
             .iter()
-            .flat_map(|check| &check.members)
+            .flat_map(|check| {
+                let written = check.written.iter().map(|interface| &interface.member);
+                check.members.iter().chain(written)
+            })
             .any(|member| !current(&members, member));
         match replaced {
             true => Round::Changed,
@@ -686,7 +771,8 @@ impl Workspace {
                 _ => {}
             }
             changed = true;
-            let new = self.load(modules, &name);
+            let last_good = old.and_then(|(old, _)| old.last_good());
+            let new = self.load(modules, &name, last_good);
             let mut members = self.members();
             if let Some((old, _)) = old
                 && current(&members, old)
@@ -735,18 +821,46 @@ impl Workspace {
     /// look up to, and those loaded from disk for modules no member is.
     /// Each root stands for its own module.
     ///
+    /// A member with a valid check that wrote its typelib is taken as that
+    /// typelib, unless it is a root.  A member whose unit fails to compile is
+    /// checked against its last good typelib, if it has one, and a root of
+    /// them is checked from source too, for its own check.
+    ///
     /// The check is of the roots and the members with no check yet when
     /// `whole`, else of the first root alone, whose own module another
     /// member stands for.
-    fn gather(&self, roots: Vec<Arc<Member>>, whole: bool) -> Check {
-        let mut found: HashMap<String, Found> = roots
-            .iter()
-            .filter_map(|root| Some((root.module.clone()?, Found::Member(root.clone()))))
-            .collect();
+    fn gather(
+        &self,
+        roots: Vec<Arc<Member>>,
+        whole: bool,
+        index: &HashMap<&str, &Arc<Member>>,
+    ) -> Check {
+        let mut found = HashMap::new();
         let mut queue: Vec<String> = Vec::new();
+        let mut written = Vec::new();
         for root in &roots {
             self.unit(root);
-            queue.extend(root.depends().iter().cloned());
+            let last_good = root.last_good.clone().filter(|_| root.fails());
+            let Some(name) = root.module.clone() else {
+                queue.extend(root.depends().iter().cloned());
+                continue;
+            };
+            let next = match last_good {
+                Some(last_good) => {
+                    queue.extend(last_good.depends.iter().cloned());
+                    written.push(Interface {
+                        member: root.clone(),
+                        written: last_good.clone(),
+                        own: false,
+                    });
+                    Found::Typelib(root.clone(), last_good)
+                }
+                None => {
+                    queue.extend(root.depends().iter().cloned());
+                    Found::Member(root.clone())
+                }
+            };
+            found.insert(name, next);
         }
         let count = roots.len();
         let mut members = roots;
@@ -756,13 +870,26 @@ impl Workspace {
                 continue;
             }
             let full = members.len() >= MAX_MODULES;
-            let next = self.find(&name, full);
+            let next = match self.find(&name, full) {
+                Found::Member(member) => match self.interface(&member, index) {
+                    Some((typelib, own)) => {
+                        written.push(Interface {
+                            member: member.clone(),
+                            written: typelib.clone(),
+                            own,
+                        });
+                        Found::Typelib(member, typelib)
+                    }
+                    None => Found::Member(member),
+                },
+                next => next,
+            };
             match &next {
                 Found::Member(member) => {
-                    self.unit(member);
                     queue.extend(member.depends().iter().cloned());
                     members.push(member.clone());
                 }
+                Found::Typelib(_, typelib) => queue.extend(typelib.depends.iter().cloned()),
                 Found::Bundled(library) => {
                     queue.extend(library.depends.iter().cloned());
                     typelibs.push(library.clone());
@@ -781,9 +908,26 @@ impl Workspace {
             .collect();
         Check {
             members,
+            written,
             typelibs,
             targets,
         }
+    }
+
+    /// The typelib a check takes `member` as, and whether it was written of
+    /// the member's own unit: the one its valid check wrote, else its last
+    /// good if its unit fails to compile.
+    fn interface(
+        &self,
+        member: &Member,
+        index: &HashMap<&str, &Arc<Member>>,
+    ) -> Option<(Arc<Written>, bool)> {
+        self.unit(member);
+        if member.fails() {
+            return Some((member.last_good.clone()?, false));
+        }
+        let typelib = member.results().as_ref()?.typelib.clone()?;
+        self.valid(member, index).then_some((typelib, true))
     }
 
     /// What a module is now: the member it looks up to, else its source on
@@ -797,7 +941,7 @@ impl Workspace {
             .min_by(|a, b| a.rank().cmp(&b.rank()))
             .cloned();
         let member = member.or_else(|| {
-            let loaded = self.load(self.modules()?, name).filter(|_| !full)?;
+            let loaded = self.load(self.modules()?, name, None).filter(|_| !full)?;
             Some(admit(&mut self.members(), loaded, false))
         });
         match member {
@@ -813,8 +957,14 @@ impl Workspace {
         }
     }
 
-    /// A module's source on the module path, read and compiled.
-    fn load(&self, modules: &ModulePath, name: &str) -> Option<Arc<Member>> {
+    /// A module's source on the module path, read and compiled, with the last
+    /// good typelib of the member it replaces.
+    fn load(
+        &self,
+        modules: &ModulePath,
+        name: &str,
+        last_good: Option<Arc<Written>>,
+    ) -> Option<Arc<Member>> {
         let (path, stamp, text) = modules.open(name)?;
         let unit = compile_document(&path, text, &self.prelude(&path), Some(name));
         Some(Arc::new(Member {
@@ -826,13 +976,19 @@ impl Workspace {
             depends: OnceLock::new(),
             results: Mutex::default(),
             earlier: None,
+            last_good,
         }))
     }
 
     /// Stores what `check` made of the members it is of, as each one's
-    /// diagnostics in `checked`, returning those it stored for: those still
-    /// current.
-    pub(crate) fn settle(&self, check: Check, mut checked: Vec<Checked>) -> Vec<Arc<Member>> {
+    /// diagnostics in `checked` and the typelib written of it in `typelibs`,
+    /// returning those it stored for: those still current.
+    pub(crate) fn settle(
+        &self,
+        check: Check,
+        mut checked: Vec<Checked>,
+        mut typelibs: Typelibs,
+    ) -> Vec<Arc<Member>> {
         let targets: Vec<_> = {
             let members = self.members();
             check
@@ -846,7 +1002,15 @@ impl Workspace {
             .map(|(target, deps)| {
                 let member = &check.members[target];
                 let checked = std::mem::take(&mut checked[target]);
-                *member.results() = Some(Results { checked, deps });
+                let typelib = typelibs[target].take().map(|bytes| {
+                    let depends = member.depends().to_vec();
+                    Arc::new(Written { bytes, depends })
+                });
+                *member.results() = Some(Results {
+                    checked,
+                    deps,
+                    typelib,
+                });
                 member.clone()
             })
             .collect()
@@ -903,6 +1067,10 @@ fn closure(found: &HashMap<String, Found>, member: &Member) -> Deps {
                 queue.extend(member.depends().iter().map(String::as_str));
                 Resolution::Member(Arc::downgrade(member))
             }
+            Found::Typelib(member, typelib) => {
+                queue.extend(typelib.depends.iter().map(String::as_str));
+                Resolution::Member(Arc::downgrade(member))
+            }
             Found::Bundled(library) => {
                 queue.extend(library.depends.iter().map(String::as_str));
                 Resolution::Bundled
@@ -951,7 +1119,7 @@ mod tests {
     use std::fs;
 
     use super::*;
-    use crate::module_path::tests::Directory;
+    use crate::{backend::check_units, module_path::tests::Directory};
 
     fn open(workspace: &Workspace, path: &Path, version: i32, text: &str) -> Option<Arc<Member>> {
         let uri = Uri::from_file_path(path).unwrap();
@@ -992,9 +1160,152 @@ mod tests {
             .into_iter()
             .flat_map(|check| {
                 let checked = vec![Checked::default(); check.members.len()];
-                workspace.settle(check, checked)
+                let typelibs = vec![None; check.members.len()];
+                workspace.settle(check, checked, typelibs)
             })
             .collect()
+    }
+
+    /// Settles what checking the workspace now makes of it, as if each check
+    /// wrote the typelib of every module whose unit compiled.
+    fn check_writing(workspace: &Workspace) -> Vec<Arc<Member>> {
+        let checks = prepare(workspace).expect("the table is settled");
+        checks
+            .into_iter()
+            .flat_map(|check| {
+                let checked = vec![Checked::default(); check.members.len()];
+                let typelibs = (check.members.iter())
+                    .map(|member| {
+                        let writes = member.module.is_some() && !member.fails();
+                        writes.then(|| Box::from(&b""[..]))
+                    })
+                    .collect();
+                workspace.settle(check, checked, typelibs)
+            })
+            .collect()
+    }
+
+    /// The sorted paths of the members a check takes as typelibs, and whether
+    /// each is its own.
+    fn written(check: &Check) -> Vec<(&Path, bool)> {
+        let mut written: Vec<_> = (check.written.iter())
+            .map(|interface| (interface.member.path.as_path(), interface.own))
+            .collect();
+        written.sort();
+        written
+    }
+
+    fn typelib(member: &Member) -> bool {
+        member
+            .results()
+            .as_ref()
+            .is_some_and(|results| results.typelib.is_some())
+    }
+
+    #[test]
+    fn valid_members_are_checked_as_their_typelibs() {
+        let tree = Directory::repo();
+        library(&tree);
+        let a = tree.write("lib/a.dol", "import b\n");
+        let b = tree.write("lib/b.dol", "");
+        let main = tree.0.join("main.dol");
+        let other = tree.0.join("other.dol");
+        let workspace = Workspaces::default().open(&main);
+        open(&workspace, &main, 1, "import a\n").unwrap();
+        check_writing(&workspace);
+
+        // A later check takes the modules the first checked as their typelibs
+        open(&workspace, &other, 1, "import a\n").unwrap();
+        let checks = prepare(&workspace).unwrap();
+        let [check] = &checks[..] else {
+            panic!("expected one check");
+        };
+        assert_eq!(paths(check), (vec![other.as_path()], vec![other.as_path()]));
+        assert_eq!(written(check), [(a.as_path(), true), (&b, true)]);
+        check_writing(&workspace);
+
+        // An edit to `b` drops its typelib and those of its importers, which
+        // are checked from source again
+        open(&workspace, &b, 1, "# b\n").unwrap();
+        let checks = prepare(&workspace).unwrap();
+        let [check] = &checks[..] else {
+            panic!("expected one check");
+        };
+        let all = vec![a.as_path(), &b, &main, &other];
+        assert_eq!(paths(check), (all.clone(), all));
+        assert_eq!(written(check), []);
+    }
+
+    #[test]
+    fn a_module_that_fails_to_compile_stands_as_its_last_good() {
+        let tree = Directory::repo();
+        library(&tree);
+        let a = tree.write("lib/a.dol", "import b\n");
+        let b = tree.write("lib/b.dol", "");
+        let main = tree.0.join("main.dol");
+        let workspace = Workspaces::default().open(&main);
+        open(&workspace, &main, 1, "import a\n").unwrap();
+        check_writing(&workspace);
+
+        // Broken, `a` is checked from source for its own check, and its
+        // importers against its last good typelib, with what that imports
+        let broken = open(&workspace, &a, 1, "pub def\n").unwrap();
+        let checks = prepare(&workspace).unwrap();
+        assert!(broken.fails());
+        let [check] = &checks[..] else {
+            panic!("expected one check");
+        };
+        let roots = vec![a.as_path(), &main];
+        assert_eq!(paths(check), (roots.clone(), roots));
+        assert_eq!(written(check), [(a.as_path(), false), (&b, true)]);
+        check_writing(&workspace);
+        assert!(!typelib(&broken));
+
+        // It stays the last good through further broken revisions
+        open(&workspace, &a, 2, "pub def\n# still\n").unwrap();
+        let checks = prepare(&workspace).unwrap();
+        assert_eq!(written(&checks[0]), [(a.as_path(), false), (&b, true)]);
+        check_writing(&workspace);
+
+        // Fixed, its source replaces it
+        let fixed = open(&workspace, &a, 3, "import b\n# fixed\n").unwrap();
+        let checks = prepare(&workspace).unwrap();
+        assert_eq!(written(&checks[0]), [(b.as_path(), true)]);
+        check_writing(&workspace);
+        assert!(typelib(&fixed));
+    }
+
+    #[test]
+    fn checks_write_typelibs_only_of_modules_whose_imports_resolve() {
+        // The modules import `std`, which only `dodo lsp-test` bundles
+        if typelib_index::lookup("std").is_none() {
+            return;
+        }
+        let tree = Directory::repo();
+        library(&tree);
+        let a = tree.write("lib/a.dol", "pub def f x@Int\n  x\n");
+        let c = tree.write("lib/c.dol", "import nowhere\npub def g x\n  x\n");
+        let main = tree.0.join("main.dol");
+        let workspace = Workspaces::default().open(&main);
+        open(&workspace, &main, 1, "import a\nimport c\n").unwrap();
+        let checks = prepare(&workspace).unwrap();
+        for check in checks {
+            let (checked, typelibs) = check_units(&workspace, &check, &HashMap::new());
+            workspace.settle(check, checked, typelibs);
+        }
+        assert!(typelib(&workspace.member(&a).unwrap()));
+        assert!(!typelib(&workspace.member(&c).unwrap()));
+        assert!(!typelib(&workspace.member(&main).unwrap()));
+
+        // A broken module has none
+        let broken = open(&workspace, &a, 1, "pub def\n").unwrap();
+        let checks = prepare(&workspace).unwrap();
+        for check in checks {
+            let (checked, typelibs) = check_units(&workspace, &check, &HashMap::new());
+            workspace.settle(check, checked, typelibs);
+        }
+        assert!(broken.checked().is_some());
+        assert!(!typelib(&broken));
     }
 
     fn library(tree: &Directory) {
@@ -1242,7 +1553,8 @@ mod tests {
         let checks = prepare(&workspace).unwrap();
         let second = open(&workspace, &main, 2, "let b = 1\n").unwrap();
         for check in checks {
-            assert!(workspace.settle(check, vec![Checked::default()]).is_empty());
+            let settled = workspace.settle(check, vec![Checked::default()], vec![None]);
+            assert!(settled.is_empty());
         }
         assert!(first.checked().is_none());
         assert!(second.checked().is_none());

@@ -32,7 +32,7 @@ use crate::{
     lookup::{self, Modules, Target},
     settings::{CONFIG_FILE_NAME, Import, PROJECT_FILE_NAME},
     signature,
-    workspace::{Check, Key, Member, PIPES, Round, Workspace, Workspaces},
+    workspace::{Check, Key, Member, PIPES, Round, Typelibs, Workspace, Workspaces},
 };
 
 const TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
@@ -731,7 +731,7 @@ struct Analyzed {
     name: String,
     /// What the check concluded about all its units
     analysis: Arc<typeck::Analysis>,
-    /// The modules the check read from source
+    /// The modules the check has the units of
     modules: Arc<Modules>,
 }
 
@@ -795,7 +795,7 @@ impl Document {
     }
 
     /// The declarations the name at `offset` stands for in the modules the
-    /// check read from source, and the overload a call of it chose. That's a
+    /// check has the units of, and the overload a call of it chose. That's a
     /// module, as its root; an item imported from a module, as the reference
     /// `id` names it; a function
     /// declared here, when a call chose one of its overloads; the members a
@@ -1259,11 +1259,11 @@ impl Worker {
             let checked = panic::catch_unwind(AssertUnwindSafe(|| {
                 check_units(workspace, &check, &encodings)
             }));
-            let Ok(checked) = checked else {
+            let Ok((checked, typelibs)) = checked else {
                 log::error!("failed to check");
                 continue;
             };
-            for member in workspace.settle(check, checked) {
+            for member in workspace.settle(check, checked, typelibs) {
                 // The compile diagnostics already published are all there is
                 // to say about a unit the checker can't take
                 if let Some(uri) = member.uri()
@@ -1373,25 +1373,36 @@ pub(crate) fn compile_document(
     config.unit(path, text)
 }
 
-/// Type checks a workspace's members together, against the bundled typelibs
-/// of the rest of what they import.
+/// Type checks a workspace's members together, against the typelibs of the
+/// rest of what they import.
 ///
 /// Gives each member the checker's diagnostics located in it, if the client
 /// has it open, and the check's analysis, or no analysis when its unit failed
-/// to compile and can't be checked.  A module neither a member nor bundled is
-/// reported as not found.
-fn check_units(
+/// to compile and can't be checked; and the typelib the check wrote of it, if
+/// it is a module whose imports all resolved.  A module with neither a source
+/// that compiles nor a typelib is reported as not found.
+pub(crate) fn check_units(
     workspace: &Workspace,
     check: &Check,
     encodings: &HashMap<Uri, PositionEncodingKind>,
-) -> Vec<Checked> {
+) -> (Vec<Checked>, Typelibs) {
     let units: Vec<_> = check
         .members()
         .iter()
         .map(|member| workspace.unit(member))
         .collect();
+    let mut written = Vec::new();
+    for interface in check.written() {
+        match typeck::Typelib::read(interface.bytes()) {
+            Ok(typelib) => written.push(typelib),
+            Err(err) => {
+                let path = interface.member().path().display();
+                log::error!("typelib of {path} is unreadable: {err}");
+            }
+        }
+    }
     let mut builder = typeck::Check::new();
-    builder.analysis(true);
+    builder.analysis(true).typelibs(true);
     builder.pipes(PIPES[0], PIPES[1]);
     let ids: Vec<_> = check
         .members()
@@ -1408,12 +1419,26 @@ fn check_units(
             }
         })
         .collect();
+    for typelib in &written {
+        if let Err(err) = builder.typelib(typelib) {
+            log::error!("cannot check against {}: {err}", typelib.module());
+        }
+    }
     for typelib in check.typelibs() {
         if let Err(err) = builder.typelib(typelib) {
             log::error!("cannot check against {}: {err}", typelib.module());
         }
     }
     let checked = builder.run();
+    // A module the check can't write a typelib of has none
+    let typelibs = ids
+        .iter()
+        .map(|id| {
+            let mut bytes = Vec::new();
+            checked.typelib((*id)?, &mut bytes).ok()?;
+            Some(bytes.into_boxed_slice())
+        })
+        .collect();
     let at: HashMap<UnitId, usize> = ids
         .iter()
         .enumerate()
@@ -1464,10 +1489,27 @@ fn check_units(
             };
             Some((name, module))
         })
+        .chain(
+            // A typelib written of a member's own unit locates its
+            // declarations in that unit
+            (check.written().iter())
+                .filter(|interface| interface.own())
+                .filter_map(|interface| {
+                    let member = interface.member();
+                    let name = member.module()?.to_owned();
+                    let uri = match member.uri() {
+                        Some(uri) => uri.clone(),
+                        None => Uri::from_file_path(member.path())?,
+                    };
+                    let unit = workspace.unit(member);
+                    Some((name.clone(), lookup::Module { uri, name, unit }))
+                }),
+        )
         .collect();
     let modules = Arc::new(modules);
     let analysis = checked.into_analysis().map(Arc::new);
-    ids.into_iter()
+    let checked = ids
+        .into_iter()
         .zip(names)
         .zip(diagnostics)
         .map(|((id, name), diagnostics)| {
@@ -1487,7 +1529,8 @@ fn check_units(
                 analyzed,
             }
         })
-        .collect()
+        .collect();
+    (checked, typelibs)
 }
 
 /// Related information for a span a checker diagnostic in the document `id`
@@ -3127,6 +3170,11 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn hover_shows_the_checked_type_of_a_variable() {
+        // Literals have the types `std` declares, which only `dodo lsp-test`
+        // bundles
+        if typelib_index::lookup("std").is_none() {
+            return;
+        }
         let mut harness = Harness::checking(Duration::from_millis(50));
         harness.initialize(vec![PositionEncodingKind::UTF16]).await;
         let uri: Uri = "file:///checked-hover.dol".parse().unwrap();
@@ -4546,6 +4594,67 @@ pub def area d @ a.D
         tree.write("lib/a.dol", "pub def f x@Int\n  x\n");
         harness.watched(&[(&a, FileChangeType::CHANGED)]).await;
         harness.quiet().await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn importers_keep_the_last_good_typelib_of_a_broken_module() {
+        // The modules import `std`, which only `dodo lsp-test` bundles
+        if typelib_index::lookup("std").is_none() {
+            return;
+        }
+        let tree = Directory::repo();
+        tree.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = [\"lib\"]\n");
+        let a = Uri::from_file_path(tree.write("lib/a.dol", "pub def f x@Int\n  x\n")).unwrap();
+        let main = Uri::from_file_path(tree.0.join("main.dol")).unwrap();
+        let other = Uri::from_file_path(tree.0.join("other.dol")).unwrap();
+        let mut harness = Harness::checking(Duration::from_millis(10));
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        harness.open(main.clone(), "import a\na.f \"s\"\n", 1).await;
+        let checked = harness.next_publish_for(&main).await;
+        assert_eq!(checked.diagnostics.len(), 1, "{:#?}", checked.diagnostics);
+
+        // A later check takes `a` as the typelib the first wrote, and finds
+        // its declarations in the unit it was written of
+        harness.open(other.clone(), "import a\na.f 1\n", 1).await;
+        let checked = harness.next_publish_for(&other).await;
+        assert_eq!(checked.diagnostics, []);
+        let found = definition(&mut harness, &other, 1, 2).await;
+        let f = Range::new(Position::new(0, 8), Position::new(0, 9));
+        assert_eq!(
+            found,
+            Some(GotoDefinitionResponse::Scalar(Location::new(a.clone(), f)))
+        );
+
+        /// The diagnostics of `main` and `other` the next checks publish
+        async fn importers(harness: &mut Harness, main: &Uri, other: &Uri) -> [Vec<Diagnostic>; 2] {
+            let (mut main_diags, mut other_diags) = (None, None);
+            while main_diags.is_none() || other_diags.is_none() {
+                let published = harness.next_publish().await;
+                if published.uri == *main {
+                    main_diags = Some(published.diagnostics);
+                } else if published.uri == *other {
+                    other_diags = Some(published.diagnostics);
+                }
+            }
+            [main_diags.unwrap(), other_diags.unwrap()]
+        }
+
+        // Broken, `a` reports its failure itself, and its importers are
+        // checked against its last good typelib
+        harness.open(a.clone(), "pub def\n", 1).await;
+        let [main_diags, other_diags] = importers(&mut harness, &main, &other).await;
+        assert_eq!(main_diags.len(), 1, "{main_diags:#?}");
+        assert!(
+            !main_diags[0].message.contains("not found"),
+            "{main_diags:#?}"
+        );
+        assert_eq!(other_diags, []);
+
+        // Fixed, its source replaces it
+        harness.open(a.clone(), "pub def f x@Str\n  x\n", 2).await;
+        let [main_diags, other_diags] = importers(&mut harness, &main, &other).await;
+        assert_eq!(main_diags, []);
+        assert_eq!(other_diags.len(), 1, "{other_diags:#?}");
     }
 
     #[tokio::test(flavor = "current_thread")]
