@@ -1,53 +1,107 @@
-import args exec strand term proc fs
+# dolang: strict
+import args exec strand term proc fs digest json
+  std:
+    - BaseDict
+    - BaseArray
 
-let rules_key = strand.Key()
+# A task's handler, which runs with the channels of `dodo`'s caller
+@let Handler = args.Handler[Value, Iter[Value], Sink[Value]]
+
+# A task's arguments, as [`args.with`](args.with) takes them
+@let Spec = BaseDict $
+  # Description shown in `--help` output and the task list
+  ?help: Str
+  # Replacement for the generated `Usage:` line
+  ?usage: Str
+  # Spec items and, optionally, the handler
+  *(args.SpecItem[Value, Iter[Value], Sink[Value]] | Handler)
+
+# A task's spec items and, optionally, its handler, without a description
+@let Items = BaseArray[args.SpecItem[Value, Iter[Value], Sink[Value]] | Handler]
+
+# A task in `dodo.dol`: its spec, its handler, or the name of another task
+@let Rule = (Spec | Items | Handler | Str)
+
+# Spec items every task takes
+@let Common = BaseDict[{*args.SpecItem[Value, Iter[Value], Sink[Value]]}]
+
+# The tasks `dodo.dol` returns
+@let Rules = BaseDict $
+  ?common: Common
+  *(Str | Sym): Rule
+
+let rules_key @ strand.Key[Rules | nil] = strand.Key()
+# The directory `dodo.dol` was loaded from, which holds `.dodo/`
+let root_key @ strand.Key[fs.Path | nil] = strand.Key()
+# Lock files held by enclosing `make` calls
+let held_key @ strand.Key[Set[Str] | nil] = strand.Key()
 let special_rules = Set ["common", "default"]
 
-def lookup rules task
+def lookup rules @ Rules task @ (Str | Sym) -> (Rule | Common)
   rules.get $task else: do rules.get (sym task) else: do
     throw "unknown task: $task"
 
-def dispatch rules task argv
+def dispatch
+  rules @ Rules
+  task @ Str
+  argv @ Iterable[Str]
+  <Iter[Value]
+  >Sink[Value]
+do -> Value
   let rule = lookup $rules $task
-  let common = rules.get :common: default: {}
   while (type rule Str)
     rule = lookup $rules $rule
-  # A type object is a `Func`, but not a rule's function
-  if (type(rule, Func) && !type(rule, Type))
-    rule = [rule]
+  # A type object is a `Func`, but not a handler
+  let spec = match rule
+    Func(handler) do {(handler !@ Handler)}
+    BaseDict(rule) | BaseArray(rule) do rule
+  let common = rules.get :common: default: ({} @ Common)
 
-  args.with args: $argv ...common ...rule
+  args.with args: $argv ...common ...spec
 
-def load_rules path
-  exec.run $path
+def load_rules path@Str <Iter[Value] >Sink[Value] -> Rules
+  let rules = exec.run $path
+  if !(type rules Dict)
+    throw std.TypeError "$path must return a Dict of tasks"
+  (rules !@ Rules)
 
-def with_rules path block
+def with_rules[R]
+  path @ Str
+  block @ (Rules -> R)
+  <Iter[Value]
+  >Sink[Value]
+do -> R
   let previous = rules_key.value
   if (previous != nil)
     block $previous
   else
     let rules = load_rules $path
-    rules_key.with $rules do block $rules
+    let root = fs.absolute "."
+    root_key.with $root do rules_key.with $rules do block $rules
 
-def list_rules rules
+def list_rules rules @ Rules
   echo "Available tasks:"
   for k v = rules
     if special_rules.contains (str k)
       continue
-    let help = (type v Dict && v.get :help:)
+    let help = if (type(v, Func) || type(v, Str))
+      nil
+    else
+      match v
+        Dict(help: Str(help) ...) do help
     if help
       echo "  - $k: $help"
     else
       echo "  - $k"
 
-def highlight_prog prog
+def highlight_prog prog @ (Str | fs.Path) -> term.Text
   if (type prog fs.Path)
     prog = str $ prog.shorten()
   else
     prog = std.verbatim $prog
   term.text bold: true "▶ " $ term.text fg: :BLUE: $prog
 
-def highlight_arg arg
+def highlight_arg arg @ Value -> (term.Text | Str)
   if (type arg fs.Path)
     term.text fg: :MAGENTA: $arg.shorten()
   else
@@ -59,18 +113,26 @@ def highlight_arg arg
 
 # Runs the external command `cmd`, first printing a highlighted
 # message showing the command to the terminal
-pub def show prog *args **opts
+pub def show
+  prog @ (Str | fs.Path)
+  *args @ Value
+  **opts @ Value
+  <Iter[Value]
+  >Sink[Str]
+do -> nil
   print
     (highlight_prog prog)
     for arg = args
       " " (highlight_arg arg)
     "\n"
-  proc.run $prog ...args ...opts
+  # Options pass through to whichever `proc.run` overload they select
+  let run = (proc.run !@ (((Str | fs.Path), *Value, **Value, <Iter[Value], >Sink[Str]) -> nil))
+  run $prog ...args ...opts
 
 # Runs a dodo task from `dodo.dol` in the current directory,
 # equivalent to running `dolang -m dodo ...argv`, but correctly
 # handles re-entrancy.
-pub def run *argv @ Str -> nil
+pub def run *argv@Str <Iter[Value] >Sink[Value] -> nil
   args.with args: $argv
     help: run tasks
     - flag: list
@@ -91,3 +153,381 @@ pub def run *argv @ Str -> nil
           list_rules $rules
         else
           dispatch $rules $task $args
+        nil
+
+# A [`make`](dodo.make) input naming the files that match a glob pattern.
+pub @let GlobSpec = BaseDict $
+  # Pattern, as for [`fs.glob`](fs.glob). Matched directories are skipped
+  glob: Str
+
+# A value a [`DataSpec`](dodo.DataSpec) adds to the digest.
+pub @let Digestible = $
+  | nil
+  | Bool
+  | Int
+  | Float
+  | Str
+  | Bin
+  | Sym
+  | fs.Path
+  | Array[Digestible]
+  | Tuple[...Digestible]
+  | Dict[Digestible, Digestible]
+  | Record[...Digestible]
+
+# A [`make`](dodo.make) input that adds a value to the digest.
+pub @let DataSpec = BaseDict $
+  # Value to digest
+  data: Digestible
+
+# An input to [`make`](dodo.make): a file path, a
+# [`GlobSpec`](dodo.GlobSpec), or a [`DataSpec`](dodo.DataSpec).
+pub @let InputSpec = (fs.Path | Str | GlobSpec | DataSpec)
+
+# Why [`make`](dodo.make) ran its block.
+#
+# | Reason | Meaning |
+# | --- | --- |
+# | `:OWNER:` | An output was last built by a rule with different outputs. |
+# | `:NO_STAMP:` | An output has no record of being built. |
+# | `:MISSING_OUTPUT:` | An output does not exist. |
+# | `:CHANGED:` | An input changed. |
+#
+# When several apply, the first in this table is reported.
+pub @let MakeReason = (:OWNER: | :NO_STAMP: | :MISSING_OUTPUT: | :CHANGED:)
+
+# Proves a `MakeContext` is constructed by `make`; nothing outside this module
+# can obtain one
+class MakeToken
+
+let make_token = MakeToken()
+
+# The context [`make`](dodo.make) passes to its block.
+#[final]
+pub class MakeContext
+  field outs @ Seq[fs.Path]
+  field ins @ Seq[fs.Path]
+  field diff @ Seq[fs.Path]
+  field why @ MakeReason
+
+  def (init)
+    self
+    # A `MakeToken`, which only this module can create
+    token @ Value
+    outs @ Seq[fs.Path]
+    ins @ Seq[fs.Path]
+    diff @ Seq[fs.Path]
+    why @ MakeReason
+  do
+    if !(type token MakeToken)
+      throw std.RuntimeError "not instantiable"
+    self.#outs = outs
+    self.#ins = ins
+    self.#diff = diff
+    self.#why = why
+
+  # The outputs, as normalized absolute paths, sorted and deduplicated.
+  #[getter]
+  pub def outputs self -> Seq[fs.Path]
+    self.#outs
+
+  # The file inputs, after glob expansion, as normalized absolute paths,
+  # sorted and deduplicated.
+  #[getter]
+  pub def inputs self -> Seq[fs.Path]
+    self.#ins
+
+  # The file inputs whose content changed since the last build, or all of them
+  # when there is no record of one.
+  #[getter]
+  pub def changed self -> Seq[fs.Path]
+    self.#diff
+
+  # Why the block is running.
+  #[getter]
+  pub def reason self -> MakeReason
+    self.#why
+
+# Hashes a length-prefixed item, so adjacent items can't run together.
+def frame state@digest.State tag@Str bytes@(Str | Bin)
+  state.update "$tag$(bytes.len):"
+  state.update $bytes
+  nil
+
+def encode_data state@digest.State value@Digestible
+  match value
+    nil do frame $state N ""
+    Bool(b) do frame $state Z (str b)
+    Int(i) do frame $state I (str i)
+    Float(f) do frame $state F (str f)
+    Str(s) do frame $state S $s
+    Bin(b) do frame $state B $b
+    Sym(y) do frame $state Y (str y)
+    fs.Path(p) do frame $state P (str p)
+    Array(items) do
+      frame $state A (str items.len)
+      for item = items
+        encode_data $state $item
+    Tuple(items) do
+      frame $state T (str items.len)
+      for item = items
+        encode_data $state $item
+    Dict(entries) do
+      frame $state M (str entries.len)
+      for k v = entries
+        encode_data $state $k
+        encode_data $state $v
+    Record(fields) do
+      frame $state R (str fields.len)
+      for k v = fields
+        encode_data $state $k
+        encode_data $state $v
+
+# Returns the key of `path` relative to `root`, and its normalized absolute
+# path. Outputs may not exist yet, so this doesn't resolve links.
+def resolve root@fs.Path path@(Str | fs.Path) -> (Str, fs.Path)
+  let absolute = fs.absolute $path
+  let normal = absolute.normalize()
+  (str(fs.relative(normal, root)), normal)
+
+# Opens and exclusively locks each lock file in order, then calls `block` with
+# the open files. Releases whatever was acquired, even when interrupted.
+def with_locks[R] paths@Iterable[fs.Path] block@(Array[fs.File] -> R) -> R
+  let files @ Array[fs.File] = []
+  let locks @ Array[fs.FileLock] = []
+  try
+    for path = paths
+      # Creates the file without truncating it; `r+` can't create
+      fs.open $path a do |_| nil
+      let file = fs.open $path r+
+      files.push $file
+      locks.push $ file.lock (..)
+    block $files
+  finally
+    for lock = locks
+      lock.release()
+    for file = files
+      file.close()
+
+# What an output's lock file records about its last build.
+@let OutputRecord = Struct[{path: Str, rule: Str, digest: Str, outputs: Array[Str]}]
+
+# Reads an output record through its locked file. A lock is mandatory on
+# Windows, so another handle couldn't read it. A missing or torn record reads
+# as `nil`.
+def read_record file @ fs.File -> (OutputRecord | nil)
+  file.seek start: 0
+  let text = file.read_str()
+  let decoded = try
+    json.decode $text
+  catch _
+    nil
+  bind decoded
+    Dict $
+      "path": Str(path)
+      "rule": Str(rule)
+      "digest": Str(digest)
+      "outputs": Array(outputs)
+  else return nil
+  outputs = Array $ outputs.map do |name|
+    if !(type name Str)
+      return nil
+    name
+  struct :path :rule :digest :outputs
+
+def write_record file@fs.File record@OutputRecord
+  let text = json.encode $record
+  file.set_size 0
+  file.seek start: 0
+  file.write $text
+  file.flush()
+
+# What a rule's input cache records about one input file.
+@let CacheEntry = Struct[{size: Int, mtime: Int, hash: Str}]
+
+# Reads a rule's input cache and the time it was written. A missing or torn
+# cache reads as empty, with no time, and a malformed entry is skipped.
+def read_cache path @ fs.Path -> (Dict[Str, CacheEntry], Int | nil)
+  let entries @ Dict[Str, CacheEntry] = {}
+  try
+    let meta = path.metadata()
+    let Dict("files": Dict(files)) = json.decode $path.read_str()
+    else return (entries, nil)
+    for key value = files
+      match value
+        Dict("size": Int(size) "mtime": Int(mtime) "hash": Str(hash)) do
+          entries[key] = struct :size :mtime :hash
+    (entries, meta.modified.unix_nanos)
+  catch _
+    (entries, nil)
+
+# Returns the cache entry for each `(key, path)` input. A cached hash is
+# reused while the size and modification time match, unless the file was
+# modified at or after the cache was written, as git does for "racy" entries.
+def hash_inputs
+  inputs @ Iterable[(Str, fs.Path)]
+  previous @ Dict[Str, CacheEntry]
+  cache_mtime @ (Int | nil)
+do -> Dict[Str, CacheEntry]
+  let entries @ Dict[Str, CacheEntry] = {}
+  strand.pool 8 $inputs do |input|
+    let key path = input
+    let meta = fs.metadata $path
+    let size = meta.size
+    let mtime = meta.modified.unix_nanos
+    let cached = previous.get $key default: nil
+    let hash = if (cached && cached.size == size && cached.mtime == mtime
+                   && cache_mtime != nil && mtime < cache_mtime)
+      cached.hash
+    else
+      let bytes = fs.open $path r do |file| digest.blake3 $file
+      "${bytes:x}"
+    entries[key] = struct :size :mtime :hash
+  entries
+
+# Runs `block` to build `outputs` from `inputs`, unless it already built them
+# from the same inputs.
+#
+# Each input is a file path, a [`GlobSpec`](dodo.GlobSpec), or a
+# [`DataSpec`](dodo.DataSpec). The block runs when an output is missing, has
+# no record of being built by a rule with these outputs, or was built from
+# inputs with different content. Modification times only decide when a file
+# needs hashing again.
+#
+# Records live in `.dodo/` in the directory [`run`](dodo.run) loaded
+# `dodo.dol` from, or in the current directory outside a task. Concurrent
+# calls with an output in common, in this or another process, wait for each
+# other. A directory output only has to exist.
+#
+# ## Returns
+#
+# The block's result, or nil when it doesn't run.
+#
+# ## Errors
+#
+# | Exception | Condition |
+# | --- | --- |
+# | [`ValueError`](std.ValueError) | There are no outputs. |
+# | [`TypeError`](std.TypeError) | A [`DataSpec`](dodo.DataSpec) value can't be digested. |
+# | [`RuntimeError`](std.RuntimeError) | An enclosing `make` call is building one of the outputs. |
+#
+# A missing file input raises as [`fs.metadata`](fs.metadata) does.
+#
+# ## Example
+#
+# ```
+# make
+#   inputs:
+#     - tools/docgen.dol
+#     - glob: "lib/**/*.dol"
+#     - data: $profile
+#   outputs:
+#     - target/docs
+#   do |ctx|
+#     echo "Rebuilding docs: $(ctx.reason)"
+#     generate_docs $ctx.outputs[0]
+# ```
+pub def make[R]
+  # Block that builds the outputs.
+  block @ (MakeContext -> R)
+  # Files and values the outputs are built from.
+  :inputs @ Iterable[InputSpec] = []
+  # Files or directories the block builds.
+  :outputs @ Iterable[fs.Path | Str]
+do -> (R | nil)
+  let root = (root_key.value || fs.absolute("."))
+  let outs = Dict $ Iter.kv $ outputs.map do |out| resolve $root $out
+  if (outs.len == 0)
+    throw std.ValueError "no outputs"
+  let out_keys = [...outs.keys()]
+  out_keys.sort()
+
+  let files @ Dict[Str, fs.Path] = {}
+  let globs @ Array[Str] = []
+  let data = digest.Blake3()
+  for input = inputs
+    match input
+      Str(path) | fs.Path(path) do
+        let key normal = resolve $root $path
+        files[key] = normal
+      Dict(:glob) do globs.push $glob
+      Dict(data: value) do encode_data $data $value
+
+  let rule_state = digest.Blake3()
+  for key = out_keys
+    frame $rule_state O $key
+  let rule_bytes = rule_state.digest()
+  let rule = "${rule_bytes:x}"
+
+  let lock_dir = (root / ".dodo" / "out")
+  let lock_paths @ Array[fs.Path] = []
+  for key = out_keys
+    let name = digest.blake3 $key
+    lock_paths.push (lock_dir / "${name:x}")
+  let held = (held_key.value || (Set() @ Set[Str]))
+  for path = lock_paths
+    if held.contains(str(path))
+      throw std.RuntimeError "an enclosing call is already building $(fs.relative(path, root))"
+  lock_dir.create_dir all: true
+  let cache_dir = (root / ".dodo" / "rule")
+  cache_dir.create_dir all: true
+  let cache_path = (cache_dir / rule)
+
+  held_key.with (Set [...held, ...lock_paths.map(str)]) do with_locks $lock_paths do |handles|
+    # Globs expand under the locks, so the block sees the files that were
+    # hashed
+    for pattern = globs
+      for path = fs.glob $pattern
+        let meta = fs.metadata $path
+        if (meta.type != :DIR:)
+          let key normal = resolve $root $path
+          files[key] = normal
+    let in_keys @ Array[Str] = [...files.keys()]
+    in_keys.sort()
+
+    let previous cache_mtime = read_cache $cache_path
+    let entries = hash_inputs (in_keys.map(do |key| (key, files[key]))) $previous $cache_mtime
+    let state = digest.Blake3()
+    for key = in_keys
+      frame $state F $key
+      frame $state H $entries[key].hash
+    frame $state D $data.digest()
+    let input_bytes = state.digest()
+    let input_digest = "${input_bytes:x}"
+
+    let records = Array $ handles.map $read_record
+    for key record = out_keys.zip $records
+      if (record != nil && record.rule != rule)
+        echo "dodo: warning: $key was last built by a rule with outputs" ...record.outputs
+
+    let reason @ (MakeReason | nil) = if records.any(do |record| record && record.rule != rule)
+      :OWNER:
+    else if !records.all()
+      :NO_STAMP:
+    else if out_keys.any(do |key| !outs[key].exists())
+      :MISSING_OUTPUT:
+    else if records.any(do |record| record == nil || record.digest != input_digest)
+      :CHANGED:
+    else
+      nil
+
+    if (reason == nil)
+      fs.write $cache_path $ json.encode $ struct files: $entries
+      return nil
+    # Clear the records first, so a failed or interrupted build never
+    # looks fresh
+    for handle = handles
+      handle.set_size 0
+    let changed @ Array[fs.Path] = []
+    for key = in_keys
+      let old = previous.get $key default: nil
+      if (!old || old.hash != entries[key].hash)
+        changed.push $files[key]
+    let out_paths = Tuple $ out_keys.map(do |key| outs[key])
+    let in_paths = Tuple $ in_keys.map(do |key| files[key])
+    let ctx = MakeContext $make_token $out_paths $in_paths (Tuple(changed)) $reason
+    let result = block $ctx
+    for path handle = out_keys.zip $handles
+      write_record $handle $ struct :path :rule digest: $input_digest outputs: $out_keys
+    fs.write $cache_path $ json.encode $ struct files: $entries
+    result

@@ -19,3 +19,4 @@ __pycache__
 /playground/public/
 /playground/test-results/
 /playground/playwright-report/
+/.dodo
