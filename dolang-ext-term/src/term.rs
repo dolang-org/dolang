@@ -6,11 +6,12 @@ use dolang::{
     compile::Config,
     runtime::{
         Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, Value, call,
+        error::ErrorKind,
         method,
         object::{Mut, Ref, TypeBuilder},
         strand::Redirect,
         unpack,
-        value::{StrEmbryo, TypeObject, View},
+        value::{Singleton, StrEmbryo, TypeObject, View},
         vm::Builder,
     },
 };
@@ -1507,6 +1508,7 @@ pub(crate) fn configure_compiler(config: &mut Config<'_>) {
 }
 
 pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Global<'v>>) {
+    let stdin_sym = builder.sym("stdin");
     let keys = global.style_keys;
     let StyleKeys {
         fg,
@@ -1550,6 +1552,31 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             Output::set(strand, out, &console);
             Ok(())
         })
+        .function_with_slots(
+            "with",
+            async move |strand, args, out, [mut input, mut output, mut shell]| {
+                let ([func], []) = unpack!(strand, args, 1, 0)?;
+                // Until `term` has a notion of input, the block reads the
+                // process's standard input, or nothing where the application
+                // has no `shell` module.
+                match strand.import("shell", &mut shell).await {
+                    Ok(()) => shell.get(strand, stdin_sym, &mut input)?,
+                    Err(error) if error.kind() == ErrorKind::Import => {
+                        Output::set(strand, &mut input, Singleton::Null);
+                    }
+                    Err(error) => return Err(error),
+                }
+                global
+                    .types
+                    .default
+                    .create(strand, DefaultOutput, &mut output);
+                Redirect::new(strand)
+                    .input(&input)
+                    .output(&output)
+                    .enter(async move |strand| call!(strand, func, out).await)
+                    .await
+            },
+        )
         .function_with_slots(
             "capture",
             async move |strand, args, out, [mut console, mut line_ending, mut tmp]| {

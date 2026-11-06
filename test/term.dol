@@ -946,3 +946,16 @@ def console_override_parsing()
   assert_eq $malformed[1] $baseline[1]
   assert_eq $malformed[2] 40
   assert_eq $malformed[3] $baseline[3]
+
+#[test]
+def with_connects_terminal()
+  # The block reads the process's stdin, whatever its caller's input is.
+  let input = strand.redirect input: [1, 2] do
+    term.with do strand.input()
+  assert (input == shell.stdin)
+  # Its output follows `output()`, not its caller's output.
+  let shown = term.sub do
+    let captured = shell.sub do
+      term.with do strand.put "shown"
+    assert_eq $captured ""
+  assert_eq $shown "shown"

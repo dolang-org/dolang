@@ -626,26 +626,6 @@ do -> R
 pub def open target @ Value ...block @ Value -> Value
   ...
 
-# Runs a block for its effect on the console: its input is
-# [`std.null`](std.null) and its output is [`term.default`](term.default).
-#
-# Programs run inside it read nothing and write to the console, whatever the
-# caller's input and output are, so a caller that only runs programs for their
-# effect needs no channels of its own.
-#
-# ## Example
-#
-# ```
-# console do
-#   run make
-#   run make install
-# ```
-pub def console[R]
-  # Block to run.
-  block @ ((<Iter[Never], >Sink[Value]) -> R)
-do -> R
-  ...
-
 # Runs a block with temporary process termination defaults.
 #
 # The signal setting is retained when the strand later targets a Unix VFS.
