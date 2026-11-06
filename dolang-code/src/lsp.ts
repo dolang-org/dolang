@@ -111,7 +111,10 @@ export class DoLanguageServer implements vscode.Disposable {
                 options: { cwd: path.dirname(server.path) }
             };
             const clientOptions: LanguageClientOptions = {
-                documentSelector: [{ scheme: "file", language: "dolang" }],
+                documentSelector: [
+                    { scheme: "file", language: "dolang" },
+                    { scheme: "untitled", language: "dolang" }
+                ],
                 synchronize: {
                     fileEvents: vscode.workspace.createFileSystemWatcher("**/*.dol")
                 },

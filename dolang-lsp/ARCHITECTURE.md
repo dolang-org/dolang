@@ -13,7 +13,12 @@ compiled. Its members are the
 documents in it open for any reason: in the client, or as a module a check
 imports. A member is one revision of its document, an `Arc` that new text
 replaces in the workspace's table; whoever holds an older one keeps it, and can
-tell it is no longer current. The workspace's lock guards only reading and
+tell it is no longer current. The table keys files by path and `untitled:`
+buffers by URI. Such a buffer is a script in the workspace of the client's first
+folder, or with none, in the detached workspace, whose module path is the
+bundled modules alone; it is never a module, so nothing imports it. The server
+checks whatever document the client opens, whatever its extension. The
+workspace's lock guards only reading and
 changing that table: files are read, and members compiled and checked, outside
 it. The backend's only state is a handle for each open document, which keeps
 its workspace alive, and the table of live workspaces.

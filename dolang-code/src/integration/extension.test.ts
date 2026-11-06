@@ -136,6 +136,22 @@ suite("Integration", () => {
         await fs.rm(uri.fsPath);
     });
 
+    test("the language server checks untitled buffers in the first folder", async () => {
+        const document = await vscode.workspace.openTextDocument({
+            language: "dolang",
+            content: "import greet\n\ngreet.greeting 1\n"
+        });
+        await vscode.window.showTextDocument(document);
+        // The check, once the module resolves, rejects the argument
+        const diagnostics = await waitFor("the check's diagnostics", () => {
+            const found = vscode.languages.getDiagnostics(document.uri);
+            return found.some(d => d.range.start.line === 2) ? found : undefined;
+        });
+        const messages = JSON.stringify(diagnostics.map(d => d.message));
+        assert.ok(!diagnostics.some(d => /not found/.test(d.message)), messages);
+        await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
+    });
+
     test("a script runs with the project's module path", async () => {
         const output = fixture("greeting.txt");
         await fs.rm(output.fsPath, { force: true });

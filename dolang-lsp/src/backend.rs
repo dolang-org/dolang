@@ -32,7 +32,7 @@ use crate::{
     lookup::{self, Modules, Target},
     settings::{CONFIG_FILE_NAME, Import, PROJECT_FILE_NAME},
     signature,
-    workspace::{Check, Member, PIPES, Round, Workspace, Workspaces},
+    workspace::{Check, Key, Member, PIPES, Round, Workspace, Workspaces},
 };
 
 const TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
@@ -1034,7 +1034,7 @@ struct Documents {
 /// A document the client has open.
 struct Handle {
     workspace: Arc<Workspace>,
-    path: PathBuf,
+    key: Key,
     encoding: PositionEncodingKind,
     /// Its current revision, the one its workspace holds
     member: Arc<Member>,
@@ -1793,8 +1793,8 @@ impl Backend {
     fn revise(&self, uri: &Uri, version: i32, text: String) -> Option<Revision> {
         let mut documents = self.documents();
         let handle = documents.handles.get_mut(uri)?;
-        let path = handle.path.clone();
-        let member = handle.workspace.revise(uri.clone(), path, version, text)?;
+        let key = handle.key.clone();
+        let member = handle.workspace.revise(uri.clone(), key, version, text)?;
         handle.revision = self.submit(uri, &handle.workspace, &member, &handle.encoding);
         handle.member = member;
         Some(handle.revision.clone())
@@ -1990,6 +1990,9 @@ impl LanguageServer for Backend {
             for workspace in guard.workspaces.iter() {
                 log::info!("workspace: {}", workspace.display())
             }
+            self.documents()
+                .workspaces
+                .set_folder(guard.workspaces.first().cloned());
             guard.watch = params
                 .capabilities
                 .workspace
@@ -2033,11 +2036,15 @@ impl LanguageServer for Backend {
                     SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
                         SemanticTokensRegistrationOptions {
                             text_document_registration_options: TextDocumentRegistrationOptions {
-                                document_selector: Some(vec![DocumentFilter {
-                                    language: Some("dolang".to_string()),
-                                    scheme: Some("file".to_string()),
-                                    pattern: None,
-                                }]),
+                                document_selector: Some(
+                                    ["file", "untitled"]
+                                        .map(|scheme| DocumentFilter {
+                                            language: Some("dolang".to_string()),
+                                            scheme: Some(scheme.to_string()),
+                                            pattern: None,
+                                        })
+                                        .into(),
+                                ),
                             },
                             semantic_tokens_options: SemanticTokensOptions {
                                 work_done_progress_options: WorkDoneProgressOptions::default(),
@@ -2091,23 +2098,25 @@ impl LanguageServer for Backend {
         let TextDocumentItem {
             uri, text, version, ..
         } = params.text_document;
-        let Some(path) = source_path(&uri) else {
+        // Whatever the client opens is a document, whether or not its name
+        // says so
+        let Some(key) = document_key(&uri) else {
             return;
         };
         let encoding = self.position_encoding();
         let mut documents = self.documents();
         // Opened again without a close, it starts over
         if let Some(old) = documents.handles.remove(&uri) {
-            old.workspace.close(&old.path);
+            old.workspace.close(&old.key);
             self.send(Request::Due(old.workspace));
         }
-        let workspace = documents.workspaces.open(&path);
+        let workspace = documents.workspaces.of(&key);
         // Unless another URI has a newer version of the same file open
-        if let Some(member) = workspace.revise(uri.clone(), path.clone(), version, text) {
+        if let Some(member) = workspace.revise(uri.clone(), key.clone(), version, text) {
             let revision = self.submit(&uri, &workspace, &member, &encoding);
             let handle = Handle {
                 workspace,
-                path,
+                key,
                 encoding,
                 member,
                 revision,
@@ -2212,7 +2221,7 @@ impl LanguageServer for Backend {
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let handle = self.documents().handles.remove(&params.text_document.uri);
         if let Some(handle) = handle {
-            handle.workspace.close(&handle.path);
+            handle.workspace.close(&handle.key);
             self.send(Request::Due(handle.workspace));
         }
     }
@@ -2258,14 +2267,14 @@ impl LanguageServer for Backend {
             if workspaces.current(&handle.workspace) {
                 continue;
             }
-            handle.workspace.close(&handle.path);
-            let workspace = workspaces.open(&handle.path);
-            let (path, member) = (handle.path.clone(), &handle.member);
+            handle.workspace.close(&handle.key);
+            let workspace = workspaces.of(&handle.key);
+            let (key, member) = (handle.key.clone(), &handle.member);
             let (Some(version), Some(text)) = (member.version(), member.text()) else {
                 continue;
             };
             let text = text.to_owned();
-            let Some(member) = workspace.revise(uri.clone(), path, version, text) else {
+            let Some(member) = workspace.revise(uri.clone(), key, version, text) else {
                 continue;
             };
             handle.revision = self.submit(uri, &workspace, &member, &handle.encoding);
@@ -2485,17 +2494,13 @@ fn uri_to_file_path(uri: &Uri) -> Option<Cow<'_, Path>> {
         .and_then(|()| uri.to_file_path())
 }
 
-/// The path of a document the server compiles.
-fn source_path(uri: &Uri) -> Option<PathBuf> {
-    let path = uri_to_file_path(uri)?;
-    is_dolang_source(&path).then(|| path.into_owned())
-}
-
-fn is_dolang_source(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|ext| ext.to_str()),
-        None | Some("dol")
-    )
+/// What a workspace knows a document the client opens by: a file, or a
+/// buffer with none.
+fn document_key(uri: &Uri) -> Option<Key> {
+    match uri.scheme().as_str() {
+        "untitled" => Some(Key::Untitled(uri.clone())),
+        _ => Some(Key::File(uri_to_file_path(uri)?.into_owned())),
+    }
 }
 
 fn range_contains_position(range: Range, position: Position) -> bool {
@@ -2638,6 +2643,22 @@ mod tests {
         }
 
         async fn initialize(&mut self, offered: Vec<PositionEncodingKind>) -> InitializeResult {
+            self.initialize_in(offered, &[]).await
+        }
+
+        /// Initializes the server with the client's `folders` open.
+        async fn initialize_in(
+            &mut self,
+            offered: Vec<PositionEncodingKind>,
+            folders: &[&Path],
+        ) -> InitializeResult {
+            let folders = folders
+                .iter()
+                .map(|folder| WorkspaceFolder {
+                    uri: Uri::from_file_path(folder).unwrap(),
+                    name: folder.display().to_string(),
+                })
+                .collect::<Vec<_>>();
             let result = self
                 .send_request::<request::Initialize>(InitializeParams {
                     capabilities: ClientCapabilities {
@@ -2647,6 +2668,7 @@ mod tests {
                         }),
                         ..Default::default()
                     },
+                    workspace_folders: (!folders.is_empty()).then_some(folders),
                     ..Default::default()
                 })
                 .await;
@@ -3235,6 +3257,62 @@ def uses b @ Box n @ Int
             diagnostics.diagnostics[0].range,
             Range::new(Position::new(0, 1), Position::new(0, 3))
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn did_open_checks_any_file_the_client_opens() {
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///script.sh".parse().unwrap();
+        let diagnostics = harness.open(uri, "\"\\q\"", 1).await;
+        let messages: Vec<_> = diagnostics.diagnostics.iter().map(|d| &d.message).collect();
+        assert_eq!(messages, ["unexpected escape sequence"]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn untitled_documents_are_checked_without_a_folder() {
+        let mut harness = Harness::checking(Duration::from_millis(50));
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "untitled:Untitled-1".parse().unwrap();
+        let text = "import not_bundled\nnot_bundled.f 1\n";
+        harness.open(uri.clone(), text, 1).await;
+
+        // Only the bundled modules resolve
+        let checked = harness.next_publish_for(&uri).await;
+        let reported: Vec<_> = checked
+            .diagnostics
+            .iter()
+            .map(|diag| diag.message.as_str())
+            .collect();
+        assert_eq!(reported, ["module `not_bundled` not found"]);
+        let hover = hover_at(&mut harness, uri, 1, 14).await;
+        assert!(hover.is_some());
+        harness.quiet().await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn untitled_documents_import_from_the_first_folder() {
+        // The modules import `std`, which only `dodo lsp-test` bundles
+        if typelib_index::lookup("std").is_none() {
+            return;
+        }
+        let tree = Directory::repo();
+        tree.write("lib/a.dol", "pub def f x@Int\n  x\n");
+        let mut harness = Harness::checking(Duration::from_millis(10));
+        harness
+            .initialize_in(vec![PositionEncodingKind::UTF16], &[&tree.0])
+            .await;
+        let uri: Uri = "untitled:Untitled-1".parse().unwrap();
+        harness.open(uri.clone(), "import a\na.f \"s\"\n", 1).await;
+        let checked = harness.next_publish_for(&uri).await;
+        let [diag] = &checked.diagnostics[..] else {
+            panic!("expected one diagnostic: {:#?}", checked.diagnostics);
+        };
+        assert_eq!(
+            diag.range,
+            Range::new(Position::new(1, 4), Position::new(1, 7))
+        );
+        harness.quiet().await;
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -3854,7 +3932,7 @@ def uses b @ Box n @ Int
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn did_save_ignores_non_dolang_files() {
+    async fn did_save_ignores_unopened_documents() {
         let mut harness = Harness::new();
         harness.initialize(vec![PositionEncodingKind::UTF16]).await;
         let request = Request::build(notification::DidSaveTextDocument::METHOD)
