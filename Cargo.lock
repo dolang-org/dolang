@@ -1168,6 +1168,8 @@ dependencies = [
  "dolang-compile",
  "env_logger",
  "futures",
+ "futures-core",
+ "futures-sink",
  "libc",
  "log",
  "mimalloc",
@@ -1189,6 +1191,14 @@ version = "0.1.1"
 dependencies = [
  "annotate-snippets",
  "dolang-compile",
+ "fastrand",
+ "futures-channel",
+ "mio",
+ "nix",
+ "regex",
+ "slab",
+ "time",
+ "tokio-util",
 ]
 
 [[package]]

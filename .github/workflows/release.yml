@@ -82,9 +82,7 @@ jobs:
           let exe = "dolang-private-polyfill$(is_win && ".exe" || "")"
           # Temporarily build polyfill binary and place it next to dolang
           dodo.run build -- --bin dolang-private-polyfill
-          fs.copy
-            ...fs.glob("target/*/debug/$exe")
-            release/bin/$exe
+          fs.copy target/debug/$exe release/bin/$exe
           run release/bin/dolang --module-path testlib -m test --tags !release test
           # Now remove it
           fs.remove release/bin/$exe
