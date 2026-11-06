@@ -677,6 +677,28 @@ pub def text
 do -> Text
   ...
 
+# Runs a block the way a shell runs a command outside a pipeline: its output is
+# [`default`](term.default), which follows [`output()`](term.output), and its
+# input is the process's [`stdin`](shell.stdin).
+#
+# Whatever input and output the caller has, the block's programs read from and
+# write to the terminal, so a block that runs them only for their effect is
+# isolated from channels its caller uses for data. Where there is no `shell`
+# module, the block reads nothing.
+#
+# ## Example
+#
+# ```
+# term.with do
+#   run make
+#   run make install
+# ```
+pub def with[R]
+  # Block to run.
+  block @ ((<Iter[Str], >Sink[Value]) -> R)
+do -> R
+  ...
+
 # The host [`Console`](term.Console), supplied by the application running Do,
 # which may be taken over by an extension such as `progress`.
 #

@@ -25,7 +25,7 @@ Modules are resolved in this order:
 For example, `dolang --module-path ./lib --module-path ../shared script.dol`
 searches `./lib`, then `../shared`, then the site directory.
 
-A [script bundle](./index.md#script-bundles) searches its own `lib/` before
+A [script bundle](../tooling/bundles.md) searches its own `lib/` before
 these.
 
 ### File Resolution

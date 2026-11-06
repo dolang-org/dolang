@@ -456,29 +456,33 @@ pub class ShapeError: RuntimeError
 
 
 # A value that implements the [`(iter)`](../../language/classes.md#iter-obtain-iterator)
-# protocol, as `for` and spreading require. Only an [`Iterable`](std.Iterable)
-# also has its methods.
+# protocol, as `for` requires. A class that implements it gets the methods of
+# [`Iterable`](std.Iterable) by also subclassing `Iterable`.
 pub @class BaseIterable[T]
   # Returns an iterator over the value.
   pub def (iter) self -> BaseIter[T]
 
 
 # A value that implements the [`(next)`](../../language/classes.md#next-iterator-protocol)
-# protocol. Only an [`Iter`](std.Iter) also has its methods.
+# protocol. A class that implements it gets the methods of [`Iter`](std.Iter),
+# and a default `(iter)`, by also subclassing `Iter`.
 pub @class BaseIter[T]
   # Returns the next value, raising [`IterStop`](std.IterStop) once exhausted.
   pub def (next) self -> T
 
 
 # A value that implements the [`(sink)`](../../language/classes.md#sink-obtain-sink)
-# protocol. Only a [`Sinkable`](std.Sinkable) also has its methods.
+# protocol, as redirecting output to the value requires. A class that
+# implements it gets the methods of [`Sinkable`](std.Sinkable) by also
+# subclassing `Sinkable`.
 pub @class BaseSinkable[T]
   # Returns a sink that writes to the value.
   pub def (sink) self -> BaseSink[T]
 
 
 # A value that implements the [`(put)`](../../language/classes.md#put-sink-protocol)
-# protocol. Only a [`Sink`](std.Sink) also has its methods.
+# protocol. A class that implements it gets the methods of [`Sink`](std.Sink),
+# and a default `(sink)`, by also subclassing `Sink`.
 pub @class BaseSink[T]
   # Writes a value.
   pub def (put) self value @ T
@@ -710,9 +714,19 @@ pub @class MutSeq[T]: AssignSeq[T]
   pub def clear self
 
 
-# Abstract type for iterable values, whose instances have the methods below.
-# Arrays, dicts, and ranges are `Iterable`; a [`Record`](std.Record), or a
-# class that only implements [`(iter)`](std.BaseIterable), is not.
+# Abstract mix-in that gives an iterable value the methods below. Implementing
+# [`(iter)`](std.BaseIterable) is enough for `for`; a class that also
+# subclasses `Iterable` gets these methods for free, each obtaining an iterator
+# with `(iter)` and calling the [`Iter`](std.Iter) method of the same name.
+# Arrays, dicts, and ranges are `Iterable`; a [`Record`](std.Record) is not.
+#
+# ```
+# class Bag: Iterable
+#   def (iter) _self
+#     [1, 2, 3].iter()
+#
+# assert_eq [...Bag().map(do |x| x * 2)] [2, 4, 6]
+# ```
 #[mixable]
 pub class Iterable[T]: @BaseIterable[T]
   # Returns an iterator over the value.
@@ -873,9 +887,23 @@ pub class Iterable[T]: @BaseIterable[T]
     ...
 
 
-# Abstract type for values that sinks can be obtained from, whose instances have
-# the methods below. An [`Array`](std.Array) is `Sinkable`; a class that only
-# implements [`(sink)`](std.BaseSinkable) is not.
+# Abstract mix-in that gives a value that sinks can be obtained from the methods
+# below. Implementing [`(sink)`](std.BaseSinkable) is enough to redirect output
+# to a value; a class that also subclasses `Sinkable` gets these methods for
+# free, each obtaining a sink with `(sink)` and calling the [`Sink`](std.Sink)
+# method of the same name. An [`Array`](std.Array) is `Sinkable`.
+#
+# ```
+# let items = []
+#
+# class Log: Sinkable
+#   def (sink) _self
+#     items.sink()
+#
+# let doubled = Log().premap(do |x| x * 2)
+# doubled.put 3
+# assert_eq $items [6]
+# ```
 #[mixable]
 pub class Sinkable[T]: @BaseSinkable[T]
   # Returns a sink over the value.
@@ -975,13 +1003,27 @@ pub class Sinkable[T]: @BaseSinkable[T]
     ...
 
 
-# Abstract type for sinks, whose instances have the methods below. Built-in
-# sinks are `Sink`; a class that only implements [`(put)`](std.BaseSink) is not.
-#
-# `Sink` is not constructible directly.
+# Abstract mix-in that gives a sink the methods below. A class that implements
+# [`(put)`](std.BaseSink) and subclasses `Sink` gets these methods for free,
+# along with a `(sink)` that returns the sink itself. Built-in sinks are `Sink`.
+# See [Classes](../../language/classes.md#put-sink-protocol) for defining custom
+# sinks.
 #
 # ```
-# assert_eq (type $ [].sink()) $Sink
+# class Collect: Sink
+#   pub field items = nil
+#
+#   def (init) self
+#     self.items = []
+#
+#   def (put) self value
+#     self.items.push $value
+#
+# let c = Collect()
+# strand.redirect output: $c do put 1
+# let scaled = c.premap(do |x| x * 10)
+# scaled.put 2
+# assert_eq $c.items [1, 20]
 # ```
 #[mixable]
 pub class Sink[T]: Sinkable[T] @BaseSink[T]
@@ -3321,15 +3363,26 @@ pub class IterStop: Error
     ...
 
 
-# Abstract type for iterators, whose instances have the methods below. Built-in
-# iterators are `Iter`; a class that only implements [`(next)`](std.BaseIter)
-# is not.
-#
-# `Iter` is not constructible directly. See
-# [Classes](../../language/classes.md) for defining custom iterators.
+# Abstract mix-in that gives an iterator the methods below. A class that implements
+# [`(next)`](std.BaseIter) and subclasses `Iter` gets these methods for free,
+# along with an `(iter)` that returns the iterator itself. Built-in iterators
+# are `Iter`. See [Classes](../../language/classes.md#next-iterator-protocol)
+# for defining custom iterators.
 #
 # ```
-# assert_eq (type $ [1, 2, 3].iter()) $Iter
+# class Countdown: Iter
+#   field n = 0
+#
+#   def (init) self n
+#     self.#n = n
+#
+#   def (next) self
+#     if (self.#n <= 0)
+#       throw std.IterStop()
+#     self.#n = (self.#n - 1)
+#     (self.#n + 1)
+#
+# assert_eq [...Countdown(3).map(do |x| x * 10)] [30, 20, 10]
 # ```
 #[mixable]
 pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
@@ -5067,8 +5120,7 @@ pub class ValueError: RuntimeError
 
 # `Value` is the abstract supertype of all values.
 #
-# `Value` is not constructible directly. Every value has its members, and a
-# class declares one only to replace it.
+# Every value has its members, and a class declares one only to replace it.
 pub class Value
   # Returns the hash code, which is equal for equal values.
   pub def (hash) self -> Int

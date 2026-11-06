@@ -3,9 +3,8 @@ use dolang::{
     runtime::{
         Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call,
         object::TypeBuilder,
-        strand::Redirect,
         unpack,
-        value::{Singleton, TypeObject, View},
+        value::{TypeObject, View},
         vm::Register,
     },
 };
@@ -265,19 +264,6 @@ pub(crate) fn configure_vm<'v>(
                 .replace_termination_policy(old_policy);
             result
         })
-        .function_with_slots(
-            "console",
-            async move |strand, args, out, [mut input, mut output]| {
-                let ([func], []) = unpack!(strand, args, 1, 0)?;
-                Output::set(strand, &mut input, Singleton::Null);
-                dolang_ext_term::default_output(strand, &mut output);
-                Redirect::new(strand)
-                    .input(&input)
-                    .output(&output)
-                    .enter(async move |strand| call!(strand, func, out).await)
-                    .await
-            },
-        )
         .function("enumerate", async move |strand, args, out| {
             let ([], []) = unpack!(strand, args, 0, 0)?;
             let vfs = global.local.get(strand).vfs();

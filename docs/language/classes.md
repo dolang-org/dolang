@@ -837,7 +837,9 @@ class Counter
     value
 ```
 
-An iterator should conventionally implement `(iter)` by returning `self`.
+An iterator should conventionally implement `(iter)` by returning `self`. A
+class that subclasses [`Iter`](std.Iter) inherits that `(iter)`, along with
+`Iter`'s methods.
 
 ### `(sink)`: Obtain Sink
 
@@ -877,8 +879,9 @@ class Summer
     self
 ```
 
-A sink should conventionally implement `(sink)` by returning
-`self`.
+A sink should conventionally implement `(sink)` by returning `self`. A class
+that subclasses [`Sink`](std.Sink) inherits that `(sink)`, along with `Sink`'s
+methods.
 
 ### `(bool)`: Boolean Conversion
 

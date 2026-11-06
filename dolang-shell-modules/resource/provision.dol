@@ -5,8 +5,6 @@ import @io json proc std sys term winnet winreg winscm
     - Path
   security.windows:
     - Sid
-  proc:
-    - console
 
 # The Feature-on-Demand package holding the Windows OpenSSH server, and the
 # inbound rule DISM is expected to add to the firewall along with it.
@@ -23,9 +21,9 @@ def log message @ Str
 # program raises `sys.NotFoundError` rather than `proc.Error` — there is no
 # process error without a process — so a probe has to catch both or the one
 # case it exists for is the one that escapes.
-def probe func @ ((<std.Iter[Never], >std.Sink[Value]) -> nil) -> Bool
+def probe func @ ((<std.Iter[Str], >std.Sink[Value]) -> nil) -> Bool
   try
-    console $func
+    term.with $func
     true
   catch proc.Error: _
     false
@@ -71,7 +69,7 @@ def create_account user@Str password@Str
 def install_openssh()
   log "installing $CAPABILITY"
   let capability = "/capabilityname:$CAPABILITY"
-  console do run dism /online /add-capability $capability /norestart
+  term.with do run dism /online /add-capability $capability /norestart
 
 # OpenSSH reads an administrator's keys from one machine-wide file rather
 # than from the account's own `.ssh` directory, and refuses to read it unless
@@ -110,7 +108,7 @@ def ensure_firewall_rule()
     log "firewall rule $FIREWALL_RULE is present"
     return
   log "adding firewall rule $FIREWALL_RULE"
-  console do run netsh advfirewall firewall add rule $name
+  term.with do run netsh advfirewall firewall add rule $name
     dir=in action=allow protocol=TCP localport=22
 
 # Puts the payload directory on the machine `PATH`.

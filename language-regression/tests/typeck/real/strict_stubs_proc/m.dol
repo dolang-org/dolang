@@ -2,7 +2,7 @@
 # `proc` overloads its calls on whether `stdin:` and `stdout:` are given and on
 # `mode:`, so a program touches only the channels it isn't redirected from.
 
-import std proc shell fs:
+import std proc shell term fs:
   - @Path
 
 # Unredirected output is written as lines, which a def without `>` lacks
@@ -89,9 +89,9 @@ pub def proxy <Iter[Value] >Sink[Str] -> nil
 pub def captures <Iter[Value] -> Str
   shell.sub do proc.run echo x
 
-# `console` gives its block the console and no input
+# `term.with` gives its block the terminal's input and output
 pub def effect() -> nil
-  proc.console do
+  term.with do
     proc.run make
     proc.run cat
   nil
