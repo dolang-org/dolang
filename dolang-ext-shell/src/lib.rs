@@ -259,15 +259,15 @@ pub async fn open<'v, 's>(
     path: &path::Path,
     mode: &str,
 ) -> io::Result<dolang_vfs::file::File> {
-    if !fs::file::MODES.contains(&mode) {
+    let Some(spec) = fs::open_opts::OpenSpec::how(mode) else {
         return Err(io::Error::other(format!("invalid mode: {}", mode)));
-    }
+    };
     let global = strand.force_state::<FsTag>();
     fs::file::open_native(
         strand,
         global,
         vfs_path::PathBuf::from_native(path.to_owned())?.to_path(),
-        mode,
+        &spec,
     )
     .await
 }

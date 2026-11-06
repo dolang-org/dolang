@@ -18,6 +18,7 @@ import
     @FsMetadata: UnixFsMetadata
     @DirEntry: UnixDirEntry
   fs.windows:
+    - @AccessMaskSpec
     - @StreamEntry
     @Metadata: WindowsMetadata
     @FsMetadata: WindowsFsMetadata
@@ -94,19 +95,104 @@ pub @let CloneMode = $
 # well-known namespaces.
 pub @let XattrNamespace = (Str | :USER: | :SYSTEM:)
 
-# File access mode accepted by [`open`](fs.open).
+# Mode string accepted by [`open`](fs.open), shorthand for common
+# [`OpenMode`](fs.OpenMode) settings. A mode string cannot be combined with
+# [`OpenMode`](fs.OpenMode) or [`OpenOptions`](fs.OpenOptions) keywords.
 #
-# | Mode   | Description                               |
-# | ------ | ----------------------------------------- |
-# | `"r"`  | Read-only                                 |
-# | `"w"`  | Write-only (truncates existing file)      |
-# | `"a"`  | Append to existing file                   |
-# | `"x"`  | Write-only (fails if the file exists)     |
-# | `"r+"` | Read and write                            |
-# | `"w+"` | Read and write (truncates existing file)  |
-# | `"a+"` | Read and append                           |
-# | `"x+"` | Read and write (fails if the file exists) |
-pub @let OpenMode = ("r" | "w" | "a" | "x" | "r+" | "w+" | "a+" | "x+")
+# | Mode | Description                                         |
+# | ---- | --------------------------------------------------- |
+# | `r`  | Read only                                           |
+# | `w`  | Write only, truncating or creating the file         |
+# | `a`  | Append only, creating the file if it is missing     |
+# | `x`  | Write only, creating the file, which must not exist |
+#
+# A trailing `+` adds read access, and to `r`, write access.
+#
+# In [`OpenMode`](fs.OpenMode) keywords:
+#
+# | Mode | Equivalent                                          |
+# | ---- | --------------------------------------------------- |
+# | `r`  | `read: true`                                        |
+# | `w`  | `write: true exists: :TRUNCATE: missing: :CREATE:`  |
+# | `a`  | `write: :APPEND: missing: :CREATE:`                 |
+# | `x`  | `write: true exists: :FAIL:`                        |
+# | `r+` | `read: true write: true`                            |
+pub @let OpenHow = ("r" | "w" | "a" | "x" | "r+" | "w+" | "a+" | "x+")
+
+# How [`open`](fs.open) accesses a file, and what it does when the file exists
+# or is missing, as keyword arguments.
+#
+# Without `read`, `write`, or `access`, the file is opened for reading. With
+# any of them, the file gets only the access they ask for: `write: true` alone
+# is write only, and `read: false` alone asks for no access at all, which
+# yields a handle that only identifies the file.
+#
+# | `exists` \ `missing` | `:CREATE:`             | `:FAIL:`                |
+# | -------------------- | ---------------------- | ----------------------- |
+# | `:OPEN:`             | Open or create         | Open an existing file   |
+# | `:TRUNCATE:`         | Truncate or create     | Truncate existing file  |
+# | `:FAIL:`             | Create a new file      | Invalid                 |
+pub @let OpenMode = $
+  # Read access
+  ?read: Bool
+  # Write access, or `:APPEND:` for writes that always land at the end of the
+  # file
+  ?write: (Bool | :APPEND:)
+  # Windows access rights to ask for besides those `read` and `write` imply.
+  # Windows only.
+  ?access: AccessMaskSpec
+  # What to do when the file exists: open it, truncate it, or fail with
+  # [`AlreadyExistsError`](sys.AlreadyExistsError). Defaults to `:OPEN:`.
+  # Truncating requires write access without append.
+  ?exists: (:OPEN: | :TRUNCATE: | :FAIL:)
+  # What to do when the file is missing: create it, or fail with
+  # [`NotFoundError`](sys.NotFoundError). Defaults to `:CREATE:` with
+  # `exists: :FAIL:`, and to `:FAIL:` otherwise.
+  ?missing: (:CREATE: | :FAIL:)
+
+# What other opens of a file may do while [`open`](fs.open) holds it open.
+pub @let ShareRight = $
+  # Read
+  | :READ:
+  # Write
+  | :WRITE:
+  # Delete or rename
+  | :DELETE:
+
+# Further [`open`](fs.open) settings, as keyword arguments.
+#
+# The creation settings apply only when the open creates the file. A setting
+# the target platform lacks throws
+# [`UnsupportedError`](sys.UnsupportedError).
+pub @let OpenOptions = $
+  # What other opens may do while the file is open. Defaults to all of them.
+  # Windows only.
+  ?share: (ShareRight | Iterable[ShareRight])
+  # Opens with backup semantics, which a directory needs, using backup and
+  # restore privileges where they are held. Windows only.
+  ?backup: Bool
+  # Link resolution. Defaults to `:TARGET:`. With `:LINK:`, a link is opened
+  # itself rather than its target: on Linux only with no access, and
+  # elsewhere only on Windows. Opening a link with access fails on Unix.
+  ?resolve: Resolve
+  # Permission bits for a created file, subject to the umask. Unix only.
+  ?mode: (Int | Mode)
+  # Security descriptor for a created file. Windows only.
+  ?sec_desc: SecDescSpec
+  # Makes a created file read only. Windows only.
+  ?readonly: Bool
+  # Hides a created file from ordinary listings. Windows only.
+  ?hidden: Bool
+  # Marks a created file as used by the operating system. Windows only.
+  ?system: Bool
+  # Marks a created file for archival. Windows only.
+  ?archive: Bool
+  # Marks a created file as temporary storage. Windows only.
+  ?temporary: Bool
+  # Marks a created file's data as not immediately available. Windows only.
+  ?offline: Bool
+  # Excludes a created file from content indexing. Windows only.
+  ?not_content_indexed: Bool
 
 # An entry within a directory.
 #
@@ -1168,14 +1254,35 @@ pub class Path
   pub def exists self -> Bool
     ...
 
-  # The method form of [`fs.open`](fs.open).
+  # The method form of [`fs.open`](fs.open) with a mode string.
   @def open
     self
-    # File access mode. Defaults to `"r"`.
-    mode @ OpenMode = ...
+    # Mode string.
+    how @ OpenHow
     # Whether to buffer the file.
     :buffer @ true = ...
   do -> File
+
+  # The method form of [`fs.open`](fs.open).
+  @def open
+    self
+    # Whether to buffer the file.
+    :buffer @ true = ...
+    # Access, disposition, and further settings.
+    **options @ {...OpenMode, ...OpenOptions}
+  do -> File
+
+  # The method form of [`fs.open`](fs.open) with a mode string and a
+  # block.
+  @def open[R]
+    self
+    # Mode string.
+    how @ OpenHow
+    # Block to run with the file; it is closed when the block returns.
+    func @ (File -> R)
+    # Whether to buffer the file.
+    :buffer @ true = ...
+  do -> R
 
   # The method form of [`fs.open`](fs.open) with a block.
   @def open[R]
@@ -1184,27 +1291,40 @@ pub class Path
     func @ (File -> R)
     # Whether to buffer the file.
     :buffer @ true = ...
+    # Access, disposition, and further settings.
+    **options @ {...OpenMode, ...OpenOptions}
   do -> R
 
-  # The method form of [`fs.open`](fs.open) with a mode and a block.
-  @def open[R]
+  # The method form of [`fs.open`](fs.open) for an unbuffered file with a
+  # mode string.
+  @def open
     self
-    # File access mode.
-    mode @ OpenMode
-    # Block to run with the file; it is closed when the block returns.
-    func @ (File -> R)
-    # Whether to buffer the file.
-    :buffer @ true = ...
-  do -> R
+    # Mode string.
+    how @ OpenHow
+    # Opens an unbuffered [`RawFile`](fs.RawFile).
+    :buffer @ false
+  do -> RawFile
 
   # The method form of [`fs.open`](fs.open) for an unbuffered file.
   @def open
     self
-    # File access mode. Defaults to `"r"`.
-    mode @ OpenMode = ...
     # Opens an unbuffered [`RawFile`](fs.RawFile).
     :buffer @ false
+    # Access, disposition, and further settings.
+    **options @ {...OpenMode, ...OpenOptions}
   do -> RawFile
+
+  # The method form of [`fs.open`](fs.open) for an unbuffered file with a
+  # mode string and a block.
+  @def open[R]
+    self
+    # Mode string.
+    how @ OpenHow
+    # Block to run with the file; it is closed when the block returns.
+    func @ (RawFile -> R)
+    # Opens an unbuffered [`RawFile`](fs.RawFile).
+    :buffer @ false
+  do -> R
 
   # The method form of [`fs.open`](fs.open) for an unbuffered file with a
   # block.
@@ -1214,18 +1334,8 @@ pub class Path
     func @ (RawFile -> R)
     # Opens an unbuffered [`RawFile`](fs.RawFile).
     :buffer @ false
-  do -> R
-
-  # The method form of [`fs.open`](fs.open) for an unbuffered file with a
-  # mode and a block.
-  @def open[R]
-    self
-    # File access mode.
-    mode @ OpenMode
-    # Block to run with the file; it is closed when the block returns.
-    func @ (RawFile -> R)
-    # Opens an unbuffered [`RawFile`](fs.RawFile).
-    :buffer @ false
+    # Access, disposition, and further settings.
+    **options @ {...OpenMode, ...OpenOptions}
   do -> R
 
   pub def open self ...options @ Value -> Value
@@ -1547,7 +1657,7 @@ pub class XattrEntry
   pub def flags self -> Int
     ...
 
-# Opens a file.
+# Opens a file with a mode string.
 #
 # The file stays open until its `close` method is called. Writes are buffered,
 # so a file that is never closed may lose them.
@@ -1560,14 +1670,52 @@ pub class XattrEntry
 @def open
   # Path to the file to open.
   path @ (Str | Path)
-  # File access mode. Defaults to `"r"`.
-  mode @ OpenMode = ...
+  # Mode string.
+  how @ OpenHow
   # Whether to buffer the file.
   :buffer @ true = ...
 do -> File
 
-# Opens a file for reading and runs a block with it. The file is closed when
-# the block returns.
+# Opens a file, by default for reading.
+#
+# [`OpenMode`](fs.OpenMode) keywords say how to access the file and what to do
+# when it exists or is missing, and [`OpenOptions`](fs.OpenOptions) keywords
+# give further settings.
+#
+# ```
+# let file = open state.json write: true missing: :CREATE: mode: 0o600
+# file.write "{}"
+# file.close()
+# ```
+@def open
+  # Path to the file to open.
+  path @ (Str | Path)
+  # Whether to buffer the file.
+  :buffer @ true = ...
+  # Access, disposition, and further settings.
+  **options @ {...OpenMode, ...OpenOptions}
+do -> File
+
+# Opens a file with a mode string and runs a block with it. The file is closed
+# when the block returns.
+#
+# ```
+# open log.txt a do |file|
+#   file.write "entry\n"
+# ```
+@def open[R]
+  # Path to the file to open.
+  path @ (Str | Path)
+  # Mode string.
+  how @ OpenHow
+  # Block to run with the file.
+  func @ (File -> R)
+  # Whether to buffer the file.
+  :buffer @ true = ...
+do -> R
+
+# Opens a file, by default for reading, and runs a block with it. The file is
+# closed when the block returns.
 #
 # ```
 # open config.txt do |file|
@@ -1580,27 +1728,11 @@ do -> File
   func @ (File -> R)
   # Whether to buffer the file.
   :buffer @ true = ...
+  # Access, disposition, and further settings.
+  **options @ {...OpenMode, ...OpenOptions}
 do -> R
 
-# Opens a file with a mode and runs a block with it. The file is closed when
-# the block returns.
-#
-# ```
-# open log.txt a do |file|
-#   file.write "entry\n"
-# ```
-@def open[R]
-  # Path to the file to open.
-  path @ (Str | Path)
-  # File access mode.
-  mode @ OpenMode
-  # Block to run with the file.
-  func @ (File -> R)
-  # Whether to buffer the file.
-  :buffer @ true = ...
-do -> R
-
-# Opens an unbuffered file.
+# Opens an unbuffered file with a mode string.
 #
 # ```
 # let file = open data.bin w buffer: false
@@ -1610,34 +1742,46 @@ do -> R
 @def open
   # Path to the file to open.
   path @ (Str | Path)
-  # File access mode. Defaults to `"r"`.
-  mode @ OpenMode = ...
+  # Mode string.
+  how @ OpenHow
   # Opens an unbuffered [`RawFile`](fs.RawFile).
   :buffer @ false
 do -> RawFile
 
-# Opens an unbuffered file for reading and runs a block with it. The file is
-# closed when the block returns.
+# Opens an unbuffered file, by default for reading.
+@def open
+  # Path to the file to open.
+  path @ (Str | Path)
+  # Opens an unbuffered [`RawFile`](fs.RawFile).
+  :buffer @ false
+  # Access, disposition, and further settings.
+  **options @ {...OpenMode, ...OpenOptions}
+do -> RawFile
+
+# Opens an unbuffered file with a mode string and runs a block with it. The
+# file is closed when the block returns.
 @def open[R]
   # Path to the file to open.
   path @ (Str | Path)
+  # Mode string.
+  how @ OpenHow
   # Block to run with the file.
   func @ (RawFile -> R)
   # Opens an unbuffered [`RawFile`](fs.RawFile).
   :buffer @ false
 do -> R
 
-# Opens an unbuffered file with a mode and runs a block with it. The file is
-# closed when the block returns.
+# Opens an unbuffered file, by default for reading, and runs a block with it.
+# The file is closed when the block returns.
 @def open[R]
   # Path to the file to open.
   path @ (Str | Path)
-  # File access mode.
-  mode @ OpenMode
   # Block to run with the file.
   func @ (RawFile -> R)
   # Opens an unbuffered [`RawFile`](fs.RawFile).
   :buffer @ false
+  # Access, disposition, and further settings.
+  **options @ {...OpenMode, ...OpenOptions}
 do -> R
 
 # Opens a file, returning a buffered [`File`](fs.File), or an unbuffered

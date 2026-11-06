@@ -37,10 +37,12 @@ use crate::{
     error_code::{CodeObject, Errno, ErrorCode, FreeBsdErrno, LinuxErrno, MacosErrno, WinError},
     fs::{
         FS_UNIX, FS_WINDOWS,
+        access_mask::AccessMask as FileAccessMask,
         file::{BaseFile, File, FileObject, RawFile},
         file_lock::FileLock,
         fs_metadata::FsMetadata,
         metadata::{Metadata, Mode},
+        open_opts::OpenSyms,
         path::{Path, UnixPath, WindowsPath},
         readdir::{DirEntry, DirEntryIter},
         stream::{StreamEntry, StreamIter},
@@ -561,6 +563,7 @@ pub(crate) struct FsTypes<'v> {
     pub(crate) dir_entry_iter: Type<'v, DirEntryIter>,
     pub(crate) glob_iter: Type<'v, crate::fs::glob::GlobIter>,
     pub(crate) mode: Type<'v, Flags<Mode>>,
+    pub(crate) file_access_mask: Type<'v, Flags<FileAccessMask>>,
 }
 
 pub(crate) struct FsSyms<'v> {
@@ -582,6 +585,8 @@ pub(crate) struct FsSyms<'v> {
     pub(crate) symlink: Sym<'v, 'v>,
     pub(crate) target: Sym<'v, 'v>,
     pub(crate) unknown: Sym<'v, 'v>,
+    /// `fs.open` keywords and values.
+    pub(crate) open: OpenSyms<'v>,
 }
 
 pub(crate) struct FsTag;
@@ -663,6 +668,7 @@ impl<'v> FsGlobal<'v> {
                 dir_entry_iter: builder.register_type(),
                 glob_iter: builder.register_type(),
                 mode: Mode::register_type(builder),
+                file_access_mask: FileAccessMask::register_type(builder),
             },
             syms: FsSyms {
                 any: builder.sym("ANY"),
@@ -683,6 +689,7 @@ impl<'v> FsGlobal<'v> {
                 symlink: builder.sym("SYMLINK"),
                 target: builder.sym("TARGET"),
                 unknown: builder.sym("UNKNOWN"),
+                open: OpenSyms::new(builder),
             },
         }
     }

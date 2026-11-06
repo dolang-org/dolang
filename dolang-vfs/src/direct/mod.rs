@@ -30,7 +30,7 @@ use crate::{
     error::{Error, ErrorKind, Result},
     extension::ExtensionSet,
     extension::{self, DirectContext, ExtContext, VfsExtension},
-    file::{self, AccessFlags, FileId, FileLockRequest, StreamEntry},
+    file::{self, AccessFlags, FileId, FileLockRequest, OpenCaps, OpenExtra, StreamEntry},
     file::{XattrEntry, XattrNamespace},
     metadata::{FsMetadata, Metadata, MetadataPatch},
     path::{self, WellKnownPath},
@@ -92,6 +92,7 @@ pub struct OpenOptions {
     create_new: bool,
     truncate: bool,
     no_follow: bool,
+    extra: OpenExtra,
 }
 
 /// Local process-spawn options returned by [`Direct::command`](crate::Vfs::command).
@@ -1296,20 +1297,6 @@ async fn child_out(stdio: SpawnOut, files: &mut Vec<ChildFile>) -> Result<Stdio>
 }
 
 impl OpenOptions {
-    fn as_tokio(&self) -> fs::OpenOptions {
-        let mut opts = fs::OpenOptions::new();
-        opts.read(self.read)
-            .write(self.write)
-            .append(self.append)
-            .create(self.create)
-            .create_new(self.create_new)
-            .truncate(self.truncate);
-        self.apply_no_follow_flags(&mut opts);
-        opts
-    }
-}
-
-impl OpenOptions {
     pub(crate) fn read(&mut self, read: bool) -> &mut Self {
         self.read = read;
         self
@@ -1345,17 +1332,40 @@ impl OpenOptions {
         self
     }
 
+    pub(crate) fn extra(&mut self) -> &mut OpenExtra {
+        &mut self.extra
+    }
+
+    pub(crate) fn caps(&self) -> OpenCaps {
+        OpenCaps::new(self.read, self.write, self.append, self.extra.access)
+    }
+
+    /// Whether the open asks for no access at all, which yields a handle
+    /// that only identifies the file. Windows needs no special case: it
+    /// takes an empty access mask as it is.
+    #[cfg(unix)]
+    fn is_no_access(&self) -> bool {
+        !self.read && !self.write && !self.append && self.extra.access.is_none()
+    }
+
+    /// Rejects settings that contradict each other, whatever the platform.
+    fn validate(&self) -> Result<()> {
+        let caps = self.caps();
+        if self.truncate && (!caps.write || caps.append) {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "truncating a file requires write access without append",
+            ));
+        }
+        Ok(())
+    }
+
     pub(crate) async fn open(&self, path: path::Path<'_>) -> Result<File> {
-        // `as_tokio` carries the platform-specific open flags, so go through
-        // it and then unwrap: the handle is driven positionally from here on
-        // and has no use for tokio's cursor bookkeeping.
-        let file = self
-            .as_tokio()
-            .open(path.to_native()?)
-            .await?
-            .into_std()
-            .await;
-        Ok(File::from_std(file, self.read, self.write, self.append))
+        self.validate()?;
+        let caps = self.caps();
+        let path = path.to_native()?;
+        let file = self.open_native(path).await?;
+        Ok(File::from_std(file, caps.read, caps.write, caps.append))
     }
 }
 

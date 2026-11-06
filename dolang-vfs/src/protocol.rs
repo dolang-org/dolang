@@ -17,7 +17,7 @@ use crate::{
     error::Error,
     extension::ExtensionSet,
     extension::{self, ErasedVfsExtension},
-    file::{CopyDataResult, CopyDest, CopyMode, FileLockRequest, StreamEntry},
+    file::{CopyDataResult, CopyDest, CopyMode, FileLockRequest, OpenExtra, StreamEntry},
     file::{XattrEntry, XattrNamespace},
     metadata::{FsMetadata, Metadata, MetadataPatch},
     path::{self, WellKnownPath},
@@ -210,6 +210,7 @@ bitflags::bitflags! {
 pub(crate) struct OpenRequest {
     pub(crate) path: path::PathBuf,
     pub(crate) flags: OpenFlags,
+    pub(crate) extra: OpenExtra,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

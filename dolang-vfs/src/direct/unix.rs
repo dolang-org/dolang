@@ -6,7 +6,7 @@ use crate::metadata::{MetadataFamily, UnixMetadata, UnixMetadataPlatform};
 use crate::{
     error::{Error, ErrorKind, Result},
     file::FileId,
-    file::StreamEntry,
+    file::{ShareMode, StreamEntry},
     file::{XattrEntry, XattrNamespace},
     metadata::{
         FileType, FsMetadata, FsMetadataFamily, MetadataPatch, Mode, UnixFsMetadata,
@@ -30,7 +30,7 @@ use std::{
     sync::Arc,
 };
 use tokio::{
-    fs::{self, OpenOptions},
+    fs,
     time::{Duration, timeout},
 };
 
@@ -2204,10 +2204,83 @@ pub(super) fn signal_to_raw(signal: crate::process::Signal) -> Result<libc::c_in
 }
 
 impl super::OpenOptions {
-    pub(super) fn apply_no_follow_flags(&self, opts: &mut OpenOptions) {
-        if self.no_follow {
-            opts.custom_flags(libc::O_NOFOLLOW);
+    /// Rejects the settings only Windows supports.
+    fn validate_unix(&self) -> Result<()> {
+        let extra = &self.extra;
+        let unsupported = if extra.access.is_some() {
+            Some("access rights")
+        } else if extra.share.is_some_and(|share| share != ShareMode::all()) {
+            Some("share modes")
+        } else if extra.backup {
+            Some("backup semantics")
+        } else if extra.sec_desc.is_some() {
+            Some("security descriptors")
+        } else if !extra.attrs.is_empty() {
+            Some("attributes")
+        } else {
+            None
+        };
+        match unsupported {
+            Some(what) => Err(Error::new(
+                ErrorKind::Unsupported,
+                format!("opening a file with {what} is not supported on this platform"),
+            )),
+            None => Ok(()),
         }
+    }
+
+    pub(super) async fn open_native(&self, path: PathBuf) -> Result<std::fs::File> {
+        use std::os::unix::fs::OpenOptionsExt as _;
+
+        self.validate_unix()?;
+        let mut opts = std::fs::OpenOptions::new();
+        // Disposition goes through the raw flags rather than std's
+        // `create`/`truncate`, which std refuses without write access even
+        // though `open(2)` allows creating a file opened read-only.
+        let mut flags = 0;
+        if self.create || self.create_new {
+            flags |= libc::O_CREAT;
+        }
+        if self.create_new {
+            flags |= libc::O_EXCL;
+        }
+        if self.truncate {
+            flags |= libc::O_TRUNC;
+        }
+        if self.no_follow {
+            flags |= libc::O_NOFOLLOW;
+        }
+        if self.is_no_access() {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            {
+                if flags & libc::O_CREAT != 0 {
+                    // `O_PATH` ignores `O_CREAT` rather than failing.
+                    return Err(Error::new(
+                        ErrorKind::Unsupported,
+                        "creating a file without access is not supported on this platform",
+                    ));
+                }
+                // `O_PATH` replaces the access mode; std insists on one, and
+                // `O_RDONLY` is zero.
+                opts.read(true);
+                flags |= libc::O_PATH;
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
+            return Err(Error::new(
+                ErrorKind::Unsupported,
+                "opening a file without access is not supported on this platform",
+            ));
+        } else {
+            opts.read(self.read).write(self.write).append(self.append);
+        }
+        if let Some(mode) = self.extra.mode {
+            opts.mode(mode.bits() & 0o7777);
+        }
+        opts.custom_flags(flags);
+        tokio::task::spawn_blocking(move || opts.open(path))
+            .await
+            .map_err(Error::other)?
+            .map_err(Error::from)
     }
 }
 

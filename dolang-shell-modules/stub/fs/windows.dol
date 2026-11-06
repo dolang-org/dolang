@@ -3,10 +3,100 @@
 
 import fs
 import security.windows:
+  @AccessRight: WindowsAccessRight
   - @Sid
   - @SecDesc
   - @SecDescSpec
   - @SecDescOptions
+  AccessMask: WindowsAccessMask
+
+# A right of an [`AccessMask`](fs.windows.AccessMask): a file-specific right or
+# a generic Windows [`AccessRight`](security.windows.AccessRight).
+pub @let AccessRight = $
+  # Reads data, or lists a directory
+  | :READ_DATA:
+  # Writes data anywhere, or creates a file in a directory
+  | :WRITE_DATA:
+  # Appends data, or creates a subdirectory
+  | :APPEND_DATA:
+  # Reads extended attributes
+  | :READ_EA:
+  # Writes extended attributes
+  | :WRITE_EA:
+  # Executes a file, or traverses a directory
+  | :EXECUTE:
+  # Deletes a directory's children
+  | :DELETE_CHILD:
+  # Reads attributes
+  | :READ_ATTRIBUTES:
+  # Writes attributes
+  | :WRITE_ATTRIBUTES:
+  | WindowsAccessRight
+
+# Access rights for a file or directory, as
+# [`fs.open`](fs.open) takes them in `access:`.
+#
+# A mask is built from symbols, and `access:` also accepts a bare symbol or an
+# iterable of symbols in its place, so an explicit `AccessMask` is only needed
+# to combine or inspect rights.
+#
+# `fs.windows.AccessMask` is a
+# [`security.windows.AccessMask`](security.windows.AccessMask), so it can be
+# used wherever a Windows access mask is expected.
+#
+# ## Example
+#
+# ```
+# let access = AccessMask :READ_DATA: :READ_ATTRIBUTES:
+# let more = (access | AccessMask(:SYNCHRONIZE:))
+# for right = more
+#   echo $right
+# ```
+pub class AccessMask: WindowsAccessMask
+  # Builds a mask from a native integer, preserving every bit including ones
+  # this type does not name.
+  #
+  # ## Example
+  #
+  # ```
+  # let mask = AccessMask.from_int 0x120089
+  # ```
+  #[class]
+  pub def from_int
+    self
+    # Native Windows access mask.
+    value @ Int
+  do -> AccessMask
+    ...
+
+  # The complete native mask as an [`Int`](std.Int), including bits this
+  # type does not name.
+  #[getter]
+  pub def int self -> Int
+    ...
+
+  # Constructs a flag set from symbols.
+  #[class]
+  @def (call) cls ...flags@AccessRight -> AccessMask
+
+  # Constructs a flag set from one iterable of symbols.
+  #[class]
+  @def (call) cls flags@Iterable[AccessRight] -> AccessMask
+
+  #[class]
+  pub def (call) cls ...flags @ (AccessRight | Iterable[AccessRight]) -> AccessMask
+    ...
+
+  pub def (init) self ...flags @ (AccessRight | Iterable[AccessRight])
+    ...
+
+  # Tests whether all flags named by `flag` are set.
+  pub def contains self flag @ AccessRight -> Bool
+    ...
+
+# Rights, given as an [`AccessMask`](fs.windows.AccessMask), one right, or an
+# iterable of rights.
+pub @let AccessMaskSpec = (AccessMask | AccessRight | Iterable[AccessRight])
 
 # [`fs.Path`](fs.Path) using Windows path syntax.
 #

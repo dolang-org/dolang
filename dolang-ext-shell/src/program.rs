@@ -28,6 +28,7 @@ use crate::{
     error::{self, ResultExt as _},
     fs::{
         file,
+        open_opts::OpenSpec,
         path::{cast_path, create_path, path_from_value},
     },
     global::{FsTag, ProcGlobal, ProcTag, ShellTag, Tag},
@@ -204,8 +205,9 @@ async fn resolve_io_file<'v, 's>(
     };
 
     let fs = strand.force_state::<FsTag>();
-    let file = file::open(strand, fs, path.to_path(), mode).await?;
-    file::create_file(strand, fs, file, mode, false, out);
+    let spec = OpenSpec::how(mode).expect("valid mode string");
+    let file = file::open_spec(strand, fs, path.to_path(), &spec).await?;
+    file::create_file(strand, fs, file, spec.caps(), false, out);
     Ok(true)
 }
 

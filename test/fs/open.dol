@@ -9,8 +9,11 @@ import
     - assert_eq
     - test
   fs:
+    - metadata
+    - create_dir
     - read_str
     - open
+    - symlink_file
     - Path
     - BaseFile
     - File
@@ -21,6 +24,10 @@ import
     - ValueError
   sys:
     - AlreadyExistsError
+    - Error
+    - NotFoundError
+    - os_info
+    - UnsupportedError
 
 #[test]
 #[vfs]
@@ -193,3 +200,147 @@ def capabilities_follow_the_mode()
       assert_eq [file.readable, file.writable, file.seekable] $caps
       file.close()
       assert_eq [file.readable, file.writable, file.seekable] [false, false, false]
+
+#[test]
+#[vfs]
+def granular_access()
+  open access.txt w do |file| file.write "hello"
+  # No access keyword reads
+  open access.txt do |file|
+    assert_eq [file.readable, file.writable] [true, false]
+  # Any access keyword grants only what it asks for
+  open access.txt write: true do |file|
+    assert_eq [file.readable, file.writable, file.seekable] [false, true, true]
+    file.write "J"
+  assert_eq (read_str "access.txt") "Jello"
+  open access.txt read: true write: :APPEND: do |file|
+    assert_eq [file.readable, file.writable, file.seekable] [true, true, false]
+    file.write "!"
+  assert_eq (read_str "access.txt") "Jello!"
+  open access.txt write: :APPEND: buffer: false do |file|
+    file.write "?"
+  assert_eq (read_str "access.txt") "Jello!?"
+  assert_throws $TypeError do open access.txt write: :TRUNCATE:
+
+#[test]
+#[vfs]
+def granular_disposition()
+  # Nothing is created or truncated unless asked for
+  assert_throws $NotFoundError do open missing.txt write: true
+  assert_throws $NotFoundError do open missing.txt write: true exists: :TRUNCATE:
+  open created.txt write: true missing: :CREATE: do |file| file.write "abc"
+  # Create or update in place
+  open created.txt write: true missing: :CREATE: do |file| file.write "X"
+  assert_eq (read_str "created.txt") "Xbc"
+  open created.txt write: true exists: :TRUNCATE: do |file| file.write "new"
+  assert_eq (read_str "created.txt") "new"
+  # An exclusive create defaults to creating
+  assert_throws $AlreadyExistsError do open created.txt write: true exists: :FAIL:
+  open exclusive.txt write: true exists: :FAIL: do |file| file.write "x"
+  assert_eq (read_str "exclusive.txt") "x"
+  # Creating a file opened only for reading
+  open readonly.txt missing: :CREATE: do |file|
+    assert_eq (file.read_str()) ""
+  assert_eq (read_str "readonly.txt") ""
+
+#[test]
+#[vfs]
+def granular_conflicts()
+  open conflicts.txt w do |file| file.write "x"
+  assert_throws $ValueError do open conflicts.txt exists: :FAIL: missing: :FAIL:
+  assert_throws $ValueError do open conflicts.txt write: :APPEND: exists: :TRUNCATE:
+  assert_throws $ValueError do open conflicts.txt exists: :TRUNCATE:
+  assert_throws $ValueError do open conflicts.txt exists: :OVERWRITE:
+  # A mode string combines with none of the granular keywords
+  for options = [(read: true), (exists: :OPEN:), (mode: 0o600), (backup: false)]
+    assert_throws $ValueError do open conflicts.txt r ...options
+    assert_throws $ValueError do (Path "conflicts.txt").open r ...options
+
+#[test]
+#[vfs]
+def creation_mode()
+  if (os_info().family != :UNIX:)
+    assert_throws $UnsupportedError do open mode.txt write: true missing: :CREATE: mode: 0o600
+    return nil
+  open mode.txt write: true exists: :FAIL: mode: 0o600 do |_| nil
+  assert_eq (metadata("mode.txt").mode.int & 0o777) 0o600
+  # Only a created file gets it
+  open mode.txt write: true missing: :CREATE: mode: 0o644 do |_| nil
+  assert_eq (metadata("mode.txt").mode.int & 0o777) 0o600
+
+#[test]
+#[vfs]
+def windows_only_options()
+  if (os_info().family == :WINDOWS:)
+    return nil
+  open windows.txt w do |file| file.write "x"
+  let cases = $
+    - (share: :READ:)
+    - (access: :READ_DATA:)
+    - (backup: true)
+    - (hidden: true)
+    - (sec_desc: {})
+  for options = cases
+    assert_throws $UnsupportedError do open windows.txt ...options
+  # Sharing everything is the default everywhere
+  open windows.txt share: [:READ:, :WRITE:, :DELETE:] do |file|
+    assert_eq (file.read_str()) "x"
+
+#[test]
+#[vfs]
+def windows_options()
+  if (os_info().family != :WINDOWS:)
+    return nil
+  open shared.txt w do |file| file.write "x"
+  # A handle that shares nothing keeps every other open out
+  open shared.txt share: [] do |_|
+    assert_throws $Error do open shared.txt
+  open shared.txt share: :READ: do |_|
+    open shared.txt do |file| assert_eq (file.read_str()) "x"
+    assert_throws $Error do open shared.txt write: true
+
+  # Exact rights decide what the handle can do
+  open shared.txt access: :READ_ATTRIBUTES: do |file|
+    assert_eq [file.readable, file.writable] [false, false]
+  open shared.txt access: [:READ_DATA:, :SYNCHRONIZE:] do |file|
+    assert_eq [file.readable, file.writable] [true, false]
+    assert_eq (file.read_str()) "x"
+  open shared.txt access: :APPEND_DATA: do |file|
+    assert_eq [file.readable, file.writable, file.seekable] [false, true, false]
+
+  # Attributes apply only to a created file
+  open hidden.txt write: true exists: :FAIL: hidden: true do |_| nil
+  assert_eq (metadata("hidden.txt").hidden) true
+  open shared.txt write: true missing: :CREATE: hidden: true do |_| nil
+  assert_eq (metadata("shared.txt").hidden) false
+
+  # The security descriptor is set as the file is created. Wine doesn't keep
+  # descriptors faithfully, so only the open itself is checked there.
+  let sd_path = (Path "created_sd.txt")
+  let spec = $
+    dacl:
+      - allow: :EVERYONE:
+        mask: :GENERIC_ALL:
+    dacl_protected: true
+  open $sd_path write: true exists: :FAIL: sec_desc: $spec do |file|
+    file.write "x"
+  if !os_info().is_wine
+    let created = sd_path.sec_desc()
+    assert_eq $created.dacl_protected true
+    assert_eq $created.dacl.aces.len 1
+
+  # Backup semantics open a directory
+  create_dir dir_handle
+  assert_throws $Error do open dir_handle read: false
+  open dir_handle read: false backup: true do |file|
+    assert_eq [file.readable, file.writable] [false, false]
+
+#[test]
+#[vfs]
+def link_handles()
+  if (os_info().os != :LINUX:)
+    return nil
+  open link_target.txt w do |file| file.write "x"
+  symlink_file link_target.txt link.txt
+  open link.txt read: false resolve: :LINK: do |file|
+    assert_eq [file.readable, file.writable] [false, false]
