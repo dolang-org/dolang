@@ -181,12 +181,10 @@ def strict_check_rejects_unverified_code()
     source.write r|
       # dolang: strict
       class Picker
-        @def pick _self x@Int -> Int
-        @def pick _self x@Str -> Str
-        pub def pick _self x @ (Int | Str)
-          x
+        pub def pick[T @ Picker] self @ T -> T
+          self
       let pick = Picker().pick
-      echo $pick(1)
+      echo $pick()
     let out = BinBuf()
     run $shell.exe -m compile check $source stdout: $out stderr: :STDOUT: mode: :CHUNK:
     let text = printed $out

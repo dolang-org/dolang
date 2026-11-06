@@ -1,0 +1,34 @@
+# A method read as a value is its signature, without the receiver when read
+# from an instance. An overloaded method's value is its overloads, which a
+# function type it's passed as chooses among.
+
+pub class Conv
+  @def conv self n @ Int -> Int
+  @def conv self s @ Str -> Str
+  pub def conv _self x
+    x
+
+  pub def one _self n @ Int -> Str
+    ...
+
+def map_each[T, U] xs @ Array[T] f @ (T -> U) -> Array[U]
+  ...
+
+def zip_each[T, U] c @ Conv xs @ Array[T] f @ ((Conv, T) -> U) -> Array[U]
+  ...
+
+pub def bound c @ Conv
+  let _ = c.one
+  #   ^: flow (std.Int) -> std.Str
+  let _ = c.conv
+  #   ^: flow ((std.Int) -> std.Int) & ((std.Str) -> std.Str)
+  let _ = map_each [1] $c.conv
+  #   ^: flow [std.Int]
+  let _ = map_each ["s"] $c.conv
+  #   ^: flow [std.Str]
+
+pub def unbound c @ Conv
+  let _ = Conv.conv
+  #   ^: flow ((m.Conv, std.Int) -> std.Int) & ((m.Conv, std.Str) -> std.Str)
+  let _ = zip_each $c [1] $Conv.conv
+  #   ^: flow [std.Int]

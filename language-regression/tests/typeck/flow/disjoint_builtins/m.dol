@@ -1,6 +1,6 @@
 # The builtin scalar and collection classes are disjoint, so a class test drops
-# the other members of a union of them. The iteration classes, `Func` and the
-# error kinds below `RuntimeError` are mixable.
+# the other members of a union of them. The iteration classes and the error
+# kinds below `RuntimeError` are mixable.
 
 import std:
   - IterStop

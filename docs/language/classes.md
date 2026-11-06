@@ -433,10 +433,10 @@ class Tile: Square Image   # error: unrelated disjoint classes `Square` and `Ima
 
 A diamond is allowed when every class in its middle is mixable. Classes whose
 nearest disjoint superclasses are unrelated have no instances in common, so a
-type test for one drops the other. `Iterable`, `Iter`, `Sinkable`, `Sink`,
-`Func`, and the error kinds below [`RuntimeError`](std.RuntimeError) are
-mixable. Only runtime supertypes count, and protocols are never disjoint. The
-runtime doesn't enforce the rule.
+type test for one drops the other. `Iterable`, `Iter`, `Sinkable`, `Sink`, and
+the error kinds below [`RuntimeError`](std.RuntimeError) are mixable. Only
+runtime supertypes count, and protocols are never disjoint. The runtime doesn't
+enforce the rule.
 
 ## Type Inspection
 
@@ -732,7 +732,10 @@ Invoked when an instance is called like a function. As a class or static member
 it instead governs calling the class itself; see
 [Class and Static Members](#class-and-static-members). A class whose instances
 are passed as functions names `Func` among its supertypes; the type checker then
-takes its `(call)`'s signature as theirs.
+takes its `(call)`'s signature as theirs. `Func` is disjoint, so a function
+type test separates functions from instances of other disjoint classes. An
+instance whose class inherits another disjoint class is still called through
+its `(call)`. To pass it as a function, pass the bound `obj.(call)`.
 
 ```
 class Multiplier: Func

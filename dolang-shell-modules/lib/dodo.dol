@@ -51,9 +51,8 @@ do -> Value
   let rule = lookup $rules $task
   while (type rule Str)
     rule = lookup $rules $rule
-  # A type object is a `Func`, but not a handler
   let spec = match rule
-    Func(handler) do {(handler !@ Handler)}
+    Func(handler) do {handler}
     BaseDict(rule) | BaseArray(rule) do rule
   let common = rules.get :common: default: ({} @ Common)
 
