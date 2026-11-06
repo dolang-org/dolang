@@ -66,13 +66,22 @@ def default_target()
     throw std.RuntimeError "unsupported host target: $target"
   target
 
+let host_tuple_cache = nil
+
+# The triple rustc builds for when Cargo gets no `--target`.
+def host_tuple()
+  if (host_tuple_cache == nil)
+    let output = sub do run rustc -vV
+    let line = output.split("\n").find(do |line| line.starts_with "host: ")
+    host_tuple_cache = line.without_prefix("host: ").trim()
+  host_tuple_cache
+
 def run_cargo ...args
-  # IF YOU'RE READING THIS, TAKE A HINT
-  env DODO: 1 do dodo.show cargo ...args
+  dodo.show cargo ...args
 
 class Spec
   pub field target tuple profile channel target_dir
-  field extra debug runner
+  field extra debug runner cross
 
   def (init)
     self args
@@ -89,11 +98,22 @@ class Spec
     self.#extra = extra
     self.#debug = args.debug
     self.#runner = nil
+    # With `--target`, Cargo builds build scripts, proc macros, and their
+    # dependencies separately for the host, even when the target is the
+    # host. The bundle build scripts link most of the workspace, so pass it
+    # only when cross-compiling. Distribution builds keep it, since
+    # `with_build_env` may set `RUSTFLAGS`, which `--target` keeps out of
+    # host artifacts.
+    self.#cross = (self.tuple != host_tuple() || self.profile == "dist")
     let artifact_profile = (self.profile == "bench" && "release" || self.profile)
-    self.target_dir = if variant
-      (Path("target") / self.tuple / variant / artifact_profile)
+    let base = if self.#cross
+      (Path("target") / self.tuple)
     else
-      (Path("target") / self.tuple / artifact_profile)
+      Path("target")
+    self.target_dir = if variant
+      (base / variant / artifact_profile)
+    else
+      (base / artifact_profile)
 
   pub def bin self name
     let exe = self.target.get :exe:
@@ -107,7 +127,9 @@ class Spec
     run_cargo
       if self.channel
         +$self.channel
-      $cmd --target $self.tuple
+      $cmd
+      if self.#cross
+        --target $self.tuple
       if (self.profile == "release")
         --$self.profile
       else if (self.profile != "debug")

@@ -72,6 +72,15 @@ workspace = true
 [build-dependencies.dolang-compile]
 workspace = true
 
+# Unused; they match the server's features (via `tower-lsp-server`) so the
+# build script and the server share one build of `dolang-compile`. See
+# `dolang-private-bundle/Cargo.toml`.
+[build-dependencies.futures-core]
+version = "0.3"
+
+[build-dependencies.futures-sink]
+version = "0.3"
+
 
 [dev-dependencies.serde]
 workspace = true

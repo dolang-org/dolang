@@ -344,6 +344,10 @@ version = "0.22.1"
 
 [workspace.dependencies.bitflags]
 version = "2.9.4"
+# `rustix` enables `std` in the shell; enabling it everywhere keeps the
+# feature set the same for build scripts, which link the core crates, so
+# Cargo doesn't build them twice.
+features = ["std"]
 
 
 [workspace.dependencies.bitvec]
@@ -477,6 +481,13 @@ default-features = false
 version = "0.61"
 
 
+# Build scripts and proc macros use `build-override`, which defaults to
+# `opt-level = 0`. Bundling build scripts link the core crates, so matching the
+# profile's level lets Cargo build them once instead of twice.
+[profile.release.build-override]
+opt-level = 3
+
+
 [profile.dist]
 inherits = "release"
 codegen-units = 1
@@ -488,6 +499,9 @@ panic = "abort"
 
 [profile.opt]
 inherits = "dev"
+opt-level = 1
+
+[profile.opt.build-override]
 opt-level = 1
 
 

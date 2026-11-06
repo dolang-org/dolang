@@ -20,5 +20,40 @@ workspace = true
 [dependencies.annotate-snippets]
 workspace = true
 
+
+# Build scripts that bundle libraries link the core crates. Cargo resolves
+# build-dependency features separately, so when a shared dependency's
+# features differ from the shell's, the core crates are built twice. The
+# dependencies below are unused; they enable on the build-script side what
+# the shell's extensions enable (HTTP, regex, the REPL, the terminal).
+[dependencies.fastrand]
+version = "2"
+default-features = false
+features = ["alloc", "std"]
+
+[dependencies.futures-channel]
+version = "0.3"
+
+[dependencies.regex]
+workspace = true
+
+[dependencies.slab]
+version = "0.4"
+
+[dependencies.time]
+version = "0.3"
+features = ["macros"]
+
+[dependencies.tokio-util]
+version = "0.7"
+features = ["codec", "io"]
+
+[target.'cfg(unix)'.dependencies.mio]
+version = "1"
+
+[target.'cfg(unix)'.dependencies.nix]
+workspace = true
+features = ["poll"]
+
 [features]
 debug = ["dolang-compile/debug"]
