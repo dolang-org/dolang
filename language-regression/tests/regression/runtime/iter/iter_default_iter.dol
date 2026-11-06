@@ -1,0 +1,47 @@
+import std:
+  - Iter
+
+# A class that subclasses `Iter` and implements only `(next)` inherits an
+# `(iter)` that returns the iterator itself.
+class Count: Iter
+  field n = 0
+  field stop = 0
+
+  def (init) self stop
+    self.#stop = stop
+
+  def (next) self
+    if (self.#n >= self.#stop)
+      throw std.IterStop()
+    self.#n = (self.#n + 1)
+    self.#n
+
+let looped = []
+for x = Count 3
+  looped.push $x
+assert_eq $looped [1, 2, 3]
+
+assert_eq [...Count 3] [1, 2, 3]
+
+# `iter` returns the same iterator, so it continues from where it was.
+let c = Count 3
+assert_eq (c.next()) 1
+let same = c.iter()
+assert (type same Count)
+assert_eq [...same] [2, 3]
+assert_eq (c.next(default: nil)) nil
+
+# An explicit `(iter)` still takes precedence.
+class Wrapped: Iter
+  def (next) _self
+    throw std.IterStop()
+
+  def (iter) _self
+    [7, 8].iter()
+
+let w = Wrapped()
+assert_eq [...w.iter()] [7, 8]
+let from_for = []
+for x = w
+  from_for.push $x
+assert_eq $from_for [7, 8]

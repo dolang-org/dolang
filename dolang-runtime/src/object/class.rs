@@ -2626,6 +2626,16 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     })
                     .await
             }
+            Some(ClassEntry::Abstract(type_obj, MemberKind::Method)) => {
+                strand
+                    .with_slots(async move |strand, [mut delegator]| {
+                        Output::set(strand, Slot::reborrow(&mut delegator), &this);
+                        Delegated::new(type_obj, &delegator)
+                            .op_iter(strand, out)
+                            .await
+                    })
+                    .await
+            }
             _ => Err(Error::unsupported(strand, "iteration")),
         }
     }
