@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     client, direct,
     error::{Error, ErrorKind, Result},
-    metadata::{FsMetadata, Metadata},
+    metadata::{AttrFlags, FsMetadata, Metadata, Mode},
     path,
     security::{Acl, AclKind},
 };
@@ -114,6 +114,84 @@ bitflags::bitflags! {
         const R_OK = 4;
         /// Checks only whether the path exists.
         const F_OK = 0;
+    }
+}
+
+bitflags::bitflags! {
+    /// What other opens of a file may do while it is open. Only Windows
+    /// enforces this; elsewhere only [`ShareMode::all`] is accepted.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+    pub struct ShareMode: u8 {
+        /// Other opens may read.
+        const READ = 1 << 0;
+        /// Other opens may write.
+        const WRITE = 1 << 1;
+        /// Other opens may delete or rename.
+        const DELETE = 1 << 2;
+    }
+}
+
+/// Windows file access rights, by their `winnt.h` values, that decide what a
+/// handle opened with an explicit access mask can do.
+pub(crate) mod rights {
+    pub(crate) const FILE_READ_DATA: u32 = 0x0001;
+    pub(crate) const FILE_WRITE_DATA: u32 = 0x0002;
+    pub(crate) const FILE_APPEND_DATA: u32 = 0x0004;
+    pub(crate) const MAXIMUM_ALLOWED: u32 = 0x0200_0000;
+    pub(crate) const GENERIC_ALL: u32 = 0x1000_0000;
+    pub(crate) const GENERIC_WRITE: u32 = 0x4000_0000;
+    pub(crate) const GENERIC_READ: u32 = 0x8000_0000;
+}
+
+/// Open settings beyond the portable access and disposition flags. They
+/// travel to the target unchanged, which decides whether it supports them.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub(crate) struct OpenExtra {
+    /// Windows access rights, added to those `read`/`write`/`append` imply.
+    pub(crate) access: Option<u32>,
+    /// Windows share mode; `None` shares everything.
+    pub(crate) share: Option<ShareMode>,
+    /// Windows backup semantics.
+    pub(crate) backup: bool,
+    /// Unix permission bits for a created file.
+    pub(crate) mode: Option<Mode>,
+    /// Windows security descriptor for a created file.
+    pub(crate) sec_desc: Option<SecDesc>,
+    /// Windows attributes for a created file.
+    pub(crate) attrs: AttrFlags,
+}
+
+/// What a file opened with some [`OpenOptions`] can do, judged from the
+/// rights requested. The target may still refuse an operation the handle
+/// turns out not to allow.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OpenCaps {
+    /// Reads are possible.
+    pub read: bool,
+    /// Writes are possible.
+    pub write: bool,
+    /// Every write lands at the end of the file, so positions mean nothing to
+    /// writes.
+    pub append: bool,
+}
+
+impl OpenCaps {
+    /// Judges the capabilities of an open with the portable `read`, `write`
+    /// and `append` flags plus the explicit Windows rights in `access`.
+    pub fn new(read: bool, write: bool, append: bool, access: Option<u32>) -> Self {
+        use rights::*;
+        let access = access.unwrap_or(0);
+        let any = |bits: u32| access & bits != 0;
+        let read = read || any(FILE_READ_DATA | GENERIC_READ | GENERIC_ALL | MAXIMUM_ALLOWED);
+        let write_data = (write && !append)
+            || any(FILE_WRITE_DATA | GENERIC_WRITE | GENERIC_ALL | MAXIMUM_ALLOWED);
+        // As in std, append implies write
+        let append_data = append || any(FILE_APPEND_DATA);
+        Self {
+            read,
+            write: write_data || append_data,
+            append: append_data && !write_data,
+        }
     }
 }
 
@@ -809,6 +887,71 @@ impl OpenOptions<'_> {
             }
         }
         self
+    }
+
+    fn extra(&mut self) -> &mut OpenExtra {
+        match &mut self.inner {
+            OpenOptionsInner::Client(opts) => opts.extra(),
+            OpenOptionsInner::Direct(opts) => opts.extra(),
+        }
+    }
+
+    /// Replaces every setting beyond the portable flags, as a request
+    /// received from a client carries them.
+    pub(crate) fn set_extra(&mut self, extra: OpenExtra) -> &mut Self {
+        *self.extra() = extra;
+        self
+    }
+
+    /// Requests Windows access rights in addition to those `read`, `write`
+    /// and `append` imply. Only Windows supports it.
+    pub fn access(&mut self, access: u32) -> &mut Self {
+        self.extra().access = Some(access);
+        self
+    }
+
+    /// Sets what other opens may do while the file is open. Only Windows
+    /// supports anything but [`ShareMode::all`].
+    pub fn share(&mut self, share: ShareMode) -> &mut Self {
+        self.extra().share = Some(share);
+        self
+    }
+
+    /// Enables Windows backup semantics, which open directories and use
+    /// backup and restore privileges. Only Windows supports it.
+    pub fn backup(&mut self, backup: bool) -> &mut Self {
+        self.extra().backup = backup;
+        self
+    }
+
+    /// Sets the Unix permission bits of a created file, subject to the umask.
+    /// Only Unix supports it.
+    pub fn mode(&mut self, mode: Mode) -> &mut Self {
+        self.extra().mode = Some(mode);
+        self
+    }
+
+    /// Sets the security descriptor of a created file. Only Windows supports
+    /// it.
+    pub fn sec_desc(&mut self, sec_desc: SecDesc) -> &mut Self {
+        self.extra().sec_desc = Some(sec_desc);
+        self
+    }
+
+    /// Sets the attributes of a created file. Only Windows supports them,
+    /// and only those `CreateFileW` accepts: read-only, hidden, system,
+    /// archive, temporary, offline and not-content-indexed.
+    pub fn attrs(&mut self, attrs: AttrFlags) -> &mut Self {
+        self.extra().attrs = attrs;
+        self
+    }
+
+    /// Returns what a file opened with these options can do.
+    pub fn caps(&self) -> OpenCaps {
+        match &self.inner {
+            OpenOptionsInner::Client(opts) => opts.caps(),
+            OpenOptionsInner::Direct(opts) => opts.caps(),
+        }
     }
 
     /// Opens `path` using the configured options.

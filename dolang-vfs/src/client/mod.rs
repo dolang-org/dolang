@@ -50,7 +50,7 @@ use crate::{
     extension::VfsExtension,
     file::{
         self, AccessFlags, CopyDest, CopyMode, File as VfsFile, FileInner, FileLockRequest,
-        StreamEntry,
+        OpenCaps, OpenExtra, StreamEntry,
     },
     file::{XattrEntry, XattrNamespace},
     metadata::{FsMetadata, Metadata, MetadataPatch},
@@ -2543,6 +2543,7 @@ impl<'a> Command<'a> {
 pub struct OpenOptions<'a> {
     client: &'a Client,
     flags: OpenFlags,
+    extra: OpenExtra,
 }
 
 impl<'a> OpenOptions<'a> {
@@ -2550,6 +2551,7 @@ impl<'a> OpenOptions<'a> {
         Self {
             client,
             flags: OpenFlags::empty(),
+            extra: OpenExtra::default(),
         }
     }
 }
@@ -2590,23 +2592,38 @@ impl OpenOptions<'_> {
         self
     }
 
+    pub(crate) fn extra(&mut self) -> &mut OpenExtra {
+        &mut self.extra
+    }
+
+    pub(crate) fn caps(&self) -> OpenCaps {
+        OpenCaps::new(
+            self.flags.contains(OpenFlags::READ),
+            self.flags.contains(OpenFlags::WRITE),
+            self.flags.contains(OpenFlags::APPEND),
+            self.extra.access,
+        )
+    }
+
     pub async fn open(&self, path: path::Path<'_>) -> Result<VfsFile> {
         let req = OpenRequest {
             path: path.into(),
             flags: self.flags,
+            extra: self.extra.clone(),
         };
+        let caps = self.caps();
         match self.client.request(RequestKind::Open(req)).await? {
             ResponseKind::Open(result) => match result {
                 OpenHandle::Native(handle) => Ok(VfsFile::direct(direct::File::from_std(
                     handle.into_inner().into(),
-                    self.flags.contains(OpenFlags::READ),
-                    self.flags.contains(OpenFlags::WRITE),
-                    self.flags.contains(OpenFlags::APPEND),
+                    caps.read,
+                    caps.write,
+                    caps.append,
                 ))),
                 OpenHandle::Opaque(file) => Ok(VfsFile::client(client::File::new(
                     self.client.clone(),
                     file,
-                    self.flags.contains(OpenFlags::APPEND),
+                    caps.append,
                 ))),
             },
             response => Err(unexpected(response).into()),

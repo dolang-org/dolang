@@ -17,7 +17,7 @@ use dolang::runtime::{
 };
 use dolang_util::{shared::Locked, utf8};
 use dolang_vfs::file::{
-    CopyDest, CopyMode, File as VfsFile, FileLockBehavior, FileLockMode, FileLockRange, OpenOptions,
+    CopyDest, CopyMode, File as VfsFile, FileLockBehavior, FileLockMode, FileLockRange, OpenCaps,
 };
 use futures::io::{AsyncRead, AsyncSeek, AsyncSeekExt as _, AsyncWrite, AsyncWriteExt as _};
 
@@ -30,6 +30,7 @@ use crate::{
         file_lock::FileLock as FileLockObject,
         fs_metadata::create_fs_metadata,
         metadata::create_metadata,
+        open_opts::{OPEN_KEYS, OpenSpec, io_caps},
         read_into_spare, stream, xattr,
     },
     global::{FsGlobal, WindowsSecurityTag},
@@ -102,42 +103,6 @@ fn lock_range<'v, 's>(
 ) -> Result<'v, 's, FileLockRange> {
     let (start, end) = byte_range(strand, value, parts, "lock range")?;
     FileLockRange::new(start, end).map_err(|error| Error::value(strand, error.to_string()))
-}
-
-/// Access modes `fs.open` accepts.
-pub(crate) const MODES: [&str; 8] = ["r", "w", "a", "x", "r+", "w+", "a+", "x+"];
-
-/// Configures `opts` for `mode`, one of [`MODES`].
-fn configure_options(opts: &mut OpenOptions, mode: &str) {
-    match mode {
-        "r" => {
-            opts.read(true);
-        }
-        "w" => {
-            opts.write(true).truncate(true).create(true);
-        }
-        "a" => {
-            opts.write(true).append(true).create(true);
-        }
-        "x" => {
-            opts.write(true).create_new(true);
-        }
-        "r+" => {
-            opts.read(true).write(true);
-        }
-        "w+" => {
-            opts.read(true).write(true).truncate(true).create(true);
-        }
-        "a+" => {
-            opts.read(true).write(true).append(true).create(true);
-        }
-        "x+" => {
-            opts.read(true).write(true).create_new(true);
-        }
-        _ => {
-            // Invalid mode - will be handled by the caller
-        }
-    }
 }
 
 /// Parses an `offset:` keyword argument.
@@ -525,25 +490,6 @@ pub(crate) struct FileAnnex<'v> {
     is_append: bool,
     /// What the file offers as a byte I/O handle, fixed by the open mode.
     caps: IoCaps,
-}
-
-/// Capabilities of a file opened with `mode`.
-///
-/// An append-mode file is not seekable as a handle: its writes land at the end
-/// whatever the position. A seekable one also forks.
-fn mode_caps(mode: &str) -> IoCaps {
-    let mut caps = if mode.starts_with('r') {
-        IoCaps::READ
-    } else {
-        IoCaps::WRITE
-    };
-    if mode.contains('+') {
-        caps |= IoCaps::READ | IoCaps::WRITE;
-    }
-    if !mode.starts_with('a') {
-        caps |= IoCaps::SEEK | IoCaps::FORK;
-    }
-    caps
 }
 
 /// What `fs.File` and `fs.RawFile` do differently. [`FileObject`] implements
@@ -964,17 +910,29 @@ impl<'v, T: FileKind<'v>> IntoByteIo<'v> for FileIo<'_, T> {
     }
 }
 
+/// Opens `path` with the mode string `how`, which must be valid.
 pub(crate) async fn open<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, FsGlobal<'v>>,
     path: vfs_path::Path<'_>,
-    mode: &str,
+    how: &str,
+) -> Result<'v, 's, VfsFile> {
+    let spec = OpenSpec::how(how).expect("valid mode string");
+    open_spec(strand, global, path, &spec).await
+}
+
+/// Opens `path` as `spec` asks.
+pub(crate) async fn open_spec<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, FsGlobal<'v>>,
+    path: vfs_path::Path<'_>,
+    spec: &OpenSpec,
 ) -> Result<'v, 's, VfsFile> {
     let path = super::prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
     let vfs = local.vfs();
     let mut opts = vfs.open_options();
-    configure_options(&mut opts, mode);
+    spec.apply(&mut opts);
     opts.open(path.to_path()).await.into_sys(strand)
 }
 
@@ -982,20 +940,21 @@ pub(crate) async fn open_native<'v>(
     strand: &Strand<'v, '_>,
     global: State<'v, FsGlobal<'v>>,
     path: vfs_path::Path<'_>,
-    mode: &str,
+    spec: &OpenSpec,
 ) -> io::Result<VfsFile> {
     let local = global.local.get(strand);
     let path = local.cwd().join(path.as_str());
     let vfs = local.vfs();
     let mut opts = vfs.open_options();
-    configure_options(&mut opts, mode);
+    spec.apply(&mut opts);
     opts.open(path.to_path())
         .await
         .map_err(dolang_vfs::error::Error::into_io_error)
 }
 
 /// Implements `fs.open`: returns a buffered `File`, or a `RawFile` with
-/// `buffer: false`.
+/// `buffer: false`. `keys` holds the granular keywords.
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn open_file<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, FsGlobal<'v>>,
@@ -1003,40 +962,36 @@ pub(crate) async fn open_file<'v, 's>(
     opt1: Option<Slot<'v, '_>>,
     opt2: Option<Slot<'v, '_>>,
     buffer: Option<Slot<'v, '_>>,
+    keys: [Option<Slot<'v, '_>>; OPEN_KEYS],
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    // Determine mode and block
-    let (mode, block) = match (&opt1, &opt2) {
-        (None, None) => ("r".to_string(), None),
-        (Some(slot), None) => {
-            // Single arg: check if it's a mode string or block callable
-            if let Some(mode) = slot.as_str(strand) {
-                (mode.to_string(), None)
-            } else {
-                ("r".to_string(), Some(slot))
-            }
-        }
-
+    // A mode string, a block, both, or neither
+    let (how, block) = match (&opt1, &opt2) {
+        (None, None) => (None, None),
+        (Some(slot), None) => match slot.as_str(strand) {
+            Some(how) => (Some(how.to_string()), None),
+            None => (None, Some(slot)),
+        },
         (Some(slot1), Some(slot2)) => {
-            // Two args: first must be mode, second is block
-            let mode = slot1
+            let how = slot1
                 .as_str(strand)
                 .ok_or_else(|| Error::type_error(strand, "mode must be a string"))?
                 .to_string();
-            (mode, Some(slot2))
+            (Some(how), Some(slot2))
         }
         (None, Some(_)) => unreachable!(),
     };
 
-    if !MODES.contains(&mode.as_str()) {
-        let message = match mode.strip_suffix('b') {
-            Some(base) if MODES.contains(&base) => {
-                format!("invalid mode: {mode}; for an unbuffered file, pass `buffer: false`")
+    let Some(spec) = OpenSpec::from_args(strand, global, how.as_deref(), keys).await? else {
+        let how = how.unwrap_or_default();
+        let message = match how.strip_suffix('b') {
+            Some(base) if OpenSpec::how(base).is_some() => {
+                format!("invalid mode: {how}; for an unbuffered file, pass `buffer: false`")
             }
-            _ => format!("invalid mode: {mode}"),
+            _ => format!("invalid mode: {how}"),
         };
         return Err(Error::value(strand, message));
-    }
+    };
     let buffered = match buffer {
         None => true,
         Some(buffer) => buffer
@@ -1044,12 +999,13 @@ pub(crate) async fn open_file<'v, 's>(
             .ok_or_else(|| Error::type_error(strand, "buffer must be a Bool"))?,
     };
 
-    let file = open(strand, global, path, &mode).await?;
+    let file = open_spec(strand, global, path, &spec).await?;
+    let caps = spec.caps();
 
     if let Some(block) = block {
         strand
             .with_slots(async move |strand, [mut handle, mut tmp]| {
-                create_file(strand, global, file, &mode, buffered, &mut handle);
+                create_file(strand, global, file, caps, buffered, &mut handle);
                 let result = call!(strand, block, out, &handle).await;
                 // Always closed, even on error. A close error matters only
                 // when the block succeeded: it may be a buffered write failing
@@ -1059,7 +1015,7 @@ pub(crate) async fn open_file<'v, 's>(
             })
             .await
     } else {
-        create_file(strand, global, file, &mode, buffered, out);
+        create_file(strand, global, file, caps, buffered, out);
         Ok(())
     }
 }
@@ -1896,16 +1852,16 @@ pub(crate) fn create_file<'v>(
     strand: &mut Strand<'v, '_>,
     global: State<'v, FsGlobal<'v>>,
     file: VfsFile,
-    mode: &str,
+    caps: OpenCaps,
     buffered: bool,
     out: impl Output<'v>,
 ) {
-    let caps = mode_caps(mode);
     let annex = FileAnnex {
         global,
-        is_append: mode.starts_with('a'),
-        caps,
+        is_append: caps.append,
+        caps: io_caps(caps),
     };
+    let caps = annex.caps;
     if buffered {
         let ty = global.types.file;
         ty.create_with_annex(strand, FileObject(File::new(file, caps)), annex, out);

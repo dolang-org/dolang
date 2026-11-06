@@ -1498,7 +1498,8 @@ impl Connection {
             .create(req.flags.contains(OpenFlags::CREATE))
             .create_new(req.flags.contains(OpenFlags::CREATE_NEW))
             .truncate(req.flags.contains(OpenFlags::TRUNCATE))
-            .no_follow(req.flags.contains(OpenFlags::NO_FOLLOW));
+            .no_follow(req.flags.contains(OpenFlags::NO_FOLLOW))
+            .set_extra(req.extra);
 
         let file = opts.open(Into::into(&req.path)).await?;
         let handle = if self.mode == SessionMode::Remote {
@@ -2431,6 +2432,7 @@ mod tests {
                     .to_path()
                     .into(),
                 flags: OpenFlags::READ,
+                extra: Default::default(),
             })))
             .await
             .unwrap()

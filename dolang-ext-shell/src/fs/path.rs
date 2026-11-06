@@ -7,7 +7,7 @@ use dolang::runtime::value::fmt::Format;
 
 use crate::{
     error::ResultExt as _,
-    fs::{path_absolute, path_relative, path_shorten},
+    fs::{open_opts::OPEN_KEYS, path_absolute, path_relative, path_shorten},
     global::{FsGlobal, FsTag, Tag, WindowsSecurityTag},
 };
 use dolang::runtime::object::fmt;
@@ -373,7 +373,6 @@ macro_rules! impl_concrete_path {
                 let ignore = builder.sym("ignore");
                 let max_depth = builder.sym("max_depth");
                 let resolve = builder.sym("resolve");
-                let buffer = builder.sym("buffer");
                 let replace = builder.sym("replace");
                 let mode = builder.sym("mode");
                 let data_kw = builder.sym("data");
@@ -449,10 +448,24 @@ macro_rules! impl_concrete_path {
                         Ok(())
                     })
                     .method("open", async move |this, strand, args, out| {
-                        let ([], [opt1, opt2, buffer]) = unpack!(strand, args, 0, 2, buffer = None)?;
                         let annex = this.annex();
+                        let global = annex.global;
+                        let syms = &global.syms.open;
+                        let mut keys = [syms.buffer; 1 + OPEN_KEYS];
+                        keys[1..].copy_from_slice(&syms.keys);
+                        let ([], opts, _) = args.unpack::<
+                            0,
+                            0,
+                            2,
+                            { 1 + OPEN_KEYS },
+                            0,
+                            { 3 + OPEN_KEYS },
+                            false,
+                            false,
+                        >(strand, [], keys)?;
+                        let [opt1, opt2, buffer, keys @ ..] = opts;
                         let path = annex.as_path();
-                        file::open_file(strand, annex.global, path, opt1, opt2, buffer, out).await
+                        file::open_file(strand, global, path, opt1, opt2, buffer, keys, out).await
                     })
                     .method("metadata", async move |this, strand, args, out| {
                         let ([], [resolve]) = unpack!(strand, args, 0, 0, resolve = None)?;

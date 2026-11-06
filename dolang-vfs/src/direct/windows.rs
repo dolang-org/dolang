@@ -2,7 +2,7 @@ use super::{Child, Command, Direct, File, OpenOptions};
 use crate::{
     directory::{DirEntry, DirEntryFamily},
     error::{Error, ErrorKind, Result},
-    file::{AccessFlags, FileId, StreamEntry},
+    file::{AccessFlags, FileId, ShareMode, StreamEntry},
     file::{XattrEntry, XattrNamespace},
     metadata::{
         AttrFlags, AttrsPatch, FileType, FsMetadata, FsMetadataFamily, Metadata, MetadataPatch,
@@ -27,7 +27,7 @@ use std::{
     time::SystemTime,
 };
 use tokio::{
-    fs::{self, OpenOptions as TokioOpenOptions},
+    fs,
     time::{Duration, timeout},
 };
 use windows_sys::{
@@ -37,18 +37,20 @@ use windows_sys::{
     },
     Win32::{
         Foundation::{
-            ERROR_FILE_NOT_FOUND, ERROR_HANDLE_EOF, ERROR_INSUFFICIENT_BUFFER,
-            ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER, ERROR_MORE_DATA, ERROR_NONE_MAPPED,
-            ERROR_NOT_SUPPORTED, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE, LocalFree,
-            MAX_PATH, RtlNtStatusToDosError, S_OK, STATUS_BUFFER_OVERFLOW, STATUS_BUFFER_TOO_SMALL,
-            STATUS_NO_EAS_ON_FILE, STATUS_NO_MORE_EAS, STATUS_SUCCESS,
+            ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_HANDLE_EOF,
+            ERROR_INSUFFICIENT_BUFFER, ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER,
+            ERROR_MORE_DATA, ERROR_NONE_MAPPED, ERROR_NOT_SUPPORTED, GENERIC_READ, GENERIC_WRITE,
+            GetLastError, INVALID_HANDLE_VALUE, LocalFree, MAX_PATH, RtlNtStatusToDosError, S_OK,
+            STATUS_BUFFER_OVERFLOW, STATUS_BUFFER_TOO_SMALL, STATUS_NO_EAS_ON_FILE,
+            STATUS_NO_MORE_EAS, STATUS_SUCCESS,
         },
         Security::{
             ACL,
             Authorization::{GetSecurityInfo, SE_FILE_OBJECT, SetSecurityInfo},
             GetSecurityDescriptorLength, LookupAccountNameW, LookupAccountSidW,
             PROTECTED_DACL_SECURITY_INFORMATION, PROTECTED_SACL_SECURITY_INFORMATION,
-            SidTypeAlias as SID_TYPE_ALIAS, SidTypeComputer as SID_TYPE_COMPUTER,
+            SECURITY_ATTRIBUTES, SidTypeAlias as SID_TYPE_ALIAS,
+            SidTypeComputer as SID_TYPE_COMPUTER,
             SidTypeDeletedAccount as SID_TYPE_DELETED_ACCOUNT, SidTypeDomain as SID_TYPE_DOMAIN,
             SidTypeGroup as SID_TYPE_GROUP, SidTypeInvalid as SID_TYPE_INVALID,
             SidTypeLabel as SID_TYPE_LABEL, SidTypeLogonSession as SID_TYPE_LOGON_SESSION,
@@ -58,17 +60,18 @@ use windows_sys::{
         },
         Storage::FileSystem::{
             BY_HANDLE_FILE_INFORMATION, COMPRESSION_FORMAT_DEFAULT, COMPRESSION_FORMAT_NONE,
-            CreateFileW, DELETE, FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_HIDDEN,
+            CREATE_NEW, CreateFileW, DELETE, FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_HIDDEN,
             FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED, FILE_ATTRIBUTE_OFFLINE,
             FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_SYSTEM, FILE_ATTRIBUTE_TEMPORARY,
-            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_RENAME_INFO,
-            FILE_RENAME_INFO_0, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-            FILE_STREAM_INFO, FileRenameInfo, FileRenameInfoEx, FileStreamInfo,
-            GetDiskFreeSpaceExW, GetDiskFreeSpaceW, GetFileAttributesW, GetFileInformationByHandle,
-            GetFileInformationByHandleEx, GetFinalPathNameByHandleW, GetVolumeInformationByHandleW,
-            INVALID_FILE_ATTRIBUTES, MAXIMUM_REPARSE_DATA_BUFFER_SIZE, OPEN_EXISTING, READ_CONTROL,
-            SetFileAttributesW, SetFileInformationByHandle, VOLUME_NAME_DOS, WRITE_DAC,
-            WRITE_OWNER,
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_WRITE,
+            FILE_RENAME_INFO, FILE_RENAME_INFO_0, FILE_SHARE_DELETE, FILE_SHARE_READ,
+            FILE_SHARE_WRITE, FILE_STREAM_INFO, FILE_WRITE_DATA, FileRenameInfo, FileRenameInfoEx,
+            FileStreamInfo, GetDiskFreeSpaceExW, GetDiskFreeSpaceW, GetFileAttributesW,
+            GetFileInformationByHandle, GetFileInformationByHandleEx, GetFinalPathNameByHandleW,
+            GetVolumeInformationByHandleW, INVALID_FILE_ATTRIBUTES,
+            MAXIMUM_REPARSE_DATA_BUFFER_SIZE, OPEN_ALWAYS, OPEN_EXISTING, READ_CONTROL,
+            SetFileAttributesW, SetFileInformationByHandle, TRUNCATE_EXISTING, VOLUME_NAME_DOS,
+            WRITE_DAC, WRITE_OWNER,
         },
         System::{
             Com::CoTaskMemFree,
@@ -2020,10 +2023,174 @@ fn nanos_to_system_time(nanos: i128) -> Result<SystemTime> {
     time.ok_or_else(|| Error::new(ErrorKind::InvalidInput, "invalid timestamp"))
 }
 
+/// The attributes `CreateFileW` can give a file it creates.
+const CREATE_ATTRS: [(AttrFlags, u32); 7] = [
+    (AttrFlags::READONLY, FILE_ATTRIBUTE_READONLY),
+    (AttrFlags::HIDDEN, FILE_ATTRIBUTE_HIDDEN),
+    (AttrFlags::SYSTEM, FILE_ATTRIBUTE_SYSTEM),
+    (AttrFlags::ARCHIVE, FILE_ATTRIBUTE_ARCHIVE),
+    (AttrFlags::TEMPORARY, FILE_ATTRIBUTE_TEMPORARY),
+    (AttrFlags::OFFLINE, FILE_ATTRIBUTE_OFFLINE),
+    (
+        AttrFlags::NOT_CONTENT_INDEXED,
+        FILE_ATTRIBUTE_NOT_CONTENT_INDEXED,
+    ),
+];
+
 impl OpenOptions {
-    pub(super) fn apply_no_follow_flags(&self, opts: &mut TokioOpenOptions) {
-        if self.no_follow {
-            opts.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    /// The access mask to request: the presets `read`, `write` and `append`
+    /// stand for, plus any explicit rights.
+    fn access_mask(&self) -> u32 {
+        let mut mask = self.extra.access.unwrap_or(0);
+        if self.read {
+            mask |= GENERIC_READ;
         }
+        if self.append {
+            // As std does: every write right but the one that allows writing
+            // anywhere.
+            mask |= FILE_GENERIC_WRITE & !FILE_WRITE_DATA;
+        } else if self.write {
+            mask |= GENERIC_WRITE;
+        }
+        mask
     }
+
+    fn share_mask(&self) -> u32 {
+        let share = self.extra.share.unwrap_or(ShareMode::all());
+        [
+            (ShareMode::READ, FILE_SHARE_READ),
+            (ShareMode::WRITE, FILE_SHARE_WRITE),
+            (ShareMode::DELETE, FILE_SHARE_DELETE),
+        ]
+        .into_iter()
+        .filter(|(mode, _)| share.contains(*mode))
+        .fold(0, |mask, (_, native)| mask | native)
+    }
+
+    fn attrs_mask(&self) -> Result<u32> {
+        let attrs = self.extra.attrs;
+        let supported = CREATE_ATTRS
+            .iter()
+            .fold(AttrFlags::empty(), |all, (attr, _)| all.union(*attr));
+        if !attrs.difference(supported).is_empty() {
+            return Err(Error::new(
+                ErrorKind::Unsupported,
+                "one or more attributes cannot be set when creating a file",
+            ));
+        }
+        Ok(CREATE_ATTRS
+            .iter()
+            .filter(|(attr, _)| attrs.contains(*attr))
+            .fold(0, |mask, (_, native)| mask | native))
+    }
+
+    fn flags_mask(&self) -> u32 {
+        let mut flags = 0;
+        if self.extra.backup {
+            flags |= FILE_FLAG_BACKUP_SEMANTICS;
+        }
+        // As std does for an exclusive create, so a dangling link is not
+        // followed to create its target.
+        if self.no_follow || self.create_new {
+            flags |= FILE_FLAG_OPEN_REPARSE_POINT;
+        }
+        flags
+    }
+
+    pub(super) async fn open_native(&self, path: PathBuf) -> Result<StdFile> {
+        if self.extra.mode.is_some() {
+            return Err(Error::new(
+                ErrorKind::Unsupported,
+                "mode cannot be set on this platform",
+            ));
+        }
+        let access = self.access_mask();
+        let share = self.share_mask();
+        let attrs = self.attrs_mask()?;
+        let flags = self.flags_mask();
+        if let Some(sec_desc) = &self.extra.sec_desc {
+            let sec_desc = sec_desc.clone();
+            let (create, create_new, truncate) = (self.create, self.create_new, self.truncate);
+            return tokio::task::spawn_blocking(move || {
+                create_file_with_sec_desc(
+                    &path,
+                    access,
+                    share,
+                    (create, create_new, truncate),
+                    attrs | flags,
+                    &sec_desc,
+                )
+            })
+            .await
+            .map_err(Error::other)?;
+        }
+        let mut opts = StdOpenOptions::new();
+        // The explicit access mask decides the rights; std's `write` only
+        // gets past its check that creating or truncating needs write
+        // access, which `CreateFileW` itself does not require.
+        opts.write(true)
+            .access_mode(access)
+            .share_mode(share)
+            .create(self.create)
+            .create_new(self.create_new)
+            .truncate(self.truncate)
+            .attributes(attrs)
+            .custom_flags(flags);
+        tokio::task::spawn_blocking(move || opts.open(path))
+            .await
+            .map_err(Error::other)?
+            .map_err(Error::from)
+    }
+}
+
+/// Opens `path` with `CreateFileW`, giving a created file `sec_desc`, which
+/// std has no way to pass. Mirrors std's handling of the rest.
+fn create_file_with_sec_desc(
+    path: &Path,
+    access: u32,
+    share: u32,
+    (create, create_new, truncate): (bool, bool, bool),
+    flags_and_attrs: u32,
+    sec_desc: &SecDesc,
+) -> Result<StdFile> {
+    // `CREATE_ALWAYS` replaces an existing file's attributes and fails on a
+    // hidden one, so emulate it as std does: `OPEN_ALWAYS`, then truncate.
+    let disposition = match (create, truncate, create_new) {
+        (_, _, true) => CREATE_NEW,
+        (false, false, false) => OPEN_EXISTING,
+        (true, _, false) => OPEN_ALWAYS,
+        (false, true, false) => TRUNCATE_EXISTING,
+    };
+    // The self-relative descriptor's offsets assume pointer alignment.
+    let bytes = sec_desc.to_bytes();
+    let mut storage = vec![0u64; bytes.len().div_ceil(8)];
+    unsafe {
+        ptr::copy_nonoverlapping(bytes.as_ptr(), storage.as_mut_ptr().cast(), bytes.len());
+    }
+    let attributes = SECURITY_ATTRIBUTES {
+        nLength: u32::try_from(mem::size_of::<SECURITY_ATTRIBUTES>()).unwrap(),
+        lpSecurityDescriptor: storage.as_mut_ptr().cast(),
+        bInheritHandle: 0,
+    };
+    let path = Direct::path_wide(path);
+    let handle = unsafe {
+        CreateFileW(
+            path.as_ptr(),
+            access,
+            share,
+            &raw const attributes,
+            disposition,
+            flags_and_attrs,
+            ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(Error::last_os_error());
+    }
+    let existed = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
+    let file = StdFile::from(unsafe { OwnedHandle::from_raw_handle(handle) });
+    if truncate && disposition == OPEN_ALWAYS && existed {
+        file.set_len(0)?;
+    }
+    Ok(file)
 }

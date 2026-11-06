@@ -32,6 +32,7 @@ pub(crate) const FS_BASE: u8 = 0;
 pub(crate) const FS_UNIX: u8 = 1;
 pub(crate) const FS_WINDOWS: u8 = 2;
 
+pub(crate) mod access_mask;
 pub(crate) mod attrs;
 pub(crate) mod file;
 pub(crate) mod file_buf;
@@ -39,6 +40,7 @@ pub(crate) mod file_lock;
 pub(crate) mod fs_metadata;
 pub(crate) mod glob;
 pub(crate) mod metadata;
+pub(crate) mod open_opts;
 pub(crate) mod path;
 pub(crate) mod readdir;
 pub(crate) mod stream;
@@ -49,6 +51,7 @@ use crate::{
     fs::{
         fs_metadata::create_fs_metadata,
         metadata::create_metadata,
+        open_opts::OPEN_KEYS,
         path::{convert_path_kind, create_path, path_from_value, safe_concat},
         readdir::{DirEntryIter, DirEntryIterAnnex},
     },
@@ -368,7 +371,7 @@ pub(crate) fn resolve_sym<'v, 's>(
     }
 }
 
-fn parse_mode<'v, 's>(
+pub(crate) fn parse_mode<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, FsGlobal<'v>>,
     value: Slot<'v, '_>,
@@ -1151,13 +1154,31 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
     let size_kw = builder.sym("size");
     let offset_kw = builder.sym("offset");
     let clone_kw = builder.sym("clone");
-    let buffer_kw = builder.sym("buffer");
     let module = builder
         .module("fs")
         .function("open", async move |strand, args, out| {
-            let ([path], [opt1, opt2, buffer]) = unpack!(strand, args, 1, 2, buffer_kw = None)?;
+            let syms = &global.syms.open;
+            let mut keys = [syms.buffer; 1 + OPEN_KEYS];
+            keys[1..].copy_from_slice(&syms.keys);
+            let ([path], opts, _) = args
+                .unpack::<1, 0, 2, { 1 + OPEN_KEYS }, 1, { 3 + OPEN_KEYS }, false, false>(
+                    strand,
+                    [],
+                    keys,
+                )?;
+            let [opt1, opt2, buffer, keys @ ..] = opts;
             let path = path_from_value(strand, &path)?;
-            file::open_file(strand, global, path.to_path(), opt1, opt2, buffer, out).await
+            file::open_file(
+                strand,
+                global,
+                path.to_path(),
+                opt1,
+                opt2,
+                buffer,
+                keys,
+                out,
+            )
+            .await
         })
         .function("remove", async move |strand, args, _out| {
             let ([], [all, ignore], paths) =
@@ -1714,6 +1735,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
         .value("DirEntry", global.types.windows_dir_entry)
         .value("Path", global.types.windows_path)
         .value("StreamEntry", global.types.stream_entry)
+        .value("AccessMask", global.types.file_access_mask)
         .function("sec_desc", async move |strand, args, out| {
             let ([path], [owner, group, dacl, sacl, resolve]) = unpack!(
                 strand,
