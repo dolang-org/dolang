@@ -1,0 +1,43 @@
+import std:
+  - Sink
+
+# A class that subclasses `Sink` and implements only `(put)` inherits a
+# `(sink)` that returns the sink itself.
+class Collect: Sink
+  pub field items = nil
+
+  def (init) self
+    self.items = []
+
+  def (put) self value
+    self.items.push $value
+
+let c = Collect()
+let same = c.sink()
+assert (type same Collect)
+same.put 1
+assert_eq $c.items [1]
+
+strand.redirect output: $c do
+  put 2
+  put 3
+assert_eq $c.items [1, 2, 3]
+
+let mapped = c.premap(do |x| x * 10)
+mapped.put 4
+assert_eq $c.items [1, 2, 3, 40]
+
+# An explicit `(sink)` still takes precedence.
+let elsewhere = []
+
+class Redirected: Sink
+  def (put) _self _value
+    throw std.RuntimeError "unused"
+
+  def (sink) _self
+    elsewhere.sink()
+
+let r = Redirected()
+r.sink().put 5
+strand.redirect output: $r do put 6
+assert_eq $elsewhere [5, 6]

@@ -93,6 +93,7 @@ pub(crate) fn classify(tag: sym::Tag) -> Option<Surface> {
 
 fn iter_members<'v, 'a>() -> &'a [Member<'v, 'a>] {
     members![
+        Method(sym::ITER_METHOD),
         Method(sym::ITER),
         Method(sym::ALL),
         Method(sym::ANY),
@@ -139,7 +140,15 @@ fn iterable_members<'v, 'a>() -> &'a [Member<'v, 'a>] {
 }
 
 fn sink_members<'v, 'a>() -> &'a [Member<'v, 'a>] {
-    sinkable_members()
+    members![
+        Method(sym::SINK_METHOD),
+        Method(sym::SINK),
+        Method(sym::PUT),
+        Method(sym::PREMAP),
+        Method(sym::PREFILTER),
+        Method(sym::PRECHOMP),
+        Method(sym::PRECRIMP),
+    ]
 }
 
 fn sinkable_members<'v, 'a>() -> &'a [Member<'v, 'a>] {
@@ -1461,6 +1470,20 @@ impl<'v> Protocol<'v> for Kv<'v> {
 }
 
 impl<'v> Protocol<'v> for Iter {
+    // The default `(iter)` of a class that subclasses `Iter`: an iterator
+    // iterates as itself.
+    async fn op_iter<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let Some(delegator) = this.delegator() else {
+            return Err(Error::unsupported(strand, "iteration"));
+        };
+        Output::set(strand, out, delegator);
+        Ok(())
+    }
+
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1550,10 +1573,15 @@ impl<'v> Protocol<'v> for Iter {
         let default = Sym::well_known(sym::DEFAULT);
         let else_key = Sym::well_known(sym::ELSE);
         match method.tag() {
-            sym::SPREAD_METHOD => {
+            // Reached only when the class doesn't define its own `(iter)`.
+            sym::SPREAD_METHOD | sym::ITER_METHOD => {
                 let ([obj], []) = unpack!(strand, args, 1, 0)?;
                 Output::set(strand, out, obj);
                 Ok(())
+            }
+            sym::ITER => {
+                let ([obj], []) = unpack!(strand, args, 1, 0)?;
+                obj.iter(strand, out).await
             }
             sym::NEXT => {
                 let ([obj], [default, or_else]) =
@@ -1647,6 +1675,20 @@ impl<'v> Protocol<'v> for Iter {
 }
 
 impl<'v> Protocol<'v> for Sink {
+    // The default `(sink)` of a class that subclasses `Sink`: a sink accepts
+    // values as itself.
+    async fn op_sink<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let Some(delegator) = this.delegator() else {
+            return Err(Error::unsupported(strand, "sink"));
+        };
+        Output::set(strand, out, delegator);
+        Ok(())
+    }
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1722,6 +1764,16 @@ impl<'v> Protocol<'v> for Sink {
             args.prepend_self(delegator.dup());
         }
         match method.tag() {
+            // Reached only when the class doesn't define its own `(sink)`.
+            sym::SINK_METHOD => {
+                let ([obj], []) = unpack!(strand, args, 1, 0)?;
+                Output::set(strand, out, obj);
+                Ok(())
+            }
+            sym::SINK => {
+                let ([obj], []) = unpack!(strand, args, 1, 0)?;
+                obj.sink(strand, out).await
+            }
             sym::PUT => {
                 let ([obj, value], []) = unpack!(strand, args, 2, 0)?;
                 obj.put(strand, value).await
