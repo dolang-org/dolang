@@ -89,16 +89,14 @@ def a_strict_script_is_warned_where_it_is_unverified()
     (dir / "main.dol").write r|
       # dolang: strict
       class Picker
-        @def pick _self x@Int -> Int
-        @def pick _self x@Str -> Str
-        pub def pick _self x @ (Int | Str)
-          x
+        pub def pick[T @ Picker] self @ T -> T
+          self
       let pick = Picker().pick
-      echo $pick(1)
+      echo $pick()
     let text = check $dir main.dol
     assert (text.contains "the checker can't verify this")
-    assert (text.contains "main.dol:7:12")
-    assert (text.contains "an overloaded method as a value")
+    assert (text.contains "main.dol:5:12")
+    assert (text.contains "a method bound to a receiver it's generic in")
 
 #[test]
 def checking_does_not_execute()
@@ -114,12 +112,10 @@ def checker_wrappers_keep_distinct_output()
     script.write r|
       # dolang: strict
       class Picker
-        @def pick _self x@Int -> Int
-        @def pick _self x@Str -> Str
-        pub def pick _self x @ (Int | Str)
-          x
+        pub def pick[T @ Picker] self @ T -> T
+          self
       let pick = Picker().pick
-      pick(1)
+      pick()
     let text = check $dir "main.dol"
     assert (text.contains "the checker can't verify this")
     assert (!text.contains("failed:"))

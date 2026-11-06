@@ -68,7 +68,7 @@ fn a_class_that_doesnt_reach_func_isnt_a_function() {
     let without = Class::new(&mut db, "Without", vec![]).finish(&mut db, vec![]);
     let f = function(&db, &[int], int);
     db.seal();
-    // A subclass may reach `Func`, but an instance of the class itself doesn't
+    // An instance of the class itself doesn't reach `Func`, whatever a subclass does
     for class in [plain, without] {
         let outcome = check(&db, class, f);
         assert!(

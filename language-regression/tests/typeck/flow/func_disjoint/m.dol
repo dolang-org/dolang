@@ -1,0 +1,156 @@
+# `Func` is disjoint: no class inherits it alongside another disjoint class, so
+# a test against a disjoint class separates functions from its instances, and
+# overloads on a function and a disjoint class don't overlap. A callable class
+# below another disjoint class is passed through its bound `(call)` or a block.
+
+pub class Shape
+
+#[mixable]
+pub class Mixin
+
+pub class Callable: Mixin Func
+  pub def (call) _self n @ Int -> Str
+    ...
+
+pub class Text: Str Func
+# error: `Text` inherits from unrelated disjoint classes `Str` and `Func`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Text: Str Func
+#    |           ^^^^
+
+pub class Drawn: Shape Func
+# error: `Drawn` inherits from unrelated disjoint classes `Shape` and `Func`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Drawn: Shape Func
+#    |           ^^^^^
+
+pub class Point
+  pub def (init) _self n @ Int
+    ...
+
+def apply f @ (Int -> Str) -> Str
+  f 1
+
+def map_each[T, U] xs @ Array[T] f @ (T -> U) -> Array[U]
+  ...
+
+def build f @ (Int -> Point) -> Point
+  f 1
+
+pub def mixed c @ Callable
+  let _ = apply $c
+  #   ^: flow std.Str
+
+pub def by_str v @ (Str | (Int -> Str))
+  if type(v, Str)
+    let _ = v
+    #       ^: flow std.Str
+  else
+    let _ = v
+    #       ^: flow (std.Int, <m.by_str.#0, >m.by_str.#1) -> std.Str
+
+pub def by_func v @ (Str | (Int -> Str))
+  if type(v, Func)
+    let _ = v
+    #       ^: flow (std.Int, <m.by_func.#0, >m.by_func.#1) -> std.Str
+  else
+    let _ = v
+    #       ^: flow std.Str
+
+pub def by_shape v @ (Shape | (Int -> Str))
+  if type(v, Shape)
+    let _ = v
+    #       ^: flow m.Shape
+  else
+    let _ = v
+    #       ^: flow (std.Int, <m.by_shape.#0, >m.by_shape.#1) -> std.Str
+
+pub def by_shape_func v @ (Shape | (Int -> Str))
+  if type(v, Func)
+    let _ = v
+    #       ^: flow (std.Int, <m.by_shape_func.#0, >m.by_shape_func.#1) -> std.Str
+  else
+    let _ = v
+    #       ^: flow m.Shape
+
+@def pick x @ Str -> Str
+@def pick x @ (Int -> Str) -> Int
+def pick x
+  ...
+
+@def pick_shape x @ Shape -> Shape
+@def pick_shape x @ (Int -> Str) -> Int
+def pick_shape x
+  ...
+
+@def run name @ Str body @ Str -> Str
+@def run name @ Str body @ (Int -> Str) -> Int
+def run name body
+  ...
+
+pub def overloads f @ (Int -> Str) s @ Shape
+  let _ = pick "s"
+  #   ^: flow std.Str
+  let _ = pick $f
+  #   ^: flow std.Int
+  let _ = pick do |n| "$n"
+  #   ^: flow std.Int
+  let _ = pick_shape $s
+  #   ^: flow m.Shape
+  let _ = pick_shape $f
+  #   ^: flow std.Int
+  let r = run
+    - task
+    - do |n| "$n"
+  let _ = r
+  #       ^: flow std.Int
+
+pub class Tagged: Str
+  @def (call) self n @ Int -> Int
+  # warning: `Tagged` has a `(call)` but not `Func` as a supertype, so it isn't passed as a function
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   @def (call) self n @ Int -> Int
+  #    |         ^^^^
+  @def (call) self s @ Str -> Str
+  pub def (call) _self x
+    x
+
+pub class Labeled: Str
+  pub def (call) _self n @ Int -> Str
+    # warning: `Labeled` has a `(call)` but not `Func` as a supertype, so it isn't passed as a function
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def (call) _self n @ Int -> Str
+    #    |            ^^^^
+    ...
+
+pub def workarounds t @ Tagged l @ Labeled
+  apply $l
+  # error: expected `(std.Int) -> std.Str`, found `m.Labeled`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   apply $l
+  #    |          ^
+  let _ = map_each [1] $t.(call)
+  #   ^: flow [std.Int]
+  let _ = map_each ["s"] $t.(call)
+  #   ^: flow [std.Str]
+  let _ = apply $l.(call)
+  #   ^: flow std.Str
+  let _ = t 1
+  #   ^: flow std.Int
+  let _ = apply do |n| l $n
+  #   ^: flow std.Str
+
+pub def factories v @ (Str | Type[Point])
+  let _ = build $Point
+  #   ^: flow m.Point
+  if type(v, Func)
+    let _ = v
+    #       ^: flow std.Type[m.Point]
+  else
+    let _ = v
+    #       ^: flow std.Str

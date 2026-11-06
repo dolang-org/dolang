@@ -223,8 +223,7 @@ impl Check<'_, '_> {
     }
 
     /// Warn of an instance `(call)` in a class that doesn't reach `Func`, since
-    /// the checker won't pass its instances as functions. A subclass may reach
-    /// it, so passing one is never an error.
+    /// the checker won't pass its instances as functions.
     fn callable(&mut self, solver: &Solver<'_>, instance: TypeId) {
         let (db, tables) = (self.db, self.tables);
         let call = self.class.members.iter().find_map(|member| {

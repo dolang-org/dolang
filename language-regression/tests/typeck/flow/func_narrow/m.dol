@@ -1,6 +1,7 @@
 # A test against `Func` keeps each function and each class that reaches `Func`.
-# Any other class becomes the gradual function type rather than being dropped,
-# since a subclass may reach `Func`.
+# `Func` is disjoint, so a disjoint class that doesn't reach it is dropped. A
+# mixable class becomes the gradual function type, since a subclass of it may
+# reach `Func`.
 
 pub class Adder: Func
   pub def (call) _self n @ Int -> Str
@@ -8,12 +9,20 @@ pub class Adder: Func
 
 pub class Plain
 
+#[mixable]
+pub class Mixin
+
 pub def kept f @ ((Int -> Str) | Adder | Type[Plain])
   if type(f, Func)
     let _ = f
     #       ^: flow ((std.Int, <m.kept.#0, >m.kept.#1) -> std.Str) | m.Adder | std.Type[m.Plain]
 
-pub def widened v @ (Plain | Adder)
+pub def dropped v @ (Plain | Adder)
+  if type(v, Func)
+    let _ = v
+    #       ^: flow m.Adder
+
+pub def widened v @ (Mixin | Adder)
   if type(v, Func)
     let _ = v
     #       ^: flow ((...Unknown{}) -> Unknown) | m.Adder

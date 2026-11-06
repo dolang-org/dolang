@@ -2619,7 +2619,10 @@ pub @let FmtKind = $
 # In a type, `Func` is any function. A class that declares `(call)` names
 # `Func` among its supertypes to be passed as a function, with its `(call)`'s
 # signature.
-#[mixable]
+#
+# `Func` is disjoint, so a class that inherits another disjoint class can't
+# also be a `Func`. Its instances are still called through `(call)`. To pass one
+# as a function, pass its bound `obj.(call)` or a `do` block that calls it.
 pub class Func
 
 # An unbound interpolation in a [`Fmt`](std.Fmt).

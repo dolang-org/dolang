@@ -69,14 +69,12 @@ pub def uncalled() -> Int
 #    |   ^^^
 
 pub class Over
-  @def pick self x @ Int -> Int
-  @def pick self x @ Str -> Str
-  pub def pick _self x @ (Int | Str)
-    x
+  pub def pick[T @ Over] self @ T -> T
+    self
 
-# What the checker can't type leaves its use undecided, as an overloaded method
-# taken as a value does
-pub def overloaded o @ Over
+# What the checker can't type leaves its use undecided, as a method generic in
+# its receiver taken as a value does
+pub def generic o @ Over
   let _ = o.pick
   # warning: the checker can't verify this
   #   --> m.dol:LL:LL
@@ -84,7 +82,7 @@ pub def overloaded o @ Over
   # LL |   let _ = o.pick
   #    |           ^^^^^^
   #    |
-  #    = note: it doesn't handle an overloaded method as a value
+  #    = note: it doesn't handle a method bound to a receiver it's generic in
   nil
 
 # A boundless range takes its element type from what's expected of it

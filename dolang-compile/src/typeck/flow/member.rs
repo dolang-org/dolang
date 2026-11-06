@@ -6,7 +6,8 @@
 //! must have it, and gives what they give. A receiver the lookup can't decide is
 //! an explicit residual. A call through an overloaded method is a call of its
 //! overloads as a whole, which the solver chooses among (see
-//! [`Type::Overloaded`]); any other use of one is dynamic.
+//! [`Type::Overloaded`]), and its value is those overloads, bound to the
+//! receiver when read from one.
 //!
 //! [`Solver::member`]: crate::typeck::solver::Solver::member
 
@@ -645,7 +646,11 @@ impl Flow<'_, '_> {
             Resolved::Method(signature, bound) => match (signature.single(), bound) {
                 // A method that didn't reify is already a gap
                 (None, _) if signature.callee(self.db).is_none() => unknown,
-                (None, _) => self.gap(span, "an overloaded method as a value"),
+                (None, true) => match signature.bound_callee(self.db) {
+                    Some(bound) => bound,
+                    None => self.gap(span, "a method bound to a receiver it's generic in"),
+                },
+                (None, false) => signature.callee(self.db).unwrap_or(unknown),
                 (Some(signature), true) => match bound_method(self.db, signature) {
                     Some(bound) => bound,
                     None => self.gap(span, "a method bound to a receiver it's generic in"),

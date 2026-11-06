@@ -12,8 +12,9 @@
 //! when one of its own `(call)`'s signatures is, chosen by trials when it has several (see
 //! [`Solver::choose_left`]). A class that doesn't reach `Func`, or none of whose
 //! signatures fits, isn't below it: some of its values are of the class itself.
-//! That a subclass may reach `Func`, or widen its `(call)`'s parameters and
-//! narrow its result, matters only to narrowing (see [`narrow`]).
+//! That a subclass may reach `Func` where disjointness allows, or widen its
+//! `(call)`'s parameters and narrow its result, matters only to narrowing (see
+//! [`narrow`]).
 
 use std::ops::ControlFlow;
 
@@ -47,6 +48,30 @@ impl Signature {
             overloads: self.overloads.iter().copied().collect(),
             implementation: self.implementation,
             function: self.function,
+        }))
+    }
+
+    /// What it's called as once bound to a receiver: [`Self::callee`] with each
+    /// signature's receiver dropped (see [`bound_method`]). `None` if it has no
+    /// signature or one is generic in its receiver.
+    pub(crate) fn bound_callee(&self, db: &Database) -> Option<TypeId> {
+        let implementation = match self.implementation {
+            Some(ty) => Some(bound_method(db, ty)?),
+            None => None,
+        };
+        if self.overloads.is_empty() {
+            return implementation;
+        }
+        let overloads = self
+            .overloads
+            .iter()
+            .map(|&ty| bound_method(db, ty))
+            .collect::<Option<_>>()?;
+        // The bound signatures aren't the declaration's, so none names them
+        Some(db.intern(Type::Overloaded {
+            overloads,
+            implementation,
+            function: None,
         }))
     }
 }

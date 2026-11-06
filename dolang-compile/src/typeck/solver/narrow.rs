@@ -13,8 +13,9 @@
 //! unreachable.
 //!
 //! Narrowing against `Func` keeps each function and each class that reaches
-//! `Func`, and makes any other class the gradual function type: a subclass may
-//! reach `Func`, so no class is dropped.
+//! `Func`. `Func` is disjoint, so a class is dropped as any other is when their
+//! nearest disjoint ancestors are unrelated. Any other class becomes the gradual
+//! function type, since a subclass may reach `Func`.
 //!
 //! A class's `(==)` may be user-defined, so a literal comparison strips only
 //! other literals and never reduces a class to the literal. Only a `Nil` or a
