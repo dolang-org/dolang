@@ -17,6 +17,11 @@
 //! change itself.  A check of the workspace checks together the members whose
 //! checks aren't valid, and the closure of their imports.
 //!
+//! A buffer the client has open with no file of its own, an `untitled:`
+//! document, is a script in the workspace of the client's first folder, else
+//! in the detached workspace, whose module path is the bundled modules alone.
+//! It is no module, so nothing else imports it.
+//!
 //! The workspace's lock guards only reading and changing its table: files are
 //! read, and members compiled and checked, outside it.
 
@@ -44,14 +49,60 @@ const MAX_MODULES: usize = 512;
 /// connect stages with `proc`'s pipes
 pub(crate) const PIPES: [(&str, &str); 2] = [("proc", "PipeSender"), ("proc", "PipeReceiver")];
 
-/// The live workspaces, by root.
+/// The live workspaces, by root, and the detached workspace.
 #[derive(Default)]
 pub(crate) struct Workspaces {
     table: HashMap<PathBuf, Weak<Workspace>>,
+    detached: Weak<Workspace>,
+    /// The client's first folder, where buffers with no file resolve imports
+    folder: Option<PathBuf>,
     bundled: Arc<Bundled>,
 }
 
+/// What a workspace's table knows a document by.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Key {
+    /// A file, whether the client has it open or a check loaded it
+    File(PathBuf),
+    /// A buffer the client has open with no file, by its URI
+    Untitled(Uri),
+}
+
+impl Key {
+    /// The path a document is compiled as: its file's, else a relative path
+    /// named for the last segment of its URI, which lies under no root.
+    fn path(&self) -> PathBuf {
+        match self {
+            Self::File(path) => path.clone(),
+            Self::Untitled(uri) => {
+                let path = uri.path();
+                let name = path.rsplit_once('/').map_or(path, |(_, name)| name);
+                let name = name.decode().to_string_lossy();
+                match name.is_empty() {
+                    true => PathBuf::from("untitled"),
+                    false => PathBuf::from(&*name),
+                }
+            }
+        }
+    }
+}
+
 impl Workspaces {
+    /// Sets the client's first folder, for buffers opened from now on.
+    pub(crate) fn set_folder(&mut self, folder: Option<PathBuf>) {
+        self.folder = folder;
+    }
+
+    /// The workspace of the document `key`: a file's own, else that of the
+    /// client's first folder, else the detached workspace.
+    pub(crate) fn of(&mut self, key: &Key) -> Arc<Workspace> {
+        match (key, self.folder.clone()) {
+            (Key::File(path), _) => self.open(path),
+            (Key::Untitled(_), Some(folder)) => self.open_dir(&folder),
+            (Key::Untitled(_), None) => self.detached(),
+        }
+    }
+
     /// The workspace of the document at `path`, created unless one is live.
     pub(crate) fn open(&mut self, path: &Path) -> Arc<Workspace> {
         self.open_dir(path.parent().unwrap_or(path))
@@ -102,11 +153,33 @@ impl Workspaces {
         workspace
     }
 
-    /// Whether `workspace` is still the one its root opens.
+    /// The workspace of buffers with no file and no folder to resolve their
+    /// imports in, created unless it is live: the default prelude, and only
+    /// the bundled modules.
+    pub(crate) fn detached(&mut self) -> Arc<Workspace> {
+        if let Some(workspace) = self.detached.upgrade() {
+            return workspace;
+        }
+        let workspace = Arc::new(Workspace {
+            root: PathBuf::new(),
+            prelude: settings::default_prelude().into(),
+            modules: None,
+            preludes: Mutex::default(),
+            bundled: self.bundled.clone(),
+            members: Mutex::default(),
+        });
+        self.detached = Arc::downgrade(&workspace);
+        workspace
+    }
+
+    /// Whether `workspace` is still the one its root opens, or the detached
+    /// workspace, which no configuration affects.
     pub(crate) fn current(&self, workspace: &Arc<Workspace>) -> bool {
-        self.table
-            .get(&workspace.root)
-            .is_some_and(|live| live.as_ptr() == Arc::as_ptr(workspace))
+        self.detached.as_ptr() == Arc::as_ptr(workspace)
+            || self
+                .table
+                .get(&workspace.root)
+                .is_some_and(|live| live.as_ptr() == Arc::as_ptr(workspace))
     }
 
     /// Forgets the workspaces a change to the configuration in `dir` may
@@ -118,7 +191,10 @@ impl Workspaces {
 
     /// The live workspaces.
     pub(crate) fn live(&self) -> impl Iterator<Item = Arc<Workspace>> + '_ {
-        self.table.values().filter_map(Weak::upgrade)
+        self.table
+            .values()
+            .chain([&self.detached])
+            .filter_map(Weak::upgrade)
     }
 }
 
@@ -140,20 +216,24 @@ fn marks_root(dir: &Path) -> bool {
 
 /// One root, and its members.
 pub(crate) struct Workspace {
+    /// Empty for the detached workspace
     root: PathBuf,
     /// The prelude at the root
     prelude: Arc<[Import]>,
-    /// `None` when the root's configuration is unreadable
+    /// `None` when the root's configuration is unreadable, and for the
+    /// detached workspace
     modules: Option<Arc<ModulePath>>,
     /// The prelude of each directory below the root looked at so far
     preludes: Mutex<HashMap<PathBuf, Arc<[Import]>>>,
     bundled: Arc<Bundled>,
     /// The current revision of each member
-    members: Mutex<HashMap<PathBuf, Arc<Member>>>,
+    members: Mutex<HashMap<Key, Arc<Member>>>,
 }
 
 /// One revision of a document in a workspace.
 pub(crate) struct Member {
+    key: Key,
+    /// The path it is compiled as
     path: PathBuf,
     /// The module it is on the module path, or `None` for a script
     module: Option<String>,
@@ -362,8 +442,9 @@ impl Workspace {
     }
 
     /// The prelude the document at `path` is compiled with: that of the
-    /// nearest configuration below the root that sets one, else the root's.
-    /// An unreadable configuration sets an empty prelude.
+    /// nearest configuration below the root that sets one, else the root's,
+    /// which a buffer with no file has too. An unreadable configuration sets
+    /// an empty prelude.
     pub(crate) fn prelude(&self, path: &Path) -> Arc<[Import]> {
         let Some(dir) = path.parent().filter(|dir| dir.starts_with(&self.root)) else {
             return self.prelude.clone();
@@ -399,10 +480,10 @@ impl Workspace {
         self.modules.as_deref()
     }
 
-    /// The current revision of the document at `path`.
+    /// The current revision of the file at `path`.
     #[cfg(test)]
     fn member(&self, path: &Path) -> Option<Arc<Member>> {
-        self.members().get(path).cloned()
+        self.members().get(&Key::File(path.to_owned())).cloned()
     }
 
     /// Whether `member` is still its document's current revision.
@@ -410,9 +491,9 @@ impl Workspace {
         current(&self.members(), member)
     }
 
-    /// Makes the client's `text` of the document at `path` its current
-    /// revision, as `version`, unless the client has a newer version open
-    /// there already.
+    /// Makes the client's `text` of the document `key` its current revision,
+    /// as `version`, unless the client has a newer version open there
+    /// already.  A buffer with no file is a script.
     ///
     /// The same text keeps the unit of the revision it replaces, and its
     /// check if the client had it open too; other text is compiled once
@@ -420,13 +501,17 @@ impl Workspace {
     pub(crate) fn revise(
         &self,
         uri: Uri,
-        path: PathBuf,
+        key: Key,
         version: i32,
         text: String,
     ) -> Option<Arc<Member>> {
-        let module = self.module_of(&path);
+        let path = key.path();
+        let module = match &key {
+            Key::File(path) => self.module_of(path),
+            Key::Untitled(_) => None,
+        };
         let mut members = self.members();
-        let old = members.get(&path);
+        let old = members.get(&key);
         if let Some(Source::Open { version: newer, .. }) = old.map(|old| &old.source)
             && *newer > version
         {
@@ -442,6 +527,7 @@ impl Workspace {
             .filter(|old| unit.is_some() && old.uri().is_some())
             .and_then(|old| old.results().clone());
         let member = Arc::new(Member {
+            key,
             module,
             path,
             source: Source::Open { uri, version, text },
@@ -450,7 +536,7 @@ impl Workspace {
             results: Mutex::new(results),
             earlier: old.and_then(|old| old.deps()),
         });
-        members.insert(member.path.clone(), member.clone());
+        members.insert(member.key.clone(), member.clone());
         Some(member)
     }
 
@@ -473,9 +559,9 @@ impl Workspace {
             .clone()
     }
 
-    /// Forgets the document the client closed at `path`.
-    pub(crate) fn close(&self, path: &Path) {
-        self.members().remove(path);
+    /// Forgets the document `key` the client closed.
+    pub(crate) fn close(&self, key: &Key) {
+        self.members().remove(key);
     }
 
     /// What a check of the workspace is to check now.
@@ -550,7 +636,7 @@ impl Workspace {
             let mut members = self.members();
             for member in dropped {
                 if current(&members, member) {
-                    members.remove(&member.path);
+                    members.remove(&member.key);
                 }
             }
         }
@@ -605,7 +691,7 @@ impl Workspace {
             if let Some((old, _)) = old
                 && current(&members, old)
             {
-                members.remove(&old.path);
+                members.remove(&old.key);
             }
             if let Some(new) = new {
                 admit(&mut members, new, true);
@@ -732,6 +818,7 @@ impl Workspace {
         let (path, stamp, text) = modules.open(name)?;
         let unit = compile_document(&path, text, &self.prelude(&path), Some(name));
         Some(Arc::new(Member {
+            key: Key::File(path.clone()),
             path,
             module: Some(name.to_owned()),
             source: Source::Loaded { stamp },
@@ -765,15 +852,15 @@ impl Workspace {
             .collect()
     }
 
-    fn members(&self) -> MutexGuard<'_, HashMap<PathBuf, Arc<Member>>> {
+    fn members(&self) -> MutexGuard<'_, HashMap<Key, Arc<Member>>> {
         self.members.lock().expect("workspace lock poisoned")
     }
 }
 
 /// Whether `member` is its document's current revision in `members`.
-fn current(members: &HashMap<PathBuf, Arc<Member>>, member: &Arc<Member>) -> bool {
+fn current(members: &HashMap<Key, Arc<Member>>, member: &Arc<Member>) -> bool {
     members
-        .get(&member.path)
+        .get(&member.key)
         .is_some_and(|current| Arc::ptr_eq(current, member))
 }
 
@@ -781,7 +868,7 @@ fn current(members: &HashMap<PathBuf, Arc<Member>>, member: &Arc<Member>) -> boo
 /// module or its document open, returning what its module looks up to now.
 /// Unless `replace`, a member already loaded at its path is kept.
 fn admit(
-    members: &mut HashMap<PathBuf, Arc<Member>>,
+    members: &mut HashMap<Key, Arc<Member>>,
     loaded: Arc<Member>,
     replace: bool,
 ) -> Arc<Member> {
@@ -792,10 +879,10 @@ fn admit(
     if let Some(open) = open {
         return open.clone();
     }
-    match members.get(&loaded.path) {
+    match members.get(&loaded.key) {
         Some(there) if there.uri().is_some() || !replace => there.clone(),
         _ => {
-            members.insert(loaded.path.clone(), loaded.clone());
+            members.insert(loaded.key.clone(), loaded.clone());
             loaded
         }
     }
@@ -868,7 +955,8 @@ mod tests {
 
     fn open(workspace: &Workspace, path: &Path, version: i32, text: &str) -> Option<Arc<Member>> {
         let uri = Uri::from_file_path(path).unwrap();
-        workspace.revise(uri, path.to_owned(), version, text.to_owned())
+        let key = Key::File(path.to_owned());
+        workspace.revise(uri, key, version, text.to_owned())
     }
 
     /// The checks a check of the workspace makes, or `None` if its table
@@ -1080,7 +1168,7 @@ mod tests {
         assert_eq!(check_paths(&workspace), [main.as_path()]);
 
         // Closed, the buffer's file stands in again
-        workspace.close(&b);
+        workspace.close(&Key::File(b.clone()));
         assert_eq!(check_paths(&workspace), [a.as_path(), &b, &main]);
         assert!(workspace.member(&b).is_some_and(|b| b.uri().is_none()));
 
@@ -1184,6 +1272,73 @@ mod tests {
                 (vec![two.as_path()], vec![two.as_path()]),
             ]
         );
+    }
+
+    /// Opens an `untitled:` buffer named `name`.
+    fn untitled(workspace: &Workspace, name: &str, text: &str) -> Arc<Member> {
+        let uri: Uri = format!("untitled:{name}").parse().unwrap();
+        let key = Key::Untitled(uri.clone());
+        workspace.revise(uri, key, 1, text.to_owned()).unwrap()
+    }
+
+    #[test]
+    fn buffers_without_files_are_scripts_in_the_first_folder() {
+        let tree = Directory::repo();
+        library(&tree);
+        let a = tree.write("lib/a.dol", "");
+        let mut workspaces = Workspaces::default();
+        workspaces.set_folder(Some(tree.0.clone()));
+        let key = Key::Untitled("untitled:a.dol".parse().unwrap());
+        let workspace = workspaces.of(&key);
+        assert_eq!(workspace.root, tree.0);
+
+        // Named like a module, it is still a script, importing the module
+        let buffer = untitled(&workspace, "a.dol", "import a\n");
+        assert_eq!(buffer.module, None);
+        assert_eq!(buffer.path, Path::new("a.dol"));
+        assert_eq!(check_paths(&workspace), [a.as_path(), Path::new("a.dol")]);
+
+        // Nothing else imports it
+        let main = tree.0.join("main.dol");
+        open(&workspace, &main, 1, "import a\n").unwrap();
+        check(&workspace);
+        let checked = workspace.member(&a).unwrap();
+        assert!(checked.uri().is_none());
+
+        // Closed, it is forgotten
+        workspace.close(&key);
+        assert!(workspace.members().get(&key).is_none());
+    }
+
+    #[test]
+    fn buffers_without_a_folder_are_detached() {
+        let mut workspaces = Workspaces::default();
+        let key = Key::Untitled("untitled:Untitled-1".parse().unwrap());
+        let workspace = workspaces.of(&key);
+        assert!(workspaces.current(&workspace));
+        assert!(Arc::ptr_eq(&workspace, &workspaces.detached()));
+        assert!(workspaces.live().any(|live| Arc::ptr_eq(&live, &workspace)));
+        assert_eq!(
+            &*workspace.prelude(Path::new("Untitled-1")),
+            settings::default_prelude()
+        );
+
+        // Only the bundled modules resolve
+        untitled(&workspace, "Untitled-1", "import json\nimport nowhere\n");
+        let checks = prepare(&workspace).unwrap();
+        let [check] = &checks[..] else {
+            panic!("expected one check");
+        };
+        assert_eq!(check.members.len(), 1);
+        let modules: Vec<_> = check.typelibs().map(|typelib| typelib.module()).collect();
+        // Ordinary builds bundle none
+        let bundled = typelib_index::lookup("json").is_some();
+        assert_eq!(modules.contains(&"json"), bundled);
+        assert!(!modules.contains(&"nowhere"));
+
+        // No configuration retires it
+        workspaces.retire(Path::new("/"));
+        assert!(workspaces.current(&workspace));
     }
 
     #[test]
