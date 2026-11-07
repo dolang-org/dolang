@@ -11,9 +11,9 @@ use crate::{
         AttrFlags, AttrsPatch, FsMetadata, FsMetadataFamily, Metadata, MetadataPatch, Resolve,
         WindowsFsMetadata, metadata_from_std, metadata_with_reparse_tag, metadata_with_sids,
     },
-    security::{Acl, AclKind, OwnershipIdentity, SidName, SidNameUse},
+    security::{Acl, AclKind, OwnershipIdentity, SecurityInfo, SidName, SidNameUse},
 };
-use dolang_winterop::security::{SecDesc, SecDescControl, SecInfo, Sid};
+use dolang_winterop::security::{SecDesc, SecDescControl, SecInfo, Sid, WellKnownSid};
 use std::{
     collections::HashMap,
     ffi::OsString,
@@ -100,8 +100,8 @@ use windows_sys::{
             },
         },
         UI::Shell::{
-            FOLDERID_LocalAppData, FOLDERID_Profile, FOLDERID_RoamingAppData, KF_FLAG_DONT_VERIFY,
-            SHGetKnownFolderPath,
+            FOLDERID_LocalAppData, FOLDERID_Profile, FOLDERID_RoamingAppData, FOLDERID_Windows,
+            KF_FLAG_DONT_VERIFY, SHGetKnownFolderPath,
         },
     },
     core::GUID,
@@ -1229,19 +1229,41 @@ impl Direct {
             Some((_, value)) => value.clone(),
             None => std::env::var(key).ok(),
         };
-        for key in ["TMP", "TEMP"] {
-            if let Some(value) = override_value(key) {
-                let path = PathBuf::from(value);
-                if path.is_absolute() {
-                    return Ok(path);
-                }
-                return Err(Error::new(
+        let absolute = |key: &str| -> Result<Option<PathBuf>> {
+            let Some(value) = override_value(key) else {
+                return Ok(None);
+            };
+            let path = PathBuf::from(value);
+            if path.is_absolute() {
+                Ok(Some(path))
+            } else {
+                Err(Error::new(
                     ErrorKind::InvalidInput,
                     format!("{key} must be an absolute path"),
-                ));
+                ))
+            }
+        };
+        // Follows `GetTempPathW`'s lookup order (with `GetTempPath2W`'s
+        // SystemTemp for SYSTEM), reading variables through the VM
+        // environment rather than the process environment.
+        for key in ["TMP", "TEMP"] {
+            if let Some(path) = absolute(key)? {
+                return Ok(path);
             }
         }
-        Ok(std::env::temp_dir())
+        let windows = Self::known_folder(&FOLDERID_Windows)?;
+        if Self::is_local_system()? {
+            return Ok(windows.join("SystemTemp"));
+        }
+        Ok(absolute("USERPROFILE")?.unwrap_or(windows))
+    }
+
+    pub(crate) fn is_local_system() -> Result<bool> {
+        let info = SecurityInfo::current()?;
+        let system = Sid::from(WellKnownSid::LocalSystem);
+        Ok(info
+            .windows()
+            .is_some_and(|token| *token.user_sid() == system))
     }
 
     fn nt_error(status: windows_sys::Win32::Foundation::NTSTATUS) -> Error {

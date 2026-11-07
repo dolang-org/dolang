@@ -2179,6 +2179,71 @@ async fn direct_well_known_temp_dir_falls_back_to_tmp() {
     assert_eq!(path.as_str(), "/tmp");
 }
 
+#[cfg(windows)]
+fn windows_temp_env(user_profile: Option<&str>) -> HashMap<String, Option<String>> {
+    HashMap::from([
+        (String::from("TMP"), None),
+        (String::from("TEMP"), None),
+        (String::from("USERPROFILE"), user_profile.map(String::from)),
+    ])
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn direct_well_known_temp_dir_falls_back_to_userprofile_override() {
+    if crate::direct::Direct::is_local_system().unwrap() {
+        return;
+    }
+    let direct = Vfs::direct().unwrap();
+    let env = windows_temp_env(Some(r"C:\test-profile"));
+
+    let path = direct
+        .well_known_path(crate::path::WellKnownPath::TempDir, None, &env)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(path.as_str(), r"C:\test-profile");
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn direct_well_known_temp_dir_falls_back_to_windows_dir() {
+    if crate::direct::Direct::is_local_system().unwrap() {
+        return;
+    }
+    let direct = Vfs::direct().unwrap();
+    let env = windows_temp_env(None);
+
+    let path = direct
+        .well_known_path(crate::path::WellKnownPath::TempDir, None, &env)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let windows =
+        crate::direct::Direct::known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_Windows)
+            .unwrap();
+    assert_eq!(Path::new(path.as_str()), windows);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn direct_well_known_temp_dir_rejects_relative_userprofile_override() {
+    if crate::direct::Direct::is_local_system().unwrap() {
+        return;
+    }
+    let direct = Vfs::direct().unwrap();
+    let env = windows_temp_env(Some("relative-profile"));
+
+    let err = direct
+        .well_known_path(crate::path::WellKnownPath::TempDir, None, &env)
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn direct_well_known_home_dir_rejects_relative_home_override() {
