@@ -885,6 +885,15 @@ impl<'a, 'u> Flow<'a, 'u> {
         )
     }
 
+    /// The ambient channels a call passes: the caller's, or `Value` for each to
+    /// a callee that runs without them
+    fn passed_channels(&mut self, at: At, isolated: bool) -> (Option<TypeId>, Option<TypeId>) {
+        match isolated {
+            true => (Some(self.db.top()), Some(self.db.top())),
+            false => self.channels(at),
+        }
+    }
+
     fn observing(&self) -> bool {
         self.results.is_some()
     }

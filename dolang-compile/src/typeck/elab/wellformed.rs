@@ -13,15 +13,17 @@
 //! offending application: each type argument, including defaults and variadic
 //! items, against its binder's bound; each function type's parameters for symbol
 //! keys, except within a `Phantom` argument, which only marks variance. An
-//! ambient channel may be any type; reading or writing it is checked where that
-//! happens. A declaration's own signature and binder defaults are checked as
+//! ambient channel may be any type, except that a getter's or setter's must admit
+//! `Value`, since it runs with none wherever its field is accessed; reading or
+//! writing a channel is checked where that happens. A declaration's own signature and binder defaults are checked as
 //! declared. Recursion among transparent aliases must be contractive and regular.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
-    BadRecursion, BoundViolation, DeclNode, Designated, Diag, Fill, Head, ParameterKeys, Referent,
-    Role, Tables, UnitDiag,
+    AccessorChannel, BadRecursion, BoundViolation, DeclNode, Designated, Diag, Fill, Head,
+    ParameterKeys, Referent, Role, Tables, UnitDiag,
+    sig::{self, Form},
     surface::{Class, Interned, Ref, TypeArg, TypeExpr, TypeParam, TypeQuant},
 };
 use crate::{
@@ -30,8 +32,8 @@ use crate::{
         report::Report,
         solver::{Gas, Issue, Provenance, Residual, Solver, Status},
         r#type::{
-            Argument, Binder, Binding, BoundRef, Database, DeclId, Rest, Type, TypeId, UnitId,
-            UnitSpan,
+            Argument, Binder, Binding, BoundRef, Database, DeclId, Function, Rest, Type, TypeId,
+            UnitId, UnitSpan,
         },
     },
 };
@@ -368,7 +370,7 @@ impl Check<'_, '_> {
         }
         let declaration = self.db.declaration(decl);
         let Type::Quantified { binders, body } = self.db.ty(declaration.ty) else {
-            return self.function_signature(id, decl, declaration.ty);
+            return self.function_signature(id, sig, decl, declaration.ty);
         };
         for (slot, binder) in binders.iter().enumerate() {
             let (Some(default), Some(span)) = (binder.default, declaration.binders[slot].default)
@@ -393,7 +395,7 @@ impl Check<'_, '_> {
                 },
             );
         }
-        self.function_signature(id, decl, *body);
+        self.function_signature(id, sig, decl, *body);
     }
 
     /// Check a class's supertypes, which are applications with no type expression
@@ -410,7 +412,7 @@ impl Check<'_, '_> {
         }
     }
 
-    fn function_signature(&mut self, id: DeclId, decl: DeclId, body: TypeId) {
+    fn function_signature(&mut self, id: DeclId, sig: usize, decl: DeclId, body: TypeId) {
         if let DeclNode::Class(_) | DeclNode::Alias(_) = self.tables.decl(id).node {
             return;
         }
@@ -420,6 +422,46 @@ impl Check<'_, '_> {
         let name = self.db.declaration(decl).source.span;
         let verdict = self.relate(Some(decl), function.params, self.db.rest_shape(Rest::All));
         self.report(verdict, name, ParameterKeys(name.span));
+        self.accessor_channels(id, sig, decl, function);
+    }
+
+    /// A getter or setter runs wherever its field is accessed, with no input and
+    /// its output discarded, so each channel it writes must admit `Value`. One it
+    /// omits is its caller's, whatever that is.
+    fn accessor_channels(&mut self, id: DeclId, sig: usize, decl: DeclId, function: &Function) {
+        let DeclNode::Methods(methods) = &self.tables.decl(id).node else {
+            return;
+        };
+        let method = &methods[sig];
+        let setter = match sig::method_form(self.tables, method) {
+            Form::Getter => false,
+            Form::Setter => true,
+            Form::Plain | Form::Unknown => return,
+        };
+        let channels = [
+            (true, method.sig.input, function.input),
+            (false, method.sig.output, function.output),
+        ];
+        for (input, site, ty) in channels {
+            let (Some(site), Some(ty)) = (site, ty) else {
+                continue;
+            };
+            let site = self.tables.site(site);
+            let span = UnitSpan {
+                unit: site.unit,
+                span: site.ty.span(),
+            };
+            let verdict = self.relate(Some(decl), self.db.top(), ty);
+            self.report(
+                verdict,
+                span,
+                AccessorChannel {
+                    span: span.span,
+                    setter,
+                    input,
+                },
+            );
+        }
     }
 
     /// Check recursion among transparent aliases: every cycle must pass through a

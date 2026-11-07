@@ -27,14 +27,27 @@ use crate::{
         sym::SymObj,
     },
     sig::Unpack,
-    strand::Strand,
+    strand::{Redirect, Strand},
     sym::{self, Sym},
     unpack,
-    value::{Output, Slot, Slots, TypeObject, Value},
+    value::{Output, Singleton, Slot, Slots, TypeObject, Value},
     vm::{Builder, StateTag, Vm},
 };
 
 use super::protocol::{GcObj, GcObjBorrow, Protocol};
+
+/// Run a getter or setter with no input and its output discarded: it runs
+/// wherever its field is accessed, so it can't use the accessing code's channels
+async fn isolated<'v, 's, R>(
+    strand: &mut Strand<'v, 's>,
+    f: impl for<'b> AsyncFnOnce(&'b mut Strand<'v, 's>) -> Result<'v, 's, R>,
+) -> Result<'v, 's, R> {
+    Redirect::new(strand)
+        .input(Singleton::Null)
+        .output(Singleton::Null)
+        .enter(f)
+        .await
+}
 
 /// Whether `value` is a function, as a member's or thunk's value must be. A type
 /// object is a `Func`, since it's called to construct, but not a function.
@@ -1201,11 +1214,14 @@ impl<'v> ClassObject<'v> {
                     },
                 inherited,
             }) => strand.sync(async |strand| {
-                if *inherited {
-                    call!(strand, getter, out, &this).await
-                } else {
-                    call!(strand, getter, out).await
-                }
+                isolated(strand, async |strand| {
+                    if *inherited {
+                        call!(strand, getter, out, &this).await
+                    } else {
+                        call!(strand, getter, out).await
+                    }
+                })
+                .await
             }),
             Some(ClassTypeEntry::Property { .. }) => Err(Error::field(strand, field)),
             Some(ClassTypeEntry::Delegate(type_obj, _)) => {
@@ -1302,11 +1318,14 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                 inherited,
             }) => strand.with_slots_sync(|strand, [mut discard]| {
                 strand.sync(async |strand| {
-                    if *inherited {
-                        call!(strand, setter, &mut discard, &this, value).await
-                    } else {
-                        call!(strand, setter, &mut discard, value).await
-                    }
+                    isolated(strand, async |strand| {
+                        if *inherited {
+                            call!(strand, setter, &mut discard, &this, value).await
+                        } else {
+                            call!(strand, setter, &mut discard, value).await
+                        }
+                    })
+                    .await
                 })
             }),
             Some(ClassTypeEntry::Delegate(type_obj, _)) => {
@@ -1373,7 +1392,9 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                     Some(ClassEntry::Property(Property {
                         getter: Some(getter),
                         ..
-                    })) => strand.sync(async |strand| call!(strand, getter, out, obj).await),
+                    })) => strand.sync(async |strand| {
+                        isolated(strand, async |strand| call!(strand, getter, out, obj).await).await
+                    }),
                     Some(ClassEntry::Method(_) | ClassEntry::Abstract(_, MemberKind::Method)) => {
                         BoundMethod::create(strand, obj, field, out);
                         Ok(())
@@ -1447,8 +1468,12 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                         setter: Some(setter),
                         ..
                     })) => strand.with_slots_sync(move |strand, [mut tmp]| {
-                        strand
-                            .sync(async |strand| call!(strand, setter, &mut tmp, obj, &value).await)
+                        strand.sync(async |strand| {
+                            isolated(strand, async |strand| {
+                                call!(strand, setter, &mut tmp, obj, &value).await
+                            })
+                            .await
+                        })
                     }),
                     Some(
                         ClassEntry::Method(_)
@@ -2370,7 +2395,12 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             Some(ClassEntry::Property(Property {
                 getter: Some(getter),
                 ..
-            })) => strand.sync(async |strand| call!(strand, getter, out, &this).await),
+            })) => strand.sync(async |strand| {
+                isolated(strand, async |strand| {
+                    call!(strand, getter, out, &this).await
+                })
+                .await
+            }),
             Some(ClassEntry::Method(_) | ClassEntry::Abstract(_, MemberKind::Method)) => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
@@ -2425,7 +2455,12 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 setter: Some(setter),
                 ..
             })) => strand.with_slots_sync(move |strand, [mut tmp]| {
-                strand.sync(async |strand| call!(strand, setter, &mut tmp, &this, &value).await)
+                strand.sync(async |strand| {
+                    isolated(strand, async |strand| {
+                        call!(strand, setter, &mut tmp, &this, &value).await
+                    })
+                    .await
+                })
             }),
             Some(ClassEntry::Delegate(slot, _)) => {
                 let native = annex.natives[*slot]
@@ -2481,7 +2516,10 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             })) => {
                 return strand
                     .with_slots(async move |strand, [mut callable]| {
-                        call!(strand, getter, &mut callable, &this).await?;
+                        isolated(strand, async |strand| {
+                            call!(strand, getter, &mut callable, &this).await
+                        })
+                        .await?;
                         callable.op_call(strand, args, out).await
                     })
                     .await;

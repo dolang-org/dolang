@@ -1,0 +1,62 @@
+# A getter or setter runs without its caller's channels, so each channel it
+# writes must admit `Value`. One it omits is its caller's, whatever that is.
+
+pub @let Anything = Value
+
+pub class Config
+  #[getter]
+  pub def plain _obj
+    nil
+
+  #[setter]
+  pub def plain _obj _value
+    nil
+
+  #[getter]
+  pub def marked _obj <Value >Anything
+    nil
+
+  #[setter]
+  pub def marked _obj _value <Anything >Value
+    nil
+
+  #[getter]
+  pub def reads _obj <Str
+    # error: a getter's input must be `Value`: a getter runs without its caller's channels
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def reads _obj <Str
+    #    |                       ^^^
+    nil
+
+  #[setter]
+  pub def writes _obj _value >Iter[Str]
+    # error: a setter's output must be `Value`: a setter runs without its caller's channels
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def writes _obj _value >Iter[Str]
+    #    |                               ^^^^^^^^^
+    nil
+
+  #[getter]
+  pub def generic[T] _obj <T
+    # error: a getter's input must be `Value`: a getter runs without its caller's channels
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def generic[T] _obj <T
+    #    |                            ^
+    nil
+
+  #[static]
+  #[getter]
+  pub def shared >Str
+    # error: a getter's output must be `Value`: a getter runs without its caller's channels
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def shared >Str
+    #    |                   ^^^
+    nil
+
+  # A plain method may take any channels
+  pub def method _self <Str >Str
+    nil

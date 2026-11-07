@@ -208,6 +208,8 @@ pub def float value @ (Num | Str) -> Float
 
 # Makes a field getter from a function of the object read.
 #
+# The function runs with no input, and its output is discarded.
+#
 # ## Example
 #
 # ```
@@ -303,6 +305,8 @@ do -> Record[...Ts]
 
 # Makes a field setter from a function of the object assigned and its new
 # value.
+#
+# The function runs with no input, and its output is discarded.
 #
 # ## Example
 #

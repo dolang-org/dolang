@@ -1,0 +1,38 @@
+# A getter or setter runs without its caller's channels, so reading or writing a
+# computed field passes it `Value` for each, whatever the caller's are.
+
+pub @class Leveled
+  pub field level @ Int
+
+# A protocol field may be upheld by a property
+pub class Gauge: @Leveled
+  field level @ Int = 0
+
+  #[getter]
+  pub def level obj -> Int
+    obj.#level
+
+  #[setter]
+  pub def level obj value @ Int
+    obj.#level = value
+
+  # A function type in its signature takes its channels, which are `Value`
+  #[getter]
+  pub def reset _obj -> (() -> nil)
+    do nil
+
+pub def reads g @ Gauge <Iter[Int]
+  let n = g.level
+  let _ = n
+  #       ^: flow std.Int
+  g.level = 1
+  let r = g.reset
+  let _ = r
+  #       ^: flow (<Value, >Value) -> nil
+  let l @ Leveled = g
+  let m = l.level
+  let _ = m
+  #       ^: flow std.Int
+
+pub def invokes g @ Gauge <Iter[Int]
+  g.reset()

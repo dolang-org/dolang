@@ -67,3 +67,66 @@ catch err
   assert_eq (str err) "class_create: duplicate class member `value`"
   getter_field_conflict = true
 assert $getter_field_conflict
+
+# An accessor runs with no input and its output discarded, wherever its field
+# is accessed
+class Channels
+  pub field seen = nil
+
+  #[getter]
+  pub def observed _obj
+    (strand.input(), strand.output())
+
+  #[setter]
+  pub def observed obj _value
+    obj.seen = (strand.input(), strand.output())
+
+  #[getter]
+  pub def observer _obj
+    let got = (strand.input(), strand.output())
+    do got
+
+  #[class]
+  #[getter]
+  pub def class_observed _cls
+    (strand.input(), strand.output())
+
+  #[static]
+  field static_seen = nil
+
+  #[static]
+  #[getter]
+  pub def static_observed()
+    (strand.input(), strand.output())
+
+  #[static]
+  #[setter]
+  pub def static_observed _value
+    Channels.#static_seen = (strand.input(), strand.output())
+
+  #[static]
+  pub def static_seen()
+    Channels.#static_seen
+
+class DerivedChannels: Channels
+
+let isolated = (std.null, std.null)
+let channel_input = [1, 2]
+let channel_output = []
+strand.with_io input: $channel_input output: $channel_output do
+  let obj = Channels()
+  assert_eq $obj.observed $isolated
+  obj.observed = 1
+  assert_eq $obj.seen $isolated
+  obj.seen = nil
+  assert_eq (Channels.(get) obj :observed:) $isolated
+  Channels.(set) $obj :observed: 1
+  assert_eq $obj.seen $isolated
+  assert_eq $obj.observer() $isolated
+  assert_eq $Channels.class_observed $isolated
+  assert_eq $DerivedChannels.class_observed $isolated
+  assert_eq $Channels.static_observed $isolated
+  Channels.static_observed = 1
+  assert_eq $Channels.static_seen() $isolated
+  assert_eq $strand.input() $channel_input
+  assert_eq $strand.output() $channel_output

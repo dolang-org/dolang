@@ -42,6 +42,8 @@ pub(super) struct CallTarget {
     pub(super) member: Option<Member>,
     /// The instance a constructor with unchecked arguments gives
     instance: Option<TypeId>,
+    /// Whether the callee runs without the caller's channels, as a setter does
+    pub(super) isolated: bool,
 }
 
 impl CallTarget {
@@ -55,6 +57,7 @@ impl CallTarget {
             receivers: Vec::new(),
             member: None,
             instance: None,
+            isolated: false,
         }
     }
 
@@ -146,6 +149,7 @@ impl Flow<'_, '_> {
                 receivers: if bound { vec![callee] } else { Vec::new() },
                 member: Some(member),
                 instance: None,
+                isolated: false,
             },
             Resolved::Missing => {
                 self.missing(ty, None, member, span, Vec::new());
@@ -530,6 +534,7 @@ impl Flow<'_, '_> {
             span,
             callee: Some(accessor),
             logs: false,
+            isolated: false,
         };
         let saved = self.results.replace(Results::default());
         let mut operands = VecDeque::new();
@@ -587,6 +592,7 @@ impl Flow<'_, '_> {
             span,
             callee: None,
             logs: false,
+            isolated: false,
         };
         let Some(alternatives) = self.alternatives(receiver, span) else {
             let receiver = (receiver, object.span);
@@ -665,6 +671,7 @@ impl Flow<'_, '_> {
                 let leading = if passed { &leading[..] } else { &[] };
                 let call = Call {
                     callee: Some(member),
+                    isolated: true,
                     ..call
                 };
                 self.call_signature(at, state, operands, &getter, leading, call)
@@ -714,6 +721,7 @@ impl Flow<'_, '_> {
             span: expr.span,
             callee: None,
             logs: true,
+            isolated: false,
         };
         if member.key == self.special("call").key
             && let Some((class, true)) = self.class_of(receiver)
@@ -770,6 +778,7 @@ impl Flow<'_, '_> {
             span,
             callee: None,
             logs: false,
+            isolated: false,
         };
         let member = self.special(name);
         let mut operands = VecDeque::new();
@@ -809,6 +818,7 @@ impl Flow<'_, '_> {
             span,
             callee: None,
             logs: false,
+            isolated: false,
         };
         let member = self.special(name);
         let given = alternatives
@@ -921,6 +931,7 @@ impl Flow<'_, '_> {
             span,
             callee: None,
             logs: false,
+            isolated: false,
         };
         match self.resolve(receiver.0, member, Access::Any, span, logs) {
             Resolved::Dynamic => vec![CallTarget::dynamic(leading)],
@@ -939,6 +950,7 @@ impl Flow<'_, '_> {
                     receivers,
                     member: Some(member),
                     instance: None,
+                    isolated: false,
                 }]
             }
             Resolved::Property {
@@ -949,6 +961,7 @@ impl Flow<'_, '_> {
                 let receivers = if passed { &[receiver][..] } else { &[] };
                 let got = Call {
                     callee: Some(member),
+                    isolated: true,
                     ..got
                 };
                 let value = self.call_signature(at, state, operands, &getter, receivers, got);
@@ -1028,6 +1041,7 @@ impl Flow<'_, '_> {
                 span,
                 callee: None,
                 logs: false,
+                isolated: false,
             };
             self.call_targets(at, state, operands, targets, call);
             return;
@@ -1083,12 +1097,14 @@ impl Flow<'_, '_> {
             span,
             callee: None,
             logs: false,
+            isolated: false,
         };
         self.call_targets(at, state, operands, vec![target], call);
     }
 
     /// What writing a resolved member that isn't a field calls, passing the value
-    /// after its receivers: a setter, or `(set)` passed the member's name first.
+    /// after its receivers: a setter, which runs without the caller's channels, or
+    /// `(set)` passed the member's name first.
     /// `None` if the member is dynamic, or can't be written, which is reported.
     #[expect(clippy::too_many_arguments, reason = "a write's parts")]
     fn write_target(
@@ -1101,7 +1117,7 @@ impl Flow<'_, '_> {
         resolved: Resolved,
         span: Span,
     ) -> Option<CallTarget> {
-        let (signature, receivers, called) = match resolved {
+        let (signature, receivers, called, isolated) = match resolved {
             Resolved::Dynamic => return None,
             Resolved::Missing | Resolved::Fallback { set: None, .. } => {
                 self.missing(receiver.0, within, member, span, Vec::new());
@@ -1122,7 +1138,7 @@ impl Flow<'_, '_> {
                 ..
             } => {
                 let receivers = if passed { vec![receiver] } else { vec![] };
-                (setter, receivers, member)
+                (setter, receivers, member, true)
             }
             Resolved::Fallback { set: Some(set), .. } => {
                 let reasons = self.refusals(at, state, &set, receiver, member, true, span);
@@ -1131,7 +1147,7 @@ impl Flow<'_, '_> {
                     return None;
                 }
                 let name = (self.name_literal(member), span);
-                (set, vec![receiver, name], self.special("set"))
+                (set, vec![receiver, name], self.special("set"), false)
             }
         };
         Some(CallTarget {
@@ -1139,6 +1155,7 @@ impl Flow<'_, '_> {
             receivers,
             member: Some(called),
             instance: None,
+            isolated,
         })
     }
 
@@ -1161,6 +1178,7 @@ impl Flow<'_, '_> {
             span: expr.span,
             callee: None,
             logs: false,
+            isolated: false,
         };
         let member = self.special("index");
         let receiver = (receiver, object.span);
@@ -1185,6 +1203,7 @@ impl Flow<'_, '_> {
             span,
             callee: None,
             logs: false,
+            isolated: false,
         };
         let member = self.special("assign");
         let receiver = (receiver, object.span);
@@ -1220,6 +1239,7 @@ impl Flow<'_, '_> {
             span: expr.span,
             callee: None,
             logs: false,
+            isolated: false,
         };
         let member = self.special(name);
         self.send(
@@ -1280,6 +1300,7 @@ impl Flow<'_, '_> {
             span: expr.span,
             callee: None,
             logs: false,
+            isolated: false,
         };
         let (member, reflected) = (self.special(name), self.special(reflected));
         let (lhs, rhs) = ((lhs, left.span), (rhs, right.span));
@@ -1403,6 +1424,7 @@ impl Flow<'_, '_> {
             span: expr.span,
             callee: None,
             logs: false,
+            isolated: false,
         };
         // The VM builds a range literal itself, without calling `Range`
         match self.solver(&Gas::default()).default_construction(class) {
