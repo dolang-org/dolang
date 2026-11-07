@@ -1,8 +1,10 @@
 //! Declarations in the modules a check saw, found by module and name.
 //!
-//! A check keeps the units of the modules it read from source, so what's found
-//! is what the check's analysis was computed against.  A module it read from a
-//! bundled typelib has no source here, and is left to the static doc index.
+//! A check keeps the units of the modules it read from source, and of those it
+//! took as typelibs written of their units, so what's found is what the
+//! check's analysis was computed against.  A module it read from a bundled
+//! typelib, or from a module's last good typelib, has no source here, and is
+//! left to the static doc index.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -12,7 +14,7 @@ use tower_lsp_server::ls_types::Uri;
 /// The most re-exports a lookup follows, which ends a cycle of them
 const MAX_HOPS: usize = 16;
 
-/// A module a check read from source
+/// A module a check read from source, or took as a typelib written of `unit`
 pub(crate) struct Module {
     pub(crate) uri: Uri,
     /// Its module name
@@ -20,12 +22,12 @@ pub(crate) struct Module {
     pub(crate) unit: Arc<Unit<'static>>,
 }
 
-/// The modules a check read from source, by name
+/// The modules a check has the units of, by name
 pub(crate) type Modules = HashMap<String, Module>;
 
 /// Where a lookup ended
 pub(crate) enum Target<'m> {
-    /// A declaration in a module read from source
+    /// A declaration in a module the check has the unit of
     Source(&'m Module, NodeId),
     /// An item of a module with no source, by module and name
     Bundled(String, String),

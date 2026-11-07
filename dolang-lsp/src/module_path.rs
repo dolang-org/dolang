@@ -50,8 +50,7 @@ impl ModulePath {
     /// The module path of a configuration in `dir` listing `entries`.  An
     /// entry that names no root, or one outside `dir`, is logged and skipped.
     pub(crate) fn load(dir: &Path, entries: &[String], bundled: bool) -> Result<Self, String> {
-        let base = dir
-            .canonicalize()
+        let base = dunce::canonicalize(dir)
             .map_err(|err| format!("cannot resolve {}: {err}", dir.display()))?;
         let mut roots = Vec::new();
         for entry in entries {
@@ -73,8 +72,7 @@ impl ModulePath {
     /// `lib/`, then the bundled modules.  `lib/` need not exist yet, since a
     /// root is resolved again whenever a module is looked for under it.
     pub(crate) fn convention(root: &Path) -> Result<Self, String> {
-        let base = root
-            .canonicalize()
+        let base = dunce::canonicalize(root)
             .map_err(|err| format!("cannot resolve {}: {err}", root.display()))?;
         Ok(Self {
             roots: vec![base.join("lib")],
@@ -93,7 +91,7 @@ impl ModulePath {
         if path.extension().is_none_or(|ext| ext != "dol") {
             return None;
         }
-        self.name_of(&path.canonicalize().ok()?)
+        self.name_of(&dunce::canonicalize(path).ok()?)
     }
 
     /// The module a canonical path under a root names.
@@ -141,7 +139,7 @@ impl ModulePath {
         let relative: PathBuf = parts.iter().collect();
         for root in &self.roots {
             // The root may have been replaced since the configuration loaded
-            let root = match root.canonicalize() {
+            let root = match dunce::canonicalize(root) {
                 Ok(canonical) if canonical.starts_with(&self.base) => canonical,
                 Ok(canonical) => {
                     log::error!(
@@ -243,7 +241,7 @@ fn expand(base: &Path, entry: &str, roots: &mut Vec<PathBuf>) -> Result<(), Stri
 
 /// The canonical path of `path`, which must lie under `base`.
 fn contained(base: &Path, path: &Path) -> Result<PathBuf, String> {
-    let canonical = path.canonicalize().map_err(|err| err.to_string())?;
+    let canonical = dunce::canonicalize(path).map_err(|err| err.to_string())?;
     if canonical.starts_with(base) {
         Ok(canonical)
     } else {
@@ -344,7 +342,7 @@ pub(crate) mod tests {
                 COUNT.fetch_add(1, Ordering::Relaxed),
             ));
             fs::create_dir(&path).unwrap();
-            Self(path.canonicalize().unwrap())
+            Self(dunce::canonicalize(path).unwrap())
         }
 
         /// A scratch repository: a directory with a `.git`, which makes it

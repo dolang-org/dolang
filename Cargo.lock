@@ -1166,6 +1166,7 @@ dependencies = [
  "backtrace",
  "dirs",
  "dolang-compile",
+ "dunce",
  "env_logger",
  "futures",
  "futures-core",
