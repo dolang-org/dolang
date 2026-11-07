@@ -274,6 +274,33 @@ impl Direct {
         ))
     }
 
+    fn junctions_unsupported() -> Error {
+        Error::new(
+            ErrorKind::Unsupported,
+            "junctions are only supported on Windows",
+        )
+    }
+
+    pub(super) fn read_junction_path(_path: &Path) -> Result<std::path::PathBuf> {
+        Err(Self::junctions_unsupported())
+    }
+
+    pub(super) fn set_junction_path(_path: &Path, _target: Option<&Path>) -> Result<()> {
+        Err(Self::junctions_unsupported())
+    }
+
+    pub(super) fn create_junction_path(_path: &Path, _target: &Path) -> Result<()> {
+        Err(Self::junctions_unsupported())
+    }
+
+    pub(super) fn read_junction_file(_file: &std::fs::File) -> Result<std::path::PathBuf> {
+        Err(Self::junctions_unsupported())
+    }
+
+    pub(super) fn set_junction_file(_file: &std::fs::File, _target: Option<&Path>) -> Result<()> {
+        Err(Self::junctions_unsupported())
+    }
+
     pub(super) async fn impl_user_name(&self, uid: u32) -> Result<String> {
         tokio::task::spawn_blocking(move || {
             nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(uid))?

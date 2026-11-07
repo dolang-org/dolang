@@ -1150,6 +1150,32 @@ impl Report for BoundViolation {
     }
 }
 
+/// A channel written on a getter or setter that doesn't admit `Value`
+struct AccessorChannel {
+    span: Span,
+    setter: bool,
+    input: bool,
+}
+
+impl Report for AccessorChannel {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        let accessor = if self.setter { "setter" } else { "getter" };
+        let channel = if self.input { "input" } else { "output" };
+        write!(
+            w,
+            "a {accessor}'s {channel} must be `Value`: a {accessor} runs without its caller's channels"
+        )
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
 /// A function type or signature whose parameters admit keys that aren't symbols
 struct ParameterKeys(Span);
 

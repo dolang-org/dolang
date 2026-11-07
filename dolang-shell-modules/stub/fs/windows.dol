@@ -2,6 +2,8 @@
 # Windows filesystem types and security descriptor access.
 
 import fs
+import fs.unix:
+  @Path: UnixPath
 import security.windows:
   @AccessRight: WindowsAccessRight
   - @Sid
@@ -261,7 +263,46 @@ pub class Path: fs.Path
   pub def shorten self base @ (Str | fs.Path) = ... -> Path
     ...
 
-  pub def read_link self -> Path
+  pub def read_link self -> (Path | UnixPath)
+    ...
+
+  # Returns the directory the junction at this path leads to.
+  #
+  # The method form of [`read_junction`](fs.windows.read_junction).
+  pub def read_junction self -> Path
+    ...
+
+  # Makes the empty directory at this path a junction, or removes its
+  # junction.
+  #
+  # A junction mounts one directory onto another, as a bind mount does on
+  # Linux. Like mounting, this needs an existing empty directory to mount
+  # onto. Unlike creating a directory symbolic link, it needs no privilege.
+  # With `nil`, it removes the junction and leaves the empty directory, and
+  # does nothing to a directory that isn't a reparse point.
+  # [`create_junction`](fs.windows.create_junction) also creates the
+  # directory.
+  #
+  # ## Errors
+  #
+  # Raises [`sys.InvalidInputError`](sys.InvalidInputError) when removing a
+  # junction from another kind of reparse point.
+  #
+  # ## Example
+  #
+  # ```
+  # let mount = Path "C:/build/cache"
+  # create_dir $mount
+  # mount.set_junction "D:/cache"
+  # # ...
+  # mount.set_junction nil
+  # ```
+  pub def set_junction
+    self
+    # The directory to lead to, or `nil` to remove the junction. A relative
+    # path is resolved against the current directory.
+    target @ (Str | fs.Path | nil)
+  do
     ...
 
   pub def glob
@@ -495,6 +536,49 @@ pub def update_sec_desc
   # Components and control flags, instead of or alongside `desc`.
   ...options @ SecDescOptions
 do
+  ...
+
+# Creates a directory that is a junction to another.
+#
+# A junction mounts one directory onto another, as a bind mount does on
+# Linux. This creates the directory and then sets the junction, as
+# [`Path.set_junction`](fs.windows.Path.set_junction) does on an existing one.
+# It isn't atomic: if setting the junction fails, it removes the directory
+# again.
+#
+# ## Example
+#
+# ```
+# create_junction "D:/cache" "C:/build/cache"
+# ```
+pub def create_junction
+  # The directory to lead to. A relative path is resolved against the current
+  # directory.
+  target @ (Str | fs.Path)
+  # The junction to create.
+  path @ (Str | fs.Path)
+do
+  ...
+
+# Returns the directory a junction leads to.
+#
+# [`fs.read_link`](fs.read_link) reads only symbolic links, since a junction
+# is a mount rather than a link.
+#
+# ## Errors
+#
+# Raises [`sys.InvalidInputError`](sys.InvalidInputError) if the path isn't a
+# junction.
+#
+# ## Example
+#
+# ```
+# echo (read_junction "C:/build/cache")
+# ```
+pub def read_junction
+  # The junction to read.
+  path @ (Str | fs.Path)
+do -> Path
   ...
 
 # Windows directory entries.

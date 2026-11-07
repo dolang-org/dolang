@@ -48,14 +48,15 @@ use crate::{
     },
     protocol::{
         AccessRequest, AclRequest, CanonicalizeRequest, ChildExit, CopyRequest, CreateDirRequest,
-        ExtensionRequest, ExtensionResponse, FsMetadataRequest, GlobRequest, HardLinkRequest,
-        MetadataRequest, MoveRequest, OpenFlags, OpenHandle, OpenRequest, OpenVfsHandle,
-        PipeResponse, ProcessPage, QueryResponse, ReadDirPage, ReadLinkRequest, RemoveDirRequest,
-        RemoveRequest, RenameRequest, Request, RequestKind, ResponseKind, SecDescRequest,
-        SetAclRequest, SetXattrRequest, SpawnRequest, StdioRecvTarget, StdioSendTarget,
-        StreamsRequest, SymlinkKind, SymlinkRequest, UnixVfsRequest, UpdateMetadataRequest,
-        UpdateSecDescRequest, VfsProtocol, WellKnownPathRequest, WindowsAdminRequest,
-        XattrNamespaceRequest, XattrRequest, XattrsRequest, rpc_builder,
+        CreateJunctionRequest, ExtensionRequest, ExtensionResponse, FsMetadataRequest, GlobRequest,
+        HardLinkRequest, MetadataRequest, MoveRequest, OpenFlags, OpenHandle, OpenRequest,
+        OpenVfsHandle, PipeResponse, ProcessPage, QueryResponse, ReadDirPage, ReadJunctionRequest,
+        ReadLinkRequest, RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind,
+        ResponseKind, SecDescRequest, SetAclRequest, SetJunctionRequest, SetXattrRequest,
+        SpawnRequest, StdioRecvTarget, StdioSendTarget, StreamsRequest, SymlinkKind,
+        SymlinkRequest, UnixVfsRequest, UpdateMetadataRequest, UpdateSecDescRequest, VfsProtocol,
+        WellKnownPathRequest, WindowsAdminRequest, XattrNamespaceRequest, XattrRequest,
+        XattrsRequest, rpc_builder,
     },
     security::{Acl, AclKind},
     session::{
@@ -941,6 +942,17 @@ impl Connection {
             RequestKind::FileStreams { file } => Ok(ResponseKind::FileStreams(
                 self.handle_file_streams(context, file).await?,
             )),
+            RequestKind::FileReadJunction { file } => {
+                let file = self.retained_file(context, file)?;
+                Ok(ResponseKind::FileReadJunction(
+                    file.0.read_junction().await?,
+                ))
+            }
+            RequestKind::FileSetJunction { file, target } => {
+                let file = self.retained_file(context, file)?;
+                file.0.set_junction(target.as_ref().map(Into::into)).await?;
+                Ok(ResponseKind::FileSetJunction)
+            }
             RequestKind::FileSetXattr {
                 file,
                 name,
@@ -1013,6 +1025,9 @@ impl Connection {
             RequestKind::UpdateMetadata(request) => self.handle_update_metadata(request).await,
             RequestKind::Canonicalize(request) => self.handle_canonicalize(request).await,
             RequestKind::ReadLink(request) => self.handle_read_link(request).await,
+            RequestKind::ReadJunction(request) => self.handle_read_junction(request).await,
+            RequestKind::SetJunction(request) => self.handle_set_junction(request).await,
+            RequestKind::CreateJunction(request) => self.handle_create_junction(request).await,
             RequestKind::Access(request) => self.handle_access(request).await,
             RequestKind::Glob(request) => self.handle_glob(request).await,
             RequestKind::Xattrs(request) => self.handle_xattrs(request).await,
@@ -2283,6 +2298,28 @@ impl Connection {
     async fn handle_read_link(&self, req: ReadLinkRequest) -> Result<ResponseKind> {
         let path = self.server.vfs.read_link(Into::into(&req.path)).await?;
         Ok(ResponseKind::ReadLink(path))
+    }
+
+    async fn handle_read_junction(&self, req: ReadJunctionRequest) -> Result<ResponseKind> {
+        let path = self.server.vfs.read_junction(Into::into(&req.path)).await?;
+        Ok(ResponseKind::ReadJunction(path))
+    }
+
+    async fn handle_set_junction(&self, req: SetJunctionRequest) -> Result<ResponseKind> {
+        let target = req.target.as_ref().map(Into::into);
+        self.server
+            .vfs
+            .set_junction(Into::into(&req.path), target)
+            .await?;
+        Ok(ResponseKind::SetJunction)
+    }
+
+    async fn handle_create_junction(&self, req: CreateJunctionRequest) -> Result<ResponseKind> {
+        self.server
+            .vfs
+            .create_junction(Into::into(&req.path), Into::into(&req.target))
+            .await?;
+        Ok(ResponseKind::CreateJunction)
     }
 
     async fn handle_access(&self, req: AccessRequest) -> Result<ResponseKind> {

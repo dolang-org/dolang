@@ -61,14 +61,15 @@ use crate::{
     },
     protocol::{
         AccessRequest, AclRequest, CanonicalizeRequest, ChildExit, CopyRequest, CreateDirRequest,
-        ExtensionRequest, ExtensionResponse, FsMetadataRequest, GlobRequest, HardLinkRequest,
-        MetadataRequest, MoveRequest, OpenFlags, OpenHandle, OpenRequest, OpenVfsHandle,
-        ProcessPage, QueryResponse, ReadLinkRequest, RemoveDirRequest, RemoveRequest,
-        RenameRequest, Request, RequestKind, ResponseKind, SecDescRequest, SetAclRequest,
-        SetXattrRequest, SpawnRequest, StdioRecvTarget, StdioSendTarget, StreamsRequest,
-        SymlinkKind, SymlinkRequest, UnixVfsRequest, UpdateMetadataRequest, UpdateSecDescRequest,
-        VfsProtocol, WellKnownPathRequest, WindowsAdminRequest, XattrNamespaceRequest,
-        XattrRequest, XattrsRequest, rpc_builder,
+        CreateJunctionRequest, ExtensionRequest, ExtensionResponse, FsMetadataRequest, GlobRequest,
+        HardLinkRequest, MetadataRequest, MoveRequest, OpenFlags, OpenHandle, OpenRequest,
+        OpenVfsHandle, ProcessPage, QueryResponse, ReadJunctionRequest, ReadLinkRequest,
+        RemoveDirRequest, RemoveRequest, RenameRequest, Request, RequestKind, ResponseKind,
+        SecDescRequest, SetAclRequest, SetJunctionRequest, SetXattrRequest, SpawnRequest,
+        StdioRecvTarget, StdioSendTarget, StreamsRequest, SymlinkKind, SymlinkRequest,
+        UnixVfsRequest, UpdateMetadataRequest, UpdateSecDescRequest, VfsProtocol,
+        WellKnownPathRequest, WindowsAdminRequest, XattrNamespaceRequest, XattrRequest,
+        XattrsRequest, rpc_builder,
     },
     security::{Acl, AclKind, PrincipalId, PrincipalIdKind, SecurityInfo, SidName},
     session::{
@@ -1096,6 +1097,28 @@ impl File {
             .await?
         {
             ResponseKind::FileStreams(result) => Ok(result),
+            response => Err(unexpected(response).into()),
+        }
+    }
+
+    pub(crate) async fn read_junction(&self) -> Result<path::PathBuf> {
+        match self
+            .client
+            .request(RequestKind::FileReadJunction { file: self.cite()? })
+            .await?
+        {
+            ResponseKind::FileReadJunction(result) => Ok(result),
+            response => Err(unexpected(response).into()),
+        }
+    }
+
+    pub(crate) async fn set_junction(&self, target: Option<path::Path<'_>>) -> Result<()> {
+        let request = RequestKind::FileSetJunction {
+            file: self.cite()?,
+            target: target.map(Into::into),
+        };
+        match self.client.request(request).await? {
+            ResponseKind::FileSetJunction => Ok(()),
             response => Err(unexpected(response).into()),
         }
     }
@@ -3259,6 +3282,44 @@ impl Client {
         let request = ReadLinkRequest { path: path.into() };
         match self.request(RequestKind::ReadLink(request)).await? {
             ResponseKind::ReadLink(result) => Ok(result),
+            response => Err(unexpected(response).into()),
+        }
+    }
+
+    pub async fn read_junction(&self, path: path::Path<'_>) -> Result<path::PathBuf> {
+        let request = ReadJunctionRequest { path: path.into() };
+        match self.request(RequestKind::ReadJunction(request)).await? {
+            ResponseKind::ReadJunction(result) => Ok(result),
+            response => Err(unexpected(response).into()),
+        }
+    }
+
+    pub async fn set_junction(
+        &self,
+        path: path::Path<'_>,
+        target: Option<path::Path<'_>>,
+    ) -> Result<()> {
+        let request = SetJunctionRequest {
+            path: path.into(),
+            target: target.map(Into::into),
+        };
+        match self.request(RequestKind::SetJunction(request)).await? {
+            ResponseKind::SetJunction => Ok(()),
+            response => Err(unexpected(response).into()),
+        }
+    }
+
+    pub async fn create_junction(
+        &self,
+        path: path::Path<'_>,
+        target: path::Path<'_>,
+    ) -> Result<()> {
+        let request = CreateJunctionRequest {
+            path: path.into(),
+            target: target.into(),
+        };
+        match self.request(RequestKind::CreateJunction(request)).await? {
+            ResponseKind::CreateJunction => Ok(()),
             response => Err(unexpected(response).into()),
         }
     }

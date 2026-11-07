@@ -951,6 +951,17 @@ macro_rules! impl_concrete_path {
                     });
                 let builder = if matches!($style, vfs_path::Kind::Windows) {
                     builder
+                        .method("read_junction", async move |this, strand, args, out| {
+                            let ([], []) = unpack!(strand, args, 0, 0)?;
+                            let annex = this.annex();
+                            super::read_junction(strand, annex.global, annex.as_path(), out).await
+                        })
+                        .method("set_junction", async move |this, strand, args, _out| {
+                            let ([target], []) = unpack!(strand, args, 1, 0)?;
+                            let annex = this.annex();
+                            super::set_junction(strand, annex.global, annex.as_path(), &target)
+                                .await
+                        })
                         .get("stream_name", |this, strand, out| {
                             let annex = this.annex();
                             if let Some(spec) = stream_spec(strand, annex.as_path())? {

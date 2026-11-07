@@ -728,6 +728,18 @@ impl File {
         match_file!(self, file => file.streams().await)
     }
 
+    /// Returns the directory the Windows junction this file refers to leads
+    /// to. The file must have been opened as itself rather than followed.
+    pub async fn read_junction(&self) -> Result<crate::path::PathBuf> {
+        match_file!(self, file => file.read_junction().await)
+    }
+
+    /// Makes the empty directory this file refers to a Windows junction to
+    /// the absolute path `target`, or with no target, removes its junction.
+    pub async fn set_junction(&self, target: Option<crate::path::Path<'_>>) -> Result<()> {
+        match_file!(self, file => file.set_junction(target).await)
+    }
+
     /// Creates or replaces an extended attribute.
     pub async fn set_xattr(&self, name: &str, namespace: Option<&str>, value: &[u8]) -> Result<()> {
         match_file!(self, file => file.set_xattr(name, namespace, value).await)

@@ -619,6 +619,8 @@ pub(super) struct PreparedCall {
     span: Span,
     /// Whether it's written in source, so the final pass logs its callee
     logs: bool,
+    /// Whether its callee runs without the caller's channels
+    isolated: bool,
     /// The ambient channels it passes
     channels: (Option<TypeId>, Option<TypeId>),
 }
@@ -631,6 +633,7 @@ impl PreparedCall {
             span: self.span,
             callee: self.member,
             logs: self.logs,
+            isolated: self.isolated,
         }
     }
 }
@@ -1011,6 +1014,9 @@ pub(super) struct Call<'e> {
     /// Whether it's written in source, so the final pass logs its callee and
     /// the members it reaches
     pub(super) logs: bool,
+    /// Whether the callee runs without the caller's channels, as a getter or
+    /// setter does, so it's passed `Value` for each
+    pub(super) isolated: bool,
 }
 
 /// What a call can pass its arguments against, when the callee's parameters are
@@ -1761,6 +1767,7 @@ impl<'a> Flow<'a, '_> {
             span: expr.span,
             callee: None,
             logs: true,
+            isolated: false,
         };
         self.call_value(at, state, operands, (callee_type, callee.span), &[], call)
     }
@@ -1826,6 +1833,7 @@ impl<'a> Flow<'a, '_> {
                 let receivers = &target.receivers;
                 let call = Call {
                     callee: target.member.or(call.callee),
+                    isolated: target.isolated,
                     ..call
                 };
                 let given =
@@ -1875,7 +1883,8 @@ impl<'a> Flow<'a, '_> {
             member: call.callee,
             span: call.span,
             logs: call.logs,
-            channels: self.channels(at),
+            isolated: call.isolated,
+            channels: self.passed_channels(at, call.isolated),
         }
     }
 
@@ -1921,6 +1930,7 @@ impl<'a> Flow<'a, '_> {
             let callee = target.signature.callee(self.db).unwrap_or(unknown);
             let call = Call {
                 callee: target.member.or(call.callee),
+                isolated: target.isolated,
                 ..call
             };
             let given = self.finish_call(at, callee, &values, call);
@@ -1952,7 +1962,7 @@ impl<'a> Flow<'a, '_> {
         let Call { expected, span, .. } = call;
         let name = self.call_name(call.callee, callee_type);
         let bottom = self.db.bottom();
-        let (input, output) = self.channels(at);
+        let (input, output) = self.passed_channels(at, call.isolated);
         if callee_type == bottom || values.never {
             self.diverge(span, false);
             return bottom;
@@ -2054,6 +2064,7 @@ impl<'a> Flow<'a, '_> {
                     span: expr.span,
                     callee: None,
                     logs: true,
+                    isolated: false,
                 };
                 match <[CallTarget; 1]>::try_from(targets) {
                     Ok([target]) => {

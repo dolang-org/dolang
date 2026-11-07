@@ -1743,6 +1743,26 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                 };
                 stream::create_stream_iter(strand, global, entries, out)
             })
+            .method("read_junction", async move |this, strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let global = this.annex().global;
+                let target = {
+                    let borrow = this.borrow(strand)?;
+                    let file = borrow.open_ref(strand)?;
+                    file.read_junction().await.into_sys(strand)?
+                };
+                super::path::create_path(strand, global, target, out)
+            })
+            .method("set_junction", async move |this, strand, args, _out| {
+                let ([target], []) = unpack!(strand, args, 1, 0)?;
+                let global = this.annex().global;
+                let target = super::junction_target(strand, global, &target)?;
+                let borrow = this.borrow(strand)?;
+                let file = borrow.open_ref(strand)?;
+                file.set_junction(target.as_ref().map(|target| target.to_path()))
+                    .await
+                    .into_sys(strand)
+            })
             .method("set_xattr", async move |this, strand, args, _out| {
                 let ([name, value], [namespace]) = unpack!(strand, args, 2, 0, namespace = None)?;
                 let global = this.annex().global;

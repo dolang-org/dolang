@@ -207,6 +207,11 @@ cfg.port = 9000
 assert_eq $cfg.port 9000
 ```
 
+A getter or setter runs with no input, and its output is discarded, so it
+can't read from or write to the channels of the code that accesses the field.
+The type checker rejects one that declares an input or output other than
+`Value`.
+
 See [Decorators](./decorators.md) for decorator syntax and evaluation order, and
 [`getter`](std.getter) / [`setter`](std.setter) for the
 decorators themselves.

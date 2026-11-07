@@ -395,6 +395,23 @@ pub(crate) struct ReadLinkRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct ReadJunctionRequest {
+    pub(crate) path: path::PathBuf,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct SetJunctionRequest {
+    pub(crate) path: path::PathBuf,
+    pub(crate) target: Option<path::PathBuf>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct CreateJunctionRequest {
+    pub(crate) path: path::PathBuf,
+    pub(crate) target: path::PathBuf,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct AccessRequest {
     pub(crate) path: path::PathBuf,
     pub(crate) mode: i32,
@@ -850,6 +867,17 @@ pub(crate) enum RequestKind {
     ProcessDescribe {
         pid: u32,
     },
+    /// Junction operations. Appended for the reason given above.
+    ReadJunction(ReadJunctionRequest),
+    SetJunction(SetJunctionRequest),
+    CreateJunction(CreateJunctionRequest),
+    FileReadJunction {
+        file: Cite<FileMarker>,
+    },
+    FileSetJunction {
+        file: Cite<FileMarker>,
+        target: Option<path::PathBuf>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -942,4 +970,10 @@ pub(crate) enum ResponseKind {
     ProcessClose,
     ProcessKill,
     ProcessDescribe(ProcessInfo),
+    /// Junction results. Appended for the reason given on `RequestKind`.
+    ReadJunction(path::PathBuf),
+    SetJunction,
+    CreateJunction,
+    FileReadJunction(path::PathBuf),
+    FileSetJunction,
 }
