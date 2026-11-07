@@ -776,9 +776,9 @@ pub class BaseFile: Io
 # needs the file, or the file is flushed or closed. Every other method sees the
 # file as written: pending writes go out first. A positional write, a lock,
 # [`set_size`](fs.BaseFile.set_size) and a copy into the file also drop
-# read-ahead, so later reads see the change. A file is not closed when it is
-# garbage collected, so close it to keep its pending writes, or use it from a
-# block that closes it.
+# read-ahead, so later reads see the change. A file that is garbage collected
+# is closed without writing out its pending writes, so close it to keep them,
+# or use it from a block that closes it.
 #
 # A function the file is passed to, such as [`zip.open`](zip.open), reads and
 # writes through the same buffer, so the file and the function see each
@@ -1440,7 +1440,7 @@ pub class Path
     ...
 
   # The method form of [`fs.entries`](fs.entries).
-  pub def entries self -> Iter[UnixDirEntry | WindowsDirEntry]
+  pub def entries self -> (Iter[UnixDirEntry] | Iter[WindowsDirEntry])
     ...
 
   # The method form of [`fs.glob`](fs.glob), searching within this
@@ -2394,7 +2394,7 @@ do -> Iter[StreamEntry]
 pub def entries
   # Path to the directory.
   path @ (Str | Path)
-do -> Iter[UnixDirEntry | WindowsDirEntry]
+do -> (Iter[UnixDirEntry] | Iter[WindowsDirEntry])
   ...
 
 # Returns an iterator over paths matching a glob pattern.
@@ -2823,10 +2823,13 @@ pub def home_dir() -> Path
 
 # Returns the platform-native directory for temporary files.
 #
-# | Platform | Result                                                      |
-# | -------- | ----------------------------------------------------------- |
-# | Unix     | `$TMPDIR`, otherwise `/tmp`                                 |
-# | Windows  | `%TMP%`, otherwise `%TEMP%`, otherwise the platform default |
+# | Platform | Result                                                                                  |
+# | -------- | --------------------------------------------------------------------------------------- |
+# | Unix     | `$TMPDIR`, otherwise `/tmp`                                                             |
+# | Windows  | `%TMP%`, otherwise `%TEMP%`, otherwise `%USERPROFILE%`, otherwise the Windows directory |
+#
+# On Windows, a process running as SYSTEM with neither `%TMP%` nor `%TEMP%`
+# set gets `C:\Windows\SystemTemp` instead of the last two.
 pub def temp_dir() -> Path
   ...
 
