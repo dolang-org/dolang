@@ -1,7 +1,8 @@
 //! Recursive `remove` and `copy`, and the check `move` makes before falling
-//! back to them. A walk never follows a symbolic link, and descends into any
-//! other crossing point only when it lies below `stop` on the [`Resolve`]
-//! scale.
+//! back to them. A walk descends into a crossing point only when it lies below
+//! `stop` on the [`Resolve`] scale. It follows symbolic links only when `stop`
+//! is [`Resolve::Target`], which stops at nothing; otherwise it never follows
+//! one.
 //!
 //! The walks run on the blocking pool, one directory at a time.
 
@@ -58,19 +59,20 @@ impl Entry {
     }
 }
 
-/// Checks a `stop` passed to a recursive operation.
+/// Checks a `stop` passed to `remove` or `move`, which never follow symbolic
+/// links.
 pub(super) fn check_stop(stop: Resolve) -> Result<Resolve> {
     if stop == Resolve::Target {
         Err(Error::new(
             ErrorKind::InvalidInput,
-            "stop: :TARGET: is not supported; recursion never follows symbolic links",
+            "stop: :NEVER: is not supported; remove and move never follow symbolic links",
         ))
     } else {
         Ok(stop)
     }
 }
 
-fn cycle_error(path: &Path) -> Error {
+pub(super) fn cycle_error(path: &Path) -> Error {
     Error::new(
         ErrorKind::Other,
         format!("{}: directory cycle", path.display()),
@@ -166,7 +168,7 @@ fn ignore_vanished(result: Result<()>) -> Result<()> {
 /// below it. A stopping point is removed as itself, which fails for a mount
 /// point or a non-empty directory. The first error ends the walk.
 pub(super) fn remove(path: &Path, stop: Resolve) -> Result<()> {
-    let root = root_entry(path)?;
+    let root = root_entry(path, stop)?;
     if root.descends(stop) {
         let dir = WalkDir::open(path, stop)?;
         walk(
@@ -181,11 +183,17 @@ pub(super) fn remove(path: &Path, stop: Resolve) -> Result<()> {
     remove_root(path, &root)
 }
 
+/// Returns whether a walk with `stop` stops at `path`, which it reaches
+/// without following.
+pub(super) fn stops_at(path: &Path, stop: Resolve) -> Result<bool> {
+    Ok(root_entry(path, stop)?.stops(stop))
+}
+
 /// Removes `path` without descending into it, which fails for a directory a
 /// walk would have to descend into. A Windows junction or directory symlink is
 /// removed like any other link.
 pub(super) fn remove_entry(path: &Path) -> Result<()> {
-    let root = root_entry(path)?;
+    let root = root_entry(path, Resolve::Mount)?;
     if root.kind == Kind::Dir && !root.stops(Resolve::Mount) {
         return Err(Direct::directory_requires_all_error());
     }
@@ -202,7 +210,13 @@ fn copy_leaf(src: &Path, dst: &Path, entry: &Entry, stop: Resolve) -> Result<()>
             std::fs::copy(src, dst)?;
             Ok(())
         }
-        Kind::Dir | Kind::Symlink | Kind::Other => Err(Error::new(
+        // Only a walk that follows links reaches a link it doesn't stop at,
+        // and only when it leads nowhere
+        Kind::Symlink => Err(Error::new(
+            ErrorKind::NotFound,
+            format!("{}: dangling symbolic link", src.display()),
+        )),
+        Kind::Dir | Kind::Other => Err(Error::new(
             ErrorKind::Unsupported,
             format!("{}: unsupported file type", src.display()),
         )),
@@ -222,9 +236,11 @@ fn copy_stopped(src: &Path, dst: &Path, entry: &Entry) -> Result<()> {
 /// Copies `from` to `to`. A directory needs `all`, and is copied with
 /// everything below it, descending into crossing points below `stop` and
 /// copying the ones at or above it as themselves: a link as a link, and a
-/// mount point or other directory as an empty directory.
+/// mount point or other directory as an empty directory. With `stop` at
+/// [`Resolve::Target`], links are followed, `from` included, and what they
+/// lead to is copied.
 pub(super) fn copy(from: &Path, to: &Path, all: bool, stop: Resolve) -> Result<()> {
-    let root = root_entry(from)?;
+    let root = root_entry(from, stop)?;
     if !root.descends(stop) {
         return copy_leaf(from, to, &root, stop);
     }
@@ -280,7 +296,7 @@ pub(super) fn check_removable(path: &Path, stop: Resolve) -> Result<()> {
         }
         Ok(())
     };
-    let root = root_entry(path)?;
+    let root = root_entry(path, stop)?;
     if !root.descends(stop) {
         return check(path, &root);
     }
@@ -375,7 +391,14 @@ mod unix {
         })
     }
 
-    pub(super) fn root_entry(path: &Path) -> Result<Entry> {
+    /// Classifies `path`, following it when `stop` is [`Resolve::Target`]
+    /// unless it is a dangling link.
+    pub(super) fn root_entry(path: &Path, stop: Resolve) -> Result<Entry> {
+        if stop == Resolve::Target
+            && let Ok(stat) = nix::sys::stat::stat(path)
+        {
+            return Ok(followed(path.as_os_str().to_owned(), &stat));
+        }
         let stat = nix::sys::stat::lstat(path)?;
         // The root of the filesystem is a mount point, with no parent to
         // compare with
@@ -397,6 +420,17 @@ mod unix {
         Ok(entry)
     }
 
+    /// An entry reached by following links, which nothing stops at.
+    fn followed(name: OsString, stat: &FileStat) -> Entry {
+        let kind = kind(stat);
+        Entry {
+            name,
+            kind,
+            level: None,
+            dir: kind == Kind::Dir,
+        }
+    }
+
     pub(super) fn remove_root(path: &Path, entry: &Entry) -> Result<()> {
         if entry.dir {
             Ok(std::fs::remove_dir(path)?)
@@ -412,10 +446,20 @@ mod unix {
         path: PathBuf,
         dev: u64,
         id: FileId,
+        /// Whether the walk follows symbolic links.
+        follow: bool,
+    }
+
+    fn dir_flags(follow: bool) -> OFlag {
+        if follow {
+            DIR_FLAGS.difference(OFlag::O_NOFOLLOW)
+        } else {
+            DIR_FLAGS
+        }
     }
 
     impl WalkDir {
-        fn new(fd: OwnedFd, path: PathBuf) -> Result<Self> {
+        fn new(fd: OwnedFd, path: PathBuf, follow: bool) -> Result<Self> {
             let (dev, ino) = dev_ino(&fstat(&fd)?);
             Ok(Self {
                 fd,
@@ -425,17 +469,24 @@ mod unix {
                     volume: dev,
                     index: ino,
                 },
+                follow,
             })
         }
 
-        pub(super) fn open(path: &Path, _stop: Resolve) -> Result<Self> {
-            let fd = open(path, DIR_FLAGS, Mode::empty())?;
-            Self::new(fd, path.to_path_buf())
+        pub(super) fn open(path: &Path, stop: Resolve) -> Result<Self> {
+            let follow = stop == Resolve::Target;
+            let fd = open(path, dir_flags(follow), Mode::empty())?;
+            Self::new(fd, path.to_path_buf(), follow)
         }
 
         pub(super) fn open_child(&self, entry: &Entry, _stop: Resolve) -> Result<Self> {
-            let fd = openat(&self.fd, entry.name.as_os_str(), DIR_FLAGS, Mode::empty())?;
-            Self::new(fd, self.path.join(&entry.name))
+            let fd = openat(
+                &self.fd,
+                entry.name.as_os_str(),
+                dir_flags(self.follow),
+                Mode::empty(),
+            )?;
+            Self::new(fd, self.path.join(&entry.name), self.follow)
         }
 
         pub(super) fn path(&self) -> &Path {
@@ -459,7 +510,7 @@ mod unix {
                     continue;
                 }
                 let name = OsString::from_vec(name.to_vec());
-                let stat = match fstatat(
+                let mut stat = match fstatat(
                     &self.fd,
                     name.as_os_str(),
                     nix::fcntl::AtFlags::AT_SYMLINK_NOFOLLOW,
@@ -469,6 +520,18 @@ mod unix {
                     Err(nix::errno::Errno::ENOENT) => continue,
                     Err(err) => return Err(err.into()),
                 };
+                if self.follow {
+                    if kind(&stat) == Kind::Symlink {
+                        match fstatat(&self.fd, name.as_os_str(), nix::fcntl::AtFlags::empty()) {
+                            Ok(target) => stat = target,
+                            // Dangling, or a loop of links
+                            Err(nix::errno::Errno::ENOENT | nix::errno::Errno::ELOOP) => {}
+                            Err(err) => return Err(err.into()),
+                        }
+                    }
+                    entries.push(followed(name, &stat));
+                    continue;
+                }
                 let path = self.path.join(&name);
                 entries.push(classify(
                     Some(self.fd.as_fd()),
@@ -496,7 +559,10 @@ mod unix {
 mod windows {
     use std::{
         ffi::OsString,
-        os::windows::io::{AsHandle, OwnedHandle},
+        os::windows::{
+            fs::MetadataExt as _,
+            io::{AsHandle, OwnedHandle},
+        },
         path::{Path, PathBuf},
     };
 
@@ -537,9 +603,32 @@ mod windows {
         }
     }
 
-    pub(super) fn root_entry(path: &Path) -> Result<Entry> {
+    /// Classifies `path`, following it when `stop` is [`Resolve::Target`]
+    /// unless it is a dangling link.
+    pub(super) fn root_entry(path: &Path, stop: Resolve) -> Result<Entry> {
+        if stop == Resolve::Target
+            && let Ok(metadata) = std::fs::metadata(path)
+        {
+            return Ok(followed(
+                path.as_os_str().to_owned(),
+                metadata.file_attributes(),
+            ));
+        }
         let (attrs, tag) = Direct::probe_entry(path)?;
         Ok(classify(path.as_os_str().to_owned(), attrs, tag))
+    }
+
+    /// An entry reached by following links, with the attributes of what it
+    /// leads to, which nothing stops at.
+    fn followed(name: OsString, attrs: u32) -> Entry {
+        let dir = attrs & FILE_ATTRIBUTE_DIRECTORY != 0;
+        Entry {
+            name,
+            kind: if dir { Kind::Dir } else { Kind::File },
+            level: None,
+            dir,
+            attrs,
+        }
     }
 
     fn remove_path(path: &Path, entry: &Entry) -> Result<()> {
@@ -576,6 +665,8 @@ mod windows {
         iter: DirIter,
         path: PathBuf,
         id: FileId,
+        /// Whether the walk follows symbolic links.
+        follow: bool,
     }
 
     impl WalkDir {
@@ -599,6 +690,7 @@ mod windows {
                 iter: DirIter::new(handle),
                 path: path.to_path_buf(),
                 id,
+                follow: stop == Resolve::Target,
             })
         }
 
@@ -617,7 +709,19 @@ mod windows {
         pub(super) fn entries(&mut self) -> Result<Vec<Entry>> {
             let mut entries = Vec::new();
             while let Some(raw) = self.iter.next_entry()? {
-                entries.push(classify(raw.name, raw.attrs, raw.tag));
+                let entry = classify(raw.name, raw.attrs, raw.tag);
+                if self.follow && entry.kind == Kind::Symlink {
+                    match std::fs::metadata(self.path.join(&entry.name)) {
+                        Ok(metadata) => {
+                            entries.push(followed(entry.name, metadata.file_attributes()));
+                            continue;
+                        }
+                        // Dangling
+                        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(err) => return Err(err.into()),
+                    }
+                }
+                entries.push(entry);
             }
             Ok(entries)
         }
@@ -638,7 +742,7 @@ mod tests {
     #[test]
     fn classifies_mount_points() {
         for path in ["/", "/proc"] {
-            let entry = root_entry(Path::new(path)).unwrap();
+            let entry = root_entry(Path::new(path), Resolve::Cross).unwrap();
             assert_eq!(entry.kind, Kind::Dir, "{path}");
             assert_eq!(entry.level, Some(Resolve::Mount), "{path}");
         }

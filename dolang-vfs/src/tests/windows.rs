@@ -565,3 +565,72 @@ async fn copy_through_junction_cycle_fails() {
         .unwrap();
     assert!(!tree.exists());
 }
+
+async fn glob_strings(
+    direct: &Vfs,
+    pattern: &str,
+    root: &Path,
+    stop: Option<crate::metadata::Resolve>,
+) -> crate::error::Result<Vec<String>> {
+    let paths = direct.glob(pattern, typed(root), stop, None).await?;
+    Ok(paths
+        .iter()
+        .map(|path| path.to_string().replace('\\', "/"))
+        .collect())
+}
+
+#[tokio::test]
+async fn glob_descends_junctions_below_stop() {
+    use crate::metadata::Resolve;
+    let dir = tempdir().unwrap();
+    let outside = dir.path().join("outside");
+    let tree = dir.path().join("tree");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("keep.txt"), "keep").unwrap();
+    std::fs::create_dir(&tree).unwrap();
+    if !try_junction(&tree.join("link"), &outside) {
+        return;
+    }
+    let direct = Vfs::direct().unwrap();
+
+    assert_eq!(
+        glob_strings(&direct, "**", &tree, None).await.unwrap(),
+        ["", "link", "link/keep.txt"]
+    );
+    // A junction the search stops at still matches
+    assert_eq!(
+        glob_strings(&direct, "**", &tree, Some(Resolve::Mount))
+            .await
+            .unwrap(),
+        ["", "link"]
+    );
+
+    // A directory symlink back up the tree is stopped at, not followed into
+    // a cycle
+    if std::os::windows::fs::symlink_dir(&tree, outside.join("up")).is_ok() {
+        assert_eq!(
+            glob_strings(&direct, "**", &tree, None).await.unwrap(),
+            ["", "link", "link/keep.txt", "link/up"]
+        );
+    }
+}
+
+#[tokio::test]
+async fn glob_through_junction_cycle_fails() {
+    let dir = tempdir().unwrap();
+    let tree = dir.path().join("tree");
+    std::fs::create_dir(&tree).unwrap();
+    if !try_junction(&tree.join("loop"), &tree) {
+        return;
+    }
+    let direct = Vfs::direct().unwrap();
+
+    let err = glob_strings(&direct, "**", &tree, None).await.unwrap_err();
+    assert!(err.to_string().contains("directory cycle"), "{err}");
+    assert_eq!(
+        glob_strings(&direct, "**", &tree, Some(crate::metadata::Resolve::Mount))
+            .await
+            .unwrap(),
+        ["", "loop"]
+    );
+}

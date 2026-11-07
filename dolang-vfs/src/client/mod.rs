@@ -3265,13 +3265,13 @@ impl Client {
         &self,
         pattern: impl Into<String>,
         root: path::Path<'_>,
-        resolve: Resolve,
+        stop: Option<Resolve>,
         max_depth: Option<usize>,
     ) -> Result<Vec<path::PathBuf>> {
         let request = GlobRequest {
             pattern: pattern.into(),
             root: root.into(),
-            resolve,
+            stop,
             max_depth,
         };
         match self.request(RequestKind::Glob(request)).await? {

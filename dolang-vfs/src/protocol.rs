@@ -403,7 +403,7 @@ pub(crate) struct AccessRequest {
 pub(crate) struct GlobRequest {
     pub(crate) pattern: String,
     pub(crate) root: path::PathBuf,
-    pub(crate) resolve: Resolve,
+    pub(crate) stop: Option<Resolve>,
     pub(crate) max_depth: Option<usize>,
 }
 

@@ -1032,8 +1032,8 @@ macro_rules! impl_concrete_path {
                         Ok(())
                     })
                     .method("glob", async move |this, strand, args, out| {
-                        let ([pattern], [max_depth, resolve]) =
-                            unpack!(strand, args, 1, 0, max_depth = None, resolve = None)?;
+                        let ([pattern], [max_depth, stop]) =
+                            unpack!(strand, args, 1, 0, max_depth = None, stop = None)?;
                         let annex = this.annex();
                         super::glob(
                             strand,
@@ -1041,7 +1041,7 @@ macro_rules! impl_concrete_path {
                             Some(annex.as_path()),
                             pattern,
                             max_depth,
-                            resolve,
+                            stop,
                             out,
                         )
                         .await

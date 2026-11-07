@@ -22,7 +22,9 @@ use tokio::{fs, process::Command as TokioCommand, sync::Mutex};
 use wax::{
     Glob, Program as _,
     query::DepthVariance,
-    walk::{DepthBehavior, DepthMax, Entry, LinkBehavior, WalkBehavior},
+    walk::{
+        DepthBehavior, DepthMax, Entry, EntryResidue, FileIterator as _, LinkBehavior, WalkBehavior,
+    },
 };
 
 use crate::{
@@ -1931,7 +1933,7 @@ impl Direct {
         stop: Option<Resolve>,
     ) -> Result<()> {
         let (from, to) = (from.to_native()?, to.to_native()?);
-        let stop = walk::check_stop(stop.unwrap_or(Resolve::Link))?;
+        let stop = stop.unwrap_or(Resolve::Link);
         tokio::task::spawn_blocking(move || walk::copy(&from, &to, all, stop))
             .await
             .map_err(Error::other)?
@@ -2010,11 +2012,12 @@ impl Direct {
         &self,
         pattern: impl Into<String>,
         root: path::Path<'_>,
-        resolve: Resolve,
+        stop: Option<Resolve>,
         max_depth: Option<usize>,
     ) -> Result<Vec<path::PathBuf>> {
         let pattern = pattern.into();
         let root = root.to_native()?;
+        let stop = stop.unwrap_or(Resolve::Link);
         tokio::task::spawn_blocking(move || {
             let (prefix, glob) = Glob::new(&pattern)
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid glob pattern"))?
@@ -2035,8 +2038,12 @@ impl Direct {
                     .collect::<Result<_>>();
             };
 
+            // The base is always followed. Below it, Unix links are followed
+            // only to never stop; Windows reports a junction as a link, so a
+            // walk that is to descend into one has to follow, leaving the
+            // filter to stop at real links
             let mut behavior = WalkBehavior::default();
-            if resolve.follows() {
+            if stop == Resolve::Target || cfg!(windows) {
                 behavior.link = LinkBehavior::ReadTarget;
             }
             // wax prunes directories that fail to match their pattern
@@ -2058,9 +2065,71 @@ impl Direct {
                 behavior.depth = DepthBehavior::Max(DepthMax(depth));
             }
 
-            for entry in glob.walk_with_behavior(&walk_root, behavior) {
-                let entry = entry.map_err(io::Error::other)?;
-                let relative = entry.root_relative_paths().1;
+            // Directories the walk stops at are discarded with their trees,
+            // so those that match are collected here
+            let mut stopped = Vec::new();
+            let mut failure = None;
+            let walk = glob
+                .walk_with_behavior(&walk_root, behavior)
+                .filter_entry(|entry| {
+                    if stop == Resolve::Target || entry.depth() == 0 || !entry.file_type().is_dir()
+                    {
+                        return None;
+                    }
+                    match walk::stops_at(entry.path(), stop) {
+                        Ok(false) => None,
+                        Ok(true) => {
+                            let relative = entry.root_relative_paths().1;
+                            if glob.is_match(relative) {
+                                stopped.push(relative.to_path_buf());
+                            }
+                            Some(EntryResidue::Tree)
+                        }
+                        // Removed since it was listed
+                        Err(err) if err.kind() == ErrorKind::NotFound => Some(EntryResidue::Tree),
+                        Err(err) => {
+                            failure.get_or_insert(err);
+                            Some(EntryResidue::Tree)
+                        }
+                    }
+                });
+            for entry in walk {
+                let relative = match entry {
+                    Ok(entry) => entry.root_relative_paths().1.to_path_buf(),
+                    Err(err) => {
+                        let path = err.path().map(Path::to_path_buf);
+                        let depth = err.depth();
+                        let err = io::Error::from(err);
+                        let link = path.as_deref().filter(|path| {
+                            depth > 0
+                                && std::fs::symlink_metadata(path)
+                                    .is_ok_and(|metadata| metadata.file_type().is_symlink())
+                        });
+                        let Some(link) = link else {
+                            return Err(err.into());
+                        };
+                        match err.kind() {
+                            // A link that leads nowhere is matched as itself
+                            io::ErrorKind::NotFound => {}
+                            // A link back to a directory the walk is inside,
+                            // which Windows follows even when it is to stop
+                            // there
+                            io::ErrorKind::Other => {
+                                if !walk::stops_at(link, stop)? {
+                                    return Err(walk::cycle_error(link));
+                                }
+                            }
+                            _ => return Err(err.into()),
+                        }
+                        let Ok(relative) = link.strip_prefix(&walk_root) else {
+                            return Err(err.into());
+                        };
+                        if !glob.is_match(relative) {
+                            continue;
+                        }
+                        relative.to_path_buf()
+                    }
+                };
                 // The walk root reports itself with an empty root-relative
                 // path, and `PathBuf::join("")` appends a trailing separator,
                 // producing a path every later `stat` of a non-directory
@@ -2071,6 +2140,10 @@ impl Direct {
                     prefix.join(relative)
                 });
             }
+            if let Some(err) = failure {
+                return Err(err);
+            }
+            paths.extend(stopped.into_iter().map(|relative| prefix.join(relative)));
 
             paths.sort();
             paths

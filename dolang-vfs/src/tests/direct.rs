@@ -1367,11 +1367,11 @@ async fn direct_remove_without_all() {
 }
 
 #[tokio::test]
-async fn direct_recursion_rejects_stop_target() {
+async fn direct_remove_and_move_reject_stop_target() {
     let direct = Vfs::direct().unwrap();
     let dir = tempdir().unwrap();
     let (tree, _) = tree_with_outside_link(&direct, dir.path()).await;
-    let copy = dir.path().join("copy");
+    let moved = dir.path().join("moved");
 
     let err = direct
         .remove(typed(&tree), true, false, Some(Resolve::Target))
@@ -1379,16 +1379,186 @@ async fn direct_recursion_rejects_stop_target() {
         .unwrap_err();
     assert_eq!(err.kind(), ErrorKind::InvalidInput);
     let err = direct
-        .copy(typed(&tree), typed(&copy), true, Some(Resolve::Target))
-        .await
-        .unwrap_err();
-    assert_eq!(err.kind(), ErrorKind::InvalidInput);
-    let err = direct
-        .move_(typed(&tree), typed(&copy), true, Some(Resolve::Target))
+        .move_(typed(&tree), typed(&moved), true, Some(Resolve::Target))
         .await
         .unwrap_err();
     assert_eq!(err.kind(), ErrorKind::InvalidInput);
     assert!(tree.exists());
+    assert!(!moved.exists());
+}
+
+#[tokio::test]
+async fn direct_copy_stop_target_follows_links() {
+    let direct = Vfs::direct().unwrap();
+    let dir = tempdir().unwrap();
+    let (tree, outside) = tree_with_outside_link(&direct, dir.path()).await;
+    direct
+        .symlink(
+            typed_str(""),
+            typed(&outside.join("keep.txt")),
+            typed(&tree.join("file_link")),
+        )
+        .await
+        .unwrap();
+    let copy = dir.path().join("copy");
+
+    direct
+        .copy(typed(&tree), typed(&copy), true, Some(Resolve::Target))
+        .await
+        .unwrap();
+    for path in ["link", "file_link"] {
+        let metadata = std::fs::symlink_metadata(copy.join(path)).unwrap();
+        assert!(!metadata.file_type().is_symlink(), "{path}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(copy.join("link/keep.txt")).unwrap(),
+        "keep"
+    );
+    assert_eq!(
+        std::fs::read_to_string(copy.join("file_link")).unwrap(),
+        "keep"
+    );
+
+    // The root is followed too
+    let from_link = dir.path().join("from_link");
+    direct
+        .copy(
+            typed(&tree.join("link")),
+            typed(&from_link),
+            true,
+            Some(Resolve::Target),
+        )
+        .await
+        .unwrap();
+    assert!(
+        !std::fs::symlink_metadata(&from_link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(from_link.join("keep.txt").exists());
+
+    dangling_link(&dir.path().join("missing"), &tree.join("dangling"));
+    let err = direct
+        .copy(
+            typed(&tree),
+            typed(&dir.path().join("copy2")),
+            true,
+            Some(Resolve::Target),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::NotFound);
+}
+
+/// Creates a link to a missing target, which `Vfs::symlink` can't on Windows,
+/// where it needs the target to choose a file or directory link.
+fn dangling_link(target: &Path, link: &Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(target, link).unwrap();
+}
+
+async fn glob_strings(
+    direct: &Vfs,
+    pattern: &str,
+    root: &Path,
+    stop: Option<Resolve>,
+) -> crate::error::Result<Vec<String>> {
+    let paths = direct.glob(pattern, typed(root), stop, None).await?;
+    Ok(paths
+        .iter()
+        .map(|path| path.to_string().replace('\\', "/"))
+        .collect())
+}
+
+#[tokio::test]
+async fn direct_glob_stops_at_links_unless_never() {
+    let direct = Vfs::direct().unwrap();
+    let dir = tempdir().unwrap();
+    let (tree, _) = tree_with_outside_link(&direct, dir.path()).await;
+
+    for stop in [None, Some(Resolve::Link), Some(Resolve::Cross)] {
+        assert_eq!(
+            glob_strings(&direct, "**", &tree, stop).await.unwrap(),
+            ["", "link", "nested", "nested/file.txt"],
+            "{stop:?}"
+        );
+    }
+    assert_eq!(
+        glob_strings(&direct, "**", &tree, Some(Resolve::Target))
+            .await
+            .unwrap(),
+        ["", "link", "link/keep.txt", "nested", "nested/file.txt"]
+    );
+    // The base is followed whatever `stop` is, from the prefix or the root
+    assert_eq!(
+        glob_strings(&direct, "link/*", &tree, None).await.unwrap(),
+        ["link/keep.txt"]
+    );
+    assert_eq!(
+        glob_strings(&direct, "*", &tree.join("link"), None)
+            .await
+            .unwrap(),
+        ["keep.txt"]
+    );
+}
+
+#[tokio::test]
+async fn direct_glob_never_reports_dangling_links_and_raises_on_loops() {
+    let direct = Vfs::direct().unwrap();
+    let dir = tempdir().unwrap();
+    let (tree, _) = tree_with_outside_link(&direct, dir.path()).await;
+    dangling_link(&dir.path().join("missing"), &tree.join("dangling"));
+    assert_eq!(
+        glob_strings(&direct, "*", &tree, Some(Resolve::Target))
+            .await
+            .unwrap(),
+        ["dangling", "link", "nested"]
+    );
+
+    direct
+        .symlink(typed_str(""), typed(&tree), typed(&tree.join("nested/up")))
+        .await
+        .unwrap();
+    // Without following, the loop is a link like any other
+    assert_eq!(
+        glob_strings(&direct, "nested/*", &tree, None)
+            .await
+            .unwrap(),
+        ["nested/file.txt", "nested/up"]
+    );
+    let err = glob_strings(&direct, "**", &tree, Some(Resolve::Target))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("directory cycle"), "{err}");
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn direct_glob_stops_at_mounts() {
+    let direct = Vfs::direct().unwrap();
+    let root = Path::new("/");
+    // A mount point the search stops at still matches
+    assert_eq!(
+        glob_strings(&direct, "pro?", root, Some(Resolve::Mount))
+            .await
+            .unwrap(),
+        ["proc"]
+    );
+    assert!(
+        glob_strings(&direct, "pro?/*", root, Some(Resolve::Mount))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        glob_strings(&direct, "pro?/self", root, Some(Resolve::Link))
+            .await
+            .unwrap(),
+        ["proc/self"]
+    );
 }
 
 #[tokio::test]
@@ -1856,7 +2026,7 @@ async fn direct_copy_move_and_glob() {
     assert!(!copied.exists());
 
     let matches = direct
-        .glob("**/*.txt", typed(dir.path()), Resolve::Link, None)
+        .glob("**/*.txt", typed(dir.path()), None, None)
         .await
         .unwrap();
     assert_eq!(matches.len(), 2);

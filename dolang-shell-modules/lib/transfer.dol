@@ -742,7 +742,7 @@ def source_entries source @ Path -> Array[Path]
   if (metadata.type == :DIR:)
     # `**` matches the source directory itself, which sorts first and must not
     # become an entry
-    [...(source.glob "**" resolve: :LINK:).skip(1)]
+    [...(source.glob "**" stop: :LINK:).skip(1)]
   else
     [source]
 

@@ -348,7 +348,7 @@ where
 }
 
 const RESOLVE_EXPECTED: &str = "resolve: expected :TARGET:, :LINK:, :MOUNT: or :CROSS:";
-const STOP_EXPECTED: &str = "stop: expected :LINK:, :MOUNT: or :CROSS:";
+const STOP_EXPECTED: &str = "stop: expected :NEVER:, :LINK:, :MOUNT: or :CROSS:";
 
 pub(crate) fn resolve_sym<'v, 's>(
     strand: &mut Strand<'v, 's>,
@@ -362,8 +362,9 @@ pub(crate) fn resolve_sym<'v, 's>(
     }
 }
 
-/// Parses the `stop:` of a recursive operation, which takes any `Resolve`
-/// but `:TARGET:`. `None` leaves the operation's default.
+/// Parses the `stop:` of a recursive operation: `:NEVER:`, which is
+/// `Resolve::Target` in the VFS, or any other `Resolve` but `:TARGET:`.
+/// `None` leaves the operation's default.
 fn stop_sym<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, FsGlobal<'v>>,
@@ -372,6 +373,9 @@ fn stop_sym<'v, 's>(
     let Some(slot) = slot else {
         return Ok(None);
     };
+    if slot.as_sym(strand) == Some(global.syms.never) {
+        return Ok(Some(Resolve::Target));
+    }
     match parse_resolve(strand, global, slot, STOP_EXPECTED)? {
         Resolve::Target => Err(Error::value(strand, STOP_EXPECTED)),
         stop => Ok(Some(stop)),
@@ -1025,7 +1029,7 @@ async fn glob<'v, 's>(
     root: Option<vfs_path::Path<'_>>,
     pattern: Slot<'v, '_>,
     max_depth: Option<Slot<'v, '_>>,
-    resolve: Option<Slot<'v, '_>>,
+    stop: Option<Slot<'v, '_>>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     let pattern = pattern
@@ -1036,7 +1040,7 @@ async fn glob<'v, 's>(
         Some(v) => Some(v.to_usize(strand)?),
         None => None,
     };
-    let resolve = resolve_sym(strand, global, resolve, Resolve::Link)?;
+    let stop = stop_sym(strand, global, stop)?;
 
     let root = root.unwrap_or_else(
         || match global.local.get(strand).target().os().path_kind() {
@@ -1048,7 +1052,7 @@ async fn glob<'v, 's>(
     let vfs = global.local.get(strand).vfs();
 
     let paths = vfs
-        .glob(pattern, abs_root.to_path(), resolve, max_depth)
+        .glob(pattern, abs_root.to_path(), stop, max_depth)
         .await
         .into_sys(strand)?;
 
@@ -1625,9 +1629,9 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             entries(strand, global, path, out).await
         })
         .function("glob", async move |strand, args, out| {
-            let ([pattern], [max_depth, resolve]) =
-                unpack!(strand, args, 1, 0, max_depth = None, resolve = None)?;
-            glob(strand, global, None, pattern, max_depth, resolve, out).await
+            let ([pattern], [max_depth, stop]) =
+                unpack!(strand, args, 1, 0, max_depth = None, stop = None)?;
+            glob(strand, global, None, pattern, max_depth, stop, out).await
         })
         .function("create_dir", async move |strand, args, _out| {
             let ([path], [all]) = unpack!(strand, args, 1, 0, all = None)?;

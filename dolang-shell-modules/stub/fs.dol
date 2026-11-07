@@ -38,9 +38,9 @@ import
 #
 # Many functions take a `resolve:` parameter. The values form a scale: each
 # opens the final component as itself, rather than following it, for
-# everything the value before it does, and more. The recursive forms of
-# [`remove`](fs.remove), [`copy`](fs.copy) and [`move`](fs.move) take a point
-# on the same scale as [`Stop`](fs.Stop).
+# everything the value before it does, and more. [`glob`](fs.glob) and the
+# recursive forms of [`remove`](fs.remove), [`copy`](fs.copy) and
+# [`move`](fs.move) take a point on the same scale as [`Stop`](fs.Stop).
 #
 # Unix can't open the directory a mount covers, so `:MOUNT:` and `:CROSS:` open
 # a mount point as `:LINK:` does, and `metadata` returns the mounted
@@ -52,7 +52,7 @@ pub @let Resolve = $
   | :TARGET:
   # Opens a symbolic link as itself. For example, given a symlink
   # `link -> target`, `metadata link resolve: :LINK:` returns the link's own
-  # metadata rather than the target's. This is the default for `glob`.
+  # metadata rather than the target's.
   | :LINK:
   # Also opens an explicit mount point as itself: a junction or volume mount
   # point on Windows, or the root of a mounted filesystem on Unix. A btrfs
@@ -66,9 +66,13 @@ pub @let Resolve = $
 
 # Where a recursive operation stops descending, as a point on the
 # [`Resolve`](fs.Resolve) scale: the operation never descends into anything
-# that value would open as itself. Recursion never follows a symbolic link, so
-# there is no `:TARGET:`.
+# that value would open as itself. `:NEVER:` takes the place of `:TARGET:`.
 pub @let Stop = $
+  # Never stops: follows symbolic links, and descends into every mount and
+  # crossing point. A link that leads back to a directory the walk is inside
+  # raises an error. [`remove`](fs.remove) and [`move`](fs.move) don't support
+  # it.
+  | :NEVER:
   # Stops at symbolic links, descending into mounts and other crossing points
   | :LINK:
   # Also stops at explicit mount points: junctions, volume mount points and
@@ -1487,7 +1491,8 @@ pub class Path
   # The method form of [`fs.glob`](fs.glob), searching within this
   # path.
   #
-  # Yielded paths contain this path as a prefix.
+  # Yielded paths contain this path as a prefix. This path is always followed,
+  # even when it is a link.
   pub def glob
     self
     # Glob pattern.
@@ -1495,8 +1500,9 @@ pub class Path
     # Maximum directory depth to traverse. Defaults
     # to unlimited.
     :max_depth @ Int = ...
-    # Resolution mode. Defaults to `:LINK:`. See [`glob`](fs.glob).
-    :resolve @ Resolve = ...
+    # Where the search stops descending. Defaults to `:LINK:`. See
+    # [`glob`](fs.glob).
+    :stop @ Stop = ...
   do -> UnpackIter[Path]
     ...
 
@@ -2446,6 +2452,22 @@ do -> (Iter[UnixDirEntry] | Iter[WindowsDirEntry])
 
 # Returns an iterator over paths matching a glob pattern.
 #
+# The search starts from the pattern's leading literal components, such as
+# `src/lib` in `"src/lib/**/*.rs"`, taken relative to the working directory.
+# That base is always followed, even when it is a link. Below it, the search
+# never descends into a stopping point: anything at `stop` on the
+# [`Resolve`](fs.Resolve) scale, or before it. A stopping point can still
+# match, but nothing below it is searched. The default of `:LINK:` descends
+# into mounts and junctions but not symbolic links, as `find` does without
+# `-L`.
+#
+# With `stop: :NEVER:`, the search follows symbolic links, and a link that
+# leads nowhere matches as itself. A link, junction or mount that leads back
+# to a directory the search is inside raises an error.
+#
+# A pattern without wildcards only checks that its path exists, and ignores
+# `stop`.
+#
 # ## Example
 #
 # ```
@@ -2458,7 +2480,7 @@ do -> (Iter[UnixDirEntry] | Iter[WindowsDirEntry])
 #   echo "Source: $path"
 #
 # # Follow symlinks
-# for path = glob "**/*" resolve: :TARGET:
+# for path = glob "**/*" stop: :NEVER:
 #   echo "Entry: $path"
 # ```
 pub def glob
@@ -2475,12 +2497,8 @@ pub def glob
   # Maximum directory depth to traverse. Defaults to
   # unlimited.
   :max_depth @ Int = ...
-  # Resolution mode. Defaults to `:LINK:`.
-  #
-  # `:TARGET:` follows links while walking; every other value walks without
-  # following symbolic links, the same as `:LINK:`. On Windows, a walk that
-  # doesn't follow links doesn't descend into junctions either.
-  :resolve @ Resolve = ...
+  # Where the search stops descending. Defaults to `:LINK:`.
+  :stop @ Stop = ...
 do -> UnpackIter[Path]
   ...
 
@@ -2525,6 +2543,7 @@ do
 # | [`IsADirectoryError`](sys.IsADirectoryError)           | A path is a directory and `all` isn't set  |
 # | [`ResourceBusyError`](sys.ResourceBusyError)           | A stopping point is a mount point          |
 # | [`DirectoryNotEmptyError`](sys.DirectoryNotEmptyError) | A stopping point is a non-empty directory  |
+# | [`InvalidInputError`](sys.InvalidInputError)           | `stop` is `:NEVER:`                        |
 #
 # ## Example
 #
@@ -2591,8 +2610,12 @@ do
 # or junction, and a Unix mount point or other directory as an empty
 # directory, as `cp -x` does.
 #
-# Descending into a junction or mount that leads back to a directory the copy
-# is inside raises rather than looping.
+# With `stop: :NEVER:`, the copy follows links instead, `from` included, and
+# copies what they lead to, as `cp -L` does. A link that leads nowhere raises
+# [`NotFoundError`](sys.NotFoundError).
+#
+# Descending into a link, junction or mount that leads back to a directory the
+# copy is inside raises rather than looping.
 #
 # ## Example
 #
@@ -2627,6 +2650,8 @@ do
 # source holds a mount point, or a non-empty subvolume or OneDrive folder, at a
 # stopping point. The source can still change during the move, so a move that
 # fails partway can leave both copies.
+#
+# `stop: :NEVER:` raises [`InvalidInputError`](sys.InvalidInputError).
 #
 # ## Example
 #

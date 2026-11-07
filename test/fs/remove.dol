@@ -4,6 +4,7 @@ import
   std:
     - ValueError
   sys:
+    - InvalidInputError
     - IsADirectoryError
   test:
     - assert
@@ -79,6 +80,24 @@ def recursion_rejects_stop_target()
   assert_throws $ValueError do move $tree moved all: true stop: :TARGET:
   assert_throws $ValueError do tree.remove all: true stop: :BOGUS:
   assert $exists(tree)
+
+#[test]
+#[vfs]
+def remove_and_move_reject_stop_never()
+  let tree _ = make_tree()
+  assert_throws $InvalidInputError do remove $tree all: true stop: :NEVER:
+  assert_throws $InvalidInputError do move $tree moved all: true stop: :NEVER:
+  assert $exists(tree)
+  assert $!exists("moved")
+
+#[test]
+#[vfs]
+def copy_stop_never_follows_links()
+  let tree _ = make_tree()
+  copy $tree copy all: true stop: :NEVER:
+  let link = metadata (Path("copy") / "link") resolve: :LINK:
+  assert_eq $link.type :DIR:
+  assert_eq (read_str(Path("copy") / "link" / "keep.txt")) keep
 
 #[test]
 #[vfs]
