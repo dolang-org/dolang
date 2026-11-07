@@ -240,9 +240,9 @@ pub class Io: Sink[Value]
 # Buffers reads and writes over another [`Io`](io.Io).
 #
 # Reads fetch ahead, and writes are held back until the buffer fills, a read
-# or seek needs the handle, or the buffer is flushed or closed. A
-# buffer is not closed when it is garbage collected, so close it to keep its
-# pending writes, or use it from a block that closes it.
+# or seek needs the handle, or the buffer is flushed or closed. A buffer that
+# is garbage collected drops its pending writes, so close it to keep them, or
+# use it from a block that closes it.
 #
 # A buffer reads lines and text as well as bytes. Text must be UTF-8, and line
 # endings are not translated. Iterating it yields lines.
