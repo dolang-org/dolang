@@ -1606,10 +1606,10 @@ impl Direct {
     /// byte, rather than reinterpreting its target. This preserves details
     /// (relative vs. absolute, print name vs. substitute name, and the
     /// reparse tag itself) that re-deriving a fresh reparse point from a
-    /// resolved target path cannot recover.
-    pub(super) fn copy_reparse_point_sync(src: &Path, dst: &Path) -> Result<()> {
-        let is_dir = std::fs::symlink_metadata(src)?.is_dir();
-
+    /// resolved target path cannot recover. `is_dir` says whether `src` has
+    /// the directory attribute, which std's file type hides for a junction or
+    /// directory symlink by reporting it as a symlink.
+    pub(super) fn copy_reparse_point_sync(src: &Path, dst: &Path, is_dir: bool) -> Result<()> {
         let mut read_opts = StdOpenOptions::new();
         read_opts
             .read(true)

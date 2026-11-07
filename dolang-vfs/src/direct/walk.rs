@@ -695,7 +695,9 @@ mod windows {
     pub(super) fn copy_stopped(src: &Path, dst: &Path, entry: &Entry) -> Result<()> {
         let src = entry.target.as_deref().unwrap_or(src);
         match entry.level {
-            Some(Resolve::Link | Resolve::Mount) => Direct::copy_reparse_point_sync(src, dst),
+            Some(Resolve::Link | Resolve::Mount) => {
+                Direct::copy_reparse_point_sync(src, dst, entry.dir)
+            }
             _ => Ok(std::fs::create_dir(dst)?),
         }
     }
