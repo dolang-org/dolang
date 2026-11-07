@@ -5,7 +5,7 @@ use std::{
 };
 
 #[cfg(any(windows, target_os = "linux"))]
-use crate::metadata::{AttrFlags, Resolve, Stop};
+use crate::metadata::AttrFlags;
 #[cfg(any(unix, windows))]
 use crate::process::{ProcessControl, Signal, TerminationPolicy};
 use crate::test_temp::tempdir;
@@ -13,7 +13,7 @@ use crate::{
     Vfs,
     error::ErrorKind,
     file::{CopyDest, CopyMode, File, FileLockBehavior, FileLockMode, FileLockRange},
-    metadata::{FileType, MetadataPatch},
+    metadata::{FileType, MetadataPatch, Resolve, Stop},
 };
 #[cfg(windows)]
 use dolang_winterop::security::SecInfo;
