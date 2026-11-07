@@ -71,9 +71,7 @@ let host_tuple_cache = nil
 # The triple rustc builds for when Cargo gets no `--target`.
 def host_tuple()
   if (host_tuple_cache == nil)
-    let output = sub do run rustc -vV
-    let line = output.split("\n").find(do |line| line.starts_with "host: ")
-    host_tuple_cache = line.without_prefix("host: ").trim()
+    host_tuple_cache = sub do run rustc --print host-tuple
   host_tuple_cache
 
 def run_cargo ...args
