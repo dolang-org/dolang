@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     client, direct,
     error::{Error, ErrorKind, Result},
-    metadata::{AttrFlags, FsMetadata, Metadata, Mode},
+    metadata::{AttrFlags, FsMetadata, Metadata, Mode, Resolve},
     path,
     security::{Acl, AclKind},
 };
@@ -876,14 +876,14 @@ impl OpenOptions<'_> {
         self
     }
 
-    /// Enables or disables following the final path component when it is a link.
-    pub fn no_follow(&mut self, no_follow: bool) -> &mut Self {
+    /// Selects how the final path component is resolved.
+    pub fn resolve(&mut self, resolve: Resolve) -> &mut Self {
         match &mut self.inner {
             OpenOptionsInner::Client(opts) => {
-                opts.no_follow(no_follow);
+                opts.resolve(resolve);
             }
             OpenOptionsInner::Direct(opts) => {
-                opts.no_follow(no_follow);
+                opts.resolve(resolve);
             }
         }
         self

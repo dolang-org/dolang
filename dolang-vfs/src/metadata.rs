@@ -5,6 +5,52 @@ use serde::{Deserialize, Serialize};
 
 use crate::security::{OwnershipIdentity, Permission};
 
+/// How far path resolution goes before stopping at the final component.
+///
+/// The levels are ordered: each one opens the final component as itself for
+/// everything the previous level covers, and more. As a recursion boundary
+/// (`stop`), a level means "don't descend into anything this level would open
+/// as itself".
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
+pub enum Resolve {
+    /// Follow every link, including at the final component.
+    #[default]
+    Target,
+    /// Open a final symbolic link as itself.
+    Link,
+    /// Also open an explicit mount point as itself: a junction or volume mount
+    /// point on Windows, a mount root on Unix.
+    Mount,
+    /// Also open any crossing point as itself: any reparse point on Windows, or
+    /// a directory on a different device from its parent on Unix.
+    Cross,
+}
+
+impl Resolve {
+    /// Returns whether a final symbolic link is followed.
+    pub fn follows(self) -> bool {
+        self == Self::Target
+    }
+
+    /// Returns the first level that opens a Windows reparse point with `tag`
+    /// as itself.
+    #[cfg(windows)]
+    pub(crate) fn of_reparse_tag(tag: u32) -> Self {
+        const IO_REPARSE_TAG_SYMLINK: u32 = 0xA000_000C;
+        const IO_REPARSE_TAG_LX_SYMLINK: u32 = 0xA000_001D;
+        // `IsReparseTagNameSurrogate`: the tag names another entity in the
+        // namespace, as a junction or volume mount point does
+        const NAME_SURROGATE: u32 = 0x2000_0000;
+        match tag {
+            IO_REPARSE_TAG_SYMLINK | IO_REPARSE_TAG_LX_SYMLINK => Self::Link,
+            tag if tag & NAME_SURROGATE != 0 => Self::Mount,
+            _ => Self::Cross,
+        }
+    }
+}
+
 /// The kind of filesystem object described by [`Metadata`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FileType {
@@ -22,6 +68,10 @@ pub enum FileType {
     BlockDevice,
     /// Unix-domain socket.
     Socket,
+    /// Windows junction or volume mount point, opened as itself.
+    Junction,
+    /// Any other Windows reparse point, opened as itself.
+    Reparse,
     /// Unrecognized file type.
     Unknown,
 }
@@ -92,6 +142,8 @@ pub struct Metadata {
     pub(crate) ctime: i64,
     /// Nanosecond component of [`ctime`](Self::ctime).
     pub(crate) ctime_nsec: i64,
+    /// Whether the object is a mount point opened as itself.
+    pub(crate) is_mount: bool,
     /// Platform-specific metadata.
     pub(crate) family: MetadataFamily,
 }
@@ -140,6 +192,7 @@ pub(crate) enum UnixMetadataPlatform {
 /// Windows-specific file metadata.
 pub struct WindowsMetadata {
     pub(crate) attrs: u32,
+    pub(crate) reparse_tag: Option<u32>,
     pub(crate) user: Option<Sid>,
     pub(crate) group: Option<Sid>,
 }
@@ -156,6 +209,11 @@ impl Metadata {
     /// Returns the type of the filesystem object.
     pub const fn file_type(&self) -> FileType {
         self.file_type
+    }
+    /// Returns whether the object is a mount point that was opened as itself,
+    /// rather than the root of the filesystem mounted there.
+    pub const fn is_mount(&self) -> bool {
+        self.is_mount
     }
     /// Returns the access time in seconds since the Unix epoch.
     pub const fn atime(&self) -> i64 {
@@ -300,6 +358,10 @@ impl WindowsMetadata {
     /// Returns the Windows file attributes.
     pub const fn attrs(&self) -> u32 {
         self.attrs
+    }
+    /// Returns the reparse tag, if the object is a reparse point.
+    pub const fn reparse_tag(&self) -> Option<u32> {
+        self.reparse_tag
     }
     /// Returns the owner SID, if it was requested and available.
     pub fn user(&self) -> Option<&Sid> {
@@ -649,7 +711,7 @@ pub struct MetadataPatch {
     pub(crate) modified: Option<i128>,
     pub(crate) created: Option<i128>,
     pub(crate) attrs: AttrsPatch,
-    pub(crate) follow: bool,
+    pub(crate) resolve: Resolve,
 }
 impl Default for MetadataPatch {
     fn default() -> Self {
@@ -661,7 +723,7 @@ impl Default for MetadataPatch {
             modified: None,
             created: None,
             attrs: AttrsPatch::default(),
-            follow: true,
+            resolve: Resolve::Target,
         }
     }
 }
@@ -705,9 +767,9 @@ impl MetadataPatch {
         self.attrs.update(flag, value);
         self
     }
-    /// Selects whether the operation follows symbolic links.
-    pub fn follow_links(&mut self, follow: bool) -> &mut Self {
-        self.follow = follow;
+    /// Selects how the final path component is resolved.
+    pub fn resolve(&mut self, resolve: Resolve) -> &mut Self {
+        self.resolve = resolve;
         self
     }
     /// Sets the replacement Unix mode and returns the patch.
@@ -745,9 +807,10 @@ impl MetadataPatch {
         self.attribute(flag, value);
         self
     }
-    /// Selects symbolic-link following and returns the patch.
-    pub fn with_follow_links(mut self, follow: bool) -> Self {
-        self.follow_links(follow);
+    /// Selects how the final path component is resolved and returns the
+    /// patch.
+    pub fn with_resolve(mut self, resolve: Resolve) -> Self {
+        self.resolve(resolve);
         self
     }
     /// Returns whether the patch requests no metadata changes.
@@ -791,6 +854,7 @@ pub(crate) fn metadata_from_std(metadata: std::fs::Metadata) -> Metadata {
             mtime_nsec: metadata.mtime_nsec(),
             ctime: metadata.ctime(),
             ctime_nsec: metadata.ctime_nsec(),
+            is_mount: false,
             family: MetadataFamily::Unix(UnixMetadata {
                 mode: Mode::from_bits_retain(mode),
                 dev: metadata.dev(),
@@ -835,13 +899,38 @@ pub(crate) fn metadata_from_std(metadata: std::fs::Metadata) -> Metadata {
             mtime_nsec: i64::from(system_time_to_parts(metadata.modified().ok()).1),
             ctime: system_time_to_parts(metadata.created().ok()).0,
             ctime_nsec: i64::from(system_time_to_parts(metadata.created().ok()).1),
+            is_mount: false,
             family: MetadataFamily::Windows(WindowsMetadata {
                 attrs: metadata.file_attributes(),
+                reparse_tag: None,
                 user: None,
                 group: None,
             }),
         }
     }
+}
+/// Records the reparse tag of the object `metadata` describes, which was
+/// opened as itself if it has one, and derives the file type from it rather
+/// than from std, which reports every name surrogate, junctions included, as a
+/// symlink.
+#[cfg(windows)]
+pub(crate) fn metadata_with_reparse_tag(mut metadata: Metadata, tag: Option<u32>) -> Metadata {
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+    const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA000_0003;
+    let MetadataFamily::Windows(windows) = &mut metadata.family else {
+        unreachable!()
+    };
+    windows.reparse_tag = tag;
+    let level = tag.map(Resolve::of_reparse_tag);
+    metadata.file_type = match (tag, level) {
+        (_, Some(Resolve::Link)) => FileType::Symlink,
+        (Some(IO_REPARSE_TAG_MOUNT_POINT), _) => FileType::Junction,
+        (Some(_), _) => FileType::Reparse,
+        (None, _) if windows.attrs & FILE_ATTRIBUTE_DIRECTORY != 0 => FileType::Dir,
+        (None, _) => FileType::File,
+    };
+    metadata.is_mount = level == Some(Resolve::Mount);
+    metadata
 }
 #[cfg(windows)]
 pub(crate) fn metadata_with_sids(
@@ -879,7 +968,7 @@ fn system_time_to_parts(time: Option<std::time::SystemTime>) -> (i64, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{AttrFlags, MetadataPatch, Mode};
+    use super::{AttrFlags, MetadataPatch, Mode, Resolve};
     use crate::security::OwnershipIdentity;
 
     #[test]
@@ -892,12 +981,12 @@ mod tests {
             .with_modified(20)
             .with_created(30)
             .with_attribute(AttrFlags::HIDDEN, Some(true))
-            .with_follow_links(false);
+            .with_resolve(Resolve::Link);
 
         assert!(!patch.is_empty());
         assert_eq!(patch.mode, Some(Mode::OWNER_READ));
         assert!(patch.attrs.set.contains(AttrFlags::HIDDEN));
-        assert!(!patch.follow);
+        assert_eq!(patch.resolve, Resolve::Link);
         assert_eq!(
             postcard::from_bytes::<MetadataPatch>(&postcard::to_stdvec(&patch).unwrap()).unwrap(),
             patch

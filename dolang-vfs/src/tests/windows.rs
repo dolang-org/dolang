@@ -342,7 +342,10 @@ async fn streams_run_in_the_server_namespace() {
     std::fs::write(&stream_path, "stream").unwrap();
 
     let (client, server_task) = connected_pair().await;
-    let streams = client.streams(typed(&path), true).await.unwrap();
+    let streams = client
+        .streams(typed(&path), crate::metadata::Resolve::Target)
+        .await
+        .unwrap();
     assert!(streams.iter().any(|entry| entry.name() == "zone"));
 
     stop_pair(client, server_task).await;
@@ -353,4 +356,212 @@ async fn disconnect_ends_the_connected_session_cleanly() {
     let (client, server_task) = connected_pair().await;
     drop(client);
     server_task.await.unwrap().unwrap();
+}
+
+/// Creates a junction at `link` to the directory `target` through
+/// `FSCTL_SET_REPARSE_POINT`, which needs no privilege, and which Wine may
+/// emulate.
+fn junction(link: &Path, target: &Path) -> std::io::Result<()> {
+    use std::os::windows::{ffi::OsStrExt, fs::OpenOptionsExt};
+    use windows_sys::Win32::{
+        Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT},
+        System::{IO::DeviceIoControl, Ioctl::FSCTL_SET_REPARSE_POINT},
+    };
+
+    let target = std::path::absolute(target)?;
+    let print: Vec<u16> = target.as_os_str().encode_wide().collect();
+    let subst: Vec<u16> = r"\??\"
+        .encode_utf16()
+        .chain(print.iter().copied())
+        .collect();
+    let len = |units: &[u16]| u16::try_from(units.len() * 2).unwrap();
+    let path_len = len(&subst) + 2 + len(&print) + 2;
+    // REPARSE_DATA_BUFFER for a mount point: tag, data length, reserved, then
+    // the substitute and print name offsets and lengths, then both names
+    let mut buf = Vec::new();
+    buf.extend(IO_REPARSE_TAG_MOUNT_POINT.to_le_bytes());
+    buf.extend((8 + path_len).to_le_bytes());
+    buf.extend(0u16.to_le_bytes());
+    for field in [0, len(&subst), len(&subst) + 2, len(&print)] {
+        buf.extend(field.to_le_bytes());
+    }
+    for unit in subst.iter().chain([&0]).chain(&print).chain([&0]) {
+        buf.extend(unit.to_le_bytes());
+    }
+
+    std::fs::create_dir(link)?;
+    let result = std::fs::OpenOptions::new()
+        .write(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(link)
+        .and_then(|dir| {
+            let mut returned = 0;
+            let ok = unsafe {
+                DeviceIoControl(
+                    dir.as_raw_handle(),
+                    FSCTL_SET_REPARSE_POINT,
+                    buf.as_ptr().cast(),
+                    u32::try_from(buf.len()).unwrap(),
+                    ptr::null_mut(),
+                    0,
+                    &mut returned,
+                    ptr::null_mut(),
+                )
+            };
+            if ok == 0 {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        });
+    if result.is_err() {
+        let _ = std::fs::remove_dir(link);
+    }
+    result
+}
+
+/// Creates a junction, or returns `false` to skip the test under Wine, which
+/// may not emulate junctions.
+fn try_junction(link: &Path, target: &Path) -> bool {
+    match junction(link, target) {
+        Ok(()) => true,
+        Err(err) if dolang_winterop::is_wine() => {
+            eprintln!("skipping: Wine can't create a junction: {err}");
+            false
+        }
+        Err(err) => panic!("creating junction {}: {err}", link.display()),
+    }
+}
+
+const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA000_0003;
+
+#[tokio::test]
+async fn junction_resolves_as_a_mount() {
+    use crate::metadata::{FileType, Resolve};
+    let dir = tempdir().unwrap();
+    let target = dir.path().join("target");
+    let link = dir.path().join("link");
+    std::fs::create_dir(&target).unwrap();
+    if !try_junction(&link, &target) {
+        return;
+    }
+    let direct = Vfs::direct().unwrap();
+
+    for (resolve, is_mount) in [
+        (Resolve::Target, false),
+        (Resolve::Link, false),
+        (Resolve::Mount, true),
+        (Resolve::Cross, true),
+    ] {
+        let metadata = direct
+            .metadata_resolved(typed(&link), resolve)
+            .await
+            .unwrap();
+        let file_type = if is_mount {
+            FileType::Junction
+        } else {
+            FileType::Dir
+        };
+        assert_eq!(metadata.file_type(), file_type, "{resolve:?}");
+        assert_eq!(metadata.is_mount(), is_mount, "{resolve:?}");
+        let tag = metadata.windows().unwrap().reparse_tag();
+        let expected = is_mount.then_some(IO_REPARSE_TAG_MOUNT_POINT);
+        assert_eq!(tag, expected, "{resolve:?}");
+    }
+
+    let mut entries = direct.read_dir(typed(dir.path())).await.unwrap();
+    let mut found = false;
+    while let Some(entry) = entries.next_entry().await.unwrap() {
+        if entry.file_name() == "link" {
+            assert_eq!(entry.file_type(), FileType::Dir);
+            assert_eq!(entry.reparse_tag(), Some(IO_REPARSE_TAG_MOUNT_POINT));
+            found = true;
+        }
+    }
+    assert!(found);
+}
+
+#[tokio::test]
+async fn recursion_stops_at_junctions_by_operation() {
+    use crate::metadata::{FileType, Resolve};
+    let dir = tempdir().unwrap();
+    let outside = dir.path().join("outside");
+    let tree = dir.path().join("tree");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("keep.txt"), "keep").unwrap();
+    std::fs::create_dir(&tree).unwrap();
+    if !try_junction(&tree.join("link"), &outside) {
+        return;
+    }
+    let direct = Vfs::direct().unwrap();
+
+    // `copy` descends into the junction and copies what it leads to
+    let copy = dir.path().join("copy");
+    direct
+        .copy(typed(&tree), typed(&copy), true, None)
+        .await
+        .unwrap();
+    let metadata = direct
+        .metadata_resolved(typed(&copy.join("link")), Resolve::Cross)
+        .await
+        .unwrap();
+    assert_eq!(metadata.file_type(), FileType::Dir);
+    assert!(!metadata.is_mount());
+    assert!(copy.join("link/keep.txt").exists());
+
+    // Stopping at mounts copies the junction as a junction
+    let copy_mount = dir.path().join("copy_mount");
+    direct
+        .copy(typed(&tree), typed(&copy_mount), true, Some(Resolve::Mount))
+        .await
+        .unwrap();
+    let metadata = direct
+        .metadata_resolved(typed(&copy_mount.join("link")), Resolve::Mount)
+        .await
+        .unwrap();
+    assert!(metadata.is_mount());
+
+    // `remove` removes the junction without touching what it leads to
+    direct
+        .remove(typed(&tree), true, false, None)
+        .await
+        .unwrap();
+    direct
+        .remove(typed(&copy_mount), true, false, None)
+        .await
+        .unwrap();
+    assert!(!tree.exists());
+    assert!(outside.join("keep.txt").exists());
+
+    // Without `all`, a junction is removed like a link
+    std::fs::create_dir(&tree).unwrap();
+    junction(&tree.join("link"), &outside).unwrap();
+    direct
+        .remove(typed(&tree.join("link")), false, false, None)
+        .await
+        .unwrap();
+    assert!(outside.join("keep.txt").exists());
+}
+
+#[tokio::test]
+async fn copy_through_junction_cycle_fails() {
+    let dir = tempdir().unwrap();
+    let tree = dir.path().join("tree");
+    std::fs::create_dir(&tree).unwrap();
+    if !try_junction(&tree.join("loop"), &tree) {
+        return;
+    }
+    let direct = Vfs::direct().unwrap();
+
+    let err = direct
+        .copy(typed(&tree), typed(&dir.path().join("copy")), true, None)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("directory cycle"), "{err}");
+    // `remove` stops at the junction, so the cycle is harmless to it
+    direct
+        .remove(typed(&tree), true, false, None)
+        .await
+        .unwrap();
+    assert!(!tree.exists());
 }

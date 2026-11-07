@@ -12,6 +12,7 @@ use nix::unistd::getgroups;
 use nix::unistd::{Group, User, getegid, geteuid, getgid, getuid};
 use std::{os::fd::OwnedFd, path::Path};
 
+use crate::metadata::Resolve;
 use crate::test_temp::tempdir;
 use tokio::task::JoinHandle;
 
@@ -209,7 +210,7 @@ async fn copy_directory_requires_all() {
 
     let client = connect_client(&socket_path).await;
     let err = client
-        .copy(typed(&src), typed(&dst), false)
+        .copy(typed(&src), typed(&dst), false, None)
         .await
         .unwrap_err();
 
@@ -232,7 +233,10 @@ async fn copy_directory_all() {
     let dst = dir.path().join("dst");
 
     let client = connect_client(&socket_path).await;
-    client.copy(typed(&src), typed(&dst), true).await.unwrap();
+    client
+        .copy(typed(&src), typed(&dst), true, None)
+        .await
+        .unwrap();
 
     assert_eq!(
         std::fs::read_to_string(dst.join("nested").join("file.txt")).unwrap(),
@@ -256,7 +260,10 @@ async fn move_directory_all() {
     let dst = dir.path().join("dst");
 
     let client = connect_client(&socket_path).await;
-    client.move_(typed(&src), typed(&dst), true).await.unwrap();
+    client
+        .move_(typed(&src), typed(&dst), true, None)
+        .await
+        .unwrap();
 
     assert!(!src.exists());
     assert_eq!(
@@ -637,14 +644,17 @@ async fn fs_metadata_basic() {
     std::fs::write(&test_file, "hello_world").unwrap();
 
     let client = connect_client(&socket_path).await;
-    let metadata = client.fs_metadata(typed(&test_file), true).await.unwrap();
+    let metadata = client
+        .fs_metadata(typed(&test_file), Resolve::Target)
+        .await
+        .unwrap();
 
     assert!(metadata.capacity() > 0);
     assert!(metadata.free() > 0);
     assert!(metadata.available() > 0);
     let local = Vfs::direct()
         .unwrap()
-        .fs_metadata(typed(&test_file), true)
+        .fs_metadata(typed(&test_file), Resolve::Target)
         .await
         .unwrap();
     assert!(metadata.fs_type().is_some());
@@ -774,7 +784,7 @@ async fn update_metadata_follow_false_on_dangling_symlink() {
             &[typed(&link_path).to_path_buf()],
             MetadataPatch::new()
                 .with_group(OwnershipIdentity::Id(getgid().as_raw()))
-                .with_follow_links(false),
+                .with_resolve(Resolve::Link),
         )
         .await
         .unwrap();
@@ -887,7 +897,7 @@ async fn glob_basic_matching() {
 
     // Test glob matching *.txt files
     let paths = client
-        .glob("*.txt", typed(dir.path()), false, None)
+        .glob("*.txt", typed(dir.path()), Resolve::Link, None)
         .await
         .unwrap();
 
@@ -916,7 +926,7 @@ async fn glob_recursive() {
 
     // Test recursive glob with **
     let paths = client
-        .glob("**/*.txt", typed(dir.path()), false, None)
+        .glob("**/*.txt", typed(dir.path()), Resolve::Link, None)
         .await
         .unwrap();
 
@@ -947,7 +957,7 @@ async fn glob_max_depth() {
 
     // Test glob with max_depth=1 (should only find root.txt)
     let paths = client
-        .glob("**/*.txt", typed(dir.path()), false, Some(1))
+        .glob("**/*.txt", typed(dir.path()), Resolve::Link, Some(1))
         .await
         .unwrap();
 
@@ -977,7 +987,7 @@ async fn glob_with_prefix() {
 
     // Test glob with prefix (should use partition to extract "subdir1/")
     let paths = client
-        .glob("subdir1/*.txt", typed(dir.path()), false, None)
+        .glob("subdir1/*.txt", typed(dir.path()), Resolve::Link, None)
         .await
         .unwrap();
 
@@ -1002,7 +1012,7 @@ async fn glob_no_matches() {
 
     // Test glob with pattern that matches nothing
     let paths = client
-        .glob("*.rs", typed(dir.path()), false, None)
+        .glob("*.rs", typed(dir.path()), Resolve::Link, None)
         .await
         .unwrap();
 
@@ -1023,7 +1033,7 @@ async fn glob_invalid_pattern() {
 
     // Test glob with invalid pattern (should return error)
     let result = client
-        .glob("[invalid", typed(dir.path()), false, None)
+        .glob("[invalid", typed(dir.path()), Resolve::Link, None)
         .await;
 
     assert!(result.is_err());
@@ -1046,7 +1056,7 @@ async fn glob_local_basic_matching() {
 
     // Test glob matching *.txt files
     let paths = direct
-        .glob("*.txt", typed(dir.path()), false, None)
+        .glob("*.txt", typed(dir.path()), Resolve::Link, None)
         .await
         .unwrap();
 
@@ -1068,7 +1078,7 @@ async fn glob_local_recursive() {
 
     // Test recursive glob with **
     let paths = direct
-        .glob("**/*.txt", typed(dir.path()), false, None)
+        .glob("**/*.txt", typed(dir.path()), Resolve::Link, None)
         .await
         .unwrap();
 
@@ -1092,7 +1102,7 @@ async fn glob_local_max_depth() {
 
     // Test glob with max_depth=1 (should only find root.txt)
     let paths = direct
-        .glob("**/*.txt", typed(dir.path()), false, Some(1))
+        .glob("**/*.txt", typed(dir.path()), Resolve::Link, Some(1))
         .await
         .unwrap();
 
@@ -1118,7 +1128,9 @@ async fn glob_local_bounded_by_pattern_depth() {
     std::fs::write(dir.path().join("root.txt"), "root").unwrap();
     std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000)).unwrap();
 
-    let result = direct.glob("*", typed(dir.path()), false, None).await;
+    let result = direct
+        .glob("*", typed(dir.path()), Resolve::Link, None)
+        .await;
     std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     let paths = result.unwrap();
@@ -1136,7 +1148,7 @@ async fn glob_local_no_matches() {
 
     // Test glob with pattern that matches nothing
     let paths = direct
-        .glob("*.rs", typed(dir.path()), false, None)
+        .glob("*.rs", typed(dir.path()), Resolve::Link, None)
         .await
         .unwrap();
 
@@ -1150,7 +1162,7 @@ async fn glob_local_invalid_pattern() {
 
     // Test glob with invalid pattern (should return error)
     let result = direct
-        .glob("[invalid", typed(dir.path()), false, None)
+        .glob("[invalid", typed(dir.path()), Resolve::Link, None)
         .await;
 
     assert!(result.is_err());

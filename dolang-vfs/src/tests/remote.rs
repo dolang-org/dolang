@@ -1166,23 +1166,35 @@ async fn security_descriptor_round_trip_over_generic_stream() {
     std::fs::write(path.to_path().as_str(), "hello").unwrap();
 
     let descriptor = client
-        .sec_desc(path.to_path(), SecInfo::OWNER | SecInfo::DACL, true)
+        .sec_desc(
+            path.to_path(),
+            SecInfo::OWNER | SecInfo::DACL,
+            crate::metadata::Resolve::Target,
+        )
         .await
         .unwrap();
     assert!(descriptor.owner().is_some());
     assert!(descriptor.dacl_loaded());
     let dacl = client
-        .sec_desc(path.to_path(), SecInfo::DACL, true)
+        .sec_desc(
+            path.to_path(),
+            SecInfo::DACL,
+            crate::metadata::Resolve::Target,
+        )
         .await
         .unwrap();
     // Must succeed rather than be tolerated — see the note in `direct.rs`'s
     // `direct_security_descriptor_path_and_file`.
     client
-        .update_sec_desc(path.to_path(), &dacl, true)
+        .update_sec_desc(path.to_path(), &dacl, crate::metadata::Resolve::Target)
         .await
         .unwrap();
     let round_trip = client
-        .sec_desc(path.to_path(), SecInfo::DACL, true)
+        .sec_desc(
+            path.to_path(),
+            SecInfo::DACL,
+            crate::metadata::Resolve::Target,
+        )
         .await
         .unwrap();
     // Wine quirk — see `direct.rs`'s `direct_security_descriptor_path_and_file`.

@@ -142,8 +142,22 @@ pub(crate) fn file_type_to_sym<'v>(
         FileType::CharacterDevice => global.syms.char_device,
         FileType::BlockDevice => global.syms.block_device,
         FileType::Socket => global.syms.socket,
+        FileType::Junction => global.syms.junction,
+        FileType::Reparse => global.syms.reparse,
         FileType::Unknown => global.syms.unknown,
     }
+}
+
+/// Returns the `fs.windows.ReparseTag` symbol for a reparse tag, or
+/// `:UNKNOWN:` for one outside the documented set.
+pub(crate) fn reparse_tag_to_sym<'v>(tag: u32, global: State<'v, FsGlobal<'v>>) -> Sym<'v, 'v> {
+    let tag = tag & !0xF000;
+    global
+        .syms
+        .reparse_tags
+        .iter()
+        .find_map(|&(known, sym)| (known == tag).then_some(sym))
+        .unwrap_or(global.syms.unknown)
 }
 
 fn timestamp_nanos(secs: i64, nanos: i64) -> i128 {
@@ -242,6 +256,10 @@ impl<'v, const FAMILY: u8> Object<'v> for Metadata<FAMILY> {
                 );
                 Ok(())
             })
+            .get("is_mount", |this, strand, out| {
+                Output::set(strand, out, this.annex().inner.is_mount());
+                Ok(())
+            })
             .get("modified", |this, strand, out| {
                 let annex = this.annex();
                 write_timestamp(strand, annex.inner.mtime(), annex.inner.mtime_nsec(), out)
@@ -314,9 +332,16 @@ impl<'v, const FAMILY: u8> Object<'v> for Metadata<FAMILY> {
                 });
         }
         if FAMILY == FS_WINDOWS {
-            builder = builder.get("win_attrs", move |this, strand, out| {
-                util::option_field(strand, this.annex().inner.win_attrs(), win_attrs, out)
-            });
+            builder = builder
+                .get("win_attrs", move |this, strand, out| {
+                    util::option_field(strand, this.annex().inner.win_attrs(), win_attrs, out)
+                })
+                .get("reparse_tag", |this, strand, out| {
+                    let annex = this.annex();
+                    let tag = annex.inner.windows().and_then(|w| w.reparse_tag());
+                    let tag = tag.map(|tag| reparse_tag_to_sym(tag, annex.global));
+                    util::nullable_field(strand, tag, out)
+                });
         }
         if FAMILY == FS_UNIX {
             builder = builder.get("freebsd_attrs", move |this, strand, out| {
@@ -409,17 +434,6 @@ impl<'v, const FAMILY: u8> Object<'v> for Metadata<FAMILY> {
                         0,
                         0,
                         attrs::freebsd::ARCHIVE,
-                    )
-                })
-                .get("reparse_point", move |this, strand, out| {
-                    attr_field(
-                        strand,
-                        this,
-                        out,
-                        attrs::windows::REPARSE_POINT,
-                        0,
-                        0,
-                        attrs::freebsd::REPARSE_POINT,
                     )
                 });
         }

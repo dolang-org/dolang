@@ -7,7 +7,7 @@ use dolang::runtime::{
 };
 use dolang_vfs::{
     file::{OpenCaps, OpenOptions, ShareMode},
-    metadata::{AttrFlags, Mode as VfsMode},
+    metadata::{AttrFlags, Mode as VfsMode, Resolve},
 };
 use dolang_winterop::security::SecDesc;
 
@@ -115,7 +115,7 @@ pub(crate) struct OpenSpec {
     create: bool,
     create_new: bool,
     truncate: bool,
-    no_follow: bool,
+    resolve: Resolve,
     share: Option<ShareMode>,
     backup: bool,
     mode: Option<VfsMode>,
@@ -306,7 +306,7 @@ impl OpenSpec {
         if let Some(backup) = backup {
             spec.backup = util::bool(strand, backup, "backup")?;
         }
-        spec.no_follow = !super::resolve_sym(strand, global, resolve, true)?;
+        spec.resolve = super::resolve_sym(strand, global, resolve, Resolve::Target)?;
         if let Some(mode) = mode {
             spec.mode = Some(super::parse_mode(strand, global, mode)?);
         }
@@ -331,7 +331,7 @@ impl OpenSpec {
             .create(self.create)
             .create_new(self.create_new)
             .truncate(self.truncate)
-            .no_follow(self.no_follow)
+            .resolve(self.resolve)
             .backup(self.backup)
             .attrs(self.attrs);
         if let Some(access) = self.access {

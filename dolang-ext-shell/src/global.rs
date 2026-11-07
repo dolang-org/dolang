@@ -572,14 +572,18 @@ pub(crate) struct FsSyms<'v> {
     pub(crate) block_device: Sym<'v, 'v>,
     pub(crate) char_device: Sym<'v, 'v>,
     pub(crate) close: Sym<'v, 'v>,
+    pub(crate) cross: Sym<'v, 'v>,
     pub(crate) dir: Sym<'v, 'v>,
     pub(crate) fifo: Sym<'v, 'v>,
     pub(crate) file: Sym<'v, 'v>,
+    pub(crate) junction: Sym<'v, 'v>,
     pub(crate) link: Sym<'v, 'v>,
+    pub(crate) mount: Sym<'v, 'v>,
     pub(crate) namespace: Sym<'v, 'v>,
     pub(crate) namespace_system: Sym<'v, 'v>,
     pub(crate) namespace_user: Sym<'v, 'v>,
     pub(crate) never: Sym<'v, 'v>,
+    pub(crate) reparse: Sym<'v, 'v>,
     pub(crate) require: Sym<'v, 'v>,
     pub(crate) socket: Sym<'v, 'v>,
     pub(crate) symlink: Sym<'v, 'v>,
@@ -587,7 +591,47 @@ pub(crate) struct FsSyms<'v> {
     pub(crate) unknown: Sym<'v, 'v>,
     /// `fs.open` keywords and values.
     pub(crate) open: OpenSyms<'v>,
+    /// Windows reparse tags and their `fs.windows.ReparseTag` symbols.
+    pub(crate) reparse_tags: Vec<(u32, Sym<'v, 'v>)>,
 }
+
+/// The documented `IO_REPARSE_TAG_*` values, looked up with bits 12 to 15
+/// cleared (`IO_REPARSE_TAG_CLOUD_MASK`), which fold `CLOUD_1` through
+/// `CLOUD_F` into `CLOUD`, and `WCI_LINK_1` into `WCI_LINK`.
+pub(crate) const REPARSE_TAGS: [(u32, &str); 31] = [
+    (0xA000_0003, "MOUNT_POINT"),
+    (0xC000_0004, "HSM"),
+    (0x8000_0006, "HSM2"),
+    (0x8000_0007, "SIS"),
+    (0x8000_0008, "WIM"),
+    (0x8000_0009, "CSV"),
+    (0x8000_000A, "DFS"),
+    (0xA000_000C, "SYMLINK"),
+    (0x8000_0012, "DFSR"),
+    (0x8000_0013, "DEDUP"),
+    (0x8000_0014, "NFS"),
+    (0x8000_0015, "FILE_PLACEHOLDER"),
+    (0x8000_0017, "WOF"),
+    (0x8000_0018, "WCI"),
+    // `WCI_1`
+    (0x9000_0018, "WCI"),
+    (0xA000_0019, "GLOBAL_REPARSE"),
+    (0x9000_001A, "CLOUD"),
+    (0x8000_001B, "APPEXECLINK"),
+    (0x9000_001C, "PROJFS"),
+    (0xA000_001D, "LX_SYMLINK"),
+    (0x8000_001E, "STORAGE_SYNC"),
+    (0xA000_001F, "WCI_TOMBSTONE"),
+    (0x8000_0020, "UNHANDLED"),
+    (0x8000_0021, "ONEDRIVE"),
+    (0xA000_0022, "PROJFS_TOMBSTONE"),
+    (0x8000_0023, "AF_UNIX"),
+    (0x8000_0024, "LX_FIFO"),
+    (0x8000_0025, "LX_CHR"),
+    (0x8000_0026, "LX_BLK"),
+    (0xA000_0027, "WCI_LINK"),
+    (0xA000_0028, "DATALESS_CIM"),
+];
 
 pub(crate) struct FsTag;
 
@@ -676,20 +720,28 @@ impl<'v> FsGlobal<'v> {
                 block_device: builder.sym("BLOCK_DEVICE"),
                 char_device: builder.sym("CHAR_DEVICE"),
                 close: builder.sym("close"),
+                cross: builder.sym("CROSS"),
                 dir: builder.sym("DIR"),
                 fifo: builder.sym("FIFO"),
                 file: builder.sym("FILE"),
+                junction: builder.sym("JUNCTION"),
                 link: builder.sym("LINK"),
+                mount: builder.sym("MOUNT"),
                 namespace: builder.sym("namespace"),
                 namespace_system: builder.sym("SYSTEM"),
                 namespace_user: builder.sym("USER"),
                 never: builder.sym("NEVER"),
+                reparse: builder.sym("REPARSE"),
                 require: builder.sym("REQUIRE"),
                 socket: builder.sym("SOCKET"),
                 symlink: builder.sym("SYMLINK"),
                 target: builder.sym("TARGET"),
                 unknown: builder.sym("UNKNOWN"),
                 open: OpenSyms::new(builder),
+                reparse_tags: REPARSE_TAGS
+                    .iter()
+                    .map(|&(tag, name)| (tag, builder.sym(name)))
+                    .collect(),
             },
         }
     }

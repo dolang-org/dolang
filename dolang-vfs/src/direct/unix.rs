@@ -9,7 +9,7 @@ use crate::{
     file::{ShareMode, StreamEntry},
     file::{XattrEntry, XattrNamespace},
     metadata::{
-        FileType, FsMetadata, FsMetadataFamily, MetadataPatch, Mode, UnixFsMetadata,
+        FileType, FsMetadata, FsMetadataFamily, MetadataPatch, Mode, Resolve, UnixFsMetadata,
         UnixFsMetadataPlatform,
     },
     process::ProcessControl,
@@ -238,7 +238,7 @@ impl Direct {
     pub(super) fn sec_desc_from_path(
         _path: &Path,
         _mask: dolang_winterop::security::SecInfo,
-        _follow: bool,
+        _resolve: Resolve,
     ) -> Result<SecDesc> {
         Err(Error::new(
             ErrorKind::Unsupported,
@@ -249,7 +249,7 @@ impl Direct {
     pub(super) fn update_sec_desc_path(
         _path: &Path,
         _descriptor: &SecDesc,
-        _follow: bool,
+        _resolve: Resolve,
     ) -> Result<()> {
         Err(Error::new(
             ErrorKind::Unsupported,
@@ -407,11 +407,12 @@ impl Direct {
         Ok(Self::fs_metadata_from_statvfs(stat, fs_type, fsid))
     }
 
-    pub(super) fn fs_metadata_from_path(path: &Path, follow: bool) -> Result<FsMetadata> {
+    pub(super) fn fs_metadata_from_path(path: &Path, resolve: Resolve) -> Result<FsMetadata> {
+        let follow = resolve.follows();
         if !follow {
             return Err(Error::new(
                 ErrorKind::Unsupported,
-                "fs_metadata follow: false is not implemented on this platform",
+                "fs_metadata resolve: other than :TARGET: is not implemented on this platform",
             ));
         }
         #[cfg(target_os = "linux")]
@@ -439,42 +440,18 @@ impl Direct {
     fn linux_fs_type(fd: BorrowedFd<'_>) -> Option<String> {
         let mount_id = Self::linux_mount_id(fd)?;
         let mountinfo = std::fs::read("/proc/self/mountinfo").ok()?;
-        mountinfo_fs_type(&mountinfo, mount_id)
+        super::mount::mountinfo_fs_type(&mountinfo, mount_id)
     }
 
-    /// Calls `statx` through the raw syscall: the libc wrapper and struct are
-    /// missing on older musl.
     #[cfg(target_os = "linux")]
     fn linux_mount_id(fd: BorrowedFd<'_>) -> Option<u64> {
-        // Prefix of `struct statx` up to `stx_mnt_id`, padded to the full
-        // 256-byte size the kernel writes.
-        #[repr(C)]
-        struct StatxMountId {
-            mask: u32,
-            _head: [u32; 35],
-            mnt_id: u64,
-            _tail: [u64; 13],
-        }
-        const _: () = assert!(std::mem::size_of::<StatxMountId>() == 0x100);
-        const _: () = assert!(std::mem::offset_of!(StatxMountId, mnt_id) == 0x90);
-        const STATX_MNT_ID: u32 = 0x1000;
-
-        let mut buf = MaybeUninit::<StatxMountId>::zeroed();
-        let rc = unsafe {
-            libc::syscall(
-                libc::SYS_statx,
-                fd.as_raw_fd(),
-                c"".as_ptr(),
-                libc::AT_EMPTY_PATH,
-                STATX_MNT_ID,
-                buf.as_mut_ptr(),
-            )
-        };
-        if rc != 0 {
-            return None;
-        }
-        let buf = unsafe { buf.assume_init() };
-        (buf.mask & STATX_MNT_ID != 0).then_some(buf.mnt_id)
+        let stat = super::mount::statx(
+            Some(fd),
+            c"",
+            libc::AT_EMPTY_PATH,
+            super::mount::STATX_MNT_ID,
+        )?;
+        (stat.mask & super::mount::STATX_MNT_ID != 0).then_some(stat.mnt_id)
     }
 
     #[cfg(any(target_os = "freebsd", target_os = "macos"))]
@@ -489,7 +466,7 @@ impl Direct {
     }
 
     #[cfg(any(target_os = "freebsd", target_os = "macos"))]
-    fn statfs_from_path(path: &Path) -> Result<libc::statfs> {
+    pub(super) fn statfs_from_path(path: &Path) -> Result<libc::statfs> {
         let path = CString::new(path.as_os_str().as_bytes())?;
         let mut stat = MaybeUninit::<libc::statfs>::uninit();
         let rc = unsafe { libc::statfs(path.as_ptr(), stat.as_mut_ptr()) };
@@ -579,14 +556,32 @@ impl Direct {
         Ok(metadata)
     }
 
+    /// Marks `metadata`, for the object at `path`, as a mount point if it is
+    /// one and `resolve` can see it. Unix can't open the directory a mount
+    /// covers, so `metadata` already describes the mounted root.
+    fn mark_mount(mut metadata: Metadata, path: &Path, resolve: Resolve) -> Result<Metadata> {
+        if resolve >= Resolve::Mount && metadata.file_type == FileType::Dir {
+            let crate::metadata::MetadataFamily::Unix(unix) = &metadata.family else {
+                unreachable!()
+            };
+            let name = CString::new(path.as_os_str().as_bytes())?;
+            metadata.is_mount = super::mount::is_mount_root(None, &name, path, unix.dev, None);
+        }
+        Ok(metadata)
+    }
+
     #[cfg(target_os = "linux")]
-    pub(super) fn metadata_from_path(path: &Path, follow: bool) -> Result<Metadata> {
+    pub(super) fn metadata_from_path(path: &Path, resolve: Resolve) -> Result<Metadata> {
+        let follow = resolve.follows();
         let std_metadata = if follow {
             std::fs::metadata(path)?
         } else {
             std::fs::symlink_metadata(path)?
         };
         let mut metadata = crate::metadata::metadata_from_std(std_metadata);
+        if !follow {
+            return Self::mark_mount(metadata, path, resolve);
+        }
         if !follow
             || !matches!(
                 metadata.file_type,
@@ -696,13 +691,13 @@ impl Direct {
     }
 
     #[cfg(any(target_os = "freebsd", target_os = "macos"))]
-    pub(super) fn metadata_from_path(path: &Path, follow: bool) -> Result<Metadata> {
-        let metadata = if follow {
+    pub(super) fn metadata_from_path(path: &Path, resolve: Resolve) -> Result<Metadata> {
+        let metadata = if resolve.follows() {
             std::fs::metadata(path)?
         } else {
             std::fs::symlink_metadata(path)?
         };
-        Ok(crate::metadata::metadata_from_std(metadata))
+        Self::mark_mount(crate::metadata::metadata_from_std(metadata), path, resolve)
     }
 
     #[cfg(target_os = "macos")]
@@ -1721,11 +1716,6 @@ impl Direct {
         .unwrap_or_else(|_| Err(Error::other("failed to join ownership update task")))
     }
 
-    pub(super) async fn impl_copy_symlink(src: &Path, dst: &Path) -> Result<()> {
-        let target = fs::read_link(src).await?;
-        Self::impl_symlink(Path::new(""), &target, dst).await
-    }
-
     pub(super) async fn impl_symlink(_cwd: &Path, src: &Path, dst: &Path) -> Result<()> {
         Ok(fs::symlink(src, dst).await?)
     }
@@ -1742,8 +1732,9 @@ impl Direct {
         &self,
         path: &Path,
         namespace: XattrNamespace<'_>,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<Vec<XattrEntry>> {
+        let follow = resolve.follows();
         let path = Self::xattr_path(path)?;
         let namespace = Self::unix_xattr_namespace(namespace)?;
         tokio::task::spawn_blocking(move || {
@@ -1756,7 +1747,7 @@ impl Direct {
     pub(super) async fn impl_streams(
         &self,
         _path: &Path,
-        _follow: bool,
+        _resolve: Resolve,
     ) -> Result<Vec<StreamEntry>> {
         Err(Error::new(
             ErrorKind::Unsupported,
@@ -1769,8 +1760,9 @@ impl Direct {
         path: &Path,
         name: &str,
         namespace: Option<&str>,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<Vec<u8>> {
+        let follow = resolve.follows();
         let path = Self::xattr_path(path)?;
         let name = Self::xattr_name(name, namespace)?;
         tokio::task::spawn_blocking(move || {
@@ -1786,8 +1778,9 @@ impl Direct {
         name: &str,
         namespace: Option<&str>,
         value: &[u8],
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<()> {
+        let follow = resolve.follows();
         let path = Self::xattr_path(path)?;
         let name = Self::xattr_name(name, namespace)?;
         let value = value.to_vec();
@@ -1803,8 +1796,9 @@ impl Direct {
         path: &Path,
         name: &str,
         namespace: Option<&str>,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<()> {
+        let follow = resolve.follows();
         let path = Self::xattr_path(path)?;
         let name = Self::xattr_name(name, namespace)?;
         tokio::task::spawn_blocking(move || {
@@ -1893,7 +1887,7 @@ impl Direct {
         if patch.is_empty() {
             return Ok(());
         }
-        if !patch.follow && (patch.mode.is_some() || !patch.attrs.is_empty()) {
+        if !patch.resolve.follows() && (patch.mode.is_some() || !patch.attrs.is_empty()) {
             return Err(Error::new(
                 ErrorKind::Unsupported,
                 "mode and attributes cannot be set without following symlinks on this platform",
@@ -1949,8 +1943,13 @@ impl Direct {
 
         for path in paths {
             if patch.user.is_some() || patch.group.is_some() {
-                self.impl_chown(path, patch.user.clone(), patch.group.clone(), patch.follow)
-                    .await?;
+                self.impl_chown(
+                    path,
+                    patch.user.clone(),
+                    patch.group.clone(),
+                    patch.resolve.follows(),
+                )
+                .await?;
             }
             if let Some(mode) = patch.mode {
                 self.impl_set_permissions(path, mode).await?;
@@ -1964,7 +1963,7 @@ impl Direct {
                     patch.accessed,
                     patch.modified,
                     patch.created,
-                    patch.follow,
+                    patch.resolve.follows(),
                 )
                 .await?;
             }
@@ -2247,7 +2246,7 @@ impl super::OpenOptions {
         if self.truncate {
             flags |= libc::O_TRUNC;
         }
-        if self.no_follow {
+        if !self.resolve.follows() {
             flags |= libc::O_NOFOLLOW;
         }
         if self.is_no_access() {
@@ -2281,64 +2280,5 @@ impl super::OpenOptions {
             .await
             .map_err(Error::other)?
             .map_err(Error::from)
-    }
-}
-
-/// Finds the filesystem type of mount `mount_id` in `/proc/self/mountinfo`
-/// content: the field after the ` - ` separator, with octal escapes decoded.
-#[cfg(target_os = "linux")]
-fn mountinfo_fs_type(mountinfo: &[u8], mount_id: u64) -> Option<String> {
-    mountinfo.split(|&b| b == b'\n').find_map(|line| {
-        let mut fields = line.split(|&b| b == b' ');
-        let id: u64 = std::str::from_utf8(fields.next()?).ok()?.parse().ok()?;
-        if id != mount_id {
-            return None;
-        }
-        // Skip parent ID, major:minor, root, and mount point, then the
-        // variable-length optional fields up to the separator.
-        fields.nth(3)?;
-        fields.find(|field| *field == b"-")?;
-        let fs_type = fields.next()?;
-        let mut name = Vec::with_capacity(fs_type.len());
-        let mut i = 0;
-        while i < fs_type.len() {
-            let escaped = fs_type
-                .get(i + 1..i + 4)
-                .filter(|_| fs_type[i] == b'\\')
-                .and_then(|digits| std::str::from_utf8(digits).ok())
-                .and_then(|digits| u8::from_str_radix(digits, 8).ok());
-            if let Some(byte) = escaped {
-                name.push(byte);
-                i += 4;
-            } else {
-                name.push(fs_type[i]);
-                i += 1;
-            }
-        }
-        String::from_utf8(name).ok().filter(|name| !name.is_empty())
-    })
-}
-
-#[cfg(all(test, target_os = "linux"))]
-mod tests {
-    use super::mountinfo_fs_type;
-
-    const MOUNTINFO: &[u8] = b"\
-22 1 0:21 / /proc rw,nosuid,nodev,noexec,relatime shared:12 - proc proc rw
-36 22 0:32 / / rw,relatime shared:1 master:2 - btrfs /dev/sda2 rw,subvol=/root
-41 36 0:40 / /mnt/a\\040b rw,relatime - fuse.my\\040fs remote:/ rw,user_id=0
-42 36 0:41 / /mnt/- rw - tmpfs tmpfs rw
-";
-
-    #[test]
-    fn mountinfo_lookup() {
-        assert_eq!(mountinfo_fs_type(MOUNTINFO, 22).as_deref(), Some("proc"));
-        assert_eq!(mountinfo_fs_type(MOUNTINFO, 36).as_deref(), Some("btrfs"));
-        assert_eq!(
-            mountinfo_fs_type(MOUNTINFO, 41).as_deref(),
-            Some("fuse.my fs")
-        );
-        assert_eq!(mountinfo_fs_type(MOUNTINFO, 42).as_deref(), Some("tmpfs"));
-        assert_eq!(mountinfo_fs_type(MOUNTINFO, 99), None);
     }
 }

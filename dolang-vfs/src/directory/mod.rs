@@ -15,7 +15,10 @@ pub(crate) enum DirEntryFamily {
     /// Unix-specific entry information.
     Unix { ino: u64 },
     /// Windows entry information.
-    Windows,
+    Windows {
+        /// The reparse tag, if the entry is a reparse point.
+        reparse_tag: Option<u32>,
+    },
 }
 
 impl DirEntry {
@@ -36,7 +39,15 @@ impl DirEntry {
     pub fn ino(&self) -> Option<u64> {
         match self.family {
             DirEntryFamily::Unix { ino } => Some(ino),
-            DirEntryFamily::Windows => None,
+            DirEntryFamily::Windows { .. } => None,
+        }
+    }
+
+    /// Returns the reparse tag when the entry is a Windows reparse point.
+    pub fn reparse_tag(&self) -> Option<u32> {
+        match self.family {
+            DirEntryFamily::Windows { reparse_tag } => reparse_tag,
+            DirEntryFamily::Unix { .. } => None,
         }
     }
 

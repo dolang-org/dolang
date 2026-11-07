@@ -30,7 +30,7 @@ pub(crate) const COPY_LIMIT: u64 = 2 * 1024 * 1024;
 /// where the volume serial lives on the *filesystem* metadata instead. Asking
 /// the platform directly costs one call on an already-open handle and works
 /// on both.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct FileId {
     pub(crate) volume: u64,
     pub(crate) index: u64,

@@ -405,11 +405,6 @@ pub class Metadata: fs.Metadata
   pub def archive self -> (Bool | nil)
     ...
 
-  # Whether the reparse-point attribute is set.
-  #[getter]
-  pub def reparse_point self -> (Bool | nil)
-    ...
-
   # Whether the offline attribute is set.
   #[getter]
   pub def offline self -> (Bool | nil)
