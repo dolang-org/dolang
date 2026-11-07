@@ -10,7 +10,10 @@ use crate::security::MacosAcl;
 use crate::security::Nfs4Acl;
 #[cfg(any(target_os = "freebsd", target_os = "linux"))]
 use crate::security::PosixAcl;
-use crate::security::{Acl, AclKind};
+use crate::{
+    metadata::Resolve,
+    security::{Acl, AclKind},
+};
 
 #[cfg(target_os = "freebsd")]
 mod freebsd;
@@ -111,8 +114,9 @@ impl Direct {
         path: &Path,
         kind: AclKind,
         default: bool,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<Option<Acl>> {
+        let follow = resolve.follows();
         check_default(kind, default)?;
         #[cfg(target_os = "linux")]
         return linux::get(path, kind, default, follow);
@@ -127,8 +131,9 @@ impl Direct {
         kind: AclKind,
         acl: Option<&Acl>,
         default: bool,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<()> {
+        let follow = resolve.follows();
         check_default(kind, default)?;
         #[cfg(target_os = "linux")]
         return linux::set(path, kind, acl, default, follow);

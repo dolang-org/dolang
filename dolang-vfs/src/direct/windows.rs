@@ -1,12 +1,15 @@
-use super::{Child, Command, Direct, File, OpenOptions};
+use super::{
+    Child, Command, Direct, File, OpenOptions,
+    win_dir::{self, DirIter},
+};
 use crate::{
     directory::{DirEntry, DirEntryFamily},
     error::{Error, ErrorKind, Result},
     file::{AccessFlags, FileId, ShareMode, StreamEntry},
     file::{XattrEntry, XattrNamespace},
     metadata::{
-        AttrFlags, AttrsPatch, FileType, FsMetadata, FsMetadataFamily, Metadata, MetadataPatch,
-        WindowsFsMetadata, metadata_from_std, metadata_with_sids,
+        AttrFlags, AttrsPatch, FsMetadata, FsMetadataFamily, Metadata, MetadataPatch, Resolve,
+        WindowsFsMetadata, metadata_from_std, metadata_with_reparse_tag, metadata_with_sids,
     },
     security::{Acl, AclKind, OwnershipIdentity, SidName, SidNameUse},
 };
@@ -37,7 +40,7 @@ use windows_sys::{
     },
     Win32::{
         Foundation::{
-            ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_HANDLE_EOF,
+            ERROR_ALREADY_EXISTS, ERROR_CANT_ACCESS_FILE, ERROR_FILE_NOT_FOUND, ERROR_HANDLE_EOF,
             ERROR_INSUFFICIENT_BUFFER, ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER,
             ERROR_MORE_DATA, ERROR_NONE_MAPPED, ERROR_NOT_SUPPORTED, GENERIC_READ, GENERIC_WRITE,
             GetLastError, INVALID_HANDLE_VALUE, LocalFree, MAX_PATH, RtlNtStatusToDosError, S_OK,
@@ -62,10 +65,11 @@ use windows_sys::{
             BY_HANDLE_FILE_INFORMATION, COMPRESSION_FORMAT_DEFAULT, COMPRESSION_FORMAT_NONE,
             CREATE_NEW, CreateFileW, DELETE, FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_HIDDEN,
             FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED, FILE_ATTRIBUTE_OFFLINE,
-            FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_SYSTEM, FILE_ATTRIBUTE_TEMPORARY,
-            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_WRITE,
-            FILE_RENAME_INFO, FILE_RENAME_INFO_0, FILE_SHARE_DELETE, FILE_SHARE_READ,
-            FILE_SHARE_WRITE, FILE_STREAM_INFO, FILE_WRITE_DATA, FileRenameInfo, FileRenameInfoEx,
+            FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_SYSTEM,
+            FILE_ATTRIBUTE_TAG_INFO, FILE_ATTRIBUTE_TEMPORARY, FILE_FLAG_BACKUP_SEMANTICS,
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_WRITE, FILE_RENAME_INFO, FILE_RENAME_INFO_0,
+            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STREAM_INFO,
+            FILE_WRITE_DATA, FileAttributeTagInfo, FileRenameInfo, FileRenameInfoEx,
             FileStreamInfo, GetDiskFreeSpaceExW, GetDiskFreeSpaceW, GetFileAttributesW,
             GetFileInformationByHandle, GetFileInformationByHandleEx, GetFinalPathNameByHandleW,
             GetVolumeInformationByHandleW, INVALID_FILE_ATTRIBUTES,
@@ -105,38 +109,58 @@ use windows_sys::{
 
 #[derive(Debug)]
 pub(crate) struct ReadDir {
-    inner: Box<tokio::fs::ReadDir>,
+    /// The listing, or `None` once it is exhausted.
+    iter: Option<Box<DirIter>>,
+    pending: std::collections::VecDeque<DirEntry>,
 }
 
 impl ReadDir {
+    /// Entries read per trip to the blocking pool.
+    const BATCH: usize = 128;
+
     pub(super) async fn open(path: &Path) -> Result<Self> {
+        let path = path.to_path_buf();
+        let handle = tokio::task::spawn_blocking(move || win_dir::open_dir(&path, false, true))
+            .await
+            .map_err(Error::other)??;
         Ok(Self {
-            inner: Box::new(tokio::fs::read_dir(path).await?),
+            iter: Some(Box::new(DirIter::new(handle))),
+            pending: std::collections::VecDeque::new(),
         })
     }
 
     pub(crate) async fn next_entry(&mut self) -> Result<Option<DirEntry>> {
-        let Some(entry) = self.inner.next_entry().await? else {
-            return Ok(None);
-        };
-        let file_type = entry.file_type().await?;
-        let file_type = if file_type.is_file() {
-            FileType::File
-        } else if file_type.is_dir() {
-            FileType::Dir
-        } else if file_type.is_symlink() {
-            FileType::Symlink
-        } else {
-            FileType::Unknown
-        };
-        let file_name = entry.file_name().into_string().map_err(|_| {
-            Error::new(ErrorKind::InvalidData, "directory entry is not valid UTF-8")
-        })?;
-        Ok(Some(DirEntry::new(
-            file_name,
-            file_type,
-            DirEntryFamily::Windows,
-        )))
+        if self.pending.is_empty()
+            && let Some(mut iter) = self.iter.take()
+        {
+            let (iter, entries) = tokio::task::spawn_blocking(move || {
+                let mut entries = Vec::new();
+                while entries.len() < Self::BATCH {
+                    match iter.next_entry()? {
+                        Some(entry) => entries.push(entry),
+                        None => return Ok::<_, Error>((None, entries)),
+                    }
+                }
+                Ok((Some(iter), entries))
+            })
+            .await
+            .map_err(Error::other)??;
+            self.iter = iter;
+            for entry in entries {
+                let file_type = entry.file_type();
+                let file_name = entry.name.into_string().map_err(|_| {
+                    Error::new(ErrorKind::InvalidData, "directory entry is not valid UTF-8")
+                })?;
+                self.pending.push_back(DirEntry::new(
+                    file_name,
+                    file_type,
+                    DirEntryFamily::Windows {
+                        reparse_tag: entry.tag,
+                    },
+                ));
+            }
+        }
+        Ok(self.pending.pop_front())
     }
 }
 
@@ -164,10 +188,14 @@ impl File {
     /// `WindowsMetadata` carries neither — its volume serial lives on the
     /// *filesystem* metadata — so this asks the platform directly.
     pub(super) fn impl_id(file: &std::fs::File) -> Result<FileId> {
+        Self::handle_id(file.as_handle())
+    }
+
+    pub(super) fn handle_id(handle: BorrowedHandle<'_>) -> Result<FileId> {
         let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { mem::zeroed() };
-        // SAFETY: the handle is borrowed from a live `File` and `info` is a
+        // SAFETY: the handle is borrowed from a live owner and `info` is a
         // correctly sized, writable output buffer.
-        let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &raw mut info) };
+        let ok = unsafe { GetFileInformationByHandle(handle.as_raw_handle(), &raw mut info) };
         if ok == 0 {
             return Err(Error::last_os_error());
         }
@@ -298,7 +326,7 @@ impl Direct {
         _path: &Path,
         _kind: AclKind,
         _default: bool,
-        _follow: bool,
+        _resolve: Resolve,
     ) -> Result<Option<Acl>> {
         Err(Error::new(
             ErrorKind::Unsupported,
@@ -311,7 +339,7 @@ impl Direct {
         _kind: AclKind,
         _acl: Option<&Acl>,
         _default: bool,
-        _follow: bool,
+        _resolve: Resolve,
     ) -> Result<()> {
         Err(Error::new(
             ErrorKind::Unsupported,
@@ -342,10 +370,105 @@ impl Direct {
         ))
     }
 
-    fn security_handle(path: &Path, access: u32, follow: bool) -> Result<OwnedHandle> {
+    /// Returns the attributes and reparse tag of the object at `path`, opening
+    /// a final reparse point as itself.
+    pub(super) fn probe_entry(path: &Path) -> Result<(u32, Option<u32>)> {
+        let handle = Self::security_handle_flags(path, 0, true)?;
+        Self::attribute_tag(handle.as_handle())
+    }
+
+    /// Returns the reparse tag of the object `handle` refers to, if it is a
+    /// reparse point.
+    pub(super) fn reparse_tag(handle: BorrowedHandle<'_>) -> Result<Option<u32>> {
+        Ok(Self::attribute_tag(handle)?.1)
+    }
+
+    /// Returns the attributes of the object `handle` refers to, and its
+    /// reparse tag if it is a reparse point.
+    fn attribute_tag(handle: BorrowedHandle<'_>) -> Result<(u32, Option<u32>)> {
+        let mut info: FILE_ATTRIBUTE_TAG_INFO = unsafe { mem::zeroed() };
+        let status = unsafe {
+            GetFileInformationByHandleEx(
+                handle.as_raw_handle(),
+                FileAttributeTagInfo,
+                (&raw mut info).cast(),
+                u32::try_from(mem::size_of::<FILE_ATTRIBUTE_TAG_INFO>()).unwrap(),
+            )
+        };
+        if status == 0 {
+            return Err(Error::last_os_error());
+        }
+        let tag =
+            (info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0).then_some(info.ReparseTag);
+        Ok((info.FileAttributes, tag))
+    }
+
+    /// Returns whether opening `path` the way `resolve` asks needs
+    /// `FILE_FLAG_OPEN_REPARSE_POINT`: whether its final component, if it is a
+    /// reparse point, is one `resolve` opens as itself.
+    ///
+    /// This probes with a handle that can't touch the file's contents, so a
+    /// write or truncating open never lands on a reparse point it then has to
+    /// follow. A probe that fails says to open the final component as itself,
+    /// and leaves the real open to report the error.
+    fn opens_reparse_point(path: &Path, resolve: Resolve) -> bool {
+        if resolve == Resolve::Target {
+            return false;
+        }
+        let wide = Self::path_wide(path);
+        let handle = unsafe {
+            CreateFileW(
+                wide.as_ptr(),
+                0,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                ptr::null(),
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                ptr::null_mut(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            return true;
+        }
+        let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
+        match Self::reparse_tag(handle.as_handle()) {
+            Ok(Some(tag)) => Resolve::of_reparse_tag(tag) <= resolve,
+            _ => true,
+        }
+    }
+
+    /// Opens `path` the way `resolve` asks, calling `open` with whether to
+    /// pass `FILE_FLAG_OPEN_REPARSE_POINT`.
+    ///
+    /// Some reparse points can't be followed by Win32 at all (app execution
+    /// aliases, WSL symlinks), and fail with `ERROR_CANT_ACCESS_FILE`. Those
+    /// are opened as themselves instead, as Python's `os.stat` does.
+    fn open_resolved<T>(
+        path: &Path,
+        resolve: Resolve,
+        open: impl Fn(bool) -> Result<T>,
+    ) -> Result<T> {
+        let reparse = Self::opens_reparse_point(path, resolve);
+        match open(reparse) {
+            Err(err)
+                if !reparse && err.raw_os_error() == Some(ERROR_CANT_ACCESS_FILE.cast_signed()) =>
+            {
+                open(true)
+            }
+            result => result,
+        }
+    }
+
+    fn security_handle(path: &Path, access: u32, resolve: Resolve) -> Result<OwnedHandle> {
+        Self::open_resolved(path, resolve, |reparse| {
+            Self::security_handle_flags(path, access, reparse)
+        })
+    }
+
+    fn security_handle_flags(path: &Path, access: u32, reparse: bool) -> Result<OwnedHandle> {
         let path = Self::path_wide(path);
         let mut flags = FILE_FLAG_BACKUP_SEMANTICS;
-        if !follow {
+        if reparse {
             flags |= FILE_FLAG_OPEN_REPARSE_POINT;
         }
         let open = || {
@@ -486,7 +609,7 @@ impl Direct {
     pub(super) fn sec_desc_from_path(
         path: &Path,
         mask: dolang_winterop::security::SecInfo,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<SecDesc> {
         let mask = mask & SecInfo::ALL;
         let access = if mask.is_empty() || mask.intersects(SecInfo::ALL - SecInfo::SACL) {
@@ -498,14 +621,14 @@ impl Direct {
         } else {
             0
         };
-        let handle = Self::security_handle(path, access, follow)?;
+        let handle = Self::security_handle(path, access, resolve)?;
         Self::sec_desc_from_handle(handle.as_handle(), mask)
     }
 
     pub(super) fn update_sec_desc_path(
         path: &Path,
         descriptor: &SecDesc,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<()> {
         let mask = descriptor.mask();
         let mut access = 0;
@@ -523,7 +646,7 @@ impl Direct {
         if mask.contains(SecInfo::SACL) {
             access |= ACCESS_SYSTEM_SECURITY | READ_CONTROL;
         }
-        let handle = Self::security_handle(path, access, follow)?;
+        let handle = Self::security_handle(path, access, resolve)?;
         Self::update_sec_desc_on_handle(handle.as_handle(), descriptor)
     }
 
@@ -765,7 +888,7 @@ impl Direct {
             return Err(Error::last_os_error());
         }
 
-        let root_handle = Self::open_for_metadata(root, true)?;
+        let root_handle = Self::open_for_metadata(root, Resolve::Target)?;
 
         let mut serial = 0u32;
         let mut max_component = 0u32;
@@ -842,28 +965,22 @@ impl Direct {
         file: &std::fs::File,
     ) -> Result<Metadata> {
         let descriptor = Self::sec_desc_from_file(file, SecInfo::OWNER | SecInfo::GROUP)?;
+        let tag = Self::reparse_tag(file.as_handle())?;
         Ok(metadata_with_sids(
-            metadata_from_std(metadata),
+            metadata_with_reparse_tag(metadata_from_std(metadata), tag),
             descriptor.owner().cloned(),
             descriptor.group().cloned(),
         ))
     }
 
-    pub(super) fn metadata_from_path(path: &Path, follow: bool) -> Result<Metadata> {
-        let metadata = if follow {
-            std::fs::metadata(path)?
-        } else {
-            std::fs::symlink_metadata(path)?
-        };
-        let descriptor = Self::sec_desc_from_path(path, SecInfo::OWNER | SecInfo::GROUP, follow)?;
-        Ok(metadata_with_sids(
-            metadata_from_std(metadata),
-            descriptor.owner().cloned(),
-            descriptor.group().cloned(),
-        ))
+    pub(super) fn metadata_from_path(path: &Path, resolve: Resolve) -> Result<Metadata> {
+        let handle = Self::security_handle(path, READ_CONTROL, resolve)?;
+        let file = StdFile::from(handle);
+        Self::metadata_with_security(file.metadata()?, &file)
     }
 
-    pub(super) fn fs_metadata_from_path(path: &Path, follow: bool) -> Result<FsMetadata> {
+    pub(super) fn fs_metadata_from_path(path: &Path, resolve: Resolve) -> Result<FsMetadata> {
+        let follow = resolve.follows();
         let root = if follow {
             Self::volume_root_path(&std::fs::canonicalize(path)?)?
         } else {
@@ -955,8 +1072,8 @@ impl Direct {
         }
     }
 
-    pub(super) fn open_for_metadata(path: &Path, follow: bool) -> Result<Arc<StdFile>> {
-        let handle = Self::security_handle(path, 0, follow)?;
+    pub(super) fn open_for_metadata(path: &Path, resolve: Resolve) -> Result<Arc<StdFile>> {
+        let handle = Self::security_handle(path, 0, resolve)?;
         Ok(Arc::new(StdFile::from(handle)))
     }
 
@@ -1485,21 +1602,14 @@ impl Direct {
         Ok(fs::symlink_file(src, dst).await?)
     }
 
-    pub(super) async fn impl_copy_symlink(src: &Path, dst: &Path) -> Result<()> {
-        let (src, dst) = (src.to_path_buf(), dst.to_path_buf());
-        tokio::task::spawn_blocking(move || Self::copy_reparse_point_sync(&src, &dst))
-            .await
-            .unwrap_or_else(|_| Err(Error::other("copy symlink task failed")))
-    }
-
     /// Duplicates a reparse point (symlink, junction, or otherwise) byte for
     /// byte, rather than reinterpreting its target. This preserves details
     /// (relative vs. absolute, print name vs. substitute name, and the
     /// reparse tag itself) that re-deriving a fresh reparse point from a
-    /// resolved target path cannot recover.
-    fn copy_reparse_point_sync(src: &Path, dst: &Path) -> Result<()> {
-        let is_dir = std::fs::symlink_metadata(src)?.is_dir();
-
+    /// resolved target path cannot recover. `is_dir` says whether `src` has
+    /// the directory attribute, which std's file type hides for a junction or
+    /// directory symlink by reporting it as a symlink.
+    pub(super) fn copy_reparse_point_sync(src: &Path, dst: &Path, is_dir: bool) -> Result<()> {
         let mut read_opts = StdOpenOptions::new();
         read_opts
             .read(true)
@@ -1580,20 +1690,24 @@ impl Direct {
         &self,
         path: &Path,
         namespace: XattrNamespace<'_>,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<Vec<XattrEntry>> {
         let file = self
             .direct_open_options()
             .read(true)
-            .no_follow(!follow)
+            .resolve(resolve)
             .open(typed_windows_path(path)?)
             .await
             .map_err(crate::error::Error::into_io_error)?;
         Self::impl_file_xattrs(&file.fd()?, namespace).await
     }
 
-    pub(super) async fn impl_streams(&self, path: &Path, follow: bool) -> Result<Vec<StreamEntry>> {
-        let file = Self::open_for_metadata(path, follow)?;
+    pub(super) async fn impl_streams(
+        &self,
+        path: &Path,
+        resolve: Resolve,
+    ) -> Result<Vec<StreamEntry>> {
+        let file = Self::open_for_metadata(path, resolve)?;
         Self::impl_file_streams(&file).await
     }
 
@@ -1602,12 +1716,12 @@ impl Direct {
         path: &Path,
         name: &str,
         namespace: Option<&str>,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<Vec<u8>> {
         let file = self
             .direct_open_options()
             .read(true)
-            .no_follow(!follow)
+            .resolve(resolve)
             .open(typed_windows_path(path)?)
             .await
             .map_err(crate::error::Error::into_io_error)?;
@@ -1620,12 +1734,12 @@ impl Direct {
         name: &str,
         namespace: Option<&str>,
         value: &[u8],
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<()> {
         let file = self
             .direct_open_options()
             .write(true)
-            .no_follow(!follow)
+            .resolve(resolve)
             .open(typed_windows_path(path)?)
             .await
             .map_err(crate::error::Error::into_io_error)?;
@@ -1637,13 +1751,13 @@ impl Direct {
         path: &Path,
         name: &str,
         namespace: Option<&str>,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<()> {
         let file = self
             .direct_open_options()
             .read(true)
             .write(true)
-            .no_follow(!follow)
+            .resolve(resolve)
             .open(typed_windows_path(path)?)
             .await
             .map_err(crate::error::Error::into_io_error)?;
@@ -1737,7 +1851,7 @@ impl Direct {
                 "mode cannot be set on this platform",
             ));
         }
-        if !patch.follow && !patch.attrs.is_empty() {
+        if !patch.resolve.follows() && !patch.attrs.is_empty() {
             return Err(Error::new(
                 ErrorKind::Unsupported,
                 "attributes cannot be set without following symlinks on this platform",
@@ -1786,7 +1900,7 @@ impl Direct {
 
             for path in paths {
                 if let Some(descriptor) = &descriptor {
-                    Self::update_sec_desc_path(&path, descriptor, patch.follow)?;
+                    Self::update_sec_desc_path(&path, descriptor, patch.resolve)?;
                 }
                 if !patch.attrs.is_empty() {
                     Self::set_attrs_path(path.clone(), patch.attrs)?;
@@ -1797,7 +1911,7 @@ impl Direct {
                         patch.accessed,
                         patch.modified,
                         patch.created,
-                        patch.follow,
+                        patch.resolve,
                     )?;
                 }
             }
@@ -1819,19 +1933,21 @@ impl Direct {
         accessed: Option<i128>,
         modified: Option<i128>,
         created: Option<i128>,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<()> {
         use std::{fs::FileTimes, os::windows::fs::FileTimesExt};
         use windows_sys::Win32::Storage::FileSystem::FILE_WRITE_ATTRIBUTES;
 
-        let mut opts = StdOpenOptions::new();
-        opts.access_mode(FILE_WRITE_ATTRIBUTES);
-        let mut flags = FILE_FLAG_BACKUP_SEMANTICS;
-        if !follow {
-            flags |= FILE_FLAG_OPEN_REPARSE_POINT;
-        }
-        opts.custom_flags(flags);
-        let file = opts.open(path)?;
+        let file = Self::open_resolved(path, resolve, |reparse| {
+            let mut opts = StdOpenOptions::new();
+            opts.access_mode(FILE_WRITE_ATTRIBUTES);
+            let mut flags = FILE_FLAG_BACKUP_SEMANTICS;
+            if reparse {
+                flags |= FILE_FLAG_OPEN_REPARSE_POINT;
+            }
+            opts.custom_flags(flags);
+            Ok(opts.open(path)?)
+        })?;
         let mut times = FileTimes::new();
         if let Some(accessed) = accessed {
             times = times.set_accessed(nanos_to_system_time(accessed)?);
@@ -2084,14 +2200,14 @@ impl OpenOptions {
             .fold(0, |mask, (_, native)| mask | native))
     }
 
-    fn flags_mask(&self) -> u32 {
+    fn flags_mask(&self, reparse: bool) -> u32 {
         let mut flags = 0;
         if self.extra.backup {
             flags |= FILE_FLAG_BACKUP_SEMANTICS;
         }
         // As std does for an exclusive create, so a dangling link is not
         // followed to create its target.
-        if self.no_follow || self.create_new {
+        if reparse || self.create_new {
             flags |= FILE_FLAG_OPEN_REPARSE_POINT;
         }
         flags
@@ -2107,39 +2223,40 @@ impl OpenOptions {
         let access = self.access_mask();
         let share = self.share_mask();
         let attrs = self.attrs_mask()?;
-        let flags = self.flags_mask();
-        if let Some(sec_desc) = &self.extra.sec_desc {
-            let sec_desc = sec_desc.clone();
-            let (create, create_new, truncate) = (self.create, self.create_new, self.truncate);
-            return tokio::task::spawn_blocking(move || {
-                create_file_with_sec_desc(
-                    &path,
-                    access,
-                    share,
-                    (create, create_new, truncate),
-                    attrs | flags,
-                    &sec_desc,
-                )
+        let flags = [self.flags_mask(false), self.flags_mask(true)];
+        let (create, create_new, truncate) = (self.create, self.create_new, self.truncate);
+        let sec_desc = self.extra.sec_desc.clone();
+        let resolve = self.resolve;
+        tokio::task::spawn_blocking(move || {
+            Direct::open_resolved(&path, resolve, |reparse| {
+                let flags = flags[usize::from(reparse)];
+                if let Some(sec_desc) = &sec_desc {
+                    return create_file_with_sec_desc(
+                        &path,
+                        access,
+                        share,
+                        (create, create_new, truncate),
+                        attrs | flags,
+                        sec_desc,
+                    );
+                }
+                let mut opts = StdOpenOptions::new();
+                // The explicit access mask decides the rights; std's `write`
+                // only gets past its check that creating or truncating needs
+                // write access, which `CreateFileW` itself does not require.
+                opts.write(true)
+                    .access_mode(access)
+                    .share_mode(share)
+                    .create(create)
+                    .create_new(create_new)
+                    .truncate(truncate)
+                    .attributes(attrs)
+                    .custom_flags(flags);
+                Ok(opts.open(&path)?)
             })
-            .await
-            .map_err(Error::other)?;
-        }
-        let mut opts = StdOpenOptions::new();
-        // The explicit access mask decides the rights; std's `write` only
-        // gets past its check that creating or truncating needs write
-        // access, which `CreateFileW` itself does not require.
-        opts.write(true)
-            .access_mode(access)
-            .share_mode(share)
-            .create(self.create)
-            .create_new(self.create_new)
-            .truncate(self.truncate)
-            .attributes(attrs)
-            .custom_flags(flags);
-        tokio::task::spawn_blocking(move || opts.open(path))
-            .await
-            .map_err(Error::other)?
-            .map_err(Error::from)
+        })
+        .await
+        .map_err(Error::other)?
     }
 }
 

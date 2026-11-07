@@ -1,5 +1,8 @@
 use std::collections::HashMap;
-use std::{io, path::Path};
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
 
 #[cfg(any(windows, target_os = "linux"))]
 use crate::metadata::AttrFlags;
@@ -10,7 +13,7 @@ use crate::{
     Vfs,
     error::ErrorKind,
     file::{CopyDest, CopyMode, File, FileLockBehavior, FileLockMode, FileLockRange},
-    metadata::{FileType, MetadataPatch},
+    metadata::{FileType, MetadataPatch, Resolve, Stop},
 };
 #[cfg(windows)]
 use dolang_winterop::security::SecInfo;
@@ -1235,6 +1238,382 @@ async fn direct_symlink_metadata_and_read_link() {
 }
 
 #[tokio::test]
+async fn direct_metadata_resolve_levels_on_symlink() {
+    let direct = Vfs::direct().unwrap();
+    let dir = tempdir().unwrap();
+    let target = dir.path().join("target");
+    let link = dir.path().join("link");
+    tokio::fs::create_dir(&target).await.unwrap();
+    direct
+        .symlink(typed_str(""), typed(&target), typed(&link))
+        .await
+        .unwrap();
+
+    for (resolve, file_type) in [
+        (Resolve::Target, FileType::Dir),
+        (Resolve::Link, FileType::Symlink),
+        (Resolve::Mount, FileType::Symlink),
+        (Resolve::Cross, FileType::Symlink),
+    ] {
+        let metadata = direct
+            .metadata_resolved(typed(&link), resolve)
+            .await
+            .unwrap();
+        assert_eq!(metadata.file_type(), file_type, "{resolve:?}");
+        assert!(!metadata.is_mount(), "{resolve:?}");
+    }
+    let metadata = direct
+        .metadata_resolved(typed(&target), Resolve::Cross)
+        .await
+        .unwrap();
+    assert!(!metadata.is_mount());
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn direct_metadata_marks_mount() {
+    let direct = Vfs::direct().unwrap();
+    let proc = Path::new("/proc");
+    for (resolve, is_mount) in [
+        (Resolve::Target, false),
+        (Resolve::Link, false),
+        (Resolve::Mount, true),
+        (Resolve::Cross, true),
+    ] {
+        let metadata = direct
+            .metadata_resolved(typed(proc), resolve)
+            .await
+            .unwrap();
+        assert_eq!(metadata.file_type(), FileType::Dir);
+        assert_eq!(metadata.is_mount(), is_mount, "{resolve:?}");
+    }
+    let metadata = direct
+        .metadata_resolved(typed(Path::new("/proc/self/fd")), Resolve::Mount)
+        .await
+        .unwrap();
+    assert!(!metadata.is_mount());
+}
+
+/// A tree with a regular file, a nested directory, and a symlink to a
+/// directory outside it, whose contents must survive anything done to the
+/// tree.
+async fn tree_with_outside_link(direct: &Vfs, root: &Path) -> (PathBuf, PathBuf) {
+    let tree = root.join("tree");
+    let outside = root.join("outside");
+    tokio::fs::create_dir_all(tree.join("nested"))
+        .await
+        .unwrap();
+    tokio::fs::write(tree.join("nested/file.txt"), "nested")
+        .await
+        .unwrap();
+    tokio::fs::create_dir(&outside).await.unwrap();
+    tokio::fs::write(outside.join("keep.txt"), "keep")
+        .await
+        .unwrap();
+    direct
+        .symlink(typed_str(""), typed(&outside), typed(&tree.join("link")))
+        .await
+        .unwrap();
+    (tree, outside)
+}
+
+#[tokio::test]
+async fn direct_remove_all_stops_at_symlink() {
+    let direct = Vfs::direct().unwrap();
+    let dir = tempdir().unwrap();
+    let (tree, outside) = tree_with_outside_link(&direct, dir.path()).await;
+
+    for stop in [Stop::Mount, Stop::Cross] {
+        let copy = dir.path().join("copy");
+        direct
+            .copy(typed(&tree), typed(&copy), true, None, false)
+            .await
+            .unwrap();
+        direct
+            .remove(typed(&copy), true, false, stop)
+            .await
+            .unwrap();
+        assert!(!copy.exists(), "{stop:?}");
+        assert!(outside.join("keep.txt").exists(), "{stop:?}");
+    }
+}
+
+#[tokio::test]
+async fn direct_remove_without_all() {
+    let direct = Vfs::direct().unwrap();
+    let dir = tempdir().unwrap();
+    let (tree, outside) = tree_with_outside_link(&direct, dir.path()).await;
+
+    let err = direct
+        .remove(typed(&tree.join("nested")), false, false, Stop::Cross)
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::IsADirectory);
+    // A link to a directory is removed as a link
+    direct
+        .remove(typed(&tree.join("link")), false, false, Stop::Cross)
+        .await
+        .unwrap();
+    assert!(outside.join("keep.txt").exists());
+    let err = direct
+        .remove(typed(&tree.join("missing")), false, false, Stop::Cross)
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::NotFound);
+    direct
+        .remove(typed(&tree.join("missing")), true, true, Stop::Cross)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn direct_copy_follow_follows_links() {
+    let direct = Vfs::direct().unwrap();
+    let dir = tempdir().unwrap();
+    let (tree, outside) = tree_with_outside_link(&direct, dir.path()).await;
+    direct
+        .symlink(
+            typed_str(""),
+            typed(&outside.join("keep.txt")),
+            typed(&tree.join("file_link")),
+        )
+        .await
+        .unwrap();
+    let copy = dir.path().join("copy");
+
+    direct
+        .copy(typed(&tree), typed(&copy), true, None, true)
+        .await
+        .unwrap();
+    for path in ["link", "file_link"] {
+        let metadata = std::fs::symlink_metadata(copy.join(path)).unwrap();
+        assert!(!metadata.file_type().is_symlink(), "{path}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(copy.join("link/keep.txt")).unwrap(),
+        "keep"
+    );
+    assert_eq!(
+        std::fs::read_to_string(copy.join("file_link")).unwrap(),
+        "keep"
+    );
+
+    // The root is followed too
+    let from_link = dir.path().join("from_link");
+    direct
+        .copy(
+            typed(&tree.join("link")),
+            typed(&from_link),
+            true,
+            None,
+            true,
+        )
+        .await
+        .unwrap();
+    assert!(
+        !std::fs::symlink_metadata(&from_link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(from_link.join("keep.txt").exists());
+
+    dangling_link(&dir.path().join("missing"), &tree.join("dangling"));
+    let err = direct
+        .copy(
+            typed(&tree),
+            typed(&dir.path().join("copy2")),
+            true,
+            None,
+            true,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::NotFound);
+}
+
+/// Creates a link to a missing target, which `Vfs::symlink` can't on Windows,
+/// where it needs the target to choose a file or directory link.
+fn dangling_link(target: &Path, link: &Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(target, link).unwrap();
+}
+
+async fn glob_strings(
+    direct: &Vfs,
+    pattern: &str,
+    root: &Path,
+    stop: Option<Stop>,
+    follow: bool,
+) -> crate::error::Result<Vec<String>> {
+    let paths = direct
+        .glob(pattern, typed(root), stop, follow, None)
+        .await?;
+    Ok(paths
+        .iter()
+        .map(|path| path.to_string().replace('\\', "/"))
+        .collect())
+}
+
+#[tokio::test]
+async fn direct_glob_follows_links_only_with_follow() {
+    let direct = Vfs::direct().unwrap();
+    let dir = tempdir().unwrap();
+    let (tree, _) = tree_with_outside_link(&direct, dir.path()).await;
+
+    for stop in [None, Some(Stop::Mount), Some(Stop::Cross)] {
+        assert_eq!(
+            glob_strings(&direct, "**", &tree, stop, false)
+                .await
+                .unwrap(),
+            ["", "link", "nested", "nested/file.txt"],
+            "{stop:?}"
+        );
+        assert_eq!(
+            glob_strings(&direct, "**", &tree, stop, true)
+                .await
+                .unwrap(),
+            ["", "link", "link/keep.txt", "nested", "nested/file.txt"],
+            "{stop:?}"
+        );
+    }
+    // The base is followed either way, from the prefix or the root
+    assert_eq!(
+        glob_strings(&direct, "link/*", &tree, None, false)
+            .await
+            .unwrap(),
+        ["link/keep.txt"]
+    );
+    assert_eq!(
+        glob_strings(&direct, "*", &tree.join("link"), None, false)
+            .await
+            .unwrap(),
+        ["keep.txt"]
+    );
+}
+
+#[tokio::test]
+async fn direct_glob_follow_reports_dangling_links_and_raises_on_loops() {
+    let direct = Vfs::direct().unwrap();
+    let dir = tempdir().unwrap();
+    let (tree, _) = tree_with_outside_link(&direct, dir.path()).await;
+    dangling_link(&dir.path().join("missing"), &tree.join("dangling"));
+    assert_eq!(
+        glob_strings(&direct, "*", &tree, None, true).await.unwrap(),
+        ["dangling", "link", "nested"]
+    );
+
+    direct
+        .symlink(typed_str(""), typed(&tree), typed(&tree.join("nested/up")))
+        .await
+        .unwrap();
+    // Without following, the loop is a link like any other
+    assert_eq!(
+        glob_strings(&direct, "nested/*", &tree, None, false)
+            .await
+            .unwrap(),
+        ["nested/file.txt", "nested/up"]
+    );
+    let err = glob_strings(&direct, "**", &tree, None, true)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("directory cycle"), "{err}");
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn direct_glob_stops_at_mounts() {
+    let direct = Vfs::direct().unwrap();
+    let root = Path::new("/");
+    // A mount point the search stops at still matches
+    assert_eq!(
+        glob_strings(&direct, "pro?", root, Some(Stop::Mount), false)
+            .await
+            .unwrap(),
+        ["proc"]
+    );
+    assert!(
+        glob_strings(&direct, "pro?/*", root, Some(Stop::Mount), false)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        glob_strings(&direct, "pro?/self", root, None, false)
+            .await
+            .unwrap(),
+        ["proc/self"]
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn direct_follow_stops_at_mounts_links_lead_to() {
+    let direct = Vfs::direct().unwrap();
+    let dir = tempdir().unwrap();
+    let (tree, _) = tree_with_outside_link(&direct, dir.path()).await;
+    std::os::unix::fs::symlink("/proc", tree.join("proc")).unwrap();
+
+    // The link to an ordinary directory is followed, and the one to a mount
+    // point is stopped at, but still matches
+    assert_eq!(
+        glob_strings(&direct, "*/*", &tree, Some(Stop::Mount), true)
+            .await
+            .unwrap(),
+        ["link/keep.txt", "nested/file.txt"]
+    );
+    assert_eq!(
+        glob_strings(&direct, "pro?", &tree, Some(Stop::Mount), true)
+            .await
+            .unwrap(),
+        ["proc"]
+    );
+    assert_eq!(
+        glob_strings(&direct, "proc/sel?", &tree, None, true)
+            .await
+            .unwrap(),
+        ["proc/self"]
+    );
+
+    // `copy` copies the mount point as an empty directory
+    std::fs::remove_dir_all(tree.join("nested")).unwrap();
+    let copy = dir.path().join("copy");
+    direct
+        .copy(typed(&tree), typed(&copy), true, Some(Stop::Mount), true)
+        .await
+        .unwrap();
+    assert!(copy.join("link/keep.txt").exists());
+    let proc = std::fs::symlink_metadata(copy.join("proc")).unwrap();
+    assert!(proc.is_dir());
+    assert_eq!(std::fs::read_dir(copy.join("proc")).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn direct_copy_all_keeps_links_as_links() {
+    let direct = Vfs::direct().unwrap();
+    let dir = tempdir().unwrap();
+    let (tree, outside) = tree_with_outside_link(&direct, dir.path()).await;
+    let copy = dir.path().join("copy");
+
+    direct
+        .copy(typed(&tree), typed(&copy), true, Some(Stop::Cross), false)
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(copy.join("nested/file.txt")).unwrap(),
+        "nested"
+    );
+    let link = direct
+        .symlink_metadata(typed(&copy.join("link")))
+        .await
+        .unwrap();
+    assert_eq!(link.file_type(), FileType::Symlink);
+    assert_eq!(std::fs::read_link(copy.join("link")).unwrap(), outside);
+}
+
+#[tokio::test]
 async fn direct_copy_symlink_preserves_link() {
     let direct = Vfs::direct().unwrap();
     let dir = tempdir().unwrap();
@@ -1248,7 +1627,7 @@ async fn direct_copy_symlink_preserves_link() {
         .await
         .unwrap();
     direct
-        .copy(typed(&link), typed(&copied), false)
+        .copy(typed(&link), typed(&copied), false, None, false)
         .await
         .unwrap();
 
@@ -1306,7 +1685,10 @@ async fn direct_fs_metadata_basic() {
     let path = dir.path().join("fsmeta.txt");
     tokio::fs::write(&path, "hello").await.unwrap();
 
-    let metadata = direct.fs_metadata(typed(&path), true).await.unwrap();
+    let metadata = direct
+        .fs_metadata(typed(&path), Resolve::Target)
+        .await
+        .unwrap();
     assert!(metadata.capacity() > 0);
     assert!(metadata.free() > 0);
     assert!(metadata.available() > 0);
@@ -1341,7 +1723,10 @@ async fn direct_security_descriptor_path_and_file() {
     tokio::fs::write(&path, "hello").await.unwrap();
 
     let mask = SecInfo::OWNER | SecInfo::GROUP | SecInfo::DACL;
-    let descriptor = direct.sec_desc(typed(&path), mask, true).await.unwrap();
+    let descriptor = direct
+        .sec_desc(typed(&path), mask, Resolve::Target)
+        .await
+        .unwrap();
     assert_eq!(descriptor.mask(), mask);
     assert!(descriptor.owner_loaded());
     assert!(descriptor.owner().is_some());
@@ -1349,7 +1734,7 @@ async fn direct_security_descriptor_path_and_file() {
     assert!(descriptor.dacl_loaded());
 
     let dacl = direct
-        .sec_desc(typed(&path), SecInfo::DACL, true)
+        .sec_desc(typed(&path), SecInfo::DACL, Resolve::Target)
         .await
         .unwrap();
     // Writing the file's own DACL back must succeed: the handle is opened with
@@ -1358,11 +1743,11 @@ async fn direct_security_descriptor_path_and_file() {
     // READ_CONTROL on the handle go unnoticed — the assertion below was never
     // reached, because every DACL write took the error branch.
     direct
-        .update_sec_desc(typed(&path), &dacl, true)
+        .update_sec_desc(typed(&path), &dacl, Resolve::Target)
         .await
         .unwrap();
     let round_trip = direct
-        .sec_desc(typed(&path), SecInfo::DACL, true)
+        .sec_desc(typed(&path), SecInfo::DACL, Resolve::Target)
         .await
         .unwrap();
     // Wine marks a new file's ACEs as explicit rather than inherited, then
@@ -1393,7 +1778,7 @@ async fn direct_security_descriptors_are_unsupported() {
         .sec_desc(
             typed(&path),
             dolang_winterop::security::SecInfo::empty(),
-            true,
+            Resolve::Target,
         )
         .await
         .unwrap_err();
@@ -1653,7 +2038,7 @@ async fn direct_copy_move_and_glob() {
         .unwrap();
 
     direct
-        .copy(typed(&src), typed(&copied), true)
+        .copy(typed(&src), typed(&copied), true, None, false)
         .await
         .unwrap();
     assert_eq!(
@@ -1664,13 +2049,13 @@ async fn direct_copy_move_and_glob() {
     );
 
     direct
-        .move_(typed(&copied), typed(&moved), true)
+        .move_(typed(&copied), typed(&moved), true, Stop::Cross)
         .await
         .unwrap();
     assert!(!copied.exists());
 
     let matches = direct
-        .glob("**/*.txt", typed(dir.path()), false, None)
+        .glob("**/*.txt", typed(dir.path()), None, false, None)
         .await
         .unwrap();
     assert_eq!(matches.len(), 2);

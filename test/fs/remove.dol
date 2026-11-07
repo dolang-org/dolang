@@ -1,0 +1,118 @@
+import
+  testlib.vfs:
+    - vfs
+  std:
+    - TypeError
+    - ValueError
+  sys:
+    - IsADirectoryError
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+    - test
+  fs:
+    - copy
+    - create_dir
+    - exists
+    - metadata
+    - move
+    - open
+    - read_str
+    - remove
+    - symlink_dir
+    - Path
+
+# Builds `tree`, holding a file in a nested directory and a link to the
+# directory `outside`, whose contents must survive whatever happens to `tree`.
+def make_tree()
+  let tree = Path "tree"
+  let outside = Path "outside"
+  create_dir (tree / "nested") all: true
+  open (tree / "nested" / "file.txt") w do |f|
+    f.write "nested"
+  create_dir $outside
+  open (outside / "keep.txt") w do |f|
+    f.write "keep"
+  symlink_dir $outside.canonical() (tree / "link")
+  (tree, outside)
+
+# Asserts that `dest` is a copy of the tree `make_tree` builds.
+def assert_tree_copy dest
+  let link = metadata (dest / "link") resolve: :LINK:
+  assert_eq $link.type :SYMLINK:
+  assert_eq (read_str(dest / "nested" / "file.txt")) nested
+
+#[test]
+#[vfs]
+def remove_all_keeps_link_target()
+  let tree outside = make_tree()
+  remove $tree all: true
+  assert $!exists(tree)
+  assert $exists(outside / "keep.txt")
+
+#[test]
+#[vfs]
+def remove_all_with_each_stop()
+  let tree outside = make_tree()
+  for stop = [:MOUNT:, :CROSS:]
+    copy $tree copy all: true
+    remove copy all: true stop: $stop
+    assert $!exists("copy")
+    assert $exists(outside / "keep.txt")
+
+#[test]
+#[vfs]
+def remove_without_all()
+  let tree outside = make_tree()
+  assert_throws $IsADirectoryError do remove (tree / "nested")
+  # A link to a directory is removed as a link
+  remove (tree / "link")
+  assert $!exists(tree / "link")
+  assert $exists(outside / "keep.txt")
+
+#[test]
+#[vfs]
+def recursion_rejects_bad_stop()
+  let tree _ = make_tree()
+  assert_throws $ValueError do remove $tree all: true stop: :LINK:
+  assert_throws $ValueError do copy $tree copy all: true stop: :LINK:
+  assert_throws $ValueError do move $tree moved all: true stop: :NEVER:
+  assert_throws $ValueError do tree.remove all: true stop: :BOGUS:
+  # Only `glob` and `copy` can stop at nothing
+  assert_throws $TypeError do remove $tree all: true stop: false
+  assert_throws $TypeError do move $tree moved all: true stop: false
+  assert_throws $ValueError do copy $tree copy all: true stop: true
+  assert_throws $TypeError do copy $tree copy all: true follow: 1
+  assert $exists(tree)
+  assert $!exists("moved")
+  assert $!exists("copy")
+
+#[test]
+#[vfs]
+def copy_follow_follows_links()
+  let tree _ = make_tree()
+  copy $tree copy all: true follow: true
+  let link = metadata (Path("copy") / "link") resolve: :LINK:
+  assert_eq $link.type :DIR:
+  assert_eq (read_str(Path("copy") / "link" / "keep.txt")) keep
+  tree.copy (Path "copy2") all: true follow: true stop: :CROSS:
+  assert_eq (read_str(Path("copy2") / "link" / "keep.txt")) keep
+
+#[test]
+#[vfs]
+def copy_all_keeps_links_as_links()
+  let tree _ = make_tree()
+  for i stop = [false, :MOUNT:, :CROSS:].enumerate()
+    let dest = Path "copy$i"
+    tree.copy $dest all: true stop: $stop
+    assert_tree_copy $dest
+
+#[test]
+#[vfs]
+def move_all_with_stop()
+  let tree outside = make_tree()
+  move $tree moved all: true stop: :CROSS:
+  assert $!exists(tree)
+  assert_tree_copy (Path "moved")
+  assert $exists(outside / "keep.txt")

@@ -39,6 +39,7 @@ use dolang_vfs::path;
 use dolang_vfs::{
     Vfs as VfsVfs,
     error::{Error, ErrorKind},
+    metadata::Stop,
 };
 
 // Shadow libc's F_RDLCK/F_WRLCK/F_UNLCK with i32 versions.
@@ -757,7 +758,7 @@ impl Vfs for ShellVfs {
         let client = get_shell_vfs();
         block_on_shell(async move {
             client
-                .remove(path::Path::unix(&path), false, false)
+                .remove(path::Path::unix(&path), false, false, Stop::Cross)
                 .await
                 .map_err(|e| map_vfs_err(e, SQLITE_IOERR_DELETE_NOENT, SQLITE_IOERR_DELETE))
         })
@@ -1002,7 +1003,7 @@ impl Vfs for ShellVfs {
             let client = get_shell_vfs();
             let _ = block_on_shell(async move {
                 client
-                    .remove(path::Path::unix(&path), false, false)
+                    .remove(path::Path::unix(&path), false, false, Stop::Cross)
                     .await
                     .map_err(|_| SQLITE_IOERR)
             });
@@ -1250,7 +1251,7 @@ impl Vfs for ShellVfs {
             let client = get_shell_vfs();
             let _ = block_on_shell(async move {
                 client
-                    .remove(path::Path::unix(&path), false, false)
+                    .remove(path::Path::unix(&path), false, false, Stop::Cross)
                     .await
                     .map_err(|_| SQLITE_IOERR)
             });

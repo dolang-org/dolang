@@ -19,7 +19,7 @@ use crate::{
     extension::{self, ErasedVfsExtension},
     file::{CopyDataResult, CopyDest, CopyMode, FileLockRequest, OpenExtra, StreamEntry},
     file::{XattrEntry, XattrNamespace},
-    metadata::{FsMetadata, Metadata, MetadataPatch},
+    metadata::{FsMetadata, Metadata, MetadataPatch, Resolve, Stop},
     path::{self, WellKnownPath},
     process::{
         ProcessControl, ProcessExit, ProcessInfo, ProcessStatus, Signal, StartTime,
@@ -202,7 +202,6 @@ bitflags::bitflags! {
         const CREATE = 1 << 3;
         const CREATE_NEW = 1 << 4;
         const TRUNCATE = 1 << 5;
-        const NO_FOLLOW = 1 << 6;
     }
 }
 
@@ -210,6 +209,7 @@ bitflags::bitflags! {
 pub(crate) struct OpenRequest {
     pub(crate) path: path::PathBuf,
     pub(crate) flags: OpenFlags,
+    pub(crate) resolve: Resolve,
     pub(crate) extra: OpenExtra,
 }
 
@@ -274,6 +274,7 @@ pub(crate) struct RemoveRequest {
     pub(crate) path: path::PathBuf,
     pub(crate) all: bool,
     pub(crate) ignore: bool,
+    pub(crate) stop: Stop,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -292,12 +293,13 @@ pub(crate) struct RemoveDirRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct MetadataRequest {
     pub(crate) path: path::PathBuf,
+    pub(crate) resolve: Resolve,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct FsMetadataRequest {
     pub(crate) path: path::PathBuf,
-    pub(crate) follow: bool,
+    pub(crate) resolve: Resolve,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -305,7 +307,7 @@ pub(crate) struct AclRequest {
     pub(crate) path: path::PathBuf,
     pub(crate) kind: AclKind,
     pub(crate) default: bool,
-    pub(crate) follow: bool,
+    pub(crate) resolve: Resolve,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -314,21 +316,21 @@ pub(crate) struct SetAclRequest {
     pub(crate) kind: AclKind,
     pub(crate) acl: Option<Acl>,
     pub(crate) default: bool,
-    pub(crate) follow: bool,
+    pub(crate) resolve: Resolve,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct SecDescRequest {
     pub(crate) path: path::PathBuf,
     pub(crate) mask: SecInfo,
-    pub(crate) follow: bool,
+    pub(crate) resolve: Resolve,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct UpdateSecDescRequest {
     pub(crate) path: path::PathBuf,
     pub(crate) sec_desc: SecDesc,
-    pub(crate) follow: bool,
+    pub(crate) resolve: Resolve,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -342,6 +344,8 @@ pub(crate) struct CopyRequest {
     pub(crate) from: path::PathBuf,
     pub(crate) to: path::PathBuf,
     pub(crate) all: bool,
+    pub(crate) stop: Option<Stop>,
+    pub(crate) follow: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -356,6 +360,7 @@ pub(crate) struct MoveRequest {
     pub(crate) from: path::PathBuf,
     pub(crate) to: path::PathBuf,
     pub(crate) all: bool,
+    pub(crate) stop: Stop,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -399,7 +404,8 @@ pub(crate) struct AccessRequest {
 pub(crate) struct GlobRequest {
     pub(crate) pattern: String,
     pub(crate) root: path::PathBuf,
-    pub(crate) follow_symlinks: bool,
+    pub(crate) stop: Option<Stop>,
+    pub(crate) follow: bool,
     pub(crate) max_depth: Option<usize>,
 }
 
@@ -414,13 +420,13 @@ pub(crate) struct WellKnownPathRequest {
 pub(crate) struct XattrsRequest {
     pub(crate) path: path::PathBuf,
     pub(crate) namespace: XattrNamespaceRequest,
-    pub(crate) follow: bool,
+    pub(crate) resolve: Resolve,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct StreamsRequest {
     pub(crate) path: path::PathBuf,
-    pub(crate) follow: bool,
+    pub(crate) resolve: Resolve,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -428,7 +434,7 @@ pub(crate) struct XattrRequest {
     pub(crate) path: path::PathBuf,
     pub(crate) name: String,
     pub(crate) namespace: Option<String>,
-    pub(crate) follow: bool,
+    pub(crate) resolve: Resolve,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -437,7 +443,7 @@ pub(crate) struct SetXattrRequest {
     pub(crate) name: String,
     pub(crate) namespace: Option<String>,
     pub(crate) value: Vec<u8>,
-    pub(crate) follow: bool,
+    pub(crate) resolve: Resolve,
 }
 
 /// Wire envelope for a VFS extension request.

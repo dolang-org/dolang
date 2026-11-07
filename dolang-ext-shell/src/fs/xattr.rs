@@ -5,6 +5,7 @@ use dolang::runtime::{
     value::TypeObject,
 };
 use dolang_vfs::file::{XattrEntry as VfsXattrEntry, XattrNamespace};
+use dolang_vfs::metadata::Resolve;
 
 use crate::{error::ResultExt as _, global::FsGlobal, util};
 use dolang_vfs::path as vfs_path;
@@ -110,7 +111,7 @@ pub(crate) async fn path_list<'v, 's>(
     resolve: Option<Slot<'v, '_>>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let follow = super::resolve_sym(strand, global, resolve, true)?;
+    let resolve = super::resolve_sym(strand, global, resolve, Resolve::Target)?;
     let namespace_buf;
     let namespace = match namespace {
         None => XattrNamespace::Default,
@@ -140,7 +141,7 @@ pub(crate) async fn path_list<'v, 's>(
     let local = global.local.get(strand);
     let entries = local
         .vfs()
-        .xattrs(path.to_path(), namespace, follow)
+        .xattrs(path.to_path(), namespace, resolve)
         .await
         .into_sys(strand)?;
     create_xattr_iter(strand, global, entries, out)
@@ -156,12 +157,12 @@ pub(crate) async fn path_get<'v, 's>(
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     let (name, namespace) = parse_name(strand, global, name, namespace)?;
-    let follow = super::resolve_sym(strand, global, resolve, true)?;
+    let resolve = super::resolve_sym(strand, global, resolve, Resolve::Target)?;
     let path = super::prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
     let value = local
         .vfs()
-        .xattr(path.to_path(), &name, namespace.as_deref(), follow)
+        .xattr(path.to_path(), &name, namespace.as_deref(), resolve)
         .await
         .into_sys(strand)?;
     Output::set(strand, out, value.as_slice());
@@ -179,12 +180,12 @@ pub(crate) async fn path_set<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let (name, namespace) = parse_name(strand, global, name, namespace)?;
     let value = util::bytes(strand, value, "value")?;
-    let follow = super::resolve_sym(strand, global, resolve, true)?;
+    let resolve = super::resolve_sym(strand, global, resolve, Resolve::Target)?;
     let path = super::prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
     local
         .vfs()
-        .set_xattr(path.to_path(), &name, namespace.as_deref(), &value, follow)
+        .set_xattr(path.to_path(), &name, namespace.as_deref(), &value, resolve)
         .await
         .into_sys(strand)
 }
@@ -198,12 +199,12 @@ pub(crate) async fn path_remove<'v, 's>(
     resolve: Option<Slot<'v, '_>>,
 ) -> Result<'v, 's, ()> {
     let (name, namespace) = parse_name(strand, global, name, namespace)?;
-    let follow = super::resolve_sym(strand, global, resolve, true)?;
+    let resolve = super::resolve_sym(strand, global, resolve, Resolve::Target)?;
     let path = super::prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
     local
         .vfs()
-        .remove_xattr(path.to_path(), &name, namespace.as_deref(), follow)
+        .remove_xattr(path.to_path(), &name, namespace.as_deref(), resolve)
         .await
         .into_sys(strand)
 }

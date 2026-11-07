@@ -34,22 +34,46 @@ import
   time:
     - @DateTime
 
-# Resolution mode.
+# How the final component of a path is resolved.
 #
-# Many functions accept a `resolve:` parameter that controls how symbolic links
-# and other recursive path resolution is handled.
+# Many functions take a `resolve:` parameter. The values form a scale: each
+# opens the final component as itself, rather than following it, for
+# everything the value before it does, and more.
 #
-# On Unix, `:LINK:` corresponds to `lstat`-style behavior. On Windows, it
-# applies to both symbolic links and other reparse points such as directory
-# junctions.
+# Unix can't open the directory a mount covers, so `:MOUNT:` and `:CROSS:` open
+# a mount point as `:LINK:` does, and `metadata` returns the mounted
+# filesystem's root with [`is_mount`](fs.Metadata.is_mount) set. macOS
+# firmlinks aren't mounts, so `:MOUNT:` doesn't stop at one, but they change
+# device, so `:CROSS:` does.
 pub @let Resolve = $
-  # Resolve all links to their final target. This is the default for most
-  # functions.
+  # Follows every link. This is the default for most functions.
   | :TARGET:
-  # Resolve all links except the final component. For example, given a symlink
+  # Opens a symbolic link as itself. For example, given a symlink
   # `link -> target`, `metadata link resolve: :LINK:` returns the link's own
-  # metadata rather than the target's. This is the default for `glob`.
+  # metadata rather than the target's.
   | :LINK:
+  # Also opens an explicit mount point as itself: a junction or volume mount
+  # point on Windows, or the root of a mounted filesystem on Unix. A btrfs
+  # subvolume reached by ordinary traversal isn't one.
+  | :MOUNT:
+  # Also opens any crossing point as itself: any Windows reparse point, such as
+  # a OneDrive folder, and any directory on a different device from its
+  # parent, such as a btrfs subvolume. On Unix, `metadata` marks only mount
+  # points.
+  | :CROSS:
+
+# Which crossing points a recursive operation stops descending at. Symbolic
+# links are a separate choice: [`glob`](fs.glob) and [`copy`](fs.copy) follow
+# them only with `follow: true`, and [`remove`](fs.remove) and
+# [`move`](fs.move) never do.
+pub @let Stop = $
+  # Stops at explicit mount points: junctions, volume mount points and Unix
+  # mounts
+  | :MOUNT:
+  # Also stops at any crossing point: any Windows reparse point, such as a
+  # OneDrive folder, and any directory on a different device from its parent,
+  # such as a btrfs subvolume
+  | :CROSS:
 
 # An ACL format.
 pub @let AclKind = $
@@ -69,7 +93,7 @@ pub @let FileType = $
   | :FILE:
   # Directory
   | :DIR:
-  # Symbolic link
+  # Symbolic link, including a WSL symlink on Windows
   | :SYMLINK:
   # Named pipe (FIFO)
   | :FIFO:
@@ -79,6 +103,14 @@ pub @let FileType = $
   | :BLOCK_DEVICE:
   # Unix domain socket
   | :SOCKET:
+  # Windows junction or volume mount point, opened as itself, with
+  # [`is_mount`](fs.Metadata.is_mount) set. Followed, it is the directory it
+  # leads to. A directory listing reports a junction as `:DIR:`.
+  | :JUNCTION:
+  # Any other Windows reparse point, opened as itself; its
+  # [`reparse_tag`](fs.windows.Metadata.reparse_tag) says which kind. A
+  # directory listing reports it as `:FILE:` or `:DIR:`.
+  | :REPARSE:
   # Type could not be determined
   | :UNKNOWN:
 
@@ -171,8 +203,8 @@ pub @let OpenOptions = $
   # Opens with backup semantics, which a directory needs, using backup and
   # restore privileges where they are held. Windows only.
   ?backup: Bool
-  # Link resolution. Defaults to `:TARGET:`. With `:LINK:`, a link is opened
-  # itself rather than its target: on Linux only with no access, and
+  # Link resolution. Defaults to `:TARGET:`. With `:LINK:` or beyond, a link is
+  # opened itself rather than its target: on Linux only with no access, and
   # elsewhere only on Windows. Opening a link with access fails on Unix.
   ?resolve: Resolve
   # Permission bits for a created file, subject to the umask. Unix only.
@@ -993,6 +1025,12 @@ pub class Metadata
   pub def type self -> FileType
     ...
 
+  # Whether this is a mount point opened as itself, which takes a `resolve:` of
+  # `:MOUNT:` or beyond. On Unix, the metadata is the mounted root's.
+  #[getter]
+  pub def is_mount self -> Bool
+    ...
+
   # Last modification time.
   #[getter]
   pub def modified self -> DateTime
@@ -1446,7 +1484,8 @@ pub class Path
   # The method form of [`fs.glob`](fs.glob), searching within this
   # path.
   #
-  # Yielded paths contain this path as a prefix.
+  # Yielded paths contain this path as a prefix. This path is always followed,
+  # even when it is a link.
   pub def glob
     self
     # Glob pattern.
@@ -1454,8 +1493,11 @@ pub class Path
     # Maximum directory depth to traverse. Defaults
     # to unlimited.
     :max_depth @ Int = ...
-    # Resolution mode. Defaults to `:LINK:`.
-    :resolve @ Resolve = ...
+    # The crossing points the search stops at, or `false`, the default, to
+    # stop at none. See [`glob`](fs.glob).
+    :stop @ (Stop | false) = ...
+    # Follow symbolic links. See [`glob`](fs.glob).
+    :follow @ Bool = ...
   do -> UnpackIter[Path]
     ...
 
@@ -1474,6 +1516,8 @@ pub class Path
     :all @ Bool = ...
     # Treat a missing path as success.
     :ignore @ Bool = ...
+    # Where recursion stops descending. Defaults to `:CROSS:`.
+    :stop @ Stop = ...
   do
     ...
 
@@ -1495,6 +1539,11 @@ pub class Path
     to @ (Str | Path)
     # Allow a recursive directory copy.
     :all @ Bool = ...
+    # The crossing points recursion stops at, or `false`, the default, to stop
+    # at none.
+    :stop @ (Stop | false) = ...
+    # Follow symbolic links, copying what they lead to.
+    :follow @ Bool = ...
   do
     ...
 
@@ -1505,6 +1554,8 @@ pub class Path
     to @ (Str | Path)
     # Allow a recursive directory move.
     :all @ Bool = ...
+    # Where a copy-and-delete stops descending. Defaults to `:CROSS:`.
+    :stop @ Stop = ...
   do
     ...
 
@@ -2073,9 +2124,9 @@ do -> (UnixMetadata | WindowsMetadata)
 #
 # ## Errors
 #
-# | Exception                                          | Condition                           |
-# | -------------------------------------------------- | ----------------------------------- |
-# | [`sys.UnsupportedError`](sys.UnsupportedError) | On Linux, `resolve: :LINK:` is used |
+# | Exception                                      | Condition                                      |
+# | ---------------------------------------------- | ---------------------------------------------- |
+# | [`sys.UnsupportedError`](sys.UnsupportedError) | On Unix, `resolve:` is anything but `:TARGET:` |
 #
 # ## Example
 #
@@ -2399,6 +2450,22 @@ do -> (Iter[UnixDirEntry] | Iter[WindowsDirEntry])
 
 # Returns an iterator over paths matching a glob pattern.
 #
+# The search starts from the pattern's leading literal components, such as
+# `src/lib` in `"src/lib/**/*.rs"`, taken relative to the working directory.
+# That base is always followed, even when it is a link. Below it, the search
+# never descends into a stopping point: a crossing point `stop` covers, or a
+# symbolic link unless `follow` is set. A stopping point can still match, but
+# nothing below it is searched. By default the search descends into mounts and
+# junctions but not symbolic links, as `find` does without `-L`.
+#
+# With `follow: true`, the search follows symbolic links, as `find -L` does,
+# and a link that leads nowhere matches as itself. A followed link that leads
+# to a crossing point `stop` covers stops there. A link, junction or mount
+# that leads back to a directory the search is inside raises an error.
+#
+# A pattern without wildcards only checks that its path exists, and ignores
+# `stop` and `follow`.
+#
 # ## Example
 #
 # ```
@@ -2410,8 +2477,8 @@ do -> (Iter[UnixDirEntry] | Iter[WindowsDirEntry])
 # for path = glob "**/*.rs" max_depth: 3
 #   echo "Source: $path"
 #
-# # Follow symlinks
-# for path = glob "**/*" resolve: :TARGET:
+# # Follow symlinks, staying on one filesystem
+# for path = glob "**/*" follow: true stop: :CROSS:
 #   echo "Entry: $path"
 # ```
 pub def glob
@@ -2428,8 +2495,11 @@ pub def glob
   # Maximum directory depth to traverse. Defaults to
   # unlimited.
   :max_depth @ Int = ...
-  # Resolution mode. Defaults to `:LINK:`.
-  :resolve @ Resolve = ...
+  # The crossing points the search stops at, or `false`, the default, to stop
+  # at none.
+  :stop @ (Stop | false) = ...
+  # Follow symbolic links.
+  :follow @ Bool = ...
 do -> UnpackIter[Path]
   ...
 
@@ -2452,9 +2522,28 @@ do
 
 # Removes one or more paths from the filesystem.
 #
-# By default this removes a single file or symlink. With `all: true`, it also
-# removes directories recursively, similar to `rm -r`. With `ignore: true`,
-# missing paths are treated as success.
+# By default this removes a single file or link, including a Windows junction.
+# With `all: true`, it also removes directories recursively, similar to
+# `rm -r`. With `ignore: true`, missing paths are treated as success.
+#
+# A recursive remove never follows a symbolic link, and never descends into a
+# crossing point `stop` covers. It removes a link or such a crossing point as
+# itself, leaving what it leads to
+# untouched. That works for a link, a junction or an empty directory, and
+# fails for a mount point or a non-empty subvolume or OneDrive folder. The
+# default of `:CROSS:` keeps a remove inside one filesystem, and away from
+# btrfs snapshots and cloud folders.
+#
+# The first error raises, and starts no further work. Which parts of the tree
+# were already removed is unspecified.
+#
+# ## Errors
+#
+# | Exception                                              | Condition                                  |
+# | ------------------------------------------------------ | ------------------------------------------ |
+# | [`IsADirectoryError`](sys.IsADirectoryError)           | A path is a directory and `all` isn't set  |
+# | [`ResourceBusyError`](sys.ResourceBusyError)           | A stopping point is a mount point          |
+# | [`DirectoryNotEmptyError`](sys.DirectoryNotEmptyError) | A stopping point is a non-empty directory  |
 #
 # ## Example
 #
@@ -2463,12 +2552,16 @@ do
 # remove "missing.txt" ignore: true
 # remove "build" all: true
 # remove "a.txt" "b.txt"
+# # Descend into subvolumes and OneDrive folders, removing what they hold
+# remove "snapshots" all: true stop: :MOUNT:
 # ```
 pub def remove
   # Remove directories recursively.
   :all @ Bool = ...
   # Treat a missing path as success.
   :ignore @ Bool = ...
+  # Where recursion stops descending. Defaults to `:CROSS:`.
+  :stop @ Stop = ...
   # One or more paths to remove.
   *paths @ (Str | Path)
 do
@@ -2510,11 +2603,26 @@ do
 # By default this copies a single file or symlink. With `all: true`, it also
 # copies directories recursively.
 #
+# By default a recursive copy copies a symbolic link as a link, and descends
+# into mounts, junctions and other crossing points, copying what they lead to,
+# as `cp -r` does. A crossing point `stop` covers is copied as itself: a
+# Windows junction as a junction, and a Unix mount point or other directory as
+# an empty directory, as `cp -x` does.
+#
+# With `follow: true`, the copy follows links instead, `from` included, and
+# copies what they lead to, as `cp -L` does. A link that leads nowhere raises
+# [`NotFoundError`](sys.NotFoundError).
+#
+# Descending into a link, junction or mount that leads back to a directory the
+# copy is inside raises rather than looping.
+#
 # ## Example
 #
 # ```
 # copy "source.txt" "backup.txt"
 # copy "project" "project-backup" all: true
+# # Copy junctions as junctions, rather than what they lead to
+# copy "profile" "profile-backup" all: true stop: :MOUNT:
 # ```
 pub def copy
   # Source path.
@@ -2523,15 +2631,27 @@ pub def copy
   to @ (Str | Path)
   # Allow a recursive directory copy.
   :all @ Bool = ...
+  # The crossing points recursion stops at, or `false`, the default, to stop
+  # at none.
+  :stop @ (Stop | false) = ...
+  # Follow symbolic links, copying what they lead to.
+  :follow @ Bool = ...
 do
   ...
 
 # Moves a filesystem entry from one location to another.
 #
-# This first tries a plain rename. If that fails because the source and
-# destination are on different filesystems, it falls back to copy-and-delete.
 # By default this moves a single file or symlink. With `all: true`, it also
 # moves directories recursively.
+#
+# This first tries a plain rename, which moves anything, whatever `stop` says.
+# If that fails because the source and destination are on different
+# filesystems, it falls back to a [`copy`](fs.copy) and then a
+# [`remove`](fs.remove), both stopping at `stop`. Before copying anything, it
+# checks that the remove can succeed, and raises as `remove` would if the
+# source holds a mount point, or a non-empty subvolume or OneDrive folder, at a
+# stopping point. The source can still change during the move, so a move that
+# fails partway can leave both copies.
 #
 # ## Example
 #
@@ -2546,6 +2666,8 @@ pub def move
   to @ (Str | Path)
   # Allow a recursive directory move.
   :all @ Bool = ...
+  # Where a copy-and-delete stops descending. Defaults to `:CROSS:`.
+  :stop @ Stop = ...
 do
   ...
 

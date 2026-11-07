@@ -7,7 +7,6 @@ pub(crate) mod windows {
     pub(crate) const ARCHIVE: u32 = 0x0000_0020;
     pub(crate) const TEMPORARY: u32 = 0x0000_0100;
     pub(crate) const SPARSE: u32 = 0x0000_0200;
-    pub(crate) const REPARSE_POINT: u32 = 0x0000_0400;
     pub(crate) const COMPRESSED: u32 = 0x0000_0800;
     pub(crate) const OFFLINE: u32 = 0x0000_1000;
     pub(crate) const NOT_CONTENT_INDEXED: u32 = 0x0000_2000;
@@ -43,7 +42,6 @@ pub(crate) mod freebsd {
     pub(crate) const COMPRESSED: u32 = 0x0000_0020;
     pub(crate) const SYSTEM: u32 = 0x0000_0080;
     pub(crate) const OFFLINE: u32 = 0x0000_0200;
-    pub(crate) const REPARSE_POINT: u32 = 0x0000_0400;
     pub(crate) const ARCHIVE: u32 = 0x0000_0800;
     pub(crate) const READONLY: u32 = 0x0000_1000;
     pub(crate) const HIDDEN: u32 = 0x0000_8000;

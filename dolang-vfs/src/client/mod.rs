@@ -53,7 +53,7 @@ use crate::{
         OpenCaps, OpenExtra, StreamEntry,
     },
     file::{XattrEntry, XattrNamespace},
-    metadata::{FsMetadata, Metadata, MetadataPatch},
+    metadata::{FsMetadata, Metadata, MetadataPatch, Resolve, Stop},
     path::{self, WellKnownPath},
     process::{
         self, PipeRecv, PipeRecvInner, PipeSend, PipeSendInner, ProcessControl, ProcessExit,
@@ -2543,6 +2543,7 @@ impl<'a> Command<'a> {
 pub struct OpenOptions<'a> {
     client: &'a Client,
     flags: OpenFlags,
+    resolve: Resolve,
     extra: OpenExtra,
 }
 
@@ -2551,6 +2552,7 @@ impl<'a> OpenOptions<'a> {
         Self {
             client,
             flags: OpenFlags::empty(),
+            resolve: Resolve::Target,
             extra: OpenExtra::default(),
         }
     }
@@ -2587,8 +2589,8 @@ impl OpenOptions<'_> {
         self
     }
 
-    pub fn no_follow(&mut self, no_follow: bool) -> &mut Self {
-        self.flags.set(OpenFlags::NO_FOLLOW, no_follow);
+    pub fn resolve(&mut self, resolve: Resolve) -> &mut Self {
+        self.resolve = resolve;
         self
     }
 
@@ -2609,6 +2611,7 @@ impl OpenOptions<'_> {
         let req = OpenRequest {
             path: path.into(),
             flags: self.flags,
+            resolve: self.resolve,
             extra: self.extra.clone(),
         };
         let caps = self.caps();
@@ -2892,12 +2895,12 @@ impl Client {
         &self,
         path: path::Path<'_>,
         namespace: XattrNamespace<'_>,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<Vec<XattrEntry>> {
         let request = XattrsRequest {
             path: path.into(),
             namespace: namespace.into(),
-            follow,
+            resolve,
         };
         match self.request(RequestKind::Xattrs(request)).await? {
             ResponseKind::Xattrs(result) => Ok(result),
@@ -2905,10 +2908,14 @@ impl Client {
         }
     }
 
-    pub async fn streams(&self, path: path::Path<'_>, follow: bool) -> Result<Vec<StreamEntry>> {
+    pub async fn streams(
+        &self,
+        path: path::Path<'_>,
+        resolve: Resolve,
+    ) -> Result<Vec<StreamEntry>> {
         let request = StreamsRequest {
             path: path.into(),
-            follow,
+            resolve,
         };
         match self.request(RequestKind::Streams(request)).await? {
             ResponseKind::Streams(result) => Ok(result),
@@ -2921,13 +2928,13 @@ impl Client {
         path: path::Path<'_>,
         name: &str,
         namespace: Option<&str>,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<Vec<u8>> {
         let request = XattrRequest {
             path: path.into(),
             name: name.to_owned(),
             namespace: namespace.map(str::to_owned),
-            follow,
+            resolve,
         };
         match self.request(RequestKind::Xattr(request)).await? {
             ResponseKind::Xattr(result) => Ok(result),
@@ -2941,14 +2948,14 @@ impl Client {
         name: &str,
         namespace: Option<&str>,
         value: &[u8],
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<()> {
         let request = SetXattrRequest {
             path: path.into(),
             name: name.to_owned(),
             namespace: namespace.map(str::to_owned),
             value: value.to_vec(),
-            follow,
+            resolve,
         };
         match self.request(RequestKind::SetXattr(request)).await? {
             ResponseKind::SetXattr => Ok(()),
@@ -2961,13 +2968,13 @@ impl Client {
         path: path::Path<'_>,
         name: &str,
         namespace: Option<&str>,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<()> {
         let request = XattrRequest {
             path: path.into(),
             name: name.to_owned(),
             namespace: namespace.map(str::to_owned),
-            follow,
+            resolve,
         };
         match self.request(RequestKind::RemoveXattr(request)).await? {
             ResponseKind::RemoveXattr => Ok(()),
@@ -2975,11 +2982,18 @@ impl Client {
         }
     }
 
-    pub async fn remove(&self, path: path::Path<'_>, all: bool, ignore: bool) -> Result<()> {
+    pub async fn remove(
+        &self,
+        path: path::Path<'_>,
+        all: bool,
+        ignore: bool,
+        stop: Stop,
+    ) -> Result<()> {
         let request = RemoveRequest {
             path: path.into(),
             all,
             ignore,
+            stop,
         };
         match self.request(RequestKind::Remove(request)).await? {
             ResponseKind::Remove => Ok(()),
@@ -2987,18 +3001,21 @@ impl Client {
         }
     }
 
-    pub async fn metadata(&self, path: path::Path<'_>) -> Result<Metadata> {
-        let request = MetadataRequest { path: path.into() };
+    pub async fn metadata(&self, path: path::Path<'_>, resolve: Resolve) -> Result<Metadata> {
+        let request = MetadataRequest {
+            path: path.into(),
+            resolve,
+        };
         match self.request(RequestKind::Metadata(request)).await? {
             ResponseKind::Metadata(result) => Ok(result),
             response => Err(unexpected(response).into()),
         }
     }
 
-    pub async fn fs_metadata(&self, path: path::Path<'_>, follow: bool) -> Result<FsMetadata> {
+    pub async fn fs_metadata(&self, path: path::Path<'_>, resolve: Resolve) -> Result<FsMetadata> {
         let request = FsMetadataRequest {
             path: path.into(),
-            follow,
+            resolve,
         };
         match self.request(RequestKind::FsMetadata(request)).await? {
             ResponseKind::FsMetadata(result) => Ok(result),
@@ -3011,13 +3028,13 @@ impl Client {
         path: path::Path<'_>,
         kind: AclKind,
         default: bool,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<Option<Acl>> {
         let request = AclRequest {
             path: path.into(),
             kind,
             default,
-            follow,
+            resolve,
         };
         match self.request(RequestKind::Acl(request)).await? {
             ResponseKind::Acl(result) => Ok(result),
@@ -3031,14 +3048,14 @@ impl Client {
         kind: AclKind,
         acl: Option<&Acl>,
         default: bool,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<()> {
         let request = SetAclRequest {
             path: path.into(),
             kind,
             acl: acl.cloned(),
             default,
-            follow,
+            resolve,
         };
         match self.request(RequestKind::SetAcl(request)).await? {
             ResponseKind::SetAcl => Ok(()),
@@ -3050,12 +3067,12 @@ impl Client {
         &self,
         path: path::Path<'_>,
         mask: dolang_winterop::security::SecInfo,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<SecDesc> {
         let request = SecDescRequest {
             path: path.into(),
             mask,
-            follow,
+            resolve,
         };
         match self.request(RequestKind::SecDesc(request)).await? {
             ResponseKind::SecDesc(result) => Ok(result),
@@ -3067,12 +3084,12 @@ impl Client {
         &self,
         path: path::Path<'_>,
         sec_desc: &SecDesc,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<()> {
         let request = UpdateSecDescRequest {
             path: path.into(),
             sec_desc: sec_desc.clone(),
-            follow,
+            resolve,
         };
         match self.request(RequestKind::UpdateSecDesc(request)).await? {
             ResponseKind::UpdateSecDesc => Ok(()),
@@ -3103,11 +3120,20 @@ impl Client {
         }
     }
 
-    pub async fn copy(&self, from: path::Path<'_>, to: path::Path<'_>, all: bool) -> Result<()> {
+    pub async fn copy(
+        &self,
+        from: path::Path<'_>,
+        to: path::Path<'_>,
+        all: bool,
+        stop: Option<Stop>,
+        follow: bool,
+    ) -> Result<()> {
         let request = CopyRequest {
             from: from.into(),
             to: to.into(),
             all,
+            stop,
+            follow,
         };
         match self.request(RequestKind::Copy(request)).await? {
             ResponseKind::Copy => Ok(()),
@@ -3132,11 +3158,18 @@ impl Client {
         }
     }
 
-    pub async fn move_(&self, from: path::Path<'_>, to: path::Path<'_>, all: bool) -> Result<()> {
+    pub async fn move_(
+        &self,
+        from: path::Path<'_>,
+        to: path::Path<'_>,
+        all: bool,
+        stop: Stop,
+    ) -> Result<()> {
         let request = MoveRequest {
             from: from.into(),
             to: to.into(),
             all,
+            stop,
         };
         match self.request(RequestKind::Move(request)).await? {
             ResponseKind::Move => Ok(()),
@@ -3199,14 +3232,6 @@ impl Client {
         }
     }
 
-    pub async fn symlink_metadata(&self, path: path::Path<'_>) -> Result<Metadata> {
-        let request = MetadataRequest { path: path.into() };
-        match self.request(RequestKind::SymlinkMetadata(request)).await? {
-            ResponseKind::SymlinkMetadata(result) => Ok(result),
-            response => Err(unexpected(response).into()),
-        }
-    }
-
     pub async fn update_metadata(
         &self,
         paths: &[path::PathBuf],
@@ -3242,13 +3267,15 @@ impl Client {
         &self,
         pattern: impl Into<String>,
         root: path::Path<'_>,
-        follow_symlinks: bool,
+        stop: Option<Stop>,
+        follow: bool,
         max_depth: Option<usize>,
     ) -> Result<Vec<path::PathBuf>> {
         let request = GlobRequest {
             pattern: pattern.into(),
             root: root.into(),
-            follow_symlinks,
+            stop,
+            follow,
             max_depth,
         };
         match self.request(RequestKind::Glob(request)).await? {

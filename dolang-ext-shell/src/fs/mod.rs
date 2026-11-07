@@ -10,7 +10,7 @@ use dolang_vfs::file::File as VfsFile;
 use dolang_vfs::path as vfs_path;
 use dolang_vfs::{
     error::ErrorKind as VfsErrorKind,
-    metadata::{AttrFlags, FileType, Mode as VfsMode},
+    metadata::{AttrFlags, Mode as VfsMode, Resolve, Stop},
     path::WellKnownPath,
     security::{Acl as VfsAnyAcl, AclKind as VfsAclKind},
 };
@@ -97,7 +97,7 @@ async fn sec_desc<'v, 's>(
     global: State<'v, FsGlobal<'v>>,
     path: vfs_path::Path<'_>,
     mask: SecInfo,
-    follow: bool,
+    resolve: Resolve,
     mut out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     let path = prepend_cwd(strand, global, path)?;
@@ -105,7 +105,7 @@ async fn sec_desc<'v, 's>(
         .local
         .get(strand)
         .vfs()
-        .sec_desc(path.to_path(), mask, follow)
+        .sec_desc(path.to_path(), mask, resolve)
         .await
         .into_sys(strand)?;
     let windows = strand.force_state::<WindowsSecurityTag>();
@@ -147,7 +147,7 @@ async fn acl<'v, 's>(
     path: vfs_path::Path<'_>,
     kind: VfsAclKind,
     default: bool,
-    follow: bool,
+    resolve: Resolve,
     mut out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     check_acl_default(strand, kind, default)?;
@@ -156,7 +156,7 @@ async fn acl<'v, 's>(
         .local
         .get(strand)
         .vfs()
-        .acl(path.to_path(), kind, default, follow)
+        .acl(path.to_path(), kind, default, resolve)
         .await
         .into_sys(strand)?;
     security::create_any_acl(strand, acl, &mut out);
@@ -170,7 +170,7 @@ async fn set_acl<'v, 's>(
     kind: VfsAclKind,
     acl: Option<&VfsAnyAcl>,
     default: bool,
-    follow: bool,
+    resolve: Resolve,
 ) -> Result<'v, 's, ()> {
     check_acl_default(strand, kind, default)?;
     let path = prepend_cwd(strand, global, path)?;
@@ -178,7 +178,7 @@ async fn set_acl<'v, 's>(
         .local
         .get(strand)
         .vfs()
-        .set_acl(path.to_path(), kind, acl, default, follow)
+        .set_acl(path.to_path(), kind, acl, default, resolve)
         .await
         .into_sys(strand)
 }
@@ -188,14 +188,14 @@ async fn update_sec_desc<'v, 's>(
     global: State<'v, FsGlobal<'v>>,
     path: vfs_path::Path<'_>,
     descriptor: &SecDesc,
-    follow: bool,
+    resolve: Resolve,
 ) -> Result<'v, 's, ()> {
     let path = prepend_cwd(strand, global, path)?;
     global
         .local
         .get(strand)
         .vfs()
-        .update_sec_desc(path.to_path(), descriptor, follow)
+        .update_sec_desc(path.to_path(), descriptor, resolve)
         .await
         .into_sys(strand)
 }
@@ -292,18 +292,16 @@ async fn metadata<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, FsGlobal<'v>>,
     path: vfs_path::Path<'_>,
-    follow: bool,
+    resolve: Resolve,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     let path = prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
     let vfs = local.vfs();
-    let metadata = if follow {
-        vfs.metadata(path.to_path()).await
-    } else {
-        vfs.symlink_metadata(path.to_path()).await
-    }
-    .into_sys(strand)?;
+    let metadata = vfs
+        .metadata_resolved(path.to_path(), resolve)
+        .await
+        .into_sys(strand)?;
     create_metadata(strand, global, metadata, out);
     Ok(())
 }
@@ -312,14 +310,14 @@ async fn fs_metadata<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, FsGlobal<'v>>,
     path: vfs_path::Path<'_>,
-    follow: bool,
+    resolve: Resolve,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     let path = prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
     let vfs = local.vfs();
     let metadata = vfs
-        .fs_metadata(path.to_path(), follow)
+        .fs_metadata(path.to_path(), resolve)
         .await
         .into_sys(strand)?;
     create_fs_metadata(strand, global, metadata, out);
@@ -349,26 +347,100 @@ where
     Ok(patch)
 }
 
+const RESOLVE_EXPECTED: &str = "resolve: expected :TARGET:, :LINK:, :MOUNT: or :CROSS:";
+const STOP_EXPECTED: &str = "stop: expected :MOUNT: or :CROSS:";
+const STOP_OR_FALSE_EXPECTED: &str = "stop: expected :MOUNT:, :CROSS: or false";
+
 pub(crate) fn resolve_sym<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, FsGlobal<'v>>,
     slot: Option<Slot<'v, '_>>,
-    default: bool,
-) -> Result<'v, 's, bool> {
-    let slot = match slot {
-        Some(slot) => slot,
-        None => return Ok(default),
-    };
+    default: Resolve,
+) -> Result<'v, 's, Resolve> {
+    match slot {
+        Some(slot) => parse_resolve(strand, global, slot, RESOLVE_EXPECTED),
+        None => Ok(default),
+    }
+}
+
+/// Parses the `stop:` of `remove` or `move`, which defaults to `:CROSS:`.
+fn stop_sym<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, FsGlobal<'v>>,
+    slot: Option<Slot<'v, '_>>,
+) -> Result<'v, 's, Stop> {
+    match slot {
+        Some(slot) => parse_stop(strand, global, slot, STOP_EXPECTED),
+        None => Ok(Stop::Cross),
+    }
+}
+
+/// Parses the `stop:` of `glob` or `copy`, where `false`, the default, stops
+/// at nothing.
+fn stop_or_false<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, FsGlobal<'v>>,
+    slot: Option<Slot<'v, '_>>,
+) -> Result<'v, 's, Option<Stop>> {
+    match slot {
+        None => Ok(None),
+        Some(slot) => match slot.as_bool(strand) {
+            Some(false) => Ok(None),
+            Some(true) => Err(Error::value(strand, STOP_OR_FALSE_EXPECTED)),
+            None => parse_stop(strand, global, slot, STOP_OR_FALSE_EXPECTED).map(Some),
+        },
+    }
+}
+
+fn parse_stop<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, FsGlobal<'v>>,
+    slot: Slot<'v, '_>,
+    expected: &'static str,
+) -> Result<'v, 's, Stop> {
     let sym = slot
         .as_sym(strand)
-        .ok_or_else(|| Error::type_error(strand, "resolve: expected :TARGET: or :LINK:"))?;
-    if sym == global.syms.target {
-        Ok(true)
-    } else if sym == global.syms.link {
-        Ok(false)
+        .ok_or_else(|| Error::type_error(strand, expected))?;
+    let syms = &global.syms;
+    if sym == syms.mount {
+        Ok(Stop::Mount)
+    } else if sym == syms.cross {
+        Ok(Stop::Cross)
     } else {
-        Err(Error::value(strand, "resolve: expected :TARGET: or :LINK:"))
+        Err(Error::value(strand, expected))
     }
+}
+
+/// Parses an optional Bool option, which defaults to `false`.
+fn flag<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    slot: Option<Slot<'v, '_>>,
+    name: &'static str,
+) -> Result<'v, 's, bool> {
+    slot.map(|slot| crate::util::bool(strand, slot, name))
+        .transpose()
+        .map(|flag| flag.unwrap_or(false))
+}
+
+fn parse_resolve<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, FsGlobal<'v>>,
+    slot: Slot<'v, '_>,
+    expected: &'static str,
+) -> Result<'v, 's, Resolve> {
+    let sym = slot
+        .as_sym(strand)
+        .ok_or_else(|| Error::type_error(strand, expected))?;
+    let syms = &global.syms;
+    [
+        (syms.target, Resolve::Target),
+        (syms.link, Resolve::Link),
+        (syms.mount, Resolve::Mount),
+        (syms.cross, Resolve::Cross),
+    ]
+    .into_iter()
+    .find_map(|(candidate, resolve)| (sym == candidate).then_some(resolve))
+    .ok_or_else(|| Error::value(strand, expected))
 }
 
 pub(crate) fn parse_mode<'v, 's>(
@@ -403,7 +475,7 @@ fn metadata_patch<'v, 's>(
     let modified = parse_timestamp_arg(strand, modified, "modified")?;
     let accessed = parse_timestamp_arg(strand, accessed, "accessed")?;
     let created = parse_timestamp_arg(strand, created, "created")?;
-    let follow = resolve_sym(strand, global, resolve, true)?;
+    let resolve = resolve_sym(strand, global, resolve, Resolve::Target)?;
     let mut patch = dolang_vfs::metadata::MetadataPatch::new();
     if let Some(mode) = mode {
         patch.mode(mode);
@@ -426,7 +498,7 @@ fn metadata_patch<'v, 's>(
     for (flag, value) in attrs {
         patch.attribute(flag, value);
     }
-    patch.follow_links(follow);
+    patch.resolve(resolve);
     Ok(patch)
 }
 
@@ -452,28 +524,14 @@ async fn remove<'v, 's>(
     path: vfs_path::Path<'_>,
     all: bool,
     ignore: bool,
+    stop: Stop,
 ) -> Result<'v, 's, ()> {
     let path = prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
     let vfs = local.vfs();
-
-    let result = if all {
-        match vfs.symlink_metadata(path.to_path()).await {
-            Ok(metadata) if metadata.file_type() == FileType::Dir => {
-                vfs.remove(path.to_path(), true, ignore).await
-            }
-            Ok(_) => vfs.remove(path.to_path(), false, ignore).await.map(|_| ()),
-            Err(e) => Err(e),
-        }
-    } else {
-        vfs.remove(path.to_path(), false, ignore).await.map(|_| ())
-    };
-
-    match result {
-        Ok(()) => Ok(()),
-        Err(e) if ignore && e.kind() == ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e.into_sys(strand)),
-    }
+    vfs.remove(path.to_path(), all, ignore, stop)
+        .await
+        .into_sys(strand)
 }
 
 async fn exists<'v, 's>(
@@ -665,12 +723,14 @@ async fn copy<'v, 's>(
     from: vfs_path::Path<'_>,
     to: vfs_path::Path<'_>,
     all: bool,
+    stop: Option<Stop>,
+    follow: bool,
 ) -> Result<'v, 's, ()> {
     let from_path = prepend_cwd(strand, global, from)?;
     let to_path = prepend_cwd(strand, global, to)?;
     let local = global.local.get(strand);
     let vfs = local.vfs();
-    vfs.copy(from_path.to_path(), to_path.to_path(), all)
+    vfs.copy(from_path.to_path(), to_path.to_path(), all, stop, follow)
         .await
         .into_sys(strand)?;
     Ok(())
@@ -682,12 +742,13 @@ async fn move_<'v, 's>(
     from: vfs_path::Path<'_>,
     to: vfs_path::Path<'_>,
     all: bool,
+    stop: Stop,
 ) -> Result<'v, 's, ()> {
     let from_path = prepend_cwd(strand, global, from)?;
     let to_path = prepend_cwd(strand, global, to)?;
     let local = global.local.get(strand);
     let vfs = local.vfs();
-    vfs.move_(from_path.to_path(), to_path.to_path(), all)
+    vfs.move_(from_path.to_path(), to_path.to_path(), all, stop)
         .await
         .into_sys(strand)?;
     Ok(())
@@ -1003,13 +1064,15 @@ pub(crate) async fn path_canonical<'v, 's>(
     Ok(())
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn glob<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, FsGlobal<'v>>,
     root: Option<vfs_path::Path<'_>>,
     pattern: Slot<'v, '_>,
     max_depth: Option<Slot<'v, '_>>,
-    resolve: Option<Slot<'v, '_>>,
+    stop: Option<Slot<'v, '_>>,
+    follow: Option<Slot<'v, '_>>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     let pattern = pattern
@@ -1020,7 +1083,8 @@ async fn glob<'v, 's>(
         Some(v) => Some(v.to_usize(strand)?),
         None => None,
     };
-    let follow = resolve_sym(strand, global, resolve, false)?;
+    let stop = stop_or_false(strand, global, stop)?;
+    let follow = flag(strand, follow, "follow")?;
 
     let root = root.unwrap_or_else(
         || match global.local.get(strand).target().os().path_kind() {
@@ -1032,7 +1096,7 @@ async fn glob<'v, 's>(
     let vfs = global.local.get(strand).vfs();
 
     let paths = vfs
-        .glob(pattern, abs_root.to_path(), follow, max_depth)
+        .glob(pattern, abs_root.to_path(), stop, follow, max_depth)
         .await
         .into_sys(strand)?;
 
@@ -1107,6 +1171,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
     let parent = builder.sym("parent");
     let all = builder.sym("all");
     let ignore = builder.sym("ignore");
+    let stop = builder.sym("stop");
+    let follow = builder.sym("follow");
     let max_depth = builder.sym("max_depth");
     let resolve = builder.sym("resolve");
     let mode = builder.sym("mode");
@@ -1181,8 +1247,9 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             .await
         })
         .function("remove", async move |strand, args, _out| {
-            let ([], [all, ignore], paths) =
-                unpack!(strand, args, 0, 0, all = None, ignore = None, *)?;
+            let ([], [all, ignore, stop], paths) =
+                unpack!(strand, args, 0, 0, all = None, ignore = None, stop = None, *)?;
+            let stop = stop_sym(strand, global, stop)?;
             let all = match all {
                 Some(v) => v
                     .as_bool(strand)
@@ -1197,21 +1264,21 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             };
             for path in paths {
                 let path = path_from_value(strand, &path)?;
-                remove(strand, global, path.to_path(), all, ignore).await?;
+                remove(strand, global, path.to_path(), all, ignore, stop).await?;
             }
             Ok(())
         })
         .function("metadata", async move |strand, args, out| {
             let ([path], [resolve]) = unpack!(strand, args, 1, 0, resolve = None)?;
             let path = path_from_value(strand, &path)?;
-            let follow = resolve_sym(strand, global, resolve, true)?;
-            metadata(strand, global, path.to_path(), follow, out).await
+            let resolve = resolve_sym(strand, global, resolve, Resolve::Target)?;
+            metadata(strand, global, path.to_path(), resolve, out).await
         })
         .function("fs_metadata", async move |strand, args, out| {
             let ([path], [resolve]) = unpack!(strand, args, 1, 0, resolve = None)?;
             let path = path_from_value(strand, &path)?;
-            let follow = resolve_sym(strand, global, resolve, true)?;
-            fs_metadata(strand, global, path.to_path(), follow, out).await
+            let resolve = resolve_sym(strand, global, resolve, Resolve::Target)?;
+            fs_metadata(strand, global, path.to_path(), resolve, out).await
         })
         .function("acl", async move |strand, args, out| {
             let ([path], [kind, default, resolve]) = unpack!(
@@ -1226,8 +1293,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             let path = path_from_value(strand, &path)?;
             let kind = security::acl_kind_sym(strand, kind)?;
             let default = acl_default(strand, default.as_deref())?;
-            let follow = resolve_sym(strand, global, resolve, true)?;
-            acl(strand, global, path.to_path(), kind, default, follow, out).await
+            let resolve = resolve_sym(strand, global, resolve, Resolve::Target)?;
+            acl(strand, global, path.to_path(), kind, default, resolve, out).await
         })
         .function("set_acl", async move |strand, args, _out| {
             let ([path, acl_value], [kind, default, resolve]) = unpack!(
@@ -1248,7 +1315,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             )
             .await?;
             let default = acl_default(strand, default.as_deref())?;
-            let follow = resolve_sym(strand, global, resolve, true)?;
+            let resolve = resolve_sym(strand, global, resolve, Resolve::Target)?;
             set_acl(
                 strand,
                 global,
@@ -1256,7 +1323,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
                 kind,
                 acl.as_ref(),
                 default,
-                follow,
+                resolve,
             )
             .await
         })
@@ -1524,7 +1591,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             well_known_path(strand, global, WellKnownPath::TempDir, None, out).await
         })
         .function("copy", async move |strand, args, out| {
-            let ([from, to], [all]) = unpack!(strand, args, 2, 0, all = None)?;
+            let ([from, to], [all, stop, follow]) =
+                unpack!(strand, args, 2, 0, all = None, stop = None, follow = None)?;
             let from = path_from_value(strand, &from)?;
             let to = path_from_value(strand, &to)?;
             let all = match all {
@@ -1533,8 +1601,19 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
                     .ok_or_else(|| Error::type_error(strand, "expected Bool"))?,
                 None => false,
             };
+            let stop = stop_or_false(strand, global, stop)?;
+            let follow = flag(strand, follow, "follow")?;
             let _ = out;
-            copy(strand, global, from.to_path(), to.to_path(), all).await
+            copy(
+                strand,
+                global,
+                from.to_path(),
+                to.to_path(),
+                all,
+                stop,
+                follow,
+            )
+            .await
         })
         .function("copy_data", async move |strand, args, out| {
             let ([src, dst], [range, size, offset, clone]) = unpack!(
@@ -1564,7 +1643,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             rename(strand, global, from.to_path(), to.to_path(), replace).await
         })
         .function("move", async move |strand, args, _out| {
-            let ([from, to], [all]) = unpack!(strand, args, 2, 0, all = None)?;
+            let ([from, to], [all, stop]) = unpack!(strand, args, 2, 0, all = None, stop = None)?;
             let from = path_from_value(strand, &from)?;
             let to = path_from_value(strand, &to)?;
             let all = match all {
@@ -1573,7 +1652,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
                     .ok_or_else(|| Error::type_error(strand, "expected Bool"))?,
                 None => false,
             };
-            move_(strand, global, from.to_path(), to.to_path(), all).await
+            let stop = stop_sym(strand, global, stop)?;
+            move_(strand, global, from.to_path(), to.to_path(), all, stop).await
         })
         .function("symlink", async move |strand, args, _out| {
             let ([src, dst], []) = unpack!(strand, args, 2, 0)?;
@@ -1605,9 +1685,16 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             entries(strand, global, path, out).await
         })
         .function("glob", async move |strand, args, out| {
-            let ([pattern], [max_depth, resolve]) =
-                unpack!(strand, args, 1, 0, max_depth = None, resolve = None)?;
-            glob(strand, global, None, pattern, max_depth, resolve, out).await
+            let ([pattern], [max_depth, stop, follow]) = unpack!(
+                strand,
+                args,
+                1,
+                0,
+                max_depth = None,
+                stop = None,
+                follow = None
+            )?;
+            glob(strand, global, None, pattern, max_depth, stop, follow, out).await
         })
         .function("create_dir", async move |strand, args, _out| {
             let ([path], [all]) = unpack!(strand, args, 1, 0, all = None)?;
@@ -1693,7 +1780,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
                     .with_interrupt_mask(InterruptMask::all(), async move |strand| {
                         let local = global.local.get(strand);
                         let vfs = local.vfs();
-                        vfs.remove(temp_path.to_path(), true, false).await
+                        vfs.remove(temp_path.to_path(), true, false, Stop::Cross)
+                            .await
                     })
                     .await;
                 result
@@ -1750,8 +1838,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             )?;
             let path = path_from_value(strand, &path)?;
             let mask = sec_desc_mask(strand, owner, group, dacl, sacl)?;
-            let follow = resolve_sym(strand, global, resolve, true)?;
-            sec_desc(strand, global, path.to_path(), mask, follow, out).await
+            let resolve = resolve_sym(strand, global, resolve, Resolve::Target)?;
+            sec_desc(strand, global, path.to_path(), mask, resolve, out).await
         })
         .function("update_sec_desc", async move |strand, args, _out| {
             let ([path], [resolve], rest) = unpack!(strand, args, 1, 0, resolve = None, ...)?;
@@ -1764,8 +1852,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
                 &security::SpecPath::root("update_sec_desc"),
             )
             .await?;
-            let follow = resolve_sym(strand, global, resolve, true)?;
-            update_sec_desc(strand, global, path.to_path(), &descriptor, follow).await
+            let resolve = resolve_sym(strand, global, resolve, Resolve::Target)?;
+            update_sec_desc(strand, global, path.to_path(), &descriptor, resolve).await
         })
         .commit();
 }

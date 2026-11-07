@@ -22,7 +22,9 @@ use tokio::{fs, process::Command as TokioCommand, sync::Mutex};
 use wax::{
     Glob, Program as _,
     query::DepthVariance,
-    walk::{DepthBehavior, DepthMax, Entry, LinkBehavior, WalkBehavior},
+    walk::{
+        DepthBehavior, DepthMax, Entry, EntryResidue, FileIterator as _, LinkBehavior, WalkBehavior,
+    },
 };
 
 use crate::{
@@ -32,7 +34,7 @@ use crate::{
     extension::{self, DirectContext, ExtContext, VfsExtension},
     file::{self, AccessFlags, FileId, FileLockRequest, OpenCaps, OpenExtra, StreamEntry},
     file::{XattrEntry, XattrNamespace},
-    metadata::{FsMetadata, Metadata, MetadataPatch},
+    metadata::{FsMetadata, Metadata, MetadataPatch, Resolve, Stop},
     path::{self, WellKnownPath},
     process::{
         self, PipeRecv, PipeSend, ProcessControl, ProcessStatus, SpawnIn, SpawnOut,
@@ -61,9 +63,14 @@ mod copy;
 mod foreign;
 mod lock;
 #[cfg(unix)]
+mod mount;
+#[cfg(unix)]
 mod security;
 #[cfg(unix)]
 mod unix;
+mod walk;
+#[cfg(windows)]
+mod win_dir;
 #[cfg(windows)]
 mod windows;
 
@@ -91,7 +98,7 @@ pub struct OpenOptions {
     create: bool,
     create_new: bool,
     truncate: bool,
-    no_follow: bool,
+    resolve: Resolve,
     extra: OpenExtra,
 }
 
@@ -1327,8 +1334,8 @@ impl OpenOptions {
         self
     }
 
-    pub(crate) fn no_follow(&mut self, no_follow: bool) -> &mut Self {
-        self.no_follow = no_follow;
+    pub(crate) fn resolve(&mut self, resolve: Resolve) -> &mut Self {
+        self.resolve = resolve;
         self
     }
 
@@ -1392,66 +1399,23 @@ impl Direct {
             .expect("response type matches the extension that produced it"))
     }
 
-    async fn copy_symlink(src: &Path, dst: &Path) -> Result<()> {
-        Self::impl_copy_symlink(src, dst).await
-    }
-
-    async fn copy_local(from: &Path, to: &Path, all: bool) -> Result<()> {
+    async fn move_local(from: &Path, to: &Path, all: bool, stop: Stop) -> Result<()> {
         let metadata = fs::symlink_metadata(from).await?;
-
-        if metadata.is_dir() {
-            if !all {
-                return Err(Self::directory_requires_all_error());
-            }
-
-            fs::create_dir(to).await?;
-            let mut stack = vec![(from.to_path_buf(), to.to_path_buf())];
-            while let Some((src_dir, dst_dir)) = stack.pop() {
-                let mut entries = fs::read_dir(&src_dir).await?;
-                while let Some(entry) = entries.next_entry().await? {
-                    let src_path = entry.path();
-                    let dst_path = dst_dir.join(entry.file_name());
-                    let metadata = fs::symlink_metadata(&src_path).await?;
-                    if metadata.is_dir() {
-                        fs::create_dir(&dst_path).await?;
-                        stack.push((src_path, dst_path));
-                    } else if metadata.is_file() {
-                        fs::copy(&src_path, &dst_path).await?;
-                    } else if metadata.file_type().is_symlink() {
-                        Self::copy_symlink(&src_path, &dst_path).await?;
-                    } else {
-                        return Err(Error::other("unsupported file type"));
-                    }
-                }
-            }
-        } else if metadata.is_file() {
-            fs::copy(from, to).await?;
-        } else if metadata.file_type().is_symlink() {
-            Self::copy_symlink(from, to).await?;
-        } else {
-            return Err(Error::other("unsupported file type"));
-        }
-
-        Ok(())
-    }
-
-    async fn move_local(from: &Path, to: &Path, all: bool) -> Result<()> {
-        let metadata = fs::symlink_metadata(from).await?;
-        let is_dir = metadata.is_dir();
-
-        if is_dir && !all {
+        if metadata.is_dir() && !all {
             return Err(Self::directory_requires_all_error());
         }
 
         match fs::rename(from, to).await {
             Ok(()) => Ok(()),
             Err(err) if err.kind() == io::ErrorKind::CrossesDevices => {
-                Self::copy_local(from, to, all).await?;
-                if is_dir {
-                    Ok(fs::remove_dir_all(from).await?)
-                } else {
-                    Ok(fs::remove_file(from).await?)
-                }
+                let (from, to) = (from.to_path_buf(), to.to_path_buf());
+                tokio::task::spawn_blocking(move || {
+                    walk::check_removable(&from, stop)?;
+                    walk::copy(&from, &to, all, walk::Bounds::remove(stop))?;
+                    walk::remove(&from, stop)
+                })
+                .await
+                .map_err(Error::other)?
             }
             Err(err) => Err(err.into()),
         }
@@ -1782,18 +1746,18 @@ impl Direct {
         &self,
         path: path::Path<'_>,
         namespace: XattrNamespace<'_>,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<Vec<XattrEntry>> {
-        self.impl_xattrs(&path.to_native()?, namespace, follow)
+        self.impl_xattrs(&path.to_native()?, namespace, resolve)
             .await
     }
 
     pub(crate) async fn streams(
         &self,
         path: path::Path<'_>,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<Vec<StreamEntry>> {
-        self.impl_streams(&path.to_native()?, follow).await
+        self.impl_streams(&path.to_native()?, resolve).await
     }
 
     pub(crate) async fn xattr(
@@ -1801,9 +1765,9 @@ impl Direct {
         path: path::Path<'_>,
         name: &str,
         namespace: Option<&str>,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<Vec<u8>> {
-        self.impl_xattr(&path.to_native()?, name, namespace, follow)
+        self.impl_xattr(&path.to_native()?, name, namespace, resolve)
             .await
     }
 
@@ -1813,9 +1777,9 @@ impl Direct {
         name: &str,
         namespace: Option<&str>,
         value: &[u8],
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<()> {
-        self.impl_set_xattr(&path.to_native()?, name, namespace, value, follow)
+        self.impl_set_xattr(&path.to_native()?, name, namespace, value, resolve)
             .await
     }
 
@@ -1824,55 +1788,53 @@ impl Direct {
         path: path::Path<'_>,
         name: &str,
         namespace: Option<&str>,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<()> {
-        self.impl_remove_xattr(&path.to_native()?, name, namespace, follow)
+        self.impl_remove_xattr(&path.to_native()?, name, namespace, resolve)
             .await
     }
 
-    pub(crate) async fn remove(&self, path: path::Path<'_>, all: bool, ignore: bool) -> Result<()> {
+    pub(crate) async fn remove(
+        &self,
+        path: path::Path<'_>,
+        all: bool,
+        ignore: bool,
+        stop: Stop,
+    ) -> Result<()> {
         let path = path.to_native()?;
-        let path = path.as_path();
-        let result = if all {
-            match fs::symlink_metadata(path).await {
-                Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(path).await,
-                Ok(_) => fs::remove_file(path).await,
-                Err(e) => Err(e),
+        let result = tokio::task::spawn_blocking(move || {
+            if all {
+                walk::remove(&path, stop)
+            } else {
+                walk::remove_entry(&path)
             }
-        } else {
-            fs::remove_file(path).await
-        };
+        })
+        .await
+        .map_err(Error::other)?;
         match result {
-            Ok(()) => Ok(()),
-            Err(e) if ignore && e.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e.into()),
+            Err(e) if ignore && e.kind() == ErrorKind::NotFound => Ok(()),
+            result => result,
         }
     }
 
-    pub(crate) async fn metadata(&self, path: path::Path<'_>) -> Result<Metadata> {
-        #[cfg(unix)]
-        {
-            let path = path.to_native()?;
-            tokio::task::spawn_blocking(move || Self::metadata_from_path(&path, true))
-                .await
-                .unwrap_or_else(|_| Err(Error::other("failed to join metadata query task")))
-        }
-        #[cfg(windows)]
-        {
-            let path = path.to_native()?;
-            tokio::task::spawn_blocking(move || Self::metadata_from_path(&path, true))
-                .await
-                .unwrap_or_else(|_| Err(Error::other("failed to join metadata query task")))
-        }
+    pub(crate) async fn metadata(
+        &self,
+        path: path::Path<'_>,
+        resolve: Resolve,
+    ) -> Result<Metadata> {
+        let path = path.to_native()?;
+        tokio::task::spawn_blocking(move || Self::metadata_from_path(&path, resolve))
+            .await
+            .unwrap_or_else(|_| Err(Error::other("failed to join metadata query task")))
     }
 
     pub(crate) async fn fs_metadata(
         &self,
         path: path::Path<'_>,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<FsMetadata> {
         let path = path.to_native()?;
-        tokio::task::spawn_blocking(move || Self::fs_metadata_from_path(&path, follow))
+        tokio::task::spawn_blocking(move || Self::fs_metadata_from_path(&path, resolve))
             .await
             .unwrap_or_else(|_| Err(Error::other("failed to join fs metadata query task")))
     }
@@ -1882,10 +1844,10 @@ impl Direct {
         path: path::Path<'_>,
         kind: AclKind,
         default: bool,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<Option<Acl>> {
         let path = path.to_native()?;
-        tokio::task::spawn_blocking(move || Self::acl_from_path(&path, kind, default, follow))
+        tokio::task::spawn_blocking(move || Self::acl_from_path(&path, kind, default, resolve))
             .await
             .unwrap_or_else(|_| Err(Error::other("failed to join ACL query task")))
     }
@@ -1896,12 +1858,12 @@ impl Direct {
         kind: AclKind,
         acl: Option<&Acl>,
         default: bool,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<()> {
         let path = path.to_native()?;
         let acl = acl.cloned();
         tokio::task::spawn_blocking(move || {
-            Self::set_acl_path(&path, kind, acl.as_ref(), default, follow)
+            Self::set_acl_path(&path, kind, acl.as_ref(), default, resolve)
         })
         .await
         .unwrap_or_else(|_| Err(Error::other("failed to join ACL update task")))
@@ -1911,10 +1873,10 @@ impl Direct {
         &self,
         path: path::Path<'_>,
         mask: dolang_winterop::security::SecInfo,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<SecDesc> {
         let path = path.to_native()?;
-        tokio::task::spawn_blocking(move || Self::sec_desc_from_path(&path, mask, follow))
+        tokio::task::spawn_blocking(move || Self::sec_desc_from_path(&path, mask, resolve))
             .await
             .unwrap_or_else(|_| Err(Error::other("failed to join security descriptor task")))
     }
@@ -1923,11 +1885,11 @@ impl Direct {
         &self,
         path: path::Path<'_>,
         sec_desc: &SecDesc,
-        follow: bool,
+        resolve: Resolve,
     ) -> Result<()> {
         let path = path.to_native()?;
         let sec_desc = sec_desc.clone();
-        tokio::task::spawn_blocking(move || Self::update_sec_desc_path(&path, &sec_desc, follow))
+        tokio::task::spawn_blocking(move || Self::update_sec_desc_path(&path, &sec_desc, resolve))
             .await
             .unwrap_or_else(|_| Err(Error::other("failed to join security descriptor task")))
     }
@@ -1967,8 +1929,14 @@ impl Direct {
         from: path::Path<'_>,
         to: path::Path<'_>,
         all: bool,
+        stop: Option<Stop>,
+        follow: bool,
     ) -> Result<()> {
-        Self::copy_local(&from.to_native()?, &to.to_native()?, all).await
+        let (from, to) = (from.to_native()?, to.to_native()?);
+        let bounds = walk::Bounds { stop, follow };
+        tokio::task::spawn_blocking(move || walk::copy(&from, &to, all, bounds))
+            .await
+            .map_err(Error::other)?
     }
 
     pub(crate) async fn rename(
@@ -1985,8 +1953,9 @@ impl Direct {
         from: path::Path<'_>,
         to: path::Path<'_>,
         all: bool,
+        stop: Stop,
     ) -> Result<()> {
-        Self::move_local(&from.to_native()?, &to.to_native()?, all).await
+        Self::move_local(&from.to_native()?, &to.to_native()?, all, stop).await
     }
 
     pub(crate) async fn symlink(
@@ -2012,23 +1981,6 @@ impl Direct {
         dst: path::Path<'_>,
     ) -> Result<()> {
         Self::impl_symlink_file(&src.to_native()?, &dst.to_native()?).await
-    }
-
-    pub(crate) async fn symlink_metadata(&self, path: path::Path<'_>) -> Result<Metadata> {
-        #[cfg(unix)]
-        {
-            let path = path.to_native()?;
-            tokio::task::spawn_blocking(move || Self::metadata_from_path(&path, false))
-                .await
-                .unwrap_or_else(|_| Err(Error::other("failed to join metadata query task")))
-        }
-        #[cfg(windows)]
-        {
-            let path = path.to_native()?;
-            tokio::task::spawn_blocking(move || Self::metadata_from_path(&path, false))
-                .await
-                .unwrap_or_else(|_| Err(Error::other("failed to join metadata query task")))
-        }
     }
 
     pub(crate) async fn update_metadata(
@@ -2059,11 +2011,13 @@ impl Direct {
         &self,
         pattern: impl Into<String>,
         root: path::Path<'_>,
-        follow_symlinks: bool,
+        stop: Option<Stop>,
+        follow: bool,
         max_depth: Option<usize>,
     ) -> Result<Vec<path::PathBuf>> {
         let pattern = pattern.into();
         let root = root.to_native()?;
+        let bounds = walk::Bounds { stop, follow };
         tokio::task::spawn_blocking(move || {
             let (prefix, glob) = Glob::new(&pattern)
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid glob pattern"))?
@@ -2084,10 +2038,17 @@ impl Direct {
                     .collect::<Result<_>>();
             };
 
+            // The base is always followed. Below it, Unix links are followed
+            // only with `follow`; Windows reports a junction as a link, so a
+            // walk that is to descend into one has to follow, leaving the
+            // filter to stop at real links
             let mut behavior = WalkBehavior::default();
-            if follow_symlinks {
+            if follow || cfg!(windows) {
                 behavior.link = LinkBehavior::ReadTarget;
             }
+            // Whether the filter has anything to stop at: a Unix walk that
+            // doesn't follow never descends into a link
+            let filter = stop.is_some() || (cfg!(windows) && !follow);
             // wax prunes directories that fail to match their pattern
             // component, but keeps descending below one that matches even
             // when the path is already deeper than the pattern can reach, so
@@ -2107,9 +2068,70 @@ impl Direct {
                 behavior.depth = DepthBehavior::Max(DepthMax(depth));
             }
 
-            for entry in glob.walk_with_behavior(&walk_root, behavior) {
-                let entry = entry.map_err(io::Error::other)?;
-                let relative = entry.root_relative_paths().1;
+            // Directories the walk stops at are discarded with their trees,
+            // so those that match are collected here
+            let mut stopped = Vec::new();
+            let mut failure = None;
+            let walk = glob
+                .walk_with_behavior(&walk_root, behavior)
+                .filter_entry(|entry| {
+                    if !filter || entry.depth() == 0 || !entry.file_type().is_dir() {
+                        return None;
+                    }
+                    match walk::stops_at(entry.path(), bounds) {
+                        Ok(false) => None,
+                        Ok(true) => {
+                            let relative = entry.root_relative_paths().1;
+                            if glob.is_match(relative) {
+                                stopped.push(relative.to_path_buf());
+                            }
+                            Some(EntryResidue::Tree)
+                        }
+                        // Removed since it was listed
+                        Err(err) if err.kind() == ErrorKind::NotFound => Some(EntryResidue::Tree),
+                        Err(err) => {
+                            failure.get_or_insert(err);
+                            Some(EntryResidue::Tree)
+                        }
+                    }
+                });
+            for entry in walk {
+                let relative = match entry {
+                    Ok(entry) => entry.root_relative_paths().1.to_path_buf(),
+                    Err(err) => {
+                        let path = err.path().map(Path::to_path_buf);
+                        let depth = err.depth();
+                        let err = io::Error::from(err);
+                        let link = path.as_deref().filter(|path| {
+                            depth > 0
+                                && std::fs::symlink_metadata(path)
+                                    .is_ok_and(|metadata| metadata.file_type().is_symlink())
+                        });
+                        let Some(link) = link else {
+                            return Err(err.into());
+                        };
+                        match err.kind() {
+                            // A link that leads nowhere is matched as itself
+                            io::ErrorKind::NotFound => {}
+                            // A link back to a directory the walk is inside,
+                            // which Windows follows even when it is to stop
+                            // there
+                            io::ErrorKind::Other => {
+                                if !walk::stops_at(link, bounds)? {
+                                    return Err(walk::cycle_error(link));
+                                }
+                            }
+                            _ => return Err(err.into()),
+                        }
+                        let Ok(relative) = link.strip_prefix(&walk_root) else {
+                            return Err(err.into());
+                        };
+                        if !glob.is_match(relative) {
+                            continue;
+                        }
+                        relative.to_path_buf()
+                    }
+                };
                 // The walk root reports itself with an empty root-relative
                 // path, and `PathBuf::join("")` appends a trailing separator,
                 // producing a path every later `stat` of a non-directory
@@ -2120,6 +2142,10 @@ impl Direct {
                     prefix.join(relative)
                 });
             }
+            if let Some(err) = failure {
+                return Err(err);
+            }
+            paths.extend(stopped.into_iter().map(|relative| prefix.join(relative)));
 
             paths.sort();
             paths

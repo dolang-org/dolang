@@ -3,6 +3,7 @@ import
     - vfs
   std:
     - UnexpectedPosError
+    - ValueError
   test:
     - assert
     - assert_eq
@@ -113,3 +114,19 @@ def broken_symlink()
 
   let resolved = link.read_link()
   assert_eq $resolved $target
+
+#[test]
+#[vfs]
+def symlink_metadata_resolve_scale()
+  let target = Path "target"
+  let link = Path "link"
+  create_dir $target
+  symlink_dir $target $link
+
+  let meta = metadata $link resolve: :TARGET:
+  assert_eq $meta.type :DIR:
+  for resolve = [:LINK:, :MOUNT:, :CROSS:]
+    let meta = metadata $link resolve: $resolve
+    assert_eq $meta.type :SYMLINK:
+    assert_eq $meta.is_mount false
+  assert_throws $ValueError do metadata $link resolve: :BOGUS:

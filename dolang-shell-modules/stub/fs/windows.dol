@@ -33,6 +33,72 @@ pub @let AccessRight = $
   | :WRITE_ATTRIBUTES:
   | WindowsAccessRight
 
+# The kind of a reparse point: the filter or feature that owns it, from the
+# documented `IO_REPARSE_TAG_*` values.
+pub @let ReparseTag = $
+  # Junction or volume mount point
+  | :MOUNT_POINT:
+  # Symbolic link
+  | :SYMLINK:
+  # WSL symbolic link
+  | :LX_SYMLINK:
+  # WSL named pipe
+  | :LX_FIFO:
+  # WSL character device
+  | :LX_CHR:
+  # WSL block device
+  | :LX_BLK:
+  # Unix domain socket
+  | :AF_UNIX:
+  # App execution alias
+  | :APPEXECLINK:
+  # Cloud files placeholder, such as a OneDrive file or folder
+  | :CLOUD:
+  # OneDrive
+  | :ONEDRIVE:
+  # Azure File Sync
+  | :STORAGE_SYNC:
+  # Data deduplication
+  | :DEDUP:
+  # Windows Overlay Filter, for compressed and WIM-backed files
+  | :WOF:
+  # WIM image mount
+  | :WIM:
+  # Hierarchical storage management
+  | :HSM:
+  # Hierarchical storage management
+  | :HSM2:
+  # Single-instance storage
+  | :SIS:
+  # Cluster shared volume
+  | :CSV:
+  # Distributed File System
+  | :DFS:
+  # DFS Replication
+  | :DFSR:
+  # Client for NFS
+  | :NFS:
+  # Windows Phone placeholder
+  | :FILE_PLACEHOLDER:
+  # Windows Container Isolation
+  | :WCI:
+  # Windows Container Isolation link
+  | :WCI_LINK:
+  # Windows Container Isolation tombstone
+  | :WCI_TOMBSTONE:
+  # Projected File System
+  | :PROJFS:
+  # Projected File System tombstone
+  | :PROJFS_TOMBSTONE:
+  # Global reparse point
+  | :GLOBAL_REPARSE:
+  # Dataless composite image
+  | :DATALESS_CIM:
+  # A tag reserved for a file that no filter handles
+  | :UNHANDLED:
+  # Any tag outside this set
+  | :UNKNOWN:
+
 # Access rights for a file or directory, as
 # [`fs.open`](fs.open) takes them in `access:`.
 #
@@ -202,7 +268,8 @@ pub class Path: fs.Path
     self
     pattern @ Str
     :max_depth @ Int = ...
-    :resolve @ fs.Resolve = ...
+    :stop @ (fs.Stop | false) = ...
+    :follow @ Bool = ...
   do -> UnpackIter[Path]
     ...
 
@@ -432,6 +499,10 @@ do
 
 # Windows directory entries.
 pub class DirEntry: fs.DirEntry
+  # The entry's reparse tag, or `nil` when it isn't a reparse point.
+  #[getter]
+  pub def reparse_tag self -> (ReparseTag | nil)
+    ...
 
 # Windows filesystem metadata.
 pub class FsMetadata: fs.FsMetadata
@@ -477,9 +548,10 @@ pub class Metadata: fs.Metadata
   pub def archive self -> Bool
     ...
 
-  # Whether the reparse-point attribute is set.
+  # The reparse tag, or `nil` when the file isn't a reparse point opened as
+  # itself.
   #[getter]
-  pub def reparse_point self -> Bool
+  pub def reparse_tag self -> (ReparseTag | nil)
     ...
 
   # Whether sparse allocation is enabled. Windows

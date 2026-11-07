@@ -1,6 +1,8 @@
 import fs std
   testlib.vfs:
     - vfs
+  std:
+    - ValueError
   test:
     - assert
     - assert_throws
@@ -9,6 +11,7 @@ import fs std
     - test
   fs:
     - glob
+    - symlink_dir
     - Path
 
 #[fixture]
@@ -80,3 +83,51 @@ def unpack_readonly()
   assert_eq ([...paths]) [Path "src/foo.rs", Path "src/lib.rs"]
   assert_throws $std.ConcurrencyError do
     [...stale]
+
+# `src` holds a link back out to `outside`.
+#[fixture]
+def with_link block ...rest
+  Path("outside").create_dir()
+  Path("outside/out.rs").write ""
+  symlink_dir $Path("outside").canonical() (Path "src/link")
+  block(...rest)
+
+#[test]
+#[vfs]
+#[populate]
+#[with_link]
+def stops_at_links_by_default()
+  assert_eq [...glob "src/**/*.rs"] [Path "src/foo.rs", Path "src/lib.rs"]
+  assert_eq [...glob "src/**/*.rs" stop: :CROSS:] [Path "src/foo.rs", Path "src/lib.rs"]
+  assert_eq [...glob "src/**/*.rs" stop: false] [Path "src/foo.rs", Path "src/lib.rs"]
+  # The link itself still matches
+  assert_eq [...glob "src/l*"] [Path "src/lib.rs", Path "src/link"]
+
+#[test]
+#[vfs]
+#[populate]
+#[with_link]
+def follow_follows_links()
+  let expected = [Path "src/foo.rs", Path "src/lib.rs", Path "src/link/out.rs"]
+  assert_eq [...glob "src/**/*.rs" follow: true] $expected
+  assert_eq [...glob "src/**/*.rs" follow: true stop: :CROSS:] $expected
+  assert_eq [...Path("src").glob("**/*.rs", follow: true)] $expected
+
+#[test]
+#[vfs]
+#[populate]
+#[with_link]
+def base_link_is_followed()
+  assert_eq [...glob "src/link/*"] [Path "src/link/out.rs"]
+  assert_eq [...Path("src/link").glob("*")] [Path "src/link/out.rs"]
+
+#[test]
+#[vfs]
+#[populate]
+def rejects_bad_stop()
+  assert_throws $ValueError do [...glob "*" stop: :TARGET:]
+  assert_throws $ValueError do [...glob "*" stop: :LINK:]
+  assert_throws $ValueError do [...glob "*" stop: :NEVER:]
+  assert_throws $ValueError do [...glob "*" stop: true]
+  assert_throws $std.TypeError do [...glob "*" follow: 1]
+  assert_throws $std.Error do [...glob "*" resolve: :LINK:]

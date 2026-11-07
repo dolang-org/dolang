@@ -580,11 +580,11 @@ impl Vfs {
         &self,
         path: path::Path<'_>,
         namespace: file::XattrNamespace<'_>,
-        follow: bool,
+        resolve: metadata::Resolve,
     ) -> error::Result<Vec<file::XattrEntry>> {
         match &self.inner {
-            VfsInner::Client(client) => client.xattrs(path, namespace, follow).await,
-            VfsInner::Direct(direct) => direct.xattrs(path, namespace, follow).await,
+            VfsInner::Client(client) => client.xattrs(path, namespace, resolve).await,
+            VfsInner::Direct(direct) => direct.xattrs(path, namespace, resolve).await,
         }
     }
 
@@ -592,11 +592,11 @@ impl Vfs {
     pub async fn streams(
         &self,
         path: path::Path<'_>,
-        follow: bool,
+        resolve: metadata::Resolve,
     ) -> error::Result<Vec<file::StreamEntry>> {
         match &self.inner {
-            VfsInner::Client(client) => client.streams(path, follow).await,
-            VfsInner::Direct(direct) => direct.streams(path, follow).await,
+            VfsInner::Client(client) => client.streams(path, resolve).await,
+            VfsInner::Direct(direct) => direct.streams(path, resolve).await,
         }
     }
 
@@ -606,11 +606,11 @@ impl Vfs {
         path: path::Path<'_>,
         name: &str,
         namespace: Option<&str>,
-        follow: bool,
+        resolve: metadata::Resolve,
     ) -> error::Result<Vec<u8>> {
         match &self.inner {
-            VfsInner::Client(client) => client.xattr(path, name, namespace, follow).await,
-            VfsInner::Direct(direct) => direct.xattr(path, name, namespace, follow).await,
+            VfsInner::Client(client) => client.xattr(path, name, namespace, resolve).await,
+            VfsInner::Direct(direct) => direct.xattr(path, name, namespace, resolve).await,
         }
     }
 
@@ -621,14 +621,18 @@ impl Vfs {
         name: &str,
         namespace: Option<&str>,
         value: &[u8],
-        follow: bool,
+        resolve: metadata::Resolve,
     ) -> error::Result<()> {
         match &self.inner {
             VfsInner::Client(client) => {
-                client.set_xattr(path, name, namespace, value, follow).await
+                client
+                    .set_xattr(path, name, namespace, value, resolve)
+                    .await
             }
             VfsInner::Direct(direct) => {
-                direct.set_xattr(path, name, namespace, value, follow).await
+                direct
+                    .set_xattr(path, name, namespace, value, resolve)
+                    .await
             }
         }
     }
@@ -639,27 +643,46 @@ impl Vfs {
         path: path::Path<'_>,
         name: &str,
         namespace: Option<&str>,
-        follow: bool,
+        resolve: metadata::Resolve,
     ) -> error::Result<()> {
         match &self.inner {
-            VfsInner::Client(client) => client.remove_xattr(path, name, namespace, follow).await,
-            VfsInner::Direct(direct) => direct.remove_xattr(path, name, namespace, follow).await,
+            VfsInner::Client(client) => client.remove_xattr(path, name, namespace, resolve).await,
+            VfsInner::Direct(direct) => direct.remove_xattr(path, name, namespace, resolve).await,
         }
     }
 
-    /// Removes a file or symlink.
-    pub async fn remove(&self, path: path::Path<'_>, all: bool, ignore: bool) -> error::Result<()> {
+    /// Removes a file or link, or with `all`, a directory and everything
+    /// below it. Recursion stops at `stop`: an entry there is removed as
+    /// itself, without descending into it. Removal never follows symbolic
+    /// links.
+    pub async fn remove(
+        &self,
+        path: path::Path<'_>,
+        all: bool,
+        ignore: bool,
+        stop: metadata::Stop,
+    ) -> error::Result<()> {
         match &self.inner {
-            VfsInner::Client(client) => client.remove(path, all, ignore).await,
-            VfsInner::Direct(direct) => direct.remove(path, all, ignore).await,
+            VfsInner::Client(client) => client.remove(path, all, ignore, stop).await,
+            VfsInner::Direct(direct) => direct.remove(path, all, ignore, stop).await,
         }
     }
 
-    /// Returns metadata without following the final symlink.
+    /// Returns metadata, following every link.
     pub async fn metadata(&self, path: path::Path<'_>) -> error::Result<metadata::Metadata> {
+        self.metadata_resolved(path, metadata::Resolve::Target)
+            .await
+    }
+
+    /// Returns metadata, resolving the final component as `resolve` says.
+    pub async fn metadata_resolved(
+        &self,
+        path: path::Path<'_>,
+        resolve: metadata::Resolve,
+    ) -> error::Result<metadata::Metadata> {
         match &self.inner {
-            VfsInner::Client(client) => client.metadata(path).await,
-            VfsInner::Direct(direct) => direct.metadata(path).await,
+            VfsInner::Client(client) => client.metadata(path, resolve).await,
+            VfsInner::Direct(direct) => direct.metadata(path, resolve).await,
         }
     }
 
@@ -667,11 +690,11 @@ impl Vfs {
     pub async fn fs_metadata(
         &self,
         path: path::Path<'_>,
-        follow: bool,
+        resolve: metadata::Resolve,
     ) -> error::Result<metadata::FsMetadata> {
         match &self.inner {
-            VfsInner::Client(client) => client.fs_metadata(path, follow).await,
-            VfsInner::Direct(direct) => direct.fs_metadata(path, follow).await,
+            VfsInner::Client(client) => client.fs_metadata(path, resolve).await,
+            VfsInner::Direct(direct) => direct.fs_metadata(path, resolve).await,
         }
     }
 
@@ -682,11 +705,11 @@ impl Vfs {
         path: path::Path<'_>,
         kind: security::AclKind,
         default: bool,
-        follow: bool,
+        resolve: metadata::Resolve,
     ) -> error::Result<Option<security::Acl>> {
         match &self.inner {
-            VfsInner::Client(client) => client.acl(path, kind, default, follow).await,
-            VfsInner::Direct(direct) => direct.acl(path, kind, default, follow).await,
+            VfsInner::Client(client) => client.acl(path, kind, default, resolve).await,
+            VfsInner::Direct(direct) => direct.acl(path, kind, default, resolve).await,
         }
     }
 
@@ -698,11 +721,11 @@ impl Vfs {
         kind: security::AclKind,
         acl: Option<&security::Acl>,
         default: bool,
-        follow: bool,
+        resolve: metadata::Resolve,
     ) -> error::Result<()> {
         match &self.inner {
-            VfsInner::Client(client) => client.set_acl(path, kind, acl, default, follow).await,
-            VfsInner::Direct(direct) => direct.set_acl(path, kind, acl, default, follow).await,
+            VfsInner::Client(client) => client.set_acl(path, kind, acl, default, resolve).await,
+            VfsInner::Direct(direct) => direct.set_acl(path, kind, acl, default, resolve).await,
         }
     }
 
@@ -711,11 +734,11 @@ impl Vfs {
         &self,
         path: path::Path<'_>,
         mask: dolang_winterop::security::SecInfo,
-        follow: bool,
+        resolve: metadata::Resolve,
     ) -> error::Result<SecDesc> {
         match &self.inner {
-            VfsInner::Client(client) => client.sec_desc(path, mask, follow).await,
-            VfsInner::Direct(direct) => direct.sec_desc(path, mask, follow).await,
+            VfsInner::Client(client) => client.sec_desc(path, mask, resolve).await,
+            VfsInner::Direct(direct) => direct.sec_desc(path, mask, resolve).await,
         }
     }
 
@@ -724,11 +747,11 @@ impl Vfs {
         &self,
         path: path::Path<'_>,
         sec_desc: &SecDesc,
-        follow: bool,
+        resolve: metadata::Resolve,
     ) -> error::Result<()> {
         match &self.inner {
-            VfsInner::Client(client) => client.update_sec_desc(path, sec_desc, follow).await,
-            VfsInner::Direct(direct) => direct.update_sec_desc(path, sec_desc, follow).await,
+            VfsInner::Client(client) => client.update_sec_desc(path, sec_desc, resolve).await,
+            VfsInner::Direct(direct) => direct.update_sec_desc(path, sec_desc, resolve).await,
         }
     }
 
@@ -753,16 +776,22 @@ impl Vfs {
         }
     }
 
-    /// Copies a path, optionally including directory contents.
+    /// Copies a path, or with `all`, a directory and everything below it.
+    /// Recursion stops at `stop`, or at nothing when it is `None`: an entry
+    /// there is copied as itself. Symbolic links are copied as links, unless
+    /// `follow` is set: then links, `from` included, are followed, and what
+    /// they lead to is copied.
     pub async fn copy(
         &self,
         from: path::Path<'_>,
         to: path::Path<'_>,
         all: bool,
+        stop: Option<metadata::Stop>,
+        follow: bool,
     ) -> error::Result<()> {
         match &self.inner {
-            VfsInner::Client(client) => client.copy(from, to, all).await,
-            VfsInner::Direct(direct) => direct.copy(from, to, all).await,
+            VfsInner::Client(client) => client.copy(from, to, all, stop, follow).await,
+            VfsInner::Direct(direct) => direct.copy(from, to, all, stop, follow).await,
         }
     }
 
@@ -779,16 +808,20 @@ impl Vfs {
         }
     }
 
-    /// Moves a path, optionally including directory contents.
+    /// Moves a path, or with `all`, a directory and everything below it. A
+    /// rename moves anything; across devices, the move copies and then
+    /// removes, stopping at `stop` as [`remove`](Self::remove) does, and
+    /// checks first that the removal can succeed.
     pub async fn move_(
         &self,
         from: path::Path<'_>,
         to: path::Path<'_>,
         all: bool,
+        stop: metadata::Stop,
     ) -> error::Result<()> {
         match &self.inner {
-            VfsInner::Client(client) => client.move_(from, to, all).await,
-            VfsInner::Direct(direct) => direct.move_(from, to, all).await,
+            VfsInner::Client(client) => client.move_(from, to, all, stop).await,
+            VfsInner::Direct(direct) => direct.move_(from, to, all, stop).await,
         }
     }
 
@@ -833,15 +866,12 @@ impl Vfs {
         }
     }
 
-    /// Returns metadata without following the final symlink.
+    /// Returns metadata without following a final symbolic link.
     pub async fn symlink_metadata(
         &self,
         path: path::Path<'_>,
     ) -> error::Result<metadata::Metadata> {
-        match &self.inner {
-            VfsInner::Client(client) => client.symlink_metadata(path).await,
-            VfsInner::Direct(direct) => direct.symlink_metadata(path).await,
-        }
+        self.metadata_resolved(path, metadata::Resolve::Link).await
     }
 
     /// Applies a metadata patch to every path.
@@ -880,23 +910,27 @@ impl Vfs {
         }
     }
 
-    /// Expands a glob pattern beneath `root`.
+    /// Expands a glob pattern beneath `root`. The base the walk starts from,
+    /// `root` joined with the pattern's literal prefix, is always followed.
+    /// Below it, the walk stops descending at `stop`, or at nothing when it
+    /// is `None`; an entry there can match, but nothing below it is read.
+    /// Symbolic links are matched as themselves, unless `follow` is set: then
+    /// they are followed, and a link that leads nowhere is matched as itself.
+    /// A pattern without wildcards only checks that its path exists, and
+    /// ignores `stop` and `follow`.
     pub async fn glob(
         &self,
         pattern: impl Into<String>,
         root: path::Path<'_>,
-        follow_symlinks: bool,
+        stop: Option<metadata::Stop>,
+        follow: bool,
         max_depth: Option<usize>,
     ) -> error::Result<Vec<path::PathBuf>> {
         let pattern = pattern.into();
 
         match &self.inner {
-            VfsInner::Client(client) => {
-                client.glob(pattern, root, follow_symlinks, max_depth).await
-            }
-            VfsInner::Direct(direct) => {
-                direct.glob(pattern, root, follow_symlinks, max_depth).await
-            }
+            VfsInner::Client(client) => client.glob(pattern, root, stop, follow, max_depth).await,
+            VfsInner::Direct(direct) => direct.glob(pattern, root, stop, follow, max_depth).await,
         }
     }
 }

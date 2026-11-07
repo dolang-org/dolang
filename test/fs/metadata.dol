@@ -138,7 +138,6 @@ def windows_attrs()
     assert_type $Bool $meta.hidden
     assert_type $Bool $meta.system
     assert_type $Bool $meta.archive
-    assert_type $Bool $meta.reparse_point
     assert_type $Bool $meta.compressed
     assert_type $Bool $meta.sparse
     assert_type $Bool $meta.encrypted
@@ -324,7 +323,6 @@ def freebsd_attrs()
   assert_type $Bool $meta.hidden
   assert_type $Bool $meta.system
   assert_type $Bool $meta.archive
-  assert_type $Bool $meta.reparse_point
   assert_type $Bool $meta.compressed
   assert_type $Bool $meta.offline
   assert_type $Bool $meta.immutable
@@ -412,3 +410,16 @@ def nominal_platform_classes()
       assert_eq $filesystem.no_dev nil
       assert_eq $filesystem.no_atime nil
   remove entry.txt
+
+#[test]
+#[vfs]
+def is_mount_marked_from_mount_up()
+  if (sys.os_info().os != :LINUX:)
+    ignore "requires Linux"
+  for resolve = [:TARGET:, :LINK:]
+    let meta = metadata /proc resolve: $resolve
+    assert_eq $meta.is_mount false
+  for resolve = [:MOUNT:, :CROSS:]
+    let meta = metadata /proc resolve: $resolve
+    assert_eq $meta.type :DIR:
+    assert_eq $meta.is_mount true

@@ -25,6 +25,7 @@ pub(crate) struct DirEntryAnnex<'v> {
     pub(crate) name: String,
     pub(crate) file_type: FileType,
     pub(crate) ino: Option<u64>,
+    pub(crate) reparse_tag: Option<u32>,
 }
 
 pub(crate) struct DirEntryIter {
@@ -47,6 +48,7 @@ pub(crate) fn create_dir_entry<'v, 's>(
         name,
         file_type: entry.file_type(),
         ino: entry.ino(),
+        reparse_tag: entry.reparse_tag(),
     };
     if annex.ino.is_some() {
         global
@@ -98,12 +100,18 @@ impl<'v, const FAMILY: u8> Object<'v> for DirEntry<FAMILY> {
                 );
                 Ok(())
             });
-        if FAMILY == FS_UNIX {
-            builder.get("ino", move |this, strand, out| {
+        match FAMILY {
+            FS_UNIX => builder.get("ino", move |this, strand, out| {
                 crate::util::option_field(strand, this.annex().ino, ino, out)
-            })
-        } else {
-            builder
+            }),
+            FS_WINDOWS => builder.get("reparse_tag", |this, strand, out| {
+                let annex = this.annex();
+                let tag = annex
+                    .reparse_tag
+                    .map(|tag| crate::fs::metadata::reparse_tag_to_sym(tag, annex.global));
+                crate::util::nullable_field(strand, tag, out)
+            }),
+            _ => builder,
         }
     }
 }

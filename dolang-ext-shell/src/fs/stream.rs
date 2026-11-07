@@ -5,6 +5,7 @@ use dolang::runtime::{
     value::TypeObject,
 };
 use dolang_vfs::file::StreamEntry as VfsStreamEntry;
+use dolang_vfs::metadata::Resolve;
 use dolang_vfs::path as vfs_path;
 
 use crate::{error::ResultExt as _, global::FsGlobal};
@@ -85,12 +86,12 @@ pub(crate) async fn path_list<'v, 's>(
     resolve: Option<Slot<'v, '_>>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let follow = super::resolve_sym(strand, global, resolve, true)?;
+    let resolve = super::resolve_sym(strand, global, resolve, Resolve::Target)?;
     let path = super::prepend_cwd(strand, global, path)?;
     let local = global.local.get(strand);
     let entries = local
         .vfs()
-        .streams(path.to_path(), follow)
+        .streams(path.to_path(), resolve)
         .await
         .into_sys(strand)?;
     create_stream_iter(strand, global, entries, out)

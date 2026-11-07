@@ -1498,7 +1498,7 @@ impl Connection {
             .create(req.flags.contains(OpenFlags::CREATE))
             .create_new(req.flags.contains(OpenFlags::CREATE_NEW))
             .truncate(req.flags.contains(OpenFlags::TRUNCATE))
-            .no_follow(req.flags.contains(OpenFlags::NO_FOLLOW))
+            .resolve(req.resolve)
             .set_extra(req.extra);
 
         let file = opts.open(Into::into(&req.path)).await?;
@@ -2106,13 +2106,17 @@ impl Connection {
     async fn handle_remove(&self, req: RemoveRequest) -> Result<ResponseKind> {
         self.server
             .vfs
-            .remove(Into::into(&req.path), req.all, req.ignore)
+            .remove(Into::into(&req.path), req.all, req.ignore, req.stop)
             .await?;
         Ok(ResponseKind::Remove)
     }
 
     async fn handle_metadata(&self, req: MetadataRequest) -> Result<ResponseKind> {
-        let metadata = self.server.vfs.metadata(Into::into(&req.path)).await?;
+        let metadata = self
+            .server
+            .vfs
+            .metadata_resolved(Into::into(&req.path), req.resolve)
+            .await?;
         Ok(ResponseKind::Metadata(metadata))
     }
 
@@ -2120,7 +2124,7 @@ impl Connection {
         let metadata = self
             .server
             .vfs
-            .fs_metadata(Into::into(&req.path), req.follow)
+            .fs_metadata(Into::into(&req.path), req.resolve)
             .await?;
         Ok(ResponseKind::FsMetadata(metadata))
     }
@@ -2129,7 +2133,7 @@ impl Connection {
         let sec_desc = self
             .server
             .vfs
-            .sec_desc(Into::into(&req.path), req.mask, req.follow)
+            .sec_desc(Into::into(&req.path), req.mask, req.resolve)
             .await?;
         Ok(ResponseKind::SecDesc(sec_desc))
     }
@@ -2138,7 +2142,7 @@ impl Connection {
         let acl = self
             .server
             .vfs
-            .acl(Into::into(&req.path), req.kind, req.default, req.follow)
+            .acl(Into::into(&req.path), req.kind, req.default, req.resolve)
             .await?;
         Ok(ResponseKind::Acl(acl))
     }
@@ -2151,7 +2155,7 @@ impl Connection {
                 req.kind,
                 req.acl.as_ref(),
                 req.default,
-                req.follow,
+                req.resolve,
             )
             .await?;
         Ok(ResponseKind::SetAcl)
@@ -2160,7 +2164,7 @@ impl Connection {
     async fn handle_update_sec_desc(&self, req: UpdateSecDescRequest) -> Result<ResponseKind> {
         self.server
             .vfs
-            .update_sec_desc(Into::into(&req.path), &req.sec_desc, req.follow)
+            .update_sec_desc(Into::into(&req.path), &req.sec_desc, req.resolve)
             .await?;
         Ok(ResponseKind::UpdateSecDesc)
     }
@@ -2184,7 +2188,13 @@ impl Connection {
     async fn handle_copy(&self, req: CopyRequest) -> Result<ResponseKind> {
         self.server
             .vfs
-            .copy(Into::into(&req.from), Into::into(&req.to), req.all)
+            .copy(
+                Into::into(&req.from),
+                Into::into(&req.to),
+                req.all,
+                req.stop,
+                req.follow,
+            )
             .await?;
         Ok(ResponseKind::Copy)
     }
@@ -2200,7 +2210,12 @@ impl Connection {
     async fn handle_move(&self, req: MoveRequest) -> Result<ResponseKind> {
         self.server
             .vfs
-            .move_(Into::into(&req.from), Into::into(&req.to), req.all)
+            .move_(
+                Into::into(&req.from),
+                Into::into(&req.to),
+                req.all,
+                req.stop,
+            )
             .await?;
         Ok(ResponseKind::Move)
     }
@@ -2283,7 +2298,8 @@ impl Connection {
             .glob(
                 req.pattern,
                 Into::into(&req.root),
-                req.follow_symlinks,
+                req.stop,
+                req.follow,
                 req.max_depth,
             )
             .await?;
@@ -2297,7 +2313,7 @@ impl Connection {
             .xattrs(
                 Into::into(&req.path),
                 req.namespace.as_borrowed(),
-                req.follow,
+                req.resolve,
             )
             .await?;
         Ok(ResponseKind::Xattrs(xattrs))
@@ -2311,7 +2327,7 @@ impl Connection {
                 Into::into(&req.path),
                 &req.name,
                 req.namespace.as_deref(),
-                req.follow,
+                req.resolve,
             )
             .await?;
         Ok(ResponseKind::Xattr(xattr))
@@ -2325,7 +2341,7 @@ impl Connection {
                 &req.name,
                 req.namespace.as_deref(),
                 &req.value,
-                req.follow,
+                req.resolve,
             )
             .await?;
         Ok(ResponseKind::SetXattr)
@@ -2338,7 +2354,7 @@ impl Connection {
                 Into::into(&req.path),
                 &req.name,
                 req.namespace.as_deref(),
-                req.follow,
+                req.resolve,
             )
             .await?;
         Ok(ResponseKind::RemoveXattr)
@@ -2348,7 +2364,7 @@ impl Connection {
         Ok(ResponseKind::Streams(
             self.server
                 .vfs
-                .streams(Into::into(&req.path), req.follow)
+                .streams(Into::into(&req.path), req.resolve)
                 .await?,
         ))
     }
@@ -2432,6 +2448,7 @@ mod tests {
                     .to_path()
                     .into(),
                 flags: OpenFlags::READ,
+                resolve: crate::metadata::Resolve::Target,
                 extra: Default::default(),
             })))
             .await
