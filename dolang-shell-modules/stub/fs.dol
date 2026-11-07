@@ -752,6 +752,36 @@ pub class BaseFile: Io
   pub def streams self -> Iter[StreamEntry]
     ...
 
+  # Returns the directory the junction this file refers to leads to.
+  #
+  # Windows only. Open the junction as itself, with `backup: true` and a
+  # `resolve:` of `:MOUNT:` or beyond. See
+  # [`fs.windows.read_junction`](fs.windows.read_junction).
+  pub def read_junction self -> Path
+    ...
+
+  # Makes the empty directory this file refers to a junction, or removes its
+  # junction.
+  #
+  # Windows only. Open the directory for writing, with `backup: true`, and to
+  # remove a junction, with a `resolve:` of `:MOUNT:` or beyond. See
+  # [`fs.windows.Path.set_junction`](fs.windows.Path.set_junction).
+  #
+  # ## Example
+  #
+  # ```
+  # create_dir mount
+  # open mount read: true write: true backup: true resolve: :MOUNT: do |dir|
+  #   dir.set_junction "D:/cache"
+  # ```
+  pub def set_junction
+    self
+    # The directory to lead to, or `nil` to remove the junction. A relative
+    # path is resolved against the current directory.
+    target @ (Str | Path | nil)
+  do
+    ...
+
   # Returns the current cursor position in bytes.
   #
   # For a [`File`](fs.File), this is the logical position, where the next
@@ -2788,6 +2818,10 @@ do
 
 # Reads the target of a symbolic link.
 #
+# On Windows, the target of a WSL symbolic link is an
+# [`fs.unix.Path`](fs.unix.Path). A junction is a mount rather than a link;
+# read one with [`fs.windows.read_junction`](fs.windows.read_junction).
+#
 # ## Returns
 #
 # The path the symlink points to.
@@ -2797,6 +2831,7 @@ do
 # | Exception                                                       | Condition                                          |
 # | --------------------------------------------------------------- | -------------------------------------------------- |
 # | [`sys.NotFoundError`](sys.NotFoundError)                | The path does not exist                            |
+# | [`sys.InvalidInputError`](sys.InvalidInputError)        | The path isn't a symbolic link                     |
 # | [`sys.PermissionDeniedError`](sys.PermissionDeniedError) | Permission denied to read the symlink              |
 # | [`sys.UnsupportedError`](sys.UnsupportedError)           | Reading symlinks is not supported on this platform |
 #

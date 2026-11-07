@@ -863,6 +863,22 @@ impl File {
         Direct::impl_file_streams(&self.fd()?).await
     }
 
+    pub(crate) async fn read_junction(&self) -> Result<path::PathBuf> {
+        let file = self.fd()?;
+        let target = tokio::task::spawn_blocking(move || Direct::read_junction_file(&file))
+            .await
+            .unwrap_or_else(|_| Err(Error::other("failed to join junction task")))?;
+        path::PathBuf::from_native(target)
+    }
+
+    pub(crate) async fn set_junction(&self, target: Option<path::Path<'_>>) -> Result<()> {
+        let file = self.fd()?;
+        let target = target.map(|target| target.to_native()).transpose()?;
+        tokio::task::spawn_blocking(move || Direct::set_junction_file(&file, target.as_deref()))
+            .await
+            .unwrap_or_else(|_| Err(Error::other("failed to join junction task")))
+    }
+
     pub(crate) async fn set_xattr(
         &self,
         name: &str,
@@ -2000,7 +2016,50 @@ impl Direct {
     }
 
     pub(crate) async fn read_link(&self, path: path::Path<'_>) -> Result<path::PathBuf> {
-        path::PathBuf::from_native(fs::read_link(path.to_native()?).await?)
+        // std's `read_link` also reads a junction, which Do treats as a mount
+        #[cfg(windows)]
+        {
+            let path = path.to_native()?;
+            tokio::task::spawn_blocking(move || Self::read_link_path(&path))
+                .await
+                .unwrap_or_else(|_| Err(Error::other("failed to join read link task")))
+        }
+        #[cfg(not(windows))]
+        {
+            path::PathBuf::from_native(fs::read_link(path.to_native()?).await?)
+        }
+    }
+
+    pub(crate) async fn read_junction(&self, path: path::Path<'_>) -> Result<path::PathBuf> {
+        let path = path.to_native()?;
+        let target = tokio::task::spawn_blocking(move || Self::read_junction_path(&path))
+            .await
+            .unwrap_or_else(|_| Err(Error::other("failed to join junction task")))?;
+        path::PathBuf::from_native(target)
+    }
+
+    pub(crate) async fn set_junction(
+        &self,
+        path: path::Path<'_>,
+        target: Option<path::Path<'_>>,
+    ) -> Result<()> {
+        let path = path.to_native()?;
+        let target = target.map(|target| target.to_native()).transpose()?;
+        tokio::task::spawn_blocking(move || Self::set_junction_path(&path, target.as_deref()))
+            .await
+            .unwrap_or_else(|_| Err(Error::other("failed to join junction task")))
+    }
+
+    pub(crate) async fn create_junction(
+        &self,
+        path: path::Path<'_>,
+        target: path::Path<'_>,
+    ) -> Result<()> {
+        let path = path.to_native()?;
+        let target = target.to_native()?;
+        tokio::task::spawn_blocking(move || Self::create_junction_path(&path, &target))
+            .await
+            .unwrap_or_else(|_| Err(Error::other("failed to join junction task")))
     }
 
     pub(crate) async fn access(&self, path: path::Path<'_>, mode: AccessFlags) -> Result<()> {

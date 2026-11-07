@@ -288,6 +288,56 @@ pub(crate) fn prepend_cwd<'v, 's>(
     safe_concat(strand, cwd.to_path(), path)
 }
 
+/// Converts a junction target, or `nil` for none, to an absolute path. A
+/// relative target is resolved against the current directory, since the VFS
+/// can't know it.
+pub(crate) fn junction_target<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, FsGlobal<'v>>,
+    target: &Value<'v>,
+) -> Result<'v, 's, Option<vfs_path::PathBuf>> {
+    if target.is_nil() {
+        return Ok(None);
+    }
+    let target = path_from_value(strand, target)?;
+    Ok(Some(prepend_cwd(strand, global, target.to_path())?))
+}
+
+pub(crate) async fn read_junction<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, FsGlobal<'v>>,
+    path: vfs_path::Path<'_>,
+    out: impl Output<'v>,
+) -> Result<'v, 's, ()> {
+    let path = prepend_cwd(strand, global, path)?;
+    let local = global.local.get(strand);
+    let target = local
+        .vfs()
+        .read_junction(path.to_path())
+        .await
+        .into_sys(strand)?;
+    create_path(strand, global, target, out)
+}
+
+pub(crate) async fn set_junction<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, FsGlobal<'v>>,
+    path: vfs_path::Path<'_>,
+    target: &Value<'v>,
+) -> Result<'v, 's, ()> {
+    let target = junction_target(strand, global, target)?;
+    let path = prepend_cwd(strand, global, path)?;
+    let local = global.local.get(strand);
+    local
+        .vfs()
+        .set_junction(
+            path.to_path(),
+            target.as_ref().map(|target| target.to_path()),
+        )
+        .await
+        .into_sys(strand)
+}
+
 async fn metadata<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, FsGlobal<'v>>,
@@ -1854,6 +1904,25 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             .await?;
             let resolve = resolve_sym(strand, global, resolve, Resolve::Target)?;
             update_sec_desc(strand, global, path.to_path(), &descriptor, resolve).await
+        })
+        .function("create_junction", async move |strand, args, _out| {
+            let ([target, path], []) = unpack!(strand, args, 2, 0)?;
+            let Some(target) = junction_target(strand, global, &target)? else {
+                return Err(Error::type_error(strand, "expected Path or Str"));
+            };
+            let path = path_from_value(strand, &path)?;
+            let path = prepend_cwd(strand, global, path.to_path())?;
+            let local = global.local.get(strand);
+            local
+                .vfs()
+                .create_junction(path.to_path(), target.to_path())
+                .await
+                .into_sys(strand)
+        })
+        .function("read_junction", async move |strand, args, out| {
+            let ([path], []) = unpack!(strand, args, 1, 0)?;
+            let path = path_from_value(strand, &path)?;
+            read_junction(strand, global, path.to_path(), out).await
         })
         .commit();
 }

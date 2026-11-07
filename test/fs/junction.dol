@@ -1,0 +1,106 @@
+import sys
+  testlib.vfs:
+    - vfs
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+    - ignore
+    - test
+  fs:
+    - Path
+    - create_dir
+    - metadata
+    - open
+    - read_link
+  fs.windows:
+    Path: WindowsPath
+    - create_junction
+    - read_junction
+
+def is_windows()
+  (sys.os_info().family == :WINDOWS:)
+
+def file_type path resolve
+  let meta = metadata $path :resolve
+  meta.type
+
+#[test]
+#[vfs]
+def set_read_and_clear_junction()
+  if !is_windows()
+    ignore "requires Windows"
+  let target = Path target
+  let link = WindowsPath link
+  create_dir $target
+  create_dir $link
+  let expected = str(target.absolute())
+
+  link.set_junction $target
+  assert_eq $str(link.read_junction()) $expected
+  assert_eq $str(read_junction(link)) $expected
+  assert_eq (file_type link :MOUNT:) :JUNCTION:
+  # A junction is a mount, not a link
+  assert_throws $sys.InvalidInputError do read_link $link
+
+  # Clearing leaves the empty directory, and does nothing to a plain one
+  link.set_junction nil
+  assert_eq (file_type link :CROSS:) :DIR:
+  link.set_junction nil
+  assert_throws $sys.InvalidInputError do link.read_junction()
+
+#[test]
+#[vfs]
+def set_junction_through_file()
+  if !is_windows()
+    ignore "requires Windows"
+  let target = Path target
+  create_dir $target
+  create_dir link
+  let expected = str(target.absolute())
+
+  open link read: true write: true backup: true resolve: :MOUNT: do |dir|
+    dir.set_junction $target
+    assert_eq $str(dir.read_junction()) $expected
+    dir.set_junction nil
+  assert_eq (file_type "link" :CROSS:) :DIR:
+
+#[test]
+#[vfs]
+def create_junction_makes_directory()
+  if !is_windows()
+    ignore "requires Windows"
+  let target = Path target
+  create_dir $target
+  create_junction $target link
+  assert_eq $str(read_junction("link")) $str(target.absolute())
+
+  # The directory must not already exist
+  create_dir other
+  assert_throws $sys.AlreadyExistsError do create_junction $target other
+  assert_eq (file_type "other" :CROSS:) :DIR:
+
+#[test]
+#[vfs]
+def junction_needs_an_empty_directory()
+  if !is_windows()
+    ignore "requires Windows"
+  let link = WindowsPath link
+  create_dir target
+  create_dir $link
+  let file = (link / "file")
+  file.write x
+  assert_throws $sys.Error do link.set_junction target
+  assert $file.exists()
+
+#[test]
+#[vfs]
+def junctions_unsupported_elsewhere()
+  if is_windows()
+    ignore "requires a platform without junctions"
+  create_dir link
+  assert_throws $sys.UnsupportedError do create_junction target other
+  assert_throws $sys.UnsupportedError do read_junction link
+  open link do |dir|
+    assert_throws $sys.UnsupportedError do dir.set_junction target
+    assert_throws $sys.UnsupportedError do dir.read_junction()

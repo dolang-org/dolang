@@ -36,13 +36,15 @@ use tokio::{
 use windows_sys::{
     Wdk::Storage::FileSystem::{
         FILE_FULL_EA_INFORMATION, FILE_GET_EA_INFORMATION, FILE_RENAME_POSIX_SEMANTICS,
-        FILE_RENAME_REPLACE_IF_EXISTS, NtQueryEaFile, NtSetEaFile,
+        FILE_RENAME_REPLACE_IF_EXISTS, IO_REPARSE_TAG_LX_SYMLINK, NtQueryEaFile, NtSetEaFile,
+        SYMLINK_FLAG_RELATIVE,
     },
     Win32::{
         Foundation::{
             ERROR_ALREADY_EXISTS, ERROR_CANT_ACCESS_FILE, ERROR_FILE_NOT_FOUND, ERROR_HANDLE_EOF,
             ERROR_INSUFFICIENT_BUFFER, ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER,
-            ERROR_MORE_DATA, ERROR_NONE_MAPPED, ERROR_NOT_SUPPORTED, GENERIC_READ, GENERIC_WRITE,
+            ERROR_INVALID_REPARSE_DATA, ERROR_MORE_DATA, ERROR_NONE_MAPPED,
+            ERROR_NOT_A_REPARSE_POINT, ERROR_NOT_SUPPORTED, GENERIC_READ, GENERIC_WRITE,
             GetLastError, INVALID_HANDLE_VALUE, LocalFree, MAX_PATH, RtlNtStatusToDosError, S_OK,
             STATUS_BUFFER_OVERFLOW, STATUS_BUFFER_TOO_SMALL, STATUS_NO_EAS_ON_FILE,
             STATUS_NO_MORE_EAS, STATUS_SUCCESS,
@@ -86,14 +88,16 @@ use windows_sys::{
             },
             IO::{DeviceIoControl, IO_STATUS_BLOCK},
             Ioctl::{
-                FILE_SET_SPARSE_BUFFER, FSCTL_GET_REPARSE_POINT, FSCTL_SET_COMPRESSION,
-                FSCTL_SET_REPARSE_POINT, FSCTL_SET_SPARSE,
+                FILE_SET_SPARSE_BUFFER, FSCTL_DELETE_REPARSE_POINT, FSCTL_GET_REPARSE_POINT,
+                FSCTL_SET_COMPRESSION, FSCTL_SET_REPARSE_POINT, FSCTL_SET_SPARSE,
             },
             JobObjects::{
                 AssignProcessToJobObject, CreateJobObjectW, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
                 JobObjectBasicAccountingInformation, QueryInformationJobObject, TerminateJobObject,
             },
-            SystemServices::ACCESS_SYSTEM_SECURITY,
+            SystemServices::{
+                ACCESS_SYSTEM_SECURITY, IO_REPARSE_TAG_MOUNT_POINT, IO_REPARSE_TAG_SYMLINK,
+            },
             Threading::{
                 CREATE_NEW_PROCESS_GROUP, CREATE_SUSPENDED, OpenThread, ResumeThread,
                 THREAD_SUSPEND_RESUME,
@@ -1637,24 +1641,7 @@ impl Direct {
             .read(true)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
         let src_file = read_opts.open(src)?;
-
-        let mut buffer = vec![0u8; MAXIMUM_REPARSE_DATA_BUFFER_SIZE as usize];
-        let mut bytes_returned = 0u32;
-        if unsafe {
-            DeviceIoControl(
-                src_file.as_raw_handle(),
-                FSCTL_GET_REPARSE_POINT,
-                ptr::null(),
-                0,
-                buffer.as_mut_ptr().cast(),
-                u32::try_from(buffer.len()).unwrap(),
-                &mut bytes_returned,
-                ptr::null_mut(),
-            )
-        } == 0
-        {
-            return Err(Error::last_os_error());
-        }
+        let buffer = Self::reparse_data(src_file.as_handle())?;
         drop(src_file);
 
         if is_dir {
@@ -1678,22 +1665,14 @@ impl Direct {
             }
         };
 
-        let mut written = 0u32;
-        let ok = unsafe {
-            DeviceIoControl(
-                dst_file.as_raw_handle(),
-                FSCTL_SET_REPARSE_POINT,
-                buffer.as_ptr().cast(),
-                bytes_returned,
-                ptr::null_mut(),
-                0,
-                &mut written,
-                ptr::null_mut(),
-            )
-        };
+        let result = Self::fs_control(
+            dst_file.as_handle(),
+            FSCTL_SET_REPARSE_POINT,
+            &buffer,
+            &mut [],
+        );
         drop(dst_file);
-        if ok == 0 {
-            let err = Error::last_os_error();
+        if let Err(err) = result {
             Self::remove_reparse_placeholder(dst, is_dir);
             return Err(err);
         }
@@ -1706,6 +1685,202 @@ impl Direct {
         } else {
             let _ = std::fs::remove_file(dst);
         }
+    }
+
+    /// Sends the file system control `code` to `handle`, returning how many
+    /// bytes of `output` it filled.
+    fn fs_control(
+        handle: BorrowedHandle<'_>,
+        code: u32,
+        input: &[u8],
+        output: &mut [u8],
+    ) -> Result<usize> {
+        let mut returned = 0u32;
+        let ok = unsafe {
+            DeviceIoControl(
+                handle.as_raw_handle(),
+                code,
+                if input.is_empty() {
+                    ptr::null()
+                } else {
+                    input.as_ptr().cast()
+                },
+                u32::try_from(input.len()).map_err(Error::other)?,
+                if output.is_empty() {
+                    ptr::null_mut()
+                } else {
+                    output.as_mut_ptr().cast()
+                },
+                u32::try_from(output.len()).map_err(Error::other)?,
+                &mut returned,
+                ptr::null_mut(),
+            )
+        };
+        if ok == 0 {
+            return Err(Error::last_os_error());
+        }
+        Ok(usize::try_from(returned).unwrap_or(output.len()))
+    }
+
+    /// Reads the reparse data buffer of the reparse point `handle` refers to,
+    /// which must have been opened with `FILE_FLAG_OPEN_REPARSE_POINT`.
+    fn reparse_data(handle: BorrowedHandle<'_>) -> Result<Vec<u8>> {
+        let mut buffer = vec![0u8; MAXIMUM_REPARSE_DATA_BUFFER_SIZE as usize];
+        let len = Self::fs_control(handle, FSCTL_GET_REPARSE_POINT, &[], &mut buffer)?;
+        buffer.truncate(len);
+        Ok(buffer)
+    }
+
+    /// Reads the reparse data of `handle` if it is a reparse point with one of
+    /// `tags`, returning its tag and tag-specific data. Anything else is an
+    /// `InvalidInput` error saying `mismatch`.
+    fn tagged_reparse_data(
+        handle: BorrowedHandle<'_>,
+        tags: &[u32],
+        mismatch: &str,
+    ) -> Result<(u32, Vec<u8>)> {
+        let wrong = || Error::new(ErrorKind::InvalidInput, mismatch);
+        let buffer = match Self::reparse_data(handle) {
+            Err(err) if err.raw_os_error() == Some(ERROR_NOT_A_REPARSE_POINT.cast_signed()) => {
+                return Err(wrong());
+            }
+            result => result?,
+        };
+        let (tag, data) = reparse_parts(&buffer)?;
+        if !tags.contains(&tag) {
+            return Err(wrong());
+        }
+        Ok((tag, data.to_vec()))
+    }
+
+    /// Opens the final component of `path` as itself, with `access`.
+    fn reparse_handle(path: &Path, access: u32) -> Result<OwnedHandle> {
+        Self::security_handle_flags(path, access, true)
+    }
+
+    /// Reads the target of the symbolic link `handle` refers to: a Windows
+    /// path for a Windows symbolic link, or a Unix path for a WSL one.
+    pub(super) fn read_link_handle(handle: BorrowedHandle<'_>) -> Result<crate::path::PathBuf> {
+        let lx_symlink = IO_REPARSE_TAG_LX_SYMLINK.cast_unsigned();
+        let (tag, data) = Self::tagged_reparse_data(
+            handle,
+            &[IO_REPARSE_TAG_SYMLINK, lx_symlink],
+            "not a symbolic link",
+        )?;
+        if tag == lx_symlink {
+            // A version number, then the target as UTF-8 without a terminator
+            let target = data.get(4..).ok_or_else(malformed_reparse_data)?;
+            let target = std::str::from_utf8(target).map_err(|_| {
+                Error::new(ErrorKind::InvalidData, "WSL symlink target is not UTF-8")
+            })?;
+            return Ok(crate::path::PathBuf::from_unix(target));
+        }
+        let flags = data.get(8..12).ok_or_else(malformed_reparse_data)?;
+        let flags = u32::from_le_bytes(flags.try_into().unwrap());
+        let name = substitute_name(&data, SYMLINK_PATH_START)?;
+        let target = if flags & SYMLINK_FLAG_RELATIVE != 0 {
+            PathBuf::from(OsString::from_wide(&name))
+        } else {
+            user_path(&name)
+        };
+        crate::path::PathBuf::from_native(target)
+    }
+
+    pub(super) fn read_link_path(path: &Path) -> Result<crate::path::PathBuf> {
+        let handle = Self::reparse_handle(path, 0)?;
+        Self::read_link_handle(handle.as_handle())
+    }
+
+    /// Reads the directory the junction `handle` refers to leads to.
+    pub(super) fn read_junction_handle(handle: BorrowedHandle<'_>) -> Result<PathBuf> {
+        let (_, data) =
+            Self::tagged_reparse_data(handle, &[IO_REPARSE_TAG_MOUNT_POINT], "not a junction")?;
+        Ok(user_path(&substitute_name(&data, MOUNT_POINT_PATH_START)?))
+    }
+
+    pub(super) fn read_junction_path(path: &Path) -> Result<PathBuf> {
+        let handle = Self::reparse_handle(path, 0)?;
+        Self::read_junction_handle(handle.as_handle())
+    }
+
+    /// Makes the empty directory `handle` refers to a junction to `target`,
+    /// or with no target, removes its junction and leaves the directory.
+    pub(super) fn set_junction_handle(
+        handle: BorrowedHandle<'_>,
+        target: Option<&Path>,
+    ) -> Result<()> {
+        match target {
+            Some(target) => {
+                let buffer = mount_point_buffer(target)?;
+                Self::fs_control(handle, FSCTL_SET_REPARSE_POINT, &buffer, &mut [])?;
+            }
+            None => match Self::reparse_tag(handle)? {
+                None => {}
+                Some(IO_REPARSE_TAG_MOUNT_POINT) => {
+                    // A header with no data names the tag to remove. Windows
+                    // wants just the tag, length and reserved field for a
+                    // Microsoft tag; Wine wants the whole
+                    // `REPARSE_GUID_DATA_BUFFER` header, with a zero GUID.
+                    let mut header = [0u8; REPARSE_GUID_HEADER_LEN];
+                    header[..4].copy_from_slice(&IO_REPARSE_TAG_MOUNT_POINT.to_le_bytes());
+                    let delete = |len| {
+                        Self::fs_control(
+                            handle,
+                            FSCTL_DELETE_REPARSE_POINT,
+                            &header[..len],
+                            &mut [],
+                        )
+                    };
+                    match delete(REPARSE_HEADER_LEN) {
+                        Err(err)
+                            if err.raw_os_error()
+                                == Some(ERROR_INVALID_REPARSE_DATA.cast_signed()) =>
+                        {
+                            delete(REPARSE_GUID_HEADER_LEN)?;
+                        }
+                        result => {
+                            result?;
+                        }
+                    }
+                }
+                Some(_) => return Err(Error::new(ErrorKind::InvalidInput, "not a junction")),
+            },
+        }
+        Ok(())
+    }
+
+    pub(super) fn set_junction_path(path: &Path, target: Option<&Path>) -> Result<()> {
+        let handle = Self::reparse_handle(path, GENERIC_WRITE)?;
+        Self::set_junction_handle(handle.as_handle(), target)
+    }
+
+    pub(super) fn read_junction_file(file: &StdFile) -> Result<PathBuf> {
+        Self::read_junction_handle(file.as_handle())
+    }
+
+    pub(super) fn set_junction_file(file: &StdFile, target: Option<&Path>) -> Result<()> {
+        Self::set_junction_handle(file.as_handle(), target)
+    }
+
+    /// Creates the directory `path` and makes it a junction to `target`,
+    /// removing the directory again if that fails.
+    pub(super) fn create_junction_path(path: &Path, target: &Path) -> Result<()> {
+        // Check the target before touching the file system
+        let buffer = mount_point_buffer(target)?;
+        std::fs::create_dir(path)?;
+        let result = Self::reparse_handle(path, GENERIC_WRITE).and_then(|handle| {
+            Self::fs_control(
+                handle.as_handle(),
+                FSCTL_SET_REPARSE_POINT,
+                &buffer,
+                &mut [],
+            )
+        });
+        if let Err(err) = result {
+            Self::remove_reparse_placeholder(path, true);
+            return Err(err);
+        }
+        Ok(())
     }
 
     pub(super) async fn impl_xattrs(
@@ -2332,4 +2507,145 @@ fn create_file_with_sec_desc(
         file.set_len(0)?;
     }
     Ok(file)
+}
+
+/// Size of the reparse data buffer header: tag, data length and a reserved
+/// field.
+const REPARSE_HEADER_LEN: usize = 8;
+
+/// Size of the `REPARSE_GUID_DATA_BUFFER` header: the reparse data buffer
+/// header followed by a GUID.
+const REPARSE_GUID_HEADER_LEN: usize = REPARSE_HEADER_LEN + 16;
+
+/// Where the path buffer starts in mount point reparse data: after the
+/// substitute and print name offsets and lengths.
+const MOUNT_POINT_PATH_START: usize = 8;
+
+/// Where the path buffer starts in symbolic link reparse data: after the
+/// name offsets and lengths, and the flags.
+const SYMLINK_PATH_START: usize = 12;
+
+/// The NT object namespace prefix that starts an absolute substitute name.
+const NT_PREFIX: [u16; 4] = [b'\\' as u16, b'?' as u16, b'?' as u16, b'\\' as u16];
+
+fn malformed_reparse_data() -> Error {
+    Error::new(ErrorKind::InvalidData, "malformed reparse data")
+}
+
+/// Splits a reparse data buffer into its tag and its tag-specific data.
+fn reparse_parts(buffer: &[u8]) -> Result<(u32, &[u8])> {
+    let header = buffer
+        .get(..REPARSE_HEADER_LEN)
+        .ok_or_else(malformed_reparse_data)?;
+    let tag = u32::from_le_bytes(header[..4].try_into().unwrap());
+    let len = usize::from(u16::from_le_bytes(header[4..6].try_into().unwrap()));
+    let data = buffer
+        .get(REPARSE_HEADER_LEN..REPARSE_HEADER_LEN + len)
+        .ok_or_else(malformed_reparse_data)?;
+    Ok((tag, data))
+}
+
+/// Returns the substitute name from mount point or symbolic link reparse
+/// data whose path buffer starts at `path_start`.
+fn substitute_name(data: &[u8], path_start: usize) -> Result<Vec<u16>> {
+    let field = |at: usize| {
+        data.get(at..at + 2)
+            .map(|bytes| usize::from(u16::from_le_bytes([bytes[0], bytes[1]])))
+    };
+    let (Some(offset), Some(len)) = (field(0), field(2)) else {
+        return Err(malformed_reparse_data());
+    };
+    let start = path_start + offset;
+    let bytes = data
+        .get(start..start + len)
+        .filter(|bytes| bytes.len() % 2 == 0)
+        .ok_or_else(malformed_reparse_data)?;
+    let (units, _) = bytes.as_chunks::<2>();
+    Ok(units.iter().map(|unit| u16::from_le_bytes(*unit)).collect())
+}
+
+/// Turns an absolute substitute name into the path a user would write: `\??\`
+/// becomes the verbatim `\\?\`, which is then dropped where that is safe.
+/// Any other name is returned as it is.
+fn user_path(name: &[u16]) -> PathBuf {
+    if !name.starts_with(&NT_PREFIX) {
+        return PathBuf::from(OsString::from_wide(name));
+    }
+    let mut verbatim = name.to_vec();
+    verbatim[1] = u16::from(b'\\');
+    let verbatim = PathBuf::from(OsString::from_wide(&verbatim));
+    dunce::simplified(&verbatim).to_path_buf()
+}
+
+/// Builds the reparse data buffer for a junction to `target`, which must be
+/// absolute.
+fn mount_point_buffer(target: &Path) -> Result<Vec<u8>> {
+    if !target.is_absolute() {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "junction target must be absolute",
+        ));
+    }
+    // Resolves `.` and `..` as Win32 does; a verbatim path is kept as it is
+    let target = std::path::absolute(target)?;
+    let wide: Vec<u16> = target.as_os_str().encode_wide().collect();
+    let substitute: Vec<u16> = {
+        let verbatim = [
+            u16::from(b'\\'),
+            u16::from(b'\\'),
+            u16::from(b'?'),
+            u16::from(b'\\'),
+        ];
+        let device = [
+            u16::from(b'\\'),
+            u16::from(b'\\'),
+            u16::from(b'.'),
+            u16::from(b'\\'),
+        ];
+        let unc = [u16::from(b'\\'), u16::from(b'\\')];
+        let unc_prefix = "\\??\\UNC\\".encode_utf16();
+        if wide.starts_with(&verbatim) || wide.starts_with(&device) {
+            NT_PREFIX
+                .iter()
+                .copied()
+                .chain(wide[4..].iter().copied())
+                .collect()
+        } else if wide.starts_with(&unc) {
+            unc_prefix.chain(wide[2..].iter().copied()).collect()
+        } else {
+            NT_PREFIX
+                .iter()
+                .copied()
+                .chain(wide.iter().copied())
+                .collect()
+        }
+    };
+    let print: Vec<u16> = dunce::simplified(&target)
+        .as_os_str()
+        .encode_wide()
+        .collect();
+
+    let too_long = || Error::new(ErrorKind::InvalidInput, "junction target is too long");
+    let substitute_len = u16::try_from(substitute.len() * 2).map_err(|_| too_long())?;
+    let print_len = u16::try_from(print.len() * 2).map_err(|_| too_long())?;
+    // Both names are followed by a NUL
+    let print_offset = substitute_len.checked_add(2).ok_or_else(too_long)?;
+    let data_len = usize::from(print_offset) + usize::from(print_len) + 2 + MOUNT_POINT_PATH_START;
+    if REPARSE_HEADER_LEN + data_len > MAXIMUM_REPARSE_DATA_BUFFER_SIZE as usize {
+        return Err(too_long());
+    }
+    let data_len = u16::try_from(data_len).map_err(|_| too_long())?;
+
+    let mut buffer = Vec::with_capacity(REPARSE_HEADER_LEN + usize::from(data_len));
+    buffer.extend_from_slice(&IO_REPARSE_TAG_MOUNT_POINT.to_le_bytes());
+    buffer.extend_from_slice(&data_len.to_le_bytes());
+    buffer.extend_from_slice(&0u16.to_le_bytes());
+    buffer.extend_from_slice(&0u16.to_le_bytes());
+    buffer.extend_from_slice(&substitute_len.to_le_bytes());
+    buffer.extend_from_slice(&print_offset.to_le_bytes());
+    buffer.extend_from_slice(&print_len.to_le_bytes());
+    for unit in substitute.iter().chain([&0]).chain(&print).chain([&0]) {
+        buffer.extend_from_slice(&unit.to_le_bytes());
+    }
+    Ok(buffer)
 }

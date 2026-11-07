@@ -895,10 +895,50 @@ impl Vfs {
     }
 
     /// Returns the destination of a symbolic link.
+    ///
+    /// On Windows this reads only symbolic links, not junctions. A WSL
+    /// symbolic link's destination is a Unix path.
     pub async fn read_link(&self, path: path::Path<'_>) -> error::Result<path::PathBuf> {
         match &self.inner {
             VfsInner::Client(client) => client.read_link(path).await,
             VfsInner::Direct(direct) => direct.read_link(path).await,
+        }
+    }
+
+    /// Returns the directory a Windows junction leads to.
+    pub async fn read_junction(&self, path: path::Path<'_>) -> error::Result<path::PathBuf> {
+        match &self.inner {
+            VfsInner::Client(client) => client.read_junction(path).await,
+            VfsInner::Direct(direct) => direct.read_junction(path).await,
+        }
+    }
+
+    /// Makes the empty directory `path` a Windows junction to the absolute
+    /// path `target`, or with no target, removes its junction and leaves the
+    /// directory. Removing does nothing to a directory that isn't a reparse
+    /// point.
+    pub async fn set_junction(
+        &self,
+        path: path::Path<'_>,
+        target: Option<path::Path<'_>>,
+    ) -> error::Result<()> {
+        match &self.inner {
+            VfsInner::Client(client) => client.set_junction(path, target).await,
+            VfsInner::Direct(direct) => direct.set_junction(path, target).await,
+        }
+    }
+
+    /// Creates the directory `path` as a Windows junction to the absolute
+    /// path `target`. This isn't atomic: the directory is created first, and
+    /// removed again if it can't be made a junction.
+    pub async fn create_junction(
+        &self,
+        path: path::Path<'_>,
+        target: path::Path<'_>,
+    ) -> error::Result<()> {
+        match &self.inner {
+            VfsInner::Client(client) => client.create_junction(path, target).await,
+            VfsInner::Direct(direct) => direct.create_junction(path, target).await,
         }
     }
 

@@ -358,72 +358,19 @@ async fn disconnect_ends_the_connected_session_cleanly() {
     server_task.await.unwrap().unwrap();
 }
 
-/// Creates a junction at `link` to the directory `target` through
-/// `FSCTL_SET_REPARSE_POINT`, which needs no privilege, and which Wine may
-/// emulate.
-fn junction(link: &Path, target: &Path) -> std::io::Result<()> {
-    use std::os::windows::{ffi::OsStrExt, fs::OpenOptionsExt};
-    use windows_sys::Win32::{
-        Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT},
-        System::{IO::DeviceIoControl, Ioctl::FSCTL_SET_REPARSE_POINT},
-    };
-
-    let target = std::path::absolute(target)?;
-    let print: Vec<u16> = target.as_os_str().encode_wide().collect();
-    let subst: Vec<u16> = r"\??\"
-        .encode_utf16()
-        .chain(print.iter().copied())
-        .collect();
-    let len = |units: &[u16]| u16::try_from(units.len() * 2).unwrap();
-    let path_len = len(&subst) + 2 + len(&print) + 2;
-    // REPARSE_DATA_BUFFER for a mount point: tag, data length, reserved, then
-    // the substitute and print name offsets and lengths, then both names
-    let mut buf = Vec::new();
-    buf.extend(IO_REPARSE_TAG_MOUNT_POINT.to_le_bytes());
-    buf.extend((8 + path_len).to_le_bytes());
-    buf.extend(0u16.to_le_bytes());
-    for field in [0, len(&subst), len(&subst) + 2, len(&print)] {
-        buf.extend(field.to_le_bytes());
-    }
-    for unit in subst.iter().chain([&0]).chain(&print).chain([&0]) {
-        buf.extend(unit.to_le_bytes());
-    }
-
-    std::fs::create_dir(link)?;
-    let result = std::fs::OpenOptions::new()
-        .write(true)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
-        .open(link)
-        .and_then(|dir| {
-            let mut returned = 0;
-            let ok = unsafe {
-                DeviceIoControl(
-                    dir.as_raw_handle(),
-                    FSCTL_SET_REPARSE_POINT,
-                    buf.as_ptr().cast(),
-                    u32::try_from(buf.len()).unwrap(),
-                    ptr::null_mut(),
-                    0,
-                    &mut returned,
-                    ptr::null_mut(),
-                )
-            };
-            if ok == 0 {
-                Err(std::io::Error::last_os_error())
-            } else {
-                Ok(())
-            }
-        });
-    if result.is_err() {
-        let _ = std::fs::remove_dir(link);
-    }
-    result
+/// Creates a junction at `link` to the directory `target`.
+async fn junction(link: &Path, target: &Path) -> VfsResult<()> {
+    let target = std::path::absolute(target).unwrap();
+    Vfs::direct()
+        .unwrap()
+        .create_junction(typed(link), typed(&target))
+        .await
 }
 
 /// Creates a junction, or returns `false` to skip the test under Wine, which
 /// may not emulate junctions.
-fn try_junction(link: &Path, target: &Path) -> bool {
-    match junction(link, target) {
+async fn try_junction(link: &Path, target: &Path) -> bool {
+    match junction(link, target).await {
         Ok(()) => true,
         Err(err) if dolang_winterop::is_wine() => {
             eprintln!("skipping: Wine can't create a junction: {err}");
@@ -442,7 +389,7 @@ async fn junction_resolves_as_a_mount() {
     let target = dir.path().join("target");
     let link = dir.path().join("link");
     std::fs::create_dir(&target).unwrap();
-    if !try_junction(&link, &target) {
+    if !try_junction(&link, &target).await {
         return;
     }
     let direct = Vfs::direct().unwrap();
@@ -490,7 +437,7 @@ async fn recursion_stops_at_junctions_by_operation() {
     std::fs::create_dir(&outside).unwrap();
     std::fs::write(outside.join("keep.txt"), "keep").unwrap();
     std::fs::create_dir(&tree).unwrap();
-    if !try_junction(&tree.join("link"), &outside) {
+    if !try_junction(&tree.join("link"), &outside).await {
         return;
     }
     let direct = Vfs::direct().unwrap();
@@ -541,7 +488,7 @@ async fn recursion_stops_at_junctions_by_operation() {
 
     // Without `all`, a junction is removed like a link
     std::fs::create_dir(&tree).unwrap();
-    junction(&tree.join("link"), &outside).unwrap();
+    junction(&tree.join("link"), &outside).await.unwrap();
     direct
         .remove(typed(&tree.join("link")), false, false, Stop::Cross)
         .await
@@ -554,7 +501,7 @@ async fn copy_through_junction_cycle_fails() {
     let dir = tempdir().unwrap();
     let tree = dir.path().join("tree");
     std::fs::create_dir(&tree).unwrap();
-    if !try_junction(&tree.join("loop"), &tree) {
+    if !try_junction(&tree.join("loop"), &tree).await {
         return;
     }
     let direct = Vfs::direct().unwrap();
@@ -603,7 +550,7 @@ async fn glob_descends_junctions_unless_stopped() {
     std::fs::create_dir(&outside).unwrap();
     std::fs::write(outside.join("keep.txt"), "keep").unwrap();
     std::fs::create_dir(&tree).unwrap();
-    if !try_junction(&tree.join("link"), &outside) {
+    if !try_junction(&tree.join("link"), &outside).await {
         return;
     }
     let direct = Vfs::direct().unwrap();
@@ -648,7 +595,7 @@ async fn follow_stops_at_junctions_links_lead_to() {
     std::fs::write(outside.join("keep.txt"), "keep").unwrap();
     std::fs::create_dir(&tree).unwrap();
     let junction_path = dir.path().join("junction");
-    if !try_junction(&junction_path, &outside)
+    if !try_junction(&junction_path, &outside).await
         || std::os::windows::fs::symlink_dir(&junction_path, tree.join("link")).is_err()
     {
         return;
@@ -694,7 +641,7 @@ async fn glob_through_junction_cycle_fails() {
     let dir = tempdir().unwrap();
     let tree = dir.path().join("tree");
     std::fs::create_dir(&tree).unwrap();
-    if !try_junction(&tree.join("loop"), &tree) {
+    if !try_junction(&tree.join("loop"), &tree).await {
         return;
     }
     let direct = Vfs::direct().unwrap();
@@ -715,4 +662,210 @@ async fn glob_through_junction_cycle_fails() {
         .unwrap(),
         ["", "loop"]
     );
+}
+
+/// Sets, reads and clears a junction through `vfs`, by path and by handle.
+async fn exercise_junction_ops(vfs: &Vfs) {
+    use crate::{
+        error::ErrorKind,
+        metadata::{FileType, Resolve},
+    };
+    let dir = tempdir().unwrap();
+    let target = dir.path().join("target");
+    let link = dir.path().join("link");
+    std::fs::create_dir(&target).unwrap();
+    std::fs::create_dir(&link).unwrap();
+
+    if let Err(err) = vfs.set_junction(typed(&link), Some(typed(&target))).await {
+        assert!(dolang_winterop::is_wine(), "setting junction: {err}");
+        eprintln!("skipping: Wine can't create a junction: {err}");
+        return;
+    }
+    let read = vfs.read_junction(typed(&link)).await.unwrap();
+    assert_eq!(read.as_str(), target.to_str().unwrap());
+    let metadata = vfs
+        .metadata_resolved(typed(&link), Resolve::Mount)
+        .await
+        .unwrap();
+    assert_eq!(metadata.file_type(), FileType::Junction);
+
+    // A junction is a mount, not a link
+    let err = vfs.read_link(typed(&link)).await.unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::InvalidInput);
+
+    // Clearing leaves the empty directory, and is a no-op on a plain one
+    for _ in 0..2 {
+        vfs.set_junction(typed(&link), None).await.unwrap();
+        let metadata = vfs
+            .metadata_resolved(typed(&link), Resolve::Cross)
+            .await
+            .unwrap();
+        assert_eq!(metadata.file_type(), FileType::Dir);
+    }
+    let err = vfs.read_junction(typed(&link)).await.unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::InvalidInput);
+
+    // The same through a handle on the directory, opened as itself
+    let mut options = vfs.open_options();
+    options
+        .read(true)
+        .write(true)
+        .backup(true)
+        .resolve(Resolve::Mount);
+    let file = options.open(typed(&link)).await.unwrap();
+    file.set_junction(Some(typed(&target))).await.unwrap();
+    drop(file);
+    let file = options.open(typed(&link)).await.unwrap();
+    let read = file.read_junction().await.unwrap();
+    assert_eq!(read.as_str(), target.to_str().unwrap());
+    file.set_junction(None).await.unwrap();
+    drop(file);
+    let metadata = vfs
+        .metadata_resolved(typed(&link), Resolve::Cross)
+        .await
+        .unwrap();
+    assert_eq!(metadata.file_type(), FileType::Dir);
+
+    // `create_junction` makes the directory, but won't reuse one
+    let created = dir.path().join("created");
+    vfs.create_junction(typed(&created), typed(&target))
+        .await
+        .unwrap();
+    let read = vfs.read_junction(typed(&created)).await.unwrap();
+    assert_eq!(read.as_str(), target.to_str().unwrap());
+    let err = vfs
+        .create_junction(typed(&link), typed(&target))
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::AlreadyExists);
+    let metadata = vfs
+        .metadata_resolved(typed(&link), Resolve::Cross)
+        .await
+        .unwrap();
+    assert_eq!(metadata.file_type(), FileType::Dir);
+}
+
+#[tokio::test]
+async fn junction_set_read_and_clear() {
+    exercise_junction_ops(&Vfs::direct().unwrap()).await;
+}
+
+#[tokio::test]
+async fn junction_set_read_and_clear_over_rpc() {
+    let (client, server) = connected_pair().await;
+    exercise_junction_ops(&client).await;
+    stop_pair(client, server).await;
+}
+
+#[tokio::test]
+async fn junction_needs_an_empty_directory_and_absolute_target() {
+    use crate::error::ErrorKind;
+    let dir = tempdir().unwrap();
+    let target = dir.path().join("target");
+    let link = dir.path().join("link");
+    std::fs::create_dir(&target).unwrap();
+    std::fs::create_dir(&link).unwrap();
+    let direct = Vfs::direct().unwrap();
+
+    let err = direct
+        .set_junction(typed(&link), Some(typed_str(r"relative\target")))
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::InvalidInput);
+    let err = direct
+        .create_junction(typed(&dir.path().join("other")), typed_str("relative"))
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::InvalidInput);
+    assert!(!dir.path().join("other").exists());
+
+    std::fs::write(link.join("file"), "x").unwrap();
+    assert!(
+        direct
+            .set_junction(typed(&link), Some(typed(&target)))
+            .await
+            .is_err()
+    );
+    assert!(link.join("file").exists());
+}
+
+#[tokio::test]
+async fn read_link_reads_symlinks_but_not_junctions() {
+    let dir = tempdir().unwrap();
+    let target = dir.path().join("target");
+    std::fs::write(&target, "x").unwrap();
+    let absolute = dir.path().join("absolute");
+    let relative = dir.path().join("relative");
+    if std::os::windows::fs::symlink_file(&target, &absolute).is_err()
+        || std::os::windows::fs::symlink_file("target", &relative).is_err()
+    {
+        eprintln!("skipping: can't create symbolic links");
+        return;
+    }
+    let direct = Vfs::direct().unwrap();
+    let read = direct.read_link(typed(&absolute)).await.unwrap();
+    assert_eq!(read.as_str(), target.to_str().unwrap());
+    let read = direct.read_link(typed(&relative)).await.unwrap();
+    assert_eq!(read.as_str(), "target");
+    let err = direct.read_link(typed(&target)).await.unwrap_err();
+    assert_eq!(err.kind(), crate::error::ErrorKind::InvalidInput);
+}
+
+#[tokio::test]
+async fn read_link_reads_wsl_symlinks_as_unix_paths() {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::{
+        Wdk::Storage::FileSystem::IO_REPARSE_TAG_LX_SYMLINK,
+        Win32::{
+            Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT},
+            System::{IO::DeviceIoControl, Ioctl::FSCTL_SET_REPARSE_POINT},
+        },
+    };
+
+    let dir = tempdir().unwrap();
+    let link = dir.path().join("link");
+    std::fs::write(&link, "").unwrap();
+    // REPARSE_DATA_BUFFER for a WSL symlink: tag, data length, reserved,
+    // then a version and the UTF-8 target
+    let target = b"/usr/bin/../lib";
+    let mut buf = Vec::new();
+    buf.extend(IO_REPARSE_TAG_LX_SYMLINK.cast_unsigned().to_le_bytes());
+    buf.extend(u16::try_from(4 + target.len()).unwrap().to_le_bytes());
+    buf.extend(0u16.to_le_bytes());
+    buf.extend(2u32.to_le_bytes());
+    buf.extend(target);
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(&link)
+        .unwrap();
+    let mut returned = 0;
+    let ok = unsafe {
+        DeviceIoControl(
+            file.as_raw_handle(),
+            FSCTL_SET_REPARSE_POINT,
+            buf.as_ptr().cast(),
+            u32::try_from(buf.len()).unwrap(),
+            ptr::null_mut(),
+            0,
+            &mut returned,
+            ptr::null_mut(),
+        )
+    };
+    drop(file);
+    if ok == 0 {
+        eprintln!(
+            "skipping: can't create a WSL symlink: {}",
+            std::io::Error::last_os_error()
+        );
+        return;
+    }
+
+    let read = Vfs::direct()
+        .unwrap()
+        .read_link(typed(&link))
+        .await
+        .unwrap();
+    assert_eq!(read.kind(), crate::path::Kind::Unix);
+    assert_eq!(read.as_str(), "/usr/bin/../lib");
 }
