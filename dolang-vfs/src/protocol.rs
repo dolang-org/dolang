@@ -19,7 +19,7 @@ use crate::{
     extension::{self, ErasedVfsExtension},
     file::{CopyDataResult, CopyDest, CopyMode, FileLockRequest, OpenExtra, StreamEntry},
     file::{XattrEntry, XattrNamespace},
-    metadata::{FsMetadata, Metadata, MetadataPatch, Resolve},
+    metadata::{FsMetadata, Metadata, MetadataPatch, Resolve, Stop},
     path::{self, WellKnownPath},
     process::{
         ProcessControl, ProcessExit, ProcessInfo, ProcessStatus, Signal, StartTime,
@@ -274,7 +274,7 @@ pub(crate) struct RemoveRequest {
     pub(crate) path: path::PathBuf,
     pub(crate) all: bool,
     pub(crate) ignore: bool,
-    pub(crate) stop: Option<Resolve>,
+    pub(crate) stop: Stop,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -344,7 +344,8 @@ pub(crate) struct CopyRequest {
     pub(crate) from: path::PathBuf,
     pub(crate) to: path::PathBuf,
     pub(crate) all: bool,
-    pub(crate) stop: Option<Resolve>,
+    pub(crate) stop: Option<Stop>,
+    pub(crate) follow: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -359,7 +360,7 @@ pub(crate) struct MoveRequest {
     pub(crate) from: path::PathBuf,
     pub(crate) to: path::PathBuf,
     pub(crate) all: bool,
-    pub(crate) stop: Option<Resolve>,
+    pub(crate) stop: Stop,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -403,7 +404,8 @@ pub(crate) struct AccessRequest {
 pub(crate) struct GlobRequest {
     pub(crate) pattern: String,
     pub(crate) root: path::PathBuf,
-    pub(crate) stop: Option<Resolve>,
+    pub(crate) stop: Option<Stop>,
+    pub(crate) follow: bool,
     pub(crate) max_depth: Option<usize>,
 }
 

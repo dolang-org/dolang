@@ -61,6 +61,7 @@ pub(super) fn statx(
 /// Returns whether the directory `name` in `dir` (the working directory when
 /// `None`) is the root of a mount. `path` names the same directory, `dev` is
 /// its device and `parent_dev` that of the directory containing it, if known.
+/// With `follow`, a symbolic link `name` is classified by what it leads to.
 ///
 /// Linux before 5.8 can only find mounts with a device of their own when
 /// `parent_dev` is given, so a bind mount from the same filesystem goes unseen.
@@ -70,10 +71,12 @@ pub(super) fn is_mount_root(
     path: &Path,
     dev: u64,
     parent_dev: Option<u64>,
+    follow: bool,
 ) -> bool {
     #[cfg(target_os = "linux")]
     {
-        if let Some(stat) = statx(dir, name, libc::AT_SYMLINK_NOFOLLOW, 0)
+        let flags = if follow { 0 } else { libc::AT_SYMLINK_NOFOLLOW };
+        if let Some(stat) = statx(dir, name, flags, 0)
             && stat.attributes_mask & STATX_ATTR_MOUNT_ROOT != 0
         {
             return stat.attributes & STATX_ATTR_MOUNT_ROOT != 0;
@@ -90,7 +93,8 @@ pub(super) fn is_mount_root(
     #[cfg(any(target_os = "freebsd", target_os = "macos"))]
     {
         use std::os::unix::ffi::OsStrExt;
-        let _ = (dir, name);
+        // Both `statfs` and `canonicalize` follow links
+        let _ = (dir, name, follow);
         let parent_dev = match parent_dev {
             Some(parent_dev) => parent_dev,
             None => {

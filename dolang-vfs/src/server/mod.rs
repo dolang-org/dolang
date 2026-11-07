@@ -2193,6 +2193,7 @@ impl Connection {
                 Into::into(&req.to),
                 req.all,
                 req.stop,
+                req.follow,
             )
             .await?;
         Ok(ResponseKind::Copy)
@@ -2294,7 +2295,13 @@ impl Connection {
         let paths = self
             .server
             .vfs
-            .glob(req.pattern, Into::into(&req.root), req.stop, req.max_depth)
+            .glob(
+                req.pattern,
+                Into::into(&req.root),
+                req.stop,
+                req.follow,
+                req.max_depth,
+            )
             .await?;
         Ok(ResponseKind::Glob(paths))
     }

@@ -34,7 +34,7 @@ use crate::{
     extension::{self, DirectContext, ExtContext, VfsExtension},
     file::{self, AccessFlags, FileId, FileLockRequest, OpenCaps, OpenExtra, StreamEntry},
     file::{XattrEntry, XattrNamespace},
-    metadata::{FsMetadata, Metadata, MetadataPatch, Resolve},
+    metadata::{FsMetadata, Metadata, MetadataPatch, Resolve, Stop},
     path::{self, WellKnownPath},
     process::{
         self, PipeRecv, PipeSend, ProcessControl, ProcessStatus, SpawnIn, SpawnOut,
@@ -1399,7 +1399,7 @@ impl Direct {
             .expect("response type matches the extension that produced it"))
     }
 
-    async fn move_local(from: &Path, to: &Path, all: bool, stop: Resolve) -> Result<()> {
+    async fn move_local(from: &Path, to: &Path, all: bool, stop: Stop) -> Result<()> {
         let metadata = fs::symlink_metadata(from).await?;
         if metadata.is_dir() && !all {
             return Err(Self::directory_requires_all_error());
@@ -1411,7 +1411,7 @@ impl Direct {
                 let (from, to) = (from.to_path_buf(), to.to_path_buf());
                 tokio::task::spawn_blocking(move || {
                     walk::check_removable(&from, stop)?;
-                    walk::copy(&from, &to, all, stop)?;
+                    walk::copy(&from, &to, all, walk::Bounds::remove(stop))?;
                     walk::remove(&from, stop)
                 })
                 .await
@@ -1799,10 +1799,9 @@ impl Direct {
         path: path::Path<'_>,
         all: bool,
         ignore: bool,
-        stop: Option<Resolve>,
+        stop: Stop,
     ) -> Result<()> {
         let path = path.to_native()?;
-        let stop = walk::check_stop(stop.unwrap_or(Resolve::Cross))?;
         let result = tokio::task::spawn_blocking(move || {
             if all {
                 walk::remove(&path, stop)
@@ -1930,11 +1929,12 @@ impl Direct {
         from: path::Path<'_>,
         to: path::Path<'_>,
         all: bool,
-        stop: Option<Resolve>,
+        stop: Option<Stop>,
+        follow: bool,
     ) -> Result<()> {
         let (from, to) = (from.to_native()?, to.to_native()?);
-        let stop = stop.unwrap_or(Resolve::Link);
-        tokio::task::spawn_blocking(move || walk::copy(&from, &to, all, stop))
+        let bounds = walk::Bounds { stop, follow };
+        tokio::task::spawn_blocking(move || walk::copy(&from, &to, all, bounds))
             .await
             .map_err(Error::other)?
     }
@@ -1953,9 +1953,8 @@ impl Direct {
         from: path::Path<'_>,
         to: path::Path<'_>,
         all: bool,
-        stop: Option<Resolve>,
+        stop: Stop,
     ) -> Result<()> {
-        let stop = walk::check_stop(stop.unwrap_or(Resolve::Cross))?;
         Self::move_local(&from.to_native()?, &to.to_native()?, all, stop).await
     }
 
@@ -2012,12 +2011,13 @@ impl Direct {
         &self,
         pattern: impl Into<String>,
         root: path::Path<'_>,
-        stop: Option<Resolve>,
+        stop: Option<Stop>,
+        follow: bool,
         max_depth: Option<usize>,
     ) -> Result<Vec<path::PathBuf>> {
         let pattern = pattern.into();
         let root = root.to_native()?;
-        let stop = stop.unwrap_or(Resolve::Link);
+        let bounds = walk::Bounds { stop, follow };
         tokio::task::spawn_blocking(move || {
             let (prefix, glob) = Glob::new(&pattern)
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid glob pattern"))?
@@ -2039,13 +2039,16 @@ impl Direct {
             };
 
             // The base is always followed. Below it, Unix links are followed
-            // only to never stop; Windows reports a junction as a link, so a
+            // only with `follow`; Windows reports a junction as a link, so a
             // walk that is to descend into one has to follow, leaving the
             // filter to stop at real links
             let mut behavior = WalkBehavior::default();
-            if stop == Resolve::Target || cfg!(windows) {
+            if follow || cfg!(windows) {
                 behavior.link = LinkBehavior::ReadTarget;
             }
+            // Whether the filter has anything to stop at: a Unix walk that
+            // doesn't follow never descends into a link
+            let filter = stop.is_some() || (cfg!(windows) && !follow);
             // wax prunes directories that fail to match their pattern
             // component, but keeps descending below one that matches even
             // when the path is already deeper than the pattern can reach, so
@@ -2072,11 +2075,10 @@ impl Direct {
             let walk = glob
                 .walk_with_behavior(&walk_root, behavior)
                 .filter_entry(|entry| {
-                    if stop == Resolve::Target || entry.depth() == 0 || !entry.file_type().is_dir()
-                    {
+                    if !filter || entry.depth() == 0 || !entry.file_type().is_dir() {
                         return None;
                     }
-                    match walk::stops_at(entry.path(), stop) {
+                    match walk::stops_at(entry.path(), bounds) {
                         Ok(false) => None,
                         Ok(true) => {
                             let relative = entry.root_relative_paths().1;
@@ -2115,7 +2117,7 @@ impl Direct {
                             // which Windows follows even when it is to stop
                             // there
                             io::ErrorKind::Other => {
-                                if !walk::stops_at(link, stop)? {
+                                if !walk::stops_at(link, bounds)? {
                                     return Err(walk::cycle_error(link));
                                 }
                             }

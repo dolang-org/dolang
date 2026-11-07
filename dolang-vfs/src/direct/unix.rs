@@ -565,7 +565,8 @@ impl Direct {
                 unreachable!()
             };
             let name = CString::new(path.as_os_str().as_bytes())?;
-            metadata.is_mount = super::mount::is_mount_root(None, &name, path, unix.dev, None);
+            metadata.is_mount =
+                super::mount::is_mount_root(None, &name, path, unix.dev, None, false);
         }
         Ok(metadata)
     }

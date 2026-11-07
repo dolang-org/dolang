@@ -483,7 +483,7 @@ async fn junction_resolves_as_a_mount() {
 
 #[tokio::test]
 async fn recursion_stops_at_junctions_by_operation() {
-    use crate::metadata::{FileType, Resolve};
+    use crate::metadata::{FileType, Resolve, Stop};
     let dir = tempdir().unwrap();
     let outside = dir.path().join("outside");
     let tree = dir.path().join("tree");
@@ -498,7 +498,7 @@ async fn recursion_stops_at_junctions_by_operation() {
     // `copy` descends into the junction and copies what it leads to
     let copy = dir.path().join("copy");
     direct
-        .copy(typed(&tree), typed(&copy), true, None)
+        .copy(typed(&tree), typed(&copy), true, None, false)
         .await
         .unwrap();
     let metadata = direct
@@ -512,7 +512,13 @@ async fn recursion_stops_at_junctions_by_operation() {
     // Stopping at mounts copies the junction as a junction
     let copy_mount = dir.path().join("copy_mount");
     direct
-        .copy(typed(&tree), typed(&copy_mount), true, Some(Resolve::Mount))
+        .copy(
+            typed(&tree),
+            typed(&copy_mount),
+            true,
+            Some(Stop::Mount),
+            false,
+        )
         .await
         .unwrap();
     let metadata = direct
@@ -523,11 +529,11 @@ async fn recursion_stops_at_junctions_by_operation() {
 
     // `remove` removes the junction without touching what it leads to
     direct
-        .remove(typed(&tree), true, false, None)
+        .remove(typed(&tree), true, false, Stop::Cross)
         .await
         .unwrap();
     direct
-        .remove(typed(&copy_mount), true, false, None)
+        .remove(typed(&copy_mount), true, false, Stop::Cross)
         .await
         .unwrap();
     assert!(!tree.exists());
@@ -537,7 +543,7 @@ async fn recursion_stops_at_junctions_by_operation() {
     std::fs::create_dir(&tree).unwrap();
     junction(&tree.join("link"), &outside).unwrap();
     direct
-        .remove(typed(&tree.join("link")), false, false, None)
+        .remove(typed(&tree.join("link")), false, false, Stop::Cross)
         .await
         .unwrap();
     assert!(outside.join("keep.txt").exists());
@@ -554,13 +560,19 @@ async fn copy_through_junction_cycle_fails() {
     let direct = Vfs::direct().unwrap();
 
     let err = direct
-        .copy(typed(&tree), typed(&dir.path().join("copy")), true, None)
+        .copy(
+            typed(&tree),
+            typed(&dir.path().join("copy")),
+            true,
+            None,
+            false,
+        )
         .await
         .unwrap_err();
     assert!(err.to_string().contains("directory cycle"), "{err}");
     // `remove` stops at the junction, so the cycle is harmless to it
     direct
-        .remove(typed(&tree), true, false, None)
+        .remove(typed(&tree), true, false, crate::metadata::Stop::Cross)
         .await
         .unwrap();
     assert!(!tree.exists());
@@ -570,9 +582,12 @@ async fn glob_strings(
     direct: &Vfs,
     pattern: &str,
     root: &Path,
-    stop: Option<crate::metadata::Resolve>,
+    stop: Option<crate::metadata::Stop>,
+    follow: bool,
 ) -> crate::error::Result<Vec<String>> {
-    let paths = direct.glob(pattern, typed(root), stop, None).await?;
+    let paths = direct
+        .glob(pattern, typed(root), stop, follow, None)
+        .await?;
     Ok(paths
         .iter()
         .map(|path| path.to_string().replace('\\', "/"))
@@ -580,8 +595,8 @@ async fn glob_strings(
 }
 
 #[tokio::test]
-async fn glob_descends_junctions_below_stop() {
-    use crate::metadata::Resolve;
+async fn glob_descends_junctions_unless_stopped() {
+    use crate::metadata::Stop;
     let dir = tempdir().unwrap();
     let outside = dir.path().join("outside");
     let tree = dir.path().join("tree");
@@ -594,25 +609,84 @@ async fn glob_descends_junctions_below_stop() {
     let direct = Vfs::direct().unwrap();
 
     assert_eq!(
-        glob_strings(&direct, "**", &tree, None).await.unwrap(),
+        glob_strings(&direct, "**", &tree, None, false)
+            .await
+            .unwrap(),
         ["", "link", "link/keep.txt"]
     );
     // A junction the search stops at still matches
     assert_eq!(
-        glob_strings(&direct, "**", &tree, Some(Resolve::Mount))
+        glob_strings(&direct, "**", &tree, Some(Stop::Mount), false)
             .await
             .unwrap(),
         ["", "link"]
     );
 
-    // A directory symlink back up the tree is stopped at, not followed into
-    // a cycle
+    // A directory symlink back up the tree is matched as itself without
+    // `follow`, and followed into a cycle with it
     if std::os::windows::fs::symlink_dir(&tree, outside.join("up")).is_ok() {
         assert_eq!(
-            glob_strings(&direct, "**", &tree, None).await.unwrap(),
+            glob_strings(&direct, "**", &tree, None, false)
+                .await
+                .unwrap(),
             ["", "link", "link/keep.txt", "link/up"]
         );
+        let err = glob_strings(&direct, "**", &tree, None, true)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("directory cycle"), "{err}");
     }
+}
+
+#[tokio::test]
+async fn follow_stops_at_junctions_links_lead_to() {
+    use crate::metadata::Stop;
+    let dir = tempdir().unwrap();
+    let outside = dir.path().join("outside");
+    let tree = dir.path().join("tree");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("keep.txt"), "keep").unwrap();
+    std::fs::create_dir(&tree).unwrap();
+    let junction_path = dir.path().join("junction");
+    if !try_junction(&junction_path, &outside)
+        || std::os::windows::fs::symlink_dir(&junction_path, tree.join("link")).is_err()
+    {
+        return;
+    }
+    let direct = Vfs::direct().unwrap();
+
+    assert_eq!(
+        glob_strings(&direct, "**", &tree, None, false)
+            .await
+            .unwrap(),
+        ["", "link"]
+    );
+    assert_eq!(
+        glob_strings(&direct, "**", &tree, None, true)
+            .await
+            .unwrap(),
+        ["", "link", "link/keep.txt"]
+    );
+    // Following the link reaches the junction, which `stop` stops at
+    assert_eq!(
+        glob_strings(&direct, "**", &tree, Some(Stop::Mount), true)
+            .await
+            .unwrap(),
+        ["", "link"]
+    );
+
+    // `copy` copies the junction the link leads to as a junction
+    let copy = dir.path().join("copy");
+    direct
+        .copy(typed(&tree), typed(&copy), true, Some(Stop::Mount), true)
+        .await
+        .unwrap();
+    let metadata = direct
+        .metadata_resolved(typed(&copy.join("link")), crate::metadata::Resolve::Mount)
+        .await
+        .unwrap();
+    assert!(metadata.is_mount());
+    assert!(copy.join("link/keep.txt").exists());
 }
 
 #[tokio::test]
@@ -625,12 +699,20 @@ async fn glob_through_junction_cycle_fails() {
     }
     let direct = Vfs::direct().unwrap();
 
-    let err = glob_strings(&direct, "**", &tree, None).await.unwrap_err();
+    let err = glob_strings(&direct, "**", &tree, None, false)
+        .await
+        .unwrap_err();
     assert!(err.to_string().contains("directory cycle"), "{err}");
     assert_eq!(
-        glob_strings(&direct, "**", &tree, Some(crate::metadata::Resolve::Mount))
-            .await
-            .unwrap(),
+        glob_strings(
+            &direct,
+            "**",
+            &tree,
+            Some(crate::metadata::Stop::Mount),
+            false
+        )
+        .await
+        .unwrap(),
         ["", "loop"]
     );
 }

@@ -2,9 +2,9 @@ import
   testlib.vfs:
     - vfs
   std:
+    - TypeError
     - ValueError
   sys:
-    - InvalidInputError
     - IsADirectoryError
   test:
     - assert
@@ -55,7 +55,7 @@ def remove_all_keeps_link_target()
 #[vfs]
 def remove_all_with_each_stop()
   let tree outside = make_tree()
-  for stop = [:LINK:, :MOUNT:, :CROSS:]
+  for stop = [:MOUNT:, :CROSS:]
     copy $tree copy all: true
     remove copy all: true stop: $stop
     assert $!exists("copy")
@@ -73,37 +73,37 @@ def remove_without_all()
 
 #[test]
 #[vfs]
-def recursion_rejects_stop_target()
+def recursion_rejects_bad_stop()
   let tree _ = make_tree()
-  assert_throws $ValueError do remove $tree all: true stop: :TARGET:
-  assert_throws $ValueError do copy $tree copy all: true stop: :TARGET:
-  assert_throws $ValueError do move $tree moved all: true stop: :TARGET:
+  assert_throws $ValueError do remove $tree all: true stop: :LINK:
+  assert_throws $ValueError do copy $tree copy all: true stop: :LINK:
+  assert_throws $ValueError do move $tree moved all: true stop: :NEVER:
   assert_throws $ValueError do tree.remove all: true stop: :BOGUS:
-  assert $exists(tree)
-
-#[test]
-#[vfs]
-def remove_and_move_reject_stop_never()
-  let tree _ = make_tree()
-  assert_throws $InvalidInputError do remove $tree all: true stop: :NEVER:
-  assert_throws $InvalidInputError do move $tree moved all: true stop: :NEVER:
+  # Only `glob` and `copy` can stop at nothing
+  assert_throws $TypeError do remove $tree all: true stop: false
+  assert_throws $TypeError do move $tree moved all: true stop: false
+  assert_throws $ValueError do copy $tree copy all: true stop: true
+  assert_throws $TypeError do copy $tree copy all: true follow: 1
   assert $exists(tree)
   assert $!exists("moved")
+  assert $!exists("copy")
 
 #[test]
 #[vfs]
-def copy_stop_never_follows_links()
+def copy_follow_follows_links()
   let tree _ = make_tree()
-  copy $tree copy all: true stop: :NEVER:
+  copy $tree copy all: true follow: true
   let link = metadata (Path("copy") / "link") resolve: :LINK:
   assert_eq $link.type :DIR:
   assert_eq (read_str(Path("copy") / "link" / "keep.txt")) keep
+  tree.copy (Path "copy2") all: true follow: true stop: :CROSS:
+  assert_eq (read_str(Path("copy2") / "link" / "keep.txt")) keep
 
 #[test]
 #[vfs]
 def copy_all_keeps_links_as_links()
   let tree _ = make_tree()
-  for i stop = [:LINK:, :MOUNT:, :CROSS:].enumerate()
+  for i stop = [false, :MOUNT:, :CROSS:].enumerate()
     let dest = Path "copy$i"
     tree.copy $dest all: true stop: $stop
     assert_tree_copy $dest

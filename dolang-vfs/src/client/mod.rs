@@ -53,7 +53,7 @@ use crate::{
         OpenCaps, OpenExtra, StreamEntry,
     },
     file::{XattrEntry, XattrNamespace},
-    metadata::{FsMetadata, Metadata, MetadataPatch, Resolve},
+    metadata::{FsMetadata, Metadata, MetadataPatch, Resolve, Stop},
     path::{self, WellKnownPath},
     process::{
         self, PipeRecv, PipeRecvInner, PipeSend, PipeSendInner, ProcessControl, ProcessExit,
@@ -2987,7 +2987,7 @@ impl Client {
         path: path::Path<'_>,
         all: bool,
         ignore: bool,
-        stop: Option<Resolve>,
+        stop: Stop,
     ) -> Result<()> {
         let request = RemoveRequest {
             path: path.into(),
@@ -3125,13 +3125,15 @@ impl Client {
         from: path::Path<'_>,
         to: path::Path<'_>,
         all: bool,
-        stop: Option<Resolve>,
+        stop: Option<Stop>,
+        follow: bool,
     ) -> Result<()> {
         let request = CopyRequest {
             from: from.into(),
             to: to.into(),
             all,
             stop,
+            follow,
         };
         match self.request(RequestKind::Copy(request)).await? {
             ResponseKind::Copy => Ok(()),
@@ -3161,7 +3163,7 @@ impl Client {
         from: path::Path<'_>,
         to: path::Path<'_>,
         all: bool,
-        stop: Option<Resolve>,
+        stop: Stop,
     ) -> Result<()> {
         let request = MoveRequest {
             from: from.into(),
@@ -3265,13 +3267,15 @@ impl Client {
         &self,
         pattern: impl Into<String>,
         root: path::Path<'_>,
-        stop: Option<Resolve>,
+        stop: Option<Stop>,
+        follow: bool,
         max_depth: Option<usize>,
     ) -> Result<Vec<path::PathBuf>> {
         let request = GlobRequest {
             pattern: pattern.into(),
             root: root.into(),
             stop,
+            follow,
             max_depth,
         };
         match self.request(RequestKind::Glob(request)).await? {

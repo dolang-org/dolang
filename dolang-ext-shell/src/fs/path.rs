@@ -372,6 +372,7 @@ macro_rules! impl_concrete_path {
                 let all = builder.sym("all");
                 let ignore = builder.sym("ignore");
                 let stop = builder.sym("stop");
+                let follow = builder.sym("follow");
                 let max_depth = builder.sym("max_depth");
                 let resolve = builder.sym("resolve");
                 let replace = builder.sym("replace");
@@ -692,8 +693,8 @@ macro_rules! impl_concrete_path {
                         super::sync_file(strand, annex.global, annex.as_path(), data).await
                     })
                     .method("copy", async move |this, strand, args, _out| {
-                        let ([to], [all, stop]) =
-                            unpack!(strand, args, 1, 0, all = None, stop = None)?;
+                        let ([to], [all, stop, follow]) =
+                            unpack!(strand, args, 1, 0, all = None, stop = None, follow = None)?;
                         let all = match all {
                             Some(v) => v
                                 .as_bool(strand)
@@ -702,9 +703,18 @@ macro_rules! impl_concrete_path {
                         };
                         let to = path_from_value(strand, &to)?;
                         let annex = this.annex();
-                        let stop = super::stop_sym(strand, annex.global, stop)?;
-                        super::copy(strand, annex.global, annex.as_path(), to.to_path(), all, stop)
-                            .await
+                        let stop = super::stop_or_false(strand, annex.global, stop)?;
+                        let follow = super::flag(strand, follow, "follow")?;
+                        super::copy(
+                            strand,
+                            annex.global,
+                            annex.as_path(),
+                            to.to_path(),
+                            all,
+                            stop,
+                            follow,
+                        )
+                        .await
                     })
                     .method("rename", async move |this, strand, args, _out| {
                         let ([to], [replace]) = unpack!(strand, args, 1, 0, replace = None)?;
@@ -1032,8 +1042,15 @@ macro_rules! impl_concrete_path {
                         Ok(())
                     })
                     .method("glob", async move |this, strand, args, out| {
-                        let ([pattern], [max_depth, stop]) =
-                            unpack!(strand, args, 1, 0, max_depth = None, stop = None)?;
+                        let ([pattern], [max_depth, stop, follow]) = unpack!(
+                            strand,
+                            args,
+                            1,
+                            0,
+                            max_depth = None,
+                            stop = None,
+                            follow = None
+                        )?;
                         let annex = this.annex();
                         super::glob(
                             strand,
@@ -1042,6 +1059,7 @@ macro_rules! impl_concrete_path {
                             pattern,
                             max_depth,
                             stop,
+                            follow,
                             out,
                         )
                         .await

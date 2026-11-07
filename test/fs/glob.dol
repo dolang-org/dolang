@@ -99,6 +99,7 @@ def with_link block ...rest
 def stops_at_links_by_default()
   assert_eq [...glob "src/**/*.rs"] [Path "src/foo.rs", Path "src/lib.rs"]
   assert_eq [...glob "src/**/*.rs" stop: :CROSS:] [Path "src/foo.rs", Path "src/lib.rs"]
+  assert_eq [...glob "src/**/*.rs" stop: false] [Path "src/foo.rs", Path "src/lib.rs"]
   # The link itself still matches
   assert_eq [...glob "src/l*"] [Path "src/lib.rs", Path "src/link"]
 
@@ -106,9 +107,11 @@ def stops_at_links_by_default()
 #[vfs]
 #[populate]
 #[with_link]
-def stop_never_follows_links()
-  let found = [...glob "src/**/*.rs" stop: :NEVER:]
-  assert_eq $found [Path "src/foo.rs", Path "src/lib.rs", Path "src/link/out.rs"]
+def follow_follows_links()
+  let expected = [Path "src/foo.rs", Path "src/lib.rs", Path "src/link/out.rs"]
+  assert_eq [...glob "src/**/*.rs" follow: true] $expected
+  assert_eq [...glob "src/**/*.rs" follow: true stop: :CROSS:] $expected
+  assert_eq [...Path("src").glob("**/*.rs", follow: true)] $expected
 
 #[test]
 #[vfs]
@@ -123,4 +126,8 @@ def base_link_is_followed()
 #[populate]
 def rejects_bad_stop()
   assert_throws $ValueError do [...glob "*" stop: :TARGET:]
+  assert_throws $ValueError do [...glob "*" stop: :LINK:]
+  assert_throws $ValueError do [...glob "*" stop: :NEVER:]
+  assert_throws $ValueError do [...glob "*" stop: true]
+  assert_throws $std.TypeError do [...glob "*" follow: 1]
   assert_throws $std.Error do [...glob "*" resolve: :LINK:]

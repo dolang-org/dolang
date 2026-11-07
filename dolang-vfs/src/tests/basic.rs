@@ -210,7 +210,7 @@ async fn copy_directory_requires_all() {
 
     let client = connect_client(&socket_path).await;
     let err = client
-        .copy(typed(&src), typed(&dst), false, None)
+        .copy(typed(&src), typed(&dst), false, None, false)
         .await
         .unwrap_err();
 
@@ -234,7 +234,7 @@ async fn copy_directory_all() {
 
     let client = connect_client(&socket_path).await;
     client
-        .copy(typed(&src), typed(&dst), true, None)
+        .copy(typed(&src), typed(&dst), true, None, false)
         .await
         .unwrap();
 
@@ -261,7 +261,7 @@ async fn move_directory_all() {
 
     let client = connect_client(&socket_path).await;
     client
-        .move_(typed(&src), typed(&dst), true, None)
+        .move_(typed(&src), typed(&dst), true, crate::metadata::Stop::Cross)
         .await
         .unwrap();
 
@@ -897,7 +897,7 @@ async fn glob_basic_matching() {
 
     // Test glob matching *.txt files
     let paths = client
-        .glob("*.txt", typed(dir.path()), None, None)
+        .glob("*.txt", typed(dir.path()), None, false, None)
         .await
         .unwrap();
 
@@ -926,7 +926,7 @@ async fn glob_recursive() {
 
     // Test recursive glob with **
     let paths = client
-        .glob("**/*.txt", typed(dir.path()), None, None)
+        .glob("**/*.txt", typed(dir.path()), None, false, None)
         .await
         .unwrap();
 
@@ -957,7 +957,7 @@ async fn glob_max_depth() {
 
     // Test glob with max_depth=1 (should only find root.txt)
     let paths = client
-        .glob("**/*.txt", typed(dir.path()), None, Some(1))
+        .glob("**/*.txt", typed(dir.path()), None, false, Some(1))
         .await
         .unwrap();
 
@@ -987,7 +987,7 @@ async fn glob_with_prefix() {
 
     // Test glob with prefix (should use partition to extract "subdir1/")
     let paths = client
-        .glob("subdir1/*.txt", typed(dir.path()), None, None)
+        .glob("subdir1/*.txt", typed(dir.path()), None, false, None)
         .await
         .unwrap();
 
@@ -1012,7 +1012,7 @@ async fn glob_no_matches() {
 
     // Test glob with pattern that matches nothing
     let paths = client
-        .glob("*.rs", typed(dir.path()), None, None)
+        .glob("*.rs", typed(dir.path()), None, false, None)
         .await
         .unwrap();
 
@@ -1032,7 +1032,9 @@ async fn glob_invalid_pattern() {
     let client = connect_client(&socket_path).await;
 
     // Test glob with invalid pattern (should return error)
-    let result = client.glob("[invalid", typed(dir.path()), None, None).await;
+    let result = client
+        .glob("[invalid", typed(dir.path()), None, false, None)
+        .await;
 
     assert!(result.is_err());
 
@@ -1054,7 +1056,7 @@ async fn glob_local_basic_matching() {
 
     // Test glob matching *.txt files
     let paths = direct
-        .glob("*.txt", typed(dir.path()), None, None)
+        .glob("*.txt", typed(dir.path()), None, false, None)
         .await
         .unwrap();
 
@@ -1076,7 +1078,7 @@ async fn glob_local_recursive() {
 
     // Test recursive glob with **
     let paths = direct
-        .glob("**/*.txt", typed(dir.path()), None, None)
+        .glob("**/*.txt", typed(dir.path()), None, false, None)
         .await
         .unwrap();
 
@@ -1100,7 +1102,7 @@ async fn glob_local_max_depth() {
 
     // Test glob with max_depth=1 (should only find root.txt)
     let paths = direct
-        .glob("**/*.txt", typed(dir.path()), None, Some(1))
+        .glob("**/*.txt", typed(dir.path()), None, false, Some(1))
         .await
         .unwrap();
 
@@ -1126,7 +1128,7 @@ async fn glob_local_bounded_by_pattern_depth() {
     std::fs::write(dir.path().join("root.txt"), "root").unwrap();
     std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000)).unwrap();
 
-    let result = direct.glob("*", typed(dir.path()), None, None).await;
+    let result = direct.glob("*", typed(dir.path()), None, false, None).await;
     std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     let paths = result.unwrap();
@@ -1144,7 +1146,7 @@ async fn glob_local_no_matches() {
 
     // Test glob with pattern that matches nothing
     let paths = direct
-        .glob("*.rs", typed(dir.path()), None, None)
+        .glob("*.rs", typed(dir.path()), None, false, None)
         .await
         .unwrap();
 
@@ -1157,7 +1159,9 @@ async fn glob_local_invalid_pattern() {
     let dir = tempdir().unwrap();
 
     // Test glob with invalid pattern (should return error)
-    let result = direct.glob("[invalid", typed(dir.path()), None, None).await;
+    let result = direct
+        .glob("[invalid", typed(dir.path()), None, false, None)
+        .await;
 
     assert!(result.is_err());
 }

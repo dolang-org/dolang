@@ -8,9 +8,7 @@ use crate::security::{OwnershipIdentity, Permission};
 /// How far path resolution goes before stopping at the final component.
 ///
 /// The levels are ordered: each one opens the final component as itself for
-/// everything the previous level covers, and more. As a recursion boundary
-/// (`stop`), a level means "don't descend into anything this level would open
-/// as itself".
+/// everything the previous level covers, and more.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
 )]
@@ -47,6 +45,28 @@ impl Resolve {
             IO_REPARSE_TAG_SYMLINK | IO_REPARSE_TAG_LX_SYMLINK => Self::Link,
             tag if tag & NAME_SURROGATE != 0 => Self::Mount,
             _ => Self::Cross,
+        }
+    }
+}
+
+/// Where a recursive operation stops descending, besides symbolic links,
+/// which are a separate choice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Stop {
+    /// Stop at explicit mount points: a junction or volume mount point on
+    /// Windows, a mount root on Unix.
+    Mount,
+    /// Also stop at any crossing point: any Windows reparse point, or a
+    /// directory on a different device from its parent on Unix.
+    Cross,
+}
+
+impl Stop {
+    /// Returns the [`Resolve`] level that opens the same points as itself.
+    pub(crate) fn level(self) -> Resolve {
+        match self {
+            Self::Mount => Resolve::Mount,
+            Self::Cross => Resolve::Cross,
         }
     }
 }

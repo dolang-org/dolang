@@ -652,17 +652,15 @@ impl Vfs {
     }
 
     /// Removes a file or link, or with `all`, a directory and everything
-    /// below it. Recursion stops at `stop`, which defaults to
-    /// [`Resolve::Cross`](metadata::Resolve::Cross): an entry there is removed
-    /// as itself, without descending into it. Removal never follows symbolic
-    /// links, so a `stop` of [`Resolve::Target`](metadata::Resolve::Target) is
-    /// rejected.
+    /// below it. Recursion stops at `stop`: an entry there is removed as
+    /// itself, without descending into it. Removal never follows symbolic
+    /// links.
     pub async fn remove(
         &self,
         path: path::Path<'_>,
         all: bool,
         ignore: bool,
-        stop: Option<metadata::Resolve>,
+        stop: metadata::Stop,
     ) -> error::Result<()> {
         match &self.inner {
             VfsInner::Client(client) => client.remove(path, all, ignore, stop).await,
@@ -779,21 +777,21 @@ impl Vfs {
     }
 
     /// Copies a path, or with `all`, a directory and everything below it.
-    /// Recursion stops at `stop`, which defaults to
-    /// [`Resolve::Link`](metadata::Resolve::Link): an entry there is copied as
-    /// itself. A `stop` of [`Resolve::Target`](metadata::Resolve::Target) stops
-    /// at nothing: links, `from` included, are followed, and what they lead to
-    /// is copied.
+    /// Recursion stops at `stop`, or at nothing when it is `None`: an entry
+    /// there is copied as itself. Symbolic links are copied as links, unless
+    /// `follow` is set: then links, `from` included, are followed, and what
+    /// they lead to is copied.
     pub async fn copy(
         &self,
         from: path::Path<'_>,
         to: path::Path<'_>,
         all: bool,
-        stop: Option<metadata::Resolve>,
+        stop: Option<metadata::Stop>,
+        follow: bool,
     ) -> error::Result<()> {
         match &self.inner {
-            VfsInner::Client(client) => client.copy(from, to, all, stop).await,
-            VfsInner::Direct(direct) => direct.copy(from, to, all, stop).await,
+            VfsInner::Client(client) => client.copy(from, to, all, stop, follow).await,
+            VfsInner::Direct(direct) => direct.copy(from, to, all, stop, follow).await,
         }
     }
 
@@ -813,14 +811,13 @@ impl Vfs {
     /// Moves a path, or with `all`, a directory and everything below it. A
     /// rename moves anything; across devices, the move copies and then
     /// removes, stopping at `stop` as [`remove`](Self::remove) does, and
-    /// checks first that the removal can succeed. A `stop` of
-    /// [`Resolve::Target`](metadata::Resolve::Target) is rejected.
+    /// checks first that the removal can succeed.
     pub async fn move_(
         &self,
         from: path::Path<'_>,
         to: path::Path<'_>,
         all: bool,
-        stop: Option<metadata::Resolve>,
+        stop: metadata::Stop,
     ) -> error::Result<()> {
         match &self.inner {
             VfsInner::Client(client) => client.move_(from, to, all, stop).await,
@@ -915,24 +912,25 @@ impl Vfs {
 
     /// Expands a glob pattern beneath `root`. The base the walk starts from,
     /// `root` joined with the pattern's literal prefix, is always followed.
-    /// Below it, the walk stops descending at `stop`, which defaults to
-    /// [`Resolve::Link`](metadata::Resolve::Link); an entry there can match,
-    /// but nothing below it is read. A `stop` of
-    /// [`Resolve::Target`](metadata::Resolve::Target) stops at nothing and
-    /// follows links. A pattern without wildcards only checks that its path
-    /// exists, and ignores `stop`.
+    /// Below it, the walk stops descending at `stop`, or at nothing when it
+    /// is `None`; an entry there can match, but nothing below it is read.
+    /// Symbolic links are matched as themselves, unless `follow` is set: then
+    /// they are followed, and a link that leads nowhere is matched as itself.
+    /// A pattern without wildcards only checks that its path exists, and
+    /// ignores `stop` and `follow`.
     pub async fn glob(
         &self,
         pattern: impl Into<String>,
         root: path::Path<'_>,
-        stop: Option<metadata::Resolve>,
+        stop: Option<metadata::Stop>,
+        follow: bool,
         max_depth: Option<usize>,
     ) -> error::Result<Vec<path::PathBuf>> {
         let pattern = pattern.into();
 
         match &self.inner {
-            VfsInner::Client(client) => client.glob(pattern, root, stop, max_depth).await,
-            VfsInner::Direct(direct) => direct.glob(pattern, root, stop, max_depth).await,
+            VfsInner::Client(client) => client.glob(pattern, root, stop, follow, max_depth).await,
+            VfsInner::Direct(direct) => direct.glob(pattern, root, stop, follow, max_depth).await,
         }
     }
 }
