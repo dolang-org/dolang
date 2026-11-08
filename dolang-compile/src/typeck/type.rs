@@ -862,6 +862,10 @@ pub(crate) struct DeclSource {
     /// that it takes the position of its nearest disjoint ancestor (see
     /// [`Database::disjoint_ancestor`])
     pub(crate) is_mixable: bool,
+    /// Whether it is a method whose decorators, besides a leading designated
+    /// `getter` or `setter`, replace its value, so that member lookup reads what
+    /// they settle to
+    pub(crate) decorated: bool,
 }
 
 /// A nominal declaration's supertype
@@ -1101,7 +1105,30 @@ pub(crate) struct Shared {
 
 /// What decorated members settled to, by their methods' declarations, each a
 /// type of the layer that holds it and the layers over it
-pub(crate) type Settled = FxHashMap<DeclId, TypeId>;
+pub(crate) type Settled = FxHashMap<DeclId, SettledMember>;
+
+/// What a decorated method's member settled to. Its type is interpreted where its
+/// class's binder group is, as a method's signature split off its class's binders
+/// is ([`Database::split`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SettledMember {
+    /// A callable, which the class installs as a method, or a decorated
+    /// accessor's function
+    Method(TypeId),
+    /// Any other value, which the class can't install. It's diagnosed, and the
+    /// member or accessor is unknown.
+    Value(TypeId),
+}
+
+impl SettledMember {
+    /// The same form, of `f` of its type
+    pub(crate) fn map(self, f: impl FnOnce(TypeId) -> TypeId) -> Self {
+        match self {
+            Self::Method(ty) => Self::Method(f(ty)),
+            Self::Value(ty) => Self::Value(f(ty)),
+        }
+    }
+}
 
 /// What the root of a chain of shared databases holds besides its types and symbols
 struct Declared {
@@ -1344,7 +1371,7 @@ impl Database {
     }
 
     /// What a decorated method's member settled to, if anything did
-    pub(crate) fn settled(&self, decl: DeclId) -> Option<TypeId> {
+    pub(crate) fn settled(&self, decl: DeclId) -> Option<SettledMember> {
         let settled = match &self.settled {
             Some(settled) => Some(&**settled),
             None => self.base().and_then(Shared::settled),

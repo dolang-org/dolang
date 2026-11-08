@@ -13,7 +13,7 @@ mod judge;
 mod kind;
 mod overrides;
 mod populate;
-mod sig;
+pub(crate) mod sig;
 mod specialize;
 pub(crate) mod surface;
 mod variance;
@@ -55,7 +55,7 @@ pub(crate) use populate::populate;
 pub(crate) use sig::signatures;
 pub(crate) use specialize::specialize;
 pub(crate) use variance::variances;
-pub(crate) use wellformed::{Unresolved, recursion, wellformed};
+pub(crate) use wellformed::{Unresolved, recursion, settled_members, wellformed};
 
 /// The names of `strand`'s pipe placeholders, sender first
 pub(crate) const PIPES: [&str; 2] = ["PipeSender", "PipeReceiver"];
@@ -1169,6 +1169,33 @@ impl Report for AccessorChannel {
             w,
             "a {accessor}'s {channel} must be `Value`: a {accessor} runs without its caller's channels"
         )
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+/// A decorated method whose decorators give something other than a function,
+/// which the class can't install. `accessor` says whether it's a setter, if it's
+/// a getter or setter.
+struct SettledValue {
+    span: Span,
+    accessor: Option<bool>,
+}
+
+impl Report for SettledValue {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        let method = match self.accessor {
+            Some(true) => "setter",
+            Some(false) => "getter",
+            None => "method",
+        };
+        write!(w, "a {method}'s decorators must give a function")
     }
 
     fn span(&self) -> Span {

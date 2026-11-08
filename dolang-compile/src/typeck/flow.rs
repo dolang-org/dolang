@@ -90,6 +90,7 @@ mod live;
 mod member;
 mod problem;
 mod rule;
+mod settle;
 mod shown;
 mod state;
 #[cfg(test)]
@@ -110,6 +111,8 @@ use problem::MemberUse;
 pub(super) use problem::Misfit;
 pub(crate) use problem::Problem;
 use rustc_hash::{FxHashMap, FxHashSet};
+use settle::Settling;
+pub(crate) use settle::settle;
 pub(crate) use state::Fact;
 use state::{Contexts, CtxId, Group, Link, May, Operand, State, VarState};
 
@@ -549,6 +552,8 @@ struct Flow<'a, 'u> {
     /// The running function's variables that may have escaped at the running
     /// step, starting from its block's [`Block::escaped`](super::cfg::Block::escaped)
     escaped: BitBox,
+    /// In a settle run, the region it settles
+    settling: Option<Settling<'a>>,
 }
 
 impl<'a, 'u> Flow<'a, 'u> {
@@ -606,6 +611,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             results: None,
             logging: false,
             escaped: BitBox::default(),
+            settling: None,
         }
     }
 
@@ -657,6 +663,20 @@ impl<'a, 'u> Flow<'a, 'u> {
             };
             self.merge(func.entry, CtxId::ROOT, state);
         }
+        self.iterate();
+        let mut results = self.final_pass();
+        sort(&mut results.problems, &mut results.unresolved);
+        let accumulators = self
+            .accumulators
+            .into_iter()
+            .map(|(var, accumulator)| (var, accumulator.ty))
+            .collect();
+        (results, accumulators)
+    }
+
+    /// Iterate to a fixed point from the states merged so far, in rounds that
+    /// default what each function's earliest undecided block leaves undecided
+    fn iterate(&mut self) {
         loop {
             loop {
                 let next = if self.reversed {
@@ -706,21 +726,27 @@ impl<'a, 'u> Flow<'a, 'u> {
                 self.enqueue(block, ctx);
             }
         }
+    }
+
+    /// Run every block once more over its final state, recording what each
+    /// reference and binding saw, and reporting. A settle run leaves out its
+    /// region's exit, which isn't in the region.
+    fn final_pass(&mut self) -> Results {
         trace!("final pass");
         self.results = Some(Results::default());
         let mut keys: Vec<_> = self.states.keys().copied().collect();
         keys.sort_by_key(|&(block, ctx)| (self.layout.blocks.rank[block.index()], block, ctx));
         for (block, ctx) in keys {
+            if self
+                .settling
+                .as_ref()
+                .is_some_and(|settling| settling.region.exit == block)
+            {
+                continue;
+            }
             self.run(block, ctx);
         }
-        let mut results = self.results.take().expect("recorded by the final pass");
-        sort(&mut results.problems, &mut results.unresolved);
-        let accumulators = self
-            .accumulators
-            .into_iter()
-            .map(|(var, accumulator)| (var, accumulator.ty))
-            .collect();
-        (results, accumulators)
+        self.results.take().expect("recorded by the final pass")
     }
 
     /// Whether the unit is strict, so the checker doesn't make up `Unknown` in it
@@ -899,7 +925,9 @@ impl<'a, 'u> Flow<'a, 'u> {
     }
 
     fn enqueue(&mut self, block: BlockId, ctx: CtxId) {
-        if !self.observing() {
+        // A settle run stops where its region ends
+        let exit = self.settling.as_ref().map(|settling| settling.region.exit);
+        if !self.observing() && exit != Some(block) {
             self.queue
                 .insert((self.layout.blocks.rank[block.index()], block, ctx));
         }
@@ -946,7 +974,15 @@ impl<'a, 'u> Flow<'a, 'u> {
         if self.observing() {
             return;
         }
-        self.mask(block, &mut state);
+        // A settle run reads its region's result at the exit, where nothing else
+        // does
+        if self
+            .settling
+            .as_ref()
+            .is_none_or(|settling| settling.region.exit != block)
+        {
+            self.mask(block, &mut state);
+        }
         let key = (block, ctx);
         let Some(entry) = self.states.get_mut(&key) else {
             trace!(
@@ -1932,6 +1968,12 @@ impl<'a, 'u> Flow<'a, 'u> {
             };
         }
         let fact = state.vars[self.slot(var)].fact();
+        // A settle run reads only what's annotated or assigned in its region
+        if fact.unassigned
+            && let Some(settling) = &self.settling
+        {
+            settling.blocked.set(true);
+        }
         if !self.reads_through(var) {
             return fact;
         }

@@ -22,7 +22,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
     AccessorChannel, BadRecursion, BoundViolation, DeclNode, Designated, Diag, Fill, Head,
-    ParameterKeys, Referent, Role, Tables, UnitDiag,
+    ParameterKeys, Referent, Role, SettledValue, Tables, UnitDiag,
     sig::{self, Form},
     surface::{Class, Interned, Ref, TypeArg, TypeExpr, TypeParam, TypeQuant},
 };
@@ -32,8 +32,8 @@ use crate::{
         report::Report,
         solver::{Gas, Issue, Provenance, Residual, Solver, Status},
         r#type::{
-            Argument, Binder, Binding, BoundRef, Database, DeclId, Function, Rest, Type, TypeId,
-            UnitId, UnitSpan,
+            Argument, Binder, Binding, BoundRef, Database, DeclId, Function, Rest, SettledMember,
+            Type, TypeId, UnitId, UnitSpan,
         },
     },
 };
@@ -68,6 +68,76 @@ pub(crate) fn wellformed(
     for id in tables.unit_decl_ids(unit) {
         for sig in 0..tables.sig_count(id) {
             check.signature(id, sig);
+        }
+    }
+    check.unresolved
+}
+
+/// Check what a unit's decorated methods settled to, once their members are
+/// settled: each must be a function, since a class installs nothing else, and
+/// each channel a decorated getter's or setter's function writes must admit
+/// `Value`, as a written accessor's must. One that didn't settle, or settled to
+/// what's unknown, passes.
+pub(crate) fn settled_members(
+    db: &Database,
+    tables: &Tables<'_>,
+    unit: UnitId,
+    diags: &mut Vec<UnitDiag>,
+) -> Vec<Unresolved> {
+    let mut check = Check {
+        db,
+        tables,
+        diags,
+        unresolved: Vec::new(),
+    };
+    for id in tables.unit_decl_ids(unit) {
+        let DeclNode::Methods(methods) = &tables.decl(id).node else {
+            continue;
+        };
+        let primary = methods
+            .iter()
+            .find(|method| !method.overload)
+            .unwrap_or(&methods[0]);
+        let accessor = match sig::method_form(tables, primary) {
+            Form::Getter { decorated: true } => Some(false),
+            Form::Setter { decorated: true } => Some(true),
+            Form::Decorated => None,
+            Form::Plain | Form::Getter { .. } | Form::Setter { .. } => continue,
+        };
+        let Some(settled) = db.settled(id) else {
+            continue;
+        };
+        let span = db.declaration(id).source.span;
+        let ty = match settled {
+            SettledMember::Method(ty) => ty,
+            // What's unknown may be a function
+            SettledMember::Value(ty) if matches!(db.ty(ty), Type::Unknown(_)) => continue,
+            SettledMember::Value(_) => {
+                let diag = SettledValue {
+                    span: span.span,
+                    accessor,
+                };
+                check.report(Verdict::Fails, span, diag);
+                continue;
+            }
+        };
+        // Its channels may name its own binders, which a check can't hold
+        let (Some(setter), Type::Function(function)) = (accessor, db.ty(ty)) else {
+            continue;
+        };
+        let class = tables.decl(id).outer.map(|(class, _)| class);
+        let channels = [(true, function.input), (false, function.output)];
+        for (input, channel) in channels {
+            let Some(channel) = channel else {
+                continue;
+            };
+            let verdict = check.relate(class, db.top(), channel);
+            let diag = AccessorChannel {
+                span: span.span,
+                setter,
+                input,
+            };
+            check.report(verdict, span, diag);
         }
     }
     check.unresolved
@@ -433,10 +503,12 @@ impl Check<'_, '_> {
             return;
         };
         let method = &methods[sig];
+        // A decorated accessor's channels are its settled type's, checked once
+        // it's settled
         let setter = match sig::method_form(self.tables, method) {
-            Form::Getter => false,
-            Form::Setter => true,
-            Form::Plain | Form::Unknown => return,
+            Form::Getter { decorated: false } => false,
+            Form::Setter { decorated: false } => true,
+            Form::Plain | Form::Getter { .. } | Form::Setter { .. } | Form::Decorated => return,
         };
         let channels = [
             (true, method.sig.input, function.input),

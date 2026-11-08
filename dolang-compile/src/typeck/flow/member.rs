@@ -355,13 +355,21 @@ impl Flow<'_, '_> {
                         };
                     Resolved::Method(method(kind), bound)
                 }
-                FoundKind::Property { getter, setter } => Resolved::Property {
-                    getter: signatures(getter),
-                    setter: signatures(setter),
-                    // A static property's accessors take no receiver
-                    passed: !found.bound && found.scope != Scope::Static,
-                },
-                FoundKind::Unknown => Resolved::Dynamic,
+                FoundKind::Property { getter, setter } => {
+                    for accessor in [&getter, &setter].into_iter().flatten() {
+                        self.placeholder(accessor.function);
+                    }
+                    Resolved::Property {
+                        getter: signatures(getter),
+                        setter: signatures(setter),
+                        // A static property's accessors take no receiver
+                        passed: !found.bound && found.scope != Scope::Static,
+                    }
+                }
+                FoundKind::Unknown => {
+                    self.placeholder(None);
+                    Resolved::Dynamic
+                }
             },
             Lookup::Fallback { get, set } => Resolved::Fallback {
                 get: get.map(|found| method(&found.kind)),

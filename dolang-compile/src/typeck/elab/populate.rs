@@ -1187,6 +1187,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                 },
                 is_final: false,
                 is_mixable: false,
+                decorated: false,
             },
             ty: self.db.intern(Type::Quantified {
                 binders: binders.into(),
@@ -1284,8 +1285,18 @@ impl<'t, 'u> Populate<'t, 'u> {
                         input: Some(input),
                         output: Some(output),
                     }));
-                    let declaration =
+                    let mut declaration =
                         self.declaration((id, sig), DeclKind::Function, Kind::Type, body);
+                    // Member lookup reads the declaration of a method's first
+                    // signature, which shares its implementation's form
+                    if let DeclNode::Methods(methods) = &decl.node {
+                        let primary = methods
+                            .iter()
+                            .find(|method| !method.overload)
+                            .unwrap_or(&methods[0]);
+                        declaration.source.decorated =
+                            sig::method_form(tables, primary).decorated();
+                    }
                     let declared = tables
                         .sig_decl((id, sig))
                         .expect("every signature is declared");
@@ -1515,14 +1526,14 @@ impl<'t, 'u> Populate<'t, 'u> {
                             let (_, found) = &mut members[*entry.get()];
                             match (form, found) {
                                 (
-                                    Form::Getter,
+                                    Form::Getter { .. },
                                     Member::Property {
                                         getter: slot @ None,
                                         ..
                                     },
                                 )
                                 | (
-                                    Form::Setter,
+                                    Form::Setter { .. },
                                     Member::Property {
                                         setter: slot @ None,
                                         ..
@@ -1539,13 +1550,13 @@ impl<'t, 'u> Populate<'t, 'u> {
                                     scope,
                                     public,
                                 },
-                                Form::Getter | Form::Setter => Member::Property {
-                                    getter: (form == Form::Getter).then_some(decl),
-                                    setter: (form == Form::Setter).then_some(decl),
+                                Form::Getter { .. } | Form::Setter { .. } => Member::Property {
+                                    getter: matches!(form, Form::Getter { .. }).then_some(decl),
+                                    setter: matches!(form, Form::Setter { .. }).then_some(decl),
                                     scope,
                                     public,
                                 },
-                                Form::Unknown => Member::Decorated {
+                                Form::Decorated => Member::Decorated {
                                     decl,
                                     scope,
                                     public,

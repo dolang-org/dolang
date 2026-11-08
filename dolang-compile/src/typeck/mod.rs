@@ -682,8 +682,9 @@ const _: () = {
 
 /// Check every unit, on a pool of `threads` threads, else the global pool,
 /// giving their outputs by [`UnitId`]: each unit is lowered by [`lower_unit`],
-/// then, once every unit is, finished by [`finish_unit`]. Flow logs facts only
-/// for an `analysis`.
+/// its method decorator regions settled by [`settle_unit`], and once every unit's
+/// are, finished by [`finish_unit`] with what every unit's settled to. Flow logs
+/// facts only for an `analysis`.
 fn check_units(
     shared: &Arc<r#type::Shared>,
     tables: &elab::Tables<'_>,
@@ -695,8 +696,10 @@ fn check_units(
         let lowered = each(tables, vec![(); count], |unit, ()| {
             lower_unit(shared, tables, unit)
         });
-        // What decorated members settle to, which #796's settling pass is to fill
-        let settled = Arc::new(r#type::Settled::default());
+        let lowered = each(tables, lowered, |_, lowered| {
+            settle_unit(tables, lowered, analysis)
+        });
+        let settled = gather_settled(shared, &lowered);
         each(tables, lowered, |unit, lowered| {
             finish_unit(tables, unit, lowered, &settled, analysis)
         })
@@ -757,6 +760,22 @@ struct Lowered {
     wellformed: (Vec<elab::UnitDiag>, Vec<elab::Unresolved>),
     /// A unit with source's CFG, and the layer lowering interned in
     lowered: Option<(cfg::Ir, Arc<r#type::Shared>)>,
+    /// Each region that settled: its method, what its member settled to, and its
+    /// settle run's fork, which the member's type is interned in, with what the
+    /// run concluded
+    settled: Vec<(
+        r#type::DeclId,
+        r#type::SettledMember,
+        r#type::Database,
+        flow::Results,
+    )>,
+}
+
+/// What every unit's decorated members settled to, in a layer over the shared
+/// base that holds their types
+struct Settled {
+    layer: Arc<r#type::Shared>,
+    members: r#type::Settled,
 }
 
 /// Check a unit's well-formedness and lower its bodies, each in a new fork of
@@ -768,6 +787,7 @@ fn lower_unit(shared: &Arc<r#type::Shared>, tables: &elab::Tables<'_>, unit: Uni
         return Lowered {
             wellformed: (Vec::new(), Vec::new()),
             lowered: None,
+            settled: Vec::new(),
         };
     }
     // A fork of its own, so that what it interns isn't in the layer
@@ -790,22 +810,69 @@ fn lower_unit(shared: &Arc<r#type::Shared>, tables: &elab::Tables<'_>, unit: Uni
     Lowered {
         wellformed: (wellformed, unresolved),
         lowered: Some((ir, db.share())),
+        settled: Vec::new(),
     }
 }
 
-/// Check a lowered unit's overrides and bodies with its decorated members
-/// `settled`, in forks of a layer over the one it was lowered in; a typelib's
-/// overrides were checked with its source, and it has no bodies
+/// Settle each of a lowered unit's method decorator regions on its own, in a
+/// fork of its own of the unit's layer, and splice out those that settle. One
+/// that doesn't stays, for flow to check, and what its run concluded is dropped.
+fn settle_unit(tables: &elab::Tables<'_>, mut lowered: Lowered, analysis: bool) -> Lowered {
+    let Some((ir, layer)) = &mut lowered.lowered else {
+        return lowered;
+    };
+    if ir.regions().is_empty() {
+        return lowered;
+    }
+    let layout = flow::Layout::new(ir);
+    let runs = ir.runs();
+    let run = &runs[cfg::RunId::module().index()];
+    let mut spliced = Vec::new();
+    for (index, region) in ir.regions().iter().enumerate() {
+        if let Some((db, results, member)) =
+            flow::settle(ir, &layout, run, region, layer, tables, analysis)
+        {
+            spliced.push(index);
+            lowered.settled.push((region.decl, member, db, results));
+        }
+    }
+    for index in spliced {
+        ir.splice(index);
+    }
+    debug_assert_eq!(ir.validate(), Ok(()), "splicing keeps a valid graph");
+    lowered
+}
+
+/// Copy what every unit's decorated members settled to into one layer over the
+/// shared base, which each unit copies them from in turn
+fn gather_settled(shared: &Arc<r#type::Shared>, lowered: &[Lowered]) -> Settled {
+    let mut db = r#type::Database::fork(shared);
+    let mut members = r#type::Settled::default();
+    for (decl, member, from, _) in lowered.iter().flat_map(|lowered| &lowered.settled) {
+        let mut copies = r#type::Copies::default();
+        let mut copier = db.copier(from, &mut copies);
+        members.insert(*decl, member.map(|ty| copier.ty(ty)));
+    }
+    Settled {
+        layer: db.share(),
+        members,
+    }
+}
+
+/// Check a lowered unit's overrides and bodies with every unit's decorated members
+/// `settled`, copied into a layer over the one it was lowered in that each check
+/// forks; a typelib's overrides were checked with its source, and it has no bodies
 fn finish_unit(
     tables: &elab::Tables<'_>,
     unit: UnitId,
     lowered: Lowered,
-    settled: &Arc<r#type::Settled>,
+    settled: &Settled,
     analysis: bool,
 ) -> UnitOutput {
     let Lowered {
         wellformed,
         lowered,
+        settled: regions,
     } = lowered;
     let Some((ir, layer)) = lowered else {
         // A nonconforming member only misleads checks against it
@@ -818,18 +885,34 @@ fn finish_unit(
         };
     };
     let mut db = r#type::Database::fork(&layer);
-    db.settle(Arc::clone(settled));
+    let from = r#type::Database::fork(&settled.layer);
+    let mut copies = r#type::Copies::default();
+    let mut copier = db.copier(&from, &mut copies);
+    let members = settled
+        .members
+        .iter()
+        .map(|(&decl, &member)| (decl, member.map(|ty| copier.ty(ty))))
+        .collect();
+    db.settle(Arc::new(members));
     let layer = db.share();
     let mut overrides = Vec::new();
-    let unresolved = elab::overrides(
+    let mut unresolved = elab::settled_members(
         &r#type::Database::fork(&layer),
         tables,
         unit,
         &mut overrides,
     );
+    unresolved.extend(elab::overrides(
+        &r#type::Database::fork(&layer),
+        tables,
+        unit,
+        &mut overrides,
+    ));
     // Each run has a fork of the layer of its own
     let layout = flow::Layout::new(&ir);
-    let runs = flow::analyze(&ir, &layout, &ir.runs(), &layer, tables, analysis);
+    let mut runs = flow::analyze(&ir, &layout, &ir.runs(), &layer, tables, analysis);
+    // A settled region's run is the only one that saw its blocks
+    runs.extend(regions.into_iter().map(|(_, _, db, results)| (db, results)));
     UnitOutput {
         wellformed,
         overrides: (overrides, unresolved),

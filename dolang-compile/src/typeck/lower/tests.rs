@@ -556,3 +556,68 @@ def outer()
         assert_eq!(runs[0].funcs.len(), 4);
     });
 }
+
+/// A method's decorators are applied to its function in a region of their own,
+/// after the step creating the function, binding what they give
+#[test]
+fn method_decorators_lower_to_a_region() {
+    let source = "
+let deco = (do |f| f)
+class C
+  #[deco]
+  pub def m _self
+    1
+";
+    lower_with(source, |ir| {
+        let [region] = ir.regions() else {
+            panic!("one region: {}", ir.regions().len())
+        };
+        // Its decorator reads a variable without an annotation, so it stays
+        let entry = ir.block(region.entry);
+        let [Step::Let { value, .. }] = &entry.steps[..] else {
+            panic!("the region applies its decorator")
+        };
+        let ExprKind::Call { args, .. } = &value.kind else {
+            panic!("the decorator is called")
+        };
+        assert!(
+            matches!(args[0].pos().kind, ExprKind::Lambda(func) if func == region.func),
+            "the decorator is passed the method's function"
+        );
+        assert!(matches!(entry.terminal, Terminal::Branch { target, .. } if target == region.exit));
+        let (created, _) = creation(ir, region.func).expect("the function is created");
+        assert!(
+            ir.blocks().any(|(_, block)| block
+                .steps
+                .iter()
+                .any(|step| matches!(step, Step::Capture(funcs) if funcs.contains(&region.func)))
+                && block
+                    .terminal
+                    .successors()
+                    .any(|target| target == region.entry)),
+            "the function is captured before the region"
+        );
+        assert_eq!(created, region.entry);
+    });
+}
+
+/// A region that settles is spliced out for a branch to its exit
+#[test]
+fn settled_regions_are_spliced() {
+    let source = "
+def deco f @ Func -> Func
+  f
+class C
+  #[deco]
+  pub def m _self
+    1
+";
+    lower_with(source, |ir| {
+        let [region] = ir.regions() else {
+            panic!("one region: {}", ir.regions().len())
+        };
+        let entry = ir.block(region.entry);
+        assert!(entry.steps.is_empty());
+        assert!(matches!(entry.terminal, Terminal::Branch { target, .. } if target == region.exit));
+    });
+}

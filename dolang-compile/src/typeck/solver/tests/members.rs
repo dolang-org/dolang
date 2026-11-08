@@ -6,7 +6,7 @@ use crate::typeck::{
         conform::RequirementKind,
         member::{Found, FoundKind, Lookup},
     },
-    r#type::{Member, MemberKey, Scope, Supertype},
+    r#type::{Member, MemberKey, Scope, SettledMember, Supertype},
 };
 
 /// A class whose members are added before it is populated
@@ -828,6 +828,7 @@ fn settled_members_meet_requirements() {
     wrapper.decorated(key(&db, "wrapped"), method);
     let wrapper = wrapper.finish(&mut db, vec![]);
     db.seal();
+    let function = db.declaration(method).ty;
     let base = db.share();
 
     let requirements = |db: &Database| {
@@ -837,17 +838,22 @@ fn settled_members_meet_requirements() {
             .conformance(wrapper, solver.closed(wrapping), true)
             .unwrap()
     };
-    // Unsettled, its value is unknown, which meets anything
+    let settled = |member| {
+        let mut layer = Database::fork(&base);
+        layer.settle(Arc::new(FxHashMap::from_iter([(method, member)])));
+        requirements(&Database::fork(&layer.share()))
+    };
+    // Unsettled, or settled to what isn't a function, its value is unknown, which
+    // meets anything
     assert!(requirements(&Database::fork(&base)).is_empty());
-    // Settled to `Str`, it must meet the requirement
-    let mut layer = Database::fork(&base);
-    layer.settle(Arc::new(FxHashMap::from_iter([(method, str)])));
-    let settled = requirements(&Database::fork(&layer.share()));
+    assert!(settled(SettledMember::Value(str)).is_empty());
+    // Settled to a function, it's a method, which isn't the field required
+    let settled = settled(SettledMember::Method(function));
     let [requirement] = settled.as_slice() else {
         panic!("one requirement: {settled:?}")
     };
     assert!(
-        matches!(&requirement.kind, RequirementKind::Relate(pairs) if !pairs.is_empty()),
+        !matches!(&requirement.kind, RequirementKind::Relate(_)),
         "{requirement:?}"
     );
 }

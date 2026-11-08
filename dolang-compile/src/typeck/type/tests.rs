@@ -94,6 +94,7 @@ fn source(db: &mut Database, kind: DeclKind, name: &str) -> DeclSource {
         },
         is_final: false,
         is_mixable: false,
+        decorated: false,
     }
 }
 
@@ -280,6 +281,7 @@ fn symbols_are_interned_independently_of_units() {
             },
             is_final: false,
             is_mixable: false,
+            decorated: false,
         };
         db.populate(decl, definition(decl_source.clone(), ty));
         types.push((decl, ty));
@@ -1521,12 +1523,15 @@ fn layers_over_a_settling_layer_read_its_table() {
     assert_eq!(Database::fork(&base).settled(id), None);
     let mut fork = Database::fork(&base);
     let two = int(&mut fork, 2);
-    fork.settle(Arc::new(FxHashMap::from_iter([(id, two)])));
-    assert_eq!(fork.settled(id), Some(two));
+    fork.settle(Arc::new(FxHashMap::from_iter([(
+        id,
+        SettledMember::Value(two),
+    )])));
+    assert_eq!(fork.settled(id), Some(SettledMember::Value(two)));
     let mut layer = Database::fork(&fork.share());
     assert_ne!(int(&mut layer, 3), one);
     let fork = Database::fork(&layer.share());
-    assert_eq!(fork.settled(id), Some(two));
+    assert_eq!(fork.settled(id), Some(SettledMember::Value(two)));
     assert_panics(|| Database::new().settle(Arc::default()));
 }
 

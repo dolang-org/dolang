@@ -20,7 +20,7 @@
 //! takes `C`'s binders as `Unknown`.
 
 use super::{callable::drop_receiver, *};
-use crate::typeck::r#type::{Member, MemberKey, Scope};
+use crate::typeck::r#type::{Member, MemberKey, Scope, SettledMember};
 
 /// What a receiver's member is
 #[derive(Clone, Debug)]
@@ -60,7 +60,8 @@ pub(crate) enum FoundKind {
         getter: Option<Signatures>,
         setter: Option<Signatures>,
     },
-    /// A method its decorators replace with a value not settled to a type
+    /// A method its decorators replace with a value not settled to a type, which
+    /// may be anything
     Unknown,
 }
 
@@ -658,13 +659,16 @@ impl Solver<'_> {
             Member::Field { ty, .. } => FoundKind::Field(self.view(ty, nominal.environment)),
             Member::Method { decl, .. } => FoundKind::Method(signatures(decl)),
             Member::Property { getter, setter, .. } => FoundKind::Property {
-                getter: getter.map(signatures),
-                setter: setter.map(signatures),
+                getter: getter.map(|decl| self.accessor(nominal, decl)),
+                setter: setter.map(|decl| self.accessor(nominal, decl)),
             },
-            // Until settled, a decorated member's value is unknown
+            // Until settled, a decorated member's value is unknown, and so is one
+            // that isn't a function, which is diagnosed
             Member::Decorated { decl, .. } => match self.db.settled(decl) {
-                Some(ty) => FoundKind::Field(self.view(ty, nominal.environment)),
-                None => FoundKind::Unknown,
+                Some(SettledMember::Method(ty)) => {
+                    FoundKind::Method(self.settled_signatures(nominal, decl, ty))
+                }
+                Some(SettledMember::Value(_)) | None => FoundKind::Unknown,
             },
         };
         Found {
@@ -673,6 +677,30 @@ impl Solver<'_> {
             public: member.public(),
             bound: false,
             kind,
+        }
+    }
+
+    /// The signatures of a computed field's getter or setter. A decorated one's
+    /// function is what its decorators settled to, unknown until they do or if
+    /// they give something else.
+    fn accessor(&self, nominal: &Nominal, decl: DeclId) -> Signatures {
+        if !self.db.declaration(decl).source.decorated {
+            return self.signatures(nominal, decl);
+        }
+        let ty = match self.db.settled(decl) {
+            Some(SettledMember::Method(ty)) => ty,
+            Some(SettledMember::Value(_)) | None => self.db.unknown(),
+        };
+        self.settled_signatures(nominal, decl, ty)
+    }
+
+    /// The signature of a decorated method that settled to `ty`, interpreted where
+    /// its class's binders are
+    fn settled_signatures(&self, nominal: &Nominal, decl: DeclId, ty: TypeId) -> Signatures {
+        Signatures {
+            overloads: Vec::new(),
+            implementation: Some(self.view(ty, nominal.environment)),
+            function: Some(decl),
         }
     }
 

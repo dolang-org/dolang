@@ -234,6 +234,9 @@ impl Flow<'_, '_> {
         let FuncKind::Decl(decl) = data.kind else {
             return unknown;
         };
+        if let Some(value) = self.settled_method(func, decl) {
+            return value;
+        }
         if self
             .tables
             .lifted(decl)

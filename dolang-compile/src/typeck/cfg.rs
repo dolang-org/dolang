@@ -470,6 +470,21 @@ pub(crate) enum PatternKey {
     Rest(RestKind),
 }
 
+/// The blocks of a module's top-level code that apply a method's decorators to
+/// its function value, binding what they give to `result`. Its blocks are those
+/// reached from `entry` without passing `exit`, where the code after the class
+/// statement continues. Settling may splice it out ([`Ir::splice`]).
+pub(crate) struct Region {
+    /// The method's declaration
+    pub(crate) decl: DeclId,
+    pub(crate) class: DeclId,
+    /// The method's function
+    pub(crate) func: FuncId,
+    pub(crate) entry: BlockId,
+    pub(crate) exit: BlockId,
+    pub(crate) result: VarId,
+}
+
 /// A graph under construction. Lowering extends it through shared references, as
 /// it holds several parts at once.
 #[derive(Default)]
@@ -477,6 +492,7 @@ pub(crate) struct Graph {
     funcs: MonoVec<RefCell<Func>>,
     blocks: MonoVec<RefCell<Block>>,
     vars: MonoVec<RefCell<Var>>,
+    regions: RefCell<Vec<Region>>,
 }
 
 impl Graph {
@@ -588,12 +604,18 @@ impl Graph {
         self.vars[id.index()].borrow_mut()
     }
 
+    /// Record a method's decorator region
+    pub(crate) fn add_region(&self, region: Region) {
+        self.regions.borrow_mut().push(region);
+    }
+
     /// Finish the graph
     pub(crate) fn freeze(mut self) -> Ir {
         Ir {
             funcs: self.funcs.drain().map(RefCell::into_inner).collect(),
             blocks: self.blocks.drain().map(RefCell::into_inner).collect(),
             vars: self.vars.drain().map(RefCell::into_inner).collect(),
+            regions: self.regions.into_inner(),
         }
     }
 }
@@ -603,6 +625,8 @@ pub(crate) struct Ir {
     funcs: Vec<Func>,
     blocks: Vec<Block>,
     vars: Vec<Var>,
+    /// The decorator regions of its methods, settled or not
+    regions: Vec<Region>,
 }
 
 impl Ir {
@@ -623,6 +647,23 @@ impl Ir {
             .iter()
             .enumerate()
             .map(|(index, func)| (FuncId::from_index(index), func))
+    }
+
+    pub(crate) fn regions(&self) -> &[Region] {
+        &self.regions
+    }
+
+    /// Replace a settled region's blocks with a branch from its entry to its exit.
+    /// The method's value isn't read, so nothing need stand for it; the blocks
+    /// left behind are unreachable.
+    pub(crate) fn splice(&mut self, index: usize) {
+        let Region { entry, exit, .. } = self.regions[index];
+        let block = &mut self.blocks[entry.index()];
+        block.steps.clear();
+        block.terminal = Terminal::Branch {
+            target: exit,
+            span: INVALID_SPAN,
+        };
     }
 
     pub(crate) fn blocks(&self) -> impl Iterator<Item = (BlockId, &Block)> {

@@ -24,10 +24,13 @@ use crate::{
     typeck::{
         cfg::{
             Against, Assume, BlockId, Collection, EscapeKind, Expr, ExprKind, FuncId, FuncKind,
-            GroupId, Item, Origin, Pattern, PatternItem, PatternKey, Relation, Signature, Step,
-            Tag, Target, Terminal, VarFlags, VarId,
+            GroupId, Item, Origin, Pattern, PatternItem, PatternKey, Region, Relation, Signature,
+            Step, Tag, Target, Terminal, VarFlags, VarId,
         },
-        elab::{Designated, Referent},
+        elab::{
+            DeclNode, Designated, Referent,
+            sig::{self, Form},
+        },
         flow::{class_object, function_value},
         r#type::{DeclId, DeclKind, Literal, TypeId},
     },
@@ -1653,9 +1656,13 @@ impl<'u> Scope<'_, '_, 'u> {
 
     /// Apply decorators to a value, the last one written first. The decorators are
     /// evaluated first, in order, as the tree has it.
-    fn decorate(&mut self, decorators: &'u [Decorator], value: Expr) -> Expr {
+    fn decorate(
+        &mut self,
+        decorators: impl IntoIterator<Item = &'u Decorator>,
+        value: Expr,
+    ) -> Expr {
         let decorators: Vec<_> = decorators
-            .iter()
+            .into_iter()
             .map(|decorator| (self.expr(&decorator.expr), decorator.open_span))
             .collect();
         decorators
@@ -1744,14 +1751,15 @@ impl<'u> Scope<'_, '_, 'u> {
         let mut statics = Vec::new();
         for member in &class.body.members {
             match member {
-                ClassMember::Method(method) => {
+                ClassMember::Method(method) if method.type_only => {
                     self.decorator_evals(&method.decorators);
-                    if !method.type_only {
-                        let id = self.lower.decl(DeclKey::method(method));
-                        let init = is_init(method).then_some(class);
-                        let span = method.name_span;
-                        self.function_value(id, &method.func, false, Some(decl), init, span);
-                    }
+                }
+                ClassMember::Method(method) => {
+                    let id = self.lower.decl(DeclKey::method(method));
+                    let init = is_init(method).then_some(class);
+                    let span = method.name_span;
+                    let func = self.function_value(id, &method.func, false, Some(decl), init, span);
+                    self.method_region(method, id, decl, func);
                 }
                 ClassMember::Field(field) => {
                     self.decorator_evals(&field.decorators);
@@ -1822,6 +1830,62 @@ impl<'u> Scope<'_, '_, 'u> {
         if let Some(dest) = dest {
             self.assign(dest, expr(ExprKind::Copy(var), self.locate(span)));
         }
+    }
+
+    /// Apply a method's decorators, but a leading designated `getter` or `setter`,
+    /// to its function value, in a region of blocks of their own that settling
+    /// may splice out. The function is created before, so its capture stays.
+    fn method_region(&mut self, method: &'u Method, decl: DeclId, class: DeclId, func: FuncId) {
+        let DeclNode::Methods(methods) = &self.lower.tables.decl(decl).node else {
+            unreachable!("a method is declared as one")
+        };
+        let surface = methods
+            .iter()
+            .find(|found| found.name.span == self.locate(method.name_span))
+            .expect("a method's signature is collected");
+        let form = sig::method_form(self.lower.tables, surface);
+        // `class` and `static` say the method's namespace, by syntax
+        let mut applied: Vec<_> = method
+            .decorators
+            .iter()
+            .filter(|decorator| {
+                !matches!(&decorator.expr, ast::Expr::Ident(ident)
+                    if matches!(self.text(ident.span), "class" | "static"))
+            })
+            .collect();
+        match form {
+            Form::Plain => return,
+            Form::Getter { .. } | Form::Setter { .. } => {
+                applied.remove(0);
+            }
+            Form::Decorated => {}
+        }
+        if applied.is_empty() {
+            return;
+        }
+        let entry = self.block();
+        self.end(Terminal::Branch {
+            target: entry,
+            span: diag::INVALID_SPAN,
+        });
+        self.switch(entry);
+        let value = synthetic(ExprKind::Lambda(func), self.locate(method.name_span));
+        let value = self.decorate(applied, value);
+        let result = self.temporary(value);
+        let exit = self.block();
+        self.end(Terminal::Branch {
+            target: exit,
+            span: diag::INVALID_SPAN,
+        });
+        self.switch(exit);
+        self.graph().add_region(Region {
+            decl,
+            class,
+            func,
+            entry,
+            exit,
+            result,
+        });
     }
 
     /// Evaluate member decorators, which only annotate their member

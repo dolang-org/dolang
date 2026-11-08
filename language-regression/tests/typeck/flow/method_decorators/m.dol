@@ -1,0 +1,182 @@
+# A method's decorators, but a leading `getter` or `setter`, are applied to its
+# function and settle to the member's value, which must be a function: the
+# class installs it as a method. Under a leading `getter` or `setter`, what they give
+# is the accessor's function, held to what a written accessor is. A region that
+# reads what isn't annotated doesn't settle, and leaves its member of unknown
+# type, or a computed field of unknown type. Each region's problems are reported
+# once.
+
+pub def same[F] f @ F -> F
+  f
+
+pub def strs _f @ ((Box) -> Int) -> ((Box) -> Str)
+  do |_b @ Box| -> Str "s"
+
+pub def label_setter f @ ((Box, Str) -> nil) -> ((Box, Str) -> nil)
+  f
+
+pub def noisy _f @ Func -> ((Box, >Str) -> Int)
+  ...
+
+pub def constant _f @ Func -> Int
+  1
+
+@def factory n @ Int -> ((Func) -> ((Box) -> Int))
+@def factory n @ Str -> ((Func) -> ((Box) -> Str))
+pub def factory _n
+  ...
+
+pub def tagged _tag @ Str = "x" -> ((Func) -> ((Box) -> Str))
+  ...
+
+pub class Registry
+  pub def deco[F] _self f @ F -> F
+    f
+
+pub let registry @ Registry = Registry()
+pub let flag @ Bool = true
+pub let loose = same
+
+pub class Box
+  #[getter]
+  pub def plain _self -> Int
+    1
+
+  #[setter]
+  pub def plain _self _value @ Int
+    nil
+
+  #[getter]
+  #[strs]
+  pub def size _self -> Int
+    1
+
+  #[setter]
+  #[label_setter]
+  pub def label _self _value @ Str
+    nil
+
+  #[getter]
+  #[constant]
+  pub def bad _self
+    # error: a getter's decorators must give a function
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def bad _self
+    #    |           ^^^
+    nil
+
+  #[getter]
+  #[noisy]
+  pub def chatty _self
+    # error: a getter's output must be `Value`: a getter runs without its caller's channels
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def chatty _self
+    #    |           ^^^^^^
+    nil
+
+  #[strs]
+  #[getter]
+  pub def inner _self -> Int
+    # error: expected `(m.Box, <Unknown, >Unknown) -> std.Int`, found `std.Getter[m.Box, std.Int]`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   #[getter]
+    #    |   ^^
+    1
+
+  #[getter]
+  #[loose]
+  pub def pending _self -> Int
+    1
+
+  #[same]
+  #[same]
+  pub def twice _self x @ Int -> Int
+    x
+
+  #[factory 1]
+  pub def counted _self
+    nil
+
+  #[tagged()]
+  pub def named _self
+    nil
+
+  #[(flag && same || same)]
+  pub def either _self -> Int
+    1
+
+  #[registry.deco]
+  pub def through _self -> Str
+    "t"
+
+  #[loose]
+  pub def unsettled _self -> Int
+    1
+
+  #[constant]
+  pub def number _self
+    # error: a method's decorators must give a function
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def number _self
+    #    |           ^^^^^^
+    nil
+
+  #[same]
+  #[strs]
+  pub def wrong _self -> Str
+    # error: expected `(m.Box, <Unknown, >Unknown) -> std.Int`, found `(m.Box) -> std.Str`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def wrong _self -> Str
+    #    |           ^^^^^
+    #    |
+    #    = note: `std.Str` does not fit `std.Int`
+    "w"
+
+pub class Cell[T]
+  field value @ T = ...
+
+  #[same]
+  pub def get self -> T
+    self.#value
+
+pub def use b @ Box c @ Cell[Int]
+  let plain = b.plain
+  #   ^~~~~: flow std.Int
+  b.plain = 2
+  let size = b.size
+  #   ^~~~: flow std.Str
+  b.label = "l"
+  b.label = 1
+  # error: expected `std.Str`, found `1`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   b.label = 1
+  #    |             ^
+  let bad = b.bad
+  #   ^~~: flow Unknown
+  let inner = b.inner
+  #   ^~~~~: flow (<Unknown, >Unknown) -> std.Str
+  let pending = b.pending
+  #   ^~~~~~~: flow Unknown
+  let twice = b.twice(1)
+  #   ^~~~~: flow std.Int
+  let counted = b.counted()
+  #   ^~~~~~~: flow std.Int
+  let named = b.named()
+  #   ^~~~~: flow std.Str
+  let either = b.either()
+  #   ^~~~~~: flow std.Int
+  let through = b.through()
+  #   ^~~~~~~: flow std.Str
+  let unsettled = b.unsettled
+  #   ^~~~~~~~~: flow Unknown
+  let number = b.number
+  #   ^~~~~~: flow Unknown
+  let got = c.get()
+  #   ^~~: flow std.Int
+  [plain, size, bad, inner, pending, twice, counted, named, either, through, unsettled, number, got]

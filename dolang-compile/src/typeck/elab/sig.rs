@@ -282,28 +282,45 @@ pub(crate) fn method_scope(method: &Method) -> Scope {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Form {
     Plain,
-    Getter,
-    Setter,
-    /// A value of unknown type
-    Unknown,
+    /// A computed field's getter, by std's designated `getter` written first. When
+    /// `decorated`, decorators follow it, and the getter is what they settle to.
+    Getter {
+        decorated: bool,
+    },
+    /// A computed field's setter, as a getter is
+    Setter {
+        decorated: bool,
+    },
+    /// A value its decorators replace it with, of the type they settle to
+    Decorated,
+}
+
+impl Form {
+    /// Whether decorators replace its own function with the value they settle to
+    pub(crate) fn decorated(self) -> bool {
+        match self {
+            Self::Plain => false,
+            Self::Getter { decorated } | Self::Setter { decorated } => decorated,
+            Self::Decorated => true,
+        }
+    }
 }
 
 /// The form of a method, from its decorators besides `class` and `static`, whose
-/// meaning is fixed by syntax. Any other decorator may replace the method with any
-/// value; until decorator applications are evaluated, std's `getter` and `setter`
-/// are recognized by what their names resolve to, and anything else leaves a value
-/// of unknown type.
+/// meaning is fixed by syntax. The runtime makes a computed field only of std's
+/// `getter` and `setter`, recognized by what their names resolve to when written
+/// first, which is applied last. Any other decorators may replace the method with
+/// any value, which settling finds.
 pub(crate) fn method_form(tables: &Tables<'_>, method: &Method) -> Form {
-    let mut form = Form::Plain;
-    for decorator in &method.decorators {
-        let designated = decorator_designation(tables, decorator);
-        form = match (form, designated) {
-            (Form::Plain, Some(Designated::Getter)) => Form::Getter,
-            (Form::Plain, Some(Designated::Setter)) => Form::Setter,
-            _ => return Form::Unknown,
-        };
+    let Some((first, rest)) = method.decorators.split_first() else {
+        return Form::Plain;
+    };
+    let decorated = !rest.is_empty();
+    match decorator_designation(tables, first) {
+        Some(Designated::Getter) => Form::Getter { decorated },
+        Some(Designated::Setter) => Form::Setter { decorated },
+        _ => Form::Decorated,
     }
-    form
 }
 
 /// The designation of the declaration a decorator names, if any

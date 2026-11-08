@@ -4,7 +4,7 @@ use super::{
     members::{Class, key, private, special},
     *,
 };
-use crate::typeck::r#type::{FieldAccess, Scope};
+use crate::typeck::r#type::{FieldAccess, Scope, SettledMember};
 
 fn sym(db: &Database, name: &str) -> TypeId {
     db.intern(Type::Literal(Literal::Sym(db.intern_symbol(name))))
@@ -110,15 +110,23 @@ fn settled_members_close_final_classes() {
     decorated.decorated(key(&db, "wrapped"), method);
     let decorated = decorated.finish(&mut db, vec![]);
     db.seal();
+    let function = db.declaration(method).ty;
     let base = db.share();
 
+    let settled = |member| {
+        let mut layer = Database::fork(&base);
+        layer.settle(Arc::new(FxHashMap::from_iter([(method, member)])));
+        Database::fork(&layer.share())
+    };
+    let open = |db: &Database| items(db, vec![tail(symbol, db.top())]);
     let fork = Database::fork(&base);
-    let open = items(&fork, vec![tail(symbol, fork.top())]);
-    assert_eq!(listed(&fork, decorated, FieldAccess::Read), Ok(open));
-    let mut layer = Database::fork(&base);
-    layer.settle(Arc::new(FxHashMap::from_iter([(method, int)])));
-    let fork = Database::fork(&layer.share());
-    let closed = items(&fork, vec![required(&fork, "wrapped", int)]);
+    assert_eq!(listed(&fork, decorated, FieldAccess::Read), Ok(open(&fork)));
+    // What isn't a function stays unknown
+    let fork = settled(SettledMember::Value(int));
+    assert_eq!(listed(&fork, decorated, FieldAccess::Read), Ok(open(&fork)));
+    // A method isn't a field
+    let fork = settled(SettledMember::Method(function));
+    let closed = items(&fork, vec![]);
     assert_eq!(listed(&fork, decorated, FieldAccess::Read), Ok(closed));
 }
 
