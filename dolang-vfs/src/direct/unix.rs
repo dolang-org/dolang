@@ -17,7 +17,7 @@ use crate::{
 };
 use dolang_winterop::security::SecDesc;
 #[cfg(target_os = "linux")]
-use std::os::{fd::RawFd, unix::fs::OpenOptionsExt};
+use std::os::fd::RawFd;
 use std::{
     collections::HashMap,
     ffi::{CStr, CString, OsString},
@@ -446,10 +446,16 @@ impl Direct {
         {
             // One `O_PATH` descriptor keeps the capacity query and the
             // mount lookup on the same mount even if the path is remounted.
-            let file = std::fs::OpenOptions::new()
-                .read(true)
-                .custom_flags(libc::O_PATH)
-                .open(path)?;
+            // Not std's `custom_flags`: musl's `O_ACCMODE` mask strips `O_PATH`.
+            use nix::{
+                fcntl::{self, OFlag},
+                sys::stat::Mode,
+            };
+            let file = std::fs::File::from(fcntl::open(
+                path,
+                OFlag::O_PATH | OFlag::O_CLOEXEC,
+                Mode::empty(),
+            )?);
             Self::fs_metadata_from_file(&file)
         }
         #[cfg(any(target_os = "freebsd", target_os = "macos"))]
@@ -2287,10 +2293,20 @@ impl super::OpenOptions {
                         "creating a file without access is not supported on this platform",
                     ));
                 }
-                // `O_PATH` replaces the access mode; std insists on one, and
-                // `O_RDONLY` is zero.
-                opts.read(true);
-                flags |= libc::O_PATH;
+                // Bypass std: it masks custom flags with `!O_ACCMODE`, and
+                // musl's `O_ACCMODE` includes `O_SEARCH`, which is `O_PATH`,
+                // so std would drop it and `O_NOFOLLOW` would fail on a link.
+                use nix::{
+                    fcntl::{self, OFlag},
+                    sys::stat::Mode,
+                };
+                let flags = OFlag::from_bits_retain(flags | libc::O_PATH | libc::O_CLOEXEC);
+                return tokio::task::spawn_blocking(move || {
+                    fcntl::open(&path, flags, Mode::empty()).map(std::fs::File::from)
+                })
+                .await
+                .map_err(Error::other)?
+                .map_err(Error::from);
             }
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
             return Err(Error::new(
