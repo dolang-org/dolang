@@ -20,7 +20,7 @@ use rustc_hash::FxHashMap;
 
 use super::{
     DeclNode, Designated, Diag, Hidden, IncoherentClasses, Nonconforming, Scoped, Tables,
-    Uncallable, UnitDiag, Unresolved, sig,
+    TrivialProtocol, Uncallable, UnitDiag, Unresolved, sig,
     surface::{Class, Member, MemberScope},
 };
 use crate::{
@@ -105,6 +105,7 @@ impl Check<'_, '_> {
         solver.close();
         let instance = self.instance();
         self.coherent();
+        self.trivial();
         self.callable(&solver, instance);
         let spans = self.member_spans();
         if runtime {
@@ -246,6 +247,27 @@ impl Check<'_, '_> {
             self.diags
                 .push((self.unit, Diag::new(Uncallable { span, class })));
         }
+    }
+
+    /// Warn of a protocol declaring required members, all of which `Value`
+    /// declares. One that declares none is a marker, and one only inheriting
+    /// such members is warned of where they're declared.
+    fn trivial(&mut self) {
+        let db = self.db;
+        let declares = db
+            .declaration(self.id)
+            .members
+            .iter()
+            .any(|(key, member)| db.required_member(*key, member));
+        if !declares || !db.trivial_protocol(self.id) {
+            return;
+        }
+        let Some(span) = self.tables.decl(self.id).name_span() else {
+            return;
+        };
+        let protocol = self.name(self.id).to_owned();
+        self.diags
+            .push((self.unit, Diag::new(TrivialProtocol { span, protocol })));
     }
 
     /// Warn of an instance method that hides a class or static member of the same

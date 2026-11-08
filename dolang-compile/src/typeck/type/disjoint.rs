@@ -140,7 +140,7 @@ impl Database {
     }
 
     /// The declaration a supertype applies, `None` for `Value`
-    fn supertype_decl(&self, ty: TypeId) -> Result<Option<DeclId>, NoAncestor> {
+    pub(super) fn supertype_decl(&self, ty: TypeId) -> Result<Option<DeclId>, NoAncestor> {
         if ty == self.top() {
             return Ok(None);
         }

@@ -3156,6 +3156,7 @@ mod disjoint;
 mod render;
 #[cfg(test)]
 mod tests;
+mod trivial;
 
 pub(crate) use copy::{Copier, Copies};
 pub(crate) use disjoint::NoAncestor;

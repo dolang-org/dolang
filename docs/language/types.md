@@ -337,3 +337,7 @@ pub @class Solid: Shape
 A protocol may name a runtime class as a supertype, but claiming the protocol
 doesn't inherit it: a class claiming the protocol must inherit that class
 itself. Protocols are never [disjoint](./classes.md#disjoint-classes).
+
+A protocol with no public members is a marker: a class conforms to it only by
+naming it. The checker warns of a protocol whose public members are all ones
+every value has, such as `(str)` and `(hash)`, since it constrains nothing.
