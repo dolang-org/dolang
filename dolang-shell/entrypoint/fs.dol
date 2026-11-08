@@ -18,7 +18,7 @@ let error_style = term.Style fg: :BRIGHT_RED: bold: true
 # Anything the runtime reports that isn't listed here is a platform attribute
 # (if boolean) or lands in a trailing `other` section, so a field added to
 # `fs.Metadata` later still shows up without touching this file.
-let GENERAL_FIELDS = ["type", "size", "modified", "accessed", "created"]
+let GENERAL_FIELDS = ["type", "is_mount", "size", "modified", "accessed", "created"]
 let UNIX_FIELDS = $
   - mode
   - uid
@@ -39,8 +39,9 @@ let RAW_MASK_FIELDS = $
   - win_flags
 # `owner`/`group` are `Metadata`'s portable view of ownership, and duplicate
 # whatever the platform reports in full: `uid`/`gid` in the unix section, the
-# owner and group SIDs in the security descriptor.
-let SKIP_FIELDS = ["owner", "group"]
+# owner and group SIDs in the security descriptor. `reparse_tag` says what a
+# path opened as itself is, so it is reported with what it leads to.
+let SKIP_FIELDS = ["owner", "group", "reparse_tag"]
 let FS_FIELDS = $
   - type
   - capacity
@@ -276,7 +277,10 @@ def windows_ace_node ace
       if (sid != nil)
         sid: $ display.sid $sid
     if (mask != nil)
-      mask: $ display.flags $mask
+      # An ACE carries an application-agnostic mask, which names only the
+      # standard and generic rights; these ACEs guard a file, so its bits read
+      # as file rights.
+      mask: $ display.flags $ fs.windows.AccessMask.from_int $mask.int
     if (flags != nil && flags.len > 0)
       flags: $ display.flags $flags
     if (object_type != nil)
@@ -364,6 +368,9 @@ def metadata_sections meta all raw
     if SKIP_FIELDS.contains(key)
       continue
     if GENERAL_FIELDS.contains(key)
+      # Nearly every path isn't a mount, so that only shows when asked for.
+      if (key == "is_mount" && value != true && !all)
+        continue
       if SIZE_FIELDS.contains(key)
         general[key] = (display.size value raw)
       else
@@ -391,13 +398,26 @@ def metadata_sections meta all raw
   let unix_ordered = order_entries $UNIX_FIELDS $unix
   [general_ordered, unix_ordered, attributes, other]
 
+# What a path opened as itself leads to: a symbolic link's target, a
+# junction's directory, and on Windows the reparse tag, which tells an NT
+# symbolic link from a WSL one and names any other kind of reparse point.
 def link_section path meta
-  if (meta.type != :SYMLINK:)
-    return nil
-  let target = display.opt do fs.read_link $path
-  if (target == nil)
-    return nil
-  {target: node(target)}
+  let kind = meta.type
+  let target = if (kind == :SYMLINK:)
+    display.opt do fs.read_link $path
+  else if (kind == :JUNCTION:)
+    display.opt do fs.windows.read_junction $path
+  else
+    nil
+  let tag = if (type meta fs.windows.Metadata)
+    meta.reparse_tag
+  else
+    nil
+  $
+    if (target != nil)
+      target: $ node $target
+    if (tag != nil)
+      tag: $tag
 
 def acl_section path kind default resolve
   let acl = display.opt do
@@ -472,8 +492,8 @@ def stream_node stream
       if (key != "name")
         "$key": $value
 
-def filesystem_section path raw
-  let fs_meta = display.opt do fs.fs_metadata $path
+def filesystem_section path resolve raw
+  let fs_meta = display.opt do fs.fs_metadata $path resolve: $resolve
   if (fs_meta == nil)
     return nil
   bind fields(fs_meta)
@@ -518,13 +538,19 @@ def dump path resolve all raw
     display.section streams $ stream_section $path $resolve
 
   display.section xattrs $ xattr_section $path $resolve
-  display.section filesystem $ filesystem_section $path $raw
+  # Only Windows can report on the filesystem a path opened as itself is on; on
+  # Unix that is always the filesystem it leads to.
+  let fs_resolve = (os == :WINDOWS: && resolve || :TARGET:)
+  display.section filesystem $ filesystem_section $path $fs_resolve $raw
+
+def parse_resolve value @ Str -> fs.Resolve
+  (sym(value.upper()) !@ fs.Resolve)
 
 def dump_metadata p
   let opts = p.metadata
   if (opts.paths.len == 0)
     throw args.Error "expected at least one path"
-  let resolve = (opts.link && :LINK: || :TARGET:)
+  let resolve = (opts.link && :LINK: || opts.resolve)
   let rc = 0
   let first = true
   for path = opts.paths
@@ -546,9 +572,16 @@ args.with
   help: Inspect the filesystem.
   - cmd: metadata
     help: Dump metadata, access control, and extended attributes for a path.
+    - opt: resolve
+      short: r
+      parse: $parse_resolve
+      default: :TARGET:
+      values: ["target", "link", "mount", "cross"]
+      meta: MODE
+      help: "Open the path as itself at: link (symlinks), mount (also junctions and mounts), cross (also any reparse point or device change)"
     - flag: link
       short: L
-      help: Report on a symlink itself rather than its target
+      help: Report on a symlink itself rather than its target (--resolve link)
     - flag: all
       short: a
       help: Include platform attributes that are not set

@@ -167,7 +167,7 @@ def fs_metadata_entrypoint()
   with_temp_dir do |dir|
     let path = (dir / "metadata.txt")
     path.write "metadata regression"
-    for flags = [[], ["--all", "--bytes"]]
+    for flags = [[], ["--all", "--bytes"], ["--resolve", "cross"], ["-L"]]
       let code out err = invoke ["-m", "fs", "metadata", ...flags, str(path)]
       assert_eq $code 0
       assert_eq $out ""
