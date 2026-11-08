@@ -1,7 +1,7 @@
 //! Typelibs: a module's declarations as the checker reads them, without its source.
 //!
 //! A check that is asked to writes the typelib of each module it checks from
-//! source, once it has elaborated it. A typelib holds the surface of a module's
+//! source, once its decorated declarations have settled. A typelib holds the surface of a module's
 //! shard, with the module's name and path, its spans written compactly (see
 //! [`spans`]) as the lines and columns a unit with source holds. It is a
 //! structural record of the module's interface: it keeps text that is part of the
@@ -10,9 +10,16 @@
 //! from, so a check that loads one elaborates the module's declarations again, as
 //! it would from source, but checks none of its bodies. What depends on what the
 //! typelib leaves out is recorded instead, as facts the check takes as given: the
-//! variance of each binder, which private members decide. Where those facts can
-//! depend on the types `strand`'s pipe placeholders stand for, the typelib records
-//! them too, and only a check that nominates the same types loads it.
+//! variance of each binder, which private members decide, and what each public
+//! decorated declaration settled to, which its decorators decide. A check loading
+//! the typelib evaluates none of them. Settled types are written as the checker
+//! holds them (see [`types`]), each one a type expression could write (see
+//! [`quote`](super::elab::quote)); a decorated declaration the typelib records
+//! nothing of is unknown. Where those facts can depend on the types `strand`'s
+//! pipe placeholders stand for, the typelib records them too, and only a check
+//! that nominates the same types loads it. A settled type names only what its
+//! module reaches through its imports, so it depends on them only where the
+//! module imports `strand`, directly or not, as its other facts do.
 //!
 //! The format is postcard, after a header naming the format and its version, of a
 //! form of its own (see [`wire`]) that is converted to and from the shard. Reading
@@ -36,12 +43,15 @@ use super::{
 mod spans;
 #[cfg(test)]
 mod tests;
+mod types;
 mod wire;
+
+pub(crate) use types::{Encode as EncodeTypes, Form, Settled, exported};
 
 const MAGIC: [u8; 8] = *b"\xffdotypel";
 /// The format's version, which changes with any change to the format. It isn't 0,
 /// which the bytes after the magic of an older typelib would read as.
-const VERSION: u16 = 10;
+const VERSION: u16 = 11;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct Header {
@@ -82,16 +92,17 @@ impl fmt::Display for Invalid {
 }
 
 /// Write the typelib of what `kept` keeps of a module's shard, whose IDs start at
-/// `base`, with the facts concluded about it and the pipe nominations they depend
-/// on, if any.
+/// `base`, with the facts concluded about it, what its public decorated
+/// declarations settled to, and the pipe nominations they depend on, if any.
 pub(crate) fn write(
     shard: &Shard<'_>,
     base: &Bases,
     kept: &BitSlice,
     facts: &Facts,
+    settled: &Settled,
     pipes: Option<[(&str, &str); 2]>,
 ) -> Vec<u8> {
-    let (content, _) = wire::Encode::new(shard, base, kept, facts, pipes).content();
+    let (content, _) = wire::Encode::new(shard, base, kept, facts, settled, pipes).content();
     let out = postcard::to_stdvec(&HEADER).expect("a header serializes");
     postcard::to_extend(&content, out).expect("a surface serializes")
 }

@@ -1,11 +1,12 @@
 //! Whether what a public declaration's decorators settled to can be quoted: written
 //! into a typelib, for an importer to read as given.
 //!
-//! A typelib writes a declaration's value as a def's signatures, or as a type
-//! expression. So at the top of a value, a function may have binders, as a def's
-//! signature does, though a type expression can't: a generic function, and each
-//! signature of an overloaded one. So may a class object, which is written as its
-//! class's. Anywhere else, the value must be what a type expression writes: it
+//! A typelib holds a declaration's value to what could be written as a def's
+//! signatures, or as a type expression. So at the top of a value, a function may
+//! have binders, as a def's signature does, though a type expression can't: a
+//! generic function, and each signature of an overloaded one. So may a class
+//! object, which is its class's. Anywhere else, the value must be what a type
+//! expression writes: it
 //! has no quantifier, overloaded function or class object, no type parameter of a
 //! declaration being checked, and names only what its unit exports.
 //!

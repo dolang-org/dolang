@@ -34,6 +34,7 @@ use super::report::{Annotation, Report};
 use super::r#type::{
     Database, DeclId, DeclKind, Intrinsic, Kind, Scope, TypeId, UnitId, UnitSpan, Variance,
 };
+use super::typelib;
 use crate::{
     RestKind, Unit, ast,
     diag::{AnnotationKind, NoteKind, Severity, Span},
@@ -176,6 +177,9 @@ pub(crate) struct Facts {
     /// The binder group of each declaration signature: the binders it is lifted
     /// over, its written binders, then its implicit binders
     pub(crate) groups: FxHashMap<(DeclId, usize), Vec<BinderRef>>,
+    /// What a typelib's public decorated declarations settled to, which a check
+    /// takes as given. Empty for a unit with source, whose own settle.
+    pub(crate) settled: typelib::Settled,
 }
 
 /// Where a unit's ranges of IDs start

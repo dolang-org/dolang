@@ -370,7 +370,8 @@ impl Flow<'_, '_> {
     }
 
     /// A declaration's value. A def's or class's whose decorators replace it is
-    /// what they settled to, unknown until then, since a typelib doesn't carry it
+    /// what they settled to, or what its typelib records they did, unknown until
+    /// then
     fn decl_value(&self, decl: DeclId) -> TypeId {
         let declaration = self.db.declaration(decl);
         if let DeclKind::Class | DeclKind::Function = declaration.source.kind

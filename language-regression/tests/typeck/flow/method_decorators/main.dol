@@ -1,0 +1,27 @@
+# An importer reads what a public class's decorated methods settled to, whether
+# it checks the module from source or reads its typelib.
+
+@import m
+
+def use b @ m.Box c @ m.Cell[Int]
+  let size = b.size
+  #   ^~~~: flow std.Str
+  let inner = b.inner
+  #   ^~~~~: flow (<Unknown, >Unknown) -> std.Str
+  let twice = b.twice(1)
+  #   ^~~~~: flow std.Int
+  let counted = b.counted()
+  #   ^~~~~~~: flow std.Int
+  let named = b.named()
+  #   ^~~~~: flow std.Str
+  let through = b.through()
+  #   ^~~~~~~: flow std.Str
+  let unsettled = b.unsettled
+  #   ^~~~~~~~~: flow Unknown
+  let got = c.get()
+  #   ^~~: flow std.Int
+  let picked = b.picked("p")
+  #   ^~~~~~: flow std.Str
+  [size, inner, twice, counted, named, through, unsettled, got, picked]
+
+use

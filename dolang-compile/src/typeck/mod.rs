@@ -194,7 +194,8 @@ impl<'u> Check<'u> {
     ///
     /// Its types' well-formedness and its classes' conformance to their
     /// supertypes are not checked; that was done with its source. Its binders'
-    /// variance is taken as the typelib records it.
+    /// variance, and what its public decorated declarations settled to, are taken
+    /// as the typelib records them; its decorators are never evaluated.
     ///
     /// Diagnostics may locate spans of the module, by line and column; it has no
     /// source to show.
@@ -299,7 +300,6 @@ impl<'u> Check<'u> {
         elab::captures(&mut tables);
         elab::variances(&mut tables);
         elab::populate(&mut db, &mut tables, &mut diags);
-        let typelibs = self.typelibs.then(|| typelibs(&tables, self.pipes));
         db.seal();
         elab::specialize(&mut db, &tables, &mut diags);
         let mut recursion = Vec::new();
@@ -307,7 +307,11 @@ impl<'u> Check<'u> {
         // Every later pass runs in a fork per unit, so no unit's results depend on
         // what another interned
         let shared = db.share();
-        let mut outputs = check_units(&shared, &tables, self.threads, self.analysis);
+        let (mut outputs, settled) = check_units(&shared, &tables, self.threads, self.analysis);
+        // Written once settled, with what public declarations settled to
+        let typelibs = self
+            .typelibs
+            .then(|| typelibs(&tables, &settled, self.pipes));
         // Gather each kind of output across units, in the order the passes ran
         let mut unresolved = Vec::new();
         for output in &mut outputs {
@@ -473,8 +477,11 @@ enum Unwritten {
 /// from source, all of whose imports are checked with it
 fn typelibs(
     tables: &elab::Tables<'_>,
+    settled: &Settled,
     pipes: [(&str, &str); 2],
 ) -> Vec<Result<Vec<u8>, Unwritten>> {
+    let db = r#type::Database::fork(&settled.layer);
+    let names = typelib::exported(tables);
     // The units whose facts can depend on the pipes: the one declaring the
     // placeholders, and those importing it, directly or not
     let mut depends = vec![false; tables.shards.len()];
@@ -522,17 +529,47 @@ fn typelibs(
             let Some(kept) = &shard.kept else {
                 return Err(Unwritten::NotExportable);
             };
-            let base = tables.base(UnitId::from_index(index));
+            let unit = UnitId::from_index(index);
+            let base = tables.base(unit);
             let pipes = depends[index].then_some(pipes);
             Ok(typelib::write(
                 shard,
                 base,
                 kept,
                 &tables.facts[index],
+                &settled_facts(tables, &db, &names, settled, unit),
                 pipes,
             ))
         })
         .collect()
+}
+
+/// What a unit's public decorated declarations settled to, as its typelib writes
+/// it. Each is quotable, or was left unknown.
+fn settled_facts(
+    tables: &elab::Tables<'_>,
+    db: &r#type::Database,
+    names: &FxHashMap<r#type::DeclId, (&str, &str)>,
+    settled: &Settled,
+    unit: UnitId,
+) -> typelib::Settled {
+    let mut decls: Vec<_> = (settled.public.iter())
+        .copied()
+        .filter(|&decl| tables.unit_of(decl) == unit)
+        .collect();
+    decls.sort_unstable();
+    let mut encode = typelib::EncodeTypes::new(db, names);
+    let entries = decls
+        .into_iter()
+        .filter_map(|decl| {
+            let (form, ty) = typelib::Form::of(*settled.members.get(&decl)?);
+            Some((decl, form, encode.ty(ty)))
+        })
+        .collect();
+    typelib::Settled {
+        table: encode.finish(),
+        entries,
+    }
 }
 
 /// What checking a unit in forks of its own concludes
@@ -683,23 +720,24 @@ const _: () = {
 /// Check every unit, on a pool of `threads` threads, else the global pool,
 /// giving their outputs by [`UnitId`]: each unit is lowered by [`lower_unit`],
 /// every unit's decorator regions settled by [`settle_units`], and each
-/// unit finished by [`finish_unit`] with what they settled to. Flow logs facts
+/// unit finished by [`finish_unit`] with what they settled to, which it gives too. Flow logs facts
 /// only for an `analysis`.
 fn check_units(
     shared: &Arc<r#type::Shared>,
     tables: &elab::Tables<'_>,
     threads: Option<NonZeroUsize>,
     analysis: bool,
-) -> Vec<UnitOutput> {
+) -> (Vec<UnitOutput>, Settled) {
     let count = tables.shards.len();
     let run = || {
         let lowered = each(tables, vec![(); count], |unit, ()| {
             lower_unit(shared, tables, unit)
         });
         let (lowered, settled) = settle_units(shared, tables, lowered, analysis);
-        each(tables, lowered, |unit, lowered| {
+        let outputs = each(tables, lowered, |unit, lowered| {
             finish_unit(tables, unit, lowered, &settled, analysis)
-        })
+        });
+        (outputs, settled)
     };
     // With traces, one thread, so that they don't interleave
     let threads = if cfg!(feature = "debug") && std::env::var_os("DOLANG_DEBUG").is_some() {
@@ -774,6 +812,9 @@ struct Lowered {
 struct RegionSettled {
     index: usize,
     member: r#type::SettledMember,
+    /// Whether its declaration is public, so that its typelib writes what it
+    /// settled to
+    public: bool,
     /// Why what its public declaration settled to can't be quoted, if it can't,
     /// which leaves it unknown
     unquotable: Option<elab::quote::Unquotable>,
@@ -787,6 +828,8 @@ struct RegionSettled {
 struct Settled {
     layer: Arc<r#type::Shared>,
     members: r#type::Settled,
+    /// The public declarations among them, settled from source
+    public: FxHashSet<r#type::DeclId>,
     cycles: FxHashSet<r#type::DeclId>,
 }
 
@@ -846,8 +889,15 @@ fn settle_units(
     let mut settled = Settled {
         layer: r#type::Database::fork(shared).share(),
         members: r#type::Settled::default(),
+        public: FxHashSet::default(),
         cycles: FxHashSet::default(),
     };
+    // A typelib's are given, so no region waits on them
+    {
+        let db = r#type::Database::fork(shared);
+        settled.members = given(tables, &db);
+        settled.layer = db.share();
+    }
     while lowered.iter().any(|lowered| !lowered.pending.is_empty()) {
         lowered = each(tables, lowered, |_, lowered| {
             settle_round(tables, lowered, &settled, analysis)
@@ -870,6 +920,9 @@ fn settle_units(
                     None => region.member.map(|ty| copier.ty(ty)),
                 };
                 settled.members.insert(decl, member);
+                if region.public {
+                    settled.public.insert(decl);
+                }
                 fresh.insert(decl);
             }
             lowered.gathered = lowered.settled.len();
@@ -919,13 +972,9 @@ fn settle_round(
         match flow::settle(ir, &layout, run, region, &layer, tables, analysis) {
             flow::Settle::Settled(settled) => {
                 let (db, results, member, escaped) = *settled;
+                let public = public(tables, region);
                 let unquotable = escaped.or_else(|| {
-                    let ty = match member {
-                        r#type::SettledMember::Declared(ty)
-                        | r#type::SettledMember::Method(ty)
-                        | r#type::SettledMember::Value(ty) => ty,
-                    };
-                    let public = public(tables, region);
+                    let (_, ty) = typelib::Form::of(member);
                     public
                         .then(|| elab::quote::unquotable(&db, tables, ty))
                         .flatten()
@@ -933,6 +982,7 @@ fn settle_round(
                 lowered.settled.push(RegionSettled {
                     index,
                     member,
+                    public,
                     unquotable,
                     db,
                     results,
@@ -961,6 +1011,39 @@ fn public(tables: &elab::Tables<'_>, region: &cfg::Region) -> bool {
             elab::sig::exported(tables, class) && (primary.public || primary.special.is_some())
         }
     }
+}
+
+/// What typelibs' decorated declarations settled to, interned in `db`: what each
+/// typelib records, and for a declaration it records nothing of, an unknown
+/// value
+fn given(tables: &elab::Tables<'_>, db: &r#type::Database) -> r#type::Settled {
+    let mut members = r#type::Settled::default();
+    let resolve = |module: &str, item: &str| {
+        let unit = (tables.shards.iter()).position(|shard| shard.info.module == Some(module))?;
+        match tables.export(UnitId::from_index(unit), item)?.target {
+            elab::Target::Local(elab::Referent::Decl(decl)) => Some(decl),
+            _ => None,
+        }
+    };
+    for (index, shard) in tables.shards.iter().enumerate() {
+        if shard.info.source.is_some() {
+            continue;
+        }
+        let facts = &tables.facts[index].settled;
+        let types = facts.table.intern(db, resolve);
+        for &(decl, form, ty) in &facts.entries {
+            members.insert(decl, form.member(types[ty as usize]));
+        }
+        let base = tables.base(UnitId::from_index(index)).decls;
+        for decl in (base..base + shard.decls.len()).map(r#type::DeclId::from_index) {
+            if db.declaration(decl).source.decorated {
+                members
+                    .entry(decl)
+                    .or_insert(r#type::SettledMember::Value(db.unknown()));
+            }
+        }
+    }
+    members
 }
 
 /// A layer over a unit's `layer` with the members `settled` copied into it

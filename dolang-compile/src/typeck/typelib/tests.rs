@@ -29,7 +29,7 @@ fn encode(shard: Shard<'_>, facts: &Facts) -> Vec<u8> {
     let text = |id: StrId| &*shard.strings[id.index()];
     let pipes =
         (shard.nominations).map(|pipes| pipes.map(|(module, item)| (text(module), text(item))));
-    super::write(&shard, &Bases::local(), &kept, facts, pipes)
+    super::write(&shard, &Bases::local(), &kept, facts, &facts.settled, pipes)
 }
 
 /// Write a unit's typelib from a check of it with an empty module of each name in
@@ -771,7 +771,8 @@ fn locates_kept_spans() {
     let mut bytes = Vec::new();
     check.typelib(id, &mut bytes).unwrap();
     let located = |shard: &Shard<'_>, base: &Bases, kept: &BitSlice, facts: &Facts| {
-        let (_, spans) = wire::Encode::new(shard, base, kept, facts, None).content();
+        let (_, spans) =
+            wire::Encode::new(shard, base, kept, facts, &facts.settled, None).content();
         (spans.into_iter())
             .filter(|&span| span != INVALID_SPAN)
             .map(|span| resolve_span(id, span).span())
@@ -1110,4 +1111,126 @@ fn missing_nominee() {
     );
     // What doesn't depend on the pipes is written
     check.typelib(ids[1], &mut Vec::new()).unwrap();
+}
+
+const DECORATED: &str = "
+def same[F] f @ F -> F
+  f
+
+#[same]
+pub def g[T] x @ T -> T
+  x
+
+@def over x @ Str -> Str
+#[same]
+pub def over x
+  x
+
+pub class Box
+  #[same]
+  pub def get self -> Box
+    self
+";
+
+#[test]
+fn settled_round_trip() {
+    let unit = compile(DECORATED, Mode::Module { name: "lib".into() });
+    let bytes = write(&unit, &[]).unwrap();
+    let (shard, facts) = read(&bytes).unwrap();
+    let named = |decl: crate::typeck::r#type::DeclId| {
+        let name = shard.decls[decl.index()].name.unwrap();
+        &*shard.strings[name.text.index()]
+    };
+    let settled: Vec<_> = (facts.settled.entries.iter())
+        .map(|&(decl, form, _)| (named(decl), form))
+        .collect();
+    assert_eq!(
+        settled,
+        [
+            ("g", super::Form::Declared),
+            ("over", super::Form::Method),
+            ("get", super::Form::Method)
+        ]
+    );
+    assert_eq!(encode(shard, &facts), bytes);
+}
+
+#[test]
+fn settled_type_before_its_children() {
+    let unit = compile(DECORATED, Mode::Module { name: "lib".into() });
+    let bytes = write(&unit, &[]).unwrap();
+    let mut content = content(&bytes);
+    assert!(content.settled_types.len() > 1);
+    content.settled_types.reverse();
+    assert!(matches!(
+        wire::decode(content),
+        Err("a type node is before its children")
+    ));
+}
+
+#[test]
+fn settled_declaration_out_of_range() {
+    let unit = compile(DECORATED, Mode::Module { name: "lib".into() });
+    let bytes = write(&unit, &[]).unwrap();
+    let mut content = content(&bytes);
+    content.settled[0].decl = 1000;
+    assert!(matches!(
+        wire::decode(content),
+        Err("a settled declaration is out of range")
+    ));
+}
+
+/// A type without declarations is the same type once written and read back
+#[test]
+fn checker_types_round_trip() {
+    use crate::typeck::r#type::{
+        Binder, Binding, BoundRef, Database, Element, Function, Kind, Literal, Multiplicity,
+        SchemaItem, Type, Variance,
+    };
+    use rustc_hash::FxHashMap;
+
+    let db = Database::new();
+    let t = db.intern(Type::Bound {
+        reference: BoundRef::new(0, 0),
+        kind: Kind::Type,
+    });
+    let key = db.intern(Type::Literal(Literal::Sym(db.intern_symbol("name"))));
+    let text = db.intern(Type::Literal(Literal::Str("text".into())));
+    let params = db.intern(Type::Schema(
+        vec![
+            SchemaItem {
+                multiplicity: Multiplicity::Required,
+                element: Element::Positional(t),
+            },
+            SchemaItem {
+                multiplicity: Multiplicity::Optional,
+                element: Element::Keyed { key, value: text },
+            },
+        ]
+        .into(),
+    ));
+    let body = db.intern(Type::Function(Function {
+        params,
+        result: t,
+        input: None,
+        output: None,
+    }));
+    let ty = db.intern(Type::Quantified {
+        binders: vec![Binder {
+            kind: Kind::Type,
+            binding: Binding::Keyword(db.intern_symbol("item")),
+            bound: None,
+            default: Some(text),
+            variance: Variance::Covariant,
+        }]
+        .into(),
+        body,
+    });
+    let names = FxHashMap::default();
+    let mut encode = super::EncodeTypes::new(&db, &names);
+    let node = encode.ty(ty);
+    let table = encode.finish();
+    let read = super::types::Table::read(table.types, &table.strings).unwrap();
+    let types = read.intern(&db, |_, _| None);
+    assert_eq!(types[node as usize], ty);
 }

@@ -1,0 +1,11 @@
+# A decorated export's settled type may name a pipe placeholder, which stands
+# for its nominee; its typelib records the nominations, as for its other facts.
+
+import strand
+
+def reads _f @ Func -> ((<strand.PipeReceiver[Int]) -> Int)
+  ...
+
+#[reads]
+pub def counted x @ Int -> Int
+  x
