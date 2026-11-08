@@ -1434,9 +1434,17 @@ impl<'u> Walk<'_, 'u> {
                 .push(method);
         }
         let mut sigs = FxHashMap::default();
+        let mut overload_scopes = FxHashMap::default();
         for key in names {
             let methods = &grouped[&key];
             let first = methods.iter().position(|method| method.at_span.is_none());
+            // An overload has its implementation's scope
+            if let Some(first) = first {
+                let scope = namespace(file, methods[first]);
+                for method in methods.iter().filter(|method| method.at_span.is_some()) {
+                    overload_scopes.insert(method.name_span, scope);
+                }
+            }
             let mut overloaded = Vec::new();
             let mut single = Vec::new();
             for (index, &method) in methods.iter().enumerate() {
@@ -1468,16 +1476,9 @@ impl<'u> Walk<'_, 'u> {
                     for decorator in &method.decorators {
                         self.expr(&group, &decorator.expr);
                         // `class` and `static` say the method's namespace, by syntax
-                        if let Expr::Ident(ident) = &decorator.expr {
-                            let namespace = match self.file.str(ident.span) {
-                                "class" => Some(surface::MemberScope::Class),
-                                "static" => Some(surface::MemberScope::Static),
-                                _ => None,
-                            };
-                            if let Some(namespace) = namespace {
-                                scope = namespace;
-                                continue;
-                            }
+                        if let Some(namespace) = decorator_namespace(self.file, decorator) {
+                            scope = namespace;
+                            continue;
                         }
                         // Only std's `getter` and `setter` are recognized so far
                         if let Expr::Ident(ident) = &decorator.expr
@@ -1492,6 +1493,9 @@ impl<'u> Walk<'_, 'u> {
                             }
                             _ => surface::Decorator::Other,
                         });
+                    }
+                    if let Some(&own) = overload_scopes.get(&method.name_span) {
+                        scope = own;
                     }
                     let (binders, signature) =
                         self.def(&group, id, sig, method.binders.as_deref(), &method.func);
@@ -2150,4 +2154,27 @@ fn path(mut expr: &Expr) -> Option<(&Ident, Vec<Span>)> {
     };
     fields.reverse();
     Some((head, fields))
+}
+
+/// The namespace a method's `class` or `static` decorator gives, by syntax
+fn decorator_namespace(
+    file: &File<'_>,
+    decorator: &ast::Decorator,
+) -> Option<surface::MemberScope> {
+    let Expr::Ident(ident) = &decorator.expr else {
+        return None;
+    };
+    match file.str(ident.span) {
+        "class" => Some(surface::MemberScope::Class),
+        "static" => Some(surface::MemberScope::Static),
+        _ => None,
+    }
+}
+
+/// The namespace a method's decorators give it, by syntax
+fn namespace(file: &File<'_>, method: &Method) -> surface::MemberScope {
+    (method.decorators.iter())
+        .rev()
+        .find_map(|decorator| decorator_namespace(file, decorator))
+        .unwrap_or(surface::MemberScope::Instance)
 }

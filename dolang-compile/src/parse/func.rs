@@ -1,5 +1,7 @@
 use super::{
-    ExprMode, Parser, Result, Scope, diag::SpecialMethodOutsideClass, pattern::PatMode,
+    ExprMode, Parser, Result, Scope,
+    diag::{SpecialMethodOutsideClass, SyntaxDiag},
+    pattern::PatMode,
     stream::ExpectKind,
 };
 use crate::{
@@ -168,6 +170,16 @@ impl Parser<'_> {
         Ok(decorators)
     }
 
+    /// Reject decorators on an `@def`. An overload describes its implementation,
+    /// which its decorators would be on, and has nothing of its own to decorate.
+    fn overload_decorators(&mut self, decorators: &[Decorator], at_span: Option<Span>) {
+        if let (Some(at_span), false) = (at_span, decorators.is_empty()) {
+            self.fail = true;
+            self.diags
+                .push(SyntaxDiag::new(at_span, "an `@def` can't be decorated"));
+        }
+    }
+
     /// Parse a `def`, which has no body when it is type-only: marked with `@`, or a
     /// protocol member. In a protocol, `@` marks an overload of a member.
     fn parse_def_common(
@@ -303,6 +315,7 @@ impl Parser<'_> {
             binders,
             func,
         } = self.parse_def_common(scope, false, at_span)?;
+        self.overload_decorators(&decorators, at_span);
 
         if special.is_some() {
             self.fail = true;
@@ -337,6 +350,7 @@ impl Parser<'_> {
             binders,
             func,
         } = self.parse_def_common(scope, protocol, at_span)?;
+        self.overload_decorators(&decorators, at_span);
         Ok(Method {
             def_span,
             decorators,

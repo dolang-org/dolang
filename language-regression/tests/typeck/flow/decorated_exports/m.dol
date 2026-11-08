@@ -2,8 +2,9 @@
 # variable reads, before its statement too, and its importers read. A decorator
 # may be a decorated export, settled first, or reached through another module,
 # and may use what isn't exported. A class only marked `final` keeps its class
-# object. An export and a method whose decorators reach each other are
-# diagnosed.
+# object. An overloaded def's overloads describe its decorated implementation,
+# which must be a function. An export and a method whose decorators reach each
+# other are diagnosed.
 
 import lib
 
@@ -15,6 +16,9 @@ def strs _f @ Func -> ((Int) -> Str)
 
 def tagged _tag @ Str -> ((Func) -> ((Int) -> Str))
   ...
+
+def constant _f @ Func -> Int
+  1
 
 def early()
   # warning: unused variable
@@ -87,6 +91,22 @@ pub class Holder
     #    |           ^^^
     x
 
+@def over x @ Int -> Int
+@def over x @ Str -> Str
+#[lib.same]
+pub def over x
+  x
+
+@def broken x @ Int -> Int
+#[constant]
+pub def broken x
+  # error: a def's decorators must give a function
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def broken x
+  #    |         ^^^^^^
+  x
+
 pub def use()
   let a1 = a(1)
   #   ^~: flow std.Int
@@ -108,4 +128,10 @@ pub def use()
   #   ^~: flow std.Int
   let looped1 = looped
   #   ^~~~~~~: flow Unknown
-  [a1, b1, c1, d1, e1, f1, g1, m1, h1, looped1]
+  let over1 = over(1)
+  #   ^~~~~: flow std.Int
+  let over2 = over("s")
+  #   ^~~~~: flow std.Str
+  let broken1 = broken
+  #   ^~~~~~~: flow Unknown
+  [a1, b1, c1, d1, e1, f1, g1, m1, h1, looped1, over1, over2, broken1]

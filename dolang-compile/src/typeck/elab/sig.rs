@@ -372,11 +372,15 @@ pub(crate) fn replaced(tables: &Tables<'_>, decl: DeclId) -> bool {
 /// or class whose decorators replace its value ([`replaced`]). A decorated
 /// declaration that isn't exported is typed through its application.
 pub(crate) fn settles(tables: &Tables<'_>, decl: DeclId) -> bool {
+    replaced(tables, decl) && exported(tables, decl)
+}
+
+/// Whether a declaration's unit exports it, so that another unit can name it
+pub(crate) fn exported(tables: &Tables<'_>, decl: DeclId) -> bool {
     let unit = tables.decl(decl).unit;
-    replaced(tables, decl)
-        && tables.shard(unit).exports.iter().any(
-            |export| matches!(export.target, Target::Local(Referent::Decl(found)) if found == decl),
-        )
+    tables.shard(unit).exports.iter().any(
+        |export| matches!(export.target, Target::Local(Referent::Decl(found)) if found == decl),
+    )
 }
 
 /// Designate a top-level declaration of `std` or `strand` that the checker treats

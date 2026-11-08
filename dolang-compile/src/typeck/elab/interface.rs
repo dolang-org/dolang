@@ -200,7 +200,7 @@ fn is_type(kind: DeclKind) -> bool {
     kind.nominal() || kind == DeclKind::Alias
 }
 
-fn kind_word(kind: DeclKind) -> &'static str {
+pub(crate) fn kind_word(kind: DeclKind) -> &'static str {
     match kind {
         DeclKind::Class => "class",
         DeclKind::Protocol => "protocol",

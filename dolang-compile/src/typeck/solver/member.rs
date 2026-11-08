@@ -696,13 +696,13 @@ impl Solver<'_> {
         self.settled_signatures(nominal, decl, ty)
     }
 
-    /// The signature of a decorated method that settled to `ty`, interpreted where
-    /// its class's binders are
+    /// The signatures of a decorated method whose implementation settled to `ty`,
+    /// interpreted where its class's binders are. Its `@def` signatures describe
+    /// the implementation as decorated, so they stay its overloads.
     fn settled_signatures(&self, nominal: &Nominal, decl: DeclId, ty: TypeId) -> Signatures {
         Signatures {
-            overloads: Vec::new(),
             implementation: Some(self.view(ty, nominal.environment)),
-            function: Some(decl),
+            ..self.signatures(nominal, decl)
         }
     }
 

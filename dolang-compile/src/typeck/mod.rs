@@ -774,6 +774,9 @@ struct Lowered {
 struct RegionSettled {
     index: usize,
     member: r#type::SettledMember,
+    /// Why what its public declaration settled to can't be quoted, if it can't,
+    /// which leaves it unknown
+    unquotable: Option<elab::quote::Unquotable>,
     db: r#type::Database,
     results: flow::Results,
 }
@@ -861,9 +864,12 @@ fn settle_units(
                 let decl = ir.regions()[region.index].decl;
                 let mut copies = r#type::Copies::default();
                 let mut copier = db.copier(&region.db, &mut copies);
-                settled
-                    .members
-                    .insert(decl, region.member.map(|ty| copier.ty(ty)));
+                // What a typelib can't write, every importer reads as unknown
+                let member = match region.unquotable {
+                    Some(_) => region.member.map(|_| db.unknown()),
+                    None => region.member.map(|ty| copier.ty(ty)),
+                };
+                settled.members.insert(decl, member);
                 fresh.insert(decl);
             }
             lowered.gathered = lowered.settled.len();
@@ -912,10 +918,22 @@ fn settle_round(
         let region = &ir.regions()[index];
         match flow::settle(ir, &layout, run, region, &layer, tables, analysis) {
             flow::Settle::Settled(settled) => {
-                let (db, results, member) = *settled;
+                let (db, results, member, escaped) = *settled;
+                let unquotable = escaped.or_else(|| {
+                    let ty = match member {
+                        r#type::SettledMember::Declared(ty)
+                        | r#type::SettledMember::Method(ty)
+                        | r#type::SettledMember::Value(ty) => ty,
+                    };
+                    let public = public(tables, region);
+                    public
+                        .then(|| elab::quote::unquotable(&db, tables, ty))
+                        .flatten()
+                });
                 lowered.settled.push(RegionSettled {
                     index,
                     member,
+                    unquotable,
                     db,
                     results,
                 });
@@ -925,6 +943,24 @@ fn settle_round(
         }
     }
     lowered
+}
+
+/// Whether a region's declaration is public, so that what it settles to is
+/// quoted in its unit's typelib: an export, or a public or special method of an
+/// exported class, as the typelib keeps
+fn public(tables: &elab::Tables<'_>, region: &cfg::Region) -> bool {
+    match region.owner {
+        cfg::Owner::Export { .. } => true,
+        cfg::Owner::Method { class, .. } => {
+            let elab::DeclNode::Methods(methods) = &tables.decl(region.decl).node else {
+                unreachable!("a method is declared as one")
+            };
+            let primary = (methods.iter())
+                .find(|method| !method.overload)
+                .unwrap_or(&methods[0]);
+            elab::sig::exported(tables, class) && (primary.public || primary.special.is_some())
+        }
+    }
 }
 
 /// A layer over a unit's `layer` with the members `settled` copied into it
@@ -1002,12 +1038,20 @@ fn finish_unit(
         };
     };
     let layer = with_settled(&layer, settled);
+    let unquotable = regions
+        .iter()
+        .filter_map(|settled| {
+            let region = &ir.regions()[settled.index];
+            Some((region.decl, (region.decorator, settled.unquotable?)))
+        })
+        .collect();
     let mut overrides = Vec::new();
     let mut unresolved = elab::settled_members(
         &r#type::Database::fork(&layer),
         tables,
         unit,
         &settled.cycles,
+        &unquotable,
         &mut overrides,
     );
     unresolved.extend(elab::overrides(

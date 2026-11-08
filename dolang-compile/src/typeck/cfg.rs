@@ -478,6 +478,8 @@ pub(crate) struct Region {
     /// The decorated declaration
     pub(crate) decl: DeclId,
     pub(crate) owner: Owner,
+    /// The `#[` of its first decorator, which is applied last
+    pub(crate) decorator: Span,
     pub(crate) entry: BlockId,
     pub(crate) exit: BlockId,
     pub(crate) result: VarId,
@@ -680,6 +682,7 @@ impl Ir {
             entry,
             exit,
             result,
+            ..
         } = self.regions[index];
         let block = &mut self.blocks[entry.index()];
         block.steps.clear();

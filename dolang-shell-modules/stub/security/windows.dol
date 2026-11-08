@@ -409,11 +409,9 @@ pub class AccessMask: Iterable[AccessRight]
     ...
 
   # Constructs a flag set from symbols.
-  #[class]
   @def (call) cls ...flags@AccessRight -> AccessMask
 
   # Constructs a flag set from one iterable of symbols.
-  #[class]
   @def (call) cls flags@Iterable[AccessRight] -> AccessMask
 
   #[class]
@@ -489,11 +487,9 @@ pub class AceFlags: Iterable[AceFlag]
     ...
 
   # Constructs a flag set from symbols.
-  #[class]
   @def (call) cls ...flags@AceFlag -> AceFlags
 
   # Constructs a flag set from one iterable of symbols.
-  #[class]
   @def (call) cls flags@Iterable[AceFlag] -> AceFlags
 
   #[class]
@@ -558,11 +554,9 @@ pub @let SecDescControlFlag = $
 pub class SecDescControl: Iterable[SecDescControlFlag]
 
   # Constructs a flag set from symbols.
-  #[class]
   @def (call) cls ...flags@SecDescControlFlag -> SecDescControl
 
   # Constructs a flag set from one iterable of symbols.
-  #[class]
   @def (call) cls flags@Iterable[SecDescControlFlag] -> SecDescControl
 
   #[class]
@@ -609,11 +603,9 @@ pub @let SecInfoComponent = $
 pub class SecInfo: Iterable[SecInfoComponent]
 
   # Constructs a flag set from symbols.
-  #[class]
   @def (call) cls ...flags@SecInfoComponent -> SecInfo
 
   # Constructs a flag set from one iterable of symbols.
-  #[class]
   @def (call) cls flags@Iterable[SecInfoComponent] -> SecInfo
 
   #[class]
@@ -668,11 +660,9 @@ pub @let TokenGroupAttribute = $
 pub class TokenGroupAttributes: Iterable[TokenGroupAttribute]
 
   # Constructs a flag set from symbols.
-  #[class]
   @def (call) cls ...flags@TokenGroupAttribute -> TokenGroupAttributes
 
   # Constructs a flag set from one iterable of symbols.
-  #[class]
   @def (call) cls flags@Iterable[TokenGroupAttribute] -> TokenGroupAttributes
 
   #[class]

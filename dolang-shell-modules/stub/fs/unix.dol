@@ -111,11 +111,9 @@ pub class Mode: Iterable[ModeBit]
     ...
 
   # Constructs a flag set from symbols.
-  #[class]
   @def (call) cls ...flags@ModeBit -> Mode
 
   # Constructs a flag set from one iterable of symbols.
-  #[class]
   @def (call) cls flags@Iterable[ModeBit] -> Mode
 
   #[class]

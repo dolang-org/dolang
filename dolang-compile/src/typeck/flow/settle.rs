@@ -20,6 +20,9 @@
 //!
 //! In a generic class, the method's value is its declared type at its class's
 //! rigids, and what the region gives is abstracted back over the class's binders.
+//! If a type parameter of another declaration escapes into it, the member is of
+//! unknown type, which is diagnosed as a value no typelib can write (see
+//! [`quote`]).
 //! Each run has its own verdicts, so nothing it decides outlives it.
 
 use std::{cell::Cell, sync::Arc};
@@ -29,7 +32,10 @@ use rustc_hash::FxHashSet;
 use super::{Flow, Layout, Results, sort};
 use crate::typeck::{
     cfg::{FuncId, Ir, Owner, Region, Run, Step, VarFlags, VarId},
-    elab::Tables,
+    elab::{
+        Tables,
+        quote::{self, Unquotable},
+    },
     flow::state::{CtxId, Group, May, State, VarState},
     solver::Verdicts,
     r#type::{Database, DeclId, SettledMember, Shared, Type, TypeId},
@@ -63,9 +69,10 @@ pub(super) enum Blocked {
 
 /// What settling a region concludes
 pub(crate) enum Settle {
-    /// It settled: the run's fork, what the run concluded, and what its
-    /// declaration settled to
-    Settled(Box<(Database, Results, SettledMember)>),
+    /// It settled: the run's fork, what the run concluded, what its declaration
+    /// settled to, and why that can't be quoted, if a type parameter of another
+    /// declaration escaped into it, which leaves it unknown
+    Settled(Box<(Database, Results, SettledMember, Option<Unquotable>)>),
     /// It reached this decorated member, accessor or export, or an export's
     /// variable, before it settled
     Blocked(DeclId),
@@ -115,21 +122,30 @@ pub(crate) fn settle(
         Ok(None) | Err(Blocked::Read) => return Settle::Failed,
         Err(Blocked::Decl(decl)) => return Settle::Blocked(decl),
     };
-    let Some(class) = class else {
-        return Settle::Settled(Box::new((db, results, SettledMember::Declared(ty))));
-    };
-    let ty = match rigids.is_empty() {
-        true => ty,
-        false => match db.abstract_rigids(ty, class) {
+    let ty = match class {
+        // An export's value is whatever its decorators give, but an overloaded
+        // def's is its overloads, with what they give as their implementation
+        None if tables.sig_count(region.decl) == 1 => {
+            let member = SettledMember::Declared(ty);
+            return Settle::Settled(Box::new((db, results, member, None)));
+        }
+        Some(class) if !rigids.is_empty() => match db.abstract_rigids(ty, class) {
             Ok(ty) => ty,
-            Err(_) => return Settle::Failed,
+            Err(_) => {
+                let member = match callable {
+                    true => SettledMember::Method(db.unknown()),
+                    false => SettledMember::Value(db.unknown()),
+                };
+                return Settle::Settled(Box::new((db, results, member, Some(quote::ESCAPED))));
+            }
         },
+        _ => ty,
     };
     let member = match callable {
         true => SettledMember::Method(ty),
         false => SettledMember::Value(ty),
     };
-    Settle::Settled(Box::new((db, results, member)))
+    Settle::Settled(Box::new((db, results, member, None)))
 }
 
 /// Whether a region's blocks create no function and have no handler
@@ -251,12 +267,21 @@ impl Flow<'_, '_> {
         }
     }
 
-    /// What an exported def's or class's decorators settled to, if they have
+    /// The value of an exported def or class whose decorators settled, if they
+    /// have: what they gave, or for an overloaded def, its overloads with what
+    /// they gave as its implementation, which must be a function
     pub(super) fn settled_decl(&self, decl: DeclId) -> Option<TypeId> {
-        match self.db.settled(decl)? {
-            SettledMember::Declared(ty) => Some(ty),
-            SettledMember::Method(_) | SettledMember::Value(_) => None,
-        }
+        Some(match self.db.settled(decl)? {
+            SettledMember::Declared(ty) => ty,
+            SettledMember::Method(implementation) => self.db.intern(Type::Overloaded {
+                overloads: (self.db.overloads(decl).iter())
+                    .map(|&overload| self.db.declaration(overload).ty)
+                    .collect(),
+                implementation: Some(implementation),
+                function: Some(decl),
+            }),
+            SettledMember::Value(_) => self.db.unknown(),
+        })
     }
 
     /// The type a variable reads as wherever it's read from: its annotation, or

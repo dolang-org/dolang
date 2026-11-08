@@ -22,7 +22,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
     AccessorChannel, BadRecursion, BoundViolation, DeclNode, Designated, Diag, Fill, Head,
-    ParameterKeys, Referent, Role, SettledCycle, SettledValue, Tables, UnitDiag,
+    ParameterKeys, Referent, Role, SettledCycle, SettledValue, Tables, UnitDiag, UnquotableResult,
+    interface,
+    quote::Unquotable,
     sig::{self, Form},
     surface::{Class, Interned, Ref, TypeArg, TypeExpr, TypeParam, TypeQuant},
 };
@@ -74,18 +76,22 @@ pub(crate) fn wellformed(
 }
 
 /// Check what a unit's decorated methods settled to, once their members are
-/// settled: each must be a function, since a class installs nothing else, and
+/// settled: each must be a function, since a class installs nothing else, as
+/// must an overloaded def's implementation, which its overloads describe, and
 /// each channel a decorated getter's or setter's function writes must admit
 /// `Value`, as a written accessor's must. One that settled to what's unknown
 /// passes. A decorated method, or an export whose decorators settling finds
 /// ([`sig::settles`]), that didn't settle is diagnosed if it's in `cycles`, its
 /// region blocked on its own declaration; otherwise, in a strict unit, it's
-/// undecided, since its value is of unknown type.
+/// undecided, since its value is of unknown type. One in `unquotable`, a public
+/// declaration whose decorators gave what no typelib can write, is diagnosed at
+/// its first decorator.
 pub(crate) fn settled_members(
     db: &Database,
     tables: &Tables<'_>,
     unit: UnitId,
     cycles: &FxHashSet<DeclId>,
+    unquotable: &FxHashMap<DeclId, (Span, Unquotable)>,
     diags: &mut Vec<UnitDiag>,
 ) -> Vec<Unresolved> {
     let strict = tables.info(unit).strict;
@@ -128,6 +134,30 @@ pub(crate) fn settled_members(
             }
             continue;
         };
+        // What a typelib can't write is unknown, whatever it is
+        if let Some(&(decorator, why)) = unquotable.get(&id) {
+            let why = match why {
+                Unquotable::Form(form) => Ok(form),
+                Unquotable::Private(private) => {
+                    let declaration = tables.decl(private);
+                    let name = declaration
+                        .name
+                        .map_or("", |name| tables.name(declaration.unit, name));
+                    Err((interface::kind_word(declaration.kind), name.to_owned()))
+                }
+            };
+            let diag = UnquotableResult {
+                span: decorator,
+                what,
+                why,
+            };
+            let span = UnitSpan {
+                unit,
+                span: decorator,
+            };
+            check.report(Verdict::Fails, span, diag);
+            continue;
+        }
         let ty = match settled {
             // An export's value may be anything
             SettledMember::Declared(_) => continue,
@@ -137,7 +167,7 @@ pub(crate) fn settled_members(
             SettledMember::Value(_) => {
                 let diag = SettledValue {
                     span: span.span,
-                    accessor,
+                    what,
                 };
                 check.report(Verdict::Fails, span, diag);
                 continue;

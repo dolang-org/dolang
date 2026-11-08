@@ -1871,7 +1871,8 @@ impl<'u> Scope<'_, '_, 'u> {
         dest: Option<VarId>,
     ) {
         let span = self.locate(ident.span);
-        self.region(decl, Owner::Export { span }, |scope| {
+        let decorator = self.locate(decorators[0].open_span);
+        self.region(decl, Owner::Export { span }, decorator, |scope| {
             let value = scope.decorate(decorators, value);
             scope.bind_name(ident, value, None, None);
             var
@@ -1883,7 +1884,13 @@ impl<'u> Scope<'_, '_, 'u> {
 
     /// Lower what `body` does, which binds what a declaration's decorators give to
     /// the variable it returns, in a region of blocks of its own
-    fn region(&mut self, decl: DeclId, owner: Owner, body: impl FnOnce(&mut Self) -> VarId) {
+    fn region(
+        &mut self,
+        decl: DeclId,
+        owner: Owner,
+        decorator: diag::Span,
+        body: impl FnOnce(&mut Self) -> VarId,
+    ) {
         let entry = self.block();
         self.end(Terminal::Branch {
             target: entry,
@@ -1900,6 +1907,7 @@ impl<'u> Scope<'_, '_, 'u> {
         self.graph().add_region(Region {
             decl,
             owner,
+            decorator,
             entry,
             exit,
             result,
@@ -1938,7 +1946,8 @@ impl<'u> Scope<'_, '_, 'u> {
             return;
         }
         let value = synthetic(ExprKind::Lambda(func), self.locate(method.name_span));
-        self.region(decl, Owner::Method { class, func }, |scope| {
+        let decorator = self.locate(applied[0].open_span);
+        self.region(decl, Owner::Method { class, func }, decorator, |scope| {
             let value = scope.decorate(applied, value);
             scope.temporary(value)
         });

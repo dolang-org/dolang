@@ -1,0 +1,112 @@
+# What a public declaration's decorators give is written into its module's
+# typelib, so it must be something a typelib can write: a function, generic or
+# overloaded, or a class object, and otherwise a type naming only what's
+# exported. Anything else is diagnosed, in any unit, and reads as unknown, as an
+# importer through a typelib would read it. A private declaration's decorators
+# may give anything.
+
+class Secret
+  pub field n @ Int = 1
+
+def same[F] f @ F -> F
+  f
+
+def hide _f @ Func -> (() -> Secret)
+  do Secret()
+
+def hide_method _f @ Func -> ((Box) -> Secret)
+  ...
+
+def pair[F] f @ F -> Tuple[F, F]
+  (f, f)
+
+#[hide]
+pub def hidden x @ Int -> Int
+  # warning: a def's decorators give a type naming private class `Secret`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | #[hide]
+  #    | ^^
+  #    |
+  #    = note: an importer sees it as `Unknown`
+  #    = help: declare `Secret` with `pub`
+  x
+
+#[pair]
+pub class Paired
+  # warning: a class's decorators give a type no typelib can write: a class object inside another type
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | #[pair]
+  #    | ^^
+  #    |
+  #    = note: an importer sees it as `Unknown`
+  pub field n @ Int = 1
+
+#[pair]
+pub def doubled x @ Int -> Int
+  # warning: a def's decorators give a type no typelib can write: a generic function inside another type
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | #[pair]
+  #    | ^^
+  #    |
+  #    = note: an importer sees it as `Unknown`
+  x
+
+pub class Box
+  #[hide_method]
+  pub def leaked _self -> Int
+    # warning: a method's decorators give a type naming private class `Secret`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   #[hide_method]
+    #    |   ^^
+    #    |
+    #    = note: an importer sees it as `Unknown`
+    #    = help: declare `Secret` with `pub`
+    1
+
+  #[hide_method]
+  def kept _self -> Int
+    1
+
+  pub def use_kept self
+    self.#kept()
+
+#[hide]
+def private_hidden x @ Int -> Int
+  x
+
+#[same]
+pub def generic[T] x @ T -> T
+  x
+
+@def over x @ Int -> Int
+@def over x @ Str -> Str
+#[same]
+pub def over x
+  x
+
+#[same]
+pub class Kept
+  pub field n @ Int = 1
+
+pub def use b @ Box
+  let hidden1 = hidden
+  #   ^~~~~~~: flow Unknown
+  let paired1 = Paired
+  #   ^~~~~~~: flow Unknown
+  let doubled1 = doubled
+  #   ^~~~~~~~: flow Unknown
+  let leaked1 = b.leaked
+  #   ^~~~~~~: flow Unknown
+  let private1 = private_hidden()
+  #   ^~~~~~~~: flow m.Secret
+  let generic1 = generic("g")
+  #   ^~~~~~~~: flow std.Str
+  let over1 = over(1)
+  #   ^~~~~: flow std.Int
+  let kept1 = Kept()
+  #   ^~~~~: flow m.Kept
+  [hidden1, paired1, doubled1, leaked1, private1, generic1, over1, kept1, b.use_kept()]

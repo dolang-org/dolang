@@ -151,11 +151,9 @@ pub class AccessMask: WindowsAccessMask
     ...
 
   # Constructs a flag set from symbols.
-  #[class]
   @def (call) cls ...flags@AccessRight -> AccessMask
 
   # Constructs a flag set from one iterable of symbols.
-  #[class]
   @def (call) cls flags@Iterable[AccessRight] -> AccessMask
 
   #[class]

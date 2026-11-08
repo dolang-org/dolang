@@ -13,6 +13,7 @@ mod judge;
 mod kind;
 mod overrides;
 mod populate;
+pub(crate) mod quote;
 pub(crate) mod sig;
 mod specialize;
 pub(crate) mod surface;
@@ -1177,11 +1178,12 @@ impl Report for AccessorChannel {
 }
 
 /// A decorated method whose decorators give something other than a function,
-/// which the class can't install. `accessor` says whether it's a setter, if it's
-/// a getter or setter.
+/// which the class can't install, or an overloaded def whose implementation's
+/// do, which its overloads can't describe
 struct SettledValue {
     span: Span,
-    accessor: Option<bool>,
+    /// What's decorated: a method, getter, setter or overloaded def
+    what: &'static str,
 }
 
 impl Report for SettledValue {
@@ -1190,12 +1192,7 @@ impl Report for SettledValue {
     }
 
     fn message(&self, w: &mut dyn Write) -> fmt::Result {
-        let method = match self.accessor {
-            Some(true) => "setter",
-            Some(false) => "getter",
-            None => "method",
-        };
-        write!(w, "a {method}'s decorators must give a function")
+        write!(w, "a {}'s decorators must give a function", self.what)
     }
 
     fn span(&self) -> Span {
@@ -1203,9 +1200,8 @@ impl Report for SettledValue {
     }
 }
 
-/// A decorated method whose decorators reach its own member, through those of
-/// others or not, so they can't settle. `accessor` says whether it's a setter, if
-/// it's a getter or setter.
+/// A decorated method or export whose decorators reach its own declaration,
+/// through those of others or not, so they can't settle
 struct SettledCycle {
     span: Span,
     /// What's decorated: a method, getter, setter, def or class
@@ -1223,6 +1219,53 @@ impl Report for SettledCycle {
 
     fn span(&self) -> Span {
         self.span
+    }
+}
+
+/// A public decorated declaration whose decorators settled to what no typelib
+/// can write, so that its importers read it as unknown
+struct UnquotableResult {
+    span: Span,
+    /// What's decorated: a method, getter, setter, def or class
+    what: &'static str,
+    /// Why it can't be written: a private declaration's kind and name, or the part
+    /// that no type expression writes
+    why: Result<&'static str, (&'static str, String)>,
+}
+
+impl Report for UnquotableResult {
+    fn severity(&self) -> Severity {
+        Severity::Warning
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        match &self.why {
+            Ok(form) => write!(
+                w,
+                "a {}'s decorators give a type no typelib can write: {form}",
+                self.what
+            ),
+            Err((kind, name)) => write!(
+                w,
+                "a {}'s decorators give a type naming private {kind} `{name}`",
+                self.what
+            ),
+        }
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+
+    fn notes(&self) -> Vec<(NoteKind, String)> {
+        let mut notes = vec![(
+            NoteKind::Info,
+            "an importer sees it as `Unknown`".to_owned(),
+        )];
+        if let Err((_, name)) = &self.why {
+            notes.push((NoteKind::Help, format!("declare `{name}` with `pub`")));
+        }
+        notes
     }
 }
 

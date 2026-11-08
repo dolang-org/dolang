@@ -53,11 +53,9 @@ pub @let PermissionBit = $
 pub class Permission: Iterable[PermissionBit]
 
   # Constructs a flag set from symbols.
-  #[class]
   @def (call) cls ...flags@PermissionBit -> Permission
 
   # Constructs a flag set from one iterable of symbols.
-  #[class]
   @def (call) cls flags@Iterable[PermissionBit] -> Permission
 
   #[class]

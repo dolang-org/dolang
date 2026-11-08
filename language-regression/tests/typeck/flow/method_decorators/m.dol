@@ -3,7 +3,8 @@
 # class installs it as a method. Under a leading `getter` or `setter`, what they give
 # is the accessor's function, held to what a written accessor is. A region that
 # reads what isn't annotated doesn't settle, and leaves its member of unknown
-# type, or a computed field of unknown type. Each region's problems are reported
+# type, or a computed field of unknown type. An overloaded method's overloads
+# describe its decorated implementation. Each region's problems are reported
 # once.
 
 pub def same[F] f @ F -> F
@@ -116,6 +117,12 @@ pub class Box
   pub def unsettled _self -> Int
     1
 
+  @def picked _self x @ Int -> Int
+  @def picked _self x @ Str -> Str
+  #[same]
+  pub def picked _self x
+    x
+
   #[constant]
   pub def number _self
     # error: a method's decorators must give a function
@@ -179,4 +186,6 @@ pub def use b @ Box c @ Cell[Int]
   #   ^~~~~~: flow Unknown
   let got = c.get()
   #   ^~~: flow std.Int
-  [plain, size, bad, inner, pending, twice, counted, named, either, through, unsettled, number, got]
+  let picked = b.picked("p")
+  #   ^~~~~~: flow std.Str
+  [plain, size, bad, inner, pending, twice, counted, named, either, through, unsettled, number, got, picked]
