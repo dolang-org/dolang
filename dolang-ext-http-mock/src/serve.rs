@@ -13,7 +13,7 @@ use http_body_util::{BodyExt as _, Full};
 use hyper::{body::Incoming, rt::Executor, service::service_fn};
 use hyper_util::{rt::TokioIo, server::conn::auto};
 use tokio::{
-    io::AsyncWriteExt as _,
+    io::{AsyncReadExt as _, AsyncWriteExt as _},
     net::{TcpListener, TcpStream},
     sync::{mpsc, oneshot},
 };
@@ -150,13 +150,19 @@ async fn connection(stream: TcpStream, exec: LocalExec, dispatch: mpsc::Unbounde
             let _ = stream.set_linger(Some(Duration::ZERO));
             return;
         }
-        Fault::Close => return,
+        Fault::Close => b"",
         Fault::Garbage => b"not http\r\n\r\n",
         Fault::Truncate => b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\n\r\npartial",
         Fault::BadChunk => b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\nzz\r\n",
     };
     let _ = stream.write_all(bytes).await;
+    // Send the FIN, then hold the socket until the client hangs up. Closing it
+    // outright can reset the connection instead (Windows does so whenever the
+    // receive buffer holds unread data), and a reset discards the FIN and any
+    // bytes the client has yet to read.
     let _ = stream.shutdown().await;
+    let mut sink = [0; 512];
+    while matches!(stream.read(&mut sink).await, Ok(n) if n > 0) {}
 }
 
 async fn handle(
