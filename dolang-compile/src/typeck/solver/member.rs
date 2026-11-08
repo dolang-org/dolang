@@ -60,9 +60,9 @@ pub(crate) enum FoundKind {
         getter: Option<Signatures>,
         setter: Option<Signatures>,
     },
-    /// A method its decorators replace with a value not settled to a type, which
-    /// may be anything
-    Unknown,
+    /// A method, by its declaration, that its decorators replace with a value not
+    /// settled to a type, which may be anything
+    Unknown(DeclId),
 }
 
 /// A method's signatures, each with its receiver parameter
@@ -500,7 +500,7 @@ impl Solver<'_> {
                 getter: getter.map(signatures).transpose()?,
                 setter: setter.map(signatures).transpose()?,
             },
-            FoundKind::Unknown => FoundKind::Unknown,
+            FoundKind::Unknown(decl) => FoundKind::Unknown(decl),
         };
         Ok(Lookup::Found(Found {
             bound,
@@ -568,7 +568,7 @@ impl Solver<'_> {
                 member.scope() == Scope::Instance
             })? {
                 Lookup::Found(found)
-                    if matches!(found.kind, FoundKind::Method(_) | FoundKind::Unknown) =>
+                    if matches!(found.kind, FoundKind::Method(_) | FoundKind::Unknown(_)) =>
                 {
                     return Ok(Lookup::Found(found));
                 }
@@ -668,7 +668,7 @@ impl Solver<'_> {
                 Some(SettledMember::Method(ty)) => {
                     FoundKind::Method(self.settled_signatures(nominal, decl, ty))
                 }
-                Some(SettledMember::Value(_)) | None => FoundKind::Unknown,
+                Some(SettledMember::Value(_)) | None => FoundKind::Unknown(decl),
             },
         };
         Found {

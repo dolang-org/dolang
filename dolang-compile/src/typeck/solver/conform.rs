@@ -205,7 +205,7 @@ impl Solver<'_> {
             Ok(())
         };
         match (&provided.kind, &required.kind) {
-            (FoundKind::Unknown, _) | (_, FoundKind::Unknown) => {}
+            (FoundKind::Unknown(_), _) | (_, FoundKind::Unknown(_)) => {}
             (&FoundKind::Field(actual), &FoundKind::Field(expected)) => {
                 pairs.push((actual, expected));
                 pairs.push((expected, actual));
@@ -574,6 +574,6 @@ fn describe(kind: &FoundKind) -> &'static str {
         } => "a property",
         FoundKind::Property { setter: None, .. } => "a read-only property",
         FoundKind::Property { getter: None, .. } => "a write-only property",
-        FoundKind::Unknown => "a decorated member",
+        FoundKind::Unknown(_) => "a decorated member",
     }
 }

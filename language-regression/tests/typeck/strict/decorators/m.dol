@@ -1,0 +1,15 @@
+# dolang: strict
+# A strict unit's method decorators that don't settle leave the method's member
+# of unknown type, which the checker can't verify.
+
+pub class Box
+  #[(do |f @ Func| -> Func f)]
+  pub def get _self -> Int
+    # warning: the checker can't verify this
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def get _self -> Int
+    #    |           ^^^
+    #    |
+    #    = note: it doesn't handle method decorators that don't settle
+    1

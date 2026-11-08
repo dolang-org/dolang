@@ -13,6 +13,9 @@
 //! - it reads a variable that's neither annotated nor assigned in the region;
 //! - it reaches a member that a region not yet settled stands for.
 //!
+//! The run is abandoned where it's blocked. Only the last can change: the driver
+//! runs the region again once that member settles.
+//!
 //! In a generic class, the method's value is its declared type at its class's
 //! rigids, and what the region gives is abstracted back over the class's binders.
 //! Each run has its own verdicts, so nothing it decides outlives it.
@@ -33,13 +36,41 @@ use crate::typeck::{
 /// What a settle run settles
 pub(super) struct Settling<'a> {
     pub(super) region: &'a Region,
-    /// Whether it read a variable it can't, or reached a member not settled yet
-    pub(super) blocked: Cell<bool>,
+    /// What first blocked it, if anything has
+    blocked: Cell<Option<Blocked>>,
 }
 
-/// Settle a method's decorator region in a fork of the unit's `layer`, from the
-/// unit's module run. Gives the fork, what the run concluded, and what the
-/// method's member settled to, unless the region doesn't settle.
+impl Settling<'_> {
+    /// Note what blocks the run, unless something already has
+    pub(super) fn block(&self, blocked: Blocked) {
+        if self.blocked.get().is_none() {
+            self.blocked.set(Some(blocked));
+        }
+    }
+}
+
+/// What blocks a settle run
+#[derive(Clone, Copy)]
+pub(super) enum Blocked {
+    /// It read a variable that's neither annotated nor assigned in its region
+    Read,
+    /// It reached this decorated member, or accessor, not settled yet
+    Member(DeclId),
+}
+
+/// What settling a region concludes
+pub(crate) enum Settle {
+    /// It settled: the run's fork, what the run concluded, and what the method's
+    /// member settled to
+    Settled(Box<(Database, Results, SettledMember)>),
+    /// It reached this decorated member, or accessor, before it settled
+    Blocked(DeclId),
+    /// It can't settle
+    Failed,
+}
+
+/// Settle a method's decorator region in a fork of `layer`, the unit's with the
+/// members settled so far, from the unit's module run
 pub(crate) fn settle(
     ir: &Ir,
     layout: &Layout,
@@ -48,9 +79,9 @@ pub(crate) fn settle(
     layer: &Arc<Shared>,
     tables: &Tables<'_>,
     logging: bool,
-) -> Option<(Database, Results, SettledMember)> {
+) -> Settle {
     if !confined(ir, region) {
-        return None;
+        return Settle::Failed;
     }
     let db = Database::fork(layer);
     let verdicts = Verdicts::default();
@@ -58,7 +89,7 @@ pub(crate) fn settle(
     flow.logging = logging;
     flow.settling = Some(Settling {
         region,
-        blocked: Cell::new(false),
+        blocked: Cell::new(None),
     });
     // The method's value is seen at its class's rigids
     let class = region.class;
@@ -66,17 +97,23 @@ pub(crate) fn settle(
     if !rigids.is_empty() && !flow.scope.iter().any(|(decl, _)| *decl == class) {
         flow.scope.push((class, rigids.clone()));
     }
-    let (results, settled) = flow.settle_region();
-    let (ty, callable) = settled?;
+    let (results, ty, callable) = match flow.settle_region() {
+        Ok(Some(settled)) => settled,
+        Ok(None) | Err(Blocked::Read) => return Settle::Failed,
+        Err(Blocked::Member(decl)) => return Settle::Blocked(decl),
+    };
     let ty = match rigids.is_empty() {
         true => ty,
-        false => db.abstract_rigids(ty, class).ok()?,
+        false => match db.abstract_rigids(ty, class) {
+            Ok(ty) => ty,
+            Err(_) => return Settle::Failed,
+        },
     };
     let member = match callable {
         true => SettledMember::Method(ty),
         false => SettledMember::Value(ty),
     };
-    Some((db, results, member))
+    Settle::Settled(Box::new((db, results, member)))
 }
 
 /// Whether a region's blocks create no function and have no handler
@@ -104,8 +141,8 @@ fn confined(ir: &Ir, region: &Region) -> bool {
 impl Flow<'_, '_> {
     /// Run a settle run's region from its entry, giving what its final pass
     /// concluded and the type bound to the region's result where it exits, with
-    /// whether it's callable, if the run wasn't blocked and reached the exit
-    fn settle_region(mut self) -> (Results, Option<(TypeId, bool)>) {
+    /// whether it's callable, if it reached the exit, unless it was blocked
+    fn settle_region(mut self) -> Result<Option<(Results, TypeId, bool)>, Blocked> {
         let settling = self.settling.as_ref().expect("a settle run");
         let region = settling.region;
         let bottom = self.db.bottom();
@@ -145,14 +182,21 @@ impl Flow<'_, '_> {
         };
         self.merge(region.entry, CtxId::ROOT, state);
         self.iterate();
+        if let Some(blocked) = self.blocked() {
+            return Err(blocked);
+        }
         let mut results = self.final_pass();
         sort(&mut results.problems, &mut results.unresolved);
-        let settling = self.settling.as_ref().expect("a settle run");
-        let ty = (!settling.blocked.get())
-            .then(|| self.states.get(&(region.exit, CtxId::ROOT)))
-            .flatten()
-            .map(|entry| entry.state.vars[self.slot(region.result)].ty);
-        (results, ty.map(|ty| (ty, self.callable(ty))))
+        let Some(entry) = self.states.get(&(region.exit, CtxId::ROOT)) else {
+            return Ok(None);
+        };
+        let ty = entry.state.vars[self.slot(region.result)].ty;
+        Ok(Some((results, ty, self.callable(ty))))
+    }
+
+    /// In a settle run, what has blocked it, if anything
+    pub(super) fn blocked(&self) -> Option<Blocked> {
+        self.settling.as_ref()?.blocked.get()
     }
 
     /// In a settle run, the value of its region's own method, at its class's
@@ -181,17 +225,14 @@ impl Flow<'_, '_> {
         Some(self.db.substitute(split, rigids))
     }
 
-    /// In a settle run, note reaching a member that a region not settled yet
-    /// stands for: a decorated member, or a decorated accessor `function`
-    pub(super) fn placeholder(&self, function: Option<DeclId>) {
+    /// In a settle run, note reaching `decl`, a decorated member or accessor, if
+    /// it's not settled yet
+    pub(super) fn placeholder(&self, decl: DeclId) {
         let Some(settling) = &self.settling else {
             return;
         };
-        let pending = function.is_none_or(|decl| {
-            self.db.declaration(decl).source.decorated && self.db.settled(decl).is_none()
-        });
-        if pending {
-            settling.blocked.set(true);
+        if self.db.declaration(decl).source.decorated && self.db.settled(decl).is_none() {
+            settling.block(Blocked::Member(decl));
         }
     }
 }

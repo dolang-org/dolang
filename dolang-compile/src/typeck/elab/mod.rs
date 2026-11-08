@@ -1203,6 +1203,33 @@ impl Report for SettledValue {
     }
 }
 
+/// A decorated method whose decorators reach its own member, through those of
+/// others or not, so they can't settle. `accessor` says whether it's a setter, if
+/// it's a getter or setter.
+struct SettledCycle {
+    span: Span,
+    accessor: Option<bool>,
+}
+
+impl Report for SettledCycle {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        let method = match self.accessor {
+            Some(true) => "setter",
+            Some(false) => "getter",
+            None => "method",
+        };
+        write!(w, "a {method}'s decorators depend on what they give")
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
 /// A function type or signature whose parameters admit keys that aren't symbols
 struct ParameterKeys(Span);
 

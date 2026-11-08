@@ -111,8 +111,8 @@ use problem::MemberUse;
 pub(super) use problem::Misfit;
 pub(crate) use problem::Problem;
 use rustc_hash::{FxHashMap, FxHashSet};
-use settle::Settling;
-pub(crate) use settle::settle;
+use settle::{Blocked, Settling};
+pub(crate) use settle::{Settle, settle};
 pub(crate) use state::Fact;
 use state::{Contexts, CtxId, Group, Link, May, Operand, State, VarState};
 
@@ -688,6 +688,10 @@ impl<'a, 'u> Flow<'a, 'u> {
                     break;
                 };
                 self.run(block, ctx);
+                // A blocked settle run is abandoned
+                if self.blocked().is_some() {
+                    return;
+                }
             }
             // Upstream first: in each function, its earliest block with an undecided
             // rule. A later rule in that block runs after its inputs.
@@ -1972,7 +1976,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         if fact.unassigned
             && let Some(settling) = &self.settling
         {
-            settling.blocked.set(true);
+            settling.block(Blocked::Read);
         }
         if !self.reads_through(var) {
             return fact;

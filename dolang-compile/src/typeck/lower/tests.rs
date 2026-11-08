@@ -7,7 +7,7 @@ use crate::{
     source::File,
     typeck::{
         Check,
-        cfg::{BlockId, ExprKind, FuncId, Ir, Origin, Step, Terminal, VarFlags, VarId},
+        cfg::{BlockId, ExprKind, FuncId, Ir, Origin, Region, Step, Terminal, VarFlags, VarId},
     },
 };
 
@@ -616,8 +616,63 @@ class C
         let [region] = ir.regions() else {
             panic!("one region: {}", ir.regions().len())
         };
-        let entry = ir.block(region.entry);
-        assert!(entry.steps.is_empty());
-        assert!(matches!(entry.terminal, Terminal::Branch { target, .. } if target == region.exit));
+        assert!(spliced(ir, region));
+    });
+}
+
+/// Whether a region was spliced out for a branch to its exit
+fn spliced(ir: &Ir, region: &Region) -> bool {
+    let entry = ir.block(region.entry);
+    entry.steps.is_empty()
+        && matches!(entry.terminal, Terminal::Branch { target, .. } if target == region.exit)
+}
+
+/// A region that reaches another's decorated member settles once that member
+/// does, in a later round, and both are spliced out
+#[test]
+fn blocked_regions_settle_in_order() {
+    let source = "
+def same[F] f @ F -> F
+  f
+let registry @ Registry = ...
+class Relay
+  #[registry.deco]
+  pub def pass[F] _self f @ F -> F
+    f
+class Registry
+  #[same]
+  pub def deco[F] _self f @ F -> F
+    f
+";
+    lower_with(source, |ir| {
+        let [pass, deco] = ir.regions() else {
+            panic!("two regions: {}", ir.regions().len())
+        };
+        assert!(spliced(ir, deco));
+        assert!(spliced(ir, pass));
+    });
+}
+
+/// Regions that reach each other's members never settle, and stay for flow
+#[test]
+fn cyclic_regions_stay() {
+    let source = "
+let p @ P = ...
+let q @ Q = ...
+class P
+  #[q.f]
+  pub def g[F] _self f @ F -> F
+    f
+class Q
+  #[p.g]
+  pub def f[F] _self f @ F -> F
+    f
+";
+    lower_with(source, |ir| {
+        let [g, f] = ir.regions() else {
+            panic!("two regions: {}", ir.regions().len())
+        };
+        assert!(!spliced(ir, g));
+        assert!(!spliced(ir, f));
     });
 }

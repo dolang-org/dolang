@@ -357,7 +357,9 @@ impl Flow<'_, '_> {
                 }
                 FoundKind::Property { getter, setter } => {
                     for accessor in [&getter, &setter].into_iter().flatten() {
-                        self.placeholder(accessor.function);
+                        if let Some(function) = accessor.function {
+                            self.placeholder(function);
+                        }
                     }
                     Resolved::Property {
                         getter: signatures(getter),
@@ -366,8 +368,8 @@ impl Flow<'_, '_> {
                         passed: !found.bound && found.scope != Scope::Static,
                     }
                 }
-                FoundKind::Unknown => {
-                    self.placeholder(None);
+                FoundKind::Unknown(decl) => {
+                    self.placeholder(decl);
                     Resolved::Dynamic
                 }
             },
