@@ -37,7 +37,9 @@ Decorators are valid in four places:
 - Before a `field` inside a class body, restricted to the prelude `class` and
   `static` decorators
 
-They are not valid before `let` or other statements.
+They are not valid before an `@def` overload, which describes its
+implementation (see [Overloads](./types.md#overloads)), or before `let` or other
+statements.
 
 `pub` goes after any decorators:
 
@@ -133,6 +135,21 @@ class Config
   pub def port self value
     self.#port = value
 ```
+
+## Type Checking
+
+The checker types a public `def`, `class`, or method of a public class as what
+its decorators give, found from the decorators' own types without running them.
+An importer may read the module from its typelib, so the type must be one a
+typelib can write:
+
+- It names only types its module or another exports.
+- A generic or overloaded function, or a class object, is the whole value, not
+  part of another type.
+
+Otherwise the checker warns, and the declaration's value is `Unknown`. An
+overloaded function's decorators must give a function, which its overloads
+describe.
 
 ## Member Scope Decorators
 

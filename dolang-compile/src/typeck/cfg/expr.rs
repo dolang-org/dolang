@@ -68,6 +68,9 @@ pub(crate) enum ExprKind {
     Copy(VarId),
     /// The class object a class statement defines, of type `Type[C]`
     Class(DeclId),
+    /// What an exported def's or class's decorators settled to, standing for
+    /// their application once it's spliced out
+    Settled(DeclId),
     /// An imported module, or an item of one
     Import {
         module: UnitId,
@@ -255,6 +258,7 @@ impl Expr {
             | ExprKind::Var(_)
             | ExprKind::Copy(_)
             | ExprKind::Class(_)
+            | ExprKind::Settled(_)
             | ExprKind::Import { .. }
             | ExprKind::Lambda(_)
             | ExprKind::Operand

@@ -1,0 +1,23 @@
+# What a typelib can't write reads as unknown whether the importer checks the
+# module from source or reads its typelib, and what it can reads as given.
+
+import m
+
+def use b @ m.Box
+  let hidden = m.hidden
+  #   ^~~~~~: flow Unknown
+  let paired = m.Paired
+  #   ^~~~~~: flow Unknown
+  let doubled = m.doubled
+  #   ^~~~~~~: flow Unknown
+  let leaked = b.leaked
+  #   ^~~~~~: flow Unknown
+  let generic = m.generic("g")
+  #   ^~~~~~~: flow std.Str
+  let over = m.over(1)
+  #   ^~~~: flow std.Int
+  let kept = m.Kept()
+  #   ^~~~: flow m.Kept
+  [hidden, paired, doubled, leaked, generic, over, kept]
+
+use

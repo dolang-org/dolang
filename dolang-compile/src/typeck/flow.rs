@@ -90,6 +90,7 @@ mod live;
 mod member;
 mod problem;
 mod rule;
+mod settle;
 mod shown;
 mod state;
 #[cfg(test)]
@@ -110,6 +111,8 @@ use problem::MemberUse;
 pub(super) use problem::Misfit;
 pub(crate) use problem::Problem;
 use rustc_hash::{FxHashMap, FxHashSet};
+use settle::{Blocked, Settling};
+pub(crate) use settle::{Settle, settle};
 pub(crate) use state::Fact;
 use state::{Contexts, CtxId, Group, Link, May, Operand, State, VarState};
 
@@ -549,6 +552,8 @@ struct Flow<'a, 'u> {
     /// The running function's variables that may have escaped at the running
     /// step, starting from its block's [`Block::escaped`](super::cfg::Block::escaped)
     escaped: BitBox,
+    /// In a settle run, the region it settles
+    settling: Option<Settling<'a>>,
 }
 
 impl<'a, 'u> Flow<'a, 'u> {
@@ -606,6 +611,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             results: None,
             logging: false,
             escaped: BitBox::default(),
+            settling: None,
         }
     }
 
@@ -622,7 +628,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             for &var in &func.vars {
                 let data = self.ir.var(var);
                 if data.flags.contains(VarFlags::EXPORTED) {
-                    let ty = data.annotation.unwrap_or(self.db.unknown());
+                    let ty = self.annotation(var).unwrap_or(self.db.unknown());
                     self.accumulator(var).ty = ty;
                 }
             }
@@ -657,6 +663,20 @@ impl<'a, 'u> Flow<'a, 'u> {
             };
             self.merge(func.entry, CtxId::ROOT, state);
         }
+        self.iterate();
+        let mut results = self.final_pass();
+        sort(&mut results.problems, &mut results.unresolved);
+        let accumulators = self
+            .accumulators
+            .into_iter()
+            .map(|(var, accumulator)| (var, accumulator.ty))
+            .collect();
+        (results, accumulators)
+    }
+
+    /// Iterate to a fixed point from the states merged so far, in rounds that
+    /// default what each function's earliest undecided block leaves undecided
+    fn iterate(&mut self) {
         loop {
             loop {
                 let next = if self.reversed {
@@ -668,6 +688,10 @@ impl<'a, 'u> Flow<'a, 'u> {
                     break;
                 };
                 self.run(block, ctx);
+                // A blocked settle run is abandoned
+                if self.blocked().is_some() {
+                    return;
+                }
             }
             // Upstream first: in each function, its earliest block with an undecided
             // rule. A later rule in that block runs after its inputs.
@@ -706,21 +730,27 @@ impl<'a, 'u> Flow<'a, 'u> {
                 self.enqueue(block, ctx);
             }
         }
+    }
+
+    /// Run every block once more over its final state, recording what each
+    /// reference and binding saw, and reporting. A settle run leaves out its
+    /// region's exit, which isn't in the region.
+    fn final_pass(&mut self) -> Results {
         trace!("final pass");
         self.results = Some(Results::default());
         let mut keys: Vec<_> = self.states.keys().copied().collect();
         keys.sort_by_key(|&(block, ctx)| (self.layout.blocks.rank[block.index()], block, ctx));
         for (block, ctx) in keys {
+            if self
+                .settling
+                .as_ref()
+                .is_some_and(|settling| settling.region.exit == block)
+            {
+                continue;
+            }
             self.run(block, ctx);
         }
-        let mut results = self.results.take().expect("recorded by the final pass");
-        sort(&mut results.problems, &mut results.unresolved);
-        let accumulators = self
-            .accumulators
-            .into_iter()
-            .map(|(var, accumulator)| (var, accumulator.ty))
-            .collect();
-        (results, accumulators)
+        self.results.take().expect("recorded by the final pass")
     }
 
     /// Whether the unit is strict, so the checker doesn't make up `Unknown` in it
@@ -819,7 +849,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         if !self.observing() || span == INVALID_SPAN || ty == self.db.bottom() {
             return;
         }
-        let (annotation, result) = match self.ir.var(var).annotation {
+        let (annotation, result) = match self.annotation(var) {
             Some(annotation) => (annotation, false),
             None => match self.result_annotation(var) {
                 Some(annotation) => (annotation, true),
@@ -899,7 +929,9 @@ impl<'a, 'u> Flow<'a, 'u> {
     }
 
     fn enqueue(&mut self, block: BlockId, ctx: CtxId) {
-        if !self.observing() {
+        // A settle run stops where its region ends
+        let exit = self.settling.as_ref().map(|settling| settling.region.exit);
+        if !self.observing() && exit != Some(block) {
             self.queue
                 .insert((self.layout.blocks.rank[block.index()], block, ctx));
         }
@@ -946,7 +978,15 @@ impl<'a, 'u> Flow<'a, 'u> {
         if self.observing() {
             return;
         }
-        self.mask(block, &mut state);
+        // A settle run reads its region's result at the exit, where nothing else
+        // does
+        if self
+            .settling
+            .as_ref()
+            .is_none_or(|settling| settling.region.exit != block)
+        {
+            self.mask(block, &mut state);
+        }
         let key = (block, ctx);
         let Some(entry) = self.states.get_mut(&key) else {
             trace!(
@@ -1109,7 +1149,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         let solver = self.solver(&gas);
         let joined = solver.lub(old, new);
         let widened = widening.join(&solver, old, new);
-        let result = match self.ir.var(var).annotation {
+        let result = match self.annotation(var) {
             Some(annotation) if widened != joined => annotation,
             _ => widened,
         };
@@ -1134,7 +1174,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
         let gas = Gas::default();
         let solver = self.solver(&gas);
-        let annotation = self.ir.var(var).annotation;
+        let annotation = self.annotation(var);
         let accumulator = self.accumulator(var);
         let old = accumulator.ty;
         let joined = solver.lub(old, ty);
@@ -1368,7 +1408,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let source = self.source_var(at, value);
                 let mut operands = Self::operands(state, holes(value));
                 let expected = match *pattern {
-                    Pattern::Bind(var) => self.ir.var(var).annotation,
+                    Pattern::Bind(var) => self.annotation(var),
                     Pattern::Unpack { .. } => None,
                 };
                 let ty = self.expect(at, state, &mut operands, value, expected);
@@ -1392,11 +1432,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let mut operands = Self::operands(state, count + holes(value));
                 match *target {
                     Target::Var { var, .. } => {
-                        let expected = self
-                            .ir
-                            .var(var)
-                            .annotation
-                            .or_else(|| self.result_annotation(var));
+                        let expected = self.annotation(var).or_else(|| self.result_annotation(var));
                         let ty = self.expect(at, state, &mut operands, value, expected);
                         if self.diverged.is_some() {
                             return false;
@@ -1443,7 +1479,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             }
             Step::Default { var, value } => {
                 let mut operands = Self::operands(state, holes(value));
-                let annotation = self.ir.var(*var).annotation;
+                let annotation = self.annotation(*var);
                 // Without an annotation, what the default leaves open may be
                 // what the item has where it's present
                 let present = (annotation.is_none() && self.ir.var(*var).owner == at.func)
@@ -1536,7 +1572,7 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// with the annotation.
     fn escape(&mut self, state: &State, var: VarId) {
         let ty = state.vars[self.slot(var)].ty;
-        let ty = match self.ir.var(var).annotation {
+        let ty = match self.annotation(var) {
             Some(annotation) if self.holds(ty, annotation) == Status::Contradicted => {
                 self.lub(annotation, ty)
             }
@@ -1552,8 +1588,7 @@ impl<'a, 'u> Flow<'a, 'u> {
     fn publish_field(&mut self, state: &mut State, var: VarId, span: Span, kind: EscapeKind) {
         let slot = self.slot(var);
         let ty = state.vars[slot].ty;
-        let data = self.ir.var(var);
-        let Some(annotation) = data.annotation else {
+        let Some(annotation) = self.annotation(var) else {
             state.vars[slot].ty = self.db.unknown();
             return;
         };
@@ -1561,7 +1596,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             && ty != self.db.bottom()
             && self.conform(ty, annotation, span) == Status::Contradicted
         {
-            let Origin::Field(key) = data.origin else {
+            let Origin::Field(key) = self.ir.var(var).origin else {
                 unreachable!("an `(init)` tracks fields")
             };
             let hash = if key.private { "#" } else { "" };
@@ -1652,7 +1687,7 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// narrows away; any other default is reported.
     fn default(&mut self, var: VarId, ty: TypeId, span: Span) -> TypeId {
         let decayed = self.db.decay(ty);
-        let Some(annotation) = self.ir.var(var).annotation else {
+        let Some(annotation) = self.annotation(var) else {
             return decayed;
         };
         if ty == self.db.bottom() || self.below(decayed, annotation) {
@@ -1692,7 +1727,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         if self.publishes(at, var) {
             // A value that doesn't fit the annotation is reported where it's
             // written, and every read elsewhere sees the annotation instead
-            let joined = match data.annotation {
+            let joined = match self.annotation(var) {
                 Some(annotation) if self.holds(ty, annotation) == Status::Contradicted => {
                     annotation
                 }
@@ -1932,6 +1967,16 @@ impl<'a, 'u> Flow<'a, 'u> {
             };
         }
         let fact = state.vars[self.slot(var)].fact();
+        // A settle run reads only what's annotated or assigned in its region, or
+        // an export's variable once its region settles
+        if fact.unassigned
+            && let Some(settling) = &self.settling
+        {
+            settling.block(match self.ir.settled_var(var) {
+                Some(decl) => Blocked::Decl(decl),
+                None => Blocked::Read,
+            });
+        }
         if !self.reads_through(var) {
             return fact;
         }

@@ -24,10 +24,13 @@ use crate::{
     typeck::{
         cfg::{
             Against, Assume, BlockId, Collection, EscapeKind, Expr, ExprKind, FuncId, FuncKind,
-            GroupId, Item, Origin, Pattern, PatternItem, PatternKey, Relation, Signature, Step,
-            Tag, Target, Terminal, VarFlags, VarId,
+            GroupId, Item, Member, Origin, Owner, Pattern, PatternItem, PatternKey, Region,
+            Relation, Signature, Step, Tag, Target, Terminal, VarFlags, VarId,
         },
-        elab::{Designated, Referent},
+        elab::{
+            DeclNode, Designated, Referent,
+            sig::{self, Form},
+        },
         flow::{class_object, function_value},
         r#type::{DeclId, DeclKind, Literal, TypeId},
     },
@@ -1653,9 +1656,13 @@ impl<'u> Scope<'_, '_, 'u> {
 
     /// Apply decorators to a value, the last one written first. The decorators are
     /// evaluated first, in order, as the tree has it.
-    fn decorate(&mut self, decorators: &'u [Decorator], value: Expr) -> Expr {
+    fn decorate(
+        &mut self,
+        decorators: impl IntoIterator<Item = &'u Decorator>,
+        value: Expr,
+    ) -> Expr {
         let decorators: Vec<_> = decorators
-            .iter()
+            .into_iter()
             .map(|decorator| (self.expr(&decorator.expr), decorator.open_span))
             .collect();
         decorators
@@ -1674,6 +1681,10 @@ impl<'u> Scope<'_, '_, 'u> {
         let decl = self.lower.decl(DeclKey::def(def));
         let id = self.function_value(decl, &def.func, false, self.ctx.class, None, def.ident.span);
         let value = expr(ExprKind::Lambda(id), self.locate(def.ident.span));
+        if let Some(var) = self.export_var(decl, &def.decorators, &def.ident) {
+            self.export_region(decl, var, &def.ident, &def.decorators, value, dest);
+            return;
+        }
         let value = self.decorate(&def.decorators, value);
         let declared = def
             .decorators
@@ -1744,14 +1755,15 @@ impl<'u> Scope<'_, '_, 'u> {
         let mut statics = Vec::new();
         for member in &class.body.members {
             match member {
-                ClassMember::Method(method) => {
+                ClassMember::Method(method) if method.type_only => {
                     self.decorator_evals(&method.decorators);
-                    if !method.type_only {
-                        let id = self.lower.decl(DeclKey::method(method));
-                        let init = is_init(method).then_some(class);
-                        let span = method.name_span;
-                        self.function_value(id, &method.func, false, Some(decl), init, span);
-                    }
+                }
+                ClassMember::Method(method) => {
+                    let id = self.lower.decl(DeclKey::method(method));
+                    let init = is_init(method).then_some(class);
+                    let span = method.name_span;
+                    let func = self.function_value(id, &method.func, false, Some(decl), init, span);
+                    self.method_region(method, id, decl, func);
                 }
                 ClassMember::Field(field) => {
                     self.decorator_evals(&field.decorators);
@@ -1786,6 +1798,14 @@ impl<'u> Scope<'_, '_, 'u> {
         // keeps the class object's type; the applications are still checked
         let source = &self.lower.db.declaration(decl).source;
         let marked = source.is_final || source.is_mixable;
+        if let Some(var) = self.export_var(decl, &class.decorators, &class.ident) {
+            self.export_region(decl, var, &class.ident, &class.decorators, value, None);
+            self.static_fields(var, span, statics);
+            if let Some(dest) = dest {
+                self.assign(dest, expr(ExprKind::Copy(var), self.locate(span)));
+            }
+            return;
+        }
         let value = if marked {
             let decorated = self.decorate(
                 &class.decorators,
@@ -1811,6 +1831,14 @@ impl<'u> Scope<'_, '_, 'u> {
             pattern: Pattern::Bind(var),
             value,
         });
+        self.static_fields(var, span, statics);
+        if let Some(dest) = dest {
+            self.assign(dest, expr(ExprKind::Copy(var), self.locate(span)));
+        }
+    }
+
+    /// Assign a class's static fields once its variable holds it
+    fn static_fields(&mut self, var: VarId, span: Span, statics: Vec<(Member, VarId)>) {
         for (member, value) in statics {
             self.emit(Step::Assign(Target::Field {
                 object: expr(ExprKind::Copy(var), self.locate(span)),
@@ -1819,9 +1847,110 @@ impl<'u> Scope<'_, '_, 'u> {
                 span: self.locate(span),
             }));
         }
-        if let Some(dest) = dest {
-            self.assign(dest, expr(ExprKind::Copy(var), self.locate(span)));
+    }
+
+    /// The variable of an exported def or class whose decorators settling finds
+    /// ([`sig::settles`]), if it has one
+    fn export_var(&self, decl: DeclId, decorators: &[Decorator], ident: &Ident) -> Option<VarId> {
+        if decorators.is_empty() || !sig::settles(self.lower.tables, decl) {
+            return None;
         }
+        self.var(ident)
+    }
+
+    /// Apply an exported def's or class's decorators to its value and bind its
+    /// variable, `var`, to what they give, in a region that settling may splice
+    /// out. The variable is hoisted, without an annotation until then.
+    fn export_region(
+        &mut self,
+        decl: DeclId,
+        var: VarId,
+        ident: &Ident,
+        decorators: &'u [Decorator],
+        value: Expr,
+        dest: Option<VarId>,
+    ) {
+        let span = self.locate(ident.span);
+        let decorator = self.locate(decorators[0].open_span);
+        self.region(decl, Owner::Export { span }, decorator, |scope| {
+            let value = scope.decorate(decorators, value);
+            scope.bind_name(ident, value, None, None);
+            var
+        });
+        if let Some(dest) = dest {
+            self.assign(dest, expr(ExprKind::Copy(var), span));
+        }
+    }
+
+    /// Lower what `body` does, which binds what a declaration's decorators give to
+    /// the variable it returns, in a region of blocks of its own
+    fn region(
+        &mut self,
+        decl: DeclId,
+        owner: Owner,
+        decorator: diag::Span,
+        body: impl FnOnce(&mut Self) -> VarId,
+    ) {
+        let entry = self.block();
+        self.end(Terminal::Branch {
+            target: entry,
+            span: diag::INVALID_SPAN,
+        });
+        self.switch(entry);
+        let result = body(self);
+        let exit = self.block();
+        self.end(Terminal::Branch {
+            target: exit,
+            span: diag::INVALID_SPAN,
+        });
+        self.switch(exit);
+        self.graph().add_region(Region {
+            decl,
+            owner,
+            decorator,
+            entry,
+            exit,
+            result,
+        });
+    }
+
+    /// Apply a method's decorators, but a leading designated `getter` or `setter`,
+    /// to its function value, in a region of blocks of their own that settling
+    /// may splice out. The function is created before, so its capture stays.
+    fn method_region(&mut self, method: &'u Method, decl: DeclId, class: DeclId, func: FuncId) {
+        let DeclNode::Methods(methods) = &self.lower.tables.decl(decl).node else {
+            unreachable!("a method is declared as one")
+        };
+        let surface = methods
+            .iter()
+            .find(|found| found.name.span == self.locate(method.name_span))
+            .expect("a method's signature is collected");
+        let form = sig::method_form(self.lower.tables, surface);
+        // `class` and `static` say the method's namespace, by syntax
+        let mut applied: Vec<_> = method
+            .decorators
+            .iter()
+            .filter(|decorator| {
+                !matches!(&decorator.expr, ast::Expr::Ident(ident)
+                    if matches!(self.text(ident.span), "class" | "static"))
+            })
+            .collect();
+        match form {
+            Form::Plain => return,
+            Form::Getter { .. } | Form::Setter { .. } => {
+                applied.remove(0);
+            }
+            Form::Decorated => {}
+        }
+        if applied.is_empty() {
+            return;
+        }
+        let value = synthetic(ExprKind::Lambda(func), self.locate(method.name_span));
+        let decorator = self.locate(applied[0].open_span);
+        self.region(decl, Owner::Method { class, func }, decorator, |scope| {
+            let value = scope.decorate(applied, value);
+            scope.temporary(value)
+        });
     }
 
     /// Evaluate member decorators, which only annotate their member

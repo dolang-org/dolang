@@ -433,7 +433,7 @@ impl Solver<'_> {
     fn unbound(&self, kind: &FoundKind) -> Result<Option<Signatures>, Issue> {
         match kind {
             FoundKind::Method(signatures) => Ok(Some(signatures.clone())),
-            FoundKind::Unknown => Ok(None),
+            FoundKind::Unknown(_) => Ok(None),
             FoundKind::Field(_) | FoundKind::Property { .. } => {
                 Err(Residual::Unsupported("a `(call)` that isn't a method").into())
             }
@@ -444,7 +444,7 @@ impl Solver<'_> {
     fn bound(&self, kind: &FoundKind) -> Result<Option<Signatures>, Issue> {
         let signatures = match kind {
             FoundKind::Method(signatures) => signatures,
-            FoundKind::Unknown => return Ok(None),
+            FoundKind::Unknown(_) => return Ok(None),
             FoundKind::Field(_) | FoundKind::Property { .. } => {
                 return Err(Residual::Unsupported("a `(call)` that isn't a method").into());
             }

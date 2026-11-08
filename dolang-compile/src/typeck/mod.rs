@@ -23,7 +23,7 @@ use std::{
     sync::Arc,
 };
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     Error, ErrorInfo, Mode, Unit, UnitId,
@@ -194,7 +194,8 @@ impl<'u> Check<'u> {
     ///
     /// Its types' well-formedness and its classes' conformance to their
     /// supertypes are not checked; that was done with its source. Its binders'
-    /// variance is taken as the typelib records it.
+    /// variance, and what its public decorated declarations settled to, are taken
+    /// as the typelib records them; its decorators are never evaluated.
     ///
     /// Diagnostics may locate spans of the module, by line and column; it has no
     /// source to show.
@@ -299,7 +300,6 @@ impl<'u> Check<'u> {
         elab::captures(&mut tables);
         elab::variances(&mut tables);
         elab::populate(&mut db, &mut tables, &mut diags);
-        let typelibs = self.typelibs.then(|| typelibs(&tables, self.pipes));
         db.seal();
         elab::specialize(&mut db, &tables, &mut diags);
         let mut recursion = Vec::new();
@@ -307,7 +307,11 @@ impl<'u> Check<'u> {
         // Every later pass runs in a fork per unit, so no unit's results depend on
         // what another interned
         let shared = db.share();
-        let mut outputs = check_units(&shared, &tables, self.threads, self.analysis);
+        let (mut outputs, settled) = check_units(&shared, &tables, self.threads, self.analysis);
+        // Written once settled, with what public declarations settled to
+        let typelibs = self
+            .typelibs
+            .then(|| typelibs(&tables, &settled, self.pipes));
         // Gather each kind of output across units, in the order the passes ran
         let mut unresolved = Vec::new();
         for output in &mut outputs {
@@ -473,8 +477,11 @@ enum Unwritten {
 /// from source, all of whose imports are checked with it
 fn typelibs(
     tables: &elab::Tables<'_>,
+    settled: &Settled,
     pipes: [(&str, &str); 2],
 ) -> Vec<Result<Vec<u8>, Unwritten>> {
+    let db = r#type::Database::fork(&settled.layer);
+    let names = typelib::exported(tables);
     // The units whose facts can depend on the pipes: the one declaring the
     // placeholders, and those importing it, directly or not
     let mut depends = vec![false; tables.shards.len()];
@@ -522,17 +529,47 @@ fn typelibs(
             let Some(kept) = &shard.kept else {
                 return Err(Unwritten::NotExportable);
             };
-            let base = tables.base(UnitId::from_index(index));
+            let unit = UnitId::from_index(index);
+            let base = tables.base(unit);
             let pipes = depends[index].then_some(pipes);
             Ok(typelib::write(
                 shard,
                 base,
                 kept,
                 &tables.facts[index],
+                &settled_facts(tables, &db, &names, settled, unit),
                 pipes,
             ))
         })
         .collect()
+}
+
+/// What a unit's public decorated declarations settled to, as its typelib writes
+/// it. Each is quotable, or was left unknown.
+fn settled_facts(
+    tables: &elab::Tables<'_>,
+    db: &r#type::Database,
+    names: &FxHashMap<r#type::DeclId, (&str, &str)>,
+    settled: &Settled,
+    unit: UnitId,
+) -> typelib::Settled {
+    let mut decls: Vec<_> = (settled.public.iter())
+        .copied()
+        .filter(|&decl| tables.unit_of(decl) == unit)
+        .collect();
+    decls.sort_unstable();
+    let mut encode = typelib::EncodeTypes::new(db, names);
+    let entries = decls
+        .into_iter()
+        .filter_map(|decl| {
+            let (form, ty) = typelib::Form::of(*settled.members.get(&decl)?);
+            Some((decl, form, encode.ty(ty)))
+        })
+        .collect();
+    typelib::Settled {
+        table: encode.finish(),
+        entries,
+    }
 }
 
 /// What checking a unit in forks of its own concludes
@@ -540,7 +577,8 @@ struct UnitOutput {
     wellformed: (Vec<elab::UnitDiag>, Vec<elab::Unresolved>),
     overrides: (Vec<elab::UnitDiag>, Vec<elab::Unresolved>),
     cfg: Option<cfg::Ir>,
-    /// The layer lowering interned in, which each flow run's fork is of
+    /// The layer over the one lowering interned in that settles decorated
+    /// members, which each flow run's fork is of
     layer: Option<Arc<r#type::Shared>>,
     /// Each flow run's fork, which its results are interned in, and its results,
     /// by run ID
@@ -666,6 +704,7 @@ const _: () = {
     const fn sync<T: Sync>() {}
     const fn owned<T: Send + 'static>() {}
     send::<UnitOutput>();
+    send::<Lowered>();
     sync::<elab::Tables<'_>>();
     // A unit's runs are analyzed on other threads than the one that lowered it
     send::<r#type::Database>();
@@ -678,35 +717,27 @@ const _: () = {
     sync::<Analysis>();
 };
 
-/// Check every unit with [`check_unit`], on a pool of `threads` threads, else the
-/// global pool, giving their outputs by [`UnitId`]. Flow logs facts only for an
-/// `analysis`.
+/// Check every unit, on a pool of `threads` threads, else the global pool,
+/// giving their outputs by [`UnitId`]: each unit is lowered by [`lower_unit`],
+/// every unit's decorator regions settled by [`settle_units`], and each
+/// unit finished by [`finish_unit`] with what they settled to, which it gives too. Flow logs facts
+/// only for an `analysis`.
 fn check_units(
     shared: &Arc<r#type::Shared>,
     tables: &elab::Tables<'_>,
     threads: Option<NonZeroUsize>,
     analysis: bool,
-) -> Vec<UnitOutput> {
+) -> (Vec<UnitOutput>, Settled) {
     let count = tables.shards.len();
-    let mut slots: Vec<Option<UnitOutput>> = (0..count).map(|_| None).collect();
-    let mut work: Vec<_> = slots
-        .iter_mut()
-        .enumerate()
-        .map(|(index, slot)| (UnitId::from_index(index), slot))
-        .collect();
-    // Largest first, so that no large unit starts last; typelibs have nothing of
-    // their own to check
-    work.sort_by_key(|(unit, _)| {
-        let info = tables.info(*unit);
-        std::cmp::Reverse(info.source.map_or(0, |source| source.file.newlines().len()))
-    });
-    // FIFO, so that the worker spawning the units takes them largest first too
     let run = || {
-        rayon::scope_fifo(|scope| {
-            for (unit, slot) in work {
-                scope.spawn_fifo(move |_| *slot = Some(check_unit(shared, tables, unit, analysis)));
-            }
-        })
+        let lowered = each(tables, vec![(); count], |unit, ()| {
+            lower_unit(shared, tables, unit)
+        });
+        let (lowered, settled) = settle_units(shared, tables, lowered, analysis);
+        let outputs = each(tables, lowered, |unit, lowered| {
+            finish_unit(tables, unit, lowered, &settled, analysis)
+        });
+        (outputs, settled)
     };
     // With traces, one thread, so that they don't interleave
     let threads = if cfg!(feature = "debug") && std::env::var_os("DOLANG_DEBUG").is_some() {
@@ -724,62 +755,408 @@ fn check_units(
         // spawn
         _ => run(),
     }
+}
+
+/// `f` of each unit and its item, `items` and the results both by [`UnitId`], in
+/// tasks on the current pool, returning once all are done
+fn each<I: Send, T: Send>(
+    tables: &elab::Tables<'_>,
+    items: Vec<I>,
+    f: impl Fn(UnitId, I) -> T + Sync,
+) -> Vec<T> {
+    let mut slots: Vec<Option<T>> = items.iter().map(|_| None).collect();
+    let mut work: Vec<_> = items
+        .into_iter()
+        .zip(slots.iter_mut())
+        .enumerate()
+        .map(|(index, (item, slot))| (UnitId::from_index(index), item, slot))
+        .collect();
+    // Largest first, so that no large unit starts last; typelibs have nothing of
+    // their own to check
+    work.sort_by_key(|(unit, ..)| {
+        let info = tables.info(*unit);
+        std::cmp::Reverse(info.source.map_or(0, |source| source.file.newlines().len()))
+    });
+    // FIFO, so that the worker spawning the units takes them largest first too
+    let f = &f;
+    rayon::scope_fifo(|scope| {
+        for (unit, item, slot) in work {
+            scope.spawn_fifo(move |_| *slot = Some(f(unit, item)));
+        }
+    });
     slots
         .into_iter()
-        .map(|output| output.expect("every unit is checked"))
+        .map(|slot| slot.expect("every unit is done"))
         .collect()
 }
 
-/// Check a unit with source, its declarations and bodies, in a new fork of
-/// `shared`; a typelib's were checked with its source. Flow logs facts only for
-/// an `analysis`.
-fn check_unit(
+/// What checking a unit concludes before its decorated members and exports settle
+struct Lowered {
+    wellformed: (Vec<elab::UnitDiag>, Vec<elab::Unresolved>),
+    /// A unit with source's CFG, and the layer lowering interned in
+    lowered: Option<(cfg::Ir, Arc<r#type::Shared>)>,
+    /// Each region that settled, by its index: what its declaration settled to,
+    /// and its settle run's fork, which that type is interned in, with what the
+    /// run concluded
+    settled: Vec<RegionSettled>,
+    /// How many of `settled` came before the current round
+    gathered: usize,
+    /// The regions to settle in the next round, by index
+    pending: Vec<usize>,
+    /// Each region, by index, whose last settle run reached the declaration not
+    /// settled yet
+    blocked: Vec<(usize, r#type::DeclId)>,
+}
+
+/// A region that settled
+struct RegionSettled {
+    index: usize,
+    member: r#type::SettledMember,
+    /// Whether its declaration is public, so that its typelib writes what it
+    /// settled to
+    public: bool,
+    /// Why what its public declaration settled to can't be quoted, if it can't,
+    /// which leaves it unknown
+    unquotable: Option<elab::quote::Unquotable>,
+    db: r#type::Database,
+    results: flow::Results,
+}
+
+/// What every unit's decorated members and exports settled to, in a layer over
+/// the shared base that holds their types, and those whose regions block on each
+/// other
+struct Settled {
+    layer: Arc<r#type::Shared>,
+    members: r#type::Settled,
+    /// The public declarations among them, settled from source
+    public: FxHashSet<r#type::DeclId>,
+    cycles: FxHashSet<r#type::DeclId>,
+}
+
+/// Check a unit's well-formedness and lower its bodies, each in a new fork of
+/// `shared`; a typelib's well-formedness was checked with its source, and it has
+/// no bodies
+fn lower_unit(shared: &Arc<r#type::Shared>, tables: &elab::Tables<'_>, unit: UnitId) -> Lowered {
+    if tables.info(unit).source.is_none() {
+        // The solver copes with an ill-formed type
+        return Lowered {
+            wellformed: (Vec::new(), Vec::new()),
+            lowered: None,
+            settled: Vec::new(),
+            gathered: 0,
+            pending: Vec::new(),
+            blocked: Vec::new(),
+        };
+    }
+    // A fork of its own, so that what it interns isn't in the layer
+    let mut wellformed = Vec::new();
+    let unresolved = elab::wellformed(
+        &r#type::Database::fork(shared),
+        tables,
+        unit,
+        &mut wellformed,
+    );
+    let db = r#type::Database::fork(shared);
+    let ir = lower::lower(tables, &db, unit);
+    debug_assert_eq!(ir.validate(), Ok(()), "lowering builds a valid graph");
+    #[cfg(debug_assertions)]
+    ir.check_stack_depths();
+    #[cfg(feature = "debug")]
+    if let Err(e) = export_dot(&ir, &db, tables.info(unit)) {
+        dolang_util::debug_eprintln!(topic: "dot", "Typing CFG DOT export failed: {e}");
+    }
+    let pending = (0..ir.regions().len()).collect();
+    Lowered {
+        wellformed: (wellformed, unresolved),
+        lowered: Some((ir, db.share())),
+        settled: Vec::new(),
+        gathered: 0,
+        pending,
+        blocked: Vec::new(),
+    }
+}
+
+/// Settle every unit's decorator regions, in rounds until none settles more. A
+/// region blocked on a declaration not settled yet runs again in the round after
+/// that declaration settles; one that otherwise can't settle stays, for flow to
+/// check. Then splice out the regions that settled.
+fn settle_units(
     shared: &Arc<r#type::Shared>,
     tables: &elab::Tables<'_>,
+    mut lowered: Vec<Lowered>,
+    analysis: bool,
+) -> (Vec<Lowered>, Settled) {
+    let mut settled = Settled {
+        layer: r#type::Database::fork(shared).share(),
+        members: r#type::Settled::default(),
+        public: FxHashSet::default(),
+        cycles: FxHashSet::default(),
+    };
+    // A typelib's are given, so no region waits on them
+    {
+        let db = r#type::Database::fork(shared);
+        settled.members = given(tables, &db);
+        settled.layer = db.share();
+    }
+    while lowered.iter().any(|lowered| !lowered.pending.is_empty()) {
+        lowered = each(tables, lowered, |_, lowered| {
+            settle_round(tables, lowered, &settled, analysis)
+        });
+        // Copied into a layer over the last, so that each round copies only
+        // what it settled
+        let mut db = r#type::Database::fork(&settled.layer);
+        let mut fresh = FxHashSet::default();
+        for lowered in &mut lowered {
+            let Some((ir, _)) = &lowered.lowered else {
+                continue;
+            };
+            for region in &lowered.settled[lowered.gathered..] {
+                let decl = ir.regions()[region.index].decl;
+                let mut copies = r#type::Copies::default();
+                let mut copier = db.copier(&region.db, &mut copies);
+                // What a typelib can't write, every importer reads as unknown
+                let member = match region.unquotable {
+                    Some(_) => region.member.map(|_| db.unknown()),
+                    None => region.member.map(|ty| copier.ty(ty)),
+                };
+                settled.members.insert(decl, member);
+                if region.public {
+                    settled.public.insert(decl);
+                }
+                fresh.insert(decl);
+            }
+            lowered.gathered = lowered.settled.len();
+        }
+        settled.layer = db.share();
+        for lowered in &mut lowered {
+            let (retry, blocked) = std::mem::take(&mut lowered.blocked)
+                .into_iter()
+                .partition(|(_, decl)| fresh.contains(decl));
+            lowered.blocked = blocked;
+            lowered.pending = retry.into_iter().map(|(index, _)| index).collect();
+        }
+    }
+    settled.cycles = cycles(&lowered);
+    for lowered in &mut lowered {
+        let Some((ir, _)) = &mut lowered.lowered else {
+            continue;
+        };
+        for region in &lowered.settled {
+            ir.splice(region.index);
+        }
+        debug_assert_eq!(ir.validate(), Ok(()), "splicing keeps a valid graph");
+    }
+    (lowered, settled)
+}
+
+/// Settle a lowered unit's pending regions, each in a fork of its own of the
+/// unit's layer with the members `settled` so far
+fn settle_round(
+    tables: &elab::Tables<'_>,
+    mut lowered: Lowered,
+    settled: &Settled,
+    analysis: bool,
+) -> Lowered {
+    let Some((ir, layer)) = &lowered.lowered else {
+        return lowered;
+    };
+    if lowered.pending.is_empty() {
+        return lowered;
+    }
+    let layer = with_settled(layer, settled);
+    let layout = flow::Layout::new(ir);
+    let runs = ir.runs();
+    let run = &runs[cfg::RunId::module().index()];
+    for index in std::mem::take(&mut lowered.pending) {
+        let region = &ir.regions()[index];
+        match flow::settle(ir, &layout, run, region, &layer, tables, analysis) {
+            flow::Settle::Settled(settled) => {
+                let (db, results, member, escaped) = *settled;
+                let public = public(tables, region);
+                let unquotable = escaped.or_else(|| {
+                    let (_, ty) = typelib::Form::of(member);
+                    public
+                        .then(|| elab::quote::unquotable(&db, tables, ty))
+                        .flatten()
+                });
+                lowered.settled.push(RegionSettled {
+                    index,
+                    member,
+                    public,
+                    unquotable,
+                    db,
+                    results,
+                });
+            }
+            flow::Settle::Blocked(decl) => lowered.blocked.push((index, decl)),
+            flow::Settle::Failed => {}
+        }
+    }
+    lowered
+}
+
+/// Whether a region's declaration is public, so that what it settles to is
+/// quoted in its unit's typelib: an export, or a public or special method of an
+/// exported class, as the typelib keeps
+fn public(tables: &elab::Tables<'_>, region: &cfg::Region) -> bool {
+    match region.owner {
+        cfg::Owner::Export { .. } => true,
+        cfg::Owner::Method { class, .. } => {
+            let elab::DeclNode::Methods(methods) = &tables.decl(region.decl).node else {
+                unreachable!("a method is declared as one")
+            };
+            let primary = (methods.iter())
+                .find(|method| !method.overload)
+                .unwrap_or(&methods[0]);
+            elab::sig::exported(tables, class) && (primary.public || primary.special.is_some())
+        }
+    }
+}
+
+/// What typelibs' decorated declarations settled to, interned in `db`: what each
+/// typelib records, and for a declaration it records nothing of, an unknown
+/// value
+fn given(tables: &elab::Tables<'_>, db: &r#type::Database) -> r#type::Settled {
+    let mut members = r#type::Settled::default();
+    let resolve = |module: &str, item: &str| {
+        let unit = (tables.shards.iter()).position(|shard| shard.info.module == Some(module))?;
+        match tables.export(UnitId::from_index(unit), item)?.target {
+            elab::Target::Local(elab::Referent::Decl(decl)) => Some(decl),
+            _ => None,
+        }
+    };
+    for (index, shard) in tables.shards.iter().enumerate() {
+        if shard.info.source.is_some() {
+            continue;
+        }
+        let facts = &tables.facts[index].settled;
+        let types = facts.table.intern(db, resolve);
+        for &(decl, form, ty) in &facts.entries {
+            members.insert(decl, form.member(types[ty as usize]));
+        }
+        let base = tables.base(UnitId::from_index(index)).decls;
+        for decl in (base..base + shard.decls.len()).map(r#type::DeclId::from_index) {
+            if db.declaration(decl).source.decorated {
+                members
+                    .entry(decl)
+                    .or_insert(r#type::SettledMember::Value(db.unknown()));
+            }
+        }
+    }
+    members
+}
+
+/// A layer over a unit's `layer` with the members `settled` copied into it
+fn with_settled(layer: &Arc<r#type::Shared>, settled: &Settled) -> Arc<r#type::Shared> {
+    let mut db = r#type::Database::fork(layer);
+    let from = r#type::Database::fork(&settled.layer);
+    let mut copies = r#type::Copies::default();
+    let mut copier = db.copier(&from, &mut copies);
+    let members = settled
+        .members
+        .iter()
+        .map(|(&decl, &member)| (decl, member.map(|ty| copier.ty(ty))))
+        .collect();
+    db.settle(Arc::new(members));
+    db.share()
+}
+
+/// The declarations of regions still blocked that block on each other, each
+/// region blocked on the declaration it reached first, or its own
+fn cycles(lowered: &[Lowered]) -> FxHashSet<r#type::DeclId> {
+    let waits: FxHashMap<r#type::DeclId, r#type::DeclId> = lowered
+        .iter()
+        .filter_map(|lowered| Some((lowered.lowered.as_ref()?, &lowered.blocked)))
+        .flat_map(|((ir, _), blocked)| {
+            blocked
+                .iter()
+                .map(|&(index, on)| (ir.regions()[index].decl, on))
+        })
+        .collect();
+    let mut cycles = FxHashSet::default();
+    let mut done = FxHashSet::default();
+    for &start in waits.keys() {
+        // Follow what each waits on until it ends, or comes back to the path
+        let mut path = Vec::new();
+        let mut at = start;
+        while !done.contains(&at) && !path.contains(&at) {
+            path.push(at);
+            match waits.get(&at) {
+                Some(&next) => at = next,
+                None => break,
+            }
+        }
+        if let Some(from) = path.iter().position(|&decl| decl == at) {
+            cycles.extend(path[from..].iter().copied());
+        }
+        done.extend(path);
+    }
+    cycles
+}
+
+/// Check a lowered unit's overrides and bodies with every unit's decorated members
+/// and exports `settled`, copied into a layer over the one it was lowered in that
+/// each check forks; a typelib's overrides were checked with its source, and it has no bodies
+fn finish_unit(
+    tables: &elab::Tables<'_>,
     unit: UnitId,
+    lowered: Lowered,
+    settled: &Settled,
     analysis: bool,
 ) -> UnitOutput {
-    // A fork of its own, so that what it interns isn't in the layer
-    let db = r#type::Database::fork(shared);
-    let source = tables.info(unit).source;
-    // A typelib's well-formedness and overrides were checked with its source;
-    // the solver copes with an ill-formed type, and a nonconforming member only
-    // misleads checks against it
-    let mut wellformed = Vec::new();
-    let wellformed_unresolved = match source {
-        Some(_) => elab::wellformed(&db, tables, unit, &mut wellformed),
-        None => Vec::new(),
+    let Lowered {
+        wellformed,
+        lowered,
+        settled: regions,
+        ..
+    } = lowered;
+    let Some((ir, layer)) = lowered else {
+        // A nonconforming member only misleads checks against it
+        return UnitOutput {
+            wellformed,
+            overrides: (Vec::new(), Vec::new()),
+            cfg: None,
+            layer: None,
+            runs: Vec::new(),
+        };
     };
+    let layer = with_settled(&layer, settled);
+    let unquotable = regions
+        .iter()
+        .filter_map(|settled| {
+            let region = &ir.regions()[settled.index];
+            Some((region.decl, (region.decorator, settled.unquotable?)))
+        })
+        .collect();
     let mut overrides = Vec::new();
-    let overrides_unresolved = match source {
-        Some(_) => elab::overrides(&db, tables, unit, &mut overrides),
-        None => Vec::new(),
-    };
-    // A unit's bodies are checked only from its source, in runs that each have a
-    // fork of the layer lowering interned in
-    let (cfg, layer, runs) = match source {
-        Some(_) => {
-            let db = r#type::Database::fork(shared);
-            let ir = lower::lower(tables, &db, unit);
-            debug_assert_eq!(ir.validate(), Ok(()), "lowering builds a valid graph");
-            #[cfg(debug_assertions)]
-            ir.check_stack_depths();
-            #[cfg(feature = "debug")]
-            if let Err(e) = export_dot(&ir, &db, tables.info(unit)) {
-                dolang_util::debug_eprintln!(topic: "dot", "Typing CFG DOT export failed: {e}");
-            }
-            let layer = db.share();
-            let layout = flow::Layout::new(&ir);
-            let runs = flow::analyze(&ir, &layout, &ir.runs(), &layer, tables, analysis);
-            (Some(ir), Some(layer), runs)
-        }
-        None => (None, None, Vec::new()),
-    };
+    let mut unresolved = elab::settled_members(
+        &r#type::Database::fork(&layer),
+        tables,
+        unit,
+        &settled.cycles,
+        &unquotable,
+        &mut overrides,
+    );
+    unresolved.extend(elab::overrides(
+        &r#type::Database::fork(&layer),
+        tables,
+        unit,
+        &mut overrides,
+    ));
+    // Each run has a fork of the layer of its own
+    let layout = flow::Layout::new(&ir);
+    let mut runs = flow::analyze(&ir, &layout, &ir.runs(), &layer, tables, analysis);
+    // A settled region's run is the only one that saw its blocks
+    runs.extend(
+        regions
+            .into_iter()
+            .map(|region| (region.db, region.results)),
+    );
     UnitOutput {
-        wellformed: (wellformed, wellformed_unresolved),
-        overrides: (overrides, overrides_unresolved),
-        cfg,
-        layer,
+        wellformed,
+        overrides: (overrides, unresolved),
+        cfg: Some(ir),
+        layer: Some(layer),
         runs,
     }
 }

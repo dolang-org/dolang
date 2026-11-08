@@ -1,0 +1,14 @@
+# Decorators, one of them a decorated export, for another unit to use.
+
+pub def same[F] f @ F -> F
+  f
+
+#[same]
+pub def deco[F] f @ F -> F
+  f
+
+pub class Registry
+  pub def wrap[F] _self f @ F -> F
+    f
+
+pub let registry @ Registry = Registry()

@@ -1,5 +1,5 @@
 # A getter and a setter of one name make one computed field, apart from a private
-# member of the same spelling. A decorator the checker doesn't know leaves a value
+# member of the same spelling. A decorator without annotations gives a value
 # of unknown type.
 
 pub class Num

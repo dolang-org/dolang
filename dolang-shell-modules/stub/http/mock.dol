@@ -116,7 +116,6 @@ pub class Mock
 # A running mock HTTP server, bound to a random local port.
 pub class Server: Func
   # Starts a server.
-  #[class]
   @def (call) self -> Server
 
   # Starts a server and calls `func` with it. The server is shut down when
@@ -128,7 +127,6 @@ pub class Server: Func
   # http.mock.Server do |server|
   #   echo $server.url
   # ```
-  #[class]
   @def (call)[R]
     self
     # Called with the `Server`.

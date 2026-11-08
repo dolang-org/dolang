@@ -1,0 +1,11 @@
+# A decorator that is itself a decorated method, for another unit to use.
+
+pub def same[F] f @ F -> F
+  f
+
+pub class Registry
+  #[same]
+  pub def deco[F] _self f @ F -> F
+    f
+
+pub let registry @ Registry = Registry()

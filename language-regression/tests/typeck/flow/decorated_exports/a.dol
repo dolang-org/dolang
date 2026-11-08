@@ -1,0 +1,13 @@
+# Exports whose decorators reach each other across modules checked together
+# are diagnosed, and their values are of unknown type.
+
+import b
+
+#[b.g]
+pub def f[F] x @ F -> F
+  # error: a def's decorators depend on what they give
+  #   --> a.dol:LL:LL
+  #    |
+  # LL | pub def f[F] x @ F -> F
+  #    |         ^
+  x

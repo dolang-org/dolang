@@ -1,0 +1,8 @@
+# An importer reads a settled type naming a pipe placeholder, which stands for
+# the nominee, whether it checks the module from source or reads its typelib.
+
+import m
+
+let counted = m.counted
+#   ^~~~~~~: flow (<strand.PipeReceiver[std.Int], >Unknown) -> std.Int
+counted

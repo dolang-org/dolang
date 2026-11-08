@@ -1,7 +1,12 @@
+use std::sync::Arc;
+
 use super::*;
 use crate::typeck::{
-    solver::member::{Found, FoundKind, Lookup},
-    r#type::{Member, MemberKey, Scope, Supertype},
+    solver::{
+        conform::RequirementKind,
+        member::{Found, FoundKind, Lookup},
+    },
+    r#type::{Member, MemberKey, Scope, SettledMember, Supertype},
 };
 
 /// A class whose members are added before it is populated
@@ -145,6 +150,12 @@ impl Class {
                 public: !key.private,
             },
         ));
+    }
+
+    /// Make it a protocol
+    pub(super) fn protocol(mut self) -> Self {
+        self.source.kind = DeclKind::Protocol;
+        self
     }
 
     /// Make it a class the runtime forbids subclassing
@@ -800,4 +811,49 @@ fn only_runtime_supertypes_provide_implementations() {
         s.inherits(s.closed(real), base_id),
         Ok(Reach::Reached(_))
     ));
+}
+
+#[test]
+fn settled_members_meet_requirements() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    // protocol Wrapping: pub field wrapped @ Int
+    let mut wrapping = Class::new(&mut db, "Wrapping", vec![]).protocol();
+    wrapping.field(key(&db, "wrapped"), int, Scope::Instance);
+    let wrapping = wrapping.finish(&mut db, vec![]);
+    // class Wrapper: @Wrapping, whose `wrapped` method is decorated
+    let mut wrapper = Class::new(&mut db, "Wrapper", vec![]);
+    let method = wrapper.function(&mut db, vec![], &[], int);
+    wrapper.decorated(key(&db, "wrapped"), method);
+    let wrapper = wrapper.finish(&mut db, vec![]);
+    db.seal();
+    let function = db.declaration(method).ty;
+    let base = db.share();
+
+    let requirements = |db: &Database| {
+        let gas = Gas::default();
+        let solver = Solver::new(db, &gas);
+        solver
+            .conformance(wrapper, solver.closed(wrapping), true)
+            .unwrap()
+    };
+    let settled = |member| {
+        let mut layer = Database::fork(&base);
+        layer.settle(Arc::new(FxHashMap::from_iter([(method, member)])));
+        requirements(&Database::fork(&layer.share()))
+    };
+    // Unsettled, or settled to what isn't a function, its value is unknown, which
+    // meets anything
+    assert!(requirements(&Database::fork(&base)).is_empty());
+    assert!(settled(SettledMember::Value(str)).is_empty());
+    // Settled to a function, it's a method, which isn't the field required
+    let settled = settled(SettledMember::Method(function));
+    let [requirement] = settled.as_slice() else {
+        panic!("one requirement: {settled:?}")
+    };
+    assert!(
+        !matches!(&requirement.kind, RequirementKind::Relate(_)),
+        "{requirement:?}"
+    );
 }

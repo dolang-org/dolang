@@ -88,7 +88,8 @@ and a field's type, with names linked to their documentation:
 - Write a declaration without parameters as `def name()`; `def name` directly
   followed by its body is a syntax error.
 - A constructor is the special method `(init)`. A method on the type object is
-  marked `#[class]` and still declares `self`.
+  marked `#[class]` and still declares `self`. Its `@def` overloads take that
+  scope from it and can't be decorated.
 - Qualify a superclass from another module: `class Error: std.RuntimeError`. A
   class names one runtime supertype; name any other type it implements as a
   type-only supertype, as in `class Blake3: @State`.

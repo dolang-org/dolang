@@ -1,0 +1,2 @@
+pipes: proc.PipeSender proc.PipeReceiver
+validated: true

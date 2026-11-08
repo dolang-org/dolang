@@ -13,7 +13,8 @@ mod judge;
 mod kind;
 mod overrides;
 mod populate;
-mod sig;
+pub(crate) mod quote;
+pub(crate) mod sig;
 mod specialize;
 pub(crate) mod surface;
 mod variance;
@@ -33,6 +34,7 @@ use super::report::{Annotation, Report};
 use super::r#type::{
     Database, DeclId, DeclKind, Intrinsic, Kind, Scope, TypeId, UnitId, UnitSpan, Variance,
 };
+use super::typelib;
 use crate::{
     RestKind, Unit, ast,
     diag::{AnnotationKind, NoteKind, Severity, Span},
@@ -55,7 +57,7 @@ pub(crate) use populate::populate;
 pub(crate) use sig::signatures;
 pub(crate) use specialize::specialize;
 pub(crate) use variance::variances;
-pub(crate) use wellformed::{Unresolved, recursion, wellformed};
+pub(crate) use wellformed::{Unresolved, recursion, settled_members, wellformed};
 
 /// The names of `strand`'s pipe placeholders, sender first
 pub(crate) const PIPES: [&str; 2] = ["PipeSender", "PipeReceiver"];
@@ -175,6 +177,9 @@ pub(crate) struct Facts {
     /// The binder group of each declaration signature: the binders it is lifted
     /// over, its written binders, then its implicit binders
     pub(crate) groups: FxHashMap<(DeclId, usize), Vec<BinderRef>>,
+    /// What a typelib's public decorated declarations settled to, which a check
+    /// takes as given. Empty for a unit with source, whose own settle.
+    pub(crate) settled: typelib::Settled,
 }
 
 /// Where a unit's ranges of IDs start
@@ -1173,6 +1178,98 @@ impl Report for AccessorChannel {
 
     fn span(&self) -> Span {
         self.span
+    }
+}
+
+/// A decorated method whose decorators give something other than a function,
+/// which the class can't install, or an overloaded def whose implementation's
+/// do, which its overloads can't describe
+struct SettledValue {
+    span: Span,
+    /// What's decorated: a method, getter, setter or overloaded def
+    what: &'static str,
+}
+
+impl Report for SettledValue {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "a {}'s decorators must give a function", self.what)
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+/// A decorated method or export whose decorators reach its own declaration,
+/// through those of others or not, so they can't settle
+struct SettledCycle {
+    span: Span,
+    /// What's decorated: a method, getter, setter, def or class
+    what: &'static str,
+}
+
+impl Report for SettledCycle {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "a {}'s decorators depend on what they give", self.what)
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+/// A public decorated declaration whose decorators settled to what no typelib
+/// can write, so that its importers read it as unknown
+struct UnquotableResult {
+    span: Span,
+    /// What's decorated: a method, getter, setter, def or class
+    what: &'static str,
+    /// Why it can't be written: a private declaration's kind and name, or the part
+    /// that no type expression writes
+    why: Result<&'static str, (&'static str, String)>,
+}
+
+impl Report for UnquotableResult {
+    fn severity(&self) -> Severity {
+        Severity::Warning
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        match &self.why {
+            Ok(form) => write!(
+                w,
+                "a {}'s decorators give a type no typelib can write: {form}",
+                self.what
+            ),
+            Err((kind, name)) => write!(
+                w,
+                "a {}'s decorators give a type naming private {kind} `{name}`",
+                self.what
+            ),
+        }
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+
+    fn notes(&self) -> Vec<(NoteKind, String)> {
+        let mut notes = vec![(
+            NoteKind::Info,
+            "an importer sees it as `Unknown`".to_owned(),
+        )];
+        if let Err((_, name)) = &self.why {
+            notes.push((NoteKind::Help, format!("declare `{name}` with `pub`")));
+        }
+        notes
     }
 }
 

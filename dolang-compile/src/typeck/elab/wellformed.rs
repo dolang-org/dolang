@@ -22,7 +22,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
     AccessorChannel, BadRecursion, BoundViolation, DeclNode, Designated, Diag, Fill, Head,
-    ParameterKeys, Referent, Role, Tables, UnitDiag,
+    ParameterKeys, Referent, Role, SettledCycle, SettledValue, Tables, UnitDiag, UnquotableResult,
+    interface,
+    quote::Unquotable,
     sig::{self, Form},
     surface::{Class, Interned, Ref, TypeArg, TypeExpr, TypeParam, TypeQuant},
 };
@@ -32,8 +34,8 @@ use crate::{
         report::Report,
         solver::{Gas, Issue, Provenance, Residual, Solver, Status},
         r#type::{
-            Argument, Binder, Binding, BoundRef, Database, DeclId, Function, Rest, Type, TypeId,
-            UnitId, UnitSpan,
+            Argument, Binder, Binding, BoundRef, Database, DeclId, Function, Rest, SettledMember,
+            Type, TypeId, UnitId, UnitSpan,
         },
     },
 };
@@ -68,6 +70,126 @@ pub(crate) fn wellformed(
     for id in tables.unit_decl_ids(unit) {
         for sig in 0..tables.sig_count(id) {
             check.signature(id, sig);
+        }
+    }
+    check.unresolved
+}
+
+/// Check what a unit's decorated methods settled to, once their members are
+/// settled: each must be a function, since a class installs nothing else, as
+/// must an overloaded def's implementation, which its overloads describe, and
+/// each channel a decorated getter's or setter's function writes must admit
+/// `Value`, as a written accessor's must. One that settled to what's unknown
+/// passes. A decorated method, or an export whose decorators settling finds
+/// ([`sig::settles`]), that didn't settle is diagnosed if it's in `cycles`, its
+/// region blocked on its own declaration; otherwise, in a strict unit, it's
+/// undecided, since its value is of unknown type. One in `unquotable`, a public
+/// declaration whose decorators gave what no typelib can write, is diagnosed at
+/// its first decorator.
+pub(crate) fn settled_members(
+    db: &Database,
+    tables: &Tables<'_>,
+    unit: UnitId,
+    cycles: &FxHashSet<DeclId>,
+    unquotable: &FxHashMap<DeclId, (Span, Unquotable)>,
+    diags: &mut Vec<UnitDiag>,
+) -> Vec<Unresolved> {
+    let strict = tables.info(unit).strict;
+    let mut check = Check {
+        db,
+        tables,
+        diags,
+        unresolved: Vec::new(),
+    };
+    for id in tables.unit_decl_ids(unit) {
+        let (what, accessor) = match &tables.decl(id).node {
+            DeclNode::Methods(methods) => {
+                let primary = methods
+                    .iter()
+                    .find(|method| !method.overload)
+                    .unwrap_or(&methods[0]);
+                match sig::method_form(tables, primary) {
+                    Form::Getter { decorated: true } => ("getter", Some(false)),
+                    Form::Setter { decorated: true } => ("setter", Some(true)),
+                    Form::Decorated => ("method", None),
+                    Form::Plain | Form::Getter { .. } | Form::Setter { .. } => continue,
+                }
+            }
+            DeclNode::Defs(_) if sig::settles(tables, id) => ("def", None),
+            DeclNode::Class(_) if sig::settles(tables, id) => ("class", None),
+            _ => continue,
+        };
+        let span = db.declaration(id).source.span;
+        let Some(settled) = db.settled(id) else {
+            // Its value is of unknown type
+            if cycles.contains(&id) {
+                let diag = SettledCycle {
+                    span: span.span,
+                    what,
+                };
+                check.report(Verdict::Fails, span, diag);
+            } else if strict {
+                let residual = Residual::Unsupported("decorators that don't settle");
+                check.unresolved.push(Unresolved { span, residual });
+            }
+            continue;
+        };
+        // What a typelib can't write is unknown, whatever it is
+        if let Some(&(decorator, why)) = unquotable.get(&id) {
+            let why = match why {
+                Unquotable::Form(form) => Ok(form),
+                Unquotable::Private(private) => {
+                    let declaration = tables.decl(private);
+                    let name = declaration
+                        .name
+                        .map_or("", |name| tables.name(declaration.unit, name));
+                    Err((interface::kind_word(declaration.kind), name.to_owned()))
+                }
+            };
+            let diag = UnquotableResult {
+                span: decorator,
+                what,
+                why,
+            };
+            let span = UnitSpan {
+                unit,
+                span: decorator,
+            };
+            check.report(Verdict::Fails, span, diag);
+            continue;
+        }
+        let ty = match settled {
+            // An export's value may be anything
+            SettledMember::Declared(_) => continue,
+            SettledMember::Method(ty) => ty,
+            // What's unknown may be a function
+            SettledMember::Value(ty) if matches!(db.ty(ty), Type::Unknown(_)) => continue,
+            SettledMember::Value(_) => {
+                let diag = SettledValue {
+                    span: span.span,
+                    what,
+                };
+                check.report(Verdict::Fails, span, diag);
+                continue;
+            }
+        };
+        // Its channels may name its own binders, which a check can't hold
+        let (Some(setter), Type::Function(function)) = (accessor, db.ty(ty)) else {
+            continue;
+        };
+        let class = tables.decl(id).outer.map(|(class, _)| class);
+        let channels = [(true, function.input), (false, function.output)];
+        for (input, channel) in channels {
+            let Some(channel) = channel else {
+                continue;
+            };
+            let verdict = check.relate(class, db.top(), channel);
+            let diag = AccessorChannel {
+                span: span.span,
+                setter,
+                input,
+            };
+            check.report(verdict, span, diag);
         }
     }
     check.unresolved
@@ -433,10 +555,12 @@ impl Check<'_, '_> {
             return;
         };
         let method = &methods[sig];
+        // A decorated accessor's channels are its settled type's, checked once
+        // it's settled
         let setter = match sig::method_form(self.tables, method) {
-            Form::Getter => false,
-            Form::Setter => true,
-            Form::Plain | Form::Unknown => return,
+            Form::Getter { decorated: false } => false,
+            Form::Setter { decorated: false } => true,
+            Form::Plain | Form::Getter { .. } | Form::Setter { .. } | Form::Decorated => return,
         };
         let channels = [
             (true, method.sig.input, function.input),

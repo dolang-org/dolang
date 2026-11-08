@@ -1187,6 +1187,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                 },
                 is_final: false,
                 is_mixable: false,
+                decorated: false,
             },
             ty: self.db.intern(Type::Quantified {
                 binders: binders.into(),
@@ -1208,6 +1209,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                 let mut declaration = self.declaration((id, 0), decl.kind, Kind::Type, body);
                 declaration.source.is_final = sig::decorated(tables, class, Designated::Final);
                 declaration.source.is_mixable = sig::decorated(tables, class, Designated::Mixable);
+                declaration.source.decorated = sig::replaced(tables, id);
                 let mut supertypes = Vec::new();
                 for super_ref in &class.supers {
                     let span = super_ref.head.span;
@@ -1284,8 +1286,20 @@ impl<'t, 'u> Populate<'t, 'u> {
                         input: Some(input),
                         output: Some(output),
                     }));
-                    let declaration =
+                    let mut declaration =
                         self.declaration((id, sig), DeclKind::Function, Kind::Type, body);
+                    // Member lookup reads the declaration of a method's first
+                    // signature, which shares its implementation's form
+                    declaration.source.decorated = match &decl.node {
+                        DeclNode::Methods(methods) => {
+                            let primary = methods
+                                .iter()
+                                .find(|method| !method.overload)
+                                .unwrap_or(&methods[0]);
+                            sig::method_form(tables, primary).decorated()
+                        }
+                        _ => sig::replaced(tables, id),
+                    };
                     let declared = tables
                         .sig_decl((id, sig))
                         .expect("every signature is declared");
@@ -1515,14 +1529,14 @@ impl<'t, 'u> Populate<'t, 'u> {
                             let (_, found) = &mut members[*entry.get()];
                             match (form, found) {
                                 (
-                                    Form::Getter,
+                                    Form::Getter { .. },
                                     Member::Property {
                                         getter: slot @ None,
                                         ..
                                     },
                                 )
                                 | (
-                                    Form::Setter,
+                                    Form::Setter { .. },
                                     Member::Property {
                                         setter: slot @ None,
                                         ..
@@ -1539,13 +1553,13 @@ impl<'t, 'u> Populate<'t, 'u> {
                                     scope,
                                     public,
                                 },
-                                Form::Getter | Form::Setter => Member::Property {
-                                    getter: (form == Form::Getter).then_some(decl),
-                                    setter: (form == Form::Setter).then_some(decl),
+                                Form::Getter { .. } | Form::Setter { .. } => Member::Property {
+                                    getter: matches!(form, Form::Getter { .. }).then_some(decl),
+                                    setter: matches!(form, Form::Setter { .. }).then_some(decl),
                                     scope,
                                     public,
                                 },
-                                Form::Unknown => Member::Decorated {
+                                Form::Decorated => Member::Decorated {
                                     decl,
                                     scope,
                                     public,

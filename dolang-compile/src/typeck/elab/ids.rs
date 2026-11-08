@@ -63,6 +63,7 @@ impl Facts {
             captured,
             lifted,
             groups,
+            settled,
         } = self;
         aliases.visit(ids);
         binder_kinds.visit(ids);
@@ -73,6 +74,9 @@ impl Facts {
         captured.visit(ids);
         lifted.visit(ids);
         groups.visit(ids);
+        for (decl, ..) in &mut settled.entries {
+            ids.decl(decl);
+        }
     }
 }
 

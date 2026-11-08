@@ -111,6 +111,7 @@ fn reserve(db: &mut Database, kind: DeclKind, name: &str) -> (DeclId, TypeId, De
         },
         is_final: false,
         is_mixable: false,
+        decorated: false,
     };
     (id, ty, source)
 }

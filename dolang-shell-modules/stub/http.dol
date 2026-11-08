@@ -608,7 +608,6 @@ pub class Client: Func
   #   session.get https://example.com/dashboard do |resp|
   #     echo $resp.status
   # ```
-  #[class]
   @def (call)
     self
     # Path to a Unix domain socket to connect
@@ -655,7 +654,6 @@ pub class Client: Func
   #
   # Browser builds accept only `func`; any other option raises
   # [`UnsupportedError`](std.UnsupportedError).
-  #[class]
   @def (call)[R]
     self
     # Path to a Unix domain socket to connect

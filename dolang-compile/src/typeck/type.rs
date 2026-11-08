@@ -862,6 +862,13 @@ pub(crate) struct DeclSource {
     /// that it takes the position of its nearest disjoint ancestor (see
     /// [`Database::disjoint_ancestor`])
     pub(crate) is_mixable: bool,
+    /// Whether its decorators replace its value: a method's besides a leading
+    /// designated `getter` or `setter`, so that member lookup reads what they
+    /// settle to, or a def's or class's ([`sig::replaced`]), so that its value
+    /// is what they settle to
+    ///
+    /// [`sig::replaced`]: crate::typeck::elab::sig::replaced
+    pub(crate) decorated: bool,
 }
 
 /// A nominal declaration's supertype
@@ -1095,6 +1102,38 @@ pub(crate) struct Shared {
     declared: Option<Declared>,
     fixed: Fixed,
     unsupported: u32,
+    /// What its layer settled decorated members to, else its parent's
+    settled: Option<Arc<Settled>>,
+}
+
+/// What decorated members and exports settled to, by their declarations, each a
+/// type of the layer that holds it and the layers over it
+pub(crate) type Settled = FxHashMap<DeclId, SettledMember>;
+
+/// What a decorated method's member, or exported def or class, settled to. A
+/// member's type is interpreted where its class's binder group is, as a method's
+/// signature split off its class's binders is ([`Database::split`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SettledMember {
+    /// A callable, which the class installs as a method, or a decorated
+    /// accessor's function
+    Method(TypeId),
+    /// Any other value, which the class can't install. It's diagnosed, and the
+    /// member or accessor is unknown.
+    Value(TypeId),
+    /// An exported def's or class's value, whatever it is, at the top level
+    Declared(TypeId),
+}
+
+impl SettledMember {
+    /// The same form, of `f` of its type
+    pub(crate) fn map(self, f: impl FnOnce(TypeId) -> TypeId) -> Self {
+        match self {
+            Self::Method(ty) => Self::Method(f(ty)),
+            Self::Value(ty) => Self::Value(f(ty)),
+            Self::Declared(ty) => Self::Declared(f(ty)),
+        }
+    }
 }
 
 /// What the root of a chain of shared databases holds besides its types and symbols
@@ -1172,6 +1211,14 @@ impl Shared {
             })
     }
 
+    fn settled(&self) -> Option<&Settled> {
+        match (&self.settled, &self.parent) {
+            (Some(settled), _) => Some(settled),
+            (None, Some(parent)) => parent.settled(),
+            (None, None) => None,
+        }
+    }
+
     fn is_fresh_symbol(&self, id: SymbolId) -> bool {
         match &self.parent {
             Some(parent) if id.index() < parent.symbol_count => parent.is_fresh_symbol(id),
@@ -1208,6 +1255,8 @@ pub(crate) struct Database {
     fixed: Fixed,
     /// How many unsupported stand-ins have been interned
     unsupported: Cell<u32>,
+    /// In a fork, what it settled decorated members to, which its layer keeps
+    settled: Option<Arc<Settled>>,
 }
 
 const _: () = {
@@ -1243,6 +1292,7 @@ impl Default for Database {
             gradual,
             symbols: intern::Table::new(),
             unsupported: Cell::new(0),
+            settled: None,
         }
     }
 }
@@ -1296,6 +1346,7 @@ impl Database {
             declared,
             fixed: self.fixed,
             unsupported: self.unsupported.get(),
+            settled: self.settled,
         })
     }
 
@@ -1310,7 +1361,28 @@ impl Database {
             symbols: intern::Table::new(),
             fixed: base.fixed,
             unsupported: Cell::new(base.unsupported),
+            settled: None,
         }
+    }
+
+    /// Settle decorated members in a fork once, for it and what forks its layer.
+    /// Each type must be one it reads.
+    pub(crate) fn settle(&mut self, settled: Arc<Settled>) {
+        assert!(
+            matches!(self.phase, Phase::Fork(_)),
+            "only a fork settles members"
+        );
+        assert!(self.settled.is_none(), "members already settled");
+        self.settled = Some(settled);
+    }
+
+    /// What a decorated method's member settled to, if anything did
+    pub(crate) fn settled(&self, decl: DeclId) -> Option<SettledMember> {
+        let settled = match &self.settled {
+            Some(settled) => Some(&**settled),
+            None => self.base().and_then(Shared::settled),
+        };
+        settled?.get(&decl).copied()
     }
 
     fn base(&self) -> Option<&Shared> {

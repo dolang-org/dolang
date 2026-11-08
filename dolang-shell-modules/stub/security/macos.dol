@@ -47,11 +47,9 @@ pub @let MaskBit = $
 pub class Mask: Iterable[MaskBit]
 
   # Constructs a flag set from symbols.
-  #[class]
   @def (call) cls ...flags@MaskBit -> Mask
 
   # Constructs a flag set from one iterable of symbols.
-  #[class]
   @def (call) cls flags@Iterable[MaskBit] -> Mask
 
   #[class]
@@ -105,11 +103,9 @@ pub @let FlagBit = $
 pub class Flags: Iterable[FlagBit]
 
   # Constructs a flag set from symbols.
-  #[class]
   @def (call) cls ...flags@FlagBit -> Flags
 
   # Constructs a flag set from one iterable of symbols.
-  #[class]
   @def (call) cls flags@Iterable[FlagBit] -> Flags
 
   #[class]

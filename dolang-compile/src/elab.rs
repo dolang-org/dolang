@@ -3240,7 +3240,8 @@ impl<'a> Elaborater<'a> {
         for decorator in &mut def.decorators {
             self.visit_expr(scope, &mut decorator.expr, false)?;
         }
-        for decorator in &def.decorators {
+        // An overload has no decorators of its own, but its implementation's scope
+        for decorator in def.decorators.iter().filter(|_| def.at_span.is_none()) {
             if let Some(member_scope) = self.member_scope(scope, decorator) {
                 def.scope = member_scope;
             }
@@ -3431,10 +3432,14 @@ impl<'a> Elaborater<'a> {
 
     fn visit_class_body(&mut self, scope: &mut Scope<'_>, body: &mut ast::ClassBody) -> Result<()> {
         self.visit_class_body_pre(scope, body)?;
-        for member in body.members.iter_mut() {
+        // An overload has its implementation's scope, which that implementation's
+        // decorators give, so overloads are visited once they have
+        let mut overloads = Vec::new();
+        for (index, member) in body.members.iter_mut().enumerate() {
             self.bump_epoch();
             match member {
                 ast::ClassMember::Field(field) => self.visit_field_decl(scope, field)?,
+                ast::ClassMember::Method(def) if def.at_span.is_some() => overloads.push(index),
                 ast::ClassMember::Method(def) => {
                     if !def.type_only {
                         self.insert_class_method(scope, def);
@@ -3442,6 +3447,31 @@ impl<'a> Elaborater<'a> {
                     self.visit_method(scope, def)?;
                 }
             }
+        }
+        for index in overloads {
+            let ast::ClassMember::Method(overload) = &body.members[index] else {
+                unreachable!("an overload is a method")
+            };
+            let key = (
+                overload.special.is_some(),
+                self.file.str(overload.name_span),
+            );
+            let implementation = body.members.iter().find_map(|member| match member {
+                ast::ClassMember::Method(def)
+                    if def.at_span.is_none()
+                        && (def.special.is_some(), self.file.str(def.name_span)) == key =>
+                {
+                    Some(def.scope)
+                }
+                _ => None,
+            });
+            let ast::ClassMember::Method(overload) = &mut body.members[index] else {
+                unreachable!("an overload is a method")
+            };
+            // One without an implementation is diagnosed already
+            overload.scope = implementation.unwrap_or(ast::MemberScope::Instance);
+            self.bump_epoch();
+            self.visit_method(scope, overload)?;
         }
         Ok(())
     }

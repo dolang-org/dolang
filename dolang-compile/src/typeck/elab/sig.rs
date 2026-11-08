@@ -17,7 +17,7 @@
 use super::{
     Ambient, BadNominee, BinderRef, DeclNode, Designated, Diag, KindOf, MisdeclaredIntrinsic,
     MissingAnnotation, MissingIntrinsic, PIPES, ParamTy, Referent, RestSlot, Sig, Slot, Tables,
-    UnitDiag,
+    Target, UnitDiag,
     surface::{BinderKind, Class, Decorator, Member, MemberScope, Method, ParamKind, Signature},
 };
 use crate::diag::Span;
@@ -282,28 +282,45 @@ pub(crate) fn method_scope(method: &Method) -> Scope {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Form {
     Plain,
-    Getter,
-    Setter,
-    /// A value of unknown type
-    Unknown,
+    /// A computed field's getter, by std's designated `getter` written first. When
+    /// `decorated`, decorators follow it, and the getter is what they settle to.
+    Getter {
+        decorated: bool,
+    },
+    /// A computed field's setter, as a getter is
+    Setter {
+        decorated: bool,
+    },
+    /// A value its decorators replace it with, of the type they settle to
+    Decorated,
+}
+
+impl Form {
+    /// Whether decorators replace its own function with the value they settle to
+    pub(crate) fn decorated(self) -> bool {
+        match self {
+            Self::Plain => false,
+            Self::Getter { decorated } | Self::Setter { decorated } => decorated,
+            Self::Decorated => true,
+        }
+    }
 }
 
 /// The form of a method, from its decorators besides `class` and `static`, whose
-/// meaning is fixed by syntax. Any other decorator may replace the method with any
-/// value; until decorator applications are evaluated, std's `getter` and `setter`
-/// are recognized by what their names resolve to, and anything else leaves a value
-/// of unknown type.
+/// meaning is fixed by syntax. The runtime makes a computed field only of std's
+/// `getter` and `setter`, recognized by what their names resolve to when written
+/// first, which is applied last. Any other decorators may replace the method with
+/// any value, which settling finds.
 pub(crate) fn method_form(tables: &Tables<'_>, method: &Method) -> Form {
-    let mut form = Form::Plain;
-    for decorator in &method.decorators {
-        let designated = decorator_designation(tables, decorator);
-        form = match (form, designated) {
-            (Form::Plain, Some(Designated::Getter)) => Form::Getter,
-            (Form::Plain, Some(Designated::Setter)) => Form::Setter,
-            _ => return Form::Unknown,
-        };
+    let Some((first, rest)) = method.decorators.split_first() else {
+        return Form::Plain;
+    };
+    let decorated = !rest.is_empty();
+    match decorator_designation(tables, first) {
+        Some(Designated::Getter) => Form::Getter { decorated },
+        Some(Designated::Setter) => Form::Setter { decorated },
+        _ => Form::Decorated,
     }
-    form
 }
 
 /// The designation of the declaration a decorator names, if any
@@ -321,15 +338,49 @@ fn decorator_designation(tables: &Tables<'_>, decorator: &Decorator) -> Option<D
 /// which returns the class it is given after marking it, and `mark` is one of
 /// them. Without decorators, a class has no mark.
 pub(crate) fn decorated(tables: &Tables<'_>, class: &Class, mark: Designated) -> bool {
-    let designations = class
+    class
         .decorators
         .iter()
-        .map(|decorator| decorator_designation(tables, decorator))
-        .collect::<Vec<_>>();
-    designations.contains(&Some(mark))
-        && designations
-            .iter()
-            .all(|designation| matches!(designation, Some(Designated::Final | Designated::Mixable)))
+        .any(|decorator| decorator_designation(tables, decorator) == Some(mark))
+        && marked_only(tables, class)
+}
+
+/// Whether a class's decorators are all std's `final` and `mixable`, which keep
+/// its class object
+fn marked_only(tables: &Tables<'_>, class: &Class) -> bool {
+    class.decorators.iter().all(|decorator| {
+        matches!(
+            decorator_designation(tables, decorator),
+            Some(Designated::Final | Designated::Mixable)
+        )
+    })
+}
+
+/// Whether a def's or class's decorators replace its value: a def's
+/// implementation's, or a class's that aren't all std's `final` and `mixable`. A
+/// protocol has no value.
+pub(crate) fn replaced(tables: &Tables<'_>, decl: DeclId) -> bool {
+    let owner = tables.decl(decl);
+    match &owner.node {
+        DeclNode::Defs(defs) => defs.iter().any(|def| !def.type_only && def.decorated),
+        DeclNode::Class(class) => owner.kind == DeclKind::Class && !marked_only(tables, class),
+        DeclNode::Alias(_) | DeclNode::Methods(_) | DeclNode::Closure(_) => false,
+    }
+}
+
+/// Whether settling finds what a declaration's decorators give: an exported def
+/// or class whose decorators replace its value ([`replaced`]). A decorated
+/// declaration that isn't exported is typed through its application.
+pub(crate) fn settles(tables: &Tables<'_>, decl: DeclId) -> bool {
+    replaced(tables, decl) && exported(tables, decl)
+}
+
+/// Whether a declaration's unit exports it, so that another unit can name it
+pub(crate) fn exported(tables: &Tables<'_>, decl: DeclId) -> bool {
+    let unit = tables.decl(decl).unit;
+    tables.shard(unit).exports.iter().any(
+        |export| matches!(export.target, Target::Local(Referent::Decl(found)) if found == decl),
+    )
 }
 
 /// Designate a top-level declaration of `std` or `strand` that the checker treats

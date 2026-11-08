@@ -22,3 +22,28 @@ def bad_pub()
 #    |
 # LL | pub #[decorator]
 #    |     ^^
+
+# An overload describes its implementation, which alone is decorated
+#[class]
+@def overload x @ Int -> Int
+# error: an `@def` can't be decorated
+#   --> decorator_errors.dol:LL:LL
+#    |
+# LL | @def overload x @ Int -> Int
+#    | ^
+
+def overload x
+  x
+
+class Overloads
+  #[class]
+  @def (call) cls x @ Int -> Int
+  # error: an `@def` can't be decorated
+  #   --> decorator_errors.dol:LL:LL
+  #    |
+  # LL |   @def (call) cls x @ Int -> Int
+  #    |   ^
+
+  #[class]
+  pub def (call) cls x
+    x

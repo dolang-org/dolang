@@ -470,6 +470,31 @@ pub(crate) enum PatternKey {
     Rest(RestKind),
 }
 
+/// The blocks of a module's top-level code that apply a declaration's decorators,
+/// binding what they give to `result`. Its blocks are those reached from `entry`
+/// without passing `exit`, where the code after the declaration continues.
+/// Settling may splice it out ([`Ir::splice`]).
+pub(crate) struct Region {
+    /// The decorated declaration
+    pub(crate) decl: DeclId,
+    pub(crate) owner: Owner,
+    /// The `#[` of its first decorator, which is applied last
+    pub(crate) decorator: Span,
+    pub(crate) entry: BlockId,
+    pub(crate) exit: BlockId,
+    pub(crate) result: VarId,
+}
+
+/// What a [`Region`] decorates
+#[derive(Clone, Copy)]
+pub(crate) enum Owner {
+    /// A method of `class`, its decorators applied to its function `func`
+    Method { class: DeclId, func: FuncId },
+    /// An exported def or class, its decorators applied to its value and bound to
+    /// its variable, the region's result, spanned by its name
+    Export { span: Span },
+}
+
 /// A graph under construction. Lowering extends it through shared references, as
 /// it holds several parts at once.
 #[derive(Default)]
@@ -477,6 +502,7 @@ pub(crate) struct Graph {
     funcs: MonoVec<RefCell<Func>>,
     blocks: MonoVec<RefCell<Block>>,
     vars: MonoVec<RefCell<Var>>,
+    regions: RefCell<Vec<Region>>,
 }
 
 impl Graph {
@@ -588,12 +614,18 @@ impl Graph {
         self.vars[id.index()].borrow_mut()
     }
 
+    /// Record a method's decorator region
+    pub(crate) fn add_region(&self, region: Region) {
+        self.regions.borrow_mut().push(region);
+    }
+
     /// Finish the graph
     pub(crate) fn freeze(mut self) -> Ir {
         Ir {
             funcs: self.funcs.drain().map(RefCell::into_inner).collect(),
             blocks: self.blocks.drain().map(RefCell::into_inner).collect(),
             vars: self.vars.drain().map(RefCell::into_inner).collect(),
+            regions: self.regions.into_inner(),
         }
     }
 }
@@ -603,6 +635,8 @@ pub(crate) struct Ir {
     funcs: Vec<Func>,
     blocks: Vec<Block>,
     vars: Vec<Var>,
+    /// The decorator regions of its methods, settled or not
+    regions: Vec<Region>,
 }
 
 impl Ir {
@@ -623,6 +657,49 @@ impl Ir {
             .iter()
             .enumerate()
             .map(|(index, func)| (FuncId::from_index(index), func))
+    }
+
+    pub(crate) fn regions(&self) -> &[Region] {
+        &self.regions
+    }
+
+    /// The exported declaration whose region binds a variable, if any
+    pub(crate) fn settled_var(&self, var: VarId) -> Option<DeclId> {
+        self.regions
+            .iter()
+            .find(|region| matches!(region.owner, Owner::Export { .. }) && region.result == var)
+            .map(|region| region.decl)
+    }
+
+    /// Replace a settled region's blocks with a branch from its entry to its exit.
+    /// A method's value isn't read, so nothing need stand for it; an export's
+    /// variable is bound to its settled value. The blocks left behind are
+    /// unreachable.
+    pub(crate) fn splice(&mut self, index: usize) {
+        let Region {
+            decl,
+            owner,
+            entry,
+            exit,
+            result,
+            ..
+        } = self.regions[index];
+        let block = &mut self.blocks[entry.index()];
+        block.steps.clear();
+        if let Owner::Export { span } = owner {
+            block.steps.push(Step::Let {
+                pattern: Pattern::Bind(result),
+                value: Expr {
+                    kind: ExprKind::Settled(decl),
+                    span,
+                    synthetic: true,
+                },
+            });
+        }
+        block.terminal = Terminal::Branch {
+            target: exit,
+            span: INVALID_SPAN,
+        };
     }
 
     pub(crate) fn blocks(&self) -> impl Iterator<Item = (BlockId, &Block)> {

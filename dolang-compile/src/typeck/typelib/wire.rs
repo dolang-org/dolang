@@ -24,7 +24,10 @@ use bitvec::slice::BitSlice;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
-use super::spans;
+use super::{
+    spans,
+    types::{self, Form, Ty},
+};
 use crate::{
     RestKind,
     ast::SpecialMethod,
@@ -59,6 +62,11 @@ pub(super) struct Content<S> {
     decls: Vec<Decl>,
     /// What elaboration concluded about each declaration, in the same order
     pub(super) facts: Vec<DeclFacts>,
+    /// What public decorated declarations settled to, each a node of
+    /// `settled_types`
+    pub(super) settled: Vec<WireSettled>,
+    /// The checker's types settled declarations name (see [`types`])
+    pub(super) settled_types: Vec<Ty>,
     sites: Vec<Site>,
     links: Vec<Link>,
     exports: Vec<Export>,
@@ -72,6 +80,14 @@ pub(super) struct Content<S> {
 
 /// A declaration signature
 type Sig = (u32, u32);
+
+/// What a decorated declaration settled to
+#[derive(Serialize, Deserialize)]
+pub(super) struct WireSettled {
+    pub(super) decl: u32,
+    pub(super) form: Form,
+    pub(super) ty: u32,
+}
 
 /// An optional ID, as one more than the ID, or 0
 type Opt = u32;
@@ -195,6 +211,7 @@ struct Def {
     binders: Vec<Binder>,
     sig: Signature,
     type_only: bool,
+    decorated: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -582,6 +599,7 @@ pub(super) struct Encode<'s, 'u> {
     base: &'s Bases,
     kept: &'s BitSlice,
     facts: &'s elab::Facts,
+    settled: &'s types::Settled,
     pipes: Option<[(&'s str, &'s str); 2]>,
     /// The ID of each kept declaration, by its offset in the unit
     decls: Vec<Option<u32>>,
@@ -606,12 +624,14 @@ pub(super) struct Encode<'s, 'u> {
 
 impl<'s, 'u> Encode<'s, 'u> {
     /// An encoder of what `kept` keeps of a shard whose IDs start at `base`, with
-    /// the facts concluded about it and the pipe nominations they depend on, if any
+    /// the facts concluded about it, what its declarations settled to, and the
+    /// pipe nominations they depend on, if any
     pub(super) fn new(
         shard: &'s Shard<'u>,
         base: &'s Bases,
         kept: &'s BitSlice,
         facts: &'s elab::Facts,
+        settled: &'s types::Settled,
         pipes: Option<[(&'s str, &'s str); 2]>,
     ) -> Self {
         let mut next = 0;
@@ -630,6 +650,7 @@ impl<'s, 'u> Encode<'s, 'u> {
             base,
             kept,
             facts,
+            settled,
             pipes,
             decls,
             site_ids: vec![None; shard.sites.len()],
@@ -688,6 +709,22 @@ impl<'s, 'u> Encode<'s, 'u> {
             .map(|(index, decl)| self.decl(DeclId::from_index(self.base.decls + index), decl))
             .collect();
         let facts = self.decl_facts();
+        let table = &self.settled.table;
+        let settled_types = (table.types.iter())
+            .map(|ty| {
+                ty.map_strings(|id| Ok::<_, Infallible>(self.text(&table.strings[id as usize])))
+                    .unwrap_or_else(|never| match never {})
+            })
+            .collect();
+        let settled = (self.settled.entries.iter())
+            .filter_map(|&(decl, form, ty)| {
+                Some(WireSettled {
+                    decl: self.decl_id(decl)?,
+                    form,
+                    ty,
+                })
+            })
+            .collect();
         let values = (shard.values.iter())
             .map(|value| Value {
                 span: self.span(value.span),
@@ -732,6 +769,8 @@ impl<'s, 'u> Encode<'s, 'u> {
             types: mem::take(&mut self.types),
             decls,
             facts,
+            settled,
+            settled_types,
             sites,
             links,
             exports,
@@ -897,6 +936,7 @@ impl<'s, 'u> Encode<'s, 'u> {
                         binders: self.binders(&def.binders, decl.outer),
                         sig: self.signature(&def.sig, (id, index)),
                         type_only: def.type_only,
+                        decorated: def.decorated,
                     })
                     .collect(),
             ),
@@ -1359,6 +1399,8 @@ pub(super) fn decode(mut content: Content<&str>) -> Result<(Shard<'_>, elab::Fac
         types,
         decls,
         facts,
+        settled,
+        settled_types,
         sites,
         links,
         exports,
@@ -1410,6 +1452,7 @@ pub(super) fn decode(mut content: Content<&str>) -> Result<(Shard<'_>, elab::Fac
                             binders: decode.binders(def.binders),
                             sig: decode.signature(def.sig)?,
                             type_only: def.type_only,
+                            decorated: def.decorated,
                         })
                     })
                     .collect::<Result<_, _>>()?;
@@ -1452,7 +1495,8 @@ pub(super) fn decode(mut content: Content<&str>) -> Result<(Shard<'_>, elab::Fac
         }
     }
 
-    let facts = unfacts(&shard_decls, facts)?;
+    let mut facts = unfacts(&shard_decls, facts)?;
+    facts.settled = unsettled(&shard_decls, settled, settled_types, &strings)?;
 
     let values: Vec<_> = values
         .into_iter()
@@ -1540,6 +1584,44 @@ pub(super) fn decode(mut content: Content<&str>) -> Result<(Shard<'_>, elab::Fac
         }),
     };
     Ok((shard, facts))
+}
+
+/// What decoded declarations settled to, each a decorated def, class or method
+/// of a form it can settle to
+fn unsettled(
+    decls: &[elab::Decl<'_>],
+    settled: Vec<WireSettled>,
+    types: Vec<Ty>,
+    strings: &[&str],
+) -> Result<types::Settled, &'static str> {
+    let table = types::Table::read(types, strings)?;
+    let entries = (settled.into_iter())
+        .map(|entry| {
+            let decl = decls
+                .get(entry.decl as usize)
+                .ok_or("a settled declaration is out of range")?;
+            let fits = matches!(
+                (&decl.node, entry.form),
+                (DeclNode::Defs(_) | DeclNode::Class(_), Form::Declared)
+                    | (
+                        DeclNode::Defs(_) | DeclNode::Methods(_),
+                        Form::Method | Form::Value
+                    )
+            );
+            if !fits {
+                return Err("a declaration settled to what it can't");
+            }
+            if !table.has(entry.ty) {
+                return Err("a settled type is out of range");
+            }
+            Ok((
+                DeclId::from_index(entry.decl as usize),
+                entry.form,
+                entry.ty,
+            ))
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(types::Settled { table, entries })
 }
 
 /// The facts recorded of decoded declarations: a variance for each binder of each

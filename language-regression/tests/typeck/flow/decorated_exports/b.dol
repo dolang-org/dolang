@@ -1,0 +1,15 @@
+import a
+
+#[a.f]
+pub def g[F] x @ F -> F
+  # error: a def's decorators depend on what they give
+  #   --> b.dol:LL:LL
+  #    |
+  # LL | pub def g[F] x @ F -> F
+  #    |         ^
+  x
+
+pub def use()
+  let got = g
+  #   ^~~: flow Unknown
+  got

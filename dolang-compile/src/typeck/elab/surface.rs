@@ -445,6 +445,8 @@ pub(crate) struct Def {
     pub(crate) sig: Signature,
     /// Whether it is an overload signature, which has no body
     pub(crate) type_only: bool,
+    /// Whether it has decorators, which replace its value
+    pub(crate) decorated: bool,
 }
 
 /// A method of a class

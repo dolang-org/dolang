@@ -205,9 +205,7 @@ pub class Shape
     ...
 
 pub class Maker
-  #[class]
   @def (call) cls n @ Int -> Int
-  #[class]
   @def (call) cls s @ Str -> Str
   #[class]
   pub def (call) _cls x

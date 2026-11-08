@@ -451,6 +451,17 @@ class Document
     else
       "instance"
 
+  # A method's scope. An `@def` overload has its implementation's, whose
+  # decorators alone give it, though the implementation isn't documented.
+  def member_scope self id node
+    if node.type_only
+      let name = self.#text $node.name
+      let implementation = self.#index.node(node.parent).children.find default: nil do |child|
+        (type(child) == type(node) && !child.type_only && self.#text(child.name) == name)
+      if (implementation != nil)
+        return self.#scope(implementation.id)
+    self.#scope $id
+
   # A parameter's name is its key if it is a keyword parameter, and absent if
   # it is an anonymous rest.
   def params self id
@@ -766,7 +777,7 @@ class Document
         pub: $is_pub
         span: (span_json(node.name))
         doc: (self.#doc_of(node))
-        scope: (self.#scope(id))
+        scope: (self.#member_scope(id, node))
         access: ["get"]
         if (returns != nil)
           type: $returns
@@ -776,7 +787,7 @@ class Document
         pub: $is_pub
         span: (span_json(node.name))
         doc: (self.#doc_of(node))
-        scope: (self.#scope(id))
+        scope: (self.#member_scope(id, node))
         access: ["set"]
         if value.contains(:type:)
           type: $value[:type:]
@@ -789,7 +800,7 @@ class Document
           type_only: true
         span: (span_json(node.name))
         doc: (self.#doc_of(node))
-        scope: (self.#scope(id))
+        scope: (self.#member_scope(id, node))
         if (binders.len > 0)
           binders: $binders
         if (self_type != nil)

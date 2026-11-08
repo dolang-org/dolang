@@ -221,7 +221,7 @@ impl Solver<'_> {
                     }
                     .map(|accessor| self.accessed(&accessor, access))
                     .transpose()?,
-                    FoundKind::Unknown => {
+                    FoundKind::Unknown(_) => {
                         members.open = true;
                         None
                     }

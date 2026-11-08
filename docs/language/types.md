@@ -268,7 +268,8 @@ pub def double x @ (Float | Int) -> (Float | Int)
 An overload has no runtime effect. It doesn't take `pub`; it's exported if
 its implementation is. A method, including a special method such as `(init)`,
 takes overloads in its class body the same way, and so does a protocol's
-method.
+method. An overload can't be decorated: it has its implementation's scope, and
+it describes the implementation as its decorators leave it.
 
 A method's overload may annotate its receiver with a narrower type, so that it
 applies only to those instances. The class's binders in the overload then stand

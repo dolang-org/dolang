@@ -7,7 +7,10 @@ use crate::{
     source::File,
     typeck::{
         Check,
-        cfg::{BlockId, ExprKind, FuncId, Ir, Origin, Step, Terminal, VarFlags, VarId},
+        cfg::{
+            BlockId, ExprKind, FuncId, Ir, Origin, Owner, Pattern, Region, Step, Terminal,
+            VarFlags, VarId,
+        },
     },
 };
 
@@ -554,5 +557,200 @@ def outer()
         let runs = ir.runs();
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].funcs.len(), 4);
+    });
+}
+
+/// A method's decorators are applied to its function in a region of their own,
+/// after the step creating the function, binding what they give
+#[test]
+fn method_decorators_lower_to_a_region() {
+    let source = "
+let deco = (do |f| f)
+class C
+  #[deco]
+  pub def m _self
+    1
+";
+    lower_with(source, |ir| {
+        let [region] = ir.regions() else {
+            panic!("one region: {}", ir.regions().len())
+        };
+        let Owner::Method { func, .. } = region.owner else {
+            panic!("a method's region")
+        };
+        // Its decorator reads a variable without an annotation, so it stays
+        let entry = ir.block(region.entry);
+        let [Step::Let { value, .. }] = &entry.steps[..] else {
+            panic!("the region applies its decorator")
+        };
+        let ExprKind::Call { args, .. } = &value.kind else {
+            panic!("the decorator is called")
+        };
+        assert!(
+            matches!(args[0].pos().kind, ExprKind::Lambda(lambda) if lambda == func),
+            "the decorator is passed the method's function"
+        );
+        assert!(matches!(entry.terminal, Terminal::Branch { target, .. } if target == region.exit));
+        let (created, _) = creation(ir, func).expect("the function is created");
+        assert!(
+            ir.blocks().any(|(_, block)| block
+                .steps
+                .iter()
+                .any(|step| matches!(step, Step::Capture(funcs) if funcs.contains(&func)))
+                && block
+                    .terminal
+                    .successors()
+                    .any(|target| target == region.entry)),
+            "the function is captured before the region"
+        );
+        assert_eq!(created, region.entry);
+    });
+}
+
+/// A region that settles is spliced out for a branch to its exit
+#[test]
+fn settled_regions_are_spliced() {
+    let source = "
+def deco f @ Func -> Func
+  f
+class C
+  #[deco]
+  pub def m _self
+    1
+";
+    lower_with(source, |ir| {
+        let [region] = ir.regions() else {
+            panic!("one region: {}", ir.regions().len())
+        };
+        assert!(spliced(ir, region));
+    });
+}
+
+/// Whether a region was spliced out for a branch to its exit, an export's binding
+/// its variable to what it settled to first
+fn spliced(ir: &Ir, region: &Region) -> bool {
+    let entry = ir.block(region.entry);
+    let steps = match region.owner {
+        Owner::Method { .. } => entry.steps.is_empty(),
+        Owner::Export { .. } => matches!(&entry.steps[..], [Step::Let {
+            pattern: Pattern::Bind(var),
+            value,
+        }] if *var == region.result
+            && matches!(value.kind, ExprKind::Settled(decl) if decl == region.decl)),
+    };
+    steps && matches!(entry.terminal, Terminal::Branch { target, .. } if target == region.exit)
+}
+
+/// Lower a module, which must be valid
+fn lower_module(source: &str, inspect: impl FnOnce(&Ir)) {
+    lower_mode_with(
+        source,
+        Mode::Module {
+            name: "test".into(),
+        },
+        inspect,
+    );
+}
+
+/// An exported def's and class's decorators are applied in regions binding their
+/// variables, which settle and are spliced out; a decorated def that isn't
+/// exported gets none
+#[test]
+fn decorated_exports_lower_to_regions() {
+    let source = "
+def same[F] f @ F -> F
+  f
+#[same]
+pub def f x @ Int -> Int
+  x
+#[same]
+pub class C
+  pub field x = 1
+#[same]
+def g x @ Int -> Int
+  x
+";
+    lower_module(source, |ir| {
+        let [f, c] = ir.regions() else {
+            panic!("two regions: {}", ir.regions().len())
+        };
+        for region in [f, c] {
+            assert!(matches!(region.owner, Owner::Export { .. }));
+            assert_eq!(ir.settled_var(region.result), Some(region.decl));
+            assert!(spliced(ir, region));
+        }
+    });
+}
+
+/// A region that reads another export's variable settles once that export does,
+/// in a later round
+#[test]
+fn export_regions_settle_in_order() {
+    let source = "
+def same[F] f @ F -> F
+  f
+#[same]
+pub def deco[F] f @ F -> F
+  f
+#[deco]
+pub def f x @ Int -> Int
+  x
+";
+    lower_module(source, |ir| {
+        let [deco, f] = ir.regions() else {
+            panic!("two regions: {}", ir.regions().len())
+        };
+        assert!(spliced(ir, deco));
+        assert!(spliced(ir, f));
+    });
+}
+
+/// A region that reaches another's decorated member settles once that member
+/// does, in a later round, and both are spliced out
+#[test]
+fn blocked_regions_settle_in_order() {
+    let source = "
+def same[F] f @ F -> F
+  f
+let registry @ Registry = ...
+class Relay
+  #[registry.deco]
+  pub def pass[F] _self f @ F -> F
+    f
+class Registry
+  #[same]
+  pub def deco[F] _self f @ F -> F
+    f
+";
+    lower_with(source, |ir| {
+        let [pass, deco] = ir.regions() else {
+            panic!("two regions: {}", ir.regions().len())
+        };
+        assert!(spliced(ir, deco));
+        assert!(spliced(ir, pass));
+    });
+}
+
+/// Regions that reach each other's members never settle, and stay for flow
+#[test]
+fn cyclic_regions_stay() {
+    let source = "
+let p @ P = ...
+let q @ Q = ...
+class P
+  #[q.f]
+  pub def g[F] _self f @ F -> F
+    f
+class Q
+  #[p.g]
+  pub def f[F] _self f @ F -> F
+    f
+";
+    lower_with(source, |ir| {
+        let [g, f] = ir.regions() else {
+            panic!("two regions: {}", ir.regions().len())
+        };
+        assert!(!spliced(ir, g));
+        assert!(!spliced(ir, f));
     });
 }

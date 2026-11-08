@@ -1,0 +1,86 @@
+# A region whose decorators reach a decorated member of another class settles
+# once that member does, in this unit or another. Regions that reach each
+# other's members, or their own, are diagnosed and leave their members of
+# unknown type; one that reaches theirs leaves its member of unknown type too.
+
+import lib
+
+pub def same[F] f @ F -> F
+  f
+
+pub class Registry
+  #[same]
+  pub def deco[F] _self f @ F -> F
+    f
+
+pub let registry @ Registry = Registry()
+
+pub class Relay
+  #[registry.deco]
+  pub def pass[F] _self f @ F -> F
+    f
+
+pub let relay @ Relay = Relay()
+
+pub class Box
+  #[relay.pass]
+  pub def get _self -> Int
+    1
+
+  #[lib.registry.deco]
+  pub def far _self -> Str
+    "f"
+
+pub let p @ P = ...
+pub let q @ Q = ...
+pub let holder @ Holder = ...
+
+pub class P
+  #[q.f]
+  pub def g[F] _self f @ F -> F
+    # error: a method's decorators depend on what they give
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def g[F] _self f @ F -> F
+    #    |           ^
+    f
+
+pub class Q
+  #[p.g]
+  pub def f[F] _self f @ F -> F
+    # error: a method's decorators depend on what they give
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def f[F] _self f @ F -> F
+    #    |           ^
+    f
+
+pub class Holder
+  #[holder.me]
+  pub def me[F] _self f @ F -> F
+    # error: a method's decorators depend on what they give
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def me[F] _self f @ F -> F
+    #    |           ^^
+    f
+
+pub class Late
+  #[p.g]
+  pub def after _self -> Int
+    1
+
+pub def use b @ Box l @ Late
+  let get = b.get()
+  #   ^~~: flow std.Int
+  let far = b.far()
+  #   ^~~: flow std.Str
+  let g = p.g
+  #   ^: flow Unknown
+  let f = q.f
+  #   ^: flow Unknown
+  let me = holder.me
+  #   ^~: flow Unknown
+  let after = l.after
+  #   ^~~~~: flow Unknown
+  [get, far, g, f, me, after]

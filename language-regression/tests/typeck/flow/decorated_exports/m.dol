@@ -1,0 +1,137 @@
+# An exported def's or class's decorators settle to its value, which its
+# variable reads, before its statement too, and its importers read. A decorator
+# may be a decorated export, settled first, or reached through another module,
+# and may use what isn't exported. A class only marked `final` keeps its class
+# object. An overloaded def's overloads describe its decorated implementation,
+# which must be a function. An export and a method whose decorators reach each
+# other are diagnosed.
+
+import lib
+
+def helper[F] f @ F -> F
+  f
+
+def strs _f @ Func -> ((Int) -> Str)
+  do |_n @ Int| -> Str "s"
+
+def tagged _tag @ Str -> ((Func) -> ((Int) -> Str))
+  ...
+
+def constant _f @ Func -> Int
+  1
+
+def early()
+  # warning: unused variable
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | def early()
+  #    |     ^^^^^
+  let got = g(1)
+  #   ^~~: flow std.Str
+  got
+
+#[lib.same]
+pub def a x @ Int -> Int
+  x
+
+#[tagged "x"]
+pub def b x @ Int -> Int
+  x
+
+#[lib.same]
+pub class C
+  pub field n @ Int = 1
+
+#[lib.registry.wrap]
+pub def d x @ Str -> Str
+  x
+
+#[lib.deco]
+pub def e x @ Int -> Int
+  x
+
+#[helper]
+pub def f x @ Int -> Int
+  x
+
+#[strs]
+pub def g x @ Int -> Int
+  x
+
+#[final]
+pub class M
+  pub field n @ Int = 1
+
+#[lib.same]
+pub def twice[F] f @ F -> F
+  f
+
+#[twice]
+pub def h x @ Int -> Int
+  x
+
+pub let holder @ Holder = ...
+
+#[holder.get]
+pub def looped[F] x @ F -> F
+  # error: a def's decorators depend on what they give
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def looped[F] x @ F -> F
+  #    |         ^^^^^^
+  x
+
+pub class Holder
+  #[looped]
+  pub def get[F] _self x @ F -> F
+    # error: a method's decorators depend on what they give
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def get[F] _self x @ F -> F
+    #    |           ^^^
+    x
+
+@def over x @ Int -> Int
+@def over x @ Str -> Str
+#[lib.same]
+pub def over x
+  x
+
+@def broken x @ Int -> Int
+#[constant]
+pub def broken x
+  # error: a def's decorators must give a function
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def broken x
+  #    |         ^^^^^^
+  x
+
+pub def use()
+  let a1 = a(1)
+  #   ^~: flow std.Int
+  let b1 = b(1)
+  #   ^~: flow std.Str
+  let c1 = C()
+  #   ^~: flow m.C
+  let d1 = d("d")
+  #   ^~: flow std.Str
+  let e1 = e(1)
+  #   ^~: flow std.Int
+  let f1 = f(1)
+  #   ^~: flow std.Int
+  let g1 = g(1)
+  #   ^~: flow std.Str
+  let m1 = M
+  #   ^~: flow <type m.M>
+  let h1 = h(1)
+  #   ^~: flow std.Int
+  let looped1 = looped
+  #   ^~~~~~~: flow Unknown
+  let over1 = over(1)
+  #   ^~~~~: flow std.Int
+  let over2 = over("s")
+  #   ^~~~~: flow std.Str
+  let broken1 = broken
+  #   ^~~~~~~: flow Unknown
+  [a1, b1, c1, d1, e1, f1, g1, m1, h1, looped1, over1, over2, broken1]

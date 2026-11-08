@@ -133,11 +133,9 @@ pub class ManagerAccessMask: AccessMask
     ...
 
   # Constructs a flag set from symbols.
-  #[class]
   @def (call) cls ...flags@ManagerAccessRight -> ManagerAccessMask
 
   # Constructs a flag set from one iterable of symbols.
-  #[class]
   @def (call) cls flags@Iterable[ManagerAccessRight] -> ManagerAccessMask
 
   #[class]
@@ -212,11 +210,9 @@ pub class ServiceAccessMask: AccessMask
     ...
 
   # Constructs a flag set from symbols.
-  #[class]
   @def (call) cls ...flags@ServiceAccessRight -> ServiceAccessMask
 
   # Constructs a flag set from one iterable of symbols.
-  #[class]
   @def (call) cls flags@Iterable[ServiceAccessRight] -> ServiceAccessMask
 
   #[class]
@@ -276,11 +272,9 @@ pub class ServiceType: Iterable[ServiceTypeFlag]
     ...
 
   # Constructs a flag set from symbols.
-  #[class]
   @def (call) cls ...flags@ServiceTypeFlag -> ServiceType
 
   # Constructs a flag set from one iterable of symbols.
-  #[class]
   @def (call) cls flags@Iterable[ServiceTypeFlag] -> ServiceType
 
   #[class]
@@ -363,11 +357,9 @@ pub class NotifyMask: Iterable[NotifyChange]
     ...
 
   # Constructs a flag set from symbols.
-  #[class]
   @def (call) cls ...flags@NotifyChange -> NotifyMask
 
   # Constructs a flag set from one iterable of symbols.
-  #[class]
   @def (call) cls flags@Iterable[NotifyChange] -> NotifyMask
 
   #[class]
@@ -454,11 +446,9 @@ pub class ServiceControlsAccepted: Iterable[AcceptedControl]
     ...
 
   # Constructs a flag set from symbols.
-  #[class]
   @def (call) cls ...flags@AcceptedControl -> ServiceControlsAccepted
 
   # Constructs a flag set from one iterable of symbols.
-  #[class]
   @def (call) cls flags@Iterable[AcceptedControl] -> ServiceControlsAccepted
 
   #[class]
