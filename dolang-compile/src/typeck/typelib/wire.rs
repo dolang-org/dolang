@@ -195,6 +195,7 @@ struct Def {
     binders: Vec<Binder>,
     sig: Signature,
     type_only: bool,
+    decorated: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -897,6 +898,7 @@ impl<'s, 'u> Encode<'s, 'u> {
                         binders: self.binders(&def.binders, decl.outer),
                         sig: self.signature(&def.sig, (id, index)),
                         type_only: def.type_only,
+                        decorated: def.decorated,
                     })
                     .collect(),
             ),
@@ -1410,6 +1412,7 @@ pub(super) fn decode(mut content: Content<&str>) -> Result<(Shard<'_>, elab::Fac
                             binders: decode.binders(def.binders),
                             sig: decode.signature(def.sig)?,
                             type_only: def.type_only,
+                            decorated: def.decorated,
                         })
                     })
                     .collect::<Result<_, _>>()?;

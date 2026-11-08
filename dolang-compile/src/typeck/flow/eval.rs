@@ -87,6 +87,7 @@ impl Flow<'_, '_> {
                 checked,
             } => self.cast(at, state, operands, value, ty, checked),
             &ExprKind::Class(decl) => class_object(self.db, decl),
+            &ExprKind::Settled(decl) => self.settled_decl(decl).unwrap_or(unknown),
             ExprKind::Import { module, item } => self.import(*module, *item, expr.span),
             &ExprKind::Lambda(func) => self.expected_lambda(at, func, expected, expr.span),
             ExprKind::Call { .. } => self.call(at, state, operands, expr, expected),
@@ -368,8 +369,16 @@ impl Flow<'_, '_> {
         }
     }
 
+    /// A declaration's value. A def's or class's whose decorators replace it is
+    /// what they settled to, unknown until then, since a typelib doesn't carry it
     fn decl_value(&self, decl: DeclId) -> TypeId {
         let declaration = self.db.declaration(decl);
+        if let DeclKind::Class | DeclKind::Function = declaration.source.kind
+            && declaration.source.decorated
+        {
+            self.placeholder(decl);
+            return self.settled_decl(decl).unwrap_or(self.db.unknown());
+        }
         match declaration.source.kind {
             DeclKind::Class | DeclKind::Protocol => class_object(self.db, decl),
             DeclKind::Function => function_value(self.db, self.tables, decl),

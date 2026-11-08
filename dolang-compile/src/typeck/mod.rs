@@ -682,7 +682,7 @@ const _: () = {
 
 /// Check every unit, on a pool of `threads` threads, else the global pool,
 /// giving their outputs by [`UnitId`]: each unit is lowered by [`lower_unit`],
-/// every unit's method decorator regions settled by [`settle_units`], and each
+/// every unit's decorator regions settled by [`settle_units`], and each
 /// unit finished by [`finish_unit`] with what they settled to. Flow logs facts
 /// only for an `analysis`.
 fn check_units(
@@ -752,21 +752,21 @@ fn each<I: Send, T: Send>(
         .collect()
 }
 
-/// What checking a unit concludes before its decorated members settle
+/// What checking a unit concludes before its decorated members and exports settle
 struct Lowered {
     wellformed: (Vec<elab::UnitDiag>, Vec<elab::Unresolved>),
     /// A unit with source's CFG, and the layer lowering interned in
     lowered: Option<(cfg::Ir, Arc<r#type::Shared>)>,
-    /// Each region that settled, by its index: what its member settled to, and
-    /// its settle run's fork, which the member's type is interned in, with what
-    /// the run concluded
+    /// Each region that settled, by its index: what its declaration settled to,
+    /// and its settle run's fork, which that type is interned in, with what the
+    /// run concluded
     settled: Vec<RegionSettled>,
     /// How many of `settled` came before the current round
     gathered: usize,
     /// The regions to settle in the next round, by index
     pending: Vec<usize>,
-    /// Each region, by index, whose last settle run reached the member or
-    /// accessor not settled yet
+    /// Each region, by index, whose last settle run reached the declaration not
+    /// settled yet
     blocked: Vec<(usize, r#type::DeclId)>,
 }
 
@@ -778,8 +778,9 @@ struct RegionSettled {
     results: flow::Results,
 }
 
-/// What every unit's decorated members settled to, in a layer over the shared
-/// base that holds their types, and those whose regions block on each other
+/// What every unit's decorated members and exports settled to, in a layer over
+/// the shared base that holds their types, and those whose regions block on each
+/// other
 struct Settled {
     layer: Arc<r#type::Shared>,
     members: r#type::Settled,
@@ -829,9 +830,9 @@ fn lower_unit(shared: &Arc<r#type::Shared>, tables: &elab::Tables<'_>, unit: Uni
     }
 }
 
-/// Settle every unit's method decorator regions, in rounds until none settles
-/// more. A region blocked on a member not settled yet runs again in the round
-/// after that member settles; one that otherwise can't settle stays, for flow to
+/// Settle every unit's decorator regions, in rounds until none settles more. A
+/// region blocked on a declaration not settled yet runs again in the round after
+/// that declaration settles; one that otherwise can't settle stays, for flow to
 /// check. Then splice out the regions that settled.
 fn settle_units(
     shared: &Arc<r#type::Shared>,
@@ -941,8 +942,8 @@ fn with_settled(layer: &Arc<r#type::Shared>, settled: &Settled) -> Arc<r#type::S
     db.share()
 }
 
-/// The methods of regions still blocked that block on each other, each region
-/// blocked on the member it reached first, or its own
+/// The declarations of regions still blocked that block on each other, each
+/// region blocked on the declaration it reached first, or its own
 fn cycles(lowered: &[Lowered]) -> FxHashSet<r#type::DeclId> {
     let waits: FxHashMap<r#type::DeclId, r#type::DeclId> = lowered
         .iter()
@@ -975,8 +976,8 @@ fn cycles(lowered: &[Lowered]) -> FxHashSet<r#type::DeclId> {
 }
 
 /// Check a lowered unit's overrides and bodies with every unit's decorated members
-/// `settled`, copied into a layer over the one it was lowered in that each check
-/// forks; a typelib's overrides were checked with its source, and it has no bodies
+/// and exports `settled`, copied into a layer over the one it was lowered in that
+/// each check forks; a typelib's overrides were checked with its source, and it has no bodies
 fn finish_unit(
     tables: &elab::Tables<'_>,
     unit: UnitId,

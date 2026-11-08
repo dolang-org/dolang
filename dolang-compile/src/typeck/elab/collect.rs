@@ -1334,6 +1334,7 @@ impl<'u> Walk<'_, 'u> {
                     binders,
                     sig: signature,
                     type_only: def.is_type_only(),
+                    decorated: !def.decorators.is_empty(),
                 });
             }
             Stmt::Class(class) => self.class(frame, class),

@@ -77,9 +77,10 @@ pub(crate) fn wellformed(
 /// settled: each must be a function, since a class installs nothing else, and
 /// each channel a decorated getter's or setter's function writes must admit
 /// `Value`, as a written accessor's must. One that settled to what's unknown
-/// passes. One that didn't settle is diagnosed if it's in `cycles`, its region
-/// blocked on its own member; otherwise, in a strict unit, it's undecided, since
-/// its member is of unknown type.
+/// passes. A decorated method, or an export whose decorators settling finds
+/// ([`sig::settles`]), that didn't settle is diagnosed if it's in `cycles`, its
+/// region blocked on its own declaration; otherwise, in a strict unit, it's
+/// undecided, since its value is of unknown type.
 pub(crate) fn settled_members(
     db: &Database,
     tables: &Tables<'_>,
@@ -95,35 +96,41 @@ pub(crate) fn settled_members(
         unresolved: Vec::new(),
     };
     for id in tables.unit_decl_ids(unit) {
-        let DeclNode::Methods(methods) = &tables.decl(id).node else {
-            continue;
-        };
-        let primary = methods
-            .iter()
-            .find(|method| !method.overload)
-            .unwrap_or(&methods[0]);
-        let accessor = match sig::method_form(tables, primary) {
-            Form::Getter { decorated: true } => Some(false),
-            Form::Setter { decorated: true } => Some(true),
-            Form::Decorated => None,
-            Form::Plain | Form::Getter { .. } | Form::Setter { .. } => continue,
+        let (what, accessor) = match &tables.decl(id).node {
+            DeclNode::Methods(methods) => {
+                let primary = methods
+                    .iter()
+                    .find(|method| !method.overload)
+                    .unwrap_or(&methods[0]);
+                match sig::method_form(tables, primary) {
+                    Form::Getter { decorated: true } => ("getter", Some(false)),
+                    Form::Setter { decorated: true } => ("setter", Some(true)),
+                    Form::Decorated => ("method", None),
+                    Form::Plain | Form::Getter { .. } | Form::Setter { .. } => continue,
+                }
+            }
+            DeclNode::Defs(_) if sig::settles(tables, id) => ("def", None),
+            DeclNode::Class(_) if sig::settles(tables, id) => ("class", None),
+            _ => continue,
         };
         let span = db.declaration(id).source.span;
         let Some(settled) = db.settled(id) else {
-            // Its member is of unknown type
+            // Its value is of unknown type
             if cycles.contains(&id) {
                 let diag = SettledCycle {
                     span: span.span,
-                    accessor,
+                    what,
                 };
                 check.report(Verdict::Fails, span, diag);
             } else if strict {
-                let residual = Residual::Unsupported("method decorators that don't settle");
+                let residual = Residual::Unsupported("decorators that don't settle");
                 check.unresolved.push(Unresolved { span, residual });
             }
             continue;
         };
         let ty = match settled {
+            // An export's value may be anything
+            SettledMember::Declared(_) => continue,
             SettledMember::Method(ty) => ty,
             // What's unknown may be a function
             SettledMember::Value(ty) if matches!(db.ty(ty), Type::Unknown(_)) => continue,

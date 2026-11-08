@@ -668,7 +668,9 @@ impl Solver<'_> {
                 Some(SettledMember::Method(ty)) => {
                     FoundKind::Method(self.settled_signatures(nominal, decl, ty))
                 }
-                Some(SettledMember::Value(_)) | None => FoundKind::Unknown(decl),
+                Some(SettledMember::Value(_) | SettledMember::Declared(_)) | None => {
+                    FoundKind::Unknown(decl)
+                }
             },
         };
         Found {
@@ -689,7 +691,7 @@ impl Solver<'_> {
         }
         let ty = match self.db.settled(decl) {
             Some(SettledMember::Method(ty)) => ty,
-            Some(SettledMember::Value(_)) | None => self.db.unknown(),
+            Some(SettledMember::Value(_) | SettledMember::Declared(_)) | None => self.db.unknown(),
         };
         self.settled_signatures(nominal, decl, ty)
     }

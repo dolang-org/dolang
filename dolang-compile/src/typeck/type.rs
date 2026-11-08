@@ -862,9 +862,12 @@ pub(crate) struct DeclSource {
     /// that it takes the position of its nearest disjoint ancestor (see
     /// [`Database::disjoint_ancestor`])
     pub(crate) is_mixable: bool,
-    /// Whether it is a method whose decorators, besides a leading designated
-    /// `getter` or `setter`, replace its value, so that member lookup reads what
-    /// they settle to
+    /// Whether its decorators replace its value: a method's besides a leading
+    /// designated `getter` or `setter`, so that member lookup reads what they
+    /// settle to, or a def's or class's ([`sig::replaced`]), so that its value
+    /// is what they settle to
+    ///
+    /// [`sig::replaced`]: crate::typeck::elab::sig::replaced
     pub(crate) decorated: bool,
 }
 
@@ -1103,13 +1106,13 @@ pub(crate) struct Shared {
     settled: Option<Arc<Settled>>,
 }
 
-/// What decorated members settled to, by their methods' declarations, each a
+/// What decorated members and exports settled to, by their declarations, each a
 /// type of the layer that holds it and the layers over it
 pub(crate) type Settled = FxHashMap<DeclId, SettledMember>;
 
-/// What a decorated method's member settled to. Its type is interpreted where its
-/// class's binder group is, as a method's signature split off its class's binders
-/// is ([`Database::split`]).
+/// What a decorated method's member, or exported def or class, settled to. A
+/// member's type is interpreted where its class's binder group is, as a method's
+/// signature split off its class's binders is ([`Database::split`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SettledMember {
     /// A callable, which the class installs as a method, or a decorated
@@ -1118,6 +1121,8 @@ pub(crate) enum SettledMember {
     /// Any other value, which the class can't install. It's diagnosed, and the
     /// member or accessor is unknown.
     Value(TypeId),
+    /// An exported def's or class's value, whatever it is, at the top level
+    Declared(TypeId),
 }
 
 impl SettledMember {
@@ -1126,6 +1131,7 @@ impl SettledMember {
         match self {
             Self::Method(ty) => Self::Method(f(ty)),
             Self::Value(ty) => Self::Value(f(ty)),
+            Self::Declared(ty) => Self::Declared(f(ty)),
         }
     }
 }

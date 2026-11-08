@@ -1209,6 +1209,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                 let mut declaration = self.declaration((id, 0), decl.kind, Kind::Type, body);
                 declaration.source.is_final = sig::decorated(tables, class, Designated::Final);
                 declaration.source.is_mixable = sig::decorated(tables, class, Designated::Mixable);
+                declaration.source.decorated = sig::replaced(tables, id);
                 let mut supertypes = Vec::new();
                 for super_ref in &class.supers {
                     let span = super_ref.head.span;
@@ -1289,14 +1290,16 @@ impl<'t, 'u> Populate<'t, 'u> {
                         self.declaration((id, sig), DeclKind::Function, Kind::Type, body);
                     // Member lookup reads the declaration of a method's first
                     // signature, which shares its implementation's form
-                    if let DeclNode::Methods(methods) = &decl.node {
-                        let primary = methods
-                            .iter()
-                            .find(|method| !method.overload)
-                            .unwrap_or(&methods[0]);
-                        declaration.source.decorated =
-                            sig::method_form(tables, primary).decorated();
-                    }
+                    declaration.source.decorated = match &decl.node {
+                        DeclNode::Methods(methods) => {
+                            let primary = methods
+                                .iter()
+                                .find(|method| !method.overload)
+                                .unwrap_or(&methods[0]);
+                            sig::method_form(tables, primary).decorated()
+                        }
+                        _ => sig::replaced(tables, id),
+                    };
                     let declared = tables
                         .sig_decl((id, sig))
                         .expect("every signature is declared");

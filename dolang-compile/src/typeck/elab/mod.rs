@@ -1208,7 +1208,8 @@ impl Report for SettledValue {
 /// it's a getter or setter.
 struct SettledCycle {
     span: Span,
-    accessor: Option<bool>,
+    /// What's decorated: a method, getter, setter, def or class
+    what: &'static str,
 }
 
 impl Report for SettledCycle {
@@ -1217,12 +1218,7 @@ impl Report for SettledCycle {
     }
 
     fn message(&self, w: &mut dyn Write) -> fmt::Result {
-        let method = match self.accessor {
-            Some(true) => "setter",
-            Some(false) => "getter",
-            None => "method",
-        };
-        write!(w, "a {method}'s decorators depend on what they give")
+        write!(w, "a {}'s decorators depend on what they give", self.what)
     }
 
     fn span(&self) -> Span {

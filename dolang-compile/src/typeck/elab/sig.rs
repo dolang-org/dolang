@@ -17,7 +17,7 @@
 use super::{
     Ambient, BadNominee, BinderRef, DeclNode, Designated, Diag, KindOf, MisdeclaredIntrinsic,
     MissingAnnotation, MissingIntrinsic, PIPES, ParamTy, Referent, RestSlot, Sig, Slot, Tables,
-    UnitDiag,
+    Target, UnitDiag,
     surface::{BinderKind, Class, Decorator, Member, MemberScope, Method, ParamKind, Signature},
 };
 use crate::diag::Span;
@@ -338,15 +338,45 @@ fn decorator_designation(tables: &Tables<'_>, decorator: &Decorator) -> Option<D
 /// which returns the class it is given after marking it, and `mark` is one of
 /// them. Without decorators, a class has no mark.
 pub(crate) fn decorated(tables: &Tables<'_>, class: &Class, mark: Designated) -> bool {
-    let designations = class
+    class
         .decorators
         .iter()
-        .map(|decorator| decorator_designation(tables, decorator))
-        .collect::<Vec<_>>();
-    designations.contains(&Some(mark))
-        && designations
-            .iter()
-            .all(|designation| matches!(designation, Some(Designated::Final | Designated::Mixable)))
+        .any(|decorator| decorator_designation(tables, decorator) == Some(mark))
+        && marked_only(tables, class)
+}
+
+/// Whether a class's decorators are all std's `final` and `mixable`, which keep
+/// its class object
+fn marked_only(tables: &Tables<'_>, class: &Class) -> bool {
+    class.decorators.iter().all(|decorator| {
+        matches!(
+            decorator_designation(tables, decorator),
+            Some(Designated::Final | Designated::Mixable)
+        )
+    })
+}
+
+/// Whether a def's or class's decorators replace its value: a def's
+/// implementation's, or a class's that aren't all std's `final` and `mixable`. A
+/// protocol has no value.
+pub(crate) fn replaced(tables: &Tables<'_>, decl: DeclId) -> bool {
+    let owner = tables.decl(decl);
+    match &owner.node {
+        DeclNode::Defs(defs) => defs.iter().any(|def| !def.type_only && def.decorated),
+        DeclNode::Class(class) => owner.kind == DeclKind::Class && !marked_only(tables, class),
+        DeclNode::Alias(_) | DeclNode::Methods(_) | DeclNode::Closure(_) => false,
+    }
+}
+
+/// Whether settling finds what a declaration's decorators give: an exported def
+/// or class whose decorators replace its value ([`replaced`]). A decorated
+/// declaration that isn't exported is typed through its application.
+pub(crate) fn settles(tables: &Tables<'_>, decl: DeclId) -> bool {
+    let unit = tables.decl(decl).unit;
+    replaced(tables, decl)
+        && tables.shard(unit).exports.iter().any(
+            |export| matches!(export.target, Target::Local(Referent::Decl(found)) if found == decl),
+        )
 }
 
 /// Designate a top-level declaration of `std` or `strand` that the checker treats

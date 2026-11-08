@@ -489,6 +489,7 @@ impl Dump<'_> {
             }
             ExprKind::Var(var) | ExprKind::Copy(var) => self.var(out, *var),
             ExprKind::Class(decl) => write!(out, "class{}", decl.index()),
+            ExprKind::Settled(decl) => write!(out, "settled{}", decl.index()),
             ExprKind::Import { module, item } => self.import(out, module, *item),
             ExprKind::Lambda(func) => write!(out, "f{}", func.index()),
             ExprKind::Call { callee, args, .. } => {

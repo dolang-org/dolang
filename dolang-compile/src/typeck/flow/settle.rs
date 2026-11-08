@@ -1,20 +1,22 @@
-//! Settling a method's decorator region: what its decorators give, found by a
-//! flow run over the region's blocks alone.
+//! Settling a decorator region, of a method or an exported def or class: what
+//! its decorators give, found by a flow run over the region's blocks alone.
 //!
 //! The run starts at the region's entry, where every annotated variable of the
-//! module holds its annotation and every other one is unassigned, and stops at
-//! its exit. It iterates and defaults as any run does, so the application is
-//! typed by flow's own call rule. Its final pass reports the region's problems.
+//! module holds its annotation, an export's variable whose region settled holds
+//! what it settled to, and every other one is unassigned. It stops at its exit.
+//! It iterates and defaults as any run does, so the application is typed by
+//! flow's own call rule. Its final pass reports the region's problems.
 //!
 //! A region doesn't settle if any of these happen:
 //! - it creates a function, as a `do` block does, whose body would need a run of
 //!   its own;
 //! - it has a handler;
 //! - it reads a variable that's neither annotated nor assigned in the region;
-//! - it reaches a member that a region not yet settled stands for.
+//! - it reaches a member, export or export's variable that a region not yet
+//!   settled stands for.
 //!
 //! The run is abandoned where it's blocked. Only the last can change: the driver
-//! runs the region again once that member settles.
+//! runs the region again once that declaration settles.
 //!
 //! In a generic class, the method's value is its declared type at its class's
 //! rigids, and what the region gives is abstracted back over the class's binders.
@@ -26,7 +28,7 @@ use rustc_hash::FxHashSet;
 
 use super::{Flow, Layout, Results, sort};
 use crate::typeck::{
-    cfg::{FuncId, Ir, Region, Run, Step, VarFlags},
+    cfg::{FuncId, Ir, Owner, Region, Run, Step, VarFlags, VarId},
     elab::Tables,
     flow::state::{CtxId, Group, May, State, VarState},
     solver::Verdicts,
@@ -54,23 +56,25 @@ impl Settling<'_> {
 pub(super) enum Blocked {
     /// It read a variable that's neither annotated nor assigned in its region
     Read,
-    /// It reached this decorated member, or accessor, not settled yet
-    Member(DeclId),
+    /// It reached this decorated member, accessor or export, or an export's
+    /// variable, not settled yet
+    Decl(DeclId),
 }
 
 /// What settling a region concludes
 pub(crate) enum Settle {
-    /// It settled: the run's fork, what the run concluded, and what the method's
-    /// member settled to
+    /// It settled: the run's fork, what the run concluded, and what its
+    /// declaration settled to
     Settled(Box<(Database, Results, SettledMember)>),
-    /// It reached this decorated member, or accessor, before it settled
+    /// It reached this decorated member, accessor or export, or an export's
+    /// variable, before it settled
     Blocked(DeclId),
     /// It can't settle
     Failed,
 }
 
-/// Settle a method's decorator region in a fork of `layer`, the unit's with the
-/// members settled so far, from the unit's module run
+/// Settle a decorator region in a fork of `layer`, the unit's with the
+/// declarations settled so far, from the unit's module run
 pub(crate) fn settle(
     ir: &Ir,
     layout: &Layout,
@@ -91,16 +95,28 @@ pub(crate) fn settle(
         region,
         blocked: Cell::new(None),
     });
-    // The method's value is seen at its class's rigids
-    let class = region.class;
-    let rigids = tables.group_rigids(&db, (class, 0));
-    if !rigids.is_empty() && !flow.scope.iter().any(|(decl, _)| *decl == class) {
+    // A method's value is seen at its class's rigids
+    let class = match region.owner {
+        Owner::Method { class, .. } => Some(class),
+        Owner::Export { .. } => None,
+    };
+    let rigids = match class {
+        Some(class) => tables.group_rigids(&db, (class, 0)),
+        None => Vec::new(),
+    };
+    if let Some(class) = class
+        && !rigids.is_empty()
+        && !flow.scope.iter().any(|(decl, _)| *decl == class)
+    {
         flow.scope.push((class, rigids.clone()));
     }
     let (results, ty, callable) = match flow.settle_region() {
         Ok(Some(settled)) => settled,
         Ok(None) | Err(Blocked::Read) => return Settle::Failed,
-        Err(Blocked::Member(decl)) => return Settle::Blocked(decl),
+        Err(Blocked::Decl(decl)) => return Settle::Blocked(decl),
+    };
+    let Some(class) = class else {
+        return Settle::Settled(Box::new((db, results, SettledMember::Declared(ty))));
     };
     let ty = match rigids.is_empty() {
         true => ty,
@@ -152,7 +168,7 @@ impl Flow<'_, '_> {
             .iter()
             .map(|&var| {
                 let data = self.ir.var(var);
-                match data.annotation {
+                match self.annotation(var) {
                     Some(ty) => VarState {
                         ty,
                         may: May::empty(),
@@ -170,7 +186,7 @@ impl Flow<'_, '_> {
             })
             .collect();
         for &var in &self.layout.vars[module.index()] {
-            if let Some(ty) = self.ir.var(var).annotation {
+            if let Some(ty) = self.annotation(var) {
                 self.accumulator(var).ty = ty;
             }
         }
@@ -203,7 +219,10 @@ impl Flow<'_, '_> {
     /// rigids when the method is lifted over them
     pub(super) fn settled_method(&self, func: FuncId, decl: DeclId) -> Option<TypeId> {
         let region = self.settling.as_ref()?.region;
-        if region.func != func
+        let Owner::Method { class, func: own } = region.owner else {
+            return None;
+        };
+        if own != func
             || self
                 .tables
                 .lifted(decl)
@@ -212,27 +231,41 @@ impl Flow<'_, '_> {
         {
             return None;
         }
-        let class = self.db.declaration(region.class).ty;
-        let count = match self.db.ty(class) {
+        let count = match self.db.ty(self.db.declaration(class).ty) {
             Type::Quantified { binders, .. } => binders.len(),
             _ => 0,
         };
-        let (_, rigids) = self
-            .scope
-            .iter()
-            .find(|(owner, _)| *owner == region.class)?;
+        let (_, rigids) = self.scope.iter().find(|(owner, _)| *owner == class)?;
         let split = self.db.split(self.db.declaration(decl).ty, count);
         Some(self.db.substitute(split, rigids))
     }
 
-    /// In a settle run, note reaching `decl`, a decorated member or accessor, if
-    /// it's not settled yet
+    /// In a settle run, note reaching `decl`, a decorated member, accessor or
+    /// export, if it's not settled yet
     pub(super) fn placeholder(&self, decl: DeclId) {
         let Some(settling) = &self.settling else {
             return;
         };
         if self.db.declaration(decl).source.decorated && self.db.settled(decl).is_none() {
-            settling.block(Blocked::Member(decl));
+            settling.block(Blocked::Decl(decl));
         }
+    }
+
+    /// What an exported def's or class's decorators settled to, if they have
+    pub(super) fn settled_decl(&self, decl: DeclId) -> Option<TypeId> {
+        match self.db.settled(decl)? {
+            SettledMember::Declared(ty) => Some(ty),
+            SettledMember::Method(_) | SettledMember::Value(_) => None,
+        }
+    }
+
+    /// The type a variable reads as wherever it's read from: its annotation, or
+    /// for an export's variable that its region binds, what its decorators
+    /// settled to, once they have
+    pub(super) fn annotation(&self, var: VarId) -> Option<TypeId> {
+        self.ir
+            .var(var)
+            .annotation
+            .or_else(|| self.settled_decl(self.ir.settled_var(var)?))
     }
 }
