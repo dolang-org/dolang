@@ -2954,11 +2954,12 @@ impl<'db> Solver<'db> {
 
     /// Whether `step` from `parent` to `child` takes a value apart, as a
     /// recursive alias must on each cycle (see `elab::wellformed`): a class's
-    /// type argument, a function type's part, or a schema item's type or key,
-    /// but not an included schema, whose items are the schema's own
+    /// type argument, a function type's part, a schema item's type or key, but
+    /// not an included schema, whose items are the schema's own, or a member a
+    /// protocol requires of a class judged by its structure
     fn guards(&self, step: &Step, parent: Relation, child: Relation) -> bool {
         match step {
-            Step::Argument { .. } => true,
+            Step::Argument { .. } | Step::Member { .. } => true,
             Step::Parameters | Step::Return | Step::Input | Step::Output => {
                 matches!(parent, Relation::Subtype { .. })
             }
@@ -3786,10 +3787,13 @@ impl<'db> Solver<'db> {
 
     /// Whether a cycle of premises proves its judgments coinductively: the
     /// obligations on it in order, each reached by the step before it from the
-    /// one before, and the last back to the first by `back`. A closed judgment
+    /// one before, and the last back to the first by `back`. A subtype judgment
     /// is assumed while it's proven, so one revisited past a guarded step (see
-    /// [`Self::guards`]) holds. Recursion through variables is the occurs
-    /// check's.
+    /// [`Self::guards`]) holds. It needn't be closed: an obligation is interned
+    /// by its terms, so the one revisited constrains the same variables and
+    /// rigids, as a protocol's quantified method does between unfoldings.
+    /// Recursion through variables runs along bound propagation, which is no
+    /// premise, and is the occurs check's.
     fn coinductive(
         &self,
         cycle: &[ObligationId],
@@ -3800,14 +3804,16 @@ impl<'db> Solver<'db> {
             .iter()
             .zip(cycle.iter().skip(1).chain(cycle.first()))
             .zip(steps.iter().map(Option::as_ref).chain([back]));
-        cycle.iter().all(|&id| self.closed_relation(id))
+        cycle
+            .iter()
+            .all(|&id| matches!(self.relation(id), Relation::Subtype { .. }))
             && edges.into_iter().any(|((&from, &to), step)| {
                 step.is_some_and(|step| self.guards(step, self.relation(from), self.relation(to)))
             })
     }
 
-    /// Whether an obligation relates closed types, as a judgment assumed while
-    /// it's proven must
+    /// Whether an obligation relates closed types, so that a cycle through it
+    /// without a guard is ill-formed rather than awaiting inference
     fn closed_relation(&self, id: ObligationId) -> bool {
         match self.relation(id) {
             Relation::Subtype {
@@ -3910,11 +3916,15 @@ impl<'db> Solver<'db> {
                 Continue(())
             });
         }
+        // What the budget left undone explains the rest, so it's reported first
         if self.gas.is_exhausted() {
-            diagnostics.push(Diagnostic {
-                issue: Residual::Limit.into(),
-                path: vec![root],
-            });
+            diagnostics.insert(
+                0,
+                Diagnostic {
+                    issue: Residual::Limit.into(),
+                    path: vec![root],
+                },
+            );
         }
         let status = if diagnostics
             .iter()

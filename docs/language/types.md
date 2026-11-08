@@ -333,6 +333,13 @@ A generic protocol's arguments are inferred from the members: a class whose
 `get` returns `Int` conforms to `Source[Int]` for a protocol `Source[T]` with
 `pub def get self -> T`.
 
+A protocol's members may name the protocol itself, directly or through another
+protocol. A class whose `rest` returns its own type conforms to a protocol
+whose `rest` returns the protocol, since its members fit once it is assumed to
+conform. The checker can't verify a class whose members never come back to the
+same comparison, such as `class Grow[T]` whose `rest` returns
+`Grow[Array[T]]`; such a class can name the protocol instead.
+
 A class can declare that it implements a protocol by naming it as a supertype
 with `@`:
 
