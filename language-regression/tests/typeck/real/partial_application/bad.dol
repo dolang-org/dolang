@@ -1,0 +1,32 @@
+# dolang: strict
+# Items bound ahead must fit what the function takes in their place
+
+def bind[P @ {*Value}, S @ {*Value}]
+  func @ ((...P, ...S, <Value, >Value) -> nil)
+  ...bound @ P
+do -> ((...S, <Value, >Value) -> nil)
+  do |...rest @ S| func ...bound ...rest
+
+def example _foo@Int _bar@Str
+  nil
+
+pub def mismatched()
+  let bound = bind $example x
+  # error: expected `("x", std.Str) -> nil`, found `(std.Int, std.Str) -> nil`
+  #   --> bad.dol:LL:LL
+  #    |
+  # LL |   let bound = bind $example x
+  #    |                     ^^^^^^^
+  #    |
+  #    = note: `std.Int` doesn't accept `"x"`
+  #    = note: in `{std.Int, std.Str}`
+  bound hello
+
+pub def leftover()
+  let bound = bind $example 42
+  bound 1
+# error: expected `std.Str`, found `1`
+#   --> bad.dol:LL:LL
+#    |
+# LL |   bound 1
+#    |         ^

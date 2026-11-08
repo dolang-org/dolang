@@ -2,7 +2,7 @@
 # A mismatch against the chosen pack is reported
 pub def mismatched names @ Array[Str] -> Iter[(Str, Str)]
   names.iter().zip([1])
-# error: `std.Iter[(std.Str, std.Int)]` does not fit the declared result `std.Iter[(std.Str, std.Str)]`
+# error: `std.Iter[(std.Str, 1)]` does not fit the declared result `std.Iter[(std.Str, std.Str)]`
 #   --> bad.dol:LL:LL
 #    |
 # LL |   names.iter().zip([1])

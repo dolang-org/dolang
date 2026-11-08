@@ -1,0 +1,29 @@
+# dolang: strict
+# A pack that a function parameter's parameters splice is left what the
+# function passed takes beyond the other items.
+
+pub def bind[P @ {*Value}, S @ {*Value}]
+  func @ ((...P, ...S, <Value, >Value) -> nil)
+  ...bound @ P
+do -> ((...S, <Value, >Value) -> nil)
+  do |...rest @ S| func ...bound ...rest
+
+pub def bind_keys[P @ {**Value}, S @ {**Value}]
+  func @ ((...P, ...S, <Value, >Value) -> nil)
+  ...bound @ P
+do -> ((...S, <Value, >Value) -> nil)
+  do |...rest @ S| func ...bound ...rest
+
+def example _foo@Int _bar@Str
+  nil
+
+def greet :name@Str :count@Int
+  let _ @ (Str, Int) = (name, count)
+
+pub def positional()
+  let bound = bind $example 42
+  bound hello
+
+pub def keyed()
+  let bound = bind_keys $greet name: world
+  bound count: 1
