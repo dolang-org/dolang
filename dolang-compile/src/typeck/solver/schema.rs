@@ -24,6 +24,10 @@
 //! the actual side's multiplicities fits the expected side; each actual atom
 //! must then fit every expected atom its items can land on.
 //!
+//! A variable without a counterpart takes what the other side has left: on the
+//! expected side, the actual items left over become its lower bound, and on
+//! the actual side, the expected items left over become its upper bound.
+//!
 //! A keyed item that may be absent and whose value is the bottom type admits
 //! no items, so on the actual side it has nothing to fit.
 //!
@@ -272,14 +276,6 @@ impl Solver<'_> {
         {
             return Err(Issue::Contradiction(Contradiction::Rigid));
         }
-        // A variable without a counterpart takes what the other side has left. On
-        // the actual side, it is bounded only through a rest-shaped expected schema.
-        if a.opaque
-            .iter()
-            .any(|o| matches!(o.opacity, Opacity::Infer(id) if !paired_variables.contains(&id)))
-        {
-            return Err(Residual::Inference.into());
-        }
         let collectors: Vec<usize> = (0..b.opaque.len())
             .filter(|j| {
                 matches!(
@@ -288,6 +284,19 @@ impl Solver<'_> {
                 ) && !b_paired.contains(j)
             })
             .collect();
+        // A variable without a counterpart takes what the other side has left.
+        // Where the actual side has several, how to split what is left between
+        // them waits for all but one to be decided elsewhere.
+        let unpaired: Vec<usize> = (0..a.opaque.len())
+            .filter(|&i| {
+                matches!(a.opaque[i].opacity, Opacity::Infer(id) if !paired_variables.contains(&id))
+            })
+            .collect();
+        match unpaired[..] {
+            [] => {}
+            [only] if collectors.is_empty() => return self.remainder(&a, &b, only, obligation),
+            _ => return Err(Residual::Inference.into()),
+        }
         if !collectors.is_empty() {
             return self.collect(&a, &b, &collectors, obligation);
         }
@@ -582,6 +591,204 @@ impl Solver<'_> {
             self.align(&leading, &fixed, obligation)?;
         }
         Ok(left)
+    }
+
+    /// Relate schemas where the actual side has one variable without a
+    /// counterpart, and the expected side has no variables, mappings or rests
+    /// of its own to collect into. The actual side's other items take theirs,
+    /// and the variable is bounded above by what the expected side has left:
+    /// the positional items between those the actual side's leading and
+    /// trailing items take, and the keyed items of keys the actual side doesn't
+    /// name, with every key domain. Only its upper bound is derived, since its
+    /// greatest solution is the one that fits.
+    fn remainder(
+        &self,
+        a: &Shape,
+        b: &Shape,
+        variable: usize,
+        obligation: ObligationId,
+    ) -> Result<(), Issue> {
+        let var = a.opaque[variable];
+        let Opacity::Infer(id) = var.opacity else {
+            unreachable!("only variables are bounded by a remainder")
+        };
+        let unknown = |shape: &Shape, lane: fn(&Opaque) -> bool| {
+            shape
+                .opaque
+                .iter()
+                .any(|o| o.opacity == Opacity::Unknown && lane(o))
+        };
+        let mut left = Vec::new();
+        if var.positional() {
+            if unknown(a, Opaque::positional) || unknown(b, Opaque::positional) {
+                return Err(Residual::Inference.into());
+            }
+            left = self.positional_remainder(a, b, variable, obligation)?;
+        } else if !unknown(a, Opaque::positional) && !unknown(b, Opaque::positional) {
+            self.positional(a, b, obligation)?;
+        } else {
+            self.prefix(a, b, obligation)?;
+        }
+        if var.keyed() {
+            if unknown(a, Opaque::keyed) || unknown(b, Opaque::keyed) {
+                return Err(Residual::Inference.into());
+            }
+            left.extend(self.keyed_remainder(a, b, obligation)?);
+        } else {
+            self.keyed(
+                &a.keyed,
+                &b.keyed,
+                unknown(a, Opaque::keyed),
+                unknown(b, Opaque::keyed),
+                None,
+                obligation,
+            )?;
+        }
+        let left = self.synthetic(&left);
+        self.derive(obligation, Term::Infer(id), left, Step::Item(var.item));
+        Ok(())
+    }
+
+    /// The expected positional atoms left for the actual variable at
+    /// `variable`, relating the actual atoms around it. Each of those must be
+    /// required, as must the expected atoms they land on: a leading run of
+    /// required atoms takes the first positions and a trailing run the last,
+    /// whatever the count.
+    fn positional_remainder(
+        &self,
+        a: &Shape,
+        b: &Shape,
+        variable: usize,
+        obligation: ObligationId,
+    ) -> Result<Vec<Collected>, Issue> {
+        let (mut before, mut after) = (Vec::new(), Vec::new());
+        let mut seen = false;
+        for slot in &a.positional {
+            match *slot {
+                Slot::Atom(atom) if seen => after.push(atom),
+                Slot::Atom(atom) => before.push(atom),
+                Slot::Opaque(index) if index == variable => seen = true,
+                Slot::Opaque(index) if !a.opaque[index].positional() => {}
+                Slot::Opaque(_) => return Err(Residual::Inference.into()),
+            }
+        }
+        let mut ys = Vec::new();
+        for slot in &b.positional {
+            match *slot {
+                Slot::Atom(atom) => ys.push(atom),
+                Slot::Opaque(index) if !b.opaque[index].positional() => {}
+                Slot::Opaque(_) => return Err(Residual::Inference.into()),
+            }
+        }
+        if before
+            .iter()
+            .chain(&after)
+            .any(|x| x.multiplicity != Multiplicity::Required)
+        {
+            return Err(Residual::Alignment.into());
+        }
+        let fixed = before.len() + after.len();
+        let most = ys
+            .iter()
+            .try_fold(0, |total, y| Some(total + range(y.multiplicity).1?));
+        if let Some(most) = most
+            && most < fixed
+        {
+            let excess = before.iter().chain(&after).nth(most).unwrap();
+            return Err(Issue::Contradiction(Contradiction::Excess(excess.item)));
+        }
+        if ys.len() < fixed {
+            return Err(Residual::Alignment.into());
+        }
+        let (leading, rest) = ys.split_at(before.len());
+        let (middle, trailing) = rest.split_at(rest.len() - after.len());
+        if leading
+            .iter()
+            .chain(trailing)
+            .any(|y| y.multiplicity != Multiplicity::Required)
+        {
+            return Err(Residual::Alignment.into());
+        }
+        for (x, y) in before.iter().zip(leading).chain(after.iter().zip(trailing)) {
+            self.derive(obligation, x.ty, y.ty, Step::Item(x.item));
+        }
+        Ok(middle.iter().map(|&y| Collected::Atom(y)).collect())
+    }
+
+    /// The expected keyed atoms left for an actual variable, relating the
+    /// actual atoms. Each actual atom must be required and have a literal key.
+    /// A key it names takes exactly as many required expected literals, in
+    /// order, and isn't left; other keys go to the expected domains, which are
+    /// left whole, as is every literal of a key the actual side doesn't name.
+    fn keyed_remainder(
+        &self,
+        a: &Shape,
+        b: &Shape,
+        obligation: ObligationId,
+    ) -> Result<Vec<Collected>, Issue> {
+        for x in &a.keyed {
+            if !self.literal(x.key)? {
+                return Err(Residual::Inference.into());
+            }
+            if x.multiplicity != Multiplicity::Required {
+                return Err(Residual::Alignment.into());
+            }
+        }
+        let mut literal = Vec::with_capacity(b.keyed.len());
+        for y in &b.keyed {
+            literal.push(self.literal(y.key)?);
+        }
+        let mut named = vec![false; b.keyed.len()];
+        let mut grouped = vec![false; a.keyed.len()];
+        let mut unnamed = Vec::new();
+        for i in 0..a.keyed.len() {
+            if grouped[i] {
+                continue;
+            }
+            let key = a.keyed[i].key;
+            let mut xs = Vec::new();
+            for (j, x) in a.keyed.iter().enumerate().skip(i) {
+                if !grouped[j] && self.same(x.key, key)? {
+                    grouped[j] = true;
+                    xs.push(*x);
+                }
+            }
+            let mut ys = Vec::new();
+            for (j, y) in b.keyed.iter().enumerate() {
+                if literal[j] && self.same(y.key, key)? {
+                    ys.push(j);
+                }
+            }
+            if ys.is_empty() {
+                unnamed.extend(xs);
+                continue;
+            }
+            if ys.len() != xs.len()
+                || ys
+                    .iter()
+                    .any(|&j| b.keyed[j].multiplicity != Multiplicity::Required)
+            {
+                return Err(Residual::Alignment.into());
+            }
+            for (x, &j) in xs.iter().zip(&ys) {
+                named[j] = true;
+                self.derive(obligation, x.value, b.keyed[j].value, Step::Item(x.item));
+            }
+        }
+        let domains: Vec<KeyedAtom> = b
+            .keyed
+            .iter()
+            .zip(&literal)
+            .filter(|&(_, &literal)| !literal)
+            .map(|(y, _)| *y)
+            .collect();
+        self.keyed(&unnamed, &domains, false, false, None, obligation)?;
+        Ok(b.keyed
+            .iter()
+            .zip(&named)
+            .filter(|&(_, &named)| !named)
+            .map(|(y, _)| Collected::Keyed(*y))
+            .collect())
     }
 
     /// Decide the packs of `mapping` from the items it must admit. Each item

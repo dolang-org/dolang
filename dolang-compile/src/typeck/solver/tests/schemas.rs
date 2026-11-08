@@ -1555,3 +1555,162 @@ fn a_positional_and_a_keyed_mapping_invert_apart() {
         ]
     );
 }
+
+/// `[*Ss] ((...inner) -> Value) -> Value`, over `packs` packs of `rest`'s
+/// lanes
+fn applies(db: &Database, rest: Rest, packs: usize, inner: Vec<SchemaItem>) -> TypeId {
+    quantified(
+        db,
+        (0..packs)
+            .map(|_| bounded(Kind::Schema, Binding::Rest(rest), None))
+            .collect(),
+        takes(
+            db,
+            vec![positional(Multiplicity::Required, takes(db, inner))],
+        ),
+    )
+}
+
+/// The outcomes of calling `callee` with `passed`, before anything is defaulted
+fn undefaulted(db: &Database, callee: TypeId, passed: TypeId) -> Vec<Outcome> {
+    let gas = Gas::default();
+    let mut s = Solver::new(db, &gas);
+    let callee = s.closed(callee);
+    let args = [CallArgument::Positional(s.closed(passed))];
+    let result = s.infer();
+    constrain_call(&mut s, callee, &args, result, None);
+    s.solve()
+}
+
+#[test]
+fn an_actual_pack_is_left_the_positional_items_around_the_others() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let s = || include(Multiplicity::Required, pack(&db, 0));
+    let required = |ty| positional(Multiplicity::Required, ty);
+    // [*S] ((Int, ...S) -> Value) -> Value, (...S, Int), and (Int, ...S, Int)
+    let leading = applies(&db, Rest::Positional, 1, vec![required(int), s()]);
+    let trailing = applies(&db, Rest::Positional, 1, vec![s(), required(int)]);
+    let both = applies(
+        &db,
+        Rest::Positional,
+        1,
+        vec![required(int), s(), required(int)],
+    );
+    let int_str = takes(&db, vec![required(int), required(str)]);
+    let str_int = takes(&db, vec![required(str), required(int)]);
+    let int_opt = takes(
+        &db,
+        vec![required(int), positional(Multiplicity::Optional, str)],
+    );
+    let surrounded = takes(&db, vec![required(int), required(str), required(int)]);
+    let optional = items(&db, vec![positional(Multiplicity::Optional, str)]);
+    db.seal();
+    for (callee, passed, left) in [
+        (leading, int_str, schema(&db, &[str])),
+        (trailing, str_int, schema(&db, &[str])),
+        (leading, int_opt, optional),
+        (both, surrounded, schema(&db, &[str])),
+    ] {
+        let (_, packs, outcomes) = invert_call(
+            &db,
+            &Gas::default(),
+            callee,
+            &[CallArg::Positional(passed)],
+            None,
+        );
+        assert!(
+            outcomes.iter().all(|o| o.status == Status::Proven),
+            "{outcomes:?}"
+        );
+        assert_eq!(packs, vec![Ok(left)]);
+    }
+}
+
+#[test]
+fn an_actual_pack_is_left_the_keys_the_others_dont_name() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let sym = nominal(&mut db, "Sym", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Sym, sym);
+    let [a, b] = ["a", "b"].map(|name| {
+        let symbol = db.intern_symbol(name);
+        db.intern(Type::Literal(Literal::Sym(symbol)))
+    });
+    let required = |key, value| keyed(Multiplicity::Required, key, value);
+    // [**S] ((a: Int, ...S) -> Value) -> Value
+    let callee = applies(
+        &db,
+        Rest::Keyed,
+        1,
+        vec![
+            required(a, int),
+            include(Multiplicity::Required, pack(&db, 0)),
+        ],
+    );
+    let passed = takes(&db, vec![required(b, str), required(a, int)]);
+    // `a` twice can't tell which `a` is the pack's
+    let twice = takes(&db, vec![required(a, int), required(a, int)]);
+    let left = items(&db, vec![required(b, str)]);
+    db.seal();
+    let (_, packs, outcomes) = invert_call(
+        &db,
+        &Gas::default(),
+        callee,
+        &[CallArg::Positional(passed)],
+        None,
+    );
+    assert!(
+        outcomes.iter().all(|o| o.status == Status::Proven),
+        "{outcomes:?}"
+    );
+    assert_eq!(packs, vec![Ok(left)]);
+    let outcomes = undefaulted(&db, callee, twice);
+    assert!(
+        outcomes.iter().any(|o| residual(o, Residual::Alignment)),
+        "{outcomes:?}"
+    );
+}
+
+#[test]
+fn several_actual_packs_wait_and_a_short_expected_lane_contradicts() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let required = |ty| positional(Multiplicity::Required, ty);
+    // [*P, *S] ((...P, ...S) -> Value) -> Value
+    let split = applies(
+        &db,
+        Rest::Positional,
+        2,
+        vec![
+            include(Multiplicity::Required, pack(&db, 0)),
+            include(Multiplicity::Required, pack(&db, 1)),
+        ],
+    );
+    // [*S] ((Int, Str, ...S) -> Value) -> Value
+    let long = applies(
+        &db,
+        Rest::Positional,
+        1,
+        vec![
+            required(int),
+            required(str),
+            include(Multiplicity::Required, pack(&db, 0)),
+        ],
+    );
+    let int_str = takes(&db, vec![required(int), required(str)]);
+    let only_int = takes(&db, vec![required(int)]);
+    db.seal();
+    let outcomes = undefaulted(&db, split, int_str);
+    assert!(
+        outcomes.iter().any(|o| residual(o, Residual::Inference)),
+        "{outcomes:?}"
+    );
+    assert_eq!(
+        statuses(&db, long, &[&[CallArg::Positional(only_int)]]),
+        [Status::Contradicted]
+    );
+}
