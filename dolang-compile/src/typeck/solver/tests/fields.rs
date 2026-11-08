@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::{
     members::{Class, key, private, special},
     *,
@@ -96,6 +98,28 @@ fn open_classes_admit_further_keys() {
         listed(&db, decorated, FieldAccess::Read),
         Ok(items(&db, vec![tail(symbol, top)]))
     );
+}
+
+#[test]
+fn settled_members_close_final_classes() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let symbol = sym_class(&mut db);
+    let mut decorated = Class::new(&mut db, "Decorated", vec![]).final_class();
+    let method = decorated.function(&mut db, vec![], &[], int);
+    decorated.decorated(key(&db, "wrapped"), method);
+    let decorated = decorated.finish(&mut db, vec![]);
+    db.seal();
+    let base = db.share();
+
+    let fork = Database::fork(&base);
+    let open = items(&fork, vec![tail(symbol, fork.top())]);
+    assert_eq!(listed(&fork, decorated, FieldAccess::Read), Ok(open));
+    let mut layer = Database::fork(&base);
+    layer.settle(Arc::new(FxHashMap::from_iter([(method, int)])));
+    let fork = Database::fork(&layer.share());
+    let closed = items(&fork, vec![required(&fork, "wrapped", int)]);
+    assert_eq!(listed(&fork, decorated, FieldAccess::Read), Ok(closed));
 }
 
 #[test]

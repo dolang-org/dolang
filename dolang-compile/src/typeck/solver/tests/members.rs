@@ -1,6 +1,11 @@
+use std::sync::Arc;
+
 use super::*;
 use crate::typeck::{
-    solver::member::{Found, FoundKind, Lookup},
+    solver::{
+        conform::RequirementKind,
+        member::{Found, FoundKind, Lookup},
+    },
     r#type::{Member, MemberKey, Scope, Supertype},
 };
 
@@ -145,6 +150,12 @@ impl Class {
                 public: !key.private,
             },
         ));
+    }
+
+    /// Make it a protocol
+    pub(super) fn protocol(mut self) -> Self {
+        self.source.kind = DeclKind::Protocol;
+        self
     }
 
     /// Make it a class the runtime forbids subclassing
@@ -800,4 +811,43 @@ fn only_runtime_supertypes_provide_implementations() {
         s.inherits(s.closed(real), base_id),
         Ok(Reach::Reached(_))
     ));
+}
+
+#[test]
+fn settled_members_meet_requirements() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    // protocol Wrapping: pub field wrapped @ Int
+    let mut wrapping = Class::new(&mut db, "Wrapping", vec![]).protocol();
+    wrapping.field(key(&db, "wrapped"), int, Scope::Instance);
+    let wrapping = wrapping.finish(&mut db, vec![]);
+    // class Wrapper: @Wrapping, whose `wrapped` method is decorated
+    let mut wrapper = Class::new(&mut db, "Wrapper", vec![]);
+    let method = wrapper.function(&mut db, vec![], &[], int);
+    wrapper.decorated(key(&db, "wrapped"), method);
+    let wrapper = wrapper.finish(&mut db, vec![]);
+    db.seal();
+    let base = db.share();
+
+    let requirements = |db: &Database| {
+        let gas = Gas::default();
+        let solver = Solver::new(db, &gas);
+        solver
+            .conformance(wrapper, solver.closed(wrapping), true)
+            .unwrap()
+    };
+    // Unsettled, its value is unknown, which meets anything
+    assert!(requirements(&Database::fork(&base)).is_empty());
+    // Settled to `Str`, it must meet the requirement
+    let mut layer = Database::fork(&base);
+    layer.settle(Arc::new(FxHashMap::from_iter([(method, str)])));
+    let settled = requirements(&Database::fork(&layer.share()));
+    let [requirement] = settled.as_slice() else {
+        panic!("one requirement: {settled:?}")
+    };
+    assert!(
+        matches!(&requirement.kind, RequirementKind::Relate(pairs) if !pairs.is_empty()),
+        "{requirement:?}"
+    );
 }

@@ -1095,7 +1095,13 @@ pub(crate) struct Shared {
     declared: Option<Declared>,
     fixed: Fixed,
     unsupported: u32,
+    /// What its layer settled decorated members to, else its parent's
+    settled: Option<Arc<Settled>>,
 }
+
+/// What decorated members settled to, by their methods' declarations, each a
+/// type of the layer that holds it and the layers over it
+pub(crate) type Settled = FxHashMap<DeclId, TypeId>;
 
 /// What the root of a chain of shared databases holds besides its types and symbols
 struct Declared {
@@ -1172,6 +1178,14 @@ impl Shared {
             })
     }
 
+    fn settled(&self) -> Option<&Settled> {
+        match (&self.settled, &self.parent) {
+            (Some(settled), _) => Some(settled),
+            (None, Some(parent)) => parent.settled(),
+            (None, None) => None,
+        }
+    }
+
     fn is_fresh_symbol(&self, id: SymbolId) -> bool {
         match &self.parent {
             Some(parent) if id.index() < parent.symbol_count => parent.is_fresh_symbol(id),
@@ -1208,6 +1222,8 @@ pub(crate) struct Database {
     fixed: Fixed,
     /// How many unsupported stand-ins have been interned
     unsupported: Cell<u32>,
+    /// In a fork, what it settled decorated members to, which its layer keeps
+    settled: Option<Arc<Settled>>,
 }
 
 const _: () = {
@@ -1243,6 +1259,7 @@ impl Default for Database {
             gradual,
             symbols: intern::Table::new(),
             unsupported: Cell::new(0),
+            settled: None,
         }
     }
 }
@@ -1296,6 +1313,7 @@ impl Database {
             declared,
             fixed: self.fixed,
             unsupported: self.unsupported.get(),
+            settled: self.settled,
         })
     }
 
@@ -1310,7 +1328,28 @@ impl Database {
             symbols: intern::Table::new(),
             fixed: base.fixed,
             unsupported: Cell::new(base.unsupported),
+            settled: None,
         }
+    }
+
+    /// Settle decorated members in a fork once, for it and what forks its layer.
+    /// Each type must be one it reads.
+    pub(crate) fn settle(&mut self, settled: Arc<Settled>) {
+        assert!(
+            matches!(self.phase, Phase::Fork(_)),
+            "only a fork settles members"
+        );
+        assert!(self.settled.is_none(), "members already settled");
+        self.settled = Some(settled);
+    }
+
+    /// What a decorated method's member settled to, if anything did
+    pub(crate) fn settled(&self, decl: DeclId) -> Option<TypeId> {
+        let settled = match &self.settled {
+            Some(settled) => Some(&**settled),
+            None => self.base().and_then(Shared::settled),
+        };
+        settled?.get(&decl).copied()
     }
 
     fn base(&self) -> Option<&Shared> {

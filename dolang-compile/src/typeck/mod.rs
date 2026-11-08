@@ -540,7 +540,8 @@ struct UnitOutput {
     wellformed: (Vec<elab::UnitDiag>, Vec<elab::Unresolved>),
     overrides: (Vec<elab::UnitDiag>, Vec<elab::Unresolved>),
     cfg: Option<cfg::Ir>,
-    /// The layer lowering interned in, which each flow run's fork is of
+    /// The layer over the one lowering interned in that settles decorated
+    /// members, which each flow run's fork is of
     layer: Option<Arc<r#type::Shared>>,
     /// Each flow run's fork, which its results are interned in, and its results,
     /// by run ID
@@ -666,6 +667,7 @@ const _: () = {
     const fn sync<T: Sync>() {}
     const fn owned<T: Send + 'static>() {}
     send::<UnitOutput>();
+    send::<Lowered>();
     sync::<elab::Tables<'_>>();
     // A unit's runs are analyzed on other threads than the one that lowered it
     send::<r#type::Database>();
@@ -678,9 +680,10 @@ const _: () = {
     sync::<Analysis>();
 };
 
-/// Check every unit with [`check_unit`], on a pool of `threads` threads, else the
-/// global pool, giving their outputs by [`UnitId`]. Flow logs facts only for an
-/// `analysis`.
+/// Check every unit, on a pool of `threads` threads, else the global pool,
+/// giving their outputs by [`UnitId`]: each unit is lowered by [`lower_unit`],
+/// then, once every unit is, finished by [`finish_unit`]. Flow logs facts only
+/// for an `analysis`.
 fn check_units(
     shared: &Arc<r#type::Shared>,
     tables: &elab::Tables<'_>,
@@ -688,24 +691,14 @@ fn check_units(
     analysis: bool,
 ) -> Vec<UnitOutput> {
     let count = tables.shards.len();
-    let mut slots: Vec<Option<UnitOutput>> = (0..count).map(|_| None).collect();
-    let mut work: Vec<_> = slots
-        .iter_mut()
-        .enumerate()
-        .map(|(index, slot)| (UnitId::from_index(index), slot))
-        .collect();
-    // Largest first, so that no large unit starts last; typelibs have nothing of
-    // their own to check
-    work.sort_by_key(|(unit, _)| {
-        let info = tables.info(*unit);
-        std::cmp::Reverse(info.source.map_or(0, |source| source.file.newlines().len()))
-    });
-    // FIFO, so that the worker spawning the units takes them largest first too
     let run = || {
-        rayon::scope_fifo(|scope| {
-            for (unit, slot) in work {
-                scope.spawn_fifo(move |_| *slot = Some(check_unit(shared, tables, unit, analysis)));
-            }
+        let lowered = each(tables, vec![(); count], |unit, ()| {
+            lower_unit(shared, tables, unit)
+        });
+        // What decorated members settle to, which #796's settling pass is to fill
+        let settled = Arc::new(r#type::Settled::default());
+        each(tables, lowered, |unit, lowered| {
+            finish_unit(tables, unit, lowered, &settled, analysis)
         })
     };
     // With traces, one thread, so that they don't interleave
@@ -724,62 +717,124 @@ fn check_units(
         // spawn
         _ => run(),
     }
+}
+
+/// `f` of each unit and its item, `items` and the results both by [`UnitId`], in
+/// tasks on the current pool, returning once all are done
+fn each<I: Send, T: Send>(
+    tables: &elab::Tables<'_>,
+    items: Vec<I>,
+    f: impl Fn(UnitId, I) -> T + Sync,
+) -> Vec<T> {
+    let mut slots: Vec<Option<T>> = items.iter().map(|_| None).collect();
+    let mut work: Vec<_> = items
+        .into_iter()
+        .zip(slots.iter_mut())
+        .enumerate()
+        .map(|(index, (item, slot))| (UnitId::from_index(index), item, slot))
+        .collect();
+    // Largest first, so that no large unit starts last; typelibs have nothing of
+    // their own to check
+    work.sort_by_key(|(unit, ..)| {
+        let info = tables.info(*unit);
+        std::cmp::Reverse(info.source.map_or(0, |source| source.file.newlines().len()))
+    });
+    // FIFO, so that the worker spawning the units takes them largest first too
+    let f = &f;
+    rayon::scope_fifo(|scope| {
+        for (unit, item, slot) in work {
+            scope.spawn_fifo(move |_| *slot = Some(f(unit, item)));
+        }
+    });
     slots
         .into_iter()
-        .map(|output| output.expect("every unit is checked"))
+        .map(|slot| slot.expect("every unit is done"))
         .collect()
 }
 
-/// Check a unit with source, its declarations and bodies, in a new fork of
-/// `shared`; a typelib's were checked with its source. Flow logs facts only for
-/// an `analysis`.
-fn check_unit(
-    shared: &Arc<r#type::Shared>,
+/// What checking a unit concludes before its decorated members settle
+struct Lowered {
+    wellformed: (Vec<elab::UnitDiag>, Vec<elab::Unresolved>),
+    /// A unit with source's CFG, and the layer lowering interned in
+    lowered: Option<(cfg::Ir, Arc<r#type::Shared>)>,
+}
+
+/// Check a unit's well-formedness and lower its bodies, each in a new fork of
+/// `shared`; a typelib's well-formedness was checked with its source, and it has
+/// no bodies
+fn lower_unit(shared: &Arc<r#type::Shared>, tables: &elab::Tables<'_>, unit: UnitId) -> Lowered {
+    if tables.info(unit).source.is_none() {
+        // The solver copes with an ill-formed type
+        return Lowered {
+            wellformed: (Vec::new(), Vec::new()),
+            lowered: None,
+        };
+    }
+    // A fork of its own, so that what it interns isn't in the layer
+    let mut wellformed = Vec::new();
+    let unresolved = elab::wellformed(
+        &r#type::Database::fork(shared),
+        tables,
+        unit,
+        &mut wellformed,
+    );
+    let db = r#type::Database::fork(shared);
+    let ir = lower::lower(tables, &db, unit);
+    debug_assert_eq!(ir.validate(), Ok(()), "lowering builds a valid graph");
+    #[cfg(debug_assertions)]
+    ir.check_stack_depths();
+    #[cfg(feature = "debug")]
+    if let Err(e) = export_dot(&ir, &db, tables.info(unit)) {
+        dolang_util::debug_eprintln!(topic: "dot", "Typing CFG DOT export failed: {e}");
+    }
+    Lowered {
+        wellformed: (wellformed, unresolved),
+        lowered: Some((ir, db.share())),
+    }
+}
+
+/// Check a lowered unit's overrides and bodies with its decorated members
+/// `settled`, in forks of a layer over the one it was lowered in; a typelib's
+/// overrides were checked with its source, and it has no bodies
+fn finish_unit(
     tables: &elab::Tables<'_>,
     unit: UnitId,
+    lowered: Lowered,
+    settled: &Arc<r#type::Settled>,
     analysis: bool,
 ) -> UnitOutput {
-    // A fork of its own, so that what it interns isn't in the layer
-    let db = r#type::Database::fork(shared);
-    let source = tables.info(unit).source;
-    // A typelib's well-formedness and overrides were checked with its source;
-    // the solver copes with an ill-formed type, and a nonconforming member only
-    // misleads checks against it
-    let mut wellformed = Vec::new();
-    let wellformed_unresolved = match source {
-        Some(_) => elab::wellformed(&db, tables, unit, &mut wellformed),
-        None => Vec::new(),
+    let Lowered {
+        wellformed,
+        lowered,
+    } = lowered;
+    let Some((ir, layer)) = lowered else {
+        // A nonconforming member only misleads checks against it
+        return UnitOutput {
+            wellformed,
+            overrides: (Vec::new(), Vec::new()),
+            cfg: None,
+            layer: None,
+            runs: Vec::new(),
+        };
     };
+    let mut db = r#type::Database::fork(&layer);
+    db.settle(Arc::clone(settled));
+    let layer = db.share();
     let mut overrides = Vec::new();
-    let overrides_unresolved = match source {
-        Some(_) => elab::overrides(&db, tables, unit, &mut overrides),
-        None => Vec::new(),
-    };
-    // A unit's bodies are checked only from its source, in runs that each have a
-    // fork of the layer lowering interned in
-    let (cfg, layer, runs) = match source {
-        Some(_) => {
-            let db = r#type::Database::fork(shared);
-            let ir = lower::lower(tables, &db, unit);
-            debug_assert_eq!(ir.validate(), Ok(()), "lowering builds a valid graph");
-            #[cfg(debug_assertions)]
-            ir.check_stack_depths();
-            #[cfg(feature = "debug")]
-            if let Err(e) = export_dot(&ir, &db, tables.info(unit)) {
-                dolang_util::debug_eprintln!(topic: "dot", "Typing CFG DOT export failed: {e}");
-            }
-            let layer = db.share();
-            let layout = flow::Layout::new(&ir);
-            let runs = flow::analyze(&ir, &layout, &ir.runs(), &layer, tables, analysis);
-            (Some(ir), Some(layer), runs)
-        }
-        None => (None, None, Vec::new()),
-    };
+    let unresolved = elab::overrides(
+        &r#type::Database::fork(&layer),
+        tables,
+        unit,
+        &mut overrides,
+    );
+    // Each run has a fork of the layer of its own
+    let layout = flow::Layout::new(&ir);
+    let runs = flow::analyze(&ir, &layout, &ir.runs(), &layer, tables, analysis);
     UnitOutput {
-        wellformed: (wellformed, wellformed_unresolved),
-        overrides: (overrides, overrides_unresolved),
-        cfg,
-        layer,
+        wellformed,
+        overrides: (overrides, unresolved),
+        cfg: Some(ir),
+        layer: Some(layer),
         runs,
     }
 }

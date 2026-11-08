@@ -60,7 +60,7 @@ pub(crate) enum FoundKind {
         getter: Option<Signatures>,
         setter: Option<Signatures>,
     },
-    /// A method its decorators replace with a value of unknown type
+    /// A method its decorators replace with a value not settled to a type
     Unknown,
 }
 
@@ -661,7 +661,11 @@ impl Solver<'_> {
                 getter: getter.map(signatures),
                 setter: setter.map(signatures),
             },
-            Member::Decorated { .. } => FoundKind::Unknown,
+            // Until settled, a decorated member's value is unknown
+            Member::Decorated { decl, .. } => match self.db.settled(decl) {
+                Some(ty) => FoundKind::Field(self.view(ty, nominal.environment)),
+                None => FoundKind::Unknown,
+            },
         };
         Found {
             class: nominal.declaration,

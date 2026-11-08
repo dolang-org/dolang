@@ -1516,6 +1516,21 @@ fn forks_read_their_base() {
 }
 
 #[test]
+fn layers_over_a_settling_layer_read_its_table() {
+    let (base, one, id, _) = shared();
+    assert_eq!(Database::fork(&base).settled(id), None);
+    let mut fork = Database::fork(&base);
+    let two = int(&mut fork, 2);
+    fork.settle(Arc::new(FxHashMap::from_iter([(id, two)])));
+    assert_eq!(fork.settled(id), Some(two));
+    let mut layer = Database::fork(&fork.share());
+    assert_ne!(int(&mut layer, 3), one);
+    let fork = Database::fork(&layer.share());
+    assert_eq!(fork.settled(id), Some(two));
+    assert_panics(|| Database::new().settle(Arc::default()));
+}
+
+#[test]
 fn forks_intern_after_their_base() {
     let (base, one, ..) = shared();
     let mut fork = Database::fork(&base);
