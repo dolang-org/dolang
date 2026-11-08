@@ -1,0 +1,53 @@
+# A protocol declaring public members, all of which every value has, is warned
+# of: it constrains nothing, so a class conforms to it only by naming it. One
+# with no public members is a marker and isn't warned of, nor is one only
+# inheriting such members.
+
+pub @class Marker[T]
+  field schema @std.Phantom[T]
+
+pub @class Shown
+  # warning: `Shown` asks only for members every value has
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub @class Shown
+  #    |            ^^^^^
+  #    |
+  #    = note: a class conforms to it only by naming it
+  #    = help: remove its public members to make it a marker, or add a member `Value` lacks
+  pub def (str) self -> Str
+
+pub @class Hashed
+  # warning: `Hashed` asks only for members every value has
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub @class Hashed
+  #    |            ^^^^^^
+  #    |
+  #    = note: a class conforms to it only by naming it
+  #    = help: remove its public members to make it a marker, or add a member `Value` lacks
+  pub def (hash) self -> Int
+  pub def (eq) self other @ Value -> Bool
+
+pub @class Sub: Shown
+
+pub @class Area: Shown
+  pub def area self -> Int
+
+pub class Base
+
+pub @class Based: Base
+  pub def (str) self -> Str
+
+pub @class Constructed
+  pub def (init) self
+  #[static]
+  pub def make -> Int
+
+pub @class Classy
+  #[class]
+  pub def (str) cls -> Str
+
+pub class Plain
+  pub def (str) _self -> Str
+    ...

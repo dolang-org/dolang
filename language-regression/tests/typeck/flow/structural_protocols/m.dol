@@ -1,0 +1,230 @@
+# A class conforms to a protocol it doesn't name when it has each of the
+# protocol's members, with compatible types, and inherits each class the
+# protocol names
+
+pub @class Shape
+  pub def area self -> Int
+
+pub class Square
+  pub def area _self -> Int
+    1
+
+pub class Blob
+  pub def volume _self -> Int
+    1
+
+pub class Wordy
+  pub def area _self -> Str
+    "big"
+
+pub def measure shape @ Shape -> Int
+  shape.area()
+
+pub def shapes()
+  measure (Square())
+  measure (Blob())
+  # error: expected `m.Shape`, found `m.Blob`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   measure (Blob())
+  #    |            ^^^^^^
+  #    |
+  #    = note: `m.Blob` has no `area`, which `m.Shape` requires
+  measure (Wordy())
+# error: expected `m.Shape`, found `m.Wordy`
+#   --> m.dol:LL:LL
+#    |
+# LL |   measure (Wordy())
+#    |            ^^^^^^^
+#    |
+#    = note: `std.Str` does not fit `std.Int`
+#    = note: in member `area`
+
+# A generic protocol's arguments are solved through the members
+pub @class Source[T]
+  pub def get self -> T
+
+pub class Numbers
+  pub def get _self -> Int
+    1
+
+pub def take[T] source @ Source[T] -> T
+  source.get()
+
+pub def sources()
+  let n @ Int = take (Numbers())
+  let s @ Str = take (Numbers())
+  # error: `std.Int` does not fit the annotation `std.Str`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let s @ Str = take (Numbers())
+  #    |                 ^^^^^^^^^^^^^^^^
+  [n, s]
+
+# A protocol naming a class requires inheriting it
+pub class Base
+
+pub @class Grounded: Base
+  pub def area self -> Int
+
+pub class Grounding: Base
+  pub def area _self -> Int
+    1
+
+pub def grounded _g @ Grounded
+  ...
+
+pub def bases()
+  grounded (Grounding())
+  grounded (Square())
+# error: expected `m.Grounded`, found `m.Square`
+#   --> m.dol:LL:LL
+#    |
+# LL |   grounded (Square())
+#    |             ^^^^^^^^
+#    |
+#    = note: `m.Square` does not fit `m.Base`
+
+# A field is related both ways
+pub @class Named
+  pub field name @ Str
+
+pub class Person
+  pub field name @ Str = "x"
+
+pub class Tagged
+  pub field name @ (Str | nil) = nil
+
+pub class Method
+  pub def name _self -> Str
+    "x"
+
+pub def named _n @ Named
+  ...
+
+pub def names()
+  named (Person())
+  named (Tagged())
+  # error: expected `m.Named`, found `m.Tagged`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   named (Tagged())
+  #    |          ^^^^^^^^
+  #    |
+  #    = note: `nil` does not fit `std.Str`
+  #    = note: in member `name`
+  named (Method())
+# error: expected `m.Named`, found `m.Method`
+#   --> m.dol:LL:LL
+#    |
+# LL |   named (Method())
+#    |          ^^^^^^^^
+#    |
+#    = note: `m.Named` requires `name` to be a field, but `m.Method`'s is a method
+
+# A trivial protocol is nominal
+pub @class Shown
+  # warning: `Shown` asks only for members every value has
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub @class Shown
+  #    |            ^^^^^
+  #    |
+  #    = note: a class conforms to it only by naming it
+  #    = help: remove its public members to make it a marker, or add a member `Value` lacks
+  pub def (str) self -> Str
+
+pub class Plain
+
+pub class Claims: @Shown
+
+pub def shown _s @ Shown
+  ...
+
+pub def trivial()
+  shown (Plain())
+  # error: expected `m.Shown`, found `m.Plain`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   shown (Plain())
+  #    |          ^^^^^^^
+  #    |
+  #    = note: `m.Shown` is nominal: every value has its members, so a class is below it only by naming it
+  shown (Claims())
+
+# Top has no members but every value's
+pub def top value @ Value
+  measure $value
+# error: expected `m.Shape`, found `Value`
+#   --> m.dol:LL:LL
+#    |
+# LL |   measure $value
+#    |            ^^^^^
+
+# A protocol conforms to a weaker one
+pub @class Solid
+  pub def area self -> Int
+  pub def volume self -> Int
+
+pub def solid s @ Solid
+  measure $s
+
+# A protocol whose member's result is the protocol again
+pub @class Chain
+  pub def next self -> Chain
+
+pub class Link
+  pub def next self -> Link
+    self
+
+pub def chained _c @ Chain
+  ...
+
+pub def chains()
+  chained (Link())
+
+# A generic protocol's field upheld by a property solves its arguments too
+pub @class Holder[T]
+  pub field value @ T
+
+pub class Computed
+  #[getter]
+  pub def value _self -> Int
+    1
+
+  #[setter]
+  pub def value _self _value @ Int
+    ...
+
+pub def hold[T] holder @ Holder[T] -> T
+  holder.value
+
+pub def holders()
+  let v @ Str = hold (Computed())
+  # error: `std.Int` does not fit the annotation `std.Str`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let v @ Str = hold (Computed())
+  #    |                 ^^^^^^^^^^^^^^^^^
+  v
+
+# Each accessor of a property is related to the field it upholds
+pub @class StrHolder
+  pub field value @ Str
+
+pub def strs _h @ StrHolder
+  ...
+
+pub def misfit()
+  strs (Computed())
+# error: expected `m.StrHolder`, found `m.Computed`
+#   --> m.dol:LL:LL
+#    |
+# LL |   strs (Computed())
+#    |         ^^^^^^^^^^
+#    |
+#    = note: `std.Int` doesn't accept `std.Str`
+#    = note: in `{m.Computed, std.Int}`
+#    = note: in member `value`
+#    = note: `std.Int` does not fit `std.Str`
+#    = note: in member `value`

@@ -1397,6 +1397,45 @@ impl Report for Uncallable {
     }
 }
 
+/// A protocol declaring public members, all of which every value has, so that
+/// it constrains nothing and is nominal
+struct TrivialProtocol {
+    span: Span,
+    protocol: String,
+}
+
+impl Report for TrivialProtocol {
+    fn severity(&self) -> Severity {
+        Severity::Warning
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "`{}` asks only for members every value has",
+            self.protocol
+        )
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+
+    fn notes(&self) -> Vec<(NoteKind, String)> {
+        vec![
+            (
+                NoteKind::Info,
+                "a class conforms to it only by naming it".to_owned(),
+            ),
+            (
+                NoteKind::Help,
+                "remove its public members to make it a marker, or add a member `Value` lacks"
+                    .to_owned(),
+            ),
+        ]
+    }
+}
+
 /// An instance method that a class object reaches before a class or static
 /// member of the same name, leaving that member reachable only through
 /// `type(C)`

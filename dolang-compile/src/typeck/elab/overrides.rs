@@ -20,7 +20,7 @@ use rustc_hash::FxHashMap;
 
 use super::{
     DeclNode, Designated, Diag, Hidden, IncoherentClasses, Nonconforming, Scoped, Tables,
-    Uncallable, UnitDiag, Unresolved, sig,
+    TrivialProtocol, Uncallable, UnitDiag, Unresolved, sig,
     surface::{Class, Member, MemberScope},
 };
 use crate::{
@@ -105,6 +105,7 @@ impl Check<'_, '_> {
         solver.close();
         let instance = self.instance();
         self.coherent();
+        self.trivial();
         self.callable(&solver, instance);
         let spans = self.member_spans();
         if runtime {
@@ -117,7 +118,7 @@ impl Check<'_, '_> {
                 continue;
             };
             let supertype = solver.view(ty, environment);
-            let requirements = match solver.conformance(instance, supertype, runtime) {
+            let requirements = match solver.conformance(instance, supertype, runtime, false) {
                 Ok(requirements) => requirements,
                 Err(issue) => {
                     self.undecided(span, issue);
@@ -248,6 +249,27 @@ impl Check<'_, '_> {
         }
     }
 
+    /// Warn of a protocol declaring required members, all of which `Value`
+    /// declares. One that declares none is a marker, and one only inheriting
+    /// such members is warned of where they're declared.
+    fn trivial(&mut self) {
+        let db = self.db;
+        let declares = db
+            .declaration(self.id)
+            .members
+            .iter()
+            .any(|(key, member)| db.required_member(*key, member));
+        if !declares || !db.trivial_protocol(self.id) {
+            return;
+        }
+        let Some(span) = self.tables.decl(self.id).name_span() else {
+            return;
+        };
+        let protocol = self.name(self.id).to_owned();
+        self.diags
+            .push((self.unit, Diag::new(TrivialProtocol { span, protocol })));
+    }
+
     /// Warn of an instance method that hides a class or static member of the same
     /// name from the class object, which reaches the method first. Each pair is
     /// reported where the later of the two is declared: at an own method, or at
@@ -308,7 +330,7 @@ impl Check<'_, '_> {
         }
         let class = self.name(self.id).to_owned();
         for (span, key, method, owner, scope) in hidden {
-            let name = self.member(key);
+            let name = self.db.member_name(key);
             let diag = Hidden {
                 span,
                 method: format!("{}.{name}", self.name(method)),
@@ -337,7 +359,7 @@ impl Check<'_, '_> {
         let Some(name) = self.tables.decl(self.id).name else {
             return;
         };
-        match solver.conformance(instance, solver.closed(db.top()), runtime) {
+        match solver.conformance(instance, solver.closed(db.top()), runtime, false) {
             Ok(requirements) => {
                 for requirement in requirements {
                     if requirement.provider == Some(self.id) {
@@ -357,7 +379,7 @@ impl Check<'_, '_> {
         supertype: Span,
         requirement: Requirement,
     ) {
-        let member = self.member(requirement.key);
+        let member = self.db.member_name(requirement.key);
         let required = format!("{}.{member}", self.name(requirement.required));
         // An override is reported where it's declared
         let declared = requirement.provider == Some(self.id);
@@ -376,7 +398,10 @@ impl Check<'_, '_> {
             RequirementKind::Relate(pairs) => {
                 pending.push(Pending {
                     span,
-                    pairs,
+                    pairs: pairs
+                        .into_iter()
+                        .map(|(actual, expected, _)| (actual, expected))
+                        .collect(),
                     message: format!("{subject} does not match `{required}`"),
                 });
             }
@@ -532,14 +557,6 @@ impl Check<'_, '_> {
             }
         }
         spans
-    }
-
-    fn member(&self, key: MemberKey) -> String {
-        let name = self.db.symbol(key.name);
-        match key.special {
-            true => format!("({name})"),
-            false => name.to_owned(),
-        }
     }
 
     fn name(&self, decl: DeclId) -> &str {

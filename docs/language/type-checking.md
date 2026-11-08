@@ -213,7 +213,8 @@ Recursive types fit each other when their structures do. For
 `@let List[T] = (nil | (T, List[T]))`, `List[Int]` fits `List[Int | Str]`
 because `Int` fits `Int | Str`, and two aliases with the same structure fit each
 other. A comparison that would hold only because a type has no values, as for
-`@let Endless = (Endless, Int)`, is not proven.
+`@let Endless = (Endless, Int)`, is not proven. A class is compared with a
+[protocol that refers to itself](./types.md#protocols) the same way.
 
 ### Generic Variance
 

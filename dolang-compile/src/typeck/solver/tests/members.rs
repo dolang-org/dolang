@@ -835,7 +835,7 @@ fn settled_members_meet_requirements() {
         let gas = Gas::default();
         let solver = Solver::new(db, &gas);
         solver
-            .conformance(wrapper, solver.closed(wrapping), true)
+            .conformance(wrapper, solver.closed(wrapping), true, false)
             .unwrap()
     };
     let settled = |member| {
@@ -856,4 +856,25 @@ fn settled_members_meet_requirements() {
         !matches!(&requirement.kind, RequirementKind::Relate(_)),
         "{requirement:?}"
     );
+}
+
+#[test]
+fn recursion_through_a_protocol_field_is_proven() {
+    let mut db = Database::new();
+    // protocol Linked: pub field next @ Linked, and Chained alike
+    let mut protocols = ["Linked", "Chained"].map(|name| {
+        let protocol = Class::new(&mut db, name, vec![]).protocol();
+        let ty = protocol.ty;
+        (protocol, ty)
+    });
+    for (protocol, ty) in &mut protocols {
+        protocol.field(key(&db, "next"), *ty, Scope::Instance);
+    }
+    let [linked, chained] = protocols.map(|(protocol, _)| protocol.finish(&mut db, vec![]));
+    db.seal();
+    // Each comes back to itself through its field, both ways for a field
+    for (actual, expected) in [(chained, linked), (linked, chained)] {
+        let outcome = check(&db, actual, expected);
+        assert_eq!(outcome.status, Status::Proven, "{outcome:?}");
+    }
 }

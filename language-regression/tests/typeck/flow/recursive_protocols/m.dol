@@ -1,0 +1,131 @@
+# dolang: strict
+# A judgment against a protocol that refers to itself comes back to itself
+# through a member, and is assumed while it's proven. One whose unfoldings never
+# repeat runs out of budget and is left undecided.
+
+# Through a field, from a protocol with the same structure
+pub @class Linked
+  pub field next @ Linked
+
+pub @class Chained
+  pub field next @ Chained
+
+def linked _l @ Linked
+  ...
+
+pub def chained c @ Chained
+  linked $c
+
+# A class's field is invariant, so it doesn't fit a protocol's field naming the
+# protocol
+pub class Node
+  pub field next @ Node
+
+  def (init) self next @ Node
+    self.next = next
+
+pub def node n @ Node
+  linked $n
+# error: expected `m.Linked`, found `m.Node`
+#   --> m.dol:LL:LL
+#    |
+# LL |   linked $n
+#    |           ^
+#    |
+#    = note: `m.Node` doesn't accept `m.Linked`
+#    = note: in member `next`
+
+# Through fields of two protocols that refer to each other
+pub @class Odd
+  pub field other @ Even
+
+pub @class Even
+  pub field other @ Odd
+
+pub @class Left
+  pub field other @ Right
+
+pub @class Right
+  pub field other @ Left
+
+def odd _o @ Odd
+  ...
+
+pub def left l @ Left
+  odd $l
+
+# Through a quantified method, inferring the protocol's argument
+pub @class Stream[T]
+  pub def get self -> T
+  pub def rest self -> Stream[T]
+
+pub class Ints
+  pub def get _self -> Int
+    1
+
+  pub def rest self -> Ints
+    self
+
+def take[T] s @ Stream[T] -> T
+  s.get()
+
+pub def ints i @ Ints -> Int
+  take $i
+
+pub def misread i @ Ints -> Str
+  take $i
+# error: `std.Int` does not fit the declared result `std.Str`
+#   --> m.dol:LL:LL
+#    |
+# LL |   take $i
+#    |   ^^^^^^^
+
+# Unfoldings that grow, from the class and from the protocol
+pub class Grow[T]
+  pub def get _self -> Int
+    1
+
+  pub def rest _self -> Grow[Array[T]]
+    ...
+
+def counted _s @ Stream[Int]
+  ...
+
+pub def grow g @ Grow[Int]
+  counted $g
+# warning: the checker can't verify this
+#   --> m.dol:LL:LL
+#    |
+# LL |   counted $g
+#    |   ^^^^^^^^^^
+#    |
+#    = note: it's too complex to check; an annotation may help
+
+pub @class Wide[T]
+  pub def get self -> Int
+  pub def rest self -> Wide[Array[T]]
+
+def wide _w @ Wide[Int]
+  ...
+
+pub def same i @ Ints
+  wide $i
+# warning: the checker can't verify this
+#   --> m.dol:LL:LL
+#    |
+# LL |   wide $i
+#    |   ^^^^^^^
+#    |
+#    = note: it's too complex to check; an annotation may help
+
+# A class naming the protocol conforms through the claim, which its declaration
+# is checked against
+pub class Claimed[T]: @Stream[Int]
+  pub def get _self -> Int
+    1
+
+  pub def rest _self -> Claimed[Array[T]]
+    ...
+
+pub def claimed c @ Claimed[Int]
+  counted $c

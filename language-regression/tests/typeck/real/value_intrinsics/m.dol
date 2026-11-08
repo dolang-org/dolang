@@ -31,6 +31,14 @@ pub def plain p @ Plain -> Str
 
 # A protocol requiring one is satisfied by a class that inherits it from `Value`
 pub @class Hashes
+  # warning: `Hashes` asks only for members every value has
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub @class Hashes
+  #    |            ^^^^^^
+  #    |
+  #    = note: a class conforms to it only by naming it
+  #    = help: remove its public members to make it a marker, or add a member `Value` lacks
   pub def (hash) self -> Int
 
 pub class Hashed: @Hashes

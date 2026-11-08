@@ -152,7 +152,7 @@ impl Solver<'_> {
 
     /// A class `C[Bs]` applied to references to its own binders, as its
     /// declaration's group interprets them
-    fn instance(&self, class: DeclId) -> TypeId {
+    pub(super) fn instance(&self, class: DeclId) -> TypeId {
         let db = self.db;
         let binders: &[Binder] = match db.ty(db.declaration(class).ty) {
             Type::Quantified { binders, .. } => binders,

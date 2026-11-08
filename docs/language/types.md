@@ -312,8 +312,36 @@ pub @class Shape
   pub def area self -> Int
 ```
 
-Protocols have no corresponding type objects at runtime. A class can indicate
-it implements a protocol by naming it as a supertype with `@`:
+Protocols have no corresponding type objects at runtime. A class conforms to a
+protocol when it has each of the protocol's public members with a compatible
+type, and inherits each class the protocol names. It doesn't need to name the
+protocol:
+
+```
+class Circle
+  pub field name @ Str = "circle"
+  pub def area _self -> Int
+    3
+
+pub def describe shape @ Shape
+  echo "$(shape.name): $(shape.area())"
+
+describe (Circle())
+```
+
+A generic protocol's arguments are inferred from the members: a class whose
+`get` returns `Int` conforms to `Source[Int]` for a protocol `Source[T]` with
+`pub def get self -> T`.
+
+A protocol's members may name the protocol itself, directly or through another
+protocol. A class whose `rest` returns its own type conforms to a protocol
+whose `rest` returns the protocol, since its members fit once it is assumed to
+conform. The checker can't verify a class whose members never come back to the
+same comparison, such as `class Grow[T]` whose `rest` returns
+`Grow[Array[T]]`; such a class can name the protocol instead.
+
+A class can declare that it implements a protocol by naming it as a supertype
+with `@`:
 
 ```
 class Square: @Shape
@@ -322,9 +350,9 @@ class Square: @Shape
     1
 ```
 
-The type checker holds the class to the claim: it must provide each of the
-protocol's members with a compatible type; a field may be provided by a
-getter and a setter.
+The type checker holds the class to the claim at its declaration: it must
+provide each of the protocol's members with a compatible type; a field may be
+provided by a getter and a setter.
 
 A protocol's own supertypes are checker-only already, so they are written
 without `@`:
@@ -337,3 +365,9 @@ pub @class Solid: Shape
 A protocol may name a runtime class as a supertype, but claiming the protocol
 doesn't inherit it: a class claiming the protocol must inherit that class
 itself. Protocols are never [disjoint](./classes.md#disjoint-classes).
+
+A protocol that names no class, and whose public members are all ones every
+value has, such as `(str)` and `(hash)`, would admit every value by its members.
+A class conforms to such a protocol only by naming it. One with no public
+members at all is a marker. The checker warns of one that declares public
+members, since they constrain nothing.

@@ -224,10 +224,10 @@ impl<'db> Solver<'db> {
     /// class reaching several generic members, whose values may fit their
     /// applications together without fitting any one, and anything beside a
     /// member that is a projection. A class has values outside a member it
-    /// doesn't reach, and one reaching a sole generic member has none another
-    /// member collects. A
-    /// literal's or function's class is fixed, so its rejections are final, and
-    /// so are top's, which no member but top covers.
+    /// doesn't reach or conform to, and one reaching a sole generic member has
+    /// none another member collects. A literal's or function's class is fixed,
+    /// so its rejections are final, and so are top's, which no member but top
+    /// covers.
     pub(super) fn refuted(
         &self,
         actual: Term,

@@ -32,11 +32,12 @@ impl<'a, 'b> DotVisitor<'a, 'b> {
 
         // Add span information if enabled
         if span != Span::INVALID {
-            let coords = self.compiler.file.coord_span(span);
+            let file = &self.compiler.file;
+            let (start, end) = (file.coord(span.start), file.coord(span.end));
             write!(
                 &mut label,
                 "\\nL{}:{}–L{}:{}",
-                coords.start.line, coords.start.column, coords.end.line, coords.end.column
+                start.line, start.column, end.line, end.column
             )
             .unwrap();
         }
@@ -55,11 +56,12 @@ impl<'a, 'b> DotVisitor<'a, 'b> {
                 write!(&mut label, "\\n{}", escaped).unwrap();
             }
 
-            let coords = self.compiler.file.coord_span(span);
+            let file = &self.compiler.file;
+            let (start, end) = (file.coord(span.start), file.coord(span.end));
             write!(
                 &mut label,
                 "\\nL{}:{}–L{}:{}",
-                coords.start.line, coords.start.column, coords.end.line, coords.end.column
+                start.line, start.column, end.line, end.column
             )
             .unwrap();
         }
