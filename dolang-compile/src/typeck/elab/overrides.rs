@@ -118,7 +118,7 @@ impl Check<'_, '_> {
                 continue;
             };
             let supertype = solver.view(ty, environment);
-            let requirements = match solver.conformance(instance, supertype, runtime) {
+            let requirements = match solver.conformance(instance, supertype, runtime, false) {
                 Ok(requirements) => requirements,
                 Err(issue) => {
                     self.undecided(span, issue);
@@ -330,7 +330,7 @@ impl Check<'_, '_> {
         }
         let class = self.name(self.id).to_owned();
         for (span, key, method, owner, scope) in hidden {
-            let name = self.member(key);
+            let name = self.db.member_name(key);
             let diag = Hidden {
                 span,
                 method: format!("{}.{name}", self.name(method)),
@@ -359,7 +359,7 @@ impl Check<'_, '_> {
         let Some(name) = self.tables.decl(self.id).name else {
             return;
         };
-        match solver.conformance(instance, solver.closed(db.top()), runtime) {
+        match solver.conformance(instance, solver.closed(db.top()), runtime, false) {
             Ok(requirements) => {
                 for requirement in requirements {
                     if requirement.provider == Some(self.id) {
@@ -379,7 +379,7 @@ impl Check<'_, '_> {
         supertype: Span,
         requirement: Requirement,
     ) {
-        let member = self.member(requirement.key);
+        let member = self.db.member_name(requirement.key);
         let required = format!("{}.{member}", self.name(requirement.required));
         // An override is reported where it's declared
         let declared = requirement.provider == Some(self.id);
@@ -398,7 +398,10 @@ impl Check<'_, '_> {
             RequirementKind::Relate(pairs) => {
                 pending.push(Pending {
                     span,
-                    pairs,
+                    pairs: pairs
+                        .into_iter()
+                        .map(|(actual, expected, _)| (actual, expected))
+                        .collect(),
                     message: format!("{subject} does not match `{required}`"),
                 });
             }
@@ -554,14 +557,6 @@ impl Check<'_, '_> {
             }
         }
         spans
-    }
-
-    fn member(&self, key: MemberKey) -> String {
-        let name = self.db.symbol(key.name);
-        match key.special {
-            true => format!("({name})"),
-            false => name.to_owned(),
-        }
     }
 
     fn name(&self, decl: DeclId) -> &str {

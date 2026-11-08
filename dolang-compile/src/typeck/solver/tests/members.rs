@@ -835,7 +835,7 @@ fn settled_members_meet_requirements() {
         let gas = Gas::default();
         let solver = Solver::new(db, &gas);
         solver
-            .conformance(wrapper, solver.closed(wrapping), true)
+            .conformance(wrapper, solver.closed(wrapping), true, false)
             .unwrap()
     };
     let settled = |member| {

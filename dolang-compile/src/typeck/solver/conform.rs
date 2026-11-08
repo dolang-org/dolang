@@ -16,8 +16,13 @@
 //! only as its first instance, so that instance must be below the others it
 //! masks, by the class's variances, for the ancestor walk to stop there.
 //!
+//! A class that doesn't name a protocol is judged below it by the same
+//! requirements, with its own type as each required signature's receiver.
+//!
 //! Every requirement is a set of ordinary subtype judgments for the caller to
 //! constrain, so no verdict is cached here.
+
+use std::ops::ControlFlow;
 
 use super::member::{Found, FoundKind};
 use super::*;
@@ -37,8 +42,10 @@ pub(crate) struct Requirement {
 
 #[derive(Clone, Debug)]
 pub(crate) enum RequirementKind {
-    /// Each pair's actual must be below its expected
-    Relate(Vec<(Term, Term)>),
+    /// Each pair's actual must be below its expected. A pair is reversed when
+    /// it relates the required member's type below the provided one's, as a
+    /// field's second pair does.
+    Relate(Vec<(Term, Term, bool)>),
     /// Nothing provides a protocol's member
     Missing,
     /// The provider is a different kind of member, or a property lacks an
@@ -53,12 +60,14 @@ pub(crate) enum RequirementKind {
 
 /// How to narrow a required signature's receiver: to instances of the class of
 /// the closed `instance`, which found the member through its supertype `through`,
-/// inside `Type` for a class method's (`object`)
+/// inside `Type` for a class method's (`object`). A `structural` receiver is
+/// `instance` itself, which doesn't reach the supertype.
 #[derive(Clone, Copy)]
 struct Narrowing {
     instance: TypeId,
     through: Term,
     object: bool,
+    structural: bool,
 }
 
 /// How a class inherits a class that a supertype names
@@ -96,23 +105,21 @@ impl Solver<'_> {
     /// The requirements `supertype`'s members place on the declaration whose
     /// instances have the closed type `instance`. With `runtime`, only what the
     /// runtime inherits provides members, as for a class; a protocol provides
-    /// what it claims too.
+    /// what it claims too. With `structural`, `instance` is judged below a
+    /// protocol it doesn't reach, so the required signatures take `instance`
+    /// itself as their receiver, and keep the supertype's arguments unsolved.
     pub(crate) fn conformance(
         &self,
         instance: TypeId,
         supertype: Term,
         runtime: bool,
+        structural: bool,
     ) -> Result<Vec<Requirement>, Issue> {
-        let init = self.db.intern_symbol("init");
         let mut keys = Vec::new();
         for decl in self.lineage(supertype)? {
             for (key, member) in self.db.declaration(decl).members.iter() {
                 let scope = member.scope();
-                if key.private
-                    || scope == Scope::Static
-                    || (key.special && key.name == init)
-                    || keys.contains(&(*key, scope))
-                {
+                if !self.db.required_member(*key, member) || keys.contains(&(*key, scope)) {
                     continue;
                 }
                 keys.push((*key, scope));
@@ -144,6 +151,7 @@ impl Solver<'_> {
                 instance,
                 through: supertype,
                 object: scope == Scope::Class,
+                structural,
             });
             let kind = match &provided {
                 Some(provided) => self
@@ -165,6 +173,81 @@ impl Solver<'_> {
             });
         }
         Ok(requirements)
+    }
+
+    /// Judge the closed `actual`, a class or protocol, below `protocol`, a
+    /// protocol it doesn't reach, by what the protocol requires: each member is
+    /// related as [`Self::conformance`] finds it, and `actual` must be below
+    /// each class the protocol's ancestry names, as the protocol names it. A
+    /// class provides what the runtime inherits, and a protocol what it claims
+    /// too. Each is derived from `obligation`, so the protocol's arguments are
+    /// solved through the members' types.
+    pub(super) fn structural_conformance(
+        &self,
+        obligation: ObligationId,
+        actual: TypeId,
+        protocol: Term,
+        runtime: bool,
+    ) -> Result<(), Issue> {
+        let requirements = self.conformance(actual, protocol, runtime, true)?;
+        // A missing or changed member decides it whatever else is undecided
+        let mut undecided = None;
+        for requirement in &requirements {
+            let key = requirement.key;
+            match requirement.kind {
+                RequirementKind::Missing => {
+                    return Err(Issue::Contradiction(Contradiction::MissingMember(key)));
+                }
+                RequirementKind::Changed { provided, required } => {
+                    return Err(Issue::Contradiction(Contradiction::ChangedMember {
+                        key,
+                        provided,
+                        required,
+                    }));
+                }
+                RequirementKind::Undecided(issue) => {
+                    undecided.get_or_insert(issue);
+                }
+                RequirementKind::Relate(_) => {}
+            }
+        }
+        if let Some(issue) = undecided {
+            return Err(issue);
+        }
+        let mut claimed = Vec::new();
+        let value = self.db.intrinsic_decl(Intrinsic::Value);
+        for decl in self.lineage(protocol)? {
+            if self.db.declaration(decl).source.kind != DeclKind::Class || Some(decl) == value {
+                continue;
+            }
+            let Reach::Reached(arguments) = self.reach(protocol, decl)? else {
+                continue;
+            };
+            let class = match arguments.is_empty() {
+                true => self.closed(self.db.intern(Type::Decl(decl))),
+                false => self.view(
+                    self.instance(decl),
+                    self.intern_environment(self.empty_environment(), arguments),
+                ),
+            };
+            claimed.push(class);
+        }
+        for requirement in requirements {
+            let RequirementKind::Relate(pairs) = requirement.kind else {
+                continue;
+            };
+            for (provided, required, reversed) in pairs {
+                let step = Step::Member {
+                    key: requirement.key,
+                    reversed,
+                };
+                self.derive(obligation, provided, required, step);
+            }
+        }
+        for class in claimed {
+            self.derive(obligation, self.closed(actual), class, Step::Claimed);
+        }
+        Ok(())
     }
 
     /// Compare a provided member with a required one of the same name. With
@@ -189,26 +272,29 @@ impl Solver<'_> {
         // An overload below the required signature satisfies it, since an
         // overload is an unchecked assertion that narrows the implementation.
         // Otherwise the implementation must be below it.
+        // A required signature with unsolved arguments has no closed form to
+        // probe the overloads with.
         let relate = |pairs: &mut Vec<_>, actual: &Signatures, expected: Option<Term>| {
             let (Some(implementation), Some(expected)) = (actual.implementation, expected) else {
                 return Ok::<_, Issue>(());
             };
-            if !actual.overloads.is_empty() {
-                let required = self.reify(expected)?;
+            if !actual.overloads.is_empty()
+                && let Ok(required) = self.reify(expected)
+            {
                 for &overload in &actual.overloads {
                     if self.probe(self.reify(overload)?, required) == Ok(Status::Proven) {
                         return Ok(());
                     }
                 }
             }
-            pairs.push((implementation, expected));
+            pairs.push((implementation, expected, false));
             Ok(())
         };
         match (&provided.kind, &required.kind) {
             (FoundKind::Unknown(_), _) | (_, FoundKind::Unknown(_)) => {}
             (&FoundKind::Field(actual), &FoundKind::Field(expected)) => {
-                pairs.push((actual, expected));
-                pairs.push((expected, actual));
+                pairs.push((actual, expected, false));
+                pairs.push((expected, actual, true));
             }
             (FoundKind::Method(actual), FoundKind::Method(required)) => {
                 relate(&mut pairs, actual, expected(required)?)?;
@@ -239,19 +325,81 @@ impl Solver<'_> {
                 },
                 &FoundKind::Field(field),
             ) if self.is_protocol(required.class) => {
-                let field = self.reify(field)?;
+                // A field whose type isn't solved yet, as a structural judgment
+                // leaves its protocol's arguments, is related to what the getter
+                // returns and what the setter takes
+                let field = match self.reify(field) {
+                    Ok(field) => field,
+                    Err(Residual::Inference) => {
+                        if let Some(getter) = getter.implementation {
+                            pairs.push((self.accessor_part(getter, false)?, field, false));
+                        }
+                        if let Some(setter) = setter.implementation {
+                            pairs.push((field, self.accessor_part(setter, true)?, true));
+                        }
+                        return Ok(RequirementKind::Relate(pairs));
+                    }
+                    Err(residual) => return Err(residual.into()),
+                };
                 if let Some(getter) = getter.implementation {
                     let expected = self.rewrite(getter, None, None, Some(field))?;
-                    pairs.push((getter, expected));
+                    pairs.push((getter, expected, false));
                 }
                 if let Some(setter) = setter.implementation {
                     let expected = self.rewrite(setter, None, Some(field), None)?;
-                    pairs.push((setter, expected));
+                    pairs.push((setter, expected, false));
                 }
             }
             _ => return Ok(changed()),
         }
         Ok(RequirementKind::Relate(pairs))
+    }
+
+    /// A provided accessor's result, or with `value` a setter's value
+    /// parameter. An accessor may be generic, as in its ambient channels, in
+    /// what it neither reads nor sets.
+    fn accessor_part(&self, signature: Term, value: bool) -> Result<Term, Issue> {
+        let signature = self.reify(signature)?;
+        let (binders, body) = match self.db.ty(signature) {
+            Type::Quantified { binders, body } => (Some(binders), *body),
+            _ => (None, signature),
+        };
+        let Type::Function(function) = self.db.ty(body) else {
+            return Err(Residual::Unsupported("a method that isn't a function").into());
+        };
+        let part = match value {
+            false => function.result,
+            true => {
+                let Type::Schema(items) = self.db.ty(function.params) else {
+                    return Err(Residual::Unsupported("a method without a parameter list").into());
+                };
+                let mut positions = items.iter().filter_map(|item| match item.element {
+                    Element::Positional(ty) => Some(ty),
+                    _ => None,
+                });
+                positions.nth(1).ok_or(Residual::Unsupported(
+                    "an accessor without a value parameter",
+                ))?
+            }
+        };
+        let Some(binders) = binders else {
+            return Ok(self.closed(part));
+        };
+        let own = self.db.walk(part, |node, depth| match *self.db.ty(node) {
+            Type::Bound { reference, .. } if u32::from(reference.depth) == depth => {
+                ControlFlow::Break(())
+            }
+            _ => ControlFlow::Continue(()),
+        });
+        if own.is_break() {
+            let generic = "an accessor generic in what it reads or sets";
+            return Err(Residual::Unsupported(generic).into());
+        }
+        let unknowns: Vec<_> = binders
+            .iter()
+            .map(|binder| self.db.unknown_of(binder.kind))
+            .collect();
+        Ok(self.closed(self.db.instantiate(part, &unknowns)))
     }
 
     /// A method signature with its receiver narrowed as [`Self::narrowed`] does,
@@ -264,7 +412,18 @@ impl Solver<'_> {
         value: Option<TypeId>,
         result: Option<TypeId>,
     ) -> Result<Term, Issue> {
-        let ty = self.reify(signature)?;
+        // A structural receiver needs no narrowing, so the signature is kept as a
+        // view: its supertype's arguments may be unsolved. A closed type spliced
+        // into it holds no binder references for the view to resolve.
+        let (ty, environment) = match (receiver, signature) {
+            (
+                Some(Narrowing {
+                    structural: true, ..
+                }),
+                Term::View(view),
+            ) => (view.ty, Some(view.environment)),
+            _ => (self.reify(signature)?, None),
+        };
         let (binders, body) = match self.db.ty(ty) {
             Type::Quantified { binders, body } => (Some(binders.clone()), *body),
             _ => (None, ty),
@@ -306,10 +465,14 @@ impl Solver<'_> {
             function.result = result;
         }
         let body = self.db.intern(Type::Function(function));
-        Ok(self.closed(match binders {
+        let ty = match binders {
             Some(binders) => self.db.intern(Type::Quantified { binders, body }),
             None => body,
-        }))
+        };
+        Ok(match environment {
+            Some(environment) => self.view(ty, environment),
+            None => self.closed(ty),
+        })
     }
 
     /// A receiver narrowed as [`Self::narrowed`] does, inside `Type` for a class
@@ -323,11 +486,23 @@ impl Solver<'_> {
             instance,
             through,
             object,
+            structural,
         } = narrowing;
+        let class_type = self.db.intrinsic(Intrinsic::Type);
+        if structural {
+            return Ok(Some(match (object, class_type) {
+                (false, _) => instance,
+                (true, Some(class_type)) => self.db.intern(Type::Apply {
+                    base: class_type,
+                    args: vec![Argument::Positional(instance)].into(),
+                    kind: Kind::Type,
+                }),
+                (true, None) => return Err(Residual::MissingIntrinsic(Intrinsic::Type).into()),
+            }));
+        }
         if !object {
             return self.narrowed(receiver, instance, through);
         }
-        let class_type = self.db.intrinsic(Intrinsic::Type);
         let inner = match self.db.ty(receiver) {
             Type::Apply { base, args, .. } if Some(*base) == class_type => match &args[..] {
                 &[Argument::Positional(inner)] => inner,

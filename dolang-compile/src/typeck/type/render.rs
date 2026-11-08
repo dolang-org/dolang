@@ -11,7 +11,7 @@ use std::{
 
 use super::{
     Argument, Binder, BinderOrigin, Binding, BoundRef, Database, DeclId, Element, FieldAccess,
-    Intrinsic, Kind, Literal, Multiplicity, Rest, Restriction, SchemaItem, Type, TypeId,
+    Intrinsic, Kind, Literal, MemberKey, Multiplicity, Rest, Restriction, SchemaItem, Type, TypeId,
     UnionMember,
 };
 
@@ -111,6 +111,15 @@ impl fmt::Display for Shown {
 }
 
 impl Database {
+    /// A member's name as a class body writes it: a special one in parentheses
+    pub(crate) fn member_name(&self, key: MemberKey) -> String {
+        let name = self.symbol(key.name);
+        match key.special {
+            true => format!("({name})"),
+            false => name.to_owned(),
+        }
+    }
+
     /// A closed type
     pub(crate) fn render(&self, ty: TypeId, names: &dyn Names, style: Style) -> String {
         self.render_in(ty, &[], names, style)

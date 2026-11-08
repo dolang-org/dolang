@@ -324,6 +324,19 @@ pub(crate) enum Contradiction {
     /// No overload of an overloaded function, or no signature of a callable, fits
     /// the function type it's related to (see [`Solver::rejections`] for why)
     NoOverload,
+    /// A class that doesn't name a trivial protocol is below it, which only a
+    /// declared edge makes it (see [`Database::trivial_protocol`])
+    Nominal,
+    /// A class has no member that a protocol it's judged structurally below
+    /// requires
+    MissingMember(MemberKey),
+    /// A class's member is a different kind than a protocol's, each described
+    /// as [`RequirementKind::Changed`] describes it
+    ChangedMember {
+        key: MemberKey,
+        provided: &'static str,
+        required: &'static str,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -401,6 +414,15 @@ pub(crate) enum Step {
     Restricted,
     /// The empty schema below a schema that must admit it, once it's solved
     Empty,
+    /// A class's member below the one a protocol it's judged structurally
+    /// below requires, or above it if `reversed`, as a field's is too
+    Member {
+        key: MemberKey,
+        reversed: bool,
+    },
+    /// A class below a class that a protocol it's judged structurally below
+    /// names
+    Claimed,
 }
 
 impl Step {
@@ -409,7 +431,11 @@ impl Step {
     pub(crate) fn reverses(&self) -> bool {
         matches!(
             self,
-            Step::Argument { reversed: true, .. } | Step::Parameters | Step::Input | Step::Output
+            Step::Argument { reversed: true, .. }
+                | Step::Member { reversed: true, .. }
+                | Step::Parameters
+                | Step::Input
+                | Step::Output
         )
     }
 }

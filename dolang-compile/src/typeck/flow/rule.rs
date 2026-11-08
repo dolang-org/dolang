@@ -1686,6 +1686,26 @@ impl<'a> Flow<'a, '_> {
                     None => format!("{expected} doesn't admit every item of {actual}"),
                 }
             }
+            (Contradiction::Nominal, _) => format!(
+                "{expected} is nominal: every value has its members, so a class is below it only by naming it"
+            ),
+            (Contradiction::MissingMember(key), _) => {
+                let member = self.db.member_name(key);
+                format!("{actual} has no `{member}`, which {expected} requires")
+            }
+            (
+                Contradiction::ChangedMember {
+                    key,
+                    provided,
+                    required,
+                },
+                _,
+            ) => {
+                let member = self.db.member_name(key);
+                format!(
+                    "{expected} requires `{member}` to be {required}, but {actual}'s is {provided}"
+                )
+            }
             _ if end == start + 1 => return None,
             (_, false) => format!("{actual} does not fit {expected}"),
             (_, true) => format!("{expected} doesn't accept {actual}"),
@@ -1693,7 +1713,16 @@ impl<'a> Flow<'a, '_> {
         let mut notes = vec![note];
         let shown = found_side(start).map(|ty| self.shown(ty));
         let mut last = found_side(end - 1).map(|ty| self.shown(ty));
-        for index in (start + 1..end - 1).rev() {
+        for index in (start + 1..end).rev() {
+            // A member a protocol requires is named, even at the leaf
+            if let Some(&Derivation::Member { key, .. }) = step(index) {
+                let member = self.db.member_name(key);
+                notes.push(format!("in member `{member}`"));
+                continue;
+            }
+            if index == end - 1 {
+                continue;
+            }
             // Only steps into a type's parts are where a reader can look
             if !matches!(
                 step(index),

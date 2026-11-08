@@ -530,7 +530,9 @@ impl Solver<'_> {
     /// A literal, class or top is outside a union if every member excludes it.
     /// For a class with infinitely many literals, a finite set of literals
     /// cannot cover it either. A class reaching several generic members may be
-    /// covered by them together. Protocols may be covered by several
+    /// covered by them together. A protocol a class doesn't conform to excludes
+    /// it as a class it doesn't reach does: the class's own instances lack one
+    /// of its members or classes. Protocols may be covered by several
     /// implementations, so unrelated alternatives are not enough to refute
     /// their inclusion.
     fn closed_member(
@@ -619,8 +621,8 @@ impl Solver<'_> {
         } = j;
         // Top has values outside anything else: top itself and the dynamic type
         // are proven before the rules, and variables, unions and rigids are theirs.
-        // This holds while protocols are nominal; once they're structural (#828),
-        // top is inside a protocol without members.
+        // A protocol top could conform to by members is trivial, so it's nominal,
+        // and every other has a member or a class top lacks.
         if matches!(&a, Head::Structural(view) if view.ty == self.db.top()) {
             return Err(Issue::Contradiction(Contradiction::Outside));
         }
@@ -1046,10 +1048,14 @@ impl Solver<'_> {
         expected: Nominal,
         obligation: ObligationId,
     ) -> Result<(), Issue> {
-        let Some(actual) =
-            self.ancestor(actual, expected.declaration, &mut FxHashSet::default(), 0)?
+        let Some(actual) = self.ancestor(
+            actual.clone(),
+            expected.declaration,
+            &mut FxHashSet::default(),
+            0,
+        )?
         else {
-            return Err(Issue::Contradiction(Contradiction::UnrelatedNominals));
+            return self.unreached(actual, expected, obligation);
         };
         assert_eq!(actual.arguments.len(), expected.arguments.len());
         if actual.arguments.is_empty() {
@@ -1078,6 +1084,40 @@ impl Solver<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Relate a class or protocol to a protocol it doesn't reach by the
+    /// protocol's members, unless the protocol is trivial: every value has its
+    /// members, so a class is below it only by naming it. Relating them needs
+    /// the class's closed form.
+    fn unreached(
+        &self,
+        actual: Nominal,
+        expected: Nominal,
+        obligation: ObligationId,
+    ) -> Result<(), Issue> {
+        let unrelated = Issue::Contradiction(Contradiction::UnrelatedNominals);
+        if self.db.declaration(expected.declaration).source.kind != DeclKind::Protocol {
+            return Err(unrelated);
+        }
+        let runtime = match self.db.declaration(actual.declaration).source.kind {
+            DeclKind::Class => true,
+            DeclKind::Protocol => false,
+            _ => return Err(unrelated),
+        };
+        if self.db.trivial_protocol(expected.declaration) {
+            return Err(Issue::Contradiction(Contradiction::Nominal));
+        }
+        let Relation::Subtype {
+            actual: term,
+            expected: protocol,
+            ..
+        } = self.relation(obligation)
+        else {
+            unreachable!("a nominal judgment is a subtype relation")
+        };
+        let closed = self.reify(term)?;
+        self.structural_conformance(obligation, closed, protocol, runtime)
     }
 
     /// Relate two metatypes, given their classes applied to their arguments: only

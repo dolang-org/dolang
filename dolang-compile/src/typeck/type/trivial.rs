@@ -30,15 +30,17 @@ impl Database {
         if self.declaration(decl).source.kind != DeclKind::Protocol {
             return false;
         }
-        let Some(value) = self.intrinsic_decl(Intrinsic::Value) else {
-            return false;
-        };
-        let value = self.declaration(value);
+        // Without `Value`, only a protocol requiring nothing is trivial
+        let value = self
+            .intrinsic_decl(Intrinsic::Value)
+            .map(|value| self.declaration(value));
         let declared = |key: MemberKey, scope: Scope| {
-            value
-                .members
-                .iter()
-                .any(|(found, member)| *found == key && member.scope() == scope)
+            value.is_some_and(|value| {
+                value
+                    .members
+                    .iter()
+                    .any(|(found, member)| *found == key && member.scope() == scope)
+            })
         };
         let mut seen = FxHashSet::default();
         let mut stack = vec![decl];
