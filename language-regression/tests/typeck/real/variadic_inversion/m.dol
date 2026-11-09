@@ -38,3 +38,32 @@ pub def forked_spread blocks @ (?(() -> Int), *(() -> Str)) -> (?Int, *Str)
   let results = strand.fork ...blocks
   #   ^~~~~~~: flow (?std.Int, *std.Str)
   results
+
+pub class Marked[T]
+  pub field value @ T
+
+  def (init) self value @ T
+    self.value = value
+
+# Each axis's union is judged within the trial of an overload, beside the
+# others, whose variables stay undecided there
+@def axes[A @ {**Value}]
+  **axes @ ...Iterable[A | Marked[A]]
+do -> Int
+@def axes[A @ {**Value}, S @ {**Value}]
+  func @ ((...A, ...S) -> nil)
+  **axes @ ...Iterable[A | Marked[A]]
+do -> ((...S) -> nil)
+pub def axes
+  _func @ Value = nil
+  **_axes @ Value
+do -> Value
+  nil
+
+def takes_both :kind@Str :n@Int
+  let _ @ (Str, Int) = (kind, n)
+
+pub def overloaded_axes()
+  let bound = axes $takes_both kind: ["a", Marked("b")] n: [1, 2]
+  #   ^~~~~: flow (<m.overloaded_axes.#0, >m.overloaded_axes.#1) -> nil
+  bound()

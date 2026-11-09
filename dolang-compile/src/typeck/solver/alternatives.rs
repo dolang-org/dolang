@@ -513,9 +513,9 @@ impl<'db> Solver<'db> {
         trace!(self, "trial {}", self.render_relation(relation));
         let mut fork = self.child(Nesting::Trial, self.gas);
         fork.trials_from = fork.obligation_count();
-        if owned {
-            fork.owned = Some(fork.variable_count());
-        }
+        // An enclosing trial's variables are its own to settle: one judged here
+        // would default them for every judgment beside this one
+        fork.owned = owned.then(|| fork.variable_count());
         let generation = fork.generation.get();
         // Alternatives choose through variables, whose recursion is the occurs
         // check's, so a trial starts unguarded

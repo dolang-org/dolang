@@ -1,0 +1,58 @@
+# dolang: strict
+# Test decorators apply as layers: each takes the test function below it and
+# gives one taking what is still unsupplied, which `test` requires be nothing.
+
+import test:
+  # error: module `test` not found
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | import test:
+  #    |        ^^^^
+  - @TestFn
+  - fixture
+  - parametrize
+  - tagged
+  - test
+
+# Supplies `extra`, forwarding the rest
+#[fixture]
+def inject[R @ {**Value}]
+  func @ TestFn[{extra: Str, ...R}]
+  ...args @ R
+  <Iter[Never] >Sink[Value]
+do
+  func extra: injected ...args
+
+#[test]
+def plain()
+  nil
+
+#[test]
+#[parametrize kind: ["a", tagged("b", "slow")]]
+def axis :kind@Str
+  let _ @ Str = kind
+
+#[test]
+#[parametrize kind: ["a"] n: [1, 2]]
+def axes :kind@Str :n@Int
+  let _ @ (Str, Int) = (kind, n)
+
+# A fixture above `parametrize` supplies what the axes leave
+#[test]
+#[inject]
+#[parametrize kind: ["a", "b"]]
+def injected_above :kind@Str :extra@Str
+  let _ @ (Str, Str) = (kind, extra)
+
+# Below it, the fixture forwards the axes
+#[test]
+#[parametrize kind: ["a"]]
+#[inject]
+def injected_below :kind@Str :extra@Str
+  let _ @ (Str, Str) = (kind, extra)
+
+def direct :kind@Str :n@Int
+  let _ @ (Str, Int) = (kind, n)
+
+let bound = parametrize $direct kind: ["a"] n: [1]
+test $bound

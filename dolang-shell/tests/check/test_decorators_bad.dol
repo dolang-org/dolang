@@ -1,0 +1,43 @@
+# dolang: strict
+# A decorated test is rejected where a layer gives what the one below doesn't
+# take, or leaves a parameter unsupplied.
+
+import test:
+  # error: module `test` not found
+  #   --> bad.dol:LL:LL
+  #    |
+  # LL | import test:
+  #    |        ^^^^
+  - @TestFn
+  - fixture
+  - parametrize
+  - tagged
+  - test
+
+#[fixture]
+def mistyped[R @ {**Value}]
+  func @ TestFn[{extra: Int, ...R}]
+  ...args @ R
+  <Iter[Never] >Sink[Value]
+do
+  func extra: 1 ...args
+
+#[test]
+#[parametrize kind: [1]]
+def axis_type :kind@Str
+  let _ @ Str = kind
+
+#[test]
+#[parametrize kind: ["a", tagged(1)]]
+def tagged_type :kind@Str
+  let _ @ Str = kind
+
+#[test]
+#[parametrize kind: ["a"]]
+def unsupplied :kind@Str :other@Int
+  let _ @ (Str, Int) = (kind, other)
+
+#[test]
+#[mistyped]
+def injected_type :extra@Str
+  let _ @ Str = extra

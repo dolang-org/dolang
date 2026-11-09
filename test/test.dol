@@ -8,6 +8,8 @@ import json proc shell term
     - assert_not
     - assert_throws
     - assert_type
+    - parametrize
+    - tagged
     - test
     tags: register_tags
     run: run_tests
@@ -205,6 +207,63 @@ def parametrize_composes_with_fixture()
       true
     assert_eq (run_tests jobs: 1 module_jobs: 1 filter: filter capture: true path) 0
     assert_eq $seen ["combo/kind=a", "combo/kind=b"]
+
+#[test]
+def a_fixture_sees_no_axes_from_below()
+  with_temp_dir do |dir|
+    let path = (dir / "fixture_below.dol")
+    path.write r|
+      import test:
+        - assert_eq
+        - fixture
+        - parametrize
+        - test
+
+      #[fixture]
+      def inject block :kind = nil ...rest
+        assert_eq $kind nil
+        block(...rest, extra: "injected")
+
+      #[test]
+      #[inject]
+      #[parametrize kind: ["a"]]
+      def combo :kind :extra
+        assert_eq $kind "a"
+        assert_eq $extra "injected"
+
+    assert_eq (run_tests jobs: 1 module_jobs: 1 capture: true path) 0
+
+#[test]
+def a_decorated_test_runs_each_case_when_called()
+  let calls = []
+  let decorated = parametrize (do |:n| calls.push n) n: [1, 2]
+  decorated()
+  assert_eq $calls [1, 2]
+
+#[test]
+def a_tagged_value_cannot_be_tagged_again()
+  assert_throws $std.TypeError do tagged (tagged 1 "a") "b"
+
+#[test]
+def tests_and_modules_read_no_input()
+  with_temp_dir do |dir|
+    let path = (dir / "reads.dol")
+    path.write r|
+      import strand
+      import test:
+        - assert_eq
+        - test
+
+      let at_load = [...strand.input()]
+
+      #[test]
+      def reads_nothing()
+        assert_eq $at_load []
+        assert_eq [...strand.input()] []
+
+    let status = strand.redirect input: ["unexpected"] do
+      run_tests jobs: 1 module_jobs: 1 capture: true $path
+    assert_eq $status 0
 
 #[test]
 def parametrize_per_value_tags_are_honored()
