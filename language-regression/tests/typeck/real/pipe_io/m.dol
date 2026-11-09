@@ -1,0 +1,36 @@
+# dolang: strict
+# A channel end's `io` is for channels of `Str` or `Bin`: a receiver whose
+# values are, and a sender that takes them
+
+import @proc io:
+  - @Io
+
+pub def reads_str input @ proc.PipeReceiver[Str] -> Io
+  input.io()
+
+pub def reads_bin input @ proc.PipeReceiver[Bin] -> Bin
+  input.io do |stream| stream.read_all()
+
+pub def writes_values output @ proc.PipeSender[Value] -> Io
+  output.io()
+
+pub def rejected input @ proc.PipeReceiver[Int] output @ proc.PipeSender[Str] -> nil
+  input.io()
+  # error: no overload of `io` accepts these arguments
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   input.io()
+  #    |   ^^^^^^^^^^
+  #    |
+  #    = note: `(proc.PipeReceiver[std.Bin | std.Str]) -> io.Io`: expected `proc.PipeReceiver[std.Bin | std.Str]`, found `proc.PipeReceiver[std.Int]`
+  #    = note: `@[R] (proc.PipeReceiver[std.Bin | std.Str], (io.Io) -> R) -> R`: this call is missing an argument; expected `proc.PipeReceiver[std.Bin | std.Str]`, found `proc.PipeReceiver[std.Int]`
+  output.io()
+  # error: no overload of `io` accepts these arguments
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   output.io()
+  #    |   ^^^^^^^^^^^
+  #    |
+  #    = note: `(proc.PipeSender[std.Bin | std.Str]) -> io.Io`: expected `proc.PipeSender[std.Bin | std.Str]`, found `proc.PipeSender[std.Str]`
+  #    = note: `@[R] (proc.PipeSender[std.Bin | std.Str], (io.Io) -> R) -> R`: this call is missing an argument; expected `proc.PipeSender[std.Bin | std.Str]`, found `proc.PipeSender[std.Str]`
+  nil

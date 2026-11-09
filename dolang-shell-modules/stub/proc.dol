@@ -248,17 +248,46 @@ pub class Info
 # stages and for a [`strand.stream`](strand.stream) strand's
 # implicit input; it cannot be constructed directly.
 #
-# Both framing methods reconfigure the receiver in place. They do not alter
-# values sent directly by another Do pipeline stage.
+# A program's output arrives as lines, each a [`Str`](std.Str) with its
+# terminator. [`io`](proc.PipeReceiver.io) reads the bytes instead.
 pub class PipeReceiver[T]: std.Iter[T]
-  # Selects arbitrary-sized [`Bin`](std.Bin) chunks when the receiver
-  # reads bytes from an external program.
-  pub def chunks self -> PipeReceiver[T]
-    ...
+  @def io self @ PipeReceiver[Str | Bin] -> Io
+  @def io[R] self@PipeReceiver[Str | Bin] func@(Io -> R) -> R
 
-  # Selects line framing when the receiver reads bytes from an external
-  # program. This is the default.
-  pub def lines self -> PipeReceiver[T]
+  # Reads the received bytes through a stream.
+  #
+  # Negotiates an OS pipe for the receiver, as running a program on it does,
+  # and returns an [`Io`](io.Io) that reads from it without framing. Values sent
+  # by Do arrive as their bytes, with no boundaries between them.
+  #
+  # While the stream is open, iterating the receiver raises
+  # [`ConcurrencyError`](std.ConcurrencyError). Closing the stream returns the
+  # receiver to values and discards whatever the stream read ahead. Of a value
+  # sent by Do, any part the stream left unread is discarded too, so the next
+  # value read is a whole one.
+  #
+  # Values are cheaper than bytes between Do stages. Use this to read what a
+  # program writes, or to hand the bytes to a native consumer.
+  #
+  # ## Errors
+  #
+  # [`ConcurrencyError`](std.ConcurrencyError) if a program or another stream
+  # holds the receiver.
+  #
+  # ## Example
+  #
+  # ```
+  # let data = pipeline
+  #   do run cat archive.gz
+  #   do strand.input().io do |stream|
+  #     compress.decompress $stream do |inner| inner.read_all()
+  # ```
+  pub def io
+    self
+    # Block to run with the stream; the stream is closed when the block
+    # returns.
+    func @ (Io -> Value) = ...
+  do -> Value
     ...
 
   # Closes the receiver and stops its sender.
@@ -272,6 +301,31 @@ pub class PipeReceiver[T]: std.Iter[T]
 # stages and for a [`strand.stream`](strand.stream) strand's
 # implicit output; it cannot be constructed directly.
 pub class PipeSender[T]: std.Sink[T]
+  @def io self @ PipeSender[Str | Bin] -> Io
+  @def io[R] self@PipeSender[Str | Bin] func@(Io -> R) -> R
+
+  # Writes bytes to the receiver through a stream.
+  #
+  # Negotiates an OS pipe for the sender, as running a program on it does, and
+  # returns an [`Io`](io.Io) that writes to it. A Do receiver reads what is
+  # written as it reads a program's output, in lines, not as separate values.
+  #
+  # While the stream is open, sending values raises
+  # [`ConcurrencyError`](std.ConcurrencyError). Closing the stream returns the
+  # sender to values.
+  #
+  # ## Errors
+  #
+  # [`ConcurrencyError`](std.ConcurrencyError) if a program or another stream
+  # holds the sender.
+  pub def io
+    self
+    # Block to run with the stream; the stream is closed when the block
+    # returns.
+    func @ (Io -> Value) = ...
+  do -> Value
+    ...
+
   # Closes the sender, signaling end of input to its receiver.
   #
   # If an error is given, the receiver re-raises it after draining any buffered

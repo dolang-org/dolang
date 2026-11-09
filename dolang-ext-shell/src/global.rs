@@ -49,7 +49,7 @@ use crate::{
         xattr::{XattrEntry, XattrIter},
     },
     local::Local,
-    pipe_channel::{PipeReceiver, PipeSender},
+    pipe_channel::{PipeReceiver, PipeSender, PipeStream},
     proc::{Info as ProcInfo, Proc, Procs, Status as ProcStatus},
     program::Program,
     security::{
@@ -863,6 +863,7 @@ pub(crate) struct PipeGlobal<'v> {
 pub(crate) struct PipeTypes<'v> {
     pub(crate) pipe_receiver: Type<'v, PipeReceiver>,
     pub(crate) pipe_sender: Type<'v, PipeSender>,
+    pub(crate) pipe_stream: Type<'v, PipeStream>,
 }
 
 pub(crate) struct PipeTag;
@@ -878,6 +879,7 @@ impl<'v> PipeGlobal<'v> {
             types: PipeTypes {
                 pipe_receiver: builder.register_type(),
                 pipe_sender: builder.register_type(),
+                pipe_stream: builder.register_type(),
             },
         }
     }

@@ -1,0 +1,3 @@
+repo-stubs: std strand proc io fs time security.unix security.windows
+pipes: proc.PipeSender proc.PipeReceiver
+validated: false

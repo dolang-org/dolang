@@ -235,6 +235,16 @@ impl<T: tokio::io::AsyncBufRead + Unpin> ReadSpare for Compat<T> {
     }
 }
 
+impl<R: futures::io::AsyncRead + Unpin> ReadSpare for futures::io::BufReader<R> {
+    fn poll_read_spare(
+        &mut self,
+        cx: &mut Context<'_>,
+        spare: &mut [MaybeUninit<u8>],
+    ) -> Poll<io::Result<usize>> {
+        poll_read_buffered(Pin::new(self), cx, spare)
+    }
+}
+
 /// Copies buffered bytes into `spare`, refilling the buffer first if it is
 /// empty.
 pub(crate) fn poll_read_buffered(

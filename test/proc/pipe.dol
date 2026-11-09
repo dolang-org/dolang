@@ -1,0 +1,129 @@
+import compress
+import
+  testlib.vfs:
+    - vfs
+  test:
+    - assert_eq
+    - assert_throws
+    - test
+  testlib.polyfill:
+    - echo
+    - cat
+  strand:
+    - collect
+    - pipeline
+    - stream
+  std:
+    - ConcurrencyError
+    - RuntimeError
+
+# A program's bytes come through a receiver's stream exactly, without framing.
+#[test]
+#[vfs]
+def receiver_io_reads_program_bytes()
+  let res = pipeline
+    do echo foo
+    do strand.input().io do |stream| stream.read_all()
+  assert_eq $res b"foo\n"
+
+# A stream takes over a value already sent and discards what it leaves unread,
+# so the receiver goes on with whole values.
+#[test]
+def receiver_io_never_leaves_a_fragment()
+  let s = stream do
+    let input = strand.input()
+    strand.put (input.io do |stream| stream.read 2)
+    for value = input
+      strand.put $value
+  let sink = s.sink()
+  let out = s.iter()
+  sink.put "abc\n"
+  assert_eq $out.next() b"ab"
+  sink.put "def\n"
+  sink.close()
+  assert_eq [...out] ["def\n"]
+  s.join()
+
+# The receiver is lent from `io()` on, before any byte moves.
+#[test]
+def receiver_lent_while_stream_open()
+  let s = stream do
+    let input = strand.input()
+    let stream = input.io()
+    assert_throws $ConcurrencyError do input.next()
+    stream.close()
+    stream.close()
+    strand.put :READY:
+    input.next()
+  assert_eq $s.iter().next() :READY:
+  s.sink().put "v"
+  s.sink().close()
+  assert_eq $s.join() "v"
+
+# A block that raises still gives the receiver back.
+#[test]
+def receiver_released_when_block_raises()
+  let s = stream do
+    let input = strand.input()
+    assert_throws $RuntimeError do
+      input.io do |_stream| throw RuntimeError("boom")
+    strand.put :READY:
+    input.next()
+  assert_eq $s.iter().next() :READY:
+  s.sink().put "v"
+  s.sink().close()
+  assert_eq $s.join() "v"
+
+# Closing the receiver while a stream holds it ends the stream's lease cleanly.
+#[test]
+def receiver_closed_under_stream()
+  let s = stream do
+    let input = strand.input()
+    input.io do |_stream| input.close()
+    :DONE:
+  assert_eq $s.join() :DONE:
+
+# Bytes written through a sender's stream reach a Do receiver as lines, and
+# values follow once the stream is closed.
+#[test]
+def sender_io_writes_lines_then_values()
+  let s = stream do
+    let output = strand.output()
+    let stream = output.io()
+    assert_throws $ConcurrencyError do output.put "v"
+    stream.write "x\ny\n"
+    stream.close()
+    output.put "z"
+  assert_eq [...s] ["x\n", "y\n", "z"]
+  s.join()
+
+def write_then_put()
+  strand.output().io do |stream| stream.write "raw\n"
+  strand.put "more\n"
+
+# A program reads a sender's stream as bytes, and values sent afterward go into
+# the same pipe.
+#[test]
+#[vfs]
+def sender_io_feeds_program()
+  let res = pipeline
+    do write_then_put()
+    do cat()
+    do collect()
+  assert_eq $res ["raw\n", "more\n"]
+
+def pack()
+  strand.output().io do |stream|
+    compress.compress $stream :GZIP: do |packer| packer.write "hello"
+
+def unpack()
+  strand.input().io do |stream|
+    compress.decompress $stream do |unpacker| unpacker.read_all_str()
+
+# Native consumers read and write the negotiated pipe through `ByteIo`.
+#[test]
+def native_consumers_use_byte_io()
+  let res = pipeline
+    do pack()
+    do unpack()
+  assert_eq $res "hello"

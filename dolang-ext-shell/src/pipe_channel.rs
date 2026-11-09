@@ -13,8 +13,9 @@ use dolang_vfs::process::{PipeRecv, PipeSend};
 use futures::io::{AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 
 use dolang::runtime::{
-    AllocExt, Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
-    object::{Mut, Ref, TypeBuilder},
+    AllocExt, Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call,
+    io::{ByteHandle, ByteIo, IntoByteIo, IoCaps, Shared},
+    object::{Mut, Ref, Request, TypeBuilder},
     unpack,
     value::{Nil, TypeObject},
 };
@@ -22,7 +23,7 @@ use dolang::runtime::{
 use crate::{
     error::{ErrorExt as _, ResultExt as _},
     global::PipeGlobal,
-    io_mode::{IoMode, encode_value, read_value},
+    io_mode::{IoMode, encode_value, read_raw, read_value, write_pieces},
 };
 
 // ---------------------------------------------------------------------------
@@ -241,6 +242,48 @@ impl PipeChannelShared {
         }
     }
 
+    /// Takes back the read end a [`PipeStream`] held and leaves receive-pipe
+    /// mode as a program's exit does.
+    ///
+    /// The stream's read-ahead is discarded with its buffer. With a Do sender
+    /// the pipe itself goes too, so whatever part of a value the stream left
+    /// unread is never seen: the next read gets the next value sent.
+    fn stream_recv_done(&mut self, end: BufReader<PipeRecv>) {
+        if !self.recv_closed {
+            self.recv_end.set_present(BufReader::new(end.into_inner()));
+        }
+        self.recv_done();
+    }
+
+    /// Takes back the write end a [`PipeStream`] held and leaves send-pipe
+    /// mode.
+    ///
+    /// Unlike a program stage's exit, which ends the stage's output, the
+    /// sender stays usable: with a program reading, the end goes back to the
+    /// channel so later values are written into the same pipe.
+    fn stream_send_done(&mut self, end: PipeSend) {
+        match mem::replace(&mut self.state, PipeState::Value) {
+            PipeState::SendPipe => {
+                drop(end);
+                self.send_end.set_absent();
+                self.state = PipeState::Draining;
+            }
+            PipeState::Direct => {
+                if self.send_closed {
+                    drop(end);
+                    self.send_end.set_absent();
+                } else {
+                    self.send_end.set_present(end);
+                }
+                self.state = PipeState::RecvPipe;
+            }
+            _ => unreachable!("should be in send-pipe state"),
+        }
+        self.wake_senders();
+        self.wake_receivers();
+        self.wake_negotiators();
+    }
+
     fn discard_recv_buffer(&mut self) {
         self.recv_end = match mem::replace(&mut self.recv_end, EndState::Taken) {
             EndState::Absent => EndState::Absent,
@@ -431,9 +474,18 @@ pub(crate) struct PipeAnnex<'v> {
 
 pub(crate) struct RecvGuard {
     shared: Rc<RefCell<PipeChannelShared>>,
+    armed: bool,
 }
 
 impl RecvGuard {
+    /// Takes the read end for a [`PipeStream`], which releases it itself
+    /// rather than when this guard drops.
+    fn into_stream_end(mut self) -> io::Result<BufReader<PipeRecv>> {
+        let end = RecvEndGuard::take(&self.shared)?.steal();
+        self.armed = false;
+        Ok(end)
+    }
+
     pub(crate) async fn recv_pipe(&self) -> io::Result<PipeRecv> {
         let reader = RecvEndGuard::take(&self.shared)
             .map_err(|_| io::Error::other("pipe: consumer end closed"))?;
@@ -463,15 +515,26 @@ impl RecvGuard {
 
 impl Drop for RecvGuard {
     fn drop(&mut self) {
-        self.shared.borrow_mut().recv_done();
+        if self.armed {
+            self.shared.borrow_mut().recv_done();
+        }
     }
 }
 
 pub(crate) struct SendGuard {
     shared: Rc<RefCell<PipeChannelShared>>,
+    armed: bool,
 }
 
 impl SendGuard {
+    /// Takes the write end for a [`PipeStream`], which releases it itself
+    /// rather than when this guard drops.
+    fn into_stream_end(mut self) -> io::Result<PipeSend> {
+        let end = SendEndGuard::take(&self.shared)?.steal();
+        self.armed = false;
+        Ok(end)
+    }
+
     pub(crate) async fn send_pipe(&self) -> io::Result<PipeSend> {
         let sender = SendEndGuard::take(&self.shared)
             .map_err(|_| io::Error::other("pipe: producer end closed"))?;
@@ -503,7 +566,9 @@ impl SendGuard {
 
 impl Drop for SendGuard {
     fn drop(&mut self) {
-        self.shared.borrow_mut().send_done();
+        if self.armed {
+            self.shared.borrow_mut().send_done();
+        }
     }
 }
 
@@ -513,15 +578,123 @@ impl Drop for SendGuard {
 
 /// The reading end of a pipe channel.
 ///
-/// Framing is a property of this end and nothing else: `lines()` and
-/// `chunks()` reconfigure it in place, which is well defined because a
-/// receiver end is uniquely owned. Both framings are lossless, so the choice
-/// only decides where the stream is cut.
-pub(crate) struct PipeReceiver {
-    mode: IoMode,
-}
+/// Bytes from a program are read as lines. A Do stage wanting them unframed
+/// asks for a [`PipeStream`] with `io()`.
+pub(crate) struct PipeReceiver;
 
 pub(crate) struct PipeSender;
+
+/// The pipe end a [`PipeStream`] holds until it is closed.
+enum StreamEnd {
+    Recv(Shared<BufReader<PipeRecv>>),
+    Send(Shared<PipeSend>),
+}
+
+/// The byte stream a channel end's `io()` returns: an `io.Io` over the OS pipe
+/// negotiated for it.
+///
+/// It takes the end from the channel, whose value operations on that end
+/// raise `ConcurrencyError` until `close` gives it back. Handles lent through
+/// [`ByteIo`] share the end and fail once it is closed.
+pub(crate) struct PipeStream {
+    end: Option<StreamEnd>,
+}
+
+const _: () = {
+    const fn assert_send<T: Send>() {}
+    assert_send::<BufReader<PipeRecv>>();
+    assert_send::<PipeSend>();
+};
+
+pub(crate) struct PipeStreamAnnex {
+    shared: Rc<RefCell<PipeChannelShared>>,
+}
+
+impl<'v> IntoByteIo<'v> for PipeStream {
+    fn caps<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, IoCaps> {
+        Ok(match self.end {
+            Some(StreamEnd::Recv(_)) => IoCaps::READ,
+            Some(StreamEnd::Send(_)) => IoCaps::WRITE,
+            None => IoCaps::empty(),
+        })
+    }
+
+    fn get<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
+        Ok(match self.end.as_ref().expect("stream is closed") {
+            StreamEnd::Recv(reader) => ByteHandle::read(reader.clone()),
+            StreamEnd::Send(writer) => ByteHandle::write(writer.clone()),
+        })
+    }
+}
+
+/// Creates the stream for a channel end into `out`, or, with a block, runs the
+/// block with it and closes it afterward.
+async fn open_stream<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, PipeGlobal<'v>>,
+    shared: Rc<RefCell<PipeChannelShared>>,
+    end: StreamEnd,
+    block: Option<&Value<'v>>,
+    out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    let stream = PipeStream { end: Some(end) };
+    let annex = PipeStreamAnnex { shared };
+    let Some(block) = block else {
+        global
+            .types
+            .pipe_stream
+            .create_with_annex(strand, stream, annex, out);
+        return Ok(());
+    };
+    strand
+        .with_slots(async move |strand, [mut handle]| {
+            global.types.pipe_stream.create_with_annex(
+                strand,
+                stream,
+                annex,
+                Slot::reborrow(&mut handle),
+            );
+            let result = call!(strand, block, out, &handle).await;
+            // Always released, even when the block raised.
+            let closed = global
+                .types
+                .pipe_stream
+                .cast(&handle)
+                .unwrap()
+                .enter(strand, async move |strand, inst| {
+                    close_stream(inst, strand).await
+                })
+                .await;
+            result.and(closed)
+        })
+        .await
+}
+
+/// Gives the stream's end back to its channel. Closing again does nothing.
+async fn close_stream<'v, 's>(
+    inst: Instance<'v, '_, PipeStream>,
+    strand: &mut Strand<'v, 's>,
+) -> Result<'v, 's, ()> {
+    let end = inst.borrow_mut(strand)?.end.take();
+    let shared = &inst.annex().shared;
+    match end {
+        None => {}
+        Some(StreamEnd::Recv(mut reader)) => {
+            // Waits out an operation on a lent handle, then ends them all.
+            if let Some(reader) = reader.close().await {
+                shared.borrow_mut().stream_recv_done(reader);
+            }
+        }
+        Some(StreamEnd::Send(mut writer)) => {
+            if let Some(mut writer) = writer.close().await {
+                let flushed = writer.flush().await;
+                shared.borrow_mut().stream_send_done(writer);
+                flushed.into_sys(strand)?;
+            }
+        }
+    }
+    Ok(())
+}
 
 // ---------------------------------------------------------------------------
 // Async negotiate functions
@@ -554,101 +727,116 @@ pub(crate) async fn negotiate_recv<'v, 's>(
         return Ok(None);
     };
     cast.enter(strand, async move |strand, inst| {
-        let shared = &inst.annex().shared;
-        let mut fresh_pipe = None;
-        let (send_end, old_recv_end, stale_bytes) = loop {
-            let ready = future::poll_fn(|cx| {
-                let mut inner = shared.borrow_mut();
-                match inner.state {
-                    PipeState::Value => Poll::Ready(true),
-                    PipeState::SendPipe | PipeState::Draining if !inner.recv_end.is_taken() => {
-                        Poll::Ready(true)
-                    }
-                    PipeState::RecvPipe => Poll::Ready(false),
-                    _ => {
-                        inner.negotiate_wakers.push_back(cx.waker().clone());
-                        Poll::Pending
-                    }
+        lease_recv(inst, strand, false).await.map(Some)
+    })
+    .await
+}
+
+async fn lease_recv<'v, 's>(
+    inst: Instance<'v, '_, PipeReceiver>,
+    strand: &mut Strand<'v, 's>,
+    keep_buffer: bool,
+) -> Result<'v, 's, RecvGuard> {
+    let global = inst.annex().global;
+    let shared = &inst.annex().shared;
+    let mut fresh_pipe = None;
+    let (send_end, old_recv_end, stale_bytes) = loop {
+        let ready = future::poll_fn(|cx| {
+            let mut inner = shared.borrow_mut();
+            match inner.state {
+                PipeState::Value => Poll::Ready(true),
+                PipeState::SendPipe | PipeState::Draining if !inner.recv_end.is_taken() => {
+                    Poll::Ready(true)
                 }
-            })
-            .await;
-
-            if !ready {
-                return Err(Error::concurrency_msg(strand, "program owns channel end"));
+                PipeState::RecvPipe => Poll::Ready(false),
+                _ => {
+                    inner.negotiate_wakers.push_back(cx.waker().clone());
+                    Poll::Pending
+                }
             }
+        })
+        .await;
 
-            let needs_pipe = {
-                let inner = shared.borrow();
-                matches!(inner.state, PipeState::Value)
-                    || matches!(inner.state, PipeState::Draining) && !inner.send_closed
-            };
-            if needs_pipe && fresh_pipe.is_none() {
-                let buffer_size = shared.borrow().buffer_size;
-                let local = global.local.get(strand);
-                fresh_pipe = Some(local.vfs().pipe(buffer_size).await.into_sys(strand)?);
-                continue;
-            }
+        if !ready {
+            return Err(Error::concurrency_msg(strand, "program owns channel end"));
+        }
 
-            let result = {
-                let mut inner = shared.borrow_mut();
-                match &mut inner.state {
-                    PipeState::Value => {
-                        let stale_bytes = take_buffered_bytes(inst, strand, &mut inner)?;
+        let needs_pipe = {
+            let inner = shared.borrow();
+            matches!(inner.state, PipeState::Value)
+                || matches!(inner.state, PipeState::Draining) && !inner.send_closed
+        };
+        if needs_pipe && fresh_pipe.is_none() {
+            let buffer_size = shared.borrow().buffer_size;
+            let local = global.local.get(strand);
+            fresh_pipe = Some(local.vfs().pipe(buffer_size).await.into_sys(strand)?);
+            continue;
+        }
+
+        let result = {
+            let mut inner = shared.borrow_mut();
+            match &mut inner.state {
+                PipeState::Value => {
+                    let stale_bytes = take_buffered_bytes(inst, strand, &mut inner)?;
+                    let (w, r) = fresh_pipe.take().unwrap();
+                    inner.recv_end.set_present(BufReader::new(r));
+                    inner.send_end = EndState::Taken;
+                    inner.state = PipeState::RecvPipe;
+                    inner.wake_senders();
+                    (Some(w), None, stale_bytes)
+                }
+                PipeState::SendPipe => {
+                    let send_end = mem::replace(&mut inner.send_end, EndState::Taken);
+                    // A program gets a duplicate of the descriptor and never
+                    // sees this buffer. A stream reads through it, so bytes
+                    // already read ahead stay readable.
+                    if !keep_buffer {
+                        inner.discard_recv_buffer();
+                    }
+                    inner.state = PipeState::Direct;
+                    inner.send_end = send_end;
+                    (None, None, None)
+                }
+                PipeState::Draining => {
+                    if inner.send_closed {
+                        inner.state = PipeState::RecvPipe;
+                        inner.wake_senders();
+                        (None, None, None)
+                    } else {
+                        let old_recv_end = inner.recv_end.take().unwrap();
                         let (w, r) = fresh_pipe.take().unwrap();
                         inner.recv_end.set_present(BufReader::new(r));
                         inner.send_end = EndState::Taken;
                         inner.state = PipeState::RecvPipe;
                         inner.wake_senders();
-                        (Some(w), None, stale_bytes)
+                        (Some(w), Some(old_recv_end), None)
                     }
-                    PipeState::SendPipe => {
-                        let send_end = mem::replace(&mut inner.send_end, EndState::Taken);
-                        inner.discard_recv_buffer();
-                        inner.state = PipeState::Direct;
-                        inner.send_end = send_end;
-                        (None, None, None)
-                    }
-                    PipeState::Draining => {
-                        if inner.send_closed {
-                            inner.state = PipeState::RecvPipe;
-                            inner.wake_senders();
-                            (None, None, None)
-                        } else {
-                            let old_recv_end = inner.recv_end.take().unwrap();
-                            let (w, r) = fresh_pipe.take().unwrap();
-                            inner.recv_end.set_present(BufReader::new(r));
-                            inner.send_end = EndState::Taken;
-                            inner.state = PipeState::RecvPipe;
-                            inner.wake_senders();
-                            (Some(w), Some(old_recv_end), None)
-                        }
-                    }
-                    _ => unreachable!("state changed after readiness was revalidated"),
                 }
-            };
-            break result;
+                _ => unreachable!("state changed after readiness was revalidated"),
+            }
         };
+        break result;
+    };
 
-        let mut send_end = send_end.map(|send_end| SendEndGuard::new(shared.clone(), send_end));
+    let mut send_end = send_end.map(|send_end| SendEndGuard::new(shared.clone(), send_end));
 
-        if let Some(mut send_end) = send_end.take() {
-            if let Some(old_recv_end) = old_recv_end {
-                drain_pipe(old_recv_end, &mut send_end)
-                    .await
-                    .into_sys(strand)?;
-            }
-            if let Some(stale_bytes) = stale_bytes {
-                strand.spawn_task(async move {
-                    let _ = send_end.write_all(&stale_bytes).await;
-                });
-            }
+    if let Some(mut send_end) = send_end.take() {
+        if let Some(old_recv_end) = old_recv_end {
+            drain_pipe(old_recv_end, &mut send_end)
+                .await
+                .into_sys(strand)?;
         }
+        if let Some(stale_bytes) = stale_bytes {
+            strand.spawn_task(async move {
+                let _ = send_end.write_all(&stale_bytes).await;
+            });
+        }
+    }
 
-        Ok(Some(RecvGuard {
-            shared: shared.clone(),
-        }))
+    Ok(RecvGuard {
+        shared: shared.clone(),
+        armed: true,
     })
-    .await
 }
 
 pub(crate) async fn negotiate_send<'v, 's>(
@@ -662,99 +850,108 @@ pub(crate) async fn negotiate_send<'v, 's>(
         return Ok(None);
     };
     cast.enter(strand, async move |strand, inst| {
-        let shared = &inst.annex().shared;
-        let mut fresh_pipe = None;
-        let (send_end, old_recv_end, stale_bytes) = loop {
-            let ready = future::poll_fn(|cx| {
-                let mut inner = shared.borrow_mut();
-                match inner.state {
-                    PipeState::Value => Poll::Ready(true),
-                    PipeState::RecvPipe if !inner.send_end.is_taken() => Poll::Ready(true),
-                    PipeState::Draining if !inner.recv_end.is_taken() => Poll::Ready(true),
-                    PipeState::SendPipe | PipeState::Direct => Poll::Ready(false),
-                    _ => {
-                        inner.negotiate_wakers.push_back(cx.waker().clone());
-                        Poll::Pending
-                    }
-                }
-            })
-            .await;
-
-            if !ready {
-                return Err(Error::concurrency_msg(strand, "program owns channel end"));
-            }
-
-            let needs_pipe = matches!(
-                shared.borrow().state,
-                PipeState::Value | PipeState::Draining
-            );
-            if needs_pipe && fresh_pipe.is_none() {
-                let buffer_size = shared.borrow().buffer_size;
-                let local = global.local.get(strand);
-                fresh_pipe = Some(local.vfs().pipe(buffer_size).await.into_sys(strand)?);
-                continue;
-            }
-
-            let result = {
-                let mut inner = shared.borrow_mut();
-                match &mut inner.state {
-                    PipeState::Value => {
-                        let send_borrow = inst.borrow(strand)?;
-                        let stale_bytes = global
-                            .types
-                            .pipe_receiver
-                            .cast(Ref::slot::<0>(&send_borrow))
-                            .unwrap()
-                            .enter_sync(strand, |strand, recv_inst| {
-                                take_buffered_bytes(recv_inst, strand, &mut inner)
-                            })?;
-                        drop(send_borrow);
-                        let (w, r) = fresh_pipe.take().unwrap();
-                        inner.send_end = EndState::Taken;
-                        inner.recv_end.set_present(BufReader::new(r));
-                        inner.state = PipeState::SendPipe;
-                        inner.wake_receivers();
-                        (Some(w), None, stale_bytes)
-                    }
-                    PipeState::RecvPipe => {
-                        let send_end = inner.send_end.take().unwrap();
-                        inner.send_end = EndState::Taken;
-                        inner.state = PipeState::Direct;
-                        (Some(send_end), None, None)
-                    }
-                    PipeState::Draining => {
-                        let old_recv_end = inner.recv_end.take().unwrap();
-                        let (w, r) = fresh_pipe.take().unwrap();
-                        inner.send_end = EndState::Taken;
-                        inner.recv_end.set_present(BufReader::new(r));
-                        inner.state = PipeState::SendPipe;
-                        inner.wake_receivers();
-                        (Some(w), Some(old_recv_end), None)
-                    }
-                    _ => unreachable!("state changed after readiness was revalidated"),
-                }
-            };
-            break result;
-        };
-
-        let mut send_end = send_end.map(|send_end| SendEndGuard::new(shared.clone(), send_end));
-
-        if let Some(mut send_end) = send_end.take() {
-            if let Some(old_recv_end) = old_recv_end {
-                drain_pipe(old_recv_end, &mut send_end)
-                    .await
-                    .into_sys(strand)?;
-            }
-            if let Some(stale_bytes) = stale_bytes {
-                send_end.write_all(&stale_bytes).await.into_sys(strand)?;
-            }
-        }
-
-        Ok(Some(SendGuard {
-            shared: shared.clone(),
-        }))
+        lease_send(inst, strand).await.map(Some)
     })
     .await
+}
+
+async fn lease_send<'v, 's>(
+    inst: Instance<'v, '_, PipeSender>,
+    strand: &mut Strand<'v, 's>,
+) -> Result<'v, 's, SendGuard> {
+    let global = inst.annex().global;
+    let shared = &inst.annex().shared;
+    let mut fresh_pipe = None;
+    let (send_end, old_recv_end, stale_bytes) = loop {
+        let ready = future::poll_fn(|cx| {
+            let mut inner = shared.borrow_mut();
+            match inner.state {
+                PipeState::Value => Poll::Ready(true),
+                PipeState::RecvPipe if !inner.send_end.is_taken() => Poll::Ready(true),
+                PipeState::Draining if !inner.recv_end.is_taken() => Poll::Ready(true),
+                PipeState::SendPipe | PipeState::Direct => Poll::Ready(false),
+                _ => {
+                    inner.negotiate_wakers.push_back(cx.waker().clone());
+                    Poll::Pending
+                }
+            }
+        })
+        .await;
+
+        if !ready {
+            return Err(Error::concurrency_msg(strand, "program owns channel end"));
+        }
+
+        let needs_pipe = matches!(
+            shared.borrow().state,
+            PipeState::Value | PipeState::Draining
+        );
+        if needs_pipe && fresh_pipe.is_none() {
+            let buffer_size = shared.borrow().buffer_size;
+            let local = global.local.get(strand);
+            fresh_pipe = Some(local.vfs().pipe(buffer_size).await.into_sys(strand)?);
+            continue;
+        }
+
+        let result = {
+            let mut inner = shared.borrow_mut();
+            match &mut inner.state {
+                PipeState::Value => {
+                    let send_borrow = inst.borrow(strand)?;
+                    let stale_bytes = global
+                        .types
+                        .pipe_receiver
+                        .cast(Ref::slot::<0>(&send_borrow))
+                        .unwrap()
+                        .enter_sync(strand, |strand, recv_inst| {
+                            take_buffered_bytes(recv_inst, strand, &mut inner)
+                        })?;
+                    drop(send_borrow);
+                    let (w, r) = fresh_pipe.take().unwrap();
+                    inner.send_end = EndState::Taken;
+                    inner.recv_end.set_present(BufReader::new(r));
+                    inner.state = PipeState::SendPipe;
+                    inner.wake_receivers();
+                    (Some(w), None, stale_bytes)
+                }
+                PipeState::RecvPipe => {
+                    let send_end = inner.send_end.take().unwrap();
+                    inner.send_end = EndState::Taken;
+                    inner.state = PipeState::Direct;
+                    (Some(send_end), None, None)
+                }
+                PipeState::Draining => {
+                    let old_recv_end = inner.recv_end.take().unwrap();
+                    let (w, r) = fresh_pipe.take().unwrap();
+                    inner.send_end = EndState::Taken;
+                    inner.recv_end.set_present(BufReader::new(r));
+                    inner.state = PipeState::SendPipe;
+                    inner.wake_receivers();
+                    (Some(w), Some(old_recv_end), None)
+                }
+                _ => unreachable!("state changed after readiness was revalidated"),
+            }
+        };
+        break result;
+    };
+
+    let mut send_end = send_end.map(|send_end| SendEndGuard::new(shared.clone(), send_end));
+
+    if let Some(mut send_end) = send_end.take() {
+        if let Some(old_recv_end) = old_recv_end {
+            drain_pipe(old_recv_end, &mut send_end)
+                .await
+                .into_sys(strand)?;
+        }
+        if let Some(stale_bytes) = stale_bytes {
+            send_end.write_all(&stale_bytes).await.into_sys(strand)?;
+        }
+    }
+
+    Ok(SendGuard {
+        shared: shared.clone(),
+        armed: true,
+    })
 }
 
 pub(crate) fn install<'v>(builder: &mut dolang::runtime::vm::Builder<'v>) {
@@ -786,7 +983,7 @@ pub(crate) fn make_pair<'v, 's>(
 
     global.types.pipe_receiver.create_with_annex(
         strand,
-        PipeReceiver { mode: IoMode::Line },
+        PipeReceiver,
         recv_annex,
         Slot::reborrow(&mut out_recv),
     );
@@ -824,17 +1021,20 @@ impl<'v> Object<'v> for PipeReceiver {
                 this.annex().shared.borrow_mut().close_recv();
                 Ok(())
             })
-            .method("lines", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
-                this.borrow_mut(strand)?.mode = IoMode::Line;
-                Output::set(strand, out, this);
-                Ok(())
-            })
-            .method("chunks", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
-                this.borrow_mut(strand)?.mode = IoMode::Chunk;
-                Output::set(strand, out, this);
-                Ok(())
+            .method("io", async move |this, strand, args, out| {
+                let ([], [block]) = unpack!(strand, args, 0, 1)?;
+                let guard = lease_recv(this, strand, true).await?;
+                let reader = guard.into_stream_end().into_sys(strand)?;
+                let annex = this.annex();
+                open_stream(
+                    strand,
+                    annex.global,
+                    annex.shared.clone(),
+                    StreamEnd::Recv(Shared::new(reader)),
+                    block.as_deref(),
+                    out,
+                )
+                .await
             })
     }
 
@@ -853,7 +1053,6 @@ impl<'v> Object<'v> for PipeReceiver {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let shared = &this.annex().shared;
-        let io_mode = this.borrow(strand)?.mode;
 
         loop {
             let recv_end = {
@@ -925,7 +1124,7 @@ impl<'v> Object<'v> for PipeReceiver {
             };
 
             if let Some(mut reader) = recv_end {
-                match read_value(&mut *reader, io_mode, strand, &mut out).await {
+                match read_value(&mut *reader, IoMode::Line, strand, &mut out).await {
                     Ok(false) => {
                         reader.discard();
                         let mut inner = shared.borrow_mut();
@@ -973,9 +1172,24 @@ impl<'v> Object<'v> for PipeSender {
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         let backtrace_sym = builder.sym("backtrace");
-        builder.supertype(TypeObject::Sink).method(
-            "close",
-            async move |this, strand, args, _out| {
+        builder
+            .supertype(TypeObject::Sink)
+            .method("io", async move |this, strand, args, out| {
+                let ([], [block]) = unpack!(strand, args, 0, 1)?;
+                let guard = lease_send(this, strand).await?;
+                let writer = guard.into_stream_end().into_sys(strand)?;
+                let annex = this.annex();
+                open_stream(
+                    strand,
+                    annex.global,
+                    annex.shared.clone(),
+                    StreamEnd::Send(Shared::new(writer)),
+                    block.as_deref(),
+                    out,
+                )
+                .await
+            })
+            .method("close", async move |this, strand, args, _out| {
                 let ([], [err, backtrace]) = unpack!(strand, args, 0, 1, backtrace_sym = None)?;
                 let shared = &this.annex().shared;
                 let send_borrow = this.borrow(strand)?;
@@ -1009,8 +1223,7 @@ impl<'v> Object<'v> for PipeSender {
                     })?;
                 shared.borrow_mut().close_send();
                 Ok(())
-            },
-        )
+            })
     }
 
     async fn sink<'a, 's>(
@@ -1070,6 +1283,11 @@ impl<'v> Object<'v> for PipeSender {
                         if inner.send_end.is_present() {
                             drop(inner);
                             Some(SendEndGuard::take(shared).into_sys(strand)?)
+                        } else if inner.send_end.is_taken() {
+                            // Another write from Do holds the end, such as the
+                            // value a receiving stream took over when it was
+                            // opened. Wait for it to finish.
+                            None
                         } else {
                             return Err(Error::concurrency_msg(strand, "program owns channel end"));
                         }
@@ -1083,14 +1301,18 @@ impl<'v> Object<'v> for PipeSender {
 
             if let Some(mut writer) = send_end {
                 let bytes = encode_value(strand, &value)?;
-                match writer.write_all(&bytes).await {
-                    Ok(()) => {
-                        return Ok(());
+                return match writer.write_all(&bytes).await {
+                    Ok(()) => Ok(()),
+                    // A receiving stream released the pipe mid-write, which
+                    // consumes the value as a program exiting would.
+                    Err(e)
+                        if e.kind() == io::ErrorKind::BrokenPipe
+                            && matches!(shared.borrow().state, PipeState::Value) =>
+                    {
+                        Ok(())
                     }
-                    Err(e) => {
-                        return Err(e.into_sys(strand));
-                    }
-                }
+                    Err(e) => Err(e.into_sys(strand)),
+                };
             }
 
             future::poll_fn(|cx| {
@@ -1112,5 +1334,111 @@ impl<'v> Object<'v> for PipeSender {
             })
             .await;
         }
+    }
+}
+
+impl PipeStream {
+    fn reader(&self) -> Option<Shared<BufReader<PipeRecv>>> {
+        match &self.end {
+            Some(StreamEnd::Recv(reader)) => Some(reader.clone()),
+            _ => None,
+        }
+    }
+
+    fn writer(&self) -> Option<Shared<PipeSend>> {
+        match &self.end {
+            Some(StreamEnd::Send(writer)) => Some(writer.clone()),
+            _ => None,
+        }
+    }
+}
+
+/// The error for `op` on a stream without the end it needs: closed, or open
+/// in the other direction.
+fn missing_end<'v, 's>(
+    this: Instance<'v, '_, PipeStream>,
+    strand: &mut Strand<'v, 's>,
+    op: &'static str,
+) -> Error<'v, 's> {
+    match this.borrow(strand) {
+        Ok(borrow) if borrow.end.is_none() => {
+            drop(borrow);
+            Error::state_error(strand, "stream closed")
+        }
+        Ok(borrow) => {
+            drop(borrow);
+            Error::unsupported(strand, op)
+        }
+        Err(e) => e,
+    }
+}
+
+impl<'v> Object<'v> for PipeStream {
+    const MODULE: &'v str = "proc";
+    const NAME: &'v str = "PipeStream";
+    type Annex = PipeStreamAnnex;
+    type Type = ();
+    type TypeAnnex = ();
+
+    fn provide<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        request: &mut Request<'v, 's, '_>,
+    ) -> Result<'v, 's, ()> {
+        if request.wants::<ByteIo>() {
+            let mut borrow = this.borrow_mut(request)?;
+            if borrow.end.is_none() {
+                return Err(Error::state_error(request, "stream closed"));
+            }
+            request.provide::<ByteIo>(&mut *borrow)?;
+        }
+        Ok(())
+    }
+
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder
+            .supertype(TypeObject::Io)
+            .get("readable", |this, strand, out| {
+                let readable = matches!(this.borrow(strand)?.end, Some(StreamEnd::Recv(_)));
+                Output::set(strand, out, readable);
+                Ok(())
+            })
+            .get("writable", |this, strand, out| {
+                let writable = matches!(this.borrow(strand)?.end, Some(StreamEnd::Send(_)));
+                Output::set(strand, out, writable);
+                Ok(())
+            })
+            .method("read", async move |this, strand, args, out| {
+                let ([size], []) = unpack!(strand, args, 1, 0)?;
+                let size = size
+                    .to_i64(strand)
+                    .ok()
+                    .and_then(|size| usize::try_from(size).ok())
+                    .ok_or_else(|| {
+                        Error::type_error(strand, "size must be a non-negative integer")
+                    })?;
+                let Some(mut reader) = this.borrow(strand)?.reader() else {
+                    return Err(missing_end(this, strand, "`read`"));
+                };
+                let mut reader = reader.lock().await.into_sys(strand)?;
+                read_raw(&mut *reader, Some(size), strand, out).await
+            })
+            .method("write", async move |this, strand, args, out| {
+                let Some(writer) = this.borrow(strand)?.writer() else {
+                    return Err(missing_end(this, strand, "`write`"));
+                };
+                write_pieces(&writer, args, strand, out).await
+            })
+            .method("flush", async move |this, strand, args, _out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let Some(mut writer) = this.borrow(strand)?.writer() else {
+                    return Err(missing_end(this, strand, "`flush`"));
+                };
+                let mut writer = writer.lock().await.into_sys(strand)?;
+                writer.flush().await.into_sys(strand)
+            })
+            .method("close", async move |this, strand, args, _out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                close_stream(this, strand).await
+            })
     }
 }
