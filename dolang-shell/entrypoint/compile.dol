@@ -492,16 +492,19 @@ class Document
   def binders self id
     let result = []
     for child = self.#own(id)
-      if !type(child, compile.Binder)
-        continue
-      result.push $
-        kind: (DECL_KINDS.get (type child))
-        name: (self.#text(child.name))
-        if (child.bound != nil)
-          bound: (self.#type_tree(child.bound))
-        if (child.default != nil)
-          default: (self.#type_tree(child.default))
+      if type(child, compile.Binder)
+        result.push $self.#binder(child)
     result
+
+  # A binder, its bound and default as type trees.
+  def binder self binder
+    $
+      kind: (DECL_KINDS.get (type binder))
+      name: (self.#text(binder.name))
+      if (binder.bound != nil)
+        bound: (self.#type_tree(binder.bound))
+      if (binder.default != nil)
+        default: (self.#type_tree(binder.default))
 
   # The annotation on a method's `self`, as a tree, or `nil`.
   def self_type self id
@@ -553,6 +556,11 @@ class Document
       $
         kind: "union"
         members: $members
+    else if type(expr, compile.QuantType)
+      $
+        kind: "quant"
+        binders: [...expr.binders.map(do |binder| self.#binder(binder))]
+        func: (self.#type_tree(expr.func))
     else
       $
         kind: "func"

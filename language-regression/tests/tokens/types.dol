@@ -171,3 +171,17 @@ let _chans @((Int, <Iter[Int], >Sink[Str]) -> nil) = nil
 #                              ^: sigil
 #                               ^~~~: type_token
 
+
+let q @(@[T] (T) -> T) = nil
+#     ^: annotation
+#      ^: delim
+#       ^: sigil
+#        ^: delim
+#         ^: binder_token, node=binder
+#          ^: delim
+#            ^: delim
+#             ^: type_token, node=binder
+#              ^: delim
+#                ^~: operator
+#                   ^: type_token, node=binder
+#                    ^: delim

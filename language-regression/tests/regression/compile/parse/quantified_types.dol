@@ -1,0 +1,38 @@
+# A quantified function type is binders juxtaposed with a function signature, so
+# it is written only within parentheses.
+let _id @ (@[T] (T) -> T) = nil
+let _grouped @ (@[T] ((T) -> T)) = nil
+let _bounded @ (@[T @ Int = Int, :K, *P, **N, ...R] (T, *P, **N) -> T) = nil
+let _nested @ ((@[T] (T) -> T) -> @[U] (U) -> U) = nil
+let _optional @ ((@[T] (T) -> T) | nil) = nil
+let _channels @ (@[T] (T, <Str) -> T) = nil
+let _not_function @ (@[T] Array[T]) = nil
+# error: binders must be followed by a function signature
+#   --> quantified_types.dol:LL:LL
+#    |
+# LL | let _not_function @ (@[T] Array[T]) = nil
+#    |                      ^^^^
+let _empty @ (@[] (Int) -> Int) = nil
+# error: expected binder
+#   --> quantified_types.dol:LL:LL
+#    |
+# LL | let _empty @ (@[] (Int) -> Int) = nil
+#    |                 ^
+let _no_binders @ (@ (Int) -> Int) = nil
+# error: expected `[` after `@` in type
+#   --> quantified_types.dol:LL:LL
+#    |
+# LL | let _no_binders @ (@ (Int) -> Int) = nil
+#    |                      ^
+let _rest_default @ (@[...R = {}] (...R) -> nil) = nil
+# error: a rest binder cannot have a default
+#   --> quantified_types.dol:LL:LL
+#    |
+# LL | let _rest_default @ (@[...R = {}] (...R) -> nil) = nil
+#    |                             ^
+let _compact @ @[T] (T) -> T = nil
+# error: expected type
+#   --> quantified_types.dol:LL:LL
+#    |
+# LL | let _compact @ @[T] (T) -> T = nil
+#    |                ^

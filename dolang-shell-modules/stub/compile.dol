@@ -689,6 +689,18 @@ pub class FuncType: TypeExpr
   pub def output self -> (TypeExpr | nil)
     ...
 
+# A function type quantified over binders, such as `(@[T] (T) -> T)`.
+pub class QuantType: TypeExpr
+  # The binders, children of the quantified type, in the order written.
+  #[getter]
+  pub def binders self -> Array[Binder]
+    ...
+
+  # The function type the binders quantify.
+  #[getter]
+  pub def func self -> FuncType
+    ...
+
 # Supertype of the type arguments in the `[]` of an
 # [`AppType`](compile.AppType). Its span leaves out a trailing `,`.
 pub class TypeArg: Node

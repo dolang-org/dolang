@@ -1,0 +1,63 @@
+# dolang: strict
+# A function that isn't generic doesn't fit a quantified type, and a quantified
+# type can't be a type argument, written or through an alias.
+
+def inc x@Int -> Int
+  (x + 1)
+
+def apply f@(@[T] (T) -> T) x@Int -> Int
+  f $x
+
+pub @let Id = (@[T] (T) -> T)
+
+pub def narrow()
+  let _ @ Int = (apply(inc, 1))
+# error: expected `@[T1] (T1) -> T1`, found `(std.Int) -> std.Int`
+#   --> bad.dol:LL:LL
+#    |
+# LL |   let _ @ Int = (apply(inc, 1))
+#    |                        ^^^
+
+pub def written _a@Array[@[T] (T) -> T]
+  # error: a generic function type can't be a type argument
+  #   --> bad.dol:LL:LL
+  #    |
+  # LL | pub def written _a@Array[@[T] (T) -> T]
+  #    |                          ^^^^^^^^^^^^^
+  nil
+
+pub def aliased _a@Array[Id]
+  # error: a generic function type can't be a type argument
+  #   --> bad.dol:LL:LL
+  #    |
+  # LL | pub def aliased _a@Array[Id]
+  #    |                          ^^
+  nil
+
+pub def tupled _t@(Int, @[T] (T) -> T)
+  # error: a generic function type can't be a type argument
+  #   --> bad.dol:LL:LL
+  #    |
+  # LL | pub def tupled _t@(Int, @[T] (T) -> T)
+  #    |                         ^^^^^^^^^^^^^
+  nil
+
+pub def unused _f@(@[T] (Int) -> Int)
+  # warning: unused binder
+  #   --> bad.dol:LL:LL
+  #    |
+  # LL | pub def unused _f@(@[T] (Int) -> Int)
+  #    |                      ^
+  nil
+
+# A nested def holds the enclosing def's binders fixed, so it doesn't fit a type
+# with something else in their place
+pub def fixed[U] _u@U -> (@[T] (T, Int) -> T)
+  def inner[T] x@T _u@U -> T
+    x
+  inner
+# error: `@[T1] (T1, U) -> T1` does not fit the declared result `@[T1] (T1, std.Int) -> T1`
+#   --> bad.dol:LL:LL
+#    |
+# LL |   inner
+#    |   ^^^^^

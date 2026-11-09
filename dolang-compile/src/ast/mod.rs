@@ -5,9 +5,9 @@ pub(crate) mod ty;
 pub(crate) mod visit;
 
 pub(crate) use self::ty::{
-    Annot, Binder, BinderDefault, BinderKind, Binders, Implicit, Implicits, RetType, TypeArg,
-    TypeArgKind, TypeEntry, TypeExpr, TypeKey, TypeParam, TypeParamKind, TypeQuant, TypeRes,
-    implicit_tys_mut, implicits,
+    Annot, Binder, BinderDefault, BinderKind, Binders, Implicit, Implicits, NameMut, NameRef,
+    RetType, TypeArg, TypeArgKind, TypeEntry, TypeExpr, TypeKey, TypeParam, TypeParamKind,
+    TypeQuant, TypeRes, implicit_tys_mut, implicits,
 };
 
 use std::{

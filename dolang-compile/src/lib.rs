@@ -597,6 +597,10 @@ impl<'a> Node<'a> {
                 output: output.map(public_node_id),
                 ret: public_node_id(*ret),
             },
+            doc::Kind::QuantType { binders, func } => Kind::QuantType {
+                binders: NodeIds(binders.iter()),
+                func: public_node_id(*func),
+            },
             doc::Kind::TypeItem { kind, ty } => Kind::TypeItem {
                 kind: match kind {
                     doc::TypeItemKind::Pos { quant } => TypeItemKind::Pos { quant: *quant },
@@ -889,6 +893,13 @@ pub enum Kind<'a> {
         output: Option<NodeId>,
         /// The return type
         ret: NodeId,
+    },
+    /// A function type quantified over binders, e.g. `(@[T] (T) -> T)`
+    QuantType {
+        /// The [`Kind::Binder`] nodes, in the order written
+        binders: NodeIds<'a>,
+        /// The [`Kind::FuncType`] the binders quantify
+        func: NodeId,
     },
     /// An item of a schema, a tuple or record type, or a function type's
     /// parameters, without a trailing `,`

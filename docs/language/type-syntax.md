@@ -336,6 +336,40 @@ let double = do |x <Iter[Int] >Sink[Int]| (x * 2)
 Schemas have no implicits, since an ambient channel is not data, and neither do
 `bind` arms or `let` patterns, which bind values.
 
+### Generic Function Types
+
+`@[]` before a function type declares binders for it, written as a `def`'s
+[binders](./types.md#binders) are. A value of the type is a generic function:
+each call chooses its binders, as a call of a generic `def` does. A generic
+`def` fits the type, but a function that takes only some of its choices does
+not:
+
+```
+def id[T] x @ T -> T
+  x
+def both f @ (@[T] (T) -> T) -> (Int, Str)
+  (f(1), f("a"))
+both $id
+```
+
+The binders and the function type are separated by whitespace, so the type is
+written in parentheses wherever a compact type is required. The function type
+may have parentheses of its own, as in `(@[T] ((T) -> T))`. An omitted channel
+is an implicit binder of the type, as it is of a `def`, so its function takes
+the caller's channels.
+
+A generic function type may be the type of a parameter, a variable, a field or
+an alias, a function's parameter or result, or a union member. It cannot be a
+type argument, which includes the element of an array or the item of a tuple,
+record or dictionary, whether written there or through an alias:
+
+```
+@let Id = (@[T] (T) -> T)
+def apply f @ Id x @ Int -> Int
+  f $x
+let fs @ Array[Id] = []    # error
+```
+
 ## Vertical Layout
 
 `$` followed by an indented body writes a schema in vertical layout, as in an

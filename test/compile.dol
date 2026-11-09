@@ -776,6 +776,31 @@ def types_describe_what_they_annotate()
   assert_eq [...items.map(do |a| a.quant)] [nil, :OPT:]
   assert_type $compile.NameType $func_type.ret
 
+# A quantified function type's binders are its children, and the names in its
+# function refer to them.
+#[test]
+def quantified_types_own_their_binders()
+  let source = r|-
+    def apply f @(@[T @ Int] (T) -> T) -> Int
+      f 1
+  let unit = compile.compile "quantified.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+  let f = (named_node unit nodes compile.PositionalParam "f")
+  let quant = (types_of(nodes, f[0])[0][1].expr)
+  assert_type $compile.QuantType $quant
+  assert_eq (span_text(unit, quant.span)) "(@[T @ Int] (T) -> T)"
+  let binder = (named_node unit nodes compile.PosBinder "T")
+  assert_eq [...quant.binders.map(do |b| b.parent)] [binder[1].parent]
+  assert_type $compile.NameType $binder[1].bound
+  let func = quant.func
+  assert_type $compile.FuncType $func
+  assert_eq $func.items[0].ty.target $binder[0]
+  assert_eq $func.ret.target $binder[0]
+  # The function's binders are its own, not its quantified type's
+  let apply = (named_node unit nodes compile.Function "apply")
+  assert (!(nodes.any(do |pair| (type(pair[1], compile.Binder) && (pair[1].parent == apply[0])))))
+
 #[test]
 def superclasses_are_types_of_their_class()
   let source = |-

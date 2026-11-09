@@ -16,8 +16,8 @@ use super::{
     interface::PrivateInInterface,
     local,
     surface::{
-        self, Collection, ConstLit, Interned, LinkId, ModuleId, Name, Ref, SiteId, StrId, Symbol,
-        TypeExpr,
+        self, Collection, ConstLit, Interned, LinkId, ModuleId, Name, Quantifier, Ref, SiteId,
+        StrId, Symbol, TypeExpr,
     },
 };
 use crate::{
@@ -25,8 +25,8 @@ use crate::{
     ast::{
         self, AliasBody, Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, Const,
         DictElem, Expr, ExprBody, FieldInit, For, Function, GetVariant, Ident, If, ImportElement,
-        LValue, Method, PatBind, PatIdent, PatItem, Pattern, PrimStmt, Res, SpecialMethod, Stmt,
-        TypeDecl, TypeEntry, TypeRes, Var, visit::Node,
+        LValue, Method, NameRef, PatBind, PatIdent, PatItem, Pattern, PrimStmt, Res, SpecialMethod,
+        Stmt, TypeDecl, TypeEntry, TypeRes, Var, visit::Node,
     },
     diag,
     resolvety::names_type_in,
@@ -107,6 +107,8 @@ pub(crate) fn collect<'u>(unit: &'u Unit<'u>) -> Shard<'u> {
         owner: None,
         sig: None,
         declared: FxHashMap::default(),
+        quantifiers: FxHashMap::default(),
+        group: None,
     };
     let root = &unit.ast.0;
     walk.function(None, root);
@@ -478,6 +480,11 @@ struct Walk<'c, 'u> {
     /// The declarations of the unit's blocks, by the span of the name each declares,
     /// with the signature each def is among its function's
     declared: FxHashMap<Span, (DeclId, usize)>,
+    /// The declaration of each quantified type's binders, by the span of their `[]`
+    quantifiers: FxHashMap<Span, DeclId>,
+    /// The declaration signature whose binder group the names being linked are
+    /// interpreted in, which a quantified type's group is inside
+    group: Option<(DeclId, usize)>,
 }
 
 impl<'u> Walk<'_, 'u> {
@@ -631,6 +638,17 @@ impl<'u> Walk<'_, 'u> {
                 ret: Box::new(self.surface(ret)),
                 interned: Interned::default(),
             },
+            ast::TypeExpr::Quantified { binders, func, .. } => {
+                let mut inner = &**func;
+                while let ast::TypeExpr::Group { ty, .. } = inner {
+                    inner = ty;
+                }
+                TypeExpr::Quantified {
+                    span,
+                    decl: self.quantifiers[&binders.bracket_span],
+                    func: Box::new(self.surface(inner)),
+                }
+            }
             ast::TypeExpr::Error => TypeExpr::Error { span },
         }
     }
@@ -984,7 +1002,14 @@ impl<'u> Walk<'_, 'u> {
     /// Record a site, resolving the names in its type.
     fn ty(&mut self, frame: &Frame<'_, 'u>, ty: &'u ast::TypeExpr, role: Role) -> SiteId {
         // The names are linked before the surface reads their links
-        ty.names(&mut |head, res, fields| self.name_ref(frame, head, res, fields));
+        let group = match role {
+            Role::Bound(binder) | Role::Default(binder) => Some((binder.decl, binder.sig)),
+            Role::Alias(decl) => Some((decl, 0)),
+            Role::Type | Role::Rest | Role::Pattern => self.owner,
+        };
+        let outer = std::mem::replace(&mut self.group, group);
+        self.names(frame, ty);
+        self.group = outer;
         let id = SiteId::from_index(self.sites.len());
         let surface = self.surface(ty);
         self.sites.push(Site {
@@ -996,6 +1021,55 @@ impl<'u> Walk<'_, 'u> {
             interned: Interned::default(),
         });
         id
+    }
+
+    /// Link the names in a type, declaring the binders of each quantified type in it.
+    fn names(&mut self, frame: &Frame<'_, 'u>, ty: &'u ast::TypeExpr) {
+        ty.names(&mut |name| match name {
+            NameRef::Name(head, res, fields) => self.name_ref(frame, head, res, fields),
+            NameRef::Quantified(binders, func) => self.quantifier(frame, binders, func),
+        });
+    }
+
+    /// Declare a quantified type's binders, and link the names in its function.
+    fn quantifier(&mut self, frame: &Frame<'_, 'u>, binders: &'u Binders, func: &'u ast::TypeExpr) {
+        let mut inner = func;
+        while let ast::TypeExpr::Group { ty, .. } = inner {
+            inner = ty;
+        }
+        let written = match inner {
+            ast::TypeExpr::Func { input, output, .. } => [input.is_some(), output.is_some()],
+            _ => [false; 2],
+        };
+        let id = DeclId::from_index(self.decls.len());
+        self.decls.push(Decl {
+            unit: self.unit,
+            kind: DeclKind::Quantifier,
+            name: None,
+            node: DeclNode::Quantifier(Quantifier {
+                span: self.at(binders.bracket_span | func.span()),
+                binders: Vec::new(),
+                written,
+                interned: Interned::default(),
+            }),
+            outer: self.group,
+            ast: None,
+        });
+        self.quantifiers.insert(binders.bracket_span, id);
+        // Function types written within it take its channels, as a def's do
+        let sig = self.sig.replace((id, 0));
+        // Its bounds are written where it is, as a declaration's are
+        let owner = std::mem::replace(&mut self.owner, self.group);
+        let (group, surfaces) = self.binders(frame, id, 0, Some(binders));
+        self.owner = owner;
+        let outer = self.group.replace((id, 0));
+        self.names(&group, func);
+        self.group = outer;
+        self.sig = sig;
+        let DeclNode::Quantifier(quantifier) = self.node(id) else {
+            unreachable!()
+        };
+        quantifier.binders = surfaces;
     }
 
     fn annot(
@@ -1402,8 +1476,9 @@ impl<'u> Walk<'_, 'u> {
             let mut args = Vec::new();
             for arg in &super_ref.args {
                 // Checked with the supertype, whose binders they fill
-                arg.ty()
-                    .names(&mut |head, res, fields| self.name_ref(&group, head, res, fields));
+                let outer = std::mem::replace(&mut self.group, self.owner);
+                self.names(&group, arg.ty());
+                self.group = outer;
                 args.push(self.surface_arg(arg));
             }
             supers.push(surface::Super {

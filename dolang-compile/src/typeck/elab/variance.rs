@@ -56,6 +56,7 @@ pub(crate) fn variances(tables: &mut Tables<'_>) {
         path: Vec::new(),
         expanding: Vec::new(),
         saturated: false,
+        quantifiers: Vec::new(),
         constraints: Vec::new(),
     };
     let mut own = Vec::new();
@@ -69,11 +70,15 @@ pub(crate) fn variances(tables: &mut Tables<'_>) {
             for slot in 0..tables.binders(decl, sig).len() {
                 own.push((decl, BinderRef { decl, sig, slot }));
             }
-            if let Some(completed) = tables.sig(decl, sig) {
-                for ambient in [completed.input, completed.output] {
-                    if let Ambient::Implicit(binder) = ambient {
-                        own.push((decl, binder));
-                    }
+            let channels = match tables.decl(decl).node {
+                DeclNode::Quantifier(_) => Some(sig::channels(tables, decl, sig)),
+                _ => tables
+                    .sig(decl, sig)
+                    .map(|completed| [completed.input, completed.output]),
+            };
+            for ambient in channels.into_iter().flatten() {
+                if let Ambient::Implicit(binder) = ambient {
+                    own.push((decl, binder));
                 }
             }
         }
@@ -244,6 +249,10 @@ struct Collect<'t, 'u> {
     expanding: Vec<(DeclId, usize, usize)>,
     /// Within a channel reached from within itself, where every use is invariant
     saturated: bool,
+    /// The quantified types being walked, outermost first: each one's
+    /// declaration, the use of the position it is in, and the length of `path`
+    /// there. Its binders' uses are relative to it.
+    quantifiers: Vec<(DeclId, Use, usize)>,
     constraints: Vec<(Key, Source<Key>)>,
 }
 
@@ -304,7 +313,8 @@ impl<'t> Collect<'t, '_> {
                     self.sig(id, sig);
                 }
             }
-            DeclNode::Closure(_) => {}
+            // A quantified type's function is walked where it is written
+            DeclNode::Closure(_) | DeclNode::Quantifier(_) => {}
         }
 
         // A method uses its class's binders, and those the class captures, for it.
@@ -495,6 +505,23 @@ impl<'t> Collect<'t, '_> {
             (true, false) => u.flip(),
             (false, false) => u,
         };
+        // A quantified type's binder is used by it, as its function uses it
+        if let Some(&(_, entry, depth)) = self
+            .quantifiers
+            .iter()
+            .find(|(decl, ..)| *decl == binder.decl)
+        {
+            let u = match entry {
+                Use::CO => u,
+                Use::CONTRA => u.flip(),
+                _ => Use::BOTH,
+            };
+            self.constraints.push((
+                (binder.decl, binder),
+                Source::Path(u, self.path[depth..].to_vec()),
+            ));
+            return;
+        }
         self.constraints
             .push(((self.decl, binder), Source::Path(u, self.path.clone())));
     }
@@ -617,6 +644,13 @@ impl<'t> Collect<'t, '_> {
                     self.ambient(ambient, index, u.flip());
                 }
             }
+            TypeExpr::Quantified { decl, func, .. } => {
+                self.quantifiers.push((*decl, u, self.path.len()));
+                let outer = self.ambient.replace((*decl, 0));
+                self.ty(func, u);
+                self.ambient = outer;
+                self.quantifiers.pop();
+            }
             TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
         }
     }
@@ -625,6 +659,8 @@ impl<'t> Collect<'t, '_> {
     fn ambient(&mut self, ambient: Ambient, index: usize, u: Use) {
         match ambient {
             Ambient::Implicit(binder) => self.uses(binder, u),
+            // A quantified type's written channel is walked where it is written
+            Ambient::Of(decl, _) if self.tables.decl(decl).kind == DeclKind::Quantifier => {}
             Ambient::Of(decl, sig) => {
                 let func = sig::function(self.tables, decl, sig);
                 let Some(implicit) = [func.input, func.output][index] else {

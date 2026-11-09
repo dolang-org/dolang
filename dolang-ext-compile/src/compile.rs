@@ -147,6 +147,7 @@ pub(crate) struct ConcreteNodeTypes<'v> {
     array_type: Type<'v, NodeObject<ArrayTypeTag>>,
     union_type: Type<'v, NodeObject<UnionTypeTag>>,
     func_type: Type<'v, NodeObject<FuncTypeTag>>,
+    quant_type: Type<'v, NodeObject<QuantTypeTag>>,
     pos_type_arg: Type<'v, NodeObject<PosTypeArgTag>>,
     key_type_arg: Type<'v, NodeObject<KeyTypeArgTag>>,
     expand_type_arg: Type<'v, NodeObject<ExpandTypeArgTag>>,
@@ -284,6 +285,7 @@ impl<'v> Global<'v> {
                     array_type: subtype!(ArrayTypeTag, type_expr),
                     union_type: subtype!(UnionTypeTag, type_expr),
                     func_type: subtype!(FuncTypeTag, type_expr),
+                    quant_type: subtype!(QuantTypeTag, type_expr),
                     pos_type_arg: subtype!(PosTypeArgTag, type_arg),
                     key_type_arg: subtype!(KeyTypeArgTag, type_arg),
                     expand_type_arg: subtype!(ExpandTypeArgTag, type_arg),
@@ -509,7 +511,7 @@ node_tags! {
     KeyRestBinderTag=>"KeyRestBinder", TypeExprTag=>"TypeExpr", NameTypeTag=>"NameType",
     ConstTypeTag=>"ConstType", AppTypeTag=>"AppType", SchemaTypeTag=>"SchemaType",
     ParensTypeTag=>"ParensType", ArrayTypeTag=>"ArrayType", UnionTypeTag=>"UnionType",
-    FuncTypeTag=>"FuncType", TypeArgTag=>"TypeArg", PosTypeArgTag=>"PosTypeArg",
+    FuncTypeTag=>"FuncType", QuantTypeTag=>"QuantType", TypeArgTag=>"TypeArg", PosTypeArgTag=>"PosTypeArg",
     KeyTypeArgTag=>"KeyTypeArg", ExpandTypeArgTag=>"ExpandTypeArg", TypeItemTag=>"TypeItem",
     PosTypeItemTag=>"PosTypeItem", KeyTypeItemTag=>"KeyTypeItem",
     AnyPosTypeItemTag=>"AnyPosTypeItem", AnyKeyTypeItemTag=>"AnyKeyTypeItem",
@@ -1978,6 +1980,7 @@ fn create_node<'v, 's>(
         ArrayType,
         UnionType,
         FuncType,
+        QuantType,
         PosTypeArg,
         KeyTypeArg,
         ExpandTypeArg,
@@ -2070,6 +2073,7 @@ fn create_node<'v, 's>(
             compile::Kind::ArrayType { .. } => Which::ArrayType,
             compile::Kind::UnionType { .. } => Which::UnionType,
             compile::Kind::FuncType { .. } => Which::FuncType,
+            compile::Kind::QuantType { .. } => Which::QuantType,
             compile::Kind::TypeArg { kind, .. } => match kind {
                 compile::TypeArgKind::Pos => Which::PosTypeArg,
                 compile::TypeArgKind::Key { .. } => Which::KeyTypeArg,
@@ -2155,6 +2159,7 @@ fn create_node<'v, 's>(
         Which::ArrayType => make!(t.array_type, ArrayTypeTag),
         Which::UnionType => make!(t.union_type, UnionTypeTag),
         Which::FuncType => make!(t.func_type, FuncTypeTag),
+        Which::QuantType => make!(t.quant_type, QuantTypeTag),
         Which::PosTypeArg => make!(t.pos_type_arg, PosTypeArgTag),
         Which::KeyTypeArg => make!(t.key_type_arg, KeyTypeArgTag),
         Which::ExpandTypeArg => make!(t.expand_type_arg, ExpandTypeArgTag),
@@ -2530,6 +2535,15 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                 .get(
                     "ret",
                     node_field!(compile::Kind::FuncType { ret, .. } => Some(ret)),
+                ),
+            "QuantType" => builder
+                .get(
+                    "binders",
+                    node_list!(compile::Kind::QuantType { binders, .. } => binders),
+                )
+                .get(
+                    "func",
+                    node_field!(compile::Kind::QuantType { func, .. } => Some(func)),
                 ),
             "KeyTypeArg" => builder.get("name", |this, strand, out| {
                 let name = with_node(this, strand, |n, _| match n.kind() {
@@ -3253,6 +3267,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("ArrayType", global.types.concrete_nodes.array_type)
         .value("UnionType", global.types.concrete_nodes.union_type)
         .value("FuncType", global.types.concrete_nodes.func_type)
+        .value("QuantType", global.types.concrete_nodes.quant_type)
         .value("TypeArg", global.types.type_arg)
         .value("PosTypeArg", global.types.concrete_nodes.pos_type_arg)
         .value("KeyTypeArg", global.types.concrete_nodes.key_type_arg)

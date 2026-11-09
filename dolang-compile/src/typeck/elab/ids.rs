@@ -327,6 +327,7 @@ impl Visit for DeclNode {
                 }
             }
             DeclNode::Closure(closure) => closure.sig.visit(ids),
+            DeclNode::Quantifier(quantifier) => quantifier.binders.visit(ids),
         }
     }
 }
@@ -428,6 +429,10 @@ impl Visit for TypeExpr {
                 input.visit(ids);
                 output.visit(ids);
                 ret.visit(ids);
+            }
+            TypeExpr::Quantified { decl, func, .. } => {
+                ids.decl(decl);
+                func.visit(ids);
             }
             TypeExpr::Error { .. } => {}
         }

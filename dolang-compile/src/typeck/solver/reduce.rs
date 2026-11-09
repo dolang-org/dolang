@@ -1298,6 +1298,47 @@ impl Solver<'_> {
         Ok(environment)
     }
 
+    /// The environment of a skolem for each of a quantified type's binders, bounded
+    /// by the binder's bound, in `scope`, inside the view's environment
+    pub(super) fn skolemize(
+        &self,
+        view: TypeView,
+        binders: &[Binder],
+        scope: ScopeId,
+    ) -> EnvironmentId {
+        let group: Vec<Term> = binders
+            .iter()
+            .map(|binder| {
+                Term::Skolem(self.push_skolem(Skolem {
+                    kind: binder.kind,
+                    binding: binder.binding,
+                    bound: Cell::new(None),
+                    implied: MonoVec::new(),
+                    scope,
+                }))
+            })
+            .collect();
+        let environment = self.intern_environment(view.environment, group.clone());
+        for (binder, term) in binders.iter().zip(&group) {
+            let bound = match (binder.bound, binder.binding) {
+                (Some(bound), _) => Some(self.view(bound, environment)),
+                (None, Binding::Rest(rest)) => Some(self.closed(self.db.rest_shape(rest))),
+                (None, _) => None,
+            };
+            let &Term::Skolem(id) = term else {
+                unreachable!()
+            };
+            self.skolem(id).bound.set(bound);
+        }
+        for (slot, bound) in self.db.implied_bounds(view.ty) {
+            let Term::Skolem(id) = group[usize::from(slot)] else {
+                unreachable!()
+            };
+            self.skolem(id).implied.push(self.view(bound, environment));
+        }
+        environment
+    }
+
     /// Relate a type to a quantified type through a skolem for each of its
     /// binders, bounded by the binder's bound, in a new scope inside the
     /// obligation's. Its body must hold for every choice of binders, so it must
@@ -1311,41 +1352,11 @@ impl Solver<'_> {
         actual: Term,
         obligation: ObligationId,
     ) -> Result<(), Issue> {
-        let known = self.skolemization_of(obligation);
-        let environment = match known {
+        let environment = match self.skolemization_of(obligation) {
             Some(environment) => environment,
             None => {
                 let scope = self.enter(self.scope(&[actual, Term::View(view)])?);
-                let group: Vec<Term> = binders
-                    .iter()
-                    .map(|binder| {
-                        Term::Skolem(self.push_skolem(Skolem {
-                            kind: binder.kind,
-                            binding: binder.binding,
-                            bound: Cell::new(None),
-                            implied: MonoVec::new(),
-                            scope,
-                        }))
-                    })
-                    .collect();
-                let environment = self.intern_environment(view.environment, group.clone());
-                for (binder, term) in binders.iter().zip(&group) {
-                    let bound = match (binder.bound, binder.binding) {
-                        (Some(bound), _) => Some(self.view(bound, environment)),
-                        (None, Binding::Rest(rest)) => Some(self.closed(self.db.rest_shape(rest))),
-                        (None, _) => None,
-                    };
-                    let &Term::Skolem(id) = term else {
-                        unreachable!()
-                    };
-                    self.skolem(id).bound.set(bound);
-                }
-                for (slot, bound) in self.db.implied_bounds(view.ty) {
-                    let Term::Skolem(id) = group[usize::from(slot)] else {
-                        unreachable!()
-                    };
-                    self.skolem(id).implied.push(self.view(bound, environment));
-                }
+                let environment = self.skolemize(view, binders, scope);
                 self.record_skolemization(obligation, environment);
                 environment
             }

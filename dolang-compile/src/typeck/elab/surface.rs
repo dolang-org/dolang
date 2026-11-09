@@ -201,6 +201,14 @@ pub(crate) enum TypeExpr {
         /// Its type, interned in the group it is written in
         interned: Interned,
     },
+    /// A function type quantified over the binders of an anonymous
+    /// [`Quantifier`](DeclNode::Quantifier) declaration, e.g. `@[T] (T) -> T`. The
+    /// function is ungrouped.
+    Quantified {
+        span: Span,
+        decl: DeclId,
+        func: Box<TypeExpr>,
+    },
     /// A type that could not be interpreted
     Error { span: Span },
 }
@@ -285,6 +293,7 @@ impl TypeExpr {
             | TypeExpr::Array { span, .. }
             | TypeExpr::Union { span, .. }
             | TypeExpr::Func { span, .. }
+            | TypeExpr::Quantified { span, .. }
             | TypeExpr::Error { span } => *span,
         }
     }
@@ -300,26 +309,39 @@ impl TypeExpr {
 
     /// Visit the type and each type within it, outermost first.
     pub(crate) fn each_node<'a>(&'a self, f: &mut impl FnMut(&'a TypeExpr)) {
-        f(self);
+        self.each_node_in(None, &mut |ty, _| f(ty));
+    }
+
+    /// Visit the type and each type within it, outermost first, with the
+    /// declaration signature whose binder group each is interpreted in, which for
+    /// the type is `group`
+    pub(crate) fn each_node_in<'a>(
+        &'a self,
+        group: Option<(DeclId, usize)>,
+        f: &mut impl FnMut(&'a TypeExpr, Option<(DeclId, usize)>),
+    ) {
+        f(self, group);
         match self {
             TypeExpr::Name(_) | TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
             TypeExpr::App { base, args, .. } => {
-                base.each_node(f);
+                base.each_node_in(group, f);
                 for arg in args {
-                    arg.ty().each_node(f);
+                    arg.ty().each_node_in(group, f);
                 }
             }
             TypeExpr::Schema { params, .. }
             | TypeExpr::Tuple { params, .. }
             | TypeExpr::Record { params, .. } => {
                 for ty in params.iter().flat_map(TypeParam::tys) {
-                    ty.each_node(f);
+                    ty.each_node_in(group, f);
                 }
             }
-            TypeExpr::Group { ty, .. } | TypeExpr::Array { elem: ty, .. } => ty.each_node(f),
+            TypeExpr::Group { ty, .. } | TypeExpr::Array { elem: ty, .. } => {
+                ty.each_node_in(group, f)
+            }
             TypeExpr::Union { members, .. } => {
                 for member in members {
-                    member.each_node(f);
+                    member.each_node_in(group, f);
                 }
             }
             TypeExpr::Func {
@@ -330,13 +352,14 @@ impl TypeExpr {
                 ..
             } => {
                 for ty in params.iter().flat_map(TypeParam::tys) {
-                    ty.each_node(f);
+                    ty.each_node_in(group, f);
                 }
                 for ty in [input, output].into_iter().flatten() {
-                    ty.each_node(f);
+                    ty.each_node_in(group, f);
                 }
-                ret.each_node(f);
+                ret.each_node_in(group, f);
             }
+            TypeExpr::Quantified { decl, func, .. } => func.each_node_in(Some((*decl, 0)), f),
         }
     }
 
@@ -531,6 +554,20 @@ pub(crate) struct Alias {
     pub(crate) body: Option<SiteId>,
 }
 
+/// The binders of a quantified function type. It is never lifted: the type is
+/// interpreted in a group of its own inside the group it is written in.
+#[derive(Clone)]
+pub(crate) struct Quantifier {
+    /// Where the quantified type is written
+    pub(crate) span: Span,
+    pub(crate) binders: Vec<Binder>,
+    /// Whether its function writes each ambient channel. The implicit binder of
+    /// an omitted one follows its written binders.
+    pub(crate) written: [bool; 2],
+    /// Its type, interned in the group it is written in
+    pub(crate) interned: Interned,
+}
+
 /// A lambda or field initializer
 #[derive(Clone)]
 pub(crate) struct Closure {
@@ -687,6 +724,32 @@ impl Printer<'_, '_> {
                 self.params(params, input.as_deref(), output.as_deref(), out)?;
                 out.write_str(") -> ")?;
                 self.ty(ret, out)
+            }
+            TypeExpr::Quantified { decl, func, .. } => {
+                out.write_str("@[")?;
+                for (index, binder) in self.tables.binders(*decl, 0).iter().enumerate() {
+                    if index != 0 {
+                        out.write_str(", ")?;
+                    }
+                    out.write_str(match binder.kind {
+                        BinderKind::Pos => "",
+                        BinderKind::Key => ":",
+                        BinderKind::Rest(RestKind::Mixed) => "...",
+                        BinderKind::Rest(RestKind::Pos) => "*",
+                        BinderKind::Rest(RestKind::Key) => "**",
+                    })?;
+                    self.name(binder.name.text, out)?;
+                    if let Some(bound) = binder.bound {
+                        out.write_str(" @ ")?;
+                        self.ty(&self.tables.site(bound).ty, out)?;
+                    }
+                    if let Some(default) = binder.default {
+                        out.write_str(" = ")?;
+                        self.ty(&self.tables.site(default).ty, out)?;
+                    }
+                }
+                out.write_str("] ")?;
+                self.ty(func, out)
             }
             TypeExpr::Error { .. } => out.write_char('?'),
         }

@@ -19,8 +19,8 @@ use crate::{
     ast::{
         AliasBody, Annot, Arg, Arm, ArrayElem, Binders, Block, Class, ClassMember, Decorator, Def,
         DictElem, Expr, ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue,
-        Origin, PatBind, PatIdent, PatItem, Pattern, PrimStmt, Res, Root, Stmt, TypeArg, TypeDecl,
-        TypeEntry, TypeExpr, TypeRes, Var, VarFlags, implicit_tys_mut, visit::Node,
+        NameMut, Origin, PatBind, PatIdent, PatItem, Pattern, PrimStmt, Res, Root, Stmt, TypeArg,
+        TypeDecl, TypeEntry, TypeExpr, TypeRes, Var, VarFlags, implicit_tys_mut, visit::Node,
     },
     diag::Severity,
     source::{Diagnose, Diags, File, Span},
@@ -620,7 +620,16 @@ impl Check<'_> {
     }
 
     fn ty(&mut self, frame: &Frame<'_>, ty: &mut TypeExpr) {
-        ty.each_name(&mut |head, res, fields| self.name(frame, head, res, fields));
+        ty.each_name(&mut |name| match name {
+            NameMut::Name(head, res, fields) => self.name(frame, head, res, fields),
+            // A quantified type's binders scope it as a def's do
+            NameMut::Quantified(binders, func) => {
+                let inner = Frame::binders(frame, Some(binders));
+                self.binder_types(&inner, Some(binders));
+                self.ty(&inner, func);
+                self.unused_types(&inner);
+            }
+        });
     }
 
     fn name(&self, frame: &Frame<'_>, head: Span, res: &mut Option<TypeRes>, fields: &[Span]) {

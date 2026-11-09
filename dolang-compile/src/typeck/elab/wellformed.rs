@@ -22,8 +22,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
     AccessorChannel, BadRecursion, BoundViolation, DeclNode, Designated, Diag, Fill, Head,
-    ParameterKeys, Referent, Role, SettledCycle, SettledValue, Tables, UnitDiag, UnquotableResult,
-    interface,
+    ParameterKeys, QuantifiedArgument, Referent, Role, SettledCycle, SettledValue, Tables,
+    UnitDiag, UnquotableResult, interface,
     quote::Unquotable,
     sig::{self, Form},
     surface::{Class, Interned, Ref, TypeArg, TypeExpr, TypeParam, TypeQuant},
@@ -32,10 +32,10 @@ use crate::{
     diag::Span,
     typeck::{
         report::Report,
-        solver::{Gas, Issue, Provenance, Residual, Solver, Status},
+        solver::{EnvironmentId, Gas, Issue, Provenance, Residual, Solver, Status},
         r#type::{
-            Argument, Binder, Binding, BoundRef, Database, DeclId, Function, Rest, SettledMember,
-            Type, TypeId, UnitId, UnitSpan,
+            Argument, Binder, Binding, BoundRef, Database, DeclId, DeclKind, Function, Rest,
+            SettledMember, Type, TypeId, UnionMember, UnitId, UnitSpan,
         },
     },
 };
@@ -258,10 +258,7 @@ impl Check<'_, '_> {
         {
             solver.named(self.tables, crate::typeck::r#type::Style::Full);
         }
-        let environment = match scope {
-            Some(decl) => solver.rigid_environment(decl),
-            None => solver.empty_environment(),
-        };
+        let environment = self.environment(&mut solver, scope);
         solver.constrain(
             solver.view(actual, environment),
             solver.view(expected, environment),
@@ -281,6 +278,94 @@ impl Check<'_, '_> {
                     })
                     .unwrap_or(Residual::Unsupported("no reason recorded")),
             ),
+        }
+    }
+
+    /// The environment types interpreted in `scope`'s group are checked in: its
+    /// binders as rigids, or a quantified type's as skolems inside the group it is
+    /// written in
+    fn environment(&self, solver: &mut Solver<'_>, scope: Option<DeclId>) -> EnvironmentId {
+        let Some(decl) = scope else {
+            return solver.empty_environment();
+        };
+        if let Some(quantifier) = self.tables.try_decl(decl)
+            && let DeclNode::Quantifier(node) = &quantifier.node
+        {
+            let outer = quantifier.outer.map(|key| self.declaration(key));
+            let parent = self.environment(solver, outer);
+            return match node.interned.get() {
+                Some(ty) => solver.skolem_environment(parent, ty),
+                None => parent,
+            };
+        }
+        solver.rigid_environment(decl)
+    }
+
+    /// Whether a type argument is a quantified function type, directly, as a union
+    /// member, or through transparent aliases
+    fn quantified(&self, ty: TypeId) -> bool {
+        let mut ty = ty;
+        let mut seen = FxHashSet::default();
+        while seen.insert(ty) {
+            ty = match self.db.ty(ty) {
+                Type::Quantified { binders, body } => {
+                    return !binders.is_empty() && matches!(self.db.ty(*body), Type::Function(_));
+                }
+                Type::Union(members) => {
+                    return members.iter().any(|member| match member {
+                        UnionMember::Type(member) => self.quantified(*member),
+                        _ => false,
+                    });
+                }
+                Type::Decl(decl) => {
+                    let declaration = self.db.declaration(*decl);
+                    if declaration.source.kind != DeclKind::Alias || !declaration.binders.is_empty()
+                    {
+                        return false;
+                    }
+                    declaration.ty
+                }
+                Type::Apply { base, .. } => {
+                    let Type::Decl(decl) = *self.db.ty(*base) else {
+                        return false;
+                    };
+                    let declaration = self.db.declaration(decl);
+                    if declaration.source.kind != DeclKind::Alias {
+                        return false;
+                    }
+                    match self.db.ty(declaration.ty) {
+                        Type::Quantified { body, .. } => *body,
+                        _ => declaration.ty,
+                    }
+                }
+                _ => return false,
+            };
+        }
+        false
+    }
+
+    /// Diagnose each quantified function type written directly among a collection
+    /// type's items, which are its type argument
+    fn items(&mut self, unit: UnitId, params: &[TypeParam]) {
+        for ty in params.iter().flat_map(TypeParam::tys) {
+            self.argument(unit, ty);
+        }
+    }
+
+    /// Diagnose a quantified function type written as a type argument, directly or
+    /// as a union member
+    fn argument(&mut self, unit: UnitId, ty: &TypeExpr) {
+        match ty.ungrouped() {
+            TypeExpr::Quantified { span, .. } => {
+                let span = UnitSpan { unit, span: *span };
+                self.report(Verdict::Fails, span, QuantifiedArgument(span.span));
+            }
+            TypeExpr::Union { members, .. } => {
+                for member in members {
+                    self.argument(unit, member);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -314,7 +399,15 @@ impl Check<'_, '_> {
             TypeExpr::Name { .. } | TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
             TypeExpr::Group { ty, .. } => self.ty(unit, scope, ty, phantom),
             // `std.Array` bounds nothing
-            TypeExpr::Array { elem, .. } => self.ty(unit, scope, elem, phantom),
+            TypeExpr::Array { elem, .. } => {
+                self.argument(unit, elem);
+                self.ty(unit, scope, elem, phantom);
+            }
+            // Its function is checked in its own group
+            TypeExpr::Quantified { decl, func, .. } => {
+                let scope = Some(self.declaration((*decl, 0)));
+                self.ty(unit, scope, func, phantom);
+            }
             TypeExpr::Union { members, .. } => {
                 for member in members {
                     self.ty(unit, scope, member, phantom);
@@ -325,6 +418,12 @@ impl Check<'_, '_> {
             TypeExpr::Schema { params, .. }
             | TypeExpr::Tuple { params, .. }
             | TypeExpr::Record { params, .. } => {
+                // A schema where a schema is required may be a parameter list's
+                let collection = !matches!(ty, TypeExpr::Schema { collection, .. }
+                    if collection.get().is_none());
+                if collection {
+                    self.items(unit, params);
+                }
                 for ty in params.iter().flat_map(TypeParam::tys) {
                     self.ty(unit, scope, ty, phantom);
                 }
@@ -401,12 +500,8 @@ impl Check<'_, '_> {
         };
         let lifted = self.tables.lifted(decl).map_or(0, <[_]>::len);
         let fills = self.tables.fill(unit, decl, written);
-        for (slot, binder) in binders.iter().enumerate() {
-            let Some(bound) = self.db.binder_bound(binder, &args) else {
-                continue;
-            };
-            let verdict = self.relate(scope, args[slot], bound);
-            // The written arguments filling the slot, or else the whole application
+        // The written arguments filling a slot, or else the whole application
+        let at = |slot: usize| {
             let at = slot.checked_sub(lifted).and_then(|slot| {
                 fills
                     .iter()
@@ -417,7 +512,20 @@ impl Check<'_, '_> {
                     .map(|(_, arg)| arg.ty().span())
                     .reduce(|first, last| self.tables.info(unit).join(first, last))
             });
-            let at = at.map_or(span, |span| UnitSpan { unit, span });
+            at.map_or(span, |span| UnitSpan { unit, span })
+        };
+        let spans: Vec<UnitSpan> = (0..args.len()).map(at).collect();
+        for (&arg, &at) in args.iter().zip(&spans) {
+            if self.quantified(arg) {
+                self.report(Verdict::Fails, at, QuantifiedArgument(at.span));
+            }
+        }
+        for (slot, binder) in binders.iter().enumerate() {
+            let Some(bound) = self.db.binder_bound(binder, &args) else {
+                continue;
+            };
+            let verdict = self.relate(scope, args[slot], bound);
+            let at = spans[slot];
             let binder = self.binder(decl, slot, binder);
             self.report(
                 verdict,
@@ -491,7 +599,10 @@ impl Check<'_, '_> {
             self.supertypes(id, decl, class);
         }
         let declaration = self.db.declaration(decl);
-        let Type::Quantified { binders, body } = self.db.ty(declaration.ty) else {
+        // An alias without binders may be of a quantified type
+        let (false, Type::Quantified { binders, body }) =
+            (declaration.binders.is_empty(), self.db.ty(declaration.ty))
+        else {
             return self.function_signature(id, sig, decl, declaration.ty);
         };
         for (slot, binder) in binders.iter().enumerate() {
@@ -747,6 +858,9 @@ impl Check<'_, '_> {
                 }
             }
             TypeExpr::Array { elem, .. } => self.guarded(unit, alias, members, elem, true, found),
+            TypeExpr::Quantified { func, .. } => {
+                self.guarded(unit, alias, members, func, guarded, found)
+            }
             TypeExpr::Func {
                 params,
                 input,

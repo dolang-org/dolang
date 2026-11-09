@@ -71,6 +71,20 @@ pub(crate) fn signatures(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
                 }
                 tables.facts_mut(decl).fields.extend(fields);
             }
+            // Its omitted channels are implicit binders, as a def's are
+            DeclNode::Quantifier(_) => {
+                for ambient in channels(tables, decl, 0) {
+                    if let Ambient::Implicit(binder) = ambient {
+                        tables.facts_mut(binder.decl).binder_kinds.insert(
+                            binder,
+                            KindOf {
+                                kind: Kind::Type,
+                                flexible: false,
+                            },
+                        );
+                    }
+                }
+            }
             DeclNode::Alias(_) | DeclNode::Closure(_) => {}
         }
         designate(tables, decl, diags);
@@ -105,10 +119,19 @@ pub(crate) fn function<'t>(tables: &'t Tables<'_>, decl: DeclId, sig: usize) -> 
 /// The ambient channels of a def or method signature, as a function type written
 /// within it without its own takes them: the channel written on the signature, or
 /// for one omitted, the implicit binder standing for it.
+///
+/// A quantified type's are its function's: the channel written there, or for one
+/// omitted, the implicit binder standing for it.
 pub(crate) fn channels(tables: &Tables<'_>, decl: DeclId, sig: usize) -> [Ambient; 2] {
-    let func = function(tables, decl, sig);
+    let written = match &tables.decl(decl).node {
+        DeclNode::Quantifier(quantifier) => quantifier.written,
+        _ => {
+            let func = function(tables, decl, sig);
+            [func.input.is_some(), func.output.is_some()]
+        }
+    };
     let mut slot = tables.binders(decl, sig).len();
-    [func.input.is_some(), func.output.is_some()].map(|written| {
+    written.map(|written| {
         if written {
             Ambient::Of(decl, sig)
         } else {
@@ -364,7 +387,10 @@ pub(crate) fn replaced(tables: &Tables<'_>, decl: DeclId) -> bool {
     match &owner.node {
         DeclNode::Defs(defs) => defs.iter().any(|def| !def.type_only && def.decorated),
         DeclNode::Class(class) => owner.kind == DeclKind::Class && !marked_only(tables, class),
-        DeclNode::Alias(_) | DeclNode::Methods(_) | DeclNode::Closure(_) => false,
+        DeclNode::Alias(_)
+        | DeclNode::Methods(_)
+        | DeclNode::Closure(_)
+        | DeclNode::Quantifier(_) => false,
     }
 }
 

@@ -101,7 +101,8 @@ struct Name {
 
 #[derive(Serialize, Deserialize)]
 struct Decl {
-    name: Name,
+    /// Absent for a quantified type's binders
+    name: Option<Name>,
     node: Node,
     outer: Option<Sig>,
 }
@@ -136,6 +137,13 @@ enum Node {
     },
     Defs(Vec<Def>),
     Methods(Vec<Method>),
+    /// The binders of a quantified function type
+    Quantifier {
+        #[serde(skip, default = "invalid")]
+        span: Span,
+        binders: Vec<Binder>,
+        written: [bool; 2],
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -353,6 +361,11 @@ pub(super) enum Type {
         output: Opt,
         ret: u32,
     },
+    /// A quantified function type, by its declaration
+    Quantified {
+        decl: u32,
+        func: u32,
+    },
     Error,
 }
 
@@ -474,6 +487,14 @@ fn slots(node: &DeclNode, sig: usize) -> Option<usize> {
         DeclNode::Methods(methods) => {
             (methods.get(sig)).map(|method| method.binders.len() + channels(&method.sig))
         }
+        DeclNode::Quantifier(quantifier) if sig == 0 => Some(
+            quantifier.binders.len()
+                + quantifier
+                    .written
+                    .iter()
+                    .filter(|written| !**written)
+                    .count(),
+        ),
         _ => None,
     }
 }
@@ -513,6 +534,7 @@ fn placed(decls: &[elab::Decl<'_>], values: &[elab::Value], sites: usize) -> Vec
             DeclNode::Methods(methods) => {
                 methods.iter().map(|method| &method.binders[..]).collect()
             }
+            DeclNode::Quantifier(quantifier) => vec![&quantifier.binders],
             DeclNode::Closure(_) => Vec::new(),
         };
         // A binder's bound and default are written where its declaration is
@@ -539,7 +561,7 @@ fn placed(decls: &[elab::Decl<'_>], values: &[elab::Value], sites: usize) -> Vec
                     }
                 }
             }
-            DeclNode::Closure(_) => {}
+            DeclNode::Closure(_) | DeclNode::Quantifier(_) => {}
         }
     }
     for value in values {
@@ -557,7 +579,12 @@ fn ambient<'d>(
     site: &elab::Site,
 ) -> Option<(DeclId, usize)> {
     site.group().filter(|(id, _)| {
-        decl(*id).is_some_and(|decl| matches!(decl.node, DeclNode::Defs(_) | DeclNode::Methods(_)))
+        decl(*id).is_some_and(|decl| {
+            matches!(
+                decl.node,
+                DeclNode::Defs(_) | DeclNode::Methods(_) | DeclNode::Quantifier(_)
+            )
+        })
     })
 }
 
@@ -914,6 +941,17 @@ impl<'s, 'u> Encode<'s, 'u> {
     }
 
     fn decl(&mut self, id: DeclId, decl: &elab::Decl<'_>) -> Decl {
+        if let DeclNode::Quantifier(quantifier) = &decl.node {
+            return Decl {
+                name: None,
+                node: Node::Quantifier {
+                    span: self.span(quantifier.span),
+                    binders: self.binders(&quantifier.binders, decl.outer),
+                    written: quantifier.written,
+                },
+                outer: decl.outer.map(|outer| self.sig(outer)),
+            };
+        }
         let own = decl.name.expect("a declaration on a surface is named");
         // A def's or method's name is mostly its declaration's
         let named = |this: &mut Self, name: surface::Name| (name != own).then(|| this.name(name));
@@ -962,9 +1000,10 @@ impl<'s, 'u> Encode<'s, 'u> {
                     .collect(),
             ),
             (DeclNode::Closure(_), _) => unreachable!("a closure is never on a surface"),
+            (DeclNode::Quantifier(_), _) => unreachable!("encoded above"),
         };
         Decl {
-            name: self.name(own),
+            name: Some(self.name(own)),
             node,
             outer: decl.outer.map(|outer| self.sig(outer)),
         }
@@ -1248,6 +1287,10 @@ impl<'s, 'u> Encode<'s, 'u> {
                 output: output.as_ref().map_or(0, |ty| self.ty(ty) + 1),
                 ret: self.ty(ret),
             },
+            TypeExpr::Quantified { decl, func, .. } => Type::Quantified {
+                decl: self.kept_id(*decl),
+                func: self.ty(func),
+            },
             TypeExpr::Error { .. } => Type::Error,
         };
         if let Some(&id) = self.interned.get(&node) {
@@ -1326,8 +1369,12 @@ impl<S: AsRef<str>, E, F: FnMut(&mut Span, Option<&str>) -> Result<(), E>> Spans
     }
 
     fn decl(&mut self, decl: &mut Decl) -> Result<(), E> {
-        self.name(&mut decl.name)?;
+        self.names(&mut decl.name)?;
         match &mut decl.node {
+            Node::Quantifier { span, binders, .. } => {
+                self.span(span, None)?;
+                self.binders(binders)
+            }
             Node::Class(class) | Node::Protocol(class) => {
                 self.binders(&mut class.binders)?;
                 match &mut class.members {
@@ -1425,7 +1472,28 @@ pub(super) fn decode(mut content: Content<&str>) -> Result<(Shard<'_>, elab::Fac
     let mut derived = Vec::new();
     let mut shard_decls = Vec::with_capacity(decls.len());
     for (index, decl) in decls.into_iter().enumerate() {
-        let own = unname(decl.name);
+        if let Node::Quantifier {
+            span,
+            binders,
+            written,
+        } = decl.node
+        {
+            shard_decls.push(elab::Decl {
+                unit: local(),
+                kind: DeclKind::Quantifier,
+                name: None,
+                node: DeclNode::Quantifier(surface::Quantifier {
+                    span,
+                    binders: decode.binders(binders),
+                    written,
+                    interned: Default::default(),
+                }),
+                outer: decl.outer.map(unsig),
+                ast: None,
+            });
+            continue;
+        }
+        let own = unname(decl.name.ok_or("a declaration is malformed")?);
         let (kind, node) = match decl.node {
             Node::Class(class) => (DeclKind::Class, decode.class(index, class, &mut derived)?),
             Node::Protocol(class) => (
@@ -1476,6 +1544,7 @@ pub(super) fn decode(mut content: Content<&str>) -> Result<(Shard<'_>, elab::Fac
                     .collect::<Result<_, _>>()?;
                 (DeclKind::Function, DeclNode::Methods(methods))
             }
+            Node::Quantifier { .. } => unreachable!("decoded above"),
         };
         shard_decls.push(elab::Decl {
             unit: local(),
@@ -1882,6 +1951,11 @@ impl Decode<'_> {
                     ret: boxed(*ret)?,
                     interned: Default::default(),
                 },
+                &Type::Quantified { decl, func } => TypeExpr::Quantified {
+                    span,
+                    decl: DeclId::from_index(decl as usize),
+                    func: boxed(func)?,
+                },
                 Type::Error => TypeExpr::Error { span },
             },
         )
@@ -1930,6 +2004,7 @@ impl Type {
                 out.extend(output.checked_sub(1));
                 out.push(*ret);
             }
+            Type::Quantified { func, .. } => out.push(*func),
         }
     }
 }

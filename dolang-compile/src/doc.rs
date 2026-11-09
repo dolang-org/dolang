@@ -215,6 +215,13 @@ pub(crate) enum Kind {
         output: Option<Id>,
         ret: Id,
     },
+    /// A function type quantified over binders, such as `@[T] (T) -> T`
+    QuantType {
+        /// [`Kind::Binder`] nodes, in written order
+        binders: alias::Box<[Id]>,
+        /// The [`Kind::FuncType`] the binders quantify
+        func: Id,
+    },
     /// An item of a schema, tuple, record or function type's parameters, without its
     /// trailing `,`
     TypeItem {
@@ -322,6 +329,7 @@ impl Kind {
             | Kind::ArrayType { .. }
             | Kind::UnionType { .. }
             | Kind::FuncType { .. }
+            | Kind::QuantType { .. }
             | Kind::TypeItem { .. } => None,
         }
     }

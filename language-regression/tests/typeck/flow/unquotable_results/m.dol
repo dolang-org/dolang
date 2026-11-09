@@ -45,7 +45,7 @@ pub class Paired
 
 #[pair]
 pub def doubled x @ Int -> Int
-  # warning: a def's decorators give a type no typelib can write: a generic function inside another type
+  # warning: a def's decorators give a type no typelib can write: a generic function as a type argument
   #   --> m.dol:LL:LL
   #    |
   # LL | #[pair]

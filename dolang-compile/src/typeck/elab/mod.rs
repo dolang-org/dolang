@@ -41,8 +41,8 @@ use crate::{
     source,
 };
 use surface::{
-    Alias, Binder, Class, Closure, Def, Interned, LinkId, Method, ModuleId, Name, Signature,
-    SiteId, StrId, TypeExpr,
+    Alias, Binder, Class, Closure, Def, Interned, LinkId, Method, ModuleId, Name, Quantifier,
+    Signature, SiteId, StrId, TypeExpr,
 };
 
 pub(crate) use super::report::{Diag, UnitDiag};
@@ -406,6 +406,7 @@ impl<'u> Tables<'u> {
             DeclNode::Alias(alias) => &alias.binders,
             DeclNode::Defs(defs) => &defs[sig].binders,
             DeclNode::Methods(methods) => &methods[sig].binders,
+            DeclNode::Quantifier(quantifier) => &quantifier.binders,
             DeclNode::Closure(_) => &[],
         }
     }
@@ -751,6 +752,8 @@ pub(crate) enum DeclNode {
     Methods(Vec<Method>),
     /// A lambda or field initializer
     Closure(Closure),
+    /// The binders of a quantified function type
+    Quantifier(Quantifier),
 }
 
 /// The syntax a declaration was collected from
@@ -776,7 +779,10 @@ impl DeclNode {
         match self {
             DeclNode::Defs(defs) => defs.len(),
             DeclNode::Methods(methods) => methods.len(),
-            DeclNode::Class(_) | DeclNode::Alias(_) | DeclNode::Closure(_) => 1,
+            DeclNode::Class(_)
+            | DeclNode::Alias(_)
+            | DeclNode::Closure(_)
+            | DeclNode::Quantifier(_) => 1,
         }
     }
 
@@ -787,7 +793,10 @@ impl DeclNode {
             DeclNode::Defs(defs) => defs.iter().position(|def| !def.type_only),
             // A protocol member is type-only, but not an overload signature
             DeclNode::Methods(methods) => methods.iter().position(|method| !method.overload),
-            DeclNode::Class(_) | DeclNode::Alias(_) | DeclNode::Closure(_) => None,
+            DeclNode::Class(_)
+            | DeclNode::Alias(_)
+            | DeclNode::Closure(_)
+            | DeclNode::Quantifier(_) => None,
         }
     }
 
@@ -797,7 +806,7 @@ impl DeclNode {
             DeclNode::Defs(defs) => &defs[sig].sig,
             DeclNode::Methods(methods) => &methods[sig].sig,
             DeclNode::Closure(closure) => &closure.sig,
-            DeclNode::Class(_) | DeclNode::Alias(_) => {
+            DeclNode::Class(_) | DeclNode::Alias(_) | DeclNode::Quantifier(_) => {
                 unreachable!("only a def, method or closure has a signature")
             }
         }
@@ -1283,6 +1292,24 @@ impl Report for ParameterKeys {
 
     fn message(&self, w: &mut dyn Write) -> fmt::Result {
         write!(w, "function parameters must have symbol keys")
+    }
+
+    fn span(&self) -> Span {
+        self.0
+    }
+}
+
+/// A quantified function type written as a type argument, which instantiating a
+/// binder with would be impredicative
+struct QuantifiedArgument(Span);
+
+impl Report for QuantifiedArgument {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "a generic function type can't be a type argument")
     }
 
     fn span(&self) -> Span {
