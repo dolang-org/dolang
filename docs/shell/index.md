@@ -100,6 +100,7 @@ dolang -m test -- test
 
 Symlink aliases such as `dodo` and `dolang-test` select the corresponding
 entrypoint implicitly when available.
+[Testing](testing.md#running-tests) describes the `test` entrypoint.
 
 ## REPL
 

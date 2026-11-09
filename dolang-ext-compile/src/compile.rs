@@ -1869,7 +1869,7 @@ impl<'v> Object<'v> for NodeIdObject {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         let Some(other) = strand.state::<Tag>().types.node_id.cast(other) else {
-            return Ok(false);
+            return Err(Error::unsupported(strand, "`==`"));
         };
         Ok(other.enter_sync(strand, |_strand, other| *this.annex() == *other.annex()))
     }
@@ -2185,9 +2185,9 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         // A unit projects a node to one class, so a node of another class is
-        // another node.
+        // another node. Declining lets strict equality report it unequal.
         let Some(other) = this.ty(strand.vm()).cast(other) else {
-            return Ok(false);
+            return Err(Error::unsupported(strand, "`==`"));
         };
         let this = this.borrow(strand)?;
         let key = (this.unit, this.id);

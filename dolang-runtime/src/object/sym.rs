@@ -79,7 +79,7 @@ impl<'v> Protocol<'v> for SymObj {
         if let Some(osym) = other.downcast_ref(strand.builtin_types().sym) {
             Ok(Value::from_bool(osym.get().tag == this.get().tag))
         } else {
-            Ok(Value::from_bool(false))
+            Err(Error::unsupported(strand, "`==`"))
         }
     }
 

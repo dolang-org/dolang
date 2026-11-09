@@ -1886,10 +1886,8 @@ impl<'v> Protocol<'v> for Dict<'v> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let other = if let Some(other) = other.downcast_ref(strand.builtin_types().dict) {
-            other
-        } else {
-            return Ok(Value::FALSE);
+        let Some(other) = other.downcast_ref(strand.builtin_types().dict) else {
+            return Err(Error::unsupported(strand, "`==`"));
         };
         let left = this.borrow(strand)?;
         let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;

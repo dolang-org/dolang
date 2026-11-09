@@ -781,7 +781,7 @@ impl<'v> Protocol<'v> for Array<'v> {
         {
             other
         } else {
-            return Ok(Value::FALSE);
+            return Err(Error::unsupported(strand, "`==`"));
         };
         let this_borrow = this.borrow(strand)?;
         let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;

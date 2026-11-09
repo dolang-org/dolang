@@ -184,6 +184,12 @@ impl<'v> Object<'v> for Widget {
 }
 ```
 
+Comparison methods (`eq`, `lt`, and so on) must decline an operand of a type
+they don't compare with by returning `Err(Error::unsupported(strand, "`==`"))`
+(with the matching operator), never `Ok(false)`. Declining lets the right
+operand's reflected method (`(req)`, `(rne)`) run; if it declines too, `==`
+falls back to strict equality, so two unrelated types still compare unequal.
+
 ## `TypeBuilder` — Registering Methods and Properties
 
 `TypeBuilder` is the API used inside `Object::build` to register methods,

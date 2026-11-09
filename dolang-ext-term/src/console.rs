@@ -163,7 +163,11 @@ impl<'v> Object<'v> for DefaultOutput {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         let global = strand.state::<Tag>();
-        Ok(global.types.default.cast(other).is_some())
+        if global.types.default.cast(other).is_some() {
+            Ok(true)
+        } else {
+            Err(Error::unsupported(strand, "`==`"))
+        }
     }
 }
 

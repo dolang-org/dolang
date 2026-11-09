@@ -1800,7 +1800,7 @@ impl<'v> Protocol<'v> for ClassTypeProxy<'v> {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         let Some(other) = other.downcast_ref(strand.builtin_types().class_type_proxy) else {
-            return Ok(Value::from_bool(false));
+            return Err(Error::unsupported(strand, "`==`"));
         };
         let same = other.get().class.repr_eq(strand, &this.get().class);
         Ok(Value::from_bool(same))

@@ -211,6 +211,20 @@ impl<'a> Peek<'a> {
         })
     }
 
+    /// Peek, lexing the token in `mode` if it isn't already buffered.
+    fn peek_with_mode(&mut self, mode: Mode) -> Result<Option<Token>> {
+        if let Inner::Empty = self.peek {
+            let prev = self.lexer.set_mode(mode);
+            let next = self.lexer.next();
+            self.lexer.set_mode(prev);
+            self.peek = match next {
+                None => Inner::End,
+                Some(next) => Inner::Full(next),
+            };
+        }
+        self.peek()
+    }
+
     pub(super) fn push(&mut self, token: Token) {
         assert!(matches!(self.peek, Inner::End | Inner::Empty));
         self.peek = Inner::Full(Ok(token))
@@ -341,6 +355,20 @@ impl Parser<'_> {
 
     pub(super) fn peek(&mut self) -> Result<Option<Token>> {
         let res = self.lex.peek();
+        if res.is_err() {
+            self.fail = true;
+        }
+        res
+    }
+
+    /// Peek past a possible here string introducer, keeping blank and `#`
+    /// lines that would start its body.
+    pub(super) fn peek_heredoc_intro(&mut self) -> Result<Option<Token>> {
+        let res = if self.mode() == Mode::Shell {
+            self.lex.peek_with_mode(Mode::HeredocIntro)
+        } else {
+            self.lex.peek()
+        };
         if res.is_err() {
             self.fail = true;
         }

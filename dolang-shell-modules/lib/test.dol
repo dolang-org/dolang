@@ -1,122 +1,8 @@
 # dolang: strict
 # Utilities for writing and running test suites.
 #
-# `dolang -m test` runs the tests under its path arguments with
-# [`run`](test.run). Its `--jobs`, `--module-jobs` and `--timeout` options set
-# the keywords of the same names, and `--no-capture` turns off `capture`.
-#
-# `--filter` takes a glob matched against `module/name`, where `module` is the
-# test file's path without its extension. The repeatable `--tags` option splits
-# each occurrence on commas: alternatives in one occurrence are ORed, while
-# occurrences are ANDed. Prefix a tag with `!` to require its absence.
-# Matching is exact and case-sensitive.
-#
-# `--tags !windows,!macos` means “not Windows OR not macOS.” Use
-# `--tags !windows --tags !macos` to exclude both.
-#
-# The repeatable `--id` option selects tests by exact
-# [ID](test.TestInfo.id), with no glob syntax to escape. It combines with
-# `--filter` and `--tags`, all of which must match.
-#
-# ## Listing Tests
-#
-# `--list` loads each module with [`list`](test.list) and reports the selected
-# tests without running them. `--jobs` and `--no-capture` don't apply. The exit
-# status is one when a module fails to compile or load, and zero otherwise,
-# including when a module skips while loading.
-#
-# By default the list is a report on the console. `--format json` instead
-# writes one JSON document to standard output, or to the file given by
-# `--output`:
-#
-# ```json
-# {
-#   "version": 1,
-#   "modules": [
-#     {
-#       "path": "test/foo.dol",
-#       "module": "test/foo",
-#       "status": "loaded",
-#       "tests": [
-#         {
-#           "id": "test/foo/connects/backend=sqlite",
-#           "module": "test/foo",
-#           "name": "connects/backend=sqlite",
-#           "base": "connects",
-#           "params": [["backend", "sqlite"]],
-#           "tags": ["slow"],
-#           "location": {"file": "test/foo.dol", "line": 12, "column": 0, "len": 12}
-#         }
-#       ]
-#     },
-#     {
-#       "path": "test/bar.dol",
-#       "module": "test/bar",
-#       "status": "failed",
-#       "error": {"kind": "compile", "message": "...", "diagnostics": [...]}
-#     }
-#   ]
-# }
-# ```
-#
-# - `version` changes when the format changes incompatibly.
-# - Modules appear in path order, and tests in registration order. Paths are
-#   as given on the command line, with directories expanded.
-# - `status` is `loaded`, `failed`, `skipped` or `ignored`. A skipped or ignored
-#   module has a `message`, which may be `null`.
-# - A test's fields are those of [`TestInfo`](test.TestInfo). `location` is
-#   `null` when unknown.
-# - A failed module's `error` has a `kind` of `compile` or `load` and a
-#   `message`. A compile error lists `diagnostics`, each with a `severity`
-#   (`error` or `warning`), `message` and `location`. A load error has
-#   `rendered`, the error as the run report prints it, with its backtrace. An
-#   `output` field holds what the module wrote while loading, when it wrote
-#   anything.
-# - Locations are zero-based, with columns and lengths in characters, as in
-#   [`inspect.Location`](inspect.Location).
-#
-# ## Progress Events
-#
-# `--format jsonl` runs the tests and writes progress events to standard
-# output, or to the file given by `--output`, in place of the report. Each line
-# is one JSON object, written as events happen, so events from concurrent
-# modules and tests interleave. Output is always captured, so `--no-capture` is
-# rejected. The exit status is the same as for the report.
-#
-# ```json
-# {"event": "run-start", "version": 1, "modules": 1}
-# {"event": "module-start", "path": "test/foo.dol", "module": "test/foo"}
-# {"event": "module-end", "path": "test/foo.dol", "module": "test/foo", "status": "loaded", "tests": [...]}
-# {"event": "test-start", "id": "test/foo/adds", "module": "test/foo", "name": "adds", ...}
-# {"event": "test-end", "id": "test/foo/adds", "outcome": "failed", "duration": 0.002, "message": "assertion failed: 3 == 4", "error": {...}, "failure_location": {...}}
-# {"event": "run-end", "passed": 0, "failed": 1, "skipped": 0, "ignored": 0, "status": 1}
-# ```
-#
-# Each event's `event` field names it:
-#
-# - `run-start` comes first, with the format `version` and the number of
-#   `modules`.
-# - `module-start` has the module's `path` and `module`.
-# - `module-end` follows when the module has loaded, or failed to. Its fields
-#   are those of a module in the `--list` document.
-# - `test-start` has the fields of a test in the `--list` document.
-# - `test-end` has the test's `id`, an `outcome` of `passed`, `failed`,
-#   `skipped` or `ignored`, and its `duration` in seconds. Ignored tests are
-#   reported, unlike in the report. Unless the test passed, it also has:
-#     - `message`: the [`Skip`](test.Skip) or [`Ignore`](test.Ignore) message,
-#       which may be `null`, or the string form of the error.
-#     - `failure_location`: the location of the innermost call in the test's
-#       file when the error was raised, or `null`. This is the failing line
-#       even when the error comes from an assertion function, a fixture or a
-#       helper.
-#     - `output`: what the test wrote, when it wrote anything.
-#     - `error`, for a failure: the error's `type`, the `rendered` error as the
-#       report prints it, and the `backtrace`, innermost call first. Each frame
-#       has the `module`, `receiver`, `method` and `location` of
-#       [`inspect.Frame`](inspect.Frame). An [`Assert`](test.Assert) error from
-#       a comparison adds its `expected` and `actual` values.
-# - `run-end` comes last, with the number of tests `passed`, `failed`,
-#   `skipped` and `ignored`, and the exit `status`.
+# See [Testing](../../shell/testing.md) for an overview of writing tests and
+# the `dolang -m test` command line.
 import _shell compile inspect json load progress shell strand term
   fs:
     - Path
@@ -323,7 +209,7 @@ pub class TestInfo
     self.#tags
 
   # The test's ID, `module/name` with the module path's extension removed: the
-  # string `--filter` and `--id` match.
+  # string `--filter` and `--id` [match](../../shell/testing.md#selecting-tests).
   #[getter]
   pub def id self -> Str
     "$(module_name self.#module)/$(self.#name)"
@@ -1199,8 +1085,8 @@ do
 # run concurrently, so each reads no input: its input is empty.
 #
 # With `format: :JSONL:`, progress events go to standard output, or to
-# `output`, in place of the report. The events are described in the
-# [module documentation](test).
+# `output`, in place of the report, as described in
+# [Progress Events](../../shell/testing.md#progress-events).
 #
 # ## Errors
 #
@@ -1258,7 +1144,7 @@ do -> Int
 # alongside the tests.
 #
 # The human-readable report goes to the console. The JSON document is
-# described in the [module documentation](test).
+# described in [Listing Tests](../../shell/testing.md#listing-tests).
 #
 # ## Returns
 #

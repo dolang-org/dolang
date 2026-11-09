@@ -127,7 +127,7 @@ impl<'v> Protocol<'v> for str {
         if let Some(ostr) = other.downcast_native(strand, strand.builtin_types().str) {
             Ok(Value::from_bool(ostr.get() == this.get()))
         } else {
-            Ok(Value::from_bool(false))
+            Err(Error::unsupported(strand, "`==`"))
         }
     }
 

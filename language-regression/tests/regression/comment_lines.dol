@@ -1,0 +1,14 @@
+# A comment line is skipped at any indentation, as a blank line is, so it
+# neither ends nor starts a block.
+let seen = []
+if true
+  seen.push 1
+# at column 0
+      # deeper
+  seen.push 2
+assert_eq $seen [1, 2]
+
+def f x
+    # deeper than the body
+  (x + 1)
+assert_eq (f 1) 2

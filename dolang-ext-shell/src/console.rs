@@ -1,7 +1,7 @@
 use crate::global::Tag;
 
 use dolang::runtime::{
-    Instance, Object, Output, Result, State, Strand, Value,
+    Error, Instance, Object, Output, Result, State, Strand, Value,
     object::TypeBuilder,
     unpack,
     value::{Root, TypeObject},
@@ -103,7 +103,11 @@ impl<'v> Object<'v> for HostConsole {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         let global = strand.state::<Tag>();
-        Ok(global.types.host_console.cast(other).is_some())
+        if global.types.host_console.cast(other).is_some() {
+            Ok(true)
+        } else {
+            Err(Error::unsupported(strand, "`==`"))
+        }
     }
 }
 

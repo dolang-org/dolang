@@ -43,3 +43,25 @@ pub class ExportedThing
 
 assert_eq (exported_fn 3) 6
 assert_eq $calls ["eval outer", "eval inner", "outer", "inner", "class-decorated", "class-decorated", "pub-fn"]
+
+# Comment lines between decorators and the declaration are skipped, at any
+# indentation, as blank lines are.
+#[wrap "first"]
+# between decorators
+#[wrap "second"]
+
+    # before the declaration
+def commented x
+  (x - 1)
+
+assert_eq (commented 1) 0
+assert_eq $calls[-2..] ["first", "second"]
+
+class Commented
+  #[wrap "method"]
+  # between the decorator and `def`
+  pub def method _self
+    7
+
+assert_eq $(Commented()).method() 7
+assert_eq $calls[-1] method

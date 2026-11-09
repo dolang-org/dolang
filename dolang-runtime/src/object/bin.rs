@@ -191,7 +191,7 @@ impl<'v> Protocol<'v> for [u8] {
         if let Some(oslice) = other.downcast_ref(strand.builtin_types().bin) {
             Ok(Value::from_bool(oslice.get() == this.receiver.get()))
         } else {
-            Ok(Value::from_bool(false))
+            Err(Error::unsupported(strand, "`==`"))
         }
     }
 
