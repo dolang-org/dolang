@@ -18,7 +18,7 @@ use crate::{
             surface::{Member, Name, ParamKind, StrId, TypeExpr},
         },
         report::resolve_span,
-        r#type::Variance,
+        r#type::{DeclKind, Variance},
     },
 };
 
@@ -93,6 +93,12 @@ pub def double x
 pub def first[T] items @ Array[T] :key @ Str = \"a\" *rest @ Int -> T
   items[0]
 
+pub @let Ident = (@[T @ Value = Int] (T) -> T)
+pub def apply f @ Ident x @ Int -> Int
+  f $x
+pub def nest f @ (@[U] (U, (@[V] (V) -> V)) -> U) -> Int
+  1
+
 pub let limit @ Int = 1
 pub let loose = 2
 ";
@@ -106,7 +112,11 @@ import lib:
   - @Shape
   - limit
   - loose
+  - apply
+  - nest
 let b @ Box[Int] = Box 1
+apply $first 1
+apply $double 1
 let p @ Pair[Int] = (1, 2)
 let s @ Shape = nil
 double 2
@@ -152,7 +162,10 @@ fn round_trip() {
     let bytes = typelib();
     let (shard, facts) = read(&bytes).unwrap();
     assert!(
-        shard.decls.iter().all(|decl| decl.name.is_some()),
+        shard
+            .decls
+            .iter()
+            .all(|decl| decl.name.is_some() || decl.kind == DeclKind::Quantifier),
         "the bodies' declarations are left out"
     );
     assert_eq!(encode(shard, &facts), bytes);

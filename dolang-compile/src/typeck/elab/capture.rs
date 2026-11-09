@@ -103,7 +103,12 @@ pub(crate) fn captures(tables: &mut Tables<'_>) {
         let Some(decl) = tables.try_decl(id) else {
             continue;
         };
-        let mut lifted: Vec<_> = set.into_iter().filter(|binder| binder.decl != id).collect();
+        // A quantified type is interpreted inside the group it is written in, not
+        // lifted, but what its bounds name is needed by its enclosing declaration
+        let mut lifted: Vec<_> = match decl.kind {
+            DeclKind::Quantifier => Vec::new(),
+            _ => set.into_iter().filter(|binder| binder.decl != id).collect(),
+        };
         // BinderRef orders enclosing declarations first, then signature and slot;
         // these positions become the leading arguments of lifted declarations.
         lifted.sort_unstable();
@@ -156,6 +161,9 @@ impl Needs<'_, '_> {
     fn name(&mut self, node: usize, head: &Ref) {
         let tables = self.tables;
         match tables.linked(head.link) {
+            // A quantified type's binders are its own, reached by depth
+            Some(&Referent::Binder(binder))
+                if tables.decl(binder.decl).kind == DeclKind::Quantifier => {}
             Some(&Referent::Binder(binder)) => {
                 self.binders[node].insert(binder);
             }
@@ -212,6 +220,11 @@ impl Needs<'_, '_> {
                     self.ambient(node, ambient, index);
                 }
             }
+            TypeExpr::Quantified { decl, func, .. } => {
+                let outer = self.ambient.replace((*decl, 0));
+                self.ty(node, unit, func);
+                self.ambient = outer;
+            }
         }
     }
 
@@ -222,7 +235,11 @@ impl Needs<'_, '_> {
     }
 
     fn ambient(&mut self, node: usize, ambient: Ambient, index: usize) {
+        let quantifier = |decl| self.tables.decl(decl).kind == DeclKind::Quantifier;
         match ambient {
+            // A quantified type's channels are its own binders, or are written in it
+            Ambient::Implicit(BinderRef { decl, .. }) | Ambient::Of(decl, _)
+                if quantifier(decl) => {}
             Ambient::Implicit(binder) => {
                 self.binders[node].insert(binder);
             }

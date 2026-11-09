@@ -59,7 +59,9 @@ impl Shard<'_> {
         let mut kept = BitVec::with_capacity(self.decls.len());
         for (index, decl) in self.decls.iter().enumerate() {
             // An outer declaration is allocated first
-            let keep = decl.kind != DeclKind::Closure
+            // A quantified type's binders are kept with the interface types it is
+            // written in
+            let keep = !matches!(decl.kind, DeclKind::Closure | DeclKind::Quantifier)
                 && match decl.outer {
                     None => exported.contains(&index),
                     Some((outer, _)) => {
@@ -86,6 +88,7 @@ impl Shard<'_> {
             shard: self,
             kept: &kept,
             leaks: Vec::new(),
+            quantifiers: Vec::new(),
         };
         for (index, decl) in self.decls.iter().enumerate() {
             if !kept[index] {
@@ -130,7 +133,9 @@ impl Shard<'_> {
                         walk.sig(&method.sig, &user);
                     }
                 }
-                DeclNode::Closure(_) => unreachable!("a closure is left out"),
+                DeclNode::Closure(_) | DeclNode::Quantifier(_) => {
+                    unreachable!("a closure or quantified type is left out")
+                }
             }
         }
         for value in &self.values {
@@ -138,7 +143,29 @@ impl Shard<'_> {
                 walk.site(annot, &User::Value(value.span));
             }
         }
-        let leaks = walk.leaks;
+        let Walk {
+            mut leaks,
+            mut quantifiers,
+            ..
+        } = walk;
+        while let Some((quantifier, user)) = quantifiers.pop() {
+            if kept[quantifier.index()] {
+                continue;
+            }
+            kept.set(quantifier.index(), true);
+            let DeclNode::Quantifier(node) = &self.decls[quantifier.index()].node else {
+                unreachable!("only a quantified type is found in one")
+            };
+            let mut walk = Walk {
+                shard: self,
+                kept: &kept,
+                leaks: Vec::new(),
+                quantifiers: Vec::new(),
+            };
+            walk.binders(&node.binders, &user);
+            leaks.extend(walk.leaks);
+            quantifiers.extend(walk.quantifiers);
+        }
         (kept.into_boxed_bitslice(), leaks)
     }
 }
@@ -148,6 +175,8 @@ struct Walk<'h, 'u> {
     shard: &'h Shard<'u>,
     kept: &'h BitSlice,
     leaks: Vec<Leak>,
+    /// The quantified types found, and the part of the interface each is in
+    quantifiers: Vec<(DeclId, User)>,
 }
 
 impl Walk<'_, '_> {
@@ -171,7 +200,11 @@ impl Walk<'_, '_> {
     }
 
     fn ty(&mut self, ty: &TypeExpr, user: &User) {
-        ty.names(&mut |head| self.name(head, user));
+        ty.each_node(&mut |node| match node {
+            TypeExpr::Name(head) => self.name(head, user),
+            TypeExpr::Quantified { decl, .. } => self.quantifiers.push((*decl, *user)),
+            _ => {}
+        });
     }
 
     fn link(&self, head: &Ref) -> Option<&Link> {
@@ -208,6 +241,7 @@ pub(crate) fn kind_word(kind: DeclKind) -> &'static str {
         DeclKind::Alias => "alias",
         DeclKind::Function | DeclKind::Annotation => "function",
         DeclKind::Closure => "closure",
+        DeclKind::Quantifier => "quantified type",
     }
 }
 

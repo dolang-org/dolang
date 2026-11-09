@@ -61,13 +61,10 @@ fn a_generic_function_is_quoted_at_the_top() {
 }
 
 #[test]
-fn a_generic_function_is_not_quoted_inside_another_type() {
+fn a_generic_function_is_quoted_as_a_functions_result() {
     let db = Database::new();
     let nested = nest(&db, identity(&db));
-    assert_eq!(
-        quote(&db, nested),
-        Some(Unquotable::Form("a generic function inside another type"))
-    );
+    assert_eq!(quote(&db, nested), None);
 }
 
 #[test]

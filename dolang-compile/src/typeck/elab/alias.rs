@@ -77,6 +77,7 @@ impl Aliases<'_, '_> {
             TypeExpr::Const { .. }
             | TypeExpr::Union { .. }
             | TypeExpr::Func { .. }
+            | TypeExpr::Quantified { .. }
             | TypeExpr::Schema { .. }
             | TypeExpr::Tuple { .. }
             | TypeExpr::Record { .. }

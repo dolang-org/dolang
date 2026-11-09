@@ -169,6 +169,18 @@ def rest_annotations_and_expansions()
   # A parameter whose annotation doesn't expand has no marker
   assert (!(entity(out, "place")["params"][0].contains("type_spread")))
 
+# A quantified function type gives its binders as a function does.
+#[test]
+def quantified_types_give_their_binders()
+  let source = |-
+    pub def apply f @ (@[T @ Int] (T) -> T) -> Int
+      f 1
+  let apply = entity $extract_source(source) apply
+  assert_eq (untargeted apply["params"][0]["type"]) $
+    "kind": quant
+    "binders": [{"kind": "pos", "name": "T", "bound": name_type("Int")}]
+    "func": {"kind": "func", "params": [{"kind": "pos", "quant": nil, "type": name_type("T")}], "ret": name_type("T")}
+
 # Binders give their kind, and a bound or default as a type tree.
 #[test]
 def binders_give_bounds_and_defaults()

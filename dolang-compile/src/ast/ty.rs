@@ -65,8 +65,30 @@ pub(crate) enum TypeExpr {
         arrow_span: Span,
         ret: Box<TypeExpr>,
     },
+    /// A function type quantified over binders, e.g. `@[T] (T) -> T`. Its binders
+    /// scope the names within it.
+    Quantified {
+        at_span: Span,
+        binders: Box<Binders>,
+        /// A [`Func`](TypeExpr::Func), possibly parenthesized
+        func: Box<TypeExpr>,
+    },
     /// A type that could not be interpreted
     Error,
+}
+
+/// What [`TypeExpr::each_name`] visits: a name, or a quantified type, which it
+/// leaves to the visitor to enter, since its binders scope the names within it
+pub(crate) enum NameMut<'a> {
+    /// A head, what it names, and the fields dotted onto it
+    Name(Span, &'a mut Option<TypeRes>, &'a [Span]),
+    Quantified(&'a mut Binders, &'a mut TypeExpr),
+}
+
+/// What [`TypeExpr::names`] visits, as [`NameMut`] without changing it
+pub(crate) enum NameRef<'a> {
+    Name(Span, Option<TypeRes>, &'a [Span]),
+    Quantified(&'a Binders, &'a TypeExpr),
 }
 
 /// What a type name refers to: an entry of a frame enclosing it, where a frame is a
@@ -255,10 +277,12 @@ pub(crate) enum BinderKind {
 
 impl TypeExpr {
     /// Visit each name within the type: its head, what the head names, and the fields
-    /// dotted onto the head.
-    pub(crate) fn each_name<F: FnMut(Span, &mut Option<TypeRes>, &[Span])>(&mut self, f: &mut F) {
+    /// dotted onto the head. A quantified type is visited instead of the names
+    /// within it.
+    pub(crate) fn each_name<F: FnMut(NameMut<'_>)>(&mut self, f: &mut F) {
         match self {
-            TypeExpr::Name { head, fields, res } => f(*head, res, fields),
+            TypeExpr::Name { head, fields, res } => f(NameMut::Name(*head, res, fields)),
+            TypeExpr::Quantified { binders, func, .. } => f(NameMut::Quantified(binders, func)),
             TypeExpr::Const { .. } | TypeExpr::Error => {}
             TypeExpr::App { base, args, .. } => {
                 base.each_name(f);
@@ -299,9 +323,10 @@ impl TypeExpr {
 impl TypeExpr {
     /// Visit each name within the type as [`each_name`](Self::each_name) does, without
     /// changing it.
-    pub(crate) fn names<'a>(&'a self, f: &mut impl FnMut(Span, Option<TypeRes>, &'a [Span])) {
+    pub(crate) fn names<'a>(&'a self, f: &mut impl FnMut(NameRef<'a>)) {
         match self {
-            TypeExpr::Name { head, fields, res } => f(*head, *res, fields),
+            TypeExpr::Name { head, fields, res } => f(NameRef::Name(*head, *res, fields)),
+            TypeExpr::Quantified { binders, func, .. } => f(NameRef::Quantified(binders, func)),
             TypeExpr::Const { .. } | TypeExpr::Error => {}
             TypeExpr::App { base, args, .. } => {
                 base.names(f);
@@ -349,7 +374,7 @@ impl TypeArg {
         }
     }
 
-    fn each_name<F: FnMut(Span, &mut Option<TypeRes>, &[Span])>(&mut self, f: &mut F) {
+    fn each_name<F: FnMut(NameMut<'_>)>(&mut self, f: &mut F) {
         self.ty_mut().each_name(f);
     }
 
@@ -364,7 +389,7 @@ impl TypeArg {
 }
 
 impl TypeParam {
-    fn each_name<F: FnMut(Span, &mut Option<TypeRes>, &[Span])>(&mut self, f: &mut F) {
+    fn each_name<F: FnMut(NameMut<'_>)>(&mut self, f: &mut F) {
         for ty in self.tys_mut() {
             ty.each_name(f);
         }
@@ -510,6 +535,15 @@ impl Node for TypeExpr {
                 }
                 visit.token(Token::Operator, *arrow_span, None)?;
                 visit.node(&**ret)
+            }
+            TypeExpr::Quantified {
+                at_span,
+                binders,
+                func,
+            } => {
+                visit.token(Token::Sigil, *at_span, None)?;
+                visit.node(&**binders)?;
+                visit.node(&**func)
             }
             TypeExpr::Error => ControlFlow::Continue(()),
         }

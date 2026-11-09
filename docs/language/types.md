@@ -128,7 +128,8 @@ its own: `f((value @ Int))`.
 ## Binders
 
 `[]` directly after the name of a `def` or `class` declares binders: names that
-stand for types within the declaration.
+stand for types within the declaration. `@[]` declares them for a
+[generic function type](./type-syntax.md#generic-function-types).
 
 ```
 def first[T] items @ Array[T] -> T

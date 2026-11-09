@@ -82,8 +82,14 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
                 sig,
                 slot,
             }));
-            if let Some(completed) = tables.sig(id, sig) {
-                for ambient in [completed.input, completed.output] {
+            let channels = match tables.decl(id).node {
+                DeclNode::Quantifier(_) => Some(sig::channels(tables, id, sig)),
+                _ => tables
+                    .sig(id, sig)
+                    .map(|completed| [completed.input, completed.output]),
+            };
+            if let Some(channels) = channels {
+                for ambient in channels {
                     if let Ambient::Implicit(binder) = ambient {
                         group.push(binder);
                     }
@@ -178,7 +184,9 @@ fn sig_name(tables: &Tables<'_>, decl: DeclId, sig: usize) -> Name {
     match &tables.decl(decl).node {
         DeclNode::Defs(defs) => defs[sig].name,
         DeclNode::Methods(methods) => methods[sig].name,
-        DeclNode::Closure(_) => unreachable!("a closure is not named"),
+        DeclNode::Closure(_) | DeclNode::Quantifier(_) => {
+            unreachable!("a closure or quantified type is not named")
+        }
         DeclNode::Class(_) | DeclNode::Alias(_) => {
             tables.decl(decl).name.expect("a type declaration is named")
         }
@@ -190,6 +198,7 @@ fn sig_name(tables: &Tables<'_>, decl: DeclId, sig: usize) -> Name {
 fn sig_span(tables: &Tables<'_>, decl: DeclId, sig: usize) -> Span {
     match &tables.decl(decl).node {
         DeclNode::Closure(closure) => closure.span,
+        DeclNode::Quantifier(quantifier) => quantifier.span,
         _ => sig_name(tables, decl, sig).span,
     }
 }
@@ -199,12 +208,18 @@ fn sig_span(tables: &Tables<'_>, decl: DeclId, sig: usize) -> Span {
 #[derive(Clone, Copy)]
 struct Group<'g> {
     unit: UnitId,
+    /// The declaration signature the group is of. A quantified type's is inside the
+    /// group it is written in, whose binders are reached across it.
+    key: Option<(DeclId, usize)>,
     binders: &'g [BinderRef],
     /// The group is too large to intern, so its binders stand for the dynamic type
     broken: bool,
     /// The signature whose channels function types take when they omit their own:
     /// the site's being interned
     ambient: Option<(DeclId, usize)>,
+    /// Within a quantified type, the channels its function writes, which the
+    /// function types written in it take when they omit their own
+    channels: [Option<&'g TypeExpr>; 2],
 }
 
 struct Populate<'t, 'u> {
@@ -238,15 +253,19 @@ impl<'t, 'u> Populate<'t, 'u> {
         match key {
             Some(key) => Group {
                 unit,
+                key: Some(key),
                 binders: &self.groups[&key],
                 broken: self.broken.contains(&key),
                 ambient: None,
+                channels: [None; 2],
             },
             None => Group {
                 unit,
+                key: None,
                 binders: &[],
                 broken: false,
                 ambient: None,
+                channels: [None; 2],
             },
         }
     }
@@ -315,22 +334,32 @@ impl<'t, 'u> Populate<'t, 'u> {
         }
     }
 
-    /// A reference to a binder in `group`, from outside a pattern's own group if
-    /// one is being interned
+    /// A reference to a binder in `group`, or a group a quantified type's is inside,
+    /// from outside a pattern's own group if one is being interned
     fn binder(&self, group: Group<'_>, binder: BinderRef) -> TypeId {
         let kind = self.kind(binder);
-        if group.broken {
-            return self.unknown(kind);
+        let mut depth = usize::from(self.pattern.is_some());
+        let mut key = group.key;
+        let mut binders = group.binders;
+        let mut broken = group.broken;
+        loop {
+            if broken {
+                return self.unknown(kind);
+            }
+            if let Some(slot) = binders.iter().position(|found| *found == binder) {
+                return self.db.intern(Type::Bound {
+                    reference: BoundRef::new(depth, slot),
+                    kind,
+                });
+            }
+            let quantifier = key
+                .filter(|&(decl, _)| self.tables.decl(decl).kind == DeclKind::Quantifier)
+                .expect("a binder named outside the declarations lifted over it");
+            key = self.tables.decl(quantifier.0).outer;
+            binders = key.map_or(&[][..], |key| &self.groups[&key]);
+            broken = key.is_some_and(|key| self.broken.contains(&key));
+            depth += 1;
         }
-        let slot = group
-            .binders
-            .iter()
-            .position(|found| *found == binder)
-            .expect("a binder named outside the declarations lifted over it");
-        self.db.intern(Type::Bound {
-            reference: BoundRef::new(usize::from(self.pattern.is_some()), slot),
-            kind,
-        })
     }
 
     /// A rest binding's `@...` pattern mapped over the packs it names, or the
@@ -485,6 +514,9 @@ impl<'t, 'u> Populate<'t, 'u> {
                     output: Some(output),
                 }))
             }
+            TypeExpr::Quantified { decl, func, .. } if expected == Kind::Type => {
+                self.quantified(group, *decl, func, depth)
+            }
             TypeExpr::Const {
                 value: Some(value), ..
             } if expected == Kind::Type => {
@@ -493,6 +525,43 @@ impl<'t, 'u> Populate<'t, 'u> {
             }
             _ => self.unknown(expected),
         }
+    }
+
+    /// A quantified function type, its function interpreted in its own group inside
+    /// `group`
+    fn quantified(
+        &mut self,
+        group: Group<'_>,
+        decl: DeclId,
+        func: &TypeExpr,
+        depth: usize,
+    ) -> TypeId {
+        let key = (decl, 0);
+        let channels = match func {
+            TypeExpr::Func { input, output, .. } => [input.as_deref(), output.as_deref()],
+            _ => [None; 2],
+        };
+        let inner = Group {
+            unit: group.unit,
+            key: Some(key),
+            binders: &self.groups[&key],
+            broken: self.broken.contains(&key),
+            ambient: Some(key),
+            channels,
+        };
+        let body = self.intern(inner, func, Kind::Type, depth);
+        let (binders, _) = self.binders(key);
+        let ty = self.db.intern(Type::Quantified {
+            binders: binders.into(),
+            body,
+        });
+        if self.expanding.is_empty()
+            && self.pattern.is_none()
+            && let DeclNode::Quantifier(quantifier) = &self.tables.decl(decl).node
+        {
+            quantifier.interned.set(ty);
+        }
+        ty
     }
 
     /// A designated class applied to `arg` for its only binder, or `Unknown` if the
@@ -601,6 +670,19 @@ impl<'t, 'u> Populate<'t, 'u> {
     ) -> TypeId {
         match ambient {
             Ambient::Implicit(binder) => self.binder(group, binder),
+            // A quantified type's written channel is in the group being interned
+            Ambient::Of(decl, sig) if self.tables.decl(decl).kind == DeclKind::Quantifier => {
+                let Some(implicit) = group.channels[index] else {
+                    return self.db.unknown();
+                };
+                if self.expanding.contains(&(decl, sig, index)) {
+                    return self.db.unknown();
+                }
+                self.expanding.push((decl, sig, index));
+                let ty = self.intern(group, implicit, Kind::Type, depth);
+                self.expanding.pop();
+                ty
+            }
             Ambient::Of(decl, sig) => {
                 let func = sig::function(self.tables, decl, sig);
                 let Some(implicit) = [func.input, func.output][index] else {
@@ -740,7 +822,10 @@ impl<'t, 'u> Populate<'t, 'u> {
                             .expect("every alias has a kind")
                             .kind
                     }
-                    DeclKind::Function | DeclKind::Closure | DeclKind::Annotation => {
+                    DeclKind::Function
+                    | DeclKind::Closure
+                    | DeclKind::Quantifier
+                    | DeclKind::Annotation => {
                         return self.unknown(expected);
                     }
                 };
@@ -1104,11 +1189,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                     (name, written.name.span, binding)
                 }
                 None => {
-                    let sigil = match tables
-                        .sig(binder.decl, binder.sig)
-                        .expect("every def and method has a signature")
-                        .input
-                    {
+                    let sigil = match sig::channels(tables, binder.decl, binder.sig)[0] {
                         Ambient::Implicit(input) if input == binder => "<",
                         _ => ">",
                     };
@@ -1306,6 +1387,29 @@ impl<'t, 'u> Populate<'t, 'u> {
                     out.push((declared, declaration));
                 }
             }
+            // A quantified type is interpreted where it is written, so its own
+            // declaration only stands for it
+            DeclNode::Quantifier(quantifier) => out.push((
+                id,
+                Declaration {
+                    source: DeclSource {
+                        kind: DeclKind::Quantifier,
+                        result_kind: Kind::Type,
+                        name: None,
+                        span: UnitSpan {
+                            unit: decl.unit,
+                            span: quantifier.span,
+                        },
+                        is_final: false,
+                        is_mixable: false,
+                        decorated: false,
+                    },
+                    ty: self.db.unknown(),
+                    binders: Default::default(),
+                    supertypes: Default::default(),
+                    members: Default::default(),
+                },
+            )),
             DeclNode::Closure(closure) => {
                 let func = &closure.sig;
                 let params = sig::params(tables, func, None);

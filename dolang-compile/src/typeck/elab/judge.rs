@@ -5,7 +5,7 @@ use std::{borrow::Cow, sync::Arc};
 
 use rustc_hash::FxHashMap;
 
-use super::{Ambient, BinderRef, DeclNode, Designated, Referent, Tables};
+use super::{Ambient, BinderRef, DeclNode, Designated, Referent, Tables, sig};
 use crate::{
     diag::Span,
     typeck::{
@@ -178,11 +178,7 @@ impl Tables<'_> {
         let unit = self.decl(binder.decl).unit;
         match self.binders(binder.decl, binder.sig).get(binder.slot) {
             Some(written) => self.name(unit, written.name).to_owned(),
-            None => match self
-                .sig(binder.decl, binder.sig)
-                .expect("a binder past the written ones is a signature's")
-                .input
-            {
+            None => match sig::channels(self, binder.decl, binder.sig)[0] {
                 Ambient::Implicit(input) if input == binder => "in".to_owned(),
                 _ => "out".to_owned(),
             },

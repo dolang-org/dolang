@@ -24,6 +24,7 @@ pub(crate) fn index(
         file,
         blocks,
         table: Table::new(),
+        adopted: Vec::new(),
     };
     let root_id = index.table.push(Node::new(
         None,
@@ -93,6 +94,9 @@ struct Index<'a> {
     file: &'a File<'a>,
     blocks: Blocks,
     table: Table,
+    /// Each binder of a quantified type a form adopted, with the node it was
+    /// indexed under, which abandoning the form restores
+    adopted: Vec<(Id, Option<Id>)>,
 }
 
 /// A frame of the traversal, which is a binder group or a lexical scope exactly where
@@ -392,9 +396,17 @@ impl Index<'_> {
     /// Resolve the names within a type.
     fn ty(&mut self, scope: &Scope<'_>, ty: &mut TypeExpr) {
         let file = self.file;
-        ty.each_name(&mut |head, res, _| {
-            if let Some(res) = res {
-                res.node = scope.type_node(file, *res, file.str(head));
+        ty.each_name(&mut |name| match name {
+            NameMut::Name(head, res, _) => {
+                if let Some(res) = res {
+                    res.node = scope.type_node(file, *res, file.str(head));
+                }
+            }
+            // The binders are indexed under the enclosing node until the form they
+            // quantify is, which adopts them
+            NameMut::Quantified(binders, func) => {
+                let group = self.binders(scope, scope.parent, Some(binders));
+                self.ty(&group, func);
             }
         });
     }
@@ -454,8 +466,12 @@ impl Index<'_> {
     /// pushed. Nothing is linked yet, so that is a plain truncation.
     fn abandoning(&mut self, convert: impl FnOnce(&mut Self) -> Option<Id>) -> Option<Id> {
         let len = self.table.len();
+        let adopted = self.adopted.len();
         let id = convert(self);
         if id.is_none() {
+            for (binder, parent) in self.adopted.drain(adopted..).rev() {
+                self.table[binder].parent = parent;
+            }
             self.table.truncate(len);
         }
         id
@@ -552,6 +568,21 @@ impl Index<'_> {
                 output: self.implicit_type(id, output)?,
                 ret: self.type_expr(id, ret)?,
             },
+            TypeExpr::Quantified { binders, func, .. } => {
+                let binders: alias::Box<[Id]> = binders
+                    .binders
+                    .iter()
+                    .map(|binder| binder.node)
+                    .collect::<Option<_>>()?;
+                for &binder in &binders {
+                    let parent = self.table[binder].parent.replace(id);
+                    self.adopted.push((binder, parent));
+                }
+                Kind::QuantType {
+                    binders,
+                    func: self.type_expr(id, func)?,
+                }
+            }
             TypeExpr::Group { .. } | TypeExpr::Error => unreachable!(),
         };
         Some(self.finish_type(id, kind))

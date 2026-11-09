@@ -37,6 +37,21 @@ test('signatures include annotated types', () => {
     params: [{ kind: 'mixed_rest', name: 'thunks', type_spread: true, type: { kind: 'func', params: [], ret: name('Rs') } }],
   };
   expect(label('m', fork)).toBe('# module m\ndef fork ...thunks @ ...(() -> Rs)\n  ...');
+  // A quantified function type is parenthesized as a function type is
+  const apply: Entity = {
+    kind: 'function',
+    name: 'apply',
+    params: [{
+      kind: 'pos',
+      name: 'f',
+      type: {
+        kind: 'quant',
+        binders: [{ kind: 'pos', name: 'T', bound: name('Int') }],
+        func: { kind: 'func', params: [{ kind: 'pos', type: name('T') }], ret: name('T') },
+      },
+    }],
+  };
+  expect(label('m', apply)).toBe('# module m\ndef apply f@(@[T @ Int] (T) -> T)\n  ...');
 });
 
 test('prose drops playground markup and manual anchors', () => {

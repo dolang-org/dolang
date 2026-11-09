@@ -1,0 +1,56 @@
+# dolang: strict
+# A quantified function type can be written for a parameter, result or alias.
+# A function generic over its binders fits it; one that only fits some of their
+# choices doesn't.
+
+def id[T] x@T -> T
+  x
+
+pub def apply f@(@[T] (T) -> T) x@Int -> Int
+  f $x
+
+pub def twice f@(@[T] (T) -> T) -> (Int, Str)
+  (f(1), f("a"))
+
+pub @let Id = (@[T] (T) -> T)
+
+pub def ident() -> Id
+  id
+
+pub def optional f@((@[T] (T) -> T) | nil) -> Int
+  if f
+    f 1
+  else
+    0
+
+def first[A] a@A _b@Int -> A
+  a
+
+pub def outer[U] u@U f@(@[T] (T, U) -> T) -> Int
+  f 1 $u
+
+def keep[T @ Int] x@T -> T
+  x
+
+pub def bounded f@(@[T @ Int] (T) -> T) -> Int
+  f 1
+
+# A nested generic def is the enclosing def's binders where it is written, and
+# generic over its own, so it can be called there or returned
+pub def offset[U] u@U -> (@[T] (T, U) -> T)
+  def inner[T] x@T _u@U -> T
+    x
+  let _ @ Str = (inner "s" u)
+  inner
+
+pub def uses()
+  let _ @ Int = (apply(id, 1))
+  let g = ident()
+  let _ @ Str = (g "s")
+  let _ @ (Int, Str) = (twice id)
+  let _ @ Int = (optional id)
+  let _ @ Int = (optional nil)
+  let _ @ Int = (outer(2, first))
+  let _ @ Int = (bounded keep)
+  let o = (offset 1)
+  let _ @ Str = (o "s" 2)

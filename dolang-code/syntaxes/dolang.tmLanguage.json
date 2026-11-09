@@ -325,6 +325,7 @@
                 { "include": "#key" },
                 { "include": "#number" },
                 { "include": "#constant" },
+                { "include": "#type_quantifier" },
                 { "include": "#type_group" },
                 { "include": "#type_marker" },
                 { "include": "#type_name" }
@@ -334,6 +335,17 @@
         "type_marker": {
             "match": "->|\\.\\.\\.|\\*\\*|[?*@<>|=:,.]",
             "name": "keyword.operator.type.dol"
+        },
+        "type_quantifier": {
+            "begin": "(@)(\\[)",
+            "end": "\\]",
+            "name": "meta.type.binders.dol",
+            "patterns": [{ "include": "#type" }],
+            "beginCaptures": {
+                "1": { "name": "keyword.operator.type.dol" },
+                "2": { "name": "punctuation.section.type.begin.dol" }
+            },
+            "endCaptures": { "0": { "name": "punctuation.section.type.end.dol" } }
         },
         "type_group": {
             "patterns": [

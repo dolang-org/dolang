@@ -525,6 +525,12 @@ def _render_type(
         arrow = "->" if plain else "-&gt;"
         rendered = f"({params}) {arrow} {ret}"
         binding = _BINDS_FUNC
+    elif kind == "quant":
+        # The binders juxtapose with the signature, which binds as a function does
+        binders = ", ".join(escape(_binder_text(binder, scope)) for binder in ty["binders"])
+        func = _render_type(ty["func"], scope, _BINDS_FUNC, plain, code=code)
+        rendered = f"@[{binders}] {func}" if plain or code else f"@\\[{binders}\\] {func}"
+        binding = _BINDS_FUNC
     else:
         return ""
     return f"({rendered})" if binding < context else rendered
@@ -617,6 +623,8 @@ def _has_docs(ty: dict) -> bool:
         return any(_has_docs(arg["type"]) for arg in ty["args"])
     if kind == "array":
         return _has_docs(ty["elem"])
+    if kind == "quant":
+        return _has_docs(ty["func"])
     return False
 
 

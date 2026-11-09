@@ -839,6 +839,8 @@ pub(crate) enum DeclKind {
     Alias,
     Function,
     Closure,
+    /// The binders of a quantified function type, which only elaboration declares
+    Quantifier,
     #[cfg_attr(not(test), expect(dead_code, reason = "declared by tests"))]
     Annotation,
 }
@@ -1749,6 +1751,12 @@ impl Database {
         );
         self.expect_kind(declaration.ty, declaration.source.result_kind);
         let arity = match self.ty(declaration.ty) {
+            // An alias without binders may be of a quantified type
+            Type::Quantified { .. }
+                if declaration.binders.is_empty() && declaration.source.kind == DeclKind::Alias =>
+            {
+                0
+            }
             Type::Quantified { binders, .. } => binders.len(),
             _ => 0,
         };
@@ -3087,7 +3095,10 @@ impl Database {
     /// The rigids of a declaration's binders, in slot order. Substituting them for
     /// its group gives the declaration as checked.
     pub(crate) fn rigids(&self, decl: DeclId) -> Vec<TypeId> {
-        let Type::Quantified { binders, .. } = self.ty(self.declaration(decl).ty) else {
+        let declaration = self.declaration(decl);
+        // An alias without binders may be of a quantified type
+        let alias = declaration.binders.is_empty() && declaration.source.kind == DeclKind::Alias;
+        let (false, Type::Quantified { binders, .. }) = (alias, self.ty(declaration.ty)) else {
             return Vec::new();
         };
         binders

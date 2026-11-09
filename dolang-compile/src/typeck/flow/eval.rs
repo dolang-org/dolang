@@ -238,14 +238,24 @@ impl Flow<'_, '_> {
         if let Some(value) = self.settled_method(func, decl) {
             return value;
         }
-        if self
-            .tables
-            .lifted(decl)
-            .is_some_and(|lifted| !lifted.is_empty())
-        {
-            return self.gap(span, "a nested def's value in a generic declaration");
+        let lifted = self.tables.lifted(decl).map_or(0, <[_]>::len);
+        if lifted == 0 {
+            return function_value(self.db, self.tables, decl);
         }
-        function_value(self.db, self.tables, decl)
+        // An overloaded def's value is the def itself, whose signatures are each
+        // lifted
+        if self.tables.sig_count(decl) != 1 {
+            return self.gap(
+                span,
+                "an overloaded nested def's value in a generic declaration",
+            );
+        }
+        // A def lifted over the binders of those it is nested in is their rigids
+        // there, as their bodies are checked, and generic over its own binders
+        let key = (decl, self.tables.primary_sig(decl));
+        let rigids = self.tables.group_rigids(self.db, key);
+        let split = self.db.split(self.db.declaration(decl).ty, lifted);
+        self.db.substitute(split, &rigids[..lifted])
     }
 
     /// Whether a value is an overloaded function: an overloaded def, or a
@@ -383,9 +393,11 @@ impl Flow<'_, '_> {
         match declaration.source.kind {
             DeclKind::Class | DeclKind::Protocol => class_object(self.db, decl),
             DeclKind::Function => function_value(self.db, self.tables, decl),
-            DeclKind::OpaqueAlias | DeclKind::Alias | DeclKind::Closure | DeclKind::Annotation => {
-                self.db.unknown()
-            }
+            DeclKind::OpaqueAlias
+            | DeclKind::Alias
+            | DeclKind::Closure
+            | DeclKind::Quantifier
+            | DeclKind::Annotation => self.db.unknown(),
         }
     }
 }

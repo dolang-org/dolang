@@ -56,7 +56,9 @@ export type TypeJson =
   /** The `[T]` form */
   | { kind: 'array'; elem: TypeJson }
   | { kind: 'union'; members: TypeJson[] }
-  | { kind: 'func'; params: TypeParamJson[]; input?: TypeJson | null; output?: TypeJson | null; ret: TypeJson };
+  | { kind: 'func'; params: TypeParamJson[]; input?: TypeJson | null; output?: TypeJson | null; ret: TypeJson }
+  /** A function type quantified over binders */
+  | { kind: 'quant'; binders: BinderJson[]; func: TypeJson };
 export interface TypeArgJson {
   kind: string;
   /** The name of a keyword argument */
@@ -137,6 +139,11 @@ export function typeText(type: TypeJson, context: Binding = Binding.Compact): st
       break;
     case 'func':
       text = `(${listText(type.params, type.input, type.output)}) -> ${typeText(type.ret, Binding.Func)}`;
+      binding = Binding.Func;
+      break;
+    case 'quant':
+      // The binders juxtapose with the signature, which binds as a function does
+      text = `@[${type.binders.map(binderText).join(', ')}] ${typeText(type.func, Binding.Func)}`;
       binding = Binding.Func;
       break;
   }

@@ -772,7 +772,7 @@ fn decl_kind(kind: DeclKind) -> Option<WireDeclKind> {
         DeclKind::OpaqueAlias => WireDeclKind::OpaqueAlias,
         DeclKind::Alias => WireDeclKind::Alias,
         DeclKind::Function => WireDeclKind::Function,
-        DeclKind::Closure | DeclKind::Annotation => return None,
+        DeclKind::Closure | DeclKind::Quantifier | DeclKind::Annotation => return None,
     })
 }
 

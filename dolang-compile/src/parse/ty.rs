@@ -3,7 +3,7 @@ use super::{
     diag::{
         ArrayTypeElems, DuplicateImplicit, ExtraQuant, ImplicitInSchema, ImplicitWithoutArrow,
         InvalidConstType, KeyedInclusion, KeyedStarStar, NonConstExpr, OptionalQuant,
-        OptionalTypeArg, QuantifiedImplicit, QuantifiedInclusion,
+        OptionalTypeArg, QuantifiedImplicit, QuantifiedInclusion, QuantifiedNonFunction,
     },
     stream::ExpectKind,
 };
@@ -494,6 +494,9 @@ impl Parser<'_> {
 
     /// Parse a full type, as found within `[]`, `()` and `{}`.
     fn parse_type_full(&mut self, scope: &mut Scope) -> Result<TypeExpr> {
+        if let Some(token!(TokenInfo::At)) = self.peek()? {
+            return self.parse_type_quantified(scope);
+        }
         let leading = match self.peek()? {
             Some(token!(TokenInfo::Op(Op::Bar))) => Some(self.advance()),
             _ => None,
@@ -550,6 +553,31 @@ impl Parser<'_> {
             members,
             bars,
             dollar_span: None,
+        })
+    }
+
+    /// Parse a quantified function type, `@[binders]` and then a function signature.
+    fn parse_type_quantified(&mut self, scope: &mut Scope) -> Result<TypeExpr> {
+        let at_span = self.advance();
+        let Some(binders) = self.parse_binders(scope)? else {
+            let token = self.next()?;
+            return Err(self.syntax_error(scope, token, "expected `[` after `@` in type"));
+        };
+        let func = self.parse_type_full(scope)?;
+        let mut inner = &func;
+        while let TypeExpr::Group { ty, .. } = inner {
+            inner = ty;
+        }
+        if !matches!(inner, TypeExpr::Func { .. } | TypeExpr::Error) {
+            self.fail = true;
+            self.diags
+                .push(QuantifiedNonFunction(at_span | binders.bracket_span));
+            return Ok(TypeExpr::Error);
+        }
+        Ok(TypeExpr::Quantified {
+            at_span,
+            binders,
+            func: Box::new(func),
         })
     }
 

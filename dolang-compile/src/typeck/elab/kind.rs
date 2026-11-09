@@ -210,7 +210,10 @@ impl Infer {
                     DeclKind::Alias | DeclKind::OpaqueAlias => {
                         Term::Var(self.vars[&Var::Alias(*decl)])
                     }
-                    DeclKind::Function | DeclKind::Closure | DeclKind::Annotation => Term::Flexible,
+                    DeclKind::Function
+                    | DeclKind::Closure
+                    | DeclKind::Quantifier
+                    | DeclKind::Annotation => Term::Flexible,
                 },
                 Some(Referent::Binder(binder)) => Term::Var(self.vars[&Var::Binder(*binder)]),
                 Some(Referent::Module(_) | Referent::Value(_) | Referent::Error) | None => {
@@ -238,6 +241,7 @@ impl Infer {
             | TypeExpr::Array { .. }
             | TypeExpr::Union { .. }
             | TypeExpr::Func { .. }
+            | TypeExpr::Quantified { .. }
             | TypeExpr::Const { .. } => Term::Known(Kind::Type),
             TypeExpr::Schema { .. } => Term::Known(Kind::Schema),
             TypeExpr::Error { .. } => Term::Flexible,
@@ -331,7 +335,10 @@ impl<'t> Check<'_, 't, '_> {
                     DeclKind::Alias | DeclKind::OpaqueAlias => {
                         tables.alias_kind(*decl).expect("every alias has a kind")
                     }
-                    DeclKind::Function | DeclKind::Closure | DeclKind::Annotation => {
+                    DeclKind::Function
+                    | DeclKind::Closure
+                    | DeclKind::Quantifier
+                    | DeclKind::Annotation => {
                         return Named::NotAType;
                     }
                 };
@@ -487,6 +494,7 @@ impl<'t> Check<'_, 't, '_> {
                 self.check(ret, Some(Kind::Type));
                 self.expect(ty.span(), expected, Kind::Type, None);
             }
+            TypeExpr::Quantified { func, .. } => self.check(func, expected),
             TypeExpr::Const { .. } => self.expect(ty.span(), expected, Kind::Type, None),
             TypeExpr::Error { .. } => {}
         }
@@ -717,7 +725,10 @@ impl Tables<'_> {
                     DeclKind::Alias | DeclKind::OpaqueAlias => {
                         known(&self.alias_kind(*decl).expect("every alias has a kind"))
                     }
-                    DeclKind::Function | DeclKind::Closure | DeclKind::Annotation => None,
+                    DeclKind::Function
+                    | DeclKind::Closure
+                    | DeclKind::Quantifier
+                    | DeclKind::Annotation => None,
                 },
                 Referent::Binder(binder) => {
                     known(&self.binder_kind(*binder).expect("every binder has a kind"))
@@ -744,6 +755,7 @@ impl Tables<'_> {
             | TypeExpr::Array { .. }
             | TypeExpr::Union { .. }
             | TypeExpr::Func { .. }
+            | TypeExpr::Quantified { .. }
             | TypeExpr::Const { .. } => Some(Kind::Type),
             TypeExpr::Schema { .. } => Some(Kind::Schema),
             TypeExpr::Error { .. } => None,

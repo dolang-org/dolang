@@ -1062,6 +1062,26 @@ impl<'db> Solver<'db> {
         self.intern_environment(self.empty_environment(), group)
     }
 
+    /// An environment inside `parent` that interprets the group of `quantified`, a
+    /// quantified type viewed there, as skolems bounded by its binders' bounds:
+    /// what a type written in its function is checked under. A type that isn't
+    /// quantified opens no group.
+    pub(crate) fn skolem_environment(
+        &mut self,
+        parent: EnvironmentId,
+        quantified: TypeId,
+    ) -> EnvironmentId {
+        let Type::Quantified { binders, .. } = self.db.ty(quantified) else {
+            return parent;
+        };
+        let view = TypeView {
+            ty: quantified,
+            environment: parent,
+        };
+        let scope = self.enter(self.scope(&[Term::View(view)]).unwrap_or(ScopeId(0)));
+        self.skolemize(view, binders, scope)
+    }
+
     /// A rigid in scope, and the binder it stands for
     fn rigid(&self, ty: TypeId) -> Result<Option<&Binder>, Residual> {
         let Type::Rigid { decl, slot, .. } = *self.db.ty(ty) else {

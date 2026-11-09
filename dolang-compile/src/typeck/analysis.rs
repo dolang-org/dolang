@@ -63,7 +63,8 @@ impl Types {
         let render = |ty| db.render_in(ty, &names, &self.labels, style);
         let mut out = String::new();
         let body = match db.ty(declaration.ty) {
-            Type::Quantified { binders, body } => {
+            // An alias without binders may be of a quantified type
+            Type::Quantified { binders, body } if !declaration.binders.is_empty() => {
                 let slots: Vec<_> = binders
                     .iter()
                     .zip(declaration.binders.iter())

@@ -63,7 +63,7 @@ impl Quote<'_> {
                     }
                 }
                 match self.db.ty(*body) {
-                    Type::Function(_) => self.children(*body),
+                    Type::Function(_) => self.children(*body, false),
                     _ if self.db.meta_of(*body).is_some() => self.class_object(*body),
                     _ => Err(Unquotable::Form("a generic value that isn't a function")),
                 }
@@ -87,7 +87,7 @@ impl Quote<'_> {
             Type::Quantified { body, .. } if matches!(self.db.ty(*body), Type::Function(_)) => {
                 self.top(ty)
             }
-            Type::Function(_) => self.children(ty),
+            Type::Function(_) => self.children(ty, false),
             _ => self.nested(ty),
         }
     }
@@ -109,7 +109,7 @@ impl Quote<'_> {
 
     fn argument(&self, arg: &Argument) -> Result<(), Unquotable> {
         let (Argument::Positional(ty) | Argument::Keyword(_, ty) | Argument::Expand(ty)) = *arg;
-        self.nested(ty)
+        self.nested_at(ty, true)
     }
 
     /// A declaration a quote names, which another unit must be able to name
@@ -122,10 +122,33 @@ impl Quote<'_> {
 
     /// Part of a type expression
     fn nested(&self, ty: TypeId) -> Result<(), Unquotable> {
+        self.nested_at(ty, false)
+    }
+
+    /// Part of a type expression, within a type argument if `argument`, which a
+    /// quantified type can't be, though it can be a function's parameter or result
+    fn nested_at(&self, ty: TypeId, argument: bool) -> Result<(), Unquotable> {
         match *self.db.ty(ty) {
             Type::Rigid { .. } => Err(ESCAPED),
-            Type::Quantified { .. } => {
-                Err(Unquotable::Form("a generic function inside another type"))
+            Type::Quantified { body, .. } if matches!(self.db.ty(body), Type::Function(_)) => {
+                match argument {
+                    true => Err(Unquotable::Form("a generic function as a type argument")),
+                    false => self.children(ty, false),
+                }
+            }
+            Type::Quantified { .. } => Err(Unquotable::Form(
+                "a generic value that isn't a function inside another type",
+            )),
+            Type::Function(_) => self.children(ty, false),
+            Type::Apply { base, ref args, .. } => {
+                self.nested_at(base, false)?;
+                for arg in args.iter() {
+                    let (Argument::Positional(arg)
+                    | Argument::Keyword(_, arg)
+                    | Argument::Expand(arg)) = *arg;
+                    self.nested_at(arg, true)?;
+                }
+                Ok(())
             }
             Type::Overloaded { .. } => Err(Unquotable::Form(
                 "an overloaded function inside another type",
@@ -138,15 +161,15 @@ impl Quote<'_> {
                 )),
                 _ => self.named(decl),
             },
-            _ => self.children(ty),
+            _ => self.children(ty, argument),
         }
     }
 
-    fn children(&self, ty: TypeId) -> Result<(), Unquotable> {
+    fn children(&self, ty: TypeId, argument: bool) -> Result<(), Unquotable> {
         let mut result = Ok(());
         self.db.ty(ty).visit_children(|child, _| {
             if result.is_ok() {
-                result = self.nested(child);
+                result = self.nested_at(child, argument);
             }
         });
         result

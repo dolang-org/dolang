@@ -151,6 +151,11 @@ enum TypeJson {
         output: Option<Box<TypeJson>>,
         ret: Box<TypeJson>,
     },
+    /// A function type quantified over binders
+    Quant {
+        binders: Vec<BinderJson>,
+        func: Box<TypeJson>,
+    },
 }
 
 /// A type argument in the `[]` of an application
@@ -257,6 +262,19 @@ impl TypeJson {
                     "({}) -> {}",
                     render_list(params, input.as_deref(), output.as_deref()),
                     ret.render(Binding::Func)
+                ),
+                Binding::Func,
+            ),
+            // The binders juxtapose with the signature, which binds as a function does
+            TypeJson::Quant { binders, func } => (
+                format!(
+                    "@[{}] {}",
+                    binders
+                        .iter()
+                        .map(BinderJson::render)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    func.render(Binding::Func)
                 ),
                 Binding::Func,
             ),

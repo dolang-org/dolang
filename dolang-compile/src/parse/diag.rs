@@ -412,6 +412,22 @@ impl Diagnose for OptionalTypeArg {
     }
 }
 
+pub(super) struct QuantifiedNonFunction(pub(super) Span);
+
+impl Diagnose for QuantifiedNonFunction {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "binders must be followed by a function signature")
+    }
+}
+
 pub(super) struct OptionalQuant(pub(super) Span);
 
 impl Diagnose for OptionalQuant {

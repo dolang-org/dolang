@@ -35,7 +35,9 @@ use serde::{Deserialize, Serialize};
 use super::{
     elab::{
         Bases, BinderRef, Decl, DeclNode, Facts, Referent, Role, Shard, Target,
-        surface::{Binder, Decorator, LinkId, Member, ModuleId, ParamKind, Ref, SiteId, StrId},
+        surface::{
+            Binder, Decorator, LinkId, Member, ModuleId, ParamKind, Ref, SiteId, StrId, TypeExpr,
+        },
     },
     r#type::{DeclId, DeclKind, UnitId},
 };
@@ -51,7 +53,7 @@ pub(crate) use types::{Encode as EncodeTypes, Form, Settled, exported};
 const MAGIC: [u8; 8] = *b"\xffdotypel";
 /// The format's version, which changes with any change to the format. It isn't 0,
 /// which the bytes after the magic of an older typelib would read as.
-const VERSION: u16 = 11;
+const VERSION: u16 = 12;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct Header {
@@ -169,10 +171,14 @@ fn validate(shard: &mut Shard<'_>) -> Result<(), &'static str> {
             (DeclKind::OpaqueAlias, DeclNode::Alias(alias)) => alias.body.is_none(),
             (DeclKind::Function, DeclNode::Defs(defs)) => !defs.is_empty(),
             (DeclKind::Function, DeclNode::Methods(methods)) => !methods.is_empty(),
+            (DeclKind::Quantifier, DeclNode::Quantifier(quantifier)) => {
+                !quantifier.binders.is_empty()
+            }
             // A closure is never on a module's surface
             _ => false,
         };
-        if !shaped || decl.name.is_none() {
+        let named = decl.kind != DeclKind::Quantifier;
+        if !shaped || decl.name.is_some() != named {
             return Err("a declaration is malformed");
         }
         match decl.outer {
@@ -238,6 +244,7 @@ fn validate(shard: &mut Shard<'_>) -> Result<(), &'static str> {
                 }
             }
             DeclNode::Alias(alias) => place(alias.body, Role::Alias(id))?,
+            DeclNode::Quantifier(_) => {}
             DeclNode::Defs(_) | DeclNode::Methods(_) | DeclNode::Closure(_) => {
                 for sig in 0..sig_count(decl) {
                     let signature = decl.node.signature(sig);
@@ -282,11 +289,12 @@ fn validate(shard: &mut Shard<'_>) -> Result<(), &'static str> {
         return Err("a site is not on the surface");
     }
     for site in sites {
-        // A function type takes its omitted ambient channels from a def or method
+        // A function type takes its omitted ambient channels from a def, method or
+        // quantified type
         let ambient_ok = site.ambient.is_none_or(|(decl, sig)| {
             matches!(
                 decls[decl.index()].node,
-                DeclNode::Defs(_) | DeclNode::Methods(_)
+                DeclNode::Defs(_) | DeclNode::Methods(_) | DeclNode::Quantifier(_)
             ) && sig_ok(decls, decl, sig)
         });
         if !ambient_ok
@@ -300,9 +308,24 @@ fn validate(shard: &mut Shard<'_>) -> Result<(), &'static str> {
 
     // Each link is named on the surface, and a binder only within its declaration
     let mut heads: Vec<(&Ref, Option<(DeclId, usize)>)> = Vec::new();
+    // A quantified type is written where its declaration is nested
+    let mut quantified = Ok(());
     for site in sites {
-        site.ty.names(&mut |head| heads.push((head, site.group())));
+        site.ty
+            .each_node_in(site.group(), &mut |ty, group| match ty {
+                TypeExpr::Name(head) => heads.push((head, group)),
+                TypeExpr::Quantified { decl, .. } => {
+                    let nested = decls.get(decl.index()).is_some_and(|found| {
+                        found.kind == DeclKind::Quantifier && found.outer == group
+                    });
+                    if !nested {
+                        quantified = Err("a quantified type is misplaced");
+                    }
+                }
+                _ => {}
+            });
     }
+    quantified?;
     for (index, decl) in decls.iter().enumerate() {
         let group = Some((DeclId::from_index(index), 0));
         // A decorator is named where its declaration is declared
@@ -311,7 +334,11 @@ fn validate(shard: &mut Shard<'_>) -> Result<(), &'static str> {
                 for supertype in &class.supers {
                     heads.push((&supertype.head, group));
                     for arg in &supertype.args {
-                        arg.ty().names(&mut |head| heads.push((head, group)));
+                        arg.ty().each_node_in(group, &mut |ty, group| {
+                            if let TypeExpr::Name(head) = ty {
+                                heads.push((head, group));
+                            }
+                        });
                     }
                 }
                 class.decorators.iter().collect()
@@ -320,7 +347,10 @@ fn validate(shard: &mut Shard<'_>) -> Result<(), &'static str> {
                 .iter()
                 .flat_map(|method| &method.decorators)
                 .collect(),
-            DeclNode::Alias(_) | DeclNode::Defs(_) | DeclNode::Closure(_) => Vec::new(),
+            DeclNode::Alias(_)
+            | DeclNode::Defs(_)
+            | DeclNode::Closure(_)
+            | DeclNode::Quantifier(_) => Vec::new(),
         };
         for decorator in decorators {
             if let Decorator::Ident(head) = decorator {
@@ -368,7 +398,10 @@ fn sig_count(decl: &Decl<'_>) -> usize {
     match &decl.node {
         DeclNode::Defs(defs) => defs.len(),
         DeclNode::Methods(methods) => methods.len(),
-        DeclNode::Class(_) | DeclNode::Alias(_) | DeclNode::Closure(_) => 1,
+        DeclNode::Class(_)
+        | DeclNode::Alias(_)
+        | DeclNode::Closure(_)
+        | DeclNode::Quantifier(_) => 1,
     }
 }
 
@@ -379,6 +412,7 @@ fn binders<'d>(decl: &'d Decl<'_>, sig: usize) -> &'d [Binder] {
         DeclNode::Alias(alias) => &alias.binders,
         DeclNode::Defs(defs) => &defs[sig].binders,
         DeclNode::Methods(methods) => &methods[sig].binders,
+        DeclNode::Quantifier(quantifier) => &quantifier.binders,
         DeclNode::Closure(_) => &[],
     }
 }
