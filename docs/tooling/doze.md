@@ -32,6 +32,7 @@ doze --project app test --filter 'util/*'
 (cd app && dolang --module-path lib -m test test --filter 'util/*')
 ```
 
+See [Running Tests](../shell/testing.md#running-tests) for the options.
 `--list` lists the tests instead, and `--format` gives JSON for tools:
 
 ```bash
