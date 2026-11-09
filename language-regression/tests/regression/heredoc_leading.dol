@@ -1,0 +1,32 @@
+# Blank lines before the body of a here string are part of it, and a body
+# line starting with `#` is text, not a comment.
+let blank = |
+
+  body
+assert_eq $blank "\nbody\n"
+
+let hash = |-
+  # text
+
+  # more
+assert_eq $hash "# text\n\n# more"
+
+let both = r|
+
+
+  # $raw
+assert_eq $both "\n\n# \$raw\n"
+
+# Whitespace on a leading blank line beyond the body's indentation is kept.
+let spaces = |
+     
+  x
+assert_eq $spaces "   \nx\n"
+
+# A `|` ending a line without an indented body is literal text, and blank and
+# comment lines after it are skipped.
+let literal = (do |*args| args)
+let args = literal a |
+
+# skipped
+assert_eq $args ("a", "|")

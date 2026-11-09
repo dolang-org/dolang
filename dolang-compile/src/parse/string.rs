@@ -130,12 +130,16 @@ impl Parser<'_> {
     pub(super) fn parse_heredoc_intro(&mut self, pipe_span: Span) -> Result<(Span, bool)> {
         use self::Op;
         use TokenInfo::*;
-        if let Some(token!(Op(Op::Minus))) = self.peek()? {
+        let res = if let Some(token!(Op(Op::Minus))) = self.peek_heredoc_intro()? {
             let minus_span = self.advance();
-            Ok((pipe_span | minus_span, true))
+            (pipe_span | minus_span, true)
         } else {
-            Ok((pipe_span, false))
-        }
+            (pipe_span, false)
+        };
+        // Buffer the token after the introducer, which is an `Indent` before a
+        // here string body
+        self.peek_heredoc_intro()?;
+        Ok(res)
     }
 
     pub(super) fn parse_heredoc(

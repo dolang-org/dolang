@@ -197,7 +197,8 @@ let stripped = |-
 ```
 
 Blank lines within the content are preserved (with any indentation stripped per
-usual):
+usual), including those before the first content line, which still sets the
+baseline. A content line starting with `#` is text, not a comment:
 
 ```
 let with_gap = |-
@@ -205,6 +206,11 @@ let with_gap = |-
 
   third
 # with_gap == "first\n\nthird"
+
+let leading = |
+
+  # heading
+# leading == "\n# heading\n"
 ```
 
 Interpolation works the same way as in quoted strings:
