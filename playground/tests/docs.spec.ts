@@ -51,7 +51,7 @@ test('signatures include annotated types', () => {
       },
     }],
   };
-  expect(label('m', apply)).toBe('# module m\ndef apply f@(@[T @ Int] (T) -> T)\n  ...');
+  expect(label('m', apply)).toBe('# module m\ndef apply f @ (@[T @ Int] (T) -> T)\n  ...');
 });
 
 test('prose drops playground markup and manual anchors', () => {
