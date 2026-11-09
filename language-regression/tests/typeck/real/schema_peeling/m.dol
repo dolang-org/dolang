@@ -1,0 +1,53 @@
+# dolang: strict
+# Items whose places are forced relate one by one, so a generic fixture that
+# forwards the keys it doesn't use is solved through a combinator that
+# interposes it on a test function's call.
+
+pub def apply_fixture[Ts @ {**Value}, Us @ {**Value}]
+  wrap @ ((((...Ts, <Value, >Value) -> nil), ...Us, <Value, >Value) -> nil)
+  func @ ((...Ts, <Value, >Value) -> nil)
+do -> ((...Us, <Value, >Value) -> nil)
+  do |...args @ Us| wrap $func ...args
+
+# A rank-2 form takes the fixture once, for any test function it then wraps
+pub def curry[K @ {**Value}]
+  wrap @ (@[R @ {**Value}] (((...K, ...R, <Value, >Value) -> nil), ...R, <Value, >Value) -> nil)
+do -> (@[R @ {**Value}] (((...K, ...R, <Value, >Value) -> nil)) -> ((...R, <Value, >Value) -> nil))
+  def curried[R @ {**Value}]
+    func @ ((...K, ...R, <Value, >Value) -> nil)
+  do -> ((...R, <Value, >Value) -> nil)
+    do |...args @ R| wrap $func ...args
+  curried
+
+pub def inject[R @ {**Value}]
+  func @ ((extra: Str, ...R, <Value, >Value) -> nil)
+  ...args @ R
+do
+  func extra: injected ...args
+
+def mono func @ ((extra: Str, <Value, >Value) -> nil)
+  func extra: injected
+
+def only_extra :extra@Str
+  let _ @ Str = extra
+
+def combo :kind@Str :extra@Str
+  let _ @ (Str, Str) = (kind, extra)
+
+pub def forwarded()
+  let f = apply_fixture $inject $combo
+  f kind: a
+
+pub def monomorphic()
+  let f = apply_fixture $mono $only_extra
+  f()
+
+def other :n@Int :extra@Str
+  let _ @ (Int, Str) = (n, extra)
+
+pub def curried()
+  let injecting = curry $inject
+  let f = injecting $combo
+  f kind: a
+  let g = injecting $other
+  g n: 1

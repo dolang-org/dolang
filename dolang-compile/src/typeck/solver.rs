@@ -2506,19 +2506,33 @@ impl<'db> Solver<'db> {
         false
     }
 
-    /// Default a variable without lower bounds to the meet of its upper bounds,
+    /// Whether nothing gives a variable a lower bound: it has none but unsolved
+    /// variables without any of their own, which only its own default could
+    /// bound in turn
+    pub(crate) fn ungrounded(&self, id: InferVarId) -> bool {
+        self.bounds(id)
+            .lower()
+            .all(|term| match self.resolve(term) {
+                Ok(Term::Infer(other)) => {
+                    other != id && self.bounds(other).lower().next().is_none()
+                }
+                _ => false,
+            })
+    }
+
+    /// Default an [ungrounded](Self::ungrounded) variable to the meet of its upper bounds,
     /// as the greatest type they show to fit them: for an instantiated binder
-    /// nothing else bounds, its bound. A variable with a lower bound, without
+    /// nothing else bounds, its bound. A variable with other lower bounds, without
     /// upper bounds, or with an upper bound that isn't yet solved is left
     /// unsolved, for its caller to default otherwise. A schema variable's upper
     /// bounds must be ordered, since schemas have no general meet. Only a caller
     /// that has given up waiting for lower bounds uses this: [`Self::default`]
     /// never invents a type from no lower bounds.
     pub(crate) fn default_upper(&mut self, id: InferVarId) -> Result<TypeId, Residual> {
-        let bounds = self.bounds(id);
-        if self.assignment(id).is_some() || bounds.lower().next().is_some() {
+        if self.assignment(id).is_some() || !self.ungrounded(id) {
             return Err(Residual::Inference);
         }
+        let bounds = self.bounds(id);
         let upper = bounds
             .upper()
             .map(|term| self.reify(term))

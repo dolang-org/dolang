@@ -172,6 +172,27 @@ fn bare_variables_default_to_the_meet_of_their_upper_bounds() {
 }
 
 #[test]
+fn a_variable_below_only_bare_ones_is_bare_too() {
+    let mut db = Database::new();
+    let a = nominal(&mut db, "A", vec![], vec![]);
+    db.seal();
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    // `below <: above <: A`: nothing bounds either from below
+    let below = s.infer();
+    let above = s.infer();
+    s.constrain(below, above, Provenance::default());
+    s.constrain(above, s.closed(a), Provenance::default());
+    s.solve();
+    // `below`'s upper bound waits on `above`'s default
+    assert!(s.default_upper(variable_id(below)).is_err());
+    assert_eq!(s.default_upper(variable_id(above)), Ok(a));
+    s.solve();
+    assert_eq!(s.default_upper(variable_id(below)), Ok(a));
+    assert!(s.solve().iter().all(|r| r.status == Status::Proven));
+}
+
+#[test]
 fn bare_schema_variables_default_to_ordered_upper_bounds() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);

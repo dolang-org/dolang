@@ -368,7 +368,9 @@ fn positional_items_are_distributed_by_count() {
         &check(&db, nested, two),
         Contradiction::Excess(1)
     ));
-    assert!(residual(&check(&db, one, twice), Residual::Alignment));
+    // Arguments bind from the left, so the item lands on the first repeated
+    // parameter
+    assert_eq!(check(&db, one, twice).status, Status::Proven);
 }
 
 #[test]
@@ -592,10 +594,8 @@ fn opaque_rigids_pair_up_or_stand_for_their_bounds() {
     }
     let result = under(&db, f, one, of_ts);
     assert!(contradiction(&result, Contradiction::Rigid));
-    assert!(residual(
-        &under(&db, f, led, led_maybe),
-        Residual::Alignment
-    ));
+    // The leading item fills the optional one, as arguments bind from the left
+    assert_eq!(under(&db, f, led, led_maybe).status, Status::Proven);
     // A pack stands for its bound, which may be empty
     assert!(contradiction(
         &under(&db, f, of_ts, one),
@@ -989,10 +989,7 @@ fn invert_call<'db>(
     s.solve();
     let mut outcomes = default_all(&mut s);
     loop {
-        let bare: Vec<_> = s
-            .unresolved()
-            .filter(|&id| s.bounds(id).lower().next().is_none())
-            .collect();
+        let bare: Vec<_> = s.unresolved().filter(|&id| s.ungrounded(id)).collect();
         let progress = bare
             .into_iter()
             .filter(|&id| s.default_upper(id).is_ok())
@@ -1651,9 +1648,11 @@ fn an_actual_pack_is_left_the_keys_the_others_dont_name() {
         ],
     );
     let passed = takes(&db, vec![required(b, str), required(a, int)]);
-    // `a` twice can't tell which `a` is the pack's
+    // With `a` twice, the first binds the named parameter and the pack is
+    // left the second
     let twice = takes(&db, vec![required(a, int), required(a, int)]);
     let left = items(&db, vec![required(b, str)]);
+    let second = items(&db, vec![required(a, int)]);
     db.seal();
     let (_, packs, outcomes) = invert_call(
         &db,
@@ -1667,11 +1666,18 @@ fn an_actual_pack_is_left_the_keys_the_others_dont_name() {
         "{outcomes:?}"
     );
     assert_eq!(packs, vec![Ok(left)]);
-    let outcomes = undefaulted(&db, callee, twice);
+    let (_, packs, outcomes) = invert_call(
+        &db,
+        &Gas::default(),
+        callee,
+        &[CallArg::Positional(twice)],
+        None,
+    );
     assert!(
-        outcomes.iter().any(|o| residual(o, Residual::Alignment)),
+        outcomes.iter().all(|o| o.status == Status::Proven),
         "{outcomes:?}"
     );
+    assert_eq!(packs, vec![Ok(second)]);
 }
 
 #[test]
@@ -1713,4 +1719,155 @@ fn several_actual_packs_wait_and_a_short_expected_lane_contradicts() {
         statuses(&db, long, &[&[CallArg::Positional(only_int)]]),
         [Status::Contradicted]
     );
+}
+
+/// `(...params) -> Value` with `packs` as the innermost group, which
+/// [`pack`] refers to
+fn takes_packs(s: &Solver<'_>, params: Vec<SchemaItem>, packs: &[Term]) -> Term {
+    let ty = takes(s.db, params);
+    let environment = s.intern_environment(s.empty_environment(), packs.to_vec());
+    s.view(ty, environment)
+}
+
+/// The outcomes, before and after defaulting, of relating `(...actual) ->
+/// Value` to `(...expected) -> Value`
+/// over schema variables `S` and `T`, slots 0 of each, with `{k: low}` below
+/// `S` and `T` below `{k: high}`. The parameter lists relate contravariantly,
+/// so `expected`'s items are the actual side of the schema obligation.
+fn through(
+    db: &Database,
+    actual: Vec<SchemaItem>,
+    expected: Vec<SchemaItem>,
+    low: TypeId,
+    high: TypeId,
+) -> (Vec<Outcome>, Vec<Outcome>) {
+    let k = db.intern(Type::Literal(Literal::Sym(db.intern_symbol("k"))));
+    let only = |value| items(db, vec![keyed(Multiplicity::Required, k, value)]);
+    let gas = Gas::default();
+    let mut s = Solver::new(db, &gas);
+    let [t, u] = [(); 2].map(|_| s.infer_kind(Kind::Schema, Rest::Keyed));
+    let a = takes_packs(&s, actual, &[u]);
+    let b = takes_packs(&s, expected, &[t]);
+    s.constrain(a, b, Provenance::default());
+    s.constrain(s.closed(only(low)), t, Provenance::default());
+    s.constrain(u, s.closed(only(high)), Provenance::default());
+    let solved = s.solve();
+    (solved, default_all(&mut s))
+}
+
+#[test]
+fn forced_items_peel_and_lone_variables_relate() {
+    use Multiplicity::Required as Req;
+    let mut db = Database::new();
+    let num = nominal(&mut db, "Num", vec![], vec![]);
+    let int = nominal(&mut db, "Int", vec![], vec![num]);
+    let sym = nominal(&mut db, "Sym", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Sym, sym);
+    let j = db.intern(Type::Literal(Literal::Sym(db.intern_symbol("j"))));
+    db.seal();
+    let s = || include(Req, pack(&db, 0));
+    // {Int, **S} <: {Num, **T} gives Int <: Num and S <: T
+    let actual = || vec![positional(Req, num), s()];
+    let expected = || vec![positional(Req, int), s()];
+    let (_, outcomes) = through(&db, actual(), expected(), int, num);
+    assert!(
+        outcomes.iter().all(|o| o.status == Status::Proven),
+        "{outcomes:?}"
+    );
+    let (_, outcomes) = through(&db, actual(), expected(), num, int);
+    assert!(
+        outcomes.iter().any(|o| o.status == Status::Contradicted),
+        "{outcomes:?}"
+    );
+    // The same key peels wherever it is: {j: Int, **S} <: {**T, j: Num}
+    let actual = || vec![s(), keyed(Req, j, num)];
+    let expected = || vec![keyed(Req, j, int), s()];
+    let (_, outcomes) = through(&db, actual(), expected(), int, num);
+    assert!(
+        outcomes.iter().all(|o| o.status == Status::Proven),
+        "{outcomes:?}"
+    );
+    let (_, outcomes) = through(&db, actual(), expected(), num, int);
+    assert!(
+        outcomes.iter().any(|o| o.status == Status::Contradicted),
+        "{outcomes:?}"
+    );
+    // After an actual variable, which may hold the key first, it doesn't, and
+    // waits for the variable: {**S, j: Int} <: {j: Num, **T}
+    let actual = vec![keyed(Req, j, num), s()];
+    let expected = vec![s(), keyed(Req, j, int)];
+    let (outcomes, _) = through(&db, actual, expected, int, num);
+    assert!(residual(&outcomes[0], Residual::Inference), "{outcomes:?}");
+}
+
+#[test]
+fn an_optional_head_takes_a_required_item_only_where_nothing_required_follows() {
+    use Multiplicity::{Optional as Opt, Repeated as Rep, Required as Req};
+    let mut db = Database::new();
+    let num = nominal(&mut db, "Num", vec![], vec![]);
+    let int = nominal(&mut db, "Int", vec![], vec![num]);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let s = |db: &Database, items: Vec<SchemaItem>| self::items(db, items);
+    let one_str = s(&db, vec![positional(Req, str)]);
+    let one_int = s(&db, vec![positional(Req, int)]);
+    // (?Int, Str) isn't a `def`'s order, but an overload may have it; by
+    // count, a lone item is Str
+    let skipped = s(&db, vec![positional(Opt, int), positional(Req, str)]);
+    let optional = s(&db, vec![positional(Opt, num), positional(Rep, str)]);
+    db.seal();
+    assert_eq!(check(&db, one_str, skipped).status, Status::Proven);
+    assert_eq!(check(&db, one_int, optional).status, Status::Proven);
+    assert!(contradiction(
+        &check(&db, one_str, optional),
+        Contradiction::UnrelatedNominals
+    ));
+}
+
+#[test]
+fn a_lone_variable_relates_to_a_rigid_beside_peels_and_pairs() {
+    use Multiplicity::Required as Req;
+    let mut db = Database::new();
+    let num = nominal(&mut db, "Num", vec![], vec![]);
+    let int = nominal(&mut db, "Int", vec![], vec![num]);
+    let body = function(&db, &[], db.top());
+    // Keyed packs K and R, as a rank-2 `curry` forwards
+    let f = generic(
+        &mut db,
+        vec![
+            bounded(Kind::Schema, Binding::Rest(Rest::Keyed), None),
+            bounded(Kind::Schema, Binding::Rest(Rest::Keyed), None),
+        ],
+        body,
+    );
+    // Slots 0 and 1 are K and R, slot 2 a variable T of both lanes
+    let led = items(&db, vec![positional(Req, int), include(Req, pack(&db, 1))]);
+    let led_t = items(&db, vec![positional(Req, num), include(Req, pack(&db, 2))]);
+    let k_t = items(
+        &db,
+        vec![include(Req, pack(&db, 0)), include(Req, pack(&db, 2))],
+    );
+    let k_r = items(
+        &db,
+        vec![include(Req, pack(&db, 0)), include(Req, pack(&db, 1))],
+    );
+    db.seal();
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    let rigids = s.rigid_environment(f);
+    let mut group = s.frame(rigids).group.clone();
+    let r = group[1];
+    let t = s.infer_kind(Kind::Schema, Rest::All);
+    group.push(t);
+    let env = s.intern_environment(s.empty_environment(), group);
+    // {Int, **R} <: {Num, **T}: R stands as itself, not as its bound
+    s.constrain(s.view(led, env), s.view(led_t, env), Provenance::default());
+    // {**K, **T} <: {**K, **R}: T relates to R beside the paired K
+    s.constrain(s.view(k_t, env), s.view(k_r, env), Provenance::default());
+    let outcomes = s.solve();
+    assert!(
+        outcomes.iter().all(|o| o.status == Status::Proven),
+        "{outcomes:?}"
+    );
+    let Term::Infer(id) = t else { unreachable!() };
+    assert_eq!(s.assignment(id), Some(r));
 }

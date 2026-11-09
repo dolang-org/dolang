@@ -1,0 +1,38 @@
+# dolang: strict
+# A forwarding fixture leaves the test function's other keys to its caller
+
+import m:
+  - apply_fixture
+  - curry
+  - inject
+
+def combo :kind@Str :extra@Str
+  let _ @ (Str, Str) = (kind, extra)
+
+pub def mismatched()
+  let f = apply_fixture $inject $combo
+  f kind: 1
+# error: expected `std.Str`, found `1`
+#   --> bad.dol:LL:LL
+#    |
+# LL |   f kind: 1
+#    |           ^
+
+pub def missing()
+  let f = apply_fixture $inject $combo
+  f()
+# error: this call is missing an argument
+#   --> bad.dol:LL:LL
+#    |
+# LL |   f()
+#    |   ^^^
+
+pub def curried_mismatched()
+  let injecting = curry $inject
+  let f = injecting $combo
+  f kind: 1
+# error: expected `std.Str`, found `1`
+#   --> bad.dol:LL:LL
+#    |
+# LL |   f kind: 1
+#    |           ^
