@@ -480,6 +480,15 @@ let NO_CONTAINER_ERRORS @ Array[Str] = $
   - CONTAINER NOT KNOWN
   - NO CONTAINER FOUND
 
+# Podman's `rmi --force` failing on a container that is mid-removal: storage
+# still holds it but libpod's database no longer does. See `Image.remove`.
+let RMI_RACE_ERRORS @ Array[Str] = $
+  - NO CONTAINER WITH ID
+  - USING IMAGE COULD NOT BE REMOVED
+
+let RMI_RETRY_ATTEMPTS = 10
+let RMI_RETRY_SLEEP = 0.2
+
 # Raised when an image reference is malformed.
 #[final]
 pub class InvalidImageReferenceError: RuntimeError
@@ -797,6 +806,9 @@ def merged_lines out@Array[Str] err@Array[Str] -> Array[Str]
 
 def matches_any haystack@Str needles@Array[Str] -> Bool
   needles.any do |needle| haystack.contains $needle
+
+def lines_match lines@Array[Str] needles@Array[Str] -> Bool
+  lines.any do |line| matches_any $line.upper() $needles
 
 def classify_image_error ref@Str lines@Array[Str]
   for line = lines
@@ -1872,23 +1884,35 @@ pub class Image
     # Remove the image even if containers use it, removing them too.
     :force @ Bool = false
   do
-    if force
-      # `rmi --force` removes containers using the image as part of the same
-      # operation, but one can be self-removing at the same time (e.g. a
-      # build container run with `--rm`), and podman treats that race as a
-      # hard failure instead of the no-op it actually is. Removing them
-      # ourselves first leaves nothing for `rmi` to race against; a
-      # container that vanishes underneath this loop is exactly that race,
-      # not a real failure.
-      for ctr = self.#runtime.containers all: true filter: "ancestor=$(self.id)"
-        try
-          ctr.remove force: true
-        catch NoContainerError: _
-          nil
-    self.#runtime.quiet_cli rmi
-      if force
-        --force
-      $self.id
+    # `rmi --force` removes containers using the image, but one can be
+    # self-removing at the same time: a `--rm` container's cleanup runs in
+    # conmon and can still be finishing after the `run` client returns. Podman
+    # treats that race as a hard failure rather than the no-op it is, and no
+    # container listing can see the half-removed container to remove it first.
+    # Image removal is idempotent, so retry briefly instead; if an earlier
+    # attempt got the image after all, a later one finding it gone is success.
+    let racy = (force && self.#runtime.id == :PODMAN:)
+    for attempt = 1..(RMI_RETRY_ATTEMPTS + 1)
+      let out @ Array[Str] = []
+      let lines @ Array[Str] = []
+      try
+        self.#runtime.cli rmi
+          if force
+            --force
+          $self.id
+          stdout: $out.prechomp()
+          stderr: $lines.prechomp()
+        return
+      catch proc.Error: e
+        let all = merged_lines $out $lines
+        if racy
+          if (attempt > 1 && lines_match(all, NO_IMAGE_ERRORS))
+            return
+          if (attempt < RMI_RETRY_ATTEMPTS && lines_match(all, RMI_RACE_ERRORS))
+            time.sleep $RMI_RETRY_SLEEP
+            continue
+        report_unknown $all
+        throw e
 
   # Saves the image to an archive or directory, returning `target`.
   pub def save
