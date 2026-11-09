@@ -38,6 +38,24 @@ def errors_fail_the_check()
   assert (text.contains "failed: 2 units, 1 diagnostics")
 
 #[test]
+def test_decorators_check_as_layers()
+  let out = BinBuf()
+  check test_decorators.dol $out
+  assert ((printed out).contains "passed: 1 units, 0 diagnostics")
+
+#[test]
+def test_decorators_reject_what_no_layer_takes()
+  let out = BinBuf()
+  let err = assert_throws $proc.Error do check test_decorators_bad.dol $out
+  assert_eq $err.rc 1
+  let text = printed $out
+  # A mistyped axis, a mistyped tagged value, an unsupplied parameter and a
+  # mistyped injected key, each where the decorator applies
+  for line = [26, 31, 36, 41]
+    assert (text.contains "test_decorators_bad.dol:$line:1")
+  assert (text.contains "failed: 1 units, 7 diagnostics")
+
+#[test]
 def a_source_under_the_search_path_is_its_module()
   let out = BinBuf()
   check lib/m.dol $out

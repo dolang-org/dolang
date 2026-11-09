@@ -1,3 +1,4 @@
+# dolang: strict
 # Utilities for writing and running test suites.
 #
 # `dolang -m test` runs the tests under its path arguments with
@@ -129,93 +130,126 @@ let pass_style = term.Style fg: :GREEN:
 let name_style = term.Style dim: true
 let note_style = term.Style bold: true
 
-class TestCase
-  pub field module name tags func base params location
+# The type of a test function under any layer of decorators: it takes the
+# arguments that no layer below it supplies. A test reads no input, since tests
+# run concurrently, and writes to its captured output.
+pub @let TestFn[S @ {**Value}] = ((...S, <Iter[Never], >Sink[Value]) -> nil)
 
-  def (init) self module name tags func base params location
-    self.module = module
-    self.name = name
-    self.tags = tags
+# A registered test case: its metadata and the function that runs it.
+#[final]
+class TestCase
+  pub field info @ TestInfo
+  pub field func @ TestFn[{}]
+
+  def (init) self info @ TestInfo func @ TestFn[{}]
+    self.info = info
     self.func = func
-    self.base = base
-    self.params = params
-    self.location = location
 
 class TestCollection
-  field module
-  field tests = []
-  field tags = []
+  field module @ (Path | nil)
+  field tests @ Array[TestCase] = []
+  field tags @ Array[Str] = []
 
-  def (init) self module
+  def (init) self module @ (Path | nil)
     self.#module = module
 
-  pub def add self name tags func base params location
-    if (self.#module == nil)
+  pub def add
+    self
+    name @ Str
+    tags @ Seq[Str]
+    func @ TestFn[{}]
+    base @ Str
+    params @ Tuple[...Tuple[Str, Str]]
+    location @ (inspect.Location | nil)
+  do
+    let module = self.#module
+    if (module == nil)
       throw std.StateError "test registration outside a test file"
     let all_tags = Tuple [...self.#tags, ...tags]
-    self.#tests.push $TestCase(self.#module, name, all_tags, func, base, params, location)
+    let info = TestInfo $module $name $all_tags $base $params $location
+    self.#tests.push $TestCase(info, func)
 
-  pub def add_tags self tags
+  pub def add_tags self tags @ Seq[Str]
     if (self.#module == nil)
       throw std.StateError "test registration outside a test file"
     self.#tags.push ...tags
 
-  pub def take self
+  pub def take self -> Array[TestCase]
     self.#tests
 
 let collect_key @ strand.Key[TestCollection] = strand.Key(TestCollection nil)
 
-# Accumulates parametrize axes around a composed test function. Any
-# decorator that needs to attach metadata beyond a function (currently
-# only `parametrize`) normalizes its input into a `TestDef` via
-# `to_test_def`; `fixture` reaches through (or creates) one transparently,
-# so `#[fixture]`-only tests register the same function as before.
+# A pending test case: the `parametrize` axes chosen for it as name parts, the
+# tags they contribute, and the test function with those axes bound.
+class Pending[S @ {**Value}]: Struct[{params: Tuple[...Tuple[Str, Str]], tags: Tuple[...Str], func: TestFn[S]}]
+
+# A test function under decorators, as the pending cases that `test` registers.
+# Each decorator applies as a layer over the one below: `parametrize` fans the
+# cases out, binding its axes in each, and a fixture wraps each case's
+# function. A case's function takes what no layer has supplied yet.
 #
-# The definition location is taken from the function the first decorator
-# receives, before any fixture wraps it.
-class TestDef: Func
-  pub field func location
-  pub field params = []
+# The name and location come from the function the first decorator received.
+#[final]
+class TestDef[S @ {**Value}]: Func
+  pub field base @ Str
+  pub field location @ (inspect.Location | nil)
+  pub field cases @ Array[Pending[S]]
 
-  def (init) self func
-    self.func = func
-    self.location = inspect.definition $func
+  def (init)
+    self
+    base @ Str
+    location @ (inspect.Location | nil)
+    cases @ Array[Pending[S]]
+  do
+    self.base = base
+    self.location = location
+    self.cases = cases
 
-  # Transparently forwards to `func`, so a `TestDef` remains a drop-in
-  # function/stringifiable value wherever the decorated function itself
-  # would be.
-  def (call) self ...rest
-    self.func(...rest)
+  # Runs every case, so a decorated test stays callable as the function it
+  # decorates.
+  def (call) self ...args @ S <Iter[Never] >Sink[Value] -> nil
+    for case = self.cases
+      case.func(...args)
 
-  def (str) self
-    str $self.func
+  def (str) self -> Str
+    self.base
 
-def to_test_def x
-  if (type x TestDef)
-    x
-  else
-    TestDef $x
+  # A layer that wraps each case's function, keeping its axes and tags.
+  pub def map[S2 @ {**Value}] self f @ (TestFn[S] -> TestFn[S2]) -> TestDef[S2]
+    let cases @ Array[Pending[S2]] = []
+    for case = self.cases
+      cases.push $ Pending {params: case.params, tags: case.tags, func: f(case.func)}
+    TestDef $self.base $self.location $cases
 
-# A parametrize value paired with tags contributed only when that value is
-# selected. Not constructed directly; use `tagged`.
-class TaggedValue[T]: @Tagged[T]
+def to_test_def[S @ {**Value}] func @ TestFn[S] -> TestDef[S]
+  if (type func TestDef)
+    # Only a layer makes a `TestDef`, as the function its result says it is,
+    # so its cases take what `func` does
+    return (func !@ TestDef[S])
+  let case @ Pending[S] = Pending {params: (), tags: (), :func}
+  TestDef $str(func) $inspect.definition(func) [case]
+
+# A [`parametrize`](test.parametrize) value carrying tags, made by
+# [`tagged`](test.tagged). A tagged value is never itself tagged.
+#[final]
+pub class Tagged[T]
+  # The parametrize value.
   pub field value @ T
-  pub field tags
+  # Tags contributed to the cases that select the value.
+  pub field tags @ Tuple[...Str]
 
-  def (init) self value @ T tags = []
+  def (init) self value @ T tags @ Tuple[...Str]
+    if (type value Tagged)
+      throw std.TypeError "tagged: value is already tagged"
     self.value = value
     self.tags = tags
 
-def normalize_param_value v
-  if (type v TaggedValue)
-    v
-  else
-    TaggedValue $v []
-
-# A [`parametrize`](test.parametrize) value carrying tags, made by
-# [`tagged`](test.tagged).
-pub @class Tagged[T]
-  field _ @ T
+def normalize_param_value[A] value @ (A | Tagged[A]) -> Tagged[A]
+  # A `Tagged` never holds another, so a tagged value is `Tagged[A]` and any
+  # other is `A`
+  if (type value Tagged)
+    return (value !@ Tagged[A])
+  Tagged $value ()
 
 # Attaches tags to a single `parametrize` value, honored only in cases that
 # select it.
@@ -225,168 +259,232 @@ pub @class Tagged[T]
 # ```
 # #[parametrize backend: [sqlite_conn, tagged(postgres_conn, "slow")]]
 # ```
+#
+# ## Errors
+#
+# [`TypeError`](std.TypeError) if `value` is already tagged or a tag isn't a
+# string.
 pub def tagged[T]
   # The parametrize value.
   value @ T
   # Tags to attach.
   *values @ Str
 do -> Tagged[T]
-  let tag_values = []
-  for tag = values
+  Tagged $value $(check_tags "tagged" values)
+
+# Checks that every tag is a string, which the caller's types may not ensure.
+def check_tags who @ Str tags @ Iterable[Value] -> Tuple[...Str]
+  let tag_values @ Array[Str] = []
+  for tag = tags
     if !(type tag Str)
-      throw std.TypeError "tagged: expected strings"
+      throw std.TypeError "$who: expected strings"
     tag_values.push $tag
-  TaggedValue $value $tag_values
+  Tuple $tag_values
 
 # Read-only metadata for a discovered test.
+#[final]
 pub class TestInfo
-  field case
+  field module @ Path
+  field name @ Str
+  field tags @ Tuple[...Str]
+  field base @ Str
+  field params @ Tuple[...Tuple[Str, Str]]
+  field location @ (inspect.Location | nil)
 
-  def (init) self case
-    self.#case = case
+  def (init)
+    self
+    module @ Path
+    name @ Str
+    tags @ Tuple[...Str]
+    base @ Str
+    params @ Tuple[...Tuple[Str, Str]]
+    location @ (inspect.Location | nil)
+  do
+    self.#module = module
+    self.#name = name
+    self.#tags = tags
+    self.#base = base
+    self.#params = params
+    self.#location = location
 
   # The module containing the test.
   #[getter]
   pub def module self -> Path
-    self.#case.module
+    self.#module
 
   # The registered test name without normalization.
   #[getter]
   pub def name self -> Str
-    self.#case.name
+    self.#name
 
   # The immutable test tags. Order and duplicates are preserved.
   #[getter]
   pub def tags self -> Tuple[...Str]
-    self.#case.tags
+    self.#tags
 
   # The test's ID, `module/name` with the module path's extension removed: the
   # string `--filter` and `--id` match.
   #[getter]
   pub def id self -> Str
-    "$(module_name self.#case.module)/$(self.#case.name)"
+    "$(module_name self.#module)/$(self.#name)"
 
   # The name the test was registered under, before any
   # [`parametrize`](test.parametrize) axes are appended. Equal to
   # [`name`](test.TestInfo.name) for a test without axes.
   #[getter]
   pub def base self -> Str
-    self.#case.base
+    self.#base
 
   # The case's `parametrize` axes as `(axis, value)` pairs, in the order they
   # appear in the name. Values are given as in the name. Empty for a test
   # without axes.
   #[getter]
   pub def params self -> Tuple[...Tuple[Str, Str]]
-    self.#case.params
+    self.#params
 
   # Where the test function is defined, as given by
   # [`inspect.definition`](inspect.definition) for the function the first
   # test decorator received, or `nil` when unknown.
   #[getter]
   pub def location self -> (inspect.Location | nil)
-    self.#case.location
+    self.#location
 
+#[final]
 class ModuleCompileError: std.RuntimeError
-  pub field path output
+  pub field path @ Path
+  pub field output @ compile.Unit
 
-  def (init) self path output
-    std.RuntimeError.(init) $self "compilation failed: $path"
+  def (init) self path @ Path output @ compile.Unit
     self.path = path
     self.output = output
+    std.RuntimeError.(init) $self "compilation failed: $path"
 
+#[final]
 class Failure
-  pub field error backtrace path test output
+  pub field error @ std.RuntimeError
+  pub field backtrace @ (inspect.Backtrace | nil)
+  pub field path @ Path
+  pub field test @ (Str | nil)
+  pub field output @ (Str | nil)
 
-  def (init) self error backtrace path test = nil output = nil
+  def (init)
+    self
+    error @ std.RuntimeError
+    backtrace @ (inspect.Backtrace | nil)
+    path @ Path
+    test @ (Str | nil) = nil
+    output @ (Str | nil) = nil
+  do
     self.error = error
     self.backtrace = backtrace
     self.path = path
     self.test = test
     self.output = output
 
+@let ModuleStatus = (:LOADED: | :FAILED: | :SKIPPED: | :IGNORED:)
+
+# A JSON object in `--list` output or a progress event.
+@let Json = Dict[Sym, json.EncodeValue]
+
 # The outcome of loading a test module: `status` is `:LOADED:` with the
 # selected `cases`, or `:FAILED:`, `:SKIPPED:` or `:IGNORED:` with `error`.
+#[final]
 class ModuleResult
-  pub field path status error backtrace output
-  pub field cases = []
+  pub field path @ Path
+  pub field status @ ModuleStatus
+  pub field error @ (std.RuntimeError | nil) = nil
+  pub field backtrace @ (inspect.Backtrace | nil) = nil
+  pub field output @ (Str | nil) = nil
+  pub field cases @ Array[TestCase] = []
 
-  def (init) self path status
+  def (init) self path @ Path status @ ModuleStatus
     self.path = path
     self.status = status
 
-def module_name path
+def module_name path @ Path -> Str
   let name = str $path.without_ext()
   name.replace "\\" "/"
 
 # Writes progress events as JSON lines. Lines go through a channel to a single
 # writer strand, so events from concurrent tests never interleave.
 class EventWriter
-  field send writer
+  field send @ strand.Sender[Str]
+  field writer @ strand.Strand[nil]
 
-  def (init) self sink
-    let send recv = strand.channel 64
+  def (init) self sink @ Sink[Str]
+    let channel @ (strand.Sender[Str], strand.Receiver[Str]) = strand.channel 64
+    let send recv = channel
     self.#send = send
     self.#writer = strand.spawn do
       for line = recv
-        sink.write $line
+        sink.put $line
 
-  pub def emit self name record
+  pub def emit self name @ Str record @ Json
     self.#send.put "$(json.encode {event: name, ...record})\n"
 
   pub def close self
     self.#send.close()
     self.#writer.join()
 
-# Prints a failure, skip or ignore in the run report's style, returning which
-# it was.
-def print_failure failure
+@let Outcome = (:passed: | :failed: | :skipped: | :ignored:)
+
+# Prints a failure, skip or ignore in the run report's style.
+def print_failure failure @ Failure
   let e = failure.error
   let module = module_name $failure.path
   if (type e Ignore)
-    return :IGNORED:
+    return
+  let test = failure.test
   if (type e Skip)
-    let name = (failure.test && "$module/$(failure.test)" || module)
+    let name = (test && "$module/$test" || module)
     print (info_style "skipped") ": " (name_style name)
-    if e.message
-      print " (" (note_style e.message) ")"
+    let message = e.message
+    if message
+      print " (" (note_style message) ")"
     echo()
-    return :SKIPPED:
+    return
   if (type e ModuleCompileError)
     print (err_style "failed") ": " (name_style "$module")
       " (" (note_style "compilation failed") ")\n"
     for diag = e.output.diagnostics()
       echo $diag.render().indent(2)
-    return :FAILED:
-  if failure.test
-    print (err_style "failed") ": " (name_style "$module/$(failure.test)") ": "
+    return
+  if test
+    print (err_style "failed") ": " (name_style "$module/$test") ": "
   else
     print (err_style "failed") ": " (name_style "$module") ": "
   echo $ shell.render_error $e backtrace: $failure.backtrace
-  if failure.output
-    print "  ──\n" $term.preformat(failure.output).indent(2)
-  :FAILED:
+  let output = failure.output
+  if output
+    print "  ──\n" $term.preformat(output).indent(2)
 
 # Loads modules and runs their tests. With `redirect`, strand output goes to
 # the capture buffer as well, so none of it reaches stdout. With `plain`,
 # captured output has no styling. With `events`, progress events go to that
 # `EventWriter`.
 class Harness
-  field module_jobs jobs filter timeout capture redirect plain events
-  field errors = []
-  field counts = {passed: 0, failed: 0, skipped: 0, ignored: 0}
-  field module_failed = false
+  field module_jobs @ strand.Resource
+  field jobs @ strand.Resource
+  field filter @ ((TestInfo, <Value, >Value) -> Bool)
+  field timeout @ Int
+  field capture @ Bool
+  field redirect @ Bool
+  field plain @ Bool
+  field events @ (EventWriter | nil)
+  field errors @ Array[Failure] = []
+  field counts @ {passed: Int, failed: Int, skipped: Int, ignored: Int} = {passed: 0, failed: 0, skipped: 0, ignored: 0}
+  field module_failed @ Bool = false
 
   def (init)
     self
-    :jobs
-    :module_jobs
-    :filter
-    :timeout
-    :capture
-    :redirect = false
-    :plain = false
-    :events = nil
+    :jobs @ Int
+    :module_jobs @ Int
+    :filter @ ((TestInfo, <Value, >Value) -> Bool)
+    :timeout @ Int
+    :capture @ Bool
+    :redirect @ Bool = false
+    :plain @ Bool = false
+    :events @ (EventWriter | nil) = nil
   do
     self.#module_jobs = strand.Resource $module_jobs
     self.#jobs = strand.Resource $jobs
@@ -397,27 +495,32 @@ class Harness
     self.#plain = plain
     self.#events = events
 
-  def matches_filter self case
-    self.#filter $TestInfo(case)
+  def matches_filter self case @ TestCase -> Bool
+    self.#filter $case.info
 
-  def emit self name record
-    if self.#events
-      self.#events.emit $name $record
+  def emit self name @ Str record @ Json
+    let events = self.#events
+    if events
+      events.emit $name $record
 
   # One when a test or module failed, otherwise zero.
-  def status self
+  def status self -> Int
     ((self.#module_failed || self.#counts[:failed:] > 0) && 1 || 0)
 
-  def with_timeout self func
-    if (self.#timeout != nil)
-      timeout $self.#timeout $func
-    else
-      func()
+  def with_timeout[R] self func @ (() -> R) >Sink[Value] -> R
+    timeout $self.#timeout $func
 
-  def record_error self error backtrace path test = nil output = nil
+  def record_error
+    self
+    error @ std.RuntimeError
+    backtrace @ (inspect.Backtrace | nil)
+    path @ Path
+    test @ (Str | nil) = nil
+    output @ (Str | nil) = nil
+  do
     self.#errors.push $Failure(error, backtrace, path, test, output)
 
-  def with_capture self output func
+  def with_capture[R] self output @ BinBuf func @ (() -> R) >Sink[Value] -> R
     if !self.#capture
       return func()
     let console = term.IoConsole $output can_style: $!self.#plain
@@ -426,15 +529,19 @@ class Harness
     else
       term.capture $console $func
 
-  def run_test self case
+  # Runs a test with its input empty, since tests run concurrently.
+  def run_test self case @ TestCase >Sink[Value]
     self.#emit test-start $(test_record case)
     let output = BinBuf()
     let start = DateTime.now()
-    let outcome = :passed:
-    let error = nil
-    let backtrace = nil
+    let outcome @ Outcome = :passed:
+    let error @ (std.RuntimeError | nil) = nil
+    let backtrace @ (inspect.Backtrace | nil) = nil
+    let func = case.func
     try
-      self.#with_capture $output do self.#with_timeout $case.func
+      self.#with_capture $output do
+        self.#with_timeout do
+          strand.redirect input: $std.null $func
     catch std.RuntimeError: e
       error = e
       backtrace = strand.error_backtrace()
@@ -448,26 +555,27 @@ class Harness
     self.#counts[outcome] = (self.#counts[outcome] + 1)
     let captured = (self.#capture && output.freeze_str() || nil)
     if (error != nil)
-      self.#record_error $error $backtrace $case.module $case.name $captured
+      self.#record_error $error $backtrace $case.info.module $case.info.name $captured
     self.#emit test-end $(test_end_record case outcome error backtrace captured duration)
 
-  def run_module self path cases
+  def run_module self path @ Path cases @ Array[TestCase] >Sink[Value]
     progress.show message: (module_name path) icon: ▶ total: $cases.len do |w|
       strand.fork
         for case = cases
           do self.#jobs.with do
-            progress.show message: $case.name do |_|
+            progress.show message: $case.info.name do |_|
               w.update icon: ▼
               self.#run_test $case
               w.delta()
+    nil
 
   # Compiles and loads a module, collecting the tests it registers that pass
-  # the filter.
-  def load_file self path
+  # the filter. Loading reads no input, since modules load concurrently.
+  def load_file self path @ Path >Sink[Value] -> ModuleResult
     let output = BinBuf()
     try
       let source = path.read_str()
-      let compiled = compile.compile $path $source
+      let compiled = compile.compile $str(path) $source
       let diagnostics = [...compiled.diagnostics()]
       let warnings = diagnostics.any do |d| (d.severity == :WARNING:)
       let errors = diagnostics.any do |d| (d.severity == :ERROR:)
@@ -475,13 +583,15 @@ class Harness
         throw ModuleCompileError $path $compiled
 
       let cases = collect_key.with (TestCollection path) do
-        self.#with_capture $output do self.#with_timeout do load.run $compiled.emit()
+        self.#with_capture $output do
+          self.#with_timeout do
+            strand.redirect input: $std.null do load.run $compiled.emit()
         collect_key.value.take()
       let result = ModuleResult $path :LOADED:
       result.cases = [...cases.filter(do |case| self.#matches_filter case)]
       result
     catch std.RuntimeError: e
-      let status = if (type e Skip)
+      let status @ ModuleStatus = if (type e Skip)
         :SKIPPED:
       else if (type e Ignore)
         :IGNORED:
@@ -493,16 +603,17 @@ class Harness
       result.output = (self.#capture && output.freeze_str() || nil)
       result
 
-  def run_file self path
+  def run_file self path @ Path >Sink[Value]
     self.#emit module-start {path: str(path), module: module_name(path)}
     let result = self.#load_file $path
     self.#emit module-end $(module_record result)
+    let error = result.error
     if (result.status == :LOADED:)
       self.#run_module $path $result.cases
-    else
+    else if (error != nil)
       if (result.status == :FAILED:)
         self.#module_failed = true
-      self.#record_error $result.error $result.backtrace $path nil $result.output
+      self.#record_error $error $result.backtrace $path nil $result.output
 
   def report self
     for failure = self.#errors
@@ -513,7 +624,7 @@ class Harness
       print " ($skipped " (info_style "skipped") ")"
     echo()
 
-  pub def run self files
+  pub def run self files @ Array[Path] >Sink[Value] -> Int
     self.#emit run-start {version: 1, modules: files.len}
     progress.show message: modules total: $files.len do |w|
       strand.fork
@@ -522,16 +633,17 @@ class Harness
             self.#run_file $path
             w.delta()
     let status = self.#status()
-    if self.#events
-      self.#events.emit run-end {...self.#counts, status: status}
+    let events = self.#events
+    if events
+      events.emit run-end {...self.#counts, status: status}
     else
       self.#report()
     status
 
   # Loads each module without running its tests, giving a `ModuleResult` for
   # each file in order.
-  pub def list self files
-    let results = []
+  pub def list self files @ Array[Path] >Sink[Value] -> Array[ModuleResult]
+    let results @ Array[ModuleResult | nil] = []
     for _ = files
       results.push nil
     progress.show message: modules total: $files.len do |w|
@@ -540,10 +652,14 @@ class Harness
           do self.#module_jobs.with do
             results[i] = self.#load_file $path
             w.delta()
-    results
+    let loaded @ Array[ModuleResult] = []
+    for result = results
+      if (result != nil)
+        loaded.push $result
+    loaded
 
 # The JSON form of an `inspect.Location`, or `nil`.
-def location_record loc
+def location_record loc @ (inspect.Location | nil) -> (Json | nil)
   if (loc == nil)
     return nil
   $
@@ -553,18 +669,18 @@ def location_record loc
     len: $loc.len
 
 # The JSON record of a test case, shared by `--list` and progress events.
-def test_record case
-  let module = module_name $case.module
+def test_record case @ TestCase -> Json
+  let info = case.info
   $
-    id: "$module/$(case.name)"
-    module: $module
-    name: $case.name
-    base: $case.base
-    params: $case.params
-    tags: $case.tags
-    location: $(location_record case.location)
+    id: $info.id
+    module: $(module_name info.module)
+    name: $info.name
+    base: $info.base
+    params: $info.params
+    tags: $info.tags
+    location: $(location_record info.location)
 
-def frame_record frame
+def frame_record frame @ inspect.Frame -> Json
   $
     module: $frame.module
     receiver: $frame.receiver
@@ -573,50 +689,60 @@ def frame_record frame
 
 # The `test-end` event for a case. `outcome` is `:passed:`, `:failed:`,
 # `:skipped:` or `:ignored:`, and `error` is what the test raised, if anything.
-def test_end_record case outcome error backtrace output duration
-  let record = $
-    id: "$(module_name case.module)/$(case.name)"
+def test_end_record
+  case @ TestCase
+  outcome @ Outcome
+  error @ (std.RuntimeError | nil)
+  backtrace @ (inspect.Backtrace | nil)
+  output @ (Str | nil)
+  duration @ Float
+do -> Json
+  let record @ Json = $
+    id: $case.info.id
     outcome: $(str outcome)
     duration: $duration
   if (error == nil)
     return record
-  if (type error Skip || type error Ignore)
+  if (type error Skip)
+    record[:message:] = error.message
+  else if (type error Ignore)
     record[:message:] = error.message
   else
     record[:message:] = str $error
-    let frames = []
-    for frame = backtrace
-      frames.push $(frame_record frame)
+    let frames @ Array[Json] = []
+    if (backtrace != nil)
+      for frame = backtrace
+        frames.push $(frame_record frame)
     # A type's string form is `<type module.Name>`.
     let type_name = str (type error)
     if (type_name.starts_with "<type " && type_name.ends_with ">")
       type_name = type_name[6..type_name.len - 1]
-    let details = $
+    let details @ Json = $
       type: $type_name
       rendered: $(str (shell.render_error error backtrace: backtrace))
       backtrace: $frames
     if (type error Assert)
-      let assert @ Assert = error
-      let expected = assert.expected
-      let actual = assert.actual
+      let expected = error.expected
+      let actual = error.actual
       if (expected != nil)
         details[:expected:] = expected
       if (actual != nil)
         details[:actual:] = actual
     record[:error:] = details
-  let source = str $case.module
-  let failure_location = nil
-  for frame = backtrace
-    let loc = frame.location
-    if (loc != nil && loc.source == source)
-      failure_location = location_record $loc
-      break
+  let source = str $case.info.module
+  let failure_location @ (Json | nil) = nil
+  if (backtrace != nil)
+    for frame = backtrace
+      let loc = frame.location
+      if (loc != nil && loc.source == source)
+        failure_location = location_record $loc
+        break
   record[:failure_location:] = failure_location
   if output
     record[:output:] = output
   record
 
-def diagnostic_record diag path
+def diagnostic_record diag @ compile.Diagnostic path @ Path -> Json
   let span = diag.span.span
   $
     severity: (diag.severity == :ERROR: && "error" || "warning")
@@ -627,8 +753,8 @@ def diagnostic_record diag path
       column: $span.start.column
       len: $span.len
 
-def module_record result
-  let record = $
+def module_record result @ ModuleResult -> Json
+  let record @ Json = $
     path: $(str result.path)
     module: $(module_name result.path)
   let e = result.error
@@ -637,26 +763,30 @@ def module_record result
     record[:tests:] = [...result.cases.map(test_record)]
   else if (result.status == :FAILED:)
     record[:status:] = "failed"
-    let error = if (type e ModuleCompileError)
-      let diagnostics = [...e.output.diagnostics().map(do |d| diagnostic_record d result.path)]
-      $
-        kind: compile
-        message: $(str e)
-        diagnostics: $diagnostics
+    let error @ Json = {}
+    if (type e ModuleCompileError)
+      error[:kind:] = "compile"
+      error[:message:] = str $e
+      error[:diagnostics:] = [...e.output.diagnostics().map(do |d| diagnostic_record d result.path)]
     else
-      $
-        kind: load
-        message: $(str e)
-        rendered: $(str (shell.render_error e backtrace: result.backtrace))
-    if result.output
-      error[:output:] = result.output
+      error[:kind:] = "load"
+      error[:message:] = str $e
+      error[:rendered:] = str $ shell.render_error $e backtrace: $result.backtrace
+    let output = result.output
+    if output
+      error[:output:] = output
     record[:error:] = error
   else
     record[:status:] = (result.status == :SKIPPED: && "skipped" || "ignored")
-    record[:message:] = e.message
+    record[:message:] = if (type e Skip)
+      e.message
+    else if (type e Ignore)
+      e.message
+    else
+      nil
   record
 
-def print_listing results
+def print_listing results @ Array[ModuleResult]
   let tests = 0
   let modules = 0
   for result = results
@@ -665,20 +795,22 @@ def print_listing results
     modules = (modules + 1)
     let module = module_name $result.path
     for case = result.cases
+      let info = case.info
       tests = (tests + 1)
-      print (name_style "$module/") $case.name
-      if case.tags.len
-        print " " (name_style "[$(", ".join(case.tags))]")
+      print (name_style "$module/") $info.name
+      if info.tags.len
+        print " " (name_style "[$(", ".join(info.tags))]")
       echo()
   for result = results
-    if (result.status != :LOADED:)
-      print_failure $Failure(result.error, result.backtrace, result.path, nil, result.output)
+    let error = result.error
+    if (result.status != :LOADED: && error != nil)
+      print_failure $Failure(error, result.backtrace, result.path, nil, result.output)
   print (pass_style "listed") ": $tests " (tests == 1 && "test" || "tests")
   print " in $modules " (modules == 1 && "module" || "modules")
   echo()
 
-def test_files paths
-  let files = []
+def test_files paths @ Iterable[Str | Path] -> Array[Path]
+  let files @ Array[Path] = []
   for path = paths
     let path = Path $path
     if (path.metadata().type == :DIR:)
@@ -687,26 +819,13 @@ def test_files paths
       files.push $path
   files
 
-class Fixture: Func
-  field wrap func
-
-  def (init) self wrap func
-    self.#wrap = wrap
-    self.#func = func
-
-  def (call) self ...rest
-    self.#wrap $self.#func ...rest
-
-  def (str) self
-    str $self.#func
-
-# Defines a test fixture. `wrap` should be a function which accepts a block
-# and invokes it with surrounding setup and teardown logic. `wrap` receives
-# any trailing keyword parameters supplied by `parametrize` (or by an outer
-# fixture) after `block` and should forward them to `block` — typically via
-# a variadic `...rest` parameter — so they reach the test function. `wrap`
-# may also pass its own additional keyword parameters to `block` to inject
-# values into the test.
+# Makes a decorator from a test fixture. `wrap` receives a test function and
+# the arguments left for it, and calls it with setup and teardown around the
+# call, passing the arguments on with any keys it injects.
+#
+# Decorators apply from the bottom up, each over the result of the one below,
+# so a fixture receives the axes of any [`parametrize`](test.parametrize) above
+# it and none from one below.
 #
 # ## Example
 #
@@ -724,13 +843,18 @@ class Fixture: Func
 # def example_test()
 #   do_something()
 # ```
-pub def fixture wrap -> (Value -> Value)
-  do |value|
-    let test_def = to_test_def $value
-    test_def.func = Fixture $wrap $test_def.func
-    test_def
+pub def fixture[K @ {**Value}]
+  # The fixture, which calls the test function with the keys it injects and
+  # the arguments it was given.
+  wrap @ (@[R @ {**Value}] (TestFn[{...K, ...R}], ...R, <Iter[Never], >Sink[Value]) -> nil)
+do -> (@[R @ {**Value}] TestFn[{...K, ...R}] -> TestFn[R])
+  def wrapped[R @ {**Value}] func @ TestFn[{...K, ...R}] -> TestFn[R]
+    let test_def = to_test_def $func
+    test_def.map do |f @ TestFn[{...K, ...R}]| -> TestFn[R]
+      do |...args @ R <Iter[Never] >Sink[Value]| wrap $f ...args
+  wrapped
 
-# Returns a decorator that registers a zero-argument test function.
+# Returns a decorator that registers a test function taking no arguments.
 #
 # ## Example
 #
@@ -745,10 +869,10 @@ pub def fixture wrap -> (Value -> Value)
   # Tags to attach. Order and duplicates are
   # preserved.
   :tags @ Iterable[Str] = []
-do -> (Value -> Value)
+do -> (TestFn[{}] -> TestFn[{}])
 
-# Registers a zero-argument test function, returning it.
-@def test[F]
+# Registers a test function taking no arguments, returning it.
+@def test
   # Reporting name. Defaults to `str(func)`.
   :name @ Str = nil
   # Tags to attach. Order and duplicates are
@@ -756,65 +880,43 @@ do -> (Value -> Value)
   :tags @ Iterable[Str] = []
   # Test function, or a test decorated with
   # [`parametrize`](test.parametrize) or a fixture.
-  func @ F
-do -> F
+  func @ TestFn[{}]
+do -> TestFn[{}]
 
 pub def test
   :name @ Str = nil
-  :tags @ Iterable[Str] = []
-  func = nil
-do
+  :tags @ Iterable[Value] = []
+  func @ Value = nil
+do -> Value
+  let tag_values = check_tags "test tags" $tags
   if (func == nil)
-    return do |func| test name: $name tags: $tags $func
-  let tag_values = []
-  for tag = tags
-    if !(type tag Str)
-      throw std.TypeError "test tags: expected strings"
-    tag_values.push $tag
+    return do |func @ TestFn[{}]| register $name $tag_values $func
+  # The overloads type the call
+  register $name $tag_values (func @ TestFn[{}])
 
+# Registers each case of a test function, returning the function.
+def register name @ (Str | nil) tags @ Tuple[...Str] func @ TestFn[{}] -> TestFn[{}]
   let test_def = to_test_def $func
-  let base_name = (name || str(test_def.func))
-
-  let location = test_def.location
-  if (test_def.params.len == 0)
-    collect_key.value.add $base_name $tag_values $test_def.func $base_name () $location
-    return func
-
-  let combos = [[{}, [], []]]
-  for axis_name axis_values = test_def.params
-    let next = []
-    for combo = combos
-      let kwargs extra_tags params = combo
-      for pv = axis_values
-        let new_kwargs = {...kwargs}
-        new_kwargs[axis_name] = pv.value
-        # `/` is stripped so a stringified value can't split the registered
-        # name across what `--filter` treats as path segments.
-        let value_part = str(pv.value).replace("/", "_")
-        next.push [new_kwargs, [...extra_tags, ...pv.tags], [...params, (str(axis_name), value_part)]]
-    combos = next
-
-  for combo = combos
-    let kwargs extra_tags params = combo
-    let name_parts = [...params.map(do |p| "$(p[0])=$(p[1])")]
-    let case_name = "$base_name/$("/".join(name_parts))"
-    let case_tags = [...tag_values, ...extra_tags]
-    let case_func = do test_def.func(...kwargs)
-    collect_key.value.add $case_name $case_tags $case_func $base_name $Tuple(params) $location
-
+  let base = (name || test_def.base)
+  for case = test_def.cases
+    let case_name = if (case.params.len == 0)
+      base
+    else
+      let parts = [...case.params.map(do |p| "$(p[0])=$(p[1])")]
+      "$base/$("/".join(parts))"
+    let case_tags = [...tags, ...case.tags]
+    collect_key.value.add $case_name $case_tags $case.func $base $case.params $test_def.location
   func
 
-# Registers one or more parametrize axes on a test. Each keyword argument
-# names an axis under which its value is passed to the decorated test
-# function (and to any fixture that declares it). Stacks with other
-# `parametrize` decorators, and composes freely with `#[fixture]`
-# decorators; the cartesian product is taken over every axis registered by
-# any application.
+# Returns a decorator that runs a test once for each combination of values of
+# one or more axes. Each keyword argument names an axis, under which each of
+# its values is passed to the test function in turn.
 #
-# Because decorators apply bottom-to-top, axes accumulate in
-# closest-to-`def`-first order (axes from one decorator are ordered as
-# written); this affects only the generated case names
-# (`$base_name/$axis1=$v/$axis2=$v/...`).
+# Decorators apply from the bottom up, each over the result of the one below.
+# Stacked `parametrize` decorators take the product of their axes, and a
+# fixture receives the axes of any `parametrize` above it. Case names list the
+# axes closest to the `def` first, those of one decorator as written:
+# `$base_name/$axis1=$v/$axis2=$v/...`.
 #
 # ## Example
 #
@@ -824,37 +926,71 @@ do
 # def connects :backend
 #   backend.ping()
 # ```
-@def parametrize
-  # An axis name paired with an iterable of raw
-  # values and/or `tagged(value, ...tags)` wrappers for that axis.
-  ...axes @ Iterable[Value]
-do -> (Value -> Value)
+@def parametrize[A @ {**Value}]
+  # Each axis, as the values to pass under its name, raw or wrapped by
+  # `tagged(value, ...tags)`.
+  **axes @ ...Iterable[A | Tagged[A]]
+do -> (@[S @ {**Value}] TestFn[{...A, ...S}] -> TestFn[S])
 
-# Registers parametrize axes on a test function directly, returning the
-# decorated test for [`test`](test.test).
-@def parametrize
+# Runs a test function once for each combination of values of one or more
+# axes, returning the decorated test for [`test`](test.test).
+@def parametrize[A @ {**Value}, S @ {**Value}]
   # Test function, or a test already decorated with
   # `parametrize` or a fixture.
-  func
-  # An axis name paired with an iterable of raw
-  # values and/or `tagged(value, ...tags)` wrappers for that axis.
-  ...axes @ Iterable[Value]
-do
+  func @ TestFn[{...A, ...S}]
+  # Each axis, as the values to pass under its name, raw or wrapped by
+  # `tagged(value, ...tags)`.
+  **axes @ ...Iterable[A | Tagged[A]]
+do -> TestFn[S]
 
 pub def parametrize
-  func = nil
-  ...axes @ Iterable[Value]
-do
-  if (func == nil)
-    return do |func| parametrize $func ...axes
-  let test_def = to_test_def $func
+  func @ Value = nil
+  **axes @ Iterable[Value]
+do -> Value
+  let normalized @ Array[(Sym, Array[Tagged[Value]])] = []
   for name values = axes
-    if !(type name Sym)
-      throw std.UnexpectedPosError $name
-    if (values.len == 0)
+    let tagged_values @ Array[Tagged[Value]] = []
+    for value = values
+      tagged_values.push $(normalize_param_value value)
+    if (tagged_values.len == 0)
       throw std.ValueError "parametrize: '$name' has no values"
-    test_def.params.push [name, [...values.map(normalize_param_value)]]
-  test_def
+    normalized.push (name, tagged_values)
+  if (func == nil)
+    return do |func @ TestFn[{**Value}]| expand $func $normalized
+  # The overloads type the call
+  expand (func @ TestFn[{**Value}]) $normalized
+
+# Each case of a test function for each combination of axis values, with the
+# values bound.
+def expand
+  func @ TestFn[{**Value}]
+  axes @ Array[(Sym, Array[Tagged[Value]])]
+do -> TestDef[{**Value}]
+  let test_def = to_test_def $func
+  let cases @ Array[Pending[{**Value}]] = []
+  for case = test_def.cases
+    let no_kwargs @ Dict[Sym, Value] = {}
+    let no_tags @ Array[Str] = []
+    let no_params @ Array[(Str, Str)] = []
+    let combos = [(no_kwargs, no_tags, no_params)]
+    for name values = axes
+      let next @ Array[(Dict[Sym, Value], Array[Str], Array[(Str, Str)])] = []
+      for kwargs tags params = combos
+        for value = values
+          let bound = {...kwargs}
+          bound[name] = value.value
+          # `/` is stripped so a stringified value can't split the registered
+          # name across what `--filter` treats as path segments.
+          let part = str(value.value).replace("/", "_")
+          next.push ({...bound}, [...tags, ...value.tags], [...params, (str(name), part)])
+      combos = next
+    let inner = case.func
+    for kwargs tags params = combos
+      cases.push $ Pending $
+        params: (Tuple [...case.params, ...params])
+        tags: (Tuple [...case.tags, ...tags])
+        func: (do |**rest <Iter[Never] >Sink[Value]| inner(...kwargs, ...rest))
+  TestDef $test_def.base $test_def.location $cases
 
 # Adds tags to tests subsequently registered in the current module.
 #
@@ -874,12 +1010,7 @@ pub def tags
   # Tag to add.
   *values @ Str
 do
-  let tag_values = []
-  for tag = values
-    if !(type tag Str)
-      throw std.TypeError "test tags: expected strings"
-    tag_values.push $tag
-  collect_key.value.add_tags $tag_values
+  collect_key.value.add_tags $(check_tags "test tags" values)
 
 # Raised when an assertion fails.
 pub class Assert: std.RuntimeError
@@ -892,7 +1023,7 @@ pub class Assert: std.RuntimeError
   # assertion doesn't compare two values.
   pub field expected @ (Str | nil) = nil
 
-  def (init) self message :actual = nil :expected = nil
+  def (init) self message @ (Str | nil) :actual @ Str = nil :expected @ Str = nil
     std.RuntimeError.(init) $self
       if (message != nil)
         "assertion failed: $message"
@@ -910,7 +1041,7 @@ pub class Skip: std.RuntimeError
   # Skip message, or `nil` if none was given.
   pub field message @ (Str | nil) = nil
 
-  def (init) self message = nil
+  def (init) self message @ (Str | nil) = nil
     std.RuntimeError.(init) $self
       if (message != nil)
         "test skipped: $message"
@@ -930,7 +1061,7 @@ pub class Ignore: std.RuntimeError
   # Ignore message, or `nil` if none was given.
   pub field message @ (Str | nil) = nil
 
-  def (init) self message = nil
+  def (init) self message @ (Str | nil) = nil
     std.RuntimeError.(init) $self
       if (message != nil)
         "test ignored: $message"
@@ -953,7 +1084,7 @@ do
 # [`Assert`](test.Assert) if the assertion fails.
 pub def assert
   # Condition to test.
-  cond
+  cond @ Value
   # Message to add to the failure.
   msg @ Str = nil
 do
@@ -967,7 +1098,7 @@ do
 # [`Assert`](test.Assert) if the assertion fails.
 pub def assert_not
   # Condition to test.
-  cond
+  cond @ Value
   # Message to add to the failure.
   msg @ Str = nil
 do
@@ -981,9 +1112,9 @@ do
 # [`Assert`](test.Assert) if the assertion fails.
 pub def assert_eq
   # Actual value.
-  left
+  left @ Value
   # Expected value.
-  right
+  right @ Value
   # Message to add to the failure.
   msg @ Str = nil
 do
@@ -1000,9 +1131,9 @@ do
 # [`Assert`](test.Assert) if the assertion fails.
 pub def assert_ne
   # Actual value.
-  left
+  left @ Value
   # Value it must differ from.
-  right
+  right @ Value
   # Message to add to the failure.
   msg @ Str = nil
 do
@@ -1035,7 +1166,9 @@ do -> E
         throw Assert "$msg (error str ${std.str(e):?} == ${str:?})"
       else
         throw Assert "error str ${std.str(e):?} == ${str:?}"
-    return e
+    # Caught by `type`, so it's an `E`; the checker doesn't narrow by a class
+    # object yet (#1644)
+    return (e !@ E)
   if msg
     throw Assert "$msg ($type thrown)"
   else
@@ -1050,7 +1183,7 @@ pub def assert_type[T]
   # Expected type.
   expected @ Type[T]
   # Value to test.
-  value
+  value @ Value
   # Message to add to the failure.
   msg @ Str = nil
 do
@@ -1062,7 +1195,8 @@ do
 
 # Discovers and runs tests under the given files and directories.
 #
-# A directory is searched recursively for `.dol` files.
+# A directory is searched recursively for `.dol` files. Modules load and tests
+# run concurrently, so each reads no input: its input is empty.
 #
 # With `format: :JSONL:`, progress events go to standard output, or to
 # `output`, in place of the report. The events are described in the
@@ -1083,7 +1217,7 @@ pub def run
   :module_jobs @ Int = 4
   # Predicate receiving a
   # [`TestInfo`](test.TestInfo). Defaults to accepting every test.
-  :filter @ (TestInfo -> Bool) = (do |_| true)
+  :filter @ ((TestInfo, <Value, >Value) -> Bool) = (do |_| true)
   # Per-test and module-load timeout in seconds.
   :timeout @ Int = 600
   # Capture output and show it for failures.
@@ -1094,6 +1228,7 @@ pub def run
   :output @ (Str | Path) = nil
   # Test file or directory.
   *paths @ (Str | Path)
+  >Sink[Value]
 do -> Int
   let files = test_files $paths
   if (format != :JSONL:)
@@ -1101,7 +1236,7 @@ do -> Int
     return harness.run $files
   if !capture
     throw std.ValueError "run: progress events require capture"
-  let run_with = do |sink|
+  let run_with = do |sink @ Sink[Str] >Sink[Value]|
     let events = EventWriter $sink
     let harness = Harness :jobs :module_jobs :filter :timeout capture: true
       redirect: true plain: true events: $events
@@ -1133,7 +1268,7 @@ pub def list
   :module_jobs @ Int = 4
   # Predicate receiving a
   # [`TestInfo`](test.TestInfo). Defaults to accepting every test.
-  :filter @ (TestInfo -> Bool) = (do |_| true)
+  :filter @ ((TestInfo, <Value, >Value) -> Bool) = (do |_| true)
   # Module-load timeout in seconds.
   :timeout @ Int = 600
   # `:HUMAN:` for a report on the console, or `:JSON:` for a JSON document.
@@ -1142,12 +1277,13 @@ pub def list
   :output @ (Str | Path) = nil
   # Test file or directory.
   *paths @ (Str | Path)
+  >Sink[Value]
 do -> Int
   let harness = Harness jobs: 1 :module_jobs :filter :timeout capture: true
     redirect: true plain: (format == :JSON:)
   let results = harness.list $(test_files paths)
   if (format == :JSON:)
-    let document = $
+    let document @ Json = $
       version: 1
       modules: $[...results.map(module_record)]
     let text = "$(json.encode document)\n"
