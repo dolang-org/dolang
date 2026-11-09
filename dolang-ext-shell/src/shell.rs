@@ -262,7 +262,7 @@ impl<'v> Object<'v> for Stdin {
     ) -> Result<'v, 's, bool> {
         let global = strand.state::<ShellTag>();
         let Some(other) = global.types.stdin.cast(other) else {
-            return Ok(false);
+            return Err(Error::unsupported(strand, "`==`"));
         };
         let (mode, chunk) = {
             let this = this.borrow(strand)?;
@@ -371,7 +371,11 @@ impl<'v> Object<'v> for Stdout {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         let global = strand.state::<ShellTag>();
-        Ok(global.types.stdout.cast(other).is_some())
+        if global.types.stdout.cast(other).is_some() {
+            Ok(true)
+        } else {
+            Err(Error::unsupported(strand, "`==`"))
+        }
     }
 
     async fn sink<'a, 's>(
@@ -461,7 +465,11 @@ impl<'v> Object<'v> for Stderr {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         let global = strand.state::<ShellTag>();
-        Ok(global.types.stderr.cast(other).is_some())
+        if global.types.stderr.cast(other).is_some() {
+            Ok(true)
+        } else {
+            Err(Error::unsupported(strand, "`==`"))
+        }
     }
 
     async fn sink<'a, 's>(

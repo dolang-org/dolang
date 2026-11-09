@@ -255,7 +255,7 @@ impl<'v> Protocol<'v> for Range<'v> {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         let Some(other) = other.downcast_ref(strand.builtin_types().range) else {
-            return Ok(Value::FALSE);
+            return Err(Error::unsupported(strand, "`==`"));
         };
         let left = this.get();
         let right = other.get();

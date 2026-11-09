@@ -496,7 +496,7 @@ impl<'v> Protocol<'v> for Set<'v> {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         let Some(other) = other.downcast_ref(strand.builtin_types().set) else {
-            return Ok(Value::FALSE);
+            return Err(Error::unsupported(strand, "`==`"));
         };
         let left = this.borrow(strand)?;
         let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;

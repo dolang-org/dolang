@@ -597,10 +597,12 @@ impl<'v> Protocol<'v> for View<'v> {
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let equal = other
-            .downcast_ref(strand.builtin_types().array_view)
-            .is_some_and(|other| this.as_header() == other.into_raw().cast());
-        Ok(Value::from_bool(equal))
+        let Some(other) = other.downcast_ref(strand.builtin_types().array_view) else {
+            return Err(Error::unsupported(strand, "`==`"));
+        };
+        Ok(Value::from_bool(
+            this.as_header() == other.into_raw().cast(),
+        ))
     }
 
     fn op_index<'a, 's>(

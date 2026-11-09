@@ -122,3 +122,50 @@ assert_not (rhs.(rne) lhs)
 # Strict equality and inequality remain the final fallback.
 assert_not (Left() == Right())
 assert (Left() != Right())
+
+# Every built-in left operand declines another type, so a right operand's
+# reflected comparison runs.
+class Liar
+  def (eq) _self _other
+    true
+  def (req) _self _other
+    true
+  def (ne) _self _other
+    false
+  def (rne) _self _other
+    false
+let liar = Liar()
+let builtins = $
+  - nil
+  - true
+  - 1
+  - 1.5
+  - :a:
+  - "x"
+  - b"x"
+  - StrBuf("x")
+  - BinBuf(b"x")
+  - [1]
+  - (1,)
+  - (a: 1)
+  - Struct(a: 1)
+  - Set([1])
+  - {a: 1}
+  - 0..3
+  - Int
+  - type(Int)
+  - Left
+  - type(Left)
+for value = builtins
+  assert (value == liar)
+  assert_not (value != liar)
+
+# Unrelated built-ins still compare unequal through strict equality.
+assert_not ("x" == :x:)
+assert ("x" != :x:)
+assert_not ([1] == (1,))
+assert ([1] != (1,))
+assert_not ({} == Set())
+assert ({} != Set())
+assert_not (Int == Str)
+assert (Int != Str)

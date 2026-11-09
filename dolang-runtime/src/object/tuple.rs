@@ -195,7 +195,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
             }
             Ok(Value::from_bool(true))
         } else {
-            Ok(Value::from_bool(false))
+            Err(Error::unsupported(strand, "`==`"))
         }
     }
 

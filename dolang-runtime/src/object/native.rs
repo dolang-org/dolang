@@ -1056,6 +1056,12 @@ pub trait Object<'v>: Sized + 'v {
     }
 
     /// Compares this object to another for equality.
+    ///
+    /// For an operand of a type it doesn't compare with, return
+    /// `Error::unsupported(strand, "`==`")` rather than `Ok(false)`, so the
+    /// right operand's reflected comparison runs. If both operands decline,
+    /// `==` falls back to strict equality.
+    ///
     /// # Default
     /// Returns an unsupported-operation error
     #[allow(unused_variables)]
@@ -4202,7 +4208,11 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Ok(Value::from_bool(other.repr_eq(strand, this)))
+        if other.repr_eq(strand, this) {
+            Ok(Value::TRUE)
+        } else {
+            Err(Error::unsupported(strand, "`==`"))
+        }
     }
 
     fn op_subtype<'a, 's>(
@@ -4329,9 +4339,10 @@ impl<'v, T: Object<'v>> Protocol<'v> for NativeTypeProxy<'v, T> {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         let proxy_type = this.get().native().annex().proxy;
-        let same = other
-            .downcast_ref(proxy_type)
-            .is_some_and(|other| other.get().native.repr_eq(strand, &this.get().native));
+        let Some(other) = other.downcast_ref(proxy_type) else {
+            return Err(Error::unsupported(strand, "`==`"));
+        };
+        let same = other.get().native.repr_eq(strand, &this.get().native);
         Ok(Value::from_bool(same))
     }
 
@@ -5762,10 +5773,13 @@ mod tests {
                     let eq = TypeObjectWrap::<SlotFixture>::op_eq(recv.clone(), strand, ty_value)
                         .unwrap();
                     assert!(eq.to_bool(strand).unwrap());
-                    let ne =
+                    // A different type object declines, so the right operand can reflect.
+                    let Err(ne) =
                         TypeObjectWrap::<SlotFixture>::op_eq(recv.clone(), strand, other_ty_value)
-                            .unwrap();
-                    assert!(!ne.to_bool(strand).unwrap());
+                    else {
+                        panic!("a different type object should decline `==`");
+                    };
+                    assert_eq!(ne.kind(), ErrorKind::Unsupported);
 
                     assert!(TypeObjectWrap::<SlotFixture>::op_subtype(
                         recv.clone(),
