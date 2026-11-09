@@ -1871,3 +1871,77 @@ fn a_lone_variable_relates_to_a_rigid_beside_peels_and_pairs() {
     let Term::Infer(id) = t else { unreachable!() };
     assert_eq!(s.assignment(id), Some(r));
 }
+
+#[test]
+fn a_lone_actual_variable_relates_to_the_whole_expected_schema() {
+    use Multiplicity::Required as Req;
+    let mut db = Database::new();
+    let body = function(&db, &[], db.top());
+    // Keyed packs K and R, as a rank-2 fixture's test function takes
+    let f = generic(
+        &mut db,
+        vec![
+            bounded(Kind::Schema, Binding::Rest(Rest::Keyed), None),
+            bounded(Kind::Schema, Binding::Rest(Rest::Keyed), None),
+        ],
+        body,
+    );
+    // Slots 0 and 1 are K and R, slot 2 a variable T of both lanes
+    let t_only = items(&db, vec![include(Req, pack(&db, 2))]);
+    let k_r = items(
+        &db,
+        vec![include(Req, pack(&db, 0)), include(Req, pack(&db, 1))],
+    );
+    db.seal();
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    let rigids = s.rigid_environment(f);
+    let mut group = s.frame(rigids).group.clone();
+    let t = s.infer_kind(Kind::Schema, Rest::All);
+    group.push(t);
+    let env = s.intern_environment(s.empty_environment(), group);
+    // {...T} <: {...K, ...R}: T is bounded by the whole schema, not paired with K
+    s.constrain(s.view(t_only, env), s.view(k_r, env), Provenance::default());
+    // Only bounded above, T waits for a default
+    let outcomes = s.solve();
+    assert!(residual(&outcomes[0], Residual::Inference), "{outcomes:?}");
+    let Term::Infer(id) = t else { unreachable!() };
+    let upper: Vec<Term> = s.bounds(id).upper().collect();
+    assert_eq!(upper, vec![s.view(k_r, env)]);
+}
+
+#[test]
+fn a_lone_expected_variable_takes_the_whole_actual_schema() {
+    use Multiplicity::Required as Req;
+    let mut db = Database::new();
+    let body = function(&db, &[], db.top());
+    let f = generic(
+        &mut db,
+        vec![
+            bounded(Kind::Schema, Binding::Rest(Rest::Keyed), None),
+            bounded(Kind::Schema, Binding::Rest(Rest::Keyed), None),
+        ],
+        body,
+    );
+    let t_only = items(&db, vec![include(Req, pack(&db, 2))]);
+    let k_r = items(
+        &db,
+        vec![include(Req, pack(&db, 0)), include(Req, pack(&db, 1))],
+    );
+    db.seal();
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    let rigids = s.rigid_environment(f);
+    let mut group = s.frame(rigids).group.clone();
+    let t = s.infer_kind(Kind::Schema, Rest::All);
+    group.push(t);
+    let env = s.intern_environment(s.empty_environment(), group);
+    // {...K, ...R} <: {...T}: T takes the whole schema
+    s.constrain(s.view(k_r, env), s.view(t_only, env), Provenance::default());
+    // Only bounded below, T waits for a default
+    let outcomes = s.solve();
+    assert!(residual(&outcomes[0], Residual::Inference), "{outcomes:?}");
+    let Term::Infer(id) = t else { unreachable!() };
+    let lower: Vec<Term> = s.bounds(id).lower().collect();
+    assert_eq!(lower, vec![s.view(k_r, env)]);
+}

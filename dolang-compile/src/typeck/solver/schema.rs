@@ -235,6 +235,21 @@ impl Solver<'_> {
         }
         let mut a = Shape::default();
         self.flatten(av, xs, None, None, &mut a, 0)?;
+        // A side that is only one variable or rigid is that opaque, as `{...X}`
+        // is `X`, so it relates to the whole of the other side, itself reduced
+        // the same way
+        let (sole_a, sole_b) = (self.sole(&a), self.sole(&b));
+        if let Some((actual, item)) = sole_a {
+            let expected = sole_b.map_or(expected, |(expected, _)| expected);
+            self.derive(obligation, actual, expected, Step::Item(item));
+            return Ok(());
+        }
+        if let (Some((expected, item)), Some((actual, _))) =
+            (sole_b, self.relation(obligation).sides())
+        {
+            self.derive(obligation, actual, expected, Step::Item(item));
+            return Ok(());
+        }
         let mut pairs = self.pair(&a, &b)?;
         self.cross(&a, &b, &mut pairs, obligation)?;
         // Mappings paired by pattern relate pack by pack
@@ -1623,11 +1638,36 @@ impl Solver<'_> {
         })
     }
 
+    /// The one opaque a shape holds, with nothing else, when it is a variable or
+    /// a rigid, as `(term, item)`: the schema is then that opaque. A mapping over
+    /// a rigid exposes as this same schema, so it isn't one.
+    fn sole(&self, shape: &Shape) -> Option<(Term, usize)> {
+        let [only] = shape.opaque[..] else {
+            return None;
+        };
+        if !shape.keyed.is_empty()
+            || shape
+                .positional
+                .iter()
+                .any(|slot| matches!(slot, Slot::Atom(_)))
+        {
+            return None;
+        }
+        match only.opacity {
+            Opacity::Infer(id) => Some((Term::Infer(id), only.item)),
+            Opacity::Rigid(Term::View(view)) if matches!(self.db.ty(view.ty), Type::Map { .. }) => {
+                None
+            }
+            Opacity::Rigid(rigid) => Some((rigid, only.item)),
+            _ => None,
+        }
+    }
+
     /// The opaques left alone on each side once forced items are peeled, as
     /// `(actual, expected, item)`: with no atoms left, the one opaque on each side
     /// not in `pairs`, at the same place among the pairs, where both are rigids or
     /// variables and not both rigids. Each then holds what the other's pairs
-    /// don't, as `{**X}` is `X`.
+    /// don't, as `{...X}` is `X`.
     fn lone(&self, a: &Shape, b: &Shape, pairs: &[(usize, usize)]) -> Option<(Term, Term, usize)> {
         let atoms = |shape: &Shape| {
             !shape.keyed.is_empty()
