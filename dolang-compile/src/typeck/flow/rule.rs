@@ -3954,7 +3954,8 @@ fn outputs(results: &[Term], parameters: &[Term]) -> Vec<(Term, Variance)> {
 }
 
 /// Solve, defaulting every unsolved variable whose lower bounds are solved, and,
-/// if `bare`, then any variable without lower bounds to its binder's default, or
+/// if `bare`, then any variable with no lower bounds but unsolved variables
+/// that have none (see [`Solver::ungrounded`]) to its binder's default, or
 /// without one that its upper bounds admit (see [`Solver::fall_back`]), to
 /// the meet of its upper bounds (see [`Solver::default_upper`]),
 /// until nothing more can be defaulted. A round that can default no bare
@@ -3975,7 +3976,7 @@ fn default_all(
     for _ in 0..64 {
         let bare: Vec<_> = solver
             .unresolved()
-            .filter(|&id| solver.bounds(id).lower().next().is_none())
+            .filter(|&id| solver.ungrounded(id))
             .collect();
         if bare.is_empty() {
             break;

@@ -24,6 +24,14 @@
 //! the actual side's multiplicities fits the expected side; each actual atom
 //! must then fit every expected atom its items can land on.
 //!
+//! Where items are bound as arguments, those whose places are forced relate
+//! first, one by one, and are set aside (`Solver::peel`): a required item
+//! leading the actual side's positional lane lands on the expected side's
+//! first, a required item ending each lane on the other's last, and a literal
+//! key's required items on the expected side's items of that key. When each
+//! side is then left a single opaque, the two relate directly; otherwise what
+//! is left relates as a whole, as follows.
+//!
 //! A variable without a counterpart takes what the other side has left: on the
 //! expected side, the actual items left over become its lower bound, and on
 //! the actual side, the expected items left over become its upper bound.
@@ -112,7 +120,7 @@ pub(super) enum Slot {
     Opaque(usize),
 }
 
-#[derive(Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub(super) struct Shape {
     pub(super) positional: Vec<Slot>,
     pub(super) keyed: Vec<KeyedAtom>,
@@ -201,7 +209,8 @@ impl Solver<'_> {
         Ok(candidate)
     }
 
-    /// Relate two exposed schemas.
+    /// Relate two exposed schemas: their forced items one by one, then what is
+    /// left of them.
     pub(super) fn schemas(
         &self,
         av: TypeView,
@@ -260,12 +269,38 @@ impl Solver<'_> {
                 _ => None,
             })
             .collect();
+        let peel = |a: &mut Shape, b: &mut Shape| {
+            if fill == Fill::Contents {
+                Ok(Vec::new())
+            } else {
+                self.peel(a, b)
+            }
+        };
+        let derive_all = |peeled: Vec<(Term, Term, usize)>| {
+            for (actual, expected, item) in peeled {
+                self.derive(obligation, actual, expected, Step::Item(item));
+            }
+        };
+        // What is left of each side beside the pairs may be a single opaque,
+        // which then stands for the rest of the schema on its side. An actual
+        // rigid relates there as itself, before it would stand for its bound.
+        let (mut peeled_a, mut peeled_b) = (a.clone(), b.clone());
+        let peeled = peel(&mut peeled_a, &mut peeled_b)?;
+        if let Some((actual, expected, item)) = self.lone(&peeled_a, &peeled_b, &pairs) {
+            derive_all(peeled);
+            self.derive(obligation, actual, expected, Step::Item(item));
+            return Ok(());
+        }
         if a.opaque
             .iter()
             .any(|o| matches!(o.opacity, Opacity::Rigid(ty) if !paired.contains(&ty)))
         {
             a = Shape::default();
             self.flatten(av, xs, None, Some(&paired), &mut a, 0)?;
+            derive_all(peel(&mut a, &mut b)?);
+        } else {
+            (a, b) = (peeled_a, peeled_b);
+            derive_all(peeled);
         }
         // Nothing but itself is known to be admitted by an expected rigid
         let b_paired: FxHashSet<usize> = pairs.iter().map(|&(_, j)| j).collect();
@@ -1586,6 +1621,214 @@ impl Solver<'_> {
             (false, true) => Rest::Keyed,
             _ => Rest::All,
         })
+    }
+
+    /// The opaques left alone on each side once forced items are peeled, as
+    /// `(actual, expected, item)`: with no atoms left, the one opaque on each side
+    /// not in `pairs`, at the same place among the pairs, where both are rigids or
+    /// variables and not both rigids. Each then holds what the other's pairs
+    /// don't, as `{**X}` is `X`.
+    fn lone(&self, a: &Shape, b: &Shape, pairs: &[(usize, usize)]) -> Option<(Term, Term, usize)> {
+        let atoms = |shape: &Shape| {
+            !shape.keyed.is_empty()
+                || shape
+                    .positional
+                    .iter()
+                    .any(|slot| matches!(slot, Slot::Atom(_)))
+        };
+        if atoms(a) || atoms(b) {
+            return None;
+        }
+        let unpaired = |shape: &Shape, paired: &dyn Fn(usize) -> bool| -> Option<(usize, usize)> {
+            let mut found = None;
+            let mut before = 0;
+            for index in 0..shape.opaque.len() {
+                if paired(index) {
+                    before += 1;
+                } else if found.replace((index, before)).is_some() {
+                    return None;
+                }
+            }
+            found
+        };
+        let (i, rank) = unpaired(a, &|i| pairs.iter().any(|&(x, _)| x == i))?;
+        let (j, other) = unpaired(b, &|j| pairs.iter().any(|&(_, y)| y == j))?;
+        if rank != other {
+            return None;
+        }
+        let term = |opacity| match opacity {
+            Opacity::Infer(id) => Some(Term::Infer(id)),
+            Opacity::Rigid(rigid) => Some(rigid),
+            _ => None,
+        };
+        let (x, y) = (a.opaque[i], b.opaque[j]);
+        if matches!(
+            (x.opacity, y.opacity),
+            (Opacity::Rigid(_), Opacity::Rigid(_))
+        ) {
+            return None;
+        }
+        Some((term(x.opacity)?, term(y.opacity)?, x.item))
+    }
+
+    /// Relate the items whose landing is forced, as the runtime binds arguments,
+    /// and remove them from both sides, leaving the opaques. A required actual
+    /// atom at the head of its lane lands on the expected head, which a
+    /// repeated one keeps taking; an optional or repeated expected head takes
+    /// it only where no required atom follows. A `def`'s parameters are always
+    /// in that order and bind from the left, but an overload may describe an
+    /// implementation that takes its arguments otherwise, as `(*stages, final)`
+    /// does, where counting decides. A required atom ending each lane lands on
+    /// the other. Within a literal key,
+    /// required actual items take the expected side's items of that key in
+    /// order, provided nothing that might hold the key comes before them: the
+    /// first item of a key binds a named parameter. Returns the relations, each
+    /// with the actual item it comes from, for the caller to derive.
+    fn peel(&self, a: &mut Shape, b: &mut Shape) -> Result<Vec<(Term, Term, usize)>, Issue> {
+        let mut peeled = Vec::new();
+        // The positional slots that take positions
+        let lane = |shape: &Shape| -> Vec<usize> {
+            (0..shape.positional.len())
+                .filter(|&s| match shape.positional[s] {
+                    Slot::Atom(_) => true,
+                    Slot::Opaque(index) => shape.opaque[index].positional(),
+                })
+                .collect()
+        };
+        let xs = lane(a);
+        let ys = lane(b);
+        let atom = |shape: &Shape, s: usize| match shape.positional[s] {
+            Slot::Atom(atom) => Some(atom),
+            Slot::Opaque(_) => None,
+        };
+        let required = |atom: Option<Atom>| {
+            atom.is_some_and(|atom| atom.multiplicity == Multiplicity::Required)
+        };
+        let mut a_drop = FxHashSet::default();
+        let mut b_drop = FxHashSet::default();
+        let (mut i, mut j) = (0, 0);
+        while i < xs.len() && j < ys.len() {
+            let (Some(x), Some(y)) = (atom(a, xs[i]), atom(b, ys[j])) else {
+                break;
+            };
+            if x.multiplicity != Multiplicity::Required {
+                break;
+            }
+            if y.multiplicity != Multiplicity::Required
+                && ys[j + 1..].iter().any(|&s| required(atom(b, s)))
+            {
+                break;
+            }
+            peeled.push((x.ty, y.ty, x.item));
+            a_drop.insert(xs[i]);
+            i += 1;
+            if y.multiplicity != Multiplicity::Repeated {
+                b_drop.insert(ys[j]);
+                j += 1;
+            }
+        }
+        let (mut m, mut n) = (xs.len(), ys.len());
+        while m > i && n > j && required(atom(a, xs[m - 1])) && required(atom(b, ys[n - 1])) {
+            let (Some(x), Some(y)) = (atom(a, xs[m - 1]), atom(b, ys[n - 1])) else {
+                unreachable!("required atoms")
+            };
+            peeled.push((x.ty, y.ty, x.item));
+            m -= 1;
+            n -= 1;
+            a_drop.insert(xs[m]);
+            b_drop.insert(ys[n]);
+        }
+        let retain = |shape: &mut Shape, drop: &FxHashSet<usize>| {
+            let mut s = 0;
+            shape.positional.retain(|_| {
+                s += 1;
+                !drop.contains(&(s - 1))
+            });
+        };
+        retain(a, &a_drop);
+        retain(b, &b_drop);
+        let a_literal = self.literals(&a.keyed)?;
+        let b_literal = self.literals(&b.keyed)?;
+        // The first item of each side that might hold any key
+        let a_block = a
+            .opaque
+            .iter()
+            .filter(|o| o.keyed())
+            .map(|o| o.item)
+            .chain(
+                a.keyed
+                    .iter()
+                    .zip(&a_literal)
+                    .filter(|&(_, &literal)| !literal)
+                    .map(|(x, _)| x.item),
+            )
+            .min()
+            .unwrap_or(usize::MAX);
+        let b_block = b
+            .opaque
+            .iter()
+            .filter(|o| o.keyed() && matches!(o.opacity, Opacity::Rigid(_) | Opacity::Unknown))
+            .map(|o| o.item)
+            .min()
+            .unwrap_or(usize::MAX);
+        let mut a_drop = vec![false; a.keyed.len()];
+        let mut b_drop = vec![false; b.keyed.len()];
+        let mut seen = vec![false; a.keyed.len()];
+        for start in 0..a.keyed.len() {
+            if seen[start] || !a_literal[start] {
+                continue;
+            }
+            let key = a.keyed[start].key;
+            let mut xs = Vec::new();
+            for i in start..a.keyed.len() {
+                if !seen[i] && a_literal[i] && self.same(a.keyed[i].key, key)? {
+                    seen[i] = true;
+                    xs.push(i);
+                }
+            }
+            let mut ys = Vec::new();
+            for (j, y) in b.keyed.iter().enumerate() {
+                if b_literal[j] && self.same(y.key, key)? {
+                    ys.push(j);
+                }
+            }
+            if ys.iter().any(|&j| b.keyed[j].item >= b_block) {
+                continue;
+            }
+            let mut next = 0;
+            for &i in &xs {
+                let x = a.keyed[i];
+                let Some(&j) = ys.get(next) else {
+                    break;
+                };
+                let y = b.keyed[j];
+                if x.multiplicity != Multiplicity::Required
+                    || x.item >= a_block
+                    || y.multiplicity != Multiplicity::Required
+                        && ys[next + 1..]
+                            .iter()
+                            .any(|&j| b.keyed[j].multiplicity == Multiplicity::Required)
+                {
+                    break;
+                }
+                peeled.push((x.value, y.value, x.item));
+                a_drop[i] = true;
+                if y.multiplicity != Multiplicity::Repeated {
+                    b_drop[j] = true;
+                    next += 1;
+                }
+            }
+        }
+        let mut drop = a_drop.into_iter();
+        a.keyed.retain(|_| !drop.next().unwrap());
+        let mut drop = b_drop.into_iter();
+        b.keyed.retain(|_| !drop.next().unwrap());
+        Ok(peeled)
+    }
+
+    /// Whether each keyed atom's key is a literal
+    fn literals(&self, atoms: &[KeyedAtom]) -> Result<Vec<bool>, Issue> {
+        atoms.iter().map(|atom| self.literal(atom.key)).collect()
     }
 
     /// Pair the same rigid or variable on both sides, in order, and a mapping
