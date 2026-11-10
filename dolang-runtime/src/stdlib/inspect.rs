@@ -14,7 +14,7 @@ use crate::{
     strand::Strand,
     unpack,
     value::{Output, Value, fmt::Format},
-    vm::{Builder, StateTag, Vm},
+    vm::{AllocExt, Builder, StateTag, Vm},
 };
 
 /// Bound on the wrappers [`definition`] unwraps, as a class's method table can hold any value
@@ -117,7 +117,7 @@ pub(crate) fn location<'v>(
     out: impl Output<'v>,
 ) {
     strand
-        .state::<InspectStateTag>()
+        .force_state::<InspectStateTag>()
         .location
         .create_with_annex(strand, Location, LocationAnnex { source, span }, out);
 }
@@ -168,25 +168,26 @@ fn definition<'v>(vm: &Vm<'v>, value: &Value<'v>) -> Option<(Box<str>, Span)> {
 }
 
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
-    let location_type = builder.register_type();
-    let state = builder.register_state::<InspectStateTag>(InspectState {
-        location: location_type,
-    });
-    let backtrace = builder.singletons().backtrace.dup();
-    let frame = builder.singletons().backtrace_frame.dup();
+    builder.lazy::<InspectStateTag>(&["inspect"], |reg| {
+        let location_type = reg.register_type();
+        let state = reg.register_state::<InspectStateTag>(InspectState {
+            location: location_type,
+        });
+        let backtrace = reg.singletons().backtrace.dup();
+        let frame = reg.singletons().backtrace_frame.dup();
 
-    builder
-        .module("inspect")
-        .value("Backtrace", &backtrace)
-        .value("Frame", &frame)
-        .value("Location", state.location)
-        .function("definition", async move |strand, args, mut out| {
-            let ([func], []) = unpack!(strand, args, 1, 0)?;
-            match definition(strand.vm(), &func) {
-                Some((source, span)) => location(strand, source, span, out),
-                None => out.store(Value::NIL),
-            }
-            Ok(())
-        })
-        .commit();
+        reg.module("inspect")
+            .value("Backtrace", &backtrace)
+            .value("Frame", &frame)
+            .value("Location", state.location)
+            .function("definition", async move |strand, args, mut out| {
+                let ([func], []) = unpack!(strand, args, 1, 0)?;
+                match definition(strand.vm(), &func) {
+                    Some((source, span)) => location(strand, source, span, out),
+                    None => out.store(Value::NIL),
+                }
+                Ok(())
+            })
+            .commit();
+    });
 }

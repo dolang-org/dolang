@@ -174,7 +174,6 @@ mod test {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn zigzag() {
         for value in spread_ivars() {
             assert_eq!(value, zig(zag(value)));
@@ -182,7 +181,6 @@ mod test {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn encode_decode_uvar() {
         for value in spread_uvars() {
             let mut buf = Vec::new();
@@ -193,13 +191,12 @@ mod test {
                 Decode::decode(&mut io::Cursor::new(&buf[..])).unwrap()
             );
             assert_eq!(value, unsafe {
-                UnsafeDecode::decode(&mut NonNull::from_ref(&buf[0]))
+                UnsafeDecode::decode(&mut NonNull::from_ref(&buf[..]).cast())
             });
         }
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn encode_decode_ivar() {
         for value in spread_ivars() {
             let mut buf = Vec::new();
@@ -210,7 +207,7 @@ mod test {
                 Decode::decode(&mut io::Cursor::new(&buf[..])).unwrap()
             );
             assert_eq!(value, unsafe {
-                UnsafeDecode::decode(&mut NonNull::from_ref(&buf[0]))
+                UnsafeDecode::decode(&mut NonNull::from_ref(&buf[..]).cast())
             });
         }
     }

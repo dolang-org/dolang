@@ -4,7 +4,7 @@ use crate::{
     strand::Strand,
     unpack,
     value::{Output, Slot, Value, prim::Prim},
-    vm::Builder,
+    vm::{Builder, StateTag},
 };
 
 fn as_float<'v, 's>(
@@ -184,52 +184,62 @@ macro_rules! unary {
     };
 }
 
+/// Tags the lazy setup of the `math` module, which has no state of its own.
+struct MathTag;
+
+impl StateTag for MathTag {
+    type State<'v> = ();
+}
+
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
-    let base = builder.sym("base");
-    let module = builder.module("math");
-    let module = unary!(module, "sqrt", sqrt);
-    let module = unary!(module, "cbrt", cbrt);
-    let module = unary!(module, "exp", exp);
-    let module = unary!(module, "expm1", exp_m1);
-    let module = unary!(module, "exp2", exp2);
-    let module = unary!(module, "ln", ln);
-    let module = unary!(module, "ln1p", ln_1p);
-    let module = unary!(module, "log2", log2);
-    let module = unary!(module, "log10", log10);
-    let module = unary!(module, "sin", sin);
-    let module = unary!(module, "cos", cos);
-    let module = unary!(module, "tan", tan);
-    let module = unary!(module, "asin", asin);
-    let module = unary!(module, "acos", acos);
-    let module = unary!(module, "atan", atan);
-    let module = unary!(module, "sinh", sinh);
-    let module = unary!(module, "cosh", cosh);
-    let module = unary!(module, "tanh", tanh);
-    let module = unary!(module, "asinh", asinh);
-    let module = unary!(module, "acosh", acosh);
-    let module = unary!(module, "atanh", atanh);
-    let module = unary!(module, "degrees", to_degrees);
-    let module = unary!(module, "radians", to_radians);
-    module
-        .function("atan2", async |strand, args, out| {
-            binary(strand, args, out, "atan2", f64::atan2).await
-        })
-        .function("copysign", async |strand, args, out| {
-            binary(strand, args, out, "copysign", f64::copysign).await
-        })
-        .function("log", async move |strand, args, out| {
-            let ([value, base_value], []) = unpack!(strand, args, 1, 0, base)?;
-            let value = as_float(strand, &value, "log")?;
-            let base_value = as_float(strand, &base_value, "log")?;
-            Output::set(strand, out, value.log(base_value));
-            Ok(())
-        })
-        .function("pow", pow)
-        .function("hypot", hypot)
-        .function("gcd", gcd)
-        .function("lcm", lcm)
-        .value("PI", std::f64::consts::PI)
-        .value("TAU", std::f64::consts::TAU)
-        .value("E", std::f64::consts::E)
-        .commit();
+    builder.lazy::<MathTag>(&["math"], |reg| {
+        reg.register_state::<MathTag>(());
+        let base = reg.sym("base");
+        let module = reg.module("math");
+        let module = unary!(module, "sqrt", sqrt);
+        let module = unary!(module, "cbrt", cbrt);
+        let module = unary!(module, "exp", exp);
+        let module = unary!(module, "expm1", exp_m1);
+        let module = unary!(module, "exp2", exp2);
+        let module = unary!(module, "ln", ln);
+        let module = unary!(module, "ln1p", ln_1p);
+        let module = unary!(module, "log2", log2);
+        let module = unary!(module, "log10", log10);
+        let module = unary!(module, "sin", sin);
+        let module = unary!(module, "cos", cos);
+        let module = unary!(module, "tan", tan);
+        let module = unary!(module, "asin", asin);
+        let module = unary!(module, "acos", acos);
+        let module = unary!(module, "atan", atan);
+        let module = unary!(module, "sinh", sinh);
+        let module = unary!(module, "cosh", cosh);
+        let module = unary!(module, "tanh", tanh);
+        let module = unary!(module, "asinh", asinh);
+        let module = unary!(module, "acosh", acosh);
+        let module = unary!(module, "atanh", atanh);
+        let module = unary!(module, "degrees", to_degrees);
+        let module = unary!(module, "radians", to_radians);
+        module
+            .function("atan2", async |strand, args, out| {
+                binary(strand, args, out, "atan2", f64::atan2).await
+            })
+            .function("copysign", async |strand, args, out| {
+                binary(strand, args, out, "copysign", f64::copysign).await
+            })
+            .function("log", async move |strand, args, out| {
+                let ([value, base_value], []) = unpack!(strand, args, 1, 0, base)?;
+                let value = as_float(strand, &value, "log")?;
+                let base_value = as_float(strand, &base_value, "log")?;
+                Output::set(strand, out, value.log(base_value));
+                Ok(())
+            })
+            .function("pow", pow)
+            .function("hypot", hypot)
+            .function("gcd", gcd)
+            .function("lcm", lcm)
+            .value("PI", std::f64::consts::PI)
+            .value("TAU", std::f64::consts::TAU)
+            .value("E", std::f64::consts::E)
+            .commit();
+    });
 }
