@@ -99,10 +99,8 @@ class Spec
     # With `--target`, Cargo builds build scripts, proc macros, and their
     # dependencies separately for the host, even when the target is the
     # host. The bundle build scripts link most of the workspace, so pass it
-    # only when cross-compiling. Distribution builds keep it, since
-    # `with_build_env` may set `RUSTFLAGS`, which `--target` keeps out of
-    # host artifacts.
-    self.#cross = (self.tuple != host_tuple() || self.profile == "dist")
+    # only when cross-compiling.
+    self.#cross = (self.tuple != host_tuple() || self.profile == "asan")
     let artifact_profile = (self.profile == "bench" && "release" || self.profile)
     let base = if self.#cross
       (Path("target") / self.tuple)
@@ -454,13 +452,20 @@ return $
     - arg: args
       help: "arguments to nightly cargo build/test/run"
       collect: true
+    - flag: slow
+      help: run slow tests (superseded by `args`)
+    - flag: release
+      help: run release tests (superseded by `args`)
     do |args|
       let spec = Spec $args
         channel: nightly
-        profile: opt
+        profile: asan
         extra:
           -Z build-std
-      env RUSTFLAGS: "-Z sanitizer=address --cfg asan" do both_test $spec $args
+      env
+        RUSTFLAGS: "-Z sanitizer=address --cfg asan"
+        RUSTDOCFLAGS: "-Z sanitizer=address --cfg asan"
+        do both_test $spec $args
 
   "test-miri":
     help: run tests with miri

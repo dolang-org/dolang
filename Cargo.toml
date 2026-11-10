@@ -497,11 +497,8 @@ incremental = false
 panic = "abort"
 
 
-[profile.opt]
+[profile.asan]
 inherits = "dev"
-opt-level = 1
-
-[profile.opt.build-override]
 opt-level = 1
 
 
