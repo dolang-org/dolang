@@ -578,7 +578,7 @@ mod test {
 
     #[test]
     fn frozen_shared_between_threads() {
-        const N: usize = 100;
+        const N: usize = if cfg!(miri) { 16 } else { 100 };
         let mut table = Table::<String, ()>::new();
         let mut bins = BinTable::new();
         let fresh = table.fresh(String::from("0"));

@@ -463,13 +463,13 @@ mod tests {
             }
         }
 
-        fn stored_waker(&self) -> Waker {
-            self.0
-                .lock()
-                .unwrap()
-                .waker
-                .clone()
-                .expect("a stored waker")
+        /// Whether the stored waker is `waker`. This compares data pointers, since
+        /// `Waker::will_wake` also compares vtable pointers, which Miri does not
+        /// keep unique for one vtable.
+        fn holds_waker(&self, waker: &Waker) -> bool {
+            let state = self.0.lock().unwrap();
+            let stored = state.waker.as_ref().expect("a stored waker");
+            stored.data() == waker.data()
         }
     }
 
@@ -572,7 +572,7 @@ mod tests {
         assert!(read(&mut a, &waker_a, 1).is_pending());
         assert!(read(&mut b, &waker_b, 1).is_pending());
         // `b` never reached the stream, so the stream still holds `a`'s waker.
-        assert!(gate.stored_waker().will_wake(&waker_a));
+        assert!(gate.holds_waker(&waker_a));
         gate.open();
         assert!(read(&mut a, &waker_a, 1).is_ready());
         assert!(woken_b.0.load(Ordering::SeqCst));
@@ -587,7 +587,7 @@ mod tests {
         assert!(read(&mut a, &waker_a, 1).is_pending());
         let mut b = a.clone();
         assert!(read(&mut b, Waker::noop(), 1).is_pending());
-        assert!(gate.stored_waker().will_wake(&waker_a));
+        assert!(gate.holds_waker(&waker_a));
         gate.open();
         assert!(read(&mut a, &waker_a, 1).is_ready());
         assert!(read(&mut b, Waker::noop(), 1).is_ready());
