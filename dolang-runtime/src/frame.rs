@@ -215,13 +215,19 @@ impl<'v> CallFrame<'v> {
             match res {
                 Err(e) => {
                     for slot in slots.get_unchecked(arg_range.clone()).iter() {
-                        (*slot.get()).store(Value::NIL);
+                        let value = &mut *slot.get();
+                        if value.is_uninit() {
+                            value.store(Value::NIL);
+                        }
                     }
                     panic::resume_unwind(e);
                 }
                 Ok(Err(e)) => {
                     for slot in slots.get_unchecked(arg_range.clone()).iter() {
-                        (*slot.get()).store(Value::NIL);
+                        let value = &mut *slot.get();
+                        if value.is_uninit() {
+                            value.store(Value::NIL);
+                        }
                     }
                     return Err(e);
                 }
