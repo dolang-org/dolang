@@ -8,6 +8,7 @@ fn union(db: &Database, types: &[TypeId]) -> TypeId {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn joins_drop_subsumed_members() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -49,6 +50,7 @@ fn joins_drop_subsumed_members() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn common_supertypes_are_the_least_shared_ancestor() {
     let mut db = Database::new();
     let t = reference(&db, 0, 0);
@@ -138,6 +140,7 @@ fn common_supertypes_are_the_least_shared_ancestor() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn widening_goes_to_a_common_supertype_then_unknown_or_value() {
     let mut db = Database::new();
     let t = reference(&db, 0, 0);
@@ -211,6 +214,7 @@ fn widening_goes_to_a_common_supertype_then_unknown_or_value() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_fresh_literal_relates_as_its_regular_twin() {
     let mut db = Database::new();
     let int = int(&mut db);

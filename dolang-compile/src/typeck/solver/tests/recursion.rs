@@ -36,6 +36,7 @@ fn recursive(
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn recursive_unions_are_proven_cheaply() {
     // Proving Box[A] <: Base[B] needs A <: B, which probes Box[A] <: Base[B]
     // again, past the argument
@@ -56,6 +57,7 @@ fn recursive_unions_are_proven_cheaply() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn recursion_through_arguments_is_proven() {
     let mut db = Database::new();
     let (_, base, boxed) = classes(&mut db);
@@ -67,6 +69,7 @@ fn recursion_through_arguments_is_proven() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn recursion_through_functions_is_proven() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -81,6 +84,7 @@ fn recursion_through_functions_is_proven() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn mutual_recursion_is_proven() {
     let mut db = Database::new();
     let (int, base, boxed) = classes(&mut db);
@@ -99,6 +103,7 @@ fn mutual_recursion_is_proven() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn instantiations_of_a_generic_recursive_alias_are_related() {
     // List[T] = Nil | Cons[T, List[T]], with Int: Num
     let mut db = Database::new();
@@ -120,6 +125,7 @@ fn instantiations_of_a_generic_recursive_alias_are_related() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn contradictions_under_an_assumption_contradict() {
     // A = Box[Pair[A, Str]] and B = Base[Pair[B, Int]]: assuming A <: B leaves
     // Str <: Int
@@ -148,6 +154,7 @@ fn contradictions_under_an_assumption_contradict() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unrelated_recursive_aliases_are_not_proven() {
     let mut db = Database::new();
     let (int, _, boxed) = classes(&mut db);
@@ -164,6 +171,7 @@ fn unrelated_recursive_aliases_are_not_proven() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn an_included_schema_doesnt_guard() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);

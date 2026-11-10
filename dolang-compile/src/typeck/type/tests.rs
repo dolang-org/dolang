@@ -116,6 +116,7 @@ fn definition(source: DeclSource, ty: TypeId) -> Declaration {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn structural_identity_is_not_source_identity() {
     let mut db = Database::new();
     let src = source(&mut db, DeclKind::Annotation, "x");
@@ -135,6 +136,7 @@ fn structural_identity_is_not_source_identity() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn literals_are_exact_values_not_builtin_types() {
     let mut db = Database::new();
     let sym = db.intern_symbol("ready");
@@ -162,6 +164,7 @@ fn literals_are_exact_values_not_builtin_types() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn decay_keeps_regular_literals_exact_keys_and_binder_bounds() {
     let mut db = Database::new();
     let (int, int_ty, int_source) = declare(&mut db, DeclKind::Class, "Int");
@@ -222,6 +225,7 @@ fn decay_keeps_regular_literals_exact_keys_and_binder_bounds() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn fresh_literals_give_way_to_their_regular_twins() {
     let mut db = Database::new();
     let fresh = intern(&mut db, Type::Fresh(Literal::Int(1)));
@@ -242,6 +246,7 @@ fn fresh_literals_give_way_to_their_regular_twins() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn symbols_are_interned_independently_of_units() {
     let mut db = Database::new();
     let mut locals = Vec::new();
@@ -294,6 +299,7 @@ fn symbols_are_interned_independently_of_units() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn declaration_lifecycle_and_post_seal_interning() {
     let mut db = Database::new();
     let src = source(&mut db, DeclKind::Alias, "A");
@@ -335,6 +341,7 @@ fn declaration_lifecycle_and_post_seal_interning() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn exposure_retains_chains_and_reports_only_head_cycles() {
     let mut db = Database::new();
     let (a, ar, a_source) = declare(&mut db, DeclKind::Annotation, "annotation");
@@ -373,6 +380,7 @@ fn exposure_retains_chains_and_reports_only_head_cycles() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn generic_definitions_remain_quantified_and_metadata_is_parallel() {
     let mut db = Database::new();
     let a = reference(&mut db, 0, 0, Kind::Type);
@@ -424,6 +432,7 @@ fn generic_definitions_remain_quantified_and_metadata_is_parallel() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn nominal_supertypes_use_the_structural_binder_scope() {
     let mut db = Database::new();
     let (parent, pr, parent_source) = declare(&mut db, DeclKind::Protocol, "Parent");
@@ -481,6 +490,7 @@ fn nominal_supertypes_use_the_structural_binder_scope() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unions_normalize_without_exposing_or_expanding() {
     let mut db = Database::new();
     let a = intern(&mut db, Type::Literal(Literal::Int(1)));
@@ -507,6 +517,7 @@ fn unions_normalize_without_exposing_or_expanding() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn union_applications_normalize_to_unions() {
     let mut db = Database::new();
     let (id, union_alias, source) = declare(&mut db, DeclKind::OpaqueAlias, "Union");
@@ -566,6 +577,7 @@ fn union_applications_normalize_to_unions() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn projections_fold_what_their_schemas_are_known_to_hold() {
     let mut db = Database::new();
     let project = |db: &mut Database, intrinsic, name| {
@@ -718,6 +730,7 @@ fn projections_fold_what_their_schemas_are_known_to_hold() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn keys_that_may_be_indexes_conflict_with_positions() {
     let mut db = Database::new();
     let (id, int, source) = declare(&mut db, DeclKind::Class, "Int");
@@ -778,6 +791,7 @@ fn keys_that_may_be_indexes_conflict_with_positions() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unknown_is_a_type_that_unions_do_not_absorb() {
     let mut db = Database::new();
     let unknown = db.unknown();
@@ -793,6 +807,7 @@ fn unknown_is_a_type_that_unions_do_not_absorb() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn types_record_whether_they_contain_unknown() {
     let mut db = Database::new();
     db.allocate_unit();
@@ -827,6 +842,7 @@ fn types_record_whether_they_contain_unknown() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn walks_stop_at_the_first_break() {
     let mut db = Database::new();
     let top = db.top();
@@ -847,6 +863,7 @@ fn walks_stop_at_the_first_break() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unknown_schema_is_a_distinct_schema() {
     let mut db = Database::new();
     let unknown = db.unknown_schema();
@@ -870,6 +887,7 @@ fn unknown_schema_is_a_distinct_schema() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn substitution_replaces_the_outer_group_and_shifts_under_quantifiers() {
     let mut db = Database::new();
     let a = reference(&mut db, 0, 0, Kind::Type);
@@ -899,6 +917,7 @@ fn substitution_replaces_the_outer_group_and_shifts_under_quantifiers() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn merging_groups_undoes_splitting() {
     let mut db = Database::new();
     let a = reference(&mut db, 0, 0, Kind::Type);
@@ -924,6 +943,7 @@ fn merging_groups_undoes_splitting() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn members_and_overloads_are_checked() {
     let mut db = Database::new();
     let (class, class_ty, class_source) = declare(&mut db, DeclKind::Class, "Box");
@@ -996,6 +1016,7 @@ fn members_and_overloads_are_checked() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 #[should_panic(expected = "is not a function")]
 fn a_method_member_must_be_a_function() {
     let mut db = Database::new();
@@ -1020,6 +1041,7 @@ fn a_method_member_must_be_a_function() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn schema_order_multiplicity_and_argument_modes_are_structural() {
     let mut db = Database::new();
     let a = intern(&mut db, Type::Literal(Literal::Int(1)));
@@ -1071,6 +1093,7 @@ fn schema_order_multiplicity_and_argument_modes_are_structural() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn binder_semantics_participate_in_identity() {
     let mut db = Database::new();
     let top = db.top();
@@ -1126,6 +1149,7 @@ fn binder_semantics_participate_in_identity() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn local_kind_checks_reject_invalid_shapes() {
     let mut db = Database::new();
     let top = db.top();
@@ -1226,6 +1250,7 @@ fn local_kind_checks_reject_invalid_shapes() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn shifting_respects_groups_slots_and_cutoffs() {
     let mut db = Database::new();
     let outer = reference(&mut db, 1, 3, Kind::Type);
@@ -1270,6 +1295,7 @@ fn shifting_respects_groups_slots_and_cutoffs() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn scope_sensitive_memoization_distinguishes_shared_occurrences() {
     let mut db = Database::new();
     let same = reference(&mut db, 0, 0, Kind::Type);
@@ -1289,6 +1315,7 @@ fn scope_sensitive_memoization_distinguishes_shared_occurrences() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn all_structural_edges_are_walked_and_rebuilt() {
     let mut db = Database::new();
     let leaves: Vec<_> = (0..13)
@@ -1405,6 +1432,7 @@ fn all_structural_edges_are_walked_and_rebuilt() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn coordinate_limits_are_checked_without_truncation() {
     assert_panics(|| {
         BoundRef::new(65536, 0);
@@ -1444,6 +1472,7 @@ fn coordinate_limits_are_checked_without_truncation() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn shared_interning_preserves_borrowed_types() {
     let mut db = Database::new();
     db.seal();
@@ -1464,6 +1493,7 @@ fn shared_interning_preserves_borrowed_types() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 #[should_panic(expected = "unallocated unit ID")]
 fn declarations_require_allocated_units() {
     let mut db = Database::new();
@@ -1474,6 +1504,7 @@ fn declarations_require_allocated_units() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn forward_schema_kinds_are_checked_when_sealing() {
     let mut db = Database::new();
     let (id, reference, mut source) = declare(&mut db, DeclKind::Alias, "Schema");
@@ -1506,6 +1537,7 @@ fn shared() -> (Arc<Shared>, TypeId, DeclId, SymbolId) {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn forks_read_their_base() {
     let (base, one, id, a) = shared();
     let mut fork = Database::fork(&base);
@@ -1518,6 +1550,7 @@ fn forks_read_their_base() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn layers_over_a_settling_layer_read_its_table() {
     let (base, one, id, _) = shared();
     assert_eq!(Database::fork(&base).settled(id), None);
@@ -1536,6 +1569,7 @@ fn layers_over_a_settling_layer_read_its_table() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn forks_intern_after_their_base() {
     let (base, one, ..) = shared();
     let mut fork = Database::fork(&base);
@@ -1560,6 +1594,7 @@ fn forks_intern_after_their_base() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn forks_are_independent() {
     let (base, ..) = shared();
     let mut first = Database::fork(&base);
@@ -1573,6 +1608,7 @@ fn forks_are_independent() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 #[should_panic(expected = "declaration database is shared")]
 fn forks_cannot_build() {
     let (base, ..) = shared();
@@ -1580,12 +1616,14 @@ fn forks_cannot_build() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 #[should_panic(expected = "only a sealed database")]
 fn sharing_requires_sealing() {
     Database::new().share();
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 #[should_panic(expected = "type kind mismatch")]
 fn sealing_checks_forward_kinds_even_after_normalization() {
     let mut db = Database::new();
@@ -1600,6 +1638,7 @@ fn sealing_checks_forward_kinds_even_after_normalization() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn intrinsic_associations_are_optional_and_write_once() {
     let intrinsics = [
         Intrinsic::Union,
@@ -1643,6 +1682,7 @@ fn intrinsic_associations_are_optional_and_write_once() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn intrinsic_associations_require_type_kind() {
     let mut db = Database::new();
     let schema = db.intern(Type::Schema(alias::Box::default()));
@@ -1678,6 +1718,7 @@ fn generic(db: &mut Database, name: &str, count: usize, body: TypeId) -> DeclId 
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn rigids_abstract_back_to_their_group() {
     let mut db = Database::new();
     let t = reference(&mut db, 0, 0, Kind::Type);
@@ -1710,6 +1751,7 @@ fn rigids_abstract_back_to_their_group() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 #[should_panic(expected = "rigid in a declaration")]
 fn declarations_never_contain_rigids() {
     let mut db = Database::new();
@@ -1721,6 +1763,7 @@ fn declarations_never_contain_rigids() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn binder_bounds_substitute_arguments_or_take_rest_shapes() {
     let mut db = Database::new();
     let t = reference(&mut db, 0, 0, Kind::Type);
@@ -1755,6 +1798,7 @@ fn binder_bounds_substitute_arguments_or_take_rest_shapes() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn sealed_declarations_can_be_retyped_and_are_revalidated() {
     let mut db = Database::new();
     let t = reference(&mut db, 0, 0, Kind::Type);
@@ -1797,6 +1841,7 @@ fn int(db: &mut Database, value: i128) -> TypeId {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_mapping_over_a_known_pack_reduces_item_by_item() {
     let mut db = Database::new();
     // `(item) -> T`, where `T` is outside the mapping
@@ -1868,6 +1913,7 @@ fn a_mapping_over_a_known_pack_reduces_item_by_item() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn several_packs_reduce_only_when_their_items_correspond() {
     let mut db = Database::new();
     let first = reference(&mut db, 0, 0, Kind::Type);
@@ -1926,6 +1972,7 @@ fn several_packs_reduce_only_when_their_items_correspond() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_mapping_is_its_own_group() {
     let mut db = Database::new();
     // `{...(item, T)}` over the pack `S`, both outside the mapping
@@ -1963,6 +2010,7 @@ fn a_mapping_is_its_own_group() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn instantiating_opens_the_innermost_group() {
     let mut db = Database::new();
     let local = reference(&mut db, 0, 0, Kind::Type);
@@ -1976,6 +2024,7 @@ fn instantiating_opens_the_innermost_group() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_mapping_has_packs_of_schemas_and_a_type_pattern() {
     let mut db = Database::new();
     let local = reference(&mut db, 0, 0, Kind::Type);
@@ -2003,6 +2052,7 @@ fn a_mapping_has_packs_of_schemas_and_a_type_pattern() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn fields_lower_to_member_schemas() {
     let mut db = Database::new();
     let designate = |db: &mut Database, intrinsic, name| {
@@ -2039,6 +2089,7 @@ fn fields_lower_to_member_schemas() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn restrictions_lower_and_imply_key_bounds() {
     let mut db = Database::new();
     let designate = |db: &mut Database, intrinsic, name| {
@@ -2151,6 +2202,7 @@ fn field(db: &mut Database, name: &str, ty: TypeId) -> (MemberKey, Member) {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn copies_remap_symbols_and_declarations() {
     let mut db = Database::new();
     // `A` and `B` refer to each other through their fields, and `A` has a method
@@ -2337,6 +2389,7 @@ fn copies_remap_symbols_and_declarations() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn copies_designate_intrinsics() {
     let mut db = Database::new();
     let (keys, keys_ty, source) = declare(&mut db, DeclKind::OpaqueAlias, "Keys");
@@ -2372,6 +2425,7 @@ fn copies_designate_intrinsics() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn copies_share_what_they_copied() {
     let mut db = Database::new();
     let (a, a_ty, source) = declare(&mut db, DeclKind::Class, "A");
@@ -2397,6 +2451,7 @@ fn copies_share_what_they_copied() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn copies_between_forks_keep_their_base() {
     let (base, one, id, a) = shared();
     let mut from = Database::fork(&base);
@@ -2424,6 +2479,7 @@ fn copies_between_forks_keep_their_base() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn layers_read_through_their_base() {
     let (base, one, id, a) = shared();
     let mut fork = Database::fork(&base);
@@ -2448,6 +2504,7 @@ fn layers_read_through_their_base() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn copies_between_layers_keep_what_they_share() {
     let (base, one, id, _) = shared();
     let layered = |local| {
@@ -2487,6 +2544,7 @@ fn copies_between_layers_keep_what_they_share() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn copies_remember_their_root() {
     let mut db = Database::new();
     let (int_id, int_ty, source) = declare(&mut db, DeclKind::Class, "Int");

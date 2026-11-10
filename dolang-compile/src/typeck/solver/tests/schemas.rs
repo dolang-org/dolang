@@ -5,6 +5,7 @@ fn residual(outcome: &Outcome, residual: Residual) -> bool {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn schema_keyword_and_rest_binders_are_instantiated() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -80,6 +81,7 @@ fn schema_keyword_and_rest_binders_are_instantiated() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 #[should_panic(expected = "implicit binder applied")]
 fn applying_an_implicit_binder_panics() {
     let mut db = Database::new();
@@ -95,6 +97,7 @@ fn applying_an_implicit_binder_panics() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn rest_shapes_admit_items_of_their_kinds() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -176,6 +179,7 @@ fn rest_shapes_admit_items_of_their_kinds() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn rest_shape_inclusions_of_rigids_and_unknown() {
     let mut db = Database::new();
     let num = nominal(&mut db, "Num", vec![], vec![]);
@@ -250,6 +254,7 @@ fn rest_shape_inclusions_of_rigids_and_unknown() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn schema_contents_can_skip_optional_atoms() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -291,6 +296,7 @@ fn schema_contents_can_skip_optional_atoms() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn positional_items_are_distributed_by_count() {
     use Multiplicity::{Optional as Opt, Repeated as Rep, Required as Req};
     let mut db = Database::new();
@@ -374,6 +380,7 @@ fn positional_items_are_distributed_by_count() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn literal_keys_own_their_items_and_others_go_to_the_domain() {
     use Multiplicity::{Optional as Opt, Repeated as Rep, Required as Req};
     let mut db = Database::new();
@@ -452,6 +459,7 @@ fn literal_keys_own_their_items_and_others_go_to_the_domain() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn domains_own_what_they_admit_narrowest_first() {
     use Multiplicity::{Repeated as Rep, Required as Req};
     let mut db = Database::new();
@@ -529,6 +537,7 @@ fn domains_own_what_they_admit_narrowest_first() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn inclusions_splice_or_take_on_their_multiplicity() {
     use Multiplicity::{Optional as Opt, Repeated as Rep, Required as Req};
     let mut db = Database::new();
@@ -559,6 +568,7 @@ fn inclusions_splice_or_take_on_their_multiplicity() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn opaque_rigids_pair_up_or_stand_for_their_bounds() {
     use Multiplicity::{Optional as Opt, Repeated as Rep, Required as Req};
     let mut db = Database::new();
@@ -604,6 +614,7 @@ fn opaque_rigids_pair_up_or_stand_for_their_bounds() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn the_dynamic_schema_leaves_its_lanes_unchecked() {
     use Multiplicity::{Optional as Opt, Required as Req};
     let mut db = Database::new();
@@ -644,6 +655,7 @@ fn the_dynamic_schema_leaves_its_lanes_unchecked() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn required_items_before_the_dynamic_schema_are_checked() {
     use Multiplicity::{Optional as Opt, Required as Req};
     let mut db = Database::new();
@@ -683,6 +695,7 @@ fn required_items_before_the_dynamic_schema_are_checked() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn positional_items_are_not_int_keyed_items() {
     use Multiplicity::{Repeated as Rep, Required as Req};
     let mut db = Database::new();
@@ -706,6 +719,7 @@ fn positional_items_are_not_int_keyed_items() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_remainder_admitting_a_literal_key_takes_its_further_items() {
     use Multiplicity::{Repeated as Rep, Required as Req};
     let mut db = Database::new();
@@ -794,6 +808,7 @@ fn applied(db: &mut Database, name: &str, body: TypeId, args: &[TypeId]) -> Type
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_mapping_over_known_packs_relates_item_by_item() {
     use Multiplicity::{Optional as Opt, Required as Req};
     let mut db = Database::new();
@@ -856,6 +871,7 @@ fn a_mapping_over_known_packs_relates_item_by_item() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_mapping_over_a_rigid_pairs_up_or_stands_for_its_bound() {
     use Multiplicity::Required as Req;
     let mut db = Database::new();
@@ -911,6 +927,7 @@ fn a_mapping_over_a_rigid_pairs_up_or_stands_for_its_bound() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_mapping_over_a_pack_being_inferred_chooses_it_from_the_items() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -1032,6 +1049,7 @@ fn mapping_callee(db: &Database, rest: Rest, two: bool, pattern: TypeId, result:
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn several_packs_take_one_item_each_per_position() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -1058,6 +1076,7 @@ fn several_packs_take_one_item_each_per_position() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_pack_item_keeps_its_items_key_and_multiplicity() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -1148,6 +1167,7 @@ fn a_pack_item_keeps_its_items_key_and_multiplicity() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_pack_item_the_pattern_doesnt_use_falls_back_to_its_bound() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -1166,6 +1186,7 @@ fn a_pack_item_the_pattern_doesnt_use_falls_back_to_its_bound() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn an_inverted_pack_is_exactly_its_items() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -1196,6 +1217,7 @@ fn an_inverted_pack_is_exactly_its_items() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_dynamic_item_gives_a_dynamic_pack() {
     let mut db = Database::new();
     let boxed = nominal(&mut db, "Box", vec![binder(Variance::Covariant)], vec![]);
@@ -1224,6 +1246,7 @@ fn a_dynamic_item_gives_a_dynamic_pack() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn an_actual_mapping_over_a_pack_being_inferred_waits_for_it() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -1283,6 +1306,7 @@ fn statuses(db: &Database, callee: TypeId, calls: &[&[CallArg]]) -> Vec<Status> 
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_rest_holds_the_items_left_over_as_values() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -1354,6 +1378,7 @@ fn a_rest_holds_the_items_left_over_as_values() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_keyed_rest_takes_the_keys_parameters_dont() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -1422,6 +1447,7 @@ fn a_keyed_rest_takes_the_keys_parameters_dont() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_pack_being_inferred_and_a_keyed_rest_take_their_own_lanes() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -1464,6 +1490,7 @@ fn a_pack_being_inferred_and_a_keyed_rest_take_their_own_lanes() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_rest_with_a_rigid_in_it_is_spliced() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -1502,6 +1529,7 @@ fn a_rest_with_a_rigid_in_it_is_spliced() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_positional_and_a_keyed_mapping_invert_apart() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -1580,6 +1608,7 @@ fn undefaulted(db: &Database, callee: TypeId, passed: TypeId) -> Vec<Outcome> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn an_actual_pack_is_left_the_positional_items_around_the_others() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -1626,6 +1655,7 @@ fn an_actual_pack_is_left_the_positional_items_around_the_others() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn an_actual_pack_is_left_the_keys_the_others_dont_name() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -1681,6 +1711,7 @@ fn an_actual_pack_is_left_the_keys_the_others_dont_name() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn several_actual_packs_wait_and_a_short_expected_lane_contradicts() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -1756,6 +1787,7 @@ fn through(
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn forced_items_peel_and_lone_variables_relate() {
     use Multiplicity::Required as Req;
     let mut db = Database::new();
@@ -1801,6 +1833,7 @@ fn forced_items_peel_and_lone_variables_relate() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn an_optional_head_takes_a_required_item_only_where_nothing_required_follows() {
     use Multiplicity::{Optional as Opt, Repeated as Rep, Required as Req};
     let mut db = Database::new();
@@ -1824,6 +1857,7 @@ fn an_optional_head_takes_a_required_item_only_where_nothing_required_follows() 
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_lone_variable_relates_to_a_rigid_beside_peels_and_pairs() {
     use Multiplicity::Required as Req;
     let mut db = Database::new();
@@ -1873,6 +1907,7 @@ fn a_lone_variable_relates_to_a_rigid_beside_peels_and_pairs() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_lone_actual_variable_relates_to_the_whole_expected_schema() {
     use Multiplicity::Required as Req;
     let mut db = Database::new();
@@ -1911,6 +1946,7 @@ fn a_lone_actual_variable_relates_to_the_whole_expected_schema() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_lone_expected_variable_takes_the_whole_actual_schema() {
     use Multiplicity::Required as Req;
     let mut db = Database::new();

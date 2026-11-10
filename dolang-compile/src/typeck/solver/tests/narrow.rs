@@ -101,6 +101,7 @@ fn value(s: &Solver<'_>, ty: TypeId, negated: bool, target: TypeId) -> TypeId {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn generic_union_alias_preserves_narrowed_arguments() {
     let mut db = Database::new();
     let int = intrinsic(&mut db, "Int", Intrinsic::Int);
@@ -128,6 +129,7 @@ fn generic_union_alias_preserves_narrowed_arguments() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn union_alias_members_are_exposed() {
     let mut w = World::new();
     let one = w.int_lit(1);
@@ -150,6 +152,7 @@ fn union_alias_members_are_exposed() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn upper_bounds_keep_reaching_members() {
     let mut w = World::new();
     w.db.seal();
@@ -190,6 +193,7 @@ fn upper_bounds_keep_reaching_members() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn negated_upper_bounds_drop_reaching_members() {
     let mut w = World::new();
     w.db.seal();
@@ -214,6 +218,7 @@ fn negated_upper_bounds_drop_reaching_members() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn exact_bounds_keep_only_the_class() {
     let mut w = World::new();
     w.db.seal();
@@ -243,6 +248,7 @@ fn exact_bounds_keep_only_the_class() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn negated_exact_bounds_drop_only_singletons() {
     let mut w = World::new();
     w.db.seal();
@@ -259,6 +265,7 @@ fn negated_exact_bounds_drop_only_singletons() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn literal_comparisons_strip_other_literals() {
     let mut w = World::new();
     w.db.seal();
@@ -295,6 +302,7 @@ fn literal_comparisons_strip_other_literals() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn truthiness_narrows_nil_and_bool() {
     let mut w = World::new();
     w.db.seal();
@@ -316,6 +324,7 @@ fn truthiness_narrows_nil_and_bool() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn generic_members_carry_arguments_down() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -384,6 +393,7 @@ fn generic_members_carry_arguments_down() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn covariant_schema_binders_take_their_bound() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -431,6 +441,7 @@ fn covariant_schema_binders_take_their_bound() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn packs_are_kept() {
     let mut w = World::new();
     w.db.seal();
@@ -454,6 +465,7 @@ fn packs_are_kept() {
 /// Every witness of the input that satisfies the relation is in the result. A
 /// witness stands for a value: a literal, or an instance of exactly a class.
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn narrowing_is_sound() {
     let mut w = World::new();
     w.db.seal();

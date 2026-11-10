@@ -16,6 +16,7 @@ fn lower(s: &Solver<'_>, variable: Term) -> Vec<Term> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_rejected_member_leaves_the_one_to_infer_through() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);
@@ -35,6 +36,7 @@ fn a_rejected_member_leaves_the_one_to_infer_through() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn what_is_expected_of_a_result_does_not_reject_a_member() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);
@@ -68,6 +70,7 @@ fn what_is_expected_of_a_result_does_not_reject_a_member() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn several_possible_members_are_ambiguous_and_leak_nothing() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);
@@ -90,6 +93,7 @@ fn several_possible_members_are_ambiguous_and_leak_nothing() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_member_proven_without_bounds_is_chosen_beside_possible_ones() {
     let mut db = Database::new();
     let parent = nominal(&mut db, "Parent", vec![], vec![]);
@@ -108,6 +112,7 @@ fn a_member_proven_without_bounds_is_chosen_beside_possible_ones() {
 /// A choice waits for bounds that reject the other members, and doesn't depend
 /// on the order constraints arrive in
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn growing_bounds_settle_an_ambiguity_in_any_order() {
     for later in [false, true] {
         let mut db = Database::new();
@@ -141,6 +146,7 @@ fn growing_bounds_settle_an_ambiguity_in_any_order() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_union_inside_a_chosen_member_is_judged_in_turn() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);
@@ -165,6 +171,7 @@ fn a_union_inside_a_chosen_member_is_judged_in_turn() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_function_infers_through_the_function_member() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);
@@ -188,6 +195,7 @@ fn a_function_infers_through_the_function_member() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn rejecting_every_member_contradicts_a_literal_or_class() {
     let mut db = Database::new();
     int(&mut db);
@@ -217,6 +225,7 @@ fn rejecting_every_member_contradicts_a_literal_or_class() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn rejecting_a_sole_reached_member_contradicts_a_class() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -245,6 +254,7 @@ fn rejecting_a_sole_reached_member_contradicts_a_class() {
 
 /// Exhausting the budget inside a trial is never a proof
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn exhaustion_in_a_trial_is_residual() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);

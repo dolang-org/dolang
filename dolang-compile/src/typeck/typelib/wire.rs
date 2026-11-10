@@ -2107,6 +2107,7 @@ mod tests {
     use super::{MemberScope, OVERLOAD, PUBLIC, SCOPE_SHIFT, scope};
 
     #[test]
+    #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
     fn unknown_flags() {
         assert!(matches!(
             scope(PUBLIC | 1 << SCOPE_SHIFT, PUBLIC),

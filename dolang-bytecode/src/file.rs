@@ -1214,7 +1214,7 @@ mod test {
     }
 
     #[test]
-    #[cfg(not(miri))]
+    #[cfg_attr(miri, ignore = "builds limit-sized tables")]
     fn verify_rejects_symbol_and_constant_table_size_limits() {
         with_valid_content(|mut content| {
             content.symtab.content = (0..(limit::SYMBOL_TAB_ENTRIES + 1))
@@ -1235,7 +1235,7 @@ mod test {
     }
 
     #[test]
-    #[cfg(not(miri))]
+    #[cfg_attr(miri, ignore = "builds limit-sized tables")]
     fn verify_rejects_pack_and_unpack_table_size_limits() {
         with_valid_content(|mut content| {
             content.packtab.content = (0..(limit::PACK_TAB_ENTRIES + 1)).map(|_| vec![]).collect();
@@ -1282,7 +1282,7 @@ mod test {
     }
 
     #[test]
-    #[cfg(not(miri))]
+    #[cfg_attr(miri, ignore = "builds limit-sized tables")]
     fn verify_rejects_function_table_and_function_limits() {
         with_valid_content(|mut content| {
             content.functab.content.clear();
@@ -1340,6 +1340,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "builds limit-sized tables")]
     fn verify_rejects_source_map_size_limit() {
         with_valid_content(|mut content| {
             content.funcdebugtab.content = vec![debug_entry(

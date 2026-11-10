@@ -20,6 +20,7 @@ fn lower(s: &Solver<'_>, variable: Term) -> Vec<Term> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn no_overload_fitting_contradicts_and_keeps_each_rejection() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);
@@ -59,6 +60,7 @@ fn no_overload_fitting_contradicts_and_keeps_each_rejection() {
 /// What a call's result is expected to be doesn't choose, but is related to
 /// what's chosen
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn only_the_arguments_choose_an_overload() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);
@@ -79,6 +81,7 @@ fn only_the_arguments_choose_an_overload() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_rejected_overload_leaves_no_bounds() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);
@@ -104,6 +107,7 @@ fn a_rejected_overload_leaves_no_bounds() {
 /// An ambiguous call waits for what its caller later bounds its arguments by,
 /// as a default does
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn an_ambiguity_waits_for_later_bounds() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);
@@ -129,6 +133,7 @@ fn an_ambiguity_waits_for_later_bounds() {
 /// Anywhere but on the left of a function type, an overloaded function is its
 /// implementation; what's below it is below each of its signatures
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn elsewhere_an_overloaded_function_is_its_implementation() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);

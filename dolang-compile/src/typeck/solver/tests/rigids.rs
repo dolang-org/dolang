@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn rigids_are_below_only_themselves_and_their_bounds() {
     let mut db = Database::new();
     let num = nominal(&mut db, "Num", vec![], vec![]);
@@ -44,6 +45,7 @@ fn rigids_are_below_only_themselves_and_their_bounds() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn f_bounds_and_unions_hold_through_bounds() {
     let mut db = Database::new();
     let nil = db.intern(Type::Literal(Literal::Nil));
@@ -89,6 +91,7 @@ fn f_bounds_and_unions_hold_through_bounds() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn rest_rigids_are_bounded_by_their_shapes() {
     for registered in [false, true] {
         let mut db = Database::new();
@@ -148,6 +151,7 @@ fn rest_rigids_are_bounded_by_their_shapes() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn bound_reductions_are_labeled() {
     let mut db = Database::new();
     let iter = nominal(&mut db, "Iter", vec![], vec![]);
@@ -178,6 +182,7 @@ fn bound_reductions_are_labeled() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn rigids_in_scope_can_be_assigned() {
     let mut db = Database::new();
     let t = reference(&db, 0, 0);
@@ -195,6 +200,7 @@ fn rigids_in_scope_can_be_assigned() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn rigids_out_of_scope_have_escaped() {
     let mut db = Database::new();
     let num = nominal(&mut db, "Num", vec![], vec![]);
@@ -226,6 +232,7 @@ fn rigids_out_of_scope_have_escaped() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn reach_walks_rigids_through_their_bounds() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -270,6 +277,7 @@ fn reach_walks_rigids_through_their_bounds() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn item_projections_imply_rigid_key_bounds() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -320,6 +328,7 @@ fn item_projections_imply_rigid_key_bounds() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_lifted_binder_bounds_as_the_enclosing_rigid() {
     let mut db = Database::new();
     let s = db.intern(Type::Bound {

@@ -158,6 +158,7 @@ fn check(typelib: &[u8]) -> Result<Vec<String>, crate::Error> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn round_trip() {
     let bytes = typelib();
     let (shard, facts) = read(&bytes).unwrap();
@@ -172,6 +173,7 @@ fn round_trip() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn text_is_interned_once() {
     // Constants spell the module's own name and path, and a name it declares
     let source = "
@@ -206,6 +208,7 @@ pub let limit @ Tag = \"Tag\"
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn types_are_interned_once() {
     let source = "pub def f a @ Array[Int] b @ Array[Int] c @ Str -> Str\n  c\n";
     let bytes = write(&compile(source, Mode::Module { name: "lib".into() }), &[]).unwrap();
@@ -217,6 +220,7 @@ fn types_are_interned_once() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn type_before_its_children() {
     let bytes = typelib();
     let mut content = content(&bytes);
@@ -243,6 +247,7 @@ fn members(shard: &Shard<'_>, class: usize) -> Vec<Option<(usize, usize)>> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn methods_keep_their_place_among_fields() {
     let source = "
 pub class C
@@ -261,6 +266,7 @@ pub class C
 
 /// What a typelib leaves to be derived is written where it can't be.
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn underived_values_are_written() {
     let bytes = typelib();
     let (mut shard, facts) = read(&bytes).unwrap();
@@ -332,6 +338,7 @@ fn underived_values_are_written() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn checks_against_typelib() {
     let script = compile(SCRIPT, Mode::Script);
     let module = compile(MODULE, Mode::Module { name: "lib".into() });
@@ -350,12 +357,14 @@ fn checks_against_typelib() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn script_has_no_typelib() {
     let error = write(&compile(SCRIPT, Mode::Script), &["lib"]).unwrap_err();
     assert!(matches!(error.kind(), ErrorKind::NotModule));
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn not_requested() {
     let module = compile(MODULE, Mode::Module { name: "lib".into() });
     let mut builder = Check::new();
@@ -365,6 +374,7 @@ fn not_requested() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn checked_from_typelib() {
     let bytes = typelib();
     let typelib = Typelib::read(&bytes).unwrap();
@@ -376,6 +386,7 @@ fn checked_from_typelib() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn missing_import() {
     let lib = compile(MISSING, Mode::Module { name: "lib".into() });
     let error = write(&lib, &[]).unwrap_err();
@@ -385,6 +396,7 @@ fn missing_import() {
 
 /// The typelib is the same whatever else the check holds
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn written_alone() {
     let lib = compile(
         "import dep\npub @let G = dep.Thing\n",
@@ -405,6 +417,7 @@ fn written_alone() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn duplicate_module() {
     let bytes = typelib();
     let typelib = Typelib::read(&bytes).unwrap();
@@ -416,6 +429,7 @@ fn duplicate_module() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn describes_module() {
     let source = "
 import json time uuid
@@ -445,6 +459,7 @@ pub let unused @ json.Value = nil
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn bad_header() {
     let mut bytes = typelib();
     bytes[1] ^= 1;
@@ -453,6 +468,7 @@ fn bad_header() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn other_version() {
     let mut bytes = typelib();
     // The version follows the 8-byte magic
@@ -463,6 +479,7 @@ fn other_version() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn truncated() {
     let bytes = typelib();
     for len in 0..bytes.len() {
@@ -471,6 +488,7 @@ fn truncated() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn trailing() {
     let mut bytes = typelib();
     bytes.push(0);
@@ -478,6 +496,7 @@ fn trailing() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn out_of_range() {
     let bytes = typelib();
     let mut content = content(&bytes);
@@ -490,6 +509,7 @@ fn out_of_range() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn malformed_facts() {
     let bytes = typelib();
     // `Box`, whose one signature has one binder
@@ -527,6 +547,7 @@ fn malformed_facts() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn exported_variables() {
     let bytes = typelib();
     let (shard, _) = read(&bytes).unwrap();
@@ -571,6 +592,7 @@ fn exported_variables() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn private_items() {
     let source = "
 import std:
@@ -624,6 +646,7 @@ def private_def()
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn private_in_interface() {
     for private in [
         "class Private",
@@ -644,7 +667,7 @@ fn private_in_interface() {
 /// Corrupting any byte must make reading fail, or leave a typelib the checker
 /// handles without panicking.
 #[test]
-#[cfg_attr(miri, ignore = "slow")]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn corruption() {
     let bytes = typelib();
     let mut read_ok = 0;
@@ -712,6 +735,7 @@ fn located(units: &[&Unit<'_>], typelibs: &[&[u8]]) -> Vec<(usize, u32, u32, Str
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn missing_module() {
     let lib = compile(MISSING, Mode::Module { name: "lib".into() });
     let script = compile(RECOVERING, Mode::Script);
@@ -723,6 +747,7 @@ fn missing_module() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn missing_export_of_dependency() {
     let lib = compile(
         "import dep\npub @let G = dep.Thing\npub @let H = dep.Thing\n",
@@ -743,6 +768,7 @@ fn missing_export_of_dependency() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn omits_reference_spans_and_spellings() {
     // `Alias` only spells a reference, and `Thing` is the item it imports
     let source = "import dep:\n  @Thing: Alias\npub @let G = Alias\npub @let H = Array[G]\n";
@@ -770,6 +796,7 @@ fn omits_reference_spans_and_spellings() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn locates_kept_spans() {
     // Kept spans after non-ASCII text and a tab on their line, and on later lines
     let source = "pub def f :key @ Str = \"é\tü\" *rest @ Int -> Int\n  1\n\
@@ -807,6 +834,7 @@ fn locates_kept_spans() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn import_on_later_line() {
     let lib = compile(
         "# A dependency\n\nimport dep\npub @let G = dep.Thing\n",
@@ -820,6 +848,7 @@ fn import_on_later_line() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn omitted_span_at_first_line() {
     let lib = compile(
         "import dep\n\npub @let G = dep.Thing[Int]\n",
@@ -901,6 +930,7 @@ fn variances(
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn variance_is_recorded() {
     let std = compile(PHANTOM_STD, Mode::Module { name: "std".into() });
     let lib = compile(VARIANT, Mode::Module { name: "lib".into() });
@@ -996,6 +1026,7 @@ fn piped() -> [Vec<u8>; 4] {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn records_pipes() {
     let [strand, proc, dep, other] = piped();
     let nominations = |bytes: &[u8]| {
@@ -1011,6 +1042,7 @@ fn records_pipes() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn missing_follows_strand_to_its_nominees() {
     let [strand, proc, dep, other] = piped();
     let [strand, proc, dep, other] =
@@ -1049,6 +1081,7 @@ fn missing_follows_strand_to_its_nominees() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn rejects_other_pipes() {
     let [strand, ..] = piped();
     let typelib = Typelib::read(&strand).unwrap();
@@ -1064,6 +1097,7 @@ fn rejects_other_pipes() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 #[should_panic = "pipes are nominated before typelibs are added"]
 fn pipes_before_typelibs() {
     let bytes = typelib();
@@ -1074,6 +1108,7 @@ fn pipes_before_typelibs() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn recorded_nominee_not_found() {
     let [strand, ..] = piped();
     let typelib = Typelib::read(&strand).unwrap();
@@ -1094,6 +1129,7 @@ fn recorded_nominee_not_found() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn missing_nominee() {
     let strand = compile(
         STRAND,
@@ -1146,6 +1182,7 @@ pub class Box
 ";
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn settled_round_trip() {
     let unit = compile(DECORATED, Mode::Module { name: "lib".into() });
     let bytes = write(&unit, &[]).unwrap();
@@ -1169,6 +1206,7 @@ fn settled_round_trip() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn settled_type_before_its_children() {
     let unit = compile(DECORATED, Mode::Module { name: "lib".into() });
     let bytes = write(&unit, &[]).unwrap();
@@ -1182,6 +1220,7 @@ fn settled_type_before_its_children() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn settled_declaration_out_of_range() {
     let unit = compile(DECORATED, Mode::Module { name: "lib".into() });
     let bytes = write(&unit, &[]).unwrap();
@@ -1195,6 +1234,7 @@ fn settled_declaration_out_of_range() {
 
 /// A type without declarations is the same type once written and read back
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn checker_types_round_trip() {
     use crate::typeck::r#type::{
         Binder, Binding, BoundRef, Database, Element, Function, Kind, Literal, Multiplicity,

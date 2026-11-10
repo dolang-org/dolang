@@ -23,6 +23,7 @@ fn schema_reference(db: &Database, slot: usize) -> TypeId {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn projections_wait_for_their_schema() {
     let db = &mut Database::new();
     let (a, b, c) = (sym(db, "a"), sym(db, "b"), sym(db, "c"));
@@ -56,6 +57,7 @@ fn projections_wait_for_their_schema() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_projection_of_a_rigid_is_below_that_of_its_bound() {
     let db = &mut Database::new();
     let (a, b) = (sym(db, "a"), sym(db, "b"));
@@ -90,6 +92,7 @@ fn a_projection_of_a_rigid_is_below_that_of_its_bound() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_value_outside_every_member_is_outside_the_union() {
     let db = &mut Database::new();
     let int = int(db);
@@ -127,6 +130,7 @@ fn a_value_outside_every_member_is_outside_the_union() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_union_expansion_is_evaluated_once_substituted() {
     let db = &mut Database::new();
     let (one, two, three) = (literal(db, 1), literal(db, 2), literal(db, 3));
@@ -157,6 +161,7 @@ fn evaluated(db: &Database, projection: TypeId) -> Result<TypeId, Issue> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_key_selects_items_positions_by_their_indexes() {
     let db = &mut Database::new();
     let int = int(db);
@@ -230,6 +235,7 @@ fn a_key_selects_items_positions_by_their_indexes() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn mutators_check_their_items_multiplicities() {
     let db = &mut Database::new();
     let int = int(db);
@@ -320,6 +326,7 @@ fn mutators_check_their_items_multiplicities() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_rigid_key_deletes_where_its_bound_does() {
     let db = &mut Database::new();
     let int = int(db);
@@ -356,6 +363,7 @@ fn a_rigid_key_deletes_where_its_bound_does() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn item_projections_meet_without_intersections() {
     let db = &mut Database::new();
     let int = int(db);
@@ -410,6 +418,7 @@ fn item_projections_meet_without_intersections() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn writes_fit_each_item_their_key_selects() {
     let db = &mut Database::new();
     let [c, d] = ["C", "D"].map(|name| nominal(db, name, vec![], vec![]));
@@ -430,6 +439,7 @@ fn writes_fit_each_item_their_key_selects() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn item_projections_wait_for_their_key_and_report_on_exposure() {
     let db = &mut Database::new();
     let int = int(db);
@@ -473,6 +483,7 @@ fn item_projections_wait_for_their_key_and_report_on_exposure() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn item_projections_relate_before_they_can_be_evaluated() {
     let db = &mut Database::new();
     let int = int(db);
@@ -543,6 +554,7 @@ fn item_projections_relate_before_they_can_be_evaluated() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn index_items_widen_to_the_keys_of_a_rigid_schemas_bound() {
     let db = &mut Database::new();
     let int = int(db);
@@ -581,6 +593,7 @@ fn index_items_widen_to_the_keys_of_a_rigid_schemas_bound() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn index_items_of_a_wider_schema_are_above() {
     use Multiplicity::{Optional as Opt, Repeated as Rep, Required as Req};
     let db = &mut Database::new();
@@ -633,6 +646,7 @@ fn index_items_of_a_wider_schema_are_above() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_class_outside_scalar_members_is_outside_the_union() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -651,6 +665,7 @@ fn a_class_outside_scalar_members_is_outside_the_union() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_sole_reached_generic_alternative_refutes() {
     let mut db = Database::new();
     let int = int(&mut db);

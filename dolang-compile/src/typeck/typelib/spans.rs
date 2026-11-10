@@ -188,6 +188,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
     fn zigzag() {
         for x in [0, 1, -1, 2, -2, 1 << 20, -(1 << 20), 1 << 25] {
             assert_eq!(zig(zag(x)), x);
@@ -196,6 +197,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
     fn names_on_a_line_take_a_word() {
         // `def f a b`, then `    g` and `    h` on the lines after
         let words = round_trip(&[
@@ -214,6 +216,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
     fn lengths_are_written_unless_implied() {
         round_trip(&[
             // Characters, not bytes
@@ -225,6 +228,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
     fn spans_go_backwards() {
         round_trip(&[
             (Span::new(9, 10, 3), Some("abc")),
@@ -238,6 +242,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
     fn invalid_spans_leave_the_reference() {
         let words = round_trip(&[
             (Span::new(4, 2, 1), Some("x")),
@@ -249,6 +254,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
     fn clamped_fields_round_trip() {
         round_trip(&[
             (Span::new(1 << 24, 1 << 20, 1 << 20), None),
@@ -258,6 +264,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
     fn malformed_streams_are_rejected() {
         let mut writer = Writer::default();
         writer.push(Span::new(5, 3, 2), None);

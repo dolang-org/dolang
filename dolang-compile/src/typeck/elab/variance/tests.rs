@@ -7,6 +7,7 @@ fn path(u: Use, keys: &[u32]) -> Source<u32> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn composition() {
     for u in [Use::NONE, Use::CO, Use::CONTRA, Use::BOTH] {
         assert_eq!(Use::CO.then(u), u);
@@ -20,6 +21,7 @@ fn composition() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn recursion_through_itself() {
     // `List[T]`: `head -> T` and `tail -> List[T]`
     let uses = solve(
@@ -35,6 +37,7 @@ fn recursion_through_itself() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unused_slot_is_invariant() {
     // `Wrap[T]` uses `T` only as the unused binder of `Unused[U]`
     let uses = solve(&[(1, path(Use::CO, &[0]))], &[0, 1], FxHashMap::default());
@@ -43,6 +46,7 @@ fn unused_slot_is_invariant() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn join_ignores_unused() {
     // A class takes its binder's uses from a method, which does not use it, and a
     // supertype that does
@@ -56,6 +60,7 @@ fn join_ignores_unused() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn mutual_recursion() {
     // `A[T]: B[T]` and `B[U]` with `get -> A[U]` and `put x@U`
     let uses = solve(
@@ -85,6 +90,7 @@ impl Lcg {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn order_independent() {
     const KEYS: u32 = 8;
     let mut rng = Lcg(753);
@@ -126,6 +132,7 @@ fn order_independent() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn fixed_keys_read_as_solved() {
     // Keys 0..4 are a typelib's and 4..8 a unit's with source: binders of their own
     // declarations, then captured ones. The typelib's constraints read only its own
