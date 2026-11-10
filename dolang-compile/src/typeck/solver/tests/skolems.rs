@@ -12,6 +12,7 @@ fn uses(s: &Solver<'_>, step: &Step) -> bool {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn skolems_are_bounded_by_their_binders() {
     let mut db = Database::new();
     let num = nominal(&mut db, "Num", vec![], vec![]);
@@ -54,6 +55,7 @@ fn skolems_are_bounded_by_their_binders() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn skolem_bounds_are_read_in_their_environment() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -77,6 +79,7 @@ fn skolem_bounds_are_read_in_their_environment() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unbounded_skolems_are_below_unions_admitting_anything() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -105,6 +108,7 @@ fn unbounded_skolems_are_below_unions_admitting_anything() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn skolem_bound_reductions_are_labeled() {
     let mut db = Database::new();
     let iter = nominal(&mut db, "Iter", vec![], vec![]);
@@ -128,6 +132,7 @@ fn skolem_bound_reductions_are_labeled() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn rest_skolems_are_bounded_by_their_shapes() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -166,6 +171,7 @@ fn rest_skolems_are_bounded_by_their_shapes() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn quantified_actuals_are_instantiated_inside_the_skolems_scope() {
     let mut db = Database::new();
     let num = nominal(&mut db, "Num", vec![], vec![]);
@@ -203,6 +209,7 @@ fn quantified_actuals_are_instantiated_inside_the_skolems_scope() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn skolemizing_is_repeatable() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -230,6 +237,7 @@ fn skolemizing_is_repeatable() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn skolems_never_leave_their_judgment() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -252,6 +260,7 @@ fn skolems_never_leave_their_judgment() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn nominals_below_quantified_types_are_residual() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -273,6 +282,7 @@ fn identity(db: &Database, variance: Variance) -> TypeId {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn quantified_types_subsume_through_instantiation() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -326,6 +336,7 @@ fn quantified_types_subsume_through_instantiation() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn implicit_channels_are_settled_by_their_skolems() {
     let mut db = Database::new();
     let num = nominal(&mut db, "Num", vec![], vec![]);
@@ -354,6 +365,7 @@ fn implicit_channels_are_settled_by_their_skolems() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn probes_prove_quantified_union_members() {
     let mut db = Database::new();
     let nil = db.intern(Type::Literal(Literal::Nil));
@@ -375,6 +387,7 @@ fn probes_prove_quantified_union_members() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn nested_quantifiers_nest_their_scopes() {
     let mut db = Database::new();
     let outer = reference(&db, 1, 0);
@@ -418,6 +431,7 @@ fn nested_quantifiers_nest_their_scopes() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn quantifiers_under_parameters_are_checked() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -444,6 +458,7 @@ fn quantifiers_under_parameters_are_checked() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn escaping_skolems_are_promoted_to_their_bounds() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -472,6 +487,7 @@ fn escaping_skolems_are_promoted_to_their_bounds() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn skolems_never_escape_through_variables() {
     let mut db = Database::new();
     db.seal();
@@ -497,6 +513,7 @@ fn skolems_never_escape_through_variables() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn variables_below_quantified_types_are_residual() {
     let mut db = Database::new();
     db.seal();
@@ -523,6 +540,7 @@ fn domains(db: &Database, pairs: &[(TypeId, TypeId)]) -> TypeId {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn item_projections_imply_key_bounds() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -579,6 +597,7 @@ fn item_projections_imply_key_bounds() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn skolem_keys_select_by_their_bounds() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -613,6 +632,7 @@ fn skolem_keys_select_by_their_bounds() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn nested_projections_imply_no_key_bounds() {
     let mut db = Database::new();
     let range = nominal(&mut db, "Range", vec![], vec![]);

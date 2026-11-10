@@ -52,6 +52,7 @@ fn lower_mode_with(source: &str, mode: Mode<'_>, inspect: impl FnOnce(&Ir)) {
 /// Short circuits as call arguments, nested in each other, and as conditions and
 /// a `throw`'s value give valid graphs with a balanced stack
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn short_circuit_stacks() {
     lower(
         "
@@ -111,6 +112,7 @@ fn capture(ir: &Ir, func: FuncId) -> (BlockId, usize) {
 /// A function's creation follows the `Capture` naming it, in the same block: after
 /// a short circuit's test, and in a nested block
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn captures_precede_creation() {
     lower_with(
         "
@@ -154,6 +156,7 @@ let h = do
 /// A comprehension's item creates a function in its item block, though the
 /// lambda stays in the collection's tree, evaluated once the comprehension ends
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn comprehension_captures() {
     lower_with(
         "
@@ -181,6 +184,7 @@ let ys = $
 /// A class statement creates its methods and field initializers, named by one
 /// `Capture` step
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn class_captures() {
     lower_with(
         "
@@ -213,6 +217,7 @@ class A
 /// A variable escapes through the function its owner creates, however deeply
 /// it's captured, even one another function assigns
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn escapes() {
     lower_with(
         "
@@ -247,6 +252,7 @@ let outer = do
 /// A function caches the variables it captures, at its entry, unless another
 /// function assigns them
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn cached() {
     lower_with(
         "
@@ -289,6 +295,7 @@ let outer = do
 
 /// Only a `def`'s or `class`'s variable is hoisted
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn hoisted() {
     let source = "
 def f()
@@ -331,6 +338,7 @@ for i = [1]
 /// reassignment after a capture counts, an assignment before one doesn't, and
 /// rebinding a `for` variable makes a fresh cell
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn uncached() {
     let source = "
 let a = 1
@@ -425,6 +433,7 @@ fn names<'s>(ir: &Ir, source: &'s str, vars: &[VarId]) -> Vec<&'s str> {
 /// Defs that only read a module variable run after the module's run, each in its
 /// own run; one that assigns it, and a `do` block, are included in it
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn late_runs() {
     let source = "
 let CONSTANT = \"lol\"
@@ -468,6 +477,7 @@ let f = do
 /// A def nested in a def that captures nothing of it runs early, and inherits
 /// what it captures of the module
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn early_runs() {
     let source = "
 let CONSTANT = \"lol\"
@@ -502,6 +512,7 @@ def outer x
 
 /// Capturing or assigning an exported variable couples nothing
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn exported_runs() {
     let source = "
 pub let shared = 0
@@ -532,6 +543,7 @@ def set()
 /// A capture and an assignment are recorded on every function between the
 /// capturer and the variable's owner, but not on the owner
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn uses_and_assigns() {
     let source = "
 let v = 1
@@ -563,6 +575,7 @@ def outer()
 /// A method's decorators are applied to its function in a region of their own,
 /// after the step creating the function, binding what they give
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn method_decorators_lower_to_a_region() {
     let source = "
 let deco = (do |f| f)
@@ -609,6 +622,7 @@ class C
 
 /// A region that settles is spliced out for a branch to its exit
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn settled_regions_are_spliced() {
     let source = "
 def deco f @ Func -> Func
@@ -656,6 +670,7 @@ fn lower_module(source: &str, inspect: impl FnOnce(&Ir)) {
 /// variables, which settle and are spliced out; a decorated def that isn't
 /// exported gets none
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn decorated_exports_lower_to_regions() {
     let source = "
 def same[F] f @ F -> F
@@ -685,6 +700,7 @@ def g x @ Int -> Int
 /// A region that reads another export's variable settles once that export does,
 /// in a later round
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn export_regions_settle_in_order() {
     let source = "
 def same[F] f @ F -> F
@@ -708,6 +724,7 @@ pub def f x @ Int -> Int
 /// A region that reaches another's decorated member settles once that member
 /// does, in a later round, and both are spliced out
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn blocked_regions_settle_in_order() {
     let source = "
 def same[F] f @ F -> F
@@ -733,6 +750,7 @@ class Registry
 
 /// Regions that reach each other's members never settle, and stay for flow
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn cyclic_regions_stay() {
     let source = "
 let p @ P = ...

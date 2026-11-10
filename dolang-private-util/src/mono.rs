@@ -854,7 +854,8 @@ impl<T: Hash + Eq, S: BuildHasher> Frozen<MonoHashSet<T, S>> {
 #[cfg(test)]
 mod test {
     use super::*;
-    const SIZE: usize = 1 << 10;
+    // Still enough for several chunk and table growths under Miri
+    const SIZE: usize = if cfg!(miri) { 1 << 6 } else { 1 << 10 };
 
     #[test]
     fn push_a_lotta_things() {
@@ -971,7 +972,7 @@ mod test {
 
     #[test]
     fn frozen_shared_between_threads() {
-        const N: usize = 100;
+        const N: usize = if cfg!(miri) { 16 } else { 100 };
         let mut vec = MonoVec::new();
         let mut map = MonoHashMap::new();
         let mut set = MonoHashSet::new();

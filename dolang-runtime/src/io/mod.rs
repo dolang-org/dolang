@@ -37,6 +37,7 @@ use crate::{
     stdlib::io::{Concat, ConcatType},
     strand::Strand,
     value::{Output, Value},
+    vm::AllocExt,
 };
 
 bitflags::bitflags! {
@@ -137,7 +138,7 @@ pub fn concat<'v, 's>(
     iterable: &Value<'v>,
     end: &[u8],
 ) -> crate::error::Result<'v, 's, ByteHandle> {
-    let ty = *strand.state::<ConcatType>();
+    let ty = *strand.force_state::<ConcatType>();
     strand.with_slots_sync(|strand, [mut concat]| {
         ty.create(strand, Concat::new(end.to_vec()), &mut concat);
         ty.cast(&concat)

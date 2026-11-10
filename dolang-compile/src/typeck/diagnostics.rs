@@ -8,6 +8,7 @@ fn config(mode: Mode<'_>) -> Config<'_> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn builder_assigns_ids_in_order_and_rejects_duplicate_modules() {
     let path = Path::new("same.dol");
     let first = config(Mode::Module {
@@ -33,6 +34,7 @@ fn builder_assigns_ids_in_order_and_rejects_duplicate_modules() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn builder_rejects_units_without_resolved_types() {
     let path = Path::new("unit.dol");
     let failed = config(Mode::Script).unit(path, "let =\n");
@@ -49,6 +51,7 @@ fn builder_rejects_units_without_resolved_types() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn check_excludes_unit_diagnostics() {
     let unit = config(Mode::Script).unit(Path::new("unit.dol"), "let x @ Missing = 1\n");
     assert!(unit.diagnostics().next().is_some());
@@ -58,6 +61,7 @@ fn check_excludes_unit_diagnostics() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn judgments_do_not_depend_on_the_order_units_are_added() {
     let geo = config(Mode::Module { name: "geo".into() }).unit(
         Path::new("geo.dol"),
@@ -109,6 +113,7 @@ fn judgments_do_not_depend_on_the_order_units_are_added() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn results_do_not_depend_on_threads() {
     let module = |name: &str, source: &'static str| {
         config(Mode::Module {
@@ -205,6 +210,7 @@ fn results_do_not_depend_on_threads() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn depends_lists_imports_prelude_modules_and_std() {
     let source = "import zeta\nimport alpha.beta:\n  - Item\ndef f()\n  import zeta: z\n  import @gamma\n  spawn f\n";
     let script = config(Mode::Script).unit(Path::new("unit.dol"), source);
@@ -227,6 +233,7 @@ fn depends_lists_imports_prelude_modules_and_std() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unit_source_round_trips() {
     let path = Path::new("unit.dol");
     let source = "# ünïcödé\nlet x = \"π\"\n";
@@ -237,6 +244,7 @@ fn unit_source_round_trips() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn repl_reassigns_only_prelude_items() {
     let refused = |source: &str| {
         let mut config = config(Mode::Repl);
@@ -257,6 +265,7 @@ fn repl_reassigns_only_prelude_items() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn owned_unit_is_shared_between_threads() {
     let path = Path::new("m.dol");
     let module = || Mode::Module {
@@ -292,6 +301,7 @@ fn owned_unit_is_shared_between_threads() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn returns_cannot_exit_modules_or_repl() {
     let sources = [
         "return\n",
@@ -337,6 +347,7 @@ fn returns_cannot_exit_modules_or_repl() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn returns_remain_valid_in_scripts_and_declared_functions() {
     let sources = [
         "pub def f()\n  return 42\nf()\n",
@@ -364,6 +375,7 @@ fn returns_remain_valid_in_scripts_and_declared_functions() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn type_only_prelude_bindings_have_no_runtime_effect() {
     for mode in [Mode::Script, Mode::Module { name: "m".into() }, Mode::Repl] {
         for document in [false, true] {
@@ -414,6 +426,7 @@ fn type_only_prelude_bindings_have_no_runtime_effect() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn type_only_prelude_values_are_unbound() {
     for typecheck in [false, true] {
         for name in ["Never", "Seq", "BaseArray", "BaseDict"] {
@@ -430,6 +443,7 @@ fn type_only_prelude_values_are_unbound() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn type_only_prelude_shadowing() {
     let mut config = Config::new();
     config.document(true).typecheck(true);
@@ -461,6 +475,7 @@ fn type_only_prelude_shadowing() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn later_prelude_items_win_in_types_only() {
     for last_type_only in [false, true] {
         let mut config = Config::new();
@@ -499,6 +514,7 @@ fn later_prelude_items_win_in_types_only() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn module_prelude_bindings_follow_type_only_configuration_order() {
     for last_type_only in [false, true] {
         let mut config = Config::new();

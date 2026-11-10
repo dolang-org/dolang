@@ -243,12 +243,18 @@ const COLLECT_THRESHOLD: isize = 10000;
 
 const COLLECT_GROWTH: isize = 1;
 
+// Under Miri, collect once allocations reach this fraction of the live set
+// instead of all of it: proportionally more often, so collection work stays
+// linear in allocations
+const MIRI_COLLECT_DIVISOR: isize = 8;
+
 fn collect_threshold(live: isize) -> isize {
-    if cfg!(miri) {
-        COLLECT_THRESHOLD
+    let scaled = if cfg!(miri) {
+        live / MIRI_COLLECT_DIVISOR
     } else {
-        live.saturating_mul(COLLECT_GROWTH).max(COLLECT_THRESHOLD)
-    }
+        live.saturating_mul(COLLECT_GROWTH)
+    };
+    scaled.max(COLLECT_THRESHOLD)
 }
 
 pub(super) struct ArenaInner {
@@ -667,12 +673,16 @@ mod tests {
         assert_eq!(collect_threshold(1), COLLECT_THRESHOLD);
         assert_eq!(
             collect_threshold(isize::MAX),
-            if cfg!(miri) { 10 } else { isize::MAX }
+            if cfg!(miri) {
+                isize::MAX / MIRI_COLLECT_DIVISOR
+            } else {
+                isize::MAX
+            }
         );
     }
 
     #[test]
-    #[cfg(not(miri))]
+    #[cfg_attr(miri, ignore = "needs a large heap")]
     fn growing_heap_has_linear_collection_work() {
         let arena = Arena::new();
         let cleared = Rc::new(Cell::new(0));

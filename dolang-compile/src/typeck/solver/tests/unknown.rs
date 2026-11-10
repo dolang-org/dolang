@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unknown_is_consistent_with_every_type_and_schema() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -24,6 +25,7 @@ fn unknown_is_consistent_with_every_type_and_schema() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unknown_is_consistent_under_arguments_and_functions() {
     for variance in [
         Variance::Covariant,
@@ -53,6 +55,7 @@ fn unknown_is_consistent_under_arguments_and_functions() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unknown_channels_are_consistent_at_any_depth() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -79,6 +82,7 @@ fn unknown_channels_are_consistent_at_any_depth() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unknown_union_members_are_checked_like_any_other() {
     let db = Database::new();
     let one = literal(&db, 1);
@@ -97,6 +101,7 @@ fn unknown_union_members_are_checked_like_any_other() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unknown_bounds_never_force_assignments() {
     let mut db = Database::new();
     let one = literal(&db, 1);

@@ -40,6 +40,7 @@ fn tail(key: TypeId, value: TypeId) -> SchemaItem {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn members_list_public_instance_fields_and_properties() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -75,6 +76,7 @@ fn members_list_public_instance_fields_and_properties() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn open_classes_admit_further_keys() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -101,6 +103,7 @@ fn open_classes_admit_further_keys() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn settled_members_close_final_classes() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -131,6 +134,7 @@ fn settled_members_close_final_classes() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn members_are_found_in_mro_order_with_their_class_arguments() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -154,6 +158,7 @@ fn members_are_found_in_mro_order_with_their_class_arguments() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unions_join_reads_and_meet_writes() {
     let mut db = Database::new();
     let symbol = sym_class(&mut db);
@@ -183,6 +188,7 @@ fn unions_join_reads_and_meet_writes() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn abstract_targets_are_left_as_themselves() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -196,6 +202,7 @@ fn abstract_targets_are_left_as_themselves() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn member_schemas_relate_as_what_they_list() {
     let mut db = Database::new();
     let symbol = sym_class(&mut db);

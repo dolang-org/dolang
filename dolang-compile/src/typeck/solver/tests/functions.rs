@@ -10,6 +10,7 @@ fn call(db: &Database, callee: TypeId, args: &[CallArgument], result: TypeId) ->
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn fixed_function_variance_and_arity() {
     let mut db = Database::new();
     let base = nominal(&mut db, "Base", vec![], vec![]);
@@ -30,6 +31,7 @@ fn fixed_function_variance_and_arity() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn ambient_channels_are_related_by_variance() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -57,6 +59,7 @@ fn ambient_channels_are_related_by_variance() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn functions_have_intrinsic_nominal_supertype() {
     let mut db = Database::new();
     let base = nominal(&mut db, "Base", vec![], vec![]);
@@ -82,6 +85,7 @@ fn functions_have_intrinsic_nominal_supertype() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn missing_func_intrinsic_is_residual() {
     let mut db = Database::new();
     let nominal = nominal(&mut db, "Func", vec![], vec![]);
@@ -96,6 +100,7 @@ fn missing_func_intrinsic_is_residual() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn omitted_channels_are_used_through_their_default_bounds() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -149,6 +154,7 @@ fn omitted_channels_are_used_through_their_default_bounds() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn calls_bind_arguments_as_the_runtime_does() {
     use Multiplicity::{Optional as Opt, Repeated as Rep, Required as Req};
     let mut db = Database::new();
@@ -279,6 +285,7 @@ fn calls_bind_arguments_as_the_runtime_does() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_call_result_variable_is_bounded_by_the_callee_result() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -297,6 +304,7 @@ fn a_call_result_variable_is_bounded_by_the_callee_result() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn parameter_lists_are_related_contravariantly() {
     use Multiplicity::{Optional as Opt, Repeated as Rep, Required as Req};
     let mut db = Database::new();
@@ -344,6 +352,7 @@ fn parameter_lists_are_related_contravariantly() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn parameter_lists_fill_by_count() {
     use Multiplicity::{Optional as Opt, Repeated as Rep, Required as Req};
     let mut db = Database::new();
@@ -386,6 +395,7 @@ fn parameter_lists_fill_by_count() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn omitted_channels_are_gradual() {
     let mut db = Database::new();
     let num = nominal(&mut db, "Num", vec![], vec![]);

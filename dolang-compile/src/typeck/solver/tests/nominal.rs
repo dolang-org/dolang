@@ -7,6 +7,7 @@ fn union(db: &Database, members: &[TypeId]) -> TypeId {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn transparent_chains_and_nominal_transitivity() {
     let mut db = Database::new();
     let base = nominal(&mut db, "Base", vec![], vec![]);
@@ -22,6 +23,7 @@ fn transparent_chains_and_nominal_transitivity() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn variance_in_both_directions() {
     let mut db = Database::new();
     let base = nominal(&mut db, "Base", vec![], vec![]);
@@ -49,6 +51,7 @@ fn variance_in_both_directions() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn generic_inheritance_composes_open_substitutions() {
     let mut db = Database::new();
     let r = reference(&db, 0, 0);
@@ -86,6 +89,7 @@ fn generic_inheritance_composes_open_substitutions() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn generic_alias_instantiation_preserves_open_arguments() {
     let mut db = Database::new();
     let r = reference(&db, 0, 0);
@@ -107,6 +111,7 @@ fn generic_alias_instantiation_preserves_open_arguments() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn mro_first_match_wins_even_if_a_later_path_would_succeed() {
     let mut db = Database::new();
     let a = literal(&db, 1);
@@ -125,6 +130,7 @@ fn mro_first_match_wins_even_if_a_later_path_would_succeed() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn repeated_nonmatching_diamond_is_not_a_cycle() {
     let mut db = Database::new();
     let base = nominal(&mut db, "Base", vec![], vec![]);
@@ -138,6 +144,7 @@ fn repeated_nonmatching_diamond_is_not_a_cycle() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unused_supertype_bounds_do_not_create_obligations() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -157,6 +164,7 @@ fn unused_supertype_bounds_do_not_create_obligations() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn alias_cycles_are_recursive() {
     let mut db = Database::new();
     let (aid, a, asrc) = reserve(&mut db, DeclKind::Alias, "A");
@@ -169,6 +177,7 @@ fn alias_cycles_are_recursive() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn generic_alias_cycles_are_recursive() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -186,6 +195,7 @@ fn generic_alias_cycles_are_recursive() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn nested_generic_alias_applications_are_not_cycles() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -201,6 +211,7 @@ fn nested_generic_alias_applications_are_not_cycles() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn cyclic_and_expanding_inheritance_remain_residual() {
     let mut db = Database::new();
     let (id, ty, source) = reserve(&mut db, DeclKind::Class, "Recursive");
@@ -216,6 +227,7 @@ fn cyclic_and_expanding_inheritance_remain_residual() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unsupported_generic_matching_is_residual() {
     let mut db = Database::new();
     let generic = nominal(
@@ -242,6 +254,7 @@ fn unsupported_generic_matching_is_residual() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 #[should_panic(expected = "generic argument arity mismatch")]
 fn generic_arity_mismatch_panics() {
     let mut db = Database::new();
@@ -257,6 +270,7 @@ fn generic_arity_mismatch_panics() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 #[should_panic(expected = "generic argument arity mismatch")]
 fn applying_a_non_generic_type_panics() {
     let mut db = Database::new();
@@ -267,6 +281,7 @@ fn applying_a_non_generic_type_panics() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn incomplete_earlier_inheritance_cannot_be_skipped() {
     let mut db = Database::new();
     let target = nominal(&mut db, "Target", vec![], vec![]);
@@ -281,6 +296,7 @@ fn incomplete_earlier_inheritance_cannot_be_skipped() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn mro_commits_to_an_inference_path_without_combining_alternatives() {
     let mut db = Database::new();
     let r = reference(&db, 0, 0);
@@ -320,6 +336,7 @@ fn mro_commits_to_an_inference_path_without_combining_alternatives() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn omitted_generic_defaults_are_not_arity_errors() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -336,6 +353,7 @@ fn omitted_generic_defaults_are_not_arity_errors() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn metatypes_reach_class_objects_and_relate_only_to_their_own() {
     let mut db = Database::new();
     let ty = nominal(&mut db, "Type", vec![binder(Variance::Covariant)], vec![]);
@@ -386,6 +404,7 @@ fn metatypes_reach_class_objects_and_relate_only_to_their_own() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unreached_generic_members_refute_any_class() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -404,6 +423,7 @@ fn unreached_generic_members_refute_any_class() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn reached_generic_members_refute_only_alone() {
     let mut db = Database::new();
     let int = int(&mut db);

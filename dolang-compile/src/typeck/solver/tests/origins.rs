@@ -19,6 +19,7 @@ fn leaves(s: &Solver<'_>, outcome: &Outcome) -> Vec<(Vec<Option<Step>>, Provenan
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn an_argument_narrows_its_call_origin() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -65,6 +66,7 @@ fn an_argument_narrows_its_call_origin() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn an_extra_argument_is_the_calls_arguments() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -123,6 +125,7 @@ fn an_extra_argument_is_the_calls_arguments() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_propagated_bound_takes_each_side_from_its_own_root() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -156,6 +159,7 @@ fn a_propagated_bound_takes_each_side_from_its_own_root() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn an_assignment_takes_where_its_variable_stands() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -196,6 +200,7 @@ fn an_assignment_takes_where_its_variable_stands() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_contravariant_step_swaps_origins() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -220,6 +225,7 @@ fn a_contravariant_step_swaps_origins() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_rests_items_are_the_arguments_they_come_from() {
     let mut db = Database::new();
     let one = literal(&db, 1);

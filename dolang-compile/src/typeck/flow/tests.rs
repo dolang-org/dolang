@@ -172,6 +172,7 @@ fn agree_with(source: &str, inspect: impl FnOnce(&Elaborated<'_>)) {
 
 /// Without an analysis, the final pass logs nothing but still reports
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unlogged() {
     let mut config = Config::new();
     config.typecheck(true);
@@ -191,6 +192,7 @@ fn unlogged() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn callable_instances_and_unions() {
     agree_with(
         "
@@ -262,6 +264,7 @@ def dynamic x e @ Empty
 /// A run detached late reads what the run it's detached from finished with,
 /// including its rigids
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn late_runs_inherit() {
     agree_with(
         "
@@ -289,6 +292,7 @@ def outer[T] x @ T
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn order_independence() {
     agree(
         "
@@ -317,6 +321,7 @@ g()
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn lambdas_are_order_independent() {
     agree(
         "
@@ -335,6 +340,7 @@ g 1
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn rounds_are_order_independent() {
     agree(
         "
@@ -355,6 +361,7 @@ def pick a @ A b @ B
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn rebuilt_collections_are_order_independent() {
     agree(
         "
@@ -374,6 +381,7 @@ def rebuilt c @ Bool n @ Int s @ Str
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn optional_patterns_are_order_independent() {
     agree(
         r#"
@@ -398,6 +406,7 @@ for ?key: (p = 1) = [(), ()]
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn captures_keep_outer_binders_before_inner_binders() {
     agree_with(
         "
@@ -432,6 +441,7 @@ def outer[T, U @ Array[T]] _u @ U
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn templates_are_order_independent() {
     let mut config = Config::new();
     config
@@ -551,6 +561,7 @@ fn head(_ir: &Ir, layout: &Layout, block: BlockId) -> bool {
 
 /// Only what an iteration reads from an earlier one is live at a loop's head
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn per_iteration_bindings_are_dead_at_heads() {
     let heads = live_at(
         "
@@ -577,6 +588,7 @@ def f r @ Array[Int | Str]
 /// Where a variable may have escaped is decided before flow, so assigning it
 /// kills it even once it may have
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn escaped_assignments_kill() {
     let heads = live_at(
         "
@@ -597,6 +609,7 @@ def f r
 
 /// A `finally` body continues to where it was entered for
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn live_through_finally() {
     let ends = live_at(
         "
@@ -618,6 +631,7 @@ def f g
 
 /// A step that throws continues at its handler
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn live_into_handlers() {
     let bodies = live_at(
         "

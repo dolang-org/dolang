@@ -237,6 +237,7 @@ fn same_type(s: &mut Solver<'_>, a: Term, b: TypeId) -> bool {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn members_are_found_in_mro_order_with_their_class_arguments() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -316,6 +317,7 @@ fn members_are_found_in_mro_order_with_their_class_arguments() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn private_members_are_their_class_own() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -371,6 +373,7 @@ fn private_members_are_their_class_own() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn class_objects_have_class_and_static_members_and_unbound_methods() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -423,6 +426,7 @@ fn class_objects_have_class_and_static_members_and_unbound_methods() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn generic_class_objects_have_members_quantified_over_its_binders() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -585,6 +589,7 @@ fn generic_class_objects_have_members_quantified_over_its_binders() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_missing_member_falls_back_to_get_and_set() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -614,6 +619,7 @@ fn a_missing_member_falls_back_to_get_and_set() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn receivers_are_walked_to_a_class_or_left_undecided() {
     let mut db = Database::new();
     // A literal's members are its backing class's
@@ -676,6 +682,7 @@ fn receivers_are_walked_to_a_class_or_left_undecided() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn every_signature_of_an_overloaded_method_is_applied() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -736,6 +743,7 @@ fn every_signature_of_an_overloaded_method_is_applied() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn only_runtime_supertypes_provide_implementations() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -814,6 +822,7 @@ fn only_runtime_supertypes_provide_implementations() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn settled_members_meet_requirements() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -859,6 +868,7 @@ fn settled_members_meet_requirements() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn recursion_through_a_protocol_field_is_proven() {
     let mut db = Database::new();
     // protocol Linked: pub field next @ Linked, and Chained alike

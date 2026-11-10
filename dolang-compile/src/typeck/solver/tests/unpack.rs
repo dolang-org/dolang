@@ -148,6 +148,7 @@ fn pattern(positional: &[bool], keyed: &[(TypeId, bool)], rest: bool) -> Pattern
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn empty_patterns_reach_the_terminal_state() {
     let mut w = World::new();
     let int = w.int;
@@ -172,6 +173,7 @@ fn empty_patterns_reach_the_terminal_state() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn an_optional_item_splits_the_possibilities() {
     let mut w = World::new();
     let (int, str, bool) = (w.int, w.str, w.bool);
@@ -198,6 +200,7 @@ fn an_optional_item_splits_the_possibilities() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn counts_that_cant_match_are_impossible() {
     let mut w = World::new();
     let int = w.int;
@@ -222,6 +225,7 @@ fn counts_that_cant_match_are_impossible() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn defaulted_slots_may_be_left_unfilled() {
     let mut w = World::new();
     let int = w.int;
@@ -235,6 +239,7 @@ fn defaulted_slots_may_be_left_unfilled() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn literal_keys_are_taken_and_domains_kept() {
     let mut w = World::new();
     let (int, str, bool) = (w.int, w.str, w.bool);
@@ -267,6 +272,7 @@ fn literal_keys_are_taken_and_domains_kept() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn rests_take_their_own_lanes() {
     let mut w = World::new();
     let (int, str) = (w.int, w.str);
@@ -287,6 +293,7 @@ fn rests_take_their_own_lanes() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unions_join_their_members_walks() {
     let mut w = World::new();
     let (int, str, bool) = (w.int, w.str, w.bool);
@@ -306,6 +313,7 @@ fn unions_join_their_members_walks() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unknown_gives_unknown() {
     let mut w = World::new();
     let int = w.int;
@@ -330,6 +338,7 @@ fn unknown_gives_unknown() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_member_not_reaching_unpack_is_undecided() {
     let mut w = World::new();
     let int = w.int;
@@ -337,6 +346,7 @@ fn a_member_not_reaching_unpack_is_undecided() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn an_unknown_unpack_schema_stays_unknown() {
     let mut w = World::new();
     let schema = w.db.unknown_schema();
@@ -360,6 +370,7 @@ fn an_unknown_unpack_schema_stays_unknown() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_closed_rest_carries_over() {
     let mut w = World::new();
     let int = w.int;
@@ -371,6 +382,7 @@ fn a_closed_rest_carries_over() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_generic_rest_is_solved_again_from_the_tail() {
     let mut w = World::new();
     let (int, str, bool) = (w.int, w.str, w.bool);
@@ -400,6 +412,7 @@ fn a_generic_rest_is_solved_again_from_the_tail() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_rest_outside_its_bound_falls_back() {
     let mut w = World::new();
     let int = w.int;
@@ -411,6 +424,7 @@ fn a_rest_outside_its_bound_falls_back() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn an_unpack_type_keeps_its_rest_only_for_its_own_tail() {
     let mut w = World::new();
     let (int, str) = (w.int, w.str);
@@ -432,6 +446,7 @@ fn an_unpack_type_keeps_its_rest_only_for_its_own_tail() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_positional_rest_takes_pos() {
     let mut w = World::new();
     let int = w.int;
@@ -459,6 +474,7 @@ fn a_positional_rest_takes_pos() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_guaranteed_pattern_takes_exactly_what_the_schema_admits() {
     let mut w = World::new();
     let (int, str) = (w.int, w.str);
@@ -489,6 +505,7 @@ fn a_guaranteed_pattern_takes_exactly_what_the_schema_admits() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn positional_items_may_be_too_few_or_too_many() {
     let mut w = World::new();
     let (int, str) = (w.int, w.str);
@@ -517,6 +534,7 @@ fn positional_items_may_be_too_few_or_too_many() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn keys_may_be_absent_or_left_over() {
     let mut w = World::new();
     let (int, str, bool) = (w.int, w.str, w.bool);
@@ -540,6 +558,7 @@ fn keys_may_be_absent_or_left_over() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn every_member_must_be_guaranteed() {
     let mut w = World::new();
     let int = w.int;
@@ -561,6 +580,7 @@ fn every_member_must_be_guaranteed() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn dynamic_schemas_never_reject() {
     let mut w = World::new();
     let int = w.int;

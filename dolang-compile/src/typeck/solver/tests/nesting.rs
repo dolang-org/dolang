@@ -14,6 +14,7 @@ fn parent<'a>(db: &'a Database, gas: &'a Gas) -> (Solver<'a>, InferVarId, InferV
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_child_sees_its_parents_bounds_and_assignments() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -31,6 +32,7 @@ fn a_child_sees_its_parents_bounds_and_assignments() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn what_a_child_solves_doesnt_reach_its_parent() {
     let mut db = Database::new();
     let two = literal(&db, 2);
@@ -77,6 +79,7 @@ fn what_a_child_solves_doesnt_reach_its_parent() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_childs_ids_continue_from_its_parents() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -105,6 +108,7 @@ fn a_childs_ids_continue_from_its_parents() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 #[should_panic(expected = "already has a live one")]
 fn a_solver_has_one_live_child() {
     let mut db = Database::new();
@@ -116,6 +120,7 @@ fn a_solver_has_one_live_child() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 #[should_panic(expected = "changed while a solver nested in it is live")]
 fn a_parent_is_unchanged_while_its_child_is_live() {
     let mut db = Database::new();
@@ -127,6 +132,7 @@ fn a_parent_is_unchanged_while_its_child_is_live() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_closed_child_sees_only_its_parents_environments() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -149,6 +155,7 @@ fn a_closed_child_sees_only_its_parents_environments() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 #[should_panic(expected = "an entry a closed solver doesn't see")]
 fn a_closed_child_doesnt_see_its_parents_variables() {
     let mut db = Database::new();
@@ -168,6 +175,7 @@ fn probe(actual: TypeId, expected: TypeId, premise: Option<bool>) -> Nesting {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn probes_revisit_those_they_are_nested_in() {
     let mut db = Database::new();
     let (one, two, three) = (literal(&db, 1), literal(&db, 2), literal(&db, 3));
@@ -188,6 +196,7 @@ fn probes_revisit_those_they_are_nested_in() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn probes_assume_only_past_a_guard_through_premises() {
     let mut db = Database::new();
     let (one, two, three) = (literal(&db, 1), literal(&db, 2), literal(&db, 3));
@@ -208,6 +217,7 @@ fn probes_assume_only_past_a_guard_through_premises() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_committed_fork_is_absorbed() {
     let mut db = Database::new();
     let two = literal(&db, 2);
@@ -281,6 +291,7 @@ fn a_committed_fork_is_absorbed() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_fork_not_kept_leaves_its_parent_unchanged() {
     let mut db = Database::new();
     let two = literal(&db, 2);
@@ -300,6 +311,7 @@ fn a_fork_not_kept_leaves_its_parent_unchanged() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_fork_nested_in_a_fork_commits_into_it() {
     let mut db = Database::new();
     let two = literal(&db, 2);
@@ -325,6 +337,7 @@ fn a_fork_nested_in_a_fork_commits_into_it() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 #[should_panic(expected = "only a fork commits")]
 fn only_a_fork_commits() {
     let mut db = Database::new();
@@ -336,6 +349,7 @@ fn only_a_fork_commits() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn holds_reports_a_probes_status() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -352,6 +366,7 @@ fn holds_reports_a_probes_status() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_probes_verdict_is_shared() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -373,6 +388,7 @@ fn a_probes_verdict_is_shared() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn only_verdicts_are_shared() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -390,6 +406,7 @@ fn only_verdicts_are_shared() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn assuming_stops_sharing_verdicts() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -410,6 +427,7 @@ fn assuming_stops_sharing_verdicts() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn probes_stop_at_the_first_contradiction() {
     let mut db = Database::new();
     let (one, two, three, four) = (

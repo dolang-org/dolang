@@ -31,6 +31,7 @@ fn solve_call<'db>(
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn generic_callees_are_instantiated_once_per_use() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -75,6 +76,7 @@ fn generic_callees_are_instantiated_once_per_use() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn invariant_arguments_force_instantiated_binders() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -112,6 +114,7 @@ fn invariant_arguments_force_instantiated_binders() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn instantiated_binders_are_below_their_bounds() {
     let mut db = Database::new();
     let num = nominal(&mut db, "Num", vec![], vec![]);
@@ -157,6 +160,7 @@ fn instantiated_binders_are_below_their_bounds() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn ambient_binders_are_bounded_by_the_callers_channels() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -193,6 +197,7 @@ fn ambient_binders_are_bounded_by_the_callers_channels() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn defaults_are_the_join_of_solved_lower_bounds() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -259,6 +264,7 @@ fn defaults_are_the_join_of_solved_lower_bounds() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn defaults_decay_literals() {
     let mut db = Database::new();
     let sym = db.intern_symbol("a");
@@ -345,6 +351,7 @@ fn defaults_decay_literals() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn literals_without_a_class_are_kept() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -358,6 +365,7 @@ fn literals_without_a_class_are_kept() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn pack_binders_take_the_remaining_arguments() {
     use Multiplicity::Required as Req;
     let mut db = Database::new();
@@ -439,6 +447,7 @@ fn pack_binders_take_the_remaining_arguments() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn closed_solvers_settle_their_own_variables() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -471,6 +480,7 @@ fn closed_solvers_settle_their_own_variables() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn instantiation_establishes_implied_bounds() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);

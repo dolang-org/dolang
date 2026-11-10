@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn inheritance_with_an_inference_argument_produces_bounds() {
     let mut db = Database::new();
     let r = reference(&db, 0, 0);
@@ -31,6 +32,7 @@ fn inheritance_with_an_inference_argument_produces_bounds() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn inference_chains_conflicts_duplicates_and_insertion_order() {
     for reverse in [false, true] {
         let mut db = Database::new();
@@ -65,6 +67,7 @@ fn inference_chains_conflicts_duplicates_and_insertion_order() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn multiple_bounds_and_variable_cycles_stabilize() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -100,6 +103,7 @@ fn multiple_bounds_and_variable_cycles_stabilize() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn new_constraints_after_quiescence_propagate() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -115,6 +119,7 @@ fn new_constraints_after_quiescence_propagate() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unrelated_classes_meet_only_through_an_intersection() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);
@@ -142,6 +147,7 @@ fn unrelated_classes_meet_only_through_an_intersection() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn bare_variables_default_to_the_meet_of_their_upper_bounds() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);
@@ -172,6 +178,7 @@ fn bare_variables_default_to_the_meet_of_their_upper_bounds() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_variable_below_only_bare_ones_is_bare_too() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);
@@ -193,6 +200,7 @@ fn a_variable_below_only_bare_ones_is_bare_too() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn bare_schema_variables_default_to_ordered_upper_bounds() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);
@@ -222,6 +230,7 @@ fn bare_schema_variables_default_to_ordered_upper_bounds() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn multiple_upper_bounds_are_checked_separately() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);
@@ -249,6 +258,7 @@ fn multiple_upper_bounds_are_checked_separately() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn recursive_inference_bounds_are_not_solutions() {
     let mut db = Database::new();
     let r = reference(&db, 0, 0);
@@ -271,6 +281,7 @@ fn recursive_inference_bounds_are_not_solutions() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn exact_assignments_propagate_in_both_orders_and_through_cycles() {
     for reverse in [false, true] {
         let mut db = Database::new();
@@ -303,6 +314,7 @@ fn exact_assignments_propagate_in_both_orders_and_through_cycles() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn forced_union_checks_all_uppers_and_preserves_one_sided_bounds() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -334,6 +346,7 @@ fn forced_union_checks_all_uppers_and_preserves_one_sided_bounds() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn assignments_wake_nested_applications_functions_and_channels() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -365,6 +378,7 @@ fn assignments_wake_nested_applications_functions_and_channels() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn resolution_contradictions_retain_all_roots_and_assignment_paths() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -399,6 +413,7 @@ fn resolution_contradictions_retain_all_roots_and_assignment_paths() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn reification_keeps_replacement_scopes_and_local_binders() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -428,6 +443,7 @@ fn reification_keeps_replacement_scopes_and_local_binders() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn upper_only_and_unanchored_variable_cycles_stay_unsolved() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -448,6 +464,7 @@ fn upper_only_and_unanchored_variable_cycles_stay_unsolved() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn direct_and_indirect_recursive_candidates_are_explicit_residuals() {
     for indirect in [false, true] {
         let mut db = Database::new();
@@ -478,6 +495,7 @@ fn direct_and_indirect_recursive_candidates_are_explicit_residuals() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unsupported_upper_bounds_block_commitment_without_becoming_proofs() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -503,6 +521,7 @@ fn unsupported_upper_bounds_block_commitment_without_becoming_proofs() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn bounds_keep_context_and_sources_after_assignment_and_duplicate_roots() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -542,6 +561,7 @@ fn bounds_keep_context_and_sources_after_assignment_and_duplicate_roots() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn reification_preserves_binder_bounds_defaults_and_declaration_recursion() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -571,6 +591,7 @@ fn reification_preserves_binder_bounds_defaults_and_declaration_recursion() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn explicit_exact_extreme_bounds_are_solutions_without_defaulting() {
     let mut db = Database::new();
     db.seal();
@@ -597,6 +618,7 @@ fn schema_reference(db: &Database) -> TypeId {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn raised_variables_are_those_at_outputs() {
     let mut db = Database::new();
     let r = reference(&db, 0, 0);
@@ -662,6 +684,7 @@ fn raised_variables_are_those_at_outputs() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn locked_variables_are_those_a_literal_would_fix() {
     let mut db = Database::new();
     let r = reference(&db, 0, 0);
@@ -732,6 +755,7 @@ fn locked_variables_are_those_a_literal_would_fix() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn schema_upper_bounds_keep_shape_and_constrain_values() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -787,6 +811,7 @@ fn schema_upper_bounds_keep_shape_and_constrain_values() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn schema_upper_bounds_do_not_invent_opaque_or_incompatible_shapes() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -820,6 +845,7 @@ fn schema_upper_bounds_do_not_invent_opaque_or_incompatible_shapes() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn schema_lower_bounds_default_to_the_one_above_the_others() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -872,6 +898,7 @@ fn schema_lower_bounds_default_to_the_one_above_the_others() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn fresh_variables_take_the_least_choice_above_them() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -905,6 +932,7 @@ fn fresh_variables_take_the_least_choice_above_them() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn fresh_variables_take_the_least_choice_through_variables_between() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -930,6 +958,7 @@ fn fresh_variables_take_the_least_choice_through_variables_between() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn an_empty_dicts_schema_is_checked_once_solved() {
     let mut db = Database::new();
     let int = int(&mut db);

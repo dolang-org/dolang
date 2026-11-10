@@ -55,12 +55,14 @@ fn nest(db: &Database, ty: TypeId) -> TypeId {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_generic_function_is_quoted_at_the_top() {
     let db = Database::new();
     assert_eq!(quote(&db, identity(&db)), None);
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_generic_function_is_quoted_as_a_functions_result() {
     let db = Database::new();
     let nested = nest(&db, identity(&db));
@@ -68,6 +70,7 @@ fn a_generic_function_is_quoted_as_a_functions_result() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_class_object_is_not_quoted_inside_another_type() {
     let mut db = Database::new();
     let class = db.allocate();
@@ -80,6 +83,7 @@ fn a_class_object_is_not_quoted_inside_another_type() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn an_escaped_rigid_is_not_quoted() {
     let mut db = Database::new();
     let decl = db.allocate();
@@ -93,6 +97,7 @@ fn an_escaped_rigid_is_not_quoted() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unknown_is_quoted() {
     let db = Database::new();
     assert_eq!(quote(&db, db.unknown()), None);

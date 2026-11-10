@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn solver_requires_sealing() {
     assert!(
         std::panic::catch_unwind(|| {
@@ -11,6 +12,7 @@ fn solver_requires_sealing() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn identity_top_bottom_and_literal_difference() {
     let mut db = Database::new();
     let a = literal(&db, 1);
@@ -28,6 +30,7 @@ fn identity_top_bottom_and_literal_difference() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn top_is_outside_anything_narrower() {
     let mut db = Database::new();
     let class = nominal(&mut db, "Class", vec![], vec![]);
@@ -60,6 +63,7 @@ fn top_is_outside_anything_narrower() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn open_identity_uses_environments() {
     let mut db = Database::new();
     let r = reference(&db, 0, 0);
@@ -80,6 +84,7 @@ fn open_identity_uses_environments() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn replacements_keep_their_own_context_under_quantifiers() {
     let mut db = Database::new();
     let local = reference(&db, 0, 0);
@@ -111,6 +116,7 @@ fn replacements_keep_their_own_context_under_quantifiers() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn closed_quantifiers_ignore_unused_environments() {
     let mut db = Database::new();
     let local = reference(&db, 0, 0);
@@ -127,6 +133,7 @@ fn closed_quantifiers_ignore_unused_environments() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn all_literal_backing_types_and_their_supertypes() {
     let mut db = Database::new();
     let base = nominal(&mut db, "Base", vec![], vec![]);
@@ -151,6 +158,7 @@ fn all_literal_backing_types_and_their_supertypes() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn missing_literal_backing_is_not_a_contradiction() {
     let mut db = Database::new();
     let base = nominal(&mut db, "Base", vec![], vec![]);
@@ -165,6 +173,7 @@ fn missing_literal_backing_is_not_a_contradiction() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unsupported_nested_forms_stay_residual() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -209,6 +218,7 @@ fn unsupported_nested_forms_stay_residual() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn limits_are_residual_not_proof_or_contradiction() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -226,6 +236,7 @@ fn limits_are_residual_not_proof_or_contradiction() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn shared_reductions_preserve_each_root_and_dependency() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -291,6 +302,7 @@ fn shared_reductions_preserve_each_root_and_dependency() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn repeated_solve_without_new_constraints_does_no_work() {
     let mut db = Database::new();
     let one = literal(&db, 1);
@@ -307,6 +319,7 @@ fn repeated_solve_without_new_constraints_does_no_work() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn generic_instantiation_does_not_capture_nested_quantifier_references() {
     let mut db = Database::new();
     let local = reference(&db, 0, 0);
@@ -343,6 +356,7 @@ fn generic_instantiation_does_not_capture_nested_quantifier_references() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn substitution_kind_misuse_panics() {
     let mut db = Database::new();
     let r = reference(&db, 0, 0);
@@ -356,6 +370,7 @@ fn substitution_kind_misuse_panics() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn shared_insertion_preserves_borrowed_solver_state() {
     let mut db = Database::new();
     let one = literal(&db, 1);

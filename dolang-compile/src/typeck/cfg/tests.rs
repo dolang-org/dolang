@@ -77,6 +77,7 @@ fn returning(graph: &Graph) -> FuncId {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn well_formed() {
     let graph = Graph::new();
     let top = module(&graph);
@@ -171,6 +172,7 @@ fn well_formed() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn non_local() {
     let graph = Graph::new();
     let top = module(&graph);
@@ -311,6 +313,7 @@ fn non_local() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn non_local_outside_closure() {
     // Escaping from top-level code
     let graph = Graph::new();
@@ -337,6 +340,7 @@ fn non_local_outside_closure() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn foreign_edge() {
     let graph = Graph::new();
     let top = returning(&graph);
@@ -384,6 +388,7 @@ fn foreign_edge() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn finally_depths() {
     // Branching into a `finally` body
     let graph = Graph::new();
@@ -477,6 +482,7 @@ fn finally_depths() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn returns() {
     // Returning other than from the exit block
     let graph = Graph::new();
@@ -494,6 +500,7 @@ fn returns() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn variables() {
     // An enclosing function's variable that the closure doesn't list as a capture
     let graph = Graph::new();
@@ -565,6 +572,7 @@ fn variables() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn lambdas() {
     // A closure instantiated by its grandparent
     let graph = Graph::new();
@@ -600,6 +608,7 @@ fn lambdas() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn captures() {
     /// A module with a closure created `count` times, in the module's entry block
     /// or else the closure's own
@@ -674,6 +683,7 @@ fn captures() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn caches() {
     /// A closure caching a variable of the module's with the given origin and
     /// flags, captured or not, in its entry block's first step or else a later one
@@ -736,6 +746,7 @@ fn caches() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn signatures() {
     /// Validate a module with a parameterless closure whose signature has a result
     /// variable, owned by the module or else the closure, captured or not, and

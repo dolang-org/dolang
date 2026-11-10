@@ -38,6 +38,7 @@ use super::{
 };
 use dolang_bytecode::Variadic;
 use dolang_util::alias;
+use rustc_hash::FxHashSet;
 
 pub use super::protocol::{Spread, SpreadContext};
 pub use dolang_bytecode::Rest;
@@ -3031,6 +3032,18 @@ pub(crate) enum Entry<'v> {
     Delegate(usize, MemberKind),
 }
 
+impl Entry<'_> {
+    fn member_kind(&self) -> MemberKind {
+        match self {
+            Entry::Method(_) => MemberKind::Method,
+            Entry::Getter(_) => MemberKind::Getter,
+            Entry::Setter(_) => MemberKind::Setter,
+            Entry::Property(_, _) => MemberKind::Property,
+            Entry::Delegate(_, kind) => *kind,
+        }
+    }
+}
+
 /// Extension vtable for `Object` types: protocol vtable + sorted namespace entries.
 ///
 /// # Safety
@@ -3192,6 +3205,7 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
         // Universal defaults come after declared supertypes and local handlers.
         self.supertype(TypeObject::Value);
         // Synthesize delegated entries from abstract supertypes.
+        let mut seen: FxHashSet<_> = self.entries.iter().map(|&(sym, _)| sym).collect();
         for (supertype_idx, supertype) in self.supertypes.iter().enumerate() {
             let inspect = supertype
                 .op_inspect(self.vm)
@@ -3205,7 +3219,7 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
                 // should have static symbols.
                 let sym = unsafe { member.sym.into_static_scope_unchecked() };
                 // Local entries win; first matching supertype wins.
-                if !self.entries.iter().any(|(entry_sym, _)| *entry_sym == sym) {
+                if seen.insert(sym) {
                     self.entries
                         .push((sym, Entry::Delegate(supertype_idx, member.kind)));
                 }
@@ -3280,32 +3294,23 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
         // Entries resolve local handlers and abstract supertypes by MRO,
         // including Value last when it was not named explicitly. An entry's
         // semantic kind wins over the forwarded method of the same name.
-        for (sym, entry) in &entries {
-            let kind = match entry {
-                Entry::Method(_) => MemberKind::Method,
-                Entry::Getter(_) => MemberKind::Getter,
-                Entry::Setter(_) => MemberKind::Setter,
-                Entry::Property(_, _) => MemberKind::Property,
-                Entry::Delegate(_, kind) => *kind,
-            };
-            if let Some(existing) = members.iter_mut().find(|member| member.sym == *sym) {
-                existing.kind = kind;
-            } else {
-                members.push(Member::new(*sym, kind));
+        // `merge_entries` sorted the entries, so each forwarded method finds its
+        // entry by binary search.
+        let mut forwarded = vec![false; entries.len()];
+        for member in &mut members {
+            if let Ok(i) = entries.binary_search_by_key(&member.sym, |&(sym, _)| sym) {
+                member.kind = entries[i].1.member_kind();
+                forwarded[i] = true;
+            }
+        }
+        for ((sym, entry), forwarded) in entries.iter().zip(forwarded) {
+            if !forwarded {
+                members.push(Member::new(*sym, entry.member_kind()));
             }
         }
         let mut type_members = type_entries
             .iter()
-            .map(|(sym, entry)| {
-                let kind = match entry {
-                    Entry::Method(_) => MemberKind::Method,
-                    Entry::Getter(_) => MemberKind::Getter,
-                    Entry::Setter(_) => MemberKind::Setter,
-                    Entry::Property(_, _) => MemberKind::Property,
-                    Entry::Delegate(_, kind) => *kind,
-                };
-                Member::new(*sym, kind)
-            })
+            .map(|(sym, entry)| Member::new(*sym, entry.member_kind()))
             .collect::<Vec<_>>();
         // Only the type object's own surface belongs here. The instance namespace is
         // reachable through the type object as unbound methods, but those are not class

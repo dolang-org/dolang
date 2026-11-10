@@ -613,22 +613,24 @@ impl Buffered {
 
 /// Registers the `io` module.
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
-    let buffered = builder.register_type::<Buffered>();
+    // Eager: converting a `ByteHandle` needs `Stream` with only a `Vm`, which can't force
     let stream = builder.register_type::<Stream>();
     builder.register_state::<StreamType>(stream);
-    let concat = builder.register_type::<Concat>();
-    builder.register_state::<ConcatType>(concat);
-    let cursor = builder.register_type::<Cursor>();
-    let window = builder.register_type::<Window>();
-    let io = builder.singletons().io.dup();
-    builder
-        .module("io")
-        .value("Io", &io)
-        .value("Buffered", buffered)
-        .value("Concat", concat)
-        .value("Cursor", cursor)
-        .value("Window", window)
-        .commit();
+    builder.lazy::<ConcatType>(&["io"], |reg| {
+        let buffered = reg.register_type::<Buffered>();
+        let concat = reg.register_type::<Concat>();
+        reg.register_state::<ConcatType>(concat);
+        let cursor = reg.register_type::<Cursor>();
+        let window = reg.register_type::<Window>();
+        let io = reg.singletons().io.dup();
+        reg.module("io")
+            .value("Io", &io)
+            .value("Buffered", buffered)
+            .value("Concat", concat)
+            .value("Cursor", cursor)
+            .value("Window", window)
+            .commit();
+    });
 }
 
 /// Writes `value` as `put` does: a `Str` or `Bin` as its bytes, anything else as its

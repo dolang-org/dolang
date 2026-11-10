@@ -60,6 +60,7 @@ fn chain(analysis: &Analysis, column: u32) -> Vec<String> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn nested() {
     // 1: [0, 20) contains 3: [2, 12), which contains 2: [4, 6) and 0: [8, 10)
     let analysis = analysis(&[(8, 10), (0, 20), (4, 6), (2, 12)]);
@@ -79,6 +80,7 @@ fn nested() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn between_siblings() {
     let analysis = analysis(&[(0, 20), (4, 6), (8, 10)]);
     assert_eq!(chain(&analysis, 6), ["0"]);
@@ -88,6 +90,7 @@ fn between_siblings() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn no_node() {
     let analysis = analysis(&[(4, 6), (8, 10)]);
     assert!(chain(&analysis, 0).is_empty());
@@ -97,6 +100,7 @@ fn no_node() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn shared_span() {
     let analysis = analysis(&[(0, 20), (4, 6), (4, 6)]);
     assert_eq!(chain(&analysis, 5), ["1", "2", "0"]);
@@ -104,6 +108,7 @@ fn shared_span() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn enclosing() {
     let analysis = analysis(&[(0, 20), (2, 12), (4, 6), (8, 10)]);
     let name = |start, end| {
@@ -118,6 +123,7 @@ fn enclosing() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn checked() {
     let source = "let x = 1\nlet y = x\nlet z = 2\n";
     let mut config = Config::new();
@@ -155,6 +161,7 @@ fn checked() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn resolved() {
     let source = "\
 class A
@@ -200,6 +207,7 @@ def run a @ A b @ B
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn items() {
     let module = "pub def f x\n  x\n";
     let script = "import a: m\nlet y = m.f(1)\n";
@@ -228,6 +236,7 @@ fn items() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn after_non_ascii() {
     // A read after a character of two bytes and a tab on its line
     let source = "let s = 1\nlet t = (\"é\t\", s)\n";

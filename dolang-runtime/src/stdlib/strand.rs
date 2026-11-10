@@ -546,193 +546,193 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     let resource = builder.local();
     let local = builder.local();
     let local_root = builder.local_root();
-    let key = builder.register_type();
-    let resource_type = builder.register_type();
-    let state = builder.register_state::<StrandStateTag>(StrandState {
-        resource,
-        next_resource_id: Cell::new(0),
-        local,
-        local_root,
-        types: StrandTypes {
-            key,
-            resource: resource_type,
-        },
-    });
-    let input_key = builder.sym("input");
-    let output_key = builder.sym("output");
-    let backtrace_key = builder.sym("backtrace");
-    let close = builder.sym("close");
-    let default_key = builder.sym("default");
-    let else_key = builder.sym("else");
-    let strand_class = builder.singletons().strand.dup();
-    let stream_class = builder.singletons().stream.dup();
+    builder.lazy::<StrandStateTag>(&["strand"], move |reg| {
+        let key = reg.register_type();
+        let resource_type = reg.register_type();
+        let state = reg.register_state::<StrandStateTag>(StrandState {
+            resource,
+            next_resource_id: Cell::new(0),
+            local,
+            local_root,
+            types: StrandTypes {
+                key,
+                resource: resource_type,
+            },
+        });
+        let input_key = reg.sym("input");
+        let output_key = reg.sym("output");
+        let backtrace_key = reg.sym("backtrace");
+        let close = reg.sym("close");
+        let default_key = reg.sym("default");
+        let else_key = reg.sym("else");
+        let strand_class = reg.singletons().strand.dup();
+        let stream_class = reg.singletons().stream.dup();
 
-    builder
-        .module("strand")
-        .value("Strand", &strand_class)
-        .value("Stream", &stream_class)
-        .value("Key", state.types.key)
-        .value("Resource", state.types.resource)
-        // Implicit I/O functions (moved from former std.iter)
-        .function_with_slots("put", async move |strand, args, _, [mut tmp]| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
-            strand.output(&mut tmp);
-            tmp.put(strand, value).await
-        })
-        .function_with_slots("next", async move |strand, args, mut out, [mut tmp]| {
-            let ([], [default, or_else]) =
-                unpack!(strand, args, 0, 0, default_key = None, else_key = None)?;
-            if default.is_some() && or_else.is_some() {
-                return Err(Error::unexpected_key(strand, else_key));
-            }
-            strand.input(&mut tmp);
-            let res = tmp.next(strand, &mut out).await?;
-            if !res {
-                if let Some(mut default) = default {
-                    out.store(default.take());
-                    return Ok(());
-                } else if let Some(or_else) = or_else {
-                    return call!(strand, or_else, out).await;
+        reg.module("strand")
+            .value("Strand", &strand_class)
+            .value("Stream", &stream_class)
+            .value("Key", state.types.key)
+            .value("Resource", state.types.resource)
+            // Implicit I/O functions (moved from former std.iter)
+            .function_with_slots("put", async move |strand, args, _, [mut tmp]| {
+                let ([value], []) = unpack!(strand, args, 1, 0)?;
+                strand.output(&mut tmp);
+                tmp.put(strand, value).await
+            })
+            .function_with_slots("next", async move |strand, args, mut out, [mut tmp]| {
+                let ([], [default, or_else]) =
+                    unpack!(strand, args, 0, 0, default_key = None, else_key = None)?;
+                if default.is_some() && or_else.is_some() {
+                    return Err(Error::unexpected_key(strand, else_key));
                 }
-                return Err(Error::iter_stop(strand));
-            }
-            Ok(())
-        })
-        .function("input", async move |strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
-            strand.input(out);
-            Ok(())
-        })
-        .function("output", async move |strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
-            strand.output(out);
-            Ok(())
-        })
-        .function_without_frame("backtrace", async move |strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
-            let entries = strand.backtrace_entries();
-            backtrace::create(strand, entries, out);
-            Ok(())
-        })
-        .function_without_frame("error_backtrace", async move |strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
-            let Some(mut entries) = strand.inner.handled_backtrace() else {
-                return Err(Error::state_error(strand, "no active handled exception"));
-            };
-            entries.extend(strand.backtrace_entries());
-            backtrace::create(strand, entries, out);
-            Ok(())
-        })
-        .function_without_frame("throw", async move |strand, args, _| {
-            let ([value], [backtrace]) = unpack!(strand, args, 1, 0, backtrace_key = None)?;
-            let err = if let Some(backtrace) = backtrace {
-                Error::from_value_backtrace(strand, value, backtrace)?
-            } else {
-                Error::from_value(strand, value)
-            };
-            Err(err)
-        })
-        .function_with_slots("redirect", async move |strand, args, out, [mut tmp]| {
-            let ([block], [arg_input, arg_output]) =
-                unpack!(strand, args, 1, 0, input_key = None, output_key = None)?;
-            let mut redir = Redirect::new(strand);
-            if let Some(input) = arg_input {
-                input.iter(&mut redir, &mut tmp).await?;
-                redir = redir.input(&mut tmp);
-            }
-            if let Some(output) = arg_output {
-                output.sink(&mut redir, &mut tmp).await?;
-                redir = redir.output(&mut tmp);
-            }
-            redir
-                .enter(async move |strand| call!(strand, block, out).await)
-                .await
-        })
-        .function("with_io", async move |strand, args, out| {
-            let ([block], [arg_input, arg_output]) =
-                unpack!(strand, args, 1, 0, input_key = None, output_key = None)?;
-            let mut redir = Redirect::new(strand);
-            if let Some(input) = arg_input {
-                redir = redir.input(input);
-            }
-            if let Some(output) = arg_output {
-                redir = redir.output(output);
-            }
-            redir
-                .enter(async move |strand| call!(strand, block, out).await)
-                .await
-        })
-        .function("channel", async move |strand, args, mut out| {
-            let (_, [limit]) = unpack!(strand, args, 0, 1)?;
-            let limit = match limit {
-                None => 1,
-                Some(limit) => limit.to_index(strand)?,
-            };
-            let (send, recv) = channel::pair(strand, limit);
-            out.store(Value::from_object(tuple::tuple(
-                strand,
-                [Value::from_object(send), Value::from_object(recv)],
-            )));
-            Ok(())
-        })
-        .function_with_slots("pipeline", async move |strand, args, out, [mut tmp]| {
-            let mut thunks = Vec::new();
-            let mut redir_input = None;
-            let mut redir_output = None;
-            for arg in args {
-                match arg {
-                    Arg::Pos(thunk) => thunks.push(thunk),
-                    Arg::Key(sym, slot) if sym == input_key => redir_input = Some(slot),
-                    Arg::Key(sym, slot) if sym == output_key => redir_output = Some(slot),
-                    Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
+                strand.input(&mut tmp);
+                let res = tmp.next(strand, &mut out).await?;
+                if !res {
+                    if let Some(mut default) = default {
+                        out.store(default.take());
+                        return Ok(());
+                    } else if let Some(or_else) = or_else {
+                        return call!(strand, or_else, out).await;
+                    }
+                    return Err(Error::iter_stop(strand));
                 }
-            }
+                Ok(())
+            })
+            .function("input", async move |strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                strand.input(out);
+                Ok(())
+            })
+            .function("output", async move |strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                strand.output(out);
+                Ok(())
+            })
+            .function_without_frame("backtrace", async move |strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let entries = strand.backtrace_entries();
+                backtrace::create(strand, entries, out);
+                Ok(())
+            })
+            .function_without_frame("error_backtrace", async move |strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let Some(mut entries) = strand.inner.handled_backtrace() else {
+                    return Err(Error::state_error(strand, "no active handled exception"));
+                };
+                entries.extend(strand.backtrace_entries());
+                backtrace::create(strand, entries, out);
+                Ok(())
+            })
+            .function_without_frame("throw", async move |strand, args, _| {
+                let ([value], [backtrace]) = unpack!(strand, args, 1, 0, backtrace_key = None)?;
+                let err = if let Some(backtrace) = backtrace {
+                    Error::from_value_backtrace(strand, value, backtrace)?
+                } else {
+                    Error::from_value(strand, value)
+                };
+                Err(err)
+            })
+            .function_with_slots("redirect", async move |strand, args, out, [mut tmp]| {
+                let ([block], [arg_input, arg_output]) =
+                    unpack!(strand, args, 1, 0, input_key = None, output_key = None)?;
+                let mut redir = Redirect::new(strand);
+                if let Some(input) = arg_input {
+                    input.iter(&mut redir, &mut tmp).await?;
+                    redir = redir.input(&mut tmp);
+                }
+                if let Some(output) = arg_output {
+                    output.sink(&mut redir, &mut tmp).await?;
+                    redir = redir.output(&mut tmp);
+                }
+                redir
+                    .enter(async move |strand| call!(strand, block, out).await)
+                    .await
+            })
+            .function("with_io", async move |strand, args, out| {
+                let ([block], [arg_input, arg_output]) =
+                    unpack!(strand, args, 1, 0, input_key = None, output_key = None)?;
+                let mut redir = Redirect::new(strand);
+                if let Some(input) = arg_input {
+                    redir = redir.input(input);
+                }
+                if let Some(output) = arg_output {
+                    redir = redir.output(output);
+                }
+                redir
+                    .enter(async move |strand| call!(strand, block, out).await)
+                    .await
+            })
+            .function("channel", async move |strand, args, mut out| {
+                let (_, [limit]) = unpack!(strand, args, 0, 1)?;
+                let limit = match limit {
+                    None => 1,
+                    Some(limit) => limit.to_index(strand)?,
+                };
+                let (send, recv) = channel::pair(strand, limit);
+                out.store(Value::from_object(tuple::tuple(
+                    strand,
+                    [Value::from_object(send), Value::from_object(recv)],
+                )));
+                Ok(())
+            })
+            .function_with_slots("pipeline", async move |strand, args, out, [mut tmp]| {
+                let mut thunks = Vec::new();
+                let mut redir_input = None;
+                let mut redir_output = None;
+                for arg in args {
+                    match arg {
+                        Arg::Pos(thunk) => thunks.push(thunk),
+                        Arg::Key(sym, slot) if sym == input_key => redir_input = Some(slot),
+                        Arg::Key(sym, slot) if sym == output_key => redir_output = Some(slot),
+                        Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
+                    }
+                }
 
-            let count = thunks.len();
-            if count == 0 {
-                return Err(Error::missing_positional(strand, 0));
-            }
+                let count = thunks.len();
+                if count == 0 {
+                    return Err(Error::missing_positional(strand, 0));
+                }
 
-            // We must avoid being dropped until we've awaited all strands we create
-            strand
-                .with_interrupt_mask(InterruptMask::all(), async move |strand| {
-                    async {
-                        let mut last_recv = Value::NIL;
-                        let mut out = Some(out);
-                        let mut strands = Vec::new();
-                        let mut pipes = Vec::with_capacity(count.saturating_sub(1));
-                        let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
-                        // Resolve the caller's redirects up front, in place.
-                        // Doing this in the stage body would put a fallible
-                        // await ahead of the call, and an early return from it
-                        // would skip closing the stage's pipe ends.
-                        if let Some(input) = &mut redir_input {
-                            input.iter(strand, &mut tmp).await?;
-                            input.store(tmp.take());
-                        }
-                        if let Some(output) = &mut redir_output {
-                            output.sink(strand, &mut tmp).await?;
-                            output.store(tmp.take());
-                        }
-                        for _ in 0..count.saturating_sub(1) {
-                            let mut send = Value::NIL;
-                            let mut recv = Value::NIL;
-                            pipe_pair(strand, Slot::new(&mut send), Slot::new(&mut recv));
-                            pipes.push(Some((send, recv)));
-                        }
-                        for (i, thunk) in thunks.into_iter().enumerate() {
-                            let (send, recv, mut out, redir_output) = if i < count - 1 {
-                                let (send, recv) = pipes[i].take().unwrap();
-                                (Some(send), Some(recv), None, None)
-                            } else {
-                                (None, None, out.take(), redir_output.take())
-                            };
-                            let redir_input = if i == 0 { redir_input.take() } else { None };
+                // We must avoid being dropped until we've awaited all strands we create
+                strand
+                    .with_interrupt_mask(InterruptMask::all(), async move |strand| {
+                        async {
+                            let mut last_recv = Value::NIL;
+                            let mut out = Some(out);
+                            let mut strands = Vec::new();
+                            let mut pipes = Vec::with_capacity(count.saturating_sub(1));
+                            let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
+                            // Resolve the caller's redirects up front, in place.
+                            // Doing this in the stage body would put a fallible
+                            // await ahead of the call, and an early return from it
+                            // would skip closing the stage's pipe ends.
+                            if let Some(input) = &mut redir_input {
+                                input.iter(strand, &mut tmp).await?;
+                                input.store(tmp.take());
+                            }
+                            if let Some(output) = &mut redir_output {
+                                output.sink(strand, &mut tmp).await?;
+                                output.store(tmp.take());
+                            }
+                            for _ in 0..count.saturating_sub(1) {
+                                let mut send = Value::NIL;
+                                let mut recv = Value::NIL;
+                                pipe_pair(strand, Slot::new(&mut send), Slot::new(&mut recv));
+                                pipes.push(Some((send, recv)));
+                            }
+                            for (i, thunk) in thunks.into_iter().enumerate() {
+                                let (send, recv, mut out, redir_output) = if i < count - 1 {
+                                    let (send, recv) = pipes[i].take().unwrap();
+                                    (Some(send), Some(recv), None, None)
+                                } else {
+                                    (None, None, out.take(), redir_output.take())
+                                };
+                                let redir_input = if i == 0 { redir_input.take() } else { None };
 
-                            strands.push(strand.spawn_scoped(
-                                Some(interrupt.clone()),
-                                async move |strand| {
-                                    if let Err(e) = strand
+                                strands.push(strand.spawn_scoped(
+                                    Some(interrupt.clone()),
+                                    async move |strand| {
+                                        if let Err(e) = strand
                                         .with_slots(
                                             async move |strand, [mut s, mut r, mut tmp, mut tmp2]| {
                                                 let mut redir = Redirect::new(strand);
@@ -786,301 +786,306 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                                         strand.interrupt_token().cancel();
                                         return Err(e);
                                     }
-                                    Ok(())
-                                },
-                            ));
-                            last_recv = recv.unwrap_or(Value::NIL);
-                        }
-                        for (i, res) in join_all(strands).await.into_iter().enumerate() {
-                            if let Err(e) = res {
-                                // Suppress Input/SinkStop errors (broken pipe) or cancellation from all
-                                // but the final element
-                                if i != count - 1 {
-                                    if matches!(e.kind(), ErrorKind::IterStop | ErrorKind::SinkStop)
-                                    {
-                                        continue;
+                                        Ok(())
+                                    },
+                                ));
+                                last_recv = recv.unwrap_or(Value::NIL);
+                            }
+                            for (i, res) in join_all(strands).await.into_iter().enumerate() {
+                                if let Err(e) = res {
+                                    // Suppress Input/SinkStop errors (broken pipe) or cancellation from all
+                                    // but the final element
+                                    if i != count - 1 {
+                                        if matches!(
+                                            e.kind(),
+                                            ErrorKind::IterStop | ErrorKind::SinkStop
+                                        ) {
+                                            continue;
+                                        }
+                                        if interrupt.is_canceled()
+                                            && e.kind() == ErrorKind::Canceled
+                                        {
+                                            continue;
+                                        }
                                     }
-                                    if interrupt.is_canceled() && e.kind() == ErrorKind::Canceled {
-                                        continue;
-                                    }
+                                    return Err(e);
                                 }
-                                return Err(e);
                             }
+                            Ok(())
                         }
-                        Ok(())
-                    }
-                    .await
-                })
-                .await
-        })
-        .function_with_slots(
-            "each",
-            async move |strand, args, _, [mut value, mut tmp, mut input, mut output]| {
-                let ([func], _) = unpack!(strand, args, 1, 0)?;
-                strand.input(&mut input);
-                strand.output(&mut output);
-                Redirect::new(strand)
-                    .input(Singleton::Null)
-                    .output(Singleton::Null)
-                    .enter(async move |strand| {
-                        while input.next(strand, &mut value).await? {
-                            call!(strand, &func, &mut tmp, &value).await?;
-                            output.put(strand, &mut tmp).await?;
-                            strand.check_trap_gc()?
-                        }
-                        Ok(())
+                        .await
                     })
                     .await
-            },
-        )
-        .function_with_slots(
-            "where",
-            async move |strand, args, _, [mut value, mut tmp, mut input, mut output]| {
-                let ([pred], _) = unpack!(strand, args, 1, 0)?;
-                strand.input(&mut input);
-                strand.output(&mut output);
-                Redirect::new(strand)
-                    .input(Singleton::Null)
-                    .output(Singleton::Null)
-                    .enter(async move |strand| {
-                        while input.next(strand, &mut value).await? {
-                            call!(strand, &pred, &mut tmp, &value).await?;
-                            if tmp.to_bool(strand)? {
-                                output.put(strand, &mut value).await?;
+            })
+            .function_with_slots(
+                "each",
+                async move |strand, args, _, [mut value, mut tmp, mut input, mut output]| {
+                    let ([func], _) = unpack!(strand, args, 1, 0)?;
+                    strand.input(&mut input);
+                    strand.output(&mut output);
+                    Redirect::new(strand)
+                        .input(Singleton::Null)
+                        .output(Singleton::Null)
+                        .enter(async move |strand| {
+                            while input.next(strand, &mut value).await? {
+                                call!(strand, &func, &mut tmp, &value).await?;
+                                output.put(strand, &mut tmp).await?;
+                                strand.check_trap_gc()?
                             }
-                            strand.check_trap_gc()?
-                        }
-                        Ok(())
-                    })
-                    .await
-            },
-        )
-        .function_with_slots(
-            "from",
-            async move |strand, args, _, [mut input, mut output, mut value]| {
-                let ([arg], []) = unpack!(strand, args, 1, 0)?;
-                arg.iter(strand, &mut input).await?;
-                strand.output(&mut output);
-                while input.next(strand, &mut value).await? {
-                    output.put(strand, &mut value).await?;
-                    strand.check_trap_gc()?
-                }
-                Ok(())
-            },
-        )
-        .function_with_slots(
-            "collect",
-            async move |strand, args, mut out, [mut input, mut item, mut output]| {
-                let ([], [arg]) = unpack!(strand, args, 0, 1)?;
-                strand.input(&mut input);
-                if let Some(mut arg) = arg {
-                    arg.sink(strand, &mut output).await?;
-                    while input.next(strand, &mut item).await? {
-                        output.put(strand, &mut item).await?;
+                            Ok(())
+                        })
+                        .await
+                },
+            )
+            .function_with_slots(
+                "where",
+                async move |strand, args, _, [mut value, mut tmp, mut input, mut output]| {
+                    let ([pred], _) = unpack!(strand, args, 1, 0)?;
+                    strand.input(&mut input);
+                    strand.output(&mut output);
+                    Redirect::new(strand)
+                        .input(Singleton::Null)
+                        .output(Singleton::Null)
+                        .enter(async move |strand| {
+                            while input.next(strand, &mut value).await? {
+                                call!(strand, &pred, &mut tmp, &value).await?;
+                                if tmp.to_bool(strand)? {
+                                    output.put(strand, &mut value).await?;
+                                }
+                                strand.check_trap_gc()?
+                            }
+                            Ok(())
+                        })
+                        .await
+                },
+            )
+            .function_with_slots(
+                "from",
+                async move |strand, args, _, [mut input, mut output, mut value]| {
+                    let ([arg], []) = unpack!(strand, args, 1, 0)?;
+                    arg.iter(strand, &mut input).await?;
+                    strand.output(&mut output);
+                    while input.next(strand, &mut value).await? {
+                        output.put(strand, &mut value).await?;
                         strand.check_trap_gc()?
                     }
-                    out.store(arg.take());
-                } else {
-                    let mut acc = Vec::new();
-                    while input.next(strand, &mut item).await? {
-                        acc.push(item.take())
-                    }
-                    strand
-                        .vm()
-                        .builtin_types()
-                        .array
-                        .create(strand, Array { inner: acc }, out);
-                }
-                Ok(())
-            },
-        )
-        .function("spawn", async move |strand, args, mut out| {
-            let ([mut callable], []) = unpack!(strand, args, 1, 0)?;
-            let handle = strand.spawn_background_raw(
-                callable.take(),
-                InterruptToken::new(),
-                None,
-                async move |strand, arg, out| call!(strand, arg, out).await,
-            )?;
-            out.store(Value::from_object(handle));
-            Ok(())
-        })
-        .function("stream", async move |strand, args, mut out| {
-            let ([mut callable], []) = unpack!(strand, args, 1, 0)?;
-
-            // Channel A: handle writes → strand reads
-            // Channel B: strand writes → handle reads
-            // Safety: stack Values are fresh, acyclic channel objects
-            let mut input_sender = Value::NIL;
-            let mut input_receiver = Value::NIL;
-            pipe_pair(
-                strand,
-                Slot::new(&mut input_sender),
-                Slot::new(&mut input_receiver),
-            );
-            let mut output_sender = Value::NIL;
-            let mut output_receiver = Value::NIL;
-            pipe_pair(
-                strand,
-                Slot::new(&mut output_sender),
-                Slot::new(&mut output_receiver),
-            );
-
-            let handle = strand.spawn_background_raw(
-                callable.take(),
-                InterruptToken::new(),
-                Some((input_receiver, output_sender)),
-                async move |strand, arg, out| call!(strand, arg, out).await,
-            )?;
-
-            // Wrap the endpoints up front so they keep `handle` GC-reachable
-            // for as long as they're reachable themselves, even once the
-            // `Stream` returned below is not.
-            strand
-                .with_slots(async move |strand, [mut input, mut output]| {
-                    let builtin_types = strand.builtin_types();
-                    builtin_types.stream_sink.create(
-                        strand,
-                        strand_object::StreamSink::new(input_sender, handle.clone()),
-                        &mut input,
-                    );
-                    builtin_types.stream_iter.create(
-                        strand,
-                        strand_object::StreamIter::new(output_receiver, handle.clone()),
-                        &mut output,
-                    );
-                    builtin_types.stream.create(
-                        strand,
-                        strand_object::Stream {
-                            handle,
-                            input: input.take(),
-                            output: output.take(),
-                        },
-                        &mut out,
-                    );
-                })
-                .await;
-            Ok(())
-        })
-        .function_with_slots(
-            "map",
-            async move |strand, args, _, [mut input, mut output]| {
-                let ([count, block], [arg_input, arg_output]) =
-                    unpack!(strand, args, 2, 0, input_key = None, output_key = None)?;
-                let count = count.to_index(strand)?;
-                if count == 0 {
-                    return Err(Error::value(strand, "strand.map: count must be positive"));
-                }
-                let disconnect_input = arg_input.is_none();
-                let disconnect_output = arg_output.is_none();
-                if let Some(arg_input) = arg_input {
-                    arg_input.iter(strand, &mut input).await?;
-                } else {
-                    strand.input(&mut input);
-                }
-                if let Some(arg_output) = arg_output {
-                    arg_output.sink(strand, &mut output).await?;
-                } else {
-                    strand.output(&mut output);
-                }
-
-                map_workers(
-                    strand,
-                    count,
-                    &input,
-                    &output,
-                    &block,
-                    disconnect_input,
-                    disconnect_output,
-                )
-                .await
-            },
-        )
-        .function_with_slots(
-            "pool",
-            async move |strand, args, _, [mut input, mut output]| {
-                let ([count, input_or_block], [block]) = unpack!(strand, args, 2, 1)?;
-                let disconnect_input = block.is_none();
-                let block = if let Some(block) = block {
-                    input_or_block.iter(strand, &mut input).await?;
-                    block
-                } else {
-                    strand.input(&mut input);
-                    input_or_block
-                };
-                let count = count.to_index(strand)?;
-                if count == 0 {
-                    return Err(Error::value(strand, "strand.pool: count must be positive"));
-                }
-                Output::set(strand, &mut output, Singleton::Null);
-                map_workers(
-                    strand,
-                    count,
-                    &input,
-                    &output,
-                    &block,
-                    disconnect_input,
-                    false,
-                )
-                .await
-            },
-        )
-        .function("fork", async move |strand, args, mut out| {
-            let ([], [], thunks) = unpack!(strand, args, 0, 0, *)?;
-            let thunks: Vec<_> = thunks.collect();
-
-            let count = thunks.len();
-            // We must avoid being dropped until we've awaited all strands we create
-            strand
-                .with_interrupt_mask(InterruptMask::all(), async move |strand| {
-                    let result = async {
-                        let results =
-                            RefCell::new((0..count).map(|_| Value::NIL).collect::<Vec<_>>());
-                        let mut strands = Vec::with_capacity(count);
-                        let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
-                        for (i, thunk) in thunks.into_iter().enumerate() {
-                            let results = &results;
-                            strands.push(strand.spawn_scoped(
-                                Some(interrupt.clone()),
-                                async move |strand| {
-                                    let result = strand
-                                        .with_slots(async move |strand, [mut tmp]| {
-                                            call!(strand, thunk, &mut tmp).await?;
-                                            results.borrow_mut()[i] = tmp.take();
-                                            Ok(())
-                                        })
-                                        .await;
-                                    if result.is_err() {
-                                        strand.interrupt_token().cancel();
-                                    }
-                                    result
-                                },
-                            ));
-                        }
-                        let mut first_err: Option<Error<'v, '_>> = None;
-                        for res in join_all(strands).await {
-                            if let Err(e) = res
-                                && first_err.as_ref().is_none_or(|prev| {
-                                    prev.kind() == ErrorKind::Canceled
-                                        && e.kind() != ErrorKind::Canceled
-                                })
-                            {
-                                first_err = Some(e);
-                            }
-                        }
-                        if let Some(e) = first_err {
-                            return Err(e);
-                        }
-                        Ok(results.into_inner())
-                    }
-                    .await;
-                    let results = result?;
-                    out.store(Value::from_object(tuple::tuple(strand, results)));
                     Ok(())
-                })
-                .await
-        })
-        .commit();
+                },
+            )
+            .function_with_slots(
+                "collect",
+                async move |strand, args, mut out, [mut input, mut item, mut output]| {
+                    let ([], [arg]) = unpack!(strand, args, 0, 1)?;
+                    strand.input(&mut input);
+                    if let Some(mut arg) = arg {
+                        arg.sink(strand, &mut output).await?;
+                        while input.next(strand, &mut item).await? {
+                            output.put(strand, &mut item).await?;
+                            strand.check_trap_gc()?
+                        }
+                        out.store(arg.take());
+                    } else {
+                        let mut acc = Vec::new();
+                        while input.next(strand, &mut item).await? {
+                            acc.push(item.take())
+                        }
+                        strand
+                            .vm()
+                            .builtin_types()
+                            .array
+                            .create(strand, Array { inner: acc }, out);
+                    }
+                    Ok(())
+                },
+            )
+            .function("spawn", async move |strand, args, mut out| {
+                let ([mut callable], []) = unpack!(strand, args, 1, 0)?;
+                let handle = strand.spawn_background_raw(
+                    callable.take(),
+                    InterruptToken::new(),
+                    None,
+                    async move |strand, arg, out| call!(strand, arg, out).await,
+                )?;
+                out.store(Value::from_object(handle));
+                Ok(())
+            })
+            .function("stream", async move |strand, args, mut out| {
+                let ([mut callable], []) = unpack!(strand, args, 1, 0)?;
+
+                // Channel A: handle writes → strand reads
+                // Channel B: strand writes → handle reads
+                // Safety: stack Values are fresh, acyclic channel objects
+                let mut input_sender = Value::NIL;
+                let mut input_receiver = Value::NIL;
+                pipe_pair(
+                    strand,
+                    Slot::new(&mut input_sender),
+                    Slot::new(&mut input_receiver),
+                );
+                let mut output_sender = Value::NIL;
+                let mut output_receiver = Value::NIL;
+                pipe_pair(
+                    strand,
+                    Slot::new(&mut output_sender),
+                    Slot::new(&mut output_receiver),
+                );
+
+                let handle = strand.spawn_background_raw(
+                    callable.take(),
+                    InterruptToken::new(),
+                    Some((input_receiver, output_sender)),
+                    async move |strand, arg, out| call!(strand, arg, out).await,
+                )?;
+
+                // Wrap the endpoints up front so they keep `handle` GC-reachable
+                // for as long as they're reachable themselves, even once the
+                // `Stream` returned below is not.
+                strand
+                    .with_slots(async move |strand, [mut input, mut output]| {
+                        let builtin_types = strand.builtin_types();
+                        builtin_types.stream_sink.create(
+                            strand,
+                            strand_object::StreamSink::new(input_sender, handle.clone()),
+                            &mut input,
+                        );
+                        builtin_types.stream_iter.create(
+                            strand,
+                            strand_object::StreamIter::new(output_receiver, handle.clone()),
+                            &mut output,
+                        );
+                        builtin_types.stream.create(
+                            strand,
+                            strand_object::Stream {
+                                handle,
+                                input: input.take(),
+                                output: output.take(),
+                            },
+                            &mut out,
+                        );
+                    })
+                    .await;
+                Ok(())
+            })
+            .function_with_slots(
+                "map",
+                async move |strand, args, _, [mut input, mut output]| {
+                    let ([count, block], [arg_input, arg_output]) =
+                        unpack!(strand, args, 2, 0, input_key = None, output_key = None)?;
+                    let count = count.to_index(strand)?;
+                    if count == 0 {
+                        return Err(Error::value(strand, "strand.map: count must be positive"));
+                    }
+                    let disconnect_input = arg_input.is_none();
+                    let disconnect_output = arg_output.is_none();
+                    if let Some(arg_input) = arg_input {
+                        arg_input.iter(strand, &mut input).await?;
+                    } else {
+                        strand.input(&mut input);
+                    }
+                    if let Some(arg_output) = arg_output {
+                        arg_output.sink(strand, &mut output).await?;
+                    } else {
+                        strand.output(&mut output);
+                    }
+
+                    map_workers(
+                        strand,
+                        count,
+                        &input,
+                        &output,
+                        &block,
+                        disconnect_input,
+                        disconnect_output,
+                    )
+                    .await
+                },
+            )
+            .function_with_slots(
+                "pool",
+                async move |strand, args, _, [mut input, mut output]| {
+                    let ([count, input_or_block], [block]) = unpack!(strand, args, 2, 1)?;
+                    let disconnect_input = block.is_none();
+                    let block = if let Some(block) = block {
+                        input_or_block.iter(strand, &mut input).await?;
+                        block
+                    } else {
+                        strand.input(&mut input);
+                        input_or_block
+                    };
+                    let count = count.to_index(strand)?;
+                    if count == 0 {
+                        return Err(Error::value(strand, "strand.pool: count must be positive"));
+                    }
+                    Output::set(strand, &mut output, Singleton::Null);
+                    map_workers(
+                        strand,
+                        count,
+                        &input,
+                        &output,
+                        &block,
+                        disconnect_input,
+                        false,
+                    )
+                    .await
+                },
+            )
+            .function("fork", async move |strand, args, mut out| {
+                let ([], [], thunks) = unpack!(strand, args, 0, 0, *)?;
+                let thunks: Vec<_> = thunks.collect();
+
+                let count = thunks.len();
+                // We must avoid being dropped until we've awaited all strands we create
+                strand
+                    .with_interrupt_mask(InterruptMask::all(), async move |strand| {
+                        let result = async {
+                            let results =
+                                RefCell::new((0..count).map(|_| Value::NIL).collect::<Vec<_>>());
+                            let mut strands = Vec::with_capacity(count);
+                            let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
+                            for (i, thunk) in thunks.into_iter().enumerate() {
+                                let results = &results;
+                                strands.push(strand.spawn_scoped(
+                                    Some(interrupt.clone()),
+                                    async move |strand| {
+                                        let result = strand
+                                            .with_slots(async move |strand, [mut tmp]| {
+                                                call!(strand, thunk, &mut tmp).await?;
+                                                results.borrow_mut()[i] = tmp.take();
+                                                Ok(())
+                                            })
+                                            .await;
+                                        if result.is_err() {
+                                            strand.interrupt_token().cancel();
+                                        }
+                                        result
+                                    },
+                                ));
+                            }
+                            let mut first_err: Option<Error<'v, '_>> = None;
+                            for res in join_all(strands).await {
+                                if let Err(e) = res
+                                    && first_err.as_ref().is_none_or(|prev| {
+                                        prev.kind() == ErrorKind::Canceled
+                                            && e.kind() != ErrorKind::Canceled
+                                    })
+                                {
+                                    first_err = Some(e);
+                                }
+                            }
+                            if let Some(e) = first_err {
+                                return Err(e);
+                            }
+                            Ok(results.into_inner())
+                        }
+                        .await;
+                        let results = result?;
+                        out.store(Value::from_object(tuple::tuple(strand, results)));
+                        Ok(())
+                    })
+                    .await
+            })
+            .commit();
+    });
 }
 
 #[cfg(test)]

@@ -41,6 +41,7 @@ fn unfit(outcome: &Outcome) -> bool {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn an_instance_reaching_func_is_called_through_its_call() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -60,6 +61,7 @@ fn an_instance_reaching_func_is_called_through_its_call() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_class_that_doesnt_reach_func_isnt_a_function() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -79,6 +81,7 @@ fn a_class_that_doesnt_reach_func_isnt_a_function() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_generic_call_is_instantiated() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -110,6 +113,7 @@ fn a_generic_call_is_instantiated() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_class_object_is_called_through_init() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -145,6 +149,7 @@ fn a_class_object_is_called_through_init() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_class_level_call_takes_precedence() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -171,6 +176,7 @@ fn a_class_level_call_takes_precedence() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_static_call_replaces_construction_for_the_exact_object() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -203,6 +209,7 @@ fn a_static_call_replaces_construction_for_the_exact_object() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_generic_class_object_infers_its_arguments() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -244,6 +251,7 @@ fn a_generic_class_object_infers_its_arguments() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn trials_choose_among_overloaded_calls() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -277,6 +285,7 @@ fn trials_choose_among_overloaded_calls() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_union_of_callables_is_below_what_each_is() {
     let mut db = Database::new();
     let int = int(&mut db);
@@ -294,6 +303,7 @@ fn a_union_of_callables_is_below_what_each_is() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_chosen_signature_is_held_to_its_parameters() {
     let mut db = Database::new();
     let int = int(&mut db);
