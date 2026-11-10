@@ -185,9 +185,17 @@ pub class Sender[T]: std.Sink[T]
   do
     ...
 
-# Handles a background strand created by [`spawn`](strand.spawn).
-pub class Strand[R]
-  # Whether the strand has completed execution.
+# Observes a strand without joining it or keeping it alive.
+#
+# Handles compare equal when they observe the same strand, including the
+# [`Task`](strand.Task) of a background strand.
+pub class Strand
+  # Identifier of the strand, unique within the VM and never reused.
+  #[getter]
+  pub def id self -> Int
+    ...
+
+  # Whether the strand has exited.
   #[getter]
   pub def done self -> Bool
     ...
@@ -196,8 +204,50 @@ pub class Strand[R]
   #
   # The strand raises [`CanceledError`](std.CanceledError) at once if it is
   # suspended, and otherwise the next time it suspends. Cancellation is
-  # permanent: each later attempt to suspend raises it again.
+  # permanent: each later attempt to suspend raises it again. The strands of one
+  # [`fork`](strand.fork) or [`pipeline`](strand.pipeline) share cancellation,
+  # so canceling one cancels the others; the parent sees the error when it joins
+  # them.
   pub def cancel self
+    ...
+
+  # Captures the strand's calls, as an [`inspect.Backtrace`](inspect.Backtrace).
+  #
+  # The capture ends at the strand's own start, which for a scoped strand is a
+  # `<scoped>` entry. A strand that hasn't started yet has an empty backtrace.
+  #
+  # ## Errors
+  #
+  # `std.StateError` if the strand has exited.
+  pub def backtrace
+    self
+    # Whether to continue past `<scoped>` into the parent's calls. False by
+    # default.
+    :full @ Bool = ...
+  do -> Backtrace
+    ...
+
+  # Returns the strand's scoped children, in creation order.
+  #
+  # ## Errors
+  #
+  # `std.StateError` if the strand has exited.
+  pub def children self -> Seq[Strand]
+    ...
+
+  # Captures the strand's current state.
+  #
+  # ## Errors
+  #
+  # `std.StateError` if the strand has exited.
+  pub def info self -> StrandInfo
+    ...
+
+# Handles a background strand created by [`spawn`](strand.spawn).
+pub class Task[R]: Strand
+  # Whether the strand has completed and its result is available.
+  #[getter]
+  pub def done self -> Bool
     ...
 
   # Waits until the strand completes and returns its result.
@@ -207,25 +257,16 @@ pub class Strand[R]
     ...
 
   # Waits until the strand completes, without returning its result or
-  # re-raising its error as [`join`](strand.Strand.join) does.
+  # re-raising its error as [`join`](strand.Task.join) does.
   pub def wait self
     ...
 
-# A [`Strand`](strand.Strand) with channel-backed input and output, created by
+# A [`Task`](strand.Task) with channel-backed input and output, created by
 # [`stream`](strand.stream).
 #
 # Its iterator re-raises a strand error after draining output; its sink reports
 # ordinary shutdown after input closes.
-pub class Stream[R, I, O]: Iterable[I] Sinkable[O]
-  # Whether the strand has completed execution.
-  #[getter]
-  pub def done self -> Bool
-    ...
-
-  # Cancels the strand, as [`Strand.cancel`](strand.Strand.cancel) does.
-  pub def cancel self
-    ...
-
+pub class Stream[R, I, O]: Task[R] Iterable[I] Sinkable[O]
   # Closes both channels, then waits for the strand to complete and returns its
   # result.
   #
@@ -241,6 +282,36 @@ pub class Stream[R, I, O]: Iterable[I] Sinkable[O]
   pub def wait self
     ...
 
+# A strand's state, captured by [`snapshot`](strand.snapshot) or
+# [`Strand.info`](strand.Strand.info).
+pub class StrandInfo
+  # The strand.
+  #[getter]
+  pub def strand self -> Strand
+    ...
+
+  # The strand's scoped parent; `nil` for a top-level strand.
+  #[getter]
+  pub def parent self -> (Strand | nil)
+    ...
+
+  # The strand's calls at the time of capture, as
+  # [`Strand.backtrace`](strand.Strand.backtrace) returns them by default.
+  #[getter]
+  pub def backtrace self -> Backtrace
+    ...
+
+# Returns a handle to the current strand.
+pub def current() -> Strand
+  ...
+
+# Captures the state of every running strand at once.
+#
+# Top-level strands come in the order they started, starting with the main
+# strand, and each is followed by its scoped descendants in creation order. A
+# background strand that hasn't started yet is left out.
+pub def snapshot() -> Seq[StrandInfo]
+  ...
 
 # Captures the current strand's calls, as an
 # [`inspect.Backtrace`](inspect.Backtrace).
@@ -529,7 +600,7 @@ pub def with_io ...args @ Value -> Value
 pub def spawn[R]
   # Function to run.
   func @ (() -> R)
-do -> Strand[R]
+do -> Task[R]
   ...
 
 # Runs a function in a background strand with channel-backed endpoints.

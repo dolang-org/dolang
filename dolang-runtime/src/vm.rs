@@ -25,7 +25,7 @@ use crate::{
     arg::Args,
     bytecode::file,
     error::{Error, Result},
-    frame::{CallFrame, Native},
+    frame::{self, CallFrame, Native},
     gc::{self, Gc, arena::Arena},
     object::{
         BuiltinTypes, Singletons, TypeTable,
@@ -37,7 +37,9 @@ use crate::{
     },
     sig::{self, UnpackKey, UnpackKeyKind},
     stdlib,
-    strand::{Local, LocalKey, LocalRootKey, LocalVtbl, Strand, StrandGroup, StrandInner},
+    strand::{
+        Local, LocalKey, LocalRootKey, LocalVtbl, Strand, StrandGroup, StrandInner, StrandRing,
+    },
     sym::{self, Sym},
     unpack,
     value::{Input, Output, Slot, Value},
@@ -268,6 +270,11 @@ pub struct Vm<'v> {
     pub(crate) locals: MonoVec<LocalVtbl<'v>>,
     pub(crate) local_root_count: Cell<usize>,
     pub(crate) spawn_tx: RefCell<Option<mpsc::UnboundedSender<SpawnedFuture<'v>>>>,
+    /// Running top-level strands: the main strand and background strands that
+    /// have been polled at least once.
+    pub(crate) strands: StrandRing,
+    /// Next strand handle ID; IDs are never reused.
+    pub(crate) next_strand_id: Cell<u64>,
     // Strings that have to be allocated for the lifetime of the VM
     pub(crate) strings: RefCell<Vec<alias::Box<str>>>,
     // SAFETY: pending setups may capture GC values, so this must be cleared before `arena`
@@ -1018,11 +1025,16 @@ impl Builder<'static> {
             locals: Default::default(),
             local_root_count: Cell::new(0),
             spawn_tx: Default::default(),
+            strands: Default::default(),
+            next_strand_id: Cell::new(1),
             strings: Default::default(),
             type_singletons: Default::default(),
             error_kind_vtbls: Default::default(),
             lazy: Default::default(),
         };
+
+        // `vm` is at its final address from here on
+        vm.strands.init();
 
         // Safety: VM is kept alive for the same duration as its contents, as it's self-referential.
         // `vm` is not moved after this point and outlives `this`, which is the only way the
@@ -1354,12 +1366,15 @@ impl<'v> Builder<'v> {
         let group = StrandGroup::new();
         let strand = StrandInner::new(self.reg.inner, None);
         let _guard = unsafe { strand.init_group_leader(&group) };
+        // Safety: `strand` stays put until it drops, which unlinks it
+        unsafe { strand.link_top_level() };
         let native = Native {
             module: "<host>".into(),
             receiver: "<enter>".into(),
             method: None,
             parent: None,
         };
+        let _sp = unsafe { strand.push_sp(frame::Ptr::Native(NonNull::from_ref(&native))) };
         let mut strand = unsafe { Strand::from_native_frame(&strand, &native) };
 
         let mut background = FuturesUnordered::new();
@@ -1487,7 +1502,7 @@ impl Bytecode {
         mut out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
         let loaded = strand.load_bytecode(self, importer);
-        let mut frame = unsafe { CallFrame::new(loaded, 0, None, None) };
+        let mut frame = unsafe { CallFrame::new(loaded, 0, None, Some(strand.fp)) };
         strand
             .run(strand.inner, &mut frame, Slot::from_output(&mut out))
             .await

@@ -5,6 +5,7 @@ import std:
   - Sinkable
 import strand:
   - Strand
+  - Task
   - Stream
   - spawn
   - stream
@@ -17,6 +18,7 @@ let s = stream do each do |x| (x * 2)
 assert_eq (type s) $Stream
 assert (type s Stream)
 assert (type s Strand)
+assert (type s Task)
 assert (type s Iterable)
 assert (type s Sinkable)
 assert (!(type s Iter))
@@ -74,7 +76,8 @@ assert_eq $results4[1] 2
 
 # Test 5: plain strand handles do not claim stream protocols.
 let plain = spawn do 42
-assert_eq (type plain) $Strand
+assert_eq (type plain) $Task
+assert (type plain Strand)
 assert (!(type plain Stream))
 assert (!(type plain Iterable))
 assert (!(type plain Sinkable))

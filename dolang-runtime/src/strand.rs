@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    cell::{Cell, RefCell, UnsafeCell},
+    cell::{Cell, OnceCell, RefCell, UnsafeCell},
     future::Future,
     marker::PhantomData,
     mem::{self, MaybeUninit},
@@ -143,10 +143,14 @@ impl<'v> InterruptToken<'v> {
         if self.inner.timed_out.get() && !filter.contains(InterruptMask::TIMED_OUT) {
             child.inner.timed_out.set(true);
         }
-        self.inner
-            .children
-            .borrow_mut()
-            .push((Rc::downgrade(&child.inner), filter));
+        let mut children = self.inner.children.borrow_mut();
+        // Prune dead children before the vector grows, so a long-lived token
+        // that nests many short-lived ones stays bounded.
+        if children.len() == children.capacity() {
+            children.retain(|(child, _)| child.strong_count() != 0);
+        }
+        children.push((Rc::downgrade(&child.inner), filter));
+        drop(children);
         child
     }
 
@@ -301,6 +305,67 @@ impl StrandGroup {
     }
 }
 
+/// Ring of running top-level strands (group leaders), owned by the VM.
+///
+/// Leaders link through their otherwise unused `group_link`.
+pub(crate) type StrandRing = ring!(StrandInner<'static>, group_link);
+
+/// Lifecycle of the strand behind a [`StrandCell`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CellState {
+    /// Spawned but not yet polled; still queued in the spawn channel.
+    Pending,
+    /// Running or suspended.
+    Live,
+    /// Exited; the [`StrandInner`] is gone.
+    Exited,
+}
+
+/// Shared, non-owning reference to a strand used by handles.
+///
+/// The pointer is set once the strand is at a stable address and cleared when
+/// its [`StrandInner`] drops, so it never dangles. `id` is unique within the VM
+/// and never reused.
+pub(crate) struct StrandCell {
+    ptr: Cell<*const StrandInner<'static>>,
+    state: Cell<CellState>,
+    id: u64,
+}
+
+impl StrandCell {
+    fn new(vm: &Vm<'_>) -> Rc<Self> {
+        let id = vm.next_strand_id.get();
+        vm.next_strand_id.set(id + 1);
+        Rc::new(Self {
+            ptr: Cell::new(null()),
+            state: Cell::new(CellState::Pending),
+            id,
+        })
+    }
+
+    pub(crate) fn id(&self) -> u64 {
+        self.id
+    }
+
+    pub(crate) fn state(&self) -> CellState {
+        self.state.get()
+    }
+
+    /// Pointer to the live strand, if any.
+    ///
+    /// Dereferencing it is only valid until the caller next yields: any
+    /// suspension can let the strand exit.
+    pub(crate) fn get<'v>(&self) -> Option<NonNull<StrandInner<'v>>> {
+        NonNull::new(self.ptr.get().cast_mut()).map(NonNull::cast)
+    }
+
+    fn attach(&self, inner: &StrandInner<'_>) {
+        debug_assert_eq!(self.state.get(), CellState::Pending);
+        self.ptr.set(ptr::from_ref(inner).cast());
+        self.state.set(CellState::Live);
+    }
+}
+
 pub(crate) struct StrandMut<'v> {
     input: Value<'v>,
     output: Value<'v>,
@@ -317,6 +382,10 @@ pub(crate) struct StrandInner<'v> {
     local_roots: alias::Box<[UnsafeCell<Value<'v>>]>,
     arena: Arena,
     pub(crate) interrupt: RefCell<InterruptToken<'v>>,
+    /// The strand's own token, which `interrupt` starts as.  Unlike `interrupt`,
+    /// it is never swapped by [`Strand::with_interrupt_token`], so canceling it
+    /// cancels the whole strand.
+    base_interrupt: InterruptToken<'v>,
     interrupt_registered: Cell<bool>,
     interrupt_mask: Cell<InterruptMask>,
     // Nested synchronous calls depth
@@ -327,9 +396,14 @@ pub(crate) struct StrandInner<'v> {
     pub(crate) start: Value<'v>,
     is_leader: Cell<bool>,
     leader: Cell<*const StrandGroup>,
+    /// Scoped parent; null for group leaders.  A scoped parent always outlives
+    /// its children.
+    parent: Cell<*const StrandInner<'static>>,
+    /// Handle cell, allocated the first time a handle is taken.
+    cell: OnceCell<Rc<StrandCell>>,
 }
 
-struct SpGuard<'v, 'a> {
+pub(crate) struct SpGuard<'v, 'a> {
     inner: &'a StrandInner<'v>,
     prior: Option<frame::Ptr<'v>>,
 }
@@ -374,8 +448,15 @@ impl<'v, 'a> Drop for LeaderGuard<'v, 'a> {
 
 impl<'v> Drop for StrandInner<'v> {
     fn drop(&mut self) {
-        if !self.leader.get().is_null() {
+        // Leaders are linked into the VM ring, members into their leader's
+        // `descendants` ring.  A leader's `leader` pointer is already cleared by
+        // its `LeaderGuard`, so `is_leader` covers it.
+        if self.is_leader.get() || !self.leader.get().is_null() {
             unsafe { self.group_link.remove() }
+        }
+        if let Some(cell) = self.cell.get() {
+            cell.ptr.set(null());
+            cell.state.set(CellState::Exited);
         }
         for (vtbl, local) in self.vm.locals.iter().zip(self.locals.iter()) {
             unsafe { (vtbl.drop)(*local) }
@@ -403,6 +484,7 @@ impl<'v> StrandInner<'v> {
     }
 
     pub(crate) fn new(vm: &'v Vm<'v>, interrupt: Option<InterruptToken<'v>>) -> Self {
+        let interrupt = interrupt.unwrap_or_else(InterruptToken::new);
         Self {
             group_link: Link::new(),
             vm,
@@ -423,7 +505,8 @@ impl<'v> StrandInner<'v> {
                 .collect::<Vec<_>>()
                 .into(),
             arena: Arena::new(ARENA_DEFAULT_SIZE),
-            interrupt: RefCell::new(interrupt.unwrap_or_else(InterruptToken::new)),
+            base_interrupt: interrupt.clone(),
+            interrupt: RefCell::new(interrupt),
             interrupt_registered: Cell::new(false),
             interrupt_mask: Cell::new(InterruptMask::empty()),
             call_depth: Cell::new(0),
@@ -431,11 +514,13 @@ impl<'v> StrandInner<'v> {
             start: Value::NIL,
             is_leader: Cell::new(false),
             leader: Cell::new(std::ptr::null()),
+            parent: Cell::new(null()),
+            cell: OnceCell::new(),
             sync_depth: Cell::new(0),
         }
     }
 
-    unsafe fn push_sp(&self, sp: frame::Ptr<'v>) -> SpGuard<'v, '_> {
+    pub(crate) unsafe fn push_sp(&self, sp: frame::Ptr<'v>) -> SpGuard<'v, '_> {
         let guard = SpGuard {
             inner: self,
             prior: self.sp.get(),
@@ -464,6 +549,7 @@ impl<'v> StrandInner<'v> {
             .map(|(vtbl, local)| unsafe { (vtbl.inherit)(*local, strand, kind) })
             .collect::<Vec<_>>();
         let borrow = strand.inner.mutable.borrow();
+        let interrupt = interrupt.unwrap_or_else(|| strand.inner.interrupt.borrow().clone());
         Self {
             group_link: Link::new(),
             vm: strand.inner.vm,
@@ -482,9 +568,8 @@ impl<'v> StrandInner<'v> {
                 .collect::<Vec<_>>()
                 .into(),
             arena: Arena::new(ARENA_DEFAULT_SIZE),
-            interrupt: RefCell::new(
-                interrupt.unwrap_or_else(|| strand.inner.interrupt.borrow().clone()),
-            ),
+            base_interrupt: interrupt.clone(),
+            interrupt: RefCell::new(interrupt),
             interrupt_registered: Cell::new(false),
             interrupt_mask: Cell::new(InterruptMask::empty()),
             call_depth: Cell::new(strand.inner.call_depth.get()),
@@ -492,6 +577,8 @@ impl<'v> StrandInner<'v> {
             start: Value::NIL,
             is_leader: Cell::new(false),
             leader: Cell::new(null()),
+            parent: Cell::new(null()),
+            cell: OnceCell::new(),
             sync_depth: Cell::new(0),
         }
     }
@@ -518,11 +605,88 @@ impl<'v> StrandInner<'v> {
         self.group_link.init();
         let leader = parent.leader.get();
         self.leader.set(leader);
+        self.parent.set(ptr::from_ref(parent).cast());
         unsafe {
             (*leader)
                 .descendants
                 .push_front(NonNull::from_ref(self).cast());
         }
+    }
+
+    /// Link this group leader into the VM's ring of top-level strands.
+    ///
+    /// # Safety
+    /// Must follow [`Self::init_group_leader`], with `self` at a stable address
+    /// until it drops (which unlinks it).
+    pub(crate) unsafe fn link_top_level(&self) {
+        debug_assert!(self.is_leader.get());
+        unsafe { self.vm.strands.push_front(NonNull::from_ref(self).cast()) }
+    }
+
+    /// The handle cell for this strand, allocating it on first use.
+    ///
+    /// `self` must be at a stable address.
+    pub(crate) fn cell(&self) -> Rc<StrandCell> {
+        self.cell
+            .get_or_init(|| {
+                let cell = StrandCell::new(self.vm);
+                cell.attach(self);
+                cell
+            })
+            .clone()
+    }
+
+    /// The strand's own interrupt token, regardless of any token selected with
+    /// [`Strand::with_interrupt_token`].
+    pub(crate) fn base_interrupt(&self) -> &InterruptToken<'v> {
+        &self.base_interrupt
+    }
+
+    /// Scoped parent, if this is a scoped strand.
+    pub(crate) fn parent(&self) -> Option<&StrandInner<'v>> {
+        // Safety: a scoped parent outlives its children
+        unsafe { self.parent.get().cast::<StrandInner<'v>>().as_ref() }
+    }
+
+    /// Immediate scoped children, in creation order.
+    pub(crate) fn children(&self) -> Vec<&StrandInner<'v>> {
+        let leader = self.leader.get();
+        if leader.is_null() {
+            return Vec::new();
+        }
+        let me = ptr::from_ref(self).cast::<StrandInner<'static>>();
+        // Safety: the leader's group outlives every member, and members unlink
+        // themselves before they go away.
+        let mut children: Vec<_> = unsafe { (*leader).descendants.iter() }
+            .map(|p| unsafe { &*p.cast::<StrandInner<'v>>().as_ptr() })
+            .filter(|child| ptr::eq(child.parent.get(), me))
+            .collect();
+        // The ring is push-front
+        children.reverse();
+        children
+    }
+
+    /// All strands in this leader's group, in creation order.
+    fn group_members(&self) -> Vec<&StrandInner<'v>> {
+        let leader = self.leader.get();
+        if !self.is_leader.get() || leader.is_null() {
+            return Vec::new();
+        }
+        let mut members: Vec<_> = unsafe { (*leader).descendants.iter() }
+            .map(|p| unsafe { &*p.cast::<StrandInner<'v>>().as_ptr() })
+            .collect();
+        members.reverse();
+        members
+    }
+
+    /// Backtrace of this strand while it is suspended, walked from `sp`.
+    ///
+    /// Stops after the nearest `<scoped>` boundary unless `full` is set.
+    ///
+    /// # Safety
+    /// The strand must be suspended (not the running strand), so `sp` is accurate.
+    pub(crate) unsafe fn suspended_entries(&self, full: bool) -> Vec<UnwindEntry<'v>> {
+        unsafe { walk_entries(self.sp.get(), full) }
     }
 
     pub(crate) fn vm(&self) -> &'v Vm<'v> {
@@ -649,6 +813,55 @@ impl<'v> StrandInner<'v> {
             ControlFlow::Continue(())
         }
     }
+}
+
+/// One strand's state, as gathered by [`Strand::snapshot_raw`].
+pub(crate) struct RawInfo<'v> {
+    pub(crate) cell: Rc<StrandCell>,
+    pub(crate) parent: Option<Rc<StrandCell>>,
+    /// Backtrace up to the nearest boundary.
+    pub(crate) entries: Vec<UnwindEntry<'v>>,
+}
+
+/// Collect backtrace entries from a frame chain, deepest first.
+///
+/// Records a `<scoped>` boundary and stops there unless `full` is set, in which
+/// case the walk continues into the scoped parent's frames.
+///
+/// # Safety
+/// Every frame reachable from `head` must be live.
+unsafe fn walk_entries<'v>(mut head: Option<frame::Ptr<'v>>, full: bool) -> Vec<UnwindEntry<'v>> {
+    let mut out = Vec::new();
+    while let Some(ptr) = head {
+        match ptr {
+            frame::Ptr::Do(frame) => {
+                let frame = unsafe { frame.as_ref() };
+                out.push(UnwindEntry::Do {
+                    program: frame.program.clone(),
+                    function_index: frame.func as u32,
+                    pc: frame.pc as u32,
+                });
+                head = frame.parent;
+            }
+            frame::Ptr::Native(frame) | frame::Ptr::Boundary(frame) => {
+                let frame = unsafe { frame.as_ref() };
+                out.push(UnwindEntry::Native {
+                    module: frame.module.clone(),
+                    receiver: frame.receiver.clone(),
+                    method: frame.method.clone(),
+                });
+                if !full && matches!(ptr, frame::Ptr::Boundary(_)) {
+                    break;
+                }
+                head = frame.parent;
+            }
+            frame::Ptr::Slots(frame) => {
+                let frame = unsafe { frame.as_ref() };
+                head = frame.parent;
+            }
+        }
+    }
+    out
 }
 
 /// A pinned future that integrates with strand interrupts.
@@ -846,6 +1059,12 @@ impl<'v, 's> Strand<'v, 's> {
             method,
             parent: Some(base.fp),
         };
+        // Keep `sp` at the innermost frame so a suspended strand's backtrace
+        // includes the native frame it's blocked in.  The GC skips native frames.
+        let _sp_guard = unsafe {
+            base.inner
+                .push_sp(frame::Ptr::Native(NonNull::from_ref(&frame)))
+        };
         match f(&mut unsafe { Self::from_native_frame(base.inner, &frame) }).await {
             Ok(v) => Ok(v),
             Err(mut e) => {
@@ -876,35 +1095,70 @@ impl<'v, 's> Strand<'v, 's> {
     }
 
     pub(crate) fn backtrace_entries(&self) -> Vec<UnwindEntry<'v>> {
-        let mut head = Some(self.fp);
-        let mut out = Vec::new();
-        while let Some(ptr) = head {
-            match ptr {
-                frame::Ptr::Do(frame) => {
-                    let frame = unsafe { frame.as_ref() };
-                    out.push(UnwindEntry::Do {
-                        program: frame.program.clone(),
-                        function_index: frame.func as u32,
-                        pc: frame.pc as u32,
-                    });
-                    head = frame.parent;
-                }
-                frame::Ptr::Native(frame) | frame::Ptr::Boundary(frame) => {
-                    let frame = unsafe { frame.as_ref() };
-                    out.push(UnwindEntry::Native {
-                        module: frame.module.clone(),
-                        receiver: frame.receiver.clone(),
-                        method: frame.method.clone(),
-                    });
-                    head = frame.parent;
-                }
-                frame::Ptr::Slots(frame) => {
-                    let frame = unsafe { frame.as_ref() };
-                    head = frame.parent;
+        unsafe { walk_entries(Some(self.fp), true) }
+    }
+
+    /// Live backtrace of this (running) strand, stopping after the nearest
+    /// `<scoped>` boundary unless `full` is set.
+    pub(crate) fn backtrace_entries_to_boundary(&self, full: bool) -> Vec<UnwindEntry<'v>> {
+        unsafe { walk_entries(Some(self.fp), full) }
+    }
+
+    /// Backtrace of `target`, which may be this strand (walked from its live
+    /// `fp`) or a suspended one (walked from its `sp`).
+    ///
+    /// # Safety
+    /// `target` must be live and must not be used past the next yield.
+    pub(crate) unsafe fn entries_of(
+        &self,
+        target: &StrandInner<'v>,
+        full: bool,
+    ) -> Vec<UnwindEntry<'v>> {
+        if ptr::eq(target, self.inner) {
+            self.backtrace_entries_to_boundary(full)
+        } else {
+            unsafe { target.suspended_entries(full) }
+        }
+    }
+
+    /// Observe one strand without allocating GC objects.
+    ///
+    /// # Safety
+    /// As for [`Self::entries_of`].
+    pub(crate) unsafe fn observe(&self, target: &StrandInner<'v>) -> RawInfo<'v> {
+        RawInfo {
+            cell: target.cell(),
+            parent: target.parent().map(StrandInner::cell),
+            entries: unsafe { self.entries_of(target, false) },
+        }
+    }
+
+    /// Observe every running strand in the VM, without allocating GC objects.
+    ///
+    /// Each top-level strand comes in creation order, followed by its scoped
+    /// descendants in creation order.  Strands still queued in the spawn
+    /// channel are not included.
+    pub(crate) fn snapshot_raw(&self) -> Vec<RawInfo<'v>> {
+        // Safety: the walk is synchronous, so every strand in the rings stays
+        // live and suspended (except this one) throughout.
+        unsafe {
+            let mut leaders: Vec<_> = self
+                .inner
+                .vm
+                .strands
+                .iter()
+                .map(|p| &*p.cast::<StrandInner<'v>>().as_ptr())
+                .collect();
+            leaders.reverse();
+            let mut out = Vec::new();
+            for leader in leaders {
+                out.push(self.observe(leader));
+                for member in leader.group_members() {
+                    out.push(self.observe(member));
                 }
             }
+            out
         }
-        out
     }
 
     /// Get reference to underlying VM
@@ -1158,13 +1412,16 @@ impl<'v, 's> Strand<'v, 's> {
 
     /// Spawn a new strand scoped to this strand which executes `f`.
     /// If `interrupt` is [`Some`], it will be the interrupt token for the new strand,
-    /// otherwise it will inherit [`Self::interrupt_token`].
+    /// otherwise it gets a fresh token nested under [`Self::interrupt_token`], so
+    /// canceling the new strand never cancels this one.
     pub async fn spawn_scoped<R>(
         &self,
         interrupt: Option<InterruptToken<'v>>,
         f: impl for<'ss> AsyncFnOnce(&mut Strand<'v, 'ss>) -> Result<'v, 'ss, R>,
     ) -> Result<'v, 's, R> {
-        let strand = StrandInner::derived(self, interrupt, InheritKind::Scoped);
+        let interrupt = interrupt
+            .unwrap_or_else(|| self.inner.interrupt.borrow().nested(InterruptMask::empty()));
+        let strand = StrandInner::derived(self, Some(interrupt), InheritKind::Scoped);
         // Safety: strand is at a stable address (async fn generator state is heap-allocated)
         // and the leader's StrandGroup outlives this scoped strand.
         unsafe { strand.init_group_member(self.inner) };
@@ -1174,6 +1431,11 @@ impl<'v, 's> Strand<'v, 's> {
             method: None,
             parent: Some(self.fp),
         };
+        // Seed `sp` with the boundary so a suspended walk can reach it.  The GC
+        // stops at boundaries.
+        strand
+            .sp
+            .set(Some(frame::Ptr::Boundary(NonNull::from_ref(&native))));
         let mut strand = Strand {
             inner: &strand,
             fp: frame::Ptr::Boundary(NonNull::from_ref(&native)),
@@ -1247,21 +1509,36 @@ impl<'v, 's> Strand<'v, 's> {
             m.output = send;
         }
 
-        let inner = Rc::new(inner);
         let vm = self.vm();
+        // The cell stays unattached until first poll, when `inner` reaches its
+        // final address inside the pinned future.
+        let cell = StrandCell::new(vm);
 
         // Create JoinHandle GcObj
         let handle = GcObj::new(
             vm.arena(),
             vm.builtin_types().strand_handle,
-            Handle::new(inner.clone(), interrupt),
+            Handle::new(cell.clone(), interrupt),
         );
 
         // Create weak ref for the future (doesn't participate in cycles)
         let weak_handle = GcObj::downgrade(&handle);
 
         // Create the background strand future
+        //
+        // `inner` is captured by value: nothing links to it before first poll, so
+        // moving it is safe.  It drops when the future completes (or is dropped),
+        // clearing the cell and unlinking it from the VM ring.
         let future = Box::pin(async move {
+            // Safety (here and below): the future is pinned, so `inner` is at a
+            // stable address from now on
+            inner
+                .cell
+                .set(cell.clone())
+                .ok()
+                .expect("strand cell already set");
+            cell.attach(&inner);
+            drop(cell);
             let native = frame::Native {
                 module: Cow::Borrowed("strand"),
                 receiver: Cow::Borrowed("spawn"),
@@ -1271,6 +1548,8 @@ impl<'v, 's> Strand<'v, 's> {
             // Initialize as group leader
             let group = StrandGroup::new();
             let _guard = unsafe { inner.init_group_leader(&group) };
+            unsafe { inner.link_top_level() };
+            let _sp = unsafe { inner.push_sp(frame::Ptr::Native(NonNull::from_ref(&native))) };
             // Safety: native outlives strand
             let mut strand = unsafe { Strand::from_native_frame(&inner, &native) };
 
@@ -1341,7 +1620,7 @@ impl<'v, 's> Strand<'v, 's> {
     ///
     /// The resulting handle is written to `out` — store it somewhere reachable (e.g. a
     /// [`Slot`] your extension owns) to keep the background strand rooted; it is a full
-    /// `strand.Strand` handle with `join`/`cancel`/`wait` operations.
+    /// `strand.Task` handle with `join`/`cancel`/`wait` operations.
     ///
     /// Returns an error if the VM is shutting down.
     ///

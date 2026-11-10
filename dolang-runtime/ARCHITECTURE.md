@@ -154,6 +154,30 @@ carry an invariant `'s` lifetime brand to prevent e.g. returning an error on a
 strand from which it didn't originate (without an explicit re-homing step at
 join boundaries).
 
+### Strand Tree
+
+Every scoped strand belongs to the group of its nearest top-level strand (the
+main strand or a background strand), linked into the leader's flat
+`descendants` ring, which the GC walks without recursion. Leaders link their
+otherwise unused `group_link` into the VM's `strands` ring when they first run,
+and unlink when their `StrandInner` drops. A scoped strand also points to its
+scoped parent, which always outlives it; immediate children are found by
+filtering the group ring on that pointer.
+
+Handles reach strands through a shared `StrandCell`: a pointer that the
+`StrandInner` clears when it drops, plus an ID that is never reused. A
+background strand's `StrandInner` lives by value in its future, so it drops when
+the strand exits rather than when its last `Task` handle goes away. The cell is
+attached on first poll, once the inner has a stable address; until then the
+`Task` handle can't trace the queued `start` value, which is conservative under
+refcounting.
+
+Introspection walks these rings and frame chains synchronously and builds Do
+values only afterwards, since any suspension could let a strand exit. A
+suspended strand's `sp` points at its innermost frame: Do and slot frames push
+it for the GC, and async native frames push it so backtraces include the call a
+strand is blocked in. The running strand walks from its live `fp` instead.
+
 ## Standard Library
 
 The standard library is mostly implemented as Rust at the moment. It consists

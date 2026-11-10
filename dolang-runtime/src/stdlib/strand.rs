@@ -566,11 +566,15 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         let default_key = reg.sym("default");
         let else_key = reg.sym("else");
         let strand_class = reg.singletons().strand.dup();
+        let task_class = reg.singletons().task.dup();
         let stream_class = reg.singletons().stream.dup();
+        let strand_info_class = reg.singletons().strand_info.dup();
 
         reg.module("strand")
             .value("Strand", &strand_class)
+            .value("Task", &task_class)
             .value("Stream", &stream_class)
+            .value("StrandInfo", &strand_info_class)
             .value("Key", state.types.key)
             .value("Resource", state.types.resource)
             // Implicit I/O functions (moved from former std.iter)
@@ -612,6 +616,28 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let entries = strand.backtrace_entries();
                 backtrace::create(strand, entries, out);
+                Ok(())
+            })
+            .function_without_frame("current", async move |strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let cell = strand.inner.cell();
+                Output::set(
+                    strand,
+                    out,
+                    &strand_object::StrandRef::create(strand.vm(), cell),
+                );
+                Ok(())
+            })
+            .function_without_frame("snapshot", async move |strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                // Walk first, then build values: the walk must not allocate
+                let raw = strand.snapshot_raw();
+                let vm = strand.vm();
+                let infos: Vec<_> = raw
+                    .into_iter()
+                    .map(|raw| strand_object::StrandInfo::create(vm, raw))
+                    .collect();
+                Output::set(strand, out, &Value::from_object(tuple::tuple(vm, infos)));
                 Ok(())
             })
             .function_without_frame("error_backtrace", async move |strand, args, out| {

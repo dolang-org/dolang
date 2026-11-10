@@ -817,7 +817,7 @@ async fn respond_mock<'v, 's>(
 /// not the script retained the handle `.mock()` returned. Unmounting a `Mock`
 /// removes its entry.
 ///
-/// Slot 1 holds the `strand.Strand` handle of the dispatcher strand (see
+/// Slot 1 holds the `strand.Task` handle of the dispatcher strand (see
 /// [`run_dispatcher`]), which `close` cancels.
 ///
 /// Slot 2 holds a Do array of every request received, matched or not.

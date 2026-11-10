@@ -1,0 +1,140 @@
+import strand:
+  - Strand
+  - Task
+  - StrandInfo
+  - current
+  - snapshot
+  - spawn
+  - stream
+  - fork
+  - next
+  - channel
+
+def receivers bt
+  let out = $
+    for frame = bt
+      - $frame.receiver
+  out
+
+def info_for target
+  for info = snapshot()
+    if (info.strand == target)
+      return info
+  nil
+
+# The current strand has a stable identity.
+let me = current()
+assert (type me Strand)
+assert_eq $me $current()
+assert_eq $me.id $current().id
+assert (!me.done)
+let seen = {}
+seen[me] = 1
+assert_eq $seen[current()] 1
+
+# The main strand comes first and has no parent.
+let all = snapshot()
+assert (type all Tuple)
+assert (type all[0] StrandInfo)
+assert_eq $all[0].strand $me
+assert_eq $all[0].parent nil
+let main_receivers = receivers $all[0].backtrace
+assert (main_receivers.contains "<main>")
+assert_eq $main_receivers[-1] "<enter>"
+
+# A suspended background strand shows where it is blocked.
+def waiter()
+  next()
+  :woke:
+
+let s = stream do waiter()
+let t = spawn do 1
+assert (type t Strand)
+assert (type t Task)
+assert (type s Task)
+assert (!(type me Task))
+assert (type s Strand)
+# Let the background strands start running
+let kick = spawn do nil
+kick.wait()
+let s_info = info_for $s
+assert (s_info != nil)
+assert_eq $s_info.strand $s
+assert_eq $s_info.parent nil
+let s_receivers = receivers $s_info.backtrace
+assert_eq $s_receivers[0] "next"
+assert (s_receivers.contains "waiter")
+assert (s_receivers.contains "spawn")
+# The backtrace is cached once built
+assert_eq $s_info.backtrace.len $s_info.backtrace.len
+assert_eq (receivers(s.backtrace())) $s_receivers
+assert_eq $s.info().strand $s
+
+# Scoped children report their parent and come in creation order.
+let parent_id = me.id
+let go_send go_recv = channel()
+let child_info = fork
+  do
+    let here = current()
+    assert_eq $here.info().parent $me
+    let short = receivers $here.backtrace()
+    let long = receivers $here.backtrace(full: true)
+    assert_eq $short[-1] "<scoped>"
+    assert (long.len > short.len)
+    assert (long.contains "<main>")
+    assert (!(short.contains "<main>"))
+    # Wait for the sibling so both are live together
+    go_recv.next()
+    here
+  do
+    let here = current()
+    let kids = me.children()
+    assert_eq $kids.len 2
+    assert_eq $kids[1] $here
+    # The first child is suspended; its backtrace shows where
+    let waiting = receivers $kids[0].backtrace()
+    assert_eq $waiting[-1] "<scoped>"
+    assert_eq $kids[0].info().parent $me
+    go_send.put nil
+    here
+let first_child = child_info[0]
+assert $first_child.done
+assert (first_child.id != parent_id)
+assert_eq $me.children().len 0
+
+# Exited strands raise on live-only operations.
+assert_eq $t.join() 1
+assert $t.done
+try
+  t.backtrace()
+  assert false
+catch std.StateError: _
+  nil
+try
+  first_child.info()
+  assert false
+catch std.StateError: _
+  nil
+let again = spawn do 2
+assert_eq $again.join() 2
+let fresh = spawn do 3
+assert (fresh.id > t.id)
+fresh.join()
+
+# Canceling a fork member through its handle fails the group, not the parent.
+let _send recv = channel()
+let canceled = try
+  fork
+    do
+      current().cancel()
+      recv.next()
+    do
+      recv.next()
+  false
+catch std.CanceledError: _
+  true
+assert $canceled
+assert (!me.done)
+
+s.sink().put 1
+assert_eq $s.join() :woke:

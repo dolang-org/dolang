@@ -31,8 +31,8 @@ to child strands.
 [`strand.spawn`](strand.spawn) and
 [`strand.stream`](strand.stream)) are not tied to a scope.
 The strand runs independently and may outlive the spawning context. You must
-manage it manually through the returned [Strand](strand.Strand)
-handle using [`join`](strand.Strand.join) to wait for completion
+manage it manually through the returned [Task](strand.Task)
+handle using [`join`](strand.Task.join) to wait for completion
 and possibly [`cancel`](strand.Strand.cancel) to terminate it.
 
 Held [`Resource`](strand.Resource)s are inherited by
@@ -57,10 +57,10 @@ let result = worker.join()
 echo "Got result: $result"
 ```
 
-The returned [Strand](strand.Strand) handle allows you to:
+The returned [Task](strand.Task) handle allows you to:
 
-- Wait for completion with [`join`](strand.Strand.join)
-- Check if done with the [`done`](strand.Strand.done) field
+- Wait for completion with [`join`](strand.Task.join)
+- Check if done with the [`done`](strand.Task.done) field
 - Request cancellation with [`cancel`](strand.Strand.cancel)
 
 ## Concurrent Execution
@@ -226,7 +226,7 @@ functions like `each` and `where` work unchanged.
 
 When a strand exits with an error:
 
-- If you call [`join`](strand.Strand.join), the error is
+- If you call [`join`](strand.Task.join), the error is
   re-raised
 - In `fork` and `pipeline` strands, all sibling strands are canceled.
   After all strands complete, one of their errors is re-raised, in preference
@@ -240,3 +240,29 @@ explicitly), current and subsequent suspending operations fail with a
 `CanceledError`. This effect is masked during `finally` blocks in
 [`try`/`catch`/`finally`](./error-handling.md) statements to permit
 possibly-suspending calls (e.g. to clean up temporary files).
+
+## Inspecting Strands
+
+[`strand.snapshot`](strand.snapshot) captures every running strand at once, as
+[`StrandInfo`](strand.StrandInfo) values. Each one records the strand, its
+scoped parent (`nil` for a top-level strand), and its backtrace at the time of
+capture. Following the parents rebuilds the tree, which helps when debugging a
+stalled program:
+
+```
+for info = strand.snapshot()
+  let parent = (info.parent && info.parent.id || "-")
+  echo "strand $(info.strand.id) (parent $parent)"
+  for frame = info.backtrace
+    echo "  $(frame.module).$(frame.receiver)"
+```
+
+A [`Strand`](strand.Strand) handle observes a strand without keeping it alive
+or joining it. [`strand.current`](strand.current) returns one for the current
+strand, and a [`Task`](strand.Task) is also one. Handles compare equal when they
+observe the same strand, and [`id`](strand.Strand.id) is never reused, so
+strands can be matched across snapshots. A handle can list the strand's
+[`children`](strand.Strand.children), capture its
+[`backtrace`](strand.Strand.backtrace), or
+[`cancel`](strand.Strand.cancel) it. A strand that has exited raises
+`std.StateError` for operations that need it running.
