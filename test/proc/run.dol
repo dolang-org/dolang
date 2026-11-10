@@ -327,7 +327,7 @@ def redirect_framing_is_lossless_in_both_modes()
 
   res = pipeline
     do echo foo
-    do [...strand.input().chunks()]
+    do [...strand.input().io().chunks()]
   assert_eq $res [b"foo\n"]
 
 # Framing across a process boundary is decided independently on each side and

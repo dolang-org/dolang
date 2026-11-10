@@ -162,9 +162,22 @@ Connections between stages use a
 [`proc.PipeSender`](proc.PipeSender). The same pipe endpoints are the
 implicit input and output of a
 [`strand.stream`](strand.stream) strand; its `Stream`
-handle exposes wrappers around them through `iter()` and `sink()`. Use
-`PipeReceiver.lines()` or `PipeReceiver.chunks()` to choose how a Do stage
-receives bytes from an external program.
+handle exposes wrappers around them through `iter()` and `sink()`. A Do stage
+receives an external program's output as lines. To read or write bytes instead,
+call [`PipeReceiver.io`](proc.PipeReceiver.io) or
+[`PipeSender.io`](proc.PipeSender.io), which return an [`io.Io`](io.Io) over a
+real OS pipe:
+
+```
+let data = pipeline
+  do run cat archive.gz
+  do strand.input().io do |stream|
+    compress.decompress $stream do |inner| inner.read_all()
+```
+
+While the stream is open, the channel end can't send or receive values. Closing
+the stream, or returning from the block, gives the end back. Between Do stages,
+values are cheaper than bytes.
 
 A Do stage adjacent to an external program receives discrete values. In this
 example, `each` receives `Str` values for each line from `cat`, and `collect`
