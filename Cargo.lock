@@ -1259,6 +1259,7 @@ dependencies = [
  "dolang-private-util",
  "futures",
  "hex",
+ "rustc-hash",
  "unicode-segmentation",
 ]
 

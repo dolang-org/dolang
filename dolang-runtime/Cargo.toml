@@ -28,6 +28,10 @@ workspace = true
 version = "0.4.3"
 
 
+[dependencies.rustc-hash]
+workspace = true
+
+
 [dependencies.unicode-segmentation]
 workspace = true
 

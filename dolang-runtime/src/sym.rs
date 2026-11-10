@@ -306,8 +306,8 @@ impl<'v> Table<'v> {
     pub(crate) fn new(arena: &'v Arena<'v>, vtbl: TypeHandle<'v, SymObj>) -> Self {
         let this = Self {
             next: Cell::new(const { NonZero::new(1).unwrap() }),
-            by_name: Default::default(),
-            by_id: Default::default(),
+            by_name: RefCell::new(HashMap::with_capacity(WELL_KNOWN.len())),
+            by_id: RefCell::new(HashMap::with_capacity(WELL_KNOWN.len())),
         };
 
         for name in WELL_KNOWN[1..].iter() {
