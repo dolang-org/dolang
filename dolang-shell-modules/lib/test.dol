@@ -772,13 +772,12 @@ do -> TestFn[{}]
 pub def test
   :name @ Str = nil
   :tags @ Iterable[Value] = []
-  func @ Value = nil
+  func @ TestFn[{}] = nil
 do -> Value
   let tag_values = check_tags "test tags" $tags
   if (func == nil)
-    return do |func @ TestFn[{}]| register $name $tag_values $func
-  # The overloads type the call
-  register $name $tag_values (func @ TestFn[{}])
+    return do |func @ TestFn[{}] <Value >Value| register $name $tag_values $func
+  register $name $tag_values $func
 
 # Registers each case of a test function, returning the function.
 def register name @ (Str | nil) tags @ Tuple[...Str] func @ TestFn[{}] -> TestFn[{}]
@@ -830,7 +829,7 @@ do -> (@[S @ {**Value}] TestFn[{...A, ...S}] -> TestFn[S])
 do -> TestFn[S]
 
 pub def parametrize
-  func @ Value = nil
+  func @ TestFn[{**Value}] = nil
   **axes @ Iterable[Value]
 do -> Value
   let normalized @ Array[(Sym, Array[Tagged[Value]])] = []
@@ -842,9 +841,8 @@ do -> Value
       throw std.ValueError "parametrize: '$name' has no values"
     normalized.push (name, tagged_values)
   if (func == nil)
-    return do |func @ TestFn[{**Value}]| expand $func $normalized
-  # The overloads type the call
-  expand (func @ TestFn[{**Value}]) $normalized
+    return do |func @ TestFn[{**Value}] <Value >Value| expand $func $normalized
+  expand $func $normalized
 
 # Each case of a test function for each combination of axis values, with the
 # values bound.

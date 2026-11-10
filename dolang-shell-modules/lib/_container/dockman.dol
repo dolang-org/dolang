@@ -1045,11 +1045,16 @@ pub class Runtime
       # Locals, since a test of what a block captures doesn't narrow it
       let out = stdout
       let err = stderr
-      program ...args stdin: $input
-        if (out != nil)
-          stdout: $out
-        if (err != nil)
-          stderr: $err
+      # Whether it writes the strand's output depends on `stdout:`, which a
+      # conditional argument would leave undecided
+      if (out == nil)
+        program ...args stdin: $input
+          if (err != nil)
+            stderr: $err
+      else
+        program ...args stdin: $input stdout: $out
+          if (err != nil)
+            stderr: $err
 
   # Runs the CLI with output captured, printing it only on failure
   pub def quiet_cli self *args @ Value

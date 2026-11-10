@@ -2346,12 +2346,15 @@ impl<'a, 'u> Flow<'a, 'u> {
 /// A declaration's type under its rigids, if it's a function type. An overloaded
 /// def's implementation isn't described by its type until overloads are resolved.
 fn declared_function(db: &Database, tables: &Tables<'_>, decl: DeclId) -> Option<Function> {
-    if tables.sig_count(decl) != 1 {
+    // An overloaded function's body is checked against its implementation's
+    // signature, which its own ID holds; without one, it has no body
+    if tables.sig_count(decl) > 1 && tables.decl(decl).node.primary_sig().is_none() {
         return None;
     }
+    let sig = tables.primary_sig(decl);
     let mut ty = db.declaration(decl).ty;
     if let Type::Quantified { body, .. } = db.ty(ty) {
-        let rigids = tables.group_rigids(db, (decl, tables.primary_sig(decl)));
+        let rigids = tables.group_rigids(db, (decl, sig));
         ty = db.substitute(*body, &rigids);
     }
     match db.ty(ty) {
