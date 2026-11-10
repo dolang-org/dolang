@@ -8,7 +8,7 @@ import std:
 
 @def vague x @ Int -> Int
 @def vague x @ (Int | Str) -> Str
-pub def vague x @ (Int | Str)
+pub def vague x @ (Int | Str) -> (Int | Str)
   x
 
 # Known arguments that fit several are an error
