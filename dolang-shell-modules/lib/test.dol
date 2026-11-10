@@ -295,7 +295,7 @@ def module_name path @ Path -> Str
 # writer strand, so events from concurrent tests never interleave.
 class EventWriter
   field send @ strand.Sender[Str]
-  field writer @ strand.Strand[nil]
+  field writer @ strand.Task[nil]
 
   def (init) self sink @ Sink[Str]
     let channel @ (strand.Sender[Str], strand.Receiver[Str]) = strand.channel 64

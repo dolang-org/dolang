@@ -111,7 +111,7 @@ not `Rc<RefCell<_>>`:
 | Object   | Slot | Holds                                                                                 |
 | -------- | ---- | ------------------------------------------------------------------------------------- |
 | `Server` | 0    | Array of mounted `Mock`s, scoped or persistent                                        |
-| `Server` | 1    | The dispatcher's `strand.Strand` handle                                               |
+| `Server` | 1    | The dispatcher's `strand.Task` handle                                                 |
 | `Server` | 2    | Array of every received `Request`, in arrival order                                   |
 | `Mock`   | 0    | The owning `Server`                                                                   |
 | `Mock`   | 1    | Array of `{match:, respond:}` callback records, one per entry (nil without callbacks) |

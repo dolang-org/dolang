@@ -1,21 +1,32 @@
-use std::{future, ops::ControlFlow, rc::Rc, task::Poll, task::Waker};
+use std::{
+    cell::RefCell,
+    future,
+    hash::{DefaultHasher, Hash},
+    mem,
+    ops::ControlFlow,
+    rc::Rc,
+    task::Poll,
+    task::Waker,
+};
 
 use crate::value::fmt::Format;
 
 use crate::{
     arg::Args,
-    error::{Error, ErrorPair, Result},
+    error::{Error, ErrorPair, Result, UnwindEntry},
     gc::{Collect, arena::Visit},
     method,
-    strand::{InterruptToken, Strand, StrandInner},
+    strand::{CellState, InterruptToken, RawInfo, Strand, StrandCell, StrandInner},
     sym::{self, Sym},
     unpack,
     value::{Output, Slot, TypeObject, Value},
+    vm::Vm,
 };
 
 use super::{
-    iter,
+    backtrace, iter,
     protocol::{GcObj, Protocol, Recv, instance_get_fallback, instance_mcall_fallback},
+    tuple,
 };
 
 /// Result stored in a JoinHandle after a background strand completes.
@@ -24,18 +35,21 @@ pub(crate) enum Completion<'v> {
     Err(ErrorPair<'v>),
 }
 
-/// GC-managed handle for a background strand.
+/// GC-managed handle for a background strand (`strand.Task`).
 pub(crate) struct Handle<'v> {
-    pub(crate) inner: Option<Rc<StrandInner<'v>>>,
+    pub(crate) cell: Rc<StrandCell>,
+    /// Whether `accept` scans the strand's stack; cleared by `clear`.
+    traced: bool,
     pub(crate) interrupt: InterruptToken<'v>,
     pub(crate) result: Option<Completion<'v>>,
     pub(crate) wakers: Vec<Waker>,
 }
 
 impl<'v> Handle<'v> {
-    pub(crate) fn new(inner: Rc<StrandInner<'v>>, interrupt: InterruptToken<'v>) -> Self {
+    pub(crate) fn new(cell: Rc<StrandCell>, interrupt: InterruptToken<'v>) -> Self {
         Self {
-            inner: Some(inner),
+            cell,
+            traced: true,
             interrupt,
             result: None,
             wakers: Vec::new(),
@@ -65,17 +79,24 @@ unsafe impl<'v> Collect for Handle<'v> {
             v.accept(visit)?;
         }
 
-        // Scan the strand's stack (start_callable, frame chain, input/output)
-        if let Some(ref inner) = self.inner {
-            unsafe { inner.scan_stack(visit)? };
+        // Scan the strand's stack (start value, frame chain, input/output).
+        //
+        // Until first poll the cell is unattached, so the queued `start` value
+        // goes untraced.  Under refcounting that is conservative and therefore
+        // sound; a tracing collector would have to root it until first poll.
+        if self.traced
+            && let Some(inner) = self.cell.get()
+        {
+            // Safety: the cell pointer is cleared before the strand goes away,
+            // and collection never runs concurrently with the strand
+            unsafe { inner.as_ref().scan_stack(visit)? };
         }
         ControlFlow::Continue(())
     }
 
     fn clear(&mut self) {
-        // Drop our reference to StrandInner (the Future's Rc clone keeps it alive during unwind)
-        if self.inner.take().is_some() {
-            // Cancel the strand
+        // Stop tracing the strand and cancel it; it unwinds on its own.
+        if mem::take(&mut self.traced) {
             self.interrupt.cancel();
         }
     }
@@ -137,15 +158,34 @@ impl<'v> Protocol<'v> for Handle<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().strand)
+        Output::set(strand, out, &strand.singletons().task)
     }
 
     fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
+        this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<strand.Strand>")
+        let id = this.borrow(strand)?.cell.id();
+        crate::fmt!(strand, w, "<strand.Task {id}>")
+    }
+
+    fn op_eq<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        let cell = this.borrow(strand)?.cell.clone();
+        cell_eq(strand, &cell, other)
+    }
+
+    fn op_hash<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        hasher: &mut DefaultHasher,
+    ) -> Result<'v, 's, ()> {
+        cell_hash(&this.borrow(strand)?.cell, hasher);
+        Ok(())
     }
 
     async fn op_mcall<'a, 's>(
@@ -170,7 +210,11 @@ impl<'v> Protocol<'v> for Handle<'v> {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 wait_handle(&this.to_strong(), strand).await
             }
-            sym::DONE => Err(Error::type_error(strand, "`done` is a field, not a method")),
+            sym::DONE | sym::ID => Err(field_not_method(strand, method)),
+            tag if is_observe_method(tag) => {
+                let cell = this.borrow(strand)?.cell.clone();
+                observe_mcall(strand, &cell, method, args, out)
+            }
             _ => instance_mcall_fallback(strand, &this, method, args, out).await,
         }
     }
@@ -189,6 +233,15 @@ impl<'v> Protocol<'v> for Handle<'v> {
             sym::DONE => {
                 let done = this.borrow(strand)?.result.is_some();
                 Output::set(strand, out, done);
+                Ok(())
+            }
+            sym::ID => {
+                let id = this.borrow(strand)?.cell.id();
+                Output::set(strand, out, id);
+                Ok(())
+            }
+            tag if is_observe_method(tag) => {
+                super::BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
             _ => instance_get_fallback(strand, &this, field, out),
@@ -448,6 +501,24 @@ impl<'v> Protocol<'v> for Stream<'v> {
         crate::fmt!(strand, w, "<strand.Stream>")
     }
 
+    fn op_eq<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        let cell = stream_cell(strand, &this)?;
+        cell_eq(strand, &cell, other)
+    }
+
+    fn op_hash<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        hasher: &mut DefaultHasher,
+    ) -> Result<'v, 's, ()> {
+        cell_hash(&*stream_cell(strand, &this)?, hasher);
+        Ok(())
+    }
+
     async fn op_mcall<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -487,7 +558,11 @@ impl<'v> Protocol<'v> for Stream<'v> {
                 let handle = this.borrow(strand)?.handle.clone();
                 wait_handle(&handle, strand).await
             }
-            sym::DONE => Err(Error::type_error(strand, "`done` is a field, not a method")),
+            sym::DONE | sym::ID => Err(field_not_method(strand, method)),
+            tag if is_observe_method(tag) => {
+                let cell = stream_cell(strand, &this)?;
+                observe_mcall(strand, &cell, method, args, out)
+            }
             tag => match iter::classify(tag) {
                 Some(iter::Surface::Iterable) => {
                     iter::iterable_mcall(strand, &this, method, args, out).await
@@ -541,6 +616,15 @@ impl<'v> Protocol<'v> for Stream<'v> {
                 Output::set(strand, out, done);
                 Ok(())
             }
+            sym::ID => {
+                let id = stream_cell(strand, &this)?.id();
+                Output::set(strand, out, id);
+                Ok(())
+            }
+            tag if is_observe_method(tag) => {
+                super::BoundMethod::create(strand, &this, field, out);
+                Ok(())
+            }
             tag => match iter::classify(tag) {
                 Some(iter::Surface::Iterable) => iter::iterable_get(strand, &this, field, out),
                 Some(iter::Surface::Sinkable) => iter::sinkable_get(strand, &this, field, out),
@@ -559,7 +643,7 @@ impl<'v> Protocol<'v> for Stream<'v> {
     }
 }
 
-// ── Strand Class ────────────────────────────────────────────────
+// ── Task Class ──────────────────────────────────────────────────
 
 pub(crate) struct Type;
 
@@ -589,7 +673,21 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type strand.Strand>")
+        crate::fmt!(strand, w, "<type strand.Task>")
+    }
+
+    fn op_subtype<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        supertype: &Value<'v>,
+    ) -> bool {
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
+            || strand
+                .singletons()
+                .strand
+                .eq(strand, supertype)
+                .unwrap_or(false)
     }
 }
 
@@ -627,6 +725,11 @@ impl<'v> Protocol<'v> for StreamType {
             || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
             || strand
                 .singletons()
+                .task
+                .eq(strand, supertype)
+                .unwrap_or(false)
+            || strand
+                .singletons()
                 .strand
                 .eq(strand, supertype)
                 .unwrap_or(false)
@@ -648,5 +751,421 @@ impl<'v> Protocol<'v> for StreamType {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         crate::fmt!(strand, w, "<type strand.Stream>")
+    }
+}
+
+// ── Strand observation ──────────────────────────────────────────
+
+/// Observation handle to any strand (`strand.Strand`).
+///
+/// Holds no values and does not keep the strand alive.
+pub(crate) struct StrandRef {
+    cell: Rc<StrandCell>,
+}
+
+impl StrandRef {
+    pub(crate) fn create<'v>(vm: &Vm<'v>, cell: Rc<StrandCell>) -> Value<'v> {
+        Value::from_object(GcObj::new(
+            vm.arena(),
+            vm.builtin_types().strand_ref,
+            StrandRef { cell },
+        ))
+    }
+}
+
+unsafe impl Collect for StrandRef {
+    const CYCLIC: bool = false;
+    const IMMUTABLE: bool = true;
+    type Annex = ();
+
+    fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
+        ControlFlow::Continue(())
+    }
+
+    fn clear(&mut self) {}
+}
+
+fn stream_cell<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    this: &Recv<'v, '_, Stream<'v>>,
+) -> Result<'v, 's, Rc<StrandCell>> {
+    let handle = this.borrow(strand)?.handle.clone();
+    let cell = handle
+        .borrow()
+        .ok_or_else(|| Error::concurrency(strand))?
+        .cell
+        .clone();
+    Ok(cell)
+}
+
+/// The cell behind any strand handle value.
+fn cell_of<'v>(vm: &Vm<'v>, value: &Value<'v>) -> Option<Rc<StrandCell>> {
+    let types = vm.builtin_types();
+    if let Some(r) = value.downcast_ref(types.strand_ref) {
+        return Some(r.get().cell.clone());
+    }
+    let handle = match value.downcast_ref(types.strand_handle) {
+        Some(h) => h.to_strong(),
+        None => value.downcast_ref(types.stream)?.get().handle.clone(),
+    };
+    Some(handle.borrow()?.cell.clone())
+}
+
+fn cell_eq<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    cell: &StrandCell,
+    other: &Value<'v>,
+) -> Result<'v, 's, Value<'v>> {
+    match cell_of(strand.vm(), other) {
+        Some(other) => Ok(Value::from_bool(other.id() == cell.id())),
+        None => Err(Error::unsupported(strand, "`==`")),
+    }
+}
+
+fn cell_hash(cell: &StrandCell, hasher: &mut DefaultHasher) {
+    cell.id().hash(hasher)
+}
+
+fn is_observe_method(tag: sym::Tag) -> bool {
+    matches!(tag, sym::BACKTRACE | sym::CHILDREN | sym::INFO)
+}
+
+fn field_not_method<'v, 's>(strand: &mut Strand<'v, 's>, field: Sym<'v, '_>) -> Error<'v, 's> {
+    let name = field.as_str(strand.vm()).to_owned();
+    Error::type_error(strand, format!("`{name}` is a field, not a method"))
+}
+
+fn exited<'v, 's>(strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
+    Error::state_error(strand, "strand has exited")
+}
+
+/// Observation methods shared by every strand handle type.
+///
+/// Each walk is synchronous: the strand pointer is used only before any GC
+/// object is built.
+fn observe_mcall<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    cell: &Rc<StrandCell>,
+    method: Sym<'v, '_>,
+    args: Args<'v, '_>,
+    out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    match method.tag() {
+        sym::BACKTRACE => {
+            let full_key = Sym::well_known(sym::FULL);
+            let ([], [full]) = unpack!(strand, args, 0, 0, full_key = None)?;
+            let full = match full {
+                Some(full) => full.op_bool(strand)?,
+                None => false,
+            };
+            let entries = match (cell.state(), cell.get()) {
+                (CellState::Live, Some(inner)) => unsafe {
+                    strand.entries_of(inner.as_ref(), full)
+                },
+                (CellState::Pending, _) => Vec::new(),
+                _ => return Err(exited(strand)),
+            };
+            backtrace::create(strand, entries, out);
+            Ok(())
+        }
+        sym::CHILDREN => {
+            let ([], []) = unpack!(strand, args, 0, 0)?;
+            let cells: Vec<_> = match (cell.state(), cell.get()) {
+                (CellState::Live, Some(inner)) => unsafe { inner.as_ref() }
+                    .children()
+                    .into_iter()
+                    .map(StrandInner::cell)
+                    .collect(),
+                (CellState::Pending, _) => Vec::new(),
+                _ => return Err(exited(strand)),
+            };
+            let vm = strand.vm();
+            let values: Vec<_> = cells
+                .into_iter()
+                .map(|cell| StrandRef::create(vm, cell))
+                .collect();
+            Output::set(strand, out, &Value::from_object(tuple::tuple(vm, values)));
+            Ok(())
+        }
+        sym::INFO => {
+            let ([], []) = unpack!(strand, args, 0, 0)?;
+            let raw = match (cell.state(), cell.get()) {
+                (CellState::Live, Some(inner)) => unsafe { strand.observe(inner.as_ref()) },
+                (CellState::Pending, _) => RawInfo {
+                    cell: cell.clone(),
+                    parent: None,
+                    entries: Vec::new(),
+                },
+                _ => return Err(exited(strand)),
+            };
+            Output::set(strand, out, &StrandInfo::create(strand.vm(), raw));
+            Ok(())
+        }
+        _ => unreachable!("not an observation method"),
+    }
+}
+
+impl<'v> Protocol<'v> for StrandRef {
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) {
+        Output::set(strand, out, &strand.singletons().strand)
+    }
+
+    fn op_debug<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        let id = this.get().cell.id();
+        crate::fmt!(strand, w, "<strand.Strand {id}>")
+    }
+
+    fn op_eq<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        cell_eq(strand, &this.get().cell, other)
+    }
+
+    fn op_hash<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        _strand: &'a mut Strand<'v, 's>,
+        hasher: &mut DefaultHasher,
+    ) -> Result<'v, 's, ()> {
+        cell_hash(&this.get().cell, hasher);
+        Ok(())
+    }
+
+    async fn op_mcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let cell = this.get().cell.clone();
+        match method.tag() {
+            sym::CANCEL => {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                if let (CellState::Live, Some(inner)) = (cell.state(), cell.get()) {
+                    // Safety: synchronous use
+                    unsafe { inner.as_ref() }.base_interrupt().cancel();
+                }
+                Ok(())
+            }
+            sym::DONE | sym::ID => Err(field_not_method(strand, method)),
+            tag if is_observe_method(tag) => observe_mcall(strand, &cell, method, args, out),
+            _ => instance_mcall_fallback(strand, &this, method, args, out).await,
+        }
+    }
+
+    fn op_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        match field.tag() {
+            sym::CANCEL | sym::BACKTRACE | sym::CHILDREN | sym::INFO => {
+                super::BoundMethod::create(strand, &this, field, out);
+                Ok(())
+            }
+            sym::DONE => {
+                let done = this.get().cell.state() == CellState::Exited;
+                Output::set(strand, out, done);
+                Ok(())
+            }
+            sym::ID => {
+                let id = this.get().cell.id();
+                Output::set(strand, out, id);
+                Ok(())
+            }
+            _ => instance_get_fallback(strand, &this, field, out),
+        }
+    }
+}
+
+/// The `strand.Strand` class.
+pub(crate) struct StrandType;
+
+unsafe impl Collect for StrandType {
+    const CYCLIC: bool = false;
+    const IMMUTABLE: bool = true;
+    type Annex = ();
+
+    fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
+        ControlFlow::Continue(())
+    }
+
+    fn clear(&mut self) {}
+}
+
+impl<'v> Protocol<'v> for StrandType {
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) {
+        Output::set(strand, out, &strand.singletons().type_obj)
+    }
+
+    fn op_debug<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        crate::fmt!(strand, w, "<type strand.Strand>")
+    }
+}
+
+// ── StrandInfo ──────────────────────────────────────────────────
+
+enum InfoBacktrace<'v> {
+    Entries(Vec<UnwindEntry<'v>>),
+    Built(Value<'v>),
+}
+
+/// One strand's state at the time of a snapshot (`strand.StrandInfo`).
+///
+/// Holds the raw walk data; Do projections are built on demand, and the
+/// backtrace is cached once built.
+pub(crate) struct StrandInfo<'v> {
+    cell: Rc<StrandCell>,
+    parent: Option<Rc<StrandCell>>,
+    backtrace: RefCell<InfoBacktrace<'v>>,
+}
+
+impl<'v> StrandInfo<'v> {
+    pub(crate) fn create(vm: &Vm<'v>, raw: RawInfo<'v>) -> Value<'v> {
+        Value::from_object(GcObj::new(
+            vm.arena(),
+            vm.builtin_types().strand_info,
+            StrandInfo {
+                cell: raw.cell,
+                parent: raw.parent,
+                backtrace: RefCell::new(InfoBacktrace::Entries(raw.entries)),
+            },
+        ))
+    }
+}
+
+unsafe impl<'v> Collect for StrandInfo<'v> {
+    const CYCLIC: bool = false;
+    const IMMUTABLE: bool = true;
+    type Annex = ();
+
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        // Never borrowed across an allocation, so this always succeeds
+        if let Ok(backtrace) = self.backtrace.try_borrow() {
+            match &*backtrace {
+                InfoBacktrace::Entries(entries) => {
+                    for entry in entries {
+                        entry.accept(visit)?;
+                    }
+                }
+                InfoBacktrace::Built(value) => value.accept(visit)?,
+            }
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn clear(&mut self) {
+        unreachable!()
+    }
+}
+
+impl<'v> Protocol<'v> for StrandInfo<'v> {
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) {
+        Output::set(strand, out, &strand.singletons().strand_info)
+    }
+
+    fn op_debug<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        let id = this.get().cell.id();
+        crate::fmt!(strand, w, "<strand.StrandInfo {id}>")
+    }
+
+    fn op_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let info = this.get();
+        match field.tag() {
+            sym::STRAND => {
+                let value = StrandRef::create(strand.vm(), info.cell.clone());
+                Output::set(strand, out, &value);
+                Ok(())
+            }
+            sym::PARENT => {
+                let value = match &info.parent {
+                    Some(parent) => StrandRef::create(strand.vm(), parent.clone()),
+                    None => Value::NIL,
+                };
+                Output::set(strand, out, &value);
+                Ok(())
+            }
+            sym::BACKTRACE => {
+                let entries = match &mut *info.backtrace.borrow_mut() {
+                    InfoBacktrace::Built(value) => Err(value.dup()),
+                    InfoBacktrace::Entries(entries) => Ok(mem::take(entries)),
+                };
+                match entries {
+                    Err(value) => Output::set(strand, out, &value),
+                    Ok(entries) => {
+                        let mut out = out;
+                        backtrace::create(strand, entries, &mut out);
+                        *info.backtrace.borrow_mut() = InfoBacktrace::Built(out.dup());
+                    }
+                }
+                Ok(())
+            }
+            _ => instance_get_fallback(strand, &this, field, out),
+        }
+    }
+}
+
+/// The `strand.StrandInfo` class.
+pub(crate) struct StrandInfoType;
+
+unsafe impl Collect for StrandInfoType {
+    const CYCLIC: bool = false;
+    const IMMUTABLE: bool = true;
+    type Annex = ();
+
+    fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
+        ControlFlow::Continue(())
+    }
+
+    fn clear(&mut self) {}
+}
+
+impl<'v> Protocol<'v> for StrandInfoType {
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) {
+        Output::set(strand, out, &strand.singletons().type_obj)
+    }
+
+    fn op_debug<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        crate::fmt!(strand, w, "<type strand.StrandInfo>")
     }
 }
