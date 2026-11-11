@@ -1831,6 +1831,12 @@ impl<'v> Value<'v> {
         backtrace::iter_from_value(vm, self)
     }
 
+    /// Downcast value to `inspect.Frame`.
+    #[inline]
+    pub fn as_backtrace_frame<'a>(&'a self, vm: &'a Vm<'v>) -> Option<impl Frame + 'a> {
+        backtrace::frame_from_value(vm, self)
+    }
+
     /// Inspect typed view of value
     pub fn view<'a>(&'a self, vm: &Vm<'v>) -> View<'v, 'a> {
         match self.case() {

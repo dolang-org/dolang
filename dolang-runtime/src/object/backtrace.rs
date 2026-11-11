@@ -4,7 +4,7 @@ use crate::value::fmt::Format;
 
 use crate::{
     arg::Args,
-    error::{BacktraceIter, Error, Result, UnwindEntry},
+    error::{BacktraceEntry, BacktraceIter, Error, Result, UnwindEntry},
     gc::{Collect, arena::Visit},
     object::{iter, protocol::members},
     strand::Strand,
@@ -44,6 +44,14 @@ pub(crate) fn iter_from_value<'v, 'a>(
 ) -> Option<BacktraceIter<'v, 'a>> {
     let backtrace = value.downcast_ref(vm.builtin_types().backtrace)?;
     Some(BacktraceIter::new(backtrace.get().entries.iter()))
+}
+
+pub(crate) fn frame_from_value<'v, 'a>(
+    vm: &'a Vm<'v>,
+    value: &'a Value<'v>,
+) -> Option<BacktraceEntry<'v, 'a>> {
+    let frame = value.downcast_ref(vm.builtin_types().backtrace_frame)?;
+    Some(BacktraceEntry::new(&frame.get().entry))
 }
 
 pub(crate) struct Backtrace<'v> {

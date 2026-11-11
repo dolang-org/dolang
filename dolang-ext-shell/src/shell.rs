@@ -945,12 +945,24 @@ pub(crate) fn configure_vm<'v>(
     let capture_ty = core.types.capture;
     let chomp_sym = builder.sym("chomp");
     let backtrace_sym = builder.sym("backtrace");
+    let code_sym = builder.sym("code");
 
     builder
         .module("shell")
         .function("render_error", async move |strand, args, out| {
             let ([error], [backtrace]) = unpack!(strand, args, 1, 0, backtrace_sym = None)?;
             let rendered = diagnostic::render_error_value(strand, &error, backtrace.as_deref())?;
+            dolang_ext_term::preformatted_text(strand, &rendered, out)
+        })
+        .function("render_backtrace", async move |strand, args, out| {
+            let ([backtrace], []) = unpack!(strand, args, 1, 0)?;
+            let rendered = diagnostic::render_backtrace_value(strand, &backtrace)?;
+            dolang_ext_term::preformatted_text(strand, &rendered, out)
+        })
+        .function("render_frame", async move |strand, args, out| {
+            let ([frame], [code]) = unpack!(strand, args, 1, 0, code_sym = None)?;
+            let code = code.map(|v| v.to_bool(strand)).transpose()?.unwrap_or(true);
+            let rendered = diagnostic::render_frame_value(strand, &frame, code)?;
             dolang_ext_term::preformatted_text(strand, &rendered, out)
         })
         .function("line_ending", async move |strand, args, out| {

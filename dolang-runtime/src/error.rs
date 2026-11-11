@@ -288,6 +288,10 @@ pub struct Error<'v, 's> {
 pub struct BacktraceEntry<'v, 'a>(&'a UnwindEntry<'v>);
 
 impl<'v, 'a> BacktraceEntry<'v, 'a> {
+    pub(crate) fn new(entry: &'a UnwindEntry<'v>) -> Self {
+        Self(entry)
+    }
+
     /// Source file, and the span of the code that raised the error.
     ///
     /// This may not be available if:

@@ -247,15 +247,18 @@ possibly-suspending calls (e.g. to clean up temporary files).
 [`StrandInfo`](strand.StrandInfo) values. Each one records the strand, its
 scoped parent (`nil` for a top-level strand), and its backtrace at the time of
 capture. Following the parents rebuilds the tree, which helps when debugging a
-stalled program:
+stalled program. [`shell.render_backtrace`](shell.render_backtrace) formats a
+backtrace the way the shell reports an uncaught error:
 
 ```
 for info = strand.snapshot()
   let parent = (info.parent && info.parent.id || "-")
   echo "strand $(info.strand.id) (parent $parent)"
-  for frame = info.backtrace
-    echo "  $(frame.module).$(frame.receiver)"
+  echo $shell.render_backtrace(info.backtrace)
 ```
+
+[`shell.render_frame`](shell.render_frame) formats a single frame, for layouts
+such as one line per strand.
 
 A [`Strand`](strand.Strand) handle observes a strand without keeping it alive
 or joining it. [`strand.current`](strand.current) returns one for the current
