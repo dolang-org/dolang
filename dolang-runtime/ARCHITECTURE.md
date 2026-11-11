@@ -55,6 +55,13 @@ Cycle collection runs when net allocations reach `max(10000, live)`, where
 collector counts objects in its initialization pass and subtracts objects it
 clears. Miri uses a fixed threshold of 10 to exercise collection frequently.
 
+Native code may hold a GC reference across an await only where the collector
+visits it: a `Strand::with_slots` slot, an error (whose value and backtrace
+live in a slot of the strand's `ErrorTable`), or a GC-visited object. A short
+span with no await may leave references unvisited; a collection during it
+counts them as external, so cycles through them are reclaimed late rather than
+freed early. #1665 proposes `with_scan` for rooting other native holders.
+
 ## Object Protocol
 
 The dynamic type system is organized in three layers, each building on the one

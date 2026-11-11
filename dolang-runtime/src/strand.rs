@@ -25,7 +25,7 @@ bitflags::bitflags! {
 }
 
 use crate::{
-    error::{Error, OwnedBacktraceIter, Result, UnwindEntry},
+    error::{BacktraceIter, Error, ErrorSlot, ErrorTable, Result, UnwindEntry},
     frame::{self, FrameIter, Native},
     gc::arena::Visit,
     method,
@@ -366,18 +366,19 @@ impl StrandCell {
     }
 }
 
-pub(crate) struct StrandMut<'v> {
-    input: Value<'v>,
-    output: Value<'v>,
-    pub(crate) floating_roots: Vec<Option<Value<'v>>>,
-    pub(crate) handled_backtrace: Option<Vec<UnwindEntry<'v>>>,
-}
-
 #[repr(C)]
 pub(crate) struct StrandInner<'v> {
     group_link: Link<StrandInner<'static>>,
     vm: &'v Vm<'v>,
-    mutable: RefCell<StrandMut<'v>>,
+    // Strand-local input and output.  Contents are only copied out or replaced
+    // with `mem::replace`, and a replaced value drops after the access ends: a
+    // drop can run native code that touches the strand.
+    input: UnsafeCell<Value<'v>>,
+    output: UnsafeCell<Value<'v>>,
+    errors: ErrorTable<'v>,
+    /// Slot of the error being handled by the innermost `guard` call, which
+    /// owns the error while the slot is focused.
+    error_focus: Cell<Option<NonNull<ErrorSlot<'v>>>>,
     locals: alias::Box<[NonNull<()>]>,
     local_roots: alias::Box<[UnsafeCell<Value<'v>>]>,
     arena: Arena,
@@ -412,9 +413,9 @@ pub(crate) struct CallDepthGuard<'v, 'a> {
     inner: &'a StrandInner<'v>,
 }
 
-pub(crate) struct HandledBacktraceGuard<'v, 'a> {
+pub(crate) struct ErrorFocusGuard<'v, 'a> {
     inner: &'a StrandInner<'v>,
-    prior: Option<Vec<UnwindEntry<'v>>>,
+    prior: Option<NonNull<ErrorSlot<'v>>>,
 }
 
 impl<'v, 'a> Drop for SpGuard<'v, 'a> {
@@ -429,9 +430,9 @@ impl<'v, 'a> Drop for CallDepthGuard<'v, 'a> {
     }
 }
 
-impl<'v, 'a> Drop for HandledBacktraceGuard<'v, 'a> {
+impl<'v, 'a> Drop for ErrorFocusGuard<'v, 'a> {
     fn drop(&mut self) {
-        self.inner.mutable.borrow_mut().handled_backtrace = self.prior.take();
+        self.inner.error_focus.set(self.prior);
     }
 }
 
@@ -488,12 +489,10 @@ impl<'v> StrandInner<'v> {
         Self {
             group_link: Link::new(),
             vm,
-            mutable: RefCell::new(StrandMut {
-                input: Value::NIL,
-                output: Value::NIL,
-                floating_roots: Vec::new(),
-                handled_backtrace: None,
-            }),
+            input: UnsafeCell::new(Value::NIL),
+            output: UnsafeCell::new(Value::NIL),
+            errors: ErrorTable::new(),
+            error_focus: Cell::new(None),
             locals: vm
                 .locals
                 .iter()
@@ -548,17 +547,14 @@ impl<'v> StrandInner<'v> {
             .zip(strand.inner.locals.iter())
             .map(|(vtbl, local)| unsafe { (vtbl.inherit)(*local, strand, kind) })
             .collect::<Vec<_>>();
-        let borrow = strand.inner.mutable.borrow();
         let interrupt = interrupt.unwrap_or_else(|| strand.inner.interrupt.borrow().clone());
         Self {
             group_link: Link::new(),
             vm: strand.inner.vm,
-            mutable: RefCell::new(StrandMut {
-                input: borrow.input.dup(),
-                output: borrow.output.dup(),
-                floating_roots: Vec::new(),
-                handled_backtrace: None,
-            }),
+            input: UnsafeCell::new(strand.inner.input()),
+            output: UnsafeCell::new(strand.inner.output()),
+            errors: ErrorTable::new(),
+            error_focus: Cell::new(None),
             locals: locals.into(),
             local_roots: strand
                 .inner
@@ -694,43 +690,53 @@ impl<'v> StrandInner<'v> {
     }
 
     pub(crate) fn input(&self) -> Value<'v> {
-        self.mutable.borrow().input.dup()
+        // Safety: see the field
+        unsafe { &*self.input.get() }.dup()
     }
 
     pub(crate) fn output(&self) -> Value<'v> {
-        self.mutable.borrow().output.dup()
+        // Safety: see the field
+        unsafe { &*self.output.get() }.dup()
     }
 
-    pub(crate) fn alloc_floating_root(&self, value: Value<'v>) -> usize {
-        let mut m = self.mutable.borrow_mut();
-        if let Some(idx) = m.floating_roots.iter().position(|s| s.is_none()) {
-            m.floating_roots[idx] = Some(value);
-            idx
-        } else {
-            let idx = m.floating_roots.len();
-            m.floating_roots.push(Some(value));
-            idx
-        }
+    /// Replace the strand's input, returning the old value for the caller to drop.
+    #[must_use]
+    pub(crate) fn replace_input(&self, value: Value<'v>) -> Value<'v> {
+        // Safety: see the field
+        mem::replace(unsafe { &mut *self.input.get() }, value)
     }
 
-    pub(crate) fn mutable_ptr(&self) -> NonNull<RefCell<StrandMut<'v>>> {
-        NonNull::from_ref(&self.mutable)
+    /// Replace the strand's output, returning the old value for the caller to drop.
+    #[must_use]
+    pub(crate) fn replace_output(&self, value: Value<'v>) -> Value<'v> {
+        // Safety: see the field
+        mem::replace(unsafe { &mut *self.output.get() }, value)
     }
 
-    pub(crate) fn handled_backtrace(&self) -> Option<Vec<UnwindEntry<'v>>> {
-        self.mutable.borrow().handled_backtrace.clone()
+    pub(crate) fn errors(&self) -> &ErrorTable<'v> {
+        &self.errors
     }
 
-    pub(crate) fn push_handled_backtrace(
+    /// Backtrace of the error being handled, if any.
+    pub(crate) fn focused_backtrace(&self) -> Option<&[UnwindEntry<'v>]> {
+        // Safety: the focusing `guard` owns the error until it restores the
+        // prior focus, and nothing writes the slot meanwhile
+        self.error_focus
+            .get()
+            .map(|slot| unsafe { ErrorSlot::backtrace(slot) })
+    }
+
+    pub(crate) fn focused_slot(&self) -> Option<NonNull<ErrorSlot<'v>>> {
+        self.error_focus.get()
+    }
+
+    /// Focus `slot` as the error being handled until the guard drops.
+    pub(crate) fn focus_error(
         &self,
-        backtrace: Vec<UnwindEntry<'v>>,
-    ) -> HandledBacktraceGuard<'v, '_> {
-        let prior = self
-            .mutable
-            .borrow_mut()
-            .handled_backtrace
-            .replace(backtrace);
-        HandledBacktraceGuard { inner: self, prior }
+        slot: Option<NonNull<ErrorSlot<'v>>>,
+    ) -> ErrorFocusGuard<'v, '_> {
+        let prior = self.error_focus.replace(slot);
+        ErrorFocusGuard { inner: self, prior }
     }
 
     /// Walk all GC-reachable values held by this strand's stack and mutable state.
@@ -742,15 +748,10 @@ impl<'v> StrandInner<'v> {
             // Scan start value
             self.start.accept(visitor)?;
 
-            // Scan input/output and floating roots
-            {
-                let m = self.mutable.borrow();
-                m.input.accept(visitor)?;
-                m.output.accept(visitor)?;
-                for val in m.floating_roots.iter().flatten() {
-                    val.accept(visitor)?;
-                }
-            }
+            // Scan input/output and error roots
+            (*self.input.get()).accept(visitor)?;
+            (*self.output.get()).accept(visitor)?;
+            self.errors.scan(visitor)?;
 
             // Scan local roots
             for cell in self.local_roots.iter() {
@@ -1091,7 +1092,9 @@ impl<'v, 's> Strand<'v, 's> {
     }
 
     pub fn error_backtrace(&self) -> Option<impl ExactSizeIterator<Item = impl frame::Frame> + '_> {
-        self.inner.handled_backtrace().map(OwnedBacktraceIter::new)
+        self.inner
+            .focused_backtrace()
+            .map(|entries| BacktraceIter::new(entries.iter()))
     }
 
     pub(crate) fn backtrace_entries(&self) -> Vec<UnwindEntry<'v>> {
@@ -1504,9 +1507,8 @@ impl<'v, 's> Strand<'v, 's> {
 
         // Set strand-side I/O if this is a stream strand
         if let Some((recv, send)) = stream {
-            let mut m = inner.mutable.borrow_mut();
-            m.input = recv;
-            m.output = send;
+            *inner.input.get_mut() = recv;
+            *inner.output.get_mut() = send;
         }
 
         let vm = self.vm();
@@ -1554,50 +1556,67 @@ impl<'v, 's> Strand<'v, 's> {
             let mut strand = unsafe { Strand::from_native_frame(&inner, &native) };
 
             strand
-                .with_slots(async |strand, [mut out, mut tmp]| {
-                    let result = strand.pin_future_call(async |strand|
-                        f(strand, &inner.start, Slot::reborrow(&mut out)).await).await;
-                    let result = match result {
-                        Ok(()) => Completion::Ok(out.take()),
-                        Err(e) => Completion::Err(e.into_pair(strand)),
-                    };
-                    let poison = match &result {
-                        Completion::Err((value, backtrace_entries)) => {
-                            backtrace::create(strand, backtrace_entries.clone(), &mut out);
-                            Some((value.dup(), out.take()))
-                        }
-                        Completion::Ok(_) => None,
-                    };
+                .with_slots(
+                    async |strand, [mut out, mut tmp, mut poison_err, mut poison_bt]| {
+                        let result = strand
+                            .pin_future_call(async |strand| {
+                                f(strand, &inner.start, Slot::reborrow(&mut out)).await
+                            })
+                            .await;
+                        let result = match result {
+                            Ok(()) => Completion::Ok(out.take()),
+                            Err(e) => Completion::Err(e.into_pair(strand)),
+                        };
+                        // Rooted in slots across the close calls below
+                        let poisoned = match &result {
+                            Completion::Err((value, backtrace_entries)) => {
+                                backtrace::create(
+                                    strand,
+                                    backtrace_entries.clone(),
+                                    &mut poison_bt,
+                                );
+                                poison_err.store(value.dup());
+                                true
+                            }
+                            Completion::Ok(_) => false,
+                        };
 
-                    // Store result in Handle via weak reference
-                    if let Some(handle) = weak_handle.upgrade() {
-                        handle
-                            .borrow_mut()
-                            .expect("strand handle had outstanding borrow")
-                            .complete(result);
-                    } else {
-                        drop(result)
-                    }
-
-                    if close_on_exit {
-                        let close = Sym::well_known(sym::CLOSE);
-                        let backtrace_key = Sym::well_known(sym::BACKTRACE);
-                        tmp.store(strand.inner.mutable.borrow_mut().input.take());
-                        if !tmp.is_nil() {
-                            let _ =
-                                method!(strand, &tmp, close, &mut out).await;
+                        // Store result in Handle via weak reference
+                        if let Some(handle) = weak_handle.upgrade() {
+                            handle
+                                .borrow_mut()
+                                .expect("strand handle had outstanding borrow")
+                                .complete(result);
+                        } else {
+                            drop(result)
                         }
-                        tmp.store(strand.inner.mutable.borrow_mut().output.take());
-                        if !tmp.is_nil() {
-                            let _ = if let Some((err, backtrace)) = &poison {
-                                method!(strand, &tmp, close, &mut out, err, backtrace_key: backtrace)
+
+                        if close_on_exit {
+                            let close = Sym::well_known(sym::CLOSE);
+                            let backtrace_key = Sym::well_known(sym::BACKTRACE);
+                            tmp.store(strand.inner.replace_input(Value::NIL));
+                            if !tmp.is_nil() {
+                                let _ = method!(strand, &tmp, close, &mut out).await;
+                            }
+                            tmp.store(strand.inner.replace_output(Value::NIL));
+                            if !tmp.is_nil() {
+                                let _ = if poisoned {
+                                    method!(
+                                        strand,
+                                        &tmp,
+                                        close,
+                                        &mut out,
+                                        &poison_err,
+                                        backtrace_key: &poison_bt
+                                    )
                                     .await
-                            } else {
-                                method!(strand, &tmp, close, &mut out).await
-                            };
+                                } else {
+                                    method!(strand, &tmp, close, &mut out).await
+                                };
+                            }
                         }
-                    }
-                })
+                    },
+                )
                 .await
         });
 
@@ -1788,26 +1807,16 @@ impl<'v, 'a, 's> Redirect<'v, 'a, 's> {
         f: impl for<'b> AsyncFnOnce(&'b mut Strand<'v, 's>) -> Result<'v, 's, R>,
     ) -> Result<'v, 's, R> {
         let strand = self.strand;
-        let (input, output) = {
-            let mut borrow = strand.inner.mutable.borrow_mut();
-            (
-                self.input.map(|mut input| {
-                    mem::swap(&mut borrow.input, &mut input);
-                    input
-                }),
-                self.output.map(|mut output| {
-                    mem::swap(&mut borrow.output, &mut output);
-                    output
-                }),
-            )
-        };
+        let input = self.input.map(|input| strand.inner.replace_input(input));
+        let output = self
+            .output
+            .map(|output| strand.inner.replace_output(output));
         let res = f(strand).await;
-        let mut borrow = strand.inner.mutable.borrow_mut();
         if let Some(input) = input {
-            borrow.input = input;
+            drop(strand.inner.replace_input(input));
         }
         if let Some(output) = output {
-            borrow.output = output;
+            drop(strand.inner.replace_output(output));
         }
         res
     }

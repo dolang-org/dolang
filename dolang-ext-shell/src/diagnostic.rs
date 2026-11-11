@@ -317,8 +317,11 @@ pub async fn print_error_stderr<'v, 's>(
     error: Error<'v, 's>,
 ) -> Result<'v, 's, ()> {
     let message = error.display(strand).to_string();
-    let rendered =
-        render_message_backtrace(&message, error.backtrace(), crate::stderr_cols(strand));
+    let rendered = render_message_backtrace(
+        &message,
+        error.backtrace(strand),
+        crate::stderr_cols(strand),
+    );
     drop(error);
     write_preformatted_stderr(strand, &rendered).await
 }

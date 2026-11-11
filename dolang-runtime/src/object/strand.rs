@@ -75,8 +75,11 @@ unsafe impl<'v> Collect for Handle<'v> {
         if let Some(Completion::Ok(v)) = &self.result {
             v.accept(visit)?;
         }
-        if let Some(Completion::Err((v, _))) = &self.result {
+        if let Some(Completion::Err((v, backtrace))) = &self.result {
             v.accept(visit)?;
+            for entry in backtrace {
+                entry.accept(visit)?;
+            }
         }
 
         // Scan the strand's stack (start value, frame chain, input/output).
