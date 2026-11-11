@@ -642,9 +642,10 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             })
             .function_without_frame("error_backtrace", async move |strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let Some(mut entries) = strand.inner.handled_backtrace() else {
+                let Some(entries) = strand.inner.focused_backtrace() else {
                     return Err(Error::state_error(strand, "no active handled exception"));
                 };
+                let mut entries = entries.to_vec();
                 entries.extend(strand.backtrace_entries());
                 backtrace::create(strand, entries, out);
                 Ok(())

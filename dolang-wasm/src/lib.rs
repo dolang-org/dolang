@@ -126,7 +126,7 @@ async fn execute(source: String, host: Host, signal: AbortSignal) -> RunResult {
                     Err(error) => {
                         let canceled = error.kind() == ErrorKind::Canceled;
                         let mut message = error.display(strand).to_string();
-                        for frame in error.backtrace() {
+                        for frame in error.backtrace(strand) {
                             message.push_str(&format!(
                                 "\n  at {}::{}",
                                 frame.module(),

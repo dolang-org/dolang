@@ -321,6 +321,10 @@ pub def backtrace() -> Backtrace
 # Captures the calls of the exception being handled, followed by the current
 # strand's calls.
 #
+# In a `finally` block, the exception being handled is the one that will
+# propagate from the `try`. After a handler succeeds, it is the exception of
+# any enclosing handler.
+#
 # ## Errors
 #
 # `std.StateError` if no exception is being handled, in a `catch` or `finally`

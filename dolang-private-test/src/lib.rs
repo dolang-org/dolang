@@ -653,7 +653,7 @@ pub fn print_backtrace(strand: &Strand) {
 pub fn print_error_backtrace<'v, 's>(strand: &mut Strand<'v, 's>, error: &Error<'v, 's>) {
     eprintln!("error: {}", error.display(strand));
 
-    for (i, entry) in error.backtrace().enumerate() {
+    for (i, entry) in error.backtrace(strand).enumerate() {
         let module = entry.module();
         let receiver = entry.receiver();
         let method = entry.method();

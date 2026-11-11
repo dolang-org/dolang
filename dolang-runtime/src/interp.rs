@@ -475,26 +475,22 @@ impl<'v> Vm<'v> {
             .with_slots(async |strand, [mut tmp]| {
                 // 1. Call body
                 let mut status = call!(strand, &body, &mut out).await;
-                let _handled_backtrace = match &mut status {
-                    Err(err) if err.catchable() => Some(
-                        strand
-                            .inner
-                            .push_handled_backtrace(err.clone_backtrace(strand)),
-                    ),
-                    _ => None,
-                };
 
                 // 2. On catchable error, try handlers
                 status = match status {
                     Ok(()) => Ok(()),
                     Err(mut err) if err.catchable() => {
                         err.get_value(strand, &mut tmp);
+                        // Handlers see the error being handled.  Its slot stays
+                        // put while `cause` moves, and `cause` outlives the call.
+                        let slot = err.slot(strand);
 
                         let mut cause = Some(err);
                         let res = loop {
                             let (ty, handler) = match (args.next(), args.next()) {
                                 (None, None) => {
                                     break if !catch_all.is_nil() {
+                                        let _focus = strand.inner.focus_error(slot);
                                         call!(strand, &catch_all, &mut out, &tmp).await
                                     } else {
                                         Err(cause.take().unwrap())
@@ -509,6 +505,7 @@ impl<'v> Vm<'v> {
                                 }
                             };
                             if tmp.is_instance_of(strand, &ty) {
+                                let _focus = strand.inner.focus_error(slot);
                                 break call!(strand, &handler, &mut out, &tmp).await;
                             }
                         };
@@ -526,8 +523,15 @@ impl<'v> Vm<'v> {
                     err => err,
                 };
 
-                // 3. Run finally under cancel mask
+                // 3. Run finally under cancel mask.  It sees the error that
+                // will propagate from it, or else whatever an enclosing
+                // `guard` is handling.
                 if !finally.is_nil() {
+                    let slot = match &mut status {
+                        Err(err) if err.catchable() => err.slot(strand),
+                        _ => strand.inner.focused_slot(),
+                    };
+                    let _focus = strand.inner.focus_error(slot);
                     let finally_status = strand
                         .with_interrupt_mask(InterruptMask::all(), async |strand| {
                             call!(strand, &finally, &mut tmp).await

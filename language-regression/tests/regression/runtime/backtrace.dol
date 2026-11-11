@@ -35,6 +35,12 @@ def boom_inner()
 def boom_outer()
   return boom_inner()
 
+def other_inner()
+  throw "other"
+
+def other_outer()
+  return other_inner()
+
 def plain_rethrow()
   try
     boom_outer()
@@ -98,6 +104,60 @@ assert_eq $finally_err "boom"
 let finally_receivers = receivers $finally_bt
 assert_eq $finally_receivers[0] "boom_inner"
 assert_eq $finally_receivers[1] "boom_outer"
+
+# After a handler succeeds, finally sees no handled exception.
+let quiet_finally = nil
+try
+  boom_outer()
+catch _
+  nil
+finally
+  quiet_finally = try
+    strand.error_backtrace()
+  catch e
+    e
+assert (type quiet_finally StateError)
+
+# Nested in a handler, that finally sees the enclosing handler's exception.
+let nested_finally_bt = nil
+try
+  other_outer()
+catch _
+  try
+    boom_outer()
+  catch _
+    nil
+  finally
+    nested_finally_bt = strand.error_backtrace()
+let nested_finally_receivers = receivers $nested_finally_bt
+assert_eq $nested_finally_receivers[0] "other_inner"
+
+# When a handler throws, finally sees the new exception.
+let failed_finally_bt = nil
+let failed_err = try
+  try
+    boom_outer()
+  catch _
+    other_outer()
+  finally
+    failed_finally_bt = strand.error_backtrace()
+catch e
+  e
+assert_eq $failed_err "other"
+let failed_finally_receivers = receivers $failed_finally_bt
+assert_eq $failed_finally_receivers[0] "other_inner"
+
+# A nested try restores the outer handler's exception when it finishes.
+let restored_bt = try
+  boom_outer()
+catch _
+  try
+    other_outer()
+  catch _
+    nil
+  strand.error_backtrace()
+let restored_receivers = receivers $restored_bt
+assert_eq $restored_receivers[0] "boom_inner"
 
 # Explicit rethrow with backtrace preserves the original trace.
 let reraised_bt = try
