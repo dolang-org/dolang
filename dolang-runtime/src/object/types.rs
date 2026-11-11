@@ -241,7 +241,7 @@ impl<'v> Protocol<'v> for Type {
 }
 
 pub(crate) struct Bool;
-pub(crate) struct ArgsType;
+pub(crate) struct ArgPackType;
 
 pub(crate) struct NilType;
 
@@ -269,7 +269,7 @@ unsafe impl Collect for NilType {
     fn clear(&mut self) {}
 }
 
-unsafe impl Collect for ArgsType {
+unsafe impl Collect for ArgPackType {
     const CYCLIC: bool = false;
     const IMMUTABLE: bool = true;
     type Annex = ();
@@ -385,7 +385,7 @@ impl<'v> Protocol<'v> for Bool {
     }
 }
 
-impl<'v> Protocol<'v> for ArgsType {
+impl<'v> Protocol<'v> for ArgPackType {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -408,7 +408,7 @@ impl<'v> Protocol<'v> for ArgsType {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Args>")
+        crate::fmt!(strand, w, "<type std.ArgPack>")
     }
 }
 

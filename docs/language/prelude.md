@@ -13,6 +13,8 @@ Embedded runtimes may provide a different additional prelude.
 | -------------------------- | ----------------------------------------------------- |
 | [`Array`](std.Array)       | [`Array`](std.Array) type                             |
 | [`array`](std.array)       | Variadic array factory                                |
+| [`Args`](std.Args)         | [`Args`](std.Args) type                               |
+| [`args`](std.args)         | Variadic `Args` factory                               |
 | [`Bin`](std.Bin)           | [`Bin`](std.Bin) type                                 |
 | [`BinBuf`](std.BinBuf)     | Mutable byte buffer                                   |
 | [`Bool`](std.Bool)         | [`Bool`](std.Bool) type                               |
@@ -33,8 +35,6 @@ Embedded runtimes may provide a different additional prelude.
 | [`Iterable`](std.Iterable) | Iterable value type                                   |
 | [`mixable`](std.mixable)   | Decorator allowing combination with unrelated classes |
 | [`Range`](std.Range)       | [`Range`](std.Range) type                             |
-| [`Record`](std.Record)     | [`Record`](std.Record) type                           |
-| [`record`](std.record)     | Variadic record factory                               |
 | [`Set`](std.Set)           | [`Set`](std.Set) type                                 |
 | [`setter`](std.setter)     | Class field setter decorator                          |
 | [`Sink`](std.Sink)         | Sink type                                             |

@@ -120,7 +120,7 @@ enum Layout {
 }
 
 fn is_table(view: &View<'_, '_>) -> bool {
-    matches!(view, View::Dict(_) | View::Record(_) | View::Struct(_))
+    matches!(view, View::Dict(_) | View::Struct(_))
 }
 
 /// Walks a value, writing TOML into an embryo.
@@ -212,7 +212,6 @@ impl<'v> Encoder<'_, 'v, '_> {
             View::Array(handle) => (handle.id().addr(), "array"),
             View::Tuple(handle) => (handle.id().addr(), "tuple"),
             View::Dict(handle) => (handle.id().addr(), "dict"),
-            View::Record(handle) => (handle.id().addr(), "record"),
             View::Struct(handle) => (handle.id().addr(), "struct"),
             _ => unreachable!("not a container"),
         };
@@ -259,7 +258,7 @@ impl<'v> Encoder<'_, 'v, '_> {
         })
     }
 
-    /// Calls `f` with each key and value of a dict, record, or struct,
+    /// Calls `f` with each key and value of a dict or struct,
     /// placing its faults under the key.
     fn each_pair<'s>(
         &mut self,
@@ -275,13 +274,6 @@ impl<'v> Encoder<'_, 'v, '_> {
         strand.with_slots_sync(|strand, [mut key, mut val]| {
             match table.view(strand.vm()) {
                 View::Dict(handle) => {
-                    let mut pairs = handle.pairs();
-                    while pairs.next(strand, &mut key, &mut val)? {
-                        f(self, strand, &key, &val)
-                            .map_err(|fault| self.within(strand, fault, &*key))?;
-                    }
-                }
-                View::Record(handle) => {
                     let mut pairs = handle.pairs();
                     while pairs.next(strand, &mut key, &mut val)? {
                         f(self, strand, &key, &val)
@@ -441,7 +433,7 @@ impl<'v> Encoder<'_, 'v, '_> {
                 self.seen.remove(&id);
                 Ok(())
             }
-            View::Dict(_) | View::Record(_) | View::Struct(_) => {
+            View::Dict(_) | View::Struct(_) => {
                 let id = self.enter(strand, value)?;
                 self.check_keys(strand, value)?;
                 self.emit(strand, |w| w.open_inline_table())?;

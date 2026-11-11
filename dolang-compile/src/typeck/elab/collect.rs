@@ -608,7 +608,7 @@ impl<'u> Walk<'_, 'u> {
                 let keyed = keyed(params);
                 let params = self.surface_params(params);
                 match keyed {
-                    true => TypeExpr::Record { span, params },
+                    true => TypeExpr::Args { span, params },
                     false => TypeExpr::Tuple { span, params },
                 }
             }
@@ -1788,7 +1788,7 @@ impl<'u> Walk<'_, 'u> {
                     elem.walk(self, frame);
                 }
             }
-            Expr::Record { args, .. } => {
+            Expr::Args { args, .. } => {
                 for arg in args {
                     arg.walk(self, frame);
                 }
@@ -1935,7 +1935,7 @@ impl<'u> Walk<'_, 'u> {
 }
 
 /// Whether items written as data are keyed: whether one is explicitly keyed, which
-/// makes parenthesized items a record and vertical ones a dict. An inclusion isn't,
+/// makes parenthesized items an `Args` and vertical ones a dict. An inclusion isn't,
 /// so the form's meaning never depends on what it includes.
 fn keyed(params: &[ast::TypeParam]) -> bool {
     params.iter().any(|param| {

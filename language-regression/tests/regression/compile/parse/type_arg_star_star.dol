@@ -1,7 +1,7 @@
-def f -> Record[**Str]
+def f -> Args[**Str]
   # error: type arguments expand a pack only with `...`
   #   --> type_arg_star_star.dol:LL:LL
   #    |
-  # LL | def f -> Record[**Str]
-  #    |                 ^^
+  # LL | def f -> Args[**Str]
+  #    |               ^^
   nil

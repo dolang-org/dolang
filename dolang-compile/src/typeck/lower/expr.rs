@@ -141,8 +141,8 @@ impl<'u> Scope<'_, '_, 'u> {
             ast::Expr::Tuple { elems, .. } => {
                 self.collection(Collection::Tuple, |scope| scope.array_items(elems))
             }
-            ast::Expr::Record { args, .. } => {
-                self.collection(Collection::Record, |scope| scope.args(args))
+            ast::Expr::Args { args, .. } => {
+                self.collection(Collection::Args, |scope| scope.args(args))
             }
             ast::Expr::Dict { elems, .. } => {
                 self.collection(Collection::Dict, |scope| scope.dict_items(elems))

@@ -7,9 +7,9 @@ import std:
   - @Keys
 
 pub class Named[S @ {**Value}]
-  field values @ Record[...S]
+  field values @ Args[...S]
 
-  def (init) self values @ Record[...S]
+  def (init) self values @ Args[...S]
     self.#values = values
 
   @def (get)[K @ Keys[S]] self name @ K -> IndexItem[S, K]

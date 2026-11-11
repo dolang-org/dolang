@@ -22,11 +22,11 @@ use crate::{
 
 use super::{
     BoundMethod,
+    args::{self, ArgItem},
     protocol::{
         GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, instance_get_fallback,
         instance_mcall_fallback, is_special_mcall, is_universal_member, type_mcall_fallback,
     },
-    record::{self, ArgItem, Record},
     sym::SymObj,
 };
 
@@ -98,12 +98,12 @@ impl<'v> Struct<'v> {
     }
 }
 
-/// A record holding the items of `this` as they are now, for iteration and
+/// An `Args` holding the items of `this` as they are now, for iteration and
 /// unpacking.
 fn snapshot<'v, 's>(
     strand: &mut Strand<'v, 's>,
     this: &Recv<'v, '_, Struct<'v>>,
-) -> Result<'v, 's, GcObj<'v, Record<'v>>> {
+) -> Result<'v, 's, GcObj<'v, args::Args<'v>>> {
     let items = this
         .borrow(strand)?
         .items
@@ -112,8 +112,8 @@ fn snapshot<'v, 's>(
         .collect();
     Ok(GcObj::new(
         strand.vm().arena(),
-        strand.builtin_types().record,
-        Record::new(items),
+        strand.builtin_types().args,
+        args::Args::new(items),
     ))
 }
 
@@ -133,7 +133,7 @@ impl<'v> Protocol<'v> for Struct<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         crate::fmt!(strand, w, "Struct")?;
-        record::debug_items(strand, &borrow.items, w)
+        args::debug_items(strand, &borrow.items, w)
     }
 
     fn op_bool<'a, 's>(
@@ -153,7 +153,7 @@ impl<'v> Protocol<'v> for Struct<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         sym::STRUCT.hash(hasher);
-        record::hash_items(strand, &borrow.items, hasher)
+        args::hash_items(strand, &borrow.items, hasher)
     }
 
     fn op_eq<'a, 's>(
@@ -166,7 +166,7 @@ impl<'v> Protocol<'v> for Struct<'v> {
         };
         let left = this.borrow(strand)?;
         let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        Ok(Value::from_bool(record::eq_items(
+        Ok(Value::from_bool(args::eq_items(
             strand,
             &left.items,
             &right.items,
@@ -183,7 +183,7 @@ impl<'v> Protocol<'v> for Struct<'v> {
         };
         let left = this.borrow(strand)?;
         let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        Ok(Value::from_bool(record::lt_items(
+        Ok(Value::from_bool(args::lt_items(
             strand,
             &left.items,
             &right.items,
@@ -203,7 +203,7 @@ impl<'v> Protocol<'v> for Struct<'v> {
             ));
         }
         let borrow = this.borrow(strand)?;
-        match record::find(strand, &borrow.items, index) {
+        match args::find(strand, &borrow.items, index) {
             Some(value) => {
                 Output::set(strand, out, value);
                 Ok(())
@@ -230,7 +230,7 @@ impl<'v> Protocol<'v> for Struct<'v> {
             ));
         }
         let mut borrow = this.borrow_mut(strand)?;
-        match record::find_index(strand, &borrow.items, &key) {
+        match args::find_index(strand, &borrow.items, &key) {
             Some(index) => {
                 borrow.items[index].1 = value.take();
                 Ok(())
@@ -303,9 +303,9 @@ impl<'v> Protocol<'v> for Struct<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let snapshot = snapshot(strand, &this)?;
-        strand.builtin_types().record_iter.create(
+        strand.builtin_types().args_iter.create(
             strand,
-            record::Iter::new(snapshot, HashSet::new(), 0, 0),
+            args::Iter::new(snapshot, HashSet::new(), 0, 0),
             out,
         );
         Ok(())
@@ -318,7 +318,7 @@ impl<'v> Protocol<'v> for Struct<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        record::spread_items(strand, &borrow.items, sink)
+        args::spread_items(strand, &borrow.items, sink)
     }
 
     async fn op_unpack<'a, 's>(
@@ -328,7 +328,7 @@ impl<'v> Protocol<'v> for Struct<'v> {
         out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let snapshot = snapshot(strand, &this)?;
-        record::unpack(strand, snapshot, sig, out)
+        args::unpack(strand, snapshot, sig, out)
     }
 }
 
@@ -425,7 +425,7 @@ impl<'v> Protocol<'v> for Class {
                 let found = {
                     let target = expect_struct(strand, &target)?;
                     let borrow = target.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                    record::find(strand, &borrow.items, &key).map(Value::dup)
+                    args::find(strand, &borrow.items, &key).map(Value::dup)
                 };
                 if let Some(value) = found {
                     out.store(value);
@@ -445,7 +445,7 @@ impl<'v> Protocol<'v> for Class {
                 let found = {
                     let target = expect_struct(strand, &target)?;
                     let borrow = target.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                    record::find_index(strand, &borrow.items, &key).is_some()
+                    args::find_index(strand, &borrow.items, &key).is_some()
                 };
                 Output::set(strand, out, found);
                 Ok(())
@@ -492,7 +492,7 @@ impl<'v> Protocol<'v> for Class {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([source], []) = unpack!(strand, args, 1, 0)?;
-        let items = record::source_items(strand, &source, "struct").await?;
+        let items = args::source_items(strand, &source, "struct").await?;
         let structure = Struct::new(strand, items)?;
         strand
             .builtin_types()

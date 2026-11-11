@@ -6,7 +6,7 @@ pub def fits
   fields @ Dict[{a: Int}]
 do
   let _d @ Dict[Sym, Int] = Dict $ pairs.iter().kv()
-  let _r @ Record[a: Int] = Record $fields
+  let _r @ Args[a: Int] = Args $fields
   let _t @ Tuple[...Int] = Tuple [1, 2]
   let _f @ std.Fmt[Int, {}] = std.Fmt ["a", std.FmtValue 1]
 

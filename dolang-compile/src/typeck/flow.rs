@@ -1895,7 +1895,7 @@ impl<'a, 'u> Flow<'a, 'u> {
     }
 
     /// The types a function's declared type gives its parameters, under its
-    /// rigids: a single its item's type, and a rest a `Tuple` or `Record` of its
+    /// rigids: a single its item's type, and a rest a `Tuple` or `Args` of its
     /// items, as the runtime binds it. `None` without a declared type. If they
     /// don't line up, each parameter is a gap.
     fn declared_params(&mut self, func: FuncId, params: &[PatternItem]) -> Option<Vec<TypeId>> {
@@ -1932,11 +1932,11 @@ impl<'a, 'u> Flow<'a, 'u> {
     }
 
     /// What a rest of `kind` binds for its share of a parameter schema: a `*` rest
-    /// a `Tuple`, and any other a `Record`
+    /// a `Tuple`, and any other an `Args`
     fn rest_type(&self, kind: RestKind, items: &[SchemaItem]) -> TypeId {
         let base = match kind {
             RestKind::Pos => self.intrinsic(Intrinsic::Tuple),
-            RestKind::Key | RestKind::Mixed => self.designated_type(Designated::Record),
+            RestKind::Key | RestKind::Mixed => self.designated_type(Designated::Args),
         };
         if base == self.db.unknown() {
             return base;

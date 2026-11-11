@@ -99,7 +99,6 @@ pub @let EncodeValue = $
   | Sym
   | BaseArray[EncodeValue]
   | Tuple[...EncodeValue]
-  | Record[...{*EncodeValue, **EncodeValue}]
   | BaseStruct[{*EncodeValue, **EncodeValue}]
   | BaseDict[EncodeValue, EncodeValue]
 
@@ -158,7 +157,6 @@ do -> DecodeValue
 # | `Tuple`  | sequence   |
 # | `Dict`   | mapping    |
 # | `Struct` | mapping    |
-# | `Record` | mapping    |
 #
 # ## Errors
 #

@@ -89,7 +89,7 @@ let x = (1 + 2 * 3)           # 7
 let arr = [1, 2, 3]
 let d = {name: "Alice", age: 30}
 let t = (1, "two", ...rest)   # tuple; (x,) is a singleton, () is empty
-let r = (name: "Alice", 30)   # record: has a static key (`k: v` or `:k`)
+let r = (name: "Alice", 30)   # Args: has a static key (`k: v` or `:k`)
 let v = (
   some_long_expr(x, y) +
   another * factor
@@ -321,7 +321,7 @@ let f = do |x|
 let x = 42                # declare and bind
 x = (x + 1)              # reassign (x must already exist)
 let a b = [1, 2]         # destructuring
-let :name :age = record   # keyword destructuring
+let :name :age = person   # keyword destructuring
 ```
 
 ### Functions
@@ -339,10 +339,10 @@ pub def exported x        # public (module export)
 def connect :host = "localhost" :port = 8080
   echo "Connecting to $host:$port"
 
-def log level ...rest     # variadic: rest is a Record
+def log level ...rest     # variadic: rest is an Args
   echo "[$level]" ...rest
 
-def run cmd *args **opts  # positional (Tuple) and key (Record) rests
+def run cmd *args **opts  # positional (Tuple) and key (Args) rests
   echo $cmd ...args ...opts
 ```
 
@@ -653,7 +653,7 @@ bind args
 ```
 
 Rests are iterable without copying: a `*` rest (or rest of a sequence) yields
-values; a `**` rest (or `...` rest of a dict/record) yields `(key, value)`
+values; a `**` rest (or `...` rest of a dict/`Args`) yields `(key, value)`
 tuples.
 
 Standalone `let` and `bind` accept a diverging `else`. Matching follows
@@ -708,7 +708,7 @@ it, even inside `()`. Parenthesize unions and function types: `@Str|Path` is not
 a union, but `@(Str | Path)` is. Other forms: `@Dict[Str, Array[Int]]`,
 `@{name: Str, ?port: Int}`, `@((Int, ?Int) -> Int)`, `@(:a: | :b:)`. `(Int,
 Str)` is `Tuple[Int, Str]`, `[T]` is `Array[T]`, and a form with a keyed item
-is a record, `(name: Str, Int)`.
+is an `Args`, `(name: Str, Int)`.
 
 `[]` directly after a `def` or `class` name declares type binders, with optional
 bounds and defaults (`T @ Bound = Default`):

@@ -16,7 +16,7 @@ introduced on the same line, in which case no space is used.
 
 ```
 let count @ Int = 0
-let :name@Str :age@Int = record
+let :name@Str :age@Int = person
 
 for key@Sym value@Int = scores
   echo "$key: $value"

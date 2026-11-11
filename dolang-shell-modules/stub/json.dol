@@ -97,7 +97,6 @@ pub @let EncodeValue = $
   | Sym
   | BaseArray[EncodeValue]
   | Tuple[...EncodeValue]
-  | Record[...{*EncodeValue, **EncodeValue}]
   | BaseStruct[{*EncodeValue, **EncodeValue}]
   | BaseDict[Str | Sym | Int | Float | Bool, EncodeValue]
 
@@ -156,7 +155,6 @@ do -> DecodeValue
 # | `Tuple`  | array                |
 # | `Dict`   | object               |
 # | `Struct` | object               |
-# | `Record` | object               |
 #
 # Object keys are written in the order the dict holds them. A non-finite
 # `Float` is written as `null`.

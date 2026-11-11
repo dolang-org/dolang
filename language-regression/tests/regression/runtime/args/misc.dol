@@ -3,17 +3,17 @@ import
     - ImmutableError
     - TypeError
 
-assert (!(bool (record())))
-assert (bool (record(a: 1)))
+assert (!(bool (args())))
+assert (bool (args(a: 1)))
 
 # len counts every item, including repeated keys
 let counted = (name: "Alice", age: 30, name: "Bob", 1, 2, age: 31)
 assert_eq $counted.len 6
-assert_eq $record().len 0
+assert_eq $args().len 0
 assert_throws $TypeError do counted.len()
 
 # get takes a position or a symbol
-let rec = record(1, 2, 3, a: "first", b: "second", a: "second")
+let rec = args(1, 2, 3, a: "first", b: "second", a: "second")
 assert_eq (rec.get 0) 1
 assert_eq (rec.get 2) 3
 assert_eq (rec.get 3) nil
@@ -21,7 +21,7 @@ assert_eq (rec.get :b:) "second"
 assert_eq (rec.get :z: default: 42) 42
 assert_eq (rec.get :z: else: do 43) 43
 assert_eq (rec.get "a") nil
-assert_eq (Record.get rec :b:) "second"
+assert_eq (Args.get rec :b:) "second"
 
 # Indexing takes a position or a symbol
 assert_eq $rec[1] 2
@@ -34,19 +34,19 @@ assert_throws $std.FieldError do rec.a
 assert_throws $std.FieldError do rec.keys
 assert_throws $std.FieldError do rec.pairs
 
-# A record is Iterable over its key/value pairs
+# An `Args` is Iterable over its key/value pairs
 assert (type rec Iterable)
 assert_eq [...rec.filter (do |kv| type kv[0] Sym)] [(:a:, "first"), (:b:, "second"), (:a:, "second")]
 
-let immutable = record(a: 1)
+let immutable = args(a: 1)
 assert_throws $ImmutableError do immutable.a = 2
 assert_throws $ImmutableError do immutable[:a:] = 2
-assert_throws $std.FieldError do Record.insert
-assert_throws $std.FieldError do Record.pop
+assert_throws $std.FieldError do Args.insert
+assert_throws $std.FieldError do Args.pop
 
-class MyRecord: Record
+class MyRecord: Args
   def (init) self source
-    Record.(init) $self $source
+    Args.(init) $self $source
 
 let custom = MyRecord {name: "Alice", age: 30}
 assert_eq $custom[:name:] "Alice"
@@ -55,18 +55,18 @@ assert (type custom MyRecord)
 
 # A lookup resolves to the *last* value for the key, so a duplicate key
 # overrides the ones before it: last wins, the same rule dict indexing follows.
-let dup = record a: 1 b: 2 a: 3
+let dup = args a: 1 b: 2 a: 3
 assert_eq $dup[:a:] 3
 assert_eq (dup.get :a:) 3
 assert_eq $dup[:b:] 2
 assert_eq [...dup.iter()] [(:a:, 1), (:b:, 2), (:a:, 3)]
 
-# A record holds positional items and symbol keys. Integer keys counting up
+# An `Args` holds positional items and symbol keys. Integer keys counting up
 # from 0 are positional, as when spreading a dict.
-assert_eq (Record {0: :a:, x: 1, 1: :b:}) (record :a: x: 1 :b:)
+assert_eq (Args {0: :a:, x: 1, 1: :b:}) (args :a: x: 1 :b:)
 # Pairs from an iterator
-assert_eq (Record([(0, :a:), (:k:, 1)].kv())) (record :a: k: 1)
-assert_eq (Record (record 1 k: 2 3)) (record 1 k: 2 3)
-assert_throws $TypeError str: "type error: record keys must be symbols" do Record {"s": 1}
-assert_throws $TypeError str: "type error: record keys must be symbols" do Record {5: :x:, 0: :y:}
-assert_throws $TypeError str: "type error: record keys must be symbols" do Record $[(1, :x:)].kv()
+assert_eq (Args([(0, :a:), (:k:, 1)].kv())) (args :a: k: 1)
+assert_eq (Args (args 1 k: 2 3)) (args 1 k: 2 3)
+assert_throws $TypeError str: "type error: args keys must be symbols" do Args {"s": 1}
+assert_throws $TypeError str: "type error: args keys must be symbols" do Args {5: :x:, 0: :y:}
+assert_throws $TypeError str: "type error: args keys must be symbols" do Args $[(1, :x:)].kv()

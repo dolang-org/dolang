@@ -20,10 +20,10 @@ assert_throws $std.UnexpectedKeyError do Set {a: 1}
 # `.iter()` gives the pairs
 assert_eq [...{a: 1, b: 2}.iter()] [(:a:, 1), (:b:, 2)]
 
-# Records and structs
-assert_eq [...(record 1 2)] [1, 2]
-assert_throws $std.UnexpectedKeyError do [...(record 1 a: 2)]
-assert_eq [...(record 1 a: 2).iter()] [(0, 1), (:a:, 2)]
+# `Args` and structs
+assert_eq [...(args 1 2)] [1, 2]
+assert_throws $std.UnexpectedKeyError do [...(args 1 a: 2)]
+assert_eq [...(args 1 a: 2).iter()] [(0, 1), (:a:, 2)]
 assert_eq [...(struct 1 2)] [1, 2]
 assert_throws $std.UnexpectedKeyError do [...(struct 1 a: 2)]
 
@@ -40,9 +40,9 @@ let _p *dict_pos **dict_keyed = {1, 2, color: "red"}
 assert_eq [...dict_pos] [2]
 assert_throws $std.UnexpectedKeyError do [...dict_keyed]
 assert_eq [...dict_keyed.iter()] [(:color:, "red")]
-let _q ...record_rest = (record 1 2 a: 3)
+let _q ...record_rest = (args 1 2 a: 3)
 assert_throws $std.UnexpectedKeyError do [...record_rest]
-let _r ...record_pos = (record 1 2 3)
+let _r ...record_pos = (args 1 2 3)
 assert_eq [...record_pos] [2, 3]
 
 # Field views are keyed

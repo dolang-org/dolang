@@ -195,7 +195,7 @@ impl Names for Tables<'_> {
         match self.designated.get(&id)? {
             Designated::Array => Some(Collection::Array),
             Designated::Intrinsic(Intrinsic::Tuple) => Some(Collection::Tuple),
-            Designated::Record => Some(Collection::Record),
+            Designated::Args => Some(Collection::Args),
             Designated::Dict => Some(Collection::Dict),
             _ => None,
         }

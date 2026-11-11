@@ -51,16 +51,11 @@ def round_trip_arrays_and_tuples()
   assert_eq (decode $ encode $ Tuple([1, 2, 3])) [1, 2, 3]
 
 #[test]
-def round_trip_dicts_and_records()
+def round_trip_dicts()
   let obj = {"name": "alice", "age": 30}
   let rt_obj = decode $ encode $obj
   assert_eq $rt_obj["name"] "alice"
   assert_eq $rt_obj["age"] 30
-
-  let rec = record enabled: true port: 8080
-  let rt_rec = decode $ encode $rec
-  assert_eq $rt_rec["enabled"] true
-  assert_eq $rt_rec["port"] 8080
 
 #[test]
 def round_trip_structs()

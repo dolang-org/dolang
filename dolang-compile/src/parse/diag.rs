@@ -183,13 +183,13 @@ impl Diagnose for AmbigIndex {
 }
 
 /// A C-style call whose arguments are separated from the callee by whitespace,
-/// such as `f (1, 2)`, which looks like a call with a tuple or record.
+/// such as `f (1, 2)`, which looks like a call with a tuple or `Args`.
 #[derive(Clone, Copy)]
 pub(super) struct MisleadingCall {
     pub(super) callee_span: Span,
     pub(super) paren_span: Span,
-    /// Whether the parentheses would make a record rather than a tuple
-    pub(super) record: bool,
+    /// Whether the parentheses would make an `Args` rather than a tuple
+    pub(super) args: bool,
 }
 
 enum MisleadingCallPatchKind {
@@ -208,8 +208,8 @@ impl Patch for MisleadingCallPatch {
         match self.0 {
             MisleadingCallPatchKind::NoSpace => write!(w, "remove space"),
             MisleadingCallPatchKind::Parens => {
-                let kind = if self.1.record { "record" } else { "tuple" };
-                write!(w, "wrap with parentheses to call with a {kind}")
+                let kind = if self.1.args { "an `Args`" } else { "a tuple" };
+                write!(w, "wrap with parentheses to call with {kind}")
             }
         }
     }

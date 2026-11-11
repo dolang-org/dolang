@@ -40,13 +40,13 @@ assert_eq (array 1 2 3) [1, 2, 3]
 assert_eq (tuple()) (Tuple [])
 assert_eq (tuple 1 2 3) (Tuple [1, 2, 3])
 assert_eq (dict 1 2 foo: 3) {1, 2, foo: 3}
-assert_eq (record 1 2 foo: 3) (Record {1, 2, foo: 3})
+assert_eq (args 1 2 foo: 3) (Args {1, 2, foo: 3})
 
 # Capitalized raw constructors consume one iterable or spreadable.
 assert_eq (Array [1, 2, 3]) [1, 2, 3]
 assert_eq (Tuple [1, 2, 3]) (tuple 1 2 3)
 assert_eq (Dict {1, 2, foo: 3}) {1, 2, foo: 3}
-assert_eq (Record {1, 2, foo: 3}) (record 1 2 foo: 3)
+assert_eq (Args {1, 2, foo: 3}) (args 1 2 foo: 3)
 
 assert_throws $UnexpectedKeyError do array foo: 1
 assert_throws $UnexpectedKeyError do tuple foo: 1
@@ -56,5 +56,5 @@ assert_throws $MissingPosError do Dict()
 assert_throws $UnexpectedPosError do Dict {} {}
 assert_throws $MissingPosError do Tuple()
 assert_throws $UnexpectedPosError do Tuple [] []
-assert_throws $MissingPosError do Record()
-assert_throws $UnexpectedPosError do Record {} {}
+assert_throws $MissingPosError do Args()
+assert_throws $UnexpectedPosError do Args {} {}

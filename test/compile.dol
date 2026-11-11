@@ -247,7 +247,7 @@ def repeated_imports_stay_distinct_declarations()
 
 #[test]
 def pub_imports_are_documented_and_dotted_names_must_be_renamed()
-  let source = "pub import std\npub import foo.bar: bar\npub import std:\n  Record: Rec\n"
+  let source = "pub import std\npub import foo.bar: bar\npub import std:\n  Args: Rec\n"
   let unit = compile.compile "imports.dol" $source document: true
   assert_no_errors $unit
   let imports = [...unit.nodes().filter(do |pair|
@@ -694,12 +694,12 @@ def type_only_declarations_are_exposed()
 def types_describe_what_they_annotate()
   let source = r|-
     import std:
-      - @Record
+      - @Args
     def lookup[T] key @Str table @std.Dict[Str, T] -> (T | nil)
       table.get $key default: nil
     class Box[T]
       pub field first second @T = nil
-    let record @Record = nil
+    let record @Args = nil
     let consts @(:a: | "b" | 1 | true | nil) = nil
     let schema @{name: Str, ?port: Int, *Dict[Str, Str]} = nil
     let func @((Int, ?Int) -> Int) = nil
@@ -806,34 +806,34 @@ def superclasses_are_types_of_their_class()
   let source = |-
     import std
     import std:
-      - Record
+      - Args
 
-    class Named: Record
+    class Named: Args
       pub field name = nil
 
-    class Tagged: std.Record
+    class Tagged: std.Args
       pub field tag = nil
 
-    class Keyed[K]: Record[...{*(K): Int}]
+    class Keyed[K]: Args[...{*(K): Int}]
       pub field key = nil
   let unit = compile.compile "supers.dol" $source document: true
   assert_no_errors $unit
   let nodes = [...unit.nodes()]
 
   let module = nodes.find(do |pair| type(pair[1], compile.ImportModule))
-  let record = (named_node unit nodes compile.ImportItem "Record")
+  let record = (named_node unit nodes compile.ImportItem "Args")
 
   let named = (named_node unit nodes compile.Class "Named")
   let named_supers = (types_of nodes named[0])
   assert_eq $named_supers.len 1
-  assert_eq (span_text(unit, named_supers[0][1].span)) "Record"
+  assert_eq (span_text(unit, named_supers[0][1].span)) "Args"
   assert_eq $named_supers[0][1].expr.target $record[0]
 
   # A dotted name resolves by its head
   let tagged = (named_node unit nodes compile.Class "Tagged")
   let tagged_supers = (types_of nodes tagged[0])
   assert_eq $tagged_supers.len 1
-  assert_eq (span_text(unit, tagged_supers[0][1].span)) "std.Record"
+  assert_eq (span_text(unit, tagged_supers[0][1].span)) "std.Args"
   assert_eq $tagged_supers[0][1].expr.target $module[0]
 
   # Type arguments may name the class's binders
@@ -841,7 +841,7 @@ def superclasses_are_types_of_their_class()
   let binder = nodes.find(do |pair| (type(pair[1], compile.Binder) && (pair[1].parent == keyed[0])))
   let app = (types_of(nodes, keyed[0])[0][1].expr)
   assert_type $compile.AppType $app
-  assert_eq (span_text(unit, app.span)) "Record[...{*(K): Int}]"
+  assert_eq (span_text(unit, app.span)) "Args[...{*(K): Int}]"
   assert_eq $app.base.target $record[0]
   let arg = app.args[0]
   assert_type $compile.ExpandTypeArg $arg
@@ -1000,7 +1000,7 @@ def rest_annotation_expansion_is_indexed()
 
 #[test]
 def type_arguments_are_positional_keyword_or_expansions()
-  let source = "let r @ Record[Int, name: Str, ...{*Bool}] = nil\n"
+  let source = "let r @ Args[Int, name: Str, ...{*Bool}] = nil\n"
   let unit = compile.compile "args.dol" $source document: true
   assert_no_errors $unit
   let nodes = [...unit.nodes()]

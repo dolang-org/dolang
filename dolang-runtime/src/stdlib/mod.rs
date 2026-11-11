@@ -2,15 +2,7 @@ use std::hash::Hasher;
 
 use crate::{
     error::Error,
-    object::{
-        array::Array,
-        class,
-        dict::Dict,
-        float, int,
-        record::{self, Record},
-        structure::Struct,
-        tuple,
-    },
+    object::{args, array::Array, class, dict::Dict, float, int, structure::Struct, tuple},
     unpack,
     value::{Output, StrEmbryo, Value},
     vm::Builder,
@@ -48,7 +40,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     let func = bc.func.dup();
     let range = bc.range.dup();
     let module = bc.module.dup();
-    let record = bc.record.dup();
+    let args_class = bc.args.dup();
     let structure = bc.structure.dup();
     let bin = bc.bin.dup();
     let binbuf = bc.binbuf.dup();
@@ -137,7 +129,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             Ok(())
         })
         .value("Module", &module)
-        .value("Record", &record)
+        .value("Args", &args_class)
         .value("Struct", &structure)
         // A type-only split of `Struct`; the same class at runtime
         .value("BaseStruct", &structure)
@@ -199,13 +191,13 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             out.store(Value::from_object(tuple::tuple(strand.vm(), values)));
             Ok(())
         })
-        .function("record", async move |strand, args, out| {
-            let record = Record::from_args(strand, args);
-            strand.builtin_types().record.create(strand, record, out);
+        .function("args", async move |strand, args, out| {
+            let value = args::Args::from_args(strand, args);
+            strand.builtin_types().args.create(strand, value, out);
             Ok(())
         })
         .function("struct", async move |strand, args, out| {
-            let items = record::args_items(strand, args);
+            let items = args::args_items(strand, args);
             let structure = Struct::new(strand, items)?;
             strand
                 .builtin_types()

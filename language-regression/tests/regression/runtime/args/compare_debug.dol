@@ -1,27 +1,27 @@
 # str/debug formatting
-assert_eq (str (record())) "()"
-assert_eq (str (record(1, 2, a: 3))) "(1, 2, a: 3)"
-assert_eq (str (record(a: "x", b: "y"))) "(a: \"x\", b: \"y\")"
-assert_eq (str (record(1))) "(1,)"
-assert_eq (str (record(a: 1))) "(a: 1)"
+assert_eq (str (args())) "()"
+assert_eq (str (args(1, 2, a: 3))) "(1, 2, a: 3)"
+assert_eq (str (args(a: "x", b: "y"))) "(a: \"x\", b: \"y\")"
+assert_eq (str (args(1))) "(1,)"
+assert_eq (str (args(a: 1))) "(a: 1)"
 
 # equality: length mismatch and value mismatch
-let r1 = record(1, 2, 3)
-let r2 = record(1, 2, 3)
+let r1 = args(1, 2, 3)
+let r2 = args(1, 2, 3)
 assert (r1 == r2)
-assert (!(r1 == (record(1, 2))))
-assert (!(r1 == (record(1, 2, 4))))
+assert (!(r1 == (args(1, 2))))
+assert (!(r1 == (args(1, 2, 4))))
 
 # ordering: shorter-is-less, value ordering, equal-is-not-less
-assert ((record(1)) < (record(1, 2)))
-assert (!((record(1, 2)) < (record(1))))
-assert ((record(1)) < (record(2)))
-assert (!((record(2)) < (record(1))))
-assert (!((record(1)) < (record(1))))
+assert ((args(1)) < (args(1, 2)))
+assert (!((args(1, 2)) < (args(1))))
+assert ((args(1)) < (args(2)))
+assert (!((args(2)) < (args(1))))
+assert (!((args(1)) < (args(1))))
 
 # indexing a missing key
-assert_throws $std.RuntimeError str: "index out of range or invalid" do (record(a: 1))[:z:]
-assert_throws $std.RuntimeError str: "index out of range or invalid" do (record(1))[5]
+assert_throws $std.RuntimeError str: "index out of range or invalid" do (args(a: 1))[:z:]
+assert_throws $std.RuntimeError str: "index out of range or invalid" do (args(1))[5]
 
 # ordering is lexicographic: the first differing item decides
 assert_not ((a: 6, b: 2) < (a: 0, b: 14))

@@ -13,8 +13,8 @@ use crate::{
 };
 
 use super::{
+    args::ArgItem,
     protocol::{Protocol, Recv, Spread, SpreadContext, instance_mcall_fallback},
-    record::ArgItem,
 };
 
 pub(crate) struct ArgPack<'v> {
@@ -73,7 +73,7 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().args)
+        Output::set(strand, out, &strand.singletons().arg_pack)
     }
 
     fn op_debug<'a, 's>(

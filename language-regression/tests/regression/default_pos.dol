@@ -28,13 +28,13 @@ bind {false}
 assert_eq $a false
 assert_eq $b 2
 
-bind record()
+bind args()
   - a = 1
   - b = 2
 assert_eq $a 1
 assert_eq $b 2
 
-bind record false
+bind args false
   - a = 1
   - b = 2
 assert_eq $a false

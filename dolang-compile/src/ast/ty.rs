@@ -36,7 +36,7 @@ pub(crate) enum TypeExpr {
     /// A parenthesized type
     Group { ty: Box<TypeExpr>, paren_span: Span },
     /// Parenthesized items that `->` doesn't follow: a tuple, e.g. `(Int, Str)`, or
-    /// a record when an item is keyed, e.g. `(name: Str, Int)`
+    /// an `Args` when an item is keyed, e.g. `(name: Str, Int)`
     Parens {
         params: Vec<TypeParam>,
         paren_span: Span,

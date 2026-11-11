@@ -144,7 +144,7 @@ log INFO hello world
 # prints: [INFO] hello world
 ```
 
-The `rest` parameter receives a [record](std.Record) of the extra arguments,
+The `rest` parameter receives an [`Args`](std.Args) of the extra arguments,
 in invocation order. Read a key argument by indexing, as in `rest[:name:]`.
 Iteration yields key/value tuples, where the key is the positional argument
 index (0-origin) for positional arguments.
@@ -161,7 +161,7 @@ echo_all foo bar: 1 baz
 ```
 
 `*` accepts only extra positional arguments, and `**` only extra key
-arguments. `*args` receives a tuple and `**kwargs` a record. Both may appear,
+arguments. `*args` receives a tuple and `**kwargs` an `Args`. Both may appear,
 `*` first, but neither combines with `...`. An extra argument that no rest
 parameter accepts is an error:
 

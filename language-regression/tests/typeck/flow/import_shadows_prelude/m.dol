@@ -1,0 +1,8 @@
+# An import of a module named like a prelude item, here `tuple`, binds the
+# module
+import tuple
+
+pub def f() -> Int
+  tuple.hello()
+
+pub let g @ Int = tuple.hello()

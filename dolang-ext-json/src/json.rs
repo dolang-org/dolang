@@ -279,12 +279,6 @@ impl<'v, F: JsonFormatter, S: Sink<'v>> Encoder<'_, 'v, '_, F, S> {
                     pairs.next(strand, key, val)
                 })?
             }
-            View::Record(handle) => {
-                let mut pairs = handle.pairs();
-                self.object(strand, handle.id().addr(), "record", |strand, key, val| {
-                    pairs.next(strand, key, val)
-                })?
-            }
             View::Struct(handle) => {
                 let mut pairs = handle.pairs();
                 self.object(strand, handle.id().addr(), "struct", |strand, key, val| {

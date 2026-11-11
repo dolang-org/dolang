@@ -172,7 +172,7 @@ pub @let Digestible = $
   | Array[Digestible]
   | Tuple[...Digestible]
   | Dict[Digestible, Digestible]
-  | Record[...Digestible]
+  | Args[...Digestible]
 
 # A [`make`](dodo.make) input that adds a value to the digest.
 pub @let DataSpec = BaseDict $
@@ -276,7 +276,7 @@ def encode_data state@digest.State value@Digestible
       for k v = entries
         encode_data $state $k
         encode_data $state $v
-    Record(fields) do
+    Args(fields) do
       frame $state R (str fields.len)
       for k v = fields
         encode_data $state $k

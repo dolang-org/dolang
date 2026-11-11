@@ -999,7 +999,7 @@ impl Parser<'_> {
     }
 
     /// Interpret a parenthesized list that `->` does not follow: a grouped type, or
-    /// a tuple or record type.
+    /// a tuple or `Args` type.
     fn finish_params(&mut self, group: Group) -> TypeExpr {
         match group {
             Group::Type(ty) => ty,

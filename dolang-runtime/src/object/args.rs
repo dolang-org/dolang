@@ -7,7 +7,7 @@ use std::{
 use crate::value::fmt::Format;
 
 use crate::{
-    arg::{Arg, Args},
+    arg::{self, Arg},
     bytecode::{Rest as RestKind, Variadic},
     call,
     error::{Error, Result},
@@ -33,19 +33,19 @@ use super::{
     tuple,
 };
 
-/// An item of a record or argument pack: its symbol key, or `None` for a
+/// An item of an `Args` or argument pack: its symbol key, or `None` for a
 /// positional item
 pub(crate) type ArgItem<'v> = (Option<GcObj<'v, SymObj>>, Value<'v>);
 
-// ── Record ──────────────────────────────────────────────────────────
+// ── Args ──────────────────────────────────────────────────────────
 
 /// An immutable sequence of positional and symbol-keyed items, in the order
 /// they were given
-pub(crate) struct Record<'v> {
+pub(crate) struct Args<'v> {
     items: Box<[ArgItem<'v>]>,
 }
 
-unsafe impl<'v> Collect for Record<'v> {
+unsafe impl<'v> Collect for Args<'v> {
     const CYCLIC: bool = true;
     const IMMUTABLE: bool = true;
     type Annex = ();
@@ -65,18 +65,18 @@ unsafe impl<'v> Collect for Record<'v> {
     }
 }
 
-impl<'v> Record<'v> {
+impl<'v> Args<'v> {
     pub(crate) fn new(items: Vec<ArgItem<'v>>) -> Self {
         Self {
             items: items.into_boxed_slice(),
         }
     }
 
-    pub(crate) fn from_args(vm: &Vm<'v>, args: Args<'v, '_>) -> Self {
+    pub(crate) fn from_args(vm: &Vm<'v>, args: arg::Args<'v, '_>) -> Self {
         Self::new(args_items(vm, args))
     }
 
-    /// Builds a record of symbol-keyed entries, such as the leftovers for a `**name` rest.
+    /// Builds an `Args` of symbol-keyed entries, such as the leftovers for a `**name` rest.
     ///
     /// This never checks for a GC trap, so the caller may hold `entries` unrooted.
     pub(crate) fn from_sym_entries(entries: Vec<(GcObj<'v, SymObj>, Value<'v>)>) -> Self {
@@ -94,7 +94,7 @@ impl<'v> Record<'v> {
 }
 
 /// The items of `args`, in order
-pub(crate) fn args_items<'v>(vm: &Vm<'v>, args: Args<'v, '_>) -> Vec<ArgItem<'v>> {
+pub(crate) fn args_items<'v>(vm: &Vm<'v>, args: arg::Args<'v, '_>) -> Vec<ArgItem<'v>> {
     args.map(|arg| match arg {
         Arg::Pos(mut value) => (None, value.take()),
         Arg::Key(key, mut value) => (Some(vm.sym_obj(key)), value.take()),
@@ -133,7 +133,7 @@ pub(crate) fn find<'v, 'b>(
     find_index(strand, items, key).map(|index| &items[index].1)
 }
 
-/// Writes `items` as the inside of a record literal.
+/// Writes `items` as the inside of an args literal.
 pub(crate) fn debug_items<'v, 's>(
     strand: &mut Strand<'v, 's>,
     items: &[ArgItem<'v>],
@@ -237,14 +237,10 @@ pub(crate) fn spread_items<'v, 's>(
     Ok(())
 }
 
-/// Creates an empty record.
-pub(crate) fn empty<'v>(strand: &mut Strand<'v, '_>) -> GcObj<'v, Record<'v>> {
+/// Creates an empty `Args`.
+pub(crate) fn empty<'v>(strand: &mut Strand<'v, '_>) -> GcObj<'v, Args<'v>> {
     let vm = strand.vm();
-    GcObj::new(
-        vm.arena(),
-        vm.builtin_types().record,
-        Record::new(Vec::new()),
-    )
+    GcObj::new(vm.arena(), vm.builtin_types().args, Args::new(Vec::new()))
 }
 
 /// The key of an item as a value: the symbol, or the position `int` counts
@@ -388,7 +384,7 @@ fn unpack_plan<'v, 'a, 's>(
     })
 }
 
-/// Stores the tuple of a `*name` rest and the record of a `**name` rest.
+/// Stores the tuple of a `*name` rest and the `Args` of a `**name` rest.
 fn store_split_rests<'v, 'a>(
     strand: &mut Strand<'v, '_>,
     sig: &sig::Unpack<'v, 'a>,
@@ -419,8 +415,8 @@ fn store_split_rests<'v, 'a>(
             .collect();
         out.at(i).store(Value::from_object(GcObj::new(
             strand.vm().arena(),
-            strand.builtin_types().record,
-            Record::from_sym_entries(entries),
+            strand.builtin_types().args,
+            Args::from_sym_entries(entries),
         )));
     }
 }
@@ -449,15 +445,15 @@ fn fill_unpack_defaults<'v, 'a>(
     }
 }
 
-/// Unpacks `record` against `sig`. A `...name` rest captures a view of
+/// Unpacks `args` against `sig`. A `...name` rest captures a view of
 /// the items left over.
 pub(crate) fn unpack<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
-    record: GcObj<'v, Record<'v>>,
+    args: GcObj<'v, Args<'v>>,
     sig: &sig::Unpack<'v, 'a>,
     mut out: Slots<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    let borrow = record.borrow().ok_or_else(|| Error::concurrency(strand))?;
+    let borrow = args.borrow().ok_or_else(|| Error::concurrency(strand))?;
     let items = &borrow.items;
     let plan = unpack_plan(strand, items, &HashSet::new(), 0, sig)?;
 
@@ -479,9 +475,9 @@ pub(crate) fn unpack<'v, 'a, 's>(
         let positional_matched =
             i64::try_from(plan.pos_matched).map_err(|_| Error::overflow(strand))?;
         drop(borrow);
-        strand.builtin_types().record_rest.create(
+        strand.builtin_types().args_rest.create(
             strand,
-            Rest::new(record, skip, pos, positional_matched),
+            Rest::new(args, skip, pos, positional_matched),
             out.at(sig.len() - 1),
         );
     }
@@ -491,9 +487,9 @@ pub(crate) fn unpack<'v, 'a, 's>(
 
 // ── Iter ────────────────────────────────────────────────────────────
 
-/// An iterator over a record's `(key, value)` pairs.
+/// An iterator over an `Args`'s `(key, value)` pairs.
 pub(crate) struct Iter<'v> {
-    record: GcObj<'v, Record<'v>>,
+    args: GcObj<'v, Args<'v>>,
     skip: HashSet<usize>,
     pos: usize,
     int: i64,
@@ -501,13 +497,13 @@ pub(crate) struct Iter<'v> {
 
 impl<'v> Iter<'v> {
     pub(crate) fn new(
-        record: GcObj<'v, Record<'v>>,
+        args: GcObj<'v, Args<'v>>,
         skip: HashSet<usize>,
         pos: usize,
         int: i64,
     ) -> Self {
         Self {
-            record,
+            args,
             skip,
             pos,
             int,
@@ -516,7 +512,7 @@ impl<'v> Iter<'v> {
 
     /// The next item not yet consumed, and its index
     fn next_item(&self) -> Option<(usize, Option<GcObj<'v, SymObj>>, Value<'v>)> {
-        let record = self.record.borrow()?;
+        let record = self.args.borrow()?;
         first_visible_index(&record.items, &self.skip, self.pos).map(|index| {
             let (key, value) = &record.items[index];
             (index, key.clone(), value.dup())
@@ -540,7 +536,7 @@ unsafe impl<'v> Collect for Iter<'v> {
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
-        self.record.accept(visit)
+        self.args.accept(visit)
     }
 
     fn clear(&mut self) {}
@@ -560,7 +556,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<record iterator>")
+        crate::fmt!(strand, w, "<args iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -579,7 +575,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let iter = this.borrow(strand)?;
-        let mut cursor = Iter::new(iter.record.clone(), iter.skip.clone(), iter.pos, iter.int);
+        let mut cursor = Iter::new(iter.args.clone(), iter.skip.clone(), iter.pos, iter.int);
         super::iter::unpack_cursor(strand, sig, &mut out, iter.pos, |strand, pos| {
             cursor.pos = pos;
             let pair = cursor.next_pair(strand)?;
@@ -588,7 +584,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         if let Some(i) = sig.pos_rest_slot() {
             strand
                 .builtin_types()
-                .record_iter
+                .args_iter
                 .create(strand, cursor, out.at(i));
         }
         sig.fill_empty_key_rest(strand, &mut out);
@@ -626,7 +622,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
             sym::LEN => {
                 let iter = this.borrow(strand)?;
                 let record = iter
-                    .record
+                    .args
                     .borrow()
                     .ok_or_else(|| Error::concurrency(strand))?;
                 let len = i64::try_from(visible_len(&record.items, &iter.skip, iter.pos))
@@ -642,16 +638,16 @@ impl<'v> Protocol<'v> for Iter<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
-        args: Args<'v, 'a>,
+        args: arg::Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         iter::iter_mcall(strand, &this, method, args, out).await
     }
 }
 
-/// Read-only view of the unmatched items of a record.
+/// Read-only view of the unmatched items of an `Args`.
 pub(crate) struct Rest<'v> {
-    record: GcObj<'v, Record<'v>>,
+    args: GcObj<'v, Args<'v>>,
     skip: HashSet<usize>,
     pos: usize,
     int: i64,
@@ -659,13 +655,13 @@ pub(crate) struct Rest<'v> {
 
 impl<'v> Rest<'v> {
     pub(crate) fn new(
-        record: GcObj<'v, Record<'v>>,
+        args: GcObj<'v, Args<'v>>,
         skip: HashSet<usize>,
         pos: usize,
         int: i64,
     ) -> Self {
         Self {
-            record,
+            args,
             skip,
             pos,
             int,
@@ -674,7 +670,7 @@ impl<'v> Rest<'v> {
 
     /// The next item not yet consumed, and its index
     fn next_item(&self) -> Option<(usize, Option<GcObj<'v, SymObj>>, Value<'v>)> {
-        let record = self.record.borrow()?;
+        let record = self.args.borrow()?;
         first_visible_index(&record.items, &self.skip, self.pos).map(|index| {
             let (key, value) = &record.items[index];
             (index, key.clone(), value.dup())
@@ -688,7 +684,7 @@ unsafe impl<'v> Collect for Rest<'v> {
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
-        self.record.accept(visit)
+        self.args.accept(visit)
     }
 
     fn clear(&mut self) {}
@@ -716,7 +712,7 @@ impl<'v> Protocol<'v> for Rest<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
-        args: Args<'v, 'a>,
+        args: arg::Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         super::iter::iterable_mcall(strand, &this, method, args, out).await
@@ -727,7 +723,7 @@ impl<'v> Protocol<'v> for Rest<'v> {
         strand: &mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<record rest>")
+        crate::fmt!(strand, w, "<args rest>")
     }
 
     async fn op_unpack<'a, 's>(
@@ -738,12 +734,12 @@ impl<'v> Protocol<'v> for Rest<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         let mut iter = Rest::new(
-            borrow.record.clone(),
+            borrow.args.clone(),
             borrow.skip.clone(),
             borrow.pos,
             borrow.int,
         );
-        let record_obj = iter.record.clone();
+        let record_obj = iter.args.clone();
         let record = record_obj
             .borrow()
             .ok_or_else(|| Error::concurrency(strand))?;
@@ -774,7 +770,7 @@ impl<'v> Protocol<'v> for Rest<'v> {
         if sig.variadic == Variadic::Capture {
             strand
                 .builtin_types()
-                .record_rest
+                .args_rest
                 .create(strand, child, out.at(sig.len() - 1));
         }
 
@@ -788,12 +784,12 @@ impl<'v> Protocol<'v> for Rest<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         let iter = Iter::new(
-            borrow.record.clone(),
+            borrow.args.clone(),
             borrow.skip.clone(),
             borrow.pos,
             borrow.int,
         );
-        strand.builtin_types().record_iter.create(strand, iter, out);
+        strand.builtin_types().args_iter.create(strand, iter, out);
         Ok(())
     }
 
@@ -805,7 +801,7 @@ impl<'v> Protocol<'v> for Rest<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         let mut iter = Rest::new(
-            borrow.record.clone(),
+            borrow.args.clone(),
             borrow.skip.clone(),
             borrow.pos,
             borrow.int,
@@ -823,15 +819,15 @@ impl<'v> Protocol<'v> for Rest<'v> {
     }
 }
 
-// ── Record protocol ─────────────────────────────────────────────────
+// ── Args protocol ─────────────────────────────────────────────────
 
-impl<'v> Protocol<'v> for Record<'v> {
+impl<'v> Protocol<'v> for Args<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().record)
+        Output::set(strand, out, &strand.singletons().args)
     }
 
     fn op_debug<'a, 's>(
@@ -859,7 +855,7 @@ impl<'v> Protocol<'v> for Record<'v> {
         hasher: &mut DefaultHasher,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        sym::RECORD.hash(hasher);
+        sym::ARGS.hash(hasher);
         hash_items(strand, &borrow.items, hasher)
     }
 
@@ -868,7 +864,7 @@ impl<'v> Protocol<'v> for Record<'v> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let Some(other) = other.downcast_ref(strand.builtin_types().record) else {
+        let Some(other) = other.downcast_ref(strand.builtin_types().args) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let left = this.borrow(strand)?;
@@ -885,7 +881,7 @@ impl<'v> Protocol<'v> for Record<'v> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let Some(other) = other.downcast_ref(strand.builtin_types().record) else {
+        let Some(other) = other.downcast_ref(strand.builtin_types().args) else {
             return Err(Error::unsupported(strand, "`<`"));
         };
         let left = this.borrow(strand)?;
@@ -906,7 +902,7 @@ impl<'v> Protocol<'v> for Record<'v> {
         if !index.is_int(strand) && index.as_sym(strand).is_none() {
             return Err(Error::type_error(
                 strand,
-                "records only support symbol and integer keys",
+                "args only support symbol and integer keys",
             ));
         }
         let borrow = this.borrow(strand)?;
@@ -953,7 +949,7 @@ impl<'v> Protocol<'v> for Record<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
-        args: Args<'v, 'a>,
+        args: arg::Args<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match method.tag() {
@@ -1021,8 +1017,8 @@ impl<'v> Protocol<'v> for Record<'v> {
                 }
                 strand
                     .builtin_types()
-                    .record
-                    .create(strand, Record::new(items), out);
+                    .args
+                    .create(strand, Args::new(items), out);
                 Ok(())
             }
             sym::WITHOUT => {
@@ -1049,13 +1045,13 @@ impl<'v> Protocol<'v> for Record<'v> {
                 }
                 strand
                     .builtin_types()
-                    .record
-                    .create(strand, Record::new(items), out);
+                    .args
+                    .create(strand, Args::new(items), out);
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(
                 strand,
-                "record.len is a field, not a method",
+                "args.len is a field, not a method",
             )),
             _ if is_special_mcall(method.tag()) => {
                 instance_mcall_fallback(strand, &this, method, args, out).await
@@ -1078,7 +1074,7 @@ impl<'v> Protocol<'v> for Record<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        strand.builtin_types().record_iter.create(
+        strand.builtin_types().args_iter.create(
             strand,
             Iter::new(this.to_strong(), HashSet::new(), 0, 0),
             out,
@@ -1106,18 +1102,18 @@ impl<'v> Protocol<'v> for Record<'v> {
     }
 }
 
-// ── Record Class ────────────────────────────────────────────────────
+// ── Args Class ────────────────────────────────────────────────────
 
-/// Collects a source's pairs for `Record src`, into an argument pack rooted in
-/// a slot. A record holds only positional items and symbol keys.
-struct RecordPairs<'b, 'v> {
+/// Collects a source's pairs for `Args src`, into an argument pack rooted in
+/// a slot. An `Args` holds only positional items and symbol keys.
+struct ArgsPairs<'b, 'v> {
     int: i64,
     pack: &'b Value<'v>,
     /// The collection named in errors
     kind: &'static str,
 }
 
-impl<'v> RecordPairs<'_, 'v> {
+impl<'v> ArgsPairs<'_, 'v> {
     fn push<'s>(
         &mut self,
         strand: &mut Strand<'v, 's>,
@@ -1127,7 +1123,7 @@ impl<'v> RecordPairs<'_, 'v> {
         let pack = self
             .pack
             .downcast_ref(strand.builtin_types().arg_pack)
-            .expect("record source pack");
+            .expect("args source pack");
         pack.borrow_mut()
             .ok_or_else(|| Error::concurrency(strand))?
             .push((key, value));
@@ -1135,7 +1131,7 @@ impl<'v> RecordPairs<'_, 'v> {
     }
 }
 
-impl<'v, 's> Spread<'v, 's> for RecordPairs<'_, 'v> {
+impl<'v, 's> Spread<'v, 's> for ArgsPairs<'_, 'v> {
     fn positional(
         &mut self,
         strand: &mut Strand<'v, 's>,
@@ -1220,7 +1216,7 @@ impl<'v> Protocol<'v> for Class {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Record>")
+        crate::fmt!(strand, w, "<type std.Args>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -1257,7 +1253,7 @@ impl<'v> Protocol<'v> for Class {
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
-        args: Args<'v, 'a>,
+        args: arg::Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match method.tag() {
@@ -1265,15 +1261,15 @@ impl<'v> Protocol<'v> for Class {
                 let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
                 strand
                     .with_slots(async |strand, [mut native]| {
-                        call!(strand, &strand.singletons().record, &mut native, items).await?;
-                        self_val.op_fill(strand, &strand.singletons().record, native.take())?;
+                        call!(strand, &strand.singletons().args, &mut native, items).await?;
+                        self_val.op_fill(strand, &strand.singletons().args, native.take())?;
                         Ok(())
                     })
                     .await
             }
             _ => {
                 let vm = strand.vm();
-                type_mcall_fallback(strand, &vm.singletons().record, method, args, out).await
+                type_mcall_fallback(strand, &vm.singletons().args, method, args, out).await
             }
         }
     }
@@ -1310,20 +1306,20 @@ impl<'v> Protocol<'v> for Class {
     async fn op_call<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        args: Args<'v, 'a>,
+        args: arg::Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([source], []) = unpack!(strand, args, 1, 0)?;
-        let items = source_items(strand, &source, "record").await?;
+        let items = source_items(strand, &source, "args").await?;
         strand
             .builtin_types()
-            .record
-            .create(strand, Record::new(items), out);
+            .args
+            .create(strand, Args::new(items), out);
         Ok(())
     }
 }
 
-/// Collects the items of `source` for `Record src`, naming the collection
+/// Collects the items of `source` for `Args src`, naming the collection
 /// `kind` in errors.
 ///
 /// The items are unrooted, so the caller must store them before anything can
@@ -1342,7 +1338,7 @@ pub(crate) async fn source_items<'v, 's>(
                 ArgPack::new(Vec::new()),
                 Slot::reborrow(&mut pack),
             );
-            let mut sink = RecordPairs {
+            let mut sink = ArgsPairs {
                 int: 0,
                 pack: &pack,
                 kind,
@@ -1352,7 +1348,7 @@ pub(crate) async fn source_items<'v, 's>(
                 .await?;
             Ok(pack
                 .downcast_ref(strand.builtin_types().arg_pack)
-                .expect("record source pack")
+                .expect("args source pack")
                 .borrow_mut()
                 .ok_or_else(|| Error::concurrency(strand))?
                 .take())

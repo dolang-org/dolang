@@ -194,7 +194,6 @@ def scalar_keys_quoted()
   assert_eq (encode {true: 1}) r#"{"true":1}"#
   assert_eq (encode {1.5: 1}) r#"{"1.5":1}"#
   assert_eq (encode {sym: 1}) r#"{"sym":1}"#
-  assert_eq (encode((a: 1, b: []))) r#"{"a":1,"b":[]}"#
 
   let err = assert_throws $EncodeError do
     encode {(Float.NAN): 1}
@@ -233,4 +232,3 @@ def indented_containers()
   assert_eq (encode {} indent: 2) "{}"
   assert_eq (encode {}) "{}"
   assert_eq (encode(struct(a: [1], b: {}), indent: 2)) "{\n  \"a\": [\n    1\n  ],\n  \"b\": {}\n}"
-  assert_eq (encode((a: "x",), indent: 0)) "{\n\"a\": \"x\"\n}"

@@ -230,7 +230,7 @@ fn tokenize(path: &Path, source: &str) -> Vec<Tok> {
         .clear()
         .import_module("std")
         .import_items("std")
-        .items(["str", "type", "dbg", "getter", "class", "static", "Record"])
+        .items(["str", "type", "dbg", "getter", "class", "static", "Args"])
         .commit();
     config.recover(true);
 

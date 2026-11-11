@@ -182,9 +182,9 @@ pub(crate) enum TypeExpr {
     Group { span: Span, ty: Box<TypeExpr> },
     /// A tuple type, e.g. `(Int, Str)`: `std.Tuple` of the schema of its items
     Tuple { span: Span, params: Vec<TypeParam> },
-    /// A record type, e.g. `(name: Str, Int)`: `std.Record` of the schema of its
+    /// An `Args` type, e.g. `(name: Str, Int)`: `std.Args` of the schema of its
     /// items
-    Record { span: Span, params: Vec<TypeParam> },
+    Args { span: Span, params: Vec<TypeParam> },
     /// An array type, e.g. `[Int]`: `std.Array` of its element type
     Array { span: Span, elem: Box<TypeExpr> },
     /// A union, e.g. `Str | Path`
@@ -289,7 +289,7 @@ impl TypeExpr {
             | TypeExpr::Schema { span, .. }
             | TypeExpr::Group { span, .. }
             | TypeExpr::Tuple { span, .. }
-            | TypeExpr::Record { span, .. }
+            | TypeExpr::Args { span, .. }
             | TypeExpr::Array { span, .. }
             | TypeExpr::Union { span, .. }
             | TypeExpr::Func { span, .. }
@@ -331,7 +331,7 @@ impl TypeExpr {
             }
             TypeExpr::Schema { params, .. }
             | TypeExpr::Tuple { params, .. }
-            | TypeExpr::Record { params, .. } => {
+            | TypeExpr::Args { params, .. } => {
                 for ty in params.iter().flat_map(TypeParam::tys) {
                     ty.each_node_in(group, f);
                 }
@@ -690,7 +690,7 @@ impl Printer<'_, '_> {
             }
             TypeExpr::Schema { params, .. }
             | TypeExpr::Tuple { params, .. }
-            | TypeExpr::Record { params, .. } => {
+            | TypeExpr::Args { params, .. } => {
                 out.write_char('(')?;
                 self.params(params, None, None, out)?;
                 // A lone item without a quantifier would only group without its comma

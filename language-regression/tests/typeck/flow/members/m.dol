@@ -360,7 +360,7 @@ pub def indexes ks @ Iter[Int]
 # A key selects items, positions by their indexes. A read gives the join of what
 # it selects, and a write must fit their meet.
 pub def selected
-  r @ Record[Int, a: Str]
+  r @ Args[Int, a: Str]
   w @ Dict[{Int, *Str}]
   d @ Dict[{a: Int, b: Str}]
   s @ Dict[{*(Sym): Int}]
@@ -369,7 +369,7 @@ pub def selected
   k @ (:a: | :b:)
   y @ Sym
 do
-  # A narrower record passes where a wider one is expected
+  # A narrower `Args` passes where a wider one is expected
   widened $r
   let _ = r[0]
   #   ^: flow std.Int
@@ -428,7 +428,7 @@ do
 # LL |   let _ = c[0]
 #    |           ^^^^
 
-pub def widened r @ Record[Int, a: Value]
+pub def widened r @ Args[Int, a: Value]
   ...
 
 # A key of unknown type may be any of the dict's keys

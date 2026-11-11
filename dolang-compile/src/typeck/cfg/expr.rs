@@ -147,7 +147,7 @@ pub(crate) enum Collection {
     Array,
     Dict,
     Tuple,
-    Record,
+    Args,
 }
 
 /// A member of a receiver, by key. A private member names the class whose member it

@@ -33,8 +33,8 @@ def collect_pairs ...args
 
 def rest_type ...args
   args
-assert (type (rest_type 1 k: 2) Record)
-assert_eq (rest_type 1 k: 2) (record 1 k: 2)
+assert (type (rest_type 1 k: 2) Args)
+assert_eq (rest_type 1 k: 2) (args 1 k: 2)
 assert_eq (collect_pos 1 2 3) [1, 2, 3]
 assert_eq (unpack_pos 1 2 3 4) [1, 2, [3, 4]]
 assert_eq (spread_pos 4 5 6) [4, 5, 6]

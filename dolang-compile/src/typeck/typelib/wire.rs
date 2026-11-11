@@ -352,7 +352,7 @@ pub(super) enum Type {
     },
     Group(u32),
     Tuple(Vec<WireParam>),
-    Record(Vec<WireParam>),
+    Args(Vec<WireParam>),
     Array(u32),
     Union(Vec<u32>),
     Func {
@@ -1270,7 +1270,7 @@ impl<'s, 'u> Encode<'s, 'u> {
             },
             TypeExpr::Group { ty, .. } => Type::Group(self.ty(ty)),
             TypeExpr::Tuple { params, .. } => Type::Tuple(self.params(params)),
-            TypeExpr::Record { params, .. } => Type::Record(self.params(params)),
+            TypeExpr::Args { params, .. } => Type::Args(self.params(params)),
             TypeExpr::Array { elem, .. } => Type::Array(self.ty(elem)),
             TypeExpr::Union { members, .. } => {
                 Type::Union(members.iter().map(|member| self.ty(member)).collect())
@@ -1923,7 +1923,7 @@ impl Decode<'_> {
                     span,
                     params: self.params(params)?,
                 },
-                Type::Record(params) => TypeExpr::Record {
+                Type::Args(params) => TypeExpr::Args {
                     span,
                     params: self.params(params)?,
                 },
@@ -1988,7 +1988,7 @@ impl Type {
                     Arg::Pos(ty) | Arg::Key { ty, .. } | Arg::Expand(ty) => ty,
                 }));
             }
-            Type::Schema { params: items, .. } | Type::Tuple(items) | Type::Record(items) => {
+            Type::Schema { params: items, .. } | Type::Tuple(items) | Type::Args(items) => {
                 params(out, items)
             }
             Type::Group(ty) | Type::Array(ty) => out.push(*ty),

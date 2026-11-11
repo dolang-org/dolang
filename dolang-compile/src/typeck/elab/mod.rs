@@ -706,8 +706,8 @@ pub(crate) enum Designated {
     Array,
     /// `std.Dict`, the class of a dict literal
     Dict,
-    /// `std.Record`, the class of a record literal
-    Record,
+    /// `std.Args`, the class of an args literal
+    Args,
     /// `std.Range`, the class of a range
     Range,
     /// `std.Spread`, which a spread item spreads

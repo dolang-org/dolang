@@ -34,7 +34,7 @@ assert_throws $std.ConcurrencyError do
   for _ = mr2
     m2.insert d 4
 
-# A record's `...` rest yields entries
+# An `Args`'s `...` rest yields entries
 let _a _b ...rr = (1, 2, 3, color: "red")
 assert_eq (collect rr) [(2, 3), (:color:, "red")]
 assert_eq (collect rr) [(2, 3), (:color:, "red")]

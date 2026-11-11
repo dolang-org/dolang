@@ -72,7 +72,7 @@ assert_eq {...options} {color: "red"}
 
 A rest spreads as its source would from where unpacking stopped. Iterating a
 `*` rest, or the rest of an array or other sequence, yields its values.
-Iterating a `**` rest, or a `...` rest of a dictionary or record, yields its
+Iterating a `**` rest, or a `...` rest of a dictionary or `Args`, yields its
 entries as `(key, value)` tuples, with positional items keyed by index:
 
 ```
@@ -84,7 +84,7 @@ for key value = options
 ```
 
 `(...rest)` makes a tuple unless the parentheses also hold a static key, as in
-`(...rest, extra: 1)`, which makes a record.
+`(...rest, extra: 1)`, which makes an `Args`.
 
 Iterating, spreading or unpacking a rest does not consume it, so it can be read
 repeatedly. The rest of an iterator is the exception: it is what is left of that

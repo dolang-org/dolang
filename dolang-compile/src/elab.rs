@@ -1705,12 +1705,11 @@ impl<'s> Scope<'s> {
         &self,
         id: sym::Id,
         capture: bool,
-        promote: Option<Origin>,
         epoch: Epoch,
     ) -> result::Result<Res, ResolveError> {
         match self {
             Scope::Base => Err(ResolveError::Unbound),
-            Scope::Class { parent, .. } => parent.resolve_inner(id, capture, promote, epoch),
+            Scope::Class { parent, .. } => parent.resolve_inner(id, capture, epoch),
             Scope::Nested {
                 kind,
                 parent,
@@ -1729,9 +1728,6 @@ impl<'s> Scope<'s> {
                             var.flags.insert(VarFlags::CAPTURED);
                         }
                         var.flags.insert(VarFlags::USED);
-                        if let Some(origin) = promote {
-                            var.origin = origin;
-                        }
                         (var, epoch)
                     });
                     return Ok(Res {
@@ -1743,7 +1739,6 @@ impl<'s> Scope<'s> {
                 let Res { index, depth, .. } = parent.resolve_inner(
                     id,
                     capture || matches!(kind, ScopeKind::Function | ScopeKind::Lambda),
-                    promote,
                     epoch,
                 )?;
                 Ok(Res {
@@ -1791,16 +1786,31 @@ impl<'s> Scope<'s> {
     }
 
     fn resolve(&self, id: sym::Id, epoch: Epoch) -> result::Result<Res, ResolveError> {
-        self.resolve_inner(id, false, None, epoch)
+        self.resolve_inner(id, false, epoch)
     }
 
-    fn promote(
-        &self,
-        id: sym::Id,
-        origin: Origin,
-        epoch: Epoch,
-    ) -> result::Result<Res, ResolveError> {
-        self.resolve_inner(id, false, Some(origin), epoch)
+    /// Reuse the binding of a module that an earlier import, or the prelude,
+    /// bound under `id` in this scope, as `import a.c` does after `import a.b`.
+    /// Any other binding, such as a prelude item, is shadowed instead.
+    fn promote(&self, id: sym::Id, origin: Origin, epoch: Epoch) -> Option<Res> {
+        let Self::Nested { index, vars, .. } = self else {
+            return None;
+        };
+        let &index = index.get(&id)?;
+        let (var, _) = vars[index].get();
+        if !matches!(var.origin, Origin::Import(_) | Origin::PreludeModule) {
+            return None;
+        }
+        vars[index].update(|(mut var, _)| {
+            var.flags.insert(VarFlags::USED);
+            var.origin = origin;
+            (var, epoch)
+        });
+        Some(Res {
+            index,
+            depth: 0,
+            node: None,
+        })
     }
 
     fn finish(self, resolver: &Elaborater, out: &mut Vec<Var>) {
@@ -2156,7 +2166,7 @@ impl<'a> Elaborater<'a> {
                 | Expr::Array { .. }
                 | Expr::Dict { .. }
                 | Expr::Tuple { .. }
-                | Expr::Record { .. }
+                | Expr::Args { .. }
                 | Expr::Concat { .. }
                 | Expr::FmtSeq { .. }
                 | Expr::FmtParam { .. }
@@ -2233,7 +2243,7 @@ impl<'a> Elaborater<'a> {
                 }
                 Ok(())
             }
-            Expr::Record { args, .. } => {
+            Expr::Args { args, .. } => {
                 for arg in args.iter_mut() {
                     match arg {
                         Arg::Pos(Single { expr, .. })
@@ -2899,9 +2909,7 @@ impl<'a> Elaborater<'a> {
                         .id(&self.bintab.id_str(self.file.str(bind.span)));
                     let name = self.module_span_first(*module);
                     let node = Origin::Import(name);
-                    if let Ok(res) = scope.promote(id, node, self.epoch)
-                        && res.depth == 0
-                    {
+                    if let Some(res) = scope.promote(id, node, self.epoch) {
                         // Reuse the binding and update its source provenance.
                         *insert = true;
                         bind.res = Some(res);

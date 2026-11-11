@@ -293,7 +293,7 @@ pub enum Builtin {
     Iter,
     ConcatStr,
     ConcatVerbatim,
-    Args,
+    ArgPack,
     ClassCreate,
     Guard,
     Throw,
@@ -304,7 +304,7 @@ pub enum Builtin {
     Fmt,
     Stub,
     Tuple,
-    Record,
+    Args,
     TypeTest,
     TypeAssert,
     ValueAssert,
@@ -319,7 +319,7 @@ pub mod builtin {
     pub const ITER: usize = Iter as usize;
     pub const CONCAT_STR: usize = ConcatStr as usize;
     pub const CONCAT_VERBATIM: usize = ConcatVerbatim as usize;
-    pub const ARGS: usize = Args as usize;
+    pub const ARG_PACK: usize = ArgPack as usize;
     pub const CLASS_CREATE: usize = ClassCreate as usize;
     pub const GUARD: usize = Guard as usize;
     pub const THROW: usize = Throw as usize;
@@ -330,7 +330,7 @@ pub mod builtin {
     pub const FMT: usize = Fmt as usize;
     pub const STUB: usize = Stub as usize;
     pub const TUPLE: usize = Tuple as usize;
-    pub const RECORD: usize = Record as usize;
+    pub const ARGS: usize = Args as usize;
     pub const TYPE_TEST: usize = TypeTest as usize;
     pub const VALUE_ASSERT: usize = ValueAssert as usize;
     pub const TYPE_ASSERT: usize = TypeAssert as usize;
@@ -343,7 +343,7 @@ pub const BUILTINS: [&str; Builtin::_LEN as usize] = [
     "iter",
     "concat_str",
     "concat_verbatim",
-    "args",
+    "arg_pack",
     "class_create",
     "guard",
     "throw",
@@ -354,7 +354,7 @@ pub const BUILTINS: [&str; Builtin::_LEN as usize] = [
     "fmt",
     "stub",
     "tuple",
-    "record",
+    "args",
     "type_test",
     "type_assert",
     "value_assert",

@@ -1,10 +1,10 @@
 # Every iterator spreads pair elements positionally; kv switches to keys.
 def capture ...args
   args
-assert_eq (capture(...{a: 1, b: 2}.iter())) (record (:a:, 1) (:b:, 2))
+assert_eq (capture(...{a: 1, b: 2}.iter())) (args (:a:, 1) (:b:, 2))
 assert_eq {...{a: 1, b: 2}.iter()} {(:a:, 1), (:b:, 2)}
-assert_eq (capture(...[10, 20].pairs())) (record (0, 10) (1, 20))
-assert_eq (capture(...[(:a:, 1), (:b:, 2)].kv())) (record a: 1 b: 2)
+assert_eq (capture(...[10, 20].pairs())) (args (0, 10) (1, 20))
+assert_eq (capture(...[(:a:, 1), (:b:, 2)].kv())) (args a: 1 b: 2)
 assert_eq {...[(:a:, 1), (:a:, 2)].kv()} {a: 1, a: 2}
 assert_eq (Dict([(0, "zero"), (1, "one")].kv())) {0: "zero", 1: "one"}
 assert_throws $std.UnexpectedKeyError do [...[(:a:, 1)].kv()]
@@ -20,10 +20,10 @@ assert_throws $std.TypeError do adapter.map(do |x| x)
 # Keyed containers reject sequences, while their iterators spread pairs
 # positionally.
 assert_throws $std.UnexpectedKeyError do [...{a: 1, b: 2}]
-assert_throws $std.UnexpectedKeyError do Tuple(record(a: 1, b: 2))
+assert_throws $std.UnexpectedKeyError do Tuple(args(a: 1, b: 2))
 assert_eq [...{a: 1, b: 2}.iter()] [(:a:, 1), (:b:, 2)]
-assert_eq (capture(...Iterable.iter(record(a: 1, b: 2)))) (record (:a:, 1) (:b:, 2))
-assert_eq {...Iterable.iter(record(a: 1, b: 2))} {(:a:, 1), (:b:, 2)}
+assert_eq (capture(...Iterable.iter(args(a: 1, b: 2)))) (args (:a:, 1) (:b:, 2))
+assert_eq {...Iterable.iter(args(a: 1, b: 2))} {(:a:, 1), (:b:, 2)}
 assert_throws $std.UnexpectedKeyError do capture ...[(0, "zero")].kv()
 
 # Pair validation stays lazy until the adapter is spread.

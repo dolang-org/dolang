@@ -652,7 +652,7 @@ impl<'v> Protocol<'v> for Type {
     // `op_iter` yields `(name, value)` pairs, which the REPL's dynamic prelude
     // relies on to carry bindings across executions — but a module's member
     // namespace is entirely reserved for its exports, so it cannot expose
-    // `Iterable`'s method surface. Same reasoning as `Record`.
+    // `Iterable`'s method surface. Same reasoning as `Args`.
     fn op_subtype<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

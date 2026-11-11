@@ -3022,7 +3022,7 @@ def parse_init init @ (InitSpec | nil) -> InitState
 #
 # This is also where a registered step macro would resolve, so that a builtin
 # and a macro are looked up the same way.
-def parse_options[I, O] options @ Record[...DomainOptions[I, O]] -> ParsedOptions[I, O]
+def parse_options[I, O] options @ Args[...DomainOptions[I, O]] -> ParsedOptions[I, O]
   let steps @ Array[Step[I, O]] = []
   let installers @ Array[Installer] = []
   let drivers @ Array[Artifact] = []

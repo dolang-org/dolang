@@ -3,7 +3,7 @@
 (echo (1))
 # Unambiguous: another argument makes the parentheses a tuple
 (echo (1, 2) 3)
-# Misleading: a C-style call that looks like a call with a tuple or record
+# Misleading: a C-style call that looks like a call with a tuple or `Args`
 (echo (1, 2))
 # warning: call arguments separated by whitespace are misleading
 #   --> misleading_call.dol:LL:LL
@@ -33,7 +33,7 @@
 # LL - (echo (a: 1))
 # LL + (echo(a: 1))
 #    |
-# help: wrap with parentheses to call with a record
+# help: wrap with parentheses to call with an `Args`
 #    |
 # LL - (echo (a: 1))
 # LL + (echo((a: 1)))

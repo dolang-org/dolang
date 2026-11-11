@@ -286,7 +286,7 @@ pub def int
 do -> Int
   ...
 
-# Creates a record from positional and key arguments.
+# Creates an [`Args`](std.Args) from positional and key arguments.
 #
 # Positional arguments become positional items, and key arguments become
 # symbol-keyed items.
@@ -294,13 +294,13 @@ do -> Int
 # ## Example
 #
 # ```
-# let r = record name: Alice age: 30
+# let r = args name: Alice age: 30
 # echo $r[:name:]  # Alice
 # ```
-pub def record[...Ts]
+pub def args[...Ts]
   # Positional and key field values.
-  ...args @ Ts
-do -> Record[...Ts]
+  ...items @ Ts
+do -> Args[...Ts]
   ...
 
 # Makes a field setter from a function of the object assigned and its new
@@ -722,7 +722,7 @@ pub @class MutSeq[T]: AssignSeq[T]
 # [`(iter)`](std.BaseIterable) is enough for `for`; a class that also
 # subclasses `Iterable` gets these methods for free, each obtaining an iterator
 # with `(iter)` and calling the [`Iter`](std.Iter) method of the same name.
-# Arrays, dicts, and ranges are `Iterable`; a [`Record`](std.Record) is not.
+# Arrays, dicts, and ranges are `Iterable`; an [`Args`](std.Args) is not.
 #
 # ```
 # class Bag: Iterable
@@ -3696,39 +3696,39 @@ pub class Range[T @ Num]: Iterable[T] @Spread[T]
 
 # Stores an immutable sequence of positional items and symbol-keyed items.
 #
-# Records keep their items in order, and a key may repeat. A lookup finds the
+# An `Args` keeps its items in order, and a key may repeat. A lookup finds the
 # latest value for a key. Spreading a repeated key into a call raises
 # [`UnexpectedKeyError`](std.UnexpectedKeyError) if it names a parameter;
 # duplicates captured by a rest remain in order. Keys are read by indexing,
 # not as fields:
 #
 # ```
-# let r = record name: Alice age: 30
+# let r = args name: Alice age: 30
 # assert_eq $r[:name:] Alice
 # ```
 #
-# A variadic capture such as `...rest` binds a record of the remaining
-# arguments. Use [`with`](std.Record.with) to replace keys in a new record:
+# A variadic capture such as `...rest` binds an `Args` of the remaining
+# arguments. Use [`with`](std.Args.with) to replace keys in a new `Args`:
 #
 # ```
 # let updated = old.with status: ready
 # ```
-pub class Record[...Ts]:
+pub class Args[...Ts]:
   Iterable[Entries[Ts]] @Index[Ts] @BaseMap[Ts]
 do
-  # Builds a record from one spreadable source of key-value pairs.
+  # Builds an `Args` from one spreadable source of key-value pairs.
   #
   # ```
-  # let r = Record {name: Alice, age: 30}
+  # let r = Args {name: Alice, age: 30}
   # ```
   #
   # Integer keys counting up from `0` become positional items, as when
   # spreading a dict.
   #
-  # The lowercase `record` factory instead builds a record from its arguments.
+  # The lowercase `args` factory instead builds an `Args` from its arguments.
   #
   # ```
-  # let r = record first second name: Alice
+  # let r = args first second name: Alice
   # ```
   #
   # ## Errors
@@ -3746,7 +3746,7 @@ do
   do -> (Value | D)
     ...
 
-  # Replaces keys in a new record, leaving the original unchanged.
+  # Replaces keys in a new `Args`, leaving the original unchanged.
   #
   # Each updated key occupies its first position; later occurrences are removed.
   # New keys append in the order first supplied. Repeated updates use their last
@@ -3754,28 +3754,28 @@ do
   # Spread a source with `...source` to supply updates.
   #
   # ```
-  # let r = record status: pending name: Alice status: queued
+  # let r = args status: pending name: Alice status: queued
   # assert_eq (r.with status: ready) (status: "ready", name: "Alice")
   # ```
   #
-  # The result is typed as a plain [`Record`](std.Record), so the type checker
+  # The result is typed as a plain [`Args`](std.Args), so the type checker
   # doesn't know its keys.
   #
   # ## Errors
   #
   # Raises [`UnexpectedPosError`](std.UnexpectedPosError) for positional arguments.
-  pub def with self **updates @ Value -> Record
+  pub def with self **updates @ Value -> Args
     ...
 
-  # Removes all occurrences of the keys in a new record.
+  # Removes all occurrences of the keys in a new `Args`.
   #
   # Missing and repeated keys are harmless. Remaining items keep their relative
   # order, and the original is unchanged. Only symbol keys can be removed. The
-  # result is typed as a plain [`Record`](std.Record), so the type checker
+  # result is typed as a plain [`Args`](std.Args), so the type checker
   # doesn't know its keys.
   #
   # ```
-  # let r = record name: Alice status: ready debug: true
+  # let r = args name: Alice status: ready debug: true
   # assert_eq (r.without :status: :debug:) (name: "Alice")
   # ```
   #
@@ -3785,7 +3785,7 @@ do
   # | --------- | --------- |
   # | [`TypeError`](std.TypeError) | A key is not a symbol |
   # | [`UnexpectedKeyError`](std.UnexpectedKeyError) | A keyword argument is supplied |
-  pub def without self *keys@Sym -> Record
+  pub def without self *keys@Sym -> Args
     ...
 
   # Number of items, counting each instance of a repeated key.
@@ -3793,20 +3793,20 @@ do
   pub def len self -> Int
     ...
 
-  # Iterates record items as `(key, value)` pairs in order. A positional item's
+  # Iterates the items as `(key, value)` pairs in order. A positional item's
   # key is its position.
   pub def (iter) self -> UnpackIter[Entries[Ts]]
     ...
 
-  # Unpacks record items by position and symbol.
-  pub def (unpack) self -> Record[...Ts]
+  # Unpacks the items by position and symbol.
+  pub def (unpack) self -> Args[...Ts]
     ...
 
   # Returns the value at a position or key.
   pub def (index)[K] self key@K -> IndexItem[Ts, K]
     ...
 
-  # Spreads the record's items.
+  # Spreads the items.
   pub def (spread) self -> Spread[Ts]
     ...
 
@@ -4811,7 +4811,7 @@ do
   pub def (spread) self -> Spread[S]
     ...
 
-  # Unpacks items by position and symbol, as a [`Record`](std.Record) does.
+  # Unpacks items by position and symbol, as an [`Args`](std.Args) does.
   pub def (unpack) self -> BaseStruct[S]
     ...
 

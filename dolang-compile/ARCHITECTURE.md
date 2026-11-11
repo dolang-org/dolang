@@ -1097,7 +1097,7 @@ The rules are:
   what that costs. A spread that's repeated or optional gives its solved
   schema's items, so that the solver never has to repeat or leave out an
   inclusion of several items.
-- An array, dict, tuple or record literal builds its designated class over
+- An array, dict, tuple or args literal builds its designated class over
   inference variables for its items, a spread through `Spread[S]`. What's
   expected of an array or dict comes from solving `Array[E]` or `Dict[S]` below
   the expected type, through aliases, or below the one member of a union for
@@ -1111,7 +1111,7 @@ The rules are:
   unless it has an expectation: then its items' own schema, built as a call's
   arguments are, must be below `S`, and it's `Dict[S]`. `std.BaseDict` and
   `std.BaseArray` are separate classes only to the checker: the runtime exports
-  `Dict` and `Array` under both names. Tuples and records have no vertical
+  `Dict` and `Array` under both names. Tuples and `Args` have no vertical
   form, so they hold no comprehension.
 - A `do` block among a call's arguments, or a collection's items when the
   collection has an expected type, is typed by the rule. A rule with a check it
@@ -1374,7 +1374,7 @@ separately, without changing the database. Top-level declarations of a checked
 `Func`, `Int`, `Bool`, `Sym`, `Nil`, `Str`, `Iter` and `Sink` are designated for
 special treatment; the same name in another module is only a lookalike. So are
 the classes that literal and constructor expressions produce, `Float`, `Bin`,
-`Array`, `Dict`, `Tuple`, `Record`, `Range` and the `Fmt` classes, which the
+`Array`, `Dict`, `Tuple`, `Args`, `Range` and the `Fmt` classes, which the
 check tables record without the database needing them, except `Tuple`, which
 `Entries` builds. A checked `strand` module's opaque `PipeSender` and
 `PipeReceiver` are designated too: each stands for the class the `Check`

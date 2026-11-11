@@ -417,7 +417,7 @@ impl Check<'_, '_> {
             // stands for where a type is required, bound nothing
             TypeExpr::Schema { params, .. }
             | TypeExpr::Tuple { params, .. }
-            | TypeExpr::Record { params, .. } => {
+            | TypeExpr::Args { params, .. } => {
                 // A schema where a schema is required may be a parameter list's
                 let collection = !matches!(ty, TypeExpr::Schema { collection, .. }
                     if collection.get().is_none());
@@ -852,7 +852,7 @@ impl Check<'_, '_> {
                 }
             }
             // These forms apply a class, which guards them as any nominal type does
-            TypeExpr::Tuple { params, .. } | TypeExpr::Record { params, .. } => {
+            TypeExpr::Tuple { params, .. } | TypeExpr::Args { params, .. } => {
                 for ty in params.iter().flat_map(TypeParam::tys) {
                     self.guarded(unit, alias, members, ty, true, found);
                 }

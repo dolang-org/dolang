@@ -97,7 +97,6 @@ pub @let EncodeValue = $
   | Sym
   | BaseArray[EncodeValue]
   | Tuple[...EncodeValue]
-  | Record[...{**EncodeValue}]
   | BaseStruct[{**EncodeValue}]
   | BaseDict[Str | Sym, EncodeValue]
 
@@ -160,9 +159,8 @@ do -> DecodeValue
 # | `Tuple`  | array      |
 # | `Dict`   | table      |
 # | `Struct` | table      |
-# | `Record` | table      |
 #
-# Top-level dicts, records, and structs serialize as documents, while other values
+# Top-level dicts and structs serialize as documents, while other values
 # serialize as values. In a document, each table's plain keys come first. Nested
 # tables follow as `[a.b]` sections, and non-empty arrays whose elements are all
 # tables as `[[a.b]]` sections. Values inside arrays are written inline. The

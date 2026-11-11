@@ -122,17 +122,18 @@ specific cases:
 
 See the [Dict API](std.Dict) for details.
 
-## Records (`Record`)
+## Args (`Args`)
 
-Records are immutable sequences of positional items and symbol-keyed items,
-like a tuple with keys. Read an item by indexing with its symbol or position:
+An `Args` is an immutable sequence of positional items and symbol-keyed items,
+like a tuple with keys. It is the type of argument packs and of keyed tuple
+literals. Read an item by indexing with its symbol or position:
 
 ```
 let r = (name: "Alice", age: 30)
 echo $r[:name:] # Alice
 ```
 
-Parentheses make a record rather than a tuple when at least one key is
+Parentheses make an `Args` rather than a tuple when at least one key is
 specified. Positional items get integer keys counting from 0:
 
 ```
@@ -142,16 +143,16 @@ let mixed = (1, 2, tag: "x")
 assert_eq $mixed[1] 2
 ```
 
-The `record` function builds a record from its arguments:
+The `args` function builds an `Args` from its arguments:
 
 ```
-let r = record name: Alice age: 30
+let r = args name: Alice age: 30
 ```
 
-A key may repeat, and a lookup finds its latest value. Iterating a record
+A key may repeat, and a lookup finds its latest value. Iterating an `Args`
 yields key/value tuples in order, with a positional item's position as its key.
 
-Use `with` to replace keys and `without` to remove them in a new record:
+Use `with` to replace keys and `without` to remove them in a new `Args`:
 
 ```
 let updated = r.with status: ready
@@ -166,12 +167,12 @@ Spreading a repeated key into a call binds its first value to a parameter of
 that name, and a `**` or `...` rest takes the later ones in order. Without a
 rest, the repeats raise [UnexpectedKeyError](std.UnexpectedKeyError).
 
-See the [Record API](std.Record) for details.
+See the [Args API](std.Args) for details.
 
 ## Structs (`Struct`)
 
 Structs are mutable sequences of positional items and symbol-keyed items,
-like a record whose keys are fields. A struct has no methods of its own, so a
+like an `Args` whose keys are fields. A struct has no methods of its own, so a
 name reads or writes the item it keys:
 
 ```
@@ -186,15 +187,15 @@ one replaces its item in place, or adds an item at the end. Calling a name
 calls its item. Indexing reads and writes items by symbol or position.
 
 The `struct` function builds a struct from its arguments, and `Struct` from one
-spreadable source, as `Record` does:
+spreadable source, as `Args` does:
 
 ```
 let s = Struct {host: "localhost", port: 22}
 ```
 
 A key appears at most once, so building a struct with a repeated key raises
-[ValueError](std.ValueError). Iterating, spreading and unpacking work as for a
-record.
+[ValueError](std.ValueError). Iterating, spreading and unpacking work as for an
+`Args`.
 
 Since every plain name is an item, operations take the struct as an argument
 to a class method instead:
@@ -240,18 +241,18 @@ See the [Set API](std.Set) for methods such as `add`, `contains`,
 
 ## Spreading
 
-`...` spreads a value into an array, tuple, dictionary, or record literal, or
+`...` spreads a value into an array, tuple, dictionary, or args literal, or
 into a call's arguments. What it contributes depends on both the value and the
 context:
 
 | Context              | Spread input                          | Behavior                                                                          |
 | -------------------- | ------------------------------------- | --------------------------------------------------------------------------------- |
 | Arguments            | Array, tuple, set, [`Iter`](std.Iter) | Positional arguments, including pair elements                                     |
-| Arguments            | Dict, record, struct                  | Mixed arguments: sequential integer keys are positional, symbol keys are keywords |
+| Arguments            | Dict, `Args`, struct                  | Mixed arguments: sequential integer keys are positional, symbol keys are keywords |
 | Array or tuple       | Array, tuple, set, [`Iter`](std.Iter) | Positional elements                                                               |
-| Array or tuple       | Dict, record, struct                  | Positional elements; a keyed entry raises an error                                |
-| Dictionary or record | Array, tuple, set, [`Iter`](std.Iter) | Elements assigned incrementing positional keys                                    |
-| Dictionary or record | Dict, record, struct                  | Preserves keyed and positional entries                                            |
+| Array or tuple       | Dict, `Args`, struct                  | Positional elements; a keyed entry raises an error                                |
+| Dictionary or `Args` | Array, tuple, set, [`Iter`](std.Iter) | Elements assigned incrementing positional keys                                    |
+| Dictionary or `Args` | Dict, `Args`, struct                  | Preserves keyed and positional entries                                            |
 | Any                  | `kv()` adapter                        | Keyed entries; arrays and tuples reject them                                      |
 
 Spread a dictionary directly to preserve its keys:
@@ -262,7 +263,7 @@ let extended = {...base, age: 30}
 ```
 
 Spreading dicts preserves duplicate keys and order. Spreading any `Iter`,
-including a dict or record pair iterator, inserts its elements positionally, so
+including a dict or `Args` pair iterator, inserts its elements positionally, so
 `iter()` gives an array of a dict's key/value pairs:
 
 ```

@@ -566,7 +566,7 @@ pub(super) fn designation(tables: &Tables<'_>, decl: DeclId) -> Option<(Designat
         ("std", "Array") => (Designated::Array, DeclKind::Class),
         ("std", "Dict") => (Designated::Dict, DeclKind::Class),
         ("std", "Tuple") => (Designated::Intrinsic(Intrinsic::Tuple), DeclKind::Class),
-        ("std", "Record") => (Designated::Record, DeclKind::Class),
+        ("std", "Args") => (Designated::Args, DeclKind::Class),
         ("std", "Range") => (Designated::Range, DeclKind::Class),
         ("std", "Spread") => (Designated::Spread, DeclKind::Protocol),
         ("std", "Unpack") => (Designated::Unpack, DeclKind::Protocol),

@@ -829,14 +829,14 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     expr.span(),
                 ));
             }
-            Expr::Record { args, .. } => {
+            Expr::Args { args, .. } => {
                 let mut sig = Vec::new();
                 for arg in args.iter() {
                     sig.push(self.lower_arg(arg)?);
                 }
                 let sig = sig::Pack::new(sig.into_iter());
                 self.block.insts.push(Inst(
-                    InstInfo::Builtin(builtin::RECORD, self.packtab.id(&sig)),
+                    InstInfo::Builtin(builtin::ARGS, self.packtab.id(&sig)),
                     expr.span(),
                 ));
             }
@@ -1039,7 +1039,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 };
                 self.block
                     .insts
-                    .push(Inst(InstInfo::Builtin(builtin::ARGS, empty), *for_span));
+                    .push(Inst(InstInfo::Builtin(builtin::ARG_PACK, empty), *for_span));
 
                 let sig = if let Some(expr) = expr {
                     self.lower_expr(expr)?;
@@ -1129,7 +1129,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 };
                 self.block
                     .insts
-                    .push(Inst(InstInfo::Builtin(builtin::ARGS, empty), *for_span));
+                    .push(Inst(InstInfo::Builtin(builtin::ARG_PACK, empty), *for_span));
 
                 let sig = if let Some(expr) = expr {
                     self.lower_expr(expr)?;
@@ -1221,7 +1221,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 };
                 self.block
                     .insts
-                    .push(Inst(InstInfo::Builtin(builtin::ARGS, empty), *for_span));
+                    .push(Inst(InstInfo::Builtin(builtin::ARG_PACK, empty), *for_span));
 
                 let sig = if let Some(expr) = expr {
                     self.lower_expr(expr)?;
@@ -1523,7 +1523,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             self.packtab.id(&call)
         };
         self.block.insts.push(Inst(
-            InstInfo::Builtin(builtin::ARGS, empty),
+            InstInfo::Builtin(builtin::ARG_PACK, empty),
             node.tbranch.span,
         ));
 

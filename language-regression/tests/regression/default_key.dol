@@ -12,10 +12,10 @@ bind {foo: nil}
   :foo = 42
 assert_eq $foo nil
 
-bind record()
+bind args()
   :foo = 42
 assert_eq $foo 42
 
-bind record foo: nil
+bind args foo: nil
   :foo = 42
 assert_eq $foo nil

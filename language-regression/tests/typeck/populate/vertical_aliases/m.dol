@@ -2,7 +2,7 @@ pub class Num
 pub class Text
 pub class Table[_S @ {...}]
 pub class Tuple[*_Ts]
-pub class Record[**_Ks]
+pub class Args[**_Ks]
 pub class Tagged[_T, _S @ {...}]
 
 pub @let Shape = $
@@ -34,11 +34,11 @@ pub @let AppendedInline = Tagged[Num, {value: Text}]
 #        ^~~~~~~~~~~~~~: decl m.Tagged[m.Num, {value: m.Text}]
 pub let tagged @ Appended = ...
 
-pub @let Fields = Record ...$
-  #      ^~~~~~: decl m.Record[value: m.Text]
+pub @let Fields = Args ...$
+  #      ^~~~~~: decl m.Args[value: m.Text]
   value: Text
-pub @let FieldsInline = Record[...{value: Text}]
-#        ^~~~~~~~~~~~: decl m.Record[value: m.Text]
+pub @let FieldsInline = Args[...{value: Text}]
+#        ^~~~~~~~~~~~: decl m.Args[value: m.Text]
 pub let fields @ Fields = ...
 
 pub @let Choice = $

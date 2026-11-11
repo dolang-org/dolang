@@ -57,7 +57,7 @@ pub(crate) enum Collection {
     /// `(A, B)`
     Tuple,
     /// `(k: A, B)`
-    Record,
+    Args,
     /// `{k: A, B}`
     Dict,
 }
@@ -719,9 +719,9 @@ impl Renderer<'_> {
                 },
                 _ => ("(", ")"),
             },
-            // Only an explicitly keyed item makes parentheses a record
-            Collection::Record if keyed => ("(", ")"),
-            Collection::Record => return false,
+            // Only an explicitly keyed item makes parentheses an `Args`
+            Collection::Args if keyed => ("(", ")"),
+            Collection::Args => return false,
             // A lone repeated item is written as arguments
             Collection::Dict if self.repeated(arg).is_some() => return false,
             Collection::Dict => ("{", "}"),

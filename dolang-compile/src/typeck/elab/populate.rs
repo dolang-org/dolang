@@ -475,9 +475,9 @@ impl<'t, 'u> Populate<'t, 'u> {
                 let tuple = Designated::Intrinsic(Intrinsic::Tuple);
                 self.collection(tuple, self.schema(items))
             }
-            TypeExpr::Record { params, .. } if expected == Kind::Type => {
+            TypeExpr::Args { params, .. } if expected == Kind::Type => {
                 let items = self.items(group, params, false, depth);
-                self.collection(Designated::Record, self.schema(items))
+                self.collection(Designated::Args, self.schema(items))
             }
             TypeExpr::Array { elem, .. } if expected == Kind::Type => {
                 let elem = self.intern(group, elem, Kind::Type, depth);
@@ -578,7 +578,7 @@ impl<'t, 'u> Populate<'t, 'u> {
     }
 
     /// Report each item of a tuple form, parenthesized or `vertical`, that may admit
-    /// keyed items. An inclusion never makes a record or dict, so what it includes
+    /// keyed items. An inclusion never makes an `Args` or dict, so what it includes
     /// can't change the form's meaning.
     fn keyed_inclusions(&mut self, unit: UnitId, params: &[TypeParam], vertical: bool) {
         for param in params {
@@ -1852,10 +1852,10 @@ impl Report for KeyedInclusion {
             (true, false) => "`(*)` is a tuple of any positional items",
             (true, true) => "a vertical `*` alone admits any positional items",
             (false, false) => {
-                "a keyed item makes a record; to include keyed items without one, write `Record[...{...}]`"
+                "a keyed item makes an `Args`; to include keyed items without one, write `Args[...{...}]`"
             }
             (false, true) => {
-                "a keyed item makes a dict; to include keyed items in a record, apply `Record ...$` to these items"
+                "a keyed item makes a dict; to include keyed items in an `Args`, apply `Args ...$` to these items"
             }
         };
         vec![(NoteKind::Help, note.to_owned())]

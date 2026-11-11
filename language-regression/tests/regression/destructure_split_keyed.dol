@@ -42,7 +42,7 @@ assert_throws $error.UnexpectedKeyError str: "unexpected key item: 5" do
 # Spreading both rests passes what spreading the dict would
 let dd = {0: "x", 1: "y", n: 1}
 let *dp **dk = dd
-assert_eq (record ...dp ...dk) (record ...dd)
+assert_eq (args ...dp ...dk) (args ...dd)
 
 # A `*` rest spreads and unpacks the positional run; materialize to iterate
 let _ *pa **_ = {0: "a", 1: "b", 2: "c", n: 1}
@@ -64,8 +64,8 @@ pm.insert 2 c
 assert_throws $std.ConcurrencyError do
   [...pf]
 
-# Records behave the same
-let t1 *t2 **t3 = (record 1 2 a: 3)
+# `Args` behave the same
+let t1 *t2 **t3 = (args 1 2 a: 3)
 assert_eq [t1, t2] [1, (2,)]
 assert_eq (pairs t3) [(Tuple [:a:, 3])]
 
@@ -85,12 +85,12 @@ let **kw = {a: 1}
 assert_throws $error.MissingPosError do
   let _k1 *_ = kw
 
-# Argument packs: `*` gets a tuple and `**` a record, as in a call
+# Argument packs: `*` gets a tuple and `**` an `Args`, as in a call
 let a *as **ak = (args 1 k: 2 3)
 assert_eq $a 1
 assert_eq $as (3,)
 assert_eq $ak (k: 2)
-assert_eq (type ak) $Record
+assert_eq (type ak) $Args
 assert_throws $error.UnexpectedKeyError do
   let _a *_as = (args 1 k: 2)
 assert_throws $error.UnexpectedPosError do
@@ -118,7 +118,7 @@ assert_eq [a1, b1, k] [1, 2, 5]
 # A `...` rest keeps stray integer keys and later instances of a key
 let _x ...r1 = {0: "a", 5: "b", n: 1}
 assert_eq (pairs r1) [(Tuple [5, "b"]), (Tuple [:n:, 1])]
-let :dup ...r2 = (record dup: 1 dup: 2 b: 3)
+let :dup ...r2 = (args dup: 1 dup: 2 b: 3)
 assert_eq $dup 1
 assert_eq (pairs r2) [(Tuple [:dup:, 2]), (Tuple [:b:, 3])]
 

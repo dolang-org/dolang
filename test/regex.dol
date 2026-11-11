@@ -93,7 +93,7 @@ def split_iter_unpack()
   let head *tail **keys = re.split "p q r"
   assert_eq $head "p"
   assert_eq ([...tail]) ["q", "r"]
-  assert_eq $keys $record()
+  assert_eq $keys $args()
 
 #[test]
 def split_unpack_atomic()
@@ -166,12 +166,12 @@ def split_unpack_readonly()
 def iterator_spreads_are_positional()
   let re = Regex r"\s+"
   let parts = re.split "a b"
-  assert_eq (record ...parts) (record "a" "b")
+  assert_eq (args ...parts) (args "a" "b")
   let parts = re.split "a b"
   assert_eq (dict ...parts) {0: "a", 1: "b"}
   let words = Regex r"\w+"
   let matches = words.find "a b"
-  let found = record ...matches
+  let found = args ...matches
   assert_eq $found.len 2
   assert_eq (str found[0]) "a"
   assert_eq (str found[1]) "b"

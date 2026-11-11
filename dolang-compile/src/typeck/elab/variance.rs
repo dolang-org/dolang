@@ -615,8 +615,8 @@ impl<'t> Collect<'t, '_> {
                 let role = Designated::Intrinsic(Intrinsic::Tuple);
                 self.designated(role, u, |this, u| this.items(params, u));
             }
-            TypeExpr::Record { params, .. } => {
-                self.designated(Designated::Record, u, |this, u| this.items(params, u));
+            TypeExpr::Args { params, .. } => {
+                self.designated(Designated::Args, u, |this, u| this.items(params, u));
             }
             TypeExpr::Array { elem, .. } => {
                 self.designated(Designated::Array, u, |this, u| this.ty(elem, u));

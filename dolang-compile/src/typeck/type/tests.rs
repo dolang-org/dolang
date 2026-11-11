@@ -1072,7 +1072,7 @@ fn schema_order_multiplicity_and_argument_modes_are_structural() {
         }
     }
     assert_eq!(forms.len(), 9);
-    let (_, record, __source) = declare(&mut db, DeclKind::Class, "Record");
+    let (_, args, __source) = declare(&mut db, DeclKind::Class, "Args");
     let key = db.intern_symbol("item");
     let mut apps = FxHashSet::default();
     for arg in [
@@ -1083,7 +1083,7 @@ fn schema_order_multiplicity_and_argument_modes_are_structural() {
         apps.insert(intern(
             &mut db,
             Type::Apply {
-                base: record,
+                base: args,
                 args: vec![arg].into(),
                 kind: Kind::Type,
             },

@@ -646,7 +646,7 @@ pub class SchemaType: TypeExpr
   pub def items self -> Array[TypeItem]
     ...
 
-# A tuple or record type, such as `(Int, Str)` or `(name: Str)`.
+# A tuple or `Args` type, such as `(Int, Str)` or `(name: Str)`.
 pub class ParensType: TypeExpr
   # The items, in the order written.
   #[getter]
