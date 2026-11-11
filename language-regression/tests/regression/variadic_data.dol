@@ -26,29 +26,13 @@ assert_eq (Array atomic[1]) ["baz", "qux"]
 let items = [1, 2, 3].iter()
 assert_eq (Array items) [1, 2, 3]
 
-let arr = [...{1, foo: "bar", 2}]
-assert_eq $arr[0][0] 0
-assert_eq $arr[0][1] 1
-assert_eq $arr[1][0] :foo:
-assert_eq $arr[1][1] "bar"
-assert_eq $arr[2][0] 1
-assert_eq $arr[2][1] 2
-
-arr = Array {1, foo: "bar", 2}
-assert_eq $arr[0][0] 0
-assert_eq $arr[0][1] 1
-assert_eq $arr[1][0] :foo:
-assert_eq $arr[1][1] "bar"
-assert_eq $arr[2][0] 1
-assert_eq $arr[2][1] 2
-
-let tup = Tuple({1, foo: "bar", 2})
-assert_eq $tup[0][0] 0
-assert_eq $tup[0][1] 1
-assert_eq $tup[1][0] :foo:
-assert_eq $tup[1][1] "bar"
-assert_eq $tup[2][0] 1
-assert_eq $tup[2][1] 2
+# Sequences take only a dict's positional items; `.iter()` gives its pairs.
+assert_eq [...{1, 2}] [1, 2]
+assert_throws $std.UnexpectedKeyError do [...{1, foo: "bar", 2}]
+assert_throws $std.UnexpectedKeyError do Array {1, foo: "bar", 2}
+assert_throws $std.UnexpectedKeyError do Tuple({1, foo: "bar", 2})
+assert_eq (Array({1, foo: "bar", 2}.iter())) [(0, 1), (:foo:, "bar"), (1, 2)]
+assert_eq (Tuple({1, 2})) (1, 2)
 
 # Lowercase collection factories accept literal-like variadic arguments.
 assert_eq (array()) []

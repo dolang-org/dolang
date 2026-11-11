@@ -26,7 +26,7 @@ assert_eq (pairs kq) [(Tuple [1, "y"]), (Tuple [5, "z"]), (Tuple [:n:, 1])]
 
 # ... and spreads them as keys, not positionals
 let **ko = {0: "a", n: 1}
-assert_eq [...{...ko}] [(Tuple [0, "a"]), (Tuple [:n:, 1])]
+assert_eq [...{...ko}.iter()] [(Tuple [0, "a"]), (Tuple [:n:, 1])]
 let **ka = {0: "a"}
 assert_throws $error.UnexpectedKeyError do
   args ...ka

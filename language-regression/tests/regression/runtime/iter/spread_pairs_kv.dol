@@ -17,9 +17,11 @@ assert_throws $std.TypeError do for pair = adapter
 assert_throws $std.TypeError do adapter.next()
 assert_throws $std.TypeError do adapter.map(do |x| x)
 
-# Containers retain pair conversion, while their iterators spread positionally.
-assert_eq [...{a: 1, b: 2}] [(:a:, 1), (:b:, 2)]
-assert_eq (Tuple(record(a: 1, b: 2))) ((:a:, 1), (:b:, 2))
+# Keyed containers reject sequences, while their iterators spread pairs
+# positionally.
+assert_throws $std.UnexpectedKeyError do [...{a: 1, b: 2}]
+assert_throws $std.UnexpectedKeyError do Tuple(record(a: 1, b: 2))
+assert_eq [...{a: 1, b: 2}.iter()] [(:a:, 1), (:b:, 2)]
 assert_eq (capture(...Iterable.iter(record(a: 1, b: 2)))) (record (:a:, 1) (:b:, 2))
 assert_eq {...Iterable.iter(record(a: 1, b: 2))} {(:a:, 1), (:b:, 2)}
 assert_throws $std.UnexpectedKeyError do capture ...[(0, "zero")].kv()

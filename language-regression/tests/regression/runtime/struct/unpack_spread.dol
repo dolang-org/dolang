@@ -13,11 +13,12 @@ assert_eq $keyed (record c: 3)
 assert_throws $std.RuntimeError str: "missing key item: b" do
   let b: _b = struct a: 1
 
-# Spreading passes items as arguments, or as pairs into a sequence
+# Spreading passes items as arguments; a sequence rejects keyed items
 def collect ...args
   args
 assert_eq (collect ...(struct 1 a: 2)) (record 1 a: 2)
-assert_eq [...(struct 1 a: 2)] [(0, 1), (:a:, 2)]
+assert_throws $std.UnexpectedKeyError do [...(struct 1 a: 2)]
+assert_eq [...(struct 1 2)] [1, 2]
 assert_eq (dict ...(struct a: 1)) {a: 1}
 
 # Iteration sees the items as they were when it began
@@ -27,4 +28,4 @@ for k v = s
   s.b = 2
   pairs.push (k, v)
 assert_eq $pairs [(:a:, 1)]
-assert_eq [...s] [(:a:, 1), (:b:, 2)]
+assert_eq [...Iterable.iter(s)] [(:a:, 1), (:b:, 2)]

@@ -249,7 +249,7 @@ context:
 | Arguments            | Array, tuple, set, [`Iter`](std.Iter) | Positional arguments, including pair elements                                     |
 | Arguments            | Dict, record, struct                  | Mixed arguments: sequential integer keys are positional, symbol keys are keywords |
 | Array or tuple       | Array, tuple, set, [`Iter`](std.Iter) | Positional elements                                                               |
-| Array or tuple       | Dict, record, struct                  | Key/value pairs                                                                   |
+| Array or tuple       | Dict, record, struct                  | Positional elements; a keyed entry raises an error                                |
 | Dictionary or record | Array, tuple, set, [`Iter`](std.Iter) | Elements assigned incrementing positional keys                                    |
 | Dictionary or record | Dict, record, struct                  | Preserves keyed and positional entries                                            |
 | Any                  | `kv()` adapter                        | Keyed entries; arrays and tuples reject them                                      |
@@ -262,7 +262,13 @@ let extended = {...base, age: 30}
 ```
 
 Spreading dicts preserves duplicate keys and order. Spreading any `Iter`,
-including a dict or record pair iterator, inserts its elements positionally.
+including a dict or record pair iterator, inserts its elements positionally, so
+`iter()` gives an array of a dict's key/value pairs:
+
+```
+let d = {a: 1, b: 2}
+assert_eq [...d.iter()] [(:a:, 1), (:b:, 2)]
+```
 
 Use `kv()` when you want an iterable of pairs to spread as key/value entries:
 

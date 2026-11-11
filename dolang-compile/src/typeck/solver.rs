@@ -414,6 +414,8 @@ pub(crate) enum Step {
     Restricted,
     /// The empty schema below a schema that must admit it, once it's solved
     Empty,
+    /// A schema variable's lower bound below the lanes its items can occupy
+    Lanes,
     /// A class's member below the one a protocol it's judged structurally
     /// below requires, or above it if `reversed`, as a field's is too
     Member {

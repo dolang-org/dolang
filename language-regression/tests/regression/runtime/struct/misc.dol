@@ -14,7 +14,7 @@ assert_eq $s.host localhost
 s.port = 2222
 assert_eq $s.port 2222
 s.user = "root"
-assert_eq [...s] [(:host:, "localhost"), (:port:, 2222), (:user:, "root")]
+assert_eq [...Iterable.iter(s)] [(:host:, "localhost"), (:port:, 2222), (:user:, "root")]
 
 # No plain name is a method, so an absent name is a missing field
 assert_throws $FieldError str: "no such field: len" do s.len
@@ -37,7 +37,7 @@ assert_eq $p[:a:] 3
 p[0] = 9
 p[:a:] = 4
 p[:b:] = 5
-assert_eq [...p] [(0, 9), (1, 2), (:a:, 4), (:b:, 5)]
+assert_eq [...Iterable.iter(p)] [(0, 9), (1, 2), (:a:, 4), (:b:, 5)]
 assert_throws $IndexError do p[2]
 assert_throws $IndexError do p[:z:]
 assert_throws $IndexError do p[2] = 0
@@ -88,7 +88,7 @@ assert (type custom MyStruct)
 custom.name = "Bob"
 assert_eq $custom.name Bob
 custom.age = 30
-assert_eq [...custom] [(:name:, "Bob"), (:age:, 30)]
+assert_eq [...Iterable.iter(custom)] [(:name:, "Bob"), (:age:, 30)]
 assert_throws $FieldError str: "no such field: missing" do custom.missing
 
 class Named: MyStruct

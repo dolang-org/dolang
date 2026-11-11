@@ -314,11 +314,11 @@ impl<'v> Protocol<'v> for Struct<'v> {
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        context: SpreadContext,
+        _context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        record::spread_items(strand, &borrow.items, context, sink)
+        record::spread_items(strand, &borrow.items, sink)
     }
 
     async fn op_unpack<'a, 's>(

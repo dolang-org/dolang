@@ -570,9 +570,9 @@ pub class Row: @Index[Int | Str, Value] @Unpack[{...}, Rest: RowRest]
 
 # Reads leftover columns without advancing a cursor.
 #
-# A positional rest spreads and iterates values; a keyed rest iterates
-# name/value pairs and spreads them as pairs in sequences and keyed items in
-# calls and dictionaries. Statement and row invalidation apply to the rest.
+# A positional rest spreads and iterates values. A keyed rest iterates
+# name/value pairs and spreads keyed items, so it cannot spread into an array
+# or tuple. Statement and row invalidation apply to the rest.
 pub @class RowRest: Iterable[Value] Unpack[{...}, Rest: RowRest]
 
 

@@ -44,7 +44,7 @@ assert_eq (type (custom.with a: 9)) $Record
 assert_eq (custom.with a: 9) (original.with a: 9)
 assert_eq (type (custom.without :a:)) $Record
 assert_eq (custom.without :a:) (original.without :a:)
-assert_eq [...custom] [...original]
+assert_eq [...Iterable.iter(custom)] [...Iterable.iter(original)]
 
 def consume :status
   status

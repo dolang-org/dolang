@@ -18,7 +18,8 @@ assert_eq $mixed (record 1 2 a: 3)
 let r = (name: "Alice", age: 30)
 assert_eq (...r, age: 31) (record name: "Alice" age: 30 age: 31)
 
-# Without a static key, a spread makes a tuple of the record's pairs
-let spread = (...(record a: 1))
+# Without a static key, a spread makes a tuple, which rejects keyed items
+let spread = (...(record 1 2))
 assert (type spread Tuple)
-assert_eq $spread (tuple((:a:, 1)))
+assert_eq $spread (1, 2)
+assert_throws $std.UnexpectedKeyError do (...(record a: 1))

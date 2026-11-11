@@ -1365,12 +1365,25 @@ impl<'a> Flow<'a, '_> {
                             }
                             problems
                         }
-                        OriginKind::Misfit(misfit) => vec![Problem::Misfit {
-                            span,
-                            found: actual
-                                .map_or(Shown::Type("?".to_owned()), |found| self.subject(found)),
-                            misfit,
-                        }],
+                        OriginKind::Misfit(misfit) => {
+                            let found = actual
+                                .map_or(Shown::Type("?".to_owned()), |found| self.subject(found));
+                            let keyed = (misfit == Misfit::Spreadable)
+                                .then(|| {
+                                    causes.iter().find_map(|cause| {
+                                        self.keyed_excess(&cause.path, cause.contradiction)
+                                    })
+                                })
+                                .flatten();
+                            match keyed {
+                                Some(item) => vec![Problem::KeyedSpread { span, found, item }],
+                                None => vec![Problem::Misfit {
+                                    span,
+                                    found,
+                                    misfit,
+                                }],
+                            }
+                        }
                         _ => {
                             let mut notes = Vec::new();
                             for cause in causes.iter() {
@@ -1750,6 +1763,24 @@ impl<'a> Flow<'a, '_> {
             last = Some(around);
         }
         Some(notes)
+    }
+
+    /// The keyed item a positional-only schema refuses, where that's what
+    /// `contradiction` at the end of `path` is: what a sequence can't spread
+    fn keyed_excess(&self, path: &[Node], contradiction: Contradiction) -> Option<String> {
+        let Contradiction::Excess(index) = contradiction else {
+            return None;
+        };
+        let (Some(schema), _) = path.last()?.sides? else {
+            return None;
+        };
+        let Type::Schema(items) = self.db.ty(schema) else {
+            return None;
+        };
+        if !matches!(items.get(index)?.element, Element::Keyed { .. }) {
+            return None;
+        }
+        self.schema_item(schema, index)
     }
 
     /// A schema's top-level item as a diagnostic names it: quoted without the

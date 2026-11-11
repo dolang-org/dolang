@@ -16,20 +16,20 @@ def spread_pos ...args
 
 def split_args ...args
   let *pos **keyed = args
-  [[...pos], [...keyed], [...args]]
+  [[...pos], [...keyed.iter()], [...args.iter()]]
 
 def consume_after_pos ...args
   let *pos = args
-  [[...pos], [...args]]
+  [[...pos], [...args.iter()]]
 
 def iter_twice ...args
-  [[...args], [...args]]
+  [[...args.iter()], [...args.iter()]]
 
 def spread_twice ...args
   [(collect_pairs ...args), (collect_pairs ...args)]
 
 def collect_pairs ...args
-  [...args]
+  [...args.iter()]
 
 def rest_type ...args
   args

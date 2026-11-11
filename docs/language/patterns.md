@@ -70,10 +70,10 @@ assert_eq {...options} {color: "red"}
 
 `*` or `**` alone discards surplus items entirely.
 
-A rest iterates the way it spreads. A `*` rest, or the rest of an array or
-other sequence, yields its values. A `**` rest, or a `...` rest of a dictionary
-or record, yields its entries as `(key, value)` tuples, with positional items
-keyed by index:
+A rest spreads as its source would from where unpacking stopped. Iterating a
+`*` rest, or the rest of an array or other sequence, yields its values.
+Iterating a `**` rest, or a `...` rest of a dictionary or record, yields its
+entries as `(key, value)` tuples, with positional items keyed by index:
 
 ```
 let _ *values **options = {1, 2, color: "red"}

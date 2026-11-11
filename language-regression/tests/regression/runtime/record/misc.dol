@@ -59,7 +59,7 @@ let dup = record a: 1 b: 2 a: 3
 assert_eq $dup[:a:] 3
 assert_eq (dup.get :a:) 3
 assert_eq $dup[:b:] 2
-assert_eq [...dup] [(:a:, 1), (:b:, 2), (:a:, 3)]
+assert_eq [...dup.iter()] [(:a:, 1), (:b:, 2), (:a:, 3)]
 
 # A record holds positional items and symbol keys. Integer keys counting up
 # from 0 are positional, as when spreading a dict.

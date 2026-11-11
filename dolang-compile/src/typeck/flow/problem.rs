@@ -76,6 +76,12 @@ pub(crate) enum Problem {
         found: Shown,
         misfit: Misfit,
     },
+    /// A value spread into a sequence that may have a keyed item
+    KeyedSpread {
+        span: Span,
+        found: Shown,
+        item: String,
+    },
     /// A pattern that can't unpack a value of the type found
     Impossible {
         span: Span,
@@ -222,6 +228,7 @@ impl Report for Problem {
             | Problem::Required { span, .. }
             | Problem::Unrepeatable { span, .. }
             | Problem::Misfit { span, .. }
+            | Problem::KeyedSpread { span, .. }
             | Problem::Impossible { span, .. }
             | Problem::Annotation { span, .. }
             | Problem::Cast { span, .. }
@@ -279,6 +286,10 @@ impl Report for Problem {
                 .map(|reason| (NoteKind::Info, reason.clone()))
                 .collect(),
             Problem::Unguaranteed { note, .. } => vec![(NoteKind::Info, note.clone())],
+            Problem::KeyedSpread { .. } => vec![(
+                NoteKind::Help,
+                "spread its `.iter()` for `(key, value)` pairs".to_owned(),
+            )],
             Problem::AmbiguousCall { survivors, .. } => survivors
                 .iter()
                 .map(|survivor| (NoteKind::Info, format!("`{survivor}` accepts them")))
@@ -346,6 +357,9 @@ impl Report for Problem {
                     Misfit::Class => "a class object",
                 };
                 write!(w, "{found} is not {required}")
+            }
+            Problem::KeyedSpread { found, item, .. } => {
+                write!(w, "a sequence can't take {item}, which {found} spreads")
             }
             Problem::Impossible { found, .. } => {
                 write!(w, "{found} can never unpack as this pattern")

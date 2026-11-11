@@ -658,13 +658,9 @@ impl<'v> Dict<'v> {
         next_pos: &mut Option<i64>,
         mut key: Value<'v>,
         mut value: Value<'v>,
-        context: SpreadContext,
         sink: &mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        if context == SpreadContext::Sequence {
-            value = Value::from_object(tuple::tuple(strand, [key, value]));
-            sink.positional(strand, Slot::new(&mut value))
-        } else if let Some(pos) = *next_pos
+        if let Some(pos) = *next_pos
             && key.to_i64(strand).ok() == Some(pos)
         {
             *next_pos = pos.checked_add(1);
@@ -1579,7 +1575,7 @@ impl<'v> Protocol<'v> for Unpack<'v> {
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        context: SpreadContext,
+        _context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
@@ -1619,7 +1615,7 @@ impl<'v> Protocol<'v> for Unpack<'v> {
             if state.is_run() {
                 sink.positional(strand, Slot::new(&mut value))?;
             } else {
-                Dict::spread_key_value(strand, &mut next_pos, key, value, context, sink)?;
+                Dict::spread_key_value(strand, &mut next_pos, key, value, sink)?;
             }
         }
     }
@@ -2197,7 +2193,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        context: SpreadContext,
+        _context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let dict = this.borrow(strand)?;
@@ -2218,7 +2214,6 @@ impl<'v> Protocol<'v> for Dict<'v> {
                     &mut next_pos,
                     bucket.key.dup(),
                     bucket.value.at(*subindex).dup(),
-                    context,
                     sink,
                 )?;
                 i += 1;

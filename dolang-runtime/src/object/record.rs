@@ -219,23 +219,15 @@ pub(crate) fn lt_items<'v, 's>(
     Ok(right.len() > left.len())
 }
 
-/// Spreads `items` into `sink`: as `(key, value)` pairs in a sequence,
-/// otherwise as positional and symbol-keyed items.
+/// Spreads `items` into `sink` as positional and symbol-keyed items.
 pub(crate) fn spread_items<'v, 's>(
     strand: &mut Strand<'v, 's>,
     items: &[ArgItem<'v>],
-    context: SpreadContext,
     sink: &mut dyn Spread<'v, 's>,
 ) -> Result<'v, 's, ()> {
-    let mut int = 0;
     for (key, value) in items {
         let mut value = value.dup();
-        if context == SpreadContext::Sequence {
-            int += i64::from(key.is_none());
-            let key = key_value(strand, key, int - i64::from(key.is_none()));
-            let mut pair = Value::from_object(tuple::tuple(strand, [key, value]));
-            sink.positional(strand, Slot::new(&mut pair))?;
-        } else if let Some(key) = key {
+        if let Some(key) = key {
             let key = unsafe { Sym::from_obj(key) };
             sink.symbol(strand, key, Slot::new(&mut value))?;
         } else {
@@ -808,7 +800,7 @@ impl<'v> Protocol<'v> for Rest<'v> {
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        context: SpreadContext,
+        _context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
@@ -819,13 +811,7 @@ impl<'v> Protocol<'v> for Rest<'v> {
             borrow.int,
         );
         while let Some((index, key, mut value)) = iter.next_item() {
-            if context == SpreadContext::Sequence {
-                let positional = key.is_none();
-                let key = key_value(strand, &key, iter.int);
-                iter.int += i64::from(positional);
-                let mut pair = Value::from_object(tuple::tuple(strand, [key, value]));
-                sink.positional(strand, Slot::new(&mut pair))?;
-            } else if let Some(key) = key {
+            if let Some(key) = key {
                 let key = unsafe { Sym::from_obj(&key) };
                 sink.symbol(strand, key, Slot::new(&mut value))?;
             } else {
@@ -1103,11 +1089,11 @@ impl<'v> Protocol<'v> for Record<'v> {
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        context: SpreadContext,
+        _context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        spread_items(strand, &borrow.items, context, sink)
+        spread_items(strand, &borrow.items, sink)
     }
 
     async fn op_unpack<'a, 's>(

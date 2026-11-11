@@ -1,0 +1,43 @@
+# A sequence spread takes only positional items.
+pub def positional_dict()
+  let xs = [...{"x", "y"}]
+  let _ = xs
+  #       ^~: flow [std.Str]
+
+pub def keyed_dict d @ Dict[Sym, Int]
+  let _x = [...d]
+  # error: a sequence can't take `**std.Int`, which `std.Spread[std.Sym, std.Int]` spreads
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _x = [...d]
+  #    |                ^
+  #    |
+  #    = help: spread its `.iter()` for `(key, value)` pairs
+
+pub def keyed_record_array()
+  let r = (a: 1, 2)
+  let _x = [...r]
+  # error: a sequence can't take `a: std.Int`, which `std.Spread[{a: std.Int, std.Int}]` spreads
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _x = [...r]
+  #    |                ^
+  #    |
+  #    = help: spread its `.iter()` for `(key, value)` pairs
+
+pub def keyed_record_tuple()
+  let r = (a: 1, 2)
+  let _x = (...r,)
+  # error: a sequence can't take `a: std.Int`, which `std.Spread[{a: std.Int, std.Int}]` spreads
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _x = (...r,)
+  #    |                ^
+  #    |
+  #    = help: spread its `.iter()` for `(key, value)` pairs
+
+# Iterating gives the pairs.
+pub def pairs d @ Dict[Sym, Int]
+  let xs = [...d.iter()]
+  let _ = xs
+  #       ^~: flow [(std.Sym, std.Int)]

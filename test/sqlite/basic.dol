@@ -190,8 +190,9 @@ def split_rest_unpack()
 
       for row = stmt.query()
         let **named = row
+        assert_throws $UnexpectedKeyError do [...named]
         let pairs = $
-          for k v = [...named]
+          for k v = [...named.iter()]
             - (Tuple [k, v])
         assert_eq $pairs [(Tuple [:a:, 1]), (Tuple [:b:, "two"]), (Tuple [:c:, 3.0])]
         # Iterating the rest directly yields the same pairs, repeatedly
