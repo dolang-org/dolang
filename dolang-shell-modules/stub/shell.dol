@@ -497,12 +497,46 @@ do -> Never
 # The error's message is followed by its backtrace: a line for each call,
 # showing the code the call was running, with that code marked. Code already
 # shown for an earlier call isn't shown again.
+# [`render_backtrace`](shell.render_backtrace) formats a backtrace alone.
 pub def render_error
   # Error to format.
   error @ Value
   # Backtrace to show. By default, that of the exception being handled, and
   # none when there isn't one; `nil` shows none.
   :backtrace @ (inspect.Backtrace | nil) = ...
+do -> term.Text
+  ...
+
+# Formats a backtrace the way [`render_error`](shell.render_error) shows one.
+#
+# Each call gets a numbered line with the code it was running, marked. Code
+# already shown for an earlier call isn't shown again. An empty backtrace
+# formats as empty text.
+#
+# ## Example
+#
+# ```
+# for info = strand.snapshot()
+#   echo "strand $(info.strand.id):"
+#   echo $render_backtrace(info.backtrace)
+# ```
+pub def render_backtrace
+  # Backtrace to format.
+  backtrace @ inspect.Backtrace
+do -> term.Text
+  ...
+
+# Formats a single frame of a backtrace: its call and source location,
+# followed by the code it was running, marked.
+#
+# Unlike [`render_backtrace`](shell.render_backtrace), the line isn't
+# numbered.
+pub def render_frame
+  # Frame to format.
+  frame @ inspect.Frame
+  # Whether to show the frame's code. With `false`, the result is a single
+  # line.
+  :code @ Bool = true
 do -> term.Text
   ...
 

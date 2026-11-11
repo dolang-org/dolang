@@ -98,6 +98,103 @@ where
         .collect()
 }
 
+/// Append the header line of `entry`, and, when `code` gives an indent and
+/// width, its code in lines of at most that width
+fn render_frame_into(
+    out: &mut String,
+    entry: &RenderedFrame,
+    cwd: Option<&Path>,
+    source_cache: &mut SourceCache,
+    code: Option<(&str, Option<usize>)>,
+) {
+    out.push_str(&render_styled(
+        Style::new().fg_color(Some(AnsiColor::White.into())),
+        &entry.module,
+    ));
+    out.push_str(&render_styled(Style::new().dimmed(), "."));
+    if let Some(method) = &entry.method {
+        out.push_str(&render_styled(
+            Style::new().fg_color(Some(AnsiColor::White.into())),
+            &entry.receiver,
+        ));
+        out.push_str(&render_styled(Style::new().dimmed(), "."));
+        out.push_str(&render_styled(
+            Style::new().fg_color(Some(AnsiColor::Blue.into())),
+            method,
+        ));
+    } else {
+        out.push_str(&render_styled(
+            Style::new().fg_color(Some(AnsiColor::Blue.into())),
+            &entry.receiver,
+        ));
+    }
+    let Some((source_path, span)) = &entry.source else {
+        return;
+    };
+    let path = Path::new(source_path.as_str());
+    let path = cwd
+        .and_then(|cwd| path.strip_prefix(cwd).ok())
+        .unwrap_or(path);
+    let start = span.start();
+    let colon = render_styled(Style::new().fg_color(Some(AnsiColor::Yellow.into())), ":");
+    let number = |n: u32| render_styled(Style::new().fg_color(Some(AnsiColor::Magenta.into())), n);
+    out.push(' ');
+    out.push_str(&render_styled(Style::new().dimmed(), "at"));
+    out.push(' ');
+    out.push_str(&path.display().to_string());
+    out.push_str(&colon);
+    out.push_str(&number(start.line_number()));
+    out.push_str(&colon);
+    out.push_str(&number(start.column_number()));
+    if let Some((indent, width)) = code
+        && let Some(snippet) = source_cache.render_snippet(source_path, *span, width)
+    {
+        for line in snippet.lines() {
+            out.push('\n');
+            if !line.is_empty() {
+                out.push_str(indent);
+                out.push_str(line);
+            }
+        }
+    }
+}
+
+/// Append the frames of a backtrace, numbered, each frame's code shown once
+/// in lines of at most `cols` columns
+fn render_frames(
+    out: &mut String,
+    backtrace: &[RenderedFrame],
+    cwd: Option<&Path>,
+    cols: Option<u16>,
+) {
+    let width = backtrace.len().saturating_sub(1).to_string().len();
+    let source_indent = " ".repeat(width + 4);
+    let snippet_width = cols.map(|cols| usize::from(cols).saturating_sub(source_indent.len()));
+    let mut source_cache = SourceCache::default();
+    let mut rendered_sources = HashSet::new();
+    for (i, entry) in backtrace.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str("  ");
+        out.push_str(&format!(
+            "{}{}",
+            render_styled(
+                Style::new().fg_color(Some(AnsiColor::Magenta.into())),
+                format!("{i:>width$}")
+            ),
+            render_styled(Style::new().fg_color(Some(AnsiColor::Yellow.into())), ":")
+        ));
+        out.push(' ');
+        let code = entry
+            .source
+            .as_ref()
+            .filter(|source| rendered_sources.insert(*source))
+            .map(|_| (source_indent.as_str(), snippet_width));
+        render_frame_into(out, entry, cwd, &mut source_cache, code);
+    }
+}
+
 /// Render `message` and the frames of its backtrace, each frame's code shown
 /// once in lines of at most `cols` columns
 fn render_message_backtrace_frames(
@@ -111,78 +208,10 @@ fn render_message_backtrace_frames(
         Style::new().fg_color(Some(AnsiColor::Red.into())).bold(),
         message,
     ));
-    out.push('\n');
-
-    let width = backtrace.len().saturating_sub(1).to_string().len();
-    let source_indent = " ".repeat(width + 4);
-    let snippet_width = cols.map(|cols| usize::from(cols).saturating_sub(source_indent.len()));
-    let mut source_cache = SourceCache::default();
-    let mut rendered_sources = HashSet::new();
-    for (i, entry) in backtrace.iter().enumerate() {
-        out.push_str("  ");
-        out.push_str(&format!(
-            "{}{}",
-            render_styled(
-                Style::new().fg_color(Some(AnsiColor::Magenta.into())),
-                format!("{i:>width$}")
-            ),
-            render_styled(Style::new().fg_color(Some(AnsiColor::Yellow.into())), ":")
-        ));
-        out.push(' ');
-        out.push_str(&render_styled(
-            Style::new().fg_color(Some(AnsiColor::White.into())),
-            &entry.module,
-        ));
-        out.push_str(&render_styled(Style::new().dimmed(), "."));
-        if let Some(method) = &entry.method {
-            out.push_str(&render_styled(
-                Style::new().fg_color(Some(AnsiColor::White.into())),
-                &entry.receiver,
-            ));
-            out.push_str(&render_styled(Style::new().dimmed(), "."));
-            out.push_str(&render_styled(
-                Style::new().fg_color(Some(AnsiColor::Blue.into())),
-                method,
-            ));
-        } else {
-            out.push_str(&render_styled(
-                Style::new().fg_color(Some(AnsiColor::Blue.into())),
-                &entry.receiver,
-            ));
-        }
-        if let Some((source_path, span)) = &entry.source {
-            let path = Path::new(source_path.as_str());
-            let path = cwd
-                .and_then(|cwd| path.strip_prefix(cwd).ok())
-                .unwrap_or(path);
-            let start = span.start();
-            let colon = render_styled(Style::new().fg_color(Some(AnsiColor::Yellow.into())), ":");
-            let number =
-                |n: u32| render_styled(Style::new().fg_color(Some(AnsiColor::Magenta.into())), n);
-            out.push(' ');
-            out.push_str(&render_styled(Style::new().dimmed(), "at"));
-            out.push(' ');
-            out.push_str(&path.display().to_string());
-            out.push_str(&colon);
-            out.push_str(&number(start.line_number()));
-            out.push_str(&colon);
-            out.push_str(&number(start.column_number()));
-            if rendered_sources.insert((source_path, *span))
-                && let Some(snippet) =
-                    source_cache.render_snippet(source_path, *span, snippet_width)
-            {
-                for line in snippet.lines() {
-                    out.push('\n');
-                    if !line.is_empty() {
-                        out.push_str(&source_indent);
-                        out.push_str(line);
-                    }
-                }
-            }
-        }
+    if !backtrace.is_empty() {
         out.push('\n');
+        render_frames(&mut out, backtrace, cwd, cols);
     }
-    out.pop();
     out
 }
 
@@ -225,6 +254,52 @@ pub(crate) fn render_error_value<'v, 's>(
         cwd.as_deref(),
         crate::stderr_cols(strand),
     ))
+}
+
+/// Render `backtrace` as [`render_error_value`] renders the backtrace of an
+/// error
+pub(crate) fn render_backtrace_value<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    backtrace: &Value<'v>,
+) -> Result<'v, 's, String> {
+    let Some(backtrace) = backtrace.as_backtrace(strand) else {
+        return Err(Error::type_error(strand, "expected inspect.Backtrace"));
+    };
+    let frames = collect_frames(backtrace);
+    let cwd = std::env::current_dir().ok();
+    let mut out = String::new();
+    render_frames(
+        &mut out,
+        &frames,
+        cwd.as_deref(),
+        crate::stderr_cols(strand),
+    );
+    Ok(out)
+}
+
+/// Render the `inspect.Frame` `frame` on its own, and its code if `code`
+pub(crate) fn render_frame_value<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    frame: &Value<'v>,
+    code: bool,
+) -> Result<'v, 's, String> {
+    let Some(frame) = frame.as_backtrace_frame(strand) else {
+        return Err(Error::type_error(strand, "expected inspect.Frame"));
+    };
+    let frames = collect_frames([frame]);
+    let cwd = std::env::current_dir().ok();
+    const INDENT: &str = "  ";
+    let width =
+        crate::stderr_cols(strand).map(|cols| usize::from(cols).saturating_sub(INDENT.len()));
+    let mut out = String::new();
+    render_frame_into(
+        &mut out,
+        &frames[0],
+        cwd.as_deref(),
+        &mut SourceCache::default(),
+        code.then_some((INDENT, width)),
+    );
+    Ok(out)
 }
 
 async fn write_preformatted_stderr<'v, 's>(

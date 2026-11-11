@@ -121,3 +121,83 @@ def backtrace_shows_whole_span()
     let plain = str $term.preformat("".join(output))
     assert (plain.contains "- first")
     assert (plain.contains "- second")
+
+#[test]
+def backtrace()
+  let rendered = shell.render_backtrace $strand.backtrace()
+  assert_eq (type rendered) $term.Text
+  let plain = str $rendered
+  assert (plain.contains "  0: ")
+  assert (plain.contains "diagnostic.dol:")
+  assert (plain.contains "strand.backtrace()")
+  assert (!plain.ends_with("\n"))
+
+#[test]
+def backtrace_empty()
+  # A strand that hasn't started has an empty backtrace.
+  let pending = spawn do nil
+  assert_eq (str(shell.render_backtrace(pending.backtrace()))) ""
+  pending.join()
+
+#[test]
+def backtrace_bad_type()
+  let type_err = try
+    shell.render_backtrace "bad"
+  catch e
+    e
+  assert_eq (str type_err) "type error: expected inspect.Backtrace"
+
+#[test]
+def backtrace_code_is_unique()
+  fs.with_temp_dir do |dir|
+    let path = (dir / "backtrace.dol")
+    path.write r|
+      import strand shell
+      def rec n
+        if (n > 0)
+          rec (n - 1)
+        else
+          strand.backtrace()
+      shell.stdout.write $(shell.render_backtrace(rec(2)).encode())
+    let output = []
+    run $shell.exe --no-cache $path stdout: $output
+    let plain = str $term.preformat("".join(output))
+    assert (plain.contains "backtrace.dol:4")
+    assert_eq (Array(plain.split("rec (n - 1)")).len - 1) 1
+
+#[test]
+def frame()
+  let first = strand.backtrace().iter().next()
+  let rendered = shell.render_frame $first
+  assert_eq (type rendered) $term.Text
+  let plain = str $rendered
+  assert (plain.contains "diagnostic.dol:")
+  assert (plain.contains "strand.backtrace()")
+  assert (!plain.ends_with("\n"))
+
+  let line = str $shell.render_frame(first, code: false)
+  assert (line.contains "diagnostic.dol:")
+  assert (!line.contains("\n"))
+
+#[test]
+def frame_of_snapshot()
+  let send recv = strand.channel()
+  def waiter()
+    recv.next()
+  let task = spawn do waiter()
+  # Let the task start and block
+  let kick = spawn do nil
+  kick.wait()
+  let info = strand.snapshot().filter(do |info| info.strand == task).next()
+  let line = str $shell.render_frame(info.backtrace.iter().next(), code: false)
+  assert (line.contains "waiter")
+  send.put nil
+  task.join()
+
+#[test]
+def frame_bad_type()
+  let type_err = try
+    shell.render_frame $strand.backtrace()
+  catch e
+    e
+  assert_eq (str type_err) "type error: expected inspect.Frame"
