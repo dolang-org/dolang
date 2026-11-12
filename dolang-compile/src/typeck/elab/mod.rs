@@ -708,6 +708,8 @@ pub(crate) enum Designated {
     Dict,
     /// `std.Args`, the class of an args literal
     Args,
+    /// `std.Record`, the class of a data literal with positional items
+    Record,
     /// `std.Range`, the class of a range
     Range,
     /// `std.Spread`, which a spread item spreads

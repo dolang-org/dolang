@@ -1,0 +1,46 @@
+# Brace and vertical literals with positional items make records
+let r = {1, a: 2, 3}
+assert (type r Record)
+assert_eq $r (record 1 a: 2 3)
+assert (type {1, 2} Record)
+assert_eq {1, 2} (record 1 2)
+
+let v = $
+  - 1
+  key: x
+  - 2
+assert (type v Record)
+assert_eq $v (record 1 key: "x" 2)
+
+# Keys alone, a spread alone, and nothing make dicts, and dashes alone an array
+assert (type {a: 1} Dict)
+assert (type {...[1]} Dict)
+assert (type {...(record 1)} Dict)
+assert (type {} Dict)
+let dashes = $
+  - 1
+  - 2
+assert (type dashes Array)
+
+# Keys are written symbols, in any of their forms
+let k = :b:
+let c = 4
+assert_eq {1, :c, :k:: 5} (record 1 c: 4 k: 5)
+
+# Spreads give positional items positionally and symbol keys as keys, as into
+# a call
+assert_eq {1, ...[2, 3], ...{$k: 4}, ...(5, z: 6)} (record 1 2 3 b: 4 5 z: 6)
+assert_throws $std.UnexpectedKeyError do {1, ...{"s": 2}}
+
+# A comprehension contributes items of both kinds
+let comp = $
+  - 0
+  for x = [1, 2]
+    - $x
+  if true
+    z: 9
+assert_eq $comp (record 0 1 2 z: 9)
+
+# A record's debug output reads back as an equal record
+assert_eq (str {1, a: 2}) "{1, a: 2}"
+assert_eq (str {1}) "{1}"

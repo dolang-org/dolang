@@ -12,7 +12,7 @@ let mixed = $
   https://example.com/disk.qcow2
   digest: blake3:0123
 
-assert_eq $mixed {0: "https://example.com/disk.qcow2", digest: "blake3:0123"}
+assert_eq $mixed {"https://example.com/disk.qcow2", digest: "blake3:0123"}
 
 # Bin-packing continues past the token that ends the fallback, as it does for
 # any other positional item.

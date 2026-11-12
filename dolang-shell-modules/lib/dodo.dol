@@ -1,20 +1,25 @@
 # dolang: strict
 import args exec strand term proc fs digest json
   std:
-    - BaseDict
     - BaseArray
+    - BaseDict
+    - BaseRecord
 
 # A task's handler, which runs with the channels of `dodo`'s caller
 @let Handler = args.Handler[Value, Iter[Value], Sink[Value]]
 
-# A task's arguments, as [`args.with`](args.with) takes them
-@let Spec = BaseDict $
+# The items of a task's arguments, as [`args.with`](args.with) takes them
+@let SpecItems = $
   # Description shown in `--help` output and the task list
   ?help: Str
   # Replacement for the generated `Usage:` line
   ?usage: Str
   # Spec items and, optionally, the handler
   *(args.SpecItem[Value, Iter[Value], Sink[Value]] | Handler)
+
+# A task's arguments: a record with spec items, or a dict without them.
+# `dispatch` tells a spec from a handler by its class.
+@let Spec = (BaseRecord[SpecItems] | BaseDict[SpecItems])
 
 # A task's spec items and, optionally, its handler, without a description
 @let Items = BaseArray[args.SpecItem[Value, Iter[Value], Sink[Value]] | Handler]
@@ -53,7 +58,7 @@ do -> Value
     rule = lookup $rules $rule
   let spec = match rule
     Func(handler) do {handler}
-    BaseDict(rule) | BaseArray(rule) do rule
+    BaseRecord(rule) | BaseDict(rule) | BaseArray(rule) do rule
   let common = rules.get :common: default: ({} @ Common)
 
   args.with args: $argv ...common ...spec
@@ -87,7 +92,7 @@ def list_rules rules @ Rules
       nil
     else
       match v
-        Dict(help: Str(help) ...) do help
+        Dict(help: Str(help) ...) | Record(help: Str(help) ...) do help
     if help
       echo "  - $k: $help"
     else

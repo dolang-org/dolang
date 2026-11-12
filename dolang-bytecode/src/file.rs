@@ -13,7 +13,7 @@ use dolang_util::verified::Verified;
 pub use super::Func;
 
 const MAGIC: [u8; 8] = *b"\xffdobytec";
-const VERSION: [u8; 3] = [0, 0, 9];
+const VERSION: [u8; 3] = [0, 0, 10];
 
 const HEADER: Header = Header {
     magic: MAGIC,

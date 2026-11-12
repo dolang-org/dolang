@@ -134,12 +134,15 @@ pub(crate) fn find<'v, 'b>(
 }
 
 /// Writes `items` as the inside of an args literal.
+/// Writes `items` as the arguments of a call, or with `braces`, as the items of
+/// a brace literal
 pub(crate) fn debug_items<'v, 's>(
     strand: &mut Strand<'v, 's>,
     items: &[ArgItem<'v>],
+    braces: bool,
     w: &mut dyn Format<'v>,
 ) -> Result<'v, 's, ()> {
-    crate::fmt!(strand, w, "(")?;
+    crate::fmt!(strand, w, "{}", if braces { "{" } else { "(" })?;
     for (index, (key, value)) in items.iter().enumerate() {
         if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
             strand.check_trap()?;
@@ -151,6 +154,9 @@ pub(crate) fn debug_items<'v, 's>(
             crate::fmt!(strand, w, "{}: ", key.name)?;
         }
         value.op_debug(strand, w)?;
+    }
+    if braces {
+        return crate::fmt!(strand, w, "}}");
     }
     // A lone positional item
     if let [(None, _)] = items {
@@ -836,7 +842,7 @@ impl<'v> Protocol<'v> for Args<'v> {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        debug_items(strand, &borrow.items, w)
+        debug_items(strand, &borrow.items, false, w)
     }
 
     fn op_bool<'a, 's>(

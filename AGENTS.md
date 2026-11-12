@@ -88,6 +88,7 @@ a syntax error or means something different).
 let x = (1 + 2 * 3)           # 7
 let arr = [1, 2, 3]
 let d = {name: "Alice", age: 30}
+let rec = {1, 2, tag: "x"}    # Record: braces with positional items
 let t = (1, "two", ...rest)   # tuple; (x,) is a singleton, () is empty
 let r = (name: "Alice", 30)   # Args: has a static key (`k: v` or `:k`)
 let v = (
@@ -506,10 +507,15 @@ let items = $
   - 2
   - 3
 
-# Vertical data (dict — at least one key present)
+# Vertical data (dict — keys only)
 let config = $
   host: localhost
   port: 8080
+
+# Vertical data (record — dash items and keys)
+let task = $
+  - build
+  help: compile
 
 # Nested
 let data = $
@@ -653,8 +659,8 @@ bind args
 ```
 
 Rests are iterable without copying: a `*` rest (or rest of a sequence) yields
-values; a `**` rest (or `...` rest of a dict/`Args`) yields `(key, value)`
-tuples.
+values; a `**` rest (or `...` rest of a dict/record/`Args`) yields
+`(key, value)` tuples.
 
 Standalone `let` and `bind` accept a diverging `else`. Matching follows
 `if let` / `if bind`; a single name tests truthiness. Bindings remain in scope

@@ -2818,7 +2818,7 @@ impl<'a> Flow<'a, '_> {
             (Collection::Array, Some(class), Some(expected)) => {
                 (self.fresh_expected(class, Kind::Type, expected), Vec::new())
             }
-            (Collection::Dict, Some(class), Some(expected)) => {
+            (Collection::Dict | Collection::Record, Some(class), Some(expected)) => {
                 (None, self.fresh_candidates(class, Kind::Schema, expected))
             }
             _ => (None, Vec::new()),
@@ -2887,7 +2887,10 @@ impl<'a> Flow<'a, '_> {
             return Some(self.db.bottom());
         }
         if values.comprehension
-            && !matches!(kind, Collection::Array | Collection::Dict)
+            && !matches!(
+                kind,
+                Collection::Array | Collection::Dict | Collection::Record
+            )
             && class.is_some()
         {
             self.unchecked(at, values, span);
@@ -2929,7 +2932,7 @@ impl<'a> Flow<'a, '_> {
                     .map(|(ty, _)| rule.closed(ty));
                 Shape::Array
             }
-            Collection::Dict => {
+            Collection::Dict | Collection::Record => {
                 let candidates = expected
                     .map(|expected| self.candidates(rule, class, expected))
                     .unwrap_or_default();
@@ -4169,6 +4172,7 @@ fn collection_role(kind: Collection) -> Designated {
     match kind {
         Collection::Array => Designated::Array,
         Collection::Dict => Designated::Dict,
+        Collection::Record => Designated::Record,
         Collection::Tuple => Designated::Intrinsic(Intrinsic::Tuple),
         Collection::Args => Designated::Args,
     }

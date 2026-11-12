@@ -1,0 +1,49 @@
+# A literal with positional items is a record, so each of its keys must be a
+# written symbol; the compiler can't know what any other key evaluates to
+let k = :b:
+let _ = {1, "s": 2}
+# error: a literal with positional items is a `Record`, whose keys must be written symbols
+#   --> record_key.dol:LL:LL
+#    |
+# LL | let _ = {1, "s": 2}
+#    |             ^^^
+#    |
+#    = help: write `key: value` or `:key:: value`, or spread a computed symbol key from a `Dict`: `...{$key: value}`
+let _ = {1, 0: 2}
+# error: a literal with positional items is a `Record`, whose keys must be written symbols
+#   --> record_key.dol:LL:LL
+#    |
+# LL | let _ = {1, 0: 2}
+#    |             ^
+#    |
+#    = help: write `key: value` or `:key:: value`, or spread a computed symbol key from a `Dict`: `...{$key: value}`
+let _ = {1, $k: 2}
+# error: a literal with positional items is a `Record`, whose keys must be written symbols
+#   --> record_key.dol:LL:LL
+#    |
+# LL | let _ = {1, $k: 2}
+#    |             ^^
+#    |
+#    = help: write `key: value` or `:key:: value`, or spread a computed symbol key from a `Dict`: `...{$key: value}`
+let _ = {1, (k): 2}
+# error: a literal with positional items is a `Record`, whose keys must be written symbols
+#   --> record_key.dol:LL:LL
+#    |
+# LL | let _ = {1, (k): 2}
+#    |             ^^^
+#    |
+#    = help: write `key: value` or `:key:: value`, or spread a computed symbol key from a `Dict`: `...{$key: value}`
+let _ = $
+  - 1
+  $k: 2
+# error: a literal with positional items is a `Record`, whose keys must be written symbols
+#   --> record_key.dol:LL:LL
+#    |
+# LL |   $k: 2
+#    |   ^^
+#    |
+#    = help: write `key: value` or `:key:: value`, or spread a computed symbol key from a `Dict`: `...{$key: value}`
+
+# Written symbols, and computed keys without positional items, are fine
+let _ = {1, a: 2, :k, :c:: 3, ...{$k: 4}}
+let _ = {"s": 1, $k: 2}

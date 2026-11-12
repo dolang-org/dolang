@@ -2,7 +2,7 @@
 def capture ...args
   args
 assert_eq (capture(...{a: 1, b: 2}.iter())) (args (:a:, 1) (:b:, 2))
-assert_eq {...{a: 1, b: 2}.iter()} {(:a:, 1), (:b:, 2)}
+assert_eq {...{a: 1, b: 2}.iter()} {0: (:a:, 1), 1: (:b:, 2)}
 assert_eq (capture(...[10, 20].pairs())) (args (0, 10) (1, 20))
 assert_eq (capture(...[(:a:, 1), (:b:, 2)].kv())) (args a: 1 b: 2)
 assert_eq {...[(:a:, 1), (:a:, 2)].kv()} {a: 1, a: 2}
@@ -23,7 +23,7 @@ assert_throws $std.UnexpectedKeyError do [...{a: 1, b: 2}]
 assert_throws $std.UnexpectedKeyError do Tuple(args(a: 1, b: 2))
 assert_eq [...{a: 1, b: 2}.iter()] [(:a:, 1), (:b:, 2)]
 assert_eq (capture(...Iterable.iter(args(a: 1, b: 2)))) (args (:a:, 1) (:b:, 2))
-assert_eq {...Iterable.iter(args(a: 1, b: 2))} {(:a:, 1), (:b:, 2)}
+assert_eq {...Iterable.iter(args(a: 1, b: 2))} {0: (:a:, 1), 1: (:b:, 2)}
 assert_throws $std.UnexpectedKeyError do capture ...[(0, "zero")].kv()
 
 # Pair validation stays lazy until the adapter is spread.

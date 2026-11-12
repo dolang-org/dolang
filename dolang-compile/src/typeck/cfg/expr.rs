@@ -146,6 +146,8 @@ impl FmtSpec {
 pub(crate) enum Collection {
     Array,
     Dict,
+    /// A brace or vertical literal with positional items
+    Record,
     Tuple,
     Args,
 }

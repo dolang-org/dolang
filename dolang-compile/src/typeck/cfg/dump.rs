@@ -547,6 +547,7 @@ impl Dump<'_> {
                 let kind = match kind {
                     Collection::Array => "array",
                     Collection::Dict => "dict",
+                    Collection::Record => "record",
                     Collection::Tuple => "tuple",
                     Collection::Args => "args",
                 };

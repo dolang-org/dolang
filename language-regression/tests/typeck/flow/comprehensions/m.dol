@@ -99,13 +99,13 @@ pub def made xs @ Array[Int] ys @ Array[Int | nil]
   let _ = zs
   let _ = ss
 
-pub def specs *ds @ Dict[{((Int) -> Int), ?name: Str, ?icon: Str}] -> nil
+pub def specs *ds @ Record[{((Int) -> Int), ?name: Str, ?icon: Str}] -> nil
   ...
 
-pub def spec d @ Dict[{((Int) -> Int), ?name: Str, ?icon: Str}] -> nil
+pub def spec d @ Record[{((Int) -> Int), ?name: Str, ?icon: Str}] -> nil
   ...
 
-# A dict checks its items one by one against what's expected of it
+# A record or dict checks its items one by one against what's expected of it
 pub def specified xs @ Array[Int]
   spec $
     - (do |y| y)
@@ -121,7 +121,7 @@ pub def specified xs @ Array[Int]
           let _ = y
           #       ^: flow std.Int
           y
-  let ds @ Array[Dict[{((Int) -> Int), ?name: Str, ?icon: Str}]] = $
+  let ds @ Array[Record[{((Int) -> Int), ?name: Str, ?icon: Str}]] = $
     for _x = xs
       - name: c
         do |y|

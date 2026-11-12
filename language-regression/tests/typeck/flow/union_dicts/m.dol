@@ -1,13 +1,14 @@
-# A dict literal holds back the items that take an expectation until its schema
-# is known, then gives each what the schema expects of it
+# A dict or record literal holds back the items that take an expectation until
+# its schema is known, then gives each what the schema expects of it
 
 import std:
   - @BaseDict
+  - @BaseRecord
 
 pub def keyed _d @ Dict[{inner: Dict[{a: Str}]}]
   ...
 
-pub def positional _d @ BaseDict[{name: Str, *BaseDict[{a: Str}]}]
+pub def positional _d @ BaseRecord[{name: Str, *BaseDict[{a: Str}]}]
   ...
 
 pub def text() -> Str
@@ -33,7 +34,7 @@ pub def nested()
 # else the one its keys fit, and is checked against that one.
 pub @let Flag = BaseDict[{flag: Str, ?help: Str}]
 pub @let Opt = BaseDict[{opt: Str, ?default: Int, ?help: Str}]
-pub @let Cmd = BaseDict $
+pub @let Cmd = BaseRecord $
   cmd: Str
   *(Item | Handler)
 pub @let Item = (Flag | Opt | Cmd)

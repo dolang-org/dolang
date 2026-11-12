@@ -610,6 +610,48 @@ impl Annotate for BinaryOpAnnotation {
     }
 }
 
+// Error: a key other than a written symbol in a data literal with positional
+// items, which makes a record
+struct RecordKey {
+    span: Span,
+}
+
+impl Diagnose for RecordKey {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "a literal with positional items is a `Record`, whose keys must be written symbols"
+        )
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+
+    fn notes(&self) -> Box<dyn Iterator<Item = Box<dyn crate::source::Note>>> {
+        Box::new([Box::new(RecordKeyNote) as Box<dyn crate::source::Note>].into_iter())
+    }
+}
+
+struct RecordKeyNote;
+
+impl crate::source::Note for RecordKeyNote {
+    fn kind(&self) -> crate::diag::NoteKind {
+        crate::diag::NoteKind::Help
+    }
+
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "write `key: value` or `:key:: value`, or spread a computed symbol key from a `Dict`: `...{{$key: value}}`"
+        )
+    }
+}
+
 // Warning: statement with no effect (pure constant)
 struct NoEffect {
     span: Span,
@@ -2238,6 +2280,18 @@ impl<'a> Elaborater<'a> {
                 Ok(())
             }
             Expr::Dict { elems, .. } => {
+                if DictElem::has_positional(elems) {
+                    DictElem::each_item(elems, &mut |elem| {
+                        if let DictElem::Pair(pair) = elem
+                            && pair.sym_key().is_none()
+                        {
+                            self.fail = true;
+                            self.diags.push(RecordKey {
+                                span: pair.key.span(),
+                            });
+                        }
+                    });
+                }
                 for elem in elems.iter_mut() {
                     self.visit_dict_elem(scope, elem, is_arg)?;
                 }

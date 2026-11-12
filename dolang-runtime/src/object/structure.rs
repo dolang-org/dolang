@@ -133,7 +133,7 @@ impl<'v> Protocol<'v> for Struct<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         crate::fmt!(strand, w, "Struct")?;
-        args::debug_items(strand, &borrow.items, w)
+        args::debug_items(strand, &borrow.items, false, w)
     }
 
     fn op_bool<'a, 's>(

@@ -145,7 +145,12 @@ impl<'u> Scope<'_, '_, 'u> {
                 self.collection(Collection::Args, |scope| scope.args(args))
             }
             ast::Expr::Dict { elems, .. } => {
-                self.collection(Collection::Dict, |scope| scope.dict_items(elems))
+                let kind = if DictElem::has_positional(elems) {
+                    Collection::Record
+                } else {
+                    Collection::Dict
+                };
+                self.collection(kind, |scope| scope.dict_items(elems))
             }
             ast::Expr::Error => ExprKind::Error,
         };

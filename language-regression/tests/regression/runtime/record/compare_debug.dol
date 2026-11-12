@@ -1,7 +1,9 @@
-# debug output spells a call that rebuilds the record
+# debug output spells what rebuilds the record: the brace literal when it has
+# positional items, and otherwise a call, since `{}` and `{a: 1}` are dicts
 assert_eq (str (record())) "Record()"
-assert_eq (str (record 1)) "Record(1,)"
-assert_eq (str (record 1 a: "x" 2)) "Record(1, a: \"x\", 2)"
+assert_eq (str (record a: 1)) "Record(a: 1)"
+assert_eq (str (record 1)) "{1}"
+assert_eq (str (record 1 a: "x" 2)) "{1, a: \"x\", 2}"
 
 # equality walks the items in order, so the interleaving of positional and
 # keyed items matters, as does each repeat

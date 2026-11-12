@@ -391,8 +391,13 @@ impl<'v> Protocol<'v> for Record<'v> {
         // The borrow keeps the snapshot's values alive
         let borrow = this.borrow(strand)?;
         let items = borrow.snapshot();
-        crate::fmt!(strand, w, "Record")?;
-        args::debug_items(strand, &items, w)
+        // With a positional item, the brace literal makes a record; otherwise,
+        // it would make a dict
+        let braces = !borrow.pos.is_empty();
+        if !braces {
+            crate::fmt!(strand, w, "Record")?;
+        }
+        args::debug_items(strand, &items, braces, w)
     }
 
     fn op_bool<'a, 's>(

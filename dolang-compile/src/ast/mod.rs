@@ -482,6 +482,17 @@ pub(crate) struct Pair {
     pub(crate) delim_span: Option<Span>,
 }
 
+impl Pair {
+    /// The span of the key's symbol name, if the key is a symbol constant
+    /// (`:name:: value`)
+    pub(crate) fn sym_key(&self) -> Option<Span> {
+        match self.key {
+            Expr::Sym(span) => Some(span),
+            _ => None,
+        }
+    }
+}
+
 impl Node for Pair {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         visit.node(&self.key)?;
@@ -507,6 +518,39 @@ pub(crate) enum DictElem {
     Expand(Expand),
     For(For<ExprBody<Self>>),
     If(If<ExprBody<Self>>),
+}
+
+impl DictElem {
+    /// Calls `f` on each item of `elems` other than a comprehension, including
+    /// the items of comprehension bodies
+    pub(crate) fn each_item<'a>(elems: &'a [DictElem], f: &mut impl FnMut(&'a DictElem)) {
+        for elem in elems {
+            match elem {
+                DictElem::For(node) => Self::each_item(&node.body.elems, f),
+                DictElem::If(node) => {
+                    Self::each_item(&node.tbranch.body.elems, f);
+                    for (branch, _) in &node.elif_branches {
+                        Self::each_item(&branch.body.elems, f);
+                    }
+                    if let Some((body, _)) = &node.else_branch {
+                        Self::each_item(&body.elems, f);
+                    }
+                }
+                _ => f(elem),
+            }
+        }
+    }
+
+    /// Whether a data literal with `elems` has positional items, which makes it
+    /// a record rather than a dict. A spread doesn't count: what it contributes
+    /// isn't known from the syntax.
+    pub(crate) fn has_positional(elems: &[DictElem]) -> bool {
+        let mut found = false;
+        Self::each_item(elems, &mut |elem| {
+            found |= matches!(elem, DictElem::Single(_));
+        });
+        found
+    }
 }
 
 impl Node for DictElem {

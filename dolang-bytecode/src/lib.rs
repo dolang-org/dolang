@@ -308,6 +308,7 @@ pub enum Builtin {
     TypeTest,
     TypeAssert,
     ValueAssert,
+    Record,
     _LEN,
 }
 
@@ -334,6 +335,7 @@ pub mod builtin {
     pub const TYPE_TEST: usize = TypeTest as usize;
     pub const VALUE_ASSERT: usize = ValueAssert as usize;
     pub const TYPE_ASSERT: usize = TypeAssert as usize;
+    pub const RECORD: usize = Record as usize;
 }
 
 pub const BUILTINS: [&str; Builtin::_LEN as usize] = [
@@ -358,6 +360,7 @@ pub const BUILTINS: [&str; Builtin::_LEN as usize] = [
     "type_test",
     "type_assert",
     "value_assert",
+    "record",
 ];
 
 trait Encode {

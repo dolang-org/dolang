@@ -2341,7 +2341,7 @@ pub class Dict[S @ {...}]: BaseDict[S] @MutMap[S] @Assign[S]
   # Builds a dictionary by spreading one source, as `{...source}` does.
   #
   # Spreading an array gives positional items, so an array of pairs is not a
-  # mapping: `Dict [(:a:, 1)]` is `{(:a:, 1)}`. Adapt pairs with
+  # mapping: `Dict [(:a:, 1)]` is `{0: (:a:, 1)}`. Adapt pairs with
   # [`Iter.kv`](std.Iter.kv) instead:
   #
   # ```
@@ -2544,6 +2544,9 @@ do
 # items: the mutable counterpart of [`Args`](std.Args), as
 # [`Array`](std.Array) is of [`Tuple`](std.Tuple).
 #
+# A brace literal with positional items, such as `{1, 2, tag: "x"}`, makes a
+# record, as does a vertical data block with dash items and keys.
+#
 # An `Int` always selects a positional item and a `Sym` always selects a key,
 # so the two can't be confused. Negative positions count from the end.
 #
@@ -2553,10 +2556,10 @@ do
 # array:
 #
 # ```
-# let r = record 1 2 3
+# let r = {1, 2, 3}
 # r.insert 0 0
 # assert_eq (r.pop -1) 3
-# assert_eq $r (record 0 1 2)
+# assert_eq $r {0, 1, 2}
 # ```
 #
 # ## Keys

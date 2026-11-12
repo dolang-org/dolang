@@ -1,12 +1,13 @@
-# A dict literal held back for a union of dict schemas that mentions the call's
-# binder takes its schema open in the binder, which handlers nested in it raise
-# with the others
+# A data literal held back for a union of dict and record schemas that mentions
+# the call's binder takes its schema open in the binder, which handlers nested in
+# it raise with the others
 
 import std:
   - @BaseDict
+  - @BaseRecord
 
 pub @let Flag = BaseDict[{flag: Str}]
-pub @let Cmd[R] = BaseDict[{cmd: Str, *(Item[R] | (Int -> R))}]
+pub @let Cmd[R] = BaseRecord[{cmd: Str, *(Item[R] | (Int -> R))}]
 pub @let Item[R] = (Flag | Cmd[R])
 
 pub def spec[R] *items @ (Item[R] | (Int -> R)) -> R

@@ -1155,6 +1155,69 @@ fn apply_prelude_dict_items<'v, 's>(
     Ok(())
 }
 
+/// Applies one entry of a `compile.Prelude` dict or record: a positional module
+/// name, or a module and how to import it
+fn apply_prelude_entry<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    config: &mut Config,
+    k: &Value<'v>,
+    v: &Value<'v>,
+) -> Result<'v, 's, ()> {
+    if k.as_int(strand).is_some() {
+        let name = match v.view(strand) {
+            View::Str(name) => name.to_string(),
+            View::Sym(name) => name.as_str(strand).to_owned(),
+            _ => {
+                return Err(Error::type_error(
+                    strand,
+                    "positional prelude entry must be Str or Sym",
+                ));
+            }
+        };
+        config.prelude().import_module(name);
+        return Ok(());
+    }
+
+    let module = match k.view(strand) {
+        View::Str(s) => s.into(),
+        View::Sym(sym) => sym.as_str(strand).to_owned(),
+        _ => {
+            return Err(Error::type_error(
+                strand,
+                "prelude module key must be Str or Sym",
+            ));
+        }
+    };
+
+    match v.view(strand.vm()) {
+        View::Str(bind) => {
+            strand.access(|access| {
+                config
+                    .prelude()
+                    .import_module_with_name(&module, bind.as_str(access));
+            });
+        }
+        View::Sym(bind) => {
+            config
+                .prelude()
+                .import_module_with_name(&module, bind.as_str(strand));
+        }
+        View::Array(arr) => {
+            apply_prelude_module_items(strand, config, &module, &arr)?;
+        }
+        View::Dict(dict) => {
+            apply_prelude_dict_items(strand, config, &module, &dict)?;
+        }
+        _ => {
+            return Err(Error::type_error(
+                strand,
+                "prelude module value must be str, sym, array, or Dict",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Applies a Do `compile.Prelude` value without initializing extension state.
 pub fn apply_prelude_value<'v, 's>(
     strand: &mut Strand<'v, 's>,
@@ -1188,64 +1251,14 @@ pub fn apply_prelude_value<'v, 's>(
             }
             View::Dict(dict) => {
                 let mut pairs = dict.pairs();
-                loop {
-                    let has_next = pairs.next(strand, &mut k, &mut v)?;
-                    if !has_next {
-                        break;
-                    }
-
-                    if k.as_int(strand).is_some() {
-                        let name = match v.view(strand) {
-                            View::Str(name) => name.to_string(),
-                            View::Sym(name) => name.as_str(strand).to_owned(),
-                            _ => {
-                                return Err(Error::type_error(
-                                    strand,
-                                    "positional prelude entry must be Str or Sym",
-                                ));
-                            }
-                        };
-                        config.prelude().import_module(name);
-                        continue;
-                    }
-
-                    let module = match k.view(strand) {
-                        View::Str(s) => s.into(),
-                        View::Sym(sym) => sym.as_str(strand).to_owned(),
-                        _ => {
-                            return Err(Error::type_error(
-                                strand,
-                                "prelude module key must be Str or Sym",
-                            ));
-                        }
-                    };
-
-                    match v.view(strand.vm()) {
-                        View::Str(bind) => {
-                            strand.access(|access| {
-                                config
-                                    .prelude()
-                                    .import_module_with_name(&module, bind.as_str(access));
-                            });
-                        }
-                        View::Sym(bind) => {
-                            config
-                                .prelude()
-                                .import_module_with_name(&module, bind.as_str(strand));
-                        }
-                        View::Array(arr) => {
-                            apply_prelude_module_items(strand, config, &module, &arr)?;
-                        }
-                        View::Dict(dict) => {
-                            apply_prelude_dict_items(strand, config, &module, &dict)?;
-                        }
-                        _ => {
-                            return Err(Error::type_error(
-                                strand,
-                                "prelude module value must be str, sym, array, or Dict",
-                            ));
-                        }
-                    }
+                while pairs.next(strand, &mut k, &mut v)? {
+                    apply_prelude_entry(strand, config, &k, &v)?;
+                }
+            }
+            View::Record(record) => {
+                let mut pairs = record.pairs();
+                while pairs.next(strand, &mut k, &mut v)? {
+                    apply_prelude_entry(strand, config, &k, &v)?;
                 }
             }
             _ => {

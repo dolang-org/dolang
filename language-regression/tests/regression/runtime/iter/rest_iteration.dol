@@ -9,7 +9,7 @@ def collect rest
 
 # A dict's `*` rest yields values; its `**` and `...` rests yield entries in
 # order, positional items keyed by index.
-let d = {1, 2, color: "red", 5: "x"}
+let d = {0: 1, 1: 2, color: "red", 5: "x"}
 let _ *p **k = d
 assert_eq (collect p) [2]
 assert_eq (collect k) [(:color:, "red"), (5, "x")]

@@ -15,7 +15,9 @@ use crate::{
         dict::Dict,
         module::{Module, Namespace},
         protocol::{GcObj, Spread, SpreadContext},
-        range, tuple,
+        range,
+        record::Record,
+        tuple,
     },
     sig::{self, Pack},
     strand::{InterruptMask, Redirect, Strand, StrandInner},
@@ -294,6 +296,17 @@ impl<'v> Vm<'v> {
     ) -> Result<'v, 's, ()> {
         let value = args::Args::from_args(strand, args);
         strand.builtin_types().args.create(strand, value, out);
+        Ok(())
+    }
+
+    fn record<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        args: Args<'v, '_>,
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        let value = Record::from_items(args::args_items(strand.vm(), args));
+        strand.builtin_types().record.create(strand, value, out);
         Ok(())
     }
 
@@ -914,6 +927,7 @@ impl<'v> Vm<'v> {
                         builtin::DICT => self.dict(strand, args, Slot::reborrow(&mut res)).await,
                         builtin::TUPLE => self.tuple(strand, args, Slot::reborrow(&mut res)).await,
                         builtin::ARGS => self.args(strand, args, Slot::reborrow(&mut res)),
+                        builtin::RECORD => self.record(strand, args, Slot::reborrow(&mut res)),
                         builtin::RANGE => self.range(strand, args, Slot::reborrow(&mut res)).await,
                         builtin::ITER => self.iter(strand, args, Slot::reborrow(&mut res)).await,
                         builtin::CONCAT_STR => {
