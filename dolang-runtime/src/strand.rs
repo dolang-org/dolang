@@ -764,27 +764,7 @@ impl<'v> StrandInner<'v> {
                 match p {
                     frame::Ptr::Do(frame_ptr) => {
                         let frame = frame_ptr.as_ref();
-                        // Scan loaded program and upvars
-                        frame.program.accept(visitor)?;
-                        if let Some(ref upvars) = frame.upvars {
-                            upvars.accept(visitor)?;
-                        }
-                        // Scan active slots
-                        let sp = frame.sp.get();
-                        for i in 0..sp {
-                            frame.slots.get_unchecked(i).accept(visitor)?;
-                        }
-                        // Scan scratch slots
-                        frame.scratch1.accept(visitor)?;
-                        frame.scratch2.accept(visitor)?;
-                        frame.scratch3.accept(visitor)?;
-                        // Scan items
-                        for (sym, value) in &*frame.items.get() {
-                            if let Some(sym) = sym {
-                                sym.accept(visitor)?;
-                            }
-                            value.accept(visitor)?;
-                        }
+                        frame.scan(visitor)?;
                         ptr = frame.parent;
                     }
                     frame::Ptr::Slots(slots_ptr) => {
@@ -840,7 +820,7 @@ unsafe fn walk_entries<'v>(mut head: Option<frame::Ptr<'v>>, full: bool) -> Vec<
                 out.push(UnwindEntry::Do {
                     program: frame.program.clone(),
                     function_index: frame.func as u32,
-                    pc: frame.pc as u32,
+                    pc: frame.pc.get() as u32,
                 });
                 head = frame.parent;
             }
@@ -942,10 +922,7 @@ pub struct Strand<'v, 's> {
 }
 
 impl<'v, 's> Strand<'v, 's> {
-    pub(crate) unsafe fn from_frame(
-        inner: &'s StrandInner<'v>,
-        frame: &frame::CallFrame<'v>,
-    ) -> Self {
+    unsafe fn from_frame(inner: &'s StrandInner<'v>, frame: &frame::CallFrame<'v>) -> Self {
         Self {
             inner,
             fp: frame::Ptr::Do(NonNull::from_ref(frame)),
@@ -961,36 +938,6 @@ impl<'v, 's> Strand<'v, 's> {
             inner,
             fp: frame::Ptr::Native(NonNull::from_ref(frame)),
             phantom: PhantomData,
-        }
-    }
-
-    pub(crate) unsafe fn for_frame_infallible<R>(
-        inner: &'s StrandInner<'v>,
-        frame: &frame::CallFrame<'v>,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        f(&mut unsafe { Self::from_frame(inner, frame) })
-    }
-
-    pub(crate) unsafe fn for_frame<R>(
-        inner: &'s StrandInner<'v>,
-        frame: &frame::CallFrame<'v>,
-        f: impl FnOnce(&mut Self) -> Result<'v, 's, R>,
-    ) -> Result<'v, 's, R> {
-        let _guard = unsafe { inner.push_sp(frame::Ptr::Do(NonNull::from_ref(frame))) };
-        match f(&mut unsafe { Self::from_frame(inner, frame) }) {
-            Ok(v) => Ok(v),
-            Err(mut e) => {
-                e.push_backtrace(
-                    inner,
-                    UnwindEntry::Do {
-                        program: frame.program.clone(),
-                        function_index: frame.func as u32,
-                        pc: frame.pc as u32,
-                    },
-                );
-                Err(e)
-            }
         }
     }
 
@@ -1024,12 +971,23 @@ impl<'v, 's> Strand<'v, 's> {
         }
     }
 
+    /// Run `f` in a new strand context whose frame is the Do `frame`.
+    ///
+    /// Checks the call depth, makes `frame` the stack pointer for the duration, and adds
+    /// the frame's backtrace entry, at its current pc, to any error `f` returns.
+    ///
+    /// # Safety
+    ///
+    /// `frame` must be a live Do frame whose parent is `base`'s frame, and must outlive
+    /// the call.
     pub(crate) async unsafe fn async_for_frame<R>(
-        inner: &'s StrandInner<'v>,
+        base: &mut Strand<'v, 's>,
         frame: &frame::CallFrame<'v>,
         f: impl AsyncFnOnce(&mut Self) -> Result<'v, 's, R>,
     ) -> Result<'v, 's, R> {
-        let _guard = unsafe { inner.push_sp(frame::Ptr::Do(NonNull::from_ref(frame))) };
+        let inner = base.inner;
+        let _depth_guard = inner.push_call_depth()?;
+        let _sp_guard = unsafe { inner.push_sp(frame::Ptr::Do(NonNull::from_ref(frame))) };
         match f(&mut unsafe { Self::from_frame(inner, frame) }).await {
             Ok(v) => Ok(v),
             Err(mut e) => {
@@ -1038,7 +996,7 @@ impl<'v, 's> Strand<'v, 's> {
                     UnwindEntry::Do {
                         program: frame.program.clone(),
                         function_index: frame.func as u32,
-                        pc: frame.pc as u32,
+                        pc: frame.pc.get() as u32,
                     },
                 );
                 Err(e)

@@ -3,6 +3,7 @@ use std::{
     cell::{Cell, UnsafeCell},
     collections::VecDeque,
     marker::PhantomData,
+    mem,
     ops::{ControlFlow, DerefMut},
     ptr::NonNull,
 };
@@ -16,11 +17,14 @@ use crate::{
     arg::{Arg, Args, OwnedItem},
     bytecode::{Rest, Variadic},
     error::{Error, Result},
-    gc::{Collect, Gc, arena::Visit},
+    gc::{
+        self, Collect, Gc,
+        arena::{Arena, Visit},
+    },
     object::{pack, tuple},
     sig,
     strand::Strand,
-    value::{Output, Value, ValueCell},
+    value::{Output, Slot, Value, ValueCell},
 };
 
 pub trait Frame {
@@ -34,9 +38,9 @@ pub trait Frame {
 pub(crate) struct CallFrame<'v> {
     pub(crate) parent: Option<Ptr<'v>>,
     pub(crate) program: Gc<'v, Program<'v>>,
-    pub(crate) upvars: Option<Gc<'v, Upvars<'v>>>,
+    upvars: UnsafeCell<Option<Gc<'v, Upvars<'v>>>>,
     pub(crate) func: usize,
-    pub(crate) pc: usize,
+    pub(crate) pc: Cell<usize>,
     pub(crate) sp: Cell<usize>,
     pub(crate) slots: Vec<ValueCell<'v>>,
     pub(crate) scratch1: ValueCell<'v>,
@@ -82,12 +86,11 @@ impl<'v> CallFrame<'v> {
     /// - A named keyword argument is repeated
     /// - Required keyword argument without default is missing
     pub(crate) unsafe fn unpack_unchecked<'s>(
-        &mut self,
+        &self,
         strand: &mut Strand<'v, 's>,
         args: Args<'v, '_>,
     ) -> Result<'v, 's, ()> {
         unsafe {
-            let inner = strand.inner;
             let program = self.program.annex();
             let (func, slot_max) = &program.funcs.get_unchecked(self.func);
             let unpack = program.unpacktab.get_unchecked(func.sig);
@@ -133,7 +136,7 @@ impl<'v> CallFrame<'v> {
                                 }
                                 variadic => match variadic.positional() {
                                     Rest::None => {
-                                        return Err(Error::unexpected_positional_raw(inner, pos));
+                                        return Err(Error::unexpected_positional(strand, pos));
                                     }
                                     // Allow but discard extra positional arguments
                                     Rest::Discard => {}
@@ -156,35 +159,35 @@ impl<'v> CallFrame<'v> {
                                 continue;
                             }
                             if unpack.variadic.keyed() == Rest::None {
-                                return Err(Error::duplicate_key_raw(inner, sym));
+                                return Err(Error::duplicate_key(strand, sym));
                             }
                         }
                         match unpack.variadic {
                             Variadic::Capture => {
                                 // Capture extra key arguments in rest
                                 rest.as_mut().unwrap().push_back(Some((
-                                    Some(inner.vm().sym_obj(sym)),
+                                    Some(strand.sym_obj(sym)),
                                     Value::from_input(strand, value),
                                 )));
                             }
                             variadic => match variadic.keyed() {
                                 Rest::None => {
-                                    return Err(Error::unexpected_key_raw(inner, sym));
+                                    return Err(Error::unexpected_key(strand, sym));
                                 }
                                 // Allow but discard extra key arguments
                                 Rest::Discard => {}
                                 // Capture extra key arguments in `**name`
-                                Rest::Capture => key_rest.as_mut().unwrap().push((
-                                    inner.vm().sym_obj(sym),
-                                    Value::from_input(strand, value),
-                                )),
+                                Rest::Capture => key_rest
+                                    .as_mut()
+                                    .unwrap()
+                                    .push((strand.sym_obj(sym), Value::from_input(strand, value))),
                             },
                         }
                     }
                 }
             }
             if pos < unpack.required {
-                return Err(Error::missing_positional_raw(inner, pos));
+                return Err(Error::missing_positional(strand, pos));
             }
             for (i, default) in unpack
                 .optional
@@ -211,7 +214,7 @@ impl<'v> CallFrame<'v> {
                     )
                 } else {
                     return Err(match &key.kind {
-                        sig::UnpackKeyKind::Sym(sym) => Error::missing_key_raw(inner, *sym),
+                        sig::UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
                         sig::UnpackKeyKind::Const(_) => unreachable!(),
                     });
                 }
@@ -277,10 +280,10 @@ impl<'v> CallFrame<'v> {
         let slots = info.1;
         CallFrame {
             func,
-            upvars,
+            upvars: UnsafeCell::new(upvars),
             parent,
             program: loaded,
-            pc: 0,
+            pc: Cell::new(0),
             phantom: PhantomData,
             sp: Cell::new(locals),
             slots: (0..slots).map(|_| ValueCell::default()).collect(),
@@ -322,94 +325,31 @@ unsafe impl<'v> Collect for Upvars<'v> {
     }
 }
 
-impl<'v> Upvars<'v> {
-    /// Traverse the upvar chain to find the upvar frame at the given depth.
-    ///
-    /// ## Upvar Chain Structure
-    ///
-    /// Upvars form a linked list where each closure's upvars reference its parent.
-    /// The depth indicates how many levels up to traverse:
-    /// - Depth 0: The current function's upvars
-    /// - Depth 1: The parent function's upvars
-    /// - Depth N: The Nth ancestor's upvars
-    ///
-    /// ## Safety
-    ///
-    /// - `this` must be Some (not None)
-    /// - `depth` must not exceed the actual chain length
-    ///
-    /// ## Panics
-    ///
-    /// Panics if there is a conflicting borrow.  The interpreter never
-    /// holds long-term borrows, nor do other objects that can access
-    /// upvars (e.g. `Module`), so this could be converted to an unchecked
-    /// unwrap in principle.
-    pub(crate) unsafe fn at_depth(
-        this: &Option<Gc<'v, Upvars<'v>>>,
-        mut depth: usize,
-    ) -> Gc<'v, Upvars<'v>> {
-        unsafe {
-            let mut current = this.as_ref().unwrap_unchecked().clone();
-            while depth != 0 {
-                let parent = current
-                    .borrow()
-                    .unwrap()
-                    .parent
-                    .as_ref()
-                    .unwrap_unchecked()
-                    .clone();
-                current = parent;
-                depth -= 1;
-            }
-            current
-        }
-    }
-
-    /// Get the value of an upvar at the given index and depth.
+impl<'v> CallFrame<'v> {
+    /// The frame's current upvar chain.
     ///
     /// # Safety
     ///
-    /// - `this` must be Some (not None)
-    /// - `depth` must not exceed the upvar chain length
-    /// - `index` must be a valid index in the target upvar frame
-    pub(crate) unsafe fn get_unchecked<'a>(
-        this: &'a Option<Gc<'v, Upvars<'v>>>,
-        index: usize,
-        mut depth: usize,
-    ) -> Value<'v> {
-        unsafe {
-            let mut upvars: *const Upvars<'v> =
-                this.as_ref().unwrap_unchecked().borrow().unwrap().as_ref() as *const _;
-            while depth != 0 {
-                upvars = (*upvars)
-                    .parent
-                    .as_ref()
-                    .unwrap_unchecked()
-                    .borrow()
-                    .unwrap()
-                    .as_ref() as *const _;
-                depth -= 1;
-            }
-            let upvars = &*upvars;
-            upvars.vars.get_unchecked(index).dup()
-        }
+    /// The returned reference must not be held across [`Self::push_upvars`] or
+    /// [`Self::pop_upvars`].  Every use stays inside the methods below.
+    unsafe fn upvar_chain(&self) -> &Option<Gc<'v, Upvars<'v>>> {
+        unsafe { &*self.upvars.get() }
     }
 
-    /// Set the value of an upvar at the given index and depth.
+    /// Upvar frame at `depth` levels up the chain: 0 is the innermost.
     ///
     /// # Safety
     ///
-    /// - `this` must be Some (not None)
-    /// - `depth` must not exceed the upvar chain length
-    /// - `index` must be a valid index in the target upvar frame
-    pub(crate) unsafe fn set_unchecked<'a>(
-        this: &'a Option<Gc<'v, Upvars<'v>>>,
-        index: usize,
-        mut depth: usize,
-        value: Value<'v>,
-    ) {
+    /// The chain must be at least `depth + 1` frames long.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a conflicting borrow.  The interpreter never holds long-term
+    /// borrows, nor do other objects that can access upvars (e.g. `Module`).
+    unsafe fn upvars_at(&self, mut depth: usize) -> *mut Upvars<'v> {
         unsafe {
-            let mut upvars: *mut Upvars<'v> = this
+            let mut upvars: *mut Upvars<'v> = self
+                .upvar_chain()
                 .as_ref()
                 .unwrap_unchecked()
                 .borrow_mut()
@@ -425,8 +365,127 @@ impl<'v> Upvars<'v> {
                     .deref_mut() as *mut _;
                 depth -= 1;
             }
-            let upvars = &mut *upvars;
-            *upvars.vars.get_unchecked_mut(index) = value;
+            upvars
+        }
+    }
+
+    /// Copy the upvar at `index` in the frame `depth` levels up into `out`.
+    ///
+    /// # Safety
+    ///
+    /// - The chain must be at least `depth + 1` frames long
+    /// - `index` must be valid in the target upvar frame
+    pub(crate) unsafe fn get_upvar(&self, index: usize, depth: usize, mut out: Slot<'v, '_>) {
+        unsafe {
+            let upvars = &*self.upvars_at(depth);
+            let value = upvars.vars.get_unchecked(index).dup();
+            out.store(value)
+        }
+    }
+
+    /// Move the value in `src` into the upvar at `index` in the frame `depth` levels up.
+    ///
+    /// # Safety
+    ///
+    /// - The chain must be at least `depth + 1` frames long
+    /// - `index` must be valid in the target upvar frame
+    pub(crate) unsafe fn set_upvar(&self, index: usize, depth: usize, mut src: Slot<'v, '_>) {
+        unsafe {
+            let value = src.take();
+            let upvars = &mut *self.upvars_at(depth);
+            let old = mem::replace(upvars.vars.get_unchecked_mut(index), value);
+            // Drop the old value only after the write: a drop can run native code
+            drop(old)
+        }
+    }
+
+    /// Push a new upvar frame of `count` nil variables.
+    pub(crate) fn push_upvars(&self, arena: &Arena<'v>, count: usize) {
+        // SAFETY: no reference into the chain outlives `upvar_chain`'s use here
+        let parent = unsafe { self.upvar_chain() }.clone();
+        let upvars = Gc::new(
+            arena,
+            Upvars {
+                parent,
+                vars: (0..count).map(|_| Value::NIL).collect(),
+                stale: false,
+            },
+        );
+        let old = unsafe { (*self.upvars.get()).replace(upvars) };
+        drop(old)
+    }
+
+    /// Pop the innermost upvar frame, returning it.
+    ///
+    /// # Safety
+    ///
+    /// The chain must not be empty.
+    pub(crate) unsafe fn pop_upvars(&self) -> Gc<'v, Upvars<'v>> {
+        unsafe {
+            let slot = &mut *self.upvars.get();
+            let popped = slot.take().unwrap_unchecked();
+            *slot = popped.borrow().unwrap().parent.clone();
+            popped
+        }
+    }
+
+    /// The current upvar chain, for a closure to capture.
+    pub(crate) fn upvars(&self) -> Option<Gc<'v, Upvars<'v>>> {
+        unsafe { self.upvar_chain() }.clone()
+    }
+
+    /// Target of a non-local branch to the upvar frame `depth` levels up, or `None` if
+    /// its guard has already finished.
+    ///
+    /// # Safety
+    ///
+    /// The chain must be at least `depth + 1` frames long.
+    pub(crate) unsafe fn nl_target(&self, mut depth: usize) -> Option<gc::Weak<'v, Upvars<'v>>> {
+        unsafe {
+            let mut current = self.upvar_chain().as_ref().unwrap_unchecked().clone();
+            while depth != 0 {
+                let parent = current
+                    .borrow()
+                    .unwrap()
+                    .parent
+                    .as_ref()
+                    .unwrap_unchecked()
+                    .clone();
+                current = parent;
+                depth -= 1;
+            }
+            if current.borrow().unwrap_unchecked().stale {
+                None
+            } else {
+                Some(Gc::downgrade(&current))
+            }
+        }
+    }
+
+    /// Scan the frame's GC roots: program, upvars, live slots, scratch slots and items.
+    ///
+    /// # Safety
+    ///
+    /// Must not run while the frame is mutating its upvar chain or item buffer.
+    pub(crate) unsafe fn scan(&self, visitor: &mut dyn Visit) -> ControlFlow<()> {
+        unsafe {
+            self.program.accept(visitor)?;
+            if let Some(upvars) = self.upvar_chain() {
+                upvars.accept(visitor)?;
+            }
+            for i in 0..self.sp.get() {
+                self.slots.get_unchecked(i).accept(visitor)?;
+            }
+            self.scratch1.accept(visitor)?;
+            self.scratch2.accept(visitor)?;
+            self.scratch3.accept(visitor)?;
+            for (sym, value) in &*self.items.get() {
+                if let Some(sym) = sym {
+                    sym.accept(visitor)?;
+                }
+                value.accept(visitor)?;
+            }
+            ControlFlow::Continue(())
         }
     }
 }
@@ -449,7 +508,7 @@ impl<'v, 'a> FrameInfo<'v, 'a> {
                 let loaded = head.program.annex();
                 if let Some(debug) = loaded.funcdebugs.get(head.func) {
                     let file = &loaded.debug_strtab()[debug.file.clone()];
-                    Some((file, debug.locate(head.pc - 1)))
+                    Some((file, debug.locate(head.pc.get() - 1)))
                 } else {
                     None
                 }

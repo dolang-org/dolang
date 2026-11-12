@@ -14,17 +14,16 @@ use std::{
 };
 
 use crate::{
-    Program,
     arg::Args,
     error::{Error, ErrorKind, Result},
-    frame::{Frame, Upvars},
+    frame::Frame,
     gc::{self, Base, BaseBorrow, BaseWeak, Collect, Gc, arena},
     method,
     object::{
         self, BoundMethod, array, backtrace,
         class::{self, iter_natives},
         dict,
-        function::{Function, NativeFunction, NativeFunctionAnnex},
+        function::{NativeFunction, NativeFunctionAnnex},
         interface::{self, InterfaceTag, Request},
         protocol::{
             Delegated, Dispatch, GcObj, Header, Inspect, Protocol, Spread, SpreadContext,
@@ -1125,19 +1124,6 @@ impl<'v> Value<'v> {
             |this, strand, other| this.op_gte(strand, other),
             |this, strand, other| this.op_lte(strand, other),
         )
-    }
-
-    pub(crate) fn function(
-        vm: &Vm<'v>,
-        loaded: Gc<'v, Program<'v>>,
-        upvars: Option<Gc<'v, Upvars<'v>>>,
-        id: usize,
-    ) -> Self {
-        Self::from_object(GcObj::new(
-            vm.arena(),
-            vm.builtin_types().function,
-            Function::new(loaded, upvars, id),
-        ))
     }
 
     pub(crate) fn op_bool<'a, 's>(&self, strand: &'a mut Strand<'v, 's>) -> Result<'v, 's, bool> {
