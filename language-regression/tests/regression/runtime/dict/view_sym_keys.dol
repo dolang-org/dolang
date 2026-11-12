@@ -1,0 +1,24 @@
+import regression2:
+  - key_view
+
+# Dict views match keys as `Dict` does: a symbol pattern looks up the symbol
+# and never a string of the same name. `key_view()` unpacks through
+# `DictView::unpack`, and its `.view` through the view object.
+let native = key_view()
+for v = [native, native.view]
+  let :name ... = v
+  assert_eq $name 1
+
+  let "HOME": home ... = v
+  assert_eq $home "/home"
+
+  assert_throws $std.MissingKeyError str: "missing key item: HOME" do
+    let HOME: _home ... = v
+
+  assert_throws $std.MissingKeyError str: "missing key item: \"name\"" do
+    let "name": _n ... = v
+
+  # The `**` rest matches the same way
+  let "HOME": _home **rest = v
+  let :name = rest
+  assert_eq $name 1

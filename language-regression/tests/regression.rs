@@ -4,14 +4,15 @@ mod detail {
     use dolang::{
         compile::{self, Config, Mode},
         runtime::{
-            self, Args, Bytecode, Error, Instance, Object, Output, Slot, Sym, call,
+            self, Args, Bytecode, Error, Instance, Object, Output, Slot, Sym, Value, call,
             error::ErrorKind,
             io::{self, ByteHandle, ByteIo, IntoByteIo, IoCaps, IoResultExt as _},
             object::{
-                FlagLike, FlagLikeExt, Flags, FlagsInstanceExt, FlagsTypeExt, InterfaceTag,
-                Request, TypeBuilder,
+                DictLike, DictView, DictViewSink, FlagLike, FlagLikeExt, Flags, FlagsInstanceExt,
+                FlagsTypeExt, InterfaceTag, Request, TypeBuilder, Unpack,
             },
             unpack,
+            value::AsSym,
             vm::Builder,
         },
     };
@@ -496,6 +497,85 @@ mod detail {
         }
     }
 
+    /// Native object that unpacks like a dict with one symbol key (`:name`)
+    /// and one string key (`"HOME"`); its `view` getter exposes the same
+    /// pairs as a [`DictView`] object.
+    struct KeyView;
+
+    impl<'v> Object<'v> for KeyView {
+        const NAME: &'v str = "KeyView";
+        const MODULE: &'v str = "regression2";
+
+        type Annex = ();
+        type Type = ();
+        type TypeAnnex = ();
+
+        fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+            builder.get("view", |this, strand, out| {
+                Output::set(strand, out, DictView::new(this, KeyPairs));
+                Ok(())
+            })
+        }
+
+        async fn unpack<'a, 's>(
+            this: Instance<'v, 'a, Self>,
+            strand: &'a mut Strand<'v, 's>,
+            unpack: Unpack<'v, 'a>,
+        ) -> runtime::Result<'v, 's, ()> {
+            DictView::unpack(this, &KeyPairs, strand, unpack)
+        }
+    }
+
+    struct KeyPairs;
+
+    impl<'v> DictLike<'v> for KeyPairs {
+        type Object = KeyView;
+        const MODULE: &'v str = "regression2";
+        const NAME: &'v str = "KeyPairs";
+
+        fn len(&self, _this: Instance<'v, '_, KeyView>, _strand: &mut Strand<'v, '_>) -> usize {
+            2
+        }
+
+        fn get<'a, 's>(
+            &self,
+            _this: Instance<'v, '_, KeyView>,
+            strand: &'a mut Strand<'v, 's>,
+            key: &Value<'v>,
+            instance: i64,
+            out: Slot<'v, 'a>,
+        ) -> runtime::Result<'v, 's, bool> {
+            if instance != 0 && instance != -1 {
+                return Ok(false);
+            }
+            if key
+                .as_sym(strand)
+                .is_some_and(|sym| sym.as_str(strand) == "name")
+            {
+                Output::set(strand, out, 1_i64);
+                return Ok(true);
+            }
+            if let Some(str) = key.as_str(strand)
+                && strand.access(|access| str.as_str(access) == "HOME")
+            {
+                Output::set(strand, out, "/home");
+                return Ok(true);
+            }
+            Ok(false)
+        }
+
+        fn flatten<'s>(
+            &self,
+            _this: Instance<'v, '_, KeyView>,
+            strand: &mut Strand<'v, 's>,
+            sink: &mut DictViewSink<'v, '_>,
+        ) -> runtime::Result<'v, 's, ()> {
+            sink.push(strand, AsSym::new("name"), 1_i64);
+            sink.push(strand, "HOME", "/home");
+            Ok(())
+        }
+    }
+
     fn bin_arg<'v, 's>(
         strand: &mut Strand<'v, 's>,
         value: &runtime::Value<'v>,
@@ -685,6 +765,7 @@ mod detail {
                     let counter_ty = vm.register_type::<Counter>();
                     let byte_buf_ty = vm.register_type::<ByteBuf>();
                     let test_flags_ty = TestFlags::register_type(vm);
+                    let key_view_ty = vm.register_type::<KeyView>();
 
                     // Configure standard regression functions from dolang-private-test
                     let test_state = dolang_private_test::configure_vm(vm);
@@ -734,6 +815,11 @@ mod detail {
                         Ok(())
                     })
                     .function("noop", async move |_strand, _args, _out| Ok(()))
+                    .function("key_view", async move |strand, args, out| {
+                        let ([], []) = unpack!(strand, args, 0, 0)?;
+                        key_view_ty.create(strand, KeyView, out);
+                        Ok(())
+                    })
                     .function("bump", async move |strand, args, out| {
                         let ([value], []) = unpack!(strand, args, 1, 0)?;
                         bump(strand, &value, out, false)

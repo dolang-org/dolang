@@ -605,8 +605,7 @@ fn unpack_pairs<'v, 's>(
                 continue;
             }
             UnpackItem::SymKey { key, slot, default } => {
-                let name = key.as_str(strand.vm());
-                (Value::from_input(strand, name), slot, default)
+                (Value::from_input(strand, key), slot, default)
             }
             UnpackItem::ConstKey { key, slot, default } => (key.dup(), slot, default),
             rest => {
@@ -751,23 +750,14 @@ fn unpack_sig_pairs<'v, 's>(
         out.at(index).store(default.dup());
     }
     for (offset, spec) in sig.keys.iter().enumerate() {
-        let key = match &spec.kind {
-            sig::UnpackKeyKind::Sym(sym) => {
-                let name = sym.as_str(strand.vm());
-                Value::from_input(strand, name)
-            }
-            sig::UnpackKeyKind::Const(value) => value.dup(),
-        };
+        let key = Value::from_input(strand, &spec.kind);
         if let Some((found, (_, value))) = find_pair(strand, pairs, &consumed, &key)? {
             consumed.set(found, true);
             out.at(pos_count + offset).store(value.dup());
         } else if let Some(default) = &spec.default {
             out.at(pos_count + offset).store(default.dup());
         } else {
-            return Err(match &spec.kind {
-                sig::UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
-                sig::UnpackKeyKind::Const(value) => Error::missing_key(strand, value),
-            });
+            return Err(Error::missing_key(strand, &spec.kind));
         }
     }
     Ok(consumed)
