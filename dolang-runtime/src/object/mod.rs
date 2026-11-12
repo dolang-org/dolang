@@ -1,5 +1,4 @@
 pub(crate) mod arg;
-pub(crate) mod args;
 pub(crate) mod array;
 pub mod array_view;
 pub(crate) mod backtrace;
@@ -22,6 +21,7 @@ pub(crate) mod iter;
 pub(crate) mod module;
 pub mod native;
 pub(crate) mod num;
+pub(crate) mod pack;
 pub(crate) mod protocol;
 pub(crate) mod range;
 pub(crate) mod record;
@@ -104,8 +104,8 @@ impl<'v> Drop for TypeTable<'v> {
 pub(crate) struct BuiltinTypes<'v> {
     pub(crate) adapter_type: TypeHandle<'v, types::AdapterType>,
     pub(crate) dict_view_rest: TypeHandle<'v, dict_view::Rest<'v>>,
-    pub(crate) args_rest: TypeHandle<'v, args::Rest<'v>>,
-    pub(crate) arg_pack: TypeHandle<'v, arg::ArgPack<'v>>,
+    pub(crate) pack_rest: TypeHandle<'v, pack::Rest<'v>>,
+    pub(crate) arg_acc: TypeHandle<'v, arg::ArgAcc<'v>>,
     pub(crate) array_iter: TypeHandle<'v, array::Iter<'v>>,
     pub(crate) array_rest: TypeHandle<'v, array::Rest<'v>>,
     pub(crate) array_sink: TypeHandle<'v, array::Sink<'v>>,
@@ -163,9 +163,9 @@ pub(crate) struct BuiltinTypes<'v> {
     pub(crate) verbatim_int: TypeHandle<'v, int::Verbatim>,
     pub(crate) range: TypeHandle<'v, range::Range<'v>>,
     pub(crate) range_iter: TypeHandle<'v, range::Iter<'v>>,
-    pub(crate) args: TypeHandle<'v, args::Args<'v>>,
-    pub(crate) args_class: TypeHandle<'v, args::Class>,
-    pub(crate) args_iter: TypeHandle<'v, args::Iter<'v>>,
+    pub(crate) pack: TypeHandle<'v, pack::Pack<'v>>,
+    pub(crate) pack_class: TypeHandle<'v, pack::Class>,
+    pub(crate) pack_iter: TypeHandle<'v, pack::Iter<'v>>,
     pub(crate) record: TypeHandle<'v, record::Record<'v>>,
     pub(crate) record_class: TypeHandle<'v, record::Class>,
     pub(crate) record_iter: TypeHandle<'v, record::Iter<'v>>,
@@ -234,7 +234,7 @@ pub(crate) struct BuiltinTypes<'v> {
     pub(crate) strand_ref_type: TypeHandle<'v, strand::StrandType>,
     pub(crate) strand_info_type: TypeHandle<'v, strand::StrandInfoType>,
     pub(crate) stream_type: TypeHandle<'v, strand::StreamType>,
-    pub(crate) arg_pack_type: TypeHandle<'v, types::ArgPackType>,
+    pub(crate) arg_acc_type: TypeHandle<'v, types::ArgAccType>,
 }
 
 impl<'v> BuiltinTypes<'v> {
@@ -242,8 +242,8 @@ impl<'v> BuiltinTypes<'v> {
         Self {
             adapter_type: types.register_type_handle(),
             dict_view_rest: types.register_type_handle(),
-            args_rest: types.register_type_handle(),
-            arg_pack: types.register_type_handle(),
+            pack_rest: types.register_type_handle(),
+            arg_acc: types.register_type_handle(),
             array_iter: types.register_type_handle(),
             array_rest: types.register_type_handle(),
             array_sink: types.register_type_handle(),
@@ -300,9 +300,9 @@ impl<'v> BuiltinTypes<'v> {
             namespace: types.register_type_handle(),
             range_iter: types.register_type_handle(),
             range: types.register_type_handle(),
-            args: types.register_type_handle(),
-            args_class: types.register_type_handle(),
-            args_iter: types.register_type_handle(),
+            pack: types.register_type_handle(),
+            pack_class: types.register_type_handle(),
+            pack_iter: types.register_type_handle(),
             record: types.register_type_handle(),
             record_class: types.register_type_handle(),
             record_iter: types.register_type_handle(),
@@ -349,7 +349,7 @@ impl<'v> BuiltinTypes<'v> {
             strand_ref_type: types.register_type_handle(),
             strand_info_type: types.register_type_handle(),
             stream_type: types.register_type_handle(),
-            arg_pack_type: types.register_type_handle(),
+            arg_acc_type: types.register_type_handle(),
             input_iter: types.register_type_handle(),
             output_iter: types.register_type_handle(),
             null: types.register_type_handle(),
@@ -402,7 +402,7 @@ pub(crate) struct Singletons<'v> {
     pub(crate) array: Value<'v>,
     pub(crate) dict: Value<'v>,
     pub(crate) set: Value<'v>,
-    pub(crate) args: Value<'v>,
+    pub(crate) pack: Value<'v>,
     pub(crate) record: Value<'v>,
     pub(crate) structure: Value<'v>,
     pub(crate) tuple: Value<'v>,
@@ -420,7 +420,7 @@ pub(crate) struct Singletons<'v> {
     pub(crate) strand: Value<'v>,
     pub(crate) strand_info: Value<'v>,
     pub(crate) stream: Value<'v>,
-    pub(crate) arg_pack: Value<'v>,
+    pub(crate) arg_acc: Value<'v>,
 
     // Error variant classes
     pub(crate) error_unsupported: Value<'v>,
@@ -495,7 +495,7 @@ impl<'v> Singletons<'v> {
             array: v!(builtin_types.array_type, array::Type),
             dict: v!(builtin_types.dict_type, dict::Type),
             set: v!(builtin_types.set_type, set::Type),
-            args: v!(builtin_types.args_class, args::Class),
+            pack: v!(builtin_types.pack_class, pack::Class),
             record: v!(builtin_types.record_class, record::Class),
             structure: v!(builtin_types.structure_class, structure::Class),
             tuple: v!(builtin_types.tuple_type, tuple::Type),
@@ -513,7 +513,7 @@ impl<'v> Singletons<'v> {
             strand: v!(builtin_types.strand_ref_type, strand::StrandType),
             strand_info: v!(builtin_types.strand_info_type, strand::StrandInfoType),
             stream: v!(builtin_types.stream_type, strand::StreamType),
-            arg_pack: v!(builtin_types.arg_pack_type, types::ArgPackType),
+            arg_acc: v!(builtin_types.arg_acc_type, types::ArgAccType),
             error_unsupported: v!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Unsupported)

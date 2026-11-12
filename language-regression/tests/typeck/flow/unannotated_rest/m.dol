@@ -1,12 +1,12 @@
 # An unannotated rest holds the dynamic schema, so spreading it is unchecked for
-# arity, while it is still known to be a `Tuple` or `Args`.
+# arity, while it is still known to be a `Tuple` or `Pack`.
 
 def one x
   x
 
 pub def spread ...xs
   let _ = xs
-  #       ^~: flow std.Args[...Unknown{}]
+  #       ^~: flow std.Pack[...Unknown{}]
   one ...xs
 
 pub def positional *xs
@@ -16,12 +16,12 @@ pub def positional *xs
 
 pub def keyed **xs
   let _ = xs
-  #       ^~: flow std.Args[...Unknown{}]
+  #       ^~: flow std.Pack[...Unknown{}]
   one ...xs
 
 pub def member ...xs
   xs.bogus
-# error: `std.Args[...Unknown{}]` has no member `bogus`
+# error: `std.Pack[...Unknown{}]` has no member `bogus`
 #   --> m.dol:LL:LL
 #    |
 # LL |   xs.bogus

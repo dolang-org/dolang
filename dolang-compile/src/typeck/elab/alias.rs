@@ -80,7 +80,7 @@ impl Aliases<'_, '_> {
             | TypeExpr::Quantified { .. }
             | TypeExpr::Schema { .. }
             | TypeExpr::Tuple { .. }
-            | TypeExpr::Args { .. } => Head::Structural,
+            | TypeExpr::Pack { .. } => Head::Structural,
             TypeExpr::Error { .. } => Head::Error,
         }
     }

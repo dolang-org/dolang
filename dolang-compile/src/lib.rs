@@ -59,9 +59,9 @@ use ast::Res;
 
 const STD_PRELUDE: &[&str] = &[
     "Array", "Bin", "BinBuf", "Bool", "Dict", "Float", "Func", "Int", "Iter", "Iterable", "Range",
-    "Args", "Record", "Set", "Sink", "Sinkable", "Str", "StrBuf", "Struct", "Sym", "Tuple", "Type",
+    "Pack", "Record", "Set", "Sink", "Sinkable", "Str", "StrBuf", "Struct", "Sym", "Tuple", "Type",
     "Value", "array", "bool", "class", "dbg", "dict", "fields", "final", "float", "getter", "int",
-    "mixable", "args", "record", "setter", "static", "str", "struct", "sym", "tuple", "type",
+    "mixable", "pack", "record", "setter", "static", "str", "struct", "sym", "tuple", "type",
 ];
 
 const STD_TYPE_PRELUDE: &[&str] = &[
@@ -866,7 +866,7 @@ pub enum Kind<'a> {
         /// The [`Kind::TypeItem`] nodes, in the order written
         items: NodeIds<'a>,
     },
-    /// A tuple or `Args` type, e.g. `(Int, Str)` or `(name: Str)`
+    /// A tuple or `Pack` type, e.g. `(Int, Str)` or `(name: Str)`
     ParensType {
         /// The [`Kind::TypeItem`] nodes, in the order written
         items: NodeIds<'a>,
@@ -894,7 +894,7 @@ pub enum Kind<'a> {
         /// The [`Kind::FuncType`] the binders quantify
         func: NodeId,
     },
-    /// An item of a schema, a tuple or `Args` type, or a function type's
+    /// An item of a schema, a tuple or `Pack` type, or a function type's
     /// parameters, without a trailing `,`
     TypeItem {
         /// The item's quantifier and element

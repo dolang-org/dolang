@@ -196,7 +196,7 @@ pub(crate) enum Kind {
         /// [`Kind::TypeItem`] nodes, in written order
         items: alias::Box<[Id]>,
     },
-    /// A tuple or `Args` type, such as `(Int, Str)`
+    /// A tuple or `Pack` type, such as `(Int, Str)`
     ParensType {
         items: alias::Box<[Id]>,
     },
@@ -218,7 +218,7 @@ pub(crate) enum Kind {
         /// The [`Kind::FuncType`] the binders quantify
         func: Id,
     },
-    /// An item of a schema, tuple, `Args` or function type's parameters, without its
+    /// An item of a schema, tuple, `Pack` or function type's parameters, without its
     /// trailing `,`
     TypeItem {
         kind: TypeItemKind,

@@ -463,9 +463,9 @@ impl<'t, 'u> Populate<'t, 'u> {
                 let tuple = Designated::Intrinsic(Intrinsic::Tuple);
                 self.collection(tuple, self.schema(items))
             }
-            TypeExpr::Args { params, .. } if expected == Kind::Type => {
+            TypeExpr::Pack { params, .. } if expected == Kind::Type => {
                 let items = self.items(group, params, false, depth);
-                self.collection(Designated::Args, self.schema(items))
+                self.collection(Designated::Pack, self.schema(items))
             }
             TypeExpr::Union { members, .. } if expected == Kind::Type => {
                 let members: Vec<_> = members
@@ -562,7 +562,7 @@ impl<'t, 'u> Populate<'t, 'u> {
     }
 
     /// Report each item of a tuple form, parenthesized or `vertical`, that may admit
-    /// keyed items. An inclusion never makes an `Args` or dict, so what it includes
+    /// keyed items. An inclusion never makes a `Pack` or dict, so what it includes
     /// can't change the form's meaning.
     fn keyed_inclusions(&mut self, unit: UnitId, params: &[TypeParam]) {
         for param in params {
@@ -1841,7 +1841,7 @@ impl Report for KeyedInclusion {
         let note = match self.open {
             true => "`(*)` is a tuple of any positional items",
             false => {
-                "a keyed item makes an `Args`; to include keyed items without one, write `Args[...{...}]`"
+                "a keyed item makes a `Pack`; to include keyed items without one, write `Pack[...{...}]`"
             }
         };
         vec![(NoteKind::Help, note.to_owned())]

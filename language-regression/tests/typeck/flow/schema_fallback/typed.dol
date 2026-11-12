@@ -1,15 +1,15 @@
 # dolang: strict
 # A strict implementation typed as its overload is checked against it: the
-# private `Args` has the same schema, so indexing it gives the projection
+# private `Pack` has the same schema, so indexing it gives the projection
 
 import std:
   - @IndexItem
   - @Keys
 
 pub class Typed[S @ {**Value}]
-  field values @ Args[...S]
+  field values @ Pack[...S]
 
-  def (init) self values @ Args[...S]
+  def (init) self values @ Pack[...S]
     self.#values = values
 
   pub def (get)[K @ Keys[S]] self name @ K -> IndexItem[S, K]

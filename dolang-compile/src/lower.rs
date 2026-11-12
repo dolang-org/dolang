@@ -830,14 +830,14 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     expr.span(),
                 ));
             }
-            Expr::Args { args, .. } => {
+            Expr::Pack { args, .. } => {
                 let mut sig = Vec::new();
                 for arg in args.iter() {
                     sig.push(self.lower_arg(arg)?);
                 }
                 let sig = sig::Pack::new(sig.into_iter());
                 self.block.insts.push(Inst(
-                    InstInfo::Builtin(builtin::ARGS, self.packtab.id(&sig)),
+                    InstInfo::Builtin(builtin::PACK, self.packtab.id(&sig)),
                     expr.span(),
                 ));
             }
@@ -1348,7 +1348,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     /// of arguments, array elements, or dict elements rather than a block.
     ///
     /// Mirrors [`Self::lower_if`], differing only in what the branches contribute
-    /// to: an empty `ARGS` builtin opens the pack each body pushes into, and
+    /// to: an empty `ARG_ACC` builtin opens the accumulator each body pushes into, and
     /// `work_ast` wraps the body for the queue.  There is no result value, so no
     /// `want_result` distinction.
     /// Lowers a comprehension among a collection's items to an argument pack the
@@ -1372,7 +1372,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         };
         self.block
             .insts
-            .push(Inst(InstInfo::Builtin(builtin::ARG_PACK, empty), *for_span));
+            .push(Inst(InstInfo::Builtin(builtin::ARG_ACC, empty), *for_span));
 
         let sig = if let Some(expr) = expr {
             self.lower_expr(expr)?;
@@ -1441,7 +1441,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             self.packtab.id(&call)
         };
         self.block.insts.push(Inst(
-            InstInfo::Builtin(builtin::ARG_PACK, empty),
+            InstInfo::Builtin(builtin::ARG_ACC, empty),
             node.tbranch.span,
         ));
 

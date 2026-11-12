@@ -23,10 +23,10 @@ assert_eq (capture ...{"a", foo: 1, "b", bar: 2}) ["a", "b", 1, 2]
 assert_throws $UnexpectedPosError do
   capture ...({"a", foo: 1, "b", bar: 2}.iter())
 assert_throws $UnexpectedPosError do
-  capture ...(Iterable.iter (args "a" foo: 1 "b" bar: 2))
+  capture ...(Iterable.iter (pack "a" foo: 1 "b" bar: 2))
 let _a foo: _x ...dict_rest = {"a", foo: 1, "b", bar: 2}
 assert_eq (capture_rest ...dict_rest) ["b", 2]
-let _a foo: _x ...record_rest = args("a", foo: 1, "b", bar: 2)
+let _a foo: _x ...record_rest = pack("a", foo: 1, "b", bar: 2)
 assert_eq (capture_rest ...record_rest) ["b", 2]
 # output: END
 # 0

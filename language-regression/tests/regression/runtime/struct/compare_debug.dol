@@ -1,4 +1,4 @@
-# Debug output names the type, so a struct isn't mistaken for an `Args`
+# Debug output names the type, so a struct isn't mistaken for a `Pack`
 assert_eq (str (struct())) "Struct()"
 assert_eq (str (struct(1, 2, a: 3))) "Struct(1, 2, a: 3)"
 assert_eq (str (struct(a: "x"))) "Struct(a: \"x\")"
@@ -7,14 +7,14 @@ assert_eq (str (struct(a: "x"))) "Struct(a: \"x\")"
 assert ((struct a: 1 b: 2) == (struct a: 1 b: 2))
 assert (!((struct a: 1 b: 2) == (struct b: 2 a: 1)))
 assert (!((struct a: 1) == (struct a: 2)))
-assert (!((struct a: 1) == (args a: 1)))
+assert (!((struct a: 1) == (pack a: 1)))
 
-# Ordering follows `Args`
+# Ordering follows `Pack`
 assert ((struct 1) < (struct 1 2))
 assert ((struct 1) < (struct 2))
 assert (!((struct 1) < (struct 1)))
-assert_throws $std.TypeError do ((struct 1) < (args 1))
+assert_throws $std.TypeError do ((struct 1) < (pack 1))
 
-# Equal structs hash equally, but not as the equal `Args` does
+# Equal structs hash equally, but not as the equal `Pack` does
 assert_eq (std.hash (struct a: 1)) (std.hash (struct a: 1))
-assert ((std.hash (struct a: 1)) != (std.hash (args a: 1)))
+assert ((std.hash (struct a: 1)) != (std.hash (pack a: 1)))

@@ -140,7 +140,7 @@ pub enum NodeKind {
     Array,
     Dict,
     Tuple,
-    Args,
+    Pack,
     Error,
     Assign,
     Bind,

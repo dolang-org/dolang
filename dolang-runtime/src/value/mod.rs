@@ -1885,9 +1885,9 @@ impl<'v> Value<'v> {
                 if let Some(set) = self.downcast_native(vm, bt.set) {
                     return View::Set(Set::from_borrow(set));
                 }
-                // Args
-                if let Some(args) = self.downcast_native(vm, bt.args) {
-                    return View::Args(view::Args::from_borrow(args));
+                // Pack
+                if let Some(args) = self.downcast_native(vm, bt.pack) {
+                    return View::Pack(view::Pack::from_borrow(args));
                 }
                 // Record
                 if let Some(record) = self.downcast_native(vm, bt.record) {

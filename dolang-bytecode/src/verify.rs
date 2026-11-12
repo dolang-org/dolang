@@ -2157,7 +2157,7 @@ mod test {
             vec![func(
                 0,
                 vec![],
-                vec![LoadConst(0), Builtin(crate::builtin::ARG_PACK, 0), Ret],
+                vec![LoadConst(0), Builtin(crate::builtin::ARG_ACC, 0), Ret],
             )],
         );
         inst_error(ctx, InstError::PackIndexOutOfBounds);
@@ -2346,7 +2346,7 @@ mod test {
                 vec![func(
                     0,
                     vec![],
-                    vec![Builtin(crate::builtin::ARG_PACK, 0), Ret],
+                    vec![Builtin(crate::builtin::ARG_ACC, 0), Ret],
                 )],
             ),
             InstError::OperandUnderflow,

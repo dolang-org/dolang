@@ -1,7 +1,7 @@
-def f -> Args[**Str]
+def f -> Pack[**Str]
   # error: type arguments expand a pack only with `...`
   #   --> type_arg_star_star.dol:LL:LL
   #    |
-  # LL | def f -> Args[**Str]
+  # LL | def f -> Pack[**Str]
   #    |               ^^
   nil

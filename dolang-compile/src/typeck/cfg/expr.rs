@@ -149,7 +149,7 @@ pub(crate) enum Collection {
     /// A brace or vertical literal with positional items
     Record,
     Tuple,
-    Args,
+    Pack,
 }
 
 /// A member of a receiver, by key. A private member names the class whose member it

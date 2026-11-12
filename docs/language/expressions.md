@@ -27,14 +27,14 @@ Full expressions support:
 - Indexing: `arr[0]`, `dict["key"]`
 - Field access: `obj.field`
 - Tuple literals: `(1, 2)`, `(x,)`, `()`
-- Args literals: `(name: "Alice", age: 30)`
+- Pack literals: `(name: "Alice", age: 30)`
 - Casts: `(value @ Type)`, `(value !@ Type)` (see
   [Casts](types.md#casts))
 
 Parentheses around a single item with no trailing comma only group it. With a
-comma, several items, or none, they make a tuple, or an `Args` if any item has a
+comma, several items, or none, they make a tuple, or a `Pack` if any item has a
 static key. See [Tuples](data-structures.md#tuples-tuple) and
-[Args](data-structures.md#args-args).
+[Packs](data-structures.md#packs-pack).
 
 Full expressions can span multiple lines:
 

@@ -15,4 +15,4 @@ assert_eq $b 2
 assert_eq $repeated 2
 assert_eq (Dict remaining) {b: 3}
 assert_eq (Dict remaining_again) {b: 3}
-assert_eq (Args keyed) (args b: 2 b: 3)
+assert_eq (Pack keyed) (pack b: 2 b: 3)

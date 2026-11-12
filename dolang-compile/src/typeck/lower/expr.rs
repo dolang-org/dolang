@@ -141,8 +141,8 @@ impl<'u> Scope<'_, '_, 'u> {
             ast::Expr::Tuple { elems, .. } => {
                 self.collection(Collection::Tuple, |scope| scope.array_items(elems))
             }
-            ast::Expr::Args { args, .. } => {
-                self.collection(Collection::Args, |scope| scope.args(args))
+            ast::Expr::Pack { args, .. } => {
+                self.collection(Collection::Pack, |scope| scope.args(args))
             }
             ast::Expr::Dict { elems, .. } => {
                 let kind = if DictElem::has_positional(elems) {

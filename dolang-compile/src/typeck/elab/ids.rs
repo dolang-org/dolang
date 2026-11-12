@@ -415,7 +415,7 @@ impl Visit for TypeExpr {
             }
             TypeExpr::Schema { params, .. }
             | TypeExpr::Tuple { params, .. }
-            | TypeExpr::Args { params, .. } => params.visit(ids),
+            | TypeExpr::Pack { params, .. } => params.visit(ids),
             TypeExpr::Group { ty, .. } => ty.visit(ids),
             TypeExpr::Union { members, .. } => members.visit(ids),
             TypeExpr::Func {

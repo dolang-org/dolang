@@ -12,10 +12,10 @@ bind {foo: nil}
   :foo = 42
 assert_eq $foo nil
 
-bind args()
+bind pack()
   :foo = 42
 assert_eq $foo 42
 
-bind args foo: nil
+bind pack foo: nil
   :foo = 42
 assert_eq $foo nil

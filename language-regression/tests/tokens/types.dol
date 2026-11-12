@@ -85,7 +85,7 @@ class Map[K, V]: Base[K]
 let shape @Base = nil
 #          ^~~~: type_token, node=class
 
-let r @Args = nil
+let r @Pack = nil
 #      ^~~~: type_token, node=prelude_item
 
 class Point

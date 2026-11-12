@@ -1131,7 +1131,7 @@ impl Check<'_> {
                     elem.check(self, frame);
                 }
             }
-            Expr::Args { args, .. } => {
+            Expr::Pack { args, .. } => {
                 for arg in args {
                     arg.check(self, frame);
                 }

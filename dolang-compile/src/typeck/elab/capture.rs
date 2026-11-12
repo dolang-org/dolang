@@ -193,7 +193,7 @@ impl Needs<'_, '_> {
             }
             TypeExpr::Schema { params, .. }
             | TypeExpr::Tuple { params, .. }
-            | TypeExpr::Args { params, .. } => self.params(node, unit, params),
+            | TypeExpr::Pack { params, .. } => self.params(node, unit, params),
             TypeExpr::Group { ty, .. } => self.ty(node, unit, ty),
             TypeExpr::Union { members, .. } => {
                 for member in members {

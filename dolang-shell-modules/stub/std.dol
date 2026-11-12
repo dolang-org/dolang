@@ -291,7 +291,7 @@ pub def int
 do -> Int
   ...
 
-# Creates an [`Args`](std.Args) from positional and key arguments.
+# Creates a [`Pack`](std.Pack) from positional and key arguments.
 #
 # Positional arguments become positional items, and key arguments become
 # symbol-keyed items.
@@ -299,13 +299,13 @@ do -> Int
 # ## Example
 #
 # ```
-# let r = args name: Alice age: 30
+# let r = pack name: Alice age: 30
 # echo $r[:name:]  # Alice
 # ```
-pub def args[...Ts]
+pub def pack[...Ts]
   # Positional and key field values.
   ...items @ Ts
-do -> Args[...Ts]
+do -> Pack[...Ts]
   ...
 
 # Creates a [`Record`](std.Record) from positional and key arguments.
@@ -744,7 +744,7 @@ pub @class MutSeq[T]: AssignSeq[T]
 # [`(iter)`](std.BaseIterable) is enough for `for`; a class that also
 # subclasses `Iterable` gets these methods for free, each obtaining an iterator
 # with `(iter)` and calling the [`Iter`](std.Iter) method of the same name.
-# Arrays, dicts, and ranges are `Iterable`; an [`Args`](std.Args) is not.
+# Arrays, dicts, and ranges are `Iterable`; a [`Pack`](std.Pack) is not.
 #
 # ```
 # class Bag: Iterable
@@ -2537,7 +2537,7 @@ do
 
 
 # Records are ordered, mutable sequences of positional items and symbol-keyed
-# items: the mutable counterpart of [`Args`](std.Args), as
+# items: the mutable counterpart of [`Pack`](std.Pack), as
 # [`Array`](std.Array) is of [`Tuple`](std.Tuple).
 #
 # A brace literal with positional items, such as `{1, 2, tag: "x"}`, makes a
@@ -3919,36 +3919,36 @@ pub class Range[T @ Num]: Iterable[T] @Spread[T]
 
 # Stores an immutable sequence of positional items and symbol-keyed items.
 #
-# An `Args` keeps its items in order, and a key may repeat. A lookup finds the
+# A `Pack` keeps its items in order, and a key may repeat. A lookup finds the
 # latest value for a key. Spreading a repeated key into a call raises
 # [`UnexpectedKeyError`](std.UnexpectedKeyError) if it names a parameter;
 # duplicates captured by a rest remain in order. Keys are read by indexing,
 # not as fields:
 #
 # ```
-# let r = args name: Alice age: 30
+# let r = pack name: Alice age: 30
 # assert_eq $r[:name:] Alice
 # ```
 #
-# A variadic capture such as `...rest` binds an `Args` of the remaining
-# arguments. Use [`with`](std.Args.with) to replace keys in a new `Args`:
+# A variadic capture such as `...rest` binds a `Pack` of the remaining
+# arguments. Use [`with`](std.Pack.with) to replace keys in a new `Pack`:
 #
 # ```
 # let updated = old.with status: ready
 # ```
-pub class Args[...Ts]:
+pub class Pack[...Ts]:
   Iterable[Entries[Ts]] @Index[Ts] @BaseMap[Ts]
 do
-  # Builds an `Args` from one spreadable source of key-value pairs.
+  # Builds a `Pack` from one spreadable source of key-value pairs.
   #
   # ```
-  # let r = Args {name: Alice, age: 30}
+  # let r = Pack {name: Alice, age: 30}
   # ```
   #
-  # The lowercase `args` factory instead builds an `Args` from its arguments.
+  # The lowercase `pack` factory instead builds a `Pack` from its arguments.
   #
   # ```
-  # let r = args first second name: Alice
+  # let r = pack first second name: Alice
   # ```
   #
   # ## Errors
@@ -3967,7 +3967,7 @@ do
   do -> (Value | D)
     ...
 
-  # Replaces keys in a new `Args`, leaving the original unchanged.
+  # Replaces keys in a new `Pack`, leaving the original unchanged.
   #
   # Each updated key occupies its first position; later occurrences are removed.
   # New keys append in the order first supplied. Repeated updates use their last
@@ -3975,28 +3975,28 @@ do
   # Spread a source with `...source` to supply updates.
   #
   # ```
-  # let r = args status: pending name: Alice status: queued
+  # let r = pack status: pending name: Alice status: queued
   # assert_eq (r.with status: ready) (status: "ready", name: "Alice")
   # ```
   #
-  # The result is typed as a plain [`Args`](std.Args), so the type checker
+  # The result is typed as a plain [`Pack`](std.Pack), so the type checker
   # doesn't know its keys.
   #
   # ## Errors
   #
   # Raises [`UnexpectedPosError`](std.UnexpectedPosError) for positional arguments.
-  pub def with self **updates @ Value -> Args
+  pub def with self **updates @ Value -> Pack
     ...
 
-  # Removes all occurrences of the keys in a new `Args`.
+  # Removes all occurrences of the keys in a new `Pack`.
   #
   # Missing and repeated keys are harmless. Remaining items keep their relative
   # order, and the original is unchanged. Only symbol keys can be removed. The
-  # result is typed as a plain [`Args`](std.Args), so the type checker
+  # result is typed as a plain [`Pack`](std.Pack), so the type checker
   # doesn't know its keys.
   #
   # ```
-  # let r = args name: Alice status: ready debug: true
+  # let r = pack name: Alice status: ready debug: true
   # assert_eq (r.without :status: :debug:) (name: "Alice")
   # ```
   #
@@ -4006,7 +4006,7 @@ do
   # | --------- | --------- |
   # | [`TypeError`](std.TypeError) | A key is not a symbol |
   # | [`UnexpectedKeyError`](std.UnexpectedKeyError) | A keyword argument is supplied |
-  pub def without self *keys@Sym -> Args
+  pub def without self *keys@Sym -> Pack
     ...
 
   # Number of items, counting each instance of a repeated key.
@@ -4020,7 +4020,7 @@ do
     ...
 
   # Unpacks the items by position and symbol.
-  pub def (unpack) self -> Args[...Ts]
+  pub def (unpack) self -> Pack[...Ts]
     ...
 
   # Returns the value at a position or key.
@@ -5032,7 +5032,7 @@ do
   pub def (spread) self -> Spread[Ts]
     ...
 
-  # Unpacks items by position and symbol, as an [`Args`](std.Args) does.
+  # Unpacks items by position and symbol, as a [`Pack`](std.Pack) does.
   pub def (unpack) self -> BaseStruct[...Ts]
     ...
 

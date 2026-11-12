@@ -8,12 +8,12 @@ use crate::{
     frame::{CallFrame, Upvars},
     gc::Gc,
     object::{
-        arg::ArgPack,
-        args,
+        arg::ArgAcc,
         array::Array,
         class,
         dict::Dict,
         module::{Module, Namespace},
+        pack,
         protocol::{GcObj, Spread, SpreadContext},
         range,
         record::Record,
@@ -294,8 +294,8 @@ impl<'v> Vm<'v> {
         args: Args<'v, '_>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let value = args::Args::from_args(strand, args);
-        strand.builtin_types().args.create(strand, value, out);
+        let value = pack::Pack::from_args(strand, args);
+        strand.builtin_types().pack.create(strand, value, out);
         Ok(())
     }
 
@@ -305,7 +305,7 @@ impl<'v> Vm<'v> {
         args: Args<'v, '_>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let value = Record::from_items(args::args_items(strand.vm(), args));
+        let value = Record::from_items(pack::pack_items(strand.vm(), args));
         strand.builtin_types().record.create(strand, value, out);
         Ok(())
     }
@@ -408,18 +408,18 @@ impl<'v> Vm<'v> {
         Ok(())
     }
 
-    fn arg_pack<'s>(
+    fn arg_acc<'s>(
         &self,
         strand: &mut Strand<'v, 's>,
         args: Args<'v, '_>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let arg_pack = ArgPack::from_args(strand, args);
+        let arg_acc = ArgAcc::from_args(strand, args);
         strand
             .vm()
             .builtin_types()
-            .arg_pack
-            .create(strand, arg_pack, out);
+            .arg_acc
+            .create(strand, arg_acc, out);
         Ok(())
     }
 
@@ -926,7 +926,7 @@ impl<'v> Vm<'v> {
                         builtin::ARRAY => self.array(strand, args, Slot::reborrow(&mut res)).await,
                         builtin::DICT => self.dict(strand, args, Slot::reborrow(&mut res)).await,
                         builtin::TUPLE => self.tuple(strand, args, Slot::reborrow(&mut res)).await,
-                        builtin::ARGS => self.args(strand, args, Slot::reborrow(&mut res)),
+                        builtin::PACK => self.args(strand, args, Slot::reborrow(&mut res)),
                         builtin::RECORD => self.record(strand, args, Slot::reborrow(&mut res)),
                         builtin::RANGE => self.range(strand, args, Slot::reborrow(&mut res)).await,
                         builtin::ITER => self.iter(strand, args, Slot::reborrow(&mut res)).await,
@@ -936,7 +936,7 @@ impl<'v> Vm<'v> {
                         builtin::CONCAT_VERBATIM => {
                             self.concat_verbatim(strand, args, Slot::reborrow(&mut res))
                         }
-                        builtin::ARG_PACK => self.arg_pack(strand, args, Slot::reborrow(&mut res)),
+                        builtin::ARG_ACC => self.arg_acc(strand, args, Slot::reborrow(&mut res)),
                         builtin::CLASS_CREATE => {
                             class::create(strand, args, Slot::reborrow(&mut res)).await
                         }

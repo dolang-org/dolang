@@ -5,7 +5,7 @@
 # See [`Point`](#fixture--Point).
 
 import std:
-  - Args
+  - Pack
 
 import std
 
@@ -33,7 +33,7 @@ pub let default_name = "world"
 let secret = "shhh"
 
 # A named point.
-pub class Point[T @ (Int | Str) = Int, :K, ...R]: Args
+pub class Point[T @ (Int | Str) = Int, :K, ...R]: Pack
   # The horizontal coordinate.
   pub field x @Int = 0
 
@@ -71,11 +71,11 @@ pub class Point[T @ (Int | Str) = Int, :K, ...R]: Args
     nil
 
 # Inherits through a module path rather than an imported item.
-pub class Tagged: std.Args
+pub class Tagged: std.Pack
   pub field tag = nil
 
 # Place a point.
-pub def place point @Point :limit @(Int | nil) = nil -> std.Dict[Str, Args]
+pub def place point @Point :limit @(Int | nil) = nil -> std.Dict[Str, Pack]
   nil
 
 # The first of some items.

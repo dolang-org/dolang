@@ -12,10 +12,10 @@ use crate::{
     error::{Error, Result},
     gc,
     object::{
-        args::{self, ArgItem},
         array,
         dict::{self, Entry, EntryValue},
         native::Cast,
+        pack::{self, ArgItem},
         protocol::{GcObjBorrow, Header},
         range, record, set, structure, tuple,
     },
@@ -680,11 +680,11 @@ impl<'v, 'a> Set<'v, 'a> {
     }
 }
 
-/// [`Args`](crate::object::args::Args) view
-pub struct Args<'v, 'a>(gc::Borrow<'v, 'a, Header, args::Args<'v>>);
+/// [`Pack`](crate::object::pack::Pack) view
+pub struct Pack<'v, 'a>(gc::Borrow<'v, 'a, Header, pack::Pack<'v>>);
 
-impl<'v, 'a> Args<'v, 'a> {
-    pub(crate) fn from_borrow(borrow: GcObjBorrow<'v, 'a, args::Args<'v>>) -> Self {
+impl<'v, 'a> Pack<'v, 'a> {
+    pub(crate) fn from_borrow(borrow: GcObjBorrow<'v, 'a, pack::Pack<'v>>) -> Self {
         Self(borrow)
     }
 
@@ -704,8 +704,8 @@ impl<'v, 'a> Args<'v, 'a> {
 
     /// Return a stateful cursor over the key-value pairs in order. A positional
     /// item's key is its position.
-    pub fn pairs(&self) -> ArgsPairs<'v, 'a> {
-        ArgsPairs {
+    pub fn pairs(&self) -> PackPairs<'v, 'a> {
+        PackPairs {
             borrow: self.0,
             pos: 0,
             int: 0,
@@ -947,8 +947,8 @@ pub enum View<'v, 'a> {
     Dict(Dict<'v, 'a>),
     /// Set
     Set(Set<'v, 'a>),
-    /// [`Args`] view
-    Args(Args<'v, 'a>),
+    /// [`Pack`] view
+    Pack(Pack<'v, 'a>),
     /// [`Record`] view
     Record(Record<'v, 'a>),
     /// Struct
@@ -1018,14 +1018,14 @@ impl<'v, 'a> SetMembers<'v, 'a> {
     }
 }
 
-/// Iterator over a [`Args`].
-pub struct ArgsPairs<'v, 'a> {
-    borrow: GcObjBorrow<'v, 'a, args::Args<'v>>,
+/// Iterator over a [`Pack`].
+pub struct PackPairs<'v, 'a> {
+    borrow: GcObjBorrow<'v, 'a, pack::Pack<'v>>,
     pos: usize,
     int: i64,
 }
 
-impl<'v, 'a> ArgsPairs<'v, 'a> {
+impl<'v, 'a> PackPairs<'v, 'a> {
     /// Get the next key/value pair.
     /// Returns `false` when all pairs have been yielded.
     pub fn next<'s>(
@@ -1120,7 +1120,7 @@ impl<'v, 'a> StructPairs<'v, 'a> {
     }
 }
 
-/// Outputs the key and value of the args or struct item at `pos`, if any,
+/// Outputs the key and value of the pack or struct item at `pos`, if any,
 /// and advances past it. `int` counts the positional items so far.
 fn next_item_pair<'v>(
     items: &[ArgItem<'v>],

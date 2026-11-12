@@ -90,7 +90,7 @@ let arr = [1, 2, 3]
 let d = {name: "Alice", age: 30} # Dict: keys only; `{0: x}` keys are never positions
 let rec = {1, 2, tag: "x"}    # Record: braces with positional items
 let t = (1, "two", ...rest)   # tuple; (x,) is a singleton, () is empty
-let r = (name: "Alice", 30)   # Args: has a static key (`k: v` or `:k`)
+let r = (name: "Alice", 30)   # Pack: has a static key (`k: v` or `:k`)
 let v = (
   some_long_expr(x, y) +
   another * factor
@@ -340,10 +340,10 @@ pub def exported x        # public (module export)
 def connect :host = "localhost" :port = 8080
   echo "Connecting to $host:$port"
 
-def log level ...rest     # variadic: rest is an Args
+def log level ...rest     # variadic: rest is a Pack
   echo "[$level]" ...rest
 
-def run cmd *args **opts  # positional (Tuple) and key (Args) rests
+def run cmd *args **opts  # positional (Tuple) and key (Pack) rests
   echo $cmd ...args ...opts
 ```
 
@@ -659,7 +659,7 @@ bind args
 ```
 
 Rests are iterable without copying: a `*` rest (or rest of a sequence) yields
-values; a `**` rest (or `...` rest of a dict/record/`Args`) yields
+values; a `**` rest (or `...` rest of a dict/record/`Pack`) yields
 `(key, value)` tuples.
 
 Standalone `let` and `bind` accept a diverging `else`. Matching follows
@@ -713,7 +713,7 @@ An annotation or return type is a **compact type**: the first whitespace ends
 it, even inside `()`. Parenthesize unions and function types: `@Str|Path` is not
 a union, but `@(Str | Path)` is. Other forms: `@Dict[Str, Array[Int]]`,
 `@Dict[{name: Str, ?port: Int}]`, `@((Int, ?Int) -> Int)`, `@(:a: | :b:)`.
-`(Int, Str)` is `Tuple[Int, Str]`, and a form with a keyed item is an `Args`,
+`(Int, Str)` is `Tuple[Int, Str]`, and a form with a keyed item is a `Pack`,
 `(name: Str, Int)`. Braces are a schema, never a type: give one to a class, as
 in `Dict[{...}]`, or expand it into a class's items, as in `Record[...{...}]`.
 

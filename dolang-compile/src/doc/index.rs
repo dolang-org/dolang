@@ -1571,7 +1571,7 @@ impl Index<'_> {
                     elem.index(self, scope);
                 }
             }
-            Expr::Args { args, .. } => {
+            Expr::Pack { args, .. } => {
                 for arg in args {
                     arg.index(self, scope);
                 }

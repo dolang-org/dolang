@@ -57,7 +57,7 @@ pm.insert 2 c
 assert_throws $std.ConcurrencyError do
   {...pf}
 
-# `Args` behave the same
+# Packs behave the same
 let t1 *t2 **t3 = (args 1 2 a: 3)
 assert_eq [t1, t2] [1, (2,)]
 assert_eq (pairs t3) [(Tuple [:a:, 3])]
@@ -78,12 +78,12 @@ let **kw = {a: 1}
 assert_throws $error.MissingPosError do
   let _k1 *_ = kw
 
-# Argument packs: `*` gets a tuple and `**` an `Args`, as in a call
+# Argument packs: `*` gets a tuple and `**` a `Pack`, as in a call
 let a *as **ak = (args 1 k: 2 3)
 assert_eq $a 1
 assert_eq $as (3,)
 assert_eq $ak (k: 2)
-assert_eq (type ak) $Args
+assert_eq (type ak) $Pack
 assert_throws $error.UnexpectedKeyError do
   let _a *_as = (args 1 k: 2)
 assert_throws $error.UnexpectedPosError do

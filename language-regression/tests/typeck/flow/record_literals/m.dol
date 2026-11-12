@@ -38,7 +38,7 @@ pub def expected xs @ Array[Int]
 # LL |   wants_dict {1}
 #    |              ^^^
 
-# Items are type arguments, as for `Args`. A type expanded among them repeats,
+# Items are type arguments, as for `Pack`. A type expanded among them repeats,
 # and a schema alias expands into its items.
 pub @let Tagged = {Str, ?tag: Str}
 

@@ -33,8 +33,8 @@ def keys :msg :optional = nil **rest
 def mixed :msg :optional = nil ...rest
   let _ = [msg, optional]
   rest
-let native_keys = do |...args| keyword_rest $std.args ...args
-let native_mixed = do |...args| mixed_rest $std.args ...args
+let native_keys = do |...args| keyword_rest $std.pack ...args
+let native_mixed = do |...args| mixed_rest $std.pack ...args
 for f = [keys, mixed, native_keys, native_mixed]
   assert_eq (f msg: 1 x: 2 y: 3 x: 4) (x: 2, y: 3, x: 4)
   assert_eq (f msg: 1 ...(x: 2, y: 3, x: 4)) (x: 2, y: 3, x: 4)

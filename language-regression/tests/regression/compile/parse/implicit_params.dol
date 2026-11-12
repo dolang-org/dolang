@@ -80,7 +80,7 @@ let _quant @ ((?<Int) -> nil) = nil
 #    |                ^
 
 # Rejected: an implicit describes a function, so it leaves no grouped, tuple, or
-# `Args` type
+# `Pack` type
 let _no_arrow @ ((<Int)) = nil
 # error: a parameter list with an implicit parameter must be followed by `->`
 #   --> implicit_params.dol:LL:LL

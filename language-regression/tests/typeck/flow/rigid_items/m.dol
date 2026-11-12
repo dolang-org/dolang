@@ -8,9 +8,9 @@ import std:
   - @Keys
 
 pub class Typed[S @ {format: Str, count: Int}]
-  field values @ Args[...S]
+  field values @ Pack[...S]
 
-  def (init) self values @ Args[...S]
+  def (init) self values @ Pack[...S]
     self.#values = values
 
   pub def join[K @ Keys[S]] self name @ K -> (Str | Int)

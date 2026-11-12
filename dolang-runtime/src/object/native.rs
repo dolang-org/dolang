@@ -28,8 +28,9 @@ use crate::{
 };
 
 use super::{
-    BoundMethod, args,
+    BoundMethod,
     interface::Request,
+    pack,
     protocol::{
         self, Inspect, Member, MemberKind, Protocol, TypeHandle, instance_mcall_fallback,
         is_special_mcall, type_mcall_fallback,
@@ -204,11 +205,11 @@ impl<'v, 'a> Unpack<'v, 'a> {
         Output::set(strand, out, &tuple);
     }
 
-    /// Stores an empty [`Args`](crate::object::args::Args) in `out`.
+    /// Stores an empty [`Pack`](crate::object::pack::Pack) in `out`.
     ///
     /// A source without keyed items uses this to fill an [`UnpackItem::KeyRest`].
     pub fn empty_key_rest<'s>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
-        let empty = Value::from_object(args::empty(strand));
+        let empty = Value::from_object(pack::empty(strand));
         Output::set(strand, out, &empty);
     }
 
@@ -280,7 +281,7 @@ pub enum UnpackItem<'v, 'a> {
     /// Keyed parameter accessed by constant value.
     ///
     /// Look up the value associated with `key` and store it in `slot`.
-    /// The key should be compared by hash and equality, similar to dict/`Args` lookup.
+    /// The key should be compared by hash and equality, similar to dict/`Pack` lookup.
     /// If the key is not found:
     /// - If `default` is `Some`, store the default value
     /// - If `default` is `None`, this is a required parameter and an error should be returned
@@ -298,7 +299,7 @@ pub enum UnpackItem<'v, 'a> {
     /// any values not consumed by earlier parameters. This is always the last
     /// item yielded by the iterator.
     ///
-    /// For containers (dicts, `Args`), this typically captures key-value pairs
+    /// For containers (dicts, packs), this typically captures key-value pairs
     /// not matched by earlier keyed parameters. For sequential iterators, this
     /// captures remaining unconsumed values.
     Rest {
@@ -318,8 +319,8 @@ pub enum UnpackItem<'v, 'a> {
     /// Capture of remaining keyed values, for a `**name` rest.
     ///
     /// Store a value in `slot` that spreads only the keyed values not matched
-    /// by earlier key parameters, such as an `Args`. A source without keyed
-    /// values stores an empty `Args` with [`Unpack::empty_key_rest`]. This is
+    /// by earlier key parameters, such as a `Pack`. A source without keyed
+    /// values stores an empty `Pack` with [`Unpack::empty_key_rest`]. This is
     /// always the last item yielded by the iterator.
     KeyRest {
         /// Output slot where the value should be stored.

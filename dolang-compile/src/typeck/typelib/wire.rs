@@ -352,7 +352,7 @@ pub(super) enum Type {
     },
     Group(u32),
     Tuple(Vec<WireParam>),
-    Args(Vec<WireParam>),
+    Pack(Vec<WireParam>),
     Union(Vec<u32>),
     Func {
         params: Vec<WireParam>,
@@ -1271,7 +1271,7 @@ impl<'s, 'u> Encode<'s, 'u> {
             },
             TypeExpr::Group { ty, .. } => Type::Group(self.ty(ty)),
             TypeExpr::Tuple { params, .. } => Type::Tuple(self.params(params)),
-            TypeExpr::Args { params, .. } => Type::Args(self.params(params)),
+            TypeExpr::Pack { params, .. } => Type::Pack(self.params(params)),
             TypeExpr::Union { members, .. } => {
                 Type::Union(members.iter().map(|member| self.ty(member)).collect())
             }
@@ -1922,7 +1922,7 @@ impl Decode<'_> {
                     span,
                     params: self.params(params)?,
                 },
-                Type::Args(params) => TypeExpr::Args {
+                Type::Pack(params) => TypeExpr::Pack {
                     span,
                     params: self.params(params)?,
                 },
@@ -1983,7 +1983,7 @@ impl Type {
                     Arg::Pos(ty) | Arg::Key { ty, .. } | Arg::Expand(ty) => ty,
                 }));
             }
-            Type::Schema { params: items, .. } | Type::Tuple(items) | Type::Args(items) => {
+            Type::Schema { params: items, .. } | Type::Tuple(items) | Type::Pack(items) => {
                 params(out, items)
             }
             Type::Group(ty) => out.push(*ty),
