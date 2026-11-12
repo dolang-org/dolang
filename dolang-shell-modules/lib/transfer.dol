@@ -59,7 +59,7 @@ let HEX_DIGEST @ Regex = Regex r"^[0-9a-f]+$"
 let CONTENT_RANGE @ Regex = Regex r"^bytes (\d+)-(\d+)/(\d+|\*)$"
 
 # A parsed `digest:` argument.
-class DigestSpec: Struct[{algorithm: Str, expected: Str, constructor: (() -> digest.State)}]
+class DigestSpec: Struct[algorithm: Str, expected: Str, constructor: (() -> digest.State)]
 
 # Fields common to both kinds of cache metadata.
 @let Metadata = $
@@ -73,7 +73,7 @@ class DigestSpec: Struct[{algorithm: Str, expected: Str, constructor: (() -> dig
 
 # Cache metadata written before the first byte of a download lands, so an
 # interrupted download can be resumed.
-class Partial: Struct[{...Metadata, state: "partial", total: (Int | nil)}]
+class Partial: Struct[...Metadata, state: "partial", total: (Int | nil)]
 
 @let CompleteFields = $
   ...Metadata
@@ -82,7 +82,7 @@ class Partial: Struct[{...Metadata, state: "partial", total: (Int | nil)}]
   verified: Dict[Str, Str]
 
 # Cache metadata for a complete payload.
-class Complete: Struct[CompleteFields]
+class Complete: Struct[...CompleteFields]
 
 def parse_location value @ (Str | Url | Path) -> (Url | Path)
   if (type value Str)
@@ -927,7 +927,7 @@ def packed_link name@Path target@Path prefix@Seq[Str] source@Path -> UnixPath
   link: (Str | nil)
 
 # One archive entry, as parsed from the archive.
-class ArchiveEntry: Struct[EntryFields]
+class ArchiveEntry: Struct[...EntryFields]
 
 @let PlacedFields = $
   ...EntryFields
@@ -937,7 +937,7 @@ class ArchiveEntry: Struct[EntryFields]
 
 # An archive entry and where it lands. Normalizing the manifest fills in
 # `resolved_link` once every output is known.
-class Placed: Struct[PlacedFields]
+class Placed: Struct[...PlacedFields]
 
 def strip_count entries@Array[ArchiveEntry] strip@(Int | :ROOT:) -> Int
   if (strip == :ROOT:)

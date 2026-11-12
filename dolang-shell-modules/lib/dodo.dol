@@ -19,7 +19,7 @@ import args exec strand term proc fs digest json
 
 # A task's arguments: a record with spec items, or a dict without them.
 # `dispatch` tells a spec from a handler by its class.
-@let Spec = (BaseRecord[SpecItems] | BaseDict[SpecItems])
+@let Spec = (BaseRecord[...SpecItems] | BaseDict[SpecItems])
 
 # A task's spec items and, optionally, its handler, without a description
 @let Items = BaseArray[args.SpecItem[Value, Iter[Value], Sink[Value]] | Handler]
@@ -314,7 +314,7 @@ def with_locks[R] paths@Iterable[fs.Path] block@(Array[fs.File] -> R) -> R
       file.close()
 
 # What an output's lock file records about its last build.
-@let OutputRecord = Struct[{path: Str, rule: Str, digest: Str, outputs: Array[Str]}]
+@let OutputRecord = Struct[path: Str, rule: Str, digest: Str, outputs: Array[Str]]
 
 # Reads an output record through its locked file. A lock is mandatory on
 # Windows, so another handle couldn't read it. A missing or torn record reads
@@ -347,7 +347,7 @@ def write_record file@fs.File record@OutputRecord
   file.flush()
 
 # What a rule's input cache records about one input file.
-@let CacheEntry = Struct[{size: Int, mtime: Int, hash: Str}]
+@let CacheEntry = Struct[size: Int, mtime: Int, hash: Str]
 
 # Reads a rule's input cache and the time it was written. A missing or torn
 # cache reads as empty, with no time, and a malformed entry is skipped.

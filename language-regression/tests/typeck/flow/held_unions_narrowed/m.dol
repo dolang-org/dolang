@@ -6,7 +6,7 @@ import std:
   - @BaseRecord
 
 pub @let Flag = BaseDict[{flag: Str}]
-pub @let Cmd[R] = BaseRecord[{cmd: Str, *(Item[R] | (Int -> R))}]
+pub @let Cmd[R] = BaseRecord[cmd: Str, ...(Item[R] | (Int -> R))]
 pub @let Item[R] = (Flag | Cmd[R])
 
 pub def spec[R] *items @ (Item[R] | (Int -> R)) -> R

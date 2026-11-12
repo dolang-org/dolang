@@ -419,6 +419,9 @@ impl Renderer<'_> {
                                     shown_args.extend(self.arguments(&items, naming));
                                     continue;
                                 }
+                                // A pack that isn't written out, such as a binder,
+                                // expands into the arguments
+                                out.push_str("...");
                                 self.render_into(*ty, naming, &mut out)
                             }
                             _ if schema == Some(index)

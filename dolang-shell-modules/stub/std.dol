@@ -324,7 +324,7 @@ do -> Args[...Ts]
 pub def record[...Ts]
   # Positional and key item values.
   ...items @ Ts
-do -> Record[Ts]
+do -> Record[...Ts]
   ...
 
 # Makes a field setter from a function of the object assigned and its new
@@ -375,7 +375,7 @@ pub def str value @ Value -> Str
 pub def struct[...Ts]
   # Positional and key item values.
   ...items @ Ts
-do -> Struct[Ts]
+do -> Struct[...Ts]
   ...
 
 # Interns a string as a [`Sym`](std.Sym).
@@ -2453,14 +2453,14 @@ pub class Dict[S @ {...}]: BaseDict[S] @MutMap[S] @Assign[S]
 
 
 # The read-only half of a [`Record`](std.Record), whose items it holds
-# covariantly: a `Record[{Int, a: Int}]` is a `BaseRecord[{Int, a: (Int |
-# Str)}]`. A parameter that only reads a record takes a `BaseRecord`, so it
-# accepts records with narrower items.
+# covariantly: a `Record[Int, a: Int]` is a `BaseRecord[Int, a: (Int | Str)]`.
+# A parameter that only reads a record takes a `BaseRecord`, so it accepts
+# records with narrower items.
 #
 # `BaseRecord` is `Record` at runtime, so only a record is a `BaseRecord`.
-pub class BaseRecord[S @ {*Value, **Value}]:
-  @Map[S] @Index[S] @Spread[S]
-  Iterable[Entries[S]]
+pub class BaseRecord[...Ts @ {*Value, **Value}]:
+  @Map[Ts] @Index[Ts] @Spread[Ts]
+  Iterable[Entries[Ts]]
 do
   # Returns the number of items, counting each value of a repeated key.
   #[getter]
@@ -2482,7 +2482,7 @@ do
   #
   # When inherited by a Do subclass, `copy()` calls the subclass constructor with
   # the source record as a single positional argument.
-  pub def copy self -> BaseRecord[S]
+  pub def copy self -> BaseRecord[...Ts]
     ...
 
   # Returns the number of positional items plus the number of distinct keys,
@@ -2500,43 +2500,43 @@ do
     instance @ Int = ...
     :default @ D = ...
     :else @ (() -> D) = ...
-  do -> (IndexItem[S, K] | D)
+  do -> (IndexItem[Ts, K] | D)
     ...
 
   # Returns an iterator of keys: each position, and each distinct key once, in
   # the order its first value was added.
-  pub def keys self -> UnpackIter[Keys[S]]
+  pub def keys self -> UnpackIter[Keys[Ts]]
     ...
 
   # Returns an iterator yielding `(key, value)` pairs, the same as ordinary
   # iteration.
-  pub def pairs self -> Iter[Entries[S]]
+  pub def pairs self -> Iter[Entries[Ts]]
     ...
 
   # Returns an iterator of values. With a `key`, it yields only that position's
   # value or that key's values.
-  @def values self -> UnpackIter[Values[S]]
-  @def values[K] self key@K -> UnpackIter[IndexItem[S, K]]
-  pub def values self key @ Value = ... -> UnpackIter[Values[S]]
+  @def values self -> UnpackIter[Values[Ts]]
+  @def values[K] self key@K -> UnpackIter[IndexItem[Ts, K]]
+  pub def values self key @ Value = ... -> UnpackIter[Values[Ts]]
     ...
 
   # Returns a positional item, or the last value of a key.
   #
   # A missing item raises [`IndexError`](std.IndexError).
-  pub def (index)[K] self key@K -> IndexItem[S, K]
+  pub def (index)[K] self key@K -> IndexItem[Ts, K]
     ...
 
   # Spreads the items: positional items positionally, keyed items as keys.
-  pub def (spread) self -> Spread[S]
+  pub def (spread) self -> Spread[Ts]
     ...
 
   # Iterating yields `(index, value)` and `(key, value)` pairs.
-  pub def (iter) self -> Iter[Entries[S]]
+  pub def (iter) self -> Iter[Entries[Ts]]
     ...
 
   # Destructures the record: positional patterns take its positional items,
   # and key patterns its keys.
-  pub def (unpack) self -> BaseRecord[S]
+  pub def (unpack) self -> BaseRecord[...Ts]
     ...
 
 
@@ -2578,23 +2578,23 @@ do
 # for each keyed item, in the order they were added. Spreading and unpacking
 # give positional items positionally and keyed items as keys. Equality and
 # hashing follow the same order.
-pub class Record[S @ {*Value, **Value}]: BaseRecord[S] @MutMap[S] @Assign[S]
+pub class Record[...Ts @ {*Value, **Value}]: BaseRecord[...Ts] @MutMap[Ts] @Assign[Ts]
   # Builds a record by spreading one source. Its integer keys counting up from
   # `0` become positional items, and its other keys must be symbols.
-  pub def (init) self source @ Spread[S]
+  pub def (init) self source @ Spread[Ts]
     ...
 
-  @def clear self @ Record[Clearable[S]]
+  @def clear self @ Record[...Clearable[Ts]]
 
   # Removes every item.
   pub def clear self
     ...
 
   # Returns a shallow copy, as [`BaseRecord.copy`](std.BaseRecord.copy) does.
-  pub def copy self -> Record[S]
+  pub def copy self -> Record[...Ts]
     ...
 
-  @def delete[K] self @ Record[Deletable[S, K]] key @ K -> Bool
+  @def delete[K] self @ Record[...Deletable[Ts, K]] key @ K -> Bool
 
   # Removes a positional item, shifting the ones after it, or every value of a
   # key. Indicates whether anything was removed.
@@ -2616,17 +2616,17 @@ pub class Record[S @ {*Value, **Value}]: BaseRecord[S] @MutMap[S] @Assign[S]
     # the position or key
     key @ K
     # the value
-    value @ InsertItem[S, K]
+    value @ InsertItem[Ts, K]
   do
     ...
 
   @def pop[K, D = Never]
-    self @ Record[Deletable[S, K]]
+    self @ Record[...Deletable[Ts, K]]
     key @ K
     instance @ Int = ...
     :default @ D = ...
     :else @ (() -> D) = ...
-  do -> (IndexItem[S, K] | D)
+  do -> (IndexItem[Ts, K] | D)
 
   # Removes and returns a positional item, shifting the ones after it, or a
   # value of a key, by default its first. `r.pop -1` removes the last
@@ -2644,15 +2644,15 @@ pub class Record[S @ {*Value, **Value}]: BaseRecord[S] @MutMap[S] @Assign[S]
     instance @ Int = ...
     :default @ D = ...
     :else @ (() -> D) = ...
-  do -> (IndexItem[S, K] | D)
+  do -> (IndexItem[Ts, K] | D)
     ...
 
   # Appends positional items.
-  pub def push self ...values @ PushItem[S]
+  pub def push self ...values @ PushItem[Ts]
     ...
 
   # Overwrites a positional item, or replaces every value of a key.
-  pub def (assign)[K] self key@K value@AssignItem[S, K]
+  pub def (assign)[K] self key@K value@AssignItem[Ts, K]
     ...
 
 
@@ -4978,13 +4978,13 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
 
 
 # A read-only view of a [`Struct`](std.Struct), covariant in its schema: a
-# `Struct[{a: Int}]` is a `BaseStruct[{a: (Int | Str)}]`. A parameter that only
+# `Struct[a: Int]` is a `BaseStruct[a: (Int | Str)]`. A parameter that only
 # reads a struct takes a `BaseStruct`, so it accepts structs with narrower items.
 #
 # `BaseStruct` is `Struct` at runtime, so only a struct is a `BaseStruct`.
-pub class BaseStruct[S @ {...}]:
-  @BaseIterable[Entries[S]] @Index[S] @Spread[S]
-  - @Unpack[S, Rest: BaseMap[S], Pos: BaseSeq[S]]
+pub class BaseStruct[...Ts @ {*Value, **Value}]:
+  @BaseIterable[Entries[Ts]] @Index[Ts] @Spread[Ts]
+  - @Unpack[Ts, Rest: BaseMap[Ts], Pos: BaseSeq[Ts]]
 do
   # Gets the value for a symbol or position, with an optional default.
   #
@@ -4994,9 +4994,9 @@ do
   # assert_eq (Struct.get s :port: default: 22) 22
   # ```
   #[class]
-  pub def get[T @ {...}, K, D = nil]
+  pub def get[T @ {*Value, **Value}, K, D = nil]
     self
-    target @ BaseStruct[T]
+    target @ BaseStruct[...T]
     key @ K
     :default @ D = ...
     :else @ (() -> D) = ...
@@ -5011,7 +5011,7 @@ do
   # assert (!Struct.contains(s, :port:))
   # ```
   #[class]
-  pub def contains self target @ BaseStruct[{...}] key @ (Int | Sym) -> Bool
+  pub def contains self target @ BaseStruct[...{*Value, **Value}] key @ (Int | Sym) -> Bool
     ...
 
   # Reads the item a name keys, as in `s.name`.
@@ -5019,7 +5019,7 @@ do
   # ## Errors
   #
   # Raises [`FieldError`](std.FieldError) when no item has the key.
-  pub def (get)[K] self key@K -> IndexItem[S, K]
+  pub def (get)[K] self key@K -> IndexItem[Ts, K]
     ...
 
   # Returns the value at a position or key.
@@ -5027,20 +5027,20 @@ do
   # ## Errors
   #
   # Raises [`IndexError`](std.IndexError) when no item has the key.
-  pub def (index)[K] self key@K -> IndexItem[S, K]
+  pub def (index)[K] self key@K -> IndexItem[Ts, K]
     ...
 
   # Iterates items as `(key, value)` pairs in order. A positional item's key is
   # its position.
-  pub def (iter) self -> UnpackIter[Entries[S]]
+  pub def (iter) self -> UnpackIter[Entries[Ts]]
     ...
 
   # Spreads the struct's items.
-  pub def (spread) self -> Spread[S]
+  pub def (spread) self -> Spread[Ts]
     ...
 
   # Unpacks items by position and symbol, as an [`Args`](std.Args) does.
-  pub def (unpack) self -> BaseStruct[S]
+  pub def (unpack) self -> BaseStruct[...Ts]
     ...
 
 
@@ -5060,9 +5060,9 @@ do
 # [`get`](std.BaseStruct.get) take the struct as their first argument, so they
 # can't collide with an item.
 #
-# The schema `S` types each item, so the type checker reports reading or
+# The type arguments type each item, so the type checker reports reading or
 # writing a name the schema lacks.
-pub class Struct[S @ {...}]: BaseStruct[S] @Assign[S]
+pub class Struct[...Ts @ {*Value, **Value}]: BaseStruct[...Ts] @Assign[Ts]
   # Builds a struct from one spreadable source of key-value pairs.
   #
   # ```
@@ -5081,11 +5081,11 @@ pub class Struct[S @ {...}]: BaseStruct[S] @Assign[S]
   # | --------- | --------- |
   # | [`TypeError`](std.TypeError) | Another key is not a symbol |
   # | [`ValueError`](std.ValueError) | A symbol key is repeated |
-  pub def (init) self source @ Spread[S]
+  pub def (init) self source @ Spread[Ts]
     ...
 
   # Replaces the item a name keys, or adds one, as in `s.name = value`.
-  pub def (set)[K] self key@K value@AssignItem[S, K]
+  pub def (set)[K] self key@K value@AssignItem[Ts, K]
     ...
 
   # Replaces the item at a position or key. A new symbol key adds an item.
@@ -5093,7 +5093,7 @@ pub class Struct[S @ {...}]: BaseStruct[S] @Assign[S]
   # ## Errors
   #
   # Raises [`IndexError`](std.IndexError) for a position with no item.
-  pub def (assign)[K] self key@K value@AssignItem[S, K]
+  pub def (assign)[K] self key@K value@AssignItem[Ts, K]
     ...
 
 

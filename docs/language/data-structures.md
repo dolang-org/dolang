@@ -228,7 +228,11 @@ and unpacking give positional items positionally and keyed items as keys.
 Equality compares the items in that order, so the same items added in a
 different order are unequal. Hashing follows the same order, as a dict's does.
 
-`BaseRecord[S]` is the read-only view of a record. A parameter that only reads
+The type `Record` takes its items as type arguments, as `Args` does:
+`Record[Str, tag: Str]`. Expand a schema for optional or repeated items, as in
+`Record[Str, ...{*Int, ?tag: Str}]`.
+
+`BaseRecord` is the read-only view of a record. A parameter that only reads
 takes a `BaseRecord`, which accepts records with narrower items, as
 [`BaseDict`](std.BaseDict) does for dicts.
 
@@ -271,15 +275,16 @@ if (Struct.contains s :user:)
   echo $s.user
 ```
 
-The type `Struct[S]` takes a schema, which types each item. Reading or writing
-a name the schema doesn't admit is an error:
+The type `Struct` takes its items as type arguments, as `Args` does, with a
+schema expanded for optional items. Reading or writing a name they don't admit
+is an error:
 
 ```
-def connect target @ Struct[{host: Str, port: Int, ?user: Str}]
+def connect target @ Struct[host: Str, port: Int, ...{?user: Str}]
   echo "$(target.host):$(target.port)"
 ```
 
-`BaseStruct[S]` is the read-only view of a struct. A parameter that only reads
+`BaseStruct` is the read-only view of a struct. A parameter that only reads
 takes a `BaseStruct`, which accepts structs with narrower items, as
 [`BaseDict`](std.BaseDict) does for dicts.
 

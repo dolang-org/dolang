@@ -49,10 +49,10 @@ pub def held p @ :a:
 pub def dicts t @ (Int, Str)
   let mixed = {1, foo: false, 2, bar: nil}
   let _ = mixed
-  #       ^~~~~: flow std.Record[{*std.Int, **std.Bool | std.Nil}]
+  #       ^~~~~: flow std.Record[...std.Int, ...{**std.Bool | std.Nil}]
   let positional = {1, 2}
   let _ = positional
-  #       ^~~~~~~~~~: flow std.Record[std.Int]
+  #       ^~~~~~~~~~: flow std.Record[...std.Int]
   let keyed = {0: "a", 1: "b"}
   let _ = keyed
   #       ^~~~~: flow std.Dict[std.Int, std.Str]

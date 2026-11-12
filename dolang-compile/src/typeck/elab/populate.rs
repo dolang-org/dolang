@@ -1036,7 +1036,17 @@ impl<'t, 'u> Populate<'t, 'u> {
             let ty = if let Some(ty) = given[slot] {
                 ty
             } else if let Some(items) = items[slot].take() {
-                self.schema(items)
+                // A lone expansion of a schema fills the pack with it as is, so
+                // `Foo[...S]` is `Foo` applied to `S` rather than to `{...S}`
+                match items[..] {
+                    [
+                        SchemaItem {
+                            element: Element::Include(schema),
+                            ..
+                        },
+                    ] => schema,
+                    _ => self.schema(items),
+                }
             } else if let Some(default) = self.default(binder(slot)) {
                 self.db.substitute(default, &placeholder)
             } else if let BinderKind::Rest(_) = written[slot].kind {

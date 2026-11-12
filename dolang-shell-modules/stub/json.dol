@@ -97,7 +97,7 @@ pub @let EncodeValue = $
   | Sym
   | BaseArray[EncodeValue]
   | Tuple[...EncodeValue]
-  | BaseStruct[{*EncodeValue, **EncodeValue}]
+  | BaseStruct[...{*EncodeValue, **EncodeValue}]
   | BaseDict[Str | Sym | Int | Float | Bool, EncodeValue]
 
 # Deserializes a JSON string to a Do value.

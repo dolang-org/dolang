@@ -97,7 +97,7 @@ pub @let EncodeValue = $
   | Sym
   | BaseArray[EncodeValue]
   | Tuple[...EncodeValue]
-  | BaseStruct[{**EncodeValue}]
+  | BaseStruct[...{**EncodeValue}]
   | BaseDict[Str | Sym, EncodeValue]
 
 # Parses a TOML string into a Do value.

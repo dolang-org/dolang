@@ -99,7 +99,7 @@ pub @let EncodeValue = $
   | Sym
   | BaseArray[EncodeValue]
   | Tuple[...EncodeValue]
-  | BaseStruct[{*EncodeValue, **EncodeValue}]
+  | BaseStruct[...{*EncodeValue, **EncodeValue}]
   | BaseDict[EncodeValue, EncodeValue]
 
 # Parses a YAML string into a Do value.

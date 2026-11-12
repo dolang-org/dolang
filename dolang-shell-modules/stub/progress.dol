@@ -169,7 +169,7 @@ pub @let StepSpec[I, O] = {((<I, >O) -> Value), ?name: Str, ?icon: Str}
 # with the items of [`StepSpec`](progress.StepSpec).
 pub @let Step[I, O] = (
   ((<I, >O) -> Value)
-  | BaseRecord[StepSpec[I, O]]
+  | BaseRecord[...StepSpec[I, O]]
   | BaseDict[StepSpec[I, O]]
 )
 

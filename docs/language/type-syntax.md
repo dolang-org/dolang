@@ -99,7 +99,7 @@ that element the schema admits:
 A type alone is a positional item:
 
 ```
-let pair @ Record[{Str, Int}] = {"a", 1}
+let pair @ Record[...{Str, Int}] = {"a", 1}
 ```
 
 ### Keyed Items
