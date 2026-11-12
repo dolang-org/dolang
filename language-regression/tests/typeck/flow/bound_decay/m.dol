@@ -1,0 +1,33 @@
+# A binder's bound keeps a literal from decaying past it, but isn't what the
+# literal is expected to be (#1680)
+
+def pick[T @ (:A: | :B:)] x @ T -> T
+  x
+def opts[T @ BaseDict[{mode: (:A: | :B:)}]] x @ T -> T
+  x
+def fixed[T @ Dict[{mode: (:A: | :B:)}]] x @ T -> T
+  x
+def keep[T @ BaseDict[{**Value}]] x @ T -> T
+  x
+def table[T @ Dict[Str, Int]] x @ T -> T
+  x
+
+pub def ceiling()
+  let _ = pick :A:
+  #       ^~~~~~~~: value :A:
+  let _ = opts {mode: :A:}
+  #       ^~~~~~~~~~~~~~~~: value std.Dict[{mode: :A:}]
+  # An invariant bound is the only type the literal can take
+  let _ = fixed {mode: :A:}
+  #       ^~~~~~~~~~~~~~~~~: value std.Dict[{mode: :A: | :B:}]
+
+# A bound that only repeats lanes leaves a literal as it would be without the
+# call
+pub def bound_not_expected()
+  let _ = keep {a: 1}
+  #       ^~~~~~~~~~~: value std.Dict[std.Sym, std.Int]
+  let _ @ BaseDict[{a: Value}] = keep {a: 1}
+
+pub def empty()
+  let _ = table {}
+  #       ^~~~~~~~: value std.Dict[std.Str, std.Int]
