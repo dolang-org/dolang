@@ -2,7 +2,7 @@
 pub def positional_dict()
   let xs = [...{"x", "y"}]
   let _ = xs
-  #       ^~: flow [std.Str]
+  #       ^~: flow std.Array[std.Str]
 
 pub def keyed_dict d @ Dict[Sym, Int]
   let _x = [...d]
@@ -40,4 +40,4 @@ pub def keyed_record_tuple()
 pub def pairs d @ Dict[Sym, Int]
   let xs = [...d.iter()]
   let _ = xs
-  #       ^~: flow [(std.Sym, std.Int)]
+  #       ^~: flow std.Array[(std.Sym, std.Int)]

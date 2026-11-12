@@ -607,21 +607,13 @@ impl<'t> Collect<'t, '_> {
                     self.ty(arg.ty(), Use::BOTH);
                 }
             }
-            TypeExpr::Schema {
-                params, collection, ..
-            } => match collection.get() {
-                Some(class) => self.designated(class, u, |this, u| this.items(params, u)),
-                None => self.items(params, u),
-            },
+            TypeExpr::Schema { params, .. } => self.items(params, u),
             TypeExpr::Tuple { params, .. } => {
                 let role = Designated::Intrinsic(Intrinsic::Tuple);
                 self.designated(role, u, |this, u| this.items(params, u));
             }
             TypeExpr::Args { params, .. } => {
                 self.designated(Designated::Args, u, |this, u| this.items(params, u));
-            }
-            TypeExpr::Array { elem, .. } => {
-                self.designated(Designated::Array, u, |this, u| this.ty(elem, u));
             }
             TypeExpr::Union { members, .. } => {
                 for member in members {

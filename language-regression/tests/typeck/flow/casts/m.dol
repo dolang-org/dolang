@@ -33,10 +33,10 @@ pub def literals r @ Release
 pub def collections()
   let empty = ([] @ Array[(Str | nil)])
   let _ = empty
-  #       ^~~~~: flow [nil | std.Str]
+  #       ^~~~~: flow std.Array[nil | std.Str]
   let options = ({port: 1} @ Dict[{?port: Int}])
   let _ = options
-  #       ^~~~~~~: flow {?port: std.Int}
+  #       ^~~~~~~: flow std.Dict[{?port: std.Int}]
 
 pub class Item
   pub field name @ Str = ""
@@ -65,7 +65,7 @@ pub def misfits()
   # LL |   let _ = ("x" @ Int)
   #    |            ^^^
   let _ = ([1, "a"] @ Array[Int])
-  # error: `["a" | 1]` does not fit the cast's type `[std.Int]`
+  # error: `std.Array["a" | 1]` does not fit the cast's type `std.Array[std.Int]`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _ = ([1, "a"] @ Array[Int])

@@ -581,9 +581,6 @@ impl<'a> Node<'a> {
             doc::Kind::ParensType { items } => Kind::ParensType {
                 items: NodeIds(items.iter()),
             },
-            doc::Kind::ArrayType { elem } => Kind::ArrayType {
-                elem: public_node_id(*elem),
-            },
             doc::Kind::UnionType { members } => Kind::UnionType {
                 members: NodeIds(members.iter()),
             },
@@ -873,11 +870,6 @@ pub enum Kind<'a> {
     ParensType {
         /// The [`Kind::TypeItem`] nodes, in the order written
         items: NodeIds<'a>,
-    },
-    /// An array type, e.g. `[Int]`
-    ArrayType {
-        /// The element type
-        elem: NodeId,
     },
     /// A union, e.g. `(Str | Path)`
     UnionType {

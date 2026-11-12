@@ -712,9 +712,10 @@ let double = (do |x @ Int| -> Int x * 2)
 An annotation or return type is a **compact type**: the first whitespace ends
 it, even inside `()`. Parenthesize unions and function types: `@Str|Path` is not
 a union, but `@(Str | Path)` is. Other forms: `@Dict[Str, Array[Int]]`,
-`@{name: Str, ?port: Int}`, `@((Int, ?Int) -> Int)`, `@(:a: | :b:)`. `(Int,
-Str)` is `Tuple[Int, Str]`, `[T]` is `Array[T]`, and a form with a keyed item
-is an `Args`, `(name: Str, Int)`.
+`@Dict[{name: Str, ?port: Int}]`, `@((Int, ?Int) -> Int)`, `@(:a: | :b:)`.
+`(Int, Str)` is `Tuple[Int, Str]`, and a form with a keyed item is an `Args`,
+`(name: Str, Int)`. Braces are a schema, never a type: give one to a class, as
+in `Dict[{...}]`, or expand it into a class's items, as in `Record[...{...}]`.
 
 `[]` directly after a `def` or `class` name declares type binders, with optional
 bounds and defaults (`T @ Bound = Default`):

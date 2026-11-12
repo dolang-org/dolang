@@ -25,7 +25,7 @@ pub def outer[A, B] _a @ A _b @ B
   @let Local = (nil -> B)
   #    ^~~~~: decl [^B +] (nil, <Value, >Value) -> B
   @let Via = Array[Local]
-  #    ^~~: decl [^B] [m.outer.Local[^B]]
+  #    ^~~: decl [^B] std.Array[m.outer.Local[^B]]
   def uses_alias x @ OnlyA
     # ^~~~~~~~~~: decl [^A -, in -, out -] (m.outer.OnlyA[^A], <in, >out) -> Unknown
     #                ^~~~~: type m.outer.OnlyA[^A]

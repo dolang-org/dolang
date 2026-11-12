@@ -55,9 +55,9 @@ pub def build_command
   :env @ BaseDict[Str | Sym, Value] = {}
   :login_env @ (Bool | Str) = true
   ...options @ (Str | Path)
-do -> [Value]
-  let identities @ [Value] = []
-  let jumps @ [Value] = []
+do -> Array[Value]
+  let identities @ Array[Value] = []
+  let jumps @ Array[Value] = []
   for key value = options
     if (key == :identity:)
       identities.push $value

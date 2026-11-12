@@ -348,12 +348,11 @@ pub(super) enum Type {
     },
     Schema {
         params: Vec<WireParam>,
-        tuple: bool,
+        vertical: bool,
     },
     Group(u32),
     Tuple(Vec<WireParam>),
     Args(Vec<WireParam>),
-    Array(u32),
     Union(Vec<u32>),
     Func {
         params: Vec<WireParam>,
@@ -1264,14 +1263,15 @@ impl<'s, 'u> Encode<'s, 'u> {
                 base: self.ty(base),
                 args: args.iter().map(|arg| self.arg(arg)).collect(),
             },
-            TypeExpr::Schema { params, tuple, .. } => Type::Schema {
+            TypeExpr::Schema {
+                params, vertical, ..
+            } => Type::Schema {
                 params: self.params(params),
-                tuple: *tuple,
+                vertical: *vertical,
             },
             TypeExpr::Group { ty, .. } => Type::Group(self.ty(ty)),
             TypeExpr::Tuple { params, .. } => Type::Tuple(self.params(params)),
             TypeExpr::Args { params, .. } => Type::Args(self.params(params)),
-            TypeExpr::Array { elem, .. } => Type::Array(self.ty(elem)),
             TypeExpr::Union { members, .. } => {
                 Type::Union(members.iter().map(|member| self.ty(member)).collect())
             }
@@ -1909,11 +1909,10 @@ impl Decode<'_> {
                     args: self.args(args.clone())?,
                     interned: Default::default(),
                 },
-                Type::Schema { params, tuple } => TypeExpr::Schema {
+                Type::Schema { params, vertical } => TypeExpr::Schema {
                     span,
                     params: self.params(params)?,
-                    tuple: *tuple,
-                    collection: Default::default(),
+                    vertical: *vertical,
                 },
                 &Type::Group(ty) => TypeExpr::Group {
                     span,
@@ -1926,10 +1925,6 @@ impl Decode<'_> {
                 Type::Args(params) => TypeExpr::Args {
                     span,
                     params: self.params(params)?,
-                },
-                &Type::Array(elem) => TypeExpr::Array {
-                    span,
-                    elem: boxed(elem)?,
                 },
                 Type::Union(members) => TypeExpr::Union {
                     span,
@@ -1991,7 +1986,7 @@ impl Type {
             Type::Schema { params: items, .. } | Type::Tuple(items) | Type::Args(items) => {
                 params(out, items)
             }
-            Type::Group(ty) | Type::Array(ty) => out.push(*ty),
+            Type::Group(ty) => out.push(*ty),
             Type::Union(members) => out.extend(members),
             Type::Func {
                 params: items,

@@ -358,7 +358,7 @@ class Harness
   field plain @ Bool
   field events @ (EventWriter | nil)
   field errors @ Array[Failure] = []
-  field counts @ {passed: Int, failed: Int, skipped: Int, ignored: Int} = {passed: 0, failed: 0, skipped: 0, ignored: 0}
+  field counts @ Dict[{passed: Int, failed: Int, skipped: Int, ignored: Int}] = {passed: 0, failed: 0, skipped: 0, ignored: 0}
   field module_failed @ Bool = false
 
   def (init)

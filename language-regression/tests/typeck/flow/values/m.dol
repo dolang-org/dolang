@@ -35,6 +35,6 @@ pub def values b @ Box n @ Int
   #                      ^~~~~~~~~~~~: value (std.Int, <m.values.#0, >m.values.#1) -> std.Int
   # Arguments held back for their call's parameters
   let nested = pick([pick(n)])
-  #                 ^~~~~~~~~: value [std.Int]
+  #                 ^~~~~~~~~: value std.Array[std.Int]
   #                  ^~~~~~~: value std.Int
   let _ = [call, got, method, sum, named, applied, nested]

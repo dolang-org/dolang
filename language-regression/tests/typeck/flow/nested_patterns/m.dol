@@ -76,13 +76,13 @@ pub def loops xs @ Array[Tuple[Str, Tuple[Int, Int]]]
     for _key (_lo hi) = xs
       - $hi
   let _ = ys
-  #       ^~: flow [std.Int]
+  #       ^~: flow std.Array[std.Int]
   let zs = $
     for x = xs
       if let _k (lo _hi) = x
         - $lo
   let _ = zs
-  #       ^~: flow [std.Int]
+  #       ^~: flow std.Array[std.Int]
 
 pub def params()
   do |a (b c = 0)|

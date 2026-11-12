@@ -19,7 +19,7 @@ pub def mapped()
   let ys = map [1, 2] do |x| [x]
   #                       ^: flow std.Int
   let _ = ys
-  #       ^~: flow [[std.Int]]
+  #       ^~: flow std.Array[std.Array[std.Int]]
 
 pub def applied()
   apply 1 do |y|

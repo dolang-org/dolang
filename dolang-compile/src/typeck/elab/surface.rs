@@ -11,19 +11,16 @@
 //! is kept in a slot on the form. Slots are relaxed atomics, filled before the
 //! tables are shared, and are not serialized.
 
-use std::{
-    fmt::{self, Write},
-    sync::atomic::{AtomicU8, Ordering},
-};
+use std::fmt::{self, Write};
 
 use dolang_util::intern::AtomicId;
 
-use super::{Designated, Referent, Tables};
+use super::{Referent, Tables};
 use crate::{
     RestKind,
     ast::SpecialMethod,
     diag::Span,
-    typeck::r#type::{DeclId, Intrinsic, TypeTag, UnitId},
+    typeck::r#type::{DeclId, TypeTag, UnitId},
 };
 
 /// A string of a unit's string table
@@ -86,38 +83,6 @@ impl ModuleId {
 /// The type a written form was interned as, filled by population
 pub(crate) type Interned = AtomicId<TypeTag>;
 
-/// The collection a schema is where a type is required, filled by kind checking
-#[derive(Default)]
-pub(crate) struct Collection(AtomicU8);
-
-impl Collection {
-    const DICT: u8 = 1;
-    const TUPLE: u8 = 2;
-
-    /// `std.Dict`, or `std.Tuple`, or `None` where a schema is one
-    pub(crate) fn get(&self) -> Option<Designated> {
-        match self.0.load(Ordering::Relaxed) {
-            Self::DICT => Some(Designated::Dict),
-            Self::TUPLE => Some(Designated::Intrinsic(Intrinsic::Tuple)),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn set(&self, tuple: bool) {
-        let class = match tuple {
-            true => Self::TUPLE,
-            false => Self::DICT,
-        };
-        self.0.store(class, Ordering::Relaxed);
-    }
-}
-
-impl Clone for Collection {
-    fn clone(&self) -> Self {
-        Self(AtomicU8::new(self.0.load(Ordering::Relaxed)))
-    }
-}
-
 /// A name as written, and where
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Name {
@@ -167,16 +132,12 @@ pub(crate) enum TypeExpr {
         /// Its type, interned in the group it is written in
         interned: Interned,
     },
-    /// A schema, e.g. `{name: Str, ?port: Int}`. Where a type is required, it is
-    /// `std.Dict` of itself, or `std.Tuple` of its items when it is `tuple`.
+    /// A schema, e.g. `{name: Str, ?port: Int}`
     Schema {
         span: Span,
         params: Vec<TypeParam>,
-        /// Whether it is written vertically without an explicitly keyed item, as an
-        /// array's data is
-        tuple: bool,
-        /// Its collection, where kind checking found a type required
-        collection: Collection,
+        /// Whether it is written vertically, after `$`
+        vertical: bool,
     },
     /// A parenthesized type
     Group { span: Span, ty: Box<TypeExpr> },
@@ -185,8 +146,6 @@ pub(crate) enum TypeExpr {
     /// An `Args` type, e.g. `(name: Str, Int)`: `std.Args` of the schema of its
     /// items
     Args { span: Span, params: Vec<TypeParam> },
-    /// An array type, e.g. `[Int]`: `std.Array` of its element type
-    Array { span: Span, elem: Box<TypeExpr> },
     /// A union, e.g. `Str | Path`
     Union { span: Span, members: Vec<TypeExpr> },
     /// A function type, e.g. `(Int, ?Int) -> Int`
@@ -290,7 +249,6 @@ impl TypeExpr {
             | TypeExpr::Group { span, .. }
             | TypeExpr::Tuple { span, .. }
             | TypeExpr::Args { span, .. }
-            | TypeExpr::Array { span, .. }
             | TypeExpr::Union { span, .. }
             | TypeExpr::Func { span, .. }
             | TypeExpr::Quantified { span, .. }
@@ -336,9 +294,7 @@ impl TypeExpr {
                     ty.each_node_in(group, f);
                 }
             }
-            TypeExpr::Group { ty, .. } | TypeExpr::Array { elem: ty, .. } => {
-                ty.each_node_in(group, f)
-            }
+            TypeExpr::Group { ty, .. } => ty.each_node_in(group, f),
             TypeExpr::Union { members, .. } => {
                 for member in members {
                     member.each_node_in(group, f);
@@ -675,10 +631,7 @@ impl Printer<'_, '_> {
                 }
                 out.write_char(']')
             }
-            // A vertical schema that is a tuple prints as one
-            TypeExpr::Schema {
-                params, collection, ..
-            } if collection.get() != Some(Designated::Intrinsic(Intrinsic::Tuple)) => {
+            TypeExpr::Schema { params, .. } => {
                 out.write_char('{')?;
                 self.params(params, None, None, out)?;
                 out.write_char('}')
@@ -688,9 +641,7 @@ impl Printer<'_, '_> {
                 self.ty(ty, out)?;
                 out.write_char(')')
             }
-            TypeExpr::Schema { params, .. }
-            | TypeExpr::Tuple { params, .. }
-            | TypeExpr::Args { params, .. } => {
+            TypeExpr::Tuple { params, .. } | TypeExpr::Args { params, .. } => {
                 out.write_char('(')?;
                 self.params(params, None, None, out)?;
                 // A lone item without a quantifier would only group without its comma
@@ -698,11 +649,6 @@ impl Printer<'_, '_> {
                     out.write_char(',')?;
                 }
                 out.write_char(')')
-            }
-            TypeExpr::Array { elem, .. } => {
-                out.write_char('[')?;
-                self.ty(elem, out)?;
-                out.write_char(']')
             }
             TypeExpr::Union { members, .. } => {
                 for (index, member) in members.iter().enumerate() {

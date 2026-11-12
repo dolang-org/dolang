@@ -1,57 +1,25 @@
-# Where a type is required, a brace is `Dict` of its schema.
+# A schema is not a type: a class applied to it gives it meaning.
 
-pub let named @ {name: Str} = ...
-#               ^~~~~~~~~~~: type {name: std.Str}
-pub let nested @ {items: [Str]} = ...
-#                ^~~~~~~~~~~~~~: type {items: [std.Str]}
-pub let rows @ Array[{a: Int}] = ...
-#              ^~~~~~~~~~~~~~~: type [{a: std.Int}]
-pub let optional @ ({a: Int} | nil) = ...
-#                  ^~~~~~~~~~~~~~~~: type nil | {a: std.Int}
-pub let callback @ (({a: Int}) -> nil) = ...
-#                  ^~~~~~~~~~~~~~~~~~~: type ({a: std.Int}, <Value, >Value) -> nil
-
-# `Dict` itself takes the brace as its schema
 pub let spelled @ Dict[{a: Int}] = ...
-#                 ^~~~~~~~~~~~~~: type {a: std.Int}
+#                 ^~~~~~~~~~~~~~: type std.Dict[{a: std.Int}]
+pub let rows @ Array[Dict[{a: Int}]] = ...
+#              ^~~~~~~~~~~~~~~~~~~~~: type std.Array[std.Dict[{a: std.Int}]]
+pub let shorthand @ Dict[Int] = ...
+#                   ^~~~~~~~~: type std.Dict[std.Int]
 
-# A vertical schema in a key's value is a dict too
+# A vertical schema follows a class too, in a key's value as anywhere
 pub @let Config = Dict $
-  #      ^~~~~~: decl {name: std.Str, meta: {owner: std.Str}}
+  #      ^~~~~~: decl std.Dict[{name: std.Str, meta: std.Dict[{owner: std.Str}]}]
   name: Str
-  meta: $
+  meta: Dict $
     owner: Str
-
-# Without a key, as an array's data is, it is a tuple of its items
-pub @let Point = Dict $
-  #      ^~~~~: decl {at: (std.Int, std.Int), tags: (*std.Str)}
-  at: $
-    Int Int
-  tags: $
-    *Str
-pub @let Nested = Tuple $
-  #      ^~~~~~: decl ((std.Int,),)
-  Int
-pub let spelled_pair @ Tuple[Int, Int] = ...
-#                      ^~~~~~~~~~~~~~~: type (std.Int, std.Int)
 pub @let Spread = Tuple ...$
   #      ^~~~~~: decl (std.Int,)
   Int
-pub @let Mixed = Dict $
-  pair: $
-    Int
-    ...Shape
-# error: included schema may have keyed items, which a tuple type can't hold
-#   --> m.dol:LL:LL
-#    |
-# LL |     ...Shape
-#    |        ^^^^^
-#    |
-#    = help: a keyed item makes a dict; to include keyed items in an `Args`, apply `Args ...$` to these items
 
 # A dict guards a recursive alias, as any class does
-pub @let Tree = (nil | {child: Tree})
-#        ^~~~: decl nil | {child: m.Tree}
+pub @let Tree = (nil | Dict[{child: Tree}])
+#        ^~~~: decl nil | std.Dict[{child: m.Tree}]
 
 # A binder's bound and an alias's body stay schemas
 pub def keys[S @ {...}] table @ Dict[S] -> nil
@@ -59,19 +27,88 @@ pub def keys[S @ {...}] table @ Dict[S] -> nil
 pub @let Shape = {a: Int}
 pub let shaped @ Dict[Shape] = ...
 #                ^~~~~~~~~~~: type std.Dict[m.Shape]
-pub let bad @ Shape = ...
+
+# Where a type is required, a schema is an error
+pub let braced @ {a: Int} = ...
+# error: expected a type, found a schema
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let braced @ {a: Int} = ...
+#    |                  ^^^^^^^^
+#    |
+#    = help: for a dict with this schema, write `Dict[{a: Int}]`
+pub let named @ Shape = ...
 # error: expected a type, found a schema
 #   --> m.dol:LL:LL
 #    |
 # LL | pub @let Shape = {a: Int}
 #    |          ----- declared here
 # ...
-# LL | pub let bad @ Shape = ...
-#    |               ^^^^^
+# LL | pub let named @ Shape = ...
+#    |                 ^^^^^
 #    |
 #    = help: for a dict with this schema, write `Dict[Shape]`
+pub @let Vertical = Array $
+  - Int
+# error: expected a type, found a schema
+#   --> m.dol:LL:LL
+#    |
+# LL |   pub @let Vertical = Array $
+#    |  ___________________________^
+# LL | |   - Int
+#    | |_______^
+#    |
+#    = help: apply a class to it, as in `Dict $` or `Tuple ...$`
+pub let item @ Record[{a: Int}] = ...
+# error: expected a type, found a schema
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let item @ Record[{a: Int}] = ...
+#    |                       ^^^^^^^^
+#    |
+#    = help: to give the schema's items, expand it: `...{a: Int}`
+pub let named_item @ Struct[Shape] = ...
+# error: expected a type, found a schema
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @let Shape = {a: Int}
+#    |          ----- declared here
+# ...
+# LL | pub let named_item @ Struct[Shape] = ...
+#    |                             ^^^^^
+#    |
+#    = help: to give the schema's items, expand it: `...Shape`
+pub @let VerticalItem = Tuple $
+  Int
+# error: expected a type, found a schema
+#   --> m.dol:LL:LL
+#    |
+# LL |   pub @let VerticalItem = Tuple $
+#    |  _______________________________^
+# LL | |   Int
+#    | |_____^
+#    |
+#    = help: to give the schema's items, expand it: `...$`
+pub @let Nested = Dict $
+  meta: $
+    owner: Str
+# error: expected a type, found a schema
+#   --> m.dol:LL:LL
+#    |
+# LL |     meta: $
+#    |  _________^
+# LL | |     owner: Str
+#    | |______________^
+#    |
+#    = help: apply a class to it, as in `Dict $` or `Tuple ...$`
 
 pub def cast value
   let row = (value @ {a: Int})
-  #                  ^~~~~~~~: type {a: std.Int}
+  # error: expected a type, found a schema
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let row = (value @ {a: Int})
+  #    |                      ^^^^^^^^
+  #    |
+  #    = help: for a dict with this schema, write `Dict[{a: Int}]`
   row

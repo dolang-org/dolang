@@ -1,7 +1,7 @@
 use super::{
     ExprMode, Parser, Result, Scope,
     diag::{
-        ArrayTypeElems, DuplicateImplicit, ExtraQuant, ImplicitInSchema, ImplicitWithoutArrow,
+        BracketType, DuplicateImplicit, ExtraQuant, ImplicitInSchema, ImplicitWithoutArrow,
         InvalidConstType, KeyedInclusion, KeyedStarStar, NonConstExpr, OptionalQuant,
         OptionalTypeArg, QuantifiedImplicit, QuantifiedInclusion, QuantifiedNonFunction,
     },
@@ -644,29 +644,24 @@ impl Parser<'_> {
             }
             Some(token!(TokenInfo::LeftBracket)) => {
                 let left = self.advance();
-                let (mut params, _, bracket_span) =
+                let (params, _, bracket_span) =
                     self.parse_type_params(scope, Params::Array, left)?;
-                if let [
-                    TypeParam {
-                        kind: TypeParamKind::Pos { quant: None, .. },
-                        delim_span: None,
-                        ..
-                    },
-                ] = params.as_slice()
-                    && let Some(TypeParam {
-                        kind: TypeParamKind::Pos { ty: elem, .. },
-                        ..
-                    }) = params.pop()
-                {
-                    TypeExpr::Array {
-                        elem: Box::new(elem),
-                        bracket_span,
-                    }
-                } else {
-                    self.fail = true;
-                    self.diags.push(ArrayTypeElems(bracket_span));
-                    TypeExpr::Error
-                }
+                let elem = match params.as_slice() {
+                    [
+                        TypeParam {
+                            kind: TypeParamKind::Pos { quant: None, ty },
+                            delim_span: None,
+                            ..
+                        },
+                    ] => Some(ty.span()),
+                    _ => None,
+                };
+                self.fail = true;
+                self.diags.push(BracketType {
+                    span: bracket_span,
+                    elem,
+                });
+                TypeExpr::Error
             }
             Some(
                 token!(

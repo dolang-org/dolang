@@ -527,12 +527,17 @@ impl Diagnose for ImplicitWithoutArrow {
     }
 }
 
+/// Brackets where a type is expected, as in `[Int]`
 #[derive(Clone)]
-pub(super) struct ArrayTypeElems(pub(super) Span);
+pub(super) struct BracketType {
+    pub(super) span: Span,
+    /// The lone element type written within, if any
+    pub(super) elem: Option<Span>,
+}
 
-impl Diagnose for ArrayTypeElems {
+impl Diagnose for BracketType {
     fn span(&self) -> Span {
-        self.0
+        self.span
     }
 
     fn severity(&self) -> Severity {
@@ -540,7 +545,7 @@ impl Diagnose for ArrayTypeElems {
     }
 
     fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(w, "an array type takes one element type")
+        write!(w, "expected a type, found `[`")
     }
 
     fn notes(&self) -> Box<dyn Iterator<Item = Box<dyn Note>>> {
@@ -548,16 +553,14 @@ impl Diagnose for ArrayTypeElems {
     }
 }
 
-impl Note for ArrayTypeElems {
+impl Note for BracketType {
     fn kind(&self) -> NoteKind {
         NoteKind::Help
     }
 
-    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(
-            w,
-            "write a union for elements of several types, as in `[Int | Str]`, or a tuple type, as in `(Int, Str)`"
-        )
+    fn message(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        let elem = self.elem.map_or("T", |elem| file.str(elem));
+        write!(w, "for an array type, write `Array[{elem}]`")
     }
 }
 

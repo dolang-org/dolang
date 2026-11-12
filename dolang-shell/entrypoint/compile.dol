@@ -102,7 +102,6 @@ let KIND_NAMES = $
   $compile.AppType: "AppType"
   $compile.SchemaType: "SchemaType"
   $compile.ParensType: "ParensType"
-  $compile.ArrayType: "ArrayType"
   $compile.UnionType: "UnionType"
   $compile.FuncType: "FuncType"
   $compile.PosTypeArg: "PosTypeArg"
@@ -542,10 +541,6 @@ class Document
       $
         kind: "parens"
         params: (self.#type_items(expr.items))
-    else if type(expr, compile.ArrayType)
-      $
-        kind: "array"
-        elem: (self.#type_tree(expr.elem))
     else if type(expr, compile.UnionType)
       let members = []
       for member = expr.members

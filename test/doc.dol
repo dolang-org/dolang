@@ -413,7 +413,6 @@ def remaining_type_forms()
   let out = extract_source |-
     @let Base = {a: Int}
     pub @let Pair = (Int, name: Str)
-    pub @let Ints = [Int]
     pub @let Keyed = Args[x: Int]
     pub @let Wide = {...Base, ...}
     pub @let Loose = {*, **}
@@ -424,7 +423,6 @@ def remaining_type_forms()
     "params":
       - {"kind": "pos", "quant": nil, "type": name_type("Int")}
       - {"kind": "key", "quant": nil, "key": "name", "type": name_type("Str")}
-  assert_eq (type_of("Ints")) {"kind": "array", "elem": name_type("Int")}
   assert_eq (type_of("Keyed")) $
     "kind": app
     "base": (name_type "Args")

@@ -135,9 +135,9 @@ pub def workarounds t @ Tagged l @ Labeled
   # LL |   apply $l
   #    |          ^
   let _ = map_each [1] $t.(call)
-  #   ^: flow [std.Int]
+  #   ^: flow std.Array[std.Int]
   let _ = map_each ["s"] $t.(call)
-  #   ^: flow [std.Str]
+  #   ^: flow std.Array[std.Str]
   let _ = apply $l.(call)
   #   ^: flow std.Str
   let _ = t 1

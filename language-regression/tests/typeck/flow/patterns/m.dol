@@ -14,7 +14,7 @@ pub def tuple_rest()
   #       ^: flow std.BaseSeq[{std.Str, std.Bool}]
   let xs = [...r]
   let _ = xs
-  #       ^~: flow [std.Bool | std.Str]
+  #       ^~: flow std.Array[std.Bool | std.Str]
 
 pub def array_rest xs @ Array[Int]
   let a ...r = xs

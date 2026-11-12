@@ -1,13 +1,13 @@
 # A dict type is used as `Dict` uses its schema.
 
 pub @let Spelled[T] = Dict[{a: T}]
-#        ^~~~~~~: decl [T] {a: T}
-pub @let Within[T] = Iter[{a: T}]
-#        ^~~~~~: decl [T] std.Iter[{a: T}]
+#        ^~~~~~~: decl [T] std.Dict[{a: T}]
+pub @let Within[T] = Iter[Dict[{a: T}]]
+#        ^~~~~~: decl [T] std.Iter[std.Dict[{a: T}]]
 
 pub class Box[T]
   #       ^~~: decl [T] nominal
-  pub def items self -> {a: T}
+  pub def items self -> Dict[{a: T}]
     ...
 
 # An alias's body is a schema, as its items use the binder

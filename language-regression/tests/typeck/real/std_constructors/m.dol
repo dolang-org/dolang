@@ -17,13 +17,13 @@ pub def misfits
   ints @ Array[Int]
 do
   let _d @ Dict[{a: Int}] = Dict $ pairs.iter().kv()
-  # error: `std.Dict[std.Sym, std.Int]` does not fit the annotation `{a: std.Int}`
+  # error: `std.Dict[std.Sym, std.Int]` does not fit the annotation `std.Dict[{a: std.Int}]`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _d @ Dict[{a: Int}] = Dict $ pairs.iter().kv()
   #    |                             ^^^^^^^^^^^^^^^^^^^^^^^^
   let _e @ Dict[{x: Int}] = Dict $ints
-  # error: `std.Dict[std.Int]` does not fit the annotation `{x: std.Int}`
+  # error: `std.Dict[std.Int]` does not fit the annotation `std.Dict[{x: std.Int}]`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _e @ Dict[{x: Int}] = Dict $ints

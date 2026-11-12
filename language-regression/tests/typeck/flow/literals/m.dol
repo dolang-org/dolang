@@ -36,10 +36,10 @@ pub def held p @ :a:
   #       ^: flow :a:
   let terms = [1, 2]
   let _ = terms
-  #       ^~~~~: flow [std.Int]
+  #       ^~~~~: flow std.Array[std.Int]
   let written = [p]
   let _ = written
-  #       ^~~~~~~: flow [:a:]
+  #       ^~~~~~~: flow std.Array[:a:]
   let d = {a: 1}
   let _ = d
   #       ^: flow std.Dict[std.Sym, std.Int]
@@ -58,7 +58,7 @@ pub def dicts t @ (Int, Str)
   #       ^~~~~: flow std.Dict[std.Int, std.Str]
   let spread = {...t, a: 1}
   let _ = spread
-  #       ^~~~~~: flow {*std.Int | std.Str, **std.Int}
+  #       ^~~~~~: flow std.Dict[{*std.Int | std.Str, **std.Int}]
   bind {1, foo: false, 2, bar: nil}
     a b
     :foo :bar

@@ -144,7 +144,6 @@ pub(crate) struct ConcreteNodeTypes<'v> {
     app_type: Type<'v, NodeObject<AppTypeTag>>,
     schema_type: Type<'v, NodeObject<SchemaTypeTag>>,
     parens_type: Type<'v, NodeObject<ParensTypeTag>>,
-    array_type: Type<'v, NodeObject<ArrayTypeTag>>,
     union_type: Type<'v, NodeObject<UnionTypeTag>>,
     func_type: Type<'v, NodeObject<FuncTypeTag>>,
     quant_type: Type<'v, NodeObject<QuantTypeTag>>,
@@ -282,7 +281,6 @@ impl<'v> Global<'v> {
                     app_type: subtype!(AppTypeTag, type_expr),
                     schema_type: subtype!(SchemaTypeTag, type_expr),
                     parens_type: subtype!(ParensTypeTag, type_expr),
-                    array_type: subtype!(ArrayTypeTag, type_expr),
                     union_type: subtype!(UnionTypeTag, type_expr),
                     func_type: subtype!(FuncTypeTag, type_expr),
                     quant_type: subtype!(QuantTypeTag, type_expr),
@@ -510,7 +508,7 @@ node_tags! {
     MixedRestBinderTag=>"MixedRestBinder", PosRestBinderTag=>"PosRestBinder",
     KeyRestBinderTag=>"KeyRestBinder", TypeExprTag=>"TypeExpr", NameTypeTag=>"NameType",
     ConstTypeTag=>"ConstType", AppTypeTag=>"AppType", SchemaTypeTag=>"SchemaType",
-    ParensTypeTag=>"ParensType", ArrayTypeTag=>"ArrayType", UnionTypeTag=>"UnionType",
+    ParensTypeTag=>"ParensType", UnionTypeTag=>"UnionType",
     FuncTypeTag=>"FuncType", QuantTypeTag=>"QuantType", TypeArgTag=>"TypeArg", PosTypeArgTag=>"PosTypeArg",
     KeyTypeArgTag=>"KeyTypeArg", ExpandTypeArgTag=>"ExpandTypeArg", TypeItemTag=>"TypeItem",
     PosTypeItemTag=>"PosTypeItem", KeyTypeItemTag=>"KeyTypeItem",
@@ -1990,7 +1988,6 @@ fn create_node<'v, 's>(
         AppType,
         SchemaType,
         ParensType,
-        ArrayType,
         UnionType,
         FuncType,
         QuantType,
@@ -2083,7 +2080,6 @@ fn create_node<'v, 's>(
             compile::Kind::AppType { .. } => Which::AppType,
             compile::Kind::SchemaType { .. } => Which::SchemaType,
             compile::Kind::ParensType { .. } => Which::ParensType,
-            compile::Kind::ArrayType { .. } => Which::ArrayType,
             compile::Kind::UnionType { .. } => Which::UnionType,
             compile::Kind::FuncType { .. } => Which::FuncType,
             compile::Kind::QuantType { .. } => Which::QuantType,
@@ -2169,7 +2165,6 @@ fn create_node<'v, 's>(
         Which::AppType => make!(t.app_type, AppTypeTag),
         Which::SchemaType => make!(t.schema_type, SchemaTypeTag),
         Which::ParensType => make!(t.parens_type, ParensTypeTag),
-        Which::ArrayType => make!(t.array_type, ArrayTypeTag),
         Which::UnionType => make!(t.union_type, UnionTypeTag),
         Which::FuncType => make!(t.func_type, FuncTypeTag),
         Which::QuantType => make!(t.quant_type, QuantTypeTag),
@@ -2523,10 +2518,6 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
             "ParensType" => builder.get(
                 "items",
                 node_list!(compile::Kind::ParensType { items } => items),
-            ),
-            "ArrayType" => builder.get(
-                "elem",
-                node_field!(compile::Kind::ArrayType { elem } => Some(elem)),
             ),
             "UnionType" => builder.get(
                 "members",
@@ -3277,7 +3268,6 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("AppType", global.types.concrete_nodes.app_type)
         .value("SchemaType", global.types.concrete_nodes.schema_type)
         .value("ParensType", global.types.concrete_nodes.parens_type)
-        .value("ArrayType", global.types.concrete_nodes.array_type)
         .value("UnionType", global.types.concrete_nodes.union_type)
         .value("FuncType", global.types.concrete_nodes.func_type)
         .value("QuantType", global.types.concrete_nodes.quant_type)

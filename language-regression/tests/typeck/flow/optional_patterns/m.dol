@@ -125,7 +125,7 @@ pub def loops values @ Array[Args[...{?k: Tuple[Int]}]]
     for ?k: (a = "none") = values
       - $a
   let _ = xs
-  #       ^~: flow [std.Int | std.Str]
+  #       ^~: flow std.Array[std.Int | std.Str]
 
 pub def accepts block @ ((?k: Tuple[Int]) -> (Int | Str))
   ...

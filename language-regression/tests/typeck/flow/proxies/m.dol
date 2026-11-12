@@ -62,7 +62,7 @@ pub def spreads o @ Options i @ Items
   #       ^: flow std.Dict[:verbose:, std.Bool]
   let xs = [...i]
   let _ = xs
-  #       ^~: flow [std.Int]
+  #       ^~: flow std.Array[std.Int]
   let mixed = {...i}
   let _ = mixed
   #       ^~~~~: flow std.Dict[std.Int]

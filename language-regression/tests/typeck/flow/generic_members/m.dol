@@ -32,7 +32,7 @@ pub def dicts data @ Dict[Str, Data]
 
 pub def arrays xs @ Array[nil]
   encode $xs
-# error: expected `m.Encodable`, found `[nil]`
+# error: expected `m.Encodable`, found `std.Array[nil]`
 #   --> m.dol:LL:LL
 #    |
 # LL |   encode $xs

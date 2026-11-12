@@ -968,8 +968,19 @@ struct KindMismatch {
     expected: Kind,
     /// Where the kind was declared, when in the same unit
     declared: Option<Span>,
-    /// The schema alias named where a type is expected, which a dict could take
-    alias: Option<String>,
+    /// What to write for a schema where a type is expected
+    schema: Option<SchemaUse>,
+}
+
+/// What a kind mismatch suggests for a schema written where a type is expected
+#[derive(Clone)]
+enum SchemaUse {
+    /// A dict with the schema, as written or named
+    Dict(String),
+    /// A class applied to the vertical schema
+    Vertical,
+    /// The schema, as written or named, expanded into a class's items
+    Expand(String),
 }
 
 impl Report for KindMismatch {
@@ -999,15 +1010,19 @@ impl Report for KindMismatch {
     }
 
     fn notes(&self) -> Vec<(NoteKind, String)> {
-        self.alias
-            .iter()
-            .map(|alias| {
-                (
-                    NoteKind::Help,
-                    format!("for a dict with this schema, write `Dict[{alias}]`"),
-                )
-            })
-            .collect()
+        let help = match &self.schema {
+            Some(SchemaUse::Dict(schema)) => {
+                format!("for a dict with this schema, write `Dict[{schema}]`")
+            }
+            Some(SchemaUse::Vertical) => {
+                "apply a class to it, as in `Dict $` or `Tuple ...$`".to_owned()
+            }
+            Some(SchemaUse::Expand(schema)) => {
+                format!("to give the schema's items, expand it: `...{schema}`")
+            }
+            None => return Vec::new(),
+        };
+        vec![(NoteKind::Help, help)]
     }
 }
 

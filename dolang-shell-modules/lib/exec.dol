@@ -36,7 +36,7 @@ def module_name path @ fs.Path name @ (Str | nil) -> Str
       throw std.RuntimeError "can't derive module name from path: $path"
     stem
 
-def inject_keys inject @ BaseDict[Sym, Value] -> [Sym]
+def inject_keys inject @ BaseDict[Sym, Value] -> Array[Sym]
   let keys = [...inject.keys()]
   if !(keys.all do |k| type k Sym)
     throw std.TypeError "inject key: expected `Sym`"

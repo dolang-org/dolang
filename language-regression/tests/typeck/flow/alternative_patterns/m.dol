@@ -42,7 +42,7 @@ pub def mismatch value @ (Tuple[Int, Int] | Tuple[Str] | Array[Int])
     nil
   else
     let _ = value
-    #       ^~~~~: flow (std.Str,) | [std.Int]
+    #       ^~~~~: flow (std.Str,) | std.Array[std.Int]
 
 pub def mismatch_defaults value @ (Tuple[Int] | Tuple[Int, Int] | Tuple[Int, Int, Int])
   if let (_a _b = 0) = value
@@ -51,12 +51,12 @@ pub def mismatch_defaults value @ (Tuple[Int] | Tuple[Int, Int] | Tuple[Int, Int
     let _ = value
     #       ^~~~~: flow (std.Int, std.Int, std.Int)
 
-pub def mismatch_keyed value @ ({a: Int, b: Int} | {a: Int} | Dict[Sym, Int])
+pub def mismatch_keyed value @ (Dict[{a: Int, b: Int}] | Dict[{a: Int}] | Dict[Sym, Int])
   if let :a b: _b = value
     a
   else
     let _ = value
-    #       ^~~~~: flow std.Dict[std.Sym, std.Int] | {a: std.Int}
+    #       ^~~~~: flow std.Dict[std.Sym, std.Int] | std.Dict[{a: std.Int}]
 
 # A sub-pattern's mismatch doesn't narrow the whole
 pub def mismatch_nested value @ (Tuple[Int, Tuple[Int, Int] | Tuple[Int]] | Tuple[Int])

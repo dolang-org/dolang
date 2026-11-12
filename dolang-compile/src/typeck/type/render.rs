@@ -52,14 +52,10 @@ impl Names for Labels {
 /// A class whose applications have a literal form
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Collection {
-    /// `[T]`
-    Array,
     /// `(A, B)`
     Tuple,
     /// `(k: A, B)`
     Args,
-    /// `{k: A, B}`
-    Dict,
 }
 
 /// What a rendered type shows
@@ -701,12 +697,6 @@ impl Renderer<'_> {
         let [Argument::Positional(arg)] = *args else {
             return false;
         };
-        if collection == Collection::Array {
-            out.push('[');
-            self.render_into(arg, naming, out);
-            out.push(']');
-            return true;
-        }
         let Some(items) = self.flat(arg) else {
             return false;
         };
@@ -714,7 +704,6 @@ impl Renderer<'_> {
             .iter()
             .any(|item| matches!(item.element, Element::Keyed { .. }));
         let (open, close) = match collection {
-            Collection::Array => unreachable!(),
             Collection::Tuple => match *items {
                 _ if keyed => return false,
                 // A lone item would be grouping
@@ -727,9 +716,6 @@ impl Renderer<'_> {
             // Only an explicitly keyed item makes parentheses an `Args`
             Collection::Args if keyed => ("(", ")"),
             Collection::Args => return false,
-            // A lone repeated item is written as arguments
-            Collection::Dict if self.repeated(arg).is_some() => return false,
-            Collection::Dict => ("{", "}"),
         };
         out.push_str(open);
         self.item_list(&items, naming, out);

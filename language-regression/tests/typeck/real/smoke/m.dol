@@ -28,7 +28,7 @@ pub @let SeqOf[T] = Seq[T]
 pub @let BaseArrayOf[T] = BaseArray[T]
 #        ^~~~~~~~~~~: decl [T +] std.BaseArray[T]
 pub @let ArrayOf[T] = Array[T]
-#        ^~~~~~~: decl [T] [T]
+#        ^~~~~~~: decl [T] std.Array[T]
 pub @let TupleOf[T] = Tuple[T]
 #        ^~~~~~~: decl [T +] (T,)
 pub @let TypeOf[T] = Type[T]

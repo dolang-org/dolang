@@ -200,10 +200,6 @@ pub(crate) enum Kind {
     ParensType {
         items: alias::Box<[Id]>,
     },
-    /// An array type, such as `[Int]`
-    ArrayType {
-        elem: Id,
-    },
     UnionType {
         members: alias::Box<[Id]>,
     },
@@ -326,7 +322,6 @@ impl Kind {
             | Kind::TypeArg { .. }
             | Kind::SchemaType { .. }
             | Kind::ParensType { .. }
-            | Kind::ArrayType { .. }
             | Kind::UnionType { .. }
             | Kind::FuncType { .. }
             | Kind::QuantType { .. }

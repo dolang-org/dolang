@@ -80,7 +80,7 @@ pub def open_keys o @ Open
 pub def unpacks p @ Point
   let :x :y :label = fields(p)
   let _ = [x, y, label]
-  #   ^: flow [std.Int | std.Str]
+  #   ^: flow std.Array[std.Int | std.Str]
   let x: _ ...rest = fields(p)
   let :y ..._ = rest
   let _ = y

@@ -28,14 +28,14 @@ pub def reads()
   # LL |   let _xs = strand.collect()
   #    |             ^^^^^^^^^^^^^^^^
   #    |
-  #    = note: `@[I] (<std.Iter[I]) -> [I]`: this call does not fit `@[I] (<std.Iter[I]) -> [I]`
+  #    = note: `@[I] (<std.Iter[I]) -> std.Array[I]`: this call does not fit `@[I] (<std.Iter[I]) -> std.Array[I]`
   #    = note: `@[I, S] (S, <std.Iter[I]) -> S`: this call does not fit `@[I, S] (S, <std.Iter[I]) -> S`; this call is missing an argument
   nil
 
 pub def reads_declared <Iter[Int]
   let xs = strand.collect()
   let _ = xs
-  #       ^~: flow [std.Int]
+  #       ^~: flow std.Array[std.Int]
   nil
 
 # A `for` without an iteratee takes its input's `(next)`
@@ -57,7 +57,7 @@ pub def loops_declared <Iter[Int]
 
 pub def loops_array <Array[Int]
   for _x
-    # error: `[std.Int]` has no member `(next)`
+    # error: `std.Array[std.Int]` has no member `(next)`
     #   --> m.dol:LL:LL
     #    |
     # LL |   for _x
@@ -124,7 +124,7 @@ pub def passes_input <Iter[Int]
   feed do
     let xs = strand.collect()
     let _ = xs
-    #       ^~: flow [std.Int]
+    #       ^~: flow std.Array[std.Int]
     nil
   nil
 
@@ -141,7 +141,7 @@ pub def map_disconnected <Iter[Int] >Sink[Int]
     # LL |     let _ = strand.collect()
     #    |             ^^^^^^^^^^^^^^^^
     #    |
-    #    = note: `@[I] (<std.Iter[I]) -> [I]`: this call does not fit `@[I] (<std.Iter[I]) -> [I]`
+    #    = note: `@[I] (<std.Iter[I]) -> std.Array[I]`: this call does not fit `@[I] (<std.Iter[I]) -> std.Array[I]`
     #    = note: `@[I, S] (S, <std.Iter[I]) -> S`: this call does not fit `@[I, S] (S, <std.Iter[I]) -> S`; this call is missing an argument
     strand.put 1
     # error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`

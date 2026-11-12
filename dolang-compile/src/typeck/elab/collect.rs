@@ -16,8 +16,8 @@ use super::{
     interface::PrivateInInterface,
     local,
     surface::{
-        self, Collection, ConstLit, Interned, LinkId, ModuleId, Name, Quantifier, Ref, SiteId,
-        StrId, Symbol, TypeExpr,
+        self, ConstLit, Interned, LinkId, ModuleId, Name, Quantifier, Ref, SiteId, StrId, Symbol,
+        TypeExpr,
     },
 };
 use crate::{
@@ -597,8 +597,7 @@ impl<'u> Walk<'_, 'u> {
             } => TypeExpr::Schema {
                 span,
                 params: self.surface_params(params),
-                tuple: brace_span.is_none() && !keyed(params),
-                collection: Collection::default(),
+                vertical: brace_span.is_none(),
             },
             ast::TypeExpr::Group { ty, .. } => TypeExpr::Group {
                 span,
@@ -612,10 +611,6 @@ impl<'u> Walk<'_, 'u> {
                     false => TypeExpr::Tuple { span, params },
                 }
             }
-            ast::TypeExpr::Array { elem, .. } => TypeExpr::Array {
-                span,
-                elem: Box::new(self.surface(elem)),
-            },
             ast::TypeExpr::Union { members, .. } => TypeExpr::Union {
                 span,
                 members: members.iter().map(|member| self.surface(member)).collect(),

@@ -38,7 +38,7 @@ pub def pair p @ (Str, Str) -> Str
 
 pub def first xs @ Array[Int] -> nil
   let _first ..._rest = xs
-  # warning: `[std.Int]` may lack an item this pattern requires
+  # warning: `std.Array[std.Int]` may lack an item this pattern requires
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _first ..._rest = xs
@@ -63,13 +63,13 @@ pub def member value @ ((Int, Int) | (Int,)) -> Int
   #    = note: a member unpacks as `{std.Int}`, which may have 1 item
   a
 
-pub def keyed d @ {foo: Int} -> Int
+pub def keyed d @ Dict[{foo: Int}] -> Int
   let :foo = d
   foo
 
-pub def optional_key d @ {?foo: Int} -> nil
+pub def optional_key d @ Dict[{?foo: Int}] -> nil
   let foo: _foo = d
-  # warning: `{?foo: std.Int}` may lack an item this pattern requires
+  # warning: `std.Dict[{?foo: std.Int}]` may lack an item this pattern requires
   #   --> m.dol:LL:LL
   #    |
   # LL |   let foo: _foo = d
@@ -78,9 +78,9 @@ pub def optional_key d @ {?foo: Int} -> nil
   #    = note: it unpacks as `{?foo: std.Int}`, which may have no item keyed `:foo:`
   nil
 
-pub def extra_key d @ {foo: Int, ?bar: Int} -> nil
+pub def extra_key d @ Dict[{foo: Int, ?bar: Int}] -> nil
   let foo: _foo = d
-  # warning: `{foo: std.Int, ?bar: std.Int}` may have an item this pattern doesn't take
+  # warning: `std.Dict[{foo: std.Int, ?bar: std.Int}]` may have an item this pattern doesn't take
   #   --> m.dol:LL:LL
   #    |
   # LL |   let foo: _foo = d
@@ -103,7 +103,7 @@ pub def domain d @ Dict[Sym, Int] -> nil
 
 pub def loops pairs @ Array[Array[Str]] tuples @ Array[(Str, Str)] -> nil
   for _k _v = pairs
-    # warning: `[std.Str]` may lack an item this pattern requires
+    # warning: `std.Array[std.Str]` may lack an item this pattern requires
     #   --> m.dol:LL:LL
     #    |
     # LL |   for _k _v = pairs
@@ -119,7 +119,7 @@ pub def loops pairs @ Array[Array[Str]] tuples @ Array[(Str, Str)] -> nil
 
 pub def lambdas() -> nil
   let _f @ (Array[Int] -> Int) = (do |(a _b)| a)
-  # warning: `[std.Int]` may lack an item this pattern requires
+  # warning: `std.Array[std.Int]` may lack an item this pattern requires
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _f @ (Array[Int] -> Int) = (do |(a _b)| a)
@@ -132,7 +132,7 @@ pub def lambdas() -> nil
 # Each level is checked against its own scrutinee
 pub def nested value @ (Int, Array[Int]) -> Int
   let a (_b _c) = value
-  # warning: `[std.Int]` may lack an item this pattern requires
+  # warning: `std.Array[std.Int]` may lack an item this pattern requires
   #   --> m.dol:LL:LL
   #    |
   # LL |   let a (_b _c) = value

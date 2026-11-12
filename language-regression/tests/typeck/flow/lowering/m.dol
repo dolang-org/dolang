@@ -126,7 +126,7 @@ pub def filtered ps @ Array[Array[Int]]
       if let a b = p
         - [a, b]
   let _ = r
-  #       ^: flow [[std.Int]]
+  #       ^: flow std.Array[std.Array[std.Int]]
 
 # Short circuits in a comprehension's filter and item narrow as anywhere else
 pub def comprehension_narrowing xs @ Array[Int | nil]
@@ -135,7 +135,7 @@ pub def comprehension_narrowing xs @ Array[Int | nil]
       if (x && x > 1)
         - (x || 0)
   let _ = r
-  #       ^: flow [std.Int]
+  #       ^: flow std.Array[std.Int]
 
 # Nested loops and filters with `elif` and `else`
 pub def comprehension_nesting xs @ Array[Int]
@@ -151,7 +151,7 @@ pub def comprehension_nesting xs @ Array[Int]
       else
         - $x
   let _ = r
-  #       ^: flow [((<Unknown, >Unknown) -> std.Int) | [std.Int] | std.Int | std.Str]
+  #       ^: flow std.Array[((<Unknown, >Unknown) -> std.Int) | std.Array[std.Int] | std.Int | std.Str]
 
 # Keyed items, pairs and spreads in a call's comprehension
 pub def comprehension_call xs @ Array[Int] a @ (Int | nil) b @ Int
@@ -185,7 +185,7 @@ pub def defaults_in_comprehension a @ (Int | nil)
     do
       - $v
   let _ = r
-  #       ^: flow [std.Int]
+  #       ^: flow std.Array[std.Int]
 
 pub def destructuring()
   let a :b ..._c = (1, b: "s")
@@ -213,7 +213,7 @@ pub def nested_tests v @ Tuple[Int, Array[Int]]
     #       ^: flow std.Int
   else
     let _ = v
-    #       ^: flow (std.Int, [std.Int])
+    #       ^: flow (std.Int, std.Array[std.Int])
 
 # Optionality belongs to the unpack schema; matching stays unchanged
 pub def optional_defaults()

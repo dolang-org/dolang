@@ -16,7 +16,7 @@ def require_linux() -> nil
   if (sys.os_info().os != :LINUX:)
     throw RuntimeError "wsl.with_windows requires a Linux VFS target"
 
-def find_windows_command() -> [Str | Path]
+def find_windows_command() -> Array[Str | Path]
   require_linux()
   let vfs = run["dolang-vfs.exe"].which()
   if (vfs != nil)

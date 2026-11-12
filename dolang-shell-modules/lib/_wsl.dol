@@ -10,8 +10,8 @@ pub def build_linux_command
   :user @ Str = nil
   :cd @ (Str | Path) = nil
   :env @ BaseDict[Str | Sym, Value] = {}
-do -> [Value]
-  let argv @ [Value] = ["wsl.exe"]
+do -> Array[Value]
+  let argv @ Array[Value] = ["wsl.exe"]
   if (distro != nil)
     argv.push --distribution $distro
   if (user != nil)
@@ -23,12 +23,12 @@ pub def build_windows_command
   command @ Iterable[Value]
   :cd @ (Str | Path) = nil
   :env @ BaseDict[Str | Sym, Value] = {}
-do -> [Value]
+do -> Array[Value]
   let argv = [...command.iter()]
   argv.push ...(_vfs.vfs_args cd env) --stdio
   argv
 
-pub def with_command[R] argv @ [Value] block @ (() -> R) -> R
+pub def with_command[R] argv @ Array[Value] block @ (() -> R) -> R
   # `command` items are passed verbatim, the program included
   let program *args = argv
   else throw std.ValueError "command: expected a program"

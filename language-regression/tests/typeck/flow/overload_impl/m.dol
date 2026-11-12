@@ -18,7 +18,7 @@ pub def double x @ (Int | Str) -> (Int | Str)
 @def first[T] xs@Tuple[T, ...T] -> T
 pub def first[T] xs @ (Array[T] | Tuple[T, ...T]) -> T
   let y = xs
-  #   ^: flow (m.first.#0, *m.first.#0) | [m.first.#0]
+  #   ^: flow (m.first.#0, *m.first.#0) | std.Array[m.first.#0]
   y[0]
 
 pub class Picker
