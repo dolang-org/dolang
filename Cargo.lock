@@ -1015,7 +1015,6 @@ dependencies = [
  "dolang-vfs",
  "libc",
  "libsqlite3-sys",
- "nix",
  "sqlite-plugin",
  "tokio",
 ]

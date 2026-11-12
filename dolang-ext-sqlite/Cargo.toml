@@ -21,11 +21,6 @@ workspace = true
 workspace = true
 
 
-[dependencies.nix]
-workspace = true
-features = ["fs"]
-
-
 [dependencies.libsqlite3-sys]
 version = "0.38"
 features = ["bundled-windows"]

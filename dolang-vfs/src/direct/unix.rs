@@ -1204,15 +1204,11 @@ impl Direct {
             return buf
                 .split(|byte| *byte == 0)
                 .filter(|name| {
-                    if name.is_empty() {
-                        return false;
-                    }
                     #[cfg(target_os = "linux")]
-                    {
-                        namespace.as_ref().is_none_or(|ns| name.starts_with(ns))
-                    }
+                    let in_namespace = namespace.as_ref().is_none_or(|ns| name.starts_with(ns));
                     #[cfg(not(target_os = "linux"))]
-                    true
+                    let in_namespace = true;
+                    !name.is_empty() && in_namespace
                 })
                 .map(|name| Direct::xattr_entry(name.to_vec()))
                 .collect();

@@ -67,7 +67,7 @@ winscm = ["dep:dolang-ext-winscm", "dolang-shell-vfs/winscm", "dolang-shell-modu
 winnet = ["dep:dolang-ext-winnet", "dolang-shell-vfs/winnet", "dolang-shell-modules/winnet"]
 
 
-[dependencies.dolang-shell-vfs]
+[target.'cfg(windows)'.dependencies.dolang-shell-vfs]
 workspace = true
 
 

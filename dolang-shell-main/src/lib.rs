@@ -74,7 +74,7 @@ pub fn main() -> i32 {
 
 enum Outcome {
     Exit(i32),
-    Exec(std::process::Command),
+    Exec(Box<std::process::Command>),
 }
 
 fn finish(outcome: Outcome) -> i32 {
@@ -193,7 +193,7 @@ fn run() -> Outcome {
                                 .then(|| e.source()?.downcast_ref::<Exec>())
                                 .flatten();
                             if let Some(exec) = exec {
-                                return Outcome::Exec(exec.command());
+                                return Outcome::Exec(Box::new(exec.command()));
                             }
                             let exit_code = (e.kind() == ErrorKind::Abort)
                                 .then(|| {
