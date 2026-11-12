@@ -192,9 +192,9 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             strand.builtin_types().dict.create(strand, dict, out);
             Ok(())
         })
-        .function("tuple", async move |strand, args, mut out| {
+        .function("tuple", async move |strand, args, out| {
             let values = tuple::from_args(strand, args)?;
-            out.store(Value::from_object(tuple::tuple(strand.vm(), values)));
+            tuple::create(strand, values, out);
             Ok(())
         })
         .function("pack", async move |strand, args, out| {
@@ -263,13 +263,17 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             format.finish(strand, out);
             Ok(())
         })
-        .function("sym", async move |strand, args, mut out| {
+        .function("sym", async move |strand, args, out| {
             let ([value], []) = unpack!(strand, args, 1, 0)?;
             if value.as_sym(strand).is_some() {
                 Output::set(strand, out, value);
                 Ok(())
             } else if let Some(value) = value.as_str_raw(strand) {
-                out.store(Value::from_object(strand.sym_register_obj(value)));
+                Output::set(
+                    strand,
+                    out,
+                    Value::from_object(strand.sym_register_obj(value)),
+                );
                 Ok(())
             } else {
                 Err(Error::type_error(strand, "sym: expected Str or Sym"))

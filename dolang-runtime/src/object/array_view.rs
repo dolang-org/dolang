@@ -23,7 +23,7 @@ use crate::{
     sym::Sym,
     unpack,
     value::{Input, InputBy, Output, Slot, Slots, TypeObject, Value, private::Sealed},
-    vm::Vm,
+    vm::{Alloc, Vm},
 };
 
 /// Implements a lazy array-like projection over a native object.
@@ -198,7 +198,7 @@ impl<'v, 'a, I: ArrayLike<'v>> ArrayView<'v, 'a, I> {
 fn create_view<'v, I: ArrayLike<'v>>(
     owner: Instance<'v, '_, I::Object>,
     view: I,
-    strand: &Strand<'v, '_>,
+    strand: &mut Strand<'v, '_>,
 ) -> GcObj<'v, View<'v>> {
     let ty = owner.ty(strand.vm());
     let owner = Value::from_input(strand, owner);
@@ -214,19 +214,21 @@ fn create_view<'v, I: ArrayLike<'v>>(
 
 impl<'v, I: ArrayLike<'v>> Input<'v> for ArrayView<'v, '_, I> {
     #[allow(private_interfaces)]
-    fn input_take<'a>(&'a mut self, vm: &'a Vm<'v>, _: Sealed) -> InputBy<'v, 'a> {
+    fn input_take<'a>(&'a mut self, mut alloc: &mut dyn Alloc<'v>, _: Sealed) -> InputBy<'v, 'a> {
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         let ty = self.owner.ty(vm);
-        let owner = Value::from_input(vm, self.owner);
+        let owner = Value::from_input(alloc, self.owner);
         let view = self.view.take().expect("ArrayView used more than once");
-        let value = GcObj::new(
-            vm.arena(),
-            vm.builtin_types().array_view,
+        let mut value = Value::NIL;
+        vm.builtin_types().array_view.create(
+            &mut alloc,
             View {
                 owner,
                 glue: Box::new(Glue { view, ty }),
             },
+            Slot::new(&mut value),
         );
-        InputBy::Value(Value::from_object(value), None)
+        InputBy::Value(value, None)
     }
 }
 

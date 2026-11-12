@@ -210,14 +210,13 @@ impl<'v, 'a> Args<'v, 'a> {
             tail: std::array::from_fn(|_| ValueCell::default()),
         };
         let mut replace = [const { MaybeUninit::uninit() }; N];
-        let inner = strand.inner;
         for ((cell, input), replace) in cells
             .tail
             .iter_mut()
             .zip(inputs.iter_mut())
             .zip(replace.iter_mut())
         {
-            let (value, slot) = match input.input_take(inner.vm(), value::private::Sealed) {
+            let (value, slot) = match input.input_take(strand, value::private::Sealed) {
                 InputBy::Borrow(value) => (value.dup(), None),
                 InputBy::Value(value, slot) => (value, slot),
             };

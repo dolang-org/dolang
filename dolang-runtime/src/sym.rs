@@ -15,7 +15,7 @@ use crate::{
         sym::SymObj,
     },
     value::{self, Input, InputBy, Value},
-    vm::Vm,
+    vm::{Alloc, Vm},
 };
 
 pub(crate) type Tag = NonZero<u64>;
@@ -296,7 +296,12 @@ impl<'v, 'a> Sym<'v, 'a> {
 
 impl<'v, 'a> Input<'v> for Sym<'v, 'a> {
     #[expect(private_interfaces)]
-    fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: value::private::Sealed) -> InputBy<'v, 'b> {
+    fn input_take<'b>(
+        &'b mut self,
+        alloc: &mut dyn Alloc<'v>,
+        _: value::private::Sealed,
+    ) -> InputBy<'v, 'b> {
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         InputBy::Value(Value::from_object(vm.sym_obj(*self)), None)
     }
 }

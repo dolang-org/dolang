@@ -128,7 +128,7 @@ async fn default_mcall<'v, 'a, 's>(
     mut args: Args<'v, 'a>,
     mut out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    args.prepend_self(Value::from_input(strand.vm(), rcvr));
+    args.prepend_self(Value::from_input(strand, rcvr));
     match method.tag() {
         sym::MIN => extrema(strand, args, out, true).await,
         sym::MAX => extrema(strand, args, out, false).await,
@@ -168,7 +168,7 @@ async fn fallback_mcall<'v, 'a, 's>(
         }
         _ => {
             let mut args = args;
-            args.prepend_self(Value::from_input(strand.vm(), rcvr));
+            args.prepend_self(Value::from_input(strand, rcvr));
             type_mcall_fallback(strand, &strand.singletons().num, method, args, out).await
         }
     }
@@ -182,7 +182,7 @@ pub(crate) async fn int_mcall<'v, 'a, 's>(
     args: Args<'v, 'a>,
     mut out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    let receiver = Value::from_input(strand.vm(), rcvr);
+    let receiver = Value::from_input(strand, rcvr);
     match method.tag() {
         sym::ABS => {
             let ([], []) = unpack!(strand, args, 0, 0)?;
@@ -215,7 +215,7 @@ pub(crate) async fn float_mcall<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    let receiver = Value::from_input(strand.vm(), rcvr);
+    let receiver = Value::from_input(strand, rcvr);
     let result = match method.tag() {
         sym::ABS => Some(Value::from_f64(strand, value.abs())),
         sym::SIGNUM => Some(Value::from_f64(strand, value.signum())),

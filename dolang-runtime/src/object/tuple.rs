@@ -14,7 +14,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Output, Slot, Slots, TypeObject, Value},
-    vm::Vm,
+    vm::{Alloc, Vm},
 };
 
 use super::{
@@ -40,6 +40,18 @@ where
             iter.into_iter(),
         )
     }
+}
+
+/// Creates a tuple from `iter` and places it into `out`.
+pub(crate) fn create<'v, I: IntoIterator<Item = Value<'v>>>(
+    alloc: &mut impl Alloc<'v>,
+    iter: I,
+    out: impl Output<'v>,
+) where
+    I::IntoIter: ExactSizeIterator,
+{
+    let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+    Output::set(alloc, out, Value::from_object(tuple(vm, iter)));
 }
 
 pub(crate) fn from_args<'v, 's>(
@@ -225,7 +237,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         index: &Value<'v>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         if let Some(slice) = range::slice(index, strand, this.get().len())? {
             match slice {
@@ -234,16 +246,14 @@ impl<'v> Protocol<'v> for [Value<'v>] {
                         .get()
                         .get(start..end)
                         .ok_or_else(|| Error::index(strand))?;
-                    out.store(Value::from_object(tuple(
-                        strand.vm(),
-                        slice.iter().map(Value::dup),
-                    )));
+                    create(strand, slice.iter().map(Value::dup), out);
                 }
                 range::Slice::Stepped(indices) => {
-                    out.store(Value::from_object(tuple(
-                        strand.vm(),
+                    create(
+                        strand,
                         indices.into_iter().map(|i| this.get()[i].dup()),
-                    )));
+                        out,
+                    );
                 }
             }
             return Ok(());
@@ -282,10 +292,11 @@ impl<'v> Protocol<'v> for [Value<'v>] {
     ) -> Result<'v, 's, ()> {
         let index = unpack_from(strand, sig, &mut out, this.get(), 0, false)?;
         if let Some(i) = sig.pos_rest_slot() {
-            out.at(i).store(Value::from_object(super::tuple::tuple(
+            create(
                 strand,
                 this.get()[index..].iter().map(Value::dup),
-            )));
+                out.at(i),
+            );
         }
         sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
@@ -591,15 +602,13 @@ impl<'v> Protocol<'v> for Pairs<'v> {
     async fn op_next<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let mut borrow = this.borrow_mut(strand)?;
         let index = borrow.index;
         if let Some(value) = borrow.tuple.get(index) {
-            out.store(Value::from_object(tuple(
-                strand,
-                [Value::from_i64(strand, index as i64), value.dup()],
-            )));
+            let items = [Value::from_i64(strand, index as i64), value.dup()];
+            create(strand, items, out);
             borrow.index += 1;
             Ok(true)
         } else {
@@ -655,10 +664,8 @@ fn unpack_from<'v, 's>(
     for (i, elem) in borrow[start..(start + min)].iter().enumerate() {
         if pair {
             let value = i64::try_from(start + i).map_err(|_| Error::overflow(strand))?;
-            out.at(i).store(Value::from_object(tuple(
-                strand,
-                [Value::from_i64(strand, value), elem.dup()],
-            )))
+            let items = [Value::from_i64(strand, value), elem.dup()];
+            create(strand, items, out.at(i))
         } else {
             out.at(i).store(elem.dup())
         }
@@ -702,7 +709,7 @@ impl<'v> Protocol<'v> for Type {
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([items], []) = unpack!(strand, args, 1, 0)?;
         let mut values = Vec::new();
@@ -710,7 +717,7 @@ impl<'v> Protocol<'v> for Type {
         items
             .op_spread(strand, SpreadContext::Sequence, &mut sink)
             .await?;
-        out.store(Value::from_object(tuple(strand.vm(), values)));
+        create(strand, values, out);
         Ok(())
     }
 

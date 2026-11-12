@@ -225,9 +225,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
                     );
                 } else {
                     if let Some(i) = sig.pos_rest_slot() {
-                        staged
-                            .at(i)
-                            .store(Value::from_object(tuple::tuple(strand, [])));
+                        tuple::create(strand, [], staged.at(i));
                     }
                     if let Some(i) = sig.key_rest_slot() {
                         strand
@@ -375,7 +373,7 @@ impl<'v> Protocol<'v> for FieldPairs<'v> {
     async fn op_next<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let mut iter = this.borrow_mut(strand)?;
         let Some(symbol) = iter.fields.symbols.get(iter.index).cloned() else {
@@ -384,10 +382,7 @@ impl<'v> Protocol<'v> for FieldPairs<'v> {
         let receiver = iter.fields.receiver.dup();
         strand.with_slots_sync(|strand, [mut value]| {
             resolve(strand, &receiver, &symbol, Slot::reborrow(&mut value))?;
-            out.store(Value::from_object(tuple::tuple(
-                strand,
-                [Value::from_object(symbol), value.take()],
-            )));
+            tuple::create(strand, [Value::from_object(symbol), value.take()], out);
             Ok(())
         })?;
         iter.index += 1;

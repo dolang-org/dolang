@@ -1226,12 +1226,12 @@ fn make_unpack<'v>(
     dict: GcObj<'v, Dict<'v>>,
     epoch: u64,
     state: UnpackState<'v>,
-) -> Value<'v> {
-    Value::from_object(GcObj::new(
-        strand.arena(),
-        strand.builtin_types().dict_unpack,
-        Unpack { state, dict, epoch },
-    ))
+    out: impl Output<'v>,
+) {
+    strand
+        .builtin_types()
+        .dict_unpack
+        .create(strand, Unpack { state, dict, epoch }, out);
 }
 
 unsafe impl<'v> Collect for Unpack<'v> {
@@ -1439,7 +1439,7 @@ impl<'v> Protocol<'v> for UnpackIter<'v> {
     async fn op_next<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let mut borrow = this.borrow_mut(strand)?;
         let dict_obj = borrow.dict.clone();
@@ -1455,7 +1455,7 @@ impl<'v> Protocol<'v> for UnpackIter<'v> {
         let Some((key, value)) = borrow.state.next_pair(strand, &dict)? else {
             return Ok(false);
         };
-        out.store(Value::from_object(tuple::tuple(strand, [key, value])));
+        tuple::create(strand, [key, value], out);
         Ok(true)
     }
 
@@ -1725,7 +1725,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::CLEAR => {
@@ -1779,33 +1779,32 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 let ([], [key]) = unpack!(strand, args, 0, 1)?;
                 let epoch = this.borrow(strand)?.epoch;
                 let dict = this.to_strong();
-                let value = if let Some(key) = key {
+                if let Some(key) = key {
                     let mut hasher = strand.vm().hasher();
                     key.op_hash(strand, &mut hasher)?;
                     let hv = hasher.finish();
                     let bucket = this.borrow(strand)?.find(strand, hv, &key)?;
-                    Value::from_object(GcObj::new(
-                        strand.arena(),
-                        strand.builtin_types().dict_key_values,
+                    strand.builtin_types().dict_key_values.create(
+                        strand,
                         KeyValues {
                             index: Cell::new(0),
                             epoch,
                             container: dict,
                             bucket,
                         },
-                    ))
+                        out,
+                    );
                 } else {
-                    Value::from_object(GcObj::new(
-                        strand.arena(),
-                        strand.builtin_types().dict_values,
+                    strand.builtin_types().dict_values.create(
+                        strand,
                         Values {
                             index: Cell::new(0),
                             epoch,
                             container: dict,
                         },
-                    ))
-                };
-                out.store(value);
+                        out,
+                    );
+                }
                 Ok(())
             }
             sym::COUNT => {
@@ -1962,16 +1961,14 @@ fn dict_rests<'v>(
     let state = UnpackState { index, skip };
     match sig.variadic {
         Variadic::Capture => {
-            out.at(sig.len() - 1)
-                .store(make_unpack(strand, dict, epoch, state));
+            make_unpack(strand, dict, epoch, state, out.at(sig.len() - 1));
         }
         _ => {
             if let Some(i) = sig.pos_rest_slot() {
-                out.at(i)
-                    .store(Value::from_object(tuple::tuple(strand, [])));
+                tuple::create(strand, [], out.at(i));
             }
             if let Some(i) = sig.key_rest_slot() {
-                out.at(i).store(make_unpack(strand, dict, epoch, state));
+                make_unpack(strand, dict, epoch, state, out.at(i));
             }
         }
     }
@@ -2092,7 +2089,7 @@ impl<'v> Dict<'v> {
         epoch: u64,
         container: &GcObj<'v, Dict<'v>>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let dict = container
             .borrow()
@@ -2107,12 +2104,16 @@ impl<'v> Dict<'v> {
             break if let Some(bucket) = dict.index.get(index.get()) {
                 index.update(|i| i + 1);
                 if let Some((bucket, subindex)) = bucket {
-                    out.store(Value::from_object(tuple::tuple(strand, unsafe {
-                        [
-                            bucket.as_ref().key.dup(),
-                            bucket.as_ref().value.at(*subindex).dup(),
-                        ]
-                    })));
+                    tuple::create(
+                        strand,
+                        unsafe {
+                            [
+                                bucket.as_ref().key.dup(),
+                                bucket.as_ref().value.at(*subindex).dup(),
+                            ]
+                        },
+                        out,
+                    );
                     Ok(true)
                 } else {
                     continue;

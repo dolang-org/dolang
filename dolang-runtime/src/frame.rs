@@ -17,7 +17,7 @@ use crate::{
     bytecode::{Rest, Variadic},
     error::{Error, Result},
     gc::{Collect, Gc, arena::Visit},
-    object::{pack, protocol::GcObj, tuple},
+    object::{pack, tuple},
     sig,
     strand::Strand,
     value::{Output, Value, ValueCell},
@@ -218,28 +218,25 @@ impl<'v> CallFrame<'v> {
             }
             if let Some(rest) = rest {
                 let record = pack::Pack::new(rest.into_iter().flatten().collect());
-                let record = GcObj::new(strand.arena(), strand.builtin_types().pack, record);
-                Output::set(
+                strand.builtin_types().pack.create(
                     strand,
+                    record,
                     slots
                         .get_unchecked(offset + pos_count + unpack.keys.len())
                         .slot(),
-                    Value::from_object(record),
                 );
             }
             let mut rest_slot = offset + pos_count + unpack.keys.len();
             if let Some(values) = pos_rest {
-                let tuple = Value::from_object(tuple::tuple(strand, values));
-                Output::set(strand, slots.get_unchecked(rest_slot).slot(), tuple);
+                tuple::create(strand, values, slots.get_unchecked(rest_slot).slot());
                 rest_slot += 1;
             }
             if let Some(entries) = key_rest {
                 let record = pack::Pack::from_sym_entries(entries);
-                let record = GcObj::new(strand.arena(), strand.builtin_types().pack, record);
-                Output::set(
+                strand.builtin_types().pack.create(
                     strand,
+                    record,
                     slots.get_unchecked(rest_slot).slot(),
-                    Value::from_object(record),
                 );
             }
             self.sp.set(offset + unpack.len());

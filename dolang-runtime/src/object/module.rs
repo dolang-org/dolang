@@ -232,7 +232,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
     async fn op_next<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let mut this_borrow = this.borrow_mut(strand)?;
         let mod_borrow = this_borrow
@@ -250,7 +250,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
             .ok_or_else(|| Error::concurrency(strand))?
             .vars[entry.1]
             .dup();
-        out.store(Value::from_object(tuple::tuple(strand, [key, value])));
+        tuple::create(strand, [key, value], out);
         mem::drop(mod_borrow);
         this_borrow.index += 1;
         Ok(true)

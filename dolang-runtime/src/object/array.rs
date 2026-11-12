@@ -469,7 +469,7 @@ impl<'v> Protocol<'v> for Pairs<'v> {
     async fn op_next<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let mut borrow = this.borrow_mut(strand)?;
         let index = borrow.index;
@@ -479,10 +479,8 @@ impl<'v> Protocol<'v> for Pairs<'v> {
             .ok_or_else(|| Error::concurrency(strand))?;
         let inner = &array_borrow.inner;
         if let Some(value) = inner.get(index) {
-            out.store(Value::from_object(tuple::tuple(
-                strand,
-                [Value::from_i64(strand, index as i64), value.dup()],
-            )));
+            let items = [Value::from_i64(strand, index as i64), value.dup()];
+            tuple::create(strand, items, out);
             mem::drop(array_borrow);
             borrow.index += 1;
             Ok(true)
@@ -1249,10 +1247,8 @@ fn unpack_from<'v, 's>(
     for (i, elem) in borrow.inner[start..(start + min)].iter().enumerate() {
         if pair {
             let value = i64::try_from(start + i).map_err(|_| Error::overflow(strand))?;
-            out.at(i).store(Value::from_object(tuple::tuple(
-                strand,
-                [Value::from_i64(strand, value), elem.dup()],
-            )))
+            let items = [Value::from_i64(strand, value), elem.dup()];
+            tuple::create(strand, items, out.at(i))
         } else {
             out.at(i).store(elem.dup())
         }

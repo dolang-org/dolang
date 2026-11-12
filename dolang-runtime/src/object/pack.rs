@@ -412,8 +412,7 @@ fn store_split_rests<'v, 'a>(
             .iter()
             .map(|&index| items[index].1.dup())
             .collect();
-        out.at(i)
-            .store(Value::from_object(tuple::tuple(strand, values)));
+        tuple::create(strand, values, out.at(i));
     }
     if let Some(i) = sig.key_rest_slot() {
         let entries = plan
@@ -424,11 +423,10 @@ fn store_split_rests<'v, 'a>(
                 (key.clone().unwrap(), value.dup())
             })
             .collect();
-        out.at(i).store(Value::from_object(GcObj::new(
-            strand.vm().arena(),
-            strand.builtin_types().pack,
-            Pack::from_sym_entries(entries),
-        )));
+        strand
+            .builtin_types()
+            .pack
+            .create(strand, Pack::from_sym_entries(entries), out.at(i));
     }
 }
 

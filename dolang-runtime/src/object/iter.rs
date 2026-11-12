@@ -1046,7 +1046,7 @@ impl<'v> Protocol<'v> for Zip<'v> {
     async fn op_next<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let sources = this
             .borrow(strand)?
@@ -1065,7 +1065,7 @@ impl<'v> Protocol<'v> for Zip<'v> {
             }
             items.push(item);
         }
-        out.store(Value::from_object(tuple::tuple(strand, items)));
+        tuple::create(strand, items, out);
         Ok(true)
     }
 
@@ -1366,7 +1366,7 @@ impl<'v> Protocol<'v> for Enumerate<'v> {
     async fn op_next<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         strand
             .with_slots(async move |strand, [mut item]| {
@@ -1380,10 +1380,8 @@ impl<'v> Protocol<'v> for Enumerate<'v> {
                 let next_index = index
                     .checked_add(1)
                     .ok_or_else(|| Error::overflow(strand))?;
-                out.store(Value::from_object(tuple::tuple(
-                    strand,
-                    vec![Value::from_i64(strand, index), item.take()],
-                )));
+                let items = vec![Value::from_i64(strand, index), item.take()];
+                tuple::create(strand, items, out);
                 this.borrow_mut(strand)?.index = next_index;
                 Ok(true)
             })

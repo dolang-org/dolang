@@ -699,7 +699,7 @@ impl<'v> BoundMethod<'v> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         let ty = vm.builtin_types().bound_method;
         let bound = BoundMethod {
-            rcvr: Value::from_input(vm, rcvr),
+            rcvr: Value::from_input(alloc, rcvr),
             method: vm.sym_obj(method),
         };
         ty.create(alloc, bound, out);

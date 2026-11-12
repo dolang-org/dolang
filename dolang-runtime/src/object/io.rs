@@ -338,7 +338,7 @@ pub(crate) async fn recv_mcall<'v, 'a, 's>(
     if classify(method.tag()) == Some(Surface::Sinkable) {
         return sink_mcall(strand, rcvr, method, args, out).await;
     }
-    args.prepend_self(Value::from_input(strand.vm(), rcvr));
+    args.prepend_self(Value::from_input(strand, rcvr));
     helper_mcall(strand, method, args, out).await
 }
 

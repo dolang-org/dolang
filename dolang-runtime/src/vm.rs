@@ -120,6 +120,13 @@ pub trait Alloc<'v> {
     fn alloc_vm(&mut self, _: private::Sealed) -> &'v Vm<'v>;
 }
 
+/// Lets a `&mut dyn Alloc<'v>` be passed where `impl Alloc<'v>` is expected.
+impl<'v, A: Alloc<'v> + ?Sized> Alloc<'v> for &mut A {
+    fn alloc_vm(&mut self, _: private::Sealed) -> &'v Vm<'v> {
+        (**self).alloc_vm(private::Sealed)
+    }
+}
+
 /// Lazy setup operations, available on every [`Alloc`], including `dyn Alloc`.
 pub trait AllocExt<'v>: Alloc<'v> {
     /// Run the lazy setup declared under tag `K` with [`Builder::lazy`], unless it has
@@ -808,10 +815,8 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
     /// ```
     pub fn value(mut self, name: &str, value: impl Input<'v>) -> Self {
         let sym = self.vm.sym(name);
-        self.push(
-            sym,
-            NativeField::Value(Value::from_input(self.vm.inner, value)),
-        );
+        let value = Value::from_input(self.vm, value);
+        self.push(sym, NativeField::Value(value));
         self
     }
 
@@ -849,10 +854,9 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
         T::Annex: Default,
     {
         let sym = self.vm.sym(name);
-        self.push(
-            sym,
-            NativeField::Value(ty.create_raw(self.vm, value, Default::default())),
-        );
+        let mut field = Value::NIL;
+        ty.create(self.vm, value, Slot::new(&mut field));
+        self.push(sym, NativeField::Value(field));
         self
     }
 
@@ -865,10 +869,9 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
         annex: T::Annex,
     ) -> Self {
         let sym = self.vm.sym(name);
-        self.push(
-            sym,
-            NativeField::Value(ty.create_raw(self.vm, value, annex)),
-        );
+        let mut field = Value::NIL;
+        ty.create_with_annex(self.vm, value, annex, Slot::new(&mut field));
+        self.push(sym, NativeField::Value(field));
         self
     }
 
@@ -1162,7 +1165,8 @@ impl<'v> Register<'v> {
         T::Annex: Default,
     {
         let name = self.inner.string(name);
-        let module = ty.create_raw(self.inner, value, Default::default());
+        let mut module = Value::NIL;
+        ty.create(self, value, Slot::new(&mut module));
         self.inner.insert_native_module(name, module);
         self
     }
@@ -1176,7 +1180,8 @@ impl<'v> Register<'v> {
         annex: T::Annex,
     ) -> &mut Self {
         let name = self.inner.string(name);
-        let module = ty.create_raw(self.inner, value, annex);
+        let mut module = Value::NIL;
+        ty.create_with_annex(self, value, annex, Slot::new(&mut module));
         self.inner.insert_native_module(name, module);
         self
     }
@@ -1491,7 +1496,7 @@ impl Bytecode {
         importer: impl Input<'v>,
         out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
-        let importer = Value::from_input(strand.vm(), importer);
+        let importer = Value::from_input(strand, importer);
         self.run_inner(strand, importer, out).await
     }
 
