@@ -616,10 +616,9 @@ impl<'v> Protocol<'v> for Record<'v> {
                     Some(key @ Key::Pos(_)) => {
                         // A position has at most one value
                         let found = this.borrow(strand)?.get(&key, None).map(Value::dup);
-                        let tuple = tuple::tuple(strand.vm(), found);
                         return strand
                             .with_slots(async |strand, [mut values]| {
-                                values.store(Value::from_object(tuple));
+                                tuple::create(strand, found, &mut values);
                                 values.op_iter(strand, out).await
                             })
                             .await;

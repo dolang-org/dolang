@@ -17,7 +17,8 @@ use crate::{
         array::Array,
         backtrace, channel,
         native::{Mut, Object, Ref, Type, TypeBuilder},
-        strand as strand_object, tuple,
+        strand::{StrandInfo, StrandRef, Stream, StreamIter, StreamSink},
+        tuple,
     },
     strand::{
         InheritKind, InterruptMask, InterruptToken, Local, LocalKey, LocalRootKey, Redirect, Strand,
@@ -43,8 +44,8 @@ fn pipe_pair<'v>(
     } else {
         let vm = strand.vm();
         let (s, r) = channel::pair(vm, 1);
-        Slot::from_output(&mut send).store(Value::from_object(s));
-        Slot::from_output(&mut recv).store(Value::from_object(r));
+        Output::set(strand, send, Value::from_object(s));
+        Output::set(strand, recv, Value::from_object(r));
     }
 }
 
@@ -621,23 +622,25 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             .function_without_frame("current", async move |strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let cell = strand.inner.cell();
-                Output::set(
-                    strand,
-                    out,
-                    &strand_object::StrandRef::create(strand.vm(), cell),
-                );
+                let ty = strand.builtin_types().strand_ref;
+                ty.create(strand, StrandRef::new(cell), out);
                 Ok(())
             })
             .function_without_frame("snapshot", async move |strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 // Walk first, then build values: the walk must not allocate
                 let raw = strand.snapshot_raw();
-                let vm = strand.vm();
+                let ty = strand.builtin_types().strand_info;
                 let infos: Vec<_> = raw
                     .into_iter()
-                    .map(|raw| strand_object::StrandInfo::create(vm, raw))
+                    .map(|raw| {
+                        let mut value = Value::NIL;
+                        let info = StrandInfo::new(raw);
+                        ty.create(strand, info, Slot::new(&mut value));
+                        value
+                    })
                     .collect();
-                Output::set(strand, out, &Value::from_object(tuple::tuple(vm, infos)));
+                tuple::create(strand, infos, out);
                 Ok(())
             })
             .function_without_frame("error_backtrace", async move |strand, args, out| {
@@ -689,17 +692,18 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     .enter(async move |strand| call!(strand, block, out).await)
                     .await
             })
-            .function("channel", async move |strand, args, mut out| {
+            .function("channel", async move |strand, args, out| {
                 let (_, [limit]) = unpack!(strand, args, 0, 1)?;
                 let limit = match limit {
                     None => 1,
                     Some(limit) => limit.to_index(strand)?,
                 };
                 let (send, recv) = channel::pair(strand, limit);
-                out.store(Value::from_object(tuple::tuple(
+                tuple::create(
                     strand,
                     [Value::from_object(send), Value::from_object(recv)],
-                )));
+                    out,
+                );
                 Ok(())
             })
             .function_with_slots("pipeline", async move |strand, args, out, [mut tmp]| {
@@ -925,7 +929,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     Ok(())
                 },
             )
-            .function("spawn", async move |strand, args, mut out| {
+            .function("spawn", async move |strand, args, out| {
                 let ([mut callable], []) = unpack!(strand, args, 1, 0)?;
                 let handle = strand.spawn_background_raw(
                     callable.take(),
@@ -933,7 +937,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     None,
                     async move |strand, arg, out| call!(strand, arg, out).await,
                 )?;
-                out.store(Value::from_object(handle));
+                Output::set(strand, out, Value::from_object(handle));
                 Ok(())
             })
             .function("stream", async move |strand, args, mut out| {
@@ -972,17 +976,17 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                         let builtin_types = strand.builtin_types();
                         builtin_types.stream_sink.create(
                             strand,
-                            strand_object::StreamSink::new(input_sender, handle.clone()),
+                            StreamSink::new(input_sender, handle.clone()),
                             &mut input,
                         );
                         builtin_types.stream_iter.create(
                             strand,
-                            strand_object::StreamIter::new(output_receiver, handle.clone()),
+                            StreamIter::new(output_receiver, handle.clone()),
                             &mut output,
                         );
                         builtin_types.stream.create(
                             strand,
-                            strand_object::Stream {
+                            Stream {
                                 handle,
                                 input: input.take(),
                                 output: output.take(),
@@ -1056,7 +1060,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     .await
                 },
             )
-            .function("fork", async move |strand, args, mut out| {
+            .function("fork", async move |strand, args, out| {
                 let ([], [], thunks) = unpack!(strand, args, 0, 0, *)?;
                 let thunks: Vec<_> = thunks.collect();
 
@@ -1106,7 +1110,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                         }
                         .await;
                         let results = result?;
-                        out.store(Value::from_object(tuple::tuple(strand, results)));
+                        tuple::create(strand, results, out);
                         Ok(())
                     })
                     .await

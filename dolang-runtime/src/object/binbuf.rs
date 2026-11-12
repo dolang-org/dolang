@@ -602,7 +602,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
         this: Recv<'v, 'a, Self>,
         request: &mut Request<'v, 's, '_>,
     ) -> Result<'v, 's, ()> {
-        let stream = Value::from_input(request.vm(), &this);
+        let stream = Value::from_input(request.parts().0, &this);
         provide_bridge(request, &stream, IoCaps::WRITE)
     }
 

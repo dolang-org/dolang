@@ -550,8 +550,8 @@ impl<'v> StrandInner<'v> {
         Self {
             group_link: Link::new(),
             vm: strand.inner.vm,
-            input: ValueCell::new(strand, &strand.inner.input),
-            output: ValueCell::new(strand, &strand.inner.output),
+            input: strand.inner.input().into(),
+            output: strand.inner.output().into(),
             errors: ErrorTable::new(),
             error_focus: Cell::new(None),
             locals: locals.into(),
@@ -559,7 +559,8 @@ impl<'v> StrandInner<'v> {
                 .inner
                 .local_roots
                 .iter()
-                .map(|cell| ValueCell::new(strand, cell))
+                // Safety: see the field
+                .map(|cell| unsafe { cell.get() }.into())
                 .collect::<Vec<_>>()
                 .into(),
             arena: Arena::new(ARENA_DEFAULT_SIZE),

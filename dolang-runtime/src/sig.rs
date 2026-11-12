@@ -2,7 +2,7 @@ use crate::{
     strand::Strand,
     sym::Sym,
     value::{Input, InputBy, Output, Slots, Value, private},
-    vm::Vm,
+    vm::Alloc,
 };
 use dolang_bytecode::{Rest, Variadic};
 
@@ -12,7 +12,12 @@ pub(crate) enum UnpackKeyKind<'v, 'a> {
 }
 
 impl<'v, 'a> Input<'v> for &UnpackKeyKind<'v, 'a> {
-    fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
+    fn input_take<'b>(
+        &'b mut self,
+        alloc: &mut dyn Alloc<'v>,
+        _: private::Sealed,
+    ) -> InputBy<'v, 'b> {
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         match self {
             UnpackKeyKind::Sym(sym) => InputBy::Value(Value::from_object(vm.sym_obj(*sym)), None),
             UnpackKeyKind::Const(value) => InputBy::Borrow(value),

@@ -47,7 +47,7 @@ use crate::{
         private::Sealed,
         view::{PinBin, PinStr},
     },
-    vm::{Alloc, Builder, StateTag, Vm},
+    vm::{Alloc, Builder, StateTag},
 };
 
 /// Buffer capacity, and the size from which reads and writes skip the buffer.
@@ -883,10 +883,13 @@ impl<'v> IntoByteIo<'v> for Stream {
 /// Wraps the handle in a [`Stream`] that owns it.
 impl<'v> Input<'v> for ByteHandle {
     #[allow(private_interfaces)]
-    fn input_take<'a>(&'a mut self, vm: &'a Vm<'v>, _: Sealed) -> InputBy<'v, 'a> {
+    fn input_take<'a>(&'a mut self, mut alloc: &mut dyn Alloc<'v>, _: Sealed) -> InputBy<'v, 'a> {
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         let handle = mem::replace(self, ByteHandle::read(futures::io::empty()));
         let ty = *vm.state::<StreamType>();
-        InputBy::Value(ty.create_raw(vm, Stream::new(handle), ()), None)
+        let mut value = Value::NIL;
+        ty.create(&mut alloc, Stream::new(handle), Slot::new(&mut value));
+        InputBy::Value(value, None)
     }
 }
 
@@ -2006,9 +2009,11 @@ mod tests {
     #[test]
     fn concat_handle_reads_items() {
         with_vm(async |strand, [mut items]| {
-            let vm = strand.vm();
-            let inner = vec![Value::from_input(vm, "ab"), Value::from_input(vm, 7_i64)];
-            let array = vm.builtin_types().array;
+            let inner = vec![
+                Value::from_input(strand, "ab"),
+                Value::from_input(strand, 7_i64),
+            ];
+            let array = strand.builtin_types().array;
             array.create(strand, Array { inner }, Slot::reborrow(&mut items));
             let handle = io::concat(strand, &items, b"\n").unwrap();
             let mut reader = handle.into_read().unwrap();

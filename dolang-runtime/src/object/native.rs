@@ -51,6 +51,16 @@ pub(crate) struct ObjectWrap<'v, T> {
     phantom: PhantomData<&'v mut &'v ()>,
 }
 
+impl<'v, T> ObjectWrap<'v, T> {
+    fn new(value: T) -> Self {
+        Self {
+            value: ManuallyDrop::new(value),
+            finalized: false,
+            phantom: PhantomData,
+        }
+    }
+}
+
 impl<'v, T> Drop for ObjectWrap<'v, T> {
     fn drop(&mut self) {
         debug_assert!(self.finalized);
@@ -60,6 +70,20 @@ impl<'v, T> Drop for ObjectWrap<'v, T> {
 pub(crate) struct ObjectAnnex<'v, T: Object<'v>> {
     slots: Option<alias::Box<[ValueCell<'v>]>>,
     inner: T::Annex,
+}
+
+impl<'v, T: Object<'v>> ObjectAnnex<'v, T> {
+    fn new(inner: T::Annex) -> Self {
+        Self {
+            slots: (T::SLOTS != 0).then(|| {
+                (0..T::SLOTS)
+                    .map(|_| ValueCell::default())
+                    .collect::<Vec<_>>()
+                    .into()
+            }),
+            inner,
+        }
+    }
 }
 
 impl<'v, T: Object<'v>> gc::Annex for ObjectAnnex<'v, T> {
@@ -583,7 +607,7 @@ impl<'v, 'a, T: Object<'v>> AsRef<T::Annex> for Annex<'v, 'a, T> {
 impl<'v, 'a, T: Object<'v>> Input<'v> for Instance<'v, 'a, T> {
     #[allow(private_interfaces)]
     #[inline]
-    fn input_take<'b>(&'b mut self, _vm: &'b Vm<'v>, _: Sealed) -> InputBy<'v, 'b> {
+    fn input_take<'b>(&'b mut self, _alloc: &mut dyn Alloc<'v>, _: Sealed) -> InputBy<'v, 'b> {
         match self.delegator {
             Some(delegator) => InputBy::Borrow(delegator),
             None => InputBy::Value(
@@ -2788,7 +2812,8 @@ impl<'v, T: Object<'v>> Clone for Type<'v, T> {
 
 impl<'v, T: Object<'v>> Input<'v> for Type<'v, T> {
     #[allow(private_interfaces)]
-    fn input_take<'b>(&'b mut self, vm: &'b Vm<'v>, _: Sealed) -> InputBy<'v, 'b> {
+    fn input_take<'b>(&'b mut self, alloc: &mut dyn Alloc<'v>, _: Sealed) -> InputBy<'v, 'b> {
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         InputBy::Borrow(self.singleton(vm))
     }
 }
@@ -2802,38 +2827,12 @@ impl<'v, T: Object<'v>> Type<'v, T> {
         &vm.type_singletons[self.singleton_idx]
     }
 
-    pub(crate) fn create_raw(&self, vm: &Vm<'v>, value: T, annex: T::Annex) -> Value<'v> {
-        Value::from_object(protocol::GcObj::new_annex(
-            vm.arena(),
-            self.vtbl,
-            ObjectWrap {
-                value: ManuallyDrop::new(value),
-                finalized: false,
-                phantom: PhantomData,
-            },
-            ObjectAnnex {
-                slots: if T::SLOTS != 0 {
-                    Some(
-                        (0..T::SLOTS)
-                            .map(|_| ValueCell::default())
-                            .collect::<Vec<_>>()
-                            .into(),
-                    )
-                } else {
-                    None
-                },
-                inner: annex,
-            },
-        ))
-    }
-
     /// Instantiates a native object and places it into the provided output
-    pub fn create(&self, alloc: &mut impl Alloc<'v>, value: T, mut out: impl Output<'v>)
+    pub fn create(&self, alloc: &mut impl Alloc<'v>, value: T, out: impl Output<'v>)
     where
         T::Annex: Default,
     {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        Slot::from_output(&mut out).store(self.create_raw(vm, value, Default::default()))
+        self.create_with_annex(alloc, value, Default::default(), out)
     }
 
     /// Instantiates a native object with an annex and places it into the provided output
@@ -2842,10 +2841,10 @@ impl<'v, T: Object<'v>> Type<'v, T> {
         alloc: &mut impl Alloc<'v>,
         value: T,
         annex: T::Annex,
-        mut out: impl Output<'v>,
+        out: impl Output<'v>,
     ) {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        Slot::from_output(&mut out).store(self.create_raw(vm, value, annex))
+        self.vtbl
+            .create_with_annex(alloc, ObjectWrap::new(value), ObjectAnnex::new(annex), out)
     }
 
     /// Check whether `value` has dynamic type `T`, returning a witness suitable to obtain an

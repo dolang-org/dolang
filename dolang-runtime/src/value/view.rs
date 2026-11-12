@@ -485,7 +485,7 @@ impl<'v, 'a> Array<'v, 'a> {
             };
             tuple::tuple(strand.vm(), borrow.inner.iter().map(Value::dup))
         };
-        Output::set(strand, out, &Value::from_object(tuple));
+        Output::set(strand, out, Value::from_object(tuple));
         Ok(())
     }
 }

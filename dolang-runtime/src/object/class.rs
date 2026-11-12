@@ -31,7 +31,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Output, Singleton, Slot, Slots, TypeObject, Value},
-    vm::{Builder, StateTag, Vm},
+    vm::{Alloc, Builder, StateTag, Vm},
 };
 
 use super::protocol::{GcObj, GcObjBorrow, Protocol};
@@ -450,7 +450,7 @@ pub(crate) async fn create<'v, 's>(
 
     // Every class ends its MRO with `Value`, which supplies the members every
     // value has, unless it names `Value` itself.
-    let value = Value::from_input(strand.vm(), TypeObject::Value);
+    let value = Value::from_input(strand, TypeObject::Value);
     let value = (!supers.iter().any(|sup| sup.repr_eq(strand, &value))).then_some(value);
 
     for sup in supers.iter().chain(&value) {
@@ -1663,9 +1663,8 @@ pub(crate) async fn instantiate<'v, 'a, 's>(
                     }
                 }
             }
-            inst.store(Value::from_object(GcObj::new_annex(
-                strand.arena(),
-                strand.builtin_types().class_instance,
+            strand.builtin_types().class_instance.create_with_annex(
+                strand,
                 ClassInstance {
                     fields: defaults.into(),
                 },
@@ -1676,7 +1675,8 @@ pub(crate) async fn instantiate<'v, 'a, 's>(
                         .collect::<Vec<_>>()
                         .into(),
                 },
-            )));
+                &mut inst,
+            );
 
             let init = Sym::well_known(sym::INIT_METHOD);
             match me.entry(init) {
@@ -1944,7 +1944,7 @@ unsafe impl<'v> Collect for ClassInstance<'v> {
 /// native super's type object, returns a reference to the initialized native slot value,
 /// if any.  The returned reference's lifetime is linked to that of the borrow.
 pub(crate) fn get_native_slot<'v, 'a>(
-    vm: &Vm<'v>,
+    alloc: &mut impl Alloc<'v>,
     borrow: GcObjBorrow<'v, 'a, ClassInstance<'v>>,
     type_obj: &Value<'v>,
 ) -> Option<&'a Value<'v>> {
@@ -1954,7 +1954,7 @@ pub(crate) fn get_native_slot<'v, 'a>(
         .annex()
         .native_supers
         .iter()
-        .position(|s| s.repr_eq(vm, type_obj))?;
+        .position(|s| s.repr_eq(alloc, type_obj))?;
     annex.natives[slot].get()
 }
 
@@ -2263,10 +2263,10 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
 
     fn op_type<'a, 's>(
         this: Recv<'v, 'a, Self>,
-        _strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
     ) {
-        out.store(Value::from_object(this.annex().class.clone()))
+        Output::set(strand, out, Value::from_object(this.annex().class.clone()))
     }
 
     fn op_display<'a, 's>(

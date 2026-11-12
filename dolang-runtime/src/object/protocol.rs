@@ -939,15 +939,14 @@ impl<'v, T: Protocol<'v>> TypeHandle<'v, T> {
         alloc: &mut impl Alloc<'v>,
         value: T,
         annex: T::Annex,
-        mut out: impl Output<'v>,
+        out: impl Output<'v>,
     ) {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        Slot::from_output(&mut out).store(Value::from_object(GcObj::new_annex(
-            vm.arena(),
-            *self,
-            value,
-            annex,
-        )));
+        Output::set(
+            alloc,
+            out,
+            Value::from_object(GcObj::new_annex(vm.arena(), *self, value, annex)),
+        );
     }
 }
 
@@ -1120,7 +1119,7 @@ impl<'v, 'a, T: Protocol<'v> + Boxable<Header, Inner = gc::BoxedSized<Header, T>
 
 impl<'v, 'a, T: ?Sized + Protocol<'v>> Input<'v> for Recv<'v, 'a, T> {
     #[inline]
-    fn input_take<'b>(&'b mut self, _vm: &'b Vm<'v>, _: Sealed) -> InputBy<'v, 'b> {
+    fn input_take<'b>(&'b mut self, _alloc: &mut dyn Alloc<'v>, _: Sealed) -> InputBy<'v, 'b> {
         match self.delegator {
             Some(delegator) => InputBy::Borrow(delegator),
             None => InputBy::Value(Value::from_object(self.receiver.to_strong()), None),
@@ -1130,7 +1129,7 @@ impl<'v, 'a, T: ?Sized + Protocol<'v>> Input<'v> for Recv<'v, 'a, T> {
 
 impl<'v, 'a, T: ?Sized + Protocol<'v>> Input<'v> for &Recv<'v, 'a, T> {
     #[inline]
-    fn input_take<'b>(&'b mut self, _vm: &'b Vm<'v>, _: Sealed) -> InputBy<'v, 'b> {
+    fn input_take<'b>(&'b mut self, _alloc: &mut dyn Alloc<'v>, _: Sealed) -> InputBy<'v, 'b> {
         match self.delegator {
             Some(delegator) => InputBy::Borrow(delegator),
             None => InputBy::Value(Value::from_object(self.receiver.to_strong()), None),
@@ -2428,7 +2427,7 @@ pub(crate) async fn instance_mcall_fallback<'v, 'a, 's>(
     if !is_special_mcall(method.tag()) {
         return Err(Error::field(strand, method));
     }
-    let receiver = Value::from_input(strand.vm(), receiver);
+    let receiver = Value::from_input(strand, receiver);
     special_mcall(strand, &receiver, None, method, args, out).await
 }
 

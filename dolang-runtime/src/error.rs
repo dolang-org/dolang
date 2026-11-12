@@ -25,7 +25,7 @@ use crate::{
     },
     strand::{Strand, StrandInner},
     sym::Sym,
-    value::{Case, Input, Output, Value, view::View},
+    value::{Case, Input, Output, Slot, Value, view::View},
     vm::Vm,
 };
 
@@ -808,9 +808,10 @@ impl<'v, 's> Error<'v, 's> {
     where
         T::Annex: Default,
     {
-        let val = ty.create_raw(strand, value, Default::default());
+        let mut root = ErrorRoot::new(strand.inner, Value::NIL, Vec::new());
+        ty.create(strand, value, Slot::new(&mut root.data_mut().value));
         Self {
-            inner: Variant::Boxed(ErrorRoot::new(strand.inner, val, Vec::new())),
+            inner: Variant::Boxed(root),
             phantom: PhantomData,
         }
     }
@@ -822,9 +823,10 @@ impl<'v, 's> Error<'v, 's> {
         value: T,
         annex: T::Annex,
     ) -> Self {
-        let val = ty.create_raw(strand, value, annex);
+        let mut root = ErrorRoot::new(strand.inner, Value::NIL, Vec::new());
+        ty.create_with_annex(strand, value, annex, Slot::new(&mut root.data_mut().value));
         Self {
-            inner: Variant::Boxed(ErrorRoot::new(strand.inner, val, Vec::new())),
+            inner: Variant::Boxed(root),
             phantom: PhantomData,
         }
     }
@@ -1044,11 +1046,8 @@ impl<'v, 's> Error<'v, 's> {
         let Some(backtrace) = backtrace::entries_from_value(strand, &backtrace) else {
             return Err(Error::type_error(strand, "expected inspect.Backtrace"));
         };
-        Ok(Self::from_pair(
-            strand,
-            Value::from_input(strand, err),
-            backtrace,
-        ))
+        let err = Value::from_input(strand, err);
+        Ok(Self::from_pair(strand, err, backtrace))
     }
 
     pub(crate) fn from_value_backtrace_raw(
@@ -1156,7 +1155,7 @@ impl<T, E: ErrorExt> ResultExt<T> for result::Result<T, E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test_support::with_vm, value::Slot};
+    use crate::test_support::with_vm;
 
     #[test]
     fn unsupported_message_survives_boxing() {

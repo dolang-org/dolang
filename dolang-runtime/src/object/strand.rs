@@ -767,12 +767,8 @@ pub(crate) struct StrandRef {
 }
 
 impl StrandRef {
-    pub(crate) fn create<'v>(vm: &Vm<'v>, cell: Rc<StrandCell>) -> Value<'v> {
-        Value::from_object(GcObj::new(
-            vm.arena(),
-            vm.builtin_types().strand_ref,
-            StrandRef { cell },
-        ))
+    pub(crate) fn new(cell: Rc<StrandCell>) -> Self {
+        Self { cell }
     }
 }
 
@@ -882,12 +878,16 @@ fn observe_mcall<'v, 's>(
                 (CellState::Pending, _) => Vec::new(),
                 _ => return Err(exited(strand)),
             };
-            let vm = strand.vm();
+            let ty = strand.builtin_types().strand_ref;
             let values: Vec<_> = cells
                 .into_iter()
-                .map(|cell| StrandRef::create(vm, cell))
+                .map(|cell| {
+                    let mut value = Value::NIL;
+                    ty.create(strand, StrandRef::new(cell), Slot::new(&mut value));
+                    value
+                })
                 .collect();
-            Output::set(strand, out, &Value::from_object(tuple::tuple(vm, values)));
+            tuple::create(strand, values, out);
             Ok(())
         }
         sym::INFO => {
@@ -901,7 +901,10 @@ fn observe_mcall<'v, 's>(
                 },
                 _ => return Err(exited(strand)),
             };
-            Output::set(strand, out, &StrandInfo::create(strand.vm(), raw));
+            strand
+                .builtin_types()
+                .strand_info
+                .create(strand, StrandInfo::new(raw), out);
             Ok(())
         }
         _ => unreachable!("not an observation method"),
@@ -1043,16 +1046,12 @@ pub(crate) struct StrandInfo<'v> {
 }
 
 impl<'v> StrandInfo<'v> {
-    pub(crate) fn create(vm: &Vm<'v>, raw: RawInfo<'v>) -> Value<'v> {
-        Value::from_object(GcObj::new(
-            vm.arena(),
-            vm.builtin_types().strand_info,
-            StrandInfo {
-                cell: raw.cell,
-                parent: raw.parent,
-                backtrace: RefCell::new(InfoBacktrace::Entries(raw.entries)),
-            },
-        ))
+    pub(crate) fn new(raw: RawInfo<'v>) -> Self {
+        Self {
+            cell: raw.cell,
+            parent: raw.parent,
+            backtrace: RefCell::new(InfoBacktrace::Entries(raw.entries)),
+        }
     }
 }
 
@@ -1108,16 +1107,18 @@ impl<'v> Protocol<'v> for StrandInfo<'v> {
         let info = this.get();
         match field.tag() {
             sym::STRAND => {
-                let value = StrandRef::create(strand.vm(), info.cell.clone());
-                Output::set(strand, out, &value);
+                let ty = strand.builtin_types().strand_ref;
+                ty.create(strand, StrandRef::new(info.cell.clone()), out);
                 Ok(())
             }
             sym::PARENT => {
-                let value = match &info.parent {
-                    Some(parent) => StrandRef::create(strand.vm(), parent.clone()),
-                    None => Value::NIL,
-                };
-                Output::set(strand, out, &value);
+                match &info.parent {
+                    Some(parent) => {
+                        let ty = strand.builtin_types().strand_ref;
+                        ty.create(strand, StrandRef::new(parent.clone()), out);
+                    }
+                    None => Output::set(strand, out, Value::NIL),
+                }
                 Ok(())
             }
             sym::BACKTRACE => {

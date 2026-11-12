@@ -12,6 +12,7 @@ use crate::{
         array::Array,
         class,
         dict::Dict,
+        function::Function,
         module::{Module, Namespace},
         pack,
         protocol::{GcObj, Spread, SpreadContext},
@@ -281,10 +282,10 @@ impl<'v> Vm<'v> {
         &self,
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, '_>,
+        out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let values = tuple::from_builtin_args(strand, args).await?;
-        out.store(Value::from_object(tuple::tuple(strand.vm(), values)));
+        tuple::create(strand, values, out);
         Ok(())
     }
 
@@ -662,12 +663,13 @@ impl<'v> Vm<'v> {
             }
             for (slot, arg) in slice[headroom..].iter().zip(args.iter()) {
                 match arg {
-                    sig::Arg::Pos => frame
-                        .items()
-                        .push((None, ValueCell::new(inner.vm(), slot.slot()))),
+                    sig::Arg::Pos => frame.items().push((
+                        None,
+                        ValueCell::from(mem::replace(slot.slot().into_inner(), Value::NIL)),
+                    )),
                     sig::Arg::Key(sym) => frame.items().push((
                         Some(inner.vm().sym_obj(*sym)),
-                        ValueCell::new(inner.vm(), slot.slot()),
+                        ValueCell::from(mem::replace(slot.slot().into_inner(), Value::NIL)),
                     )),
                     sig::Arg::Expand => Self::expand_args(inner, frame, slot.as_ref()).await?,
                 }
@@ -1211,12 +1213,11 @@ impl<'v> Vm<'v> {
                     let mut res = frame.scratch2();
                     // Create and call the closure that will execute the guarded code
                     let call_result = Strand::async_for_frame(inner, frame, async |strand| {
-                        func.store(Value::function(
+                        strand.builtin_types().function.create(
                             strand,
-                            frame.program.clone(),
-                            frame.upvars.clone(),
-                            index,
-                        ));
+                            Function::new(frame.program.clone(), frame.upvars.clone(), index),
+                            &mut func,
+                        );
                         func.op_call(strand, Args::new(&[], &[], 0), Slot::reborrow(&mut res))
                             .await
                     })

@@ -15,7 +15,7 @@ use crate::{
     object::{
         BoundMethod, dict,
         native::{Instance, Object, Spread, SpreadContext, Type as NativeType, Unpack, UnpackItem},
-        protocol::{GcObj, Inspect, Protocol, Recv, members},
+        protocol::{Inspect, Protocol, Recv, members},
     },
     sig,
     strand::Strand,
@@ -23,7 +23,7 @@ use crate::{
     sym::Sym,
     unpack,
     value::{Empty, Input, InputBy, Output, Slot, Slots, TypeObject, Value, private::Sealed},
-    vm::Vm,
+    vm::{Alloc, Vm},
 };
 
 /// Receives ordered key/value pairs while a dictionary view is flattened.
@@ -257,19 +257,21 @@ impl<'v, 'a, I: DictLike<'v>> DictView<'v, 'a, I> {
 
 impl<'v, I: DictLike<'v>> Input<'v> for DictView<'v, '_, I> {
     #[allow(private_interfaces)]
-    fn input_take<'a>(&'a mut self, vm: &'a Vm<'v>, _: Sealed) -> InputBy<'v, 'a> {
+    fn input_take<'a>(&'a mut self, mut alloc: &mut dyn Alloc<'v>, _: Sealed) -> InputBy<'v, 'a> {
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         let ty = self.owner.ty(vm);
-        let owner = Value::from_input(vm, self.owner);
+        let owner = Value::from_input(alloc, self.owner);
         let view = self.view.take().expect("DictView used more than once");
-        let value = GcObj::new(
-            vm.arena(),
-            vm.builtin_types().dict_view,
+        let mut value = Value::NIL;
+        vm.builtin_types().dict_view.create(
+            &mut alloc,
             View {
                 owner,
                 glue: Box::new(Glue { view, ty }),
             },
+            Slot::new(&mut value),
         );
-        InputBy::Value(Value::from_object(value), None)
+        InputBy::Value(value, None)
     }
 }
 
@@ -541,7 +543,8 @@ fn flatten_glue<'v, 's>(
 fn snapshot_dict<'v, 's>(
     strand: &mut Strand<'v, 's>,
     pairs: Vec<(Value<'v>, Value<'v>)>,
-) -> Result<'v, 's, Value<'v>> {
+    out: impl Output<'v>,
+) -> Result<'v, 's, ()> {
     let mut snapshot = dict::Dict::new();
     for (key, value) in pairs {
         let mut hasher = strand.vm().hasher();
@@ -549,11 +552,8 @@ fn snapshot_dict<'v, 's>(
         let hash = hasher.finish();
         snapshot.insert(strand, key, value, hash, false)?;
     }
-    Ok(Value::from_object(GcObj::new(
-        strand.arena(),
-        strand.builtin_types().dict,
-        snapshot,
-    )))
+    strand.builtin_types().dict.create(strand, snapshot, out);
+    Ok(())
 }
 
 /// Spreads pairs keyed, as a dict does: a symbol key as a symbol, any other
@@ -605,7 +605,8 @@ fn unpack_pairs<'v, 's>(
                 continue;
             }
             UnpackItem::SymKey { key, slot, default } => {
-                (Value::from_input(strand, key.as_str(strand)), slot, default)
+                let name = key.as_str(strand.vm());
+                (Value::from_input(strand, name), slot, default)
             }
             UnpackItem::ConstKey { key, slot, default } => (key.dup(), slot, default),
             rest => {
@@ -751,7 +752,10 @@ fn unpack_sig_pairs<'v, 's>(
     }
     for (offset, spec) in sig.keys.iter().enumerate() {
         let key = match &spec.kind {
-            sig::UnpackKeyKind::Sym(sym) => Value::from_input(strand, sym.as_str(strand)),
+            sig::UnpackKeyKind::Sym(sym) => {
+                let name = sym.as_str(strand.vm());
+                Value::from_input(strand, name)
+            }
             sig::UnpackKeyKind::Const(value) => value.dup(),
         };
         if let Some((found, (_, value))) = find_pair(strand, pairs, &consumed, &key)? {
@@ -957,8 +961,12 @@ impl<'v> Protocol<'v> for View<'v> {
             let view = this.get();
             flatten_glue(view, strand)?
         };
-        snapshot_dict(strand, pairs)?
-            .op_mcall(strand, method, args, out)
+        // The snapshot is called across an await, so it lives in a scanned slot.
+        strand
+            .with_slots(async |strand, [mut snapshot]| {
+                snapshot_dict(strand, pairs, &mut snapshot)?;
+                snapshot.op_mcall(strand, method, args, out).await
+            })
             .await
     }
     async fn op_iter<'a, 's>(
@@ -1030,16 +1038,13 @@ impl<'v> Protocol<'v> for Iter<'v> {
     async fn op_next<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let mut iter = this.borrow_mut(strand)?;
         let Some((key, value)) = iter.pairs.get(iter.index) else {
             return Ok(false);
         };
-        out.store(Value::from_object(super::tuple::tuple(
-            strand,
-            [key.dup(), value.dup()],
-        )));
+        super::tuple::create(strand, [key.dup(), value.dup()], out);
         iter.index += 1;
         Ok(true)
     }
