@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    cell::{Cell, OnceCell, RefCell, UnsafeCell},
+    cell::{Cell, OnceCell, RefCell},
     future::Future,
     marker::PhantomData,
     mem::{self, MaybeUninit},
@@ -35,7 +35,7 @@ use crate::{
         strand::{Completion, Handle},
     },
     sym::{self, Sym},
-    value::{Input, Output, Slot, Value},
+    value::{Input, Output, Slot, Value, ValueCell},
     vm::{Alloc, Vm},
 };
 
@@ -271,7 +271,7 @@ impl<'v> LocalRootKey<'v> {
 
     /// Get a [`Slot`] for reading/writing this root in the given strand.
     pub fn slot<'s>(&self, strand: &Strand<'v, 's>) -> Slot<'v, 's> {
-        unsafe { Slot::new(&mut *strand.inner.local_roots.get_unchecked(self.index).get()) }
+        unsafe { strand.inner.local_roots.get_unchecked(self.index).slot() }
     }
 }
 
@@ -370,17 +370,16 @@ impl StrandCell {
 pub(crate) struct StrandInner<'v> {
     group_link: Link<StrandInner<'static>>,
     vm: &'v Vm<'v>,
-    // Strand-local input and output.  Contents are only copied out or replaced
-    // with `mem::replace`, and a replaced value drops after the access ends: a
-    // drop can run native code that touches the strand.
-    input: UnsafeCell<Value<'v>>,
-    output: UnsafeCell<Value<'v>>,
+    // Strand-local input and output.  A replaced value drops after the access
+    // ends: a drop can run native code that touches the strand.
+    input: ValueCell<'v>,
+    output: ValueCell<'v>,
     errors: ErrorTable<'v>,
     /// Slot of the error being handled by the innermost `guard` call, which
     /// owns the error while the slot is focused.
     error_focus: Cell<Option<NonNull<ErrorSlot<'v>>>>,
     locals: alias::Box<[NonNull<()>]>,
-    local_roots: alias::Box<[UnsafeCell<Value<'v>>]>,
+    local_roots: alias::Box<[ValueCell<'v>]>,
     arena: Arena,
     pub(crate) interrupt: RefCell<InterruptToken<'v>>,
     /// The strand's own token, which `interrupt` starts as.  Unlike `interrupt`,
@@ -489,8 +488,8 @@ impl<'v> StrandInner<'v> {
         Self {
             group_link: Link::new(),
             vm,
-            input: UnsafeCell::new(Value::NIL),
-            output: UnsafeCell::new(Value::NIL),
+            input: ValueCell::default(),
+            output: ValueCell::default(),
             errors: ErrorTable::new(),
             error_focus: Cell::new(None),
             locals: vm
@@ -500,7 +499,7 @@ impl<'v> StrandInner<'v> {
                 .collect::<Vec<_>>()
                 .into(),
             local_roots: (0..vm.local_root_count.get())
-                .map(|_| UnsafeCell::new(Value::NIL))
+                .map(|_| ValueCell::default())
                 .collect::<Vec<_>>()
                 .into(),
             arena: Arena::new(ARENA_DEFAULT_SIZE),
@@ -551,8 +550,8 @@ impl<'v> StrandInner<'v> {
         Self {
             group_link: Link::new(),
             vm: strand.inner.vm,
-            input: UnsafeCell::new(strand.inner.input()),
-            output: UnsafeCell::new(strand.inner.output()),
+            input: ValueCell::new(strand, &strand.inner.input),
+            output: ValueCell::new(strand, &strand.inner.output),
             errors: ErrorTable::new(),
             error_focus: Cell::new(None),
             locals: locals.into(),
@@ -560,7 +559,7 @@ impl<'v> StrandInner<'v> {
                 .inner
                 .local_roots
                 .iter()
-                .map(|cell| UnsafeCell::new(unsafe { &*cell.get() }.dup()))
+                .map(|cell| ValueCell::new(strand, cell))
                 .collect::<Vec<_>>()
                 .into(),
             arena: Arena::new(ARENA_DEFAULT_SIZE),
@@ -691,26 +690,26 @@ impl<'v> StrandInner<'v> {
 
     pub(crate) fn input(&self) -> Value<'v> {
         // Safety: see the field
-        unsafe { &*self.input.get() }.dup()
+        unsafe { self.input.get() }
     }
 
     pub(crate) fn output(&self) -> Value<'v> {
         // Safety: see the field
-        unsafe { &*self.output.get() }.dup()
+        unsafe { self.output.get() }
     }
 
     /// Replace the strand's input, returning the old value for the caller to drop.
     #[must_use]
     pub(crate) fn replace_input(&self, value: Value<'v>) -> Value<'v> {
         // Safety: see the field
-        mem::replace(unsafe { &mut *self.input.get() }, value)
+        mem::replace(unsafe { self.input.slot() }.into_inner(), value)
     }
 
     /// Replace the strand's output, returning the old value for the caller to drop.
     #[must_use]
     pub(crate) fn replace_output(&self, value: Value<'v>) -> Value<'v> {
         // Safety: see the field
-        mem::replace(unsafe { &mut *self.output.get() }, value)
+        mem::replace(unsafe { self.output.slot() }.into_inner(), value)
     }
 
     pub(crate) fn errors(&self) -> &ErrorTable<'v> {
@@ -749,13 +748,13 @@ impl<'v> StrandInner<'v> {
             self.start.accept(visitor)?;
 
             // Scan input/output and error roots
-            (*self.input.get()).accept(visitor)?;
-            (*self.output.get()).accept(visitor)?;
+            self.input.accept(visitor)?;
+            self.output.accept(visitor)?;
             self.errors.scan(visitor)?;
 
             // Scan local roots
             for cell in self.local_roots.iter() {
-                (*cell.get()).accept(visitor)?;
+                cell.accept(visitor)?;
             }
 
             // Walk frame chain
@@ -772,18 +771,18 @@ impl<'v> StrandInner<'v> {
                         // Scan active slots
                         let sp = frame.sp.get();
                         for i in 0..sp {
-                            (*frame.slots.get_unchecked(i).get()).accept(visitor)?;
+                            frame.slots.get_unchecked(i).accept(visitor)?;
                         }
                         // Scan scratch slots
-                        (*frame.scratch1.get()).accept(visitor)?;
-                        (*frame.scratch2.get()).accept(visitor)?;
-                        (*frame.scratch3.get()).accept(visitor)?;
+                        frame.scratch1.accept(visitor)?;
+                        frame.scratch2.accept(visitor)?;
+                        frame.scratch3.accept(visitor)?;
                         // Scan items
                         for (sym, value) in &*frame.items.get() {
                             if let Some(sym) = sym {
                                 sym.accept(visitor)?;
                             }
-                            (*value.get()).accept(visitor)?;
+                            value.accept(visitor)?;
                         }
                         ptr = frame.parent;
                     }
@@ -791,7 +790,7 @@ impl<'v> StrandInner<'v> {
                         let slots = slots_ptr.as_ref();
                         let slice = &*slots.slots;
                         for cell in slice {
-                            (*cell.get()).accept(visitor)?;
+                            cell.accept(visitor)?;
                         }
                         ptr = slots.parent;
                     }
@@ -1191,14 +1190,14 @@ impl<'v, 's> Strand<'v, 's> {
         &mut self,
         f: impl for<'b> AsyncFnOnce(&mut Strand<'v, 's>, [Slot<'v, 'b>; N]) -> R,
     ) -> R {
-        let mut values = [const { UnsafeCell::new(Value::NIL) }; N];
+        let values: [ValueCell<'v>; N] = std::array::from_fn(|_| ValueCell::default());
         let mut slots = MaybeUninit::<[Slot<'v, '_>; N]>::uninit();
 
         unsafe {
-            for (i, value) in values.iter_mut().enumerate() {
+            for (i, value) in values.iter().enumerate() {
                 (slots.as_mut_ptr() as *mut Slot<'v, '_>)
                     .add(i)
-                    .write(Slot::new(&mut *value.get()))
+                    .write(value.slot())
             }
             let frame = frame::Slots {
                 parent: Some(self.fp),
@@ -1226,7 +1225,7 @@ impl<'v, 's> Strand<'v, 's> {
         len: usize,
         f: impl for<'b> AsyncFnOnce(&mut Strand<'v, 's>, crate::value::Slots<'v, 'b>) -> R,
     ) -> R {
-        let values: Vec<_> = (0..len).map(|_| UnsafeCell::new(Value::NIL)).collect();
+        let values: Vec<_> = (0..len).map(|_| ValueCell::default()).collect();
 
         unsafe {
             let frame = frame::Slots {
@@ -1255,14 +1254,14 @@ impl<'v, 's> Strand<'v, 's> {
         &mut self,
         f: impl for<'b> FnOnce(&mut Strand<'v, 's>, [Slot<'v, 'b>; N]) -> R,
     ) -> R {
-        let mut values = [const { UnsafeCell::new(Value::NIL) }; N];
+        let values: [ValueCell<'v>; N] = std::array::from_fn(|_| ValueCell::default());
         let mut slots = MaybeUninit::<[Slot<'v, '_>; N]>::uninit();
 
         unsafe {
-            for (i, value) in values.iter_mut().enumerate() {
+            for (i, value) in values.iter().enumerate() {
                 (slots.as_mut_ptr() as *mut Slot<'v, '_>)
                     .add(i)
-                    .write(Slot::new(&mut *value.get()))
+                    .write(value.slot())
             }
             let frame = frame::Slots {
                 parent: Some(self.fp),

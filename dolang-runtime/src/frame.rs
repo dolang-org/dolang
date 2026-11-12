@@ -20,7 +20,7 @@ use crate::{
     object::{pack, protocol::GcObj, tuple},
     sig,
     strand::Strand,
-    value::Value,
+    value::{Output, Value, ValueCell},
 };
 
 pub trait Frame {
@@ -38,10 +38,10 @@ pub(crate) struct CallFrame<'v> {
     pub(crate) func: usize,
     pub(crate) pc: usize,
     pub(crate) sp: Cell<usize>,
-    pub(crate) slots: Vec<UnsafeCell<Value<'v>>>,
-    pub(crate) scratch1: UnsafeCell<Value<'v>>,
-    pub(crate) scratch2: UnsafeCell<Value<'v>>,
-    pub(crate) scratch3: UnsafeCell<Value<'v>>,
+    pub(crate) slots: Vec<ValueCell<'v>>,
+    pub(crate) scratch1: ValueCell<'v>,
+    pub(crate) scratch2: ValueCell<'v>,
+    pub(crate) scratch3: ValueCell<'v>,
     pub(crate) items: UnsafeCell<Vec<OwnedItem<'v>>>,
     phantom: PhantomData<&'v ()>,
 }
@@ -122,12 +122,14 @@ impl<'v> CallFrame<'v> {
 
             for arg in args {
                 match arg {
-                    Arg::Pos(mut value) => {
+                    Arg::Pos(value) => {
                         if pos == pos_count {
                             match unpack.variadic {
                                 Variadic::Capture => {
                                     // Capture extra positional arguments in rest
-                                    rest.as_mut().unwrap().push_back(Some((None, value.take())));
+                                    rest.as_mut()
+                                        .unwrap()
+                                        .push_back(Some((None, Value::from_input(strand, value))));
                                 }
                                 variadic => match variadic.positional() {
                                     Rest::None => {
@@ -136,19 +138,21 @@ impl<'v> CallFrame<'v> {
                                     // Allow but discard extra positional arguments
                                     Rest::Discard => {}
                                     // Capture extra positional arguments in `*name`
-                                    Rest::Capture => pos_rest.as_mut().unwrap().push(value.take()),
+                                    Rest::Capture => pos_rest
+                                        .as_mut()
+                                        .unwrap()
+                                        .push(Value::from_input(strand, value)),
                                 },
                             }
                         } else {
-                            (*slots.get_unchecked(offset + pos).get())
-                                .store(value.into_inner().take());
+                            Output::set(strand, slots.get_unchecked(offset + pos).slot(), value);
                             pos += 1
                         }
                     }
-                    Arg::Key(sym, mut value) => {
+                    Arg::Key(sym, value) => {
                         if let Some(i) = unpack.sym_offset(sym) {
                             if !assigned.replace(i - pos_count, true) {
-                                (*slots.get_unchecked(offset + i).get()).store(value.take());
+                                Output::set(strand, slots.get_unchecked(offset + i).slot(), value);
                                 continue;
                             }
                             if unpack.variadic.keyed() == Rest::None {
@@ -158,9 +162,10 @@ impl<'v> CallFrame<'v> {
                         match unpack.variadic {
                             Variadic::Capture => {
                                 // Capture extra key arguments in rest
-                                rest.as_mut()
-                                    .unwrap()
-                                    .push_back(Some((Some(inner.vm().sym_obj(sym)), value.take())));
+                                rest.as_mut().unwrap().push_back(Some((
+                                    Some(inner.vm().sym_obj(sym)),
+                                    Value::from_input(strand, value),
+                                )));
                             }
                             variadic => match variadic.keyed() {
                                 Rest::None => {
@@ -169,10 +174,10 @@ impl<'v> CallFrame<'v> {
                                 // Allow but discard extra key arguments
                                 Rest::Discard => {}
                                 // Capture extra key arguments in `**name`
-                                Rest::Capture => key_rest
-                                    .as_mut()
-                                    .unwrap()
-                                    .push((inner.vm().sym_obj(sym), value.take())),
+                                Rest::Capture => key_rest.as_mut().unwrap().push((
+                                    inner.vm().sym_obj(sym),
+                                    Value::from_input(strand, value),
+                                )),
                             },
                         }
                     }
@@ -187,8 +192,11 @@ impl<'v> CallFrame<'v> {
                 .iter()
                 .enumerate()
             {
-                let value = &mut *slots.get_unchecked(offset + unpack.required + i).get();
-                value.store(default.dup())
+                Output::set(
+                    strand,
+                    slots.get_unchecked(offset + unpack.required + i).slot(),
+                    default,
+                )
             }
 
             for (i, key) in unpack.keys.iter().enumerate() {
@@ -196,7 +204,11 @@ impl<'v> CallFrame<'v> {
                     continue;
                 }
                 if let Some(default) = &key.default {
-                    (*slots.get_unchecked(offset + pos_count + i).get()).store(default.dup())
+                    Output::set(
+                        strand,
+                        slots.get_unchecked(offset + pos_count + i).slot(),
+                        default,
+                    )
                 } else {
                     return Err(match &key.kind {
                         sig::UnpackKeyKind::Sym(sym) => Error::missing_key_raw(inner, *sym),
@@ -206,28 +218,29 @@ impl<'v> CallFrame<'v> {
             }
             if let Some(rest) = rest {
                 let record = pack::Pack::new(rest.into_iter().flatten().collect());
-                (*slots
-                    .get_unchecked(offset + pos_count + unpack.keys.len())
-                    .get())
-                .store(Value::from_object(GcObj::new(
-                    inner.vm().arena(),
-                    inner.vm().builtin_types().pack,
-                    record,
-                )));
+                let record = GcObj::new(strand.arena(), strand.builtin_types().pack, record);
+                Output::set(
+                    strand,
+                    slots
+                        .get_unchecked(offset + pos_count + unpack.keys.len())
+                        .slot(),
+                    Value::from_object(record),
+                );
             }
             let mut rest_slot = offset + pos_count + unpack.keys.len();
             if let Some(values) = pos_rest {
-                (*slots.get_unchecked(rest_slot).get())
-                    .store(Value::from_object(tuple::tuple(inner.vm(), values)));
+                let tuple = Value::from_object(tuple::tuple(strand, values));
+                Output::set(strand, slots.get_unchecked(rest_slot).slot(), tuple);
                 rest_slot += 1;
             }
             if let Some(entries) = key_rest {
                 let record = pack::Pack::from_sym_entries(entries);
-                (*slots.get_unchecked(rest_slot).get()).store(Value::from_object(GcObj::new(
-                    inner.vm().arena(),
-                    inner.vm().builtin_types().pack,
-                    record,
-                )));
+                let record = GcObj::new(strand.arena(), strand.builtin_types().pack, record);
+                Output::set(
+                    strand,
+                    slots.get_unchecked(rest_slot).slot(),
+                    Value::from_object(record),
+                );
             }
             self.sp.set(offset + unpack.len());
             Ok(())
@@ -244,7 +257,7 @@ pub(crate) struct Native<'v> {
 
 pub(crate) struct Slots<'v> {
     pub(crate) parent: Option<Ptr<'v>>,
-    pub(crate) slots: *const [UnsafeCell<Value<'v>>],
+    pub(crate) slots: *const [ValueCell<'v>],
 }
 
 #[derive(Clone, Copy)]
@@ -273,10 +286,10 @@ impl<'v> CallFrame<'v> {
             pc: 0,
             phantom: PhantomData,
             sp: Cell::new(locals),
-            slots: (0..slots).map(|_| UnsafeCell::new(Value::NIL)).collect(),
-            scratch1: UnsafeCell::new(Value::NIL),
-            scratch2: UnsafeCell::new(Value::NIL),
-            scratch3: UnsafeCell::new(Value::NIL),
+            slots: (0..slots).map(|_| ValueCell::default()).collect(),
+            scratch1: ValueCell::default(),
+            scratch2: ValueCell::default(),
+            scratch3: ValueCell::default(),
             items: UnsafeCell::new(Default::default()),
         }
     }

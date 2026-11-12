@@ -237,11 +237,6 @@ impl<'v> Value<'v> {
         interface::query::<K, R>(self, strand, consumer)
     }
 
-    pub(crate) fn store(&mut self, value: Self) {
-        self.0 = value.0.clone();
-        mem::forget(value);
-    }
-
     pub(crate) fn case(&self) -> Case<'v, '_> {
         unsafe {
             match self.0.decode() {
@@ -3014,15 +3009,13 @@ where
 {
     #[allow(private_interfaces)]
     fn input_take<'a>(&'a mut self, vm: &'a Vm<'v>, _: private::Sealed) -> InputBy<'v, 'a> {
-        let bound = Value::from_input(vm, self.value.take().expect("bound adapter reused"));
+        let bound = ValueCell::new(vm, self.value.take().expect("bound adapter reused"));
         let func = self.func.take().expect("bound adapter reused");
         let object = GcObj::new_annex(
             vm.arena(),
             vm.builtin_types().native_function,
             NativeFunction::bound(func),
-            NativeFunctionAnnex {
-                bound: UnsafeCell::new(bound),
-            },
+            NativeFunctionAnnex { bound },
         );
         InputBy::Value(Value::from_object(object), None)
     }
@@ -3086,7 +3079,10 @@ impl<'v, 'a> Slot<'v, 'a> {
     }
 
     pub(crate) fn store(&mut self, value: Value<'v>) {
-        unsafe { *self.0 = value }
+        // Drop the old value only after the write: a drop can run native code that
+        // reaches this slot.
+        let old = unsafe { mem::replace(&mut *self.0, value) };
+        drop(old);
     }
 
     pub(crate) fn from_output(this: &'a mut impl Output<'v>) -> Self {
@@ -3135,6 +3131,15 @@ impl<'v, 'a> Input<'v> for &mut Slot<'v, 'a> {
     #[allow(private_interfaces)]
     fn input_take<'b>(&'b mut self, _vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
         InputBy::Value(self.take(), Some(Slot::reborrow(self)))
+    }
+}
+
+/// An owned value moves in.  Only the runtime itself holds owned values.
+impl<'v> Input<'v> for Value<'v> {
+    #[allow(private_interfaces)]
+    #[inline]
+    fn input_take<'b>(&'b mut self, _vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
+        InputBy::Value(mem::replace(self, Value::NIL), None)
     }
 }
 
@@ -3442,10 +3447,91 @@ impl<'v> Input<'v> for &mut Root<'v> {
     }
 }
 
-pub(crate) struct Slots<'v, 'a>(&'a [UnsafeCell<Value<'v>>]);
+/// Interior-mutable [`Value`] holder.
+///
+/// A holder that is reachable while other code runs (frame slots, strand state, object
+/// slots) keeps its value here. Reading is by [`dup`](Value::dup), either safely through
+/// [`Input`] or with [`get`](Self::get). Writing goes through a [`Slot`] from
+/// [`slot`](Self::slot), which replaces the old value and drops it only after the
+/// write: a drop can run native code that reaches the same cell.
+#[repr(transparent)]
+pub(crate) struct ValueCell<'v>(UnsafeCell<Value<'v>>);
+
+impl<'v> ValueCell<'v> {
+    #[inline]
+    pub(crate) fn new(vm: &Vm<'v>, input: impl Input<'v>) -> Self {
+        Self(UnsafeCell::new(Value::from_input(vm, input)))
+    }
+
+    #[inline]
+    pub(crate) fn get_mut(&mut self) -> &mut Value<'v> {
+        self.0.get_mut()
+    }
+
+    /// Visit the stored value for the garbage collector.
+    #[inline]
+    pub(crate) fn accept(&self, visit: &mut dyn arena::Visit) -> ControlFlow<()> {
+        // Safety: a `Slot` into the cell never keeps a `&mut` alive, and no write is
+        // in progress while the collector runs.
+        unsafe { (*self.0.get()).accept(visit) }
+    }
+
+    /// Duplicate the stored value.
+    ///
+    /// # Safety
+    /// No `&mut` into the cell may be alive. An owned transient [`Value`] is sound only
+    /// under reference counting; prefer passing the cell as an [`Input`].
+    #[inline]
+    pub(crate) unsafe fn get(&self) -> Value<'v> {
+        unsafe { (*self.0.get()).dup() }
+    }
+
+    /// Borrow the stored value.
+    ///
+    /// # Safety
+    /// Nothing may write the cell while the borrow is alive.
+    #[inline]
+    pub(crate) unsafe fn as_ref(&self) -> &Value<'v> {
+        unsafe { &*self.0.get() }
+    }
+
+    /// Obtain a [`Slot`] for writing the cell.
+    ///
+    /// # Safety
+    /// No other access to the cell may happen while the slot is alive, except reads
+    /// that do not borrow across a write.
+    #[inline]
+    pub(crate) unsafe fn slot(&self) -> Slot<'v, '_> {
+        Slot(self.0.get(), PhantomData)
+    }
+
+    #[inline]
+    pub(crate) fn as_ptr(&self) -> *mut Value<'v> {
+        self.0.get()
+    }
+}
+
+impl<'v> Default for ValueCell<'v> {
+    #[inline]
+    fn default() -> Self {
+        Self(UnsafeCell::new(Value::NIL))
+    }
+}
+
+impl<'v> Input<'v> for &ValueCell<'v> {
+    #[allow(private_interfaces)]
+    #[inline]
+    fn input_take<'b>(&'b mut self, _vm: &'b Vm<'v>, _: private::Sealed) -> InputBy<'v, 'b> {
+        // Dup rather than borrow: the same cell may be written through a `Slot` while
+        // the input is in use.
+        InputBy::Value(unsafe { self.get() }, None)
+    }
+}
+
+pub(crate) struct Slots<'v, 'a>(&'a [ValueCell<'v>]);
 
 impl<'v, 'a> Slots<'v, 'a> {
-    pub(crate) unsafe fn new(slice: &'a [UnsafeCell<Value<'v>>]) -> Self {
+    pub(crate) unsafe fn new(slice: &'a [ValueCell<'v>]) -> Self {
         Self(slice)
     }
 
@@ -3455,15 +3541,15 @@ impl<'v, 'a> Slots<'v, 'a> {
     }
 
     pub(crate) fn at<'b>(&'b mut self, index: usize) -> Slot<'v, 'b> {
-        unsafe { Slot::new(&mut *self.0[index].get()) }
+        unsafe { self.0[index].slot() }
     }
 
-    pub(crate) fn as_inner(&self) -> &'a [UnsafeCell<Value<'v>>] {
+    pub(crate) fn as_inner(&self) -> &'a [ValueCell<'v>] {
         self.0
     }
 
     pub(crate) unsafe fn unchecked_at(&self, index: usize) -> Slot<'v, 'a> {
-        unsafe { Slot::new(&mut *self.0[index].get()) }
+        unsafe { self.0[index].slot() }
     }
 }
 

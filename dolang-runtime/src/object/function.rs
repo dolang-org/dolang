@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cell::UnsafeCell, marker::PhantomData, ops::ControlFlow, ptr::NonNull};
+use std::{borrow::Cow, marker::PhantomData, ops::ControlFlow, ptr::NonNull};
 
 use crate::value::fmt::Format;
 
@@ -13,7 +13,7 @@ use crate::{
     object::protocol::members,
     strand::{Pinned, Strand},
     sym::{self, Sym},
-    value::{Output, Slot, Value},
+    value::{Output, Slot, Value, ValueCell},
     vm::Vm,
 };
 
@@ -44,25 +44,18 @@ pub(crate) struct NativeFunction<'v> {
     phantom: PhantomData<&'v mut &'v ()>,
 }
 
+#[derive(Default)]
 pub(crate) struct NativeFunctionAnnex<'v> {
-    pub(crate) bound: UnsafeCell<Value<'v>>,
-}
-
-impl Default for NativeFunctionAnnex<'_> {
-    fn default() -> Self {
-        Self {
-            bound: UnsafeCell::new(Value::NIL),
-        }
-    }
+    pub(crate) bound: ValueCell<'v>,
 }
 
 impl Annex for NativeFunctionAnnex<'_> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
-        unsafe { (&*self.bound.get()).accept(visit) }
+        self.bound.accept(visit)
     }
 
     fn clear(&self) {
-        unsafe { *self.bound.get() = Value::NIL }
+        unsafe { self.bound.slot() }.store(Value::NIL)
     }
 }
 
@@ -252,7 +245,9 @@ impl<'v> Protocol<'v> for NativeFunction<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         this.get()
-            .call_with_frame(unsafe { &*this.annex().bound.get() }, strand, args, out)
+            // Safety: `bound` is written only at construction and by `clear`, which
+            // runs only once the function is unreachable
+            .call_with_frame(unsafe { this.annex().bound.as_ref() }, strand, args, out)
             .await
     }
 }
