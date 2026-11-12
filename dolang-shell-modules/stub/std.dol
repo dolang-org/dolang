@@ -37,9 +37,12 @@ pub @let Entries[S @ {...}] = ...
 
 # The union of the values of the items of `S` that a key selects, which a read
 # at a key of type `K` may give. A positional item's key is its index, as in
-# `Keys`. `IndexItem[{a: Int, b: Str}, :a:]` is `Int`, and
+# `Keys`, and a negative index counts from the end: `IndexItem[{Int, Str}, -1]`
+# is `Str`, and `IndexItem[{Int, *Str}, -1]` is `(Int | Str)`, since the rest
+# may be empty. `IndexItem[{a: Int, b: Str}, :a:]` is `Int`, and
 # `IndexItem[{a: Int, b: Str}, (:a: | :b:)]` is `(Int | Str)`. A key `S` doesn't
-# admit is an error.
+# admit is an error, as is a schema whose keys may be indexes alongside its
+# positions.
 pub @let IndexItem[S @ {...}, K] = ...
 
 # The values that fit every item of `S` that a key selects, which a write at a
@@ -4023,7 +4026,8 @@ do
   pub def (unpack) self -> Pack[...Ts]
     ...
 
-  # Returns the value at a position or key.
+  # Returns the value at a position or key. Negative positions count from the
+  # end.
   pub def (index)[K] self key@K -> IndexItem[Ts, K]
     ...
 
@@ -5015,7 +5019,8 @@ do
   pub def (get)[K] self key@K -> IndexItem[Ts, K]
     ...
 
-  # Returns the value at a position or key.
+  # Returns the value at a position or key. Negative positions count from the
+  # end.
   #
   # ## Errors
   #
@@ -5079,6 +5084,7 @@ pub class Struct[...Ts @ {*Value, **Value}]: BaseStruct[...Ts] @Assign[Ts]
     ...
 
   # Replaces the item at a position or key. A new symbol key adds an item.
+  # Negative positions count from the end.
   #
   # ## Errors
   #

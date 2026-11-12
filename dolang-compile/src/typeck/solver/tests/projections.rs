@@ -171,6 +171,7 @@ fn a_key_selects_items_positions_by_their_indexes() {
     db.set_intrinsic(Intrinsic::Sym, sym);
     let (a, b, c) = (self::sym(db, "a"), self::sym(db, "b"), self::sym(db, "c"));
     let (zero, five) = (literal(db, 0), literal(db, 5));
+    let (minus_one, minus_two) = (literal(db, -1), literal(db, -2));
     // `{Str, a: Int, b: Str}`
     let fixed = items(
         db,
@@ -194,6 +195,14 @@ fn a_key_selects_items_positions_by_their_indexes() {
         vec![
             keyed(Multiplicity::Repeated, sym, int),
             keyed(Multiplicity::Repeated, db.top(), db.top()),
+        ],
+    );
+    // `{Str, *(Value): Int}`, where a key may be a position's index
+    let conflicting = items(
+        db,
+        vec![
+            positional(Multiplicity::Required, str),
+            keyed(Multiplicity::Repeated, db.top(), int),
         ],
     );
     let ab = union(db, &[a, b]);
@@ -222,6 +231,22 @@ fn a_key_selects_items_positions_by_their_indexes() {
         // The narrowest domain owns a key
         (false, open, c, Ok(int)),
         (false, open, zero, Ok(db.top())),
+        // A negative index counts from the end of the positions, and may be
+        // any fixed one as far back as it counts before varying ones
+        (false, fixed, minus_one, Ok(str)),
+        (
+            false,
+            fixed,
+            minus_two,
+            Err(Contradiction::Unadmitted(minus_two)),
+        ),
+        (false, varying, minus_one, Ok(int_str)),
+        (true, varying, minus_one, Ok(db.unknown())),
+        // Without positions, it's a key
+        (false, open, minus_one, Ok(db.top())),
+        // A domain alongside positions that may hold an index conflicts
+        (false, conflicting, zero, Err(Contradiction::Conflict)),
+        (true, conflicting, a, Err(Contradiction::Conflict)),
     ];
     for (meet, schema, key, expected) in cases {
         let projection = selecting(db, meet, schema, key);
