@@ -8,10 +8,13 @@
 //! lying inside it and to the domains that own it, as an actual keyed item goes
 //! to an expected schema's domains (see [`Solver::owning`]). An `Int` key
 //! selects every fixed position, as it selects every varying one: an index out
-//! of range is a runtime error, as an array's is. `IndexItem` joins the selected
-//! values, what a read may give, and `AssignItem` meets them, what a write must
-//! fit. A key member the schema doesn't admit whole is unadmitted, as a literal
-//! index past the fixed positions is.
+//! of range is a runtime error, as an array's is. A negative literal counts from
+//! the end of the positions, so before varying ones it may be any fixed one as
+//! far back as it counts. `IndexItem` joins the selected values, what a read may
+//! give, and `AssignItem` meets them, what a write must fit. A key member the
+//! schema doesn't admit whole is unadmitted, as a literal index past the fixed
+//! positions is. A keyed domain alongside positions that may hold an index
+//! conflicts with them.
 //!
 //! `InsertItem` meets the values as `AssignItem` does, where each item its key
 //! selects is keyed and repeated, as one more of it must be. `Deletable` is its
@@ -464,12 +467,56 @@ impl Solver<'_> {
             return Ok(None);
         }
         match self.db.promoted(schema) {
-            Promotion::Promoted(promoted) => Ok(Some(promoted)),
+            Promotion::Promoted(promoted) => {
+                self.check_index_domains(&promoted)?;
+                Ok(Some(promoted))
+            }
             Promotion::Pending => {
                 Err(Residual::Unsupported("a schema whose keyed view is pending").into())
             }
             Promotion::Conflict => Err(Issue::Contradiction(Contradiction::Conflict)),
         }
+    }
+
+    /// Check that no keyed domain alongside a keyed view's positions may hold
+    /// one of their indexes, an `Int`, as a domain like `Value` does. Literals
+    /// conflict in the view itself (see [`Database::promoted`]). The dynamic
+    /// type's values are unknown, so as a domain it doesn't conflict.
+    fn check_index_domains(&self, promoted: &Promoted) -> Result<(), Issue> {
+        if promoted.fixed.is_empty() && promoted.varying.is_empty() {
+            return Ok(());
+        }
+        let int = self
+            .db
+            .intrinsic(Intrinsic::Int)
+            .ok_or(Residual::MissingIntrinsic(Intrinsic::Int))?;
+        for &(_, key, _) in &promoted.keyed {
+            for member in self.union_members(key) {
+                let UnionMember::Type(member) = member else {
+                    return Err(Residual::Unsupported("a key with projections").into());
+                };
+                if self.db.literal(member).is_some()
+                    || matches!(self.db.ty(member), Type::Unknown(_))
+                {
+                    continue;
+                }
+                let holds = self.probe(int, member)?;
+                let inside = self.probe(member, int)?;
+                match (holds, inside) {
+                    (Status::Proven, _) | (_, Status::Proven) => {
+                        return Err(Issue::Contradiction(Contradiction::Conflict));
+                    }
+                    (Status::Contradicted, Status::Contradicted) => {}
+                    _ => {
+                        return Err(Residual::Unsupported(
+                            "a key domain that may or may not hold an index",
+                        )
+                        .into());
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// The items of a schema a key selects
@@ -563,6 +610,29 @@ impl Solver<'_> {
                     .db
                     .intrinsic(Intrinsic::Int)
                     .is_some_and(|int| int == member);
+            // A negative index counts from the end of the positions. Past fixed
+            // positions alone, it's one of them; before varying ones, which the
+            // `Int` domain holds, it may be any fixed one as far back as it
+            // counts, since the varying ones may be fewer.
+            if let Some(&Literal::Int(i)) = self.db.literal(member)
+                && i < 0
+                && !(promoted.fixed.is_empty() && promoted.varying.is_empty())
+            {
+                let fixed = promoted.fixed.len();
+                let back = usize::try_from(i.unsigned_abs()).unwrap_or(usize::MAX);
+                let counted = match promoted.varying.is_empty() {
+                    true => fixed.checked_sub(back).map_or(0..0, |at| at..at + 1),
+                    false => fixed.saturating_sub(back)..fixed,
+                };
+                for &value in &promoted.fixed[counted] {
+                    whole = true;
+                    selected.push(Selected::Item {
+                        value,
+                        occurrence: Occurrence::Position(Shift::FIXED),
+                        key: member,
+                    });
+                }
+            }
             for (d, admits) in self.owning(member, &keys)? {
                 whole |= admits;
                 let (_, value, occurrence) = domains[d];

@@ -141,7 +141,8 @@ See the [Dict API](std.Dict) for details.
 
 A `Pack` is an immutable sequence of positional items and symbol-keyed items,
 like a tuple with keys. It is the type of a `...` rest capture and of keyed
-tuple literals. Read an item by indexing with its symbol or position:
+tuple literals. Read an item by indexing with its symbol or position; negative
+positions count from the end:
 
 ```
 let r = (name: "Alice", age: 30)
@@ -270,7 +271,8 @@ echo $s.host # localhost
 
 Reading a name with no item raises [FieldError](std.FieldError). Assigning
 one replaces its item in place, or adds an item at the end. Calling a name
-calls its item. Indexing reads and writes items by symbol or position.
+calls its item. Indexing reads and writes items by symbol or position, and
+negative positions count from the end.
 
 The `struct` function builds a struct from its arguments, and `Struct` from one
 spreadable source, as `Pack` does:

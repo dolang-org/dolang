@@ -129,8 +129,10 @@ projection selects every position by an `Int`; `Entries` takes each
 `Tuple[key, value]`. An included schema not yet known stays a member beside what
 is known, unless positions, or keys that may be indexes, lie beside it: their
 indexes, or collisions, depend on it, so the whole projection waits. A key that
-may be a position's index conflicts with it: a non-negative `Int` literal a
-position may have, or a domain of `Int` alongside positions. A conflicting
+may be a position's index conflicts with it: an `Int` literal a position may
+have, counting a negative one from the end, or a domain of `Int` alongside
+positions. The solver also finds a conflict in any other domain alongside
+positions that may hold an `Int`, as `Value` does. A conflicting
 projection stays unevaluated, and a judgment exposing it is contradicted. The
 dynamic schema projects to `Unknown`. Without a designated `Tuple`, `Entries`
 stays whole, and without a designated `Int`, so does `Keys` of a schema with
@@ -251,7 +253,10 @@ of the schema's keyed view: each member of the key goes to the literal item it
 is, or else to the literal items inside it and the domains that own it, as an
 actual keyed item goes to an expected schema's domains. `Int` selects every
 fixed position too, since an index out of range is a runtime error, as an
-array's is; a literal index past them is unadmitted. `IndexItem` joins the
+array's is; a literal index past them is unadmitted. A negative literal counts
+from the end: past fixed positions alone it selects one of them, and before
+varying ones it also selects each fixed one as far back as it counts, since the
+varying ones may be fewer. `IndexItem` joins the
 selected values. `AssignItem` meets them: a value below a closed `AssignItem`
 that selects several values is related to each. Evaluated, as where it isn't the
 expected side, the meet needs no intersection types: the lower of two ordered

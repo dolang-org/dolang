@@ -103,24 +103,29 @@ pub(crate) fn pack_items<'v>(vm: &Vm<'v>, args: arg::Args<'v, '_>) -> Vec<ArgIte
 }
 
 /// The index in `items` for `key`: the positional item it numbers if it is an
-/// integer, or the latest instance of it if it is a symbol
+/// integer, counting from the end if it is negative, or the latest instance of
+/// it if it is a symbol
 pub(crate) fn find_index<'v>(
     strand: &mut Strand<'v, '_>,
     items: &[ArgItem<'v>],
     key: &Value<'v>,
 ) -> Option<usize> {
     if let Some(sym) = key.as_sym(strand) {
-        items
+        return items
             .iter()
-            .rposition(|(k, _)| k.as_ref().is_some_and(|k| k.tag == sym.tag()))
+            .rposition(|(k, _)| k.as_ref().is_some_and(|k| k.tag == sym.tag()));
+    }
+    let index = key.to_i64(strand).ok()?;
+    let mut positions = items
+        .iter()
+        .enumerate()
+        .filter(|(_, (k, _))| k.is_none())
+        .map(|(i, _)| i);
+    if index >= 0 {
+        positions.nth(usize::try_from(index).ok()?)
     } else {
-        let index = usize::try_from(key.to_i64(strand).ok()?).ok()?;
-        items
-            .iter()
-            .enumerate()
-            .filter(|(_, (k, _))| k.is_none())
-            .nth(index)
-            .map(|(i, _)| i)
+        let back = usize::try_from(index.unsigned_abs() - 1).ok()?;
+        positions.rev().nth(back)
     }
 }
 

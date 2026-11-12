@@ -1,0 +1,83 @@
+# A negative index counts from the end of a schema's positions. Before
+# varying positions, it may be any fixed one as far back as it counts. A
+# schema without positions takes it as a key, and a schema whose keys may be
+# indexes alongside its positions is a conflict.
+
+import std:
+  - @AssignItem
+  - @IndexItem
+
+pub @class Indexed[S @ {...}]
+  pub def (index)[K] self key@K -> IndexItem[S, K]
+  pub def (assign)[K] self key@K value@AssignItem[S, K]
+
+pub def fixed t @ Tuple[Int, Str] -> Tuple[Str, Int]
+  (t[-1], t[-2])
+
+pub def past t @ Tuple[Int, Str]
+  t[-3]
+# error: no overload of `(index)` accepts these arguments
+#   --> m.dol:LL:LL
+#    |
+# LL |   t[-3]
+#    |   ^^^^^
+#    |
+#    = note: `@[K] ((std.Int, std.Str), K) -> std.IndexItem[{std.Int, std.Str}, K]`: this call selects by `-3`, which isn't one of the schema's keys
+#    = note: `((std.Int, std.Str), std.Range[std.Int]) -> (*std.Int | std.Str)`: expected `std.Range[std.Int]`, found `-3`
+
+pub def varying t @ Tuple[Int, ...{*Str}] -> Str
+  t[-1]
+# error: `std.Int | std.Str` does not fit the declared result `std.Str`
+#   --> m.dol:LL:LL
+#    |
+# LL |   t[-1]
+#    |   ^^^^^
+
+pub def record r @ Record[Int, Str, a: Bool] -> Str
+  r[-1] = "x"
+  r[-1] = 1
+  # error: expected `std.Str`, found `1`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   r[-1] = 1
+  #    |           ^
+  r[-1]
+
+pub def pack p @ Pack[Int, Str, a: Bool] -> Str
+  p[-1]
+
+pub def pop_rest r @ Record[...{*Int}] -> Int
+  r.pop -1
+
+pub def pop_fixed r @ Record[Str, ...{*Int}]
+  r.pop -1
+  # error: this call removes the required item at `-1`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   r.pop -1
+  #    |   ^^^^^^^^
+  nil
+
+pub def dict d @ Dict[{0: Int, 1: Str}]
+  d[-1]
+# error: expected `0 | 1`, found `-1`
+#   --> m.dol:LL:LL
+#    |
+# LL |   d[-1]
+#    |     ^^
+#    |
+#    = note: `-1` does not fit `0 | 1`
+
+pub def open x @ Indexed[{Int, *(Value): Str}]
+  let _ = x[:a:]
+  # error: this call indexes a schema with a key that may be one of its positions' indexes
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = x[:a:]
+  #    |           ^^^^^^
+  x[0] = 1
+# error: this call indexes a schema with a key that may be one of its positions' indexes
+#   --> m.dol:LL:LL
+#    |
+# LL |   x[0] = 1
+#    |   ^^^^^^^^

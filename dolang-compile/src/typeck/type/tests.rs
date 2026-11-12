@@ -743,7 +743,8 @@ fn keys_that_may_be_indexes_conflict_with_positions() {
         element,
     };
     let items = |db: &mut Database, items: Vec<SchemaItem>| intern(db, Type::Schema(items.into()));
-    let [minus, zero, three] = [-1, 0, 3].map(|i| intern(&mut db, Type::Literal(Literal::Int(i))));
+    let [minus_two, minus, zero, three] =
+        [-2, -1, 0, 3].map(|i| intern(&mut db, Type::Literal(Literal::Int(i))));
     let top = db.top();
     let keyed = |key, value| Element::Keyed { key, value };
     let positional = |ty| item(Multiplicity::Required, Element::Positional(ty));
@@ -765,6 +766,16 @@ fn keys_that_may_be_indexes_conflict_with_positions() {
         ],
         // `{*Int, *(Int): Str}`
         vec![repeated(int), item(Multiplicity::Repeated, keyed(int, str))],
+        // `{Int, -1: Str}`: a negative index counts from the end
+        vec![
+            positional(int),
+            item(Multiplicity::Required, keyed(minus, str)),
+        ],
+        // `{*Int, -1: Str}`, where position -1 may exist
+        vec![
+            repeated(int),
+            item(Multiplicity::Required, keyed(minus, str)),
+        ],
     ];
     for list in conflicts {
         assert_eq!(promotion(&mut db, list), Promotion::Conflict);
@@ -775,10 +786,10 @@ fn keys_that_may_be_indexes_conflict_with_positions() {
             positional(int),
             item(Multiplicity::Required, keyed(three, str)),
         ],
-        // `{*Int, -1: Str}`: negative keys are never indexes
+        // `{Int, -2: Str}`, where position -2 can't exist
         vec![
-            repeated(int),
-            item(Multiplicity::Required, keyed(minus, str)),
+            positional(int),
+            item(Multiplicity::Required, keyed(minus_two, str)),
         ],
         // `{...}`
         vec![repeated(top), item(Multiplicity::Repeated, keyed(top, top))],

@@ -2236,10 +2236,11 @@ impl Database {
     /// it's alongside positions or a key that may be an index, since the view
     /// depends on its positions: then the view is pending.
     ///
-    /// A key that may be the index of a position conflicts with it: a
-    /// non-negative `Int` literal that a position may have, or a domain of `Int`
-    /// alongside positions. So does a union with such a member. Whether any
-    /// other domain holds an index isn't decided here, so it doesn't conflict.
+    /// A key that may be the index of a position conflicts with it: an `Int`
+    /// literal that a position may have, counting a negative one from the end,
+    /// or a domain of `Int` alongside positions. So does a union with such a
+    /// member. Whether any other domain holds an index takes subtyping, which
+    /// the solver decides when it selects items.
     pub(crate) fn promoted(&self, schema: TypeId) -> Promotion {
         let mut promoted = Promoted::default();
         let mut varies = false;
@@ -2313,8 +2314,10 @@ impl Database {
     /// have fixed indexes and whether more follow
     fn collides(&self, key: TypeId, fixed: usize, varying: bool) -> bool {
         match self.ty(key) {
+            // A negative index counts from the end
             Type::Literal(Literal::Int(i)) | Type::Fresh(Literal::Int(i)) => {
-                *i >= 0 && (varying || usize::try_from(*i).is_ok_and(|i| i < fixed))
+                let fixed = i128::try_from(fixed).unwrap_or(i128::MAX);
+                varying || (0..fixed).contains(i) || (-fixed..0).contains(i)
             }
             Type::Union(members) => members.iter().any(|member| match *member {
                 UnionMember::Type(ty) => self.collides(ty, fixed, varying),
