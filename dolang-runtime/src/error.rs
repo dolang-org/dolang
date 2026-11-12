@@ -655,11 +655,10 @@ impl<'v, 's> Error<'v, 's> {
 
     /// Create error: a named keyword parameter was supplied more than once.
     pub fn duplicate_key(strand: &mut Strand<'v, 's>, key: Sym<'v, '_>) -> Self {
-        Self::duplicate_key_raw(strand.inner, key)
-    }
-
-    pub(crate) fn duplicate_key_raw(strand: &'s StrandInner<'v>, key: Sym<'v, '_>) -> Self {
-        Self::new_info(strand, Boxed::DuplicateKey(key.as_str(strand.vm()).into()))
+        Self::new_info(
+            strand.inner,
+            Boxed::DuplicateKey(key.as_str(strand.vm()).into()),
+        )
     }
 
     /// Create error: missing positional item.
@@ -682,22 +681,6 @@ impl<'v, 's> Error<'v, 's> {
             }
         };
         Self::new_info(strand.inner, Boxed::MissingKey(str.into()))
-    }
-
-    pub(crate) fn unexpected_positional_raw(strand: &'s StrandInner<'v>, index: usize) -> Self {
-        Self::new_info(strand, Boxed::UnexpectedPos(index))
-    }
-
-    pub(crate) fn unexpected_key_raw(strand: &'s StrandInner<'v>, key: Sym<'v, '_>) -> Self {
-        Self::new_info(strand, Boxed::UnexpectedKey(key.as_str(strand.vm()).into()))
-    }
-
-    pub(crate) fn missing_positional_raw(strand: &'s StrandInner<'v>, index: usize) -> Self {
-        Self::new_info(strand, Boxed::MissingPos(index))
-    }
-
-    pub(crate) fn missing_key_raw(strand: &'s StrandInner<'v>, key: Sym<'v, '_>) -> Self {
-        Self::new_info(strand, Boxed::MissingKey(key.as_str(strand.vm()).into()))
     }
 
     /// Create error: numeric overflow

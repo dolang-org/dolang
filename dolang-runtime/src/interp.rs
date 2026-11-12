@@ -5,8 +5,7 @@ use crate::{
     bytecode::UnsafeInstDecoder,
     call,
     error::{Error, ErrorKind, Result},
-    frame::{CallFrame, Upvars},
-    gc::Gc,
+    frame::CallFrame,
     object::{
         arg::ArgAcc,
         array::Array,
@@ -15,13 +14,13 @@ use crate::{
         function::Function,
         module::{Module, Namespace},
         pack,
-        protocol::{GcObj, Spread, SpreadContext},
+        protocol::{Spread, SpreadContext},
         range,
         record::Record,
         tuple,
     },
     sig::{self, Pack},
-    strand::{InterruptMask, Redirect, Strand, StrandInner},
+    strand::{InterruptMask, Redirect, Strand},
     sym::{self, Sym},
     unpack,
     value::{Output, Singleton, Slot, Slots, StrEmbryo, Value, ValueCell},
@@ -43,6 +42,18 @@ impl<'v> CallFrame<'v> {
     unsafe fn pop(&self) -> Value<'v> {
         self.sp.update(|s| s - 1);
         unsafe { self.slots.get_unchecked(self.sp.get()).slot().take() }
+    }
+
+    /// Push a nil slot and return it, for an operation to write its result into.
+    unsafe fn push_slot(&self) -> Slot<'v, '_> {
+        let slot = unsafe { self.slots.get_unchecked(self.sp.get()).slot() };
+        self.sp.update(|s| s + 1);
+        slot
+    }
+
+    /// The top stack slot.
+    unsafe fn top_slot(&self) -> Slot<'v, '_> {
+        unsafe { self.slots.get_unchecked(self.sp.get() - 1).slot() }
     }
 
     unsafe fn discard(&self, count: usize) {
@@ -194,7 +205,7 @@ impl<'v> Vm<'v> {
         &self,
         strand: &'a mut Strand<'v, 's>,
         mut args: Args<'v, 'a>,
-        importer: Option<&Value<'v>>,
+        importer: &Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         Redirect::new(strand)
@@ -220,14 +231,11 @@ impl<'v> Vm<'v> {
                 let components: Vec<_> = name.split('.').collect();
                 strand
                     .with_slots(async move |strand, [mut raw]| {
-                        match importer {
-                            Some(importer) => {
-                                call!(strand, importer, Slot::reborrow(&mut raw), name).await?
-                            }
-                            None => {
-                                self.import_raw(strand, name, Slot::reborrow(&mut raw))
-                                    .await?
-                            }
+                        if importer.is_nil() {
+                            self.import_raw(strand, name, Slot::reborrow(&mut raw))
+                                .await?
+                        } else {
+                            call!(strand, importer, Slot::reborrow(&mut raw), name).await?
                         }
                         match mode {
                             Mode::Get => Slot::set(strand, out, raw),
@@ -574,12 +582,12 @@ impl<'v> Vm<'v> {
     }
 
     async unsafe fn expand_args<'s>(
-        inner: &'s StrandInner<'v>,
+        strand: &mut Strand<'v, 's>,
         frame: &CallFrame<'v>,
         slot: &Value<'v>,
     ) -> Result<'v, 's, ()> {
         unsafe {
-            Strand::async_for_frame(inner, frame, async |strand| {
+            {
                 struct ArgSpread<'b, 'v> {
                     items: &'b mut Vec<OwnedItem<'v>>,
                 }
@@ -625,10 +633,8 @@ impl<'v> Vm<'v> {
                     items: frame.items(),
                 };
                 slot.op_spread(strand, SpreadContext::Args, &mut sink).await
-            })
-            .await?;
+            }
         }
-        Ok(())
     }
 
     fn throw<'a, 's>(
@@ -651,7 +657,7 @@ impl<'v> Vm<'v> {
 
     #[inline(never)]
     async unsafe fn marshal_var_args<'a, 's>(
-        inner: &'s StrandInner<'v>,
+        strand: &mut Strand<'v, 's>,
         frame: &'a CallFrame<'v>,
         slice: &[ValueCell<'v>],
         args: &Vec<sig::Arg<'v, '_>>,
@@ -663,15 +669,15 @@ impl<'v> Vm<'v> {
             }
             for (slot, arg) in slice[headroom..].iter().zip(args.iter()) {
                 match arg {
-                    sig::Arg::Pos => frame.items().push((
-                        None,
-                        ValueCell::from(mem::replace(slot.slot().into_inner(), Value::NIL)),
-                    )),
-                    sig::Arg::Key(sym) => frame.items().push((
-                        Some(inner.vm().sym_obj(*sym)),
-                        ValueCell::from(mem::replace(slot.slot().into_inner(), Value::NIL)),
-                    )),
-                    sig::Arg::Expand => Self::expand_args(inner, frame, slot.as_ref()).await?,
+                    sig::Arg::Pos => {
+                        let value = ValueCell::new(strand, slot.slot());
+                        frame.items().push((None, value))
+                    }
+                    sig::Arg::Key(sym) => {
+                        let value = ValueCell::new(strand, slot.slot());
+                        frame.items().push((Some(strand.sym_obj(*sym)), value))
+                    }
+                    sig::Arg::Expand => Self::expand_args(strand, frame, slot.as_ref()).await?,
                 }
             }
             Ok(Args::new_owned(frame.items(), headroom))
@@ -680,7 +686,7 @@ impl<'v> Vm<'v> {
 
     #[inline]
     async unsafe fn marshal_args<'a, 's>(
-        inner: &'s StrandInner<'v>,
+        strand: &mut Strand<'v, 's>,
         frame: &'a CallFrame<'v>,
         sig: &'a Pack<'v, 'a>,
         headroom: usize,
@@ -693,7 +699,7 @@ impl<'v> Vm<'v> {
             match sig {
                 Pack::Fixed(syms) => Ok(Args::new(slice, syms, headroom)),
                 Pack::Var(args) => {
-                    Self::marshal_var_args(inner, frame, slice, args, headroom).await
+                    Self::marshal_var_args(strand, frame, slice, args, headroom).await
                 }
             }
         }
@@ -725,8 +731,8 @@ impl<'v> Vm<'v> {
     /// This ensures values are scannable by the cycle collector during suspension.
     async unsafe fn step<'s>(
         &self,
-        inner: &'s StrandInner<'v>,
-        frame: &mut CallFrame<'v>,
+        strand: &mut Strand<'v, 's>,
+        frame: &CallFrame<'v>,
         reader: &mut UnsafeInstDecoder<'_>,
     ) -> Result<'v, 's, Status<'v>> {
         use Opcode::*;
@@ -767,8 +773,7 @@ impl<'v> Vm<'v> {
                 LoadUpvar => {
                     let index = reader.usize();
                     let depth = reader.usize();
-                    let value = Upvars::get_unchecked(&frame.upvars, index, depth);
-                    frame.push(value)
+                    frame.get_upvar(index, depth, frame.push_slot())
                 }
                 StoreLocal => {
                     let index = reader.usize();
@@ -778,93 +783,69 @@ impl<'v> Vm<'v> {
                 StoreUpvar => {
                     let index = reader.usize();
                     let depth = reader.usize();
-                    let value = frame.pop();
-                    Upvars::set_unchecked(&frame.upvars, index, depth, value);
+                    frame.set_upvar(index, depth, frame.top_slot());
+                    frame.sp.update(|s| s - 1);
                 }
                 Get => {
-                    frame.pc = reader.offset();
+                    frame.pc.set(reader.offset());
                     let index = reader.usize();
                     let sym = *symtab.get_unchecked(index);
                     let mut obj = frame.scratch1();
                     let mut res = frame.scratch2();
                     obj.store(frame.pop());
-                    Strand::for_frame(inner, frame, |strand| {
-                        obj.op_get(strand, sym, Slot::reborrow(&mut res))
-                    })?;
+                    obj.op_get(strand, sym, Slot::reborrow(&mut res))?;
                     frame.push(res.take());
                     obj.store(Value::NIL);
                 }
                 Set => {
-                    frame.pc = reader.offset();
+                    frame.pc.set(reader.offset());
                     let index = reader.usize();
                     let sym = *symtab.get_unchecked(index);
                     let mut value = frame.scratch1();
                     let mut obj = frame.scratch2();
                     value.store(frame.pop());
                     obj.store(frame.pop());
-                    Strand::for_frame(inner, frame, |strand| {
-                        obj.op_set(strand, sym, Slot::reborrow(&mut value))
-                    })?;
+                    obj.op_set(strand, sym, Slot::reborrow(&mut value))?;
                     value.store(Value::NIL);
                     obj.store(Value::NIL);
                 }
                 Index => {
-                    frame.pc = reader.offset();
+                    frame.pc.set(reader.offset());
                     let mut index = frame.scratch1();
                     index.store(frame.pop());
                     let mut obj = frame.scratch2();
                     obj.store(frame.pop());
                     let mut res = frame.scratch3();
-                    Strand::for_frame(inner, frame, |strand| {
-                        obj.op_index(strand, &index, Slot::reborrow(&mut res))
-                    })?;
+                    obj.op_index(strand, &index, Slot::reborrow(&mut res))?;
                     frame.push(res.take());
                     index.store(Value::NIL);
                     obj.store(Value::NIL);
                 }
                 Assign => {
-                    frame.pc = reader.offset();
+                    frame.pc.set(reader.offset());
                     let mut value = frame.scratch1();
                     let mut index = frame.scratch2();
                     let mut obj = frame.scratch3();
                     value.store(frame.pop());
                     index.store(frame.pop());
                     obj.store(frame.pop());
-                    Strand::for_frame(inner, frame, |strand| {
-                        obj.op_assign(
-                            strand,
-                            Slot::reborrow(&mut index),
-                            Slot::reborrow(&mut value),
-                        )
-                    })?;
+                    obj.op_assign(
+                        strand,
+                        Slot::reborrow(&mut index),
+                        Slot::reborrow(&mut value),
+                    )?;
                     value.store(Value::NIL);
                     index.store(Value::NIL);
                     obj.store(Value::NIL);
                 }
                 PushUpvars => {
                     let count = reader.usize();
-                    frame.upvars = Some(Gc::new(
-                        self.arena(),
-                        Upvars {
-                            parent: frame.upvars.clone(),
-                            vars: (0..count).map(|_| Value::NIL).collect(),
-                            stale: false,
-                        },
-                    ))
+                    frame.push_upvars(self.arena(), count)
                 }
-                PopUpvars => {
-                    frame.upvars = frame
-                        .upvars
-                        .take()
-                        .unwrap()
-                        .borrow()
-                        .unwrap()
-                        .parent
-                        .clone()
-                }
+                PopUpvars => drop(frame.pop_upvars()),
                 Call => {
                     // Set current PC in frame header in case a backtrace is needed
-                    frame.pc = reader.offset();
+                    frame.pc.set(reader.offset());
                     let index = reader.usize();
                     let sig = program.packtab.get_unchecked(index);
                     let count = sig.len() + 1;
@@ -872,19 +853,16 @@ impl<'v> Vm<'v> {
                     let mut func = frame.scratch1();
                     let mut res = frame.scratch2();
                     func.store(frame.take(depth - count));
-                    let args = Self::marshal_args(inner, frame, sig, 1).await?;
-                    Strand::async_for_frame(inner, frame, async |strand| {
-                        self.check_trap_gc(strand)?;
-                        func.op_call(strand, args, Slot::reborrow(&mut res)).await
-                    })
-                    .await?;
+                    let args = Self::marshal_args(strand, frame, sig, 1).await?;
+                    self.check_trap_gc(strand)?;
+                    func.op_call(strand, args, Slot::reborrow(&mut res)).await?;
                     func.store(Value::NIL);
                     frame.items().clear();
                     frame.discard(count);
                     frame.push(res.take());
                 }
                 MethodCall => {
-                    frame.pc = reader.offset();
+                    frame.pc.set(reader.offset());
                     let sym = reader.usize();
                     let index = reader.usize();
                     let method = *symtab.get_unchecked(sym);
@@ -894,36 +872,33 @@ impl<'v> Vm<'v> {
                     let mut obj = frame.scratch1();
                     let mut res = frame.scratch2();
                     obj.store(frame.take(depth - count));
-                    let args = Self::marshal_args(inner, frame, sig, 1).await?;
-                    Strand::async_for_frame(inner, frame, async |strand| {
-                        self.check_trap_gc(strand)?;
-                        obj.op_mcall(strand, method, args, Slot::reborrow(&mut res))
-                            .await
-                    })
-                    .await?;
+                    let args = Self::marshal_args(strand, frame, sig, 1).await?;
+                    self.check_trap_gc(strand)?;
+                    obj.op_mcall(strand, method, args, Slot::reborrow(&mut res))
+                        .await?;
                     frame.discard(count);
                     frame.push(res.take());
                     frame.items().clear();
                     obj.store(Value::NIL);
                 }
                 Builtin => {
-                    frame.pc = reader.offset();
+                    frame.pc.set(reader.offset());
                     let index = reader.usize();
                     let sig = reader.usize();
                     let sig = program.packtab.get_unchecked(sig);
                     let count = sig.len();
-                    let args = Self::marshal_args(inner, frame, sig, 0).await?;
+                    let args = Self::marshal_args(strand, frame, sig, 0).await?;
                     let mut res = frame.scratch1();
-                    let mut importer = frame.scratch2();
-                    if index == builtin::IMPORT {
-                        let program = frame.program.borrow().unwrap();
-                        importer.store(program.importer.dup());
-                    }
-                    Strand::async_for_frame(inner, frame, async |strand| match index {
+                    match index {
                         builtin::IMPORT => {
-                            let custom = (!importer.is_nil()).then_some(&*importer);
-                            self.import(strand, args, custom, Slot::reborrow(&mut res))
-                                .await
+                            // Root the program's importer across the import
+                            let mut importer = frame.scratch2();
+                            importer.store(frame.program.borrow().unwrap().importer.dup());
+                            let result = self
+                                .import(strand, args, &importer, Slot::reborrow(&mut res))
+                                .await;
+                            importer.store(Value::NIL);
+                            result
                         }
                         builtin::ARRAY => self.array(strand, args, Slot::reborrow(&mut res)).await,
                         builtin::DICT => self.dict(strand, args, Slot::reborrow(&mut res)).await,
@@ -1000,40 +975,40 @@ impl<'v> Vm<'v> {
                         }
                         builtin::STUB => self.stub(strand, args),
                         _ => unreachable_unchecked(),
-                    })
-                    .await?;
+                    }?;
                     frame.discard(count);
                     frame.push(res.take());
-                    importer.store(Value::NIL);
                     frame.items().clear();
                 }
                 inst @ (Neg | Not | BitNot) => {
-                    frame.pc = reader.offset();
-                    let slot = frame.pop();
-                    frame.pc = reader.offset();
-                    let res = Strand::for_frame(inner, frame, |strand| match inst {
+                    frame.pc.set(reader.offset());
+                    let mut slot = frame.scratch1();
+                    slot.store(frame.pop());
+                    let res = match inst {
                         Neg => slot.op_neg(strand),
                         Not => slot.op_not(strand),
                         BitNot => slot.op_bnot(strand),
                         _ => unreachable_unchecked(),
-                    })?;
+                    }?;
+                    slot.store(Value::NIL);
                     frame.push(res);
                 }
                 Close => {
                     let index = reader.usize();
-                    let value = Strand::for_frame_infallible(inner, frame, |strand| {
-                        Value::function(strand, frame.program.clone(), frame.upvars.clone(), index)
-                    });
-                    frame.push(value);
+                    strand.builtin_types().function.create(
+                        strand,
+                        Function::new(frame.program.clone(), frame.upvars(), index),
+                        &mut frame.push_slot(),
+                    );
                 }
                 inst @ (BitAnd | BitOr | BitXor | Shl | Shr | Add | Sub | Mul | Div | Ediv
                 | Mod | Eq | Ne | Lt | Gt | Lte | Gte) => {
-                    frame.pc = reader.offset();
+                    frame.pc.set(reader.offset());
                     let mut left = frame.scratch1();
                     let mut right = frame.scratch2();
                     right.store(frame.pop());
                     left.store(frame.pop());
-                    let res = Strand::for_frame(inner, frame, |strand| match inst {
+                    let res = match inst {
                         BitAnd => left.op_band(strand, &right),
                         BitOr => left.op_bor(strand, &right),
                         BitXor => left.op_bxor(strand, &right),
@@ -1052,7 +1027,7 @@ impl<'v> Vm<'v> {
                         Lte => left.op_lte(strand, &right),
                         Gte => left.op_gte(strand, &right),
                         _ => unreachable_unchecked(),
-                    })?;
+                    }?;
                     right.store(Value::NIL);
                     left.store(Value::NIL);
                     frame.push(res)
@@ -1061,20 +1036,20 @@ impl<'v> Vm<'v> {
                 Branch => {
                     let offset = reader.isize();
                     if offset < 0 {
-                        frame.pc = reader.offset();
-                        Strand::for_frame(inner, frame, |strand| self.check_trap_gc(strand))?
+                        frame.pc.set(reader.offset());
+                        self.check_trap_gc(strand)?
                     }
                     reader.seek(offset)
                 }
                 op @ (BranchTrue | BranchFalse) => {
-                    frame.pc = reader.offset();
+                    frame.pc.set(reader.offset());
                     let offset = reader.isize();
                     let mut slot = frame.scratch1();
                     slot.store(frame.pop());
                     if offset < 0 {
-                        Strand::for_frame(inner, frame, |strand| self.check_trap_gc(strand))?
+                        self.check_trap_gc(strand)?
                     }
-                    let value = Strand::for_frame(inner, frame, |strand| slot.op_bool(strand))?;
+                    let value = slot.op_bool(strand)?;
                     slot.store(Value::NIL);
                     if (op == BranchTrue) == value {
                         reader.seek(offset)
@@ -1083,8 +1058,7 @@ impl<'v> Vm<'v> {
                 Reify => {
                     let index = reader.usize();
                     let sig = program.packtab.get_unchecked(index);
-                    let upvars = frame.upvars.take().unwrap();
-                    frame.upvars = upvars.borrow().unwrap().parent.clone();
+                    let upvars = frame.pop_upvars();
                     let value = Module::from_upvars_syms(
                         frame.program.clone(),
                         upvars,
@@ -1093,38 +1067,30 @@ impl<'v> Vm<'v> {
                             Pack::Var(_) => unreachable!(),
                         },
                     );
-                    frame.push(Value::from_object(GcObj::new(
-                        inner.vm().arena(),
-                        self.builtin_types().module,
-                        value,
-                    )));
+                    self.builtin_types()
+                        .module
+                        .create(strand, value, &mut frame.push_slot());
                 }
                 Next => {
-                    frame.pc = reader.offset();
+                    frame.pc.set(reader.offset());
                     let mut value = frame.scratch1();
                     let mut out = frame.scratch2();
                     value.store(frame.pop());
-                    let flag = Strand::async_for_frame(inner, frame, async |strand| {
-                        value.op_next(strand, Slot::reborrow(&mut out)).await
-                    })
-                    .await?;
+                    let flag = value.op_next(strand, Slot::reborrow(&mut out)).await?;
                     frame.push(out.take());
                     frame.push(Value::from_bool(flag));
                     value.store(Value::NIL);
                 }
                 Unpack => {
                     // Set current PC in frame header in case a backtrace is needed
-                    frame.pc = reader.offset();
+                    frame.pc.set(reader.offset());
                     let index = reader.usize();
                     let value = frame.pop();
                     let sig = program.unpacktab.get_unchecked(index);
                     let depth = frame.sp.get();
                     let slice = frame.slots.get_unchecked(depth..depth + sig.len());
                     frame.sp.update(|s| s + sig.len());
-                    Strand::async_for_frame(inner, frame, async |strand| {
-                        value.op_unpack(strand, sig, Slots::new(slice)).await
-                    })
-                    .await?;
+                    value.op_unpack(strand, sig, Slots::new(slice)).await?;
                 }
                 // Conditional unpack: on success the unpacked values are left on the
                 // operand stack exactly as `Unpack` leaves them; on a shape mismatch
@@ -1133,7 +1099,7 @@ impl<'v> Vm<'v> {
                 // `(unpack)` method is never mistaken for a failed match.
                 UnpackBranch => {
                     // Set current PC in frame header in case a backtrace is needed
-                    frame.pc = reader.offset();
+                    frame.pc.set(reader.offset());
                     let index = reader.usize();
                     let offset = reader.isize();
                     // Hold the scrutinee in a scratch slot rather than a bare local so
@@ -1146,13 +1112,9 @@ impl<'v> Vm<'v> {
                     let slice = frame.slots.get_unchecked(depth..depth + sig.len());
                     frame.sp.update(|s| s + sig.len());
                     if offset < 0 {
-                        Strand::for_frame(inner, frame, |strand| self.check_trap_gc(strand))?
+                        self.check_trap_gc(strand)?
                     }
-                    let matched = match Strand::async_for_frame(inner, frame, async |strand| {
-                        value.op_unpack(strand, sig, Slots::new(slice)).await
-                    })
-                    .await
-                    {
+                    let matched = match value.op_unpack(strand, sig, Slots::new(slice)).await {
                         Ok(()) => true,
                         Err(e) if e.is_unpack_mismatch() => false,
                         Err(e) => return Err(e),
@@ -1166,12 +1128,12 @@ impl<'v> Vm<'v> {
                     }
                 }
                 ElseFallthrough => {
-                    frame.pc = reader.offset();
+                    frame.pc.set(reader.offset());
                     let message = match reader.usize() {
                         0 => "`let` else block did not diverge",
                         _ => "`bind` else block did not diverge",
                     };
-                    return Err(Error::runtime_raw(inner, message));
+                    return Err(Error::runtime(strand, message));
                 }
                 // Non-local branch: jump to a target frame outside the current call stack.
                 // Used to implement break/continue/return across closure boundaries.
@@ -1181,14 +1143,12 @@ impl<'v> Vm<'v> {
                 // - 1: continue
                 // - 2: return
                 NlBranch => {
-                    frame.pc = reader.offset();
+                    frame.pc.set(reader.offset());
                     let depth = reader.usize();
                     let indicator = reader.usize() as u8;
-                    let target = Upvars::at_depth(&frame.upvars, depth);
-                    if target.borrow().unwrap_unchecked().stale {
-                        return Err(Error::runtime_raw(inner, "stale non-local branch"));
-                    }
-                    let weak = Gc::downgrade(&target);
+                    let Some(weak) = frame.nl_target(depth) else {
+                        return Err(Error::runtime(strand, "stale non-local branch"));
+                    };
                     return Err(Error::non_local_jump(indicator, weak));
                 }
                 // Non-local guard: creates a closure to mark an NlBranch boundary and
@@ -1198,34 +1158,26 @@ impl<'v> Vm<'v> {
                 // - If the guarded function returns normally: pushes result, NIL indicator
                 // - If an NlBranch is caught: pushes NIL result, indicator value
                 NlGuard => {
-                    frame.pc = reader.offset();
+                    frame.pc.set(reader.offset());
                     // Push marker upvar frame used as NlBranch target
-                    frame.upvars = Some(Gc::new(
-                        self.arena(),
-                        Upvars {
-                            parent: frame.upvars.clone(),
-                            vars: Default::default(),
-                            stale: false,
-                        },
-                    ));
+                    frame.push_upvars(self.arena(), 0);
                     let index = reader.usize();
                     let mut func = frame.scratch1();
                     let mut res = frame.scratch2();
                     // Create and call the closure that will execute the guarded code
-                    let call_result = Strand::async_for_frame(inner, frame, async |strand| {
-                        strand.builtin_types().function.create(
-                            strand,
-                            Function::new(frame.program.clone(), frame.upvars.clone(), index),
-                            &mut func,
-                        );
-                        func.op_call(strand, Args::new(&[], &[], 0), Slot::reborrow(&mut res))
-                            .await
-                    })
-                    .await;
+                    strand.builtin_types().function.create(
+                        strand,
+                        Function::new(frame.program.clone(), frame.upvars(), index),
+                        &mut func,
+                    );
+                    let call_result = func
+                        .op_call(strand, Args::new(&[], &[], 0), Slot::reborrow(&mut res))
+                        .await;
                     func.store(Value::NIL);
-                    let upvars = frame.upvars.as_ref().unwrap_unchecked();
-                    // Mark this guard as stale so future jumps to it fail
-                    upvars.borrow_mut().unwrap_unchecked().stale = true;
+                    // Pop the guard's upvar frame and mark it stale so future jumps to
+                    // it fail
+                    let guard = frame.pop_upvars();
+                    guard.borrow_mut().unwrap_unchecked().stale = true;
                     // Check if this was a normal return or a caught NlBranch
                     let res = match call_result {
                         Ok(()) => {
@@ -1236,25 +1188,16 @@ impl<'v> Vm<'v> {
                         Err(err) => {
                             res.store(Value::NIL);
                             if let Some((indicator, weak)) = err.as_nl_branch()
-                                && weak.ptr_eq_strong(upvars)
+                                && weak.ptr_eq_strong(&guard)
                             {
                                 frame.push(Value::NIL);
-                                frame.push(Value::from_int(inner.vm(), indicator as i128));
+                                frame.push(Value::from_int(strand.vm(), indicator as i128));
                                 Ok(())
                             } else {
                                 Err(err)
                             }
                         }
                     };
-                    // Pop the guard's upvar frame
-                    frame.upvars = frame
-                        .upvars
-                        .take()
-                        .unwrap()
-                        .borrow()
-                        .unwrap()
-                        .parent
-                        .clone();
                     res?
                 }
             }
@@ -1265,23 +1208,28 @@ impl<'v> Vm<'v> {
 
     pub(crate) async fn run<'s>(
         &self,
-        inner: &'s StrandInner<'v>,
-        frame: &mut CallFrame<'v>,
+        strand: &mut Strand<'v, 's>,
+        frame: &CallFrame<'v>,
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let _depth_guard = inner.push_call_depth()?;
         let loaded = frame.program.clone();
         let program = loaded.annex();
         let mut reader =
             UnsafeInstDecoder::new(&program.bytecode[program.funcs[frame.func].0.bytecode.clone()]);
-        loop {
-            match unsafe { self.step(inner, frame, &mut reader) }.await? {
-                Status::Ret(value) => {
-                    out.store(value);
-                    break Ok(());
+        // SAFETY: `frame` is a live Do frame whose parent is `strand`'s frame
+        unsafe {
+            Strand::async_for_frame(strand, frame, async |strand| {
+                loop {
+                    match self.step(strand, frame, &mut reader).await? {
+                        Status::Ret(value) => {
+                            out.store(value);
+                            break Ok(());
+                        }
+                        Status::Running => (),
+                    }
                 }
-                Status::Running => (),
-            }
+            })
+            .await
         }
     }
 }

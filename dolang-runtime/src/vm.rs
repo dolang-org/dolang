@@ -1507,9 +1507,10 @@ impl Bytecode {
         mut out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
         let loaded = strand.load_bytecode(self, importer);
-        let mut frame = unsafe { CallFrame::new(loaded, 0, None, Some(strand.fp)) };
+        let frame = unsafe { CallFrame::new(loaded, 0, None, Some(strand.fp)) };
         strand
-            .run(strand.inner, &mut frame, Slot::from_output(&mut out))
+            .vm()
+            .run(strand, &frame, Slot::from_output(&mut out))
             .await
     }
 }

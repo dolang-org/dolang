@@ -292,14 +292,14 @@ impl<'v> Function<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         unsafe {
-            let mut frame = CallFrame::new(
+            let frame = CallFrame::new(
                 self.module.clone(),
                 self.id,
                 self.upvars.clone(),
                 Some(strand.fp),
             );
             frame.unpack_unchecked(strand, args)?;
-            strand.run(strand.inner, &mut frame, out).await
+            strand.vm().run(strand, &frame, out).await
         }
     }
 }

@@ -85,6 +85,22 @@ let catch_receivers = receivers $catch_bt
 assert_eq $catch_receivers[0] "boom_inner"
 assert_eq $catch_receivers[1] "boom_outer"
 
+# Errors raised by the interpreter itself include the raising frame.
+def fallthrough_inner()
+  let _x _y = 42
+  else nil
+
+def fallthrough_outer()
+  return fallthrough_inner()
+
+let fallthrough_bt = try
+  fallthrough_outer()
+catch std.RuntimeError: _
+  strand.error_backtrace()
+let fallthrough_receivers = receivers $fallthrough_bt
+assert_eq $fallthrough_receivers[0] "fallthrough_inner"
+assert_eq $fallthrough_receivers[1] "fallthrough_outer"
+
 # Do-level error_backtrace snapshots extend the handled trace with the live handler stack.
 let catch_snapshot_receivers = receivers $(catch_snapshot())
 assert_eq $catch_snapshot_receivers[0] "boom_inner"
