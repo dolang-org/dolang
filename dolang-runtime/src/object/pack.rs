@@ -236,16 +236,18 @@ pub(crate) fn spread_items<'v, 's>(
     items: &[ArgItem<'v>],
     sink: &mut dyn Spread<'v, 's>,
 ) -> Result<'v, 's, ()> {
-    for (key, value) in items {
-        let mut value = value.dup();
-        if let Some(key) = key {
-            let key = unsafe { Sym::from_obj(key) };
-            sink.symbol(strand, key, Slot::new(&mut value))?;
-        } else {
-            sink.positional(strand, Slot::new(&mut value))?;
+    strand.with_slots_sync(|strand, [mut slot]| {
+        for (key, value) in items {
+            Output::set(strand, &mut slot, value);
+            if let Some(key) = key {
+                let key = unsafe { Sym::from_obj(key) };
+                sink.symbol(strand, key, Slot::reborrow(&mut slot))?;
+            } else {
+                sink.positional(strand, Slot::reborrow(&mut slot))?;
+            }
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Creates an empty `Pack`.
@@ -815,16 +817,19 @@ impl<'v> Protocol<'v> for Rest<'v> {
             borrow.pos,
             borrow.int,
         );
-        while let Some((index, key, mut value)) = iter.next_item() {
-            if let Some(key) = key {
-                let key = unsafe { Sym::from_obj(&key) };
-                sink.symbol(strand, key, Slot::new(&mut value))?;
-            } else {
-                sink.positional(strand, Slot::new(&mut value))?;
+        strand.with_slots_sync(|strand, [mut slot]| {
+            while let Some((index, key, value)) = iter.next_item() {
+                Output::set(strand, &mut slot, value);
+                if let Some(key) = key {
+                    let key = unsafe { Sym::from_obj(&key) };
+                    sink.symbol(strand, key, Slot::reborrow(&mut slot))?;
+                } else {
+                    sink.positional(strand, Slot::reborrow(&mut slot))?;
+                }
+                iter.pos = index + 1;
             }
-            iter.pos = index + 1;
-        }
-        Ok(())
+            Ok(())
+        })
     }
 }
 

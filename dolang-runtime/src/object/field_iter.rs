@@ -249,19 +249,18 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let iter = this.borrow(strand)?;
-        for symbol in &iter.symbols {
-            let receiver = iter.receiver.dup();
-            let mut value = strand.with_slots_sync(|strand, [mut value]| {
+        strand.with_slots_sync(|strand, [mut value]| {
+            for symbol in &iter.symbols {
+                let receiver = iter.receiver.dup();
                 resolve(strand, &receiver, symbol, Slot::reborrow(&mut value))?;
-                Ok(value.take())
-            })?;
-            sink.symbol(
-                strand,
-                unsafe { Sym::from_obj(symbol) },
-                Slot::new(&mut value),
-            )?;
-        }
-        Ok(())
+                sink.symbol(
+                    strand,
+                    unsafe { Sym::from_obj(symbol) },
+                    Slot::reborrow(&mut value),
+                )?;
+            }
+            Ok(())
+        })
     }
 }
 

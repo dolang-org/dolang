@@ -2,6 +2,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::{HashSet, VecDeque},
     pin::Pin,
+    ptr::NonNull,
     rc::Rc,
     task::{self, Poll, Waker},
 };
@@ -636,7 +637,9 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     .map(|raw| {
                         let mut value = Value::NIL;
                         let info = StrandInfo::new(raw);
-                        ty.create(strand, info, Slot::new(&mut value));
+                        // Safety: written by the last allocation; see `Slot::new`.
+                        let slot = unsafe { Slot::new(NonNull::from(&mut value)) };
+                        ty.create(strand, info, slot);
                         value
                     })
                     .collect();
@@ -746,10 +749,12 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                                 output.store(tmp.take());
                             }
                             for _ in 0..count.saturating_sub(1) {
-                                let mut send = Value::NIL;
-                                let mut recv = Value::NIL;
-                                pipe_pair(strand, Slot::new(&mut send), Slot::new(&mut recv));
-                                pipes.push(Some((send, recv)));
+                                let pair =
+                                    strand.with_slots_sync(|strand, [mut send, mut recv]| {
+                                        pipe_pair(strand, &mut send, &mut recv);
+                                        (send.take(), recv.take())
+                                    });
+                                pipes.push(Some(pair));
                             }
                             for (i, thunk) in thunks.into_iter().enumerate() {
                                 let (send, recv, mut out, redir_output) = if i < count - 1 {
@@ -945,21 +950,19 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
 
                 // Channel A: handle writes → strand reads
                 // Channel B: strand writes → handle reads
-                // Safety: stack Values are fresh, acyclic channel objects
-                let mut input_sender = Value::NIL;
-                let mut input_receiver = Value::NIL;
-                pipe_pair(
-                    strand,
-                    Slot::new(&mut input_sender),
-                    Slot::new(&mut input_receiver),
-                );
-                let mut output_sender = Value::NIL;
-                let mut output_receiver = Value::NIL;
-                pipe_pair(
-                    strand,
-                    Slot::new(&mut output_sender),
-                    Slot::new(&mut output_receiver),
-                );
+                let (input_sender, input_receiver, output_sender, output_receiver) = strand
+                    .with_slots_sync(
+                        |strand, [mut in_send, mut in_recv, mut out_send, mut out_recv]| {
+                            pipe_pair(strand, &mut in_send, &mut in_recv);
+                            pipe_pair(strand, &mut out_send, &mut out_recv);
+                            (
+                                in_send.take(),
+                                in_recv.take(),
+                                out_send.take(),
+                                out_recv.take(),
+                            )
+                        },
+                    );
 
                 let handle = strand.spawn_background_raw(
                     callable.take(),

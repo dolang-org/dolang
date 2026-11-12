@@ -25,7 +25,7 @@ pub(crate) fn with_builder<R: 'static>(
 /// calling thread. Values a test needs to hold onto — across a call that might allocate
 /// or yield — belong in one of these slots, never in a bare, unrooted Rust local: use
 /// `Slot::reborrow` to hand a slot to something that wants to fill it (e.g. as an `out`
-/// parameter), and `Slot::into_inner` to read it back as a `&Value`/`&mut Value` in place.
+/// parameter), and `Slot::into_ref`, or the slot itself as an `Input`, to read it back.
 pub(crate) fn with_vm<const N: usize, R: 'static>(
     body: impl for<'v, 's, 'b> AsyncFnOnce(&mut Strand<'v, 's>, [Slot<'v, 'b>; N]) -> R + 'static,
 ) -> R {

@@ -792,7 +792,10 @@ impl<'v, 's> Error<'v, 's> {
         T::Annex: Default,
     {
         let mut root = ErrorRoot::new(strand.inner, Value::NIL, Vec::new());
-        ty.create(strand, value, Slot::new(&mut root.data_mut().value));
+        // Safety: the value lives in the strand's error table, which the collector scans
+        // and which never moves its entries.
+        let slot = unsafe { Slot::new(NonNull::from(&mut root.data_mut().value)) };
+        ty.create(strand, value, slot);
         Self {
             inner: Variant::Boxed(root),
             phantom: PhantomData,
@@ -807,7 +810,10 @@ impl<'v, 's> Error<'v, 's> {
         annex: T::Annex,
     ) -> Self {
         let mut root = ErrorRoot::new(strand.inner, Value::NIL, Vec::new());
-        ty.create_with_annex(strand, value, annex, Slot::new(&mut root.data_mut().value));
+        // Safety: the value lives in the strand's error table, which the collector scans
+        // and which never moves its entries.
+        let slot = unsafe { Slot::new(NonNull::from(&mut root.data_mut().value)) };
+        ty.create_with_annex(strand, value, annex, slot);
         Self {
             inner: Variant::Boxed(root),
             phantom: PhantomData,

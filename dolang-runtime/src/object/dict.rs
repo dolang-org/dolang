@@ -19,7 +19,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{
-        Output, Slot, Slots, TypeObject, Value,
+        Input, Output, Slot, Slots, TypeObject, Value,
         fmt::{Format, Spec},
     },
     vm::Vm,
@@ -638,15 +638,19 @@ impl<'v> Dict<'v> {
     /// key as is
     fn spread_key_value<'s>(
         strand: &mut Strand<'v, 's>,
-        mut key: Value<'v>,
-        mut value: Value<'v>,
+        key: impl Input<'v>,
+        value: impl Input<'v>,
         sink: &mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        if let Some(sym) = key.as_sym(strand) {
-            sink.symbol(strand, sym, Slot::new(&mut value))
-        } else {
-            sink.keyed(strand, Slot::new(&mut key), Slot::new(&mut value))
-        }
+        strand.with_slots_sync(|strand, [mut key_slot, mut value_slot]| {
+            Output::set(strand, &mut key_slot, key);
+            Output::set(strand, &mut value_slot, value);
+            if let Some(sym) = key_slot.as_sym(strand) {
+                sink.symbol(strand, sym, value_slot)
+            } else {
+                sink.keyed(strand, key_slot, value_slot)
+            }
+        })
     }
 
     fn with_iter_inner<'s, R>(
@@ -1918,12 +1922,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
                     strand.check_trap()?;
                 }
                 let bucket = bucket.as_ref();
-                Self::spread_key_value(
-                    strand,
-                    bucket.key.dup(),
-                    bucket.value.at(*subindex).dup(),
-                    sink,
-                )?;
+                Self::spread_key_value(strand, &bucket.key, bucket.value.at(*subindex), sink)?;
                 i += 1;
             }
         }

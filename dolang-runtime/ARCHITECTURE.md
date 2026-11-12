@@ -57,10 +57,14 @@ clears. Miri uses a fixed threshold of 10 to exercise collection frequently.
 
 Native code may hold a GC reference across an await only where the collector
 visits it: a `Strand::with_slots` slot, an error (whose value and backtrace
-live in a slot of the strand's `ErrorTable`), or a GC-visited object. A short
-span with no await may leave references unvisited; a collection during it
-counts them as external, so cycles through them are reclaimed late rather than
-freed early. #1665 proposes `with_scan` for rooting other native holders.
+live in a slot of the strand's `ErrorTable`), or a GC-visited object. Outside
+those, a reference may sit unvisited, such as in a local on the Rust stack,
+only while no collection can happen at all; a tracing collector would miss it.
+Count every GC allocation, and any code reached with a `Strand`, as a possible
+collection, even though collections currently happen only at explicit
+safepoints. `Slot::new` is `unsafe` for this reason: creating a slot over a
+location claims the collector can see it. #1665 proposes `with_scan` for
+rooting other native holders.
 
 ## Object Protocol
 

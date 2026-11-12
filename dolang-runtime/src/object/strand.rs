@@ -4,6 +4,7 @@ use std::{
     hash::{DefaultHasher, Hash},
     mem,
     ops::ControlFlow,
+    ptr::NonNull,
     rc::Rc,
     task::Poll,
     task::Waker,
@@ -883,7 +884,9 @@ fn observe_mcall<'v, 's>(
                 .into_iter()
                 .map(|cell| {
                     let mut value = Value::NIL;
-                    ty.create(strand, StrandRef::new(cell), Slot::new(&mut value));
+                    // Safety: written by the last allocation; see `Slot::new`.
+                    let slot = unsafe { Slot::new(NonNull::from(&mut value)) };
+                    ty.create(strand, StrandRef::new(cell), slot);
                     value
                 })
                 .collect();

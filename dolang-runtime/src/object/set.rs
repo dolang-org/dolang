@@ -736,7 +736,7 @@ impl<'v> Protocol<'v> for Set<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        unsafe {
+        strand.with_slots_sync(|strand, [mut slot]| {
             for (i, entry) in borrow.order.iter().enumerate() {
                 let Some(bucket) = entry else {
                     continue;
@@ -744,11 +744,11 @@ impl<'v> Protocol<'v> for Set<'v> {
                 if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
                     strand.check_trap()?;
                 }
-                let mut value = bucket.as_ref().value.dup();
-                sink.positional(strand, Slot::new(&mut value))?;
+                Output::set(strand, &mut slot, unsafe { &bucket.as_ref().value });
+                sink.positional(strand, Slot::reborrow(&mut slot))?;
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 }
 

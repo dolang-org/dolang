@@ -3,7 +3,7 @@ use std::{
     cell::{Cell, OnceCell, RefCell},
     future::Future,
     marker::PhantomData,
-    mem::{self, MaybeUninit},
+    mem::MaybeUninit,
     ops::{ControlFlow, Deref, DerefMut},
     pin::Pin,
     ptr::{self, NonNull, null},
@@ -703,14 +703,14 @@ impl<'v> StrandInner<'v> {
     #[must_use]
     pub(crate) fn replace_input(&self, value: Value<'v>) -> Value<'v> {
         // Safety: see the field
-        mem::replace(unsafe { self.input.slot() }.into_inner(), value)
+        unsafe { self.input.slot() }.replace(value)
     }
 
     /// Replace the strand's output, returning the old value for the caller to drop.
     #[must_use]
     pub(crate) fn replace_output(&self, value: Value<'v>) -> Value<'v> {
         // Safety: see the field
-        mem::replace(unsafe { self.output.slot() }.into_inner(), value)
+        unsafe { self.output.slot() }.replace(value)
     }
 
     pub(crate) fn errors(&self) -> &ErrorTable<'v> {

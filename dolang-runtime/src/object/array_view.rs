@@ -1,6 +1,6 @@
 //! Lazy array-like projections over native objects.
 
-use std::{cell::Cell, ops::ControlFlow};
+use std::{cell::Cell, ops::ControlFlow, ptr::NonNull};
 
 use crate::value::fmt::Format;
 
@@ -12,7 +12,7 @@ use crate::{
     error::{Error, Result},
     gc::{self, Collect, arena::Visit},
     object::{
-        BoundMethod, array, index, iter,
+        BoundMethod, index, iter,
         native::{Instance, Object, Type as NativeType, Unpack as NativeUnpack, UnpackItem},
         protocol::{GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, members},
         range,
@@ -22,7 +22,7 @@ use crate::{
     sym,
     sym::Sym,
     unpack,
-    value::{Input, InputBy, Output, Slot, Slots, TypeObject, Value, private::Sealed},
+    value::{Empty, Input, InputBy, Output, Slot, Slots, TypeObject, Value, private::Sealed},
     vm::{Alloc, Vm},
 };
 
@@ -226,7 +226,8 @@ impl<'v, I: ArrayLike<'v>> Input<'v> for ArrayView<'v, '_, I> {
                 owner,
                 glue: Box::new(Glue { view, ty }),
             },
-            Slot::new(&mut value),
+            // Safety: written by the last allocation; see `Slot::new`.
+            unsafe { Slot::new(NonNull::from(&mut value)) },
         );
         InputBy::Value(value, None)
     }
@@ -968,7 +969,7 @@ fn index_from<'v, 's>(
     glue: &(dyn ArrayViewGlue<'v> + '_),
     strand: &mut Strand<'v, 's>,
     index: &Value<'v>,
-    out: Slot<'v, '_>,
+    mut out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     let len = glue.len(owner, strand);
     if let Some(slice) = range::slice(index, strand, len)? {
@@ -976,14 +977,15 @@ fn index_from<'v, 's>(
             range::Slice::Contiguous { start, end } => Box::new(start..end),
             range::Slice::Stepped(indices) => Box::new(indices.into_iter()),
         };
-        let mut array = array::Array::new();
-        for index in indices {
-            let mut value = Value::NIL;
-            glue.get(owner, strand, index, Slot::new(&mut value))?;
-            array.inner.push(value);
-        }
-        strand.builtin_types().array.create(strand, array, out);
-        return Ok(());
+        Output::set(strand, &mut out, Empty::Array);
+        let array = out.as_array(strand).unwrap();
+        return strand.with_slots_sync(|strand, [mut value]| {
+            for index in indices {
+                glue.get(owner, strand, index, Slot::reborrow(&mut value))?;
+                array.push(strand, &value)?;
+            }
+            Ok(())
+        });
     }
     let index = normalize(strand, index, len)?;
     glue.get(owner, strand, index, out)
@@ -998,12 +1000,13 @@ fn spread_from<'v, 's>(
     sink: &mut dyn Spread<'v, 's>,
 ) -> Result<'v, 's, ()> {
     let len = glue.len(owner, strand);
-    let mut value = Value::NIL;
-    for index in start..len {
-        glue.get(owner, strand, index, Slot::new(&mut value))?;
-        sink.positional(strand, Slot::new(&mut value))?;
-    }
-    Ok(())
+    strand.with_slots_sync(|strand, [mut value]| {
+        for index in start..len {
+            glue.get(owner, strand, index, Slot::reborrow(&mut value))?;
+            sink.positional(strand, Slot::reborrow(&mut value))?;
+        }
+        Ok(())
+    })
 }
 
 fn unpack_native<'v, 's>(

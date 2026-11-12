@@ -709,16 +709,18 @@ impl<'v> Protocol<'v> for Record<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        for (key, value) in borrow.items() {
-            let mut value = value.dup();
-            if let Some(key) = key {
-                let key = unsafe { Sym::from_obj(key) };
-                sink.symbol(strand, key, Slot::new(&mut value))?;
-            } else {
-                sink.positional(strand, Slot::new(&mut value))?;
+        strand.with_slots_sync(|strand, [mut slot]| {
+            for (key, value) in borrow.items() {
+                Output::set(strand, &mut slot, value);
+                if let Some(key) = key {
+                    let key = unsafe { Sym::from_obj(key) };
+                    sink.symbol(strand, key, Slot::reborrow(&mut slot))?;
+                } else {
+                    sink.positional(strand, Slot::reborrow(&mut slot))?;
+                }
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     async fn op_unpack<'a, 's>(

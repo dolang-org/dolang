@@ -2150,30 +2150,32 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(neg)")),
-            |strand| T::neg(Instance::from_recv(&this), strand, Slot::new(&mut out)),
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(neg)")),
+                |strand| T::neg(Instance::from_recv(&this), strand, Slot::reborrow(&mut out)),
+            )?;
+            Ok(out.take())
+        })
     }
 
     fn op_bnot<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(bnot)")),
-            |strand| T::bnot(Instance::from_recv(&this), strand, Slot::new(&mut out)),
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(bnot)")),
+                |strand| T::bnot(Instance::from_recv(&this), strand, Slot::reborrow(&mut out)),
+            )?;
+            Ok(out.take())
+        })
     }
 
     fn op_band<'a, 's>(
@@ -2181,44 +2183,46 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(band)")),
-            |strand| {
-                T::band(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(band)")),
+                |strand| {
+                    T::band(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
     fn op_rband<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rband)")),
-            |strand| {
-                T::rband(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(rband)")),
+                |strand| {
+                    T::rband(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
 
     fn op_bor<'a, 's>(
@@ -2226,44 +2230,46 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(bor)")),
-            |strand| {
-                T::bor(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(bor)")),
+                |strand| {
+                    T::bor(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
     fn op_rbor<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rbor)")),
-            |strand| {
-                T::rbor(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(rbor)")),
+                |strand| {
+                    T::rbor(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
 
     fn op_bxor<'a, 's>(
@@ -2271,44 +2277,46 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(bxor)")),
-            |strand| {
-                T::bxor(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(bxor)")),
+                |strand| {
+                    T::bxor(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
     fn op_rbxor<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rbxor)")),
-            |strand| {
-                T::rbxor(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(rbxor)")),
+                |strand| {
+                    T::rbxor(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
 
     fn op_shl<'a, 's>(
@@ -2316,44 +2324,46 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(shl)")),
-            |strand| {
-                T::shl(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(shl)")),
+                |strand| {
+                    T::shl(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
     fn op_rshl<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rshl)")),
-            |strand| {
-                T::rshl(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(rshl)")),
+                |strand| {
+                    T::rshl(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
 
     fn op_shr<'a, 's>(
@@ -2361,44 +2371,46 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(shr)")),
-            |strand| {
-                T::shr(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(shr)")),
+                |strand| {
+                    T::shr(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
     fn op_rshr<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rshr)")),
-            |strand| {
-                T::rshr(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(rshr)")),
+                |strand| {
+                    T::rshr(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
 
     fn op_add<'a, 's>(
@@ -2406,44 +2418,46 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(add)")),
-            |strand| {
-                T::add(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(add)")),
+                |strand| {
+                    T::add(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
     fn op_radd<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(radd)")),
-            |strand| {
-                T::radd(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(radd)")),
+                |strand| {
+                    T::radd(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
 
     fn op_sub<'a, 's>(
@@ -2451,22 +2465,23 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(sub)")),
-            |strand| {
-                T::sub(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(sub)")),
+                |strand| {
+                    T::sub(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
 
     fn op_rsub<'a, 's>(
@@ -2474,22 +2489,23 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rsub)")),
-            |strand| {
-                T::rsub(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(rsub)")),
+                |strand| {
+                    T::rsub(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
 
     fn op_mul<'a, 's>(
@@ -2497,44 +2513,46 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(mul)")),
-            |strand| {
-                T::mul(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(mul)")),
+                |strand| {
+                    T::mul(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
     fn op_rmul<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rmul)")),
-            |strand| {
-                T::rmul(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(rmul)")),
+                |strand| {
+                    T::rmul(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
 
     fn op_div<'a, 's>(
@@ -2542,22 +2560,23 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(div)")),
-            |strand| {
-                T::div(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(div)")),
+                |strand| {
+                    T::div(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
 
     fn op_rdiv<'a, 's>(
@@ -2565,22 +2584,23 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rdiv)")),
-            |strand| {
-                T::rdiv(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(rdiv)")),
+                |strand| {
+                    T::rdiv(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
 
     fn op_ediv<'a, 's>(
@@ -2588,22 +2608,23 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(ediv)")),
-            |strand| {
-                T::ediv(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(ediv)")),
+                |strand| {
+                    T::ediv(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
 
     fn op_rediv<'a, 's>(
@@ -2611,22 +2632,23 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rediv)")),
-            |strand| {
-                T::redv(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(rediv)")),
+                |strand| {
+                    T::redv(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
 
     fn op_mod<'a, 's>(
@@ -2634,22 +2656,23 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(mod)")),
-            |strand| {
-                T::rem(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(mod)")),
+                |strand| {
+                    T::rem(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
 
     fn op_rmod<'a, 's>(
@@ -2657,22 +2680,23 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let mut out = Value::NIL;
-        Strand::for_native_frame(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rmod)")),
-            |strand| {
-                T::rrem(
-                    Instance::from_recv(&this),
-                    strand,
-                    other,
-                    Slot::new(&mut out),
-                )
-            },
-        )?;
-        Ok(out)
+        strand.with_slots_sync(|strand, [mut out]| {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(rmod)")),
+                |strand| {
+                    T::rrem(
+                        Instance::from_recv(&this),
+                        strand,
+                        other,
+                        Slot::reborrow(&mut out),
+                    )
+                },
+            )?;
+            Ok(out.take())
+        })
     }
 
     fn op_lt<'a, 's>(
@@ -5662,7 +5686,7 @@ mod tests {
 
     #[test]
     fn type_object_op_get_op_set_dispatch() {
-        with_fixture_vm(async |strand, [mut ty_slot, mut out]| {
+        with_fixture_vm(async |strand, [mut ty_slot, mut out, mut val]| {
             let state = strand.vm().state::<FixtureStateTag>();
             type_value(strand, state.slot_ty, Slot::reborrow(&mut ty_slot));
             let ty_value: &Value = &ty_slot;
@@ -5685,12 +5709,12 @@ mod tests {
                     assert_eq!(out.to_i64(strand).unwrap(), 0);
 
                     // Registered type-level setter, then read back through the getter.
-                    let mut val = Value::from_i64(strand, 7);
+                    Output::set(strand, &mut val, 7i64);
                     TypeObjectWrap::<SlotFixture>::op_set(
                         recv.clone(),
                         strand,
                         meta_sym,
-                        Slot::new(&mut val),
+                        Slot::reborrow(&mut val),
                     )
                     .unwrap();
                     TypeObjectWrap::<SlotFixture>::op_get(
@@ -5721,12 +5745,12 @@ mod tests {
                     .unwrap();
 
                     // Getter-only type-level entry: setting it through the type object errors.
-                    let mut val2 = Value::from_i64(strand, 1);
+                    Output::set(strand, &mut val, 1i64);
                     let err = TypeObjectWrap::<SlotFixture>::op_set(
                         recv.clone(),
                         strand,
                         state.readonly_sym,
-                        Slot::new(&mut val2),
+                        Slot::reborrow(&mut val),
                     )
                     .unwrap_err();
                     assert_eq!(err.kind(), ErrorKind::Immutable);
@@ -5741,12 +5765,12 @@ mod tests {
                     .unwrap_err();
                     assert_eq!(err.kind(), ErrorKind::Field);
 
-                    let mut val3 = Value::from_i64(strand, 1);
+                    Output::set(strand, &mut val, 1i64);
                     let err = TypeObjectWrap::<SlotFixture>::op_set(
                         recv,
                         strand,
                         Sym::well_known(sym::LEN),
-                        Slot::new(&mut val3),
+                        Slot::reborrow(&mut val),
                     )
                     .unwrap_err();
                     assert_eq!(err.kind(), ErrorKind::Field);
