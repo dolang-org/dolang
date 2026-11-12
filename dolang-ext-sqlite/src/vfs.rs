@@ -625,16 +625,16 @@ fn disconnect_shm(handle: &mut ShellFileHandle) {
         let mut node = conn.node.lock().unwrap();
         if let Some(shm_file) = &node.shm_file {
             let fd = shm_file.as_raw_fd();
-            for i in 0..SQLITE_SHM_NLOCK {
+            for (i, slot) in node.a_lock.iter_mut().enumerate() {
                 let bit = 1u16 << i;
                 if conn.shared_mask & bit != 0 {
-                    node.a_lock[i] -= 1;
-                    if node.a_lock[i] == 0 {
+                    *slot -= 1;
+                    if *slot == 0 {
                         let _ = fcntl_unlock(fd, UNIX_SHM_BASE + i as off_t, 1);
                     }
                 }
                 if conn.excl_mask & bit != 0 {
-                    node.a_lock[i] = 0;
+                    *slot = 0;
                     let _ = fcntl_unlock(fd, UNIX_SHM_BASE + i as off_t, 1);
                 }
             }
@@ -768,7 +768,7 @@ impl Vfs for ShellVfs {
         let path = path.to_string();
         let client = get_shell_vfs();
 
-        // Map sqlite_plugin AccessFlags to nix::unistd::AccessFlags
+        // Map sqlite_plugin AccessFlags to dolang_vfs AccessFlags
         let mode = match flags {
             AccessFlags::Exists => dolang_vfs::file::AccessFlags::F_OK,
             AccessFlags::Read => dolang_vfs::file::AccessFlags::R_OK,
@@ -1178,9 +1178,7 @@ impl Vfs for ShellVfs {
                 debug_assert_eq!(conn.excl_mask & mask, mask);
                 // Unlock the entire range in one syscall.
                 fcntl_unlock(fd, UNIX_SHM_BASE + offset as off_t, count as off_t)?;
-                for i in offset..offset + count {
-                    node.a_lock[i] = 0;
-                }
+                node.a_lock[offset..offset + count].fill(0);
                 conn.excl_mask &= !mask;
             }
 
@@ -1202,16 +1200,12 @@ impl Vfs for ShellVfs {
 
             ShmLockMode::LockExclusive => {
                 // All slots in range must be completely unlocked (intra-process check).
-                for i in offset..offset + count {
-                    if node.a_lock[i] != 0 {
-                        return Err(SQLITE_BUSY);
-                    }
+                if node.a_lock[offset..offset + count].iter().any(|&n| n != 0) {
+                    return Err(SQLITE_BUSY);
                 }
                 // Acquire the exclusive fcntl write lock on all slots in one call.
                 shm_fcntl_lock(fd, F_WRLCK, UNIX_SHM_BASE + offset as off_t, count as off_t)?;
-                for i in offset..offset + count {
-                    node.a_lock[i] = -1;
-                }
+                node.a_lock[offset..offset + count].fill(-1);
                 conn.excl_mask |= mask;
             }
         }

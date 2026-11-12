@@ -27,11 +27,11 @@ workspace = true
 workspace = true
 
 
-[dependencies.dolang-private-test]
+[dependencies.futures]
 workspace = true
 
 
-[dependencies.futures]
+[dev-dependencies.dolang-private-test]
 workspace = true
 
 
