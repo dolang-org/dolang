@@ -1,4 +1,4 @@
-use std::{cell::UnsafeCell, ops::ControlFlow};
+use std::ops::ControlFlow;
 
 use crate::value::fmt::Format;
 
@@ -21,7 +21,7 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{BinEmbryo, Input, Output, Slot, Slots, TypeObject, Value, view::View},
+    value::{BinEmbryo, Input, Output, Slot, Slots, TypeObject, Value, ValueCell, view::View},
     vm::Vm,
 };
 
@@ -1455,11 +1455,11 @@ impl<'v> Protocol<'v> for Kv<'v> {
                     let source = this.borrow(strand)?.source.dup();
                     source.iter(strand, &mut iter).await?;
                     while iter.next(strand, &mut item).await? {
-                        let cells = [UnsafeCell::new(Value::NIL), UnsafeCell::new(Value::NIL)];
+                        let cells = [ValueCell::default(), ValueCell::default()];
                         item.op_unpack(strand, &unpack, unsafe { Slots::new(&cells) })
                             .await?;
-                        key.store(unsafe { (*cells[0].get()).take() });
-                        value.store(unsafe { (*cells[1].get()).take() });
+                        Output::set(strand, &mut key, unsafe { cells[0].slot() });
+                        Output::set(strand, &mut value, unsafe { cells[1].slot() });
                         sink.keyed(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut value))?;
                     }
                     Ok(())

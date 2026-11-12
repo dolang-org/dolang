@@ -25,13 +25,7 @@
 //! A forkable stream's `fork` is served like the other methods. The handle of the stream
 //! it returns has its own owner, so it outlives this stream's handle.
 
-use std::{
-    cell::{Cell, UnsafeCell},
-    io::SeekFrom,
-    ops::ControlFlow,
-    pin::pin,
-    rc::Rc,
-};
+use std::{cell::Cell, io::SeekFrom, ops::ControlFlow, pin::pin, rc::Rc};
 
 use futures::{
     StreamExt as _,
@@ -61,7 +55,7 @@ use crate::{
     strand::{InterruptMask, Strand},
     sym::{self, Sym},
     unpack,
-    value::{BinEmbryo, Input, Output, Root, Slot, TypeObject, Value, fmt::Format},
+    value::{BinEmbryo, Input, Output, Root, Slot, TypeObject, Value, ValueCell, fmt::Format},
     vm::Vm,
 };
 
@@ -430,7 +424,7 @@ async fn write_all<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let mut items: Vec<OwnedItem<'v>> = Vec::with_capacity(args.len() + 1);
     // Headroom for the receiver.
-    items.push((None, UnsafeCell::new(Value::NIL)));
+    items.push((None, ValueCell::default()));
     let mut len = 0;
     for arg in args.reborrow() {
         let piece = match arg {
@@ -438,7 +432,7 @@ async fn write_all<'v, 's>(
             Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
         };
         len += piece_len(strand, &piece)?;
-        items.push((None, UnsafeCell::new(piece.dup())));
+        items.push((None, ValueCell::new(strand, &piece)));
     }
     if len == 0 {
         return Ok(());

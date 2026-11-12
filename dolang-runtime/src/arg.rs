@@ -1,14 +1,14 @@
-use std::{cell::UnsafeCell, marker::PhantomData, mem::MaybeUninit};
+use std::{marker::PhantomData, mem::MaybeUninit};
 
 use crate::{
     error::{Error, Result},
     object::{protocol::GcObj, sym::SymObj},
     strand::Strand,
     sym::Sym,
-    value::{self, Input, InputBy, Slot, Value},
+    value::{self, Input, InputBy, Slot, Value, ValueCell},
 };
 
-pub(crate) type OwnedItem<'v> = (Option<GcObj<'v, SymObj>>, UnsafeCell<Value<'v>>);
+pub(crate) type OwnedItem<'v> = (Option<GcObj<'v, SymObj>>, ValueCell<'v>);
 
 /// Stack-allocated array with one headroom slot at position 0.
 /// `repr(C)` guarantees `head` is immediately followed by `tail` elements
@@ -30,7 +30,7 @@ impl<T, const N: usize> HeadroomCells<T, N> {
 enum ArgContent<'v, 'a> {
     Borrowed {
         sig: &'a [Option<Sym<'v, 'a>>],
-        slots: &'a [UnsafeCell<Value<'v>>],
+        slots: &'a [ValueCell<'v>],
     },
     Owned(&'a [OwnedItem<'v>]),
 }
@@ -47,10 +47,10 @@ impl<'v, 'a> ArgContent<'v, 'a> {
         unsafe {
             match self {
                 ArgContent::Borrowed { slots, .. } => {
-                    *slots.get_unchecked(index).get() = value;
+                    slots.get_unchecked(index).slot().store(value);
                 }
                 ArgContent::Owned(items) => {
-                    *items.get_unchecked(index).1.get() = value;
+                    items.get_unchecked(index).1.slot().store(value);
                 }
             }
         }
@@ -60,7 +60,7 @@ impl<'v, 'a> ArgContent<'v, 'a> {
         unsafe {
             match self {
                 ArgContent::Borrowed { slots, sig } => {
-                    let slot = Slot::new(&mut *slots.get_unchecked(index).get());
+                    let slot = slots.get_unchecked(index).slot();
                     if index < headroom {
                         Arg::Pos(slot)
                     } else {
@@ -71,10 +71,8 @@ impl<'v, 'a> ArgContent<'v, 'a> {
                     }
                 }
                 ArgContent::Owned(items) => match items.get_unchecked(index) {
-                    (Some(sym), value) => {
-                        Arg::Key(Sym::from_tag(sym.tag), Slot::new(&mut *value.get()))
-                    }
-                    (None, value) => Arg::Pos(Slot::new(&mut *value.get())),
+                    (Some(sym), value) => Arg::Key(Sym::from_tag(sym.tag), value.slot()),
+                    (None, value) => Arg::Pos(value.slot()),
                 },
             }
         }
@@ -141,7 +139,7 @@ impl<'v, 'a> Args<'v, 'a> {
     // - Concurrent mutable reference into base must not be formed
     // - slots.len() must equal sig.len() + headroom
     pub(crate) unsafe fn new(
-        slots: &'a [UnsafeCell<Value<'v>>],
+        slots: &'a [ValueCell<'v>],
         sig: &'a [Option<Sym<'v, 'a>>],
         headroom: usize,
     ) -> Self {
@@ -207,9 +205,9 @@ impl<'v, 'a> Args<'v, 'a> {
     ) -> R {
         // HeadroomCells gives us N+1 contiguous cells: head is headroom (NIL),
         // tail[0..N] hold the actual arguments.
-        let mut cells = HeadroomCells {
-            head: UnsafeCell::new(Value::NIL),
-            tail: [const { UnsafeCell::new(Value::NIL) }; N],
+        let mut cells: HeadroomCells<_, N> = HeadroomCells {
+            head: ValueCell::default(),
+            tail: std::array::from_fn(|_| ValueCell::default()),
         };
         let mut replace = [const { MaybeUninit::uninit() }; N];
         let inner = strand.inner;
@@ -636,11 +634,11 @@ macro_rules! method {
 mod tests {
     use super::{Arg, Args};
     use crate::Value;
-    use std::cell::UnsafeCell;
+    use crate::value::ValueCell;
 
     #[test]
     fn prepend_self_reuses_a_consumed_leading_argument() {
-        let slots = [UnsafeCell::new(Value::NIL), UnsafeCell::new(Value::NIL)];
+        let slots = [ValueCell::default(), ValueCell::default()];
         let sig = [None];
         let mut args = unsafe { Args::new(&slots, &sig, 1) };
 

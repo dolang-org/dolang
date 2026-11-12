@@ -1,6 +1,5 @@
 use std::{
     borrow::Cow,
-    cell::UnsafeCell,
     future,
     hash::Hasher,
     marker::PhantomData,
@@ -23,7 +22,9 @@ use crate::{
     strand::{Pinned, Strand},
     sym::{self, Sym},
     unpack,
-    value::{Case, Input, InputBy, Output, Slot, Slots, TypeObject, Value, private::Sealed},
+    value::{
+        Case, Input, InputBy, Output, Slot, Slots, TypeObject, Value, ValueCell, private::Sealed,
+    },
     vm::{Alloc, Register, Vm},
 };
 
@@ -57,7 +58,7 @@ impl<'v, T> Drop for ObjectWrap<'v, T> {
 }
 
 pub(crate) struct ObjectAnnex<'v, T: Object<'v>> {
-    slots: Option<alias::Box<[UnsafeCell<Value<'v>>]>>,
+    slots: Option<alias::Box<[ValueCell<'v>]>>,
     inner: T::Annex,
 }
 
@@ -66,7 +67,7 @@ impl<'v, T: Object<'v>> gc::Annex for ObjectAnnex<'v, T> {
         if T::SLOTS != 0 {
             unsafe {
                 for slot in self.slots.as_ref().unwrap_unchecked().iter() {
-                    (*slot.get()).accept(visit)?
+                    slot.accept(visit)?
                 }
             }
         }
@@ -74,11 +75,10 @@ impl<'v, T: Object<'v>> gc::Annex for ObjectAnnex<'v, T> {
     }
 
     fn clear(&self) {
-        // Zero out each slot using UnsafeCell interior mutability
         if T::SLOTS != 0 {
             unsafe {
                 for slot in self.slots.as_ref().unwrap_unchecked().iter() {
-                    *slot.get() = Value::NIL
+                    slot.slot().store(Value::NIL)
                 }
             }
         }
@@ -470,13 +470,14 @@ impl<'v, 'a, T: Object<'v>> Ref<'v, 'a, T> {
         const {
             assert!(N < T::SLOTS, "slot out of bounds");
         }
+        // Safety: the borrow of the object excludes writers, which need `Mut::slot_mut`
         unsafe {
-            &*gc::Ref::annex(&this.0)
+            gc::Ref::annex(&this.0)
                 .slots
                 .as_ref()
                 .unwrap_unchecked()
                 .get_unchecked(N)
-                .get()
+                .as_ref()
         }
     }
 }
@@ -507,13 +508,14 @@ impl<'v, 'a, T: Object<'v>> Mut<'v, 'a, T> {
         const {
             assert!(N < T::SLOTS);
         }
+        // Safety: the borrow of the object excludes writers, which need `Mut::slot_mut`
         unsafe {
-            &*gc::Mut::annex(&this.0)
+            gc::Mut::annex(&this.0)
                 .slots
                 .as_ref()
                 .unwrap_unchecked()
                 .get_unchecked(N)
-                .get()
+                .as_ref()
         }
     }
 
@@ -522,15 +524,14 @@ impl<'v, 'a, T: Object<'v>> Mut<'v, 'a, T> {
         const {
             assert!(N < T::SLOTS, "slot out of bounds");
         }
+        // Safety: the slot reborrows `this` mutably, excluding other access
         unsafe {
-            Slot::new(
-                &mut *gc::Mut::annex(&this.0)
-                    .slots
-                    .as_ref()
-                    .unwrap_unchecked()
-                    .get_unchecked(N)
-                    .get(),
-            )
+            gc::Mut::annex(&this.0)
+                .slots
+                .as_ref()
+                .unwrap_unchecked()
+                .get_unchecked(N)
+                .slot()
         }
     }
 }
@@ -2814,7 +2815,7 @@ impl<'v, T: Object<'v>> Type<'v, T> {
                 slots: if T::SLOTS != 0 {
                     Some(
                         (0..T::SLOTS)
-                            .map(|_| UnsafeCell::new(Value::NIL))
+                            .map(|_| ValueCell::default())
                             .collect::<Vec<_>>()
                             .into(),
                     )

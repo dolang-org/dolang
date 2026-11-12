@@ -1,4 +1,4 @@
-use std::{cell::UnsafeCell, future::poll_fn, hint::unreachable_unchecked, mem, ptr, task::Poll};
+use std::{future::poll_fn, hint::unreachable_unchecked, mem, ptr, task::Poll};
 
 use crate::{
     arg::{Arg, Args, OwnedItem},
@@ -23,7 +23,7 @@ use crate::{
     strand::{InterruptMask, Redirect, Strand, StrandInner},
     sym::{self, Sym},
     unpack,
-    value::{Output, Singleton, Slot, Slots, StrEmbryo, Value},
+    value::{Output, Singleton, Slot, Slots, StrEmbryo, Value, ValueCell},
     vm::{ImportCacheEntry, ImportGuard, Vm, force_lazy_unit},
 };
 use dolang_bytecode::{Opcode, builtin};
@@ -35,13 +35,13 @@ enum Status<'v> {
 
 impl<'v> CallFrame<'v> {
     unsafe fn push(&self, value: Value<'v>) {
-        unsafe { *self.slots.get_unchecked(self.sp.get()).get() = value }
+        unsafe { self.slots.get_unchecked(self.sp.get()).slot().store(value) }
         self.sp.update(|s| s + 1);
     }
 
     unsafe fn pop(&self) -> Value<'v> {
         self.sp.update(|s| s - 1);
-        unsafe { (*self.slots.get_unchecked(self.sp.get()).get()).take() }
+        unsafe { self.slots.get_unchecked(self.sp.get()).slot().take() }
     }
 
     unsafe fn discard(&self, count: usize) {
@@ -49,55 +49,55 @@ impl<'v> CallFrame<'v> {
         self.sp.update(|s| s - count);
         unsafe {
             for slot in self.slots.get_unchecked(self.sp.get()..end) {
-                *slot.get() = Value::NIL;
+                slot.slot().store(Value::NIL);
             }
         }
     }
 
     unsafe fn dup(&self) {
         unsafe {
-            let value = (*self.slots.get_unchecked(self.sp.get() - 1).get()).dup();
+            let value = self.slots.get_unchecked(self.sp.get() - 1).get();
             self.push(value)
         }
     }
 
     unsafe fn pick(&self, depth: usize) {
         unsafe {
-            self.push((*self.slots.get_unchecked(self.sp.get() - 1 - depth).get()).dup());
+            self.push(self.slots.get_unchecked(self.sp.get() - 1 - depth).get());
         }
     }
 
     unsafe fn swap(&self, i: usize, j: usize) {
         unsafe {
             ptr::swap(
-                self.slots.get_unchecked(self.sp.get() - 1 - i).get(),
-                self.slots.get_unchecked(self.sp.get() - 1 - j).get(),
+                self.slots.get_unchecked(self.sp.get() - 1 - i).as_ptr(),
+                self.slots.get_unchecked(self.sp.get() - 1 - j).as_ptr(),
             );
         }
     }
 
     unsafe fn load(&self, index: usize) -> Value<'v> {
-        unsafe { (*self.slots.get_unchecked(index).get()).dup() }
+        unsafe { self.slots.get_unchecked(index).get() }
     }
 
     unsafe fn take(&self, index: usize) -> Value<'v> {
-        unsafe { (*self.slots.get_unchecked(index).get()).take() }
+        unsafe { self.slots.get_unchecked(index).slot().take() }
     }
 
     unsafe fn store(&self, index: usize, value: Value<'v>) {
-        unsafe { *self.slots.get_unchecked(index).get() = value }
+        unsafe { self.slots.get_unchecked(index).slot().store(value) }
     }
 
     unsafe fn scratch1(&self) -> Slot<'v, '_> {
-        unsafe { Slot::new(&mut *self.scratch1.get()) }
+        unsafe { self.scratch1.slot() }
     }
 
     unsafe fn scratch2(&self) -> Slot<'v, '_> {
-        unsafe { Slot::new(&mut *self.scratch2.get()) }
+        unsafe { self.scratch2.slot() }
     }
 
     unsafe fn scratch3(&self) -> Slot<'v, '_> {
-        unsafe { Slot::new(&mut *self.scratch3.get()) }
+        unsafe { self.scratch3.slot() }
     }
 
     #[expect(clippy::mut_from_ref)]
@@ -586,10 +586,10 @@ impl<'v> Vm<'v> {
                 impl<'b, 'v, 's> Spread<'v, 's> for ArgSpread<'b, 'v> {
                     fn positional(
                         &mut self,
-                        _strand: &mut Strand<'v, 's>,
-                        mut value: Slot<'v, '_>,
+                        strand: &mut Strand<'v, 's>,
+                        value: Slot<'v, '_>,
                     ) -> Result<'v, 's, ()> {
-                        self.items.push((None, UnsafeCell::new(value.take())));
+                        self.items.push((None, ValueCell::new(strand, value)));
                         Ok(())
                     }
 
@@ -597,10 +597,10 @@ impl<'v> Vm<'v> {
                         &mut self,
                         strand: &mut Strand<'v, 's>,
                         key: Sym<'v, '_>,
-                        mut value: Slot<'v, '_>,
+                        value: Slot<'v, '_>,
                     ) -> Result<'v, 's, ()> {
                         self.items
-                            .push((Some(strand.sym_obj(key)), UnsafeCell::new(value.take())));
+                            .push((Some(strand.sym_obj(key)), ValueCell::new(strand, value)));
                         Ok(())
                     }
 
@@ -608,11 +608,11 @@ impl<'v> Vm<'v> {
                         &mut self,
                         strand: &mut Strand<'v, 's>,
                         key: Slot<'v, '_>,
-                        mut value: Slot<'v, '_>,
+                        value: Slot<'v, '_>,
                     ) -> Result<'v, 's, ()> {
                         if let Some(sym) = key.as_sym(strand) {
                             self.items
-                                .push((Some(strand.sym_obj(sym)), UnsafeCell::new(value.take())));
+                                .push((Some(strand.sym_obj(sym)), ValueCell::new(strand, value)));
                             Ok(())
                         } else {
                             Err(Error::unexpected_key(strand, key))
@@ -652,24 +652,24 @@ impl<'v> Vm<'v> {
     async unsafe fn marshal_var_args<'a, 's>(
         inner: &'s StrandInner<'v>,
         frame: &'a CallFrame<'v>,
-        slice: &[UnsafeCell<Value<'v>>],
+        slice: &[ValueCell<'v>],
         args: &Vec<sig::Arg<'v, '_>>,
         headroom: usize,
     ) -> Result<'v, 's, Args<'v, 'a>> {
         unsafe {
             for _ in 0..headroom {
-                frame.items().push((None, UnsafeCell::new(Value::NIL)));
+                frame.items().push((None, ValueCell::default()));
             }
             for (slot, arg) in slice[headroom..].iter().zip(args.iter()) {
                 match arg {
                     sig::Arg::Pos => frame
                         .items()
-                        .push((None, UnsafeCell::new((*slot.get()).take()))),
+                        .push((None, ValueCell::new(inner.vm(), slot.slot()))),
                     sig::Arg::Key(sym) => frame.items().push((
                         Some(inner.vm().sym_obj(*sym)),
-                        UnsafeCell::new((*slot.get()).take()),
+                        ValueCell::new(inner.vm(), slot.slot()),
                     )),
-                    sig::Arg::Expand => Self::expand_args(inner, frame, &*slot.get()).await?,
+                    sig::Arg::Expand => Self::expand_args(inner, frame, slot.as_ref()).await?,
                 }
             }
             Ok(Args::new_owned(frame.items(), headroom))
