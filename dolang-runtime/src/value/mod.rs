@@ -210,13 +210,6 @@ impl<'v> Value<'v> {
         }
     }
 
-    /// # Safety
-    /// The uninit state must be cleared by `put` before accessing the
-    /// value by any other means or causing it to be dropped.
-    pub(crate) unsafe fn set_uninit(&mut self) {
-        self.0 = Repr::UNINIT;
-    }
-
     /// Tests whether this value is an instance of a type, following nominal
     /// supertypes as the `isa` operator does.
     pub fn is_instance_of(&self, strand: &mut Strand<'v, '_>, input: impl Input<'v>) -> bool {
@@ -242,10 +235,6 @@ impl<'v> Value<'v> {
         ) -> Result<'v, 's, R>,
     ) -> Result<'v, 's, R> {
         interface::query::<K, R>(self, strand, consumer)
-    }
-
-    pub(crate) fn is_uninit(&self) -> bool {
-        self.0.is_uninit()
     }
 
     pub(crate) fn store(&mut self, value: Self) {

@@ -4,10 +4,10 @@ use std::{
     collections::VecDeque,
     marker::PhantomData,
     ops::{ControlFlow, DerefMut},
-    panic,
     ptr::NonNull,
 };
 
+use bitvec::{array::BitArray, bitbox, slice::BitSlice};
 pub use dolang_bytecode::span::{Pos, Span};
 use dolang_util::alias;
 
@@ -54,7 +54,8 @@ impl<'v> CallFrame<'v> {
     /// This function processes the provided arguments and assigns them to the correct
     /// local variable slots based on the function's signature (unpack spec):
     ///
-    /// 1. **Initialize slots**: Mark all argument slots as uninitialized
+    /// 1. **Track assignment**: Slots start as `nil`; positional assignment is tracked by a
+    ///    count and key assignment by a bitset with one bit per key parameter
     /// 2. **Handle arguments**:
     ///     - Positional: add to required slots, then optional
     ///     - Key: match against declared keyword parameters
@@ -62,15 +63,12 @@ impl<'v> CallFrame<'v> {
     /// 3. **Apply defaults**: Fill unset optional/keyword slots with default values
     /// 4. **Validate**: Ensure all required args were provided
     ///
-    /// # Panic Safety
-    ///
-    /// This function uses `catch_unwind` to handle panics during argument processing.
-    /// If a panic occurs, all argument slots are cleared (set to NIL) before the panic
-    /// is re-raised. This prevents leaving the frame in a partially-initialized state
-    /// which could cause use-after-free or memory leaks during unwinding.
+    /// Slots hold valid values throughout, so an early error or panic (including one
+    /// from a collection triggered by error construction) needs no cleanup.
     ///
     /// # Safety
     ///
+    /// - Frame must be freshly created by [`CallFrame::new`], so argument slots hold `nil`
     /// - Frame must be properly initialized with valid `loaded` and `func` indices
     /// - Argument slots must be within bounds (verified by the assert)
     /// - The function signature (unpack spec) must match the compiled code
@@ -96,7 +94,6 @@ impl<'v> CallFrame<'v> {
             let slots = &self.slots;
             let mut pos = 0;
             let offset = func.locals;
-            let arg_range = offset..(offset + unpack.len());
             let pos_count = unpack.required + unpack.optional.len();
             let mut rest = if unpack.variadic == Variadic::Capture {
                 Some(VecDeque::new())
@@ -110,129 +107,103 @@ impl<'v> CallFrame<'v> {
             let mut key_rest = (unpack.variadic.keyed() == Rest::Capture
                 && unpack.variadic != Variadic::Capture)
                 .then(Vec::new);
+            // Which key parameters have been assigned, relative to the first one
+            let key_count = unpack.keys.len();
+            let mut inline = BitArray::<[usize; 1]>::ZERO;
+            let mut spilled;
+            let assigned: &mut BitSlice = if key_count <= usize::BITS as usize {
+                &mut inline[..key_count]
+            } else {
+                spilled = bitbox![0; key_count];
+                &mut spilled
+            };
 
             assert!(*slot_max >= func.locals + unpack.len());
 
-            for slot in slots.get_unchecked(arg_range.clone()).iter() {
-                (*slot.get()).set_uninit();
-            }
-
-            let res = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-                for arg in args {
-                    match arg {
-                        Arg::Pos(mut value) => {
-                            if pos == pos_count {
-                                match unpack.variadic {
-                                    Variadic::Capture => {
-                                        // Capture extra positional arguments in rest
-                                        rest.as_mut()
-                                            .unwrap()
-                                            .push_back(Some((None, value.take())));
-                                    }
-                                    variadic => match variadic.positional() {
-                                        Rest::None => {
-                                            return Err(Error::unexpected_positional_raw(
-                                                inner, pos,
-                                            ));
-                                        }
-                                        // Allow but discard extra positional arguments
-                                        Rest::Discard => {}
-                                        // Capture extra positional arguments in `*name`
-                                        Rest::Capture => {
-                                            pos_rest.as_mut().unwrap().push(value.take())
-                                        }
-                                    },
-                                }
-                            } else {
-                                (*slots.get_unchecked(offset + pos).get())
-                                    .store(value.into_inner().take());
-                                pos += 1
-                            }
-                        }
-                        Arg::Key(sym, mut value) => {
-                            if let Some(i) = unpack.sym_offset(sym) {
-                                let dest = &mut *slots.get_unchecked(offset + i).get();
-                                if dest.is_uninit() {
-                                    dest.store(value.take());
-                                    continue;
-                                }
-                                if unpack.variadic.keyed() == Rest::None {
-                                    return Err(Error::duplicate_key_raw(inner, sym));
-                                }
-                            }
+            for arg in args {
+                match arg {
+                    Arg::Pos(mut value) => {
+                        if pos == pos_count {
                             match unpack.variadic {
                                 Variadic::Capture => {
-                                    // Capture extra key arguments in rest
-                                    rest.as_mut().unwrap().push_back(Some((
-                                        Some(inner.vm().sym_obj(sym)),
-                                        value.take(),
-                                    )));
+                                    // Capture extra positional arguments in rest
+                                    rest.as_mut().unwrap().push_back(Some((None, value.take())));
                                 }
-                                variadic => match variadic.keyed() {
+                                variadic => match variadic.positional() {
                                     Rest::None => {
-                                        return Err(Error::unexpected_key_raw(inner, sym));
+                                        return Err(Error::unexpected_positional_raw(inner, pos));
                                     }
-                                    // Allow but discard extra key arguments
+                                    // Allow but discard extra positional arguments
                                     Rest::Discard => {}
-                                    // Capture extra key arguments in `**name`
-                                    Rest::Capture => key_rest
-                                        .as_mut()
-                                        .unwrap()
-                                        .push((inner.vm().sym_obj(sym), value.take())),
+                                    // Capture extra positional arguments in `*name`
+                                    Rest::Capture => pos_rest.as_mut().unwrap().push(value.take()),
                                 },
                             }
-                        }
-                    }
-                }
-                if pos < unpack.required {
-                    return Err(Error::missing_positional_raw(inner, pos));
-                }
-                for (i, default) in unpack
-                    .optional
-                    .get_unchecked((pos - unpack.required)..)
-                    .iter()
-                    .enumerate()
-                {
-                    let value = &mut *slots.get_unchecked(offset + unpack.required + i).get();
-                    value.store(default.dup())
-                }
-
-                for (i, key) in unpack.keys.iter().enumerate() {
-                    let value = &mut *slots.get_unchecked(offset + pos_count + i).get();
-                    if value.is_uninit() {
-                        if let Some(default) = &key.default {
-                            value.store(default.dup())
                         } else {
-                            return Err(match &key.kind {
-                                sig::UnpackKeyKind::Sym(sym) => Error::missing_key_raw(inner, *sym),
-                                sig::UnpackKeyKind::Const(_) => unreachable!(),
-                            });
+                            (*slots.get_unchecked(offset + pos).get())
+                                .store(value.into_inner().take());
+                            pos += 1
+                        }
+                    }
+                    Arg::Key(sym, mut value) => {
+                        if let Some(i) = unpack.sym_offset(sym) {
+                            if !assigned.replace(i - pos_count, true) {
+                                (*slots.get_unchecked(offset + i).get()).store(value.take());
+                                continue;
+                            }
+                            if unpack.variadic.keyed() == Rest::None {
+                                return Err(Error::duplicate_key_raw(inner, sym));
+                            }
+                        }
+                        match unpack.variadic {
+                            Variadic::Capture => {
+                                // Capture extra key arguments in rest
+                                rest.as_mut()
+                                    .unwrap()
+                                    .push_back(Some((Some(inner.vm().sym_obj(sym)), value.take())));
+                            }
+                            variadic => match variadic.keyed() {
+                                Rest::None => {
+                                    return Err(Error::unexpected_key_raw(inner, sym));
+                                }
+                                // Allow but discard extra key arguments
+                                Rest::Discard => {}
+                                // Capture extra key arguments in `**name`
+                                Rest::Capture => key_rest
+                                    .as_mut()
+                                    .unwrap()
+                                    .push((inner.vm().sym_obj(sym), value.take())),
+                            },
                         }
                     }
                 }
-                Ok(())
-            }));
-            match res {
-                Err(e) => {
-                    for slot in slots.get_unchecked(arg_range.clone()).iter() {
-                        let value = &mut *slot.get();
-                        if value.is_uninit() {
-                            value.store(Value::NIL);
-                        }
-                    }
-                    panic::resume_unwind(e);
+            }
+            if pos < unpack.required {
+                return Err(Error::missing_positional_raw(inner, pos));
+            }
+            for (i, default) in unpack
+                .optional
+                .get_unchecked((pos - unpack.required)..)
+                .iter()
+                .enumerate()
+            {
+                let value = &mut *slots.get_unchecked(offset + unpack.required + i).get();
+                value.store(default.dup())
+            }
+
+            for (i, key) in unpack.keys.iter().enumerate() {
+                if assigned[i] {
+                    continue;
                 }
-                Ok(Err(e)) => {
-                    for slot in slots.get_unchecked(arg_range.clone()).iter() {
-                        let value = &mut *slot.get();
-                        if value.is_uninit() {
-                            value.store(Value::NIL);
-                        }
-                    }
-                    return Err(e);
+                if let Some(default) = &key.default {
+                    (*slots.get_unchecked(offset + pos_count + i).get()).store(default.dup())
+                } else {
+                    return Err(match &key.kind {
+                        sig::UnpackKeyKind::Sym(sym) => Error::missing_key_raw(inner, *sym),
+                        sig::UnpackKeyKind::Const(_) => unreachable!(),
+                    });
                 }
-                Ok(Ok(())) => (),
-            };
+            }
             if let Some(rest) = rest {
                 let record = pack::Pack::new(rest.into_iter().flatten().collect());
                 (*slots

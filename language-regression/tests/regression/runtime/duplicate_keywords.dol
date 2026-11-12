@@ -62,3 +62,82 @@ assert_throws $UnexpectedKeyError str: "duplicate keyword argument: msg" do
 # Errors clean up the frame and don't affect subsequent invocations.
 assert_eq (required msg: 9) 9
 assert_eq (optional()) 42
+
+# More key parameters than fit in one word of the assigned bitset
+def many
+  :k0 = 0
+  :_k1 = 1
+  :_k2 = 2
+  :_k3 = 3
+  :_k4 = 4
+  :_k5 = 5
+  :_k6 = 6
+  :_k7 = 7
+  :_k8 = 8
+  :_k9 = 9
+  :_k10 = 10
+  :_k11 = 11
+  :_k12 = 12
+  :_k13 = 13
+  :_k14 = 14
+  :_k15 = 15
+  :_k16 = 16
+  :_k17 = 17
+  :_k18 = 18
+  :_k19 = 19
+  :_k20 = 20
+  :_k21 = 21
+  :_k22 = 22
+  :_k23 = 23
+  :_k24 = 24
+  :_k25 = 25
+  :_k26 = 26
+  :_k27 = 27
+  :_k28 = 28
+  :_k29 = 29
+  :_k30 = 30
+  :_k31 = 31
+  :_k32 = 32
+  :_k33 = 33
+  :_k34 = 34
+  :_k35 = 35
+  :_k36 = 36
+  :_k37 = 37
+  :_k38 = 38
+  :_k39 = 39
+  :_k40 = 40
+  :_k41 = 41
+  :_k42 = 42
+  :_k43 = 43
+  :_k44 = 44
+  :_k45 = 45
+  :_k46 = 46
+  :_k47 = 47
+  :_k48 = 48
+  :_k49 = 49
+  :_k50 = 50
+  :_k51 = 51
+  :_k52 = 52
+  :_k53 = 53
+  :_k54 = 54
+  :_k55 = 55
+  :_k56 = 56
+  :_k57 = 57
+  :_k58 = 58
+  :_k59 = 59
+  :_k60 = 60
+  :_k61 = 61
+  :_k62 = 62
+  :k63 = 63
+  :k64 = 64
+  :k65
+do
+  [k0, k63, k64, k65]
+assert_eq (many k65: 1) [0, 63, 64, 1]
+assert_eq (many k64: nil k65: nil k0: nil) [nil, 63, nil, nil]
+assert_throws $UnexpectedKeyError str: "duplicate keyword argument: k65" do
+  many k65: 1 k65: 2
+assert_throws $UnexpectedKeyError str: "duplicate keyword argument: k64" do
+  many k64: nil k65: 1 k64: 2
+assert_throws $std.MissingKeyError str: "missing key item: k65" do
+  many k64: 1

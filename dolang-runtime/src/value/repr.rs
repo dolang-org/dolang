@@ -32,7 +32,6 @@ pub(crate) mod tag {
 // non-zero (for compact `Option<Value>`), 0 is not used.
 mod known {
     use super::tag;
-    pub(super) const UNINIT: usize = 0b001 << tag::WIDTH;
     pub(super) const NIL: usize = 0b010 << tag::WIDTH;
     pub(super) const FALSE: usize = 0b011 << tag::WIDTH;
     pub(super) const TRUE: usize = 0b100 << tag::WIDTH;
@@ -152,12 +151,6 @@ use floating::*;
 pub(crate) struct Repr(NonNull<u8>);
 
 impl Repr {
-    // Special value which is used when a transient "not a valid value" state
-    // is needed.  It's unsafe to attempt to decode or otherwise operate on
-    // this value other than testing that it is the uninit state.
-    pub(crate) const UNINIT: Repr = Repr(NonNull::without_provenance(
-        NonZero::new(known::UNINIT).unwrap(),
-    ));
     // The unit type, but not called that for familiarity reasons
     pub(crate) const NIL: Repr = Repr(NonNull::without_provenance(
         NonZero::new(known::NIL).unwrap(),
@@ -219,8 +212,6 @@ impl Repr {
             tag::OBJECT => {
                 let addr = this.addr().get() & !tag::MASK;
                 match addr {
-                    // This catches unsafe use of uninit in debug builds
-                    known::UNINIT => unsafe { unreachable_unchecked() },
                     known::NIL => Decode::Prim(Prim::Nil),
                     known::FALSE => Decode::Prim(Prim::Bool(false)),
                     known::TRUE => Decode::Prim(Prim::Bool(true)),
@@ -235,14 +226,6 @@ impl Repr {
             }
             _ => unsafe { unreachable_unchecked() },
         }
-    }
-
-    #[inline]
-    pub(crate) fn is_uninit(&self) -> bool {
-        let this = self.0;
-        let tag = this.addr().get() & tag::MASK;
-        let addr = this.addr().get() & !tag::MASK;
-        matches!((tag, addr), (tag::OBJECT, known::UNINIT))
     }
 
     #[inline]
@@ -319,11 +302,6 @@ mod test {
     use std::hash::{DefaultHasher, Hash, Hasher};
 
     use super::*;
-
-    #[test]
-    fn uninit_is_uninit() {
-        assert!(Repr::UNINIT.is_uninit())
-    }
 
     #[test]
     fn encode_decode_known() {
