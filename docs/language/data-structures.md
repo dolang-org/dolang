@@ -137,18 +137,18 @@ specific cases:
 
 See the [Dict API](std.Dict) for details.
 
-## Args (`Args`)
+## Packs (`Pack`)
 
-An `Args` is an immutable sequence of positional items and symbol-keyed items,
-like a tuple with keys. It is the type of argument packs and of keyed tuple
-literals. Read an item by indexing with its symbol or position:
+A `Pack` is an immutable sequence of positional items and symbol-keyed items,
+like a tuple with keys. It is the type of a `...` rest capture and of keyed
+tuple literals. Read an item by indexing with its symbol or position:
 
 ```
 let r = (name: "Alice", age: 30)
 echo $r[:name:] # Alice
 ```
 
-Parentheses make an `Args` rather than a tuple when at least one key is
+Parentheses make a `Pack` rather than a tuple when at least one key is
 specified. Positional items get integer keys counting from 0:
 
 ```
@@ -158,16 +158,16 @@ let mixed = (1, 2, tag: "x")
 assert_eq $mixed[1] 2
 ```
 
-The `args` function builds an `Args` from its arguments:
+The `pack` function builds a `Pack` from its arguments:
 
 ```
-let r = args name: Alice age: 30
+let r = pack name: Alice age: 30
 ```
 
-A key may repeat, and a lookup finds its latest value. Iterating an `Args`
+A key may repeat, and a lookup finds its latest value. Iterating a `Pack`
 yields key/value tuples in order, with a positional item's position as its key.
 
-Use `with` to replace keys and `without` to remove them in a new `Args`:
+Use `with` to replace keys and `without` to remove them in a new `Pack`:
 
 ```
 let updated = r.with status: ready
@@ -182,12 +182,12 @@ Spreading a repeated key into a call binds its first value to a parameter of
 that name, and a `**` or `...` rest takes the later ones in order. Without a
 rest, the repeats raise [UnexpectedKeyError](std.UnexpectedKeyError).
 
-See the [Args API](std.Args) for details.
+See the [Pack API](std.Pack) for details.
 
 ## Records (`Record`)
 
 A `Record` is a mutable sequence of positional items and symbol-keyed items:
-the mutable counterpart of `Args`, as an array is of a tuple. A brace literal
+the mutable counterpart of `Pack`, as an array is of a tuple. A brace literal
 with positional items makes one, as does a vertical data block with both dash
 items and keys:
 
@@ -245,7 +245,7 @@ and unpacking give positional items positionally and keyed items as keys.
 Equality compares the items in that order, so the same items added in a
 different order are unequal. Hashing follows the same order, as a dict's does.
 
-The type `Record` takes its items as type arguments, as `Args` does:
+The type `Record` takes its items as type arguments, as `Pack` does:
 `Record[Str, tag: Str]`. Expand a schema for optional or repeated items, as in
 `Record[Str, ...{*Int, ?tag: Str}]`.
 
@@ -258,7 +258,7 @@ See the [Record API](std.Record) for details.
 ## Structs (`Struct`)
 
 Structs are mutable sequences of positional items and symbol-keyed items,
-like an `Args` whose keys are fields. A struct has no methods of its own, so a
+like a `Pack` whose keys are fields. A struct has no methods of its own, so a
 name reads or writes the item it keys:
 
 ```
@@ -273,7 +273,7 @@ one replaces its item in place, or adds an item at the end. Calling a name
 calls its item. Indexing reads and writes items by symbol or position.
 
 The `struct` function builds a struct from its arguments, and `Struct` from one
-spreadable source, as `Args` does:
+spreadable source, as `Pack` does:
 
 ```
 let s = Struct {host: "localhost", port: 22}
@@ -281,7 +281,7 @@ let s = Struct {host: "localhost", port: 22}
 
 A key appears at most once, so building a struct with a repeated key raises
 [ValueError](std.ValueError). Iterating, spreading and unpacking work as for an
-`Args`.
+`Pack`.
 
 Since every plain name is an item, operations take the struct as an argument
 to a class method instead:
@@ -292,7 +292,7 @@ if (Struct.contains s :user:)
   echo $s.user
 ```
 
-The type `Struct` takes its items as type arguments, as `Args` does, with a
+The type `Struct` takes its items as type arguments, as `Pack` does, with a
 schema expanded for optional items. Reading or writing a name they don't admit
 is an error:
 
@@ -328,20 +328,20 @@ See the [Set API](std.Set) for methods such as `add`, `contains`,
 
 ## Spreading
 
-`...` spreads a value into an array, tuple, dictionary, record, or args literal,
+`...` spreads a value into an array, tuple, dictionary, record, or pack literal,
 or into a call's arguments. What it contributes depends on both the value and
 the context:
 
 | Context                     | Spread input                          | Behavior                                                    |
 | --------------------------- | ------------------------------------- | ----------------------------------------------------------- |
-| Arguments, `Args` or record | Array, tuple, set, [`Iter`](std.Iter) | Positional items, including pair elements                   |
-| Arguments, `Args` or record | `Args`, record, struct                | Positional items stay positional, symbol keys are keywords  |
-| Arguments, `Args` or record | Dict                                  | Symbol keys are keywords; another key raises an error       |
+| Arguments, `Pack` or record | Array, tuple, set, [`Iter`](std.Iter) | Positional items, including pair elements                   |
+| Arguments, `Pack` or record | `Pack`, record, struct                | Positional items stay positional, symbol keys are keywords  |
+| Arguments, `Pack` or record | Dict                                  | Symbol keys are keywords; another key raises an error       |
 | Array or tuple              | Array, tuple, set, [`Iter`](std.Iter) | Positional elements                                         |
-| Array or tuple              | `Args`, record, struct                | Positional elements; a keyed entry raises an error          |
+| Array or tuple              | `Pack`, record, struct                | Positional elements; a keyed entry raises an error          |
 | Array or tuple              | Dict                                  | Raises an error, since every entry is keyed                 |
 | Dictionary                  | Array, tuple, set, [`Iter`](std.Iter) | Raises an error, since every element is positional          |
-| Dictionary                  | Dict, `Args`, record, struct          | Keyed entries; a positional item raises an error            |
+| Dictionary                  | Dict, `Pack`, record, struct          | Keyed entries; a positional item raises an error            |
 | Any                         | `kv()` adapter                        | Keyed entries; arrays and tuples reject them                |
 
 Spread a dictionary directly to preserve its keys:
@@ -352,7 +352,7 @@ let extended = {...base, age: 30}
 ```
 
 Spreading dicts preserves duplicate keys and order. Spreading any `Iter`,
-including a dict or `Args` pair iterator, gives its elements positionally, so
+including a dict or `Pack` pair iterator, gives its elements positionally, so
 `iter()` gives an array of a dict's key/value pairs:
 
 ```

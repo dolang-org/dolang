@@ -1,8 +1,8 @@
-let _open @ Args[name: Str, ...] = nil
+let _open @ Pack[name: Str, ...] = nil
 # error: expected type
 #   --> type_arg_forms.dol:LL:LL
 #    |
-# LL | let _open @ Args[name: Str, ...] = nil
+# LL | let _open @ Pack[name: Str, ...] = nil
 #    |                                ^
 let _keyed @ Dict[...Str: Int] = nil
 # error: expected type

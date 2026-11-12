@@ -30,7 +30,7 @@ assert_eq (type sym) $Func
 assert_eq (type array) $Func
 assert_eq (type dict) $Func
 assert_eq (type tuple) $Func
-assert_eq (type args) $Func
+assert_eq (type pack) $Func
 assert_throws $TypeError do Type()
 assert_throws $TypeError do Value()
 

@@ -787,7 +787,7 @@ pub(crate) enum Expr {
     },
     /// A parenthesized sequence with at least one static key: `(a: 1)`,
     /// `(x, :y)`. Arguments are only `Pos`, `Key`, or `Expand`.
-    Args {
+    Pack {
         paren_span: Span,
         args: Vec<Arg>,
     },
@@ -1141,8 +1141,8 @@ impl Expr {
                 _ => SideEffect::Likely,
             })),
 
-            // Args literals - check all elements
-            Expr::Args { args, .. } => Self::combine_iter(args.iter().map(|a| match a {
+            // Pack literals - check all elements
+            Expr::Pack { args, .. } => Self::combine_iter(args.iter().map(|a| match a {
                 Arg::Pos(s) => s.expr.side_effect(),
                 Arg::Key(k) => k.expr.side_effect(),
                 // Expansion upgrades VarRef to Unlikely (overloadable unpack)
@@ -1460,7 +1460,7 @@ impl Node for Expr {
                 elems.accept(visit)?;
                 visit.token(Token::Delim, paren_span.right_char(), None)
             }
-            Expr::Args { paren_span, args } => {
+            Expr::Pack { paren_span, args } => {
                 visit.token(Token::Delim, paren_span.left_char(), None)?;
                 args.accept(visit)?;
                 visit.token(Token::Delim, paren_span.right_char(), None)
@@ -1501,7 +1501,7 @@ impl Node for Expr {
             Expr::Array { .. } => NodeKind::Array,
             Expr::Dict { .. } => NodeKind::Dict,
             Expr::Tuple { .. } => NodeKind::Tuple,
-            Expr::Args { .. } => NodeKind::Args,
+            Expr::Pack { .. } => NodeKind::Pack,
             Expr::Error => NodeKind::Error,
         }
     }

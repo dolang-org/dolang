@@ -1,5 +1,5 @@
 //! `Record`: a mutable sequence of positional and symbol-keyed items, the
-//! mutable counterpart of [`Args`](super::args::Args).
+//! mutable counterpart of [`Pack`](super::pack::Pack).
 //!
 //! Every item has a slot in an order index, which iteration, spreading,
 //! unpacking and equality walk. Positional items are a separate lane: `pos`
@@ -30,9 +30,8 @@ use crate::{
 };
 
 use super::{
-    BoundMethod,
-    args::{self, ArgItem},
-    index, iter,
+    BoundMethod, index, iter,
+    pack::{self, ArgItem},
     protocol::{
         GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, instance_get_fallback,
         instance_mcall_fallback, is_special_mcall, type_mcall_fallback,
@@ -340,16 +339,16 @@ impl<'v> Record<'v> {
     }
 }
 
-/// An `Args` holding the items of `this` as they are now, for unpacking.
+/// A `Pack` holding the items of `this` as they are now, for unpacking.
 fn snapshot<'v, 's>(
     strand: &mut Strand<'v, 's>,
     this: &Recv<'v, '_, Record<'v>>,
-) -> Result<'v, 's, GcObj<'v, args::Args<'v>>> {
+) -> Result<'v, 's, GcObj<'v, pack::Pack<'v>>> {
     let items = this.borrow(strand)?.snapshot();
     Ok(GcObj::new(
         strand.vm().arena(),
-        strand.builtin_types().args,
-        args::Args::new(items),
+        strand.builtin_types().pack,
+        pack::Pack::new(items),
     ))
 }
 
@@ -397,7 +396,7 @@ impl<'v> Protocol<'v> for Record<'v> {
         if !braces {
             crate::fmt!(strand, w, "Record")?;
         }
-        args::debug_items(strand, &items, braces, w)
+        pack::debug_items(strand, &items, braces, w)
     }
 
     fn op_bool<'a, 's>(
@@ -730,7 +729,7 @@ impl<'v> Protocol<'v> for Record<'v> {
         out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let snapshot = snapshot(strand, &this)?;
-        args::unpack(strand, snapshot, sig, out)
+        pack::unpack(strand, snapshot, sig, out)
     }
 }
 
@@ -1061,7 +1060,7 @@ impl<'v> Protocol<'v> for Class {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([source], []) = unpack!(strand, args, 1, 0)?;
-        let items = args::source_items(strand, &source).await?;
+        let items = pack::source_items(strand, &source).await?;
         strand
             .builtin_types()
             .record

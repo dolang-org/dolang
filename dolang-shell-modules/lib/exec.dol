@@ -55,7 +55,7 @@ def cache_usable cache @ fs.Path path @ fs.Path -> Bool
 
 # Values a script reads as the fields of an imported module.
 class Namespace
-  field values @ Args[...{**Value}]
+  field values @ Pack[...{**Value}]
 
   def (init) self values @ BaseDict[Value, Value]
     let fields @ Dict[Sym, Value] = {}
@@ -63,7 +63,7 @@ class Namespace
       if !(type name Sym)
         throw std.TypeError "module field: expected `Sym`"
       fields[name] = value
-    self.#values = Args $fields
+    self.#values = Pack $fields
 
   def (get) self name @ Sym -> Value
     self.#values.get $name else: do throw std.FieldError $name

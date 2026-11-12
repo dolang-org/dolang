@@ -22,7 +22,7 @@ pub def dict_items x @ Dict[Fields]
   let _ = x[:size:]
   #   ^: flow std.Int
 
-pub def record_items x @ Args[...Fields]
+pub def record_items x @ Pack[...Fields]
   let _ = x[:total:]
   #   ^: flow nil | std.Int
 

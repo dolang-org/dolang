@@ -549,7 +549,7 @@ impl Dump<'_> {
                     Collection::Dict => "dict",
                     Collection::Record => "record",
                     Collection::Tuple => "tuple",
-                    Collection::Args => "args",
+                    Collection::Pack => "pack",
                 };
                 write!(out, "{kind}[")?;
                 self.items(out, items)?;

@@ -13,15 +13,15 @@ use crate::{
 };
 
 use super::{
-    args::ArgItem,
+    pack::ArgItem,
     protocol::{Protocol, Recv, Spread, SpreadContext, instance_mcall_fallback},
 };
 
-pub(crate) struct ArgPack<'v> {
+pub(crate) struct ArgAcc<'v> {
     inner: Vec<ArgItem<'v>>,
 }
 
-impl<'v> ArgPack<'v> {
+impl<'v> ArgAcc<'v> {
     pub(crate) fn new(inner: Vec<ArgItem<'v>>) -> Self {
         Self { inner }
     }
@@ -47,7 +47,7 @@ impl<'v> ArgPack<'v> {
     }
 }
 
-unsafe impl<'v> Collect for ArgPack<'v> {
+unsafe impl<'v> Collect for ArgAcc<'v> {
     const CYCLIC: bool = true;
     const IMMUTABLE: bool = false;
     type Annex = ();
@@ -67,13 +67,13 @@ unsafe impl<'v> Collect for ArgPack<'v> {
     }
 }
 
-impl<'v> Protocol<'v> for ArgPack<'v> {
+impl<'v> Protocol<'v> for ArgAcc<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().arg_pack)
+        Output::set(strand, out, &strand.singletons().arg_acc)
     }
 
     fn op_debug<'a, 's>(
@@ -81,7 +81,7 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
         strand: &mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<args>")
+        crate::fmt!(strand, w, "<arg accumulator>")
     }
 
     async fn op_spread<'a, 's>(

@@ -23,7 +23,7 @@ use crate::{
 enum ParenKind {
     Group,
     Tuple,
-    Args,
+    Pack,
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -114,7 +114,7 @@ impl Parser<'_> {
     /// Parse the items between parentheses, up to but not including the `)`.
     ///
     /// These become the arguments of a C-style call, or a group, tuple, or
-    /// `Args` via [`Self::paren_expr`].
+    /// `Pack` via [`Self::paren_expr`].
     fn parse_arg_pack(&mut self, scope: &mut Scope) -> Result<Vec<Arg>> {
         use self::Key;
         use TokenInfo::*;
@@ -167,7 +167,7 @@ impl Parser<'_> {
     /// Classify parenthesized items.
     ///
     /// A lone positional item without a trailing comma is a group. Otherwise,
-    /// any static key makes an `Args`, and anything else is a tuple.
+    /// any static key makes a `Pack`, and anything else is a tuple.
     fn paren_kind(args: &[Arg]) -> ParenKind {
         if let [
             Arg::Pos(Single {
@@ -177,7 +177,7 @@ impl Parser<'_> {
         {
             ParenKind::Group
         } else if args.iter().any(|arg| matches!(arg, Arg::Key(_))) {
-            ParenKind::Args
+            ParenKind::Pack
         } else {
             ParenKind::Tuple
         }
@@ -227,7 +227,7 @@ impl Parser<'_> {
                     delim: Some(GroupDelim::Paren(paren_span)),
                 };
             }
-            ParenKind::Args => return Expr::Args { paren_span, args },
+            ParenKind::Pack => return Expr::Pack { paren_span, args },
             ParenKind::Tuple => (),
         }
         let elems = args
@@ -583,7 +583,7 @@ impl Parser<'_> {
         };
 
         // A C-style call separated from its callee by whitespace, which looks like
-        // a call with a tuple or `Args`. Reported once the call is final, since
+        // a call with a tuple or `Pack`. Reported once the call is final, since
         // juxtaposing another argument turns it into exactly that.
         let mut spaced_call: Option<MisleadingCall> = None;
 
@@ -839,7 +839,7 @@ impl Parser<'_> {
                     let mut juxta_warn = false;
                     // Immediately invoking the result of a C-style call is disallowed.
                     // Convert it into a regular call whose first argument is a group,
-                    // tuple, or `Args`, unless in compact mode, where we give up parsing
+                    // tuple, or `Pack`, unless in compact mode, where we give up parsing
                     if let Expr::Call {
                         arg0,
                         args,
@@ -918,7 +918,7 @@ impl Parser<'_> {
                                     spaced_call = Some(MisleadingCall {
                                         callee_span,
                                         paren_span,
-                                        args: kind == ParenKind::Args,
+                                        args: kind == ParenKind::Pack,
                                     });
                                 }
                             }

@@ -248,7 +248,7 @@ pub def lambda_signature()
     let _ = pos
     #       ^~~: flow (*std.Int)
     let _ = kw
-    #       ^~: flow std.Args[...Unknown{}]
+    #       ^~: flow std.Pack[...Unknown{}]
     nil
   h 1
   let g = (do |x <Iter[Int]| -> Int x)
@@ -287,7 +287,7 @@ pub def loops()
   let _ = y
   #       ^: flow std.Int | std.Str | std.Sym
 
-# A rest binds a tuple or `Args` of the items its declared schema leaves it
+# A rest binds a tuple or `Pack` of the items its declared schema leaves it
 pub def rests a @ Int *pos @ Int **kw @ Str
   let _ = pos
   #       ^~~: flow (*std.Int)

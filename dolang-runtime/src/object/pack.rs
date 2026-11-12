@@ -23,7 +23,7 @@ use crate::{
 
 use super::{
     BoundMethod,
-    arg::ArgPack,
+    arg::ArgAcc,
     iter,
     protocol::{
         GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, instance_get_fallback,
@@ -33,19 +33,19 @@ use super::{
     tuple,
 };
 
-/// An item of an `Args` or argument pack: its symbol key, or `None` for a
+/// An item of a `Pack` or an argument accumulator: its symbol key, or `None` for a
 /// positional item
 pub(crate) type ArgItem<'v> = (Option<GcObj<'v, SymObj>>, Value<'v>);
 
-// ── Args ──────────────────────────────────────────────────────────
+// ── Pack ──────────────────────────────────────────────────────────
 
 /// An immutable sequence of positional and symbol-keyed items, in the order
 /// they were given
-pub(crate) struct Args<'v> {
+pub(crate) struct Pack<'v> {
     items: Box<[ArgItem<'v>]>,
 }
 
-unsafe impl<'v> Collect for Args<'v> {
+unsafe impl<'v> Collect for Pack<'v> {
     const CYCLIC: bool = true;
     const IMMUTABLE: bool = true;
     type Annex = ();
@@ -65,7 +65,7 @@ unsafe impl<'v> Collect for Args<'v> {
     }
 }
 
-impl<'v> Args<'v> {
+impl<'v> Pack<'v> {
     pub(crate) fn new(items: Vec<ArgItem<'v>>) -> Self {
         Self {
             items: items.into_boxed_slice(),
@@ -73,10 +73,10 @@ impl<'v> Args<'v> {
     }
 
     pub(crate) fn from_args(vm: &Vm<'v>, args: arg::Args<'v, '_>) -> Self {
-        Self::new(args_items(vm, args))
+        Self::new(pack_items(vm, args))
     }
 
-    /// Builds an `Args` of symbol-keyed entries, such as the leftovers for a `**name` rest.
+    /// Builds a `Pack` of symbol-keyed entries, such as the leftovers for a `**name` rest.
     ///
     /// This never checks for a GC trap, so the caller may hold `entries` unrooted.
     pub(crate) fn from_sym_entries(entries: Vec<(GcObj<'v, SymObj>, Value<'v>)>) -> Self {
@@ -94,7 +94,7 @@ impl<'v> Args<'v> {
 }
 
 /// The items of `args`, in order
-pub(crate) fn args_items<'v>(vm: &Vm<'v>, args: arg::Args<'v, '_>) -> Vec<ArgItem<'v>> {
+pub(crate) fn pack_items<'v>(vm: &Vm<'v>, args: arg::Args<'v, '_>) -> Vec<ArgItem<'v>> {
     args.map(|arg| match arg {
         Arg::Pos(mut value) => (None, value.take()),
         Arg::Key(key, mut value) => (Some(vm.sym_obj(key)), value.take()),
@@ -243,10 +243,10 @@ pub(crate) fn spread_items<'v, 's>(
     Ok(())
 }
 
-/// Creates an empty `Args`.
-pub(crate) fn empty<'v>(strand: &mut Strand<'v, '_>) -> GcObj<'v, Args<'v>> {
+/// Creates an empty `Pack`.
+pub(crate) fn empty<'v>(strand: &mut Strand<'v, '_>) -> GcObj<'v, Pack<'v>> {
     let vm = strand.vm();
-    GcObj::new(vm.arena(), vm.builtin_types().args, Args::new(Vec::new()))
+    GcObj::new(vm.arena(), vm.builtin_types().pack, Pack::new(Vec::new()))
 }
 
 /// The key of an item as a value: the symbol, or the position `int` counts
@@ -390,7 +390,7 @@ fn unpack_plan<'v, 'a, 's>(
     })
 }
 
-/// Stores the tuple of a `*name` rest and the `Args` of a `**name` rest.
+/// Stores the tuple of a `*name` rest and the `Pack` of a `**name` rest.
 fn store_split_rests<'v, 'a>(
     strand: &mut Strand<'v, '_>,
     sig: &sig::Unpack<'v, 'a>,
@@ -421,8 +421,8 @@ fn store_split_rests<'v, 'a>(
             .collect();
         out.at(i).store(Value::from_object(GcObj::new(
             strand.vm().arena(),
-            strand.builtin_types().args,
-            Args::from_sym_entries(entries),
+            strand.builtin_types().pack,
+            Pack::from_sym_entries(entries),
         )));
     }
 }
@@ -455,7 +455,7 @@ fn fill_unpack_defaults<'v, 'a>(
 /// the items left over.
 pub(crate) fn unpack<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
-    args: GcObj<'v, Args<'v>>,
+    args: GcObj<'v, Pack<'v>>,
     sig: &sig::Unpack<'v, 'a>,
     mut out: Slots<'v, 'a>,
 ) -> Result<'v, 's, ()> {
@@ -481,7 +481,7 @@ pub(crate) fn unpack<'v, 'a, 's>(
         let positional_matched =
             i64::try_from(plan.pos_matched).map_err(|_| Error::overflow(strand))?;
         drop(borrow);
-        strand.builtin_types().args_rest.create(
+        strand.builtin_types().pack_rest.create(
             strand,
             Rest::new(args, skip, pos, positional_matched),
             out.at(sig.len() - 1),
@@ -493,9 +493,9 @@ pub(crate) fn unpack<'v, 'a, 's>(
 
 // ── Iter ────────────────────────────────────────────────────────────
 
-/// An iterator over an `Args`'s `(key, value)` pairs.
+/// An iterator over a `Pack`'s `(key, value)` pairs.
 pub(crate) struct Iter<'v> {
-    args: GcObj<'v, Args<'v>>,
+    args: GcObj<'v, Pack<'v>>,
     skip: HashSet<usize>,
     pos: usize,
     int: i64,
@@ -503,7 +503,7 @@ pub(crate) struct Iter<'v> {
 
 impl<'v> Iter<'v> {
     pub(crate) fn new(
-        args: GcObj<'v, Args<'v>>,
+        args: GcObj<'v, Pack<'v>>,
         skip: HashSet<usize>,
         pos: usize,
         int: i64,
@@ -562,7 +562,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<args iterator>")
+        crate::fmt!(strand, w, "<pack iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -590,7 +590,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         if let Some(i) = sig.pos_rest_slot() {
             strand
                 .builtin_types()
-                .args_iter
+                .pack_iter
                 .create(strand, cursor, out.at(i));
         }
         sig.fill_empty_key_rest(strand, &mut out);
@@ -651,9 +651,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
     }
 }
 
-/// Read-only view of the unmatched items of an `Args`.
+/// Read-only view of the unmatched items of a `Pack`.
 pub(crate) struct Rest<'v> {
-    args: GcObj<'v, Args<'v>>,
+    args: GcObj<'v, Pack<'v>>,
     skip: HashSet<usize>,
     pos: usize,
     int: i64,
@@ -661,7 +661,7 @@ pub(crate) struct Rest<'v> {
 
 impl<'v> Rest<'v> {
     pub(crate) fn new(
-        args: GcObj<'v, Args<'v>>,
+        args: GcObj<'v, Pack<'v>>,
         skip: HashSet<usize>,
         pos: usize,
         int: i64,
@@ -729,7 +729,7 @@ impl<'v> Protocol<'v> for Rest<'v> {
         strand: &mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<args rest>")
+        crate::fmt!(strand, w, "<pack rest>")
     }
 
     async fn op_unpack<'a, 's>(
@@ -776,7 +776,7 @@ impl<'v> Protocol<'v> for Rest<'v> {
         if sig.variadic == Variadic::Capture {
             strand
                 .builtin_types()
-                .args_rest
+                .pack_rest
                 .create(strand, child, out.at(sig.len() - 1));
         }
 
@@ -795,7 +795,7 @@ impl<'v> Protocol<'v> for Rest<'v> {
             borrow.pos,
             borrow.int,
         );
-        strand.builtin_types().args_iter.create(strand, iter, out);
+        strand.builtin_types().pack_iter.create(strand, iter, out);
         Ok(())
     }
 
@@ -825,15 +825,15 @@ impl<'v> Protocol<'v> for Rest<'v> {
     }
 }
 
-// ── Args protocol ─────────────────────────────────────────────────
+// ── Pack protocol ─────────────────────────────────────────────────
 
-impl<'v> Protocol<'v> for Args<'v> {
+impl<'v> Protocol<'v> for Pack<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().args)
+        Output::set(strand, out, &strand.singletons().pack)
     }
 
     fn op_debug<'a, 's>(
@@ -861,7 +861,7 @@ impl<'v> Protocol<'v> for Args<'v> {
         hasher: &mut DefaultHasher,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        sym::ARGS.hash(hasher);
+        sym::PACK.hash(hasher);
         hash_items(strand, &borrow.items, hasher)
     }
 
@@ -870,7 +870,7 @@ impl<'v> Protocol<'v> for Args<'v> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let Some(other) = other.downcast_ref(strand.builtin_types().args) else {
+        let Some(other) = other.downcast_ref(strand.builtin_types().pack) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let left = this.borrow(strand)?;
@@ -887,7 +887,7 @@ impl<'v> Protocol<'v> for Args<'v> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let Some(other) = other.downcast_ref(strand.builtin_types().args) else {
+        let Some(other) = other.downcast_ref(strand.builtin_types().pack) else {
             return Err(Error::unsupported(strand, "`<`"));
         };
         let left = this.borrow(strand)?;
@@ -908,7 +908,7 @@ impl<'v> Protocol<'v> for Args<'v> {
         if !index.is_int(strand) && index.as_sym(strand).is_none() {
             return Err(Error::type_error(
                 strand,
-                "args only support symbol and integer keys",
+                "a pack only supports symbol and integer keys",
             ));
         }
         let borrow = this.borrow(strand)?;
@@ -1023,8 +1023,8 @@ impl<'v> Protocol<'v> for Args<'v> {
                 }
                 strand
                     .builtin_types()
-                    .args
-                    .create(strand, Args::new(items), out);
+                    .pack
+                    .create(strand, Pack::new(items), out);
                 Ok(())
             }
             sym::WITHOUT => {
@@ -1051,13 +1051,13 @@ impl<'v> Protocol<'v> for Args<'v> {
                 }
                 strand
                     .builtin_types()
-                    .args
-                    .create(strand, Args::new(items), out);
+                    .pack
+                    .create(strand, Pack::new(items), out);
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(
                 strand,
-                "args.len is a field, not a method",
+                "pack.len is a field, not a method",
             )),
             _ if is_special_mcall(method.tag()) => {
                 instance_mcall_fallback(strand, &this, method, args, out).await
@@ -1080,7 +1080,7 @@ impl<'v> Protocol<'v> for Args<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        strand.builtin_types().args_iter.create(
+        strand.builtin_types().pack_iter.create(
             strand,
             Iter::new(this.to_strong(), HashSet::new(), 0, 0),
             out,
@@ -1108,15 +1108,15 @@ impl<'v> Protocol<'v> for Args<'v> {
     }
 }
 
-// ── Args Class ────────────────────────────────────────────────────
+// ── Pack Class ────────────────────────────────────────────────────
 
-/// Collects a source's pairs for `Args src`, into an argument pack rooted in
-/// a slot. An `Args` holds only positional items and symbol keys.
-struct ArgsPairs<'b, 'v> {
+/// Collects a source's pairs for `Pack src`, into an argument accumulator rooted in
+/// a slot. A `Pack` holds only positional items and symbol keys.
+struct PackPairs<'b, 'v> {
     pack: &'b Value<'v>,
 }
 
-impl<'v> ArgsPairs<'_, 'v> {
+impl<'v> PackPairs<'_, 'v> {
     fn push<'s>(
         &mut self,
         strand: &mut Strand<'v, 's>,
@@ -1125,8 +1125,8 @@ impl<'v> ArgsPairs<'_, 'v> {
     ) -> Result<'v, 's, ()> {
         let pack = self
             .pack
-            .downcast_ref(strand.builtin_types().arg_pack)
-            .expect("args source pack");
+            .downcast_ref(strand.builtin_types().arg_acc)
+            .expect("source accumulator");
         pack.borrow_mut()
             .ok_or_else(|| Error::concurrency(strand))?
             .push((key, value));
@@ -1134,7 +1134,7 @@ impl<'v> ArgsPairs<'_, 'v> {
     }
 }
 
-impl<'v, 's> Spread<'v, 's> for ArgsPairs<'_, 'v> {
+impl<'v, 's> Spread<'v, 's> for PackPairs<'_, 'v> {
     fn positional(
         &mut self,
         strand: &mut Strand<'v, 's>,
@@ -1208,7 +1208,7 @@ impl<'v> Protocol<'v> for Class {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Args>")
+        crate::fmt!(strand, w, "<type std.Pack>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -1253,15 +1253,15 @@ impl<'v> Protocol<'v> for Class {
                 let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
                 strand
                     .with_slots(async |strand, [mut native]| {
-                        call!(strand, &strand.singletons().args, &mut native, items).await?;
-                        self_val.op_fill(strand, &strand.singletons().args, native.take())?;
+                        call!(strand, &strand.singletons().pack, &mut native, items).await?;
+                        self_val.op_fill(strand, &strand.singletons().pack, native.take())?;
                         Ok(())
                     })
                     .await
             }
             _ => {
                 let vm = strand.vm();
-                type_mcall_fallback(strand, &vm.singletons().args, method, args, out).await
+                type_mcall_fallback(strand, &vm.singletons().pack, method, args, out).await
             }
         }
     }
@@ -1305,13 +1305,13 @@ impl<'v> Protocol<'v> for Class {
         let items = source_items(strand, &source).await?;
         strand
             .builtin_types()
-            .args
-            .create(strand, Args::new(items), out);
+            .pack
+            .create(strand, Pack::new(items), out);
         Ok(())
     }
 }
 
-/// Collects the items of `source` for `Args src`.
+/// Collects the items of `source` for `Pack src`.
 ///
 /// The items are unrooted, so the caller must store them before anything can
 /// collect.
@@ -1323,18 +1323,18 @@ pub(crate) async fn source_items<'v, 's>(
         .with_slots(async |strand, [mut pack]| {
             // Spreading can run arbitrary code, so the items collect in a
             // pack the GC can see
-            strand.builtin_types().arg_pack.create(
+            strand.builtin_types().arg_acc.create(
                 strand,
-                ArgPack::new(Vec::new()),
+                ArgAcc::new(Vec::new()),
                 Slot::reborrow(&mut pack),
             );
-            let mut sink = ArgsPairs { pack: &pack };
+            let mut sink = PackPairs { pack: &pack };
             source
                 .op_spread(strand, SpreadContext::Pairs, &mut sink)
                 .await?;
             Ok(pack
-                .downcast_ref(strand.builtin_types().arg_pack)
-                .expect("args source pack")
+                .downcast_ref(strand.builtin_types().arg_acc)
+                .expect("source accumulator")
                 .borrow_mut()
                 .ok_or_else(|| Error::concurrency(strand))?
                 .take())

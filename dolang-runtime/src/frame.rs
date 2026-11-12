@@ -17,7 +17,7 @@ use crate::{
     bytecode::{Rest, Variadic},
     error::{Error, Result},
     gc::{Collect, Gc, arena::Visit},
-    object::{args, protocol::GcObj, tuple},
+    object::{pack, protocol::GcObj, tuple},
     sig,
     strand::Strand,
     value::Value,
@@ -234,13 +234,13 @@ impl<'v> CallFrame<'v> {
                 Ok(Ok(())) => (),
             };
             if let Some(rest) = rest {
-                let record = args::Args::new(rest.into_iter().flatten().collect());
+                let record = pack::Pack::new(rest.into_iter().flatten().collect());
                 (*slots
                     .get_unchecked(offset + pos_count + unpack.keys.len())
                     .get())
                 .store(Value::from_object(GcObj::new(
                     inner.vm().arena(),
-                    inner.vm().builtin_types().args,
+                    inner.vm().builtin_types().pack,
                     record,
                 )));
             }
@@ -251,10 +251,10 @@ impl<'v> CallFrame<'v> {
                 rest_slot += 1;
             }
             if let Some(entries) = key_rest {
-                let record = args::Args::from_sym_entries(entries);
+                let record = pack::Pack::from_sym_entries(entries);
                 (*slots.get_unchecked(rest_slot).get()).store(Value::from_object(GcObj::new(
                     inner.vm().arena(),
-                    inner.vm().builtin_types().args,
+                    inner.vm().builtin_types().pack,
                     record,
                 )));
             }

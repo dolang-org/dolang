@@ -675,7 +675,7 @@ enum Shape {
     /// An empty dict, whose schema is left to what it's in, so long as it admits
     /// no items
     Empty,
-    /// A tuple or `Args`, with the lanes its spreads can fill
+    /// A tuple or `Pack`, with the lanes its spreads can fill
     Items(Rest),
 }
 
@@ -2787,7 +2787,7 @@ impl<'a> Flow<'a, '_> {
     /// dict, unless something is expected of it: then its schema is its items'. A
     /// union expects several schemas of a dict; it takes the one its items fit,
     /// or else the one its keys do, and its items held back take what that
-    /// schema expects of them. A tuple or `Args` takes its items' schema; neither
+    /// schema expects of them. A tuple or `Pack` takes its items' schema; neither
     /// has a vertical form, so neither holds a comprehension. With an expected
     /// type, the collection types the `do` blocks among its items.
     pub(super) fn collection(
@@ -2882,7 +2882,7 @@ impl<'a> Flow<'a, '_> {
     }
 
     /// The type of a collection that no rule checks, if it's one: one that's
-    /// never produced, a tuple or `Args` with a comprehension, or one without
+    /// never produced, a tuple or `Pack` with a comprehension, or one without
     /// its class
     fn unchecked_collection(&mut self, at: At, prepared: &PreparedCollection) -> Option<TypeId> {
         let PreparedCollection {
@@ -2902,7 +2902,7 @@ impl<'a> Flow<'a, '_> {
             && class.is_some()
         {
             self.unchecked(at, values, span);
-            return Some(self.gap(span, "a comprehension in a tuple or `Args`"));
+            return Some(self.gap(span, "a comprehension in a tuple or `Pack`"));
         }
         if class.is_none() {
             self.unchecked(at, values, span);
@@ -2979,7 +2979,7 @@ impl<'a> Flow<'a, '_> {
                 }
             }
             Collection::Tuple => Shape::Items(Rest::Positional),
-            Collection::Args => Shape::Items(Rest::All),
+            Collection::Pack => Shape::Items(Rest::All),
         };
         let term = collection_constraint(rule, values, class, shape, spread, span);
         (term, seed)
@@ -4187,7 +4187,7 @@ fn collection_role(kind: Collection) -> Designated {
         Collection::Dict => Designated::Dict,
         Collection::Record => Designated::Record,
         Collection::Tuple => Designated::Intrinsic(Intrinsic::Tuple),
-        Collection::Args => Designated::Args,
+        Collection::Pack => Designated::Pack,
     }
 }
 
@@ -4361,11 +4361,11 @@ fn collection_constraint<'p>(
                         let key = match at {
                             HeldAt::Positional => None,
                             HeldAt::Keyword(key) => Some(key),
-                            HeldAt::Pair(_) => unreachable!("a tuple or `Args` has no pairs"),
+                            HeldAt::Pair(_) => unreachable!("a tuple or `Pack` has no pairs"),
                         };
                         elements.push((key, var, Kind::Type));
                     }
-                    Value::Pair(..) => unreachable!("a tuple or `Args` has no pairs"),
+                    Value::Pair(..) => unreachable!("a tuple or `Pack` has no pairs"),
                 }
             }
             rule.term(|holes| {

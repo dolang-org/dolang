@@ -3,7 +3,7 @@ use std::hash::Hasher;
 use crate::{
     error::Error,
     object::{
-        args, array::Array, class, dict::Dict, float, int, record::Record, structure::Struct, tuple,
+        array::Array, class, dict::Dict, float, int, pack, record::Record, structure::Struct, tuple,
     },
     unpack,
     value::{Output, StrEmbryo, Value},
@@ -42,7 +42,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     let func = bc.func.dup();
     let range = bc.range.dup();
     let module = bc.module.dup();
-    let args_class = bc.args.dup();
+    let pack_class = bc.pack.dup();
     let record = bc.record.dup();
     let structure = bc.structure.dup();
     let bin = bc.bin.dup();
@@ -132,7 +132,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             Ok(())
         })
         .value("Module", &module)
-        .value("Args", &args_class)
+        .value("Pack", &pack_class)
         .value("Record", &record)
         // A type-only split of `Record`; the same class at runtime
         .value("BaseRecord", &record)
@@ -197,13 +197,13 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             out.store(Value::from_object(tuple::tuple(strand.vm(), values)));
             Ok(())
         })
-        .function("args", async move |strand, args, out| {
-            let value = args::Args::from_args(strand, args);
-            strand.builtin_types().args.create(strand, value, out);
+        .function("pack", async move |strand, args, out| {
+            let value = pack::Pack::from_args(strand, args);
+            strand.builtin_types().pack.create(strand, value, out);
             Ok(())
         })
         .function("record", async move |strand, args, out| {
-            let items = args::args_items(strand, args);
+            let items = pack::pack_items(strand, args);
             strand
                 .builtin_types()
                 .record
@@ -211,7 +211,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             Ok(())
         })
         .function("struct", async move |strand, args, out| {
-            let items = args::args_items(strand, args);
+            let items = pack::pack_items(strand, args);
             let structure = Struct::new(strand, items)?;
             strand
                 .builtin_types()

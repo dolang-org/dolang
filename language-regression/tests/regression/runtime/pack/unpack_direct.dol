@@ -1,15 +1,15 @@
 # Positional unpack against integer keys
-let x y = args("zero", "one")
+let x y = pack("zero", "one")
 assert_eq $x zero
 assert_eq $y one
 assert_throws $std.RuntimeError str: "unexpected positional item: 2" do
-  let _a _b = args("zero", "one", "two")
+  let _a _b = pack("zero", "one", "two")
 assert_throws $std.RuntimeError str: "missing positional item: 1" do
-  let _a _b = args("only-zero")
+  let _a _b = pack("only-zero")
 
 # ...rest captures the remaining pairs as a structural rest, in order, skipping those
 # already matched
-let :a ...rest = args(a: 1, b: 2, c: 3)
+let :a ...rest = pack(a: 1, b: 2, c: 3)
 assert_eq $a 1
 let pairs = $
   for k v = Dict(rest)
@@ -17,7 +17,7 @@ let pairs = $
 assert_eq $pairs [(Tuple [:b:, 2]), (Tuple [:c:, 3])]
 
 # materializing the structural rest numbers its positional items from zero
-let x2 :k ...rest2 = args("zero", k: 1, "one", "two")
+let x2 :k ...rest2 = pack("zero", k: 1, "one", "two")
 assert_eq $x2 zero
 assert_eq $k 1
 let pairs2 = $
@@ -25,16 +25,16 @@ let pairs2 = $
     - (Tuple [k, v])
 assert_eq $pairs2 [(Tuple [0, "one"]), (Tuple [1, "two"])]
 
-# an integer key is not a position, so an `Args` refuses it
-assert_throws $std.UnexpectedKeyError do Args {0: "zero", 1: "one"}
+# an integer key is not a position, so a `Pack` refuses it
+assert_throws $std.UnexpectedKeyError do Pack {0: "zero", 1: "one"}
 
 # the structural rest supports further keyed/positional unpacking
-let a: _a ...rest4 = args(a: 1, "zero", "one")
+let a: _a ...rest4 = pack(a: 1, "zero", "one")
 let d e = rest4
 assert_eq $d zero
 assert_eq $e one
 
-let a: _a ...rest5 = args(a: 1, b: 2)
+let a: _a ...rest5 = pack(a: 1, b: 2)
 bind rest5
   :b
   :missing = "fallback"
@@ -43,23 +43,23 @@ assert_eq $missing fallback
 
 # a key satisfied by a default does not excuse a pair nobody claimed
 assert_throws $std.RuntimeError str: "unexpected key item: c" do
-  let a: _a ...rest5b = args(a: 1, b: 2, c: 3)
+  let a: _a ...rest5b = pack(a: 1, b: 2, c: 3)
   bind rest5b
     b: _b
     missing: _missing = "fallback"
 
-# the leftover key is named when unpacking an `Args` directly, too
+# the leftover key is named when unpacking a `Pack` directly, too
 assert_throws $std.RuntimeError str: "unexpected key item: c" do
-  let b: _b = args(b: 2, c: 3)
+  let b: _b = pack(b: 2, c: 3)
 
 assert_throws $std.RuntimeError str: "missing key item: zzz" do
-  let a: _a ...rest6 = args(a: 1, b: 2, c: 3)
+  let a: _a ...rest6 = pack(a: 1, b: 2, c: 3)
   let zzz: _zzz = rest6
 
 assert_throws $std.RuntimeError str: "unexpected key item: c" do
-  let a: _a ...rest7 = args(a: 1, b: 2, c: 3)
+  let a: _a ...rest7 = pack(a: 1, b: 2, c: 3)
   let b: _b = rest7
 
 assert_throws $std.RuntimeError str: "unexpected positional item: 2" do
-  let a: _a ...rest8 = args(a: 1, "zero", "one", "two")
+  let a: _a ...rest8 = pack(a: 1, "zero", "one", "two")
   let _d _e = rest8

@@ -133,7 +133,7 @@ pub class Args[R, I, O]: @Unpack[Sym, Value]
   field values
 
   def (init) self values
-    self.#values = std.Args $values
+    self.#values = std.Pack $values
 
   def (get) self name
     self.#values.get $name else: do throw std.FieldError $name

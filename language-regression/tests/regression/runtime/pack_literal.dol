@@ -1,0 +1,25 @@
+let name = "Alice"
+
+assert (type (a: 1) Pack)
+assert_eq (a: 1) (pack a: 1)
+assert_eq (a: 1,) (pack a: 1)
+assert_eq ((a: 1)[:a:]) 1
+assert_eq (name: "Alice", age: 30) (pack name: "Alice" age: 30)
+assert_eq (:name) (pack name: "Alice")
+assert_eq (:name, age: 30) (pack name: "Alice" age: 30)
+
+let mixed = (1, 2, a: 3)
+assert (type mixed Pack)
+assert_eq $mixed[0] 1
+assert_eq $mixed[1] 2
+assert_eq $mixed[:a:] 3
+assert_eq $mixed (pack 1 2 a: 3)
+
+let r = (name: "Alice", age: 30)
+assert_eq (...r, age: 31) (pack name: "Alice" age: 30 age: 31)
+
+# Without a static key, a spread makes a tuple, which rejects keyed items
+let spread = (...(pack 1 2))
+assert (type spread Tuple)
+assert_eq $spread (1, 2)
+assert_throws $std.UnexpectedKeyError do (...(pack a: 1))

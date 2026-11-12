@@ -141,7 +141,7 @@ def noop()
 
 # Narrowing in each arm grows a loop variable's join past the widening limit,
 # which widens it to an ancestor its alternatives share
-pub def widened r @ Args[...{a: Int, b: Int, c: Int, d: Int}]
+pub def widened r @ Pack[...{a: Int, b: Int, c: Int, d: Int}]
   for e = r
     match e
       (:a: _) do nil

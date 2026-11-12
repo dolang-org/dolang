@@ -6,7 +6,7 @@ pub def fits
   fields @ Dict[{a: Int}]
 do
   let _d @ Dict[Sym, Int] = Dict $ pairs.iter().kv()
-  let _r @ Args[a: Int] = Args $fields
+  let _r @ Pack[a: Int] = Pack $fields
   let _rec @ Record[a: Int] = Record $fields
   let _items @ Record[Str, a: Int] = record "x" a: 1
   let _t @ Tuple[...Int] = Tuple [1, 2]

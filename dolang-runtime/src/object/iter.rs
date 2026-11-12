@@ -54,7 +54,7 @@ const ITERABLE_METHODS: &[sym::Tag] = &[
 /// - `next` is stateful: a container has no iteration position of its own, so
 ///   forwarding it would mint a fresh iterator per call and a `while` loop
 ///   over `next` would spin on the first element forever.
-/// - `count` is `len` spelled expensively, and `Dict`/`dict_view`/`Args`
+/// - `count` is `len` spelled expensively, and `Dict`/`dict_view`/`Pack`
 ///   already define `count` with unrelated semantics.
 const ITER_ONLY_METHODS: &[sym::Tag] = &[sym::NEXT, sym::COUNT, sym::SPREAD_METHOD];
 

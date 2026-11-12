@@ -20,7 +20,7 @@ pub def positional()
   let _ = a
   #       ^: flow std.Str
 
-pub def mixed value @ (Args[...{?k: Tuple[Int]}])
+pub def mixed value @ (Pack[...{?k: Tuple[Int]}])
   let ?k: (a = "none") = value
   let _ = a
   #       ^: flow std.Int | std.Str
@@ -117,7 +117,7 @@ pub def captured()
   let _ = result
   #       ^~~~~~: flow std.Int
 
-pub def loops values @ Array[Args[...{?k: Tuple[Int]}]]
+pub def loops values @ Array[Pack[...{?k: Tuple[Int]}]]
   for ?k: (a = "none") = values
     let _ = a
     #       ^: flow std.Int | std.Str
@@ -161,7 +161,7 @@ pub def dynamic_dict()
   let _ = n
   #       ^: flow std.Int | std.Str
 
-pub def mixed_alternatives value @ Args[...{?k: (Int | Str)}]
+pub def mixed_alternatives value @ Pack[...{?k: (Int | Str)}]
   let ?k: (Int(n = 0) | Str(n)) = value
   let _ = n
   #       ^: flow std.Int | std.Str
@@ -196,7 +196,7 @@ pub def string_key value @ Dict[{?"key": Tuple[Bool]}]
   let _ = a
   #       ^: flow std.Bool | std.Str
 
-pub def while_pattern value @ Args[...{?k: Tuple[Int]}]
+pub def while_pattern value @ Pack[...{?k: Tuple[Int]}]
   while let ?k: (n = "missing") = value
     let _ = n
     #       ^: flow std.Int | std.Str

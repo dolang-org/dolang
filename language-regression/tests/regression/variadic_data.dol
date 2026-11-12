@@ -42,7 +42,7 @@ assert_eq (tuple 1 2 3) (Tuple [1, 2, 3])
 assert_eq (dict foo: 3) {foo: 3}
 assert_throws $std.UnexpectedPosError do dict 1 foo: 3
 assert_eq (record 1 2 foo: 3) {1, 2, foo: 3}
-assert_eq (args 1 2 foo: 3) (Args {1, 2, foo: 3})
+assert_eq (pack 1 2 foo: 3) (Pack {1, 2, foo: 3})
 
 # Capitalized raw constructors consume one iterable or spreadable.
 assert_eq (Array [1, 2, 3]) [1, 2, 3]
@@ -50,7 +50,7 @@ assert_eq (Tuple [1, 2, 3]) (tuple 1 2 3)
 assert_eq (Dict {0: 1, foo: 3}) {0: 1, foo: 3}
 assert_throws $std.UnexpectedPosError do Dict {1, 2, foo: 3}
 assert_eq (Record {foo: 3}) (record foo: 3)
-assert_eq (Args {1, 2, foo: 3}) (args 1 2 foo: 3)
+assert_eq (Pack {1, 2, foo: 3}) (pack 1 2 foo: 3)
 
 assert_throws $UnexpectedKeyError do array foo: 1
 assert_throws $UnexpectedKeyError do tuple foo: 1
@@ -60,5 +60,5 @@ assert_throws $MissingPosError do Dict()
 assert_throws $UnexpectedPosError do Dict {} {}
 assert_throws $MissingPosError do Tuple()
 assert_throws $UnexpectedPosError do Tuple [] []
-assert_throws $MissingPosError do Args()
-assert_throws $UnexpectedPosError do Args {} {}
+assert_throws $MissingPosError do Pack()
+assert_throws $UnexpectedPosError do Pack {} {}

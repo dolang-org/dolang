@@ -13,7 +13,7 @@ Within a type's own `()`, `[]`, and `{}`, whitespace is insignificant.
 | `:SYM:`, `"str"`, `42`, `true`, `nil` | Constant                  |
 | `Array[Int]`                          | Apply generic arguments   |
 | `(Str | Path)`                        | Union                     |
-| `(Int, Str)`, `(name: Str, Int)`      | Tuple or `Args`           |
+| `(Int, Str)`, `(name: Str, Int)`      | Tuple or `Pack`           |
 | `{name: Str, ?port: Int}`             | Schema                    |
 | `(Int, ?Int) -> Int`                  | Function                  |
 
@@ -49,7 +49,7 @@ passed positionally, or `name: T`, passed by keyword:
 ```
 let names @ Array[Str] = []
 let index @ Dict[Str, Array[Int]] = {}
-let result @ Args[value: Int, error: std.Error | nil] = (value: 1, error: nil)
+let result @ Pack[value: Int, error: std.Error | nil] = (value: 1, error: nil)
 ```
 
 An argument may also [expand a schema](#expanding-schemas) into further
@@ -173,7 +173,7 @@ as optional ones. Expanding a type `T` rather than a schema is shorthand for
 
 ```
 let row @ Tuple[...Str] = Tuple ["id", "name"]
-let conn @ Args[...{host: Str, ?port: Int}] = (host: "db")
+let conn @ Pack[...{host: Str, ?port: Int}] = (host: "db")
 ```
 
 ### Types as Schema Arguments
@@ -204,7 +204,7 @@ standard class:
 | Syntax             | Stands for                  |
 | ------------------ | --------------------------- |
 | `(Int, Str)`       | `Tuple[Int, Str]`           |
-| `(name: Str, Int)` | `Args[...{name: Str, Int}]` |
+| `(name: Str, Int)` | `Pack[...{name: Str, Int}]` |
 
 Other collection types name their class. A parameter that only reads should name
 a less specific type than `Array[T]` or `Dict[S]`, such as `Seq[T]`,
@@ -218,22 +218,22 @@ def count rows @ Seq[Dict[{id: Int}]] -> Int
   rows.len
 ```
 
-### Tuples and Args
+### Tuples and Packs
 
-A parenthesized form with an explicitly keyed item is an `Args`: `key: T`, `(K):
+A parenthesized form with an explicitly keyed item is a `Pack`: `key: T`, `(K):
 T`, or an item quantified `**`. Otherwise it is a tuple. A single item without
 a quantifier or trailing comma is merely a grouping.
 
-| Syntax       | Is                  |
-| ------------ | ------------------- |
-| `(Int)`      | `Int`               |
-| `(Int,)`     | A one-item tuple    |
-| `()`         | The empty tuple     |
-| `(*Int)`     | A tuple of any size |
-| `(Int, **)`  | An `Args`           |
+| Syntax      | Is                  |
+| ----------- | ------------------- |
+| `(Int)`     | `Int`               |
+| `(Int,)`    | A one-item tuple    |
+| `()`        | The empty tuple     |
+| `(*Int)`    | A tuple of any size |
+| `(Int, **)` | A `Pack`            |
 
-An inclusion `...S` never makes a form an `Args`. In a tuple, including a schema
-that may admit keyed items is an error; write `Args[...S]` instead. For a
+An inclusion `...S` never makes a form a `Pack`. In a tuple, including a schema
+that may admit keyed items is an error; write `Pack[...S]` instead. For a
 tuple of any items, write `(*)` rather than `(...)`.
 
 ### Schemas in Types
@@ -349,7 +349,7 @@ the caller's channels.
 A generic function type may be the type of a parameter, a variable, a field or
 an alias, a function's parameter or result, or a union member. It cannot be a
 type argument, which includes the element of an array or the item of a tuple,
-`Args` or dictionary, whether written there or through an alias:
+`Pack` or dictionary, whether written there or through an alias:
 
 ```
 @let Id = (@[T] (T) -> T)

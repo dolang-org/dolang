@@ -152,7 +152,6 @@ well_known_symbols! {
     (ReadAll, "read_all", READ_ALL),
     (ReadAllStr, "read_all_str", READ_ALL_STR),
     (Readable, "readable", READABLE),
-    (Args, "args", ARGS),
     (Repeat, "repeat", REPEAT),
     (Receiver, "receiver", RECEIVER),
     (Rfind, "rfind", RFIND),

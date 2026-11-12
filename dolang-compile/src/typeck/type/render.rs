@@ -55,7 +55,7 @@ pub(crate) enum Collection {
     /// `(A, B)`
     Tuple,
     /// `(k: A, B)`
-    Args,
+    Pack,
 }
 
 /// What a rendered type shows
@@ -713,9 +713,9 @@ impl Renderer<'_> {
                 },
                 _ => ("(", ")"),
             },
-            // Only an explicitly keyed item makes parentheses an `Args`
-            Collection::Args if keyed => ("(", ")"),
-            Collection::Args => return false,
+            // Only an explicitly keyed item makes parentheses a `Pack`
+            Collection::Pack if keyed => ("(", ")"),
+            Collection::Pack => return false,
         };
         out.push_str(open);
         self.item_list(&items, naming, out);

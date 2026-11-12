@@ -1,4 +1,4 @@
-# A tuple or `Args` type varies as the `Tuple` or `Args` it stands for does.
+# A tuple or `Pack` type varies as the `Tuple` or `Pack` it stands for does.
 
 pub @let Pair[T] = (T, T)
 #        ^~~~: decl [T +] (T, T)

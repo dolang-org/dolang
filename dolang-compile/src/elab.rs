@@ -2208,7 +2208,7 @@ impl<'a> Elaborater<'a> {
                 | Expr::Array { .. }
                 | Expr::Dict { .. }
                 | Expr::Tuple { .. }
-                | Expr::Args { .. }
+                | Expr::Pack { .. }
                 | Expr::Concat { .. }
                 | Expr::FmtSeq { .. }
                 | Expr::FmtParam { .. }
@@ -2297,7 +2297,7 @@ impl<'a> Elaborater<'a> {
                 }
                 Ok(())
             }
-            Expr::Args { args, .. } => {
+            Expr::Pack { args, .. } => {
                 for arg in args.iter_mut() {
                     match arg {
                         Arg::Pos(Single { expr, .. })

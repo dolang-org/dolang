@@ -194,7 +194,7 @@ impl Names for Tables<'_> {
     fn collection(&self, id: DeclId) -> Option<Collection> {
         match self.designated.get(&id)? {
             Designated::Intrinsic(Intrinsic::Tuple) => Some(Collection::Tuple),
-            Designated::Args => Some(Collection::Args),
+            Designated::Pack => Some(Collection::Pack),
             _ => None,
         }
     }

@@ -1,14 +1,14 @@
-# Basic subclassing of Args
-class MyArgs: Args
+# Basic subclassing of Pack
+class MyPack: Pack
 def (init) self
   # error: special methods are only valid in a class body
-  #   --> class_args_subclass.dol:LL:LL
+  #   --> class_pack_subclass.dol:LL:LL
   #    |
   # LL | def (init) self
   #    |      ^^^^
-  Args.(init) $self {}
+  Pack.(init) $self {}
 
-let r = MyArgs()
+let r = MyPack()
 r.name = "Alice"
 r.age = 30
 
