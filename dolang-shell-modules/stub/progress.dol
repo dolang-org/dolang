@@ -153,8 +153,8 @@ pub def show[R]
 do -> R
   ...
 
-# The items of a step specification for [`steps`](progress.steps), usually
-# written as a [`Record`](std.Record): the step's function as its one
+# The items of a step specification for [`steps`](progress.steps), written
+# as a [`Record`](std.Record): the step's function as its one
 # positional item, and these optional keys:
 #
 # | Key    | Type             | Description                 |
@@ -167,11 +167,7 @@ pub @let StepSpec[I, O] = {((<I, >O) -> Value), ?name: Str, ?icon: Str}
 
 # A step of [`steps`](progress.steps): a function, or a specification of one
 # with the items of [`StepSpec`](progress.StepSpec).
-pub @let Step[I, O] = (
-  ((<I, >O) -> Value)
-  | BaseRecord[...StepSpec[I, O]]
-  | BaseDict[StepSpec[I, O]]
-)
+pub @let Step[I, O] = (((<I, >O) -> Value) | BaseRecord[...StepSpec[I, O]])
 
 # Runs a sequence of steps under an indicator tracking step completion.
 #

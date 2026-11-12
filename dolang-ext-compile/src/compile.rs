@@ -1153,15 +1153,17 @@ fn apply_prelude_dict_items<'v, 's>(
     Ok(())
 }
 
-/// Applies one entry of a `compile.Prelude` dict or record: a positional module
-/// name, or a module and how to import it
+/// Applies one entry of a `compile.Prelude` dict or record: a module and how
+/// to import it (`true` imports it as is), or, from a record, a positional
+/// module name
 fn apply_prelude_entry<'v, 's>(
     strand: &mut Strand<'v, 's>,
     config: &mut Config,
+    positional: bool,
     k: &Value<'v>,
     v: &Value<'v>,
 ) -> Result<'v, 's, ()> {
-    if k.as_int(strand).is_some() {
+    if positional && k.as_int(strand).is_some() {
         let name = match v.view(strand) {
             View::Str(name) => name.to_string(),
             View::Sym(name) => name.as_str(strand).to_owned(),
@@ -1188,6 +1190,9 @@ fn apply_prelude_entry<'v, 's>(
     };
 
     match v.view(strand.vm()) {
+        View::Bool(true) => {
+            config.prelude().import_module(module);
+        }
         View::Str(bind) => {
             strand.access(|access| {
                 config
@@ -1209,7 +1214,7 @@ fn apply_prelude_entry<'v, 's>(
         _ => {
             return Err(Error::type_error(
                 strand,
-                "prelude module value must be str, sym, array, or Dict",
+                "prelude module value must be true, str, sym, array, or Dict",
             ));
         }
     }
@@ -1250,13 +1255,13 @@ pub fn apply_prelude_value<'v, 's>(
             View::Dict(dict) => {
                 let mut pairs = dict.pairs();
                 while pairs.next(strand, &mut k, &mut v)? {
-                    apply_prelude_entry(strand, config, &k, &v)?;
+                    apply_prelude_entry(strand, config, false, &k, &v)?;
                 }
             }
             View::Record(record) => {
                 let mut pairs = record.pairs();
                 while pairs.next(strand, &mut k, &mut v)? {
-                    apply_prelude_entry(strand, config, &k, &v)?;
+                    apply_prelude_entry(strand, config, true, &k, &v)?;
                 }
             }
             _ => {

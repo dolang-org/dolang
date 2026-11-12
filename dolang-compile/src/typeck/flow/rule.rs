@@ -1368,15 +1368,20 @@ impl<'a> Flow<'a, '_> {
                         OriginKind::Misfit(misfit) => {
                             let found = actual
                                 .map_or(Shown::Type("?".to_owned()), |found| self.subject(found));
-                            let keyed = (misfit == Misfit::Spreadable)
+                            let excess = (misfit == Misfit::Spreadable)
                                 .then(|| {
                                     causes.iter().find_map(|cause| {
-                                        self.keyed_excess(&cause.path, cause.contradiction)
+                                        self.spread_excess(&cause.path, cause.contradiction)
                                     })
                                 })
                                 .flatten();
-                            match keyed {
-                                Some(item) => vec![Problem::KeyedSpread { span, found, item }],
+                            match excess {
+                                Some((false, item)) => {
+                                    vec![Problem::KeyedSpread { span, found, item }]
+                                }
+                                Some((true, item)) => {
+                                    vec![Problem::PositionalSpread { span, found, item }]
+                                }
                                 None => vec![Problem::Misfit {
                                     span,
                                     found,
@@ -1770,9 +1775,10 @@ impl<'a> Flow<'a, '_> {
         Some(notes)
     }
 
-    /// The keyed item a positional-only schema refuses, where that's what
-    /// `contradiction` at the end of `path` is: what a sequence can't spread
-    fn keyed_excess(&self, path: &[Node], contradiction: Contradiction) -> Option<String> {
+    /// The item a spread's target refuses, where that's what `contradiction`
+    /// at the end of `path` is, and whether it's positional: a keyed item is
+    /// what a sequence can't take, and a positional one what a dict can't
+    fn spread_excess(&self, path: &[Node], contradiction: Contradiction) -> Option<(bool, String)> {
         let Contradiction::Excess(index) = contradiction else {
             return None;
         };
@@ -1782,10 +1788,12 @@ impl<'a> Flow<'a, '_> {
         let Type::Schema(items) = self.db.ty(schema) else {
             return None;
         };
-        if !matches!(items.get(index)?.element, Element::Keyed { .. }) {
-            return None;
-        }
-        self.schema_item(schema, index)
+        let positional = match items.get(index)?.element {
+            Element::Positional(_) => true,
+            Element::Keyed { .. } => false,
+            Element::Include(_) => return None,
+        };
+        Some((positional, self.schema_item(schema, index)?))
     }
 
     /// A schema's top-level item as a diagnostic names it: quoted without the
@@ -2959,6 +2967,11 @@ impl<'a> Flow<'a, '_> {
                             };
                             has_positional |= positional;
                             has_keyed |= keyed;
+                        }
+                        // A dict holds only keyed items, so what a spread
+                        // gives positionally is refused, not a lane
+                        if kind == Collection::Dict {
+                            has_positional = false;
                         }
                         has_keyed |= !has_positional;
                         Shape::Dict(has_positional, has_keyed)
@@ -4296,8 +4309,10 @@ fn collection_constraint<'p>(
                             None => rule.constrain(term, positional, Provenance::default()),
                         }
                     }
+                    // A record literal always has a positional lane, and a
+                    // dict never does
                     Value::Spread(ty, span) => {
-                        let schema = rule.term(|holes| lanes(holes, true, true));
+                        let schema = rule.term(|holes| lanes(holes, has_positional, true));
                         spread_into(rule, spread, ty, schema, span);
                     }
                     Value::Held(at, index, _) => {

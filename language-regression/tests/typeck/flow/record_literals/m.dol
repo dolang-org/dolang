@@ -12,7 +12,7 @@ pub def takes r @ Record[Str, ...{*Int, ?tag: Str}]
 pub def reads r @ BaseRecord[...(Int | Str)]
   let _ = r
 
-pub def wants_dict d @ Dict[{*Int}]
+pub def wants_dict d @ Dict[Int, Int]
   let _ = d
 
 pub def expected xs @ Array[Int]
@@ -32,7 +32,7 @@ pub def expected xs @ Array[Int]
   #    |
   #    = note: `1` does not fit `std.Str`
   wants_dict {1}
-# error: expected `std.Dict[std.Int]`, found `std.Record[...std.Int]`
+# error: expected `std.Dict[std.Int, std.Int]`, found `std.Record[...std.Int]`
 #   --> m.dol:LL:LL
 #    |
 # LL |   wants_dict {1}

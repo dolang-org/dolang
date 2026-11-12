@@ -468,7 +468,7 @@ pub @let BodyOptions = $
   # [`lines`](http.Client.lines)
   ?lines: Iterable[Value]
   # Multipart form parts -- see [`multipart`](http.Client.multipart)
-  ?multipart: Iterable[Dict[{name: Str, ...}]]
+  ?multipart: Iterable[Dict[{name: Str, *(Value): Value}]]
 
 # An HTTP client.
 #

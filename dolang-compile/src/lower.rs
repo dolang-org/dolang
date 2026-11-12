@@ -1001,15 +1001,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     }
 
     fn lower_dict_elem(&mut self, elem: &'a DictElem) -> Result<(sig::Arg, Option<sig::Arg>)> {
-        let int = OnceCell::new();
         let iter_sym = OnceCell::new();
         Ok(match elem {
-            DictElem::Single(Single { expr, .. }) => {
-                self.lower_expr(expr)?;
-                (
-                    sig::Arg::Key(*int.get_or_init(|| self.symtab.id(&self.bintab.id_str("int")))),
-                    None,
-                )
+            DictElem::Single(_) => {
+                unreachable!("a dict literal with positional items lowers as a record")
             }
             DictElem::Key(Key { key_span, expr, .. }) => {
                 let cid = self.lower_const(&Const::Sym(*key_span));

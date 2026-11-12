@@ -22,7 +22,7 @@ Embedded runtimes may provide a different additional prelude.
 | [`class`](std.class)       | Inherited class member decorator                      |
 | [`dbg`](std.dbg)           | Debug representation                                  |
 | [`Dict`](std.Dict)         | [`Dict`](std.Dict) type                               |
-| [`dict`](std.dict)         | Variadic dictionary factory                           |
+| [`dict`](std.dict)         | Dictionary factory from key arguments                 |
 | [`fields`](std.fields)     | Proxy for a value's public fields                     |
 | [`final`](std.final)       | Decorator forbidding subclasses                       |
 | [`Float`](std.Float)       | [`Float`](std.Float) type                             |

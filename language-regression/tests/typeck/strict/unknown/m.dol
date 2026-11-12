@@ -40,7 +40,7 @@ pub def dicts
 do
   if type(v, std.BaseDict)
     let _ = v
-    #       ^: flow std.BaseDict[{*Value, *(Value): Value}]
+    #       ^: flow std.BaseDict[Value, Value]
   else
     let _ = v
     #       ^: flow Value
@@ -52,7 +52,7 @@ do
     #       ^: flow std.BaseDict[{a: std.Int}]
   if type(e, std.BaseDict)
     let _ = e
-    #       ^: flow std.BaseDict[{*Value, *(Value): Value}]
+    #       ^: flow std.BaseDict[Value, Value]
   nil
 
 # A `do` block's parameter that nothing gives a type is `Value`, as its channels

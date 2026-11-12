@@ -2,6 +2,7 @@ use crate::global::WindowsSecurityTag;
 
 use super::*;
 use crate::util;
+use dolang::runtime::value::{DictPairs, RecordPairs, View};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SecInfo(pub WinSecInfo);
@@ -2043,10 +2044,31 @@ struct AclComponents {
     revision: Option<AclRevision>,
 }
 
+/// The pairs of an ACL spec: a record's positional items are its entries,
+/// and a dict holds only keys
+enum AclSpecPairs<'v, 'a> {
+    Dict(DictPairs<'v, 'a>),
+    Record(RecordPairs<'v, 'a>),
+}
+
+impl<'v> AclSpecPairs<'v, '_> {
+    fn next<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        key: Slot<'v, '_>,
+        value: Slot<'v, '_>,
+    ) -> Result<'v, 's, bool> {
+        match self {
+            AclSpecPairs::Dict(pairs) => pairs.next(strand, key, value),
+            AclSpecPairs::Record(pairs) => pairs.next(strand, key, value),
+        }
+    }
+}
+
 async fn acl_components_from_spec<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, WindowsSecurityGlobal<'v>>,
-    dict: Dict<'v, '_>,
+    mut pairs: AclSpecPairs<'v, '_>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, AclComponents> {
     let mut components = AclComponents {
@@ -2054,10 +2076,10 @@ async fn acl_components_from_spec<'v, 's>(
         revision: None,
     };
     let mut index = 0_usize;
-    let mut pairs = dict.pairs();
+    let positional = matches!(pairs, AclSpecPairs::Record(_));
     strand
         .with_slots(async |strand, [mut key, mut entry]| {
-            while pairs.next(strand, &mut key, &mut entry)? {
+            while pairs.next(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut entry))? {
                 if let Some(sym) = key.as_sym(strand.vm()) {
                     if sym != global.syms.revision {
                         return Err(Error::value(
@@ -2076,7 +2098,7 @@ async fn acl_components_from_spec<'v, 's>(
                     }
                     components.revision =
                         Some(acl_revision(strand, global, &entry, &path.key("revision"))?);
-                } else if let Some(found) = key.as_int(strand) {
+                } else if positional && let Some(found) = key.as_int(strand) {
                     if found != i128::try_from(index).expect("entry count fits in i128") {
                         return Err(Error::value(
                             strand,
@@ -2112,8 +2134,13 @@ async fn coerce_acl<'v, 's>(
         });
     }
 
-    if let Some(dict) = value.as_dict(strand.vm()) {
-        let components = acl_components_from_spec(strand, global, dict, path).await?;
+    let pairs = match value.view(strand.vm()) {
+        View::Dict(dict) => Some(AclSpecPairs::Dict(dict.pairs())),
+        View::Record(record) => Some(AclSpecPairs::Record(record.pairs())),
+        _ => None,
+    };
+    if let Some(pairs) = pairs {
+        let components = acl_components_from_spec(strand, global, pairs, path).await?;
         return VfsAclBuf::from_aces(&components.aces, components.revision)
             .map_err(|error| Error::value(strand, format!("{path}: {error}")));
     }

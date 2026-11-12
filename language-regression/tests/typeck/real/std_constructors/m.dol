@@ -23,6 +23,13 @@ do
   # LL |   let _d @ Dict[{a: Int}] = Dict $ pairs.iter().kv()
   #    |                             ^^^^^^^^^^^^^^^^^^^^^^^^
   let _e @ Dict[{x: Int}] = Dict $ints
+  # error: `std.Array[std.Int]` does not fit this parameter
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _e @ Dict[{x: Int}] = Dict $ints
+  #    |                                   ^^^^
+  #    |
+  #    = note: `{*(Value): Value}` doesn't admit positional `*std.Int`
   # error: `std.Dict[std.Int]` does not fit the annotation `std.Dict[{x: std.Int}]`
   #   --> m.dol:LL:LL
   #    |
@@ -46,3 +53,10 @@ do
 #    |
 # LL |   let _f @ std.Fmt[Str, {}] = std.Fmt ["a", std.FmtValue 1]
 #    |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+# A literal passed to `Dict` keeps its own schema: the binder's bound is the
+# class's, so it expects nothing more
+pub def precise()
+  let d = Dict {a: 1}
+  let _ = d
+  #       ^: flow std.Dict[std.Sym, std.Int]

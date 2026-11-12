@@ -7,15 +7,15 @@ def collect rest
     out.push $item
   out
 
-# A dict's `*` rest yields values; its `**` and `...` rests yield entries in
-# order, positional items keyed by index.
+# A dict has no positional items, so its `*` rest is empty; its `**` and
+# `...` rests yield entries in order.
 let d = {0: 1, 1: 2, color: "red", 5: "x"}
-let _ *p **k = d
-assert_eq (collect p) [2]
-assert_eq (collect k) [(:color:, "red"), (5, "x")]
-assert_eq (collect k) [(:color:, "red"), (5, "x")]
-assert_eq {...k} {color: "red", 5: "x"}
-let _ ...r = d
+let 0: _ *p **k = d
+assert_eq (collect p) []
+assert_eq (collect k) [(1, 2), (:color:, "red"), (5, "x")]
+assert_eq (collect k) [(1, 2), (:color:, "red"), (5, "x")]
+assert_eq {...k} {1: 2, color: "red", 5: "x"}
+let 0: _ ...r = d
 assert_eq (collect r) [(1, 2), (:color:, "red"), (5, "x")]
 assert_eq [...r.iter()] (collect r)
 assert_throws $std.UnexpectedKeyError do [...r]
@@ -67,4 +67,4 @@ assert $ar.all()
 assert_eq $ar.iter().count() 2
 assert_eq $r.iter().count() 3
 assert $rr.any()
-assert_eq [...p.map(do |v| v * 10)] [20]
+assert_eq [...p.map(do |v| v * 10)] []

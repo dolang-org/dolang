@@ -41,8 +41,8 @@ pub @let AssignOf[S @ {...}] = Assign[S]
 #        ^~~~~~~~: decl [S @ {*Value, *(Value): Value}] std.Assign[S]
 pub @let SpreadOf[S @ {...}] = Spread[S]
 #        ^~~~~~~~: decl [S + @ {*Value, *(Value): Value}] std.Spread[S]
-pub @let DictOf[S @ {...}] = Dict[S]
-#        ^~~~~~: decl [S @ {*Value, *(Value): Value}] std.Dict[S]
+pub @let DictOf[S @ {*(Value): Value}] = Dict[S]
+#        ^~~~~~: decl [S @ {*(Value): Value}] std.Dict[S]
 
 # An omitted ambient channel is bounded by the standard library's channels.
 pub def relay()

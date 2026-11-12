@@ -4,7 +4,7 @@ import std:
 
 def foo first ...rest
   echo $first
-  echo {...rest}
+  echo (Record rest)
 
 def capture a b foo: x bar: y
   [a, b, x, y]
@@ -36,5 +36,5 @@ assert_eq (capture_rest ...record_rest) ["b", 2]
 # 0
 # {1, 2, 3}
 # a
-# {foo: 42, bar: false}
+# Record(foo: 42, bar: false)
 # END

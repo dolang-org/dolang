@@ -1370,6 +1370,16 @@ def prelude_unaliased_module_and_items()
     compile.compile "m.dol" "nil" prelude: {42}
 
 #[test]
+def prelude_dict_imports_module_as_is()
+  import load
+  let unit = compile.compile "m.dol" "std.Int" prelude: {"std": true}
+  assert_no_errors $unit
+  assert_eq (load.run(unit.emit())) $Int
+  # A dict's integer keys are keys, not positions
+  assert_throws $std.TypeError do
+    compile.compile "m.dol" "nil" prelude: {0: "std"}
+
+#[test]
 def type_only_prelude_configuration()
   import load
   for binding = [["@Custom"], [sym("@Custom")], {"@Export": "Custom"}]

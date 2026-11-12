@@ -3,12 +3,13 @@
 def capture ...args
   args
 
-# Dicts: sequential integer keys are positional
+# Records spread their positional items; a dict has none, and its integer keys
+# are keys
 assert_eq [...{"x", "y"}] ["x", "y"]
 assert_eq (...{"x", "y"},) ("x", "y")
 assert_throws $std.UnexpectedKeyError do [...{a: 1}]
 assert_throws $std.UnexpectedKeyError do ["x", ...{a: 1}]
-assert_throws $std.UnexpectedKeyError do [...{0: "x", 2: "y"}]
+assert_throws $std.UnexpectedKeyError do [...{0: "x"}]
 assert_throws $std.UnexpectedKeyError do (...{a: 1},)
 
 # Constructors spread their source the same way

@@ -623,7 +623,9 @@ impl<'v> Object<'v> for Fmt {
                 strand
                     .with_slots(
                         async move |strand, [mut bindings, mut consumed, mut filled]| {
-                            let dict = Dict::from_args(strand, args)?;
+                            // Positional arguments bind the parameters named by
+                            // their index
+                            let dict = Dict::from_indexed_args(strand, args)?;
                             strand
                                 .builtin_types()
                                 .dict

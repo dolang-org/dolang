@@ -670,14 +670,16 @@ fn parse_step<'v, 's>(
         }
     };
 
+    // Only a record has positional items; a dict's integer keys are keys
+    let positional = matches!(pairs, StepPairs::Record(_));
     let (mut found, mut name, mut icon) = (false, None, None);
     while pairs.next(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut value))? {
         match key.view(strand) {
-            View::Int(0) => {
+            View::Int(0) if positional => {
                 Output::set(strand, Slot::reborrow(&mut callable), &*value);
                 found = true;
             }
-            View::Int(index) if index >= 0 => {
+            View::Int(index) if positional && index >= 0 => {
                 let index = usize::try_from(index).unwrap_or(usize::MAX);
                 return Err(Error::unexpected_positional(strand, index));
             }

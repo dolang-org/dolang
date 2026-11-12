@@ -492,7 +492,7 @@ impl<'v> Protocol<'v> for Class {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([source], []) = unpack!(strand, args, 1, 0)?;
-        let items = args::source_items(strand, &source, "struct").await?;
+        let items = args::source_items(strand, &source).await?;
         let structure = Struct::new(strand, items)?;
         strand
             .builtin_types()

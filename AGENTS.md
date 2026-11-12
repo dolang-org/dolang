@@ -87,7 +87,7 @@ a syntax error or means something different).
 ```
 let x = (1 + 2 * 3)           # 7
 let arr = [1, 2, 3]
-let d = {name: "Alice", age: 30}
+let d = {name: "Alice", age: 30} # Dict: keys only; `{0: x}` keys are never positions
 let rec = {1, 2, tag: "x"}    # Record: braces with positional items
 let t = (1, "two", ...rest)   # tuple; (x,) is a singleton, () is empty
 let r = (name: "Alice", 30)   # Args: has a static key (`k: v` or `:k`)

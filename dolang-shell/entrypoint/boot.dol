@@ -111,7 +111,7 @@ while true
           if (parts.len == 2)
             prelude.insert $name $alias
           else
-            prelude.insert $prelude.len $name
+            prelude.insert $name true
         else
           let qualified = [...name.rsplit "." limit: 1]
           if (qualified.len != 2)

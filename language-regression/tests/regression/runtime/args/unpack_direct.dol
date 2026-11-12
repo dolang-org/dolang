@@ -21,13 +21,12 @@ let x2 :k ...rest2 = args("zero", k: 1, "one", "two")
 assert_eq $x2 zero
 assert_eq $k 1
 let pairs2 = $
-  for k v = Dict(rest2)
+  for k v = Record(rest2)
     - (Tuple [k, v])
 assert_eq $pairs2 [(Tuple [0, "one"]), (Tuple [1, "two"])]
 
-# an integer key out of sequence is not a position, so an `Args` refuses it
-assert_throws $std.TypeError do Args {0: "zero", 1: "one", 3: "three"}
-assert_throws $std.TypeError do Args {2: "c", 0: "a", 1: "b"}
+# an integer key is not a position, so an `Args` refuses it
+assert_throws $std.UnexpectedKeyError do Args {0: "zero", 1: "one"}
 
 # the structural rest supports further keyed/positional unpacking
 let a: _a ...rest4 = args(a: 1, "zero", "one")

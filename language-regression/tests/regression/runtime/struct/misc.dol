@@ -58,12 +58,12 @@ assert (!(Struct.contains g :z:))
 assert (!(Struct.contains g 1))
 assert_throws $TypeError do Struct.get (args a: 1) :a:
 
-# Built from one spreadable source, with integer keys counting up from 0
-# positional, as for an `Args`
-assert_eq (Struct {0: :a:, x: 1, 1: :b:}) (struct :a: x: 1 :b:)
+# Built from one spreadable source, whose keys must be symbols: an integer
+# key is a key, not a position
+assert_eq (Struct {x: 1}) (struct x: 1)
 assert_eq (Struct (args 1 k: 2)) (struct 1 k: 2)
-assert_throws $TypeError str: "type error: struct keys must be symbols" do Struct {"s": 1}
-assert_throws $TypeError str: "type error: struct keys must be symbols" do Struct {5: :x:}
+assert_throws $std.UnexpectedKeyError str: "unexpected key item: \"s\"" do Struct {"s": 1}
+assert_throws $std.UnexpectedKeyError str: "unexpected key item: 0" do Struct {0: :x:}
 
 # A key appears at most once
 assert_throws $ValueError str: "value error: duplicate struct key: a" do struct a: 1 a: 2

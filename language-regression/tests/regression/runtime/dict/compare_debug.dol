@@ -1,10 +1,8 @@
 # str/debug formatting
 assert_eq (str {}) "{}"
 assert_eq (str {a: 1, b: 2}) "{a: 1, b: 2}"
-# sequential int keys starting at 0 print bare, like a tuple
-assert_eq (str {0: "x", 1: "y"}) "{\"x\", \"y\"}"
-# a gap in the int-key sequence falls back to printing the key
-assert_eq (str {0: "x", 2: "y"}) "{\"x\", 2: \"y\"}"
+# int keys print like any other key
+assert_eq (str {0: "x", 1: "y"}) "{0: \"x\", 1: \"y\"}"
 # non-symbol string keys print quoted
 assert_eq (str {"a-b": 1}) "{\"a-b\": 1}"
 

@@ -57,7 +57,7 @@ def cache_usable cache @ fs.Path path @ fs.Path -> Bool
 class Namespace
   field values @ Args[...{**Value}]
 
-  def (init) self values @ BaseDict[{...}]
+  def (init) self values @ BaseDict[Value, Value]
     let fields @ Dict[Sym, Value] = {}
     for name value = values
       if !(type name Sym)

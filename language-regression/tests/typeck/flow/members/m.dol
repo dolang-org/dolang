@@ -270,7 +270,7 @@ pub def dynamic x
 
 # A literal key picks its own item, since the key isn't decayed. A key must be
 # one of the schema's.
-pub def looked d @ Dict[{a: Int, b: Str}] k @ Sym i @ Index[{a: Int}] o @ Dict[{...}]
+pub def looked d @ Dict[{a: Int, b: Str}] k @ Sym i @ Index[{a: Int}] o @ Dict[Value, Value]
   let a = d[:a:]
   let _ = a
   #       ^: flow std.Int
@@ -333,9 +333,8 @@ pub def iterated d @ Dict[{a: Int, b: Str}] s @ Dict[{*(Str): Int}]
 pub def keyed ks @ Iter[(:a: | :b:)]
   ...
 
-# A collection keys a schema's positions by their indexes, so a key that may be
-# one of them conflicts.
-pub def promoted p @ Dict[{Int, Str}] v @ Dict[{Int, *Bool}] c @ Dict[{Int, 0: Str}]
+# A collection keys a schema's positions by their indexes.
+pub def promoted p @ Record[Int, Str] v @ Record[Int, ...Bool]
   for k x = p
     let _ = k
     #       ^: flow 0 | 1
@@ -347,25 +346,16 @@ pub def promoted p @ Dict[{Int, Str}] v @ Dict[{Int, *Bool}] c @ Dict[{Int, 0: S
   let vk = v.keys()
   let _ = vk
   #       ^~: flow std.UnpackIter[std.Int]
-  indexes $c.keys()
-# error: this call indexes a schema with a key that may be one of its positions' indexes
-#   --> m.dol:LL:LL
-#    |
-# LL |   indexes $c.keys()
-#    |   ^^^^^^^^^^^^^^^^^
-
-pub def indexes ks @ Iter[Int]
-  ...
 
 # A key selects items, positions by their indexes. A read gives the join of what
 # it selects, and a write must fit their meet.
 pub def selected
   r @ Args[Int, a: Str]
-  w @ Dict[{Int, *Str}]
+  w @ Record[Int, ...Str]
   d @ Dict[{a: Int, b: Str}]
   s @ Dict[{*(Sym): Int}]
-  p @ Dict[{Int, Str}]
-  c @ Dict[{Int, 0: Str}]
+  p @ Record[Int, Str]
+  c @ Index[{Int, 0: Str}]
   k @ (:a: | :b:)
   y @ Sym
 do

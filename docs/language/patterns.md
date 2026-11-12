@@ -42,14 +42,21 @@ assert_eq $name "Alice"
 assert_eq $years 30
 ```
 
-A pattern can mix positional and keyed items; how they match depends on the
-source. For records, positional patterns bind the positional items, and for
-dictionaries, incrementing integer keys:
+A pattern can mix positional and keyed items. For records, positional
+patterns bind the positional items:
 
 ```
 let first :foo = {foo: 42, "ultramarine"}
 assert_eq $first "ultramarine"
 assert_eq $foo 42
+```
+
+A dictionary has no positional items, so a positional pattern finds nothing
+there. Match its integer keys with key patterns:
+
+```
+let 0: first 1: second = {0: "a", 1: "b"}
+assert_eq $second "b"
 ```
 
 A pattern binds each name at most once, so `let a a = [1, 2]` is an error. `_`
@@ -73,8 +80,8 @@ assert_eq {...options} {color: "red"}
 A rest spreads as its source would from where unpacking stopped. Iterating a
 `*` rest, or the rest of an array or other sequence, yields its values.
 Iterating a `**` rest, or a `...` rest of a dictionary, record or `Args`,
-yields its entries as `(key, value)` tuples, with positional items keyed by
-index:
+yields its entries as `(key, value)` tuples, with a record's or `Args`'s
+positional items keyed by index:
 
 ```
 let _ *values **options = {1, 2, color: "red"}

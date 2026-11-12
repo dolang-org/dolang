@@ -47,7 +47,7 @@ pub def optional b @ Dict[{x: Int, ?y: Int}]
 # LL |   b.clear()
 #    |   ^^^^^^^^^
 
-pub def positions b @ Dict[{Int, *Int}]
+pub def positions b @ Record[Int, ...Int]
   b.delete 0
   # error: this call removes the required item at `0`
   #   --> m.dol:LL:LL
@@ -69,12 +69,12 @@ pub def positions b @ Dict[{Int, *Int}]
 # LL |   b.clear()
 #    |   ^^^^^^^^^
 
-pub def varying b @ Dict[{*Int}]
+pub def varying b @ Record[...Int]
   b.clear()
   b.insert 0 1
 
 # A shift would move a `Str` where an `Int` goes
-pub def mixed b @ Dict[{?Int, *Str}]
+pub def mixed b @ Record[...{?Int, *Str}]
   b.pop 0
 # error: this call inserts or removes at `0`, shifting positions the schema doesn't let move
 #   --> m.dol:LL:LL
@@ -117,7 +117,7 @@ pub def generic_open[K, V] b @ Dict[K, V] k @ K v @ V
   b.clear()
 
 # An arbitrary schema may have required items
-pub def generic_schema[S @ {...}, K @ std.Keys[S]] b @ Dict[S] k @ K
+pub def generic_schema[S @ {*(Value): Value}, K @ std.Keys[S]] b @ Dict[S] k @ K
   b.delete $k
   # error: expected `std.Dict[std.Deletable[S, K]]`, found `std.Dict[S]`
   #   --> m.dol:LL:LL

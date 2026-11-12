@@ -88,14 +88,29 @@ Constants, quoted strings, parenthesized expressions, and other literals are
 automatically treated as expressions. Values are always treated as full,
 whitespace-insensitive expressions.
 
-### Positional Elements
+### Keys Only
 
-A brace literal with values that have no keys makes a [record](#records-record)
-instead of a dict:
+A dict holds only keyed items. A brace literal with values that have no keys
+makes a [record](#records-record) instead:
 
 ```
 let r = {1, foo: "bar", 3}
 assert (type r Record)
+```
+
+Integer keys are ordinary keys, never positions, so a pattern names them as
+keys:
+
+```
+let d = {0: "a", 1: "b"}
+let 0: first 1: second = d
+```
+
+Spreading positional items into a dict raises an error. Adapt pairs with
+`kv()` to build a dict from them:
+
+```
+let d = Dict $ [(0, "a"), (1, "b")].kv()
 ```
 
 ### Ordering
@@ -194,7 +209,9 @@ assert_eq (record 1 2 tag: x) {1, 2, tag: "x"}
 assert_eq (Record (1, tag: "x")) {1, tag: "x"}
 ```
 
-A spread alone doesn't make a record, so `{...source}` is still a dict.
+A spread alone doesn't make a record, so `{...source}` is still a dict, which
+raises an error if `source` has positional items. Use `Record source` for
+those.
 
 The keys of a record literal must be written symbols, `name: value`, `:name`
 or `:name:: value`, since the literal is a record whatever they evaluate to.
@@ -315,15 +332,17 @@ See the [Set API](std.Set) for methods such as `add`, `contains`,
 or into a call's arguments. What it contributes depends on both the value and
 the context:
 
-| Context                        | Spread input                          | Behavior                                                                          |
-| ------------------------------ | ------------------------------------- | --------------------------------------------------------------------------------- |
-| Arguments, `Args` or record    | Array, tuple, set, [`Iter`](std.Iter) | Positional items, including pair elements                                         |
-| Arguments, `Args` or record    | Dict, `Args`, record, struct          | Mixed items: sequential integer keys are positional, symbol keys are keywords     |
-| Array or tuple                 | Array, tuple, set, [`Iter`](std.Iter) | Positional elements                                                               |
-| Array or tuple                 | Dict, `Args`, record, struct          | Positional elements; a keyed entry raises an error                                |
-| Dictionary                     | Array, tuple, set, [`Iter`](std.Iter) | Elements assigned incrementing positional keys                                    |
-| Dictionary                     | Dict, `Args`, record, struct          | Preserves keyed and positional entries                                            |
-| Any                            | `kv()` adapter                        | Keyed entries; arrays and tuples reject them                                      |
+| Context                     | Spread input                          | Behavior                                                    |
+| --------------------------- | ------------------------------------- | ----------------------------------------------------------- |
+| Arguments, `Args` or record | Array, tuple, set, [`Iter`](std.Iter) | Positional items, including pair elements                   |
+| Arguments, `Args` or record | `Args`, record, struct                | Positional items stay positional, symbol keys are keywords  |
+| Arguments, `Args` or record | Dict                                  | Symbol keys are keywords; another key raises an error       |
+| Array or tuple              | Array, tuple, set, [`Iter`](std.Iter) | Positional elements                                         |
+| Array or tuple              | `Args`, record, struct                | Positional elements; a keyed entry raises an error          |
+| Array or tuple              | Dict                                  | Raises an error, since every entry is keyed                 |
+| Dictionary                  | Array, tuple, set, [`Iter`](std.Iter) | Raises an error, since every element is positional          |
+| Dictionary                  | Dict, `Args`, record, struct          | Keyed entries; a positional item raises an error            |
+| Any                         | `kv()` adapter                        | Keyed entries; arrays and tuples reject them                |
 
 Spread a dictionary directly to preserve its keys:
 
@@ -333,7 +352,7 @@ let extended = {...base, age: 30}
 ```
 
 Spreading dicts preserves duplicate keys and order. Spreading any `Iter`,
-including a dict or `Args` pair iterator, inserts its elements positionally, so
+including a dict or `Args` pair iterator, gives its elements positionally, so
 `iter()` gives an array of a dict's key/value pairs:
 
 ```

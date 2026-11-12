@@ -61,12 +61,13 @@ assert_eq (dup.get :a:) 3
 assert_eq $dup[:b:] 2
 assert_eq [...dup.iter()] [(:a:, 1), (:b:, 2), (:a:, 3)]
 
-# An `Args` holds positional items and symbol keys. Integer keys counting up
-# from 0 are positional, as when spreading a dict.
-assert_eq (Args {0: :a:, x: 1, 1: :b:}) (args :a: x: 1 :b:)
+# An `Args` holds positional items and symbol keys. A source's integer keys
+# are keys, not positions.
+assert_eq (Args {x: 1, y: 2}) (args x: 1 y: 2)
+assert_throws $std.UnexpectedKeyError str: "unexpected key item: 0" do Args {0: :a:}
 # Pairs from an iterator
-assert_eq (Args([(0, :a:), (:k:, 1)].kv())) (args :a: k: 1)
+assert_eq (Args([(:k:, 1)].kv())) (args k: 1)
 assert_eq (Args (args 1 k: 2 3)) (args 1 k: 2 3)
-assert_throws $TypeError str: "type error: args keys must be symbols" do Args {"s": 1}
-assert_throws $TypeError str: "type error: args keys must be symbols" do Args {5: :x:, 0: :y:}
-assert_throws $TypeError str: "type error: args keys must be symbols" do Args $[(1, :x:)].kv()
+assert_throws $std.UnexpectedKeyError str: "unexpected key item: \"s\"" do Args {"s": 1}
+assert_throws $std.UnexpectedKeyError str: "unexpected key item: 5" do Args {5: :x:}
+assert_throws $std.UnexpectedKeyError str: "unexpected key item: 1" do Args $[(1, :x:)].kv()

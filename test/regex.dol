@@ -168,7 +168,7 @@ def iterator_spreads_are_positional()
   let parts = re.split "a b"
   assert_eq (args ...parts) (args "a" "b")
   let parts = re.split "a b"
-  assert_eq (dict ...parts) {0: "a", 1: "b"}
+  assert_eq (record ...parts) {"a", "b"}
   let words = Regex r"\w+"
   let matches = words.find "a b"
   let found = args ...matches

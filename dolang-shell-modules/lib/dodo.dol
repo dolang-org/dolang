@@ -8,18 +8,22 @@ import args exec strand term proc fs digest json
 # A task's handler, which runs with the channels of `dodo`'s caller
 @let Handler = args.Handler[Value, Iter[Value], Sink[Value]]
 
-# The items of a task's arguments, as [`args.with`](args.with) takes them
-@let SpecItems = $
+# The keys of a task's arguments
+@let SpecKeys = $
   # Description shown in `--help` output and the task list
   ?help: Str
   # Replacement for the generated `Usage:` line
   ?usage: Str
+
+# The items of a task's arguments, as [`args.with`](args.with) takes them
+@let SpecItems = $
+  ...SpecKeys
   # Spec items and, optionally, the handler
   *(args.SpecItem[Value, Iter[Value], Sink[Value]] | Handler)
 
 # A task's arguments: a record with spec items, or a dict without them.
 # `dispatch` tells a spec from a handler by its class.
-@let Spec = (BaseRecord[...SpecItems] | BaseDict[SpecItems])
+@let Spec = (BaseRecord[...SpecItems] | BaseDict[SpecKeys])
 
 # A task's spec items and, optionally, its handler, without a description
 @let Items = BaseArray[args.SpecItem[Value, Iter[Value], Sink[Value]] | Handler]
@@ -28,7 +32,7 @@ import args exec strand term proc fs digest json
 @let Rule = (Spec | Items | Handler | Str)
 
 # Spec items every task takes
-@let Common = BaseDict[{*args.SpecItem[Value, Iter[Value], Sink[Value]]}]
+@let Common = BaseRecord[...{*args.SpecItem[Value, Iter[Value], Sink[Value]]}]
 
 # The tasks `dodo.dol` returns
 @let Rules = BaseDict $
@@ -59,7 +63,7 @@ do -> Value
   let spec = match rule
     Func(handler) do {handler}
     BaseRecord(rule) | BaseDict(rule) | BaseArray(rule) do rule
-  let common = rules.get :common: default: ({} @ Common)
+  let common = rules.get :common: default: (Record(()) @ Common)
 
   args.with args: $argv ...common ...spec
 

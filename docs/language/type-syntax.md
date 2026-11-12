@@ -160,8 +160,8 @@ alone admit any further item of their own kind:
 | `**`  | Any further keyed items      |
 
 ```
-let anything @ Dict[{...}] = {}
-let positional @ Dict[{Str, *}] = {}
+let anything @ Spread[{...}] = {}
+let positional @ Tuple[...{Str, *}] = ("a", 1)
 ```
 
 ### Expanding Schemas
@@ -178,14 +178,14 @@ let conn @ Args[...{host: Str, ?port: Int}] = (host: "db")
 
 ### Types as Schema Arguments
 
-A type whose only positional parameter is a schema, such as `Dict`, also
-accepts types in its place. Any other parameters must be keyword parameters,
-which are passed by name as usual:
+A type whose only positional parameter is a schema, such as `Dict` or `Spread`,
+also accepts types in its place. Any other parameters must be keyword
+parameters, which are passed by name as usual:
 
-| Shorthand    | Stands for          |
-| ------------ | ------------------- |
-| `Dict[T]`    | `Dict[{*T}]`        |
-| `Dict[K, V]` | `Dict[{*(K): V}]`   |
+| Shorthand    | Stands for        |
+| ------------ | ----------------- |
+| `Spread[T]`  | `Spread[{*T}]`    |
+| `Dict[K, V]` | `Dict[{*(K): V}]` |
 
 An argument that is already a schema, including a binder bounded by one, is
 passed as is:

@@ -90,6 +90,12 @@ pub(crate) enum Problem {
         found: Shown,
         item: String,
     },
+    /// A value spread into a dict that may have a positional item
+    PositionalSpread {
+        span: Span,
+        found: Shown,
+        item: String,
+    },
     /// A pattern that can't unpack a value of the type found
     Impossible {
         span: Span,
@@ -239,6 +245,7 @@ impl Report for Problem {
             | Problem::Unextendable(span)
             | Problem::Misfit { span, .. }
             | Problem::KeyedSpread { span, .. }
+            | Problem::PositionalSpread { span, .. }
             | Problem::Impossible { span, .. }
             | Problem::Annotation { span, .. }
             | Problem::Cast { span, .. }
@@ -299,6 +306,12 @@ impl Report for Problem {
             Problem::KeyedSpread { .. } => vec![(
                 NoteKind::Help,
                 "spread its `.iter()` for `(key, value)` pairs".to_owned(),
+            )],
+            Problem::PositionalSpread { .. } => vec![(
+                NoteKind::Help,
+                "a dict holds only keyed items; for positional ones, make a record, as in \
+                 `Record source`"
+                    .to_owned(),
             )],
             Problem::AmbiguousCall { survivors, .. } => survivors
                 .iter()
@@ -382,6 +395,9 @@ impl Report for Problem {
             }
             Problem::KeyedSpread { found, item, .. } => {
                 write!(w, "a sequence can't take {item}, which {found} spreads")
+            }
+            Problem::PositionalSpread { found, item, .. } => {
+                write!(w, "a dict can't take {item}, which {found} spreads")
             }
             Problem::Impossible { found, .. } => {
                 write!(w, "{found} can never unpack as this pattern")

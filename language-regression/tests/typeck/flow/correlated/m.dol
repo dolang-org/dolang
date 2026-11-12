@@ -128,7 +128,7 @@ pub def recent p @ (((:x:, Int), Str) | ((:y:, Str), Int))
 pub @let Steps = {*run: (() -> nil), *Str}
 
 # Entries of an aliased schema are its alternatives too
-pub def aliased d @ Dict[Steps]
+pub def aliased d @ Record[...Steps]
   for entry = d
     match entry
       (Int(_) _) do nil

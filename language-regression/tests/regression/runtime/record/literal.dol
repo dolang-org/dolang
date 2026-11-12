@@ -14,9 +14,11 @@ assert_eq $v (record 1 key: "x" 2)
 
 # Keys alone, a spread alone, and nothing make dicts, and dashes alone an array
 assert (type {a: 1} Dict)
-assert (type {...[1]} Dict)
-assert (type {...(record 1)} Dict)
+assert (type {...(record a: 1)} Dict)
 assert (type {} Dict)
+# A dict holds only keyed items, so a spread with positional ones raises
+assert_throws $std.UnexpectedPosError do {...[1]}
+assert_throws $std.UnexpectedPosError do {...(record 1)}
 let dashes = $
   - 1
   - 2

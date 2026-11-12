@@ -56,9 +56,14 @@ pub def dicts t @ (Int, Str)
   let keyed = {0: "a", 1: "b"}
   let _ = keyed
   #       ^~~~~: flow std.Dict[std.Int, std.Str]
-  let spread = {...t, a: 1}
-  let _ = spread
-  #       ^~~~~~: flow std.Dict[{*std.Int | std.Str, **std.Int}]
+  let _spread = {...t, a: 1}
+  # error: a dict can't take positional `std.Int`, which `std.Spread[{std.Int, std.Str}]` spreads
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _spread = {...t, a: 1}
+  #    |                     ^
+  #    |
+  #    = help: a dict holds only keyed items; for positional ones, make a record, as in `Record source`
   bind {1, foo: false, 2, bar: nil}
     a b
     :foo :bar
@@ -66,6 +71,11 @@ pub def dicts t @ (Int, Str)
   #        ^: flow std.Int
   let _ = (foo, bar)
   #             ^~~: flow std.Bool | std.Nil
-  let spread_only = {...t}
-  let _ = spread_only
-  #       ^~~~~~~~~~~: flow std.Dict[std.Int | std.Str]
+  let _spread_only = {...t}
+  # error: a dict can't take positional `std.Int`, which `std.Spread[{std.Int, std.Str}]` spreads
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _spread_only = {...t}
+  #    |                          ^
+  #    |
+  #    = help: a dict holds only keyed items; for positional ones, make a record, as in `Record source`

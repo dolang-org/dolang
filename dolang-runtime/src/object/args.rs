@@ -1113,10 +1113,7 @@ impl<'v> Protocol<'v> for Args<'v> {
 /// Collects a source's pairs for `Args src`, into an argument pack rooted in
 /// a slot. An `Args` holds only positional items and symbol keys.
 struct ArgsPairs<'b, 'v> {
-    int: i64,
     pack: &'b Value<'v>,
-    /// The collection named in errors
-    kind: &'static str,
 }
 
 impl<'v> ArgsPairs<'_, 'v> {
@@ -1143,12 +1140,7 @@ impl<'v, 's> Spread<'v, 's> for ArgsPairs<'_, 'v> {
         strand: &mut Strand<'v, 's>,
         mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        self.push(strand, None, value.take())?;
-        self.int = self
-            .int
-            .checked_add(1)
-            .ok_or_else(|| Error::overflow(strand))?;
-        Ok(())
+        self.push(strand, None, value.take())
     }
 
     fn symbol(
@@ -1161,23 +1153,17 @@ impl<'v, 's> Spread<'v, 's> for ArgsPairs<'_, 'v> {
         self.push(strand, Some(key), value.take())
     }
 
-    // Pairs from an iterable all arrive here. An integer key is positional
-    // while it counts up from 0, as when spreading a dict.
+    // Pairs from an iterable all arrive here. Only a symbol key fits, since
+    // an integer key is a key, never a position.
     fn keyed(
         &mut self,
         strand: &mut Strand<'v, 's>,
         key: Slot<'v, '_>,
         value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        if let Some(sym) = key.as_sym(strand) {
-            self.symbol(strand, sym, value)
-        } else if key.to_i64(strand).ok() == Some(self.int) {
-            self.positional(strand, value)
-        } else {
-            Err(Error::type_error(
-                strand,
-                format!("{} keys must be symbols", self.kind),
-            ))
+        match key.as_sym(strand) {
+            Some(sym) => self.symbol(strand, sym, value),
+            None => Err(Error::unexpected_key(strand, &key)),
         }
     }
 }
@@ -1316,7 +1302,7 @@ impl<'v> Protocol<'v> for Class {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([source], []) = unpack!(strand, args, 1, 0)?;
-        let items = source_items(strand, &source, "args").await?;
+        let items = source_items(strand, &source).await?;
         strand
             .builtin_types()
             .args
@@ -1325,15 +1311,13 @@ impl<'v> Protocol<'v> for Class {
     }
 }
 
-/// Collects the items of `source` for `Args src`, naming the collection
-/// `kind` in errors.
+/// Collects the items of `source` for `Args src`.
 ///
 /// The items are unrooted, so the caller must store them before anything can
 /// collect.
 pub(crate) async fn source_items<'v, 's>(
     strand: &mut Strand<'v, 's>,
     source: &Value<'v>,
-    kind: &'static str,
 ) -> Result<'v, 's, Vec<ArgItem<'v>>> {
     strand
         .with_slots(async |strand, [mut pack]| {
@@ -1344,11 +1328,7 @@ pub(crate) async fn source_items<'v, 's>(
                 ArgPack::new(Vec::new()),
                 Slot::reborrow(&mut pack),
             );
-            let mut sink = ArgsPairs {
-                int: 0,
-                pack: &pack,
-                kind,
-            };
+            let mut sink = ArgsPairs { pack: &pack };
             source
                 .op_spread(strand, SpreadContext::Pairs, &mut sink)
                 .await?;

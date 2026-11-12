@@ -97,7 +97,6 @@ well_known_symbols! {
     (IterMethod, "(iter)", ITER_METHOD),
     (Insert, "insert", INSERT),
     (InitMethod, "(init)", INIT_METHOD),
-    (Int, "int", INT),
     (Join, "join", JOIN),
     (Key, "key", KEY),
     (Keys, "keys", KEYS),

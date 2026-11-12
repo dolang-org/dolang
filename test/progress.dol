@@ -107,7 +107,11 @@ def invalid_step_specs()
     - name: missing
 
   assert_throws $UnexpectedPosError do
-    progress.steps {0: (do nil), 1: (do nil)}
+    progress.steps {(do nil), (do nil)}
+
+  # A dict holds no positions, so its integer keys are unknown keys
+  assert_throws $UnexpectedKeyError do
+    progress.steps {0: (do nil)}
 
   assert_throws $UnexpectedKeyError do progress.steps
     - unknown: value

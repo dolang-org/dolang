@@ -4,8 +4,16 @@ pub let spelled @ Dict[{a: Int}] = ...
 #                 ^~~~~~~~~~~~~~: type std.Dict[{a: std.Int}]
 pub let rows @ Array[Dict[{a: Int}]] = ...
 #              ^~~~~~~~~~~~~~~~~~~~~: type std.Array[std.Dict[{a: std.Int}]]
-pub let shorthand @ Dict[Int] = ...
-#                   ^~~~~~~~~: type std.Dict[std.Int]
+pub let shorthand @ Dict[Int, Str] = ...
+#                   ^~~~~~~~~~~~~~: type std.Dict[std.Int, std.Str]
+# A dict holds only keyed items, so `Dict[Int]`, short for `Dict[{*Int}]`,
+# doesn't satisfy its bound
+pub let positional @ Dict[Int] = ...
+# error: this does not satisfy `S @ {*(Value): Value}`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let positional @ Dict[Int] = ...
+#    |                           ^^^
 
 # A vertical schema follows a class too, in a key's value as anywhere
 pub @let Config = Dict $
@@ -22,7 +30,7 @@ pub @let Tree = (nil | Dict[{child: Tree}])
 #        ^~~~: decl nil | std.Dict[{child: m.Tree}]
 
 # A binder's bound and an alias's body stay schemas
-pub def keys[S @ {...}] table @ Dict[S] -> nil
+pub def keys[S @ {*(Value): Value}] table @ Dict[S] -> nil
   ...
 pub @let Shape = {a: Int}
 pub let shaped @ Dict[Shape] = ...

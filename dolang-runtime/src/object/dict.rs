@@ -1,7 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
     hash::{Hash, Hasher},
-    mem,
     ops::ControlFlow,
 };
 
@@ -151,33 +150,21 @@ impl<'v> Dict<'v> {
     }
 
     /// Finds the key of the first pair, in insertion order, that an unpack
-    /// left behind.
-    ///
-    /// A pair is accounted for if it is one of the integer keys below
-    /// `int_limit` consumed positionally, or if `skip` already covers that
-    /// many instances of its key. `skip` is copied rather than advanced,
-    /// since the caller still needs it as it stands (to commit, or to hand to
-    /// a capture).
+    /// left behind: one with more instances than `skip` covers. `skip` is
+    /// copied rather than advanced, since the caller still needs it as it
+    /// stands (to commit, or to hand to a capture).
     fn leftover_key<'s>(
         &self,
         strand: &mut Strand<'v, 's>,
-        int_limit: i64,
         skip: &Skip<'v>,
     ) -> Result<'v, 's, Option<Value<'v>>> {
         let mut skip = skip.clone();
-        for (bucket, subindex) in self.index.iter().flatten() {
+        for (bucket, _) in self.index.iter().flatten() {
             let bucket = unsafe { bucket.as_ref() };
-            let key = &bucket.key;
-            if *subindex == 0
-                && let Some(int) = key.as_int(strand)
-                && (0..i128::from(int_limit)).contains(&int)
-            {
+            if skip.add(strand, &bucket.key, bucket.hash)? >= bucket.value.len() {
                 continue;
             }
-            if skip.add(strand, key, bucket.hash)? >= bucket.value.len() {
-                continue;
-            }
-            return Ok(Some(key.dup()));
+            return Ok(Some(bucket.key.dup()));
         }
         Ok(None)
     }
@@ -363,10 +350,7 @@ impl<'v> Dict<'v> {
         args: Args<'v, '_>,
     ) -> Result<'v, 's, Self> {
         let mut this = Self::new();
-        let mut sink = DictPairs {
-            int: 0,
-            dict: &mut this,
-        };
+        let mut sink = DictPairs { dict: &mut this };
 
         for (index, arg) in args.enumerate() {
             if (index + 1) % crate::INTERRUPT_INTERVAL == 0 {
@@ -381,18 +365,41 @@ impl<'v> Dict<'v> {
         Ok(this)
     }
 
+    /// Builds a dict from arguments, keying the positional ones by their
+    /// index among the positional arguments and the key ones by symbol.
+    pub(crate) fn from_indexed_args<'s>(
+        strand: &mut Strand<'v, 's>,
+        args: Args<'v, '_>,
+    ) -> Result<'v, 's, Self> {
+        let mut this = Self::new();
+        let mut position = 0i64;
+        for (index, arg) in args.enumerate() {
+            if (index + 1) % crate::INTERRUPT_INTERVAL == 0 {
+                strand.check_trap_gc()?;
+            }
+            let (key, mut value) = match arg {
+                Arg::Pos(value) => {
+                    let key = Value::from_i64(strand, position);
+                    position += 1;
+                    (key, value)
+                }
+                Arg::Key(key, value) => (Value::from_object(strand.sym_obj(key)), value),
+            };
+            let mut hasher = strand.vm().hasher();
+            key.op_hash(strand, &mut hasher)?;
+            this.insert(strand, key, value.take(), hasher.finish(), false)?;
+        }
+        Ok(this)
+    }
+
     pub(crate) async fn from_builtin_args<'s>(
         strand: &mut Strand<'v, 's>,
         mut args: Args<'v, '_>,
     ) -> Result<'v, 's, Self> {
         let mut this = Self::new();
         let mut counter = 1;
-        let mut index = 0;
 
-        let mut sink = DictPairs {
-            int: 0,
-            dict: &mut this,
-        };
+        let mut sink = DictPairs { dict: &mut this };
 
         loop {
             if counter % crate::INTERRUPT_INTERVAL == 0 {
@@ -401,21 +408,6 @@ impl<'v> Dict<'v> {
             counter += 1;
             let mut key = match args.next() {
                 Some(Arg::Pos(key)) => key,
-                Some(Arg::Key(sym, mut value)) if sym.tag() == sym::INT => {
-                    let key = Value::from_i64(strand, index);
-                    let mut hasher = strand.vm().hasher();
-                    key.op_hash(strand, &mut hasher).unwrap();
-                    let hv = hasher.finish();
-                    sink.dict.insert(
-                        strand,
-                        Value::from_i64(strand, index),
-                        value.take(),
-                        hv,
-                        false,
-                    )?;
-                    index += 1;
-                    continue;
-                }
                 Some(Arg::Key(sym, expand)) if sym.tag() == sym::ITER => {
                     expand
                         .op_spread(strand, SpreadContext::Pairs, &mut sink)
@@ -447,8 +439,8 @@ fn hasher<'v>() -> impl Fn(&Entry<'v>) -> u64 {
     |Entry { hash, .. }| *hash
 }
 
+/// Collects spread pairs into a dict, which holds only keyed entries
 struct DictPairs<'b, 'v> {
-    int: i64,
     dict: &'b mut Dict<'v>,
 }
 
@@ -456,18 +448,9 @@ impl<'b, 'v, 's> Spread<'v, 's> for DictPairs<'b, 'v> {
     fn positional(
         &mut self,
         strand: &mut Strand<'v, 's>,
-        mut value: Slot<'v, '_>,
+        _value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let key = Value::from_i64(strand, self.int);
-        let mut hasher = strand.vm().hasher();
-        key.op_hash(strand, &mut hasher).unwrap();
-        let hv = hasher.finish();
-        self.dict.insert(strand, key, value.take(), hv, false)?;
-        self.int = self
-            .int
-            .checked_add(1)
-            .ok_or_else(|| Error::overflow(strand))?;
-        Ok(())
+        Err(Error::unexpected_positional(strand, 0))
     }
 
     fn symbol(
@@ -651,21 +634,15 @@ unsafe impl<'v> Collect for KeyValues<'v> {
 }
 
 impl<'v> Dict<'v> {
-    /// Spreads one pair. It is positional if its key is the integer `next_pos`,
-    /// which then counts up; `None` spreads every pair as keyed.
+    /// Spreads one pair, always keyed: a symbol key as a symbol, any other
+    /// key as is
     fn spread_key_value<'s>(
         strand: &mut Strand<'v, 's>,
-        next_pos: &mut Option<i64>,
         mut key: Value<'v>,
         mut value: Value<'v>,
         sink: &mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        if let Some(pos) = *next_pos
-            && key.to_i64(strand).ok() == Some(pos)
-        {
-            *next_pos = pos.checked_add(1);
-            sink.positional(strand, Slot::new(&mut value))
-        } else if let Some(sym) = key.as_sym(strand) {
+        if let Some(sym) = key.as_sym(strand) {
             sink.symbol(strand, sym, Slot::new(&mut value))
         } else {
             sink.keyed(strand, Slot::new(&mut key), Slot::new(&mut value))
@@ -1201,191 +1178,36 @@ impl<'v> Skip<'v> {
         self.count += 1;
         Ok(count)
     }
-
-    fn take(&mut self) -> Self {
-        mem::replace(self, Skip::new())
-    }
 }
 
-/// How far [`Dict::unpack_matched`] got.
-struct Matched {
-    /// First integer key after those taken positionally, if any remain.
-    start: Option<i64>,
-    /// End of the run of leftover positional items from `start`.
-    end: Option<i64>,
-    /// First instances of integer keys below this were consumed beforehand.
-    floor: i64,
-}
-
-impl Matched {
-    /// Returns the floor for a `**name` rest: it takes the leftover
-    /// positional items too, as keyed ones, unless a `*` rest takes them.
-    fn key_floor(&self, sig: &sig::Unpack<'_, '_>) -> i64 {
-        if sig.pos_rest() == Rest::None {
-            self.start.unwrap_or(self.floor)
-        } else {
-            self.end.unwrap_or(self.floor)
-        }
-    }
-
-    /// Returns the slot and state of a `*name` rest, which takes the leftover
-    /// positional run.
-    fn pos_rest<'v>(&self, sig: &sig::Unpack<'_, '_>) -> Option<(usize, UnpackState<'v>)> {
-        if sig.variadic == Variadic::Capture {
-            return None;
-        }
-        let slot = sig.pos_rest_slot()?;
-        Some((slot, UnpackState::Run { int: self.start }))
-    }
-}
-
-fn offset<'v, 's>(strand: &mut Strand<'v, 's>, base: i64, by: usize) -> Result<'v, 's, i64> {
-    i64::try_from(by)
-        .ok()
-        .and_then(|by| base.checked_add(by))
-        .ok_or_else(|| Error::overflow(strand))
-}
-
-/// Returns which of `entry`'s values a walk over leftover pairs delivers when
-/// it reaches the one at `subindex`, or `None` if that visit delivers nothing.
-///
-/// Values go out in order, skipping those consumed: the first instance of an
-/// integer key below `floor` (taken positionally), then as many more as
-/// `skip` counts.
-fn leftover_instance<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    entry: &Entry<'v>,
-    subindex: usize,
-    floor: i64,
-    skip: &mut Skip<'v>,
-) -> Result<'v, 's, Option<usize>> {
-    let positional = entry
-        .key
-        .as_int(strand)
-        .is_some_and(|int| (0..i128::from(floor)).contains(&int));
-    if positional && subindex == 0 {
-        return Ok(None);
-    }
-    let instance = skip.add(strand, &entry.key, entry.hash)? + usize::from(positional);
-    Ok((instance < entry.value.len()).then_some(instance))
-}
-
-/// Position of a lazy rest over a keyed container's leftover pairs.
-///
-/// A rest delivers its positional items, the run of integer keys from the
-/// next position, before its keyed ones, which follow insertion order.
+/// Position of a lazy rest over a dict's leftover pairs, which follow
+/// insertion order from `index`, skipping the instances of each key that
+/// `skip` counts as consumed.
 #[derive(Clone)]
-enum UnpackState<'v> {
-    /// Delivering the positional run from `int`, before resuming the keyed
-    /// items at `resume`.
-    Int {
-        int: i64,
-        resume: usize,
-        skip: Skip<'v>,
-    },
-    /// Walking in insertion order while the integer keys met continue the
-    /// positional run from `int`.
-    Order {
-        int: i64,
-        index: usize,
-        skip: Skip<'v>,
-    },
-    /// Delivering the keyed items from `index`. First instances of integer
-    /// keys below `floor` were consumed positionally.
-    Resume {
-        index: usize,
-        floor: i64,
-        skip: Skip<'v>,
-    },
-    /// Delivering only the positional run from `int`, for a `*name` rest.
-    Run { int: Option<i64> },
+struct UnpackState<'v> {
+    index: usize,
+    skip: Skip<'v>,
 }
 
 impl<'v> UnpackState<'v> {
-    fn is_run(&self) -> bool {
-        matches!(self, UnpackState::Run { .. })
-    }
-
     /// Returns the next leftover pair, advancing past it.
     fn next_pair<'s>(
         &mut self,
         strand: &mut Strand<'v, 's>,
         dict: &Dict<'v>,
     ) -> Result<'v, 's, Option<(Value<'v>, Value<'v>)>> {
-        loop {
-            match self {
-                UnpackState::Run { int } => {
-                    let Some(pos) = *int else {
-                        return Ok(None);
-                    };
-                    let key = Value::from_i64(strand, pos);
-                    let Some(value) = dict.get(strand, &key, Some(0))? else {
-                        *int = None;
-                        return Ok(None);
-                    };
-                    let value = value.dup();
-                    *int = pos.checked_add(1);
-                    return Ok(Some((key, value)));
-                }
-                UnpackState::Int { int, resume, skip } => {
-                    let key = Value::from_i64(strand, *int);
-                    if let Some(value) = dict.get(strand, &key, Some(0))? {
-                        let value = value.dup();
-                        *int = offset(strand, *int, 1)?;
-                        return Ok(Some((key, value)));
-                    }
-                    *self = UnpackState::Resume {
-                        index: *resume,
-                        floor: *int,
-                        skip: skip.take(),
-                    };
-                }
-                UnpackState::Resume { index, floor, skip } => {
-                    let Some(slot) = dict.index.get(*index) else {
-                        return Ok(None);
-                    };
-                    *index += 1;
-                    let Some((bucket, subindex)) = slot else {
-                        continue;
-                    };
-                    let entry = unsafe { bucket.as_ref() };
-                    if let Some(instance) =
-                        leftover_instance(strand, entry, *subindex, *floor, skip)?
-                    {
-                        return Ok(Some((entry.key.dup(), entry.value.at(instance).dup())));
-                    }
-                }
-                UnpackState::Order { int, index, skip } => {
-                    let Some(slot) = dict.index.get(*index) else {
-                        return Ok(None);
-                    };
-                    let Some((bucket, subindex)) = slot else {
-                        *index += 1;
-                        continue;
-                    };
-                    let entry = unsafe { bucket.as_ref() };
-                    if let Some(key) = entry.key.as_int(strand) {
-                        if *subindex == 0 && key == i128::from(*int) {
-                            *index += 1;
-                            *int = offset(strand, *int, 1)?;
-                            return Ok(Some((entry.key.dup(), entry.value.at(0).dup())));
-                        }
-                        // Out of sequence: finish the run, then resume here
-                        *self = UnpackState::Int {
-                            int: *int,
-                            resume: *index,
-                            skip: skip.take(),
-                        };
-                        continue;
-                    }
-                    *index += 1;
-                    if let Some(instance) = leftover_instance(strand, entry, *subindex, *int, skip)?
-                    {
-                        return Ok(Some((entry.key.dup(), entry.value.at(instance).dup())));
-                    }
-                }
+        while let Some(slot) = dict.index.get(self.index) {
+            self.index += 1;
+            let Some((bucket, _)) = slot else {
+                continue;
+            };
+            let entry = unsafe { bucket.as_ref() };
+            let instance = self.skip.add(strand, &entry.key, entry.hash)?;
+            if instance < entry.value.len() {
+                return Ok(Some((entry.key.dup(), entry.value.at(instance).dup())));
             }
         }
+        Ok(None)
     }
 }
 
@@ -1396,8 +1218,6 @@ pub(crate) struct Unpack<'v> {
     state: UnpackState<'v>,
     epoch: u64,
     dict: GcObj<'v, Dict<'v>>,
-    /// Spreads every pair as keyed, for a `**name` rest.
-    keyed: bool,
 }
 
 /// Creates the lazy rest over a dict's leftover pairs.
@@ -1406,17 +1226,11 @@ fn make_unpack<'v>(
     dict: GcObj<'v, Dict<'v>>,
     epoch: u64,
     state: UnpackState<'v>,
-    keyed: bool,
 ) -> Value<'v> {
     Value::from_object(GcObj::new(
         strand.arena(),
         strand.builtin_types().dict_unpack,
-        Unpack {
-            state,
-            dict,
-            epoch,
-            keyed,
-        },
+        Unpack { state, dict, epoch },
     ))
 }
 
@@ -1496,79 +1310,15 @@ impl<'v> Protocol<'v> for Unpack<'v> {
         let dict = container
             .borrow()
             .ok_or_else(|| Error::concurrency(strand))?;
-        let (next, floor, resume, skip) = match &borrow.state {
-            UnpackState::Int { int, resume, skip } => (Some(*int), *int, *resume, skip),
-            UnpackState::Order { int, index, skip } => (Some(*int), *int, *index, skip),
-            UnpackState::Resume { index, floor, skip } => (None, *floor, *index, skip),
-            UnpackState::Run { int } => {
-                // A positional run unpacks as a sequence
-                let values = dict.run_values(strand, *int)?;
-                let taken = super::iter::unpack_cursor(strand, sig, &mut out, 0, |_, i| {
-                    values.get(i).map(|value| (i + 1, value.dup()))
-                })?;
-                let next = match *int {
-                    Some(int) if taken < values.len() => Some(offset(strand, int, taken)?),
-                    _ => None,
-                };
-                let epoch = borrow.epoch;
-                drop(dict);
-                drop(borrow);
-                if let Some(i) = sig.pos_rest_slot() {
-                    out.at(i).store(make_unpack(
-                        strand,
-                        container,
-                        epoch,
-                        UnpackState::Run { int: next },
-                        false,
-                    ));
-                }
-                sig.fill_empty_key_rest(strand, &mut out);
-                return Ok(());
-            }
-        };
+        let resume = borrow.state.index;
 
         // Match against a copy, so a failure leaves the rest as it was
-        let mut skip = skip.clone();
-        let matched = dict.unpack_matched(strand, sig, &mut out, next, floor, &mut skip)?;
-        let pos_rest = matched.pos_rest(sig);
-        let key_rest = sig.key_rest_slot().map(|i| {
-            let state = UnpackState::Resume {
-                index: resume,
-                floor: matched.key_floor(sig),
-                skip: skip.clone(),
-            };
-            (i, state)
-        });
-
-        // Build the child view, excluding a positional run that a `*` rest took
-        let next = if sig.variadic == Variadic::Capture || sig.pos_rest() == Rest::None {
-            matched.start
-        } else {
-            matched.end
-        };
-        let state = match next {
-            Some(int) => UnpackState::Int { int, resume, skip },
-            None => UnpackState::Resume {
-                index: resume,
-                floor,
-                skip,
-            },
-        };
+        let mut skip = borrow.state.skip.clone();
+        dict.unpack_matched(strand, sig, &mut out, &mut skip)?;
         let epoch = borrow.epoch;
         drop(dict);
         drop(borrow);
-
-        if let Some((i, state)) = pos_rest {
-            let rest = make_unpack(strand, container.clone(), epoch, state, false);
-            out.at(i).store(rest);
-        }
-        if let Some((i, state)) = key_rest {
-            let rest = make_unpack(strand, container.clone(), epoch, state, true);
-            out.at(i).store(rest);
-        } else if sig.variadic == Variadic::Capture {
-            out.at(sig.len() - 1)
-                .store(make_unpack(strand, container, epoch, state, false));
-        }
+        dict_rests(strand, sig, &mut out, container, epoch, resume, skip);
         Ok(())
     }
 
@@ -1588,11 +1338,6 @@ impl<'v> Protocol<'v> for Unpack<'v> {
         {
             return Err(Error::concurrency(strand));
         }
-        let mut next_pos = match &borrow.state {
-            _ if borrow.keyed => None,
-            UnpackState::Int { int, .. } | UnpackState::Order { int, .. } => Some(*int),
-            UnpackState::Run { .. } | UnpackState::Resume { .. } => None,
-        };
         let mut state = borrow.state.clone();
         let mut counter = 0usize;
         loop {
@@ -1609,14 +1354,10 @@ impl<'v> Protocol<'v> for Unpack<'v> {
                 }
                 state.next_pair(strand, &dict)?
             };
-            let Some((key, mut value)) = pair else {
+            let Some((key, value)) = pair else {
                 return Ok(());
             };
-            if state.is_run() {
-                sink.positional(strand, Slot::new(&mut value))?;
-            } else {
-                Dict::spread_key_value(strand, &mut next_pos, key, value, sink)?;
-            }
+            Dict::spread_key_value(strand, key, value, sink)?;
         }
     }
 
@@ -1641,7 +1382,7 @@ impl<'v> Protocol<'v> for Unpack<'v> {
 
 // ── UnpackIter ──────────────────────────────────────────────────────
 
-/// Iterator over a dict rest: values for a `*name` rest, pairs otherwise.
+/// Iterator over a dict rest's `(key, value)` pairs.
 pub(crate) struct UnpackIter<'v> {
     state: UnpackState<'v>,
     epoch: u64,
@@ -1714,11 +1455,7 @@ impl<'v> Protocol<'v> for UnpackIter<'v> {
         let Some((key, value)) = borrow.state.next_pair(strand, &dict)? else {
             return Ok(false);
         };
-        if borrow.state.is_run() {
-            out.store(value);
-        } else {
-            out.store(Value::from_object(tuple::tuple(strand, [key, value])));
-        }
+        out.store(Value::from_object(tuple::tuple(strand, [key, value])));
         Ok(true)
     }
 
@@ -1798,7 +1535,6 @@ impl<'v> Protocol<'v> for Dict<'v> {
         let borrow = this.borrow(strand)?;
         crate::fmt!(strand, w, "{{")?;
         let mut index = 0usize;
-        let mut next_int_key = Some(0);
         let mut count = 0usize;
         unsafe {
             while let Some(bucket) = borrow.index.get(index) {
@@ -1815,17 +1551,6 @@ impl<'v> Protocol<'v> for Dict<'v> {
                     crate::fmt!(strand, w, ", ")?;
                 }
                 count += 1;
-                if let (Some(int_key), Some(expected)) =
-                    (bucket.as_ref().key.to_i64(strand).ok(), next_int_key)
-                {
-                    if int_key == expected {
-                        next_int_key = Some(expected + 1);
-                        bucket.as_ref().value.at(subindex).op_debug(strand, w)?;
-                        continue;
-                    } else {
-                        next_int_key = None;
-                    }
-                }
                 if let Some(sym) = bucket.as_ref().key.downcast_ref(strand.builtin_types().sym) {
                     crate::fmt!(strand, w, "{}", sym.get().name)?;
                 } else {
@@ -2183,7 +1908,6 @@ impl<'v> Protocol<'v> for Dict<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let dict = this.borrow(strand)?;
-        let mut next_pos = Some(0i64);
         unsafe {
             let mut i = 0usize;
             while i < dict.index.len() {
@@ -2197,7 +1921,6 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 let bucket = bucket.as_ref();
                 Self::spread_key_value(
                     strand,
-                    &mut next_pos,
                     bucket.key.dup(),
                     bucket.value.at(*subindex).dup(),
                     sink,
@@ -2216,31 +1939,41 @@ impl<'v> Protocol<'v> for Dict<'v> {
     ) -> Result<'v, 's, ()> {
         let dict = this.borrow(strand)?;
         let mut skip = Skip::new();
-        let matched = dict.unpack_matched(strand, sig, &mut out, Some(0), 0, &mut skip)?;
+        dict.unpack_matched(strand, sig, &mut out, &mut skip)?;
         let epoch = dict.epoch;
         drop(dict);
-        if let Some((i, state)) = matched.pos_rest(sig) {
-            let rest = make_unpack(strand, this.to_strong(), epoch, state, false);
-            out.at(i).store(rest);
-        }
-        if let Some(i) = sig.key_rest_slot() {
-            let state = UnpackState::Resume {
-                index: 0,
-                floor: matched.key_floor(sig),
-                skip,
-            };
-            let rest = make_unpack(strand, this.to_strong(), epoch, state, true);
-            out.at(i).store(rest);
-        } else if sig.variadic == Variadic::Capture {
-            let state = UnpackState::Order {
-                int: matched.start.unwrap_or(i64::MAX),
-                index: 0,
-                skip,
-            };
-            let rest = make_unpack(strand, this.to_strong(), epoch, state, false);
-            out.at(sig.len() - 1).store(rest);
-        }
+        dict_rests(strand, sig, &mut out, this.to_strong(), epoch, 0, skip);
         Ok(())
+    }
+}
+
+/// Stores the rests of an unpack of a dict, or of a rest of one, whose
+/// leftover pairs start at `index` past what `skip` counts. A dict has no
+/// positional items, so a `*name` rest is empty.
+fn dict_rests<'v>(
+    strand: &mut Strand<'v, '_>,
+    sig: &sig::Unpack<'v, '_>,
+    out: &mut Slots<'v, '_>,
+    dict: GcObj<'v, Dict<'v>>,
+    epoch: u64,
+    index: usize,
+    skip: Skip<'v>,
+) {
+    let state = UnpackState { index, skip };
+    match sig.variadic {
+        Variadic::Capture => {
+            out.at(sig.len() - 1)
+                .store(make_unpack(strand, dict, epoch, state));
+        }
+        _ => {
+            if let Some(i) = sig.pos_rest_slot() {
+                out.at(i)
+                    .store(Value::from_object(tuple::tuple(strand, [])));
+            }
+            if let Some(i) = sig.key_rest_slot() {
+                out.at(i).store(make_unpack(strand, dict, epoch, state));
+            }
+        }
     }
 }
 
@@ -2256,7 +1989,6 @@ impl<'v> Dict<'v> {
             return crate::fmt!(strand, w, "{{}}");
         }
         crate::fmt!(strand, w, "{{\n")?;
-        let mut next_int_key = Some(0);
         unsafe {
             for (index, entry) in dict.index.iter().enumerate() {
                 let Some((bucket, subindex)) = entry else {
@@ -2267,34 +1999,19 @@ impl<'v> Dict<'v> {
                 }
                 let bucket = bucket.as_ref();
                 let mut rendered = String::new();
-                let implicit = if let (Some(int_key), Some(expected)) =
-                    (bucket.key.to_i64(strand).ok(), next_int_key)
-                {
-                    if int_key == expected {
-                        next_int_key = Some(expected + 1);
-                        true
-                    } else {
-                        next_int_key = None;
-                        false
-                    }
+                if let Some(symbol) = bucket.key.downcast_ref(strand.builtin_types().sym) {
+                    rendered.push_str(&symbol.get().name);
                 } else {
-                    false
-                };
-                if !implicit {
-                    if let Some(symbol) = bucket.key.downcast_ref(strand.builtin_types().sym) {
-                        rendered.push_str(&symbol.get().name);
-                    } else {
-                        bucket.key.fmt(
-                            strand,
-                            &Spec {
-                                kind: Some(kind),
-                                ..Default::default()
-                            },
-                            &mut rendered,
-                        )?;
-                    }
-                    rendered.push_str(": ");
+                    bucket.key.fmt(
+                        strand,
+                        &Spec {
+                            kind: Some(kind),
+                            ..Default::default()
+                        },
+                        &mut rendered,
+                    )?;
                 }
+                rendered.push_str(": ");
                 let value = bucket.value.at(*subindex);
                 value.fmt(
                     strand,
@@ -2316,51 +2033,24 @@ impl<'v> Dict<'v> {
 
     /// Matches the positional and key items of `sig` against the pairs an
     /// unpack has not yet consumed, filling their slots, and checks for
-    /// leftovers of a kind that no rest takes.
+    /// leftovers that no rest takes.
     ///
-    /// The positional items are the first instances of the integer keys
-    /// counting up from `next`, or none if it is `None`. Those of integer keys
-    /// below `floor` are already consumed. `skip` counts the instances of
-    /// each key consumed so far, and is advanced past those the key items
-    /// take.
+    /// A dict has no positional items, so a required one is missing and an
+    /// optional one takes its default. `skip` counts the instances of each
+    /// key consumed so far, and is advanced past those the key items take.
     fn unpack_matched<'s>(
         &self,
         strand: &mut Strand<'v, 's>,
         sig: &sig::Unpack<'v, '_>,
         out: &mut Slots<'v, '_>,
-        next: Option<i64>,
-        floor: i64,
         skip: &mut Skip<'v>,
-    ) -> Result<'v, 's, Matched> {
-        let pos_count = sig.required + sig.optional.len();
-        let mut taken = 0usize;
-        if let Some(next) = next {
-            while taken < pos_count {
-                let key = offset(strand, next, taken)?;
-                let Some(value) = self.get(strand, &Value::from_i64(strand, key), Some(0))? else {
-                    break;
-                };
-                out.at(taken).store(value.dup());
-                taken += 1;
-            }
+    ) -> Result<'v, 's, ()> {
+        if sig.required > 0 {
+            return Err(Error::missing_positional(strand, 0));
         }
-        if taken < sig.required {
-            return Err(Error::missing_positional(strand, taken));
-        }
-        for i in taken..pos_count {
-            out.at(i).store(sig.optional[i - sig.required].dup());
-        }
-
-        // The leftover positional items run from `start` to `end`
-        let start = next.map(|next| offset(strand, next, taken)).transpose()?;
-        let mut end = start;
-        if let Some(end) = &mut end {
-            while self
-                .get(strand, &Value::from_i64(strand, *end), Some(0))?
-                .is_some()
-            {
-                *end = offset(strand, *end, 1)?;
-            }
+        let pos_count = sig.optional.len();
+        for (i, default) in sig.optional.iter().enumerate() {
+            out.at(i).store(default.dup());
         }
 
         for (i, key) in sig.keys.iter().enumerate() {
@@ -2389,40 +2079,12 @@ impl<'v> Dict<'v> {
             }
         }
 
-        let matched = Matched { start, end, floor };
-        let leftover_floor = match (sig.pos_rest(), sig.key_rest()) {
-            (Rest::None, Rest::None) => {
-                if start != end {
-                    return Err(Error::unexpected_positional(strand, pos_count));
-                }
-                Some(start.unwrap_or(floor))
-            }
-            (_, Rest::None) => Some(end.unwrap_or(floor)),
-            _ => None,
-        };
-        if let Some(leftover_floor) = leftover_floor
-            && let Some(key) = self.leftover_key(strand, leftover_floor, skip)?
+        if sig.key_rest() == Rest::None
+            && let Some(key) = self.leftover_key(strand, skip)?
         {
             return Err(Error::unexpected_key(strand, &key));
         }
-        Ok(matched)
-    }
-
-    /// Returns the values of the run of integer keys counting up from `int`.
-    fn run_values<'s>(
-        &self,
-        strand: &mut Strand<'v, 's>,
-        int: Option<i64>,
-    ) -> Result<'v, 's, Vec<Value<'v>>> {
-        let mut values = Vec::new();
-        let mut next = int;
-        while let Some(int) = next
-            && let Some(value) = self.get(strand, &Value::from_i64(strand, int), Some(0))?
-        {
-            values.push(value.dup());
-            next = int.checked_add(1);
-        }
-        Ok(values)
+        Ok(())
     }
 
     fn iter_op_next<'a, 's>(
@@ -2710,10 +2372,7 @@ impl<'v> Protocol<'v> for Type {
 
         // FIXME: `Dict` is not GC-scannable, but then again if it were it would also
         // be mutably borrowed, which would inhibit GC.  This needs a resolution.
-        let mut sink = DictPairs {
-            int: 0,
-            dict: &mut dict,
-        };
+        let mut sink = DictPairs { dict: &mut dict };
         items
             .op_spread(strand, SpreadContext::Pairs, &mut sink)
             .await?;
@@ -2846,26 +2505,5 @@ impl<'v> Protocol<'v> for Type {
             }
             _ => type_mcall_fallback(strand, &strand.singletons().dict, method, args, out).await,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{error::ErrorKind, test_support::with_vm, value::Value};
-
-    use super::*;
-
-    #[test]
-    fn dict_pairs_positional_overflow_errors() {
-        with_vm(async |strand, [mut slot]| {
-            let mut dict = Dict::new();
-            let mut sink = DictPairs {
-                int: i64::MAX,
-                dict: &mut dict,
-            };
-            slot.store(Value::from_i64(strand, 0));
-            let err = sink.positional(strand, slot).unwrap_err();
-            assert_eq!(err.kind(), ErrorKind::Overflow);
-        });
     }
 }
