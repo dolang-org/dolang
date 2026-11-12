@@ -103,12 +103,19 @@ pub def unpacking s @ Struct[a: Int, b: Str]
     let _ = v
     #       ^: flow std.Int | std.Str
 
-# A dict literal source widens to the binder's bound (#1680); the factory keeps
-# each item's type
+# A dict literal source is as it would be without the constructor, not widened
+# to its binder's bound (#1680); the factory keeps each item's type
 pub def construct()
   let s = Struct {host: "h", port: 1}
   let _ = s
-  #       ^: flow std.Struct[...Value, ...{**Value}]
+  #       ^: flow std.Struct[...{**std.Int | std.Str}]
+  let r = Record {host: "h", port: 1}
+  let _ = r
+  #       ^: flow std.Record[...{**std.Int | std.Str}]
+  let k = Pack {host: "h", port: 1}
+  let _ = k
+  #       ^: flow (**std.Int | std.Str)
+  let _ @ Record[host: Str, port: Int] = Record {host: "h", port: 1}
   let a @ Struct[host: Str, port: Int] = Struct {host: "h", port: 1}
   let _ = a.port
   #   ^: flow std.Int

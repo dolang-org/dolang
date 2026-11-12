@@ -2856,6 +2856,72 @@ impl<'db> Solver<'db> {
         derived
     }
 
+    /// The obligations whose expected side can come from something other than
+    /// an instantiated binder's bound (see [`Step::InstantiationBound`]), of
+    /// this solver or one it's nested in. A bound propagation takes each side
+    /// from the bound that gives it, and a step that reverses swaps its
+    /// parent's sides. An obligation with several parents can come from
+    /// elsewhere if any of them can.
+    pub(crate) fn caller_expected(&self) -> FxHashSet<ObligationId> {
+        let mut edges: Vec<(ObligationId, Dependency)> = Vec::new();
+        // Whether each side, actual then expected, can come from elsewhere
+        let mut sides: FxHashMap<ObligationId, (bool, bool)> = FxHashMap::default();
+        let mut pending = Vec::new();
+        for root in self.every_root() {
+            sides.insert(root.obligation, (true, true));
+            pending.push(root.obligation);
+        }
+        let mut seen: FxHashSet<ObligationId> = pending.iter().copied().collect();
+        while let Some(parent) = pending.pop() {
+            for dependency in self.dependencies(parent) {
+                if seen.insert(dependency.obligation) {
+                    pending.push(dependency.obligation);
+                }
+                edges.push((parent, dependency));
+            }
+        }
+        // A propagation's partner may gain a side after its child is visited,
+        // so the edges are judged again until nothing changes
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for (parent, dependency) in &edges {
+                let side = |id| sides.get(&id).copied().unwrap_or_default();
+                let (actual, expected) = side(*parent);
+                let child = match (&dependency.step, dependency.partner) {
+                    (Step::InstantiationBound(_), _) => (true, false),
+                    (_, Some(partner)) if partner.upper => (actual, side(partner.obligation).1),
+                    (_, Some(partner)) => (side(partner.obligation).0, expected),
+                    (step, None) if step.reverses() => (expected, actual),
+                    _ => (actual, expected),
+                };
+                let entry = sides.entry(dependency.obligation).or_default();
+                let merged = (entry.0 || child.0, entry.1 || child.1);
+                if merged != *entry {
+                    *entry = merged;
+                    changed = true;
+                }
+            }
+        }
+        sides
+            .into_iter()
+            .filter_map(|(id, (_, expected))| expected.then_some(id))
+            .collect()
+    }
+
+    /// Whether `upper` bounds a variable only as a binder's bound gives it:
+    /// each obligation that imposed it is outside `caller` (see
+    /// [`Self::caller_expected`])
+    pub(crate) fn bound_only(
+        &self,
+        id: InferVarId,
+        upper: Term,
+        caller: &FxHashSet<ObligationId>,
+    ) -> bool {
+        let sources = self.term_sources(id, false, upper);
+        !sources.is_empty() && sources.iter().all(|source| !caller.contains(source))
+    }
+
     /// Register as a diagnostic root that `schema` admits no items, as an empty
     /// dict's must. It's judged once `schema` is solved, and bounds nothing
     /// before then, so it doesn't choose `schema` itself.

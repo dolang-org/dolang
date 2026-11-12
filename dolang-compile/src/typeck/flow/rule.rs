@@ -661,7 +661,9 @@ struct Fresh {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Candidate {
     Closed(TypeId, TypeId),
-    Open(Term),
+    /// An alternative, and whether a binder's bound in it gives the shape (see
+    /// [`expectation`])
+    Open(Term, bool),
 }
 
 /// What a collection's rule builds
@@ -2215,7 +2217,14 @@ impl<'a> Flow<'a, '_> {
                 }
                 continue;
             }
-            self.sub_rule(rule, held, expected);
+            // A binder's bound can still give a fresh dict its shape
+            let shape = match held.prepared {
+                Prepared::Collection(_) => {
+                    expectation(rule.solver, held.term, |a, b| self.below(a, b), true)
+                }
+                _ => None,
+            };
+            self.sub_rule(rule, held, expected, shape);
         }
     }
 
@@ -2232,7 +2241,7 @@ impl<'a> Flow<'a, '_> {
         raisable: &[Term],
     ) -> Option<Term> {
         let below = |actual, expected| self.below(actual, expected);
-        let open = expectation(rule.solver, held, below);
+        let open = expectation(rule.solver, held, below, false);
         if open.is_some_and(|expected| rule.solver.reify(expected).is_ok()) {
             return open;
         }
@@ -2242,14 +2251,20 @@ impl<'a> Flow<'a, '_> {
                 .raised(raisable)
                 .unwrap_or_else(|_| fork.unresolved().collect());
             default_where(&mut fork, |id| !raised.contains(&id), None);
-            expectation(&fork, held, below).and_then(|expected| fork.reify(expected).ok())
+            expectation(&fork, held, below, false).and_then(|expected| fork.reify(expected).ok())
         };
         solved.map(|ty| rule.closed(ty)).or(open)
     }
 
     /// Make the sub-rule of an argument held back, and have the rule take it
     /// over.
-    fn sub_rule<'p>(&self, rule: &mut Rule<'_, '_, 'p>, held: Held<'p>, expected: Option<Term>) {
+    fn sub_rule<'p>(
+        &self,
+        rule: &mut Rule<'_, '_, 'p>,
+        held: Held<'p>,
+        expected: Option<Term>,
+        shape: Option<Term>,
+    ) {
         let (db, gas) = (rule.db, rule.gas);
         let lengths = (rule.passed.len(), rule.pending.len());
         let logged = rule.logged.len();
@@ -2269,7 +2284,7 @@ impl<'a> Flow<'a, '_> {
                 blind: rule.blind,
                 ..Rule::new(&mut fork, db, gas)
             };
-            let (given, seeded) = self.held_term(&mut sub, held.prepared, expected);
+            let (given, seeded) = self.held_term(&mut sub, held.prepared, expected, shape);
             let provenance = || held.prepared.provenance();
             let mut seeds = Vec::new();
             if let Some(seeded) = seeded {
@@ -2379,12 +2394,14 @@ impl<'a> Flow<'a, '_> {
     }
 
     /// The term of an argument held back, toward `expected`, and what it
-    /// must be besides
+    /// must be besides. A fresh dict takes its shape from `shape` when
+    /// `expected` gives none (see [`Flow::collection_term`]).
     fn held_term<'p>(
         &self,
         rule: &mut Rule<'_, '_, 'p>,
         prepared: &'p Prepared,
         expected: Option<Term>,
+        shape: Option<Term>,
     ) -> (Term, Option<Term>) {
         match prepared {
             Prepared::Call { call, instance } => {
@@ -2404,7 +2421,9 @@ impl<'a> Flow<'a, '_> {
                 let given = instance.map_or(result, |instance| rule.closed(instance));
                 (given, None)
             }
-            Prepared::Collection(collection) => self.collection_term(rule, collection, expected),
+            Prepared::Collection(collection) => {
+                self.collection_term(rule, collection, expected, shape)
+            }
             Prepared::Fmt(..) => unreachable!("a template is refined, not made"),
         }
     }
@@ -2812,7 +2831,7 @@ impl<'a> Flow<'a, '_> {
         };
         self.conclude(at, prepared.span, seed, |flow, rule| {
             let expected = expected.map(|ty| rule.closed(ty));
-            vec![flow.collection_term(rule, &prepared, expected).0]
+            vec![flow.collection_term(rule, &prepared, expected, None).0]
         })[0]
     }
 
@@ -2915,13 +2934,17 @@ impl<'a> Flow<'a, '_> {
     /// what it must be besides when it's held back: the type a fresh array
     /// solves as (see [`Flow::fresh`]). A dict with candidates takes the one
     /// [`Flow::choose`] does, and its items held back are released toward what
-    /// that schema expects of them; otherwise it's built from the lanes its
-    /// items can fill.
+    /// that schema expects of them. Without one from `expected`, a nonempty dict
+    /// takes its shape from a binder's bound that `shape` or `expected` reaches,
+    /// with its own schema below the bound's, so its items still decay as far as
+    /// the bound admits (#1680). Otherwise it's built from the lanes its items
+    /// can fill.
     fn collection_term<'p>(
         &self,
         rule: &mut Rule<'_, '_, 'p>,
         prepared: &'p PreparedCollection,
         expected: Option<Term>,
+        shape: Option<Term>,
     ) -> (Term, Option<Term>) {
         let PreparedCollection {
             kind,
@@ -2941,10 +2964,33 @@ impl<'a> Flow<'a, '_> {
                 Shape::Array
             }
             Collection::Dict | Collection::Record => {
-                let candidates = expected
-                    .map(|expected| self.candidates(rule, class, expected))
+                let mut candidates = expected
+                    .map(|expected| self.candidates(rule, class, expected, false))
                     .unwrap_or_default();
+                // Else a binder's bound with items of its own gives the shape,
+                // but not the items' types: the dict's schema is below the
+                // bound's, as its items decay. One that only repeats lanes, as
+                // a constructor's does, leaves the dict as it would be without
+                // the call.
+                let bounded = candidates.is_empty() && !values.values.is_empty();
+                if bounded {
+                    candidates = shape
+                        .or(expected)
+                        .map(|expected| self.candidates(rule, class, expected, true))
+                        .unwrap_or_default();
+                    candidates.retain(|&candidate| self.shaped(rule, class, candidate));
+                }
                 match self.choose(rule, class, &candidates, values, span) {
+                    Some(candidate) if bounded => {
+                        let (_, bound) = self.candidate(rule, class, candidate);
+                        let schema = rule.solver.infer_kind(Kind::Schema, Rest::All);
+                        rule.constrain(schema, bound, Provenance::default());
+                        let ty = rule.term(|holes| {
+                            let schema = holes.hole(schema, Kind::Schema);
+                            holes.apply(class, vec![schema])
+                        });
+                        Shape::Chosen(ty, schema)
+                    }
                     Some(candidate) => {
                         let (ty, schema) = self.candidate(rule, class, candidate);
                         Shape::Chosen(ty, schema)
@@ -2994,6 +3040,7 @@ impl<'a> Flow<'a, '_> {
         rule: &mut Rule<'_, '_, '_>,
         class: DeclId,
         expected: Term,
+        bounds: bool,
     ) -> Vec<Candidate> {
         let closed = |ty: TypeId| {
             self.fresh_candidates(class, Kind::Schema, ty)
@@ -3016,8 +3063,8 @@ impl<'a> Flow<'a, '_> {
         for alternative in alternatives {
             let found: Vec<Candidate> = match rule.solver.reify(alternative) {
                 Ok(ty) => closed(ty).collect(),
-                Err(_) if self.reaches(rule, class, alternative) => {
-                    vec![Candidate::Open(alternative)]
+                Err(_) if self.reaches(rule, class, alternative, bounds) => {
+                    vec![Candidate::Open(alternative, bounds)]
                 }
                 Err(_) => Vec::new(),
             };
@@ -3031,9 +3078,15 @@ impl<'a> Flow<'a, '_> {
     }
 
     /// Whether a fresh dict of `class` can be an open alternative, with an
-    /// argument that's expected of it. One that admits whatever the class's
-    /// bound does, as a binder's bound it's below may, says nothing of it.
-    fn reaches(&self, rule: &mut Rule<'_, '_, '_>, class: DeclId, alternative: Term) -> bool {
+    /// argument that's expected of it. One that's only a variable, as a binder
+    /// bounded only by its bound is (see [`expectation`]), says nothing of it.
+    fn reaches(
+        &self,
+        rule: &mut Rule<'_, '_, '_>,
+        class: DeclId,
+        alternative: Term,
+        bounds: bool,
+    ) -> bool {
         let mut fork = rule.solver.fork(rule.gas);
         let (argument, ty) = applied_term(&mut fork, rule.db, class, Kind::Schema);
         fork.constrain(ty, alternative, Provenance::default());
@@ -3044,18 +3097,18 @@ impl<'a> Flow<'a, '_> {
         {
             return false;
         }
-        let Some(argument) = expectation(&fork, argument, |a, b| self.below(a, b)) else {
+        let Some(argument) = expectation(&fork, argument, |a, b| self.below(a, b), bounds) else {
             return false;
         };
+        // A variable, as a binder bounded only by its bound is, says nothing of it
+        let argument = fork.resolve(argument).unwrap_or(argument);
+        if let Term::Infer(_) = argument {
+            return false;
+        }
         let Ok(argument) = fork.reify(argument) else {
             return true;
         };
-        let bound = match self.db.ty(self.db.declaration(class).ty) {
-            Type::Quantified { binders, .. } => binders.first().and_then(|binder| binder.bound),
-            _ => None,
-        };
         !matches!(self.db.ty(argument), Type::Unknown(_))
-            && !bound.is_some_and(|bound| self.below(bound, argument))
     }
 
     /// The candidate a fresh dict with `values` is: the only one, or else the one
@@ -3099,7 +3152,7 @@ impl<'a> Flow<'a, '_> {
             match chosen[..] {
                 [] => "none fits the dict".to_owned(),
                 [Candidate::Closed(ty, _)] => format!("chose {}", self.show(ty)),
-                [Candidate::Open(_)] => "chose an open candidate".to_owned(),
+                [Candidate::Open(..)] => "chose an open candidate".to_owned(),
                 _ => "several fit the dict".to_owned(),
             }
         );
@@ -3160,12 +3213,12 @@ impl<'a> Flow<'a, '_> {
     ) -> (Term, Term) {
         match candidate {
             Candidate::Closed(ty, schema) => (rule.closed(ty), rule.closed(schema)),
-            Candidate::Open(alternative) => {
+            Candidate::Open(alternative, bounds) => {
                 let (argument, ty) = applied_term(rule.solver, rule.db, class, Kind::Schema);
                 rule.constrain(ty, alternative, Provenance::default());
                 rule.solver.solve();
                 let below = |actual, expected| self.below(actual, expected);
-                let schema = expectation(rule.solver, argument, below).unwrap_or(argument);
+                let schema = expectation(rule.solver, argument, below, bounds).unwrap_or(argument);
                 let ty = rule.term(|holes| {
                     let schema = holes.hole(schema, Kind::Schema);
                     holes.apply(class, vec![schema])
@@ -3173,6 +3226,31 @@ impl<'a> Flow<'a, '_> {
                 (ty, schema)
             }
         }
+    }
+
+    /// Whether a candidate's schema has an item it doesn't repeat, as a key it
+    /// requires, and so gives a fresh dict a shape of its own. It's judged in a
+    /// fork of the rule's solver that's discarded.
+    fn shaped(&self, rule: &mut Rule<'_, '_, '_>, class: DeclId, candidate: Candidate) -> bool {
+        let schema = match candidate {
+            Candidate::Closed(_, schema) => Some(schema),
+            Candidate::Open(..) => {
+                let (db, gas) = (rule.db, rule.gas);
+                let mut fork = rule.solver.fork(gas);
+                let mut probe = Rule::new(&mut fork, db, gas);
+                probe.blind = true;
+                let (_, schema) = self.candidate(&mut probe, class, candidate);
+                probe.solver.reify(schema).ok()
+            }
+        };
+        let Some(schema) = schema else {
+            return false;
+        };
+        let mut found = Vec::new();
+        atoms(self.db, schema, Multiplicity::Required, &mut found);
+        found.iter().any(|&(multiplicity, atom)| {
+            multiplicity != Multiplicity::Repeated && !matches!(atom, Atom::Unknown)
+        })
     }
 
     /// Which lanes of a dict a spread of `ty` can fill, positional then keyed:
@@ -3246,7 +3324,7 @@ impl<'a> Flow<'a, '_> {
             {
                 return None;
             }
-            expectation(&solver, argument, |a, b| self.below(a, b))
+            expectation(&solver, argument, |a, b| self.below(a, b), false)
                 .and_then(|argument| solver.reify(argument).ok())
                 .filter(|&ty| !matches!(self.db.ty(ty), Type::Unknown(_)))
         };
@@ -4409,19 +4487,26 @@ fn applied_term(solver: &mut Solver<'_>, db: &Database, class: DeclId, kind: Kin
 /// so far: its upper bounds, seen through the variables it's below, as the
 /// variable of a `for`'s joined items stands between them. That's the one open
 /// in what isn't solved yet, as the binders of a call its parameter names, or
-/// else the solved one `below` shows is below the others, as a binder's bound
-/// is above what's expected of it. Without another, it's the variable that
-/// ends the walk. `None` if the bounds don't agree.
+/// else the solved one `below` shows is below the others. Without another, it's
+/// the variable that ends the walk. `None` if the bounds don't agree.
+///
+/// A binder's bound isn't what's expected of the binder, so unless `bounds`, an
+/// upper bound only one gives is passed over (see [`Solver::bound_only`]): the
+/// bound still keeps a literal from decaying past it, but doesn't widen it to
+/// the bound (#1680). With `bounds`, it's the shape a fresh dict can take
+/// when nothing else gives one.
 fn expectation(
     solver: &Solver<'_>,
     held: Term,
     below: impl Fn(TypeId, TypeId) -> bool,
+    bounds: bool,
 ) -> Option<Term> {
     let mut open: Option<Term> = None;
     let mut closed: Vec<TypeId> = Vec::new();
     let mut last = None;
     let mut pending = vec![held];
     let mut seen = FxHashSet::default();
+    let caller = (!bounds).then(|| solver.caller_expected());
     while let Some(term) = pending.pop() {
         let Term::Infer(id) = term else {
             unreachable!("a variable stands for a value")
@@ -4431,6 +4516,11 @@ fn expectation(
         }
         let mut bounded = false;
         for upper in solver.bounds(id).upper() {
+            if let Some(caller) = &caller
+                && solver.bound_only(id, upper, caller)
+            {
+                continue;
+            }
             bounded = true;
             let upper = solver.resolve(upper).unwrap_or(upper);
             match (upper, solver.reify(upper)) {
