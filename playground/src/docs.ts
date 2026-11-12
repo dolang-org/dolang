@@ -53,8 +53,6 @@ export type TypeJson =
   | { kind: 'schema'; params: TypeParamJson[] }
   /** A parenthesized tuple or record form */
   | { kind: 'parens'; params: TypeParamJson[] }
-  /** The `[T]` form */
-  | { kind: 'array'; elem: TypeJson }
   | { kind: 'union'; members: TypeJson[] }
   | { kind: 'func'; params: TypeParamJson[]; input?: TypeJson | null; output?: TypeJson | null; ret: TypeJson }
   /** A function type quantified over binders */
@@ -129,10 +127,6 @@ export function typeText(type: TypeJson, context: Binding = Binding.Compact): st
       binding = Binding.Compact;
       break;
     }
-    case 'array':
-      text = `[${typeText(type.elem, Binding.Func)}]`;
-      binding = Binding.Compact;
-      break;
     case 'union':
       text = type.members.map(member => typeText(member)).join(' | ');
       binding = Binding.Union;

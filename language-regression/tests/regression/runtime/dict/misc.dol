@@ -158,8 +158,8 @@ assert_eq [...mapped] [10, 20, 30]
 let original = {a: 1, b: 2, a: 3}
 let copied = original.copy()
 copied.insert :c: 4
-assert_eq [...original] [(Tuple [:a:, 1]), (Tuple [:b:, 2]), (Tuple [:a:, 3])]
-assert_eq [...copied] [(Tuple [:a:, 1]), (Tuple [:b:, 2]), (Tuple [:a:, 3]), (Tuple [:c:, 4])]
+assert_eq [...original.iter()] [(Tuple [:a:, 1]), (Tuple [:b:, 2]), (Tuple [:a:, 3])]
+assert_eq [...copied.iter()] [(Tuple [:a:, 1]), (Tuple [:b:, 2]), (Tuple [:a:, 3]), (Tuple [:c:, 4])]
 
 let shared_inner = [1]
 let shallow = {items: shared_inner}.copy()

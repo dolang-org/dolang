@@ -24,7 +24,6 @@ use super::{
         GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, instance_get_fallback,
         instance_mcall_fallback, is_special_mcall, type_mcall_fallback,
     },
-    tuple,
 };
 
 use dolang_util::hashbrown::raw::{Bucket, RawTable};
@@ -295,31 +294,18 @@ impl<'a, 'v, 's> Spread<'v, 's> for SetSpread<'a, 'v> {
         &mut self,
         strand: &mut Strand<'v, 's>,
         key: Sym<'v, '_>,
-        mut value: Slot<'v, '_>,
+        _value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let pair = Value::from_object(tuple::tuple(
-            strand,
-            [Value::from_object(strand.sym_obj(key)), value.take()],
-        ));
-        let mut hasher = strand.vm().hasher();
-        pair.op_hash(strand, &mut hasher)?;
-        let hash = hasher.finish();
-        self.0.insert(strand, pair, hash)?;
-        Ok(())
+        Err(Error::unexpected_key(strand, key))
     }
 
     fn keyed(
         &mut self,
         strand: &mut Strand<'v, 's>,
-        mut key: Slot<'v, '_>,
-        mut value: Slot<'v, '_>,
+        key: Slot<'v, '_>,
+        _value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let pair = Value::from_object(tuple::tuple(strand, [key.take(), value.take()]));
-        let mut hasher = strand.vm().hasher();
-        pair.op_hash(strand, &mut hasher)?;
-        let hash = hasher.finish();
-        self.0.insert(strand, pair, hash)?;
-        Ok(())
+        Err(Error::unexpected_key(strand, key))
     }
 }
 

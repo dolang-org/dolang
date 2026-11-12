@@ -130,7 +130,7 @@ enum TypeJson {
     Schema {
         params: Vec<TypeParamJson>,
     },
-    /// A parenthesized tuple or record form
+    /// A parenthesized tuple or `Args` form
     Parens {
         params: Vec<TypeParamJson>,
     },

@@ -362,9 +362,9 @@ impl<'t> Collect<'t, '_> {
         }
 
         // Designated opaque aliases take their binders covariantly, but for
-        // `AssignItem` and `InsertItem`: a wider key selects more items, whose
-        // meet is lower, and its schema is invariant, since wider values raise
-        // the meet but more items lower it. `Deletable` and `Clearable` are their
+        // `AssignItem`, `InsertItem` and `PushItem`: a wider key selects more
+        // items, whose meet is lower, and its schema is invariant, since wider
+        // values raise the meet but more items lower it. `Deletable` and `Clearable` are their
         // schema where every item they remove admits zero, which neither a wider
         // nor a narrower schema keeps, and a wider key removes more items.
         // `MutFields` takes its target contravariantly: a subclass sets the same
@@ -379,6 +379,7 @@ impl<'t> Collect<'t, '_> {
                 | Intrinsic::IndexItem
                 | Intrinsic::AssignItem
                 | Intrinsic::InsertItem
+                | Intrinsic::PushItem
                 | Intrinsic::Deletable
                 | Intrinsic::Clearable
                 | Intrinsic::Fields
@@ -391,6 +392,7 @@ impl<'t> Collect<'t, '_> {
                 Designated::Intrinsic(
                     Intrinsic::AssignItem
                         | Intrinsic::InsertItem
+                        | Intrinsic::PushItem
                         | Intrinsic::Deletable
                         | Intrinsic::Clearable
                 )
@@ -605,21 +607,13 @@ impl<'t> Collect<'t, '_> {
                     self.ty(arg.ty(), Use::BOTH);
                 }
             }
-            TypeExpr::Schema {
-                params, collection, ..
-            } => match collection.get() {
-                Some(class) => self.designated(class, u, |this, u| this.items(params, u)),
-                None => self.items(params, u),
-            },
+            TypeExpr::Schema { params, .. } => self.items(params, u),
             TypeExpr::Tuple { params, .. } => {
                 let role = Designated::Intrinsic(Intrinsic::Tuple);
                 self.designated(role, u, |this, u| this.items(params, u));
             }
-            TypeExpr::Record { params, .. } => {
-                self.designated(Designated::Record, u, |this, u| this.items(params, u));
-            }
-            TypeExpr::Array { elem, .. } => {
-                self.designated(Designated::Array, u, |this, u| this.ty(elem, u));
+            TypeExpr::Args { params, .. } => {
+                self.designated(Designated::Args, u, |this, u| this.items(params, u));
             }
             TypeExpr::Union { members, .. } => {
                 for member in members {

@@ -39,7 +39,7 @@ do
   let _l = p.items.len
   #   ^~: flow std.Int
   let _ = p.missing
-  # error: `lib.Named[{format: std.Str, count: std.Int, ?port: std.Int, cb: (std.Int) -> std.Str, items: [std.Int]}]` has no member `missing`
+  # error: `lib.Named[{format: std.Str, count: std.Int, ?port: std.Int, cb: (std.Int) -> std.Str, items: std.Array[std.Int]}]` has no member `missing`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _ = p.missing
@@ -66,14 +66,14 @@ do
   #    = note: `(get)`: expected `:format:`, found `:missing:`
   #    = note: `:missing:` does not fit `:format:`
   let _ = p.missing 1
-  # error: `lib.Named[{format: std.Str, count: std.Int, ?port: std.Int, cb: (std.Int) -> std.Str, items: [std.Int]}]` has no member `missing`
-  #   --> m.dol:LL:LL
-  #    |
-  # LL |   let _ = p.missing 1
-  #    |           ^^^^^^^^^^^
-  #    |
-  #    = note: `(get)`: expected `:cb: | :count: | :format: | :items: | :port:`, found `:missing:`
-  #    = note: `:missing:` does not fit `:cb: | :count: | :format: | :items: | :port:`
+# error: `lib.Named[{format: std.Str, count: std.Int, ?port: std.Int, cb: (std.Int) -> std.Str, items: std.Array[std.Int]}]` has no member `missing`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ = p.missing 1
+#    |           ^^^^^^^^^^^
+#    |
+#    = note: `(get)`: expected `:cb: | :count: | :format: | :items: | :port:`, found `:missing:`
+#    = note: `:missing:` does not fit `:cb: | :count: | :format: | :items: | :port:`
 
 pub def writes
   p @ Named[{format: Str, count: Int, cb: ((Int) -> Str), items: Array[(Int | Str)]}]
@@ -114,7 +114,7 @@ do
   #    |
   #    = note: `std.Int` does not fit `std.Str`
   p.missing = 1
-  # error: `lib.Named[{format: std.Str, count: std.Int, cb: (std.Int) -> std.Str, items: [std.Int | std.Str]}]` has no member `missing`
+  # error: `lib.Named[{format: std.Str, count: std.Int, cb: (std.Int) -> std.Str, items: std.Array[std.Int | std.Str]}]` has no member `missing`
   #   --> m.dol:LL:LL
   #    |
   # LL |   p.missing = 1
@@ -123,14 +123,14 @@ do
   #    = note: `(set)`: expected `:cb: | :count: | :format: | :items:`, found `:missing:`
   #    = note: `:missing:` does not fit `:cb: | :count: | :format: | :items:`
   q.missing = 1
-  # error: `lib.Plain[{count: std.Int, cb: (std.Int) -> std.Str, items: [std.Int | std.Str]}]` has no member `missing`
-  #   --> m.dol:LL:LL
-  #    |
-  # LL |   q.missing = 1
-  #    |   ^^^^^^^^^^^^^
-  #    |
-  #    = note: `(set)`: expected `:cb: | :count: | :items:`, found `:missing:`
-  #    = note: `:missing:` does not fit `:cb: | :count: | :items:`
+# error: `lib.Plain[{count: std.Int, cb: (std.Int) -> std.Str, items: std.Array[std.Int | std.Str]}]` has no member `missing`
+#   --> m.dol:LL:LL
+#    |
+# LL |   q.missing = 1
+#    |   ^^^^^^^^^^^^^
+#    |
+#    = note: `(set)`: expected `:cb: | :count: | :items:`, found `:missing:`
+#    = note: `:missing:` does not fit `:cb: | :count: | :items:`
 
 pub def unions
   u @ (Named[{a: Int}] | Named[{a: Str}])

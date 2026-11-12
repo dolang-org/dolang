@@ -247,29 +247,21 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        context: SpreadContext,
+        _context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let iter = this.borrow(strand)?;
-        for symbol in iter.symbols.iter().cloned() {
+        for symbol in &iter.symbols {
             let receiver = iter.receiver.dup();
             let mut value = strand.with_slots_sync(|strand, [mut value]| {
-                resolve(strand, &receiver, &symbol, Slot::reborrow(&mut value))?;
+                resolve(strand, &receiver, symbol, Slot::reborrow(&mut value))?;
                 Ok(value.take())
             })?;
-            if context != SpreadContext::Sequence {
-                sink.symbol(
-                    strand,
-                    unsafe { Sym::from_obj(&symbol) },
-                    Slot::new(&mut value),
-                )?;
-            } else {
-                value = Value::from_object(tuple::tuple(
-                    strand,
-                    [Value::from_object(symbol), value.take()],
-                ));
-                sink.positional(strand, Slot::new(&mut value))?;
-            }
+            sink.symbol(
+                strand,
+                unsafe { Sym::from_obj(symbol) },
+                Slot::new(&mut value),
+            )?;
         }
         Ok(())
     }

@@ -146,8 +146,10 @@ impl FmtSpec {
 pub(crate) enum Collection {
     Array,
     Dict,
-    Tuple,
+    /// A brace or vertical literal with positional items
     Record,
+    Tuple,
+    Args,
 }
 
 /// A member of a receiver, by key. A private member names the class whose member it

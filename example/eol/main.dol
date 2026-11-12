@@ -106,7 +106,7 @@ def check client format pins warn
           let days = status.days_left $release :today
           echo "$name $version: end-of-life in $days days, on $(release.eol)"
       str(state).lower()
-    let result = record
+    let result = $
       product: $name
       version: $version
       release: $(release && release.name)

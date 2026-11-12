@@ -21,8 +21,8 @@ pub class Tuple[*Ts]
   pub def items _self -> Tuple[...Ts]
     ...
 
-pub class Record[**Ks]
-  pub def items _self -> Record[...Ks]
+pub class Args[**Ks]
+  pub def items _self -> Args[...Ks]
     ...
 
 pub class Numbers[*Ns @ Num]
@@ -47,10 +47,10 @@ pub def positional[**Ks] x @ Tuple[...Ks]
   #    |                                       ^^
   x
 
-pub def keyed[*Ps] x @ Record[...Ps]
+pub def keyed[*Ps] x @ Args[...Ps]
   # error: this does not satisfy `**Ks @ {**Value}`
   #   --> m.dol:LL:LL
   #    |
-  # LL | pub def keyed[*Ps] x @ Record[...Ps]
-  #    |                                  ^^
+  # LL | pub def keyed[*Ps] x @ Args[...Ps]
+  #    |                                ^^
   x

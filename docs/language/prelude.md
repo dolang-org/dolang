@@ -13,6 +13,8 @@ Embedded runtimes may provide a different additional prelude.
 | -------------------------- | ----------------------------------------------------- |
 | [`Array`](std.Array)       | [`Array`](std.Array) type                             |
 | [`array`](std.array)       | Variadic array factory                                |
+| [`Args`](std.Args)         | [`Args`](std.Args) type                               |
+| [`args`](std.args)         | Variadic `Args` factory                               |
 | [`Bin`](std.Bin)           | [`Bin`](std.Bin) type                                 |
 | [`BinBuf`](std.BinBuf)     | Mutable byte buffer                                   |
 | [`Bool`](std.Bool)         | [`Bool`](std.Bool) type                               |
@@ -20,7 +22,7 @@ Embedded runtimes may provide a different additional prelude.
 | [`class`](std.class)       | Inherited class member decorator                      |
 | [`dbg`](std.dbg)           | Debug representation                                  |
 | [`Dict`](std.Dict)         | [`Dict`](std.Dict) type                               |
-| [`dict`](std.dict)         | Variadic dictionary factory                           |
+| [`dict`](std.dict)         | Dictionary factory from key arguments                 |
 | [`fields`](std.fields)     | Proxy for a value's public fields                     |
 | [`final`](std.final)       | Decorator forbidding subclasses                       |
 | [`Float`](std.Float)       | [`Float`](std.Float) type                             |
@@ -34,7 +36,7 @@ Embedded runtimes may provide a different additional prelude.
 | [`mixable`](std.mixable)   | Decorator allowing combination with unrelated classes |
 | [`Range`](std.Range)       | [`Range`](std.Range) type                             |
 | [`Record`](std.Record)     | [`Record`](std.Record) type                           |
-| [`record`](std.record)     | Variadic record factory                               |
+| [`record`](std.record)     | Variadic `Record` factory                             |
 | [`Set`](std.Set)           | [`Set`](std.Set) type                                 |
 | [`setter`](std.setter)     | Class field setter decorator                          |
 | [`Sink`](std.Sink)         | Sink type                                             |
@@ -56,8 +58,9 @@ Embedded runtimes may provide a different additional prelude.
 ## Checker-only names from `std`
 
 These names are available in annotations without an import. They do not bind
-runtime values, including [`BaseArray`](std.BaseArray) and
-[`BaseDict`](std.BaseDict), which are runtime classes. Use a qualified name or
+runtime values, including [`BaseArray`](std.BaseArray),
+[`BaseDict`](std.BaseDict) and [`BaseRecord`](std.BaseRecord), which are
+runtime classes. Use a qualified name or
 an explicit runtime import to use those classes as values.
 
 | Names                                                                                                                          | Purpose                                            |
@@ -68,7 +71,7 @@ an explicit runtime import to use those classes as values.
 | [`Index`](std.Index), [`Assign`](std.Assign), [`Spread`](std.Spread), [`Unpack`](std.Unpack)                                   | Indexing, assignment, spreading, and destructuring |
 | [`BaseIterable`](std.BaseIterable), [`BaseIter`](std.BaseIter), [`BaseSinkable`](std.BaseSinkable), [`BaseSink`](std.BaseSink) | Minimal iteration and sink protocols               |
 | [`UnpackIter`](std.UnpackIter), [`UnpackIterable`](std.UnpackIterable)                                                         | Iteration with read-only unpacking                 |
-| [`BaseArray`](std.BaseArray), [`BaseDict`](std.BaseDict)                                                                       | Native container read-only interfaces              |
+| [`BaseArray`](std.BaseArray), [`BaseDict`](std.BaseDict), [`BaseRecord`](std.BaseRecord)                                       | Native container read-only interfaces              |
 
 ## `strand`
 

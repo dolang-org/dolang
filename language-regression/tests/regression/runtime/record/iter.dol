@@ -1,0 +1,23 @@
+# iteration yields `(index, value)` for positional items and `(sym, value)`
+# for keys, in insertion order
+let r = record 1 a: 2 3 a: 4
+assert_eq [...r.iter()] [(0, 1), (:a:, 2), (1, 3), (:a:, 4)]
+assert_eq [...r.pairs()] [(0, 1), (:a:, 2), (1, 3), (:a:, 4)]
+assert_eq [...r.keys()] [0, :a:, 1]
+assert_eq [...r.values()] [1, 2, 3, 4]
+assert_eq [...r.values(:a:)] [2, 4]
+assert_eq [...r.values(1)] [3]
+assert_eq [...r.values(5)] []
+
+# a removed position leaves the later indexes contiguous
+r.pop 0
+assert_eq [...r.pairs()] [(:a:, 2), (0, 3), (:a:, 4)]
+
+# changing the record ends iteration
+let it = r.iter()
+r.push 5
+assert_throws $std.ConcurrencyError str: "conflicting concurrent operation: collection was modified during iteration" do
+  it.next()
+let values = r.values()
+r[0] = 6
+assert_throws $std.ConcurrencyError do values.next()

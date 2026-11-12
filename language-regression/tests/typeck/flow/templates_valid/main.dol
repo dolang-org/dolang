@@ -15,7 +15,7 @@ pub def template n @ Int
   source.format 1 name: "ok"
   let segments = [...source]
   let _ = segments
-  #       ^~~~~~~~: flow [std.FmtSegment[std.Int]]
+  #       ^~~~~~~~: flow std.Array[std.FmtSegment[std.Int]]
   for part = segments
     # Segment classes are disjoint bases, so a test drops the others
     if let FmtValue(bound) = part

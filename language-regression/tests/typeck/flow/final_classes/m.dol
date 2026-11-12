@@ -65,10 +65,10 @@ pub def ints i @ Int
 pub def narrowed value @ (Sym | Array[Int])
   if let Array(xs) = value
     let _ = xs
-    #       ^~: flow [std.Int]
+    #       ^~: flow std.Array[std.Int]
 
 # A subclass of `Open` may be an `Array`
 pub def kept value @ (Open | Array[Int])
   if let Array(xs) = value
     let _ = xs
-    #       ^~: flow [Unknown] | [std.Int]
+    #       ^~: flow std.Array[Unknown] | std.Array[std.Int]

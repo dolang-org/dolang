@@ -144,7 +144,6 @@ pub(crate) struct ConcreteNodeTypes<'v> {
     app_type: Type<'v, NodeObject<AppTypeTag>>,
     schema_type: Type<'v, NodeObject<SchemaTypeTag>>,
     parens_type: Type<'v, NodeObject<ParensTypeTag>>,
-    array_type: Type<'v, NodeObject<ArrayTypeTag>>,
     union_type: Type<'v, NodeObject<UnionTypeTag>>,
     func_type: Type<'v, NodeObject<FuncTypeTag>>,
     quant_type: Type<'v, NodeObject<QuantTypeTag>>,
@@ -282,7 +281,6 @@ impl<'v> Global<'v> {
                     app_type: subtype!(AppTypeTag, type_expr),
                     schema_type: subtype!(SchemaTypeTag, type_expr),
                     parens_type: subtype!(ParensTypeTag, type_expr),
-                    array_type: subtype!(ArrayTypeTag, type_expr),
                     union_type: subtype!(UnionTypeTag, type_expr),
                     func_type: subtype!(FuncTypeTag, type_expr),
                     quant_type: subtype!(QuantTypeTag, type_expr),
@@ -510,7 +508,7 @@ node_tags! {
     MixedRestBinderTag=>"MixedRestBinder", PosRestBinderTag=>"PosRestBinder",
     KeyRestBinderTag=>"KeyRestBinder", TypeExprTag=>"TypeExpr", NameTypeTag=>"NameType",
     ConstTypeTag=>"ConstType", AppTypeTag=>"AppType", SchemaTypeTag=>"SchemaType",
-    ParensTypeTag=>"ParensType", ArrayTypeTag=>"ArrayType", UnionTypeTag=>"UnionType",
+    ParensTypeTag=>"ParensType", UnionTypeTag=>"UnionType",
     FuncTypeTag=>"FuncType", QuantTypeTag=>"QuantType", TypeArgTag=>"TypeArg", PosTypeArgTag=>"PosTypeArg",
     KeyTypeArgTag=>"KeyTypeArg", ExpandTypeArgTag=>"ExpandTypeArg", TypeItemTag=>"TypeItem",
     PosTypeItemTag=>"PosTypeItem", KeyTypeItemTag=>"KeyTypeItem",
@@ -1155,6 +1153,74 @@ fn apply_prelude_dict_items<'v, 's>(
     Ok(())
 }
 
+/// Applies one entry of a `compile.Prelude` dict or record: a module and how
+/// to import it (`true` imports it as is), or, from a record, a positional
+/// module name
+fn apply_prelude_entry<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    config: &mut Config,
+    positional: bool,
+    k: &Value<'v>,
+    v: &Value<'v>,
+) -> Result<'v, 's, ()> {
+    if positional && k.as_int(strand).is_some() {
+        let name = match v.view(strand) {
+            View::Str(name) => name.to_string(),
+            View::Sym(name) => name.as_str(strand).to_owned(),
+            _ => {
+                return Err(Error::type_error(
+                    strand,
+                    "positional prelude entry must be Str or Sym",
+                ));
+            }
+        };
+        config.prelude().import_module(name);
+        return Ok(());
+    }
+
+    let module = match k.view(strand) {
+        View::Str(s) => s.into(),
+        View::Sym(sym) => sym.as_str(strand).to_owned(),
+        _ => {
+            return Err(Error::type_error(
+                strand,
+                "prelude module key must be Str or Sym",
+            ));
+        }
+    };
+
+    match v.view(strand.vm()) {
+        View::Bool(true) => {
+            config.prelude().import_module(module);
+        }
+        View::Str(bind) => {
+            strand.access(|access| {
+                config
+                    .prelude()
+                    .import_module_with_name(&module, bind.as_str(access));
+            });
+        }
+        View::Sym(bind) => {
+            config
+                .prelude()
+                .import_module_with_name(&module, bind.as_str(strand));
+        }
+        View::Array(arr) => {
+            apply_prelude_module_items(strand, config, &module, &arr)?;
+        }
+        View::Dict(dict) => {
+            apply_prelude_dict_items(strand, config, &module, &dict)?;
+        }
+        _ => {
+            return Err(Error::type_error(
+                strand,
+                "prelude module value must be true, str, sym, array, or Dict",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Applies a Do `compile.Prelude` value without initializing extension state.
 pub fn apply_prelude_value<'v, 's>(
     strand: &mut Strand<'v, 's>,
@@ -1188,64 +1254,14 @@ pub fn apply_prelude_value<'v, 's>(
             }
             View::Dict(dict) => {
                 let mut pairs = dict.pairs();
-                loop {
-                    let has_next = pairs.next(strand, &mut k, &mut v)?;
-                    if !has_next {
-                        break;
-                    }
-
-                    if k.as_int(strand).is_some() {
-                        let name = match v.view(strand) {
-                            View::Str(name) => name.to_string(),
-                            View::Sym(name) => name.as_str(strand).to_owned(),
-                            _ => {
-                                return Err(Error::type_error(
-                                    strand,
-                                    "positional prelude entry must be Str or Sym",
-                                ));
-                            }
-                        };
-                        config.prelude().import_module(name);
-                        continue;
-                    }
-
-                    let module = match k.view(strand) {
-                        View::Str(s) => s.into(),
-                        View::Sym(sym) => sym.as_str(strand).to_owned(),
-                        _ => {
-                            return Err(Error::type_error(
-                                strand,
-                                "prelude module key must be Str or Sym",
-                            ));
-                        }
-                    };
-
-                    match v.view(strand.vm()) {
-                        View::Str(bind) => {
-                            strand.access(|access| {
-                                config
-                                    .prelude()
-                                    .import_module_with_name(&module, bind.as_str(access));
-                            });
-                        }
-                        View::Sym(bind) => {
-                            config
-                                .prelude()
-                                .import_module_with_name(&module, bind.as_str(strand));
-                        }
-                        View::Array(arr) => {
-                            apply_prelude_module_items(strand, config, &module, &arr)?;
-                        }
-                        View::Dict(dict) => {
-                            apply_prelude_dict_items(strand, config, &module, &dict)?;
-                        }
-                        _ => {
-                            return Err(Error::type_error(
-                                strand,
-                                "prelude module value must be str, sym, array, or Dict",
-                            ));
-                        }
-                    }
+                while pairs.next(strand, &mut k, &mut v)? {
+                    apply_prelude_entry(strand, config, false, &k, &v)?;
+                }
+            }
+            View::Record(record) => {
+                let mut pairs = record.pairs();
+                while pairs.next(strand, &mut k, &mut v)? {
+                    apply_prelude_entry(strand, config, true, &k, &v)?;
                 }
             }
             _ => {
@@ -1977,7 +1993,6 @@ fn create_node<'v, 's>(
         AppType,
         SchemaType,
         ParensType,
-        ArrayType,
         UnionType,
         FuncType,
         QuantType,
@@ -2070,7 +2085,6 @@ fn create_node<'v, 's>(
             compile::Kind::AppType { .. } => Which::AppType,
             compile::Kind::SchemaType { .. } => Which::SchemaType,
             compile::Kind::ParensType { .. } => Which::ParensType,
-            compile::Kind::ArrayType { .. } => Which::ArrayType,
             compile::Kind::UnionType { .. } => Which::UnionType,
             compile::Kind::FuncType { .. } => Which::FuncType,
             compile::Kind::QuantType { .. } => Which::QuantType,
@@ -2156,7 +2170,6 @@ fn create_node<'v, 's>(
         Which::AppType => make!(t.app_type, AppTypeTag),
         Which::SchemaType => make!(t.schema_type, SchemaTypeTag),
         Which::ParensType => make!(t.parens_type, ParensTypeTag),
-        Which::ArrayType => make!(t.array_type, ArrayTypeTag),
         Which::UnionType => make!(t.union_type, UnionTypeTag),
         Which::FuncType => make!(t.func_type, FuncTypeTag),
         Which::QuantType => make!(t.quant_type, QuantTypeTag),
@@ -2510,10 +2523,6 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
             "ParensType" => builder.get(
                 "items",
                 node_list!(compile::Kind::ParensType { items } => items),
-            ),
-            "ArrayType" => builder.get(
-                "elem",
-                node_field!(compile::Kind::ArrayType { elem } => Some(elem)),
             ),
             "UnionType" => builder.get(
                 "members",
@@ -3264,7 +3273,6 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("AppType", global.types.concrete_nodes.app_type)
         .value("SchemaType", global.types.concrete_nodes.schema_type)
         .value("ParensType", global.types.concrete_nodes.parens_type)
-        .value("ArrayType", global.types.concrete_nodes.array_type)
         .value("UnionType", global.types.concrete_nodes.union_type)
         .value("FuncType", global.types.concrete_nodes.func_type)
         .value("QuantType", global.types.concrete_nodes.quant_type)

@@ -159,8 +159,8 @@ pub def decoded d @ DecodeValue
   # LL |   let _ = d["key"]
   #    |           ^^^^^^^^
   #    |
-  #    = note: `@[K] ([json.DecodeValue], K) -> std.IndexItem[{*json.DecodeValue}, K]`: expected `std.Int`, found `"key"`
-  #    = note: `([json.DecodeValue], std.Range[std.Int]) -> [json.DecodeValue]`: expected `std.Range[std.Int]`, found `"key"`
+  #    = note: `@[K] (std.Array[json.DecodeValue], K) -> std.IndexItem[{*json.DecodeValue}, K]`: expected `std.Int`, found `"key"`
+  #    = note: `(std.Array[json.DecodeValue], std.Range[std.Int]) -> std.Array[json.DecodeValue]`: expected `std.Range[std.Int]`, found `"key"`
   # error: expected `std.Range[std.Int]`, found `"key"`
   #   --> m.dol:LL:LL
   #    |

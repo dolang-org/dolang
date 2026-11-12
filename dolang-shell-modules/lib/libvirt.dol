@@ -2774,7 +2774,7 @@ def manifest_hex value@Str source@Path -> Str
   hex
 
 # One state member as a manifest describes it, for extracting and verifying it.
-class ManifestMember: Struct[{kind: Str, name: Str, format: (Str | nil), size: Int, hex: Str}]
+class ManifestMember: Struct[kind: Str, name: Str, format: (Str | nil), size: Int, hex: Str]
 
 @let ManifestFields = $
   app: Str
@@ -2795,7 +2795,7 @@ class ManifestMember: Struct[{kind: Str, name: Str, format: (Str | nil), size: I
 
 # A bundle's manifest, validated: the record the rest of the import path
 # consumes.
-class Manifest: Struct[ManifestFields]
+class Manifest: Struct[...ManifestFields]
 
 # Reads one member's description out of a manifest's `members` map, or `nil`
 # for state the bundle does not carry.
@@ -3022,7 +3022,7 @@ def parse_init init @ (InitSpec | nil) -> InitState
 #
 # This is also where a registered step macro would resolve, so that a builtin
 # and a macro are looked up the same way.
-def parse_options[I, O] options @ Record[...DomainOptions[I, O]] -> ParsedOptions[I, O]
+def parse_options[I, O] options @ Args[...DomainOptions[I, O]] -> ParsedOptions[I, O]
   let steps @ Array[Step[I, O]] = []
   let installers @ Array[Installer] = []
   let drivers @ Array[Artifact] = []

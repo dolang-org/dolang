@@ -1,7 +1,7 @@
 # Type Syntax
 
 An annotation or return type is a compact type expression which admits only
-dotted type names, application of generic arguments, and forms in `[]` or `{}`.
+dotted type names, application of generic arguments, and schemas in `{}`.
 More complex type expressions require parentheses for grouping. This applies
 *even in contexts that are otherwise space-insensitive*: in
 `(do |x @ Int| -> Array[Int] [x])`, the space after `Array[Int]` ends the type.
@@ -13,9 +13,8 @@ Within a type's own `()`, `[]`, and `{}`, whitespace is insignificant.
 | `:SYM:`, `"str"`, `42`, `true`, `nil` | Constant                  |
 | `Array[Int]`                          | Apply generic arguments   |
 | `(Str | Path)`                        | Union                     |
-| `(Int, Str)`, `(name: Str, Int)`      | Tuple or record           |
-| `[Int]`                               | Array                     |
-| `{name: Str, ?port: Int}`             | Dict or schema            |
+| `(Int, Str)`, `(name: Str, Int)`      | Tuple or `Args`           |
+| `{name: Str, ?port: Int}`             | Schema                    |
 | `(Int, ?Int) -> Int`                  | Function                  |
 
 ## Names
@@ -50,7 +49,7 @@ passed positionally, or `name: T`, passed by keyword:
 ```
 let names @ Array[Str] = []
 let index @ Dict[Str, Array[Int]] = {}
-let result @ Record[value: Int, error: std.Error | nil] = (value: 1, error: nil)
+let result @ Args[value: Int, error: std.Error | nil] = (value: 1, error: nil)
 ```
 
 An argument may also [expand a schema](#expanding-schemas) into further
@@ -75,8 +74,8 @@ A value fits a union when it fits one of the members; see
 ## Schemas
 
 A schema is not itself a type, but a description of positional and keyed items
-and their types which can parameterize a `Dict`, a rest parameter, etc. A brace
-written where a type is required is a [dict type](#dicts). Schemas are closed:
+and their types which can parameterize a `Dict`, a rest parameter, etc. Where a
+type is required, a schema is an error. Schemas are closed:
 they admit only the items they list, unless a [quantifier](#quantifiers) or an
 [open item](#open-items) admits more.
 
@@ -99,7 +98,7 @@ that element the schema admits:
 A type alone is a positional item:
 
 ```
-let pair @ Dict[{Str, Int}] = {"a", 1}
+let pair @ Record[...{Str, Int}] = {"a", 1}
 ```
 
 ### Keyed Items
@@ -161,8 +160,8 @@ alone admit any further item of their own kind:
 | `**`  | Any further keyed items      |
 
 ```
-let anything @ Dict[{...}] = {}
-let positional @ Dict[{Str, *}] = {}
+let anything @ Spread[{...}] = {}
+let positional @ Tuple[...{Str, *}] = ("a", 1)
 ```
 
 ### Expanding Schemas
@@ -174,19 +173,19 @@ as optional ones. Expanding a type `T` rather than a schema is shorthand for
 
 ```
 let row @ Tuple[...Str] = Tuple ["id", "name"]
-let conn @ Record[...{host: Str, ?port: Int}] = (host: "db")
+let conn @ Args[...{host: Str, ?port: Int}] = (host: "db")
 ```
 
 ### Types as Schema Arguments
 
-A type whose only positional parameter is a schema, such as `Dict`, also
-accepts types in its place. Any other parameters must be keyword parameters,
-which are passed by name as usual:
+A type whose only positional parameter is a schema, such as `Dict` or `Spread`,
+also accepts types in its place. Any other parameters must be keyword
+parameters, which are passed by name as usual:
 
-| Shorthand    | Stands for          |
-| ------------ | ------------------- |
-| `Dict[T]`    | `Dict[{*T}]`        |
-| `Dict[K, V]` | `Dict[{*(K): V}]`   |
+| Shorthand    | Stands for        |
+| ------------ | ----------------- |
+| `Spread[T]`  | `Spread[{*T}]`    |
+| `Dict[K, V]` | `Dict[{*(K): V}]` |
 
 An argument that is already a schema, including a binder bounded by one, is
 passed as is:
@@ -199,31 +198,29 @@ class Table[S @ {...}]
 
 ## Collections
 
-`()`, `[]`, and `{}` write the types of the matching literals. Each stands for a
+Parenthesized forms write the types of the matching literals. Each stands for a
 standard class:
 
-| Syntax                    | Stands for                      |
-| ------------------------- | ------------------------------- |
-| `(Int, Str)`              | `Tuple[Int, Str]`               |
-| `(name: Str, Int)`        | `Record[...{name: Str, Int}]`   |
-| `[Int]`                   | `Array[Int]`                    |
-| `{name: Str, ?port: Int}` | `Dict[{name: Str, ?port: Int}]` |
+| Syntax             | Stands for                  |
+| ------------------ | --------------------------- |
+| `(Int, Str)`       | `Tuple[Int, Str]`           |
+| `(name: Str, Int)` | `Args[...{name: Str, Int}]` |
 
-Each form stands for the class itself, never a less specific type. A parameter
-that only reads should name one such as `Seq[T]`, `Iterable[T]`, or
-`BaseDict[S]`.
+Other collection types name their class. A parameter that only reads should name
+a less specific type than `Array[T]` or `Dict[S]`, such as `Seq[T]`,
+`Iterable[T]`, or `BaseDict[S]`.
 
 ```
 let pair @ (Int, Str) = (1, "a")
-let names @ [Str] = []
-let options @ {name: Str, ?port: Int} = {name: "db"}
-def count rows @ [{id: Int}] -> Int
+let names @ Array[Str] = []
+let options @ Dict[{name: Str, ?port: Int}] = {name: "db"}
+def count rows @ Seq[Dict[{id: Int}]] -> Int
   rows.len
 ```
 
-### Tuples and Records
+### Tuples and Args
 
-A parenthesized form with an explicitly keyed item is a record: `key: T`, `(K):
+A parenthesized form with an explicitly keyed item is an `Args`: `key: T`, `(K):
 T`, or an item quantified `**`. Otherwise it is a tuple. A single item without
 a quantifier or trailing comma is merely a grouping.
 
@@ -233,33 +230,24 @@ a quantifier or trailing comma is merely a grouping.
 | `(Int,)`     | A one-item tuple    |
 | `()`         | The empty tuple     |
 | `(*Int)`     | A tuple of any size |
-| `(Int, **)`  | A record            |
+| `(Int, **)`  | An `Args`           |
 
-An inclusion `...S` never makes a form a record. In a tuple, including a schema
-that may admit keyed items is an error; write `Record[...S]` instead. For a
+An inclusion `...S` never makes a form an `Args`. In a tuple, including a schema
+that may admit keyed items is an error; write `Args[...S]` instead. For a
 tuple of any items, write `(*)` rather than `(...)`.
 
-### Arrays
+### Schemas in Types
 
-`[T]` takes one element type. `[Int, Str]` and `[]` are errors; write a union
-element such as `[Int | Str]`, or a tuple type.
+A schema in `{}` or a [vertical](#vertical-layout) `$` schema is a schema
+wherever it appears. Only a class it's given to makes it a type:
 
-### Dicts
-
-A braced type expression is a `Dict` type only where a type is
-required, and a schema everywhere else:
-
-| Position                                                    | `{...}` is      |
-| ----------------------------------------------------------- | --------------- |
-| Annotation, return type, cast, union member                 | `Dict[{...}]`   |
-| Argument for a type binder, as in `Array[{a: Int}]`         | `Dict[{...}]`   |
-| Argument for a schema binder, as in `Dict[{a: Int}]`        | The schema      |
-| Binder bound, as in `S @ {...}`                             | The schema      |
-| Alias body, as in `@let Fields = {a: Int}`                  | The schema      |
-
-A [vertical](#vertical-layout) schema written with `$` where a type is required
-follows the rule for vertical data: it is a `Dict` if it has an explicitly
-keyed item, and otherwise a `Tuple` of its items.
+| Position                                                                   | A schema is      |
+| -------------------------------------------------------------------------- | ---------------- |
+| Argument for a schema binder, as in `Dict[{a: Int}]`                       | Its argument     |
+| Expansion among items, as in `Record[...{Int, ?tag: Str}]`                 | Its items        |
+| Binder bound, as in `S @ {...}`                                            | Its bound        |
+| Alias body, as in `@let Fields = {a: Int}`                                 | The alias's body |
+| Annotation, return type, cast, union member, or argument for a type binder | An error         |
 
 ## Functions
 
@@ -361,7 +349,7 @@ the caller's channels.
 A generic function type may be the type of a parameter, a variable, a field or
 an alias, a function's parameter or result, or a union member. It cannot be a
 type argument, which includes the element of an array or the item of a tuple,
-record or dictionary, whether written there or through an alias:
+`Args` or dictionary, whether written there or through an alias:
 
 ```
 @let Id = (@[T] (T) -> T)
@@ -427,16 +415,15 @@ An indented value under a key defines a union without another `$`. Its first
 The first token after `-` or `|` establishes an implicit indentation level,
 as it does in vertical arguments or data literals.
 
-A vertical schema where a type is required is a `Dict` or `Tuple` as described
-under [Dicts](#dicts). Here `meta` is a `Dict[{owner: Str}]` and `at` is an
-`(Int, Int)`:
+A key's value is a type, so a vertical schema there follows a class too. Here
+`meta` is a `Dict[{owner: Str}]` and `at` is an `(Int, Int)`:
 
 ```
 @let Config = Dict $
   name: Str
-  meta: $
+  meta: Dict $
     owner: Str
-  at: $
+  at: Tuple ...$
     Int Int
 ```
 

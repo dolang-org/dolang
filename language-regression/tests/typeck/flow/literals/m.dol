@@ -36,28 +36,34 @@ pub def held p @ :a:
   #       ^: flow :a:
   let terms = [1, 2]
   let _ = terms
-  #       ^~~~~: flow [std.Int]
+  #       ^~~~~: flow std.Array[std.Int]
   let written = [p]
   let _ = written
-  #       ^~~~~~~: flow [:a:]
+  #       ^~~~~~~: flow std.Array[:a:]
   let d = {a: 1}
   let _ = d
   #       ^: flow std.Dict[std.Sym, std.Int]
 
-# A dict's positional items stay positional; only a written key is a key
+# A literal's positional items make it a record and stay positional; only a
+# written key is a key. A spread alone makes a dict.
 pub def dicts t @ (Int, Str)
   let mixed = {1, foo: false, 2, bar: nil}
   let _ = mixed
-  #       ^~~~~: flow {*std.Int, **std.Bool | std.Nil}
+  #       ^~~~~: flow std.Record[...std.Int, ...{**std.Bool | std.Nil}]
   let positional = {1, 2}
   let _ = positional
-  #       ^~~~~~~~~~: flow std.Dict[std.Int]
+  #       ^~~~~~~~~~: flow std.Record[...std.Int]
   let keyed = {0: "a", 1: "b"}
   let _ = keyed
   #       ^~~~~: flow std.Dict[std.Int, std.Str]
-  let spread = {...t, a: 1}
-  let _ = spread
-  #       ^~~~~~: flow {*std.Int | std.Str, **std.Int}
+  let _spread = {...t, a: 1}
+  # error: a dict can't take positional `std.Int`, which `std.Spread[{std.Int, std.Str}]` spreads
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _spread = {...t, a: 1}
+  #    |                     ^
+  #    |
+  #    = help: a dict holds only keyed items; for positional ones, make a record, as in `Record source`
   bind {1, foo: false, 2, bar: nil}
     a b
     :foo :bar
@@ -65,6 +71,11 @@ pub def dicts t @ (Int, Str)
   #        ^: flow std.Int
   let _ = (foo, bar)
   #             ^~~: flow std.Bool | std.Nil
-  let spread_only = {...t}
-  let _ = spread_only
-  #       ^~~~~~~~~~~: flow std.Dict[std.Int | std.Str]
+  let _spread_only = {...t}
+  # error: a dict can't take positional `std.Int`, which `std.Spread[{std.Int, std.Str}]` spreads
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _spread_only = {...t}
+  #    |                          ^
+  #    |
+  #    = help: a dict holds only keyed items; for positional ones, make a record, as in `Record source`

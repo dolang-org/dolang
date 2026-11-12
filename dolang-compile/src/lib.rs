@@ -59,9 +59,9 @@ use ast::Res;
 
 const STD_PRELUDE: &[&str] = &[
     "Array", "Bin", "BinBuf", "Bool", "Dict", "Float", "Func", "Int", "Iter", "Iterable", "Range",
-    "Record", "Set", "Sink", "Sinkable", "Str", "StrBuf", "Struct", "Sym", "Tuple", "Type",
+    "Args", "Record", "Set", "Sink", "Sinkable", "Str", "StrBuf", "Struct", "Sym", "Tuple", "Type",
     "Value", "array", "bool", "class", "dbg", "dict", "fields", "final", "float", "getter", "int",
-    "mixable", "record", "setter", "static", "str", "struct", "sym", "tuple", "type",
+    "mixable", "args", "record", "setter", "static", "str", "struct", "sym", "tuple", "type",
 ];
 
 const STD_TYPE_PRELUDE: &[&str] = &[
@@ -87,6 +87,7 @@ const STD_TYPE_PRELUDE: &[&str] = &[
     "BaseMap",
     "BaseArray",
     "BaseDict",
+    "BaseRecord",
 ];
 
 #[derive(Debug)]
@@ -580,9 +581,6 @@ impl<'a> Node<'a> {
             doc::Kind::ParensType { items } => Kind::ParensType {
                 items: NodeIds(items.iter()),
             },
-            doc::Kind::ArrayType { elem } => Kind::ArrayType {
-                elem: public_node_id(*elem),
-            },
             doc::Kind::UnionType { members } => Kind::UnionType {
                 members: NodeIds(members.iter()),
             },
@@ -868,15 +866,10 @@ pub enum Kind<'a> {
         /// The [`Kind::TypeItem`] nodes, in the order written
         items: NodeIds<'a>,
     },
-    /// A tuple or record type, e.g. `(Int, Str)` or `(name: Str)`
+    /// A tuple or `Args` type, e.g. `(Int, Str)` or `(name: Str)`
     ParensType {
         /// The [`Kind::TypeItem`] nodes, in the order written
         items: NodeIds<'a>,
-    },
-    /// An array type, e.g. `[Int]`
-    ArrayType {
-        /// The element type
-        elem: NodeId,
     },
     /// A union, e.g. `(Str | Path)`
     UnionType {
@@ -901,7 +894,7 @@ pub enum Kind<'a> {
         /// The [`Kind::FuncType`] the binders quantify
         func: NodeId,
     },
-    /// An item of a schema, a tuple or record type, or a function type's
+    /// An item of a schema, a tuple or `Args` type, or a function type's
     /// parameters, without a trailing `,`
     TypeItem {
         /// The item's quantifier and element

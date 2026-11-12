@@ -1,0 +1,26 @@
+# a long run of changes keeps the record in step with a model of its two lanes
+let r = record()
+let positions = []
+let keys = []
+for i = 0..200
+  match (i % 5)
+    0 do
+      r.push $i
+      positions.push $i
+    1 do
+      r.insert :k: $i
+      keys.push $i
+    2 do
+      if (positions.len > 0)
+        r.insert 0 $i
+        positions.insert 0 $i
+    3 do
+      if (positions.len > 1)
+        assert_eq (r.pop 1) (positions.pop 1)
+  else
+    if (keys.len > 1)
+      assert_eq (r.pop :k:) (keys.pop 0)
+  assert_eq $r.len (positions.len + keys.len)
+for i value = positions.iter().enumerate()
+  assert_eq $r[i] $value
+assert_eq [...r.values(:k:)] $keys

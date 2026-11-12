@@ -16,7 +16,7 @@ pub def iterable_source source @ Iterable[Int]
 pub def general it @ Iter[Int]
   let xs = [...it]
   let _ = xs
-  #       ^~: flow [std.Int]
+  #       ^~: flow std.Array[std.Int]
   let _ _ = it
 # error: `std.Iter[std.Int]` is not unpackable
 #   --> m.dol:LL:LL
@@ -44,7 +44,7 @@ pub def unpackable it @ UnpackIter[Int]
 pub def unpack_spreads source @ Unpack[Int]
   let xs = [...source]
   let _ = xs
-  #       ^~: flow [std.Int]
+  #       ^~: flow std.Array[std.Int]
 
 pub def factories a @ Array[Int] t @ Tuple[Int, Str] d @ Dict[Str, Int]
   let _ = a.iter()

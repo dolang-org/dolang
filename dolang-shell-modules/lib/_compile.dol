@@ -108,7 +108,7 @@ do
         let typelib = compile.Typelib $Bin(bytes)
         bundled.push $typelib
         check.add $typelib
-  record :check :units typelibs: $found :bundled
+  args :check :units typelibs: $found :bundled
 
 pub def check
   entries

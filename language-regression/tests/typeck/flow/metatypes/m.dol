@@ -57,7 +57,7 @@ pub def names()
   # A metatype doesn't decay where it's stored
   let a = [Shape]
   let _ = a
-  #       ^: flow [<type m.Shape>]
+  #       ^: flow std.Array[<type m.Shape>]
   let b = Box 1
   let _ = b
   #       ^: flow m.Box[std.Int]

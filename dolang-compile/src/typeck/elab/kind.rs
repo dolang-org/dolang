@@ -8,11 +8,13 @@
 //! determines is a type. An opaque alias is a type, unless it's designated as an
 //! intrinsic schema, and an application has its alias's kind.
 
+use std::mem;
+
 use rustc_hash::FxHashMap;
 
 use super::{
     BinderRef, Designated, Head, KindMismatch, KindOf, NotAType, NotGeneric, PatternWithoutPack,
-    Referent, Role, Site, Tables, TooManyTypeArgs, UnknownTypeKeyword,
+    Referent, Role, SchemaUse, Site, Tables, TooManyTypeArgs, UnknownTypeKeyword,
     surface::{
         Binder, BinderKind, Ref, Super, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam,
         TypeQuant,
@@ -111,6 +113,7 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
         tables: &*tables,
         unit: UnitId::from_index(0),
         packs: None,
+        item: false,
         diags,
     };
     for (_, site) in check.tables.sites() {
@@ -237,8 +240,7 @@ impl Infer {
                 _ => Term::Known(Kind::Type),
             },
             TypeExpr::Tuple { .. }
-            | TypeExpr::Record { .. }
-            | TypeExpr::Array { .. }
+            | TypeExpr::Args { .. }
             | TypeExpr::Union { .. }
             | TypeExpr::Func { .. }
             | TypeExpr::Quantified { .. }
@@ -266,6 +268,8 @@ struct Check<'a, 't, 'u> {
     unit: UnitId,
     /// Within a rest binding's `@...` pattern, the packs it names so far
     packs: Option<usize>,
+    /// Whether the type being checked is an item of a variadic class
+    item: bool,
     diags: &'a mut Vec<UnitDiag>,
 }
 
@@ -377,17 +381,21 @@ impl<'t> Check<'_, 't, '_> {
                     return;
                 }
                 let declared = (unit == self.unit).then_some(declared);
-                // Only an alias declares a schema with a name a dict could take
+                // Only an alias declares a schema with a name to suggest
                 if expected == Some(Kind::Type)
                     && kind.kind == Kind::Schema
                     && let Named::Generic(..) = named
                 {
-                    let alias = Some(self.tables.quote(self.unit, *head));
+                    let alias = self.tables.quote(self.unit, *head);
+                    let schema = Some(match self.item {
+                        true => SchemaUse::Expand(alias),
+                        false => SchemaUse::Dict(alias),
+                    });
                     self.diag(KindMismatch {
                         span,
                         expected: Kind::Type,
                         declared,
-                        alias,
+                        schema,
                     });
                     return;
                 }
@@ -409,17 +417,23 @@ impl<'t> Check<'_, 't, '_> {
                 span,
                 expected,
                 declared,
-                alias: None,
+                schema: None,
             });
         }
     }
 
     fn check(&mut self, ty: &'t TypeExpr, expected: Option<Kind>) {
+        let item = mem::take(&mut self.item);
         match ty {
-            TypeExpr::Group { ty, .. } => self.check(ty, expected),
+            TypeExpr::Group { ty, .. } => {
+                self.item = item;
+                self.check(ty, expected)
+            }
             TypeExpr::Name(head) => {
                 let named = self.named(head);
+                self.item = item;
                 self.name(head, &named, expected);
+                self.item = false;
             }
             TypeExpr::App { base, args, .. } => {
                 let base = base.ungrouped();
@@ -455,23 +469,36 @@ impl<'t> Check<'_, 't, '_> {
                 }
             }
             TypeExpr::Schema {
+                span,
                 params,
-                tuple,
-                collection,
-                ..
+                vertical,
             } => {
                 self.items(params);
-                // Where a type is required, a schema is a collection, as data is
                 if expected == Some(Kind::Type) {
-                    collection.set(*tuple);
+                    let written = match vertical {
+                        true => Some("$".to_owned()),
+                        false => self
+                            .tables
+                            .info(self.unit)
+                            .source
+                            .map(|source| source.text(*span).to_owned()),
+                    };
+                    let written = written.unwrap_or_else(|| "{...}".to_owned());
+                    let schema = match (item, vertical) {
+                        (true, _) => SchemaUse::Expand(written),
+                        (false, true) => SchemaUse::Vertical,
+                        (false, false) => SchemaUse::Dict(written),
+                    };
+                    self.diag(KindMismatch {
+                        span: *span,
+                        expected: Kind::Type,
+                        declared: None,
+                        schema: Some(schema),
+                    });
                 }
             }
-            TypeExpr::Tuple { params, .. } | TypeExpr::Record { params, .. } => {
+            TypeExpr::Tuple { params, .. } | TypeExpr::Args { params, .. } => {
                 self.items(params);
-                self.expect(ty.span(), expected, Kind::Type, None);
-            }
-            TypeExpr::Array { elem, .. } => {
-                self.check(elem, Some(Kind::Type));
                 self.expect(ty.span(), expected, Kind::Type, None);
             }
             TypeExpr::Union { members, .. } => {
@@ -577,6 +604,8 @@ impl<'t> Check<'_, 't, '_> {
                     None
                 }
             };
+            // A positional schema among items was likely meant to be expanded
+            self.item = matches!(fill, Fill::Item(_)) && matches!(arg.kind, TypeArgKind::Pos(_));
             self.check(arg.ty(), expected);
         }
     }
@@ -751,8 +780,7 @@ impl Tables<'_> {
                 _ => Some(Kind::Type),
             },
             TypeExpr::Tuple { .. }
-            | TypeExpr::Record { .. }
-            | TypeExpr::Array { .. }
+            | TypeExpr::Args { .. }
             | TypeExpr::Union { .. }
             | TypeExpr::Func { .. }
             | TypeExpr::Quantified { .. }

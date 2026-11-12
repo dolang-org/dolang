@@ -9,7 +9,7 @@ pub @let Chain = Base
 pub @let Opaque = Prim
 #        ^~~~~~: decl a.Prim
 pub @let Generic[T] = Array[T]
-#        ^~~~~~~: decl [T] [T]
+#        ^~~~~~~: decl [T] std.Array[T]
 pub @let Param[T] = T
 #        ^~~~~: decl [T +] T
 pub @let Union = (Int | Str)

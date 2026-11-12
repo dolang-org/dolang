@@ -2,9 +2,10 @@
 #
 # [`parse`](args.parse) and [`with`](args.with) take the options, arguments,
 # and subcommands to accept as positional spec items, written with `-` list
-# syntax. Each item is a dictionary whose first key gives both its kind and its
-# name: [`flag:`](args.FlagSpec), [`opt:`](args.OptSpec),
-# [`arg:`](args.ArgSpec), or [`cmd:`](args.CmdSpec).
+# syntax. Each item is a dictionary, or a record if it has positional items of
+# its own, and its first key gives both its kind and its name:
+# [`flag:`](args.FlagSpec), [`opt:`](args.OptSpec), [`arg:`](args.ArgSpec), or
+# [`cmd:`](args.CmdSpec).
 #
 # ```
 # args.parse
@@ -92,7 +93,7 @@ pub @let ArgSpec = BaseDict $
 # symbol, such as `:deploy:` or `:build_docs:`, and its own fields are in a
 # nested [`Args`](args.Args) at `p[p.cmd]`. The result's `handler` field is the
 # matched handler.
-pub @let CmdSpec[R, I, O] = BaseDict $
+pub @let CmdSpec[R, I, O] = Map $
   # Name
   cmd: Str
   # Description shown in `--help` output
@@ -132,7 +133,7 @@ pub class Args[R, I, O]: @Unpack[Sym, Value]
   field values
 
   def (init) self values
-    self.#values = Record $values
+    self.#values = std.Args $values
 
   def (get) self name
     self.#values.get $name else: do throw std.FieldError $name
@@ -363,7 +364,7 @@ class Parser
         self.#sym = sym $ cmd.replace "-" "_"
     for k v = spec
       if (type k Int)
-        if (type v Dict)
+        if (type(v, Dict) || type(v, Record))
           bind v
             :opt = nil
             :arg = nil

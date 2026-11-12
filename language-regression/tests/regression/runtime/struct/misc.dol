@@ -14,7 +14,7 @@ assert_eq $s.host localhost
 s.port = 2222
 assert_eq $s.port 2222
 s.user = "root"
-assert_eq [...s] [(:host:, "localhost"), (:port:, 2222), (:user:, "root")]
+assert_eq [...Iterable.iter(s)] [(:host:, "localhost"), (:port:, 2222), (:user:, "root")]
 
 # No plain name is a method, so an absent name is a missing field
 assert_throws $FieldError str: "no such field: len" do s.len
@@ -37,7 +37,7 @@ assert_eq $p[:a:] 3
 p[0] = 9
 p[:a:] = 4
 p[:b:] = 5
-assert_eq [...p] [(0, 9), (1, 2), (:a:, 4), (:b:, 5)]
+assert_eq [...Iterable.iter(p)] [(0, 9), (1, 2), (:a:, 4), (:b:, 5)]
 assert_throws $IndexError do p[2]
 assert_throws $IndexError do p[:z:]
 assert_throws $IndexError do p[2] = 0
@@ -56,18 +56,18 @@ assert (Struct.contains g :contains:)
 assert (Struct.contains g 0)
 assert (!(Struct.contains g :z:))
 assert (!(Struct.contains g 1))
-assert_throws $TypeError do Struct.get (record a: 1) :a:
+assert_throws $TypeError do Struct.get (args a: 1) :a:
 
-# Built from one spreadable source, with integer keys counting up from 0
-# positional, as for a record
-assert_eq (Struct {0: :a:, x: 1, 1: :b:}) (struct :a: x: 1 :b:)
-assert_eq (Struct (record 1 k: 2)) (struct 1 k: 2)
-assert_throws $TypeError str: "type error: struct keys must be symbols" do Struct {"s": 1}
-assert_throws $TypeError str: "type error: struct keys must be symbols" do Struct {5: :x:}
+# Built from one spreadable source, whose keys must be symbols: an integer
+# key is a key, not a position
+assert_eq (Struct {x: 1}) (struct x: 1)
+assert_eq (Struct (args 1 k: 2)) (struct 1 k: 2)
+assert_throws $std.UnexpectedKeyError str: "unexpected key item: \"s\"" do Struct {"s": 1}
+assert_throws $std.UnexpectedKeyError str: "unexpected key item: 0" do Struct {0: :x:}
 
 # A key appears at most once
 assert_throws $ValueError str: "value error: duplicate struct key: a" do struct a: 1 a: 2
-assert_throws $ValueError str: "value error: duplicate struct key: a" do Struct (record a: 1 a: 2)
+assert_throws $ValueError str: "value error: duplicate struct key: a" do Struct (args a: 1 a: 2)
 
 # `BaseStruct` is the same class at runtime
 assert (type s Struct)
@@ -88,7 +88,7 @@ assert (type custom MyStruct)
 custom.name = "Bob"
 assert_eq $custom.name Bob
 custom.age = 30
-assert_eq [...custom] [(:name:, "Bob"), (:age:, 30)]
+assert_eq [...Iterable.iter(custom)] [(:name:, "Bob"), (:age:, 30)]
 assert_throws $FieldError str: "no such field: missing" do custom.missing
 
 class Named: MyStruct

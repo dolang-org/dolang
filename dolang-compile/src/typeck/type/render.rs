@@ -52,14 +52,10 @@ impl Names for Labels {
 /// A class whose applications have a literal form
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Collection {
-    /// `[T]`
-    Array,
     /// `(A, B)`
     Tuple,
     /// `(k: A, B)`
-    Record,
-    /// `{k: A, B}`
-    Dict,
+    Args,
 }
 
 /// What a rendered type shows
@@ -419,6 +415,9 @@ impl Renderer<'_> {
                                     shown_args.extend(self.arguments(&items, naming));
                                     continue;
                                 }
+                                // A pack that isn't written out, such as a binder,
+                                // expands into the arguments
+                                out.push_str("...");
                                 self.render_into(*ty, naming, &mut out)
                             }
                             _ if schema == Some(index)
@@ -499,10 +498,12 @@ impl Renderer<'_> {
                             }
                             UnionMember::Keys(ty)
                             | UnionMember::Values(ty)
-                            | UnionMember::Entries(ty) => {
+                            | UnionMember::Entries(ty)
+                            | UnionMember::PushItem(ty) => {
                                 let head = match member {
                                     UnionMember::Keys(_) => Intrinsic::Keys,
                                     UnionMember::Values(_) => Intrinsic::Values,
+                                    UnionMember::PushItem(_) => Intrinsic::PushItem,
                                     _ => Intrinsic::Entries,
                                 };
                                 self.head(head, naming, &mut out);
@@ -696,12 +697,6 @@ impl Renderer<'_> {
         let [Argument::Positional(arg)] = *args else {
             return false;
         };
-        if collection == Collection::Array {
-            out.push('[');
-            self.render_into(arg, naming, out);
-            out.push(']');
-            return true;
-        }
         let Some(items) = self.flat(arg) else {
             return false;
         };
@@ -709,7 +704,6 @@ impl Renderer<'_> {
             .iter()
             .any(|item| matches!(item.element, Element::Keyed { .. }));
         let (open, close) = match collection {
-            Collection::Array => unreachable!(),
             Collection::Tuple => match *items {
                 _ if keyed => return false,
                 // A lone item would be grouping
@@ -719,12 +713,9 @@ impl Renderer<'_> {
                 },
                 _ => ("(", ")"),
             },
-            // Only an explicitly keyed item makes parentheses a record
-            Collection::Record if keyed => ("(", ")"),
-            Collection::Record => return false,
-            // A lone repeated item is written as arguments
-            Collection::Dict if self.repeated(arg).is_some() => return false,
-            Collection::Dict => ("{", "}"),
+            // Only an explicitly keyed item makes parentheses an `Args`
+            Collection::Args if keyed => ("(", ")"),
+            Collection::Args => return false,
         };
         out.push_str(open);
         self.item_list(&items, naming, out);

@@ -318,6 +318,11 @@ pub(crate) enum Contradiction {
     Required(TypeId),
     /// An `InsertItem`'s key selects an item that doesn't admit repetition
     Unrepeatable(TypeId),
+    /// A key selects a position whose insertion or removal would shift
+    /// positions the schema doesn't let move
+    Shifted(TypeId),
+    /// A `PushItem`'s schema has no rest position for an appended one
+    Unextendable,
     /// A mapping's packs have items that don't correspond, by count,
     /// multiplicity or form
     MappedPacks,
@@ -414,6 +419,8 @@ pub(crate) enum Step {
     Restricted,
     /// The empty schema below a schema that must admit it, once it's solved
     Empty,
+    /// A schema variable's lower bound below the lanes its items can occupy
+    Lanes,
     /// A class's member below the one a protocol it's judged structurally
     /// below requires, or above it if `reversed`, as a field's is too
     Member {

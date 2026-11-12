@@ -1,23 +1,24 @@
 # Unpacking matches positions and symbols, and a rest holds the items left
-# over, as for a record
+# over, as for an `Args`
 let x :k ...rest = struct "zero" k: 1 "one" j: 2
 assert_eq $x zero
 assert_eq $k 1
-assert_eq (Record rest) (record "one" j: 2)
+assert_eq (Args rest) (args "one" j: 2)
 
 let a *pos **keyed = struct 1 2 c: 3
 assert_eq $a 1
 assert_eq $pos (2,)
-assert_eq $keyed (record c: 3)
+assert_eq $keyed (args c: 3)
 
 assert_throws $std.RuntimeError str: "missing key item: b" do
   let b: _b = struct a: 1
 
-# Spreading passes items as arguments, or as pairs into a sequence
+# Spreading passes items as arguments; a sequence rejects keyed items
 def collect ...args
   args
-assert_eq (collect ...(struct 1 a: 2)) (record 1 a: 2)
-assert_eq [...(struct 1 a: 2)] [(0, 1), (:a:, 2)]
+assert_eq (collect ...(struct 1 a: 2)) (args 1 a: 2)
+assert_throws $std.UnexpectedKeyError do [...(struct 1 a: 2)]
+assert_eq [...(struct 1 2)] [1, 2]
 assert_eq (dict ...(struct a: 1)) {a: 1}
 
 # Iteration sees the items as they were when it began
@@ -27,4 +28,4 @@ for k v = s
   s.b = 2
   pairs.push (k, v)
 assert_eq $pairs [(:a:, 1)]
-assert_eq [...s] [(:a:, 1), (:b:, 2)]
+assert_eq [...Iterable.iter(s)] [(:a:, 1), (:b:, 2)]

@@ -1,0 +1,66 @@
+# A literal with positional items is a record. Without an expectation, it takes
+# a positional lane and a keyed lane; with one, the schema it's expected to have.
+
+pub def inferred()
+  let r = {1, a: "x", 2}
+  let _ = r
+  #       ^: flow std.Record[...std.Int, ...{**std.Str}]
+
+pub def takes r @ Record[Str, ...{*Int, ?tag: Str}]
+  let _ = r
+
+pub def reads r @ BaseRecord[...(Int | Str)]
+  let _ = r
+
+pub def wants_dict d @ Dict[Int, Int]
+  let _ = d
+
+pub def expected xs @ Array[Int]
+  takes {"a", 1, 2, tag: "t"}
+  takes $
+    - a
+    for x = xs
+      - $x
+    tag: t
+  reads {1, "b"}
+  takes {1}
+  # error: expected `{std.Str, *std.Int, ?tag: std.Str}`, found `{1}`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   takes {1}
+  #    |         ^^^
+  #    |
+  #    = note: `1` does not fit `std.Str`
+  wants_dict {1}
+# error: expected `std.Dict[std.Int, std.Int]`, found `std.Record[...std.Int]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   wants_dict {1}
+#    |              ^^^
+
+# Items are type arguments, as for `Args`. A type expanded among them repeats,
+# and a schema alias expands into its items.
+pub @let Tagged = {Str, ?tag: Str}
+
+pub def fixed r @ Record[Int, tag: Str]
+  let _ = r
+
+pub def repeated r @ Record[...Int]
+  let _ = r
+
+pub def aliased r @ BaseRecord[...Tagged]
+  let _ = r
+
+pub def item_arguments()
+  fixed {1, tag: "t"}
+  repeated {1, 2, 3}
+  aliased {"a"}
+  aliased {"a", tag: "t"}
+  fixed {1, tag: 2}
+# error: expected `{std.Int, tag: std.Str}`, found `{1, tag: 2}`
+#   --> m.dol:LL:LL
+#    |
+# LL |   fixed {1, tag: 2}
+#    |         ^^^^^^^^^^^
+#    |
+#    = note: `2` does not fit `std.Str`

@@ -154,6 +154,7 @@ enum WorkAst<'a> {
     Args(&'a [Arg]),
     ArrayElems(&'a [ArrayElem]),
     DictElems(&'a [DictElem]),
+    RecordElems(&'a [DictElem]),
 }
 
 struct Work<'a> {
@@ -829,10 +830,21 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     expr.span(),
                 ));
             }
-            Expr::Record { args, .. } => {
+            Expr::Args { args, .. } => {
                 let mut sig = Vec::new();
                 for arg in args.iter() {
                     sig.push(self.lower_arg(arg)?);
+                }
+                let sig = sig::Pack::new(sig.into_iter());
+                self.block.insts.push(Inst(
+                    InstInfo::Builtin(builtin::ARGS, self.packtab.id(&sig)),
+                    expr.span(),
+                ));
+            }
+            Expr::Dict { elems, .. } if DictElem::has_positional(elems) => {
+                let mut sig = Vec::new();
+                for elem in elems.iter() {
+                    sig.push(self.lower_record_elem(elem)?);
                 }
                 let sig = sig::Pack::new(sig.into_iter());
                 self.block.insts.push(Inst(
@@ -989,15 +1001,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     }
 
     fn lower_dict_elem(&mut self, elem: &'a DictElem) -> Result<(sig::Arg, Option<sig::Arg>)> {
-        let int = OnceCell::new();
         let iter_sym = OnceCell::new();
         Ok(match elem {
-            DictElem::Single(Single { expr, .. }) => {
-                self.lower_expr(expr)?;
-                (
-                    sig::Arg::Key(*int.get_or_init(|| self.symtab.id(&self.bintab.id_str("int")))),
-                    None,
-                )
+            DictElem::Single(_) => {
+                unreachable!("a dict literal with positional items lowers as a record")
             }
             DictElem::Key(Key { key_span, expr, .. }) => {
                 let cid = self.lower_const(&Const::Sym(*key_span));
@@ -1025,77 +1032,44 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 self.lower_elem_if(node, WorkAst::DictElems)?;
                 (sig::Arg::Pack, None)
             }
-            DictElem::For(For {
-                bind,
-                expr,
-                body,
-                iter,
-                for_span,
-                ..
-            }) => {
-                let empty = {
-                    let call = sig::Pack::new([].into_iter());
-                    self.packtab.id(&call)
-                };
-                self.block
-                    .insts
-                    .push(Inst(InstInfo::Builtin(builtin::ARGS, empty), *for_span));
-
-                let sig = if let Some(expr) = expr {
-                    self.lower_expr(expr)?;
-                    let call = sig::Pack::new([sig::Arg::Value].into_iter());
-                    self.packtab.id(&call)
-                } else {
-                    let call = sig::Pack::new([].into_iter());
-                    self.packtab.id(&call)
-                };
-                let iter_span = expr.as_ref().map_or(*for_span, Expr::span);
-                self.block
-                    .insts
-                    .push(Inst(InstInfo::Builtin(builtin::ITER, sig), iter_span));
-                self.lower_store_res(
-                    iter.as_ref().expect("unresolved for iterator"),
-                    *for_span,
-                    false,
-                );
-                let advance = self.graph.alloc_block(self.block.func, self.block.scope);
-                let next = self.graph.alloc_block(self.block.func, self.block.scope);
-                let bscope = self.graph.alloc_scope(
-                    false,
-                    false,
-                    self.block.func,
-                    Some(self.block.scope),
-                    &body.vars,
-                );
-                let bodyid = self.graph.alloc_block(self.block.func, bscope);
-                let bind_params = Some(Defaults::Pattern(bind));
-                // FIXME: include span of keyword, not of block
-                self.queue(Work {
-                    bb: bodyid,
-                    ast: WorkAst::DictElems(&body.elems),
-                    params: Params {
-                        bind: Some(Prologue::Pattern(bind)),
-                        bind_params,
-                        mode: self.params.mode.clone(),
-                        is_top_level: false,
-                        next_id: Some(advance),
-                        break_id: None,
-                        break_result: false,
-                        continue_id: None,
-                        exit_id: self.params.exit_id,
-                    },
-                });
-                self.block.term = Term(TermInfo::Branch(advance), *for_span);
-                self.link(advance);
-                self.switch(advance);
-                self.lower_load(iter.as_ref().unwrap(), *for_span);
-                self.block.insts.push(Inst(InstInfo::Next, iter_span));
-                self.block.term = Term(TermInfo::If(bodyid, next), *for_span);
-                self.link(bodyid);
-                self.link(next);
-                self.switch(next);
-                self.block.insts.push(Inst(InstInfo::Pop, *for_span));
+            DictElem::For(node) => {
+                self.lower_elem_for(node, WorkAst::DictElems)?;
                 (sig::Arg::Pack, None)
+            }
+        })
+    }
+
+    /// Lowers an item of a record literal as an argument: keys are written
+    /// symbols, which [`crate::elab`] checks
+    fn lower_record_elem(&mut self, elem: &'a DictElem) -> Result<sig::Arg> {
+        Ok(match elem {
+            DictElem::Single(Single { expr, .. }) => {
+                self.lower_expr(expr)?;
+                sig::Arg::Value
+            }
+            DictElem::Key(Key { key_span, expr, .. }) => {
+                self.lower_expr(expr)?;
+                sig::Arg::Key(
+                    self.symtab
+                        .id(&self.bintab.id_str(self.file.str(*key_span))),
+                )
+            }
+            DictElem::Pair(pair) => {
+                let key_span = pair.sym_key().expect("a record literal's key is a symbol");
+                self.lower_expr(&pair.value)?;
+                sig::Arg::Key(self.symtab.id(&self.bintab.id_str(self.file.str(key_span))))
+            }
+            DictElem::Expand(Expand { expr, .. }) => {
+                self.lower_expr(expr)?;
+                sig::Arg::Pack
+            }
+            DictElem::For(node) => {
+                self.lower_elem_for(node, WorkAst::RecordElems)?;
+                sig::Arg::Pack
+            }
+            DictElem::If(node) => {
+                self.lower_elem_if(node, WorkAst::RecordElems)?;
+                sig::Arg::Pack
             }
         })
     }
@@ -1115,76 +1089,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 self.lower_elem_if(node, WorkAst::ArrayElems)?;
                 sig::Arg::Pack
             }
-            ArrayElem::For(For {
-                bind,
-                expr,
-                body,
-                iter,
-                for_span,
-                ..
-            }) => {
-                let empty = {
-                    let call = sig::Pack::new([].into_iter());
-                    self.packtab.id(&call)
-                };
-                self.block
-                    .insts
-                    .push(Inst(InstInfo::Builtin(builtin::ARGS, empty), *for_span));
-
-                let sig = if let Some(expr) = expr {
-                    self.lower_expr(expr)?;
-                    let call = sig::Pack::new([sig::Arg::Value].into_iter());
-                    self.packtab.id(&call)
-                } else {
-                    let call = sig::Pack::new([].into_iter());
-                    self.packtab.id(&call)
-                };
-                let iter_span = expr.as_ref().map_or(*for_span, Expr::span);
-                self.block
-                    .insts
-                    .push(Inst(InstInfo::Builtin(builtin::ITER, sig), iter_span));
-                self.lower_store_res(
-                    iter.as_ref().expect("unresolved for iterator"),
-                    *for_span,
-                    false,
-                );
-                let advance = self.graph.alloc_block(self.block.func, self.block.scope);
-                let next = self.graph.alloc_block(self.block.func, self.block.scope);
-                let bscope = self.graph.alloc_scope(
-                    false,
-                    false,
-                    self.block.func,
-                    Some(self.block.scope),
-                    &body.vars,
-                );
-                let bodyid = self.graph.alloc_block(self.block.func, bscope);
-                let bind_params = Some(Defaults::Pattern(bind));
-                // FIXME: include span of keyword, not of block
-                self.queue(Work {
-                    bb: bodyid,
-                    ast: WorkAst::ArrayElems(&body.elems),
-                    params: Params {
-                        bind: Some(Prologue::Pattern(bind)),
-                        bind_params,
-                        mode: self.params.mode.clone(),
-                        is_top_level: false,
-                        next_id: Some(advance),
-                        break_id: None,
-                        break_result: false,
-                        continue_id: None,
-                        exit_id: self.params.exit_id,
-                    },
-                });
-                self.block.term = Term(TermInfo::Branch(advance), *for_span);
-                self.link(advance);
-                self.switch(advance);
-                self.lower_load(iter.as_ref().unwrap(), *for_span);
-                self.block.insts.push(Inst(InstInfo::Next, iter_span));
-                self.block.term = Term(TermInfo::If(bodyid, next), *for_span);
-                self.link(bodyid);
-                self.link(next);
-                self.switch(next);
-                self.block.insts.push(Inst(InstInfo::Pop, *for_span));
+            ArrayElem::For(node) => {
+                self.lower_elem_for(node, WorkAst::ArrayElems)?;
                 sig::Arg::Pack
             }
         })
@@ -1207,76 +1113,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 self.lower_expr(expr)?;
                 sig::Arg::Pack
             }
-            Arg::For(For {
-                bind,
-                expr,
-                body,
-                iter,
-                for_span,
-                ..
-            }) => {
-                let empty = {
-                    let call = sig::Pack::new([].into_iter());
-                    self.packtab.id(&call)
-                };
-                self.block
-                    .insts
-                    .push(Inst(InstInfo::Builtin(builtin::ARGS, empty), *for_span));
-
-                let sig = if let Some(expr) = expr {
-                    self.lower_expr(expr)?;
-                    let call = sig::Pack::new([sig::Arg::Value].into_iter());
-                    self.packtab.id(&call)
-                } else {
-                    let call = sig::Pack::new([].into_iter());
-                    self.packtab.id(&call)
-                };
-                let iter_span = expr.as_ref().map_or(*for_span, Expr::span);
-                self.block
-                    .insts
-                    .push(Inst(InstInfo::Builtin(builtin::ITER, sig), iter_span));
-                self.lower_store_res(
-                    iter.as_ref().expect("unresolved for iterator"),
-                    *for_span,
-                    false,
-                );
-                let advance = self.graph.alloc_block(self.block.func, self.block.scope);
-                let next = self.graph.alloc_block(self.block.func, self.block.scope);
-                let bscope = self.graph.alloc_scope(
-                    false,
-                    false,
-                    self.block.func,
-                    Some(self.block.scope),
-                    &body.vars,
-                );
-                let bodyid = self.graph.alloc_block(self.block.func, bscope);
-                let bind_params = Some(Defaults::Pattern(bind));
-                // FIXME: include span of keyword, not of block
-                self.queue(Work {
-                    bb: bodyid,
-                    ast: WorkAst::Args(&body.elems),
-                    params: Params {
-                        bind: Some(Prologue::Pattern(bind)),
-                        bind_params,
-                        mode: self.params.mode.clone(),
-                        is_top_level: false,
-                        next_id: Some(advance),
-                        break_id: None,
-                        break_result: false,
-                        continue_id: None,
-                        exit_id: self.params.exit_id,
-                    },
-                });
-                self.block.term = Term(TermInfo::Branch(advance), *for_span);
-                self.link(advance);
-                self.switch(advance);
-                self.lower_load(iter.as_ref().unwrap(), *for_span);
-                self.block.insts.push(Inst(InstInfo::Next, iter_span));
-                self.block.term = Term(TermInfo::If(bodyid, next), *for_span);
-                self.link(bodyid);
-                self.link(next);
-                self.switch(next);
-                self.block.insts.push(Inst(InstInfo::Pop, *for_span));
+            Arg::For(node) => {
+                self.lower_elem_for(node, WorkAst::Args)?;
                 sig::Arg::Pack
             }
             Arg::If(node) => {
@@ -1513,6 +1351,86 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     /// to: an empty `ARGS` builtin opens the pack each body pushes into, and
     /// `work_ast` wraps the body for the queue.  There is no result value, so no
     /// `want_result` distinction.
+    /// Lowers a comprehension among a collection's items to an argument pack the
+    /// body fills, queued as `work_ast` of its items
+    fn lower_elem_for<T>(
+        &mut self,
+        node: &'a For<ExprBody<T>>,
+        work_ast: fn(&'a [T]) -> WorkAst<'a>,
+    ) -> Result<()> {
+        let For {
+            bind,
+            expr,
+            body,
+            iter,
+            for_span,
+            ..
+        } = node;
+        let empty = {
+            let call = sig::Pack::new([].into_iter());
+            self.packtab.id(&call)
+        };
+        self.block
+            .insts
+            .push(Inst(InstInfo::Builtin(builtin::ARG_PACK, empty), *for_span));
+
+        let sig = if let Some(expr) = expr {
+            self.lower_expr(expr)?;
+            let call = sig::Pack::new([sig::Arg::Value].into_iter());
+            self.packtab.id(&call)
+        } else {
+            let call = sig::Pack::new([].into_iter());
+            self.packtab.id(&call)
+        };
+        let iter_span = expr.as_ref().map_or(*for_span, Expr::span);
+        self.block
+            .insts
+            .push(Inst(InstInfo::Builtin(builtin::ITER, sig), iter_span));
+        self.lower_store_res(
+            iter.as_ref().expect("unresolved for iterator"),
+            *for_span,
+            false,
+        );
+        let advance = self.graph.alloc_block(self.block.func, self.block.scope);
+        let next = self.graph.alloc_block(self.block.func, self.block.scope);
+        let bscope = self.graph.alloc_scope(
+            false,
+            false,
+            self.block.func,
+            Some(self.block.scope),
+            &body.vars,
+        );
+        let bodyid = self.graph.alloc_block(self.block.func, bscope);
+        let bind_params = Some(Defaults::Pattern(bind));
+        // FIXME: include span of keyword, not of block
+        self.queue(Work {
+            bb: bodyid,
+            ast: work_ast(&body.elems),
+            params: Params {
+                bind: Some(Prologue::Pattern(bind)),
+                bind_params,
+                mode: self.params.mode.clone(),
+                is_top_level: false,
+                next_id: Some(advance),
+                break_id: None,
+                break_result: false,
+                continue_id: None,
+                exit_id: self.params.exit_id,
+            },
+        });
+        self.block.term = Term(TermInfo::Branch(advance), *for_span);
+        self.link(advance);
+        self.switch(advance);
+        self.lower_load(iter.as_ref().unwrap(), *for_span);
+        self.block.insts.push(Inst(InstInfo::Next, iter_span));
+        self.block.term = Term(TermInfo::If(bodyid, next), *for_span);
+        self.link(bodyid);
+        self.link(next);
+        self.switch(next);
+        self.block.insts.push(Inst(InstInfo::Pop, *for_span));
+        Ok(())
+    }
+
     fn lower_elem_if<T>(
         &mut self,
         node: &'a If<ExprBody<T>>,
@@ -1523,7 +1441,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             self.packtab.id(&call)
         };
         self.block.insts.push(Inst(
-            InstInfo::Builtin(builtin::ARGS, empty),
+            InstInfo::Builtin(builtin::ARG_PACK, empty),
             node.tbranch.span,
         ));
 
@@ -3946,6 +3864,53 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         Ok(())
     }
 
+    fn lower_for_record(&mut self, body: &'a [DictElem]) -> Result<()> {
+        let scope = self.graph.scope(self.block.scope);
+        // FIXME: choose better span for this
+        let span = body.span();
+
+        // Prologue
+
+        // Push upvars if we have captures in this scope
+        if scope.has_upvars() {
+            self.block
+                .insts
+                .push(Inst(InstInfo::PushUpvars(scope.caps), span));
+        }
+
+        self.lower_prologue_bind(span)?;
+
+        let mut sig = Vec::new();
+        self.block.insts.push(Inst(InstInfo::Dup, span));
+        // End prologue
+        for elem in body.iter() {
+            sig.push(self.lower_record_elem(elem)?);
+        }
+        let sig = sig::Pack::new(sig.into_iter());
+        let sig = self.packtab.id(&sig);
+
+        self.block.insts.push(Inst(
+            InstInfo::MethodCall(self.symtab.id(&self.bintab.id_str("push")), sig),
+            span,
+        ));
+        self.block.insts.push(Inst(InstInfo::Pop, span));
+
+        // Epilogue
+        if scope.has_upvars() {
+            self.block.insts.push(Inst(InstInfo::PopUpvars, span));
+        }
+        // End epilogue
+
+        if let Some(next) = self.params.next_id {
+            self.block.term = Term(TermInfo::Branch(next), span);
+            self.link(next);
+        } else {
+            unreachable!();
+        }
+
+        Ok(())
+    }
+
     fn lower_for_array(&mut self, body: &'a [ArrayElem]) -> Result<()> {
         let scope = self.graph.scope(self.block.scope);
         // FIXME: choose better span for this
@@ -4124,6 +4089,7 @@ impl<'c> Lowerer<'c> {
                 WorkAst::Args(body) => scope.lower_for_args(body)?,
                 WorkAst::ArrayElems(body) => scope.lower_for_array(body)?,
                 WorkAst::DictElems(body) => scope.lower_for_dict(body)?,
+                WorkAst::RecordElems(body) => scope.lower_for_record(body)?,
             }
         }
         mem::drop(queue);

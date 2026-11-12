@@ -398,11 +398,6 @@ impl Check<'_, '_> {
         match ty {
             TypeExpr::Name { .. } | TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
             TypeExpr::Group { ty, .. } => self.ty(unit, scope, ty, phantom),
-            // `std.Array` bounds nothing
-            TypeExpr::Array { elem, .. } => {
-                self.argument(unit, elem);
-                self.ty(unit, scope, elem, phantom);
-            }
             // Its function is checked in its own group
             TypeExpr::Quantified { decl, func, .. } => {
                 let scope = Some(self.declaration((*decl, 0)));
@@ -413,17 +408,15 @@ impl Check<'_, '_> {
                     self.ty(unit, scope, member, phantom);
                 }
             }
-            // The designated classes these forms stand for, including those a schema
-            // stands for where a type is required, bound nothing
-            TypeExpr::Schema { params, .. }
-            | TypeExpr::Tuple { params, .. }
-            | TypeExpr::Record { params, .. } => {
-                // A schema where a schema is required may be a parameter list's
-                let collection = !matches!(ty, TypeExpr::Schema { collection, .. }
-                    if collection.get().is_none());
-                if collection {
-                    self.items(unit, params);
+            // A schema may be a parameter list's
+            TypeExpr::Schema { params, .. } => {
+                for ty in params.iter().flat_map(TypeParam::tys) {
+                    self.ty(unit, scope, ty, phantom);
                 }
+            }
+            // The designated classes these forms stand for bound nothing
+            TypeExpr::Tuple { params, .. } | TypeExpr::Args { params, .. } => {
+                self.items(unit, params);
                 for ty in params.iter().flat_map(TypeParam::tys) {
                     self.ty(unit, scope, ty, phantom);
                 }
@@ -830,15 +823,10 @@ impl Check<'_, '_> {
                     self.guarded(unit, alias, members, arg.ty(), guarded || nominal, found);
                 }
             }
-            TypeExpr::Schema {
-                params, collection, ..
-            } => {
-                // A schema that is a collection applies a class, which guards its items
-                let collection = collection.get().is_some();
+            TypeExpr::Schema { params, .. } => {
                 for param in params {
                     // An inclusion's items are the schema's own
                     let guarded = guarded
-                        || collection
                         || !matches!(
                             param,
                             TypeParam::Pos {
@@ -852,12 +840,11 @@ impl Check<'_, '_> {
                 }
             }
             // These forms apply a class, which guards them as any nominal type does
-            TypeExpr::Tuple { params, .. } | TypeExpr::Record { params, .. } => {
+            TypeExpr::Tuple { params, .. } | TypeExpr::Args { params, .. } => {
                 for ty in params.iter().flat_map(TypeParam::tys) {
                     self.guarded(unit, alias, members, ty, true, found);
                 }
             }
-            TypeExpr::Array { elem, .. } => self.guarded(unit, alias, members, elem, true, found),
             TypeExpr::Quantified { func, .. } => {
                 self.guarded(unit, alias, members, func, guarded, found)
             }

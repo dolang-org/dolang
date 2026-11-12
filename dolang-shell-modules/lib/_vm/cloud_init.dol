@@ -17,16 +17,16 @@ pub let READY_PATH @ Str = "/var/tmp/dolang-cloud-init-ready"
 pub def cloud_config
   user @ Str
   public_key @ Str
-  packages @ [Str]
+  packages @ Array[Str]
   boot @ Iterable[Iterable[Value]]
-  write_files @ [yaml.EncodeValue]
+  write_files @ Array[yaml.EncodeValue]
 do -> Str
   let run = ["set -e"]
   for entry = boot
     run.push (shlex.join entry)
   run.push "touch $(shlex.quote READY_PATH)"
 
-  let user_config @ {**yaml.EncodeValue} = $
+  let user_config @ Dict[{**yaml.EncodeValue}] = $
     name: $user
     groups:
       - wheel

@@ -457,31 +457,15 @@ impl<'t, 'u> Populate<'t, 'u> {
                 let items = self.items(group, params, false, depth);
                 self.schema(items)
             }
-            TypeExpr::Schema {
-                params, collection, ..
-            } if expected == Kind::Type => {
-                let class = collection.get();
-                debug_assert!(class.is_some(), "kind checking classifies each brace");
-                let class = class.unwrap_or(Designated::Dict);
-                if class == Designated::Intrinsic(Intrinsic::Tuple) {
-                    self.keyed_inclusions(group.unit, params, true);
-                }
-                let items = self.items(group, params, false, depth);
-                self.collection(class, self.schema(items))
-            }
             TypeExpr::Tuple { params, .. } if expected == Kind::Type => {
-                self.keyed_inclusions(group.unit, params, false);
+                self.keyed_inclusions(group.unit, params);
                 let items = self.items(group, params, false, depth);
                 let tuple = Designated::Intrinsic(Intrinsic::Tuple);
                 self.collection(tuple, self.schema(items))
             }
-            TypeExpr::Record { params, .. } if expected == Kind::Type => {
+            TypeExpr::Args { params, .. } if expected == Kind::Type => {
                 let items = self.items(group, params, false, depth);
-                self.collection(Designated::Record, self.schema(items))
-            }
-            TypeExpr::Array { elem, .. } if expected == Kind::Type => {
-                let elem = self.intern(group, elem, Kind::Type, depth);
-                self.collection(Designated::Array, elem)
+                self.collection(Designated::Args, self.schema(items))
             }
             TypeExpr::Union { members, .. } if expected == Kind::Type => {
                 let members: Vec<_> = members
@@ -578,9 +562,9 @@ impl<'t, 'u> Populate<'t, 'u> {
     }
 
     /// Report each item of a tuple form, parenthesized or `vertical`, that may admit
-    /// keyed items. An inclusion never makes a record or dict, so what it includes
+    /// keyed items. An inclusion never makes an `Args` or dict, so what it includes
     /// can't change the form's meaning.
-    fn keyed_inclusions(&mut self, unit: UnitId, params: &[TypeParam], vertical: bool) {
+    fn keyed_inclusions(&mut self, unit: UnitId, params: &[TypeParam]) {
         for param in params {
             match param {
                 TypeParam::Open(span) => {
@@ -589,7 +573,6 @@ impl<'t, 'u> Populate<'t, 'u> {
                         KeyedInclusion {
                             span: *span,
                             open: true,
-                            vertical,
                         },
                     );
                 }
@@ -602,7 +585,6 @@ impl<'t, 'u> Populate<'t, 'u> {
                         KeyedInclusion {
                             span: ty.span(),
                             open: false,
-                            vertical,
                         },
                     );
                 }
@@ -1036,7 +1018,17 @@ impl<'t, 'u> Populate<'t, 'u> {
             let ty = if let Some(ty) = given[slot] {
                 ty
             } else if let Some(items) = items[slot].take() {
-                self.schema(items)
+                // A lone expansion of a schema fills the pack with it as is, so
+                // `Foo[...S]` is `Foo` applied to `S` rather than to `{...S}`
+                match items[..] {
+                    [
+                        SchemaItem {
+                            element: Element::Include(schema),
+                            ..
+                        },
+                    ] => schema,
+                    _ => self.schema(items),
+                }
             } else if let Some(default) = self.default(binder(slot)) {
                 self.db.substitute(default, &placeholder)
             } else if let BinderKind::Rest(_) = written[slot].kind {
@@ -1824,8 +1816,6 @@ impl Report for BareGeneric {
 struct KeyedInclusion {
     span: Span,
     open: bool,
-    /// Whether the tuple is a vertical schema, rather than parenthesized
-    vertical: bool,
 }
 
 impl Report for KeyedInclusion {
@@ -1848,14 +1838,10 @@ impl Report for KeyedInclusion {
     }
 
     fn notes(&self) -> Vec<(NoteKind, String)> {
-        let note = match (self.open, self.vertical) {
-            (true, false) => "`(*)` is a tuple of any positional items",
-            (true, true) => "a vertical `*` alone admits any positional items",
-            (false, false) => {
-                "a keyed item makes a record; to include keyed items without one, write `Record[...{...}]`"
-            }
-            (false, true) => {
-                "a keyed item makes a dict; to include keyed items in a record, apply `Record ...$` to these items"
+        let note = match self.open {
+            true => "`(*)` is a tuple of any positional items",
+            false => {
+                "a keyed item makes an `Args`; to include keyed items without one, write `Args[...{...}]`"
             }
         };
         vec![(NoteKind::Help, note.to_owned())]

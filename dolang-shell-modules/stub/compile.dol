@@ -26,23 +26,26 @@
 import term:
   - @Text
 
-# What a prelude binds a module to: an alias, an array of items, or a
-# dictionary of items to their aliases. Prefix an item name with `@` to bind it
-# only in types; aliases are written without the prefix.
+# What a prelude binds a module to: `true` to import it as is, an alias, an
+# array of items, or a dictionary of items to their aliases. Prefix an item
+# name with `@` to bind it only in types; aliases are written without the
+# prefix.
 pub @let PreludeBinding = $
+  | true
   | Str
   | Sym
   | BaseArray[Str | Sym]
   | BaseDict[Str | Sym, Str | Sym]
 
 # Imports to bind before compiled source: a module name, an array of module
-# names, or a dictionary of module names to their bindings. Positional
-# dictionary entries import unaliased modules.
+# names, or a dictionary or record of module names to their bindings. A
+# record's positional items import unaliased modules.
 pub @let Prelude = $
   | Str
   | Sym
   | BaseArray[Str | Sym]
-  | BaseDict[{*(Str | Sym), *(Str | Sym): PreludeBinding}]
+  | BaseDict[Str | Sym, PreludeBinding]
+  | BaseRecord[...{*(Str | Sym), **PreludeBinding}]
 
 # A staged compilation unit.
 #
@@ -646,18 +649,11 @@ pub class SchemaType: TypeExpr
   pub def items self -> Array[TypeItem]
     ...
 
-# A tuple or record type, such as `(Int, Str)` or `(name: Str)`.
+# A tuple or `Args` type, such as `(Int, Str)` or `(name: Str)`.
 pub class ParensType: TypeExpr
   # The items, in the order written.
   #[getter]
   pub def items self -> Array[TypeItem]
-    ...
-
-# An array type, such as `[Int]`.
-pub class ArrayType: TypeExpr
-  # The element type.
-  #[getter]
-  pub def elem self -> TypeExpr
     ...
 
 # A union, such as `(Str | Path)`.

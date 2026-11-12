@@ -1,4 +1,4 @@
-# Debug output names the type, so a struct isn't mistaken for a record
+# Debug output names the type, so a struct isn't mistaken for an `Args`
 assert_eq (str (struct())) "Struct()"
 assert_eq (str (struct(1, 2, a: 3))) "Struct(1, 2, a: 3)"
 assert_eq (str (struct(a: "x"))) "Struct(a: \"x\")"
@@ -7,14 +7,14 @@ assert_eq (str (struct(a: "x"))) "Struct(a: \"x\")"
 assert ((struct a: 1 b: 2) == (struct a: 1 b: 2))
 assert (!((struct a: 1 b: 2) == (struct b: 2 a: 1)))
 assert (!((struct a: 1) == (struct a: 2)))
-assert (!((struct a: 1) == (record a: 1)))
+assert (!((struct a: 1) == (args a: 1)))
 
-# Ordering follows records
+# Ordering follows `Args`
 assert ((struct 1) < (struct 1 2))
 assert ((struct 1) < (struct 2))
 assert (!((struct 1) < (struct 1)))
-assert_throws $std.TypeError do ((struct 1) < (record 1))
+assert_throws $std.TypeError do ((struct 1) < (args 1))
 
-# Equal structs hash equally, but not as the equal record does
+# Equal structs hash equally, but not as the equal `Args` does
 assert_eq (std.hash (struct a: 1)) (std.hash (struct a: 1))
-assert ((std.hash (struct a: 1)) != (std.hash (record a: 1)))
+assert ((std.hash (struct a: 1)) != (std.hash (args a: 1)))

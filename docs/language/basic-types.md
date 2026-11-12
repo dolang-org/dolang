@@ -89,7 +89,7 @@ let s = sym "my_symbol"
 
 ## Data Structures
 
-See [Data Structures](./data-structures.md) for arrays, dictionaries, records,
+See [Data Structures](./data-structures.md) for arrays, dictionaries, `Args`,
 sets, and tuples.
 
 ## Type Inspection

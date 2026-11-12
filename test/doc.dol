@@ -149,7 +149,7 @@ def parameters_and_returns_are_typed()
   assert_eq (untargeted place["returns"]) $
     "kind": app
     "base": {"kind": "name", "name": "std.Dict", "module": "std"}
-    "args": [pos_arg(name_type("Str")), pos_arg(std_type("Record"))]
+    "args": [pos_arg(name_type("Str")), pos_arg(std_type("Args"))]
 
 # A rest parameter whose annotation expands a pack says so, and an expansion
 # argument is marked as one.
@@ -203,10 +203,10 @@ def binders_give_bounds_and_defaults()
 #[test]
 def classes_list_supertypes()
   let out = extract()
-  assert_eq (untargeted(entity(out, "Point")["supers"])) [std_type("Record")]
+  assert_eq (untargeted(entity(out, "Point")["supers"])) [std_type("Args")]
   # A supertype named through a module path has no item
   assert_eq (untargeted(entity(out, "Tagged")["supers"])) $
-    - {"kind": "name", "name": "std.Record", "module": "std"}
+    - {"kind": "name", "name": "std.Args", "module": "std"}
   let plot = entity $out Plot
   assert (!plot.contains("protocol"))
   assert_eq (untargeted plot["supers"]) $
@@ -413,8 +413,7 @@ def remaining_type_forms()
   let out = extract_source |-
     @let Base = {a: Int}
     pub @let Pair = (Int, name: Str)
-    pub @let Ints = [Int]
-    pub @let Keyed = Record[x: Int]
+    pub @let Keyed = Args[x: Int]
     pub @let Wide = {...Base, ...}
     pub @let Loose = {*, **}
     pub @let Named = {**Int}
@@ -424,10 +423,9 @@ def remaining_type_forms()
     "params":
       - {"kind": "pos", "quant": nil, "type": name_type("Int")}
       - {"kind": "key", "quant": nil, "key": "name", "type": name_type("Str")}
-  assert_eq (type_of("Ints")) {"kind": "array", "elem": name_type("Int")}
   assert_eq (type_of("Keyed")) $
     "kind": app
-    "base": (name_type "Record")
+    "base": (name_type "Args")
     "args": [{"kind": "key", "name": "x", "type": name_type("Int")}]
   assert_eq (type_of("Wide")) $
     "kind": schema

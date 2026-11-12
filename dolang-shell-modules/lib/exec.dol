@@ -36,7 +36,7 @@ def module_name path @ fs.Path name @ (Str | nil) -> Str
       throw std.RuntimeError "can't derive module name from path: $path"
     stem
 
-def inject_keys inject @ BaseDict[Sym, Value] -> [Sym]
+def inject_keys inject @ BaseDict[Sym, Value] -> Array[Sym]
   let keys = [...inject.keys()]
   if !(keys.all do |k| type k Sym)
     throw std.TypeError "inject key: expected `Sym`"
@@ -55,15 +55,15 @@ def cache_usable cache @ fs.Path path @ fs.Path -> Bool
 
 # Values a script reads as the fields of an imported module.
 class Namespace
-  field values @ Record[...{**Value}]
+  field values @ Args[...{**Value}]
 
-  def (init) self values @ BaseDict[{...}]
+  def (init) self values @ BaseDict[Value, Value]
     let fields @ Dict[Sym, Value] = {}
     for name value = values
       if !(type name Sym)
         throw std.TypeError "module field: expected `Sym`"
       fields[name] = value
-    self.#values = Record $fields
+    self.#values = Args $fields
 
   def (get) self name @ Sym -> Value
     self.#values.get $name else: do throw std.FieldError $name

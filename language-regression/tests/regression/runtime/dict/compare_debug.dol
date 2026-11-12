@@ -1,10 +1,8 @@
 # str/debug formatting
 assert_eq (str {}) "{}"
 assert_eq (str {a: 1, b: 2}) "{a: 1, b: 2}"
-# sequential int keys starting at 0 print bare, like a tuple
-assert_eq (str {0: "x", 1: "y"}) "{\"x\", \"y\"}"
-# a gap in the int-key sequence falls back to printing the key
-assert_eq (str {0: "x", 2: "y"}) "{\"x\", 2: \"y\"}"
+# int keys print like any other key
+assert_eq (str {0: "x", 1: "y"}) "{0: \"x\", 1: \"y\"}"
 # non-symbol string keys print quoted
 assert_eq (str {"a-b": 1}) "{\"a-b\": 1}"
 
@@ -18,6 +16,10 @@ assert (d1 == d2)
 assert (!(d1 == {a: 1}))
 assert (!(d1 == {a: 1, c: 99}))
 assert (!(d1 == {a: 1, z: 3}))
+# a repeated key counts each instance
+assert (!({a: 1} == {a: 1, a: 2}))
+assert (!({a: 1, a: 2} == {a: 1}))
+assert ({a: 1, a: 2} == {a: 1, a: 2})
 
 # ordering: shorter-is-less, key ordering, value ordering, equal-is-not-less
 assert ({1: "x"} < {1: "x", 2: "y"})

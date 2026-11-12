@@ -84,7 +84,7 @@ func
 
 ## Vertical Data
 
-`$` followed by indentation introduces an array or dictionary:
+`$` followed by indentation introduces an array, dictionary or record:
 
 ```
 # Vertical array
@@ -105,8 +105,15 @@ echo $
   - c
 ```
 
-A dictionary results if any keys are present; otherwise, an array is
-constructed.
+Keys alone make a dictionary, and positional items alone an array. Both
+together make a [record](./data-structures.md#records-record):
+
+```
+let task = $
+  - build
+  help: compile the sources
+assert (type task Record)
+```
 
 As with command arguments, vertical data introduced by `$` may contain
 bin-packed positional items.
@@ -122,8 +129,8 @@ let command = $
 
 ## Nested Data
 
-In a vertical context, further indentation will introduce an array or
-dictionary as an item:
+In a vertical context, further indentation will introduce an array,
+dictionary or record as an item:
 
 ```
 my_func
@@ -212,8 +219,8 @@ let all = $
 assert_eq $all [1, 2, 3, 4, 5, 6]
 ```
 
-Note that a dictionary is only produced if at least one static key exists in
-addition to any spreads; otherwise, an array results. See
+Note that a dictionary or record is only produced if at least one static key
+exists in addition to any spreads; otherwise, an array results. See
 [Spreading](./data-structures.md#spreading) for what each kind of value
 contributes.
 

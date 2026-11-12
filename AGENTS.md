@@ -87,9 +87,10 @@ a syntax error or means something different).
 ```
 let x = (1 + 2 * 3)           # 7
 let arr = [1, 2, 3]
-let d = {name: "Alice", age: 30}
+let d = {name: "Alice", age: 30} # Dict: keys only; `{0: x}` keys are never positions
+let rec = {1, 2, tag: "x"}    # Record: braces with positional items
 let t = (1, "two", ...rest)   # tuple; (x,) is a singleton, () is empty
-let r = (name: "Alice", 30)   # record: has a static key (`k: v` or `:k`)
+let r = (name: "Alice", 30)   # Args: has a static key (`k: v` or `:k`)
 let v = (
   some_long_expr(x, y) +
   another * factor
@@ -321,7 +322,7 @@ let f = do |x|
 let x = 42                # declare and bind
 x = (x + 1)              # reassign (x must already exist)
 let a b = [1, 2]         # destructuring
-let :name :age = record   # keyword destructuring
+let :name :age = person   # keyword destructuring
 ```
 
 ### Functions
@@ -339,10 +340,10 @@ pub def exported x        # public (module export)
 def connect :host = "localhost" :port = 8080
   echo "Connecting to $host:$port"
 
-def log level ...rest     # variadic: rest is a Record
+def log level ...rest     # variadic: rest is an Args
   echo "[$level]" ...rest
 
-def run cmd *args **opts  # positional (Tuple) and key (Record) rests
+def run cmd *args **opts  # positional (Tuple) and key (Args) rests
   echo $cmd ...args ...opts
 ```
 
@@ -506,10 +507,15 @@ let items = $
   - 2
   - 3
 
-# Vertical data (dict — at least one key present)
+# Vertical data (dict — keys only)
 let config = $
   host: localhost
   port: 8080
+
+# Vertical data (record — dash items and keys)
+let task = $
+  - build
+  help: compile
 
 # Nested
 let data = $
@@ -653,8 +659,8 @@ bind args
 ```
 
 Rests are iterable without copying: a `*` rest (or rest of a sequence) yields
-values; a `**` rest (or `...` rest of a dict/record) yields `(key, value)`
-tuples.
+values; a `**` rest (or `...` rest of a dict/record/`Args`) yields
+`(key, value)` tuples.
 
 Standalone `let` and `bind` accept a diverging `else`. Matching follows
 `if let` / `if bind`; a single name tests truthiness. Bindings remain in scope
@@ -706,9 +712,10 @@ let double = (do |x @ Int| -> Int x * 2)
 An annotation or return type is a **compact type**: the first whitespace ends
 it, even inside `()`. Parenthesize unions and function types: `@Str|Path` is not
 a union, but `@(Str | Path)` is. Other forms: `@Dict[Str, Array[Int]]`,
-`@{name: Str, ?port: Int}`, `@((Int, ?Int) -> Int)`, `@(:a: | :b:)`. `(Int,
-Str)` is `Tuple[Int, Str]`, `[T]` is `Array[T]`, and a form with a keyed item
-is a record, `(name: Str, Int)`.
+`@Dict[{name: Str, ?port: Int}]`, `@((Int, ?Int) -> Int)`, `@(:a: | :b:)`.
+`(Int, Str)` is `Tuple[Int, Str]`, and a form with a keyed item is an `Args`,
+`(name: Str, Int)`. Braces are a schema, never a type: give one to a class, as
+in `Dict[{...}]`, or expand it into a class's items, as in `Record[...{...}]`.
 
 `[]` directly after a `def` or `class` name declares type binders, with optional
 bounds and defaults (`T @ Bound = Default`):

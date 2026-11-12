@@ -107,11 +107,13 @@ impl<'u> Lower<'_, 'u> {
         origin: Option<Ctx<'u>>,
     ) -> Rc<Frame<'u>> {
         let mut entries: Vec<Option<Entry<'u>>> = vec![None; vars.len()];
-        for stmt in stmts {
-            self.imports(func, stmt, &mut entries);
-        }
+        // An import of a name the prelude binds reuses its variable, so the
+        // import's entry replaces the prelude's
         if parent.is_none() {
             self.prelude(&mut entries);
+        }
+        for stmt in stmts {
+            self.imports(func, stmt, &mut entries);
         }
         let unit = self
             .tables

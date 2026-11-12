@@ -23,12 +23,12 @@ pub def bound c @ Conv
   let _ = c.conv
   #   ^: flow ((std.Int) -> std.Int) & ((std.Str) -> std.Str)
   let _ = map_each [1] $c.conv
-  #   ^: flow [std.Int]
+  #   ^: flow std.Array[std.Int]
   let _ = map_each ["s"] $c.conv
-  #   ^: flow [std.Str]
+  #   ^: flow std.Array[std.Str]
 
 pub def unbound c @ Conv
   let _ = Conv.conv
   #   ^: flow ((m.Conv, std.Int) -> std.Int) & ((m.Conv, std.Str) -> std.Str)
   let _ = zip_each $c [1] $Conv.conv
-  #   ^: flow [std.Int]
+  #   ^: flow std.Array[std.Int]

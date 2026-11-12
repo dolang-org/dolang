@@ -62,10 +62,15 @@ pub def spreads o @ Options i @ Items
   #       ^: flow std.Dict[:verbose:, std.Bool]
   let xs = [...i]
   let _ = xs
-  #       ^~: flow [std.Int]
-  let mixed = {...i}
-  let _ = mixed
-  #       ^~~~~: flow std.Dict[std.Int]
+  #       ^~: flow std.Array[std.Int]
+  let _mixed = {...i}
+  # error: a dict can't take positional `*std.Int`, which `std.Array[std.Int]` spreads
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _mixed = {...i}
+  #    |                    ^
+  #    |
+  #    = help: a dict holds only keyed items; for positional ones, make a record, as in `Record source`
 
 # A value without the method isn't spreadable or unpackable
 pub def misfits v @ (Int | (Int, Str))

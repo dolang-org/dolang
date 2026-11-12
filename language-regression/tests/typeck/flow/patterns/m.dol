@@ -14,7 +14,7 @@ pub def tuple_rest()
   #       ^: flow std.BaseSeq[{std.Str, std.Bool}]
   let xs = [...r]
   let _ = xs
-  #       ^~: flow [std.Bool | std.Str]
+  #       ^~: flow std.Array[std.Bool | std.Str]
 
 pub def array_rest xs @ Array[Int]
   let a ...r = xs
@@ -101,7 +101,7 @@ pub def iterated_rests d @ Dict[Str, Int] a @ Array[Int]
     #       ^: flow std.Int
 
 # A `*name` rest is `Unpack`'s `Pos`: a keyed source's iterates as its values
-pub def positional_rests d @ Dict[{Int, *Str, a: Bool}] ...cmd @ Str
+pub def positional_rests d @ Record[Int, ...Str, a: Bool] ...cmd @ Str
   let _x *p ** = d
   let _ = p
   #       ^: flow std.BaseSeq[std.Str]

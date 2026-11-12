@@ -270,7 +270,7 @@ pub class Server: Func
   @def mock
     self
     # Mock items, as described above.
-    ...items @ Dict[{respond: Value, ...}]
+    ...items @ Dict[{respond: Value, *(Value): Value}]
   do -> Mock
 
   # Registers mocks for the duration of a block, which is called with the
@@ -293,7 +293,7 @@ pub class Server: Func
   @def mock[R]
     self
     # Mock items followed by the block.
-    ...args @ {*Dict[{respond: Value, ...}], (Mock -> R)}
+    ...args @ {*Dict[{respond: Value, *(Value): Value}], (Mock -> R)}
   do -> R
 
   pub def mock self ...args

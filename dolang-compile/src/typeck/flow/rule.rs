@@ -675,7 +675,7 @@ enum Shape {
     /// An empty dict, whose schema is left to what it's in, so long as it admits
     /// no items
     Empty,
-    /// A tuple or record, with the lanes its spreads can fill
+    /// A tuple or `Args`, with the lanes its spreads can fill
     Items(Rest),
 }
 
@@ -1365,12 +1365,30 @@ impl<'a> Flow<'a, '_> {
                             }
                             problems
                         }
-                        OriginKind::Misfit(misfit) => vec![Problem::Misfit {
-                            span,
-                            found: actual
-                                .map_or(Shown::Type("?".to_owned()), |found| self.subject(found)),
-                            misfit,
-                        }],
+                        OriginKind::Misfit(misfit) => {
+                            let found = actual
+                                .map_or(Shown::Type("?".to_owned()), |found| self.subject(found));
+                            let excess = (misfit == Misfit::Spreadable)
+                                .then(|| {
+                                    causes.iter().find_map(|cause| {
+                                        self.spread_excess(&cause.path, cause.contradiction)
+                                    })
+                                })
+                                .flatten();
+                            match excess {
+                                Some((false, item)) => {
+                                    vec![Problem::KeyedSpread { span, found, item }]
+                                }
+                                Some((true, item)) => {
+                                    vec![Problem::PositionalSpread { span, found, item }]
+                                }
+                                None => vec![Problem::Misfit {
+                                    span,
+                                    found,
+                                    misfit,
+                                }],
+                            }
+                        }
                         _ => {
                             let mut notes = Vec::new();
                             for cause in causes.iter() {
@@ -1538,6 +1556,11 @@ impl<'a> Flow<'a, '_> {
                 let key = self.subject(key);
                 return Problem::Unrepeatable { span, key };
             }
+            Contradiction::Shifted(key) => {
+                let key = self.subject(key);
+                return Problem::Shifted { span, key };
+            }
+            Contradiction::Unextendable => return Problem::Unextendable(span),
             _ => {}
         }
         let fallback = Problem::Call {
@@ -1750,6 +1773,27 @@ impl<'a> Flow<'a, '_> {
             last = Some(around);
         }
         Some(notes)
+    }
+
+    /// The item a spread's target refuses, where that's what `contradiction`
+    /// at the end of `path` is, and whether it's positional: a keyed item is
+    /// what a sequence can't take, and a positional one what a dict can't
+    fn spread_excess(&self, path: &[Node], contradiction: Contradiction) -> Option<(bool, String)> {
+        let Contradiction::Excess(index) = contradiction else {
+            return None;
+        };
+        let (Some(schema), _) = path.last()?.sides? else {
+            return None;
+        };
+        let Type::Schema(items) = self.db.ty(schema) else {
+            return None;
+        };
+        let positional = match items.get(index)?.element {
+            Element::Positional(_) => true,
+            Element::Keyed { .. } => false,
+            Element::Include(_) => return None,
+        };
+        Some((positional, self.schema_item(schema, index)?))
     }
 
     /// A schema's top-level item as a diagnostic names it: quoted without the
@@ -2743,7 +2787,7 @@ impl<'a> Flow<'a, '_> {
     /// dict, unless something is expected of it: then its schema is its items'. A
     /// union expects several schemas of a dict; it takes the one its items fit,
     /// or else the one its keys do, and its items held back take what that
-    /// schema expects of them. A tuple or record takes its items' schema; neither
+    /// schema expects of them. A tuple or `Args` takes its items' schema; neither
     /// has a vertical form, so neither holds a comprehension. With an expected
     /// type, the collection types the `do` blocks among its items.
     pub(super) fn collection(
@@ -2782,7 +2826,7 @@ impl<'a> Flow<'a, '_> {
             (Collection::Array, Some(class), Some(expected)) => {
                 (self.fresh_expected(class, Kind::Type, expected), Vec::new())
             }
-            (Collection::Dict, Some(class), Some(expected)) => {
+            (Collection::Dict | Collection::Record, Some(class), Some(expected)) => {
                 (None, self.fresh_candidates(class, Kind::Schema, expected))
             }
             _ => (None, Vec::new()),
@@ -2838,7 +2882,7 @@ impl<'a> Flow<'a, '_> {
     }
 
     /// The type of a collection that no rule checks, if it's one: one that's
-    /// never produced, a tuple or record with a comprehension, or one without
+    /// never produced, a tuple or `Args` with a comprehension, or one without
     /// its class
     fn unchecked_collection(&mut self, at: At, prepared: &PreparedCollection) -> Option<TypeId> {
         let PreparedCollection {
@@ -2851,11 +2895,14 @@ impl<'a> Flow<'a, '_> {
             return Some(self.db.bottom());
         }
         if values.comprehension
-            && !matches!(kind, Collection::Array | Collection::Dict)
+            && !matches!(
+                kind,
+                Collection::Array | Collection::Dict | Collection::Record
+            )
             && class.is_some()
         {
             self.unchecked(at, values, span);
-            return Some(self.gap(span, "a comprehension in a tuple or record"));
+            return Some(self.gap(span, "a comprehension in a tuple or `Args`"));
         }
         if class.is_none() {
             self.unchecked(at, values, span);
@@ -2893,7 +2940,7 @@ impl<'a> Flow<'a, '_> {
                     .map(|(ty, _)| rule.closed(ty));
                 Shape::Array
             }
-            Collection::Dict => {
+            Collection::Dict | Collection::Record => {
                 let candidates = expected
                     .map(|expected| self.candidates(rule, class, expected))
                     .unwrap_or_default();
@@ -2921,13 +2968,18 @@ impl<'a> Flow<'a, '_> {
                             has_positional |= positional;
                             has_keyed |= keyed;
                         }
+                        // A dict holds only keyed items, so what a spread
+                        // gives positionally is refused, not a lane
+                        if kind == Collection::Dict {
+                            has_positional = false;
+                        }
                         has_keyed |= !has_positional;
                         Shape::Dict(has_positional, has_keyed)
                     }
                 }
             }
             Collection::Tuple => Shape::Items(Rest::Positional),
-            Collection::Record => Shape::Items(Rest::All),
+            Collection::Args => Shape::Items(Rest::All),
         };
         let term = collection_constraint(rule, values, class, shape, spread, span);
         (term, seed)
@@ -4133,8 +4185,9 @@ fn collection_role(kind: Collection) -> Designated {
     match kind {
         Collection::Array => Designated::Array,
         Collection::Dict => Designated::Dict,
-        Collection::Tuple => Designated::Intrinsic(Intrinsic::Tuple),
         Collection::Record => Designated::Record,
+        Collection::Tuple => Designated::Intrinsic(Intrinsic::Tuple),
+        Collection::Args => Designated::Args,
     }
 }
 
@@ -4256,8 +4309,10 @@ fn collection_constraint<'p>(
                             None => rule.constrain(term, positional, Provenance::default()),
                         }
                     }
+                    // A record literal always has a positional lane, and a
+                    // dict never does
                     Value::Spread(ty, span) => {
-                        let schema = rule.term(|holes| lanes(holes, true, true));
+                        let schema = rule.term(|holes| lanes(holes, has_positional, true));
                         spread_into(rule, spread, ty, schema, span);
                     }
                     Value::Held(at, index, _) => {
@@ -4306,11 +4361,11 @@ fn collection_constraint<'p>(
                         let key = match at {
                             HeldAt::Positional => None,
                             HeldAt::Keyword(key) => Some(key),
-                            HeldAt::Pair(_) => unreachable!("a tuple or record has no pairs"),
+                            HeldAt::Pair(_) => unreachable!("a tuple or `Args` has no pairs"),
                         };
                         elements.push((key, var, Kind::Type));
                     }
-                    Value::Pair(..) => unreachable!("a tuple or record has no pairs"),
+                    Value::Pair(..) => unreachable!("a tuple or `Args` has no pairs"),
                 }
             }
             rule.term(|holes| {

@@ -1,20 +1,29 @@
 # dolang: strict
 import args exec strand term proc fs digest json
   std:
-    - BaseDict
     - BaseArray
+    - BaseDict
+    - BaseRecord
 
 # A task's handler, which runs with the channels of `dodo`'s caller
 @let Handler = args.Handler[Value, Iter[Value], Sink[Value]]
 
-# A task's arguments, as [`args.with`](args.with) takes them
-@let Spec = BaseDict $
+# The keys of a task's arguments
+@let SpecKeys = $
   # Description shown in `--help` output and the task list
   ?help: Str
   # Replacement for the generated `Usage:` line
   ?usage: Str
+
+# The items of a task's arguments, as [`args.with`](args.with) takes them
+@let SpecItems = $
+  ...SpecKeys
   # Spec items and, optionally, the handler
   *(args.SpecItem[Value, Iter[Value], Sink[Value]] | Handler)
+
+# A task's arguments: a record with spec items, or a dict without them.
+# `dispatch` tells a spec from a handler by its class.
+@let Spec = (BaseRecord[...SpecItems] | BaseDict[SpecKeys])
 
 # A task's spec items and, optionally, its handler, without a description
 @let Items = BaseArray[args.SpecItem[Value, Iter[Value], Sink[Value]] | Handler]
@@ -23,7 +32,7 @@ import args exec strand term proc fs digest json
 @let Rule = (Spec | Items | Handler | Str)
 
 # Spec items every task takes
-@let Common = BaseDict[{*args.SpecItem[Value, Iter[Value], Sink[Value]]}]
+@let Common = BaseRecord[...{*args.SpecItem[Value, Iter[Value], Sink[Value]]}]
 
 # The tasks `dodo.dol` returns
 @let Rules = BaseDict $
@@ -53,8 +62,8 @@ do -> Value
     rule = lookup $rules $rule
   let spec = match rule
     Func(handler) do {handler}
-    BaseDict(rule) | BaseArray(rule) do rule
-  let common = rules.get :common: default: ({} @ Common)
+    BaseRecord(rule) | BaseDict(rule) | BaseArray(rule) do rule
+  let common = rules.get :common: default: (Record(()) @ Common)
 
   args.with args: $argv ...common ...spec
 
@@ -87,7 +96,7 @@ def list_rules rules @ Rules
       nil
     else
       match v
-        Dict(help: Str(help) ...) do help
+        Dict(help: Str(help) ...) | Record(help: Str(help) ...) do help
     if help
       echo "  - $k: $help"
     else
@@ -172,7 +181,7 @@ pub @let Digestible = $
   | Array[Digestible]
   | Tuple[...Digestible]
   | Dict[Digestible, Digestible]
-  | Record[...Digestible]
+  | Args[...Digestible]
 
 # A [`make`](dodo.make) input that adds a value to the digest.
 pub @let DataSpec = BaseDict $
@@ -276,7 +285,7 @@ def encode_data state@digest.State value@Digestible
       for k v = entries
         encode_data $state $k
         encode_data $state $v
-    Record(fields) do
+    Args(fields) do
       frame $state R (str fields.len)
       for k v = fields
         encode_data $state $k
@@ -309,7 +318,7 @@ def with_locks[R] paths@Iterable[fs.Path] block@(Array[fs.File] -> R) -> R
       file.close()
 
 # What an output's lock file records about its last build.
-@let OutputRecord = Struct[{path: Str, rule: Str, digest: Str, outputs: Array[Str]}]
+@let OutputRecord = Struct[path: Str, rule: Str, digest: Str, outputs: Array[Str]]
 
 # Reads an output record through its locked file. A lock is mandatory on
 # Windows, so another handle couldn't read it. A missing or torn record reads
@@ -342,7 +351,7 @@ def write_record file@fs.File record@OutputRecord
   file.flush()
 
 # What a rule's input cache records about one input file.
-@let CacheEntry = Struct[{size: Int, mtime: Int, hash: Str}]
+@let CacheEntry = Struct[size: Int, mtime: Int, hash: Str]
 
 # Reads a rule's input cache and the time it was written. A missing or torn
 # cache reads as empty, with no time, and a malformed entry is skipped.

@@ -429,7 +429,7 @@ fn type_only_prelude_bindings_have_no_runtime_effect() {
 #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn type_only_prelude_values_are_unbound() {
     for typecheck in [false, true] {
-        for name in ["Never", "Seq", "BaseArray", "BaseDict"] {
+        for name in ["Never", "Seq", "BaseArray", "BaseDict", "BaseRecord"] {
             let mut config = Config::new();
             config.typecheck(typecheck);
             let unit = config.unit(Path::new("m.dol"), name.to_owned());

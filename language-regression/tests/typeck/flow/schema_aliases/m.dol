@@ -5,7 +5,7 @@
 
 pub @let Fields = {size: Int, total: (Int | nil)}
 
-pub def struct_items x @ Struct[Fields]
+pub def struct_items x @ Struct[...Fields]
   let _ = x[:size:]
   #   ^: flow std.Int
   let _ = x.total
@@ -22,13 +22,13 @@ pub def dict_items x @ Dict[Fields]
   let _ = x[:size:]
   #   ^: flow std.Int
 
-pub def record_items x @ Record[...Fields]
+pub def record_items x @ Args[...Fields]
   let _ = x[:total:]
   #   ^: flow nil | std.Int
 
-pub def missing x @ Struct[Fields]
+pub def missing x @ Struct[...Fields]
   let _ = x.missing
-  # error: `std.Struct[m.Fields]` has no member `missing`
+  # error: `std.Struct[...m.Fields]` has no member `missing`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _ = x.missing
@@ -41,7 +41,7 @@ pub def subclass x @ Sized
   let _ = x.size
   #   ^: flow std.Int
 
-pub class Sized: Struct[Later]
+pub class Sized: Struct[...Later]
   pub def (init) self
     Struct.(init) $self (size: 1)
 
@@ -52,7 +52,7 @@ pub @let Base = {a: Int}
 pub @let Left = {...Base, b: Str}
 pub @let Both = {...Base, ...Left}
 
-pub def included x @ Struct[Both]
+pub def included x @ Struct[...Both]
   let _ = x[:a:]
   #   ^: flow std.Int
   let _ = x[:b:]

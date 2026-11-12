@@ -85,8 +85,8 @@ class Map[K, V]: Base[K]
 let shape @Base = nil
 #          ^~~~: type_token, node=class
 
-let r @Record = nil
-#      ^~~~~~: type_token, node=prelude_item
+let r @Args = nil
+#      ^~~~: type_token, node=prelude_item
 
 class Point
   field x y @Int = 0

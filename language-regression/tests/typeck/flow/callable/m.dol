@@ -214,7 +214,7 @@ do
   let _ = callback
   #   ^: flow std.Str
   f [:c:]
-# error: expected `[:a: | :b:]`, found `[:c:]`
+# error: expected `std.Array[:a: | :b:]`, found `std.Array[:c:]`
 #   --> m.dol:LL:LL
 #    |
 # LL |   f [:c:]

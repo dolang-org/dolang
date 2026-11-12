@@ -13,9 +13,8 @@ use crate::{
 };
 
 use super::{
+    args::ArgItem,
     protocol::{Protocol, Recv, Spread, SpreadContext, instance_mcall_fallback},
-    record::ArgItem,
-    tuple,
 };
 
 pub(crate) struct ArgPack<'v> {
@@ -74,7 +73,7 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().args)
+        Output::set(strand, out, &strand.singletons().arg_pack)
     }
 
     fn op_debug<'a, 's>(
@@ -88,35 +87,17 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        context: SpreadContext,
+        _context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        let mut int = 0i64;
         let pack = this.borrow(strand)?;
         for (key, value) in &pack.inner {
             let mut value = value.dup();
-            if context == SpreadContext::Sequence {
-                if let Some(key) = key {
-                    value = Value::from_object(tuple::tuple(
-                        strand,
-                        [Value::from_object(key.clone()), value.take()],
-                    ));
-                    sink.positional(strand, Slot::new(&mut value))?;
-                } else {
-                    value = Value::from_object(tuple::tuple(
-                        strand,
-                        [Value::from_i64(strand, int), value.take()],
-                    ));
-                    sink.positional(strand, Slot::new(&mut value))?;
-                    int += 1;
-                }
+            if let Some(key) = key {
+                let mut key = Value::from_object(key.clone());
+                sink.keyed(strand, Slot::new(&mut key), Slot::new(&mut value))?;
             } else {
-                if let Some(key) = key {
-                    let mut key = Value::from_object(key.clone());
-                    sink.keyed(strand, Slot::new(&mut key), Slot::new(&mut value))?;
-                } else {
-                    sink.positional(strand, Slot::new(&mut value))?;
-                }
+                sink.positional(strand, Slot::new(&mut value))?;
             }
         }
         Ok(())

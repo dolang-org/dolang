@@ -28,7 +28,7 @@ pub def read_view items @ BaseArray[Int]
   let _ = rand.pick $items
   #   ^: flow std.Int
   rand.shuffle $items
-# error: expected `[Unknown]`, found `std.BaseArray[std.Int]`
+# error: expected `std.Array[Unknown]`, found `std.BaseArray[std.Int]`
 #   --> m.dol:LL:LL
 #    |
 # LL |   rand.shuffle $items

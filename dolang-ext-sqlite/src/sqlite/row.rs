@@ -451,18 +451,16 @@ fn unpack_columns<'v, 's>(
 }
 
 /// Spreads the columns of `row` not in `consumed` (all of them if `None`):
-/// values positionally, or if `keyed`, name/value pairs in sequences and
-/// keyed items elsewhere.
+/// values positionally, or if `keyed`, keyed by column name.
 fn spread_columns<'v, 's>(
     strand: &mut Strand<'v, 's>,
     row: Instance<'v, '_, Row>,
     consumed: Option<&[bool]>,
     keyed: bool,
-    context: SpreadContext,
     sink: &mut dyn Spread<'v, 's>,
 ) -> Result<'v, 's, ()> {
     with_stmt(strand, row, |strand, annex, stmt_annex, raw| {
-        strand.with_slots_sync(|strand, [mut key, mut value, mut pair]| {
+        strand.with_slots_sync(|strand, [mut key, mut value]| {
             let count = unsafe { sqlite3_column_count(raw) } as usize;
             for index in 0..count {
                 if consumed.is_some_and(|consumed| consumed[index]) {
@@ -485,16 +483,7 @@ fn spread_columns<'v, 's>(
                 }
                 let name = unsafe { column_name(raw, index) };
                 Output::set(strand, Slot::reborrow(&mut key), AsSym::new(&name));
-                if context == SpreadContext::Sequence {
-                    Output::set(
-                        strand,
-                        Slot::reborrow(&mut pair),
-                        AsTuple::new([&key, &value]),
-                    );
-                    sink.positional(strand, Slot::reborrow(&mut pair))?;
-                } else {
-                    sink.keyed(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut value))?;
-                }
+                sink.keyed(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut value))?;
             }
             Ok(())
         })
@@ -524,7 +513,7 @@ impl<'v> Object<'v> for Row {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let keyed = context != SpreadContext::Sequence;
-        spread_columns(strand, this, None, keyed, context, sink)
+        spread_columns(strand, this, None, keyed, sink)
     }
 
     fn index<'a, 's>(
@@ -745,7 +734,7 @@ impl<'v> Object<'v> for RowRest {
     async fn spread<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        context: SpreadContext,
+        _context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
@@ -757,14 +746,7 @@ impl<'v> Object<'v> for RowRest {
             .cast(Ref::slot::<0>(&borrow))
             .unwrap();
         row.enter_sync(strand, |strand, row| {
-            spread_columns(
-                strand,
-                row,
-                Some(&annex.consumed),
-                annex.keyed,
-                context,
-                sink,
-            )
+            spread_columns(strand, row, Some(&annex.consumed), annex.keyed, sink)
         })
     }
 

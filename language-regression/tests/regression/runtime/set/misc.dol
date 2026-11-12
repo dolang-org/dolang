@@ -68,13 +68,10 @@ catch _
   true
 assert $caught
 
-let pair_set = Set {1, foo: "bar"}
-assert_eq $pair_set.len 2
-let pair_items = [...pair_set]
-assert_eq $pair_items[0][0] 0
-assert_eq $pair_items[0][1] 1
-assert_eq $pair_items[1][0] :foo:
-assert_eq $pair_items[1][1] "bar"
+assert_throws $std.UnexpectedKeyError do Set {1, foo: "bar"}
+assert_eq [...Set({1, 2})] [1, 2]
+let pair_set = Set({1, foo: "bar"}.iter())
+assert_eq [...pair_set] [(0, 1), (:foo:, "bar")]
 
 assert (type (Set([]).iter()) std.Iter)
 assert_throws $std.RuntimeError str: "unexpected positional item: 0" do (Set []).copy 1

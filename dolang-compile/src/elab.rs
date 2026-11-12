@@ -610,6 +610,48 @@ impl Annotate for BinaryOpAnnotation {
     }
 }
 
+// Error: a key other than a written symbol in a data literal with positional
+// items, which makes a record
+struct RecordKey {
+    span: Span,
+}
+
+impl Diagnose for RecordKey {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "a literal with positional items is a `Record`, whose keys must be written symbols"
+        )
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+
+    fn notes(&self) -> Box<dyn Iterator<Item = Box<dyn crate::source::Note>>> {
+        Box::new([Box::new(RecordKeyNote) as Box<dyn crate::source::Note>].into_iter())
+    }
+}
+
+struct RecordKeyNote;
+
+impl crate::source::Note for RecordKeyNote {
+    fn kind(&self) -> crate::diag::NoteKind {
+        crate::diag::NoteKind::Help
+    }
+
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "write `key: value` or `:key:: value`, or spread a computed symbol key from a `Dict`: `...{{$key: value}}`"
+        )
+    }
+}
+
 // Warning: statement with no effect (pure constant)
 struct NoEffect {
     span: Span,
@@ -1705,12 +1747,11 @@ impl<'s> Scope<'s> {
         &self,
         id: sym::Id,
         capture: bool,
-        promote: Option<Origin>,
         epoch: Epoch,
     ) -> result::Result<Res, ResolveError> {
         match self {
             Scope::Base => Err(ResolveError::Unbound),
-            Scope::Class { parent, .. } => parent.resolve_inner(id, capture, promote, epoch),
+            Scope::Class { parent, .. } => parent.resolve_inner(id, capture, epoch),
             Scope::Nested {
                 kind,
                 parent,
@@ -1729,9 +1770,6 @@ impl<'s> Scope<'s> {
                             var.flags.insert(VarFlags::CAPTURED);
                         }
                         var.flags.insert(VarFlags::USED);
-                        if let Some(origin) = promote {
-                            var.origin = origin;
-                        }
                         (var, epoch)
                     });
                     return Ok(Res {
@@ -1743,7 +1781,6 @@ impl<'s> Scope<'s> {
                 let Res { index, depth, .. } = parent.resolve_inner(
                     id,
                     capture || matches!(kind, ScopeKind::Function | ScopeKind::Lambda),
-                    promote,
                     epoch,
                 )?;
                 Ok(Res {
@@ -1791,16 +1828,31 @@ impl<'s> Scope<'s> {
     }
 
     fn resolve(&self, id: sym::Id, epoch: Epoch) -> result::Result<Res, ResolveError> {
-        self.resolve_inner(id, false, None, epoch)
+        self.resolve_inner(id, false, epoch)
     }
 
-    fn promote(
-        &self,
-        id: sym::Id,
-        origin: Origin,
-        epoch: Epoch,
-    ) -> result::Result<Res, ResolveError> {
-        self.resolve_inner(id, false, Some(origin), epoch)
+    /// Reuse the binding of a module that an earlier import, or the prelude,
+    /// bound under `id` in this scope, as `import a.c` does after `import a.b`.
+    /// Any other binding, such as a prelude item, is shadowed instead.
+    fn promote(&self, id: sym::Id, origin: Origin, epoch: Epoch) -> Option<Res> {
+        let Self::Nested { index, vars, .. } = self else {
+            return None;
+        };
+        let &index = index.get(&id)?;
+        let (var, _) = vars[index].get();
+        if !matches!(var.origin, Origin::Import(_) | Origin::PreludeModule) {
+            return None;
+        }
+        vars[index].update(|(mut var, _)| {
+            var.flags.insert(VarFlags::USED);
+            var.origin = origin;
+            (var, epoch)
+        });
+        Some(Res {
+            index,
+            depth: 0,
+            node: None,
+        })
     }
 
     fn finish(self, resolver: &Elaborater, out: &mut Vec<Var>) {
@@ -2156,7 +2208,7 @@ impl<'a> Elaborater<'a> {
                 | Expr::Array { .. }
                 | Expr::Dict { .. }
                 | Expr::Tuple { .. }
-                | Expr::Record { .. }
+                | Expr::Args { .. }
                 | Expr::Concat { .. }
                 | Expr::FmtSeq { .. }
                 | Expr::FmtParam { .. }
@@ -2228,12 +2280,24 @@ impl<'a> Elaborater<'a> {
                 Ok(())
             }
             Expr::Dict { elems, .. } => {
+                if DictElem::has_positional(elems) {
+                    DictElem::each_item(elems, &mut |elem| {
+                        if let DictElem::Pair(pair) = elem
+                            && pair.sym_key().is_none()
+                        {
+                            self.fail = true;
+                            self.diags.push(RecordKey {
+                                span: pair.key.span(),
+                            });
+                        }
+                    });
+                }
                 for elem in elems.iter_mut() {
                     self.visit_dict_elem(scope, elem, is_arg)?;
                 }
                 Ok(())
             }
-            Expr::Record { args, .. } => {
+            Expr::Args { args, .. } => {
                 for arg in args.iter_mut() {
                     match arg {
                         Arg::Pos(Single { expr, .. })
@@ -2899,9 +2963,7 @@ impl<'a> Elaborater<'a> {
                         .id(&self.bintab.id_str(self.file.str(bind.span)));
                     let name = self.module_span_first(*module);
                     let node = Origin::Import(name);
-                    if let Ok(res) = scope.promote(id, node, self.epoch)
-                        && res.depth == 0
-                    {
+                    if let Some(res) = scope.promote(id, node, self.epoch) {
                         // Reuse the binding and update its source provenance.
                         *insert = true;
                         bind.res = Some(res);

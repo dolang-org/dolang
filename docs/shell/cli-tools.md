@@ -48,8 +48,8 @@ args.with
 
 ### Argument Parsing
 
-[`args.with`](args) describes the command line and invokes its
-block with a record of converted values. `parse:` specifies how to parse the
+[`args.with`](args) describes the command line and invokes its block with an
+[`Args`](args.Args) of converted values. `parse:` specifies how to parse the
 argument from a string, e.g. `parse: $url.Url` ensures that `download` receives
 URL objects. `collect: true` gathers the remaining positional arguments into an
 array.

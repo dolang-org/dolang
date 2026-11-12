@@ -279,17 +279,14 @@ impl<'v, F: JsonFormatter, S: Sink<'v>> Encoder<'_, 'v, '_, F, S> {
                     pairs.next(strand, key, val)
                 })?
             }
-            View::Record(handle) => {
-                let mut pairs = handle.pairs();
-                self.object(strand, handle.id().addr(), "record", |strand, key, val| {
-                    pairs.next(strand, key, val)
-                })?
-            }
             View::Struct(handle) => {
                 let mut pairs = handle.pairs();
                 self.object(strand, handle.id().addr(), "struct", |strand, key, val| {
                     pairs.next(strand, key, val)
                 })?
+            }
+            View::Record(_) => {
+                return Err(Error::type_error(strand, "`Record` has no JSON encoding").into());
             }
             _ => return Err(Error::type_error(strand, "unsupported JSON type").into()),
         }

@@ -1,0 +1,135 @@
+# Record's mutators check their keys against the schema as Dict's do. A
+# position shifts the ones after it, so inserting or removing one needs a
+# position past the fixed ones, and `push` a rest position.
+
+pub def rest r @ Record[Str, ...Int]
+  r.pop 1
+  r.insert 1 2
+  r.delete 2
+  r.push 3 4
+  r.insert 0 1
+  # error: this call inserts or removes at `0`, shifting positions the schema doesn't let move
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   r.insert 0 1
+  #    |   ^^^^^^^^^^^^
+  r.pop 0
+  # error: this call removes the required item at `0`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   r.pop 0
+  #    |   ^^^^^^^
+  r.push "x"
+# error: expected `std.Int`, found `"x"`
+#   --> m.dol:LL:LL
+#    |
+# LL |   r.push "x"
+#    |          ^^^
+
+pub def optional r @ Record[Str, ...{?Int, *Bool}]
+  r.pop 1
+  # error: this call inserts or removes at `1`, shifting positions the schema doesn't let move
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   r.pop 1
+  #    |   ^^^^^^^
+  r.push 1
+# error: expected `std.Bool`, found `1`
+#   --> m.dol:LL:LL
+#    |
+# LL |   r.push 1
+#    |          ^
+
+pub def fixed r @ Record[Str, Int]
+  r.push 1
+  # error: this call appends a position, which the schema has no rest for
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   r.push 1
+  #    |   ^^^^^^^^
+  r.pop 1
+# error: this call removes the required item at `1`
+#   --> m.dol:LL:LL
+#    |
+# LL |   r.pop 1
+#    |   ^^^^^^^
+
+pub def keys r @ Record[Str, a: Int, ...{?b: Str, *c: Bool}]
+  r.insert :c: true
+  r.delete :b:
+  r.pop :c:
+  r.insert :a: 1
+  # error: this call inserts at `:a:`, where the schema admits only one item
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   r.insert :a: 1
+  #    |   ^^^^^^^^^^^^^^
+  r.delete :a:
+# error: this call removes the required item at `:a:`
+#   --> m.dol:LL:LL
+#    |
+# LL |   r.delete :a:
+#    |   ^^^^^^^^^^^^
+
+pub def items r @ Record[Str, a: Int] -> Int
+  r[0] = "x"
+  r[:a:] = 1
+  r[:a:] = "x"
+  # error: expected `std.Int`, found `"x"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   r[:a:] = "x"
+  #    |            ^^^
+  let _s @ Str = r[0]
+  r[:a:]
+
+pub def constructed()
+  let r = record "x" a: 1
+  let _a @ Int = r[:a:]
+  let _s @ Str = r[0]
+  let _r @ Record[Str, a: Int] = Record((name: 1))
+# error: expected `std.Spread[{std.Str, a: std.Int}]`, found `(name: 1)`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _r @ Record[Str, a: Int] = Record((name: 1))
+#    |                                         ^^^^^^^^^
+#    |
+#    = note: `{name: 1}` may be missing positional `std.Str`
+
+# Keys are symbols
+pub def bound _r @ Record[...{*(Str): Int}]
+  # error: this does not satisfy `...Ts @ {*Value, **Value}`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def bound _r @ Record[...{*(Str): Int}]
+  #    |                              ^^^^^^^^^^^^^
+  nil
+
+# A reader takes a `BaseRecord`, which holds its items covariantly, while a
+# `Record` holds them invariantly
+def reads r @ BaseRecord[Int, a: (Int | Str)] -> (Int | Str)
+  r[:a:]
+
+def writes _r @ Record[Int, a: (Int | Str)]
+  nil
+
+pub def widened r @ Record[Int, a: Int]
+  reads $r
+  writes $r
+# error: expected `std.Record[std.Int, a: std.Int | std.Str]`, found `std.Record[std.Int, a: std.Int]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   writes $r
+#    |           ^
+#    |
+#    = note: `std.Int` doesn't accept `std.Str`
+#    = note: in `{std.Int, a: std.Int}`
+
+# A `BaseRecord` has no mutators
+pub def read_only r @ BaseRecord[Int, ...Int]
+  r.push 1
+# error: `std.BaseRecord[std.Int, ...std.Int]` has no member `push`
+#   --> m.dol:LL:LL
+#    |
+# LL |   r.push 1
+#    |   ^^^^^^^^

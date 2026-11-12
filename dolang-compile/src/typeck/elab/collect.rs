@@ -16,8 +16,8 @@ use super::{
     interface::PrivateInInterface,
     local,
     surface::{
-        self, Collection, ConstLit, Interned, LinkId, ModuleId, Name, Quantifier, Ref, SiteId,
-        StrId, Symbol, TypeExpr,
+        self, ConstLit, Interned, LinkId, ModuleId, Name, Quantifier, Ref, SiteId, StrId, Symbol,
+        TypeExpr,
     },
 };
 use crate::{
@@ -597,8 +597,7 @@ impl<'u> Walk<'_, 'u> {
             } => TypeExpr::Schema {
                 span,
                 params: self.surface_params(params),
-                tuple: brace_span.is_none() && !keyed(params),
-                collection: Collection::default(),
+                vertical: brace_span.is_none(),
             },
             ast::TypeExpr::Group { ty, .. } => TypeExpr::Group {
                 span,
@@ -608,14 +607,10 @@ impl<'u> Walk<'_, 'u> {
                 let keyed = keyed(params);
                 let params = self.surface_params(params);
                 match keyed {
-                    true => TypeExpr::Record { span, params },
+                    true => TypeExpr::Args { span, params },
                     false => TypeExpr::Tuple { span, params },
                 }
             }
-            ast::TypeExpr::Array { elem, .. } => TypeExpr::Array {
-                span,
-                elem: Box::new(self.surface(elem)),
-            },
             ast::TypeExpr::Union { members, .. } => TypeExpr::Union {
                 span,
                 members: members.iter().map(|member| self.surface(member)).collect(),
@@ -1788,7 +1783,7 @@ impl<'u> Walk<'_, 'u> {
                     elem.walk(self, frame);
                 }
             }
-            Expr::Record { args, .. } => {
+            Expr::Args { args, .. } => {
                 for arg in args {
                     arg.walk(self, frame);
                 }
@@ -1935,7 +1930,7 @@ impl<'u> Walk<'_, 'u> {
 }
 
 /// Whether items written as data are keyed: whether one is explicitly keyed, which
-/// makes parenthesized items a record and vertical ones a dict. An inclusion isn't,
+/// makes parenthesized items an `Args` and vertical ones a dict. An inclusion isn't,
 /// so the form's meaning never depends on what it includes.
 fn keyed(params: &[ast::TypeParam]) -> bool {
     params.iter().any(|param| {

@@ -1,4 +1,5 @@
-# A rest iterates the way it spreads, and iterating it does not consume it.
+# Iterating a rest does not consume it. Keyed rests iterate entries, but
+# spread into a sequence only their positional items.
 
 def collect rest
   let out = []
@@ -6,17 +7,20 @@ def collect rest
     out.push $item
   out
 
-# A dict's `*` rest yields values; its `**` and `...` rests yield entries in
-# order, positional items keyed by index.
-let d = {1, 2, color: "red", 5: "x"}
-let _ *p **k = d
-assert_eq (collect p) [2]
-assert_eq (collect k) [(:color:, "red"), (5, "x")]
-assert_eq (collect k) [(:color:, "red"), (5, "x")]
-assert_eq {...k} {color: "red", 5: "x"}
-let _ ...r = d
+# A dict has no positional items, so its `*` rest is empty; its `**` and
+# `...` rests yield entries in order.
+let d = {0: 1, 1: 2, color: "red", 5: "x"}
+let 0: _ *p **k = d
+assert_eq (collect p) []
+assert_eq (collect k) [(1, 2), (:color:, "red"), (5, "x")]
+assert_eq (collect k) [(1, 2), (:color:, "red"), (5, "x")]
+assert_eq {...k} {1: 2, color: "red", 5: "x"}
+let 0: _ ...r = d
 assert_eq (collect r) [(1, 2), (:color:, "red"), (5, "x")]
-assert_eq [...r] (collect r)
+assert_eq [...r.iter()] (collect r)
+assert_throws $std.UnexpectedKeyError do [...r]
+let _ ...pr = {1, 2, 3}
+assert_eq [...pr] [2, 3]
 
 # A dict rest fails once its dict changes, whether before or during iteration.
 let m = {a: 1, b: 2}
@@ -30,7 +34,7 @@ assert_throws $std.ConcurrencyError do
   for _ = mr2
     m2.insert d 4
 
-# A record's `...` rest yields entries
+# An `Args`'s `...` rest yields entries
 let _a _b ...rr = (1, 2, 3, color: "red")
 assert_eq (collect rr) [(2, 3), (:color:, "red")]
 assert_eq (collect rr) [(2, 3), (:color:, "red")]
@@ -63,4 +67,4 @@ assert $ar.all()
 assert_eq $ar.iter().count() 2
 assert_eq $r.iter().count() 3
 assert $rr.any()
-assert_eq [...p.map(do |v| v * 10)] [20]
+assert_eq [...p.map(do |v| v * 10)] []

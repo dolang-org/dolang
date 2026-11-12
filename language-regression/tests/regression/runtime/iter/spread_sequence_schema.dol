@@ -1,0 +1,52 @@
+# Spreading into a sequence follows the value's schema, as spreading into a
+# call does: positional items become elements and keyed items raise.
+def capture ...args
+  args
+
+# Records spread their positional items; a dict has none, and its integer keys
+# are keys
+assert_eq [...{"x", "y"}] ["x", "y"]
+assert_eq (...{"x", "y"},) ("x", "y")
+assert_throws $std.UnexpectedKeyError do [...{a: 1}]
+assert_throws $std.UnexpectedKeyError do ["x", ...{a: 1}]
+assert_throws $std.UnexpectedKeyError do [...{0: "x"}]
+assert_throws $std.UnexpectedKeyError do (...{a: 1},)
+
+# Constructors spread their source the same way
+assert_eq (Array {"x", "y"}) ["x", "y"]
+assert_throws $std.UnexpectedKeyError do Array {a: 1}
+assert_throws $std.UnexpectedKeyError do Tuple {a: 1}
+assert_throws $std.UnexpectedKeyError do Set {a: 1}
+
+# `.iter()` gives the pairs
+assert_eq [...{a: 1, b: 2}.iter()] [(:a:, 1), (:b:, 2)]
+
+# `Args` and structs
+assert_eq [...(args 1 2)] [1, 2]
+assert_throws $std.UnexpectedKeyError do [...(args 1 a: 2)]
+assert_eq [...(args 1 a: 2).iter()] [(0, 1), (:a:, 2)]
+assert_eq [...(struct 1 2)] [1, 2]
+assert_throws $std.UnexpectedKeyError do [...(struct 1 a: 2)]
+
+# Argument packs
+let pos = capture 1 2
+assert_eq [...pos] [1, 2]
+let mixed = capture 1 a: 2
+assert_throws $std.UnexpectedKeyError do [...mixed]
+
+# A rest spreads as its source would from where unpacking stopped
+let _first ...dict_rest = {"x", "y", "z"}
+assert_eq [...dict_rest] ["y", "z"]
+let _p *dict_pos **dict_keyed = {1, 2, color: "red"}
+assert_eq [...dict_pos] [2]
+assert_throws $std.UnexpectedKeyError do [...dict_keyed]
+assert_eq [...dict_keyed.iter()] [(:color:, "red")]
+let _q ...record_rest = (args 1 2 a: 3)
+assert_throws $std.UnexpectedKeyError do [...record_rest]
+let _r ...record_pos = (args 1 2 3)
+assert_eq [...record_pos] [2, 3]
+
+# Field views are keyed
+class Point
+  pub field x = 1
+assert_throws $std.UnexpectedKeyError do [...fields(Point())]

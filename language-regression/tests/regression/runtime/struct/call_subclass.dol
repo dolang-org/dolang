@@ -1,4 +1,4 @@
-class D: Struct[{f: (() -> Int)}]
+class D: Struct[f: (() -> Int)]
 
 let d = D {f: (do 3)}
 let g = d.f

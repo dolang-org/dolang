@@ -46,11 +46,11 @@ pub def sentinels d @ Dict[Str, Array[Int]]
     "c": c = [nil]
     ..._
   let _ = a
-  #       ^: flow [std.Int] | std.Nil
+  #       ^: flow std.Array[std.Int] | std.Nil
   let _ = b
-  #       ^: flow [std.Int] | std.Str
+  #       ^: flow std.Array[std.Int] | std.Str
   let _ = c
-  #       ^: flow [std.Int] | [std.Nil]
+  #       ^: flow std.Array[std.Int] | std.Array[std.Nil]
   nil
 
 # A nested empty literal is decided by what it's in
@@ -69,16 +69,16 @@ pub def nested d @ Dict[Str, json.DecodeValue]
 pub def optional t @ (Int, ?Array[Str]) r @ (?b: Array[Str])
   let (_ a = []) = t
   let _ = a
-  #       ^: flow [std.Str]
+  #       ^: flow std.Array[std.Str]
   bind t
     - _
     - c = []
   let _ = c
-  #       ^: flow [std.Str]
+  #       ^: flow std.Array[std.Str]
   bind r
     :b = []
   let _ = b
-  #       ^: flow [std.Str]
+  #       ^: flow std.Array[std.Str]
   nil
 
 def pick[T] a @ T _b @ T -> T
@@ -88,7 +88,7 @@ def pick[T] a @ T _b @ T -> T
 pub def calls p @ Array[Int]
   let a = pick $p []
   let _ = a
-  #       ^: flow [std.Int]
+  #       ^: flow std.Array[std.Int]
   nil
 
 # Nothing decides an empty literal alone

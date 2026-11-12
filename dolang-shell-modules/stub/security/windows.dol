@@ -281,7 +281,7 @@ pub @let AceSpec = $
 
 # An ACL, built or given as its entries in order.
 #
-# A dictionary holds the entries positionally and may add a `revision:` key.
+# A record holds the entries positionally and may add a `revision:` key.
 #
 # ```
 # $
@@ -293,7 +293,7 @@ pub @let AceSpec = $
 pub @let AclSpec = $
   | Acl
   | Iterable[AceSpec]
-  | BaseDict $
+  | BaseRecord ...$
       *AceSpec
       ?revision: (AclRevision | Int)
 

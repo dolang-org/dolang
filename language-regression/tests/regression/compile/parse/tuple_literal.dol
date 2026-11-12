@@ -9,7 +9,7 @@ let x = 1
 let rest = [2, 3]
 echo () (x,) (x) (x, 2, 3) (x, 2, 3,) (x, ...rest) (...rest)
 echo (f(1), g 2, h(a: 3)) ((1 + 1), (2,))
-echo (a: 1) (1, a: 2) (:x) (:x,) (...(record a: 1), b: 2)
+echo (a: 1) (1, a: 2) (:x) (:x,) (...(args a: 1), b: 2)
 (echo (1, 2) 3)
 (echo () 3)
 (echo (x,) 3)

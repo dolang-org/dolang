@@ -214,10 +214,40 @@ impl Solver<'_> {
                 self.add_bound(b, Term::Infer(a), true, j.obligation)?;
             }
             (&Head::Infer(id), _) => self.add_bound(id, j.expected, false, j.obligation)?,
-            (_, &Head::Infer(id)) => self.add_bound(id, j.actual, true, j.obligation)?,
+            (_, &Head::Infer(id)) => {
+                self.occupy(id, j.actual, j.obligation);
+                self.add_bound(id, j.actual, true, j.obligation)?;
+            }
             _ => return Ok(Continue(())),
         }
         Err(Residual::Inference.into())
+    }
+
+    /// What's below a schema variable occupies only its lanes, which a bound
+    /// alone wouldn't check: a variable's lower bounds reach another
+    /// variable's by propagation, so only what isn't one is checked
+    fn occupy(&self, id: InferVarId, actual: Term, obligation: ObligationId) {
+        let variable = self.variable(id);
+        if variable.kind != Kind::Schema {
+            return;
+        }
+        let top = self.db.top();
+        let element = match variable.lanes {
+            Rest::All => return,
+            Rest::Positional => Element::Positional(top),
+            Rest::Keyed => Element::Keyed {
+                key: top,
+                value: top,
+            },
+        };
+        let lanes = self.db.intern(Type::Schema(
+            vec![SchemaItem {
+                multiplicity: Multiplicity::Repeated,
+                element,
+            }]
+            .into(),
+        ));
+        self.derive(obligation, actual, self.closed(lanes), Step::Lanes);
     }
 
     /// Anything is below a union that lists it

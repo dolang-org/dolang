@@ -547,8 +547,9 @@ impl Dump<'_> {
                 let kind = match kind {
                     Collection::Array => "array",
                     Collection::Dict => "dict",
-                    Collection::Tuple => "tuple",
                     Collection::Record => "record",
+                    Collection::Tuple => "tuple",
+                    Collection::Args => "args",
                 };
                 write!(out, "{kind}[")?;
                 self.items(out, items)?;

@@ -1,30 +1,38 @@
+//! `Record`: a mutable sequence of positional and symbol-keyed items, the
+//! mutable counterpart of [`Args`](super::args::Args).
+//!
+//! Every item has a slot in an order index, which iteration, spreading,
+//! unpacking and equality walk. Positional items are a separate lane: `pos`
+//! holds their slots, so the k-th of them is positional item k. Each key maps
+//! to the slots of its instances. Removing an item empties its slot, and the
+//! index is compacted once empty slots outnumber live ones.
+
 use std::{
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     hash::{DefaultHasher, Hash},
+    mem,
     ops::ControlFlow,
 };
 
-use crate::value::fmt::Format;
-
 use crate::{
     arg::{Arg, Args},
-    bytecode::{Rest as RestKind, Variadic},
     call,
     error::{Error, Result},
     gc::{Collect, arena::Visit},
     object::protocol::members,
     sig,
     strand::Strand,
-    sym::{self, Sym},
+    sym::{self, Sym, Tag},
     unpack,
-    value::{Output, Slot, Slots, TypeObject, Value},
+    value::{Output, Slot, Slots, TypeObject, Value, fmt::Format},
     vm::Vm,
 };
 
 use super::{
     BoundMethod,
-    arg::ArgPack,
-    iter,
+    args::{self, ArgItem},
+    index, iter,
     protocol::{
         GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, instance_get_fallback,
         instance_mcall_fallback, is_special_mcall, type_mcall_fallback,
@@ -33,25 +41,31 @@ use super::{
     tuple,
 };
 
-/// An item of a record or argument pack: its symbol key, or `None` for a
-/// positional item
-pub(crate) type ArgItem<'v> = (Option<GcObj<'v, SymObj>>, Value<'v>);
+/// The smallest order index worth compacting
+const MIN_COMPACT: usize = 8;
 
 // ── Record ──────────────────────────────────────────────────────────
 
-/// An immutable sequence of positional and symbol-keyed items, in the order
-/// they were given
 pub(crate) struct Record<'v> {
-    items: Box<[ArgItem<'v>]>,
+    /// Every item in order; `None` is an emptied slot
+    order: Vec<Option<ArgItem<'v>>>,
+    /// The slots of the positional items, in order
+    pos: Vec<usize>,
+    /// The slots of each key's instances, in order. A key with no instances
+    /// has no entry.
+    keys: HashMap<Tag, Vec<usize>>,
+    /// The number of keyed items
+    keyed: usize,
+    epoch: u64,
 }
 
 unsafe impl<'v> Collect for Record<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
+    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
-        for (key, value) in &self.items {
+        for (key, value) in self.order.iter().flatten() {
             if let Some(key) = key {
                 key.accept(visit)?;
             }
@@ -61,783 +75,304 @@ unsafe impl<'v> Collect for Record<'v> {
     }
 
     fn clear(&mut self) {
-        self.items = Box::new([]);
+        self.order = Vec::new();
+        self.pos = Vec::new();
+        self.keys = HashMap::new();
+        self.keyed = 0;
     }
+}
+
+/// A record key: a position, as given, or a symbol
+enum Key<'v> {
+    Pos(i64),
+    Sym(GcObj<'v, SymObj>),
+}
+
+impl<'v> Key<'v> {
+    fn new<'s>(strand: &mut Strand<'v, 's>, key: &Value<'v>) -> Result<'v, 's, Self> {
+        if let Some(sym) = key.as_sym(strand) {
+            Ok(Self::Sym(strand.sym_obj(sym)))
+        } else if key.is_int(strand) {
+            // An integer too big for `i64` is no position
+            Ok(Self::Pos(key.to_i64(strand).unwrap_or(i64::MAX)))
+        } else {
+            Err(Error::type_error(
+                strand,
+                "records only support symbol and integer keys",
+            ))
+        }
+    }
+}
+
+/// An optional instance argument, as an index
+fn instance<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    instance: Option<Slot<'v, '_>>,
+) -> Result<'v, 's, Option<i64>> {
+    instance
+        .map(|instance| instance.to_i64(strand).map_err(|_| Error::index(strand)))
+        .transpose()
 }
 
 impl<'v> Record<'v> {
-    pub(crate) fn new(items: Vec<ArgItem<'v>>) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            items: items.into_boxed_slice(),
+            order: Vec::new(),
+            pos: Vec::new(),
+            keys: HashMap::new(),
+            keyed: 0,
+            epoch: 0,
         }
     }
 
-    pub(crate) fn from_args(vm: &Vm<'v>, args: Args<'v, '_>) -> Self {
-        Self::new(args_items(vm, args))
-    }
-
-    /// Builds a record of symbol-keyed entries, such as the leftovers for a `**name` rest.
-    ///
-    /// This never checks for a GC trap, so the caller may hold `entries` unrooted.
-    pub(crate) fn from_sym_entries(entries: Vec<(GcObj<'v, SymObj>, Value<'v>)>) -> Self {
-        Self::new(
-            entries
-                .into_iter()
-                .map(|(key, value)| (Some(key), value))
-                .collect(),
-        )
-    }
-
-    pub(crate) fn items(&self) -> &[ArgItem<'v>] {
-        &self.items
-    }
-}
-
-/// The items of `args`, in order
-pub(crate) fn args_items<'v>(vm: &Vm<'v>, args: Args<'v, '_>) -> Vec<ArgItem<'v>> {
-    args.map(|arg| match arg {
-        Arg::Pos(mut value) => (None, value.take()),
-        Arg::Key(key, mut value) => (Some(vm.sym_obj(key)), value.take()),
-    })
-    .collect()
-}
-
-/// The index in `items` for `key`: the positional item it numbers if it is an
-/// integer, or the latest instance of it if it is a symbol
-pub(crate) fn find_index<'v>(
-    strand: &mut Strand<'v, '_>,
-    items: &[ArgItem<'v>],
-    key: &Value<'v>,
-) -> Option<usize> {
-    if let Some(sym) = key.as_sym(strand) {
-        items
-            .iter()
-            .rposition(|(k, _)| k.as_ref().is_some_and(|k| k.tag == sym.tag()))
-    } else {
-        let index = usize::try_from(key.to_i64(strand).ok()?).ok()?;
-        items
-            .iter()
-            .enumerate()
-            .filter(|(_, (k, _))| k.is_none())
-            .nth(index)
-            .map(|(i, _)| i)
-    }
-}
-
-/// The value in `items` for `key`, as [`find_index`] finds it
-pub(crate) fn find<'v, 'b>(
-    strand: &mut Strand<'v, '_>,
-    items: &'b [ArgItem<'v>],
-    key: &Value<'v>,
-) -> Option<&'b Value<'v>> {
-    find_index(strand, items, key).map(|index| &items[index].1)
-}
-
-/// Writes `items` as the inside of a record literal.
-pub(crate) fn debug_items<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    items: &[ArgItem<'v>],
-    w: &mut dyn Format<'v>,
-) -> Result<'v, 's, ()> {
-    crate::fmt!(strand, w, "(")?;
-    for (index, (key, value)) in items.iter().enumerate() {
-        if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-            strand.check_trap()?;
+    pub(crate) fn from_items(items: Vec<ArgItem<'v>>) -> Self {
+        let mut record = Self::new();
+        for item in items {
+            record.push_item(item);
         }
-        if index > 0 {
-            crate::fmt!(strand, w, ", ")?;
-        }
-        if let Some(key) = key {
-            crate::fmt!(strand, w, "{}: ", key.name)?;
-        }
-        value.op_debug(strand, w)?;
+        record
     }
-    // A lone positional item
-    if let [(None, _)] = items {
-        crate::fmt!(strand, w, ",")?;
-    }
-    crate::fmt!(strand, w, ")")
-}
 
-pub(crate) fn hash_items<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    items: &[ArgItem<'v>],
-    hasher: &mut DefaultHasher,
-) -> Result<'v, 's, ()> {
-    for (index, (key, value)) in items.iter().enumerate() {
-        if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-            strand.check_trap()?;
-        }
-        key.as_ref().map(|key| key.tag).hash(hasher);
-        value.op_hash(strand, hasher)?;
+    /// The number of items
+    pub(crate) fn len(&self) -> usize {
+        self.pos.len() + self.keyed
     }
-    Ok(())
-}
 
-pub(crate) fn eq_items<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    left: &[ArgItem<'v>],
-    right: &[ArgItem<'v>],
-) -> Result<'v, 's, bool> {
-    if left.len() != right.len() {
-        return Ok(false);
+    /// Every slot of the order index, with `None` for an emptied one
+    pub(crate) fn order(&self) -> &[Option<ArgItem<'v>>] {
+        &self.order
     }
-    for (index, ((lkey, lvalue), (rkey, rvalue))) in left.iter().zip(right.iter()).enumerate() {
-        if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-            strand.check_trap()?;
-        }
-        // Positions line up when every key before them does
-        if lkey.as_ref().map(|key| key.tag) != rkey.as_ref().map(|key| key.tag)
-            || !lvalue.op_eq(strand, rvalue)?.to_bool(strand)?
-        {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
 
-pub(crate) fn lt_items<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    left: &[ArgItem<'v>],
-    right: &[ArgItem<'v>],
-) -> Result<'v, 's, bool> {
-    let (mut lint, mut rint) = (0, 0);
-    for (index, ((lkey, lvalue), (rkey, rvalue))) in left.iter().zip(right.iter()).enumerate() {
-        if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-            strand.check_trap()?;
+    /// The items, in order
+    pub(crate) fn items(&self) -> impl Iterator<Item = &ArgItem<'v>> {
+        self.order.iter().flatten()
+    }
+
+    fn snapshot(&self) -> Vec<ArgItem<'v>> {
+        self.items()
+            .map(|(key, value)| (key.clone(), value.dup()))
+            .collect()
+    }
+
+    /// Appends an item.
+    fn push_item(&mut self, item: ArgItem<'v>) {
+        if self.order.len() >= MIN_COMPACT && self.order.len() >= 2 * self.len() {
+            self.compact();
         }
-        let lk = key_value(strand, lkey, lint);
-        let rk = key_value(strand, rkey, rint);
-        lint += i64::from(lkey.is_none());
-        rint += i64::from(rkey.is_none());
-        for (l, r) in [(&lk, &rk), (lvalue, rvalue)] {
-            if !l.op_eq(strand, r)?.to_bool(strand)? {
-                return l.op_lt(strand, r)?.to_bool(strand);
+        let slot = self.order.len();
+        match &item.0 {
+            None => self.pos.push(slot),
+            Some(key) => {
+                self.keys.entry(key.tag).or_default().push(slot);
+                self.keyed += 1;
+            }
+        }
+        self.order.push(Some(item));
+    }
+
+    /// Drops the emptied slots, renumbering the rest.
+    fn compact(&mut self) {
+        self.order.retain(Option::is_some);
+        self.pos.clear();
+        for slots in self.keys.values_mut() {
+            slots.clear();
+        }
+        for (slot, item) in self.order.iter().enumerate() {
+            match &item.as_ref().expect("retained slot").0 {
+                None => self.pos.push(slot),
+                Some(key) => self.keys.get_mut(&key.tag).expect("live key").push(slot),
             }
         }
     }
-    Ok(right.len() > left.len())
-}
 
-/// Spreads `items` into `sink`: as `(key, value)` pairs in a sequence,
-/// otherwise as positional and symbol-keyed items.
-pub(crate) fn spread_items<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    items: &[ArgItem<'v>],
-    context: SpreadContext,
-    sink: &mut dyn Spread<'v, 's>,
-) -> Result<'v, 's, ()> {
-    let mut int = 0;
-    for (key, value) in items {
-        let mut value = value.dup();
-        if context == SpreadContext::Sequence {
-            int += i64::from(key.is_none());
-            let key = key_value(strand, key, int - i64::from(key.is_none()));
-            let mut pair = Value::from_object(tuple::tuple(strand, [key, value]));
-            sink.positional(strand, Slot::new(&mut pair))?;
-        } else if let Some(key) = key {
-            let key = unsafe { Sym::from_obj(key) };
-            sink.symbol(strand, key, Slot::new(&mut value))?;
-        } else {
-            sink.positional(strand, Slot::new(&mut value))?;
-        }
+    fn value_mut(&mut self, slot: usize) -> &mut Value<'v> {
+        &mut self.order[slot].as_mut().expect("live slot").1
     }
-    Ok(())
-}
 
-/// Creates an empty record.
-pub(crate) fn empty<'v>(strand: &mut Strand<'v, '_>) -> GcObj<'v, Record<'v>> {
-    let vm = strand.vm();
-    GcObj::new(
-        vm.arena(),
-        vm.builtin_types().record,
-        Record::new(Vec::new()),
-    )
-}
-
-/// The key of an item as a value: the symbol, or the position `int` counts
-fn key_value<'v>(
-    strand: &mut Strand<'v, '_>,
-    key: &Option<GcObj<'v, SymObj>>,
-    int: i64,
-) -> Value<'v> {
-    match key {
-        Some(key) => Value::from_object(key.clone()),
-        None => Value::from_i64(strand, int),
-    }
-}
-
-// ── Unpacking ───────────────────────────────────────────────────────
-
-struct Action {
-    source_index: usize,
-    dest_slot: usize,
-}
-
-struct UnpackPlan {
-    actions: Vec<Action>,
-    pos_matched: usize,
-    /// Leftover positional items, for a `*name` rest
-    pos_rest: Vec<usize>,
-    /// Leftover keyed items, for a `**name` rest
-    key_rest: Vec<usize>,
-}
-
-fn first_visible_index<'v>(
-    items: &[ArgItem<'v>],
-    skip: &HashSet<usize>,
-    start: usize,
-) -> Option<usize> {
-    (start..items.len()).find(|index| !skip.contains(index))
-}
-
-fn visible_len<'v>(items: &[ArgItem<'v>], skip: &HashSet<usize>, start: usize) -> usize {
-    (start..items.len())
-        .filter(|index| !skip.contains(index))
-        .count()
-}
-
-fn unpack_plan<'v, 'a, 's>(
-    strand: &mut Strand<'v, 's>,
-    items: &[ArgItem<'v>],
-    skip: &HashSet<usize>,
-    start: usize,
-    sig: &sig::Unpack<'v, 'a>,
-) -> Result<'v, 's, UnpackPlan> {
-    let mut actions = Vec::new();
-    let mut pos = 0;
-    let pos_count = sig.required + sig.optional.len();
-    let mut keys_left = sig.keys.len();
-    let mut seen_keys = vec![false; keys_left];
-    let split = !matches!(sig.variadic, Variadic::Discard | Variadic::Capture);
-    let collect_pos = split && sig.pos_rest() == RestKind::Capture;
-    let collect_keys = split && sig.key_rest() == RestKind::Capture;
-    let mut pos_rest = Vec::new();
-    let mut key_rest = Vec::new();
-    // Reported after any missing item
-    let mut unexpected_key = None;
-    let mut unexpected_pos = false;
-
-    'top: for (idx, (key, _)) in items.iter().enumerate().skip(start) {
-        if skip.contains(&idx) {
-            continue;
-        }
-        if pos == pos_count
-            && keys_left == 0
-            && sig.pos_rest() != RestKind::None
-            && sig.key_rest() != RestKind::None
-            && !collect_pos
-            && !collect_keys
-        {
-            break;
-        }
-        if let Some(sym) = key {
-            for (i, (wanted, seen)) in sig.keys.iter().zip(seen_keys.iter_mut()).enumerate() {
-                if *seen {
-                    continue;
+    /// The slot `key` selects: a position, or an instance of a key. Without an
+    /// instance, a key selects its latest one. A position has only instance 0.
+    fn slot(&self, key: &Key<'v>, instance: Option<i64>) -> Option<usize> {
+        match key {
+            Key::Pos(i) => {
+                if instance.is_some_and(|instance| index::element(1, instance).is_none()) {
+                    return None;
                 }
-                if let sig::UnpackKeyKind::Sym(wanted_sym) = &wanted.kind
-                    && wanted_sym.tag() == sym.tag
-                {
-                    *seen = true;
-                    keys_left -= 1;
-                    actions.push(Action {
-                        source_index: idx,
-                        dest_slot: pos_count + i,
-                    });
-                    continue 'top;
+                Some(self.pos[index::element(self.pos.len(), *i)?])
+            }
+            Key::Sym(key) => {
+                let slots = self.keys.get(&key.tag)?;
+                match instance {
+                    None => slots.last().copied(),
+                    Some(instance) => Some(slots[index::element(slots.len(), instance)?]),
                 }
             }
-            if sig.key_rest() == RestKind::None {
-                unexpected_key.get_or_insert(sym.tag);
-                continue;
+        }
+    }
+
+    fn get(&self, key: &Key<'v>, instance: Option<i64>) -> Option<&Value<'v>> {
+        let slot = self.slot(key, instance)?;
+        self.order[slot].as_ref().map(|(_, value)| value)
+    }
+
+    /// Overwrites a position, or replaces every instance of a key, appending
+    /// it if absent. False if the position is out of range.
+    fn assign(&mut self, key: Key<'v>, value: Value<'v>) -> bool {
+        match key {
+            Key::Pos(i) => {
+                let Some(slot) = self.slot(&Key::Pos(i), None) else {
+                    return false;
+                };
+                *self.value_mut(slot) = value;
             }
-            if collect_keys {
-                key_rest.push(idx);
+            Key::Sym(key) => match self.keys.get_mut(&key.tag) {
+                Some(slots) => {
+                    for &slot in &slots[1..] {
+                        self.order[slot] = None;
+                    }
+                    self.keyed -= slots.len() - 1;
+                    slots.truncate(1);
+                    let slot = slots[0];
+                    *self.value_mut(slot) = value;
+                }
+                None => self.push_item((Some(key), value)),
+            },
+        }
+        self.epoch += 1;
+        true
+    }
+
+    /// Appends an instance of a key, or inserts a positional item before
+    /// position `i`, shifting the later ones. False if the position is out of
+    /// range.
+    fn insert(&mut self, key: Key<'v>, value: Value<'v>) -> bool {
+        match key {
+            Key::Sym(key) => self.push_item((Some(key), value)),
+            Key::Pos(i) => {
+                let Some(at) = index::position(self.pos.len(), i) else {
+                    return false;
+                };
+                // The new item takes the last slot, then moves down to `at`,
+                // each item it passes moving to the next position's slot
+                self.push_item((None, value));
+                for j in (at + 1..self.pos.len()).rev() {
+                    let (lo, hi) = (self.pos[j - 1], self.pos[j]);
+                    let (before, after) = self.order.split_at_mut(hi);
+                    mem::swap(
+                        &mut before[lo].as_mut().expect("live slot").1,
+                        &mut after[0].as_mut().expect("live slot").1,
+                    );
+                }
             }
-        } else if pos < pos_count {
-            actions.push(Action {
-                source_index: idx,
-                dest_slot: pos,
-            });
-            pos += 1;
-        } else if sig.pos_rest() == RestKind::None {
-            unexpected_pos = true;
-        } else if collect_pos {
-            pos_rest.push(idx);
         }
+        self.epoch += 1;
+        true
     }
 
-    if pos < sig.required {
-        return Err(Error::missing_positional(strand, pos));
-    }
-
-    for (wanted, seen) in sig.keys.iter().zip(seen_keys.iter()) {
-        if !*seen && wanted.default.is_none() {
-            return Err(match &wanted.kind {
-                sig::UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
-                sig::UnpackKeyKind::Const(val) => Error::missing_key(strand, val),
-            });
+    /// Appends positional items.
+    fn push(&mut self, values: impl IntoIterator<Item = Value<'v>>) {
+        for value in values {
+            self.push_item((None, value));
         }
+        self.epoch += 1;
     }
 
-    if unexpected_pos {
-        return Err(Error::unexpected_positional(strand, pos_count));
-    }
-    if let Some(tag) = unexpected_key {
-        return Err(Error::unexpected_key(strand, unsafe { Sym::from_tag(tag) }));
-    }
-
-    Ok(UnpackPlan {
-        actions,
-        pos_matched: pos,
-        pos_rest,
-        key_rest,
-    })
-}
-
-/// Stores the tuple of a `*name` rest and the record of a `**name` rest.
-fn store_split_rests<'v, 'a>(
-    strand: &mut Strand<'v, '_>,
-    sig: &sig::Unpack<'v, 'a>,
-    out: &mut Slots<'v, 'a>,
-    items: &[ArgItem<'v>],
-    plan: &UnpackPlan,
-) {
-    if sig.variadic == Variadic::Capture {
-        return;
-    }
-    if let Some(i) = sig.pos_rest_slot() {
-        let values: Vec<_> = plan
-            .pos_rest
-            .iter()
-            .map(|&index| items[index].1.dup())
-            .collect();
-        out.at(i)
-            .store(Value::from_object(tuple::tuple(strand, values)));
-    }
-    if let Some(i) = sig.key_rest_slot() {
-        let entries = plan
-            .key_rest
-            .iter()
-            .map(|&index| {
-                let (key, value) = &items[index];
-                (key.clone().unwrap(), value.dup())
-            })
-            .collect();
-        out.at(i).store(Value::from_object(GcObj::new(
-            strand.vm().arena(),
-            strand.builtin_types().record,
-            Record::from_sym_entries(entries),
-        )));
-    }
-}
-
-fn fill_unpack_defaults<'v, 'a>(
-    strand: &mut Strand<'v, '_>,
-    sig: &sig::Unpack<'v, 'a>,
-    out: &mut Slots<'v, 'a>,
-    positional_matched: usize,
-    actions: &[Action],
-) {
-    for (pos, default) in
-        (positional_matched..).zip(sig.optional[(positional_matched - sig.required)..].iter())
-    {
-        out.at(pos).store(default.dup());
-    }
-
-    let pos_count = sig.required + sig.optional.len();
-    for (i, wanted) in sig.keys.iter().enumerate() {
-        let dest = pos_count + i;
-        if actions.iter().all(|action| action.dest_slot != dest)
-            && let Some(default) = &wanted.default
-        {
-            Output::set(strand, out.at(dest), default);
-        }
-    }
-}
-
-/// Unpacks `record` against `sig`. A `...name` rest captures a view of
-/// the items left over.
-pub(crate) fn unpack<'v, 'a, 's>(
-    strand: &mut Strand<'v, 's>,
-    record: GcObj<'v, Record<'v>>,
-    sig: &sig::Unpack<'v, 'a>,
-    mut out: Slots<'v, 'a>,
-) -> Result<'v, 's, ()> {
-    let borrow = record.borrow().ok_or_else(|| Error::concurrency(strand))?;
-    let items = &borrow.items;
-    let plan = unpack_plan(strand, items, &HashSet::new(), 0, sig)?;
-
-    for action in &plan.actions {
-        out.at(action.dest_slot)
-            .store(items[action.source_index].1.dup())
-    }
-
-    fill_unpack_defaults(strand, sig, &mut out, plan.pos_matched, &plan.actions);
-    store_split_rests(strand, sig, &mut out, items, &plan);
-
-    if sig.variadic == Variadic::Capture {
-        let skip = plan
-            .actions
-            .iter()
-            .map(|action| action.source_index)
-            .collect();
-        let pos = first_visible_index(items, &skip, 0).unwrap_or(items.len());
-        let positional_matched =
-            i64::try_from(plan.pos_matched).map_err(|_| Error::overflow(strand))?;
-        drop(borrow);
-        strand.builtin_types().record_rest.create(
-            strand,
-            Rest::new(record, skip, pos, positional_matched),
-            out.at(sig.len() - 1),
-        );
-    }
-
-    Ok(())
-}
-
-// ── Iter ────────────────────────────────────────────────────────────
-
-/// An iterator over a record's `(key, value)` pairs.
-pub(crate) struct Iter<'v> {
-    record: GcObj<'v, Record<'v>>,
-    skip: HashSet<usize>,
-    pos: usize,
-    int: i64,
-}
-
-impl<'v> Iter<'v> {
-    pub(crate) fn new(
-        record: GcObj<'v, Record<'v>>,
-        skip: HashSet<usize>,
-        pos: usize,
-        int: i64,
-    ) -> Self {
-        Self {
-            record,
-            skip,
-            pos,
-            int,
-        }
-    }
-
-    /// The next item not yet consumed, and its index
-    fn next_item(&self) -> Option<(usize, Option<GcObj<'v, SymObj>>, Value<'v>)> {
-        let record = self.record.borrow()?;
-        first_visible_index(&record.items, &self.skip, self.pos).map(|index| {
-            let (key, value) = &record.items[index];
-            (index, key.clone(), value.dup())
-        })
-    }
-
-    /// Advances past the next item, returning it as a `(key, value)` pair
-    fn next_pair(&mut self, strand: &mut Strand<'v, '_>) -> Option<Value<'v>> {
-        let (index, key, value) = self.next_item()?;
-        self.pos = index + 1;
-        let positional = key.is_none();
-        let key = key_value(strand, &key, self.int);
-        self.int += i64::from(positional);
-        Some(Value::from_object(tuple::tuple(strand, [key, value])))
-    }
-}
-
-unsafe impl<'v> Collect for Iter<'v> {
-    const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
-    type Annex = ();
-
-    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
-        self.record.accept(visit)
-    }
-
-    fn clear(&mut self) {}
-}
-
-impl<'v> Protocol<'v> for Iter<'v> {
-    fn op_type<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<record iterator>")
-    }
-
-    async fn op_iter<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
-        Ok(())
-    }
-
-    async fn op_unpack<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        sig: &'a sig::Unpack<'v, 'a>,
-        mut out: Slots<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        let iter = this.borrow(strand)?;
-        let mut cursor = Iter::new(iter.record.clone(), iter.skip.clone(), iter.pos, iter.int);
-        super::iter::unpack_cursor(strand, sig, &mut out, iter.pos, |strand, pos| {
-            cursor.pos = pos;
-            let pair = cursor.next_pair(strand)?;
-            Some((cursor.pos, pair))
-        })?;
-        if let Some(i) = sig.pos_rest_slot() {
-            strand
-                .builtin_types()
-                .record_iter
-                .create(strand, cursor, out.at(i));
-        }
-        sig.fill_empty_key_rest(strand, &mut out);
-        Ok(())
-    }
-
-    async fn op_next<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, bool> {
-        let Some(pair) = this.borrow_mut(strand)?.next_pair(strand) else {
-            return Ok(false);
+    /// Removes a positional item, shifting the later ones, or an instance of a
+    /// key, by default its first.
+    fn remove(&mut self, key: &Key<'v>, instance: Option<i64>) -> Option<Value<'v>> {
+        let slot = match key {
+            Key::Pos(i) => {
+                if instance.is_some_and(|instance| index::element(1, instance).is_none()) {
+                    return None;
+                }
+                let at = index::element(self.pos.len(), *i)?;
+                self.pos.remove(at)
+            }
+            Key::Sym(key) => {
+                let slots = self.keys.get_mut(&key.tag)?;
+                let at = index::element(slots.len(), instance.unwrap_or(0))?;
+                let slot = slots.remove(at);
+                if slots.is_empty() {
+                    self.keys.remove(&key.tag);
+                }
+                self.keyed -= 1;
+                slot
+            }
         };
-        out.store(pair);
-        Ok(true)
+        self.epoch += 1;
+        self.order[slot].take().map(|(_, value)| value)
     }
 
-    async fn op_spread<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        _context: SpreadContext,
-        sink: &'a mut dyn Spread<'v, 's>,
-    ) -> Result<'v, 's, ()> {
-        super::iter::spread_iter(strand, this, sink).await
-    }
-
-    fn op_get<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &mut Strand<'v, 's>,
-        field: Sym<'v, 'a>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        match field.tag() {
-            sym::LEN => {
-                let iter = this.borrow(strand)?;
-                let record = iter
-                    .record
-                    .borrow()
-                    .ok_or_else(|| Error::concurrency(strand))?;
-                let len = i64::try_from(visible_len(&record.items, &iter.skip, iter.pos))
-                    .map_err(|_| Error::overflow(strand))?;
-                Output::set(strand, out, len);
-                Ok(())
+    /// Removes a positional item, or every instance of a key. False if there
+    /// was none.
+    fn delete(&mut self, key: &Key<'v>) -> bool {
+        match key {
+            Key::Pos(_) => self.remove(key, None).is_some(),
+            Key::Sym(key) => {
+                let Some(slots) = self.keys.remove(&key.tag) else {
+                    return false;
+                };
+                self.keyed -= slots.len();
+                for slot in slots {
+                    self.order[slot] = None;
+                }
+                self.epoch += 1;
+                true
             }
-            _ => iter::iter_get(strand, &this, field, out),
         }
     }
 
-    async fn op_mcall<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        method: Sym<'v, 'a>,
-        args: Args<'v, 'a>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        iter::iter_mcall(strand, &this, method, args, out).await
+    fn clear_items(&mut self) {
+        self.order.clear();
+        self.pos.clear();
+        self.keys.clear();
+        self.keyed = 0;
+        self.epoch += 1;
     }
-}
 
-/// Read-only view of the unmatched items of a record.
-pub(crate) struct Rest<'v> {
-    record: GcObj<'v, Record<'v>>,
-    skip: HashSet<usize>,
-    pos: usize,
-    int: i64,
-}
-
-impl<'v> Rest<'v> {
-    pub(crate) fn new(
-        record: GcObj<'v, Record<'v>>,
-        skip: HashSet<usize>,
-        pos: usize,
-        int: i64,
-    ) -> Self {
-        Self {
-            record,
-            skip,
-            pos,
-            int,
+    /// The number of distinct keys, counting each position as one, or the
+    /// number of instances of `key`
+    fn count(&self, key: Option<&Key<'v>>) -> usize {
+        match key {
+            None => self.pos.len() + self.keys.len(),
+            Some(key @ Key::Pos(_)) => usize::from(self.slot(key, None).is_some()),
+            Some(Key::Sym(key)) => self.keys.get(&key.tag).map_or(0, Vec::len),
         }
     }
-
-    /// The next item not yet consumed, and its index
-    fn next_item(&self) -> Option<(usize, Option<GcObj<'v, SymObj>>, Value<'v>)> {
-        let record = self.record.borrow()?;
-        first_visible_index(&record.items, &self.skip, self.pos).map(|index| {
-            let (key, value) = &record.items[index];
-            (index, key.clone(), value.dup())
-        })
-    }
 }
 
-unsafe impl<'v> Collect for Rest<'v> {
-    const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
-    type Annex = ();
-
-    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
-        self.record.accept(visit)
-    }
-
-    fn clear(&mut self) {}
+/// An `Args` holding the items of `this` as they are now, for unpacking.
+fn snapshot<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    this: &Recv<'v, '_, Record<'v>>,
+) -> Result<'v, 's, GcObj<'v, args::Args<'v>>> {
+    let items = this.borrow(strand)?.snapshot();
+    Ok(GcObj::new(
+        strand.vm().arena(),
+        strand.builtin_types().args,
+        args::Args::new(items),
+    ))
 }
 
-impl<'v> Protocol<'v> for Rest<'v> {
-    fn op_type<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) {
-        Output::set(strand, out, TypeObject::Iterable)
-    }
-
-    fn op_get<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        field: Sym<'v, 'a>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        super::iter::iterable_get(strand, &this, field, out)
-    }
-
-    async fn op_mcall<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        method: Sym<'v, 'a>,
-        args: Args<'v, 'a>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        super::iter::iterable_mcall(strand, &this, method, args, out).await
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<record rest>")
-    }
-
-    async fn op_unpack<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        sig: &'a sig::Unpack<'v, 'a>,
-        mut out: Slots<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        let borrow = this.borrow(strand)?;
-        let mut iter = Rest::new(
-            borrow.record.clone(),
-            borrow.skip.clone(),
-            borrow.pos,
-            borrow.int,
-        );
-        let record_obj = iter.record.clone();
-        let record = record_obj
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        let items = &record.items;
-        let plan = unpack_plan(strand, items, &iter.skip, iter.pos, sig)?;
-
-        for action in &plan.actions {
-            iter.skip.insert(action.source_index);
-            out.at(action.dest_slot)
-                .store(items[action.source_index].1.dup());
-        }
-        fill_unpack_defaults(strand, sig, &mut out, plan.pos_matched, &plan.actions);
-        // The rests take their items
-        store_split_rests(strand, sig, &mut out, items, &plan);
-        iter.skip.extend(plan.pos_rest.iter().chain(&plan.key_rest));
-
-        iter.pos = first_visible_index(items, &iter.skip, iter.pos).unwrap_or(items.len());
-        iter.int = iter
-            .int
-            .checked_add(
-                i64::try_from(plan.pos_matched + plan.pos_rest.len())
-                    .map_err(|_| Error::overflow(strand))?,
-            )
-            .ok_or_else(|| Error::overflow(strand))?;
-        drop(record);
-        let child = iter;
-
-        if sig.variadic == Variadic::Capture {
-            strand
-                .builtin_types()
-                .record_rest
-                .create(strand, child, out.at(sig.len() - 1));
-        }
-
+/// Settles a lookup that found nothing: the default, the `else:` callback's
+/// result, or `missing`.
+async fn fallback<'v, 'a, 's>(
+    strand: &'a mut Strand<'v, 's>,
+    default: Option<Slot<'v, 'a>>,
+    or_else: Option<Slot<'v, 'a>>,
+    mut out: Slot<'v, 'a>,
+    missing: impl FnOnce(&mut Strand<'v, 's>) -> Result<'v, 's, ()>,
+) -> Result<'v, 's, ()> {
+    if let Some(mut default) = default {
+        out.store(default.take());
         Ok(())
-    }
-
-    async fn op_iter<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        let borrow = this.borrow(strand)?;
-        let iter = Iter::new(
-            borrow.record.clone(),
-            borrow.skip.clone(),
-            borrow.pos,
-            borrow.int,
-        );
-        strand.builtin_types().record_iter.create(strand, iter, out);
-        Ok(())
-    }
-
-    async fn op_spread<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        context: SpreadContext,
-        sink: &'a mut dyn Spread<'v, 's>,
-    ) -> Result<'v, 's, ()> {
-        let borrow = this.borrow(strand)?;
-        let mut iter = Rest::new(
-            borrow.record.clone(),
-            borrow.skip.clone(),
-            borrow.pos,
-            borrow.int,
-        );
-        while let Some((index, key, mut value)) = iter.next_item() {
-            if context == SpreadContext::Sequence {
-                let positional = key.is_none();
-                let key = key_value(strand, &key, iter.int);
-                iter.int += i64::from(positional);
-                let mut pair = Value::from_object(tuple::tuple(strand, [key, value]));
-                sink.positional(strand, Slot::new(&mut pair))?;
-            } else if let Some(key) = key {
-                let key = unsafe { Sym::from_obj(&key) };
-                sink.symbol(strand, key, Slot::new(&mut value))?;
-            } else {
-                sink.positional(strand, Slot::new(&mut value))?;
-            }
-            iter.pos = index + 1;
-        }
+    } else if let Some(or_else) = or_else {
+        call!(strand, or_else, out).await
+    } else {
+        missing(strand)?;
+        out.store(Value::NIL);
         Ok(())
     }
 }
-
-// ── Record protocol ─────────────────────────────────────────────────
 
 impl<'v> Protocol<'v> for Record<'v> {
     fn op_type<'a, 's>(
@@ -853,8 +388,16 @@ impl<'v> Protocol<'v> for Record<'v> {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
+        // The borrow keeps the snapshot's values alive
         let borrow = this.borrow(strand)?;
-        debug_items(strand, &borrow.items, w)
+        let items = borrow.snapshot();
+        // With a positional item, the brace literal makes a record; otherwise,
+        // it would make a dict
+        let braces = !borrow.pos.is_empty();
+        if !braces {
+            crate::fmt!(strand, w, "Record")?;
+        }
+        args::debug_items(strand, &items, braces, w)
     }
 
     fn op_bool<'a, 's>(
@@ -864,9 +407,10 @@ impl<'v> Protocol<'v> for Record<'v> {
         let Ok(borrow) = this.borrow(strand) else {
             return Ok(true);
         };
-        Ok(!borrow.items.is_empty())
+        Ok(borrow.len() != 0)
     }
 
+    /// Hashes the items in order, as equality compares them
     fn op_hash<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -874,7 +418,14 @@ impl<'v> Protocol<'v> for Record<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         sym::RECORD.hash(hasher);
-        hash_items(strand, &borrow.items, hasher)
+        for (index, (key, value)) in borrow.items().enumerate() {
+            if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
+                strand.check_trap()?;
+            }
+            key.as_ref().map(|key| key.tag).hash(hasher);
+            value.op_hash(strand, hasher)?;
+        }
+        Ok(())
     }
 
     fn op_eq<'a, 's>(
@@ -887,28 +438,21 @@ impl<'v> Protocol<'v> for Record<'v> {
         };
         let left = this.borrow(strand)?;
         let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        Ok(Value::from_bool(eq_items(
-            strand,
-            &left.items,
-            &right.items,
-        )?))
-    }
-
-    fn op_lt<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        let Some(other) = other.downcast_ref(strand.builtin_types().record) else {
-            return Err(Error::unsupported(strand, "`<`"));
-        };
-        let left = this.borrow(strand)?;
-        let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        Ok(Value::from_bool(lt_items(
-            strand,
-            &left.items,
-            &right.items,
-        )?))
+        if left.len() != right.len() {
+            return Ok(Value::FALSE);
+        }
+        for (index, ((lkey, lvalue), (rkey, rvalue))) in left.items().zip(right.items()).enumerate()
+        {
+            if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
+                strand.check_trap()?;
+            }
+            if lkey.as_ref().map(|key| key.tag) != rkey.as_ref().map(|key| key.tag)
+                || !lvalue.op_eq(strand, rvalue)?.to_bool(strand)?
+            {
+                return Ok(Value::FALSE);
+            }
+        }
+        Ok(Value::TRUE)
     }
 
     fn op_index<'a, 's>(
@@ -917,14 +461,9 @@ impl<'v> Protocol<'v> for Record<'v> {
         index: &Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        if !index.is_int(strand) && index.as_sym(strand).is_none() {
-            return Err(Error::type_error(
-                strand,
-                "records only support symbol and integer keys",
-            ));
-        }
+        let key = Key::new(strand, index)?;
         let borrow = this.borrow(strand)?;
-        match find(strand, &borrow.items, index) {
+        match borrow.get(&key, None) {
             Some(value) => {
                 Output::set(strand, out, value);
                 Ok(())
@@ -934,12 +473,17 @@ impl<'v> Protocol<'v> for Record<'v> {
     }
 
     fn op_assign<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
+        this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        _key: Slot<'v, 'a>,
-        _value: Slot<'v, 'a>,
+        key: Slot<'v, 'a>,
+        mut value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::immutable(strand))
+        let key = Key::new(strand, &key)?;
+        if this.borrow_mut(strand)?.assign(key, value.take()) {
+            Ok(())
+        } else {
+            Err(Error::index(strand))
+        }
     }
 
     fn op_get<'a, 's>(
@@ -950,12 +494,23 @@ impl<'v> Protocol<'v> for Record<'v> {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                let len = this.borrow(strand)?.items.len();
+                let len = this.borrow(strand)?.len();
                 let len = i64::try_from(len).map_err(|_| Error::overflow(strand))?;
                 Output::set(strand, out, len);
                 Ok(())
             }
-            sym::GET | sym::WITH | sym::WITHOUT => {
+            sym::CLEAR
+            | sym::INSERT
+            | sym::PUSH
+            | sym::GET
+            | sym::POP
+            | sym::DELETE
+            | sym::PAIRS
+            | sym::KEYS
+            | sym::VALUES
+            | sym::COUNT
+            | sym::COPY
+            | sym::CONTAINS => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
@@ -970,101 +525,164 @@ impl<'v> Protocol<'v> for Record<'v> {
         args: Args<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        let default_key = Sym::well_known(sym::DEFAULT);
+        let else_key = Sym::well_known(sym::ELSE);
         match method.tag() {
+            sym::CLEAR => {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                this.borrow_mut(strand)?.clear_items();
+                Ok(())
+            }
+            sym::INSERT => {
+                let ([key, mut value], []) = unpack!(strand, args, 2, 0)?;
+                let key = Key::new(strand, &key)?;
+                if this.borrow_mut(strand)?.insert(key, value.take()) {
+                    Ok(())
+                } else {
+                    Err(Error::index(strand))
+                }
+            }
+            sym::PUSH => {
+                let mut values = Vec::new();
+                for arg in args {
+                    match arg {
+                        Arg::Pos(mut value) => values.push(value.take()),
+                        Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
+                    }
+                }
+                // The argument slots no longer root the values, so nothing
+                // may collect before they are stored
+                this.borrow_mut(strand)?.push(values);
+                Ok(())
+            }
             sym::GET => {
-                let default = Sym::well_known(sym::DEFAULT);
-                let else_key = Sym::well_known(sym::ELSE);
-                let ([key], [default, or_else]) =
-                    unpack!(strand, args, 1, 0, default = None, else_key = None)?;
+                let ([key], [instance_arg, default, or_else]) =
+                    unpack!(strand, args, 1, 1, default_key = None, else_key = None)?;
                 if default.is_some() && or_else.is_some() {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
-                let borrow = this.borrow(strand)?;
-                let found = find(strand, &borrow.items, &key).map(Value::dup);
-                drop(borrow);
-                if let Some(value) = found {
-                    out.store(value);
-                    Ok(())
-                } else if let Some(mut default) = default {
-                    out.store(default.take());
-                    Ok(())
-                } else if let Some(or_else) = or_else {
-                    call!(strand, or_else, out).await
-                } else {
-                    out.store(Value::NIL);
-                    Ok(())
+                let key = Key::new(strand, &key)?;
+                let instance = instance(strand, instance_arg)?;
+                let found = this.borrow(strand)?.get(&key, instance).map(Value::dup);
+                match found {
+                    Some(value) => {
+                        out.store(value);
+                        Ok(())
+                    }
+                    None => fallback(strand, default, or_else, out, |_| Ok(())).await,
                 }
             }
-            sym::WITH => {
-                let ([], [], updates) = unpack!(strand, args, 0, 0, **)?;
-                // Keep argument slots intact so updates remain rooted. This path
-                // checks interrupts but never collects while building the result.
-                let mut replacements = Vec::new();
-                let mut indices = HashMap::new();
-                for (i, (key, value)) in updates.enumerate() {
-                    if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                        strand.check_trap()?;
-                    }
-                    let index = *indices.entry(key.tag()).or_insert_with(|| {
-                        replacements.push((key, None));
-                        replacements.len() - 1
-                    });
-                    replacements[index].1 = Some(value.dup());
+            sym::POP => {
+                let ([key], [instance_arg, default, or_else]) =
+                    unpack!(strand, args, 1, 1, default_key = None, else_key = None)?;
+                if default.is_some() && or_else.is_some() {
+                    return Err(Error::unexpected_key(strand, else_key));
                 }
-                let borrow = this.borrow(strand)?;
-                let mut items = Vec::with_capacity(borrow.items.len());
-                for (i, (key, value)) in borrow.items.iter().enumerate() {
-                    if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                        strand.check_trap()?;
+                let key = Key::new(strand, &key)?;
+                let instance = instance(strand, instance_arg)?;
+                let removed = this.borrow_mut(strand)?.remove(&key, instance);
+                match removed {
+                    Some(value) => {
+                        out.store(value);
+                        Ok(())
                     }
-                    if let Some(index) = key.as_ref().and_then(|key| indices.get(&key.tag)) {
-                        if let Some(value) = replacements[*index].1.take() {
-                            items.push((key.clone(), value));
-                        }
-                    } else {
-                        items.push((key.clone(), value.dup()));
+                    None => {
+                        fallback(strand, default, or_else, out, |strand| {
+                            Err(Error::index(strand))
+                        })
+                        .await
                     }
                 }
-                for (i, (key, value)) in replacements.into_iter().enumerate() {
-                    if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                        strand.check_trap()?;
-                    }
-                    if let Some(value) = value {
-                        items.push((Some(strand.sym_obj(key)), value));
-                    }
-                }
-                strand
-                    .builtin_types()
-                    .record
-                    .create(strand, Record::new(items), out);
+            }
+            sym::DELETE => {
+                let ([key], []) = unpack!(strand, args, 1, 0)?;
+                let key = Key::new(strand, &key)?;
+                let deleted = this.borrow_mut(strand)?.delete(&key);
+                Output::set(strand, out, deleted);
                 Ok(())
             }
-            sym::WITHOUT => {
-                let ([], [], keys) = unpack!(strand, args, 0, 0, *)?;
-                let mut removed = HashSet::new();
-                for (i, key) in keys.enumerate() {
-                    if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                        strand.check_trap()?;
+            sym::PAIRS => {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                Iter::create(strand, &this, Mode::Pairs, out)
+            }
+            sym::KEYS => {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                Iter::create(strand, &this, Mode::Keys, out)
+            }
+            sym::VALUES => {
+                let ([], [key]) = unpack!(strand, args, 0, 1)?;
+                let mode = match key.map(|key| Key::new(strand, &key)).transpose()? {
+                    None => Mode::Values,
+                    Some(Key::Sym(key)) => Mode::KeyValues(key.tag),
+                    Some(key @ Key::Pos(_)) => {
+                        // A position has at most one value
+                        let found = this.borrow(strand)?.get(&key, None).map(Value::dup);
+                        let tuple = tuple::tuple(strand.vm(), found);
+                        return strand
+                            .with_slots(async |strand, [mut values]| {
+                                values.store(Value::from_object(tuple));
+                                values.op_iter(strand, out).await
+                            })
+                            .await;
                     }
-                    let key = key
-                        .as_sym(strand)
-                        .ok_or_else(|| Error::type_error(strand, "expected `Sym`"))?;
-                    removed.insert(key.tag());
-                }
+                };
+                Iter::create(strand, &this, mode, out)
+            }
+            sym::COUNT => {
+                let ([], [key]) = unpack!(strand, args, 0, 1)?;
+                let key = key.map(|key| Key::new(strand, &key)).transpose()?;
+                let count = this.borrow(strand)?.count(key.as_ref());
+                let count = i64::try_from(count).map_err(|_| Error::overflow(strand))?;
+                Output::set(strand, out, count);
+                Ok(())
+            }
+            sym::CONTAINS => {
+                let ([key], [expected]) = unpack!(strand, args, 1, 1)?;
+                let key = Key::new(strand, &key)?;
                 let borrow = this.borrow(strand)?;
-                let mut items = Vec::with_capacity(borrow.items.len());
-                for (i, (key, value)) in borrow.items.iter().enumerate() {
-                    if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                        strand.check_trap()?;
+                let found = match (&key, expected) {
+                    (_, None) => borrow.slot(&key, None).is_some(),
+                    (Key::Pos(_), Some(expected)) => match borrow.get(&key, None) {
+                        Some(value) => value.op_eq(strand, &expected)?.to_bool(strand)?,
+                        None => false,
+                    },
+                    (Key::Sym(sym), Some(expected)) => {
+                        let mut found = false;
+                        for (i, &slot) in borrow
+                            .keys
+                            .get(&sym.tag)
+                            .map_or(&[][..], Vec::as_slice)
+                            .iter()
+                            .enumerate()
+                        {
+                            if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
+                                strand.check_trap()?;
+                            }
+                            let value = &borrow.order[slot].as_ref().expect("live slot").1;
+                            if value.op_eq(strand, &expected)?.to_bool(strand)? {
+                                found = true;
+                                break;
+                            }
+                        }
+                        found
                     }
-                    if !key.as_ref().is_some_and(|key| removed.contains(&key.tag)) {
-                        items.push((key.clone(), value.dup()));
-                    }
+                };
+                Output::set(strand, out, found);
+                Ok(())
+            }
+            sym::COPY => {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                if this.delegator().is_some() {
+                    return strand
+                        .with_slots(async |strand, [mut receiver, mut ty]| {
+                            Output::set(strand, Slot::reborrow(&mut receiver), &this);
+                            receiver.op_type(strand, Slot::reborrow(&mut ty));
+                            call!(strand, &ty, out, &receiver).await
+                        })
+                        .await;
                 }
-                strand
-                    .builtin_types()
-                    .record
-                    .create(strand, Record::new(items), out);
+                let copy = Record::from_items(this.borrow(strand)?.snapshot());
+                strand.builtin_types().record.create(strand, copy, out);
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(
@@ -1078,36 +696,31 @@ impl<'v> Protocol<'v> for Record<'v> {
         }
     }
 
-    fn op_set<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &mut Strand<'v, 's>,
-        _field: Sym<'v, 'a>,
-        _value: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        Err(Error::immutable(strand))
-    }
-
     async fn op_iter<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        strand.builtin_types().record_iter.create(
-            strand,
-            Iter::new(this.to_strong(), HashSet::new(), 0, 0),
-            out,
-        );
-        Ok(())
+        Iter::create(strand, &this, Mode::Pairs, out)
     }
 
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        context: SpreadContext,
+        _context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        spread_items(strand, &borrow.items, context, sink)
+        for (key, value) in borrow.items() {
+            let mut value = value.dup();
+            if let Some(key) = key {
+                let key = unsafe { Sym::from_obj(key) };
+                sink.symbol(strand, key, Slot::new(&mut value))?;
+            } else {
+                sink.positional(strand, Slot::new(&mut value))?;
+            }
+        }
+        Ok(())
     }
 
     async fn op_unpack<'a, 's>(
@@ -1116,83 +729,185 @@ impl<'v> Protocol<'v> for Record<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        unpack(strand, this.to_strong(), sig, out)
+        let snapshot = snapshot(strand, &this)?;
+        args::unpack(strand, snapshot, sig, out)
+    }
+}
+
+// ── Iter ────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy)]
+enum Mode {
+    /// `(key, value)` pairs, a position's key being its index
+    Pairs,
+    /// Each position, and each key once
+    Keys,
+    Values,
+    /// The values of one key
+    KeyValues(Tag),
+}
+
+/// An iterator over a record's items, in order. It fails once the record
+/// changes.
+pub(crate) struct Iter<'v> {
+    record: GcObj<'v, Record<'v>>,
+    epoch: u64,
+    mode: Mode,
+    /// The next slot
+    slot: Cell<usize>,
+    /// The positional items passed
+    int: Cell<i64>,
+    /// The keys yielded, for [`Mode::Keys`]
+    seen: RefCell<HashSet<Tag>>,
+}
+
+unsafe impl<'v> Collect for Iter<'v> {
+    const CYCLIC: bool = true;
+    const IMMUTABLE: bool = false;
+    type Annex = ();
+
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        self.record.accept(visit)
+    }
+
+    fn clear(&mut self) {}
+}
+
+impl<'v> Iter<'v> {
+    fn create<'s>(
+        strand: &mut Strand<'v, 's>,
+        this: &Recv<'v, '_, Record<'v>>,
+        mode: Mode,
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        let epoch = this.borrow(strand)?.epoch;
+        let iter = Iter {
+            record: this.to_strong(),
+            epoch,
+            mode,
+            slot: Cell::new(0),
+            int: Cell::new(0),
+            seen: RefCell::new(HashSet::new()),
+        };
+        strand.builtin_types().record_iter.create(strand, iter, out);
+        Ok(())
+    }
+}
+
+impl<'v> Protocol<'v> for Iter<'v> {
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) {
+        Output::set(strand, out, &strand.singletons().input_iter)
+    }
+
+    fn op_debug<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        crate::fmt!(strand, w, "<record iterator>")
+    }
+
+    async fn op_iter<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Output::set(strand, out, &this);
+        Ok(())
+    }
+
+    async fn op_unpack<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _sig: &'a sig::Unpack<'v, 'a>,
+        _out: Slots<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Err(Error::unsupported(strand, "unpacking"))
+    }
+
+    async fn op_next<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        let iter = this.borrow(strand)?;
+        let record = iter
+            .record
+            .borrow()
+            .ok_or_else(|| Error::concurrency(strand))?;
+        if record.epoch != iter.epoch {
+            return Err(Error::concurrency_msg(
+                strand,
+                "collection was modified during iteration",
+            ));
+        }
+        while let Some(item) = record.order.get(iter.slot.get()) {
+            iter.slot.update(|slot| slot + 1);
+            let Some((key, value)) = item else {
+                continue;
+            };
+            let key = match key {
+                Some(key) => {
+                    match iter.mode {
+                        Mode::Keys if !iter.seen.borrow_mut().insert(key.tag) => continue,
+                        Mode::KeyValues(tag) if key.tag != tag => continue,
+                        _ => {}
+                    }
+                    Value::from_object(key.clone())
+                }
+                None => {
+                    let int = iter.int.get();
+                    iter.int.set(int + 1);
+                    if let Mode::KeyValues(_) = iter.mode {
+                        continue;
+                    }
+                    Value::from_i64(strand, int)
+                }
+            };
+            out.store(match iter.mode {
+                Mode::Pairs => Value::from_object(tuple::tuple(strand.vm(), [key, value.dup()])),
+                Mode::Keys => key,
+                Mode::Values | Mode::KeyValues(_) => value.dup(),
+            });
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    fn op_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        iter::iter_get(strand, &this, field, out)
+    }
+
+    async fn op_mcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        iter::iter_mcall(strand, &this, method, args, out).await
+    }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        iter::spread_iter(strand, this, sink).await
     }
 }
 
 // ── Record Class ────────────────────────────────────────────────────
-
-/// Collects a source's pairs for `Record src`, into an argument pack rooted in
-/// a slot. A record holds only positional items and symbol keys.
-struct RecordPairs<'b, 'v> {
-    int: i64,
-    pack: &'b Value<'v>,
-    /// The collection named in errors
-    kind: &'static str,
-}
-
-impl<'v> RecordPairs<'_, 'v> {
-    fn push<'s>(
-        &mut self,
-        strand: &mut Strand<'v, 's>,
-        key: Option<GcObj<'v, SymObj>>,
-        value: Value<'v>,
-    ) -> Result<'v, 's, ()> {
-        let pack = self
-            .pack
-            .downcast_ref(strand.builtin_types().arg_pack)
-            .expect("record source pack");
-        pack.borrow_mut()
-            .ok_or_else(|| Error::concurrency(strand))?
-            .push((key, value));
-        Ok(())
-    }
-}
-
-impl<'v, 's> Spread<'v, 's> for RecordPairs<'_, 'v> {
-    fn positional(
-        &mut self,
-        strand: &mut Strand<'v, 's>,
-        mut value: Slot<'v, '_>,
-    ) -> Result<'v, 's, ()> {
-        self.push(strand, None, value.take())?;
-        self.int = self
-            .int
-            .checked_add(1)
-            .ok_or_else(|| Error::overflow(strand))?;
-        Ok(())
-    }
-
-    fn symbol(
-        &mut self,
-        strand: &mut Strand<'v, 's>,
-        key: Sym<'v, '_>,
-        mut value: Slot<'v, '_>,
-    ) -> Result<'v, 's, ()> {
-        let key = strand.sym_obj(key);
-        self.push(strand, Some(key), value.take())
-    }
-
-    // Pairs from an iterable all arrive here. An integer key is positional
-    // while it counts up from 0, as when spreading a dict.
-    fn keyed(
-        &mut self,
-        strand: &mut Strand<'v, 's>,
-        key: Slot<'v, '_>,
-        value: Slot<'v, '_>,
-    ) -> Result<'v, 's, ()> {
-        if let Some(sym) = key.as_sym(strand) {
-            self.symbol(strand, sym, value)
-        } else if key.to_i64(strand).ok() == Some(self.int) {
-            self.positional(strand, value)
-        } else {
-            Err(Error::type_error(
-                strand,
-                format!("{} keys must be symbols", self.kind),
-            ))
-        }
-    }
-}
 
 pub(crate) struct Class;
 
@@ -1253,13 +968,22 @@ impl<'v> Protocol<'v> for Class {
                 Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
                 Method(sym::EQ_METHOD),
-                Method(sym::LT_METHOD),
                 Method(sym::HASH_METHOD),
                 Getter(sym::LEN),
+                Method(sym::CLEAR),
+                Method(sym::INSERT),
+                Method(sym::PUSH),
                 Method(sym::GET),
-                Method(sym::WITH),
-                Method(sym::WITHOUT),
+                Method(sym::POP),
+                Method(sym::DELETE),
+                Method(sym::PAIRS),
+                Method(sym::KEYS),
+                Method(sym::VALUES),
+                Method(sym::COUNT),
+                Method(sym::COPY),
+                Method(sym::CONTAINS),
                 Method(sym::INDEX_METHOD),
+                Method(sym::ASSIGN_METHOD),
                 Method(sym::ITER_METHOD),
                 Method(sym::UNPACK_METHOD),
                 Method(sym::SPREAD_METHOD),
@@ -1301,16 +1025,25 @@ impl<'v> Protocol<'v> for Class {
         match field.tag() {
             sym::INIT_METHOD
             | sym::LEN
+            | sym::CLEAR
+            | sym::INSERT
+            | sym::PUSH
             | sym::GET
-            | sym::WITH
-            | sym::WITHOUT
+            | sym::POP
+            | sym::DELETE
+            | sym::PAIRS
+            | sym::KEYS
+            | sym::VALUES
+            | sym::COUNT
+            | sym::COPY
+            | sym::CONTAINS
             | sym::STR_METHOD
             | sym::DBG_METHOD
             | sym::FMT_METHOD
             | sym::EQ_METHOD
-            | sym::LT_METHOD
             | sym::HASH_METHOD
             | sym::INDEX_METHOD
+            | sym::ASSIGN_METHOD
             | sym::ITER_METHOD
             | sym::UNPACK_METHOD
             | sym::SPREAD_METHOD => {
@@ -1328,48 +1061,11 @@ impl<'v> Protocol<'v> for Class {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([source], []) = unpack!(strand, args, 1, 0)?;
-        let items = source_items(strand, &source, "record").await?;
+        let items = args::source_items(strand, &source).await?;
         strand
             .builtin_types()
             .record
-            .create(strand, Record::new(items), out);
+            .create(strand, Record::from_items(items), out);
         Ok(())
     }
-}
-
-/// Collects the items of `source` for `Record src`, naming the collection
-/// `kind` in errors.
-///
-/// The items are unrooted, so the caller must store them before anything can
-/// collect.
-pub(crate) async fn source_items<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    source: &Value<'v>,
-    kind: &'static str,
-) -> Result<'v, 's, Vec<ArgItem<'v>>> {
-    strand
-        .with_slots(async |strand, [mut pack]| {
-            // Spreading can run arbitrary code, so the items collect in a
-            // pack the GC can see
-            strand.builtin_types().arg_pack.create(
-                strand,
-                ArgPack::new(Vec::new()),
-                Slot::reborrow(&mut pack),
-            );
-            let mut sink = RecordPairs {
-                int: 0,
-                pack: &pack,
-                kind,
-            };
-            source
-                .op_spread(strand, SpreadContext::Pairs, &mut sink)
-                .await?;
-            Ok(pack
-                .downcast_ref(strand.builtin_types().arg_pack)
-                .expect("record source pack")
-                .borrow_mut()
-                .ok_or_else(|| Error::concurrency(strand))?
-                .take())
-        })
-        .await
 }

@@ -70,11 +70,31 @@ pub(crate) enum Problem {
         span: Span,
         key: Shown,
     },
+    /// A call whose types insert or remove a position, shifting positions its
+    /// schema doesn't let move
+    Shifted {
+        span: Span,
+        key: Shown,
+    },
+    /// A call whose types append a position to a schema with no rest position
+    Unextendable(Span),
     /// A value that doesn't fit what its use requires of it
     Misfit {
         span: Span,
         found: Shown,
         misfit: Misfit,
+    },
+    /// A value spread into a sequence that may have a keyed item
+    KeyedSpread {
+        span: Span,
+        found: Shown,
+        item: String,
+    },
+    /// A value spread into a dict that may have a positional item
+    PositionalSpread {
+        span: Span,
+        found: Shown,
+        item: String,
     },
     /// A pattern that can't unpack a value of the type found
     Impossible {
@@ -221,7 +241,11 @@ impl Report for Problem {
             | Problem::Unadmitted { span, .. }
             | Problem::Required { span, .. }
             | Problem::Unrepeatable { span, .. }
+            | Problem::Shifted { span, .. }
+            | Problem::Unextendable(span)
             | Problem::Misfit { span, .. }
+            | Problem::KeyedSpread { span, .. }
+            | Problem::PositionalSpread { span, .. }
             | Problem::Impossible { span, .. }
             | Problem::Annotation { span, .. }
             | Problem::Cast { span, .. }
@@ -279,6 +303,16 @@ impl Report for Problem {
                 .map(|reason| (NoteKind::Info, reason.clone()))
                 .collect(),
             Problem::Unguaranteed { note, .. } => vec![(NoteKind::Info, note.clone())],
+            Problem::KeyedSpread { .. } => vec![(
+                NoteKind::Help,
+                "spread its `.iter()` for `(key, value)` pairs".to_owned(),
+            )],
+            Problem::PositionalSpread { .. } => vec![(
+                NoteKind::Help,
+                "a dict holds only keyed items; for positional ones, make a record, as in \
+                 `Record source`"
+                    .to_owned(),
+            )],
             Problem::AmbiguousCall { survivors, .. } => survivors
                 .iter()
                 .map(|survivor| (NoteKind::Info, format!("`{survivor}` accepts them")))
@@ -337,6 +371,18 @@ impl Report for Problem {
                     "this call inserts at {key}, where the schema admits only one item"
                 )
             }
+            Problem::Shifted { key, .. } => {
+                write!(
+                    w,
+                    "this call inserts or removes at {key}, shifting positions the schema doesn't let move"
+                )
+            }
+            Problem::Unextendable(_) => {
+                write!(
+                    w,
+                    "this call appends a position, which the schema has no rest for"
+                )
+            }
             Problem::Misfit { found, misfit, .. } => {
                 let required = match misfit {
                     Misfit::Binary => "binary",
@@ -346,6 +392,12 @@ impl Report for Problem {
                     Misfit::Class => "a class object",
                 };
                 write!(w, "{found} is not {required}")
+            }
+            Problem::KeyedSpread { found, item, .. } => {
+                write!(w, "a sequence can't take {item}, which {found} spreads")
+            }
+            Problem::PositionalSpread { found, item, .. } => {
+                write!(w, "a dict can't take {item}, which {found} spreads")
             }
             Problem::Impossible { found, .. } => {
                 write!(w, "{found} can never unpack as this pattern")

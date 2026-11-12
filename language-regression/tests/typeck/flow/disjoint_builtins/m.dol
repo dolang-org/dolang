@@ -28,7 +28,7 @@ pub def decoded d @ DecodeValue
     #       ^: flow std.Dict[std.Str, json.DecodeValue]
   else if let Array(a) = d
     let _ = a
-    #       ^: flow [json.DecodeValue]
+    #       ^: flow std.Array[json.DecodeValue]
   else if let Int(n) = d
     let _ = n
     #       ^: flow std.Int

@@ -50,7 +50,7 @@ pub class BaseArray
 pub class Dict
 pub class BaseDict
 pub class Tuple
-pub class Record
+pub class Args
 pub class Range
 pub @class Spread
 pub class Unpack

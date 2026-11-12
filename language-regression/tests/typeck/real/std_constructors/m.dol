@@ -6,7 +6,9 @@ pub def fits
   fields @ Dict[{a: Int}]
 do
   let _d @ Dict[Sym, Int] = Dict $ pairs.iter().kv()
-  let _r @ Record[a: Int] = Record $fields
+  let _r @ Args[a: Int] = Args $fields
+  let _rec @ Record[a: Int] = Record $fields
+  let _items @ Record[Str, a: Int] = record "x" a: 1
   let _t @ Tuple[...Int] = Tuple [1, 2]
   let _f @ std.Fmt[Int, {}] = std.Fmt ["a", std.FmtValue 1]
 
@@ -15,17 +17,30 @@ pub def misfits
   ints @ Array[Int]
 do
   let _d @ Dict[{a: Int}] = Dict $ pairs.iter().kv()
-  # error: `std.Dict[std.Sym, std.Int]` does not fit the annotation `{a: std.Int}`
+  # error: `std.Dict[std.Sym, std.Int]` does not fit the annotation `std.Dict[{a: std.Int}]`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _d @ Dict[{a: Int}] = Dict $ pairs.iter().kv()
   #    |                             ^^^^^^^^^^^^^^^^^^^^^^^^
   let _e @ Dict[{x: Int}] = Dict $ints
-  # error: `std.Dict[std.Int]` does not fit the annotation `{x: std.Int}`
+  # error: `std.Array[std.Int]` does not fit this parameter
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _e @ Dict[{x: Int}] = Dict $ints
+  #    |                                   ^^^^
+  #    |
+  #    = note: `{*(Value): Value}` doesn't admit positional `*std.Int`
+  # error: `std.Dict[std.Int]` does not fit the annotation `std.Dict[{x: std.Int}]`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _e @ Dict[{x: Int}] = Dict $ints
   #    |                             ^^^^^^^^^^
+  let _rec @ Record[Int] = Record $ints
+  # error: `std.Record[...std.Int]` does not fit the annotation `std.Record[std.Int]`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _rec @ Record[Int] = Record $ints
+  #    |                            ^^^^^^^^^^^^
   let _t @ Tuple[Int, Int] = Tuple [1, 2]
   # error: `(*std.Int)` does not fit the annotation `(std.Int, std.Int)`
   #   --> m.dol:LL:LL
@@ -38,3 +53,10 @@ do
 #    |
 # LL |   let _f @ std.Fmt[Str, {}] = std.Fmt ["a", std.FmtValue 1]
 #    |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+# A literal passed to `Dict` keeps its own schema: the binder's bound is the
+# class's, so it expects nothing more
+pub def precise()
+  let d = Dict {a: 1}
+  let _ = d
+  #       ^: flow std.Dict[std.Sym, std.Int]

@@ -1131,7 +1131,7 @@ impl Check<'_> {
                     elem.check(self, frame);
                 }
             }
-            Expr::Record { args, .. } => {
+            Expr::Args { args, .. } => {
                 for arg in args {
                     arg.check(self, frame);
                 }

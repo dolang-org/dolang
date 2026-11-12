@@ -32,6 +32,7 @@ def collect_doc_jobs()
     let base = Path $search_dir
     for path = base.glob "**/*.dol"
       let name = dol_module_name $path $base
+      # FIXME(#1676): `args` once the bootstrap interpreter has it
       put $ record :name :path
 
 # The documented public classes a module declares or re-exports. Only

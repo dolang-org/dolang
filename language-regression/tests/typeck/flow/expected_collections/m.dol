@@ -22,7 +22,7 @@ pub def literals()
   maybe {type: :BIND:, target: "/src"}
   let ms @ Iterable[Mount] = [{type: :CACHE:, target: "/var/cache"}]
   let _ = ms
-  #       ^~: flow [{type: :BIND: | :CACHE:, target: std.Str}]
+  #       ^~: flow std.Array[std.Dict[{type: :BIND: | :CACHE:, target: std.Str}]]
 
 # An argument is reported once, however many of its parts don't fit
 pub def decayed()

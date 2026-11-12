@@ -2,8 +2,8 @@
 # Command-line options the boot entrypoint supplies to the entrypoints it runs.
 @import compile: compiler
 
-# Prelude from `--import` and `--import-item`.
-pub let prelude @ BaseDict[{*(Str | Sym), *(Str | Sym): compiler.PreludeBinding}] = ...
+# Prelude from `--import` and `--import-item`: module names to their bindings.
+pub let prelude @ BaseDict[Str | Sym, compiler.PreludeBinding] = ...
 
 # Whether `--strict` was given.
 pub let strict @ Bool = ...

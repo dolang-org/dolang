@@ -12,13 +12,12 @@ use crate::{
     error::{Error, Result},
     gc,
     object::{
+        args::{self, ArgItem},
         array,
         dict::{self, Entry, EntryValue},
         native::Cast,
         protocol::{GcObjBorrow, Header},
-        range,
-        record::{self, ArgItem},
-        set, structure, tuple,
+        range, record, set, structure, tuple,
     },
     stdlib::fmt as stdfmt,
     strand::{Access, Strand},
@@ -681,15 +680,15 @@ impl<'v, 'a> Set<'v, 'a> {
     }
 }
 
-/// Record view
-pub struct Record<'v, 'a>(gc::Borrow<'v, 'a, Header, record::Record<'v>>);
+/// [`Args`](crate::object::args::Args) view
+pub struct Args<'v, 'a>(gc::Borrow<'v, 'a, Header, args::Args<'v>>);
 
-impl<'v, 'a> Record<'v, 'a> {
-    pub(crate) fn from_borrow(borrow: GcObjBorrow<'v, 'a, record::Record<'v>>) -> Self {
+impl<'v, 'a> Args<'v, 'a> {
+    pub(crate) fn from_borrow(borrow: GcObjBorrow<'v, 'a, args::Args<'v>>) -> Self {
         Self(borrow)
     }
 
-    /// Return the opaque identity of this record for cycle detection.
+    /// Return the opaque identity of this args value for cycle detection.
     pub fn id(&self) -> ObjectId<'v, 'a> {
         ObjectId(self.0.into_raw().cast(), PhantomData)
     }
@@ -705,10 +704,43 @@ impl<'v, 'a> Record<'v, 'a> {
 
     /// Return a stateful cursor over the key-value pairs in order. A positional
     /// item's key is its position.
+    pub fn pairs(&self) -> ArgsPairs<'v, 'a> {
+        ArgsPairs {
+            borrow: self.0,
+            pos: 0,
+            int: 0,
+        }
+    }
+}
+
+/// [`Record`](crate::object::record::Record) view
+pub struct Record<'v, 'a>(GcObjBorrow<'v, 'a, record::Record<'v>>);
+
+impl<'v, 'a> Record<'v, 'a> {
+    pub(crate) fn from_borrow(borrow: GcObjBorrow<'v, 'a, record::Record<'v>>) -> Self {
+        Self(borrow)
+    }
+
+    /// Return the opaque identity of this record for cycle detection.
+    pub fn id(&self) -> ObjectId<'v, 'a> {
+        ObjectId(self.0.into_raw().cast(), PhantomData)
+    }
+
+    /// Total number of items.
+    pub fn len<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, usize> {
+        let borrow = match self.0.borrow() {
+            Some(b) => b,
+            None => return Err(Error::concurrency(strand)),
+        };
+        Ok(borrow.len())
+    }
+
+    /// Return a stateful cursor over the key-value pairs in order. A positional
+    /// item's key is its position.
     pub fn pairs(&self) -> RecordPairs<'v, 'a> {
         RecordPairs {
             borrow: self.0,
-            pos: 0,
+            slot: 0,
             int: 0,
         }
     }
@@ -915,7 +947,9 @@ pub enum View<'v, 'a> {
     Dict(Dict<'v, 'a>),
     /// Set
     Set(Set<'v, 'a>),
-    /// Record
+    /// [`Args`] view
+    Args(Args<'v, 'a>),
+    /// [`Record`] view
     Record(Record<'v, 'a>),
     /// Struct
     Struct(Struct<'v, 'a>),
@@ -984,14 +1018,14 @@ impl<'v, 'a> SetMembers<'v, 'a> {
     }
 }
 
-/// Iterator over a [`Record`].
-pub struct RecordPairs<'v, 'a> {
-    borrow: GcObjBorrow<'v, 'a, record::Record<'v>>,
+/// Iterator over a [`Args`].
+pub struct ArgsPairs<'v, 'a> {
+    borrow: GcObjBorrow<'v, 'a, args::Args<'v>>,
     pos: usize,
     int: i64,
 }
 
-impl<'v, 'a> RecordPairs<'v, 'a> {
+impl<'v, 'a> ArgsPairs<'v, 'a> {
     /// Get the next key/value pair.
     /// Returns `false` when all pairs have been yielded.
     pub fn next<'s>(
@@ -1012,6 +1046,46 @@ impl<'v, 'a> RecordPairs<'v, 'a> {
             key,
             value,
         ))
+    }
+}
+
+/// Iterator over a [`Record`].
+pub struct RecordPairs<'v, 'a> {
+    borrow: GcObjBorrow<'v, 'a, record::Record<'v>>,
+    slot: usize,
+    int: i64,
+}
+
+impl<'v, 'a> RecordPairs<'v, 'a> {
+    /// Get the next key/value pair.
+    /// Returns `false` when all pairs have been yielded.
+    pub fn next<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        key: impl Output<'v>,
+        value: impl Output<'v>,
+    ) -> Result<'v, 's, bool> {
+        let borrow = match self.borrow.borrow() {
+            Some(b) => b,
+            None => return Err(Error::concurrency(strand)),
+        };
+        let order = borrow.order();
+        while let Some(item) = order.get(self.slot) {
+            self.slot += 1;
+            let Some((item_key, item_value)) = item else {
+                continue;
+            };
+            match item_key {
+                Some(item_key) => Output::set(strand, key, unsafe { Sym::from_obj(item_key) }),
+                None => {
+                    Output::set(strand, key, self.int);
+                    self.int += 1;
+                }
+            }
+            Output::set(strand, value, item_value);
+            return Ok(true);
+        }
+        Ok(false)
     }
 }
 
@@ -1046,7 +1120,7 @@ impl<'v, 'a> StructPairs<'v, 'a> {
     }
 }
 
-/// Outputs the key and value of the record or struct item at `pos`, if any,
+/// Outputs the key and value of the args or struct item at `pos`, if any,
 /// and advances past it. `int` counts the positional items so far.
 fn next_item_pair<'v>(
     items: &[ArgItem<'v>],

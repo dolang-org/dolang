@@ -414,7 +414,7 @@ def container_create_structured_lifecycle()
           ctr.start()
           let configured = ctr.with do
             let uid = sub do run id -u
-            record
+            args
               cd: $cd()
               env: $env["TEST_DOLANG_CREATE"]
               uid: $uid

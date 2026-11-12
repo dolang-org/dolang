@@ -536,9 +536,6 @@ impl Index<'_> {
             TypeExpr::Parens { params, .. } => Kind::ParensType {
                 items: self.type_items(id, params, true)?,
             },
-            TypeExpr::Array { elem, .. } => Kind::ArrayType {
-                elem: self.type_expr(id, elem)?,
-            },
             TypeExpr::Union { members, bars, .. } => {
                 // A member is documented above its bar. Without a leading bar, the
                 // first member has none, and starts where the union does.
@@ -1574,7 +1571,7 @@ impl Index<'_> {
                     elem.index(self, scope);
                 }
             }
-            Expr::Record { args, .. } => {
+            Expr::Args { args, .. } => {
                 for arg in args {
                     arg.index(self, scope);
                 }

@@ -11,8 +11,8 @@ import load: loader
 # How much of a file is read to tell its kind.
 let PREFIX_LEN = 4096
 
-# The prelude as boot builds it: positional module names and aliased bindings.
-pub @let Prelude = BaseDict[{*(Str | Sym), *(Str | Sym): compile.PreludeBinding}]
+# The prelude as boot builds it: module names to their bindings.
+pub @let Prelude = BaseDict[Str | Sym, compile.PreludeBinding]
 
 # Bytecode, the offset of a bundle's archive after an optional `#!` line, or
 # `nil` for source. Only a bounded prefix is read.

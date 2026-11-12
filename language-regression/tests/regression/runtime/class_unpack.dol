@@ -71,7 +71,7 @@ assert_eq (take_backing ...tail3) 30
 
 let ...pair_tail = fields(example)
 example.direct = 10
-let pairs = [...pair_tail]
+let pairs = [...pair_tail.iter()]
 assert (pairs.contains (Tuple [:direct:, 10]))
 assert (pairs.contains (Tuple [:property:, 30]))
 
@@ -168,7 +168,7 @@ let second_pairs = []
 for key value = proxy_fields
   second_pairs.push (key, value)
 assert_eq $first_pairs $second_pairs
-assert_eq [...proxy_fields] $first_pairs
+assert_throws $std.UnexpectedKeyError do [...proxy_fields]
 assert_eq { ...proxy_fields } {direct: 12, inherited: 2, property: 30, backing: 30}
 
 # Primitive and built-in values use the same type-inspection path.

@@ -77,8 +77,8 @@ let direct = []
 direct.put 9
 assert_eq $direct [9]
 
-# A record is Iterable over its key/value pairs.
-let rec = record(1, a: 2)
+# An `Args` is Iterable over its key/value pairs.
+let rec = args(1, a: 2)
 assert (type rec Iterable)
 assert_eq [...rec.map (do |kv| kv[0])] [0, :a:]
 

@@ -51,16 +51,11 @@ def round_trip_arrays_and_tuples()
   assert_eq (decode $ encode $ Tuple([1, 2, 3])) [1, 2, 3]
 
 #[test]
-def round_trip_dicts_and_records()
+def round_trip_dicts()
   let obj = {"name": "alice", "age": 30}
   let rt_obj = decode $ encode $obj
   assert_eq $rt_obj["name"] "alice"
   assert_eq $rt_obj["age"] 30
-
-  let rec = record enabled: true port: 8080
-  let rt_rec = decode $ encode $rec
-  assert_eq $rt_rec["enabled"] true
-  assert_eq $rt_rec["port"] 8080
 
 #[test]
 def round_trip_structs()
@@ -109,6 +104,10 @@ def encode_unsupported()
   let key_err = assert_throws $TypeError do
     encode {1: "bad"}
   assert ((str key_err).contains "TOML table keys must be Str or Sym values")
+
+  let record_err = assert_throws $TypeError do
+    encode {a: (record 1 b: 2)}
+  assert ((str record_err).contains "Record")
 
   let bin_err = assert_throws $TypeError do
     encode b"\x01\x02"

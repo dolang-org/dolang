@@ -54,6 +54,12 @@ pub @let AssignItem[S @ {...}, K] = ...
 # is `Int`, but `InsertItem[{a: Int}, :a:]` is an error.
 pub @let InsertItem[S @ {...}, K] = ...
 
+# The values that fit every position of `S` after its fixed ones, which a
+# position appended past the end may fill. `PushItem[{Str, *Int}]` is `Int`,
+# and a value fits `PushItem[{Str, ?Int, *Bool}]` if it fits both `Int` and
+# `Bool`. A schema with no rest position is an error.
+pub @let PushItem[S @ {...}] = ...
+
 # `S`, where removing every item that a key of type `K` selects leaves a value
 # of `S`. Each item selected must be keyed and admit zero:
 # `Deletable[{a: Int, ?b: Str}, :b:]` is `{a: Int, ?b: Str}`, but
@@ -107,14 +113,13 @@ pub def bool value @ Value -> Bool
 pub def dbg value @ Value -> Str
   ...
 
-# Creates a dictionary from positional and key arguments.
+# Creates a dictionary from key arguments, which become symbol keys.
 #
-# Positional arguments receive incrementing integer keys starting at `0`.
-# Key arguments become symbol keys. The function-call syntax cannot specify
-# other key types; use a [horizontal dictionary
-# literal](../../language/data-structures.md#literals) or [vertical
-# data](../../language/vertical-layout.md#vertical-data) instead.
-pub def dict[...Ts] ...pairs @ Ts -> Dict[Ts]
+# The function-call syntax cannot specify other key types; use a [horizontal
+# dictionary literal](../../language/data-structures.md#literals) or [vertical
+# data](../../language/vertical-layout.md#vertical-data) instead. A positional
+# argument raises [`UnexpectedPosError`](std.UnexpectedPosError).
+pub def dict[...Ts @ {**Value}] ...pairs @ Ts -> Dict[Ts]
   ...
 
 # Makes a proxy for a value's public fields and properties.
@@ -286,7 +291,7 @@ pub def int
 do -> Int
   ...
 
-# Creates a record from positional and key arguments.
+# Creates an [`Args`](std.Args) from positional and key arguments.
 #
 # Positional arguments become positional items, and key arguments become
 # symbol-keyed items.
@@ -294,12 +299,30 @@ do -> Int
 # ## Example
 #
 # ```
-# let r = record name: Alice age: 30
+# let r = args name: Alice age: 30
 # echo $r[:name:]  # Alice
 # ```
-pub def record[...Ts]
+pub def args[...Ts]
   # Positional and key field values.
-  ...args @ Ts
+  ...items @ Ts
+do -> Args[...Ts]
+  ...
+
+# Creates a [`Record`](std.Record) from positional and key arguments.
+#
+# Positional arguments become positional items, and key arguments become
+# symbol-keyed items, in order. A key may repeat.
+#
+# ## Example
+#
+# ```
+# let r = record 1 2 name: Alice
+# r.push 3
+# assert_eq $r[2] 3
+# ```
+pub def record[...Ts]
+  # Positional and key item values.
+  ...items @ Ts
 do -> Record[...Ts]
   ...
 
@@ -351,7 +374,7 @@ pub def str value @ Value -> Str
 pub def struct[...Ts]
   # Positional and key item values.
   ...items @ Ts
-do -> Struct[Ts]
+do -> Struct[...Ts]
   ...
 
 # Interns a string as a [`Sym`](std.Sym).
@@ -569,7 +592,6 @@ do
 
 
 # Reads dictionary-like entries, including multiple values for a key.
-# Integer keys retain the positional structure described by `S`.
 pub @class Map[S @ {...}]: BaseMap[S] Index[S]
   # The number of pairs, counting repeated keys separately.
   #[getter]
@@ -722,7 +744,7 @@ pub @class MutSeq[T]: AssignSeq[T]
 # [`(iter)`](std.BaseIterable) is enough for `for`; a class that also
 # subclasses `Iterable` gets these methods for free, each obtaining an iterator
 # with `(iter)` and calling the [`Iter`](std.Iter) method of the same name.
-# Arrays, dicts, and ranges are `Iterable`; a [`Record`](std.Record) is not.
+# Arrays, dicts, and ranges are `Iterable`; an [`Args`](std.Args) is not.
 #
 # ```
 # class Bag: Iterable
@@ -2149,7 +2171,7 @@ pub class DataError: RuntimeError
 # reads a dict takes a `BaseDict`, so it accepts dicts with narrower items.
 #
 # `BaseDict` is `Dict` at runtime, so only a dict is a `BaseDict`.
-pub class BaseDict[S @ {...}]:
+pub class BaseDict[S @ {*(Value): Value}]:
   @Map[S] @Index[S] @Spread[S]
   Iterable[Entries[S]]
 do
@@ -2313,19 +2335,17 @@ do
 # - **`get`** and **`pop`** accept an `instance` parameter to access specific
 #   values by their position (0-indexed) among values for that key; negative
 #   instance indexes count from the end
-pub class Dict[S @ {...}]: BaseDict[S] @MutMap[S] @Assign[S]
+pub class Dict[S @ {*(Value): Value}]: BaseDict[S] @MutMap[S] @Assign[S]
   # Builds a dictionary by spreading one source, as `{...source}` does.
   #
-  # Spreading an array gives positional items, so an array of pairs is not a
-  # mapping: `Dict [(:a:, 1)]` is `{(:a:, 1)}`. Adapt pairs with
+  # A dictionary holds only keyed items, so a source with positional items,
+  # such as an array of pairs, raises
+  # [`UnexpectedPosError`](std.UnexpectedPosError). Adapt pairs with
   # [`Iter.kv`](std.Iter.kv) instead:
   #
   # ```
   # let d = Dict $ pairs.iter().kv()
   # ```
-  #
-  # The lowercase `dict` factory instead assigns integer keys to positional
-  # arguments and symbol keys to key arguments.
   pub def (init) self source @ Spread[S]
     ...
 
@@ -2425,6 +2445,209 @@ pub class Dict[S @ {...}]: BaseDict[S] @MutMap[S] @Assign[S]
   # d[:age:] = 30
   # ```
   pub def (assign)[K] self key@K value@AssignItem[S, K]
+    ...
+
+
+# The read-only half of a [`Record`](std.Record), whose items it holds
+# covariantly: a `Record[Int, a: Int]` is a `BaseRecord[Int, a: (Int | Str)]`.
+# A parameter that only reads a record takes a `BaseRecord`, so it accepts
+# records with narrower items.
+#
+# `BaseRecord` is `Record` at runtime, so only a record is a `BaseRecord`.
+pub class BaseRecord[...Ts @ {*Value, **Value}]:
+  @Map[Ts] @Index[Ts] @Spread[Ts]
+  Iterable[Entries[Ts]]
+do
+  # Returns the number of items, counting each value of a repeated key.
+  #[getter]
+  pub def len self -> Int
+    ...
+
+  # Tests whether a position or key is present. With a `value`, tests whether
+  # the position holds it, or any value of the key equals it.
+  pub def contains
+    self
+    # the position or key
+    key @ Value
+    # a value to look for
+    value @ Value = ...
+  do -> Bool
+    ...
+
+  # Returns a shallow copy.
+  #
+  # When inherited by a Do subclass, `copy()` calls the subclass constructor with
+  # the source record as a single positional argument.
+  pub def copy self -> BaseRecord[...Ts]
+    ...
+
+  # Returns the number of positional items plus the number of distinct keys,
+  # or with a `key`, how many values it has.
+  pub def count self key @ Value = ... -> Int
+    ...
+
+  # Retrieves a positional item or a value of a key. Returns `nil` if it's
+  # missing and no alternative is provided.
+  pub def get[K, D = nil]
+    self
+    # the position or key
+    key @ K
+    # which value of a repeated key to retrieve (0-indexed; negative counts from end; default: last)
+    instance @ Int = ...
+    :default @ D = ...
+    :else @ (() -> D) = ...
+  do -> (IndexItem[Ts, K] | D)
+    ...
+
+  # Returns an iterator of keys: each position, and each distinct key once, in
+  # the order its first value was added.
+  pub def keys self -> UnpackIter[Keys[Ts]]
+    ...
+
+  # Returns an iterator yielding `(key, value)` pairs, the same as ordinary
+  # iteration.
+  pub def pairs self -> Iter[Entries[Ts]]
+    ...
+
+  # Returns an iterator of values. With a `key`, it yields only that position's
+  # value or that key's values.
+  @def values self -> UnpackIter[Values[Ts]]
+  @def values[K] self key@K -> UnpackIter[IndexItem[Ts, K]]
+  pub def values self key @ Value = ... -> UnpackIter[Values[Ts]]
+    ...
+
+  # Returns a positional item, or the last value of a key.
+  #
+  # A missing item raises [`IndexError`](std.IndexError).
+  pub def (index)[K] self key@K -> IndexItem[Ts, K]
+    ...
+
+  # Spreads the items: positional items positionally, keyed items as keys.
+  pub def (spread) self -> Spread[Ts]
+    ...
+
+  # Iterating yields `(index, value)` and `(key, value)` pairs.
+  pub def (iter) self -> Iter[Entries[Ts]]
+    ...
+
+  # Destructures the record: positional patterns take its positional items,
+  # and key patterns its keys.
+  pub def (unpack) self -> BaseRecord[...Ts]
+    ...
+
+
+# Records are ordered, mutable sequences of positional items and symbol-keyed
+# items: the mutable counterpart of [`Args`](std.Args), as
+# [`Array`](std.Array) is of [`Tuple`](std.Tuple).
+#
+# A brace literal with positional items, such as `{1, 2, tag: "x"}`, makes a
+# record, as does a vertical data block with dash items and keys.
+#
+# An `Int` always selects a positional item and a `Sym` always selects a key,
+# so the two can't be confused. Negative positions count from the end.
+#
+# ## Positional Items
+#
+# Inserting or removing a positional item shifts the ones after it, as in an
+# array:
+#
+# ```
+# let r = {1, 2, 3}
+# r.insert 0 0
+# assert_eq (r.pop -1) 3
+# assert_eq $r {0, 1, 2}
+# ```
+#
+# ## Keys
+#
+# Keys follow a [`Dict`](std.Dict)'s multi-map rules:
+#
+# - **Indexing** (`r[:key:]`) returns the last value of a key.
+# - **Assignment** (`r[:key:] = value`) replaces every value of a key.
+# - **`insert`** adds another value for a key.
+# - **`get`** and **`pop`** take an `instance` that selects one of a key's
+#   values.
+#
+# ## Iteration
+#
+# Iterating yields `(index, value)` for each positional item and `(key, value)`
+# for each keyed item, in the order they were added. Spreading and unpacking
+# give positional items positionally and keyed items as keys. Equality and
+# hashing follow the same order.
+pub class Record[...Ts @ {*Value, **Value}]: BaseRecord[...Ts] @MutMap[Ts] @Assign[Ts]
+  # Builds a record by spreading one source, whose keys must be symbols.
+  pub def (init) self source @ Spread[Ts]
+    ...
+
+  @def clear self @ Record[...Clearable[Ts]]
+
+  # Removes every item.
+  pub def clear self
+    ...
+
+  # Returns a shallow copy, as [`BaseRecord.copy`](std.BaseRecord.copy) does.
+  pub def copy self -> Record[...Ts]
+    ...
+
+  @def delete[K] self @ Record[...Deletable[Ts, K]] key @ K -> Bool
+
+  # Removes a positional item, shifting the ones after it, or every value of a
+  # key. Indicates whether anything was removed.
+  pub def delete
+    self
+    # the position or key
+    key @ Value
+  do -> Bool
+    ...
+
+  # Inserts a positional item before a position, shifting the ones after it,
+  # or adds a value for a key without removing its others.
+  #
+  # ## Errors
+  #
+  # Raises [`IndexError`](std.IndexError) if the position is past the end.
+  pub def insert[K]
+    self
+    # the position or key
+    key @ K
+    # the value
+    value @ InsertItem[Ts, K]
+  do
+    ...
+
+  @def pop[K, D = Never]
+    self @ Record[...Deletable[Ts, K]]
+    key @ K
+    instance @ Int = ...
+    :default @ D = ...
+    :else @ (() -> D) = ...
+  do -> (IndexItem[Ts, K] | D)
+
+  # Removes and returns a positional item, shifting the ones after it, or a
+  # value of a key, by default its first. `r.pop -1` removes the last
+  # positional item.
+  #
+  # ## Errors
+  #
+  # Raises [`IndexError`](std.IndexError) if the item is missing and there is
+  # no `default` or `else`.
+  pub def pop[K, D = Never]
+    self
+    # the position or key
+    key @ K
+    # which value of a repeated key to remove (0-indexed; negative counts from end; default: first)
+    instance @ Int = ...
+    :default @ D = ...
+    :else @ (() -> D) = ...
+  do -> (IndexItem[Ts, K] | D)
+    ...
+
+  # Appends positional items.
+  pub def push self ...values @ PushItem[Ts]
+    ...
+
+  # Overwrites a positional item, or replaces every value of a key.
+  pub def (assign)[K] self key@K value@AssignItem[Ts, K]
     ...
 
 
@@ -3696,44 +3919,42 @@ pub class Range[T @ Num]: Iterable[T] @Spread[T]
 
 # Stores an immutable sequence of positional items and symbol-keyed items.
 #
-# Records keep their items in order, and a key may repeat. A lookup finds the
+# An `Args` keeps its items in order, and a key may repeat. A lookup finds the
 # latest value for a key. Spreading a repeated key into a call raises
 # [`UnexpectedKeyError`](std.UnexpectedKeyError) if it names a parameter;
 # duplicates captured by a rest remain in order. Keys are read by indexing,
 # not as fields:
 #
 # ```
-# let r = record name: Alice age: 30
+# let r = args name: Alice age: 30
 # assert_eq $r[:name:] Alice
 # ```
 #
-# A variadic capture such as `...rest` binds a record of the remaining
-# arguments. Use [`with`](std.Record.with) to replace keys in a new record:
+# A variadic capture such as `...rest` binds an `Args` of the remaining
+# arguments. Use [`with`](std.Args.with) to replace keys in a new `Args`:
 #
 # ```
 # let updated = old.with status: ready
 # ```
-pub class Record[...Ts]:
+pub class Args[...Ts]:
   Iterable[Entries[Ts]] @Index[Ts] @BaseMap[Ts]
 do
-  # Builds a record from one spreadable source of key-value pairs.
+  # Builds an `Args` from one spreadable source of key-value pairs.
   #
   # ```
-  # let r = Record {name: Alice, age: 30}
+  # let r = Args {name: Alice, age: 30}
   # ```
   #
-  # Integer keys counting up from `0` become positional items, as when
-  # spreading a dict.
-  #
-  # The lowercase `record` factory instead builds a record from its arguments.
+  # The lowercase `args` factory instead builds an `Args` from its arguments.
   #
   # ```
-  # let r = record first second name: Alice
+  # let r = args first second name: Alice
   # ```
   #
   # ## Errors
   #
-  # Raises `TypeError` for any other key that is not a symbol.
+  # Raises [`UnexpectedKeyError`](std.UnexpectedKeyError) for a key that is
+  # not a symbol.
   pub def (init) self source @ Spread[Ts]
     ...
 
@@ -3746,7 +3967,7 @@ do
   do -> (Value | D)
     ...
 
-  # Replaces keys in a new record, leaving the original unchanged.
+  # Replaces keys in a new `Args`, leaving the original unchanged.
   #
   # Each updated key occupies its first position; later occurrences are removed.
   # New keys append in the order first supplied. Repeated updates use their last
@@ -3754,28 +3975,28 @@ do
   # Spread a source with `...source` to supply updates.
   #
   # ```
-  # let r = record status: pending name: Alice status: queued
+  # let r = args status: pending name: Alice status: queued
   # assert_eq (r.with status: ready) (status: "ready", name: "Alice")
   # ```
   #
-  # The result is typed as a plain [`Record`](std.Record), so the type checker
+  # The result is typed as a plain [`Args`](std.Args), so the type checker
   # doesn't know its keys.
   #
   # ## Errors
   #
   # Raises [`UnexpectedPosError`](std.UnexpectedPosError) for positional arguments.
-  pub def with self **updates @ Value -> Record
+  pub def with self **updates @ Value -> Args
     ...
 
-  # Removes all occurrences of the keys in a new record.
+  # Removes all occurrences of the keys in a new `Args`.
   #
   # Missing and repeated keys are harmless. Remaining items keep their relative
   # order, and the original is unchanged. Only symbol keys can be removed. The
-  # result is typed as a plain [`Record`](std.Record), so the type checker
+  # result is typed as a plain [`Args`](std.Args), so the type checker
   # doesn't know its keys.
   #
   # ```
-  # let r = record name: Alice status: ready debug: true
+  # let r = args name: Alice status: ready debug: true
   # assert_eq (r.without :status: :debug:) (name: "Alice")
   # ```
   #
@@ -3785,7 +4006,7 @@ do
   # | --------- | --------- |
   # | [`TypeError`](std.TypeError) | A key is not a symbol |
   # | [`UnexpectedKeyError`](std.UnexpectedKeyError) | A keyword argument is supplied |
-  pub def without self *keys@Sym -> Record
+  pub def without self *keys@Sym -> Args
     ...
 
   # Number of items, counting each instance of a repeated key.
@@ -3793,20 +4014,20 @@ do
   pub def len self -> Int
     ...
 
-  # Iterates record items as `(key, value)` pairs in order. A positional item's
+  # Iterates the items as `(key, value)` pairs in order. A positional item's
   # key is its position.
   pub def (iter) self -> UnpackIter[Entries[Ts]]
     ...
 
-  # Unpacks record items by position and symbol.
-  pub def (unpack) self -> Record[...Ts]
+  # Unpacks the items by position and symbol.
+  pub def (unpack) self -> Args[...Ts]
     ...
 
   # Returns the value at a position or key.
   pub def (index)[K] self key@K -> IndexItem[Ts, K]
     ...
 
-  # Spreads the record's items.
+  # Spreads the items.
   pub def (spread) self -> Spread[Ts]
     ...
 
@@ -4750,13 +4971,13 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
 
 
 # A read-only view of a [`Struct`](std.Struct), covariant in its schema: a
-# `Struct[{a: Int}]` is a `BaseStruct[{a: (Int | Str)}]`. A parameter that only
+# `Struct[a: Int]` is a `BaseStruct[a: (Int | Str)]`. A parameter that only
 # reads a struct takes a `BaseStruct`, so it accepts structs with narrower items.
 #
 # `BaseStruct` is `Struct` at runtime, so only a struct is a `BaseStruct`.
-pub class BaseStruct[S @ {...}]:
-  @BaseIterable[Entries[S]] @Index[S] @Spread[S]
-  - @Unpack[S, Rest: BaseMap[S], Pos: BaseSeq[S]]
+pub class BaseStruct[...Ts @ {*Value, **Value}]:
+  @BaseIterable[Entries[Ts]] @Index[Ts] @Spread[Ts]
+  - @Unpack[Ts, Rest: BaseMap[Ts], Pos: BaseSeq[Ts]]
 do
   # Gets the value for a symbol or position, with an optional default.
   #
@@ -4766,9 +4987,9 @@ do
   # assert_eq (Struct.get s :port: default: 22) 22
   # ```
   #[class]
-  pub def get[T @ {...}, K, D = nil]
+  pub def get[T @ {*Value, **Value}, K, D = nil]
     self
-    target @ BaseStruct[T]
+    target @ BaseStruct[...T]
     key @ K
     :default @ D = ...
     :else @ (() -> D) = ...
@@ -4783,7 +5004,7 @@ do
   # assert (!Struct.contains(s, :port:))
   # ```
   #[class]
-  pub def contains self target @ BaseStruct[{...}] key @ (Int | Sym) -> Bool
+  pub def contains self target @ BaseStruct[...{*Value, **Value}] key @ (Int | Sym) -> Bool
     ...
 
   # Reads the item a name keys, as in `s.name`.
@@ -4791,7 +5012,7 @@ do
   # ## Errors
   #
   # Raises [`FieldError`](std.FieldError) when no item has the key.
-  pub def (get)[K] self key@K -> IndexItem[S, K]
+  pub def (get)[K] self key@K -> IndexItem[Ts, K]
     ...
 
   # Returns the value at a position or key.
@@ -4799,20 +5020,20 @@ do
   # ## Errors
   #
   # Raises [`IndexError`](std.IndexError) when no item has the key.
-  pub def (index)[K] self key@K -> IndexItem[S, K]
+  pub def (index)[K] self key@K -> IndexItem[Ts, K]
     ...
 
   # Iterates items as `(key, value)` pairs in order. A positional item's key is
   # its position.
-  pub def (iter) self -> UnpackIter[Entries[S]]
+  pub def (iter) self -> UnpackIter[Entries[Ts]]
     ...
 
   # Spreads the struct's items.
-  pub def (spread) self -> Spread[S]
+  pub def (spread) self -> Spread[Ts]
     ...
 
-  # Unpacks items by position and symbol, as a [`Record`](std.Record) does.
-  pub def (unpack) self -> BaseStruct[S]
+  # Unpacks items by position and symbol, as an [`Args`](std.Args) does.
+  pub def (unpack) self -> BaseStruct[...Ts]
     ...
 
 
@@ -4832,17 +5053,14 @@ do
 # [`get`](std.BaseStruct.get) take the struct as their first argument, so they
 # can't collide with an item.
 #
-# The schema `S` types each item, so the type checker reports reading or
+# The type arguments type each item, so the type checker reports reading or
 # writing a name the schema lacks.
-pub class Struct[S @ {...}]: BaseStruct[S] @Assign[S]
+pub class Struct[...Ts @ {*Value, **Value}]: BaseStruct[...Ts] @Assign[Ts]
   # Builds a struct from one spreadable source of key-value pairs.
   #
   # ```
   # let s = Struct {host: "localhost", port: 22}
   # ```
-  #
-  # Integer keys counting up from `0` become positional items, as when
-  # spreading a dict.
   #
   # The lowercase [`struct`](std.struct) factory instead builds a struct from
   # its arguments.
@@ -4851,13 +5069,13 @@ pub class Struct[S @ {...}]: BaseStruct[S] @Assign[S]
   #
   # | Exception | Condition |
   # | --------- | --------- |
-  # | [`TypeError`](std.TypeError) | Another key is not a symbol |
+  # | [`UnexpectedKeyError`](std.UnexpectedKeyError) | A key is not a symbol |
   # | [`ValueError`](std.ValueError) | A symbol key is repeated |
-  pub def (init) self source @ Spread[S]
+  pub def (init) self source @ Spread[Ts]
     ...
 
   # Replaces the item a name keys, or adds one, as in `s.name = value`.
-  pub def (set)[K] self key@K value@AssignItem[S, K]
+  pub def (set)[K] self key@K value@AssignItem[Ts, K]
     ...
 
   # Replaces the item at a position or key. A new symbol key adds an item.
@@ -4865,7 +5083,7 @@ pub class Struct[S @ {...}]: BaseStruct[S] @Assign[S]
   # ## Errors
   #
   # Raises [`IndexError`](std.IndexError) for a position with no item.
-  pub def (assign)[K] self key@K value@AssignItem[S, K]
+  pub def (assign)[K] self key@K value@AssignItem[Ts, K]
     ...
 
 

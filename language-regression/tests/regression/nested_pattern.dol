@@ -36,10 +36,10 @@ let w (
 assert_eq [w, w1, w2] [1, 2, 3]
 
 # Vertical layout nests under keys and dashes
-bind {1, k: [5, 6], "s": {z: 7}, extra: true}
+bind {1, k: [5, 6], s: {z: 7}, extra: true}
   - v
   k: (k1 k2)
-  "s":
+  s:
     :z
   ...
 assert_eq [v, k1, k2, z] [1, 5, 6, 7]

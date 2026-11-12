@@ -275,14 +275,6 @@ impl<'v> Builder<'_, 'v> {
                 self.seen.remove(&id);
                 Ok(Yaml::Mapping(map))
             }
-            View::Record(handle) => {
-                let id = handle.id().addr();
-                self.enter(id, "record")?;
-                let mut pairs = handle.pairs();
-                let map = self.mapping(strand, |strand, key, val| pairs.next(strand, key, val))?;
-                self.seen.remove(&id);
-                Ok(Yaml::Mapping(map))
-            }
             View::Struct(handle) => {
                 let id = handle.id().addr();
                 self.enter(id, "struct")?;
@@ -290,6 +282,9 @@ impl<'v> Builder<'_, 'v> {
                 let map = self.mapping(strand, |strand, key, val| pairs.next(strand, key, val))?;
                 self.seen.remove(&id);
                 Ok(Yaml::Mapping(map))
+            }
+            View::Record(_) => {
+                Err(Error::type_error(strand, "`Record` has no YAML encoding").into())
             }
             _ => Err(Error::type_error(strand, "unsupported YAML type").into()),
         }

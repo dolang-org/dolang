@@ -11,8 +11,8 @@ pub class Node[A, B]
     ...
 
 pub @let List[T] = (nil | Node[T, List[T]])
-pub @let Cells = [{id: Int, children: Cells}]
-pub @let Grid = [{id: Num, children: Grid}]
+pub @let Cells = Array[Dict[{id: Int, children: Cells}]]
+pub @let Grid = Array[Dict[{id: Num, children: Grid}]]
 
 # An `Array`'s items are invariant
 pub def cells c @ Cells

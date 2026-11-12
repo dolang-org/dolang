@@ -128,7 +128,7 @@ pub def recent p @ (((:x:, Int), Str) | ((:y:, Str), Int))
 pub @let Steps = {*run: (() -> nil), *Str}
 
 # Entries of an aliased schema are its alternatives too
-pub def aliased d @ Dict[Steps]
+pub def aliased d @ Record[...Steps]
   for entry = d
     match entry
       (Int(_) _) do nil
@@ -141,7 +141,7 @@ def noop()
 
 # Narrowing in each arm grows a loop variable's join past the widening limit,
 # which widens it to an ancestor its alternatives share
-pub def widened r @ Record[...{a: Int, b: Int, c: Int, d: Int}]
+pub def widened r @ Args[...{a: Int, b: Int, c: Int, d: Int}]
   for e = r
     match e
       (:a: _) do nil

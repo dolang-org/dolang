@@ -22,7 +22,7 @@ pub class Counter
     let _ = self.#label
     #       ^~~~~~~~~~~: flow nil | std.Str
     let _ = self.#items
-    #       ^~~~~~~~~~~: flow [std.Int]
+    #       ^~~~~~~~~~~: flow std.Array[std.Int]
     if self.#limit
       let _ = self.#limit
       #       ^~~~~~~~~~~: flow std.Int

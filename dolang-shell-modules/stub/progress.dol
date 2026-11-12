@@ -153,6 +153,22 @@ pub def show[R]
 do -> R
   ...
 
+# The items of a step specification for [`steps`](progress.steps), written
+# as a [`Record`](std.Record): the step's function as its one
+# positional item, and these optional keys:
+#
+# | Key    | Type             | Description                 |
+# | ------ | ---------------- | --------------------------- |
+# | `name` | [`Str`](std.Str) | Step name                   |
+# | `icon` | [`Str`](std.Str) | Icon overriding the default |
+#
+# The function runs with the channels `I` and `O` of the call to `steps`.
+pub @let StepSpec[I, O] = {((<I, >O) -> Value), ?name: Str, ?icon: Str}
+
+# A step of [`steps`](progress.steps): a function, or a specification of one
+# with the items of [`StepSpec`](progress.StepSpec).
+pub @let Step[I, O] = (((<I, >O) -> Value) | BaseRecord[...StepSpec[I, O]])
+
 # Runs a sequence of steps under an indicator tracking step completion.
 #
 # Before a named step runs, its name is appended to the overall message with a
@@ -178,20 +194,15 @@ do -> R
 #   - name: package
 #     do package()
 # ```
-pub def steps
+pub def steps[I, O]
   # Overall message prefix.
   :message @ Str = ...
   # Default icon. Defaults to `"●"`.
   :icon @ Str = ...
-  # A step function or specification.
-  #
-  # A specification contains one positional function and accepts these keys:
-  #
-  # | Key    | Type                 | Description                         |
-  # | ------ | -------------------- | ----------------------------------- |
-  # | `name` | [`Str`](std.Str)     | Step name                           |
-  # | `icon` | [`Str`](std.Str)     | Icon overriding the default         |
-  *steps @ ((() -> Value) | Dict[{(() -> Value), ?name: Str, ?icon: Str}])
+  # Steps to run, in order.
+  *steps @ Step[I, O]
+  <I
+  >O
 do -> Array[Value]
   ...
 

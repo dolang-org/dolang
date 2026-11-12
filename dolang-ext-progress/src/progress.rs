@@ -16,7 +16,7 @@ use dolang::runtime::{
     object::TypeBuilder,
     strand::{self, Local},
     unpack,
-    value::{Empty, Singleton, Slot, View},
+    value::{DictPairs, Empty, RecordPairs, Singleton, Slot, View},
     vm::Register,
 };
 use dolang_ext_shell::with_terminal;
@@ -618,6 +618,37 @@ struct StepMetadata {
     icon: Option<String>,
 }
 
+/// The pairs of a step specification, which is a dict or a record
+enum StepPairs<'v, 'a> {
+    Dict(DictPairs<'v, 'a>),
+    Record(RecordPairs<'v, 'a>),
+}
+
+impl<'v> StepPairs<'v, '_> {
+    fn next<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        key: Slot<'v, '_>,
+        value: Slot<'v, '_>,
+    ) -> Result<'v, 's, bool> {
+        match self {
+            StepPairs::Dict(pairs) => pairs.next(strand, key, value),
+            StepPairs::Record(pairs) => pairs.next(strand, key, value),
+        }
+    }
+}
+
+fn step_str<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: &Value<'v>,
+    what: &str,
+) -> Result<'v, 's, String> {
+    Ok(value
+        .as_str(strand)
+        .ok_or_else(|| Error::type_error(strand, format!("step {what}: expected `Str`")))?
+        .to_string())
+}
+
 fn parse_step<'v, 's>(
     strand: &mut Strand<'v, 's>,
     step: &Value<'v>,
@@ -627,50 +658,38 @@ fn parse_step<'v, 's>(
     mut key: Slot<'v, '_>,
     mut value: Slot<'v, '_>,
 ) -> Result<'v, 's, StepMetadata> {
-    let Some(dict) = step.as_dict(strand) else {
-        Output::set(strand, callable, step);
-        return Ok(StepMetadata {
-            name: None,
-            icon: None,
-        });
+    let mut pairs = match step.view(strand) {
+        View::Dict(dict) => StepPairs::Dict(dict.pairs()),
+        View::Record(record) => StepPairs::Record(record.pairs()),
+        _ => {
+            Output::set(strand, callable, step);
+            return Ok(StepMetadata {
+                name: None,
+                icon: None,
+            });
+        }
     };
 
-    if !dict.get(strand, 0i64, None, &mut callable)? {
-        return Err(Error::missing_positional(strand, 0));
-    }
-
-    let name = if dict.get(strand, name_sym, None, &mut value)? {
-        Some(
-            value
-                .as_str(strand)
-                .ok_or_else(|| Error::type_error(strand, "step name: expected `Str`"))?
-                .to_string(),
-        )
-    } else {
-        None
-    };
-    let icon = if dict.get(strand, icon_sym, None, &mut value)? {
-        Some(
-            value
-                .as_str(strand)
-                .ok_or_else(|| Error::type_error(strand, "step icon: expected `Str`"))?
-                .to_string(),
-        )
-    } else {
-        None
-    };
-
-    let mut pairs = dict.pairs();
+    // Only a record has positional items; a dict's integer keys are keys
+    let positional = matches!(pairs, StepPairs::Record(_));
+    let (mut found, mut name, mut icon) = (false, None, None);
     while pairs.next(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut value))? {
         match key.view(strand) {
-            View::Int(0) => {}
-            View::Int(index) if index >= 0 => {
+            View::Int(0) if positional => {
+                Output::set(strand, Slot::reborrow(&mut callable), &*value);
+                found = true;
+            }
+            View::Int(index) if positional && index >= 0 => {
                 let index = usize::try_from(index).unwrap_or(usize::MAX);
                 return Err(Error::unexpected_positional(strand, index));
             }
-            View::Sym(sym) if sym == name_sym || sym == icon_sym => {}
+            View::Sym(sym) if sym == name_sym => name = Some(step_str(strand, &value, "name")?),
+            View::Sym(sym) if sym == icon_sym => icon = Some(step_str(strand, &value, "icon")?),
             _ => return Err(Error::unexpected_key(strand, &key)),
         }
+    }
+    if !found {
+        return Err(Error::missing_positional(strand, 0));
     }
 
     Ok(StepMetadata { name, icon })
