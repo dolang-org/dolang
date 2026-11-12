@@ -318,6 +318,11 @@ pub(crate) enum Contradiction {
     Required(TypeId),
     /// An `InsertItem`'s key selects an item that doesn't admit repetition
     Unrepeatable(TypeId),
+    /// A key selects a position whose insertion or removal would shift
+    /// positions the schema doesn't let move
+    Shifted(TypeId),
+    /// A `PushItem`'s schema has no rest position for an appended one
+    Unextendable,
     /// A mapping's packs have items that don't correspond, by count,
     /// multiplicity or form
     MappedPacks,

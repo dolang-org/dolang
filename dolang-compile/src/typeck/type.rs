@@ -236,6 +236,9 @@ pub(crate) enum UnionMember {
     /// The meet of the values of a schema's items a key selects, each of which
     /// must admit repetition, as `InsertItem[S, K]`
     InsertItem(TypeId, TypeId),
+    /// The meet of the values a schema's appended position may have, as
+    /// `PushItem[S]`
+    PushItem(TypeId),
 }
 
 impl UnionMember {
@@ -248,7 +251,8 @@ impl UnionMember {
         | Self::Entries(id)
         | Self::IndexItem(id, _)
         | Self::AssignItem(id, _)
-        | Self::InsertItem(id, _)) = self;
+        | Self::InsertItem(id, _)
+        | Self::PushItem(id)) = self;
         id
     }
 
@@ -260,6 +264,12 @@ impl UnionMember {
             }
             _ => None,
         }
+    }
+
+    /// Whether evaluating it takes the solver: an item projection selecting by
+    /// a key, or `PushItem`, which meets values
+    pub(crate) fn solved(self) -> bool {
+        self.key().is_some() || matches!(self, Self::PushItem(_))
     }
 
     /// The schema it projects, if it's a projection
@@ -281,6 +291,7 @@ impl UnionMember {
             Self::IndexItem(_, key) => Self::IndexItem(id, key),
             Self::AssignItem(_, key) => Self::AssignItem(id, key),
             Self::InsertItem(_, key) => Self::InsertItem(id, key),
+            Self::PushItem(_) => Self::PushItem(id),
         }
     }
 
@@ -360,6 +371,8 @@ pub(crate) struct Promoted {
     pub(crate) fixed: Vec<TypeId>,
     /// The values of the positions after them, whose indexes vary
     pub(crate) varying: Vec<TypeId>,
+    /// The multiplicity of each varying position, through inclusions
+    pub(crate) varying_multiplicity: Vec<Multiplicity>,
     /// Each keyed item's multiplicity, through inclusions, key and value
     pub(crate) keyed: Vec<(Multiplicity, TypeId, TypeId)>,
     /// The included schemas not yet known
@@ -952,6 +965,9 @@ pub(crate) enum Intrinsic {
     AssignItem,
     /// `InsertItem[S, K]`, as `AssignItem` where each item admits repetition
     InsertItem,
+    /// `PushItem[S]`, the meet of the values of the positions after a schema's
+    /// fixed ones, which an appended position may be
+    PushItem,
     /// `Deletable[S, K]`, `S` where each item a key selects admits zero
     Deletable,
     /// `Clearable[S]`, `S` where each of its items admits zero
@@ -978,7 +994,7 @@ pub(crate) enum Intrinsic {
 }
 
 impl Intrinsic {
-    const ALL: [Self; 20] = [
+    const ALL: [Self; 21] = [
         Self::Union,
         Self::Keys,
         Self::Values,
@@ -986,6 +1002,7 @@ impl Intrinsic {
         Self::IndexItem,
         Self::AssignItem,
         Self::InsertItem,
+        Self::PushItem,
         Self::Deletable,
         Self::Clearable,
         Self::Fields,
@@ -1012,6 +1029,7 @@ struct Intrinsics {
     index_item: Option<TypeId>,
     assign_item: Option<TypeId>,
     insert_item: Option<TypeId>,
+    push_item: Option<TypeId>,
     deletable: Option<TypeId>,
     clearable: Option<TypeId>,
     fields: Option<TypeId>,
@@ -1037,6 +1055,7 @@ impl Intrinsics {
             Intrinsic::IndexItem => self.index_item,
             Intrinsic::AssignItem => self.assign_item,
             Intrinsic::InsertItem => self.insert_item,
+            Intrinsic::PushItem => self.push_item,
             Intrinsic::Deletable => self.deletable,
             Intrinsic::Clearable => self.clearable,
             Intrinsic::Fields => self.fields,
@@ -1062,6 +1081,7 @@ impl Intrinsics {
             Intrinsic::IndexItem => &mut self.index_item,
             Intrinsic::AssignItem => &mut self.assign_item,
             Intrinsic::InsertItem => &mut self.insert_item,
+            Intrinsic::PushItem => &mut self.push_item,
             Intrinsic::Deletable => &mut self.deletable,
             Intrinsic::Clearable => &mut self.clearable,
             Intrinsic::Fields => &mut self.fields,
@@ -2095,6 +2115,7 @@ impl Database {
             (Intrinsic::Keys, UnionMember::Keys),
             (Intrinsic::Values, UnionMember::Values),
             (Intrinsic::Entries, UnionMember::Entries),
+            (Intrinsic::PushItem, UnionMember::PushItem),
         ]
         .into_iter()
         .find(|&(intrinsic, _)| self.intrinsic(intrinsic) == Some(base))?
@@ -2141,8 +2162,8 @@ impl Database {
             Type::Unknown(_) => {
                 return Projected::Reduced(vec![UnionMember::Type(self.fixed.unknown)]);
             }
-            // Selecting by a key takes the solver
-            _ if member.key().is_some() => return Projected::Pending,
+            // Selecting by a key, or meeting values, takes the solver
+            _ if member.solved() => return Projected::Pending,
             Type::Schema(items) => items,
             _ => return Projected::Pending,
         };
@@ -2268,7 +2289,10 @@ impl Database {
                 Element::Positional(value) => {
                     *varies |= multiplicity != Multiplicity::Required;
                     match *varies {
-                        true => promoted.varying.push(value),
+                        true => {
+                            promoted.varying.push(value);
+                            promoted.varying_multiplicity.push(multiplicity);
+                        }
                         false => promoted.fixed.push(value),
                     }
                 }

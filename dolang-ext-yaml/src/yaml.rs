@@ -283,6 +283,9 @@ impl<'v> Builder<'_, 'v> {
                 self.seen.remove(&id);
                 Ok(Yaml::Mapping(map))
             }
+            View::Record(_) => {
+                Err(Error::type_error(strand, "`Record` has no YAML encoding").into())
+            }
             _ => Err(Error::type_error(strand, "unsupported YAML type").into()),
         }
     }

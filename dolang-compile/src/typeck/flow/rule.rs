@@ -1551,6 +1551,11 @@ impl<'a> Flow<'a, '_> {
                 let key = self.subject(key);
                 return Problem::Unrepeatable { span, key };
             }
+            Contradiction::Shifted(key) => {
+                let key = self.subject(key);
+                return Problem::Shifted { span, key };
+            }
+            Contradiction::Unextendable => return Problem::Unextendable(span),
             _ => {}
         }
         let fallback = Problem::Call {

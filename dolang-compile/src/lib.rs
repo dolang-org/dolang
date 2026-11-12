@@ -59,9 +59,9 @@ use ast::Res;
 
 const STD_PRELUDE: &[&str] = &[
     "Array", "Bin", "BinBuf", "Bool", "Dict", "Float", "Func", "Int", "Iter", "Iterable", "Range",
-    "Args", "Set", "Sink", "Sinkable", "Str", "StrBuf", "Struct", "Sym", "Tuple", "Type", "Value",
-    "array", "bool", "class", "dbg", "dict", "fields", "final", "float", "getter", "int",
-    "mixable", "args", "setter", "static", "str", "struct", "sym", "tuple", "type",
+    "Args", "Record", "Set", "Sink", "Sinkable", "Str", "StrBuf", "Struct", "Sym", "Tuple", "Type",
+    "Value", "array", "bool", "class", "dbg", "dict", "fields", "final", "float", "getter", "int",
+    "mixable", "args", "record", "setter", "static", "str", "struct", "sym", "tuple", "type",
 ];
 
 const STD_TYPE_PRELUDE: &[&str] = &[
@@ -87,6 +87,7 @@ const STD_TYPE_PRELUDE: &[&str] = &[
     "BaseMap",
     "BaseArray",
     "BaseDict",
+    "BaseRecord",
 ];
 
 #[derive(Debug)]

@@ -16,8 +16,13 @@
 //! `InsertItem` meets the values as `AssignItem` does, where each item its key
 //! selects is keyed and repeated, as one more of it must be. `Deletable` is its
 //! schema where each item its key selects is keyed and admits none, and
-//! `Clearable` where every item admits none. A position is never inserted or
-//! deleted, since that would move the positions after it.
+//! `Clearable` where every item admits none. Inserting or removing a position
+//! shifts the positions after it, so it's admitted only past the fixed
+//! positions, where every position is optional or a rest and all have the same
+//! value, so that each fits where it moves. An insertion also needs a rest, or
+//! the last position could move past the end. `PushItem` meets the values of
+//! the positions past the fixed ones, any of which an appended position may
+//! be, and needs a rest for the same reason.
 //!
 //! A rigid or skolem key is known only by its bounds, including those its
 //! projections imply (see [`Database::implied_bounds`]), so it selects a value
@@ -38,11 +43,48 @@ use crate::typeck::r#type::Promoted;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Occurrence {
     /// A position, keyed by its index
-    Position,
+    Position(Shift),
     /// A keyed item
     Keyed(Multiplicity),
     /// An item of the dynamic schema, or of an included one
     Unknown,
+}
+
+/// Which changes shifting the positions after a position admits
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Shift {
+    /// Whether the position is fixed, and so required
+    fixed: bool,
+    delete: bool,
+    insert: bool,
+}
+
+impl Shift {
+    /// A fixed position's, which no change admits
+    const FIXED: Self = Self {
+        fixed: true,
+        delete: false,
+        insert: false,
+    };
+
+    /// A varying position's: removing one moves each after it to the one
+    /// before, which fits where every varying position is optional or a rest
+    /// and has the same value. Inserting one also needs a rest, which the last
+    /// position may move into.
+    fn varying(promoted: &Promoted) -> Self {
+        let delete = promoted.varying.windows(2).all(|pair| pair[0] == pair[1])
+            && !promoted
+                .varying_multiplicity
+                .contains(&Multiplicity::Required);
+        Self {
+            fixed: false,
+            delete,
+            insert: delete
+                && promoted
+                    .varying_multiplicity
+                    .contains(&Multiplicity::Repeated),
+        }
+    }
 }
 
 /// An item a key selects
@@ -73,7 +115,8 @@ impl Change {
     fn admits(self, occurrence: Occurrence) -> bool {
         match (self, occurrence) {
             (_, Occurrence::Unknown) => true,
-            (_, Occurrence::Position) => false,
+            (Self::Insert, Occurrence::Position(shift)) => shift.insert,
+            (Self::Delete, Occurrence::Position(shift)) => shift.delete,
             (Self::Insert, Occurrence::Keyed(multiplicity)) => {
                 multiplicity == Multiplicity::Repeated
             }
@@ -83,11 +126,16 @@ impl Change {
         }
     }
 
-    /// The contradiction of a key selecting an item that doesn't admit it
-    fn refused(self, key: TypeId) -> Contradiction {
-        match self {
-            Self::Insert => Contradiction::Unrepeatable(key),
-            Self::Delete => Contradiction::Required(key),
+    /// The contradiction of a key selecting an item that doesn't admit it. A
+    /// fixed position is required; any other position refuses by shifting.
+    fn refused(self, occurrence: Occurrence, key: TypeId) -> Contradiction {
+        match (self, occurrence) {
+            (Self::Delete, Occurrence::Position(Shift { fixed: true, .. })) => {
+                Contradiction::Required(key)
+            }
+            (_, Occurrence::Position(_)) => Contradiction::Shifted(key),
+            (Self::Insert, _) => Contradiction::Unrepeatable(key),
+            (Self::Delete, _) => Contradiction::Required(key),
         }
     }
 }
@@ -99,7 +147,7 @@ impl Solver<'_> {
         let Type::Union(members) = self.db.ty(ty) else {
             return Ok(None);
         };
-        if !members.iter().any(|member| member.key().is_some()) {
+        if !members.iter().any(|member| member.solved()) {
             return Ok(None);
         }
         let members = members
@@ -114,6 +162,13 @@ impl Solver<'_> {
                 UnionMember::InsertItem(schema, key) => {
                     self.changed(schema, key, Change::Insert)?;
                     Ok(UnionMember::Type(self.item(schema, key, true)?))
+                }
+                UnionMember::PushItem(schema) => {
+                    let mut met = self.db.top();
+                    for value in self.pushed(schema)? {
+                        met = self.meet(met, value)?;
+                    }
+                    Ok(UnionMember::Type(met))
                 }
                 _ => Ok(member),
             })
@@ -207,7 +262,7 @@ impl Solver<'_> {
                     occurrence, key, ..
                 } => {
                     if !change.admits(occurrence) {
-                        return Err(Issue::Contradiction(change.refused(key)));
+                        return Err(Issue::Contradiction(change.refused(occurrence, key)));
                     }
                 }
                 Selected::Rigid(member) => {
@@ -321,6 +376,21 @@ impl Solver<'_> {
         let Type::Union(members) = self.db.ty(view.ty) else {
             return Ok(None);
         };
+        if let &[UnionMember::PushItem(schema)] = &members[..] {
+            let Ok(schema) = self.reify(view.child(schema)) else {
+                return Ok(None);
+            };
+            let Ok(pushed) = self.pushed(schema) else {
+                return Ok(None);
+            };
+            let mut values = Vec::new();
+            for value in pushed {
+                if !values.contains(&value) {
+                    values.push(value);
+                }
+            }
+            return Ok((values.len() > 1).then_some(values));
+        }
         let &[
             member @ (UnionMember::AssignItem(schema, key) | UnionMember::InsertItem(schema, key)),
         ] = &members[..]
@@ -348,6 +418,28 @@ impl Solver<'_> {
             }
         }
         Ok((values.len() > 1).then_some(values))
+    }
+
+    /// The values of the positions of a closed schema that an appended position
+    /// may be: those past its fixed positions, which need a rest
+    fn pushed(&self, schema: TypeId) -> Result<Vec<TypeId>, Issue> {
+        let Some(promoted) = self.keyed_view(schema)? else {
+            return Ok(vec![self.db.unknown()]);
+        };
+        // An included schema not yet known may hold any position
+        if let Some(&opaque) = promoted.opaque.first() {
+            return match self.db.ty(opaque) {
+                Type::Unknown(_) => Ok(vec![self.db.unknown()]),
+                _ => Err(Residual::Unsupported("a schema including a schema not yet known").into()),
+            };
+        }
+        if !promoted
+            .varying_multiplicity
+            .contains(&Multiplicity::Repeated)
+        {
+            return Err(Issue::Contradiction(Contradiction::Unextendable));
+        }
+        Ok(promoted.varying)
     }
 
     /// The values of a schema's items a key selects
@@ -405,7 +497,7 @@ impl Solver<'_> {
                 (
                     self.db.intern(Type::Literal(Literal::Int(i as i128))),
                     value,
-                    Occurrence::Position,
+                    Occurrence::Position(Shift::FIXED),
                 )
             })
             .collect();
@@ -415,12 +507,8 @@ impl Solver<'_> {
                 .db
                 .intrinsic(Intrinsic::Int)
                 .ok_or(Residual::MissingIntrinsic(Intrinsic::Int))?;
-            domains.extend(
-                promoted
-                    .varying
-                    .iter()
-                    .map(|&value| (int, value, Occurrence::Position)),
-            );
+            let shift = Occurrence::Position(Shift::varying(&promoted));
+            domains.extend(promoted.varying.iter().map(|&value| (int, value, shift)));
         }
         for &(multiplicity, key, value) in &promoted.keyed {
             let occurrence = Occurrence::Keyed(multiplicity);

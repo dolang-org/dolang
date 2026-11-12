@@ -7,6 +7,8 @@ pub def fits
 do
   let _d @ Dict[Sym, Int] = Dict $ pairs.iter().kv()
   let _r @ Args[a: Int] = Args $fields
+  let _rec @ Record[{a: Int}] = Record $fields
+  let _items @ Record[{Str, a: Int}] = record "x" a: 1
   let _t @ Tuple[...Int] = Tuple [1, 2]
   let _f @ std.Fmt[Int, {}] = std.Fmt ["a", std.FmtValue 1]
 
@@ -26,6 +28,12 @@ do
   #    |
   # LL |   let _e @ Dict[{x: Int}] = Dict $ints
   #    |                             ^^^^^^^^^^
+  let _rec @ Record[{Int}] = Record $ints
+  # error: `std.Record[std.Int]` does not fit the annotation `std.Record[{std.Int}]`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _rec @ Record[{Int}] = Record $ints
+  #    |                              ^^^^^^^^^^^^
   let _t @ Tuple[Int, Int] = Tuple [1, 2]
   # error: `(*std.Int)` does not fit the annotation `(std.Int, std.Int)`
   #   --> m.dol:LL:LL

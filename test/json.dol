@@ -210,6 +210,9 @@ def unsupported_values()
   assert ((str err).contains "binary")
   assert_throws $TypeError do
     encode $ (do 1)
+  let err = assert_throws $TypeError do
+    encode (record 1 a: 2)
+  assert ((str err).contains "Record")
 
   let array = []
   array.push $array

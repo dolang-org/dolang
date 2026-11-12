@@ -169,6 +169,48 @@ rest, the repeats raise [UnexpectedKeyError](std.UnexpectedKeyError).
 
 See the [Args API](std.Args) for details.
 
+## Records (`Record`)
+
+A `Record` is a mutable sequence of positional items and symbol-keyed items:
+the mutable counterpart of `Args`, as an array is of a tuple. No literal makes
+one; build it with `record`, or from a source with `Record`:
+
+```
+let r = record 1 2 tag: x
+r.push 3
+r[:tag:] = "y"
+let copied = Record (1, tag: "x")
+```
+
+An integer always selects a positional item and a symbol always selects a key,
+so the two can't be confused. Negative positions count from the end.
+
+Positional items behave like an array's: `insert` and `pop` shift the items
+after the one they add or remove, and `push` appends.
+
+```
+let r = record a b c
+r.insert 0 z
+assert_eq (r.pop -1) c
+assert_eq $r[0] z
+```
+
+Keys follow a dict's [multi-map rules](#multi-map-semantics). Indexing reads a
+key's latest value, assignment replaces all its values, `insert` adds another
+value, and `get` and `pop` take an instance that selects one.
+
+Iterating a record yields `(index, value)` for each positional item and
+`(key, value)` for each keyed item, in the order they were added. Spreading
+and unpacking give positional items positionally and keyed items as keys.
+Equality compares the items in that order, so the same items added in a
+different order are unequal. Hashing follows the same order, as a dict's does.
+
+`BaseRecord[S]` is the read-only view of a record. A parameter that only reads
+takes a `BaseRecord`, which accepts records with narrower items, as
+[`BaseDict`](std.BaseDict) does for dicts.
+
+See the [Record API](std.Record) for details.
+
 ## Structs (`Struct`)
 
 Structs are mutable sequences of positional items and symbol-keyed items,

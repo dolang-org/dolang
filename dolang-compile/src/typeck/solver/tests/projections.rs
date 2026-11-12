@@ -242,7 +242,8 @@ fn mutators_check_their_items_multiplicities() {
     let sym = nominal(db, "Sym", vec![], vec![]);
     db.set_intrinsic(Intrinsic::Sym, sym);
     let (x, y) = (self::sym(db, "x"), self::sym(db, "y"));
-    let (zero, three) = (literal(db, 0), literal(db, 3));
+    let (zero, one, three) = (literal(db, 0), literal(db, 1), literal(db, 3));
+    let str = nominal(db, "Str", vec![], vec![]);
     let required = items(db, vec![keyed(Multiplicity::Required, x, int)]);
     let optional = items(db, vec![keyed(Multiplicity::Optional, x, int)]);
     let repeated = items(db, vec![keyed(Multiplicity::Repeated, sym, int)]);
@@ -255,6 +256,28 @@ fn mutators_check_their_items_multiplicities() {
         ],
     );
     let varying = items(db, vec![positional(Multiplicity::Repeated, int)]);
+    // `{Int, ?Int}`, `{?Int, *Str}` and `{?Int, Int}`
+    let bounded = items(
+        db,
+        vec![
+            positional(Multiplicity::Required, int),
+            positional(Multiplicity::Optional, int),
+        ],
+    );
+    let mixed = items(
+        db,
+        vec![
+            positional(Multiplicity::Optional, int),
+            positional(Multiplicity::Repeated, str),
+        ],
+    );
+    let trailing = items(
+        db,
+        vec![
+            positional(Multiplicity::Optional, int),
+            positional(Multiplicity::Required, int),
+        ],
+    );
     // `{x: Int, ...Unknown{}}`
     let unknown = items(
         db,
@@ -273,7 +296,11 @@ fn mutators_check_their_items_multiplicities() {
         (optional, x),
         (repeated, x),
         (fixed, zero),
+        (fixed, one),
         (varying, three),
+        (bounded, one),
+        (mixed, one),
+        (trailing, zero),
         (unknown, y),
         (required, y),
     ]
@@ -281,19 +308,24 @@ fn mutators_check_their_items_multiplicities() {
     .map(|(schema, key)| (schema, key, inserting(db, schema, key)))
     .collect();
     db.seal();
-    use Contradiction::{Required, Unadmitted, Unrepeatable};
+    use Contradiction::{Required, Shifted, Unadmitted, Unrepeatable};
     // `InsertItem`, `Deletable` and `Clearable` of each
     let expected = [
         (Err(Unrepeatable(x)), Err(Required(x)), Err(Required(x))),
         (Err(Unrepeatable(x)), Ok(()), Ok(())),
         (Ok(int), Ok(()), Ok(())),
-        // A position is never inserted or deleted
-        (
-            Err(Unrepeatable(zero)),
-            Err(Required(zero)),
-            Err(Required(zero)),
-        ),
-        (Err(Unrepeatable(three)), Err(Required(three)), Ok(())),
+        // A fixed position is required, and inserting before it shifts it
+        (Err(Shifted(zero)), Err(Required(zero)), Err(Required(zero))),
+        // Past the fixed positions, a shift moves rest positions into each
+        // other
+        (Ok(int), Ok(()), Err(Required(zero))),
+        (Ok(int), Ok(()), Ok(())),
+        // Without a rest, an insertion may push the last position past the end
+        (Err(Shifted(one)), Ok(()), Err(Required(zero))),
+        // A shift moves a `Str` where an `Int` goes, or a required position
+        // into an optional one
+        (Err(Shifted(one)), Err(Shifted(one)), Ok(())),
+        (Err(Shifted(zero)), Err(Shifted(zero)), Ok(())),
         // An included unknown schema may hold anything, but not instead of
         // a required item. What fits its items, as what fits `AssignItem`'s,
         // is anything.
@@ -321,6 +353,49 @@ fn mutators_check_their_items_multiplicities() {
             restricted(Restriction::Clearable),
             clear.map_err(Issue::Contradiction),
             "{schema:?}"
+        );
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn a_push_fits_every_position_past_the_fixed_ones() {
+    let db = &mut Database::new();
+    let int = int(db);
+    let str = nominal(db, "Str", vec![], vec![]);
+    let child = nominal(db, "Child", vec![], vec![int]);
+    let schema = |db: &Database, positions: &[(Multiplicity, TypeId)]| {
+        let positions = positions
+            .iter()
+            .map(|&(multiplicity, ty)| positional(multiplicity, ty))
+            .collect();
+        let schema = items(db, positions);
+        db.intern(Type::Union(vec![UnionMember::PushItem(schema)].into()))
+    };
+    use Multiplicity::{Optional, Repeated, Required};
+    let cases = [
+        // `{Str, *Int}` appends an `Int`, past the fixed `Str`
+        (schema(db, &[(Required, str), (Repeated, int)]), Ok(int)),
+        // `{Str, ?Int, *Child}` may fill the optional position too
+        (
+            schema(db, &[(Required, str), (Optional, int), (Repeated, child)]),
+            Ok(child),
+        ),
+        // Without a rest, there's nowhere to append
+        (
+            schema(db, &[(Required, str), (Optional, int)]),
+            Err(Contradiction::Unextendable),
+        ),
+        (
+            schema(db, &[(Required, str)]),
+            Err(Contradiction::Unextendable),
+        ),
+    ];
+    db.seal();
+    for (projection, expected) in cases {
+        assert_eq!(
+            evaluated(db, projection),
+            expected.map_err(Issue::Contradiction)
         );
     }
 }

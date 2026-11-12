@@ -147,6 +147,10 @@ def serialize_error_cases()
   assert_throws $TypeError do
     encode $ Range 10
 
+  let record_err = assert_throws $TypeError do
+    encode (record 1 a: 2)
+  assert ((str record_err).contains "Record")
+
 #[test]
 def encode_error_paths()
   let big = 9223372036854775808

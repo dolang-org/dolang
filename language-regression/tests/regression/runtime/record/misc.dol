@@ -1,0 +1,115 @@
+import
+  std:
+    - IndexError
+    - TypeError
+
+# construction from items or a source
+let r = record 1 a: 2 3 a: 4
+assert_eq $r.len 4
+assert_eq (Record((1, a: 2, 3, a: 4))) $r
+assert_eq (Record({a: 1, b: 2})) (record a: 1 b: 2)
+assert_throws $TypeError do Record {"x": 1}
+assert (!(bool (record())))
+assert (bool r)
+
+# an integer is a position, counting from the end when negative; a symbol is
+# a key, its latest instance
+assert_eq $r[0] 1
+assert_eq $r[1] 3
+assert_eq $r[-1] 3
+assert_eq $r[:a:] 4
+assert_throws $IndexError do r[2]
+assert_throws $IndexError do r[-3]
+assert_throws $IndexError do r[:b:]
+assert_throws $TypeError do r["a"]
+
+# `get` takes an instance, and falls back to `nil`, a default or `else:`
+assert_eq (r.get :a: 0) 2
+assert_eq (r.get :a: -1) 4
+assert_eq (r.get :a: 2) nil
+assert_eq (r.get 0 0) 1
+assert_eq (r.get 0 1) nil
+assert_eq (r.get :b:) nil
+assert_eq (r.get :b: default: 5) 5
+assert_eq (r.get 9 else: (do 6)) 6
+
+# assignment overwrites a position, or replaces every instance of a key
+let s = record 1 a: 2 3 a: 4
+s[1] = "x"
+s[:a:] = "y"
+assert_eq $s (record 1 a: "y" "x")
+s[:b:] = "z"
+assert_eq $s (record 1 a: "y" "x" b: "z")
+assert_throws $IndexError do s[5] = 0
+
+# `insert` repeats a key, or puts a positional item before a position,
+# shifting the later ones
+let t = record 1 a: 2 3
+t.insert :a: 4
+t.insert 1 x
+t.insert -1 y
+t.insert 4 z
+assert_eq $t.len 7
+assert_eq [t[0], t[1], t[2], t[3], t[4]] [1, "x", "y", 3, "z"]
+assert_throws $IndexError do t.insert 9 0
+assert_eq (t.count :a:) 2
+
+# `push` appends positional items
+let u = record a: 1
+u.push 2 3
+assert_eq $u (record a: 1 2 3)
+assert_throws $std.RuntimeError do u.push k: 4
+
+# `pop` removes a key's first instance, or a positional item, shifting the later
+# ones
+let v = record 1 a: 2 3 a: 4 5
+assert_eq (v.pop :a:) 2
+assert_eq (v.pop :a:) 4
+assert_eq (v.pop 0) 1
+assert_eq (v.pop -1) 5
+assert_eq $v (record 3)
+assert_throws $IndexError do v.pop :a:
+assert_eq (v.pop :a: default: 0) 0
+let w = record a: 1 a: 2 a: 3
+assert_eq (w.pop :a: 1) 2
+assert_eq (w.pop :a: -1) 3
+assert_eq $w (record a: 1)
+
+# `delete` removes a positional item or every instance of a key
+let d = record 1 a: 2 a: 3 4
+assert (d.delete :a:)
+assert (!(d.delete :a:))
+assert (d.delete 0)
+assert (!(d.delete 5))
+assert_eq $d (record 4)
+
+# counting and membership
+let c = record 1 a: 2 a: 3 b: 4
+assert_eq (c.count()) 3
+assert_eq (c.count :a:) 2
+assert_eq (c.count 0) 1
+assert_eq (c.count 1) 0
+assert (c.contains :b:)
+assert (c.contains :a: 3)
+assert (!(c.contains :a: 4))
+assert (c.contains 0 1)
+assert (!(c.contains 1))
+
+# `copy` is shallow and independent; `clear` empties it
+let original = record 1 a: [2]
+let copied = original.copy()
+copied.push 3
+assert_eq $original.len 2
+assert_eq $copied.len 3
+copied[:a:].push 9
+assert_eq $original[:a:] [2, 9]
+copied.clear()
+assert_eq $copied.len 0
+assert_eq $copied (record())
+
+assert_throws $TypeError do r.len()
+assert_eq (str (type r)) "<type std.Record>"
+
+# `BaseRecord` is a type-only split of `Record`, the same class at runtime
+assert_eq $std.BaseRecord $Record
+assert (type (record 1) std.BaseRecord)

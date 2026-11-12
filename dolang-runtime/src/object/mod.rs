@@ -24,6 +24,7 @@ pub mod native;
 pub(crate) mod num;
 pub(crate) mod protocol;
 pub(crate) mod range;
+pub(crate) mod record;
 pub(crate) mod set;
 pub(crate) mod str;
 pub(crate) mod strand;
@@ -165,6 +166,9 @@ pub(crate) struct BuiltinTypes<'v> {
     pub(crate) args: TypeHandle<'v, args::Args<'v>>,
     pub(crate) args_class: TypeHandle<'v, args::Class>,
     pub(crate) args_iter: TypeHandle<'v, args::Iter<'v>>,
+    pub(crate) record: TypeHandle<'v, record::Record<'v>>,
+    pub(crate) record_class: TypeHandle<'v, record::Class>,
+    pub(crate) record_iter: TypeHandle<'v, record::Iter<'v>>,
     pub(crate) structure: TypeHandle<'v, structure::Struct<'v>>,
     pub(crate) structure_class: TypeHandle<'v, structure::Class>,
     pub(crate) channel_recv: TypeHandle<'v, channel::Receiver<'v>>,
@@ -299,6 +303,9 @@ impl<'v> BuiltinTypes<'v> {
             args: types.register_type_handle(),
             args_class: types.register_type_handle(),
             args_iter: types.register_type_handle(),
+            record: types.register_type_handle(),
+            record_class: types.register_type_handle(),
+            record_iter: types.register_type_handle(),
             structure: types.register_type_handle(),
             structure_class: types.register_type_handle(),
             str_split: types.register_type_handle(),
@@ -396,6 +403,7 @@ pub(crate) struct Singletons<'v> {
     pub(crate) dict: Value<'v>,
     pub(crate) set: Value<'v>,
     pub(crate) args: Value<'v>,
+    pub(crate) record: Value<'v>,
     pub(crate) structure: Value<'v>,
     pub(crate) tuple: Value<'v>,
     pub(crate) bin: Value<'v>,
@@ -488,6 +496,7 @@ impl<'v> Singletons<'v> {
             dict: v!(builtin_types.dict_type, dict::Type),
             set: v!(builtin_types.set_type, set::Type),
             args: v!(builtin_types.args_class, args::Class),
+            record: v!(builtin_types.record_class, record::Class),
             structure: v!(builtin_types.structure_class, structure::Class),
             tuple: v!(builtin_types.tuple_type, tuple::Type),
             bin: v!(builtin_types.bin_class, bin::Class),

@@ -1,6 +1,8 @@
 # Dict's mutators check their keys against the multiplicities of the schema:
 # deleting and clearing need items that admit zero, and inserting needs keyed
-# items that admit repetition
+# items that admit repetition. Inserting or deleting a position shifts the ones
+# after it, so it needs a position past the fixed ones, where the shift keeps
+# every position fitting.
 
 pub def fixed b @ Dict[{x: Int}]
   b.delete :x:
@@ -53,11 +55,13 @@ pub def positions b @ Dict[{Int, *Int}]
   # LL |   b.delete 0
   #    |   ^^^^^^^^^^
   b.pop 1
-  # error: this call removes the required item at `1`
+  b.insert 1 2
+  b.insert 0 1
+  # error: this call inserts or removes at `0`, shifting positions the schema doesn't let move
   #   --> m.dol:LL:LL
   #    |
-  # LL |   b.pop 1
-  #    |   ^^^^^^^
+  # LL |   b.insert 0 1
+  #    |   ^^^^^^^^^^^^
   b.clear()
 # error: this call removes the required item at `0`
 #   --> m.dol:LL:LL
@@ -68,11 +72,15 @@ pub def positions b @ Dict[{Int, *Int}]
 pub def varying b @ Dict[{*Int}]
   b.clear()
   b.insert 0 1
-# error: this call inserts at `0`, where the schema admits only one item
+
+# A shift would move a `Str` where an `Int` goes
+pub def mixed b @ Dict[{?Int, *Str}]
+  b.pop 0
+# error: this call inserts or removes at `0`, shifting positions the schema doesn't let move
 #   --> m.dol:LL:LL
 #    |
-# LL |   b.insert 0 1
-#    |   ^^^^^^^^^^^^
+# LL |   b.pop 0
+#    |   ^^^^^^^
 
 pub def open b @ Dict[Sym, Int]
   b.delete :x:

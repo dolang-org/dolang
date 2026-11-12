@@ -499,10 +499,12 @@ impl Renderer<'_> {
                             }
                             UnionMember::Keys(ty)
                             | UnionMember::Values(ty)
-                            | UnionMember::Entries(ty) => {
+                            | UnionMember::Entries(ty)
+                            | UnionMember::PushItem(ty) => {
                                 let head = match member {
                                     UnionMember::Keys(_) => Intrinsic::Keys,
                                     UnionMember::Values(_) => Intrinsic::Values,
+                                    UnionMember::PushItem(_) => Intrinsic::PushItem,
                                     _ => Intrinsic::Entries,
                                 };
                                 self.head(head, naming, &mut out);

@@ -535,6 +535,10 @@ pub(super) fn designation(tables: &Tables<'_>, decl: DeclId) -> Option<(Designat
             Designated::Intrinsic(Intrinsic::InsertItem),
             DeclKind::OpaqueAlias,
         ),
+        ("std", "PushItem") => (
+            Designated::Intrinsic(Intrinsic::PushItem),
+            DeclKind::OpaqueAlias,
+        ),
         ("std", "Deletable") => (
             Designated::Intrinsic(Intrinsic::Deletable),
             DeclKind::OpaqueAlias,

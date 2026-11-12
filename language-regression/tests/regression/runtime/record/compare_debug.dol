@@ -1,0 +1,28 @@
+# debug output spells a call that rebuilds the record
+assert_eq (str (record())) "Record()"
+assert_eq (str (record 1)) "Record(1,)"
+assert_eq (str (record 1 a: "x" 2)) "Record(1, a: \"x\", 2)"
+
+# equality walks the items in order, so the interleaving of positional and
+# keyed items matters, as does each repeat
+assert ((record 1 a: 2) == (record 1 a: 2))
+assert (!((record 1 a: 2) == (record a: 2 1)))
+assert (!((record a: 1) == (record a: 1 a: 1)))
+assert (!((record a: 1 a: 1) == (record a: 1)))
+assert (!((record a: 1 b: 2) == (record b: 2 a: 1)))
+assert (!((record 1) == (record 2)))
+assert (!((record 1) == (1,)))
+
+# emptied slots are skipped
+let left = record 1 a: 2 3
+left.pop 1
+let right = record 0 1 a: 2
+right.delete 0
+assert (left == right)
+
+# equal records hash alike, so they key the same entry
+let keyed = {(record 1 a: 2): "x"}
+assert_eq $keyed[record(1, a: 2)] x
+assert_eq (keyed.get (record a: 2 1)) nil
+let set = Set [(record 1), (record 1), (record 2)]
+assert_eq $set.len 2

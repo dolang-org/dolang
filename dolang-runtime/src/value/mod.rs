@@ -1889,6 +1889,10 @@ impl<'v> Value<'v> {
                 if let Some(args) = self.downcast_native(vm, bt.args) {
                     return View::Args(view::Args::from_borrow(args));
                 }
+                // Record
+                if let Some(record) = self.downcast_native(vm, bt.record) {
+                    return View::Record(view::Record::from_borrow(record));
+                }
                 // Struct
                 if let Some(structure) = self.downcast_native(vm, bt.structure) {
                     return View::Struct(Struct::from_borrow(structure));

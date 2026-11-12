@@ -452,6 +452,9 @@ impl<'v> Encoder<'_, 'v, '_> {
                 self.seen.remove(&id);
                 Ok(())
             }
+            View::Record(_) => {
+                Err(Error::type_error(strand, "`Record` has no TOML encoding").into())
+            }
             _ => Err(Error::type_error(strand, "unsupported TOML type").into()),
         }
     }

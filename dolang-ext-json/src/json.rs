@@ -285,6 +285,9 @@ impl<'v, F: JsonFormatter, S: Sink<'v>> Encoder<'_, 'v, '_, F, S> {
                     pairs.next(strand, key, val)
                 })?
             }
+            View::Record(_) => {
+                return Err(Error::type_error(strand, "`Record` has no JSON encoding").into());
+            }
             _ => return Err(Error::type_error(strand, "unsupported JSON type").into()),
         }
         Ok(())

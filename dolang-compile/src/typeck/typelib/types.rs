@@ -165,6 +165,7 @@ pub(crate) enum Member {
     IndexItem(u32, u32),
     AssignItem(u32, u32),
     InsertItem(u32, u32),
+    PushItem(u32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -281,7 +282,8 @@ impl Ty {
                         | Member::Expand(ty)
                         | Member::Keys(ty)
                         | Member::Values(ty)
-                        | Member::Entries(ty) => visit(ty),
+                        | Member::Entries(ty)
+                        | Member::PushItem(ty) => visit(ty),
                         Member::IndexItem(ty, key)
                         | Member::AssignItem(ty, key)
                         | Member::InsertItem(ty, key) => {
@@ -437,6 +439,7 @@ impl Table {
                             Member::Keys(ty) => UnionMember::Keys(at(ty)),
                             Member::Values(ty) => UnionMember::Values(at(ty)),
                             Member::Entries(ty) => UnionMember::Entries(at(ty)),
+                            Member::PushItem(ty) => UnionMember::PushItem(at(ty)),
                             Member::IndexItem(ty, key) => UnionMember::IndexItem(at(ty), at(key)),
                             Member::AssignItem(ty, key) => UnionMember::AssignItem(at(ty), at(key)),
                             Member::InsertItem(ty, key) => UnionMember::InsertItem(at(ty), at(key)),
@@ -626,6 +629,7 @@ impl<'a> Encode<'a> {
                         UnionMember::Keys(ty) => Member::Keys(self.ty(ty)),
                         UnionMember::Values(ty) => Member::Values(self.ty(ty)),
                         UnionMember::Entries(ty) => Member::Entries(self.ty(ty)),
+                        UnionMember::PushItem(ty) => Member::PushItem(self.ty(ty)),
                         UnionMember::IndexItem(ty, key) => {
                             Member::IndexItem(self.ty(ty), self.ty(key))
                         }

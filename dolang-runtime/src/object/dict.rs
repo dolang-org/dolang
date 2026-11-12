@@ -1887,43 +1887,29 @@ impl<'v> Protocol<'v> for Dict<'v> {
         };
         let left = this.borrow(strand)?;
         let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        if left.table.len() != right.table.len() {
-            return Ok(Value::from_bool(false));
+        // Equal pair counts make both walks end together
+        if left.total_pairs != right.total_pairs {
+            return Ok(Value::FALSE);
         }
-        unsafe {
-            let mut i = 0usize;
-            let mut j = 0usize;
-            while i < left.index.len() {
-                let l = if let Some(l) = left.index.get_unchecked(i) {
-                    l
-                } else {
-                    i += 1;
-                    continue;
-                };
-                let r = if let Some(r) = right.index.get_unchecked(j) {
-                    r
-                } else {
-                    j += 1;
-                    continue;
-                };
-
-                if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                    strand.check_trap()?;
-                }
-                let (l, subl) = (l.0.as_ref(), l.1);
-                let (r, subr) = (r.0.as_ref(), r.1);
-                if l.hash != r.hash
-                    || !l.key.op_eq(strand, &r.key)?.to_bool(strand)?
-                    || !l
-                        .value
-                        .at(subl)
-                        .op_eq(strand, r.value.at(subr))?
-                        .to_bool(strand)?
-                {
-                    return Ok(Value::FALSE);
-                }
-                i += 1;
-                j += 1;
+        let pairs = left
+            .index
+            .iter()
+            .flatten()
+            .zip(right.index.iter().flatten());
+        for (i, ((l, subl), (r, subr))) in pairs.enumerate() {
+            if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
+                strand.check_trap()?;
+            }
+            let (l, r) = unsafe { (l.as_ref(), r.as_ref()) };
+            if l.hash != r.hash
+                || !l.key.op_eq(strand, &r.key)?.to_bool(strand)?
+                || !l
+                    .value
+                    .at(*subl)
+                    .op_eq(strand, r.value.at(*subr))?
+                    .to_bool(strand)?
+            {
+                return Ok(Value::FALSE);
             }
         }
         Ok(Value::TRUE)

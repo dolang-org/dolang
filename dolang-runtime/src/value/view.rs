@@ -17,7 +17,7 @@ use crate::{
         dict::{self, Entry, EntryValue},
         native::Cast,
         protocol::{GcObjBorrow, Header},
-        range, set, structure, tuple,
+        range, record, set, structure, tuple,
     },
     stdlib::fmt as stdfmt,
     strand::{Access, Strand},
@@ -713,6 +713,39 @@ impl<'v, 'a> Args<'v, 'a> {
     }
 }
 
+/// [`Record`](crate::object::record::Record) view
+pub struct Record<'v, 'a>(GcObjBorrow<'v, 'a, record::Record<'v>>);
+
+impl<'v, 'a> Record<'v, 'a> {
+    pub(crate) fn from_borrow(borrow: GcObjBorrow<'v, 'a, record::Record<'v>>) -> Self {
+        Self(borrow)
+    }
+
+    /// Return the opaque identity of this record for cycle detection.
+    pub fn id(&self) -> ObjectId<'v, 'a> {
+        ObjectId(self.0.into_raw().cast(), PhantomData)
+    }
+
+    /// Total number of items.
+    pub fn len<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, usize> {
+        let borrow = match self.0.borrow() {
+            Some(b) => b,
+            None => return Err(Error::concurrency(strand)),
+        };
+        Ok(borrow.len())
+    }
+
+    /// Return a stateful cursor over the key-value pairs in order. A positional
+    /// item's key is its position.
+    pub fn pairs(&self) -> RecordPairs<'v, 'a> {
+        RecordPairs {
+            borrow: self.0,
+            slot: 0,
+            int: 0,
+        }
+    }
+}
+
 /// Struct view
 pub struct Struct<'v, 'a>(GcObjBorrow<'v, 'a, structure::Struct<'v>>);
 
@@ -916,6 +949,8 @@ pub enum View<'v, 'a> {
     Set(Set<'v, 'a>),
     /// [`Args`] view
     Args(Args<'v, 'a>),
+    /// [`Record`] view
+    Record(Record<'v, 'a>),
     /// Struct
     Struct(Struct<'v, 'a>),
     /// Tuple
@@ -1011,6 +1046,46 @@ impl<'v, 'a> ArgsPairs<'v, 'a> {
             key,
             value,
         ))
+    }
+}
+
+/// Iterator over a [`Record`].
+pub struct RecordPairs<'v, 'a> {
+    borrow: GcObjBorrow<'v, 'a, record::Record<'v>>,
+    slot: usize,
+    int: i64,
+}
+
+impl<'v, 'a> RecordPairs<'v, 'a> {
+    /// Get the next key/value pair.
+    /// Returns `false` when all pairs have been yielded.
+    pub fn next<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        key: impl Output<'v>,
+        value: impl Output<'v>,
+    ) -> Result<'v, 's, bool> {
+        let borrow = match self.borrow.borrow() {
+            Some(b) => b,
+            None => return Err(Error::concurrency(strand)),
+        };
+        let order = borrow.order();
+        while let Some(item) = order.get(self.slot) {
+            self.slot += 1;
+            let Some((item_key, item_value)) = item else {
+                continue;
+            };
+            match item_key {
+                Some(item_key) => Output::set(strand, key, unsafe { Sym::from_obj(item_key) }),
+                None => {
+                    Output::set(strand, key, self.int);
+                    self.int += 1;
+                }
+            }
+            Output::set(strand, value, item_value);
+            return Ok(true);
+        }
+        Ok(false)
     }
 }
 

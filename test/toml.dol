@@ -105,6 +105,10 @@ def encode_unsupported()
     encode {1: "bad"}
   assert ((str key_err).contains "TOML table keys must be Str or Sym values")
 
+  let record_err = assert_throws $TypeError do
+    encode {a: (record 1 b: 2)}
+  assert ((str record_err).contains "Record")
+
   let bin_err = assert_throws $TypeError do
     encode b"\x01\x02"
   assert ((str bin_err).contains "binary values are not TOML-representable")

@@ -18,6 +18,10 @@ assert (d1 == d2)
 assert (!(d1 == {a: 1}))
 assert (!(d1 == {a: 1, c: 99}))
 assert (!(d1 == {a: 1, z: 3}))
+# a repeated key counts each instance
+assert (!({a: 1} == {a: 1, a: 2}))
+assert (!({a: 1, a: 2} == {a: 1}))
+assert ({a: 1, a: 2} == {a: 1, a: 2})
 
 # ordering: shorter-is-less, key ordering, value ordering, equal-is-not-less
 assert ({1: "x"} < {1: "x", 2: "y"})

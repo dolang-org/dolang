@@ -54,6 +54,12 @@ pub @let AssignItem[S @ {...}, K] = ...
 # is `Int`, but `InsertItem[{a: Int}, :a:]` is an error.
 pub @let InsertItem[S @ {...}, K] = ...
 
+# The values that fit every position of `S` after its fixed ones, which a
+# position appended past the end may fill. `PushItem[{Str, *Int}]` is `Int`,
+# and a value fits `PushItem[{Str, ?Int, *Bool}]` if it fits both `Int` and
+# `Bool`. A schema with no rest position is an error.
+pub @let PushItem[S @ {...}] = ...
+
 # `S`, where removing every item that a key of type `K` selects leaves a value
 # of `S`. Each item selected must be keyed and admit zero:
 # `Deletable[{a: Int, ?b: Str}, :b:]` is `{a: Int, ?b: Str}`, but
@@ -301,6 +307,24 @@ pub def args[...Ts]
   # Positional and key field values.
   ...items @ Ts
 do -> Args[...Ts]
+  ...
+
+# Creates a [`Record`](std.Record) from positional and key arguments.
+#
+# Positional arguments become positional items, and key arguments become
+# symbol-keyed items, in order. A key may repeat.
+#
+# ## Example
+#
+# ```
+# let r = record 1 2 name: Alice
+# r.push 3
+# assert_eq $r[2] 3
+# ```
+pub def record[...Ts]
+  # Positional and key item values.
+  ...items @ Ts
+do -> Record[Ts]
   ...
 
 # Makes a field setter from a function of the object assigned and its new
@@ -2424,6 +2448,207 @@ pub class Dict[S @ {...}]: BaseDict[S] @MutMap[S] @Assign[S]
   # let d = {name: "Alice"}
   # d[:age:] = 30
   # ```
+  pub def (assign)[K] self key@K value@AssignItem[S, K]
+    ...
+
+
+# The read-only half of a [`Record`](std.Record), whose items it holds
+# covariantly: a `Record[{Int, a: Int}]` is a `BaseRecord[{Int, a: (Int |
+# Str)}]`. A parameter that only reads a record takes a `BaseRecord`, so it
+# accepts records with narrower items.
+#
+# `BaseRecord` is `Record` at runtime, so only a record is a `BaseRecord`.
+pub class BaseRecord[S @ {*Value, **Value}]:
+  @Map[S] @Index[S] @Spread[S]
+  Iterable[Entries[S]]
+do
+  # Returns the number of items, counting each value of a repeated key.
+  #[getter]
+  pub def len self -> Int
+    ...
+
+  # Tests whether a position or key is present. With a `value`, tests whether
+  # the position holds it, or any value of the key equals it.
+  pub def contains
+    self
+    # the position or key
+    key @ Value
+    # a value to look for
+    value @ Value = ...
+  do -> Bool
+    ...
+
+  # Returns a shallow copy.
+  #
+  # When inherited by a Do subclass, `copy()` calls the subclass constructor with
+  # the source record as a single positional argument.
+  pub def copy self -> BaseRecord[S]
+    ...
+
+  # Returns the number of positional items plus the number of distinct keys,
+  # or with a `key`, how many values it has.
+  pub def count self key @ Value = ... -> Int
+    ...
+
+  # Retrieves a positional item or a value of a key. Returns `nil` if it's
+  # missing and no alternative is provided.
+  pub def get[K, D = nil]
+    self
+    # the position or key
+    key @ K
+    # which value of a repeated key to retrieve (0-indexed; negative counts from end; default: last)
+    instance @ Int = ...
+    :default @ D = ...
+    :else @ (() -> D) = ...
+  do -> (IndexItem[S, K] | D)
+    ...
+
+  # Returns an iterator of keys: each position, and each distinct key once, in
+  # the order its first value was added.
+  pub def keys self -> UnpackIter[Keys[S]]
+    ...
+
+  # Returns an iterator yielding `(key, value)` pairs, the same as ordinary
+  # iteration.
+  pub def pairs self -> Iter[Entries[S]]
+    ...
+
+  # Returns an iterator of values. With a `key`, it yields only that position's
+  # value or that key's values.
+  @def values self -> UnpackIter[Values[S]]
+  @def values[K] self key@K -> UnpackIter[IndexItem[S, K]]
+  pub def values self key @ Value = ... -> UnpackIter[Values[S]]
+    ...
+
+  # Returns a positional item, or the last value of a key.
+  #
+  # A missing item raises [`IndexError`](std.IndexError).
+  pub def (index)[K] self key@K -> IndexItem[S, K]
+    ...
+
+  # Spreads the items: positional items positionally, keyed items as keys.
+  pub def (spread) self -> Spread[S]
+    ...
+
+  # Iterating yields `(index, value)` and `(key, value)` pairs.
+  pub def (iter) self -> Iter[Entries[S]]
+    ...
+
+  # Destructures the record: positional patterns take its positional items,
+  # and key patterns its keys.
+  pub def (unpack) self -> BaseRecord[S]
+    ...
+
+
+# Records are ordered, mutable sequences of positional items and symbol-keyed
+# items: the mutable counterpart of [`Args`](std.Args), as
+# [`Array`](std.Array) is of [`Tuple`](std.Tuple).
+#
+# An `Int` always selects a positional item and a `Sym` always selects a key,
+# so the two can't be confused. Negative positions count from the end.
+#
+# ## Positional Items
+#
+# Inserting or removing a positional item shifts the ones after it, as in an
+# array:
+#
+# ```
+# let r = record 1 2 3
+# r.insert 0 0
+# assert_eq (r.pop -1) 3
+# assert_eq $r (record 0 1 2)
+# ```
+#
+# ## Keys
+#
+# Keys follow a [`Dict`](std.Dict)'s multi-map rules:
+#
+# - **Indexing** (`r[:key:]`) returns the last value of a key.
+# - **Assignment** (`r[:key:] = value`) replaces every value of a key.
+# - **`insert`** adds another value for a key.
+# - **`get`** and **`pop`** take an `instance` that selects one of a key's
+#   values.
+#
+# ## Iteration
+#
+# Iterating yields `(index, value)` for each positional item and `(key, value)`
+# for each keyed item, in the order they were added. Spreading and unpacking
+# give positional items positionally and keyed items as keys. Equality and
+# hashing follow the same order.
+pub class Record[S @ {*Value, **Value}]: BaseRecord[S] @MutMap[S] @Assign[S]
+  # Builds a record by spreading one source. Its integer keys counting up from
+  # `0` become positional items, and its other keys must be symbols.
+  pub def (init) self source @ Spread[S]
+    ...
+
+  @def clear self @ Record[Clearable[S]]
+
+  # Removes every item.
+  pub def clear self
+    ...
+
+  # Returns a shallow copy, as [`BaseRecord.copy`](std.BaseRecord.copy) does.
+  pub def copy self -> Record[S]
+    ...
+
+  @def delete[K] self @ Record[Deletable[S, K]] key @ K -> Bool
+
+  # Removes a positional item, shifting the ones after it, or every value of a
+  # key. Indicates whether anything was removed.
+  pub def delete
+    self
+    # the position or key
+    key @ Value
+  do -> Bool
+    ...
+
+  # Inserts a positional item before a position, shifting the ones after it,
+  # or adds a value for a key without removing its others.
+  #
+  # ## Errors
+  #
+  # Raises [`IndexError`](std.IndexError) if the position is past the end.
+  pub def insert[K]
+    self
+    # the position or key
+    key @ K
+    # the value
+    value @ InsertItem[S, K]
+  do
+    ...
+
+  @def pop[K, D = Never]
+    self @ Record[Deletable[S, K]]
+    key @ K
+    instance @ Int = ...
+    :default @ D = ...
+    :else @ (() -> D) = ...
+  do -> (IndexItem[S, K] | D)
+
+  # Removes and returns a positional item, shifting the ones after it, or a
+  # value of a key, by default its first. `r.pop -1` removes the last
+  # positional item.
+  #
+  # ## Errors
+  #
+  # Raises [`IndexError`](std.IndexError) if the item is missing and there is
+  # no `default` or `else`.
+  pub def pop[K, D = Never]
+    self
+    # the position or key
+    key @ K
+    # which value of a repeated key to remove (0-indexed; negative counts from end; default: first)
+    instance @ Int = ...
+    :default @ D = ...
+    :else @ (() -> D) = ...
+  do -> (IndexItem[S, K] | D)
+    ...
+
+  # Appends positional items.
+  pub def push self ...values @ PushItem[S]
+    ...
+
+  # Overwrites a positional item, or replaces every value of a key.
   pub def (assign)[K] self key@K value@AssignItem[S, K]
     ...
 
