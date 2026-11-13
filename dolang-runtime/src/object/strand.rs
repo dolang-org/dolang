@@ -1064,16 +1064,14 @@ unsafe impl<'v> Collect for StrandInfo<'v> {
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
-        // Never borrowed across an allocation, so this always succeeds
-        if let Ok(backtrace) = self.backtrace.try_borrow() {
-            match &*backtrace {
-                InfoBacktrace::Entries(entries) => {
-                    for entry in entries {
-                        entry.accept(visit)?;
-                    }
+        // Never borrowed across an allocation
+        match &*self.backtrace.borrow() {
+            InfoBacktrace::Entries(entries) => {
+                for entry in entries {
+                    entry.accept(visit)?;
                 }
-                InfoBacktrace::Built(value) => value.accept(visit)?,
             }
+            InfoBacktrace::Built(value) => value.accept(visit)?,
         }
         ControlFlow::Continue(())
     }
@@ -1125,13 +1123,13 @@ impl<'v> Protocol<'v> for StrandInfo<'v> {
                 Ok(())
             }
             sym::BACKTRACE => {
-                let entries = match &mut *info.backtrace.borrow_mut() {
-                    InfoBacktrace::Built(value) => Err(value.dup()),
-                    InfoBacktrace::Entries(entries) => Ok(mem::take(entries)),
-                };
-                match entries {
-                    Err(value) => Output::set(strand, out, &value),
-                    Ok(entries) => {
+                let mut state = info.backtrace.borrow_mut();
+                match &mut *state {
+                    InfoBacktrace::Built(value) => Output::set(strand, out, &*value),
+                    InfoBacktrace::Entries(entries) => {
+                        let entries = mem::take(entries);
+                        // `accept` borrows the state, so release it before allocating
+                        drop(state);
                         let mut out = out;
                         backtrace::create(strand, entries, &mut out);
                         *info.backtrace.borrow_mut() = InfoBacktrace::Built(out.dup());

@@ -255,9 +255,47 @@ pub(crate) struct Native<'v> {
     pub(crate) parent: Option<Ptr<'v>>,
 }
 
-pub(crate) struct Slots<'v> {
+/// A rooting frame: native-held GC references visited by a closure.
+///
+/// [`Strand::with_scan`](crate::strand::Strand::with_scan) pushes one around a
+/// call; [`Strand::scan_stack`](crate::strand::StrandInner::scan_stack) runs the
+/// closure, and backtraces skip the frame.
+pub(crate) struct Scan<'v> {
     pub(crate) parent: Option<Ptr<'v>>,
-    pub(crate) slots: *const [ValueCell<'v>],
+    data: *const (),
+    visit: unsafe fn(*const (), &mut dyn Visit) -> ControlFlow<()>,
+}
+
+impl<'v> Scan<'v> {
+    /// A frame that visits through `visit`.
+    ///
+    /// The frame borrows `visit` without a lifetime, so `visit` must outlive
+    /// every use of the frame, including its time on the frame chain.
+    pub(crate) fn new<F: Fn(&mut dyn Visit) -> ControlFlow<()>>(
+        parent: Option<Ptr<'v>>,
+        visit: &F,
+    ) -> Self {
+        unsafe fn glue<F: Fn(&mut dyn Visit) -> ControlFlow<()>>(
+            data: *const (),
+            visitor: &mut dyn Visit,
+        ) -> ControlFlow<()> {
+            unsafe { (*data.cast::<F>())(visitor) }
+        }
+        Scan {
+            parent,
+            data: (visit as *const F).cast(),
+            visit: glue::<F>,
+        }
+    }
+
+    /// Visit the frame's roots.
+    ///
+    /// # Safety
+    ///
+    /// The closure passed to [`Self::new`] must still be live.
+    pub(crate) unsafe fn scan(&self, visitor: &mut dyn Visit) -> ControlFlow<()> {
+        unsafe { (self.visit)(self.data, visitor) }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -265,7 +303,7 @@ pub(crate) enum Ptr<'v> {
     Do(NonNull<CallFrame<'v>>),
     Native(NonNull<Native<'v>>),
     Boundary(NonNull<Native<'v>>),
-    Slots(NonNull<Slots<'v>>),
+    Scan(NonNull<Scan<'v>>),
 }
 
 impl<'v> CallFrame<'v> {
@@ -514,7 +552,7 @@ impl<'v, 'a> FrameInfo<'v, 'a> {
                 }
             }
             Ptr::Native(_) | Ptr::Boundary(_) => None,
-            Ptr::Slots(_) => unreachable!(),
+            Ptr::Scan(_) => unreachable!(),
         }
     }
 
@@ -541,7 +579,7 @@ impl<'v, 'a> FrameInfo<'v, 'a> {
                 let head = unsafe { head.as_ref() };
                 head.receiver.as_ref()
             }
-            Ptr::Slots(_) => unreachable!(),
+            Ptr::Scan(_) => unreachable!(),
         }
     }
 
@@ -555,7 +593,7 @@ impl<'v, 'a> FrameInfo<'v, 'a> {
                 let head = unsafe { head.as_ref() };
                 head.method.as_deref()
             }
-            Ptr::Slots(_) => unreachable!(),
+            Ptr::Scan(_) => unreachable!(),
         }
     }
 
@@ -574,7 +612,7 @@ impl<'v, 'a> FrameInfo<'v, 'a> {
                 let head = unsafe { head.as_ref() };
                 head.module.as_ref()
             }
-            Ptr::Slots(_) => unreachable!(),
+            Ptr::Scan(_) => unreachable!(),
         }
     }
 }
@@ -620,7 +658,7 @@ impl<'v, 'a> Iterator for FrameIter<'v, 'a> {
                     self.head = head.parent;
                     break Some(FrameInfo(ptr, PhantomData));
                 }
-                Some(Ptr::Slots(head)) => {
+                Some(Ptr::Scan(head)) => {
                     let head = unsafe { head.as_ref() };
                     self.head = head.parent;
                 }

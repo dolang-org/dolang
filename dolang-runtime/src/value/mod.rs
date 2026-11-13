@@ -3722,7 +3722,6 @@ impl<'v, 'a> Slots<'v, 'a> {
         Self(slice)
     }
 
-    #[expect(dead_code)]
     pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
