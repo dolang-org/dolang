@@ -5,8 +5,6 @@ use std::ops::{BitAnd, BitOr, BitXor, Not};
 use dolang::runtime::{
     AllocExt, Error, Object, Output, Result, State, Strand, Sym,
     object::{FlagLike, FlagsInstanceExt, FlagsTypeExt, Instance, TypeBuilder},
-    unpack,
-    value::Value,
 };
 use dolang_vfs::metadata::{FileType, Metadata as VfsMetadata, Mode as VfsMode};
 
@@ -18,17 +16,6 @@ use crate::{
 };
 
 const NANOS_PER_SEC_I128: i128 = 1_000_000_000;
-
-fn mode_u32<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    value: &Value<'v>,
-    name: &'static str,
-) -> Result<'v, 's, u32> {
-    let value = value
-        .to_i64(strand)
-        .map_err(|_| Error::type_error(strand, format!("{name}: expected Int")))?;
-    u32::try_from(value).map_err(|_| Error::value(strand, format!("{name}: out of range")))
-}
 
 /// Unix mode bits (`fs.unix.Mode`), a local newtype over
 /// [`dolang_vfs::metadata::Mode`] so [`FlagLike`] can be implemented here
@@ -86,6 +73,17 @@ impl FlagLike for Mode {
         ("IFLNK", Self(VfsMode::IFLNK)),
         ("IFSOCK", Self(VfsMode::IFSOCK)),
     ];
+    const INT: bool = true;
+
+    fn to_i128(self) -> Option<i128> {
+        Some(self.0.bits().into())
+    }
+
+    fn from_i128(value: i128) -> Option<Self> {
+        u32::try_from(value)
+            .ok()
+            .map(|bits| Self(VfsMode::from_bits_retain(bits)))
+    }
 
     fn rank(self) -> usize {
         self.0.bits().count_ones() as usize
@@ -108,16 +106,6 @@ impl FlagLike for Mode {
             .get("other", |this, strand, out| {
                 let permission = strand.force_state::<UnixSecurityTag>().types.permission;
                 permission.create_flags(strand, Permission(this.flags().0.other()), out);
-                Ok(())
-            })
-            .get("int", |this, strand, out| {
-                Output::set(strand, out, this.flags().0.bits());
-                Ok(())
-            })
-            .type_method("from_int", async move |this, strand, args, out| {
-                let ([value], []) = unpack!(strand, args, 1, 0)?;
-                let value = mode_u32(strand, &value, "value")?;
-                this.create_flags(strand, Self(VfsMode::from_bits_retain(value)), out);
                 Ok(())
             })
     }

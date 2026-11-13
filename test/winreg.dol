@@ -22,7 +22,7 @@ def access_masks_are_precise_and_lossless()
   assert $access.contains(:CREATE_SUB_KEY:)
   assert_eq $access.int 5
 
-  let unknown = winreg.AccessMask.from_int 2147483649
+  let unknown = winreg.AccessMask 2147483649
   assert_eq $unknown.int 2147483649
   assert $unknown.contains(:GENERIC_READ:)
   assert $unknown.contains(:QUERY_VALUE:)

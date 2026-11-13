@@ -152,7 +152,7 @@ pub def registry target @ winreg.LinkTarget entry @ winreg.Value -> nil
   #   ^~~~~~~~~~~: flow std.Str
   let _key = winreg.AccessMask :READ: :WRITE_DAC:
   #   ^~~~: flow winreg.AccessMask
-  let _service = winscm.ServiceAccessMask.from_int 0x10
+  let _service = winscm.ServiceAccessMask 0x10
   #   ^~~~~~~~: flow winscm.ServiceAccessMask
   nil
 

@@ -7,38 +7,33 @@
 
 use std::ops::{BitAnd, BitOr, BitXor, Not};
 
-use dolang::runtime::object::{FlagLike, Flags, FlagsInstanceExt, FlagsTypeExt, TypeBuilder};
-use dolang::runtime::{Error, Output, unpack};
+use dolang::runtime::object::{FlagCoercion, FlagLike, Flags, TypeBuilder};
 use dolang_vfs_winscm::ServiceAccess as WireServiceAccess;
 use dolang_winterop::security::AccessMask as WinAccessMask;
 
-macro_rules! raw_projection {
+macro_rules! access_mask_repr {
     () => {
+        const INT: bool = true;
+        const COERCE: FlagCoercion = FlagCoercion::FromSupertypes;
+
+        fn to_i128(self) -> Option<i128> {
+            Some(self.0.0.bits().into())
+        }
+
+        fn from_i128(value: i128) -> Option<Self> {
+            u32::try_from(value)
+                .ok()
+                .map(|bits| Self(WireServiceAccess(WinAccessMask::from_bits_retain(bits))))
+        }
+
         fn build<'v, 'a>(
             mut builder: TypeBuilder<'v, 'a, Flags<Self>>,
         ) -> TypeBuilder<'v, 'a, Flags<Self>> {
             // `security.windows.AccessMask` is a nominal supertype so these
             // rights can be used wherever a Windows access mask is expected;
-            // that contract is what the `int` projection below satisfies.
+            // the two convert into each other through their integer forms.
             let base = dolang_ext_shell::windows_access_mask_type(&mut builder);
-            builder
-                .nominal_supertype(base)
-                .get("int", |this, strand, out| {
-                    Output::set(strand, out, this.flags().0.0.bits());
-                    Ok(())
-                })
-                .type_method("from_int", async move |this, strand, args, out| {
-                    let ([value], []) = unpack!(strand, args, 1, 0)?;
-                    let value = value.to_i64(strand)?;
-                    let value = u32::try_from(value)
-                        .map_err(|_| Error::value(strand, "flags integer out of range"))?;
-                    this.create_flags(
-                        strand,
-                        Self(WireServiceAccess(WinAccessMask::from_bits_retain(value))),
-                        out,
-                    );
-                    Ok(())
-                })
+            builder.nominal_supertype(base)
         }
     };
 }
@@ -172,7 +167,7 @@ impl FlagLike for ManagerAccessMask {
         self.0.0.bits().count_ones() as usize
     }
 
-    raw_projection!();
+    access_mask_repr!();
 }
 
 impl From<ManagerAccessMask> for WireServiceAccess {
@@ -325,7 +320,7 @@ impl FlagLike for ServiceAccessMask {
         self.0.0.bits().count_ones() as usize
     }
 
-    raw_projection!();
+    access_mask_repr!();
 }
 
 impl From<ServiceAccessMask> for WireServiceAccess {

@@ -131,6 +131,18 @@ impl FlagLike for AccessMask {
         ("GENERIC_EXECUTE", AccessMask::GENERIC_EXECUTE),
         ("GENERIC_ALL", AccessMask::GENERIC_ALL),
     ];
+    const INT: bool = true;
+    const COERCE: FlagCoercion = FlagCoercion::FromSubtypes;
+
+    fn to_i128(self) -> Option<i128> {
+        Some(self.0.bits().into())
+    }
+
+    fn from_i128(value: i128) -> Option<Self> {
+        u32::try_from(value)
+            .ok()
+            .map(|bits| Self(WinAccessMask::from_bits_retain(bits)))
+    }
 
     fn rank(self) -> usize {
         self.0.bits().count_ones() as usize
@@ -152,16 +164,6 @@ impl FlagLike for AccessMask {
             .get("generic_rights", |this, strand, out| {
                 let ty = this.ty(strand.vm());
                 ty.create_flags(strand, Self(this.flags().0.generic_rights()), out);
-                Ok(())
-            })
-            .get("int", |this, strand, out| {
-                Output::set(strand, out, this.flags().0.bits());
-                Ok(())
-            })
-            .type_method("from_int", async move |this, strand, args, out| {
-                let ([value], []) = unpack!(strand, args, 1, 0)?;
-                let value = ace_u32(strand, &value, &SpecPath::root("value"))?;
-                this.create_flags(strand, Self(WinAccessMask::from_bits_retain(value)), out);
                 Ok(())
             })
     }
@@ -198,20 +200,16 @@ impl FlagLike for AceFlags {
         self.0.bits().count_ones() as usize
     }
 
-    fn build<'v, 'a>(
-        builder: TypeBuilder<'v, 'a, Flags<Self>>,
-    ) -> TypeBuilder<'v, 'a, Flags<Self>> {
-        builder
-            .get("int", |this, strand, out| {
-                Output::set(strand, out, this.flags().0.bits());
-                Ok(())
-            })
-            .type_method("from_int", async move |this, strand, args, out| {
-                let ([value], []) = unpack!(strand, args, 1, 0)?;
-                let value = ace_u8(strand, &value, &SpecPath::root("value"))?;
-                this.create_flags(strand, Self(WinAceFlags::from_bits_retain(value)), out);
-                Ok(())
-            })
+    const INT: bool = true;
+
+    fn to_i128(self) -> Option<i128> {
+        Some(self.0.bits().into())
+    }
+
+    fn from_i128(value: i128) -> Option<Self> {
+        u8::try_from(value)
+            .ok()
+            .map(|bits| Self(WinAceFlags::from_bits_retain(bits)))
     }
 }
 
@@ -904,77 +902,60 @@ fn ace_u8<'v, 's>(
     u8::try_from(value).map_err(|_| Error::value(strand, format!("{path}: out of range")))
 }
 
-/// Resolves an access mask argument.
-///
-/// Accepts this module's [`AccessMask`], any flags type that names it as a
-/// nominal supertype (a domain-specific mask such as `winreg.AccessMask`,
-/// read through the `int` field that contract requires), a symbol or
-/// iterable of symbols naming generic rights, or a raw integer.
+/// Qualifies a flags conversion error with `path`: a value error keeps its
+/// kind, and anything else becomes a type error naming what was `expected`.
+fn ace_flags_error<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    err: Error<'v, 's>,
+    path: &SpecPath<'_>,
+    expected: &str,
+) -> Error<'v, 's> {
+    if err.kind() == ErrorKind::Value {
+        Error::value(strand, format!("{path}: invalid value")).caused_by(strand, err)
+    } else {
+        Error::type_error(strand, format!("{path}: expected {expected}"))
+    }
+}
+
+/// Resolves an access mask argument as the [`AccessMask`] constructor does:
+/// a mask of this type or a subtype (a domain-specific mask such as
+/// `winreg.AccessMask`), a raw integer, or a symbol or iterable of symbols
+/// naming generic rights.
 async fn ace_mask<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, WindowsSecurityGlobal<'v>>,
     value: &Value<'v>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, WinAccessMask> {
-    if let Some(mask) = global.types.access_mask.cast_flags(value) {
-        return Ok(mask.0);
+    match global.types.access_mask.coerce(strand, value).await {
+        Ok(mask) => Ok(mask.0),
+        Err(err) => Err(ace_flags_error(
+            strand,
+            err,
+            path,
+            "security.windows.AccessMask (or a subtype), Int, Sym, or iterable of Sym",
+        )),
     }
-    if value.is_instance_of(strand, global.types.access_mask) {
-        return strand.with_slots_sync(|strand, [mut bits]| {
-            value.get(strand, global.syms.int, &mut bits)?;
-            Ok(WinAccessMask::from_bits_retain(ace_u32(
-                strand, &bits, path,
-            )?))
-        });
-    }
-    if value.as_int(strand).is_some() {
-        return Ok(WinAccessMask::from_bits_retain(ace_u32(
-            strand, value, path,
-        )?));
-    }
-    let mask = global
-        .types
-        .access_mask
-        .coerce(strand, value)
-        .await
-        .map_err(|_| {
-            Error::type_error(
-                strand,
-                format!(
-                    "{path}: expected security.windows.AccessMask (or a subtype), Int, Sym, or \
-                     iterable of Sym"
-                ),
-            )
-        })?;
-    Ok(mask.0)
 }
 
-/// Resolves an ACE header flags argument.
-///
-/// Accepts [`AceFlags`], a symbol or iterable of symbols naming its bits, or
-/// a raw integer.
+/// Resolves an ACE header flags argument as the [`AceFlags`] constructor
+/// does: [`AceFlags`], a raw integer, or a symbol or iterable of symbols
+/// naming its bits.
 async fn ace_flags<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, WinAceFlags> {
     let ace_flags = strand.state::<WindowsSecurityTag>().types.ace_flags;
-    if let Some(flags) = ace_flags.cast_flags(value) {
-        return Ok(flags.0);
+    match ace_flags.coerce(strand, value).await {
+        Ok(flags) => Ok(flags.0),
+        Err(err) => Err(ace_flags_error(
+            strand,
+            err,
+            path,
+            "security.windows.AceFlags, Int, Sym, or iterable of Sym",
+        )),
     }
-    if value.is_int(strand) {
-        return Ok(WinAceFlags::from_bits_retain(ace_u8(strand, value, path)?));
-    }
-    ace_flags
-        .coerce(strand, value)
-        .await
-        .map(|flags| flags.0)
-        .map_err(|_| {
-            Error::type_error(
-                strand,
-                format!("{path}: expected security.windows.AceFlags, Int, Sym, or iterable of Sym"),
-            )
-        })
 }
 
 fn ace_bool<'v, 's>(

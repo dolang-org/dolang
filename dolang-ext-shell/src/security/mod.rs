@@ -9,8 +9,10 @@ use dolang::{
     runtime::{
         AllocExt, Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym,
         Type, Value,
+        error::ErrorKind,
         object::{
-            ArrayLike, FlagLike, Flags, FlagsInstanceExt, FlagsTypeExt, Mut, Ref, TypeBuilder, fmt,
+            ArrayLike, FlagCoercion, FlagLike, Flags, FlagsInstanceExt, FlagsTypeExt, Mut, Ref,
+            TypeBuilder, fmt,
         },
         strand::LocalKey,
         unpack,

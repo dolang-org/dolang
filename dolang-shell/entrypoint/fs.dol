@@ -280,7 +280,7 @@ def windows_ace_node ace
       # An ACE carries an application-agnostic mask, which names only the
       # standard and generic rights; these ACEs guard a file, so its bits read
       # as file rights.
-      mask: $ display.flags $ fs.windows.AccessMask.from_int $mask.int
+      mask: $ display.flags $ fs.windows.AccessMask $mask
     if (flags != nil && flags.len > 0)
       flags: $ display.flags $flags
     if (object_type != nil)

@@ -1,0 +1,42 @@
+let exec = TestFlags(:EXEC:)
+
+# An int-capable type converts from and to an `Int`, under its own policy for
+# out-of-range values and unnamed bits.
+assert_eq (TestFlags 4) $exec
+assert_eq $exec.int 4
+assert_eq (TestFlags(12).int) 12
+assert_eq [...TestFlags(12)] [:EXEC:]
+assert_throws $std.RuntimeError str: "value error: invalid `regression2.TestFlags` integer: 256" do TestFlags 256
+assert_throws $std.ValueError do TestFlags (-1)
+assert_eq (SubFlags(9).int) 9
+assert_throws $std.ValueError do SubFlags 2
+
+# A type with no integer form has no `int` and rejects an `Int`.
+assert_throws $std.FieldError do SymFlags(:READ:).int
+assert_throws $std.TypeError do SymFlags 1
+
+# Do subclasses construct from an `Int` and pass through as the same type.
+class DerivedFlags: TestFlags
+assert_eq (DerivedFlags(4).int) 4
+assert_eq (TestFlags exec) $exec
+assert_eq (TestFlags (DerivedFlags 4)) $exec
+
+# Subtype to supertype through the integer form keeps bits the target doesn't
+# name; the reverse direction applies the subtype's policy.
+assert_eq (TestFlags (SubFlags :READ: :EXEC:)) (TestFlags :READ: :EXEC:)
+assert_eq (TestFlags(SubFlags(:EXTRA:)).int) 8
+assert_eq (SubFlags (TestFlags :READ:)) (SubFlags :READ:)
+assert_throws $std.ValueError do SubFlags (TestFlags :WRITE:)
+
+# Without an integer form on both sides, conversion goes by symbol.
+assert_eq (TestFlags (SymFlags :READ: :WRITE:)) (TestFlags :READ: :WRITE:)
+assert_throws $std.RuntimeError str: "value error: unrecognized flag: OTHER" do TestFlags (SymFlags :OTHER:)
+
+# A direction the target doesn't accept, or an unrelated type, is a type error.
+assert_throws $std.RuntimeError str: "type error: cannot convert `regression2.TestFlags` to `regression2.SymFlags`" do SymFlags (TestFlags :READ:)
+assert_throws $std.RuntimeError str: "type error: cannot convert `regression2.SymFlags` to `regression2.SubFlags`" do SubFlags (SymFlags :READ:)
+
+# Coercion for API arguments converts the same way.
+assert_eq (coerce_flags 4) $exec
+assert_eq (coerce_flags(SubFlags(:EXTRA:)).int) 8
+assert_throws $std.ValueError do coerce_flags (SymFlags :OTHER:)

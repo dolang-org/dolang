@@ -116,16 +116,6 @@ pub @let ManagerAccessRight = $
 # let b = ManagerAccessMask [:SC_MANAGER_CONNECT:, :SC_MANAGER_LOCK:]
 # ```
 pub class ManagerAccessMask: AccessMask
-  # Builds a mask from a native integer, preserving every bit including ones
-  # this type does not name.
-  #[class]
-  pub def from_int
-    self
-    # Native Windows access mask.
-    value @ Int
-  do -> ManagerAccessMask
-    ...
-
   # The complete native mask as an [`Int`](std.Int), including bits this
   # type does not name.
   #[getter]
@@ -138,11 +128,22 @@ pub class ManagerAccessMask: AccessMask
   # Constructs a flag set from one iterable of symbols.
   @def (call) cls flags@Iterable[ManagerAccessRight] -> ManagerAccessMask
 
+  # Constructs a flag set from its native integer form, keeping bits this type
+  # does not name.
+  #
+  # ```
+  # let value = ManagerAccessMask 0xf003f
+  # ```
+  @def (call) cls value@Int -> ManagerAccessMask
+
+  # Converts a generic mask, keeping bits this type does not name.
+  @def (call) cls mask@AccessMask -> ManagerAccessMask
+
   #[class]
-  pub def (call) cls ...flags @ (ManagerAccessRight | Iterable[ManagerAccessRight]) -> ManagerAccessMask
+  pub def (call) cls ...flags @ (ManagerAccessRight | Iterable[ManagerAccessRight] | Int | AccessMask) -> ManagerAccessMask
     ...
 
-  pub def (init) self ...flags @ (ManagerAccessRight | Iterable[ManagerAccessRight])
+  pub def (init) self ...flags @ (ManagerAccessRight | Iterable[ManagerAccessRight] | Int | AccessMask)
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -193,16 +194,6 @@ pub @let ServiceAccessRight = $
 # let b = ServiceAccessMask [:SERVICE_START:, :SERVICE_STOP:]
 # ```
 pub class ServiceAccessMask: AccessMask
-  # Builds a mask from a native integer, preserving every bit including ones
-  # this type does not name.
-  #[class]
-  pub def from_int
-    self
-    # Native Windows access mask.
-    value @ Int
-  do -> ServiceAccessMask
-    ...
-
   # The complete native mask as an [`Int`](std.Int), including bits this
   # type does not name.
   #[getter]
@@ -215,11 +206,22 @@ pub class ServiceAccessMask: AccessMask
   # Constructs a flag set from one iterable of symbols.
   @def (call) cls flags@Iterable[ServiceAccessRight] -> ServiceAccessMask
 
+  # Constructs a flag set from its native integer form, keeping bits this type
+  # does not name.
+  #
+  # ```
+  # let value = ServiceAccessMask 0xf01ff
+  # ```
+  @def (call) cls value@Int -> ServiceAccessMask
+
+  # Converts a generic mask, keeping bits this type does not name.
+  @def (call) cls mask@AccessMask -> ServiceAccessMask
+
   #[class]
-  pub def (call) cls ...flags @ (ServiceAccessRight | Iterable[ServiceAccessRight]) -> ServiceAccessMask
+  pub def (call) cls ...flags @ (ServiceAccessRight | Iterable[ServiceAccessRight] | Int | AccessMask) -> ServiceAccessMask
     ...
 
-  pub def (init) self ...flags @ (ServiceAccessRight | Iterable[ServiceAccessRight])
+  pub def (init) self ...flags @ (ServiceAccessRight | Iterable[ServiceAccessRight] | Int | AccessMask)
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -255,16 +257,6 @@ pub @let ServiceTypeFlag = $
 # let types = ServiceType :WIN32_OWN_PROCESS: :INTERACTIVE_PROCESS:
 # ```
 pub class ServiceType: Iterable[ServiceTypeFlag]
-  # Builds a value from a native integer, preserving every bit including ones
-  # this type does not name.
-  #[class]
-  pub def from_int
-    self
-    # Native service type mask.
-    value @ Int
-  do -> ServiceType
-    ...
-
   # The complete native value as an [`Int`](std.Int), including bits this
   # type does not name.
   #[getter]
@@ -277,11 +269,19 @@ pub class ServiceType: Iterable[ServiceTypeFlag]
   # Constructs a flag set from one iterable of symbols.
   @def (call) cls flags@Iterable[ServiceTypeFlag] -> ServiceType
 
+  # Constructs a flag set from its native integer form, keeping bits this type
+  # does not name.
+  #
+  # ```
+  # let value = ServiceType 0x10
+  # ```
+  @def (call) cls value@Int -> ServiceType
+
   #[class]
-  pub def (call) cls ...flags @ (ServiceTypeFlag | Iterable[ServiceTypeFlag]) -> ServiceType
+  pub def (call) cls ...flags @ (ServiceTypeFlag | Iterable[ServiceTypeFlag] | Int) -> ServiceType
     ...
 
-  pub def (init) self ...flags @ (ServiceTypeFlag | Iterable[ServiceTypeFlag])
+  pub def (init) self ...flags @ (ServiceTypeFlag | Iterable[ServiceTypeFlag] | Int)
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -340,16 +340,6 @@ pub @let NotifyChange = $
 # let mask = NotifyMask :RUNNING: :STOPPED:
 # ```
 pub class NotifyMask: Iterable[NotifyChange]
-  # Builds a mask from a native integer, preserving every bit including ones
-  # this type does not name.
-  #[class]
-  pub def from_int
-    self
-    # Native notification mask.
-    value @ Int
-  do -> NotifyMask
-    ...
-
   # The complete native mask as an [`Int`](std.Int), including bits this
   # type does not name.
   #[getter]
@@ -362,11 +352,19 @@ pub class NotifyMask: Iterable[NotifyChange]
   # Constructs a flag set from one iterable of symbols.
   @def (call) cls flags@Iterable[NotifyChange] -> NotifyMask
 
+  # Constructs a flag set from its native integer form, keeping bits this type
+  # does not name.
+  #
+  # ```
+  # let value = NotifyMask 0x8
+  # ```
+  @def (call) cls value@Int -> NotifyMask
+
   #[class]
-  pub def (call) cls ...flags @ (NotifyChange | Iterable[NotifyChange]) -> NotifyMask
+  pub def (call) cls ...flags @ (NotifyChange | Iterable[NotifyChange] | Int) -> NotifyMask
     ...
 
-  pub def (init) self ...flags @ (NotifyChange | Iterable[NotifyChange])
+  pub def (init) self ...flags @ (NotifyChange | Iterable[NotifyChange] | Int)
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -429,16 +427,6 @@ pub @let AcceptedControl = $
 #   service.control :STOP:
 # ```
 pub class ServiceControlsAccepted: Iterable[AcceptedControl]
-  # Builds a value from a native integer, preserving every bit including ones
-  # this type does not name.
-  #[class]
-  pub def from_int
-    self
-    # Native controls-accepted mask.
-    value @ Int
-  do -> ServiceControlsAccepted
-    ...
-
   # The complete native value as an [`Int`](std.Int), including bits this
   # type does not name.
   #[getter]
@@ -451,11 +439,19 @@ pub class ServiceControlsAccepted: Iterable[AcceptedControl]
   # Constructs a flag set from one iterable of symbols.
   @def (call) cls flags@Iterable[AcceptedControl] -> ServiceControlsAccepted
 
+  # Constructs a flag set from its native integer form, keeping bits this type
+  # does not name.
+  #
+  # ```
+  # let value = ServiceControlsAccepted 0x1
+  # ```
+  @def (call) cls value@Int -> ServiceControlsAccepted
+
   #[class]
-  pub def (call) cls ...flags @ (AcceptedControl | Iterable[AcceptedControl]) -> ServiceControlsAccepted
+  pub def (call) cls ...flags @ (AcceptedControl | Iterable[AcceptedControl] | Int) -> ServiceControlsAccepted
     ...
 
-  pub def (init) self ...flags @ (AcceptedControl | Iterable[AcceptedControl])
+  pub def (init) self ...flags @ (AcceptedControl | Iterable[AcceptedControl] | Int)
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -480,16 +476,20 @@ pub class ServiceControlsAccepted: Iterable[AcceptedControl]
 
 
 # Manager rights, given as a [`ManagerAccessMask`](winscm.ManagerAccessMask),
-# one right, or an iterable of rights.
+# a generic mask, native bits, one right, or an iterable of rights.
 pub @let ManagerAccessMaskSpec = $
   | ManagerAccessMask
+  | AccessMask
+  | Int
   | ManagerAccessRight
   | Iterable[ManagerAccessRight]
 
 # Service rights, given as a [`ServiceAccessMask`](winscm.ServiceAccessMask),
-# one right, or an iterable of rights.
+# a generic mask, native bits, one right, or an iterable of rights.
 pub @let ServiceAccessMaskSpec = $
   | ServiceAccessMask
+  | AccessMask
+  | Int
   | ServiceAccessRight
   | Iterable[ServiceAccessRight]
 
@@ -497,16 +497,17 @@ pub @let ServiceAccessMaskSpec = $
 # of arguments.
 pub @let BinaryPathSpec = (Str | Path | Iterable[Str | Path])
 
-# Service types, given as a [`ServiceType`](winscm.ServiceType), one flag, or an
-# iterable of flags.
+# Service types, given as a [`ServiceType`](winscm.ServiceType), native bits,
+# one flag, or an iterable of flags.
 pub @let ServiceTypeSpec = $
   | ServiceType
+  | Int
   | ServiceTypeFlag
   | Iterable[ServiceTypeFlag]
 
-# Status changes, given as a [`NotifyMask`](winscm.NotifyMask), one change, or
-# an iterable of changes.
-pub @let NotifyMaskSpec = (NotifyMask | NotifyChange | Iterable[NotifyChange])
+# Status changes, given as a [`NotifyMask`](winscm.NotifyMask), native bits,
+# one change, or an iterable of changes.
+pub @let NotifyMaskSpec = (NotifyMask | Int | NotifyChange | Iterable[NotifyChange])
 
 # An open handle to the Windows Service Control Manager.
 #

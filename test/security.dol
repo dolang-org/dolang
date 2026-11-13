@@ -20,6 +20,7 @@ import sys
     - Str
     - Tuple
   test:
+    - assert
     - assert_eq
     - assert_throws
     - assert_type
@@ -61,6 +62,8 @@ import sys
     - TokenGroup
     - TokenGroupAttributes
     - TokenInfo
+  fs.windows:
+    AccessMask: FileAccessMask
 
 #[test]
 def sid_converts_between_structural_forms()
@@ -189,13 +192,24 @@ def security_descriptor_exposes_acl_and_ace_views()
   assert_eq $absent.dacl nil
 
 #[test]
+def converts_masks_between_related_types()
+  let generic = AccessMask 0x120089
+  let file = FileAccessMask $generic
+  assert_eq $file.int 0x120089
+  assert (file.contains(:READ_DATA:))
+  assert (file.contains(:SYNCHRONIZE:))
+  assert_eq (AccessMask file) $generic
+  assert_eq (FileAccessMask(AccessMask(0x80000001)).int) 0x80000001
+  assert_throws $ValueError do FileAccessMask (-1)
+
+#[test]
 def constructs_aces_and_acls()
   let sid = Sid S-1-1-0
   let guid = Guid 00112233-4455-6677-8899-aabbccddeeff
-  let raw_mask = AccessMask.from_int 305419896
-  let header_flags = AceFlags.from_int 3
-  let mask_one = AccessMask.from_int 1
-  let mask_two = AccessMask.from_int 2
+  let raw_mask = AccessMask 305419896
+  let header_flags = AceFlags 3
+  let mask_one = AccessMask 1
+  let mask_two = AccessMask 2
   assert_eq $raw_mask.specific_rights 22136
   assert_type $AccessMask $raw_mask.standard_rights
   assert_type $AccessMask $raw_mask.generic_rights
@@ -218,7 +232,7 @@ def constructs_aces_and_acls()
   assert_throws $ValueError do
     CommonAce qualifier: :AUDIT: sid: $sid mask: $mask_two successful: false failed: false
   assert_throws $ValueError do
-    CommonAce qualifier: :AUDIT: sid: $sid mask: $mask_two successful: true failed: false flags: (AceFlags.from_int 64)
+    CommonAce qualifier: :AUDIT: sid: $sid mask: $mask_two successful: true failed: false flags: (AceFlags 64)
   assert_throws $MissingKeyError do CommonAce mask: $mask_one
   assert_throws $UnexpectedKeyError do CommonAce qualifier: :ALLOW: sid: $sid mask: $mask_one unexpected: true
   assert_throws $ValueError do CommonAce qualifier: :ALLOW: sid: $sid mask: $mask_one successful: true

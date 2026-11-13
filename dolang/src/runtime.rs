@@ -36,7 +36,7 @@ pub mod object {
         object::{
             array_view::{ArrayLike, ArrayView},
             dict_view::{DictLike, DictView, DictViewSink},
-            flags::{FlagLike, FlagLikeExt, Flags, FlagsInstanceExt, FlagsTypeExt},
+            flags::{FlagCoercion, FlagLike, FlagLikeExt, Flags, FlagsInstanceExt, FlagsTypeExt},
             interface::{InterfaceTag, Request},
             native::{
                 Cast, Instance, Mut, Object, Ref, Rest, Spread, SpreadContext, Type, TypeBuilder,

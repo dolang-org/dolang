@@ -121,22 +121,6 @@ pub @let ReparseTag = $
 #   echo $right
 # ```
 pub class AccessMask: WindowsAccessMask
-  # Builds a mask from a native integer, preserving every bit including ones
-  # this type does not name.
-  #
-  # ## Example
-  #
-  # ```
-  # let mask = AccessMask.from_int 0x120089
-  # ```
-  #[class]
-  pub def from_int
-    self
-    # Native Windows access mask.
-    value @ Int
-  do -> AccessMask
-    ...
-
   # The complete native mask as an [`Int`](std.Int), including bits this
   # type does not name.
   #[getter]
@@ -149,20 +133,36 @@ pub class AccessMask: WindowsAccessMask
   # Constructs a flag set from one iterable of symbols.
   @def (call) cls flags@Iterable[AccessRight] -> AccessMask
 
+  # Constructs a flag set from its native integer form, keeping bits this type
+  # does not name.
+  #
+  # ```
+  # let value = AccessMask 0x120089
+  # ```
+  @def (call) cls value@Int -> AccessMask
+
+  # Converts a generic mask, keeping bits this type does not name.
+  @def (call) cls mask@WindowsAccessMask -> AccessMask
+
   #[class]
-  pub def (call) cls ...flags @ (AccessRight | Iterable[AccessRight]) -> AccessMask
+  pub def (call) cls ...flags @ (AccessRight | Iterable[AccessRight] | Int | WindowsAccessMask) -> AccessMask
     ...
 
-  pub def (init) self ...flags @ (AccessRight | Iterable[AccessRight])
+  pub def (init) self ...flags @ (AccessRight | Iterable[AccessRight] | Int | WindowsAccessMask)
     ...
 
   # Tests whether all flags named by `flag` are set.
   pub def contains self flag @ AccessRight -> Bool
     ...
 
-# Rights, given as an [`AccessMask`](fs.windows.AccessMask), one right, or an
-# iterable of rights.
-pub @let AccessMaskSpec = (AccessMask | AccessRight | Iterable[AccessRight])
+# Rights, given as an [`AccessMask`](fs.windows.AccessMask), a generic mask, native
+# bits, one right, or an iterable of rights.
+pub @let AccessMaskSpec = $
+  | AccessMask
+  | WindowsAccessMask
+  | Int
+  | AccessRight
+  | Iterable[AccessRight]
 
 # [`fs.Path`](fs.Path) using Windows path syntax.
 #

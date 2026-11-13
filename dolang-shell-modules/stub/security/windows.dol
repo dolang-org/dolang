@@ -379,15 +379,6 @@ pub @let AccessRight = $
 # Domain-specific rights such as [`winreg.AccessMask`](winreg.AccessMask) are
 # subtypes. This type names generically applicable rights only.
 pub class AccessMask: Iterable[AccessRight]
-  # Constructs a mask from a native integer, preserving unknown bits.
-  #[class]
-  pub def from_int
-    self
-    # Native mask bits.
-    value @ Int
-  do -> AccessMask
-    ...
-
   # The object-specific low 16 bits.
   #[getter]
   pub def specific_rights self -> Int
@@ -414,11 +405,23 @@ pub class AccessMask: Iterable[AccessRight]
   # Constructs a flag set from one iterable of symbols.
   @def (call) cls flags@Iterable[AccessRight] -> AccessMask
 
+  # Constructs a flag set from its native integer form, keeping bits this type
+  # does not name.
+  #
+  # ```
+  # let value = AccessMask 0x120089
+  # ```
+  @def (call) cls value@Int -> AccessMask
+
+  # Converts a mask of a subtype, such as
+  # [`fs.windows.AccessMask`](fs.windows.AccessMask), keeping every bit.
+  @def (call) cls mask@AccessMask -> AccessMask
+
   #[class]
-  pub def (call) cls ...flags @ (AccessRight | Iterable[AccessRight]) -> AccessMask
+  pub def (call) cls ...flags @ (AccessRight | Iterable[AccessRight] | Int) -> AccessMask
     ...
 
-  pub def (init) self ...flags @ (AccessRight | Iterable[AccessRight])
+  pub def (init) self ...flags @ (AccessRight | Iterable[AccessRight] | Int)
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -472,15 +475,6 @@ pub @let AceFlag = $
 
 # Flags stored in an ACE header.
 pub class AceFlags: Iterable[AceFlag]
-  # Constructs flags from a native integer, preserving unknown bits.
-  #[class]
-  pub def from_int
-    self
-    # Native flag bits.
-    value @ Int
-  do -> AceFlags
-    ...
-
   # The native integer flags.
   #[getter]
   pub def int self -> Int
@@ -492,11 +486,19 @@ pub class AceFlags: Iterable[AceFlag]
   # Constructs a flag set from one iterable of symbols.
   @def (call) cls flags@Iterable[AceFlag] -> AceFlags
 
+  # Constructs a flag set from its native integer form, keeping bits this type
+  # does not name.
+  #
+  # ```
+  # let value = AceFlags 0x3
+  # ```
+  @def (call) cls value@Int -> AceFlags
+
   #[class]
-  pub def (call) cls ...flags @ (AceFlag | Iterable[AceFlag]) -> AceFlags
+  pub def (call) cls ...flags @ (AceFlag | Iterable[AceFlag] | Int) -> AceFlags
     ...
 
-  pub def (init) self ...flags @ (AceFlag | Iterable[AceFlag])
+  pub def (init) self ...flags @ (AceFlag | Iterable[AceFlag] | Int)
     ...
 
   # Tests whether all flags named by `flag` are set.
