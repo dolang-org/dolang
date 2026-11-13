@@ -65,44 +65,26 @@ impl<'v, T> Drop for ObjectWrap<'v, T> {
     }
 }
 
-pub(crate) struct ObjectAnnex<'v, T: Object<'v>> {
-    slots: Option<alias::Box<[ValueCell<'v>]>>,
-    inner: T::Annex,
+/// The fixed part of a native object's annex; the tail holds its `T::SLOTS`
+/// slots.
+pub(crate) struct ObjectAnnexPrefix<'v, T: Object<'v>> {
+    pub(crate) inner: T::Annex,
 }
 
-impl<'v, T: Object<'v>> ObjectAnnex<'v, T> {
-    fn new(inner: T::Annex) -> Self {
-        Self {
-            slots: (T::SLOTS != 0).then(|| {
-                (0..T::SLOTS)
-                    .map(|_| ValueCell::default())
-                    .collect::<Vec<_>>()
-                    .into()
-            }),
-            inner,
-        }
-    }
-}
+pub(crate) type ObjectAnnex<'v, T> = gc::Tail<ObjectAnnexPrefix<'v, T>, [ValueCell<'v>]>;
 
-impl<'v, T: Object<'v>> gc::Annex for ObjectAnnex<'v, T> {
-    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
-        if T::SLOTS != 0 {
-            unsafe {
-                for slot in self.slots.as_ref().unwrap_unchecked().iter() {
-                    slot.accept(visit)?
-                }
-            }
+impl<'v, T: Object<'v>> gc::TailAnnex<ValueCell<'v>> for ObjectAnnexPrefix<'v, T> {
+    fn accept(&self, slots: &[ValueCell<'v>], visit: &mut dyn Visit) -> ControlFlow<()> {
+        for slot in slots {
+            slot.accept(visit)?
         }
         ControlFlow::Continue(())
     }
 
-    fn clear(&self) {
-        if T::SLOTS != 0 {
-            unsafe {
-                for slot in self.slots.as_ref().unwrap_unchecked().iter() {
-                    slot.slot().store(Value::NIL)
-                }
-            }
+    fn clear(&self, slots: &[ValueCell<'v>]) {
+        for slot in slots {
+            // Safety: the collector clears only unreachable objects
+            unsafe { slot.slot().store(Value::NIL) }
         }
     }
 }
@@ -493,14 +475,7 @@ impl<'v, 'a, T: Object<'v>> Ref<'v, 'a, T> {
             assert!(N < T::SLOTS, "slot out of bounds");
         }
         // Safety: the borrow of the object excludes writers, which need `Mut::slot_mut`
-        unsafe {
-            gc::Ref::annex(&this.0)
-                .slots
-                .as_ref()
-                .unwrap_unchecked()
-                .get_unchecked(N)
-                .as_ref()
-        }
+        unsafe { gc::Ref::annex(&this.0).tail.get_unchecked(N).as_ref() }
     }
 }
 
@@ -531,14 +506,7 @@ impl<'v, 'a, T: Object<'v>> Mut<'v, 'a, T> {
             assert!(N < T::SLOTS);
         }
         // Safety: the borrow of the object excludes writers, which need `Mut::slot_mut`
-        unsafe {
-            gc::Mut::annex(&this.0)
-                .slots
-                .as_ref()
-                .unwrap_unchecked()
-                .get_unchecked(N)
-                .as_ref()
-        }
+        unsafe { gc::Mut::annex(&this.0).tail.get_unchecked(N).as_ref() }
     }
 
     #[inline]
@@ -547,14 +515,7 @@ impl<'v, 'a, T: Object<'v>> Mut<'v, 'a, T> {
             assert!(N < T::SLOTS, "slot out of bounds");
         }
         // Safety: the slot reborrows `this` mutably, excluding other access
-        unsafe {
-            gc::Mut::annex(&this.0)
-                .slots
-                .as_ref()
-                .unwrap_unchecked()
-                .get_unchecked(N)
-                .slot()
-        }
+        unsafe { gc::Mut::annex(&this.0).tail.get_unchecked(N).slot() }
     }
 }
 
@@ -711,7 +672,7 @@ impl<'v, 'a, T: Object<'v>> Instance<'v, 'a, T> {
     /// Get immutable annex
     #[inline]
     pub fn annex(&self) -> Annex<'v, 'a, T> {
-        Annex(&self.receiver.annex().inner)
+        Annex(&self.receiver.annex().prefix.inner)
     }
 
     /// Reconstructs the [`Type`] handle for this instance's own type.
@@ -1724,7 +1685,6 @@ async fn default_object_spread<'v, 'a, 's, T: Object<'v>>(
 
 unsafe impl<'v, T: Object<'v>> Collect for ObjectWrap<'v, T> {
     const CYCLIC: bool = T::SLOTS != 0;
-    const IMMUTABLE: bool = false;
     type Annex = ObjectAnnex<'v, T>;
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -2882,8 +2842,13 @@ impl<'v, T: Object<'v>> Type<'v, T> {
         annex: T::Annex,
         out: impl Output<'v>,
     ) {
-        self.vtbl
-            .create_with_annex(alloc, ObjectWrap::new(value), ObjectAnnex::new(annex), out)
+        self.vtbl.create_tail(
+            alloc,
+            ObjectWrap::new(value),
+            ObjectAnnexPrefix { inner: annex },
+            (0..T::SLOTS).map(|_| ValueCell::default()),
+            out,
+        )
     }
 
     /// Check whether `value` has dynamic type `T`, returning a witness suitable to obtain an
@@ -3857,8 +3822,8 @@ pub(crate) struct TypeObjectWrap<'v, T: Object<'v>>(
 /// accessible directly via [`Type::annex`].  The `Type<'v,T>` itself can be
 /// reconstituted from the type object header via [`Type::from_type_header`].
 pub(crate) struct TypeAnnexInner<'v, T: Object<'v>> {
-    proxy: TypeHandle<'v, NativeTypeProxy<'v, T>>,
-    scope: TypeHandle<'v, NativeTypeScope<'v, T>>,
+    proxy: TypeHandle<'v, gc::Imm<NativeTypeProxy<'v, T>>>,
+    scope: TypeHandle<'v, gc::Imm<NativeTypeScope<'v, T>>>,
     pub(crate) inner: T::TypeAnnex,
     pub(crate) supertypes: alias::Box<[Value<'v>]>,
     pub(crate) nominal_supertypes: alias::Box<[Value<'v>]>,
@@ -3882,7 +3847,6 @@ impl<'v, T: Object<'v>> gc::Annex for TypeAnnexInner<'v, T> {
 
 unsafe impl<'v, T: Object<'v>> Collect for TypeObjectWrap<'v, T> {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = false;
     type Annex = TypeAnnexInner<'v, T>;
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -4051,7 +4015,7 @@ impl<'v, T: Object<'v>> TypeObjectWrap<'v, T> {
         strand.with_slots_sync(|strand, [mut namespace]| {
             this.annex()
                 .scope
-                .create(strand, scope, Slot::reborrow(&mut namespace));
+                .create_imm(strand, scope, Slot::reborrow(&mut namespace));
             BoundMethod::create(strand, &namespace, field, out);
         });
     }
@@ -4067,7 +4031,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
             native: Value::from_object(this.to_strong()),
             ty: this.ty(strand.vm()),
         };
-        this.annex().proxy.create(strand, proxy, out);
+        this.annex().proxy.create_imm(strand, proxy, out);
     }
 
     fn op_debug<'a, 's>(
@@ -4292,20 +4256,18 @@ struct NativeTypeScope<'v, T: Object<'v>> {
     receiver: Value<'v>,
 }
 
-unsafe impl<'v, T: Object<'v>> Collect for NativeTypeScope<'v, T> {
+unsafe impl<'v, T: Object<'v>> gc::ImmState for NativeTypeScope<'v, T> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl<'v, T: Object<'v>> gc::Annex for NativeTypeScope<'v, T> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         self.native.accept(visit)?;
         self.receiver.accept(visit)
     }
-
-    fn clear(&mut self) {}
 }
 
-impl<'v, T: Object<'v>> Protocol<'v> for NativeTypeScope<'v, T> {
+impl<'v, T: Object<'v>> Protocol<'v> for gc::Imm<NativeTypeScope<'v, T>> {
     fn op_type<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -4346,19 +4308,17 @@ impl<'v, T: Object<'v>> NativeTypeProxy<'v, T> {
     }
 }
 
-unsafe impl<'v, T: Object<'v>> Collect for NativeTypeProxy<'v, T> {
+unsafe impl<'v, T: Object<'v>> gc::ImmState for NativeTypeProxy<'v, T> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl<'v, T: Object<'v>> gc::Annex for NativeTypeProxy<'v, T> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         self.native.accept(visit)
     }
-
-    fn clear(&mut self) {}
 }
 
-impl<'v, T: Object<'v>> Protocol<'v> for NativeTypeProxy<'v, T> {
+impl<'v, T: Object<'v>> Protocol<'v> for gc::Imm<NativeTypeProxy<'v, T>> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

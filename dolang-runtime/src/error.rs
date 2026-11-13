@@ -529,7 +529,7 @@ impl<'v, 's, 'a> fmt::Display for Display<'v, 's, 'a> {
 
 impl<'v, 's> Error<'v, 's> {
     fn new_info(inner: &'s StrandInner<'v>, kind: Boxed<'v>) -> Self {
-        let value = Value::from_object(GcObj::new(
+        let value = Value::from_object(GcObj::new_imm(
             inner.vm().arena(),
             inner.vm().builtin_types().error,
             kind,

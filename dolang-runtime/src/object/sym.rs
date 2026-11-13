@@ -8,7 +8,7 @@ use crate::value::fmt::Format;
 use crate::{
     arg::Args,
     error::{Error, Result},
-    gc::{Collect, arena::Visit},
+    gc::{self, Collect, arena::Visit},
     strand::Strand,
     sym::Tag,
     unpack,
@@ -18,25 +18,24 @@ use crate::{
 
 use super::protocol::{Inspect, Protocol, Recv};
 
-pub(crate) struct SymObj {
+pub(crate) struct SymData {
     pub(crate) tag: Tag,
     pub(crate) name: String,
     pub(crate) private: bool,
 }
 
-unsafe impl Collect for SymObj {
+unsafe impl gc::ImmState for SymData {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl gc::Annex for SymData {
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
         ControlFlow::Continue(())
     }
-
-    fn clear(&mut self) {
-        unreachable!()
-    }
 }
+
+/// A symbol object.
+pub(crate) type SymObj = gc::Imm<SymData>;
 
 impl<'v> Protocol<'v> for SymObj {
     fn op_type<'a, 's>(
@@ -109,7 +108,6 @@ pub(crate) struct Type;
 
 unsafe impl Collect for Type {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {

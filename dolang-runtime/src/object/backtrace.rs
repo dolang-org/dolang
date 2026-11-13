@@ -24,7 +24,7 @@ pub(crate) fn create<'v>(
     strand
         .builtin_types()
         .backtrace
-        .create(strand, Backtrace::new(entries), out);
+        .create_imm(strand, Backtrace::new(entries), out);
 }
 
 pub(crate) fn entries_from_value<'v>(
@@ -63,24 +63,22 @@ impl<'v> Backtrace<'v> {
     }
 }
 
-unsafe impl<'v> Collect for Backtrace<'v> {
+unsafe impl<'v> crate::gc::ImmState for Backtrace<'v> {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl<'v> crate::gc::Annex for Backtrace<'v> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         for entry in &self.entries {
             entry.accept(visit)?;
         }
         ControlFlow::Continue(())
     }
-
-    fn clear(&mut self) {
-        unreachable!()
-    }
 }
 
-impl<'v> Protocol<'v> for Backtrace<'v> {
+pub(crate) type BacktraceObj<'v> = crate::gc::Imm<Backtrace<'v>>;
+
+impl<'v> Protocol<'v> for BacktraceObj<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -187,7 +185,6 @@ pub(crate) struct Iter<'v> {
 
 unsafe impl<'v> Collect for Iter<'v> {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -235,7 +232,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
             .vm()
             .builtin_types()
             .backtrace_frame
-            .create(strand, Frame { entry }, out);
+            .create_imm(strand, Frame { entry }, out);
         Ok(true)
     }
 
@@ -281,21 +278,19 @@ pub(crate) struct Frame<'v> {
     entry: UnwindEntry<'v>,
 }
 
-unsafe impl<'v> Collect for Frame<'v> {
+unsafe impl<'v> crate::gc::ImmState for Frame<'v> {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl<'v> crate::gc::Annex for Frame<'v> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         self.entry.accept(visit)
     }
-
-    fn clear(&mut self) {
-        unreachable!()
-    }
 }
 
-impl<'v> Protocol<'v> for Frame<'v> {
+pub(crate) type FrameObj<'v> = crate::gc::Imm<Frame<'v>>;
+
+impl<'v> Protocol<'v> for FrameObj<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -368,7 +363,6 @@ pub(crate) struct Type;
 
 unsafe impl Collect for Type {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -443,7 +437,6 @@ pub(crate) struct FrameType;
 
 unsafe impl Collect for FrameType {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {

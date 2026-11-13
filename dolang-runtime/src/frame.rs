@@ -3,14 +3,12 @@ use std::{
     cell::{Cell, UnsafeCell},
     collections::VecDeque,
     marker::PhantomData,
-    mem,
-    ops::{ControlFlow, DerefMut},
+    ops::ControlFlow,
     ptr::NonNull,
 };
 
 use bitvec::{array::BitArray, bitbox, slice::BitSlice};
 pub use dolang_bytecode::span::{Pos, Span};
-use dolang_util::alias;
 
 use crate::{
     Program,
@@ -221,7 +219,7 @@ impl<'v> CallFrame<'v> {
             }
             if let Some(rest) = rest {
                 let record = pack::Pack::new(rest.into_iter().flatten().collect());
-                strand.builtin_types().pack.create(
+                strand.builtin_types().pack.create_imm(
                     strand,
                     record,
                     slots
@@ -236,7 +234,7 @@ impl<'v> CallFrame<'v> {
             }
             if let Some(entries) = key_rest {
                 let record = pack::Pack::from_sym_entries(entries);
-                strand.builtin_types().pack.create(
+                strand.builtin_types().pack.create_imm(
                     strand,
                     record,
                     slots.get_unchecked(rest_slot).slot(),
@@ -333,32 +331,47 @@ impl<'v> CallFrame<'v> {
     }
 }
 
-#[derive(Default)]
-pub(crate) struct Upvars<'v> {
+/// A frame of upvars. Its annex holds the parent frame and the variables.
+pub(crate) struct Upvars<'v>(PhantomData<Value<'v>>);
+
+/// The fixed part of an [`Upvars`] annex.
+pub(crate) struct UpvarsPrefix<'v> {
     pub(crate) parent: Option<Gc<'v, Upvars<'v>>>,
-    pub(crate) vars: alias::Box<[Value<'v>]>,
-    pub(crate) stale: bool,
+    /// Set once the closure of a non-local branch guard returns.
+    pub(crate) stale: Cell<bool>,
 }
+
+pub(crate) type UpvarsAnnex<'v> = gc::Tail<UpvarsPrefix<'v>, [ValueCell<'v>]>;
 
 unsafe impl<'v> Collect for Upvars<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
-    type Annex = ();
+    type Annex = UpvarsAnnex<'v>;
 
-    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+    fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
+        ControlFlow::Continue(())
+    }
+
+    fn clear(&mut self) {}
+}
+
+impl<'v> gc::TailAnnex<ValueCell<'v>> for UpvarsPrefix<'v> {
+    fn accept(&self, vars: &[ValueCell<'v>], visit: &mut dyn Visit) -> ControlFlow<()> {
         if let Some(parent) = self.parent.as_ref() {
             parent.accept(visit)?
         }
-        for var in self.vars.iter() {
+        for var in vars {
             var.accept(visit)?
         }
         ControlFlow::Continue(())
     }
 
-    fn clear(&mut self) {
-        self.parent = None;
-        for var in self.vars.iter_mut() {
-            *var = Value::NIL;
+    // The parent is not cleared: a parent frame always exists before its
+    // children, so any cycle through it passes through a variable.
+    fn clear(&self, vars: &[ValueCell<'v>]) {
+        for var in vars {
+            // Safety: the collector clears only unreachable frames, so nothing
+            // else accesses the cell.
+            unsafe { var.slot().store(Value::NIL) }
         }
     }
 }
@@ -379,28 +392,11 @@ impl<'v> CallFrame<'v> {
     /// # Safety
     ///
     /// The chain must be at least `depth + 1` frames long.
-    ///
-    /// # Panics
-    ///
-    /// Panics on a conflicting borrow.  The interpreter never holds long-term
-    /// borrows, nor do other objects that can access upvars (e.g. `Module`).
-    unsafe fn upvars_at(&self, mut depth: usize) -> *mut Upvars<'v> {
+    unsafe fn upvars_at(&self, mut depth: usize) -> &UpvarsAnnex<'v> {
         unsafe {
-            let mut upvars: *mut Upvars<'v> = self
-                .upvar_chain()
-                .as_ref()
-                .unwrap_unchecked()
-                .borrow_mut()
-                .unwrap()
-                .deref_mut() as *mut _;
+            let mut upvars = self.upvar_chain().as_ref().unwrap_unchecked().annex();
             while depth != 0 {
-                upvars = (*upvars)
-                    .parent
-                    .as_mut()
-                    .unwrap_unchecked()
-                    .borrow_mut()
-                    .unwrap()
-                    .deref_mut() as *mut _;
+                upvars = upvars.prefix.parent.as_ref().unwrap_unchecked().annex();
                 depth -= 1;
             }
             upvars
@@ -415,8 +411,7 @@ impl<'v> CallFrame<'v> {
     /// - `index` must be valid in the target upvar frame
     pub(crate) unsafe fn get_upvar(&self, index: usize, depth: usize, mut out: Slot<'v, '_>) {
         unsafe {
-            let upvars = &*self.upvars_at(depth);
-            let value = upvars.vars.get_unchecked(index).dup();
+            let value = self.upvars_at(depth).tail.get_unchecked(index).get();
             out.store(value)
         }
     }
@@ -430,10 +425,13 @@ impl<'v> CallFrame<'v> {
     pub(crate) unsafe fn set_upvar(&self, index: usize, depth: usize, mut src: Slot<'v, '_>) {
         unsafe {
             let value = src.take();
-            let upvars = &mut *self.upvars_at(depth);
-            let old = mem::replace(upvars.vars.get_unchecked_mut(index), value);
-            // Drop the old value only after the write: a drop can run native code
-            drop(old)
+            // The slot drops the old value only after the write: a drop can run
+            // native code
+            self.upvars_at(depth)
+                .tail
+                .get_unchecked(index)
+                .slot()
+                .store(value)
         }
     }
 
@@ -441,13 +439,14 @@ impl<'v> CallFrame<'v> {
     pub(crate) fn push_upvars(&self, arena: &Arena<'v>, count: usize) {
         // SAFETY: no reference into the chain outlives `upvar_chain`'s use here
         let parent = unsafe { self.upvar_chain() }.clone();
-        let upvars = Gc::new(
+        let upvars = Gc::new_tail(
             arena,
-            Upvars {
+            Upvars(PhantomData),
+            UpvarsPrefix {
                 parent,
-                vars: (0..count).map(|_| Value::NIL).collect(),
-                stale: false,
+                stale: Cell::new(false),
             },
+            (0..count).map(|_| ValueCell::default()),
         );
         let old = unsafe { (*self.upvars.get()).replace(upvars) };
         drop(old)
@@ -462,7 +461,7 @@ impl<'v> CallFrame<'v> {
         unsafe {
             let slot = &mut *self.upvars.get();
             let popped = slot.take().unwrap_unchecked();
-            *slot = popped.borrow().unwrap().parent.clone();
+            *slot = popped.annex().prefix.parent.clone();
             popped
         }
     }
@@ -480,22 +479,15 @@ impl<'v> CallFrame<'v> {
     /// The chain must be at least `depth + 1` frames long.
     pub(crate) unsafe fn nl_target(&self, mut depth: usize) -> Option<gc::Weak<'v, Upvars<'v>>> {
         unsafe {
-            let mut current = self.upvar_chain().as_ref().unwrap_unchecked().clone();
+            let mut current = self.upvar_chain().as_ref().unwrap_unchecked();
             while depth != 0 {
-                let parent = current
-                    .borrow()
-                    .unwrap()
-                    .parent
-                    .as_ref()
-                    .unwrap_unchecked()
-                    .clone();
-                current = parent;
+                current = current.annex().prefix.parent.as_ref().unwrap_unchecked();
                 depth -= 1;
             }
-            if current.borrow().unwrap_unchecked().stale {
+            if current.annex().prefix.stale.get() {
                 None
             } else {
-                Some(Gc::downgrade(&current))
+                Some(Gc::downgrade(current))
             }
         }
     }

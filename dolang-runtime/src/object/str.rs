@@ -13,8 +13,8 @@ use crate::{
     arg::Args,
     bytecode::Rest,
     error::{Error, Result},
-    gc::{Collect, arena::Visit},
-    object::protocol::{GcObj, instance_get_fallback, members},
+    gc::{self, Collect, arena::Visit},
+    object::protocol::{GcObj, GcObjBorrow, instance_get_fallback, members},
     sig,
     strand::Strand,
     sym::{self, Sym},
@@ -29,10 +29,12 @@ use super::{
     range,
 };
 
-unsafe impl Collect for str {
+/// A `Str` object. Its text is the tail of its annex.
+pub(crate) struct StrObj;
+
+unsafe impl Collect for StrObj {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+    type Annex = gc::Tail<(), str>;
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
         ControlFlow::Continue(())
@@ -76,7 +78,28 @@ async fn value_to_pattern<'v, 's>(
         .await
 }
 
-impl<'v> Protocol<'v> for str {
+impl<'v, 'a> Recv<'v, 'a, StrObj> {
+    /// The string's text.
+    pub(crate) fn str(&self) -> &'a str {
+        &self.annex().tail
+    }
+}
+
+impl<'v, 'a> GcObjBorrow<'v, 'a, StrObj> {
+    /// The string's text.
+    pub(crate) fn str(&self) -> &'a str {
+        &self.annex().tail
+    }
+}
+
+impl<'v> GcObj<'v, StrObj> {
+    /// The string's text.
+    pub(crate) fn str(&self) -> &str {
+        &self.annex().tail
+    }
+}
+
+impl<'v> Protocol<'v> for StrObj {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -90,7 +113,7 @@ impl<'v> Protocol<'v> for str {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "{}", this.receiver.get())
+        crate::fmt!(strand, w, "{}", this.str())
     }
 
     fn op_debug<'a, 's>(
@@ -99,7 +122,7 @@ impl<'v> Protocol<'v> for str {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         crate::fmt!(strand, w, "\"")?;
-        for char in this.receiver.get().chars() {
+        for char in this.str().chars() {
             match char {
                 '"' | '\\' | '$' => crate::fmt!(strand, w, "\\{char}"),
                 '\t' => crate::fmt!(strand, w, "\\t"),
@@ -116,7 +139,7 @@ impl<'v> Protocol<'v> for str {
         this: Recv<'v, 'a, Self>,
         _strand: &'a mut Strand<'v, 's>,
     ) -> Result<'v, 's, bool> {
-        Ok(!this.get().is_empty())
+        Ok(!this.str().is_empty())
     }
 
     fn op_eq<'a, 's>(
@@ -125,7 +148,7 @@ impl<'v> Protocol<'v> for str {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         if let Some(ostr) = other.downcast_native(strand, strand.builtin_types().str) {
-            Ok(Value::from_bool(ostr.get() == this.get()))
+            Ok(Value::from_bool(ostr.str() == this.str()))
         } else {
             Err(Error::unsupported(strand, "`==`"))
         }
@@ -137,7 +160,7 @@ impl<'v> Protocol<'v> for str {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         if let Some(ostr) = other.downcast_ref(strand.builtin_types().str) {
-            Ok(Value::from_bool(this.get() < ostr.get()))
+            Ok(Value::from_bool(this.str() < ostr.str()))
         } else {
             Err(Error::unsupported(strand, "`<`"))
         }
@@ -148,7 +171,7 @@ impl<'v> Protocol<'v> for str {
         _strand: &'a mut Strand<'v, 's>,
         hasher: &mut DefaultHasher,
     ) -> Result<'v, 's, ()> {
-        this.get().hash(hasher);
+        this.str().hash(hasher);
         Ok(())
     }
 
@@ -158,7 +181,7 @@ impl<'v> Protocol<'v> for str {
         index: &Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let me = this.get();
+        let me = this.str();
         let Some((start, end)) = range::slice_bounds(index, strand, me.len())? else {
             return Err(Error::index(strand));
         };
@@ -176,7 +199,7 @@ impl<'v> Protocol<'v> for str {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let me = this.get();
+        let me = this.str();
 
         match method.tag() {
             sym::SCALARS | sym::GRAPHEMES | sym::SCALAR_BOUNDS | sym::GRAPHEME_BOUNDS => {
@@ -215,7 +238,7 @@ impl<'v> Protocol<'v> for str {
             sym::STARTS_WITH => {
                 let ([prefix], []) = unpack!(strand, args, 1, 0)?;
                 let input =
-                    this.get()
+                    this.str()
                         .starts_with(prefix.as_str_raw(strand).ok_or_else(|| {
                             Error::type_error(strand, "str.starts_with: not a string")
                         })?);
@@ -224,7 +247,7 @@ impl<'v> Protocol<'v> for str {
             }
             sym::WITHOUT_PREFIX => {
                 let ([prefix], []) = unpack!(strand, args, 1, 0)?;
-                let borrow = this.get();
+                let borrow = this.str();
                 let input = borrow
                     .strip_prefix(prefix.as_str_raw(strand).ok_or_else(|| {
                         Error::type_error(strand, "str.without_prefix: not a string")
@@ -235,7 +258,7 @@ impl<'v> Protocol<'v> for str {
             }
             sym::ENDS_WITH => {
                 let ([suffix], []) = unpack!(strand, args, 1, 0)?;
-                let input = this.get().ends_with(
+                let input = this.str().ends_with(
                     suffix
                         .as_str_raw(strand)
                         .ok_or_else(|| Error::type_error(strand, "str.ends_with: not a string"))?,
@@ -245,7 +268,7 @@ impl<'v> Protocol<'v> for str {
             }
             sym::WITHOUT_SUFFIX => {
                 let ([suffix], []) = unpack!(strand, args, 1, 0)?;
-                let borrow = this.get();
+                let borrow = this.str();
                 let input = borrow
                     .strip_suffix(suffix.as_str_raw(strand).ok_or_else(|| {
                         Error::type_error(strand, "str.without_suffix: not a string")
@@ -275,11 +298,11 @@ impl<'v> Protocol<'v> for str {
                     Some(l) if l < 0 => {
                         // Negative limit: split from the opposite end, buffer in yield order.
                         let n = (l.unsigned_abs() as usize).saturating_add(1);
-                        let src: &str = this.receiver.get();
+                        let src: &str = this.str();
                         let base = src.as_ptr() as usize;
                         let mut segs: Vec<(usize, usize)> = if forward {
                             // split(limit: -N): split from rear via rsplitn, yield forward
-                            src.rsplitn(n, &*delim_gc)
+                            src.rsplitn(n, delim_gc.str())
                                 .map(|s| {
                                     let st = s.as_ptr() as usize - base;
                                     (st, st + s.len())
@@ -287,7 +310,7 @@ impl<'v> Protocol<'v> for str {
                                 .collect()
                         } else {
                             // rsplit(limit: -N): split from front via splitn, yield backward
-                            src.splitn(n, &*delim_gc)
+                            src.splitn(n, delim_gc.str())
                                 .map(|s| {
                                     let st = s.as_ptr() as usize - base;
                                     (st, st + s.len())
@@ -313,7 +336,7 @@ impl<'v> Protocol<'v> for str {
                             }
                         } else {
                             SplitState::Lazy {
-                                offset: Some(this.receiver.get().len()),
+                                offset: Some(this.str().len()),
                                 limit,
                                 reverse: true,
                             }
@@ -346,7 +369,7 @@ impl<'v> Protocol<'v> for str {
                             value.op_display(strand, &mut acc)?;
                         }
                         while input.next(strand, &mut value).await? {
-                            acc.extend(strand, this.receiver.get());
+                            acc.extend(strand, this.str());
                             value.op_display(strand, &mut acc)?;
                             strand.check_trap_gc()?;
                         }
@@ -471,7 +494,7 @@ impl<'v> Protocol<'v> for str {
             }
             sym::CONTAINS => {
                 let ([needle], []) = unpack!(strand, args, 1, 0)?;
-                let input = this.get().contains(
+                let input = this.str().contains(
                     needle
                         .as_str_raw(strand)
                         .ok_or_else(|| Error::type_error(strand, "not a string"))?,
@@ -495,7 +518,7 @@ impl<'v> Protocol<'v> for str {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                Output::set(strand, out, this.receiver.get().len());
+                Output::set(strand, out, this.str().len());
                 Ok(())
             }
             sym::STARTS_WITH
@@ -548,12 +571,12 @@ pub(crate) struct UnicodeIter<'v> {
     offset: usize,
     terminal_emitted: bool,
     _pin: PinStr<'v, 'static>,
-    str: GcObj<'v, str>,
+    str: GcObj<'v, StrObj>,
 }
 
 impl<'v> UnicodeIter<'v> {
     fn new(
-        str: GcObj<'v, str>,
+        str: GcObj<'v, StrObj>,
         kind: UnicodeKind,
         boundaries: bool,
         strand: &Strand<'v, '_>,
@@ -627,7 +650,6 @@ impl<'v> UnicodeIter<'v> {
 
 unsafe impl<'v> Collect for UnicodeIter<'v> {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -799,8 +821,8 @@ impl Clone for SplitState {
 
 #[derive(Clone)]
 pub(crate) struct Split<'v> {
-    str: GcObj<'v, str>,
-    delim: GcObj<'v, str>,
+    str: GcObj<'v, StrObj>,
+    delim: GcObj<'v, StrObj>,
     state: SplitState,
     /// `true` = yield left-to-right (split); `false` = right-to-left (rsplit).
     forward: bool,
@@ -825,10 +847,11 @@ impl<'v> Split<'v> {
                 reverse,
             } => {
                 let off = (*offset)?;
-                let delim_len = self.delim.len();
+                let delim_len = self.delim.str().len();
                 if !*reverse {
                     if *limit != 0
-                        && let Some((before, _)) = self.str[off..].split_once(&*self.delim)
+                        && let Some((before, _)) =
+                            self.str.str()[off..].split_once(self.delim.str())
                     {
                         let end = off + before.len();
                         *offset = Some(end + delim_len);
@@ -836,11 +859,12 @@ impl<'v> Split<'v> {
                         Some((off, end))
                     } else {
                         *offset = None;
-                        Some((off, self.str.len()))
+                        Some((off, self.str.str().len()))
                     }
                 } else {
                     if *limit != 0
-                        && let Some((before, _after)) = self.str[..off].rsplit_once(&*self.delim)
+                        && let Some((before, _after)) =
+                            self.str.str()[..off].rsplit_once(self.delim.str())
                     {
                         let after_start = before.len() + delim_len;
                         *offset = Some(before.len());
@@ -858,7 +882,6 @@ impl<'v> Split<'v> {
 
 unsafe impl<'v> Collect for Split<'v> {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -942,14 +965,14 @@ impl<'v> Protocol<'v> for Split<'v> {
                 return Err(Error::missing_positional(strand, sig.required));
             };
             out.at(i)
-                .store(Value::from_str(strand, &borrow.str[start..end]));
+                .store(Value::from_str(strand, &borrow.str.str()[start..end]));
         }
 
         // Fill optional positional slots
         for i in 0..sig.optional.len() {
             if let Some((start, end)) = borrow.next_segment() {
                 out.at(sig.required + i)
-                    .store(Value::from_str(strand, &borrow.str[start..end]));
+                    .store(Value::from_str(strand, &borrow.str.str()[start..end]));
             } else {
                 out.at(sig.required + i).store(sig.optional[i].dup());
             }
@@ -979,7 +1002,7 @@ impl<'v> Protocol<'v> for Split<'v> {
         let Some((start, end)) = borrow.next_segment() else {
             return Ok(false);
         };
-        Output::set(strand, out, &borrow.str[start..end]);
+        Output::set(strand, out, &borrow.str.str()[start..end]);
         Ok(true)
     }
 
@@ -1007,7 +1030,6 @@ pub(crate) struct Type;
 
 unsafe impl Collect for Type {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {

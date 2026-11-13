@@ -94,7 +94,6 @@ pub(crate) struct Dict<'v> {
 
 unsafe impl<'v> Collect for Dict<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -492,7 +491,6 @@ pub(crate) struct Iter<'v> {
 
 unsafe impl<'v> Collect for Iter<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -599,7 +597,6 @@ pub(crate) struct KeyValues<'v> {
 
 unsafe impl<'v> Collect for Values<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -611,7 +608,6 @@ unsafe impl<'v> Collect for Values<'v> {
 
 unsafe impl<'v> Collect for Keys<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -623,7 +619,6 @@ unsafe impl<'v> Collect for Keys<'v> {
 
 unsafe impl<'v> Collect for KeyValues<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -1240,7 +1235,6 @@ fn make_unpack<'v>(
 
 unsafe impl<'v> Collect for Unpack<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -1395,7 +1389,6 @@ pub(crate) struct UnpackIter<'v> {
 
 unsafe impl<'v> Collect for UnpackIter<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -2350,7 +2343,6 @@ pub(crate) struct Type;
 
 unsafe impl Collect for Type {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {

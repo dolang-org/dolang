@@ -26,16 +26,16 @@ use crate::{
     bytecode::file,
     error::{Error, Result},
     frame::{self, CallFrame, Native},
-    gc::{self, Gc, arena::Arena},
+    gc::{Gc, arena::Arena},
     object::{
         BuiltinTypes, Singletons, TypeTable, array,
         array_view::{self, ArrayLike},
         dict,
         dict_view::{self, DictLike},
-        function::{NativeFunction, NativeFunctionAnnex},
+        function::NativeFunction,
         module::{Native as NativeModule, NativeField},
         native::{Instance, Object, ObjectVtbl, Type, TypeBuilder},
-        protocol::{GcObj, Header},
+        protocol::GcObj,
         set,
         sym::SymObj,
     },
@@ -197,7 +197,7 @@ pub trait AllocExt<'v>: Alloc<'v> {
     {
         let mut alloc = self;
         let types = alloc.alloc_vm(private::Sealed).builtin_types();
-        types.native_function.create(
+        types.native_function.create_imm(
             &mut alloc,
             NativeFunction::new(func, "<native>", "<function>"),
             out,
@@ -230,10 +230,9 @@ pub trait AllocExt<'v>: Alloc<'v> {
         let types = alloc.alloc_vm(private::Sealed).builtin_types();
         let embryo = types.native_function.embryo(&mut alloc);
         let bound = ValueCell::from(out.take());
-        embryo.finish_with_annex(
+        embryo.finish_imm(
             &mut alloc,
-            NativeFunction::bound(func),
-            NativeFunctionAnnex { bound },
+            NativeFunction::bound(func).with_bound(bound),
             out,
         )
     }
@@ -656,13 +655,10 @@ impl<'v> Vm<'v> {
                 }
                 file::Const::Bool(v) => Value::from_bool(*v),
                 file::Const::Str(file::StrId { start, end }) => {
-                    Value::from_object(gc::Base::upcast(unsafe {
-                        gc::Base::from_header_utf8_slice(
-                            &self.arena,
-                            Header::new(self.arena(), self.builtin_types.str.vtbl),
-                            &main[*start..*end],
-                        )
-                    }))
+                    // Safety: the verifier checks that string constants are UTF-8
+                    Value::from_str(self, unsafe {
+                        std::str::from_utf8_unchecked(&main[*start..*end])
+                    })
                 }
                 file::Const::Bin(file::BinId { start, end }) => {
                     Value::from_u8_slice(self, &main[*start..*end])
@@ -849,7 +845,7 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
         let func = NativeFunction::new(f, self.name, name);
         self.push(
             sym,
-            NativeField::Value(Value::from_object(GcObj::new(
+            NativeField::Value(Value::from_object(GcObj::new_imm(
                 self.vm.inner.arena(),
                 vtbl,
                 func,
@@ -873,7 +869,7 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
         let func = NativeFunction::without_frame(f, self.name, name);
         self.push(
             sym,
-            NativeField::Value(Value::from_object(GcObj::new(
+            NativeField::Value(Value::from_object(GcObj::new_imm(
                 self.vm.inner.arena(),
                 vtbl,
                 func,
@@ -1017,7 +1013,7 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
         }
 
         let module = NativeModule::new(self.name, items);
-        let module = Value::from_object(GcObj::new(
+        let module = Value::from_object(GcObj::new_imm(
             self.vm.inner.arena(),
             self.vm.inner.builtin_types.native_module,
             module,
@@ -1431,19 +1427,22 @@ impl<'v> Builder<'v> {
         + 'v,
     ) -> &mut Self {
         let vtbl = self.reg.inner.builtin_types.native_function;
-        self.reg.inner.importers.push(Value::from_object(GcObj::new(
-            self.reg.inner.arena(),
-            vtbl,
-            NativeFunction::new(
-                async move |strand, args, out| {
-                    let ([name], _) = unpack!(strand, args, 1, 0)?;
-                    let name = name.to_string(strand)?;
-                    import(strand, &name, out).await
-                },
-                "<host>",
-                "import",
-            ),
-        )));
+        self.reg
+            .inner
+            .importers
+            .push(Value::from_object(GcObj::new_imm(
+                self.reg.inner.arena(),
+                vtbl,
+                NativeFunction::new(
+                    async move |strand, args, out| {
+                        let ([name], _) = unpack!(strand, args, 1, 0)?;
+                        let name = name.to_string(strand)?;
+                        import(strand, &name, out).await
+                    },
+                    "<host>",
+                    "import",
+                ),
+            )));
         self
     }
 

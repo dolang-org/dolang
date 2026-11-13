@@ -21,19 +21,17 @@ use crate::{
     vm::Vm,
 };
 
-unsafe impl Collect for i128 {
+unsafe impl crate::gc::ImmState for i128 {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl crate::gc::Annex for i128 {
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
         ControlFlow::Continue(())
     }
-
-    fn clear(&mut self) {
-        unreachable!()
-    }
 }
+
+pub(crate) type IntObj = crate::gc::Imm<i128>;
 
 fn binop<'v, 's>(
     strand: &mut Strand<'v, 's>,
@@ -57,7 +55,7 @@ fn rbinop<'v, 's>(
     Ok(Value::from_prim(strand, value))
 }
 
-impl<'v> Protocol<'v> for i128 {
+impl<'v> Protocol<'v> for IntObj {
     fn op_fmt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -347,21 +345,19 @@ impl Verbatim {
     }
 }
 
-unsafe impl Collect for Verbatim {
+unsafe impl crate::gc::ImmState for Verbatim {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl crate::gc::Annex for Verbatim {
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
         ControlFlow::Continue(())
     }
-
-    fn clear(&mut self) {
-        unreachable!()
-    }
 }
 
-impl<'v> Protocol<'v> for Verbatim {
+pub(crate) type VerbatimObj = crate::gc::Imm<Verbatim>;
+
+impl<'v> Protocol<'v> for VerbatimObj {
     fn op_fmt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -780,7 +776,6 @@ pub(crate) struct Int;
 
 unsafe impl Collect for Int {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {

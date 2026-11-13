@@ -49,7 +49,6 @@ impl<'v> ArgAcc<'v> {
 
 unsafe impl<'v> Collect for ArgAcc<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {

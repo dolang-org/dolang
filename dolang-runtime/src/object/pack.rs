@@ -45,11 +45,11 @@ pub(crate) struct Pack<'v> {
     items: Box<[ArgItem<'v>]>,
 }
 
-unsafe impl<'v> Collect for Pack<'v> {
+unsafe impl<'v> crate::gc::ImmState for Pack<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl<'v> crate::gc::Annex for Pack<'v> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         for (key, value) in &self.items {
             if let Some(key) = key {
@@ -59,11 +59,9 @@ unsafe impl<'v> Collect for Pack<'v> {
         }
         ControlFlow::Continue(())
     }
-
-    fn clear(&mut self) {
-        self.items = Box::new([]);
-    }
 }
+
+pub(crate) type PackObj<'v> = crate::gc::Imm<Pack<'v>>;
 
 impl<'v> Pack<'v> {
     pub(crate) fn new(items: Vec<ArgItem<'v>>) -> Self {
@@ -251,9 +249,9 @@ pub(crate) fn spread_items<'v, 's>(
 }
 
 /// Creates an empty `Pack`.
-pub(crate) fn empty<'v>(strand: &mut Strand<'v, '_>) -> GcObj<'v, Pack<'v>> {
+pub(crate) fn empty<'v>(strand: &mut Strand<'v, '_>) -> GcObj<'v, PackObj<'v>> {
     let vm = strand.vm();
-    GcObj::new(vm.arena(), vm.builtin_types().pack, Pack::new(Vec::new()))
+    GcObj::new_imm(vm.arena(), vm.builtin_types().pack, Pack::new(Vec::new()))
 }
 
 /// The key of an item as a value: the symbol, or the position `int` counts
@@ -428,7 +426,7 @@ fn store_split_rests<'v, 'a>(
         strand
             .builtin_types()
             .pack
-            .create(strand, Pack::from_sym_entries(entries), out.at(i));
+            .create_imm(strand, Pack::from_sym_entries(entries), out.at(i));
     }
 }
 
@@ -460,12 +458,11 @@ fn fill_unpack_defaults<'v, 'a>(
 /// the items left over.
 pub(crate) fn unpack<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
-    args: GcObj<'v, Pack<'v>>,
+    args: GcObj<'v, PackObj<'v>>,
     sig: &sig::Unpack<'v, 'a>,
     mut out: Slots<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    let borrow = args.borrow().ok_or_else(|| Error::concurrency(strand))?;
-    let items = &borrow.items;
+    let items = &args.items;
     let plan = unpack_plan(strand, items, &HashSet::new(), 0, sig)?;
 
     for action in &plan.actions {
@@ -485,7 +482,6 @@ pub(crate) fn unpack<'v, 'a, 's>(
         let pos = first_visible_index(items, &skip, 0).unwrap_or(items.len());
         let positional_matched =
             i64::try_from(plan.pos_matched).map_err(|_| Error::overflow(strand))?;
-        drop(borrow);
         strand.builtin_types().pack_rest.create(
             strand,
             Rest::new(args, skip, pos, positional_matched),
@@ -500,7 +496,7 @@ pub(crate) fn unpack<'v, 'a, 's>(
 
 /// An iterator over a `Pack`'s `(key, value)` pairs.
 pub(crate) struct Iter<'v> {
-    args: GcObj<'v, Pack<'v>>,
+    args: GcObj<'v, PackObj<'v>>,
     skip: HashSet<usize>,
     pos: usize,
     int: i64,
@@ -508,7 +504,7 @@ pub(crate) struct Iter<'v> {
 
 impl<'v> Iter<'v> {
     pub(crate) fn new(
-        args: GcObj<'v, Pack<'v>>,
+        args: GcObj<'v, PackObj<'v>>,
         skip: HashSet<usize>,
         pos: usize,
         int: i64,
@@ -523,7 +519,7 @@ impl<'v> Iter<'v> {
 
     /// The next item not yet consumed, and its index
     fn next_item(&self) -> Option<(usize, Option<GcObj<'v, SymObj>>, Value<'v>)> {
-        let record = self.args.borrow()?;
+        let record = &*self.args;
         first_visible_index(&record.items, &self.skip, self.pos).map(|index| {
             let (key, value) = &record.items[index];
             (index, key.clone(), value.dup())
@@ -543,7 +539,6 @@ impl<'v> Iter<'v> {
 
 unsafe impl<'v> Collect for Iter<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -632,10 +627,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         match field.tag() {
             sym::LEN => {
                 let iter = this.borrow(strand)?;
-                let record = iter
-                    .args
-                    .borrow()
-                    .ok_or_else(|| Error::concurrency(strand))?;
+                let record = &*iter.args;
                 let len = i64::try_from(visible_len(&record.items, &iter.skip, iter.pos))
                     .map_err(|_| Error::overflow(strand))?;
                 Output::set(strand, out, len);
@@ -658,7 +650,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
 
 /// Read-only view of the unmatched items of a `Pack`.
 pub(crate) struct Rest<'v> {
-    args: GcObj<'v, Pack<'v>>,
+    args: GcObj<'v, PackObj<'v>>,
     skip: HashSet<usize>,
     pos: usize,
     int: i64,
@@ -666,7 +658,7 @@ pub(crate) struct Rest<'v> {
 
 impl<'v> Rest<'v> {
     pub(crate) fn new(
-        args: GcObj<'v, Pack<'v>>,
+        args: GcObj<'v, PackObj<'v>>,
         skip: HashSet<usize>,
         pos: usize,
         int: i64,
@@ -681,7 +673,7 @@ impl<'v> Rest<'v> {
 
     /// The next item not yet consumed, and its index
     fn next_item(&self) -> Option<(usize, Option<GcObj<'v, SymObj>>, Value<'v>)> {
-        let record = self.args.borrow()?;
+        let record = &*self.args;
         first_visible_index(&record.items, &self.skip, self.pos).map(|index| {
             let (key, value) = &record.items[index];
             (index, key.clone(), value.dup())
@@ -691,7 +683,6 @@ impl<'v> Rest<'v> {
 
 unsafe impl<'v> Collect for Rest<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -751,10 +742,7 @@ impl<'v> Protocol<'v> for Rest<'v> {
             borrow.int,
         );
         let record_obj = iter.args.clone();
-        let record = record_obj
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        let items = &record.items;
+        let items = &record_obj.items;
         let plan = unpack_plan(strand, items, &iter.skip, iter.pos, sig)?;
 
         for action in &plan.actions {
@@ -775,7 +763,6 @@ impl<'v> Protocol<'v> for Rest<'v> {
                     .map_err(|_| Error::overflow(strand))?,
             )
             .ok_or_else(|| Error::overflow(strand))?;
-        drop(record);
         let child = iter;
 
         if sig.variadic == Variadic::Capture {
@@ -835,7 +822,7 @@ impl<'v> Protocol<'v> for Rest<'v> {
 
 // ── Pack protocol ─────────────────────────────────────────────────
 
-impl<'v> Protocol<'v> for Pack<'v> {
+impl<'v> Protocol<'v> for PackObj<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -849,18 +836,15 @@ impl<'v> Protocol<'v> for Pack<'v> {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        let borrow = this.borrow(strand)?;
+        let borrow = this.get();
         debug_items(strand, &borrow.items, false, w)
     }
 
     fn op_bool<'a, 's>(
         this: Recv<'v, 'a, Self>,
-        strand: &mut Strand<'v, 's>,
+        _strand: &mut Strand<'v, 's>,
     ) -> Result<'v, 's, bool> {
-        let Ok(borrow) = this.borrow(strand) else {
-            return Ok(true);
-        };
-        Ok(!borrow.items.is_empty())
+        Ok(!this.get().items.is_empty())
     }
 
     fn op_hash<'a, 's>(
@@ -868,7 +852,7 @@ impl<'v> Protocol<'v> for Pack<'v> {
         strand: &'a mut Strand<'v, 's>,
         hasher: &mut DefaultHasher,
     ) -> Result<'v, 's, ()> {
-        let borrow = this.borrow(strand)?;
+        let borrow = this.get();
         sym::PACK.hash(hasher);
         hash_items(strand, &borrow.items, hasher)
     }
@@ -881,8 +865,8 @@ impl<'v> Protocol<'v> for Pack<'v> {
         let Some(other) = other.downcast_ref(strand.builtin_types().pack) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
-        let left = this.borrow(strand)?;
-        let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
+        let left = this.get();
+        let right = other.get();
         Ok(Value::from_bool(eq_items(
             strand,
             &left.items,
@@ -898,8 +882,8 @@ impl<'v> Protocol<'v> for Pack<'v> {
         let Some(other) = other.downcast_ref(strand.builtin_types().pack) else {
             return Err(Error::unsupported(strand, "`<`"));
         };
-        let left = this.borrow(strand)?;
-        let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
+        let left = this.get();
+        let right = other.get();
         Ok(Value::from_bool(lt_items(
             strand,
             &left.items,
@@ -919,7 +903,7 @@ impl<'v> Protocol<'v> for Pack<'v> {
                 "a pack only supports symbol and integer keys",
             ));
         }
-        let borrow = this.borrow(strand)?;
+        let borrow = this.get();
         match find(strand, &borrow.items, index) {
             Some(value) => {
                 Output::set(strand, out, value);
@@ -946,7 +930,7 @@ impl<'v> Protocol<'v> for Pack<'v> {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                let len = this.borrow(strand)?.items.len();
+                let len = this.get().items.len();
                 let len = i64::try_from(len).map_err(|_| Error::overflow(strand))?;
                 Output::set(strand, out, len);
                 Ok(())
@@ -975,9 +959,8 @@ impl<'v> Protocol<'v> for Pack<'v> {
                 if default.is_some() && or_else.is_some() {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
-                let borrow = this.borrow(strand)?;
+                let borrow = this.get();
                 let found = find(strand, &borrow.items, &key).map(Value::dup);
-                drop(borrow);
                 if let Some(value) = found {
                     out.store(value);
                     Ok(())
@@ -1007,7 +990,7 @@ impl<'v> Protocol<'v> for Pack<'v> {
                     });
                     replacements[index].1 = Some(value.dup());
                 }
-                let borrow = this.borrow(strand)?;
+                let borrow = this.get();
                 let mut items = Vec::with_capacity(borrow.items.len());
                 for (i, (key, value)) in borrow.items.iter().enumerate() {
                     if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
@@ -1032,7 +1015,7 @@ impl<'v> Protocol<'v> for Pack<'v> {
                 strand
                     .builtin_types()
                     .pack
-                    .create(strand, Pack::new(items), out);
+                    .create_imm(strand, Pack::new(items), out);
                 Ok(())
             }
             sym::WITHOUT => {
@@ -1047,7 +1030,7 @@ impl<'v> Protocol<'v> for Pack<'v> {
                         .ok_or_else(|| Error::type_error(strand, "expected `Sym`"))?;
                     removed.insert(key.tag());
                 }
-                let borrow = this.borrow(strand)?;
+                let borrow = this.get();
                 let mut items = Vec::with_capacity(borrow.items.len());
                 for (i, (key, value)) in borrow.items.iter().enumerate() {
                     if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
@@ -1060,7 +1043,7 @@ impl<'v> Protocol<'v> for Pack<'v> {
                 strand
                     .builtin_types()
                     .pack
-                    .create(strand, Pack::new(items), out);
+                    .create_imm(strand, Pack::new(items), out);
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(
@@ -1102,7 +1085,7 @@ impl<'v> Protocol<'v> for Pack<'v> {
         _context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        let borrow = this.borrow(strand)?;
+        let borrow = this.get();
         spread_items(strand, &borrow.items, sink)
     }
 
@@ -1180,7 +1163,6 @@ pub(crate) struct Class;
 
 unsafe impl Collect for Class {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -1314,7 +1296,7 @@ impl<'v> Protocol<'v> for Class {
         strand
             .builtin_types()
             .pack
-            .create(strand, Pack::new(items), out);
+            .create_imm(strand, Pack::new(items), out);
         Ok(())
     }
 }

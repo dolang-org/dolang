@@ -7,7 +7,7 @@ use crate::value::fmt::Format;
 use crate::{
     arg::Args,
     error::{Error, Result},
-    gc::{Collect, arena::Visit},
+    gc::{self, Collect, arena::Visit},
     object::{
         BoundMethod, class,
         protocol::{
@@ -26,7 +26,6 @@ pub(crate) struct Value;
 
 unsafe impl Collect for Value {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -131,7 +130,6 @@ pub(crate) struct Type;
 
 unsafe impl Collect for Type {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -247,7 +245,6 @@ pub(crate) struct NilType;
 
 unsafe impl Collect for Bool {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -259,7 +256,6 @@ unsafe impl Collect for Bool {
 
 unsafe impl Collect for NilType {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -271,7 +267,6 @@ unsafe impl Collect for NilType {
 
 unsafe impl Collect for ArgAccType {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -444,17 +439,19 @@ impl<'v> Protocol<'v> for NilType {
 /// Private type identity for adapters that expose only type-only protocols.
 pub(crate) struct AdapterType(pub(crate) &'static str);
 
-unsafe impl Collect for AdapterType {
+unsafe impl gc::ImmState for AdapterType {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
+
+impl gc::Annex for AdapterType {
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
         ControlFlow::Continue(())
     }
-    fn clear(&mut self) {}
 }
 
-impl<'v> Protocol<'v> for AdapterType {
+pub(crate) type AdapterTypeObj = gc::Imm<AdapterType>;
+
+impl<'v> Protocol<'v> for AdapterTypeObj {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

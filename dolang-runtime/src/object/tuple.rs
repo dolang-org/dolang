@@ -1,4 +1,4 @@
-use std::ops::ControlFlow;
+use std::{marker::PhantomData, ops::ControlFlow};
 
 use crate::value::fmt::Format;
 
@@ -20,8 +20,8 @@ use crate::{
 use super::{
     BoundMethod, index, iter,
     protocol::{
-        GcObj, Header, Inspect, Spread, SpreadContext, instance_mcall_fallback, is_special_mcall,
-        type_mcall_fallback,
+        GcObj, GcObjBorrow, Header, Inspect, Spread, SpreadContext, instance_mcall_fallback,
+        is_special_mcall, type_mcall_fallback,
     },
     range,
 };
@@ -29,15 +29,17 @@ use super::{
 pub(crate) fn tuple<'v, I: IntoIterator<Item = Value<'v>>>(
     vm: &Vm<'v>,
     iter: I,
-) -> GcObj<'v, [Value<'v>]>
+) -> GcObj<'v, TupleObj<'v>>
 where
     I::IntoIter: ExactSizeIterator,
 {
+    let iter = iter.into_iter();
     unsafe {
-        gc::Base::from_header_iter(
-            vm.arena(),
+        gc::Embryo::new_tail(vm.arena(), iter.len()).finish_tail(
             Header::new(vm.arena(), vm.builtin_types().tuple.vtbl),
-            iter.into_iter(),
+            TupleObj(PhantomData),
+            (),
+            iter,
         )
     }
 }
@@ -58,11 +60,11 @@ pub(crate) fn create<'v, I: IntoIterator<Item = Value<'v>>>(
 /// [`ObjEmbryo`](super::protocol::ObjEmbryo) for the contract.
 pub(crate) fn embryo<'v>(alloc: &mut impl Alloc<'v>, len: usize) -> TupleEmbryo<'v> {
     let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-    TupleEmbryo(unsafe { gc::Embryo::new_slice(vm.arena(), len) })
+    TupleEmbryo(unsafe { gc::Embryo::new_tail(vm.arena(), len) })
 }
 
 /// An allocated but uninitialized tuple, created by [`embryo`].
-pub(crate) struct TupleEmbryo<'v>(gc::Embryo<'v, Header, [Value<'v>]>);
+pub(crate) struct TupleEmbryo<'v>(gc::Embryo<'v, Header, TupleObj<'v>>);
 
 impl<'v> TupleEmbryo<'v> {
     /// Fills the tuple from `iter` and places it into `out`.
@@ -78,8 +80,29 @@ impl<'v> TupleEmbryo<'v> {
     ) {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         let header = unsafe { Header::new(vm.arena(), vm.builtin_types().tuple.vtbl) };
-        let tuple = unsafe { self.0.finish_slice(header, iter) };
+        let tuple = unsafe { self.0.finish_tail(header, TupleObj(PhantomData), (), iter) };
         Output::set(alloc, out, Value::from_object(tuple));
+    }
+}
+
+impl<'v, 'a> Recv<'v, 'a, TupleObj<'v>> {
+    /// The tuple's elements.
+    pub(crate) fn items(&self) -> &'a [Value<'v>] {
+        &self.annex().tail
+    }
+}
+
+impl<'v, 'a> GcObjBorrow<'v, 'a, TupleObj<'v>> {
+    /// The tuple's elements.
+    pub(crate) fn items(&self) -> &'a [Value<'v>] {
+        &self.annex().tail
+    }
+}
+
+impl<'v> GcObj<'v, TupleObj<'v>> {
+    /// The tuple's elements.
+    pub(crate) fn items(&self) -> &[Value<'v>] {
+        &self.annex().tail
     }
 }
 
@@ -161,7 +184,36 @@ impl<'a, 'v, 's> Spread<'v, 's> for TupleSpread<'a, 'v> {
     }
 }
 
-impl<'v> Protocol<'v> for [Value<'v>] {
+/// A `Tuple` object. Its elements are the tail of its annex.
+pub(crate) struct TupleObj<'v>(PhantomData<Value<'v>>);
+
+pub(crate) type TupleAnnex<'v> = gc::Tail<(), [Value<'v>]>;
+
+unsafe impl<'v> Collect for TupleObj<'v> {
+    const CYCLIC: bool = true;
+    type Annex = TupleAnnex<'v>;
+
+    fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
+        ControlFlow::Continue(())
+    }
+
+    fn clear(&mut self) {}
+}
+
+impl<'v> gc::TailAnnex<Value<'v>> for () {
+    fn accept(&self, elements: &[Value<'v>], visit: &mut dyn Visit) -> ControlFlow<()> {
+        for element in elements {
+            element.accept(visit)?
+        }
+        ControlFlow::Continue(())
+    }
+
+    // A tuple is immutable: any cycle through it passes through a mutable object,
+    // which breaks the cycle when cleared.
+    fn clear(&self, _elements: &[Value<'v>]) {}
+}
+
+impl<'v> Protocol<'v> for TupleObj<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -176,7 +228,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         crate::fmt!(strand, w, "(")?;
-        let items = this.receiver.get();
+        let items = this.items();
         let mut iter = items.iter();
         if let Some(first) = iter.next() {
             first.op_debug(strand, w)?;
@@ -196,7 +248,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
         this: Recv<'v, 'a, Self>,
         _strand: &mut Strand<'v, 's>,
     ) -> Result<'v, 's, bool> {
-        Ok(!this.get().is_empty())
+        Ok(!this.items().is_empty())
     }
 
     fn op_hash<'a, 's>(
@@ -204,7 +256,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
         strand: &'a mut Strand<'v, 's>,
         hasher: &mut std::hash::DefaultHasher,
     ) -> Result<'v, 's, ()> {
-        let inner = this.receiver.get();
+        let inner = this.items();
         for i in 0..inner.len() {
             if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                 strand.check_trap()?;
@@ -221,8 +273,8 @@ impl<'v> Protocol<'v> for [Value<'v>] {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         if let Some(other) = other.downcast_ref(strand.builtin_types().tuple) {
-            let left = this.receiver.get();
-            let right = other.get();
+            let left = this.items();
+            let right = other.items();
             if left.len() != right.len() {
                 return Ok(Value::from_bool(false));
             }
@@ -246,8 +298,8 @@ impl<'v> Protocol<'v> for [Value<'v>] {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         if let Some(other) = other.downcast_ref(strand.builtin_types().tuple) {
-            let left = this.receiver.get();
-            let right = other.get();
+            let left = this.items();
+            let right = other.items();
             for (i, (l, r)) in left.iter().zip(right.iter()).enumerate() {
                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                     strand.check_trap()?;
@@ -268,11 +320,11 @@ impl<'v> Protocol<'v> for [Value<'v>] {
         index: &Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        if let Some(slice) = range::slice(index, strand, this.get().len())? {
+        if let Some(slice) = range::slice(index, strand, this.items().len())? {
             match slice {
                 range::Slice::Contiguous { start, end } => {
                     let slice = this
-                        .get()
+                        .items()
                         .get(start..end)
                         .ok_or_else(|| Error::index(strand))?;
                     create(strand, slice.iter().map(Value::dup), out);
@@ -280,7 +332,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
                 range::Slice::Stepped(indices) => {
                     create(
                         strand,
-                        indices.into_iter().map(|i| this.get()[i].dup()),
+                        indices.into_iter().map(|i| this.items()[i].dup()),
                         out,
                     );
                 }
@@ -288,7 +340,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
             return Ok(());
         }
         let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
-        match index::element(this.get().len(), index).and_then(|index| this.get().get(index)) {
+        match index::element(this.items().len(), index).and_then(|index| this.items().get(index)) {
             Some(value) => {
                 Output::set(strand, out, value);
                 Ok(())
@@ -319,11 +371,11 @@ impl<'v> Protocol<'v> for [Value<'v>] {
         sig: &'a Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let index = unpack_from(strand, sig, &mut out, this.get(), 0, false)?;
+        let index = unpack_from(strand, sig, &mut out, this.items(), 0, false)?;
         if let Some(i) = sig.pos_rest_slot() {
             create(
                 strand,
-                this.get()[index..].iter().map(Value::dup),
+                this.items()[index..].iter().map(Value::dup),
                 out.at(i),
             );
         }
@@ -337,7 +389,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
         _context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        let borrow = this.get();
+        let borrow = this.items();
         strand.with_slots_sync(|strand, [mut tmp]| {
             for item in borrow.iter() {
                 Output::set(strand, &mut tmp, item);
@@ -364,8 +416,8 @@ impl<'v> Protocol<'v> for [Value<'v>] {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
                 let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
-                let borrow = this.borrow(strand)?;
-                match index::element(borrow.len(), index).and_then(|index| borrow.get(index)) {
+                let items = this.items();
+                match index::element(items.len(), index).and_then(|index| items.get(index)) {
                     Some(value) => out.store(value.dup()),
                     None => {
                         if let Some(mut default) = default {
@@ -391,7 +443,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
             }
             sym::CONTAINS => {
                 let ([needle], []) = unpack!(strand, args, 1, 0)?;
-                let inner = this.receiver.get();
+                let inner = this.items();
                 let mut found = false;
                 for (i, elem) in inner.iter().enumerate() {
                     if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
@@ -438,7 +490,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                Output::set(strand, out, this.get().len());
+                Output::set(strand, out, this.items().len());
                 Ok(())
             }
             sym::PAIRS | sym::GET | sym::CONTAINS | sym::COPY => {
@@ -451,13 +503,12 @@ impl<'v> Protocol<'v> for [Value<'v>] {
 }
 
 pub(crate) struct Iter<'v> {
-    tuple: GcObj<'v, [Value<'v>]>,
+    tuple: GcObj<'v, TupleObj<'v>>,
     index: usize,
 }
 
 unsafe impl<'v> Collect for Iter<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -503,7 +554,14 @@ impl<'v> Protocol<'v> for Iter<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        let count = unpack_from(strand, sig, &mut out, &borrow.tuple, borrow.index, false)?;
+        let count = unpack_from(
+            strand,
+            sig,
+            &mut out,
+            borrow.tuple.items(),
+            borrow.index,
+            false,
+        )?;
         if let Some(i) = sig.pos_rest_slot() {
             strand.builtin_types().tuple_iter.create(
                 strand,
@@ -525,7 +583,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
     ) -> Result<'v, 's, bool> {
         let mut borrow = this.borrow_mut(strand)?;
         let index = borrow.index;
-        if let Some(value) = borrow.tuple.get(index) {
+        if let Some(value) = borrow.tuple.items().get(index) {
             Output::set(strand, out, value);
             borrow.index += 1;
             Ok(true)
@@ -563,13 +621,12 @@ impl<'v> Protocol<'v> for Iter<'v> {
 }
 
 pub(crate) struct Pairs<'v> {
-    tuple: GcObj<'v, [Value<'v>]>,
+    tuple: GcObj<'v, TupleObj<'v>>,
     index: usize,
 }
 
 unsafe impl<'v> Collect for Pairs<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -615,7 +672,14 @@ impl<'v> Protocol<'v> for Pairs<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        let count = unpack_from(strand, sig, &mut out, &borrow.tuple, borrow.index, true)?;
+        let count = unpack_from(
+            strand,
+            sig,
+            &mut out,
+            borrow.tuple.items(),
+            borrow.index,
+            true,
+        )?;
         if let Some(i) = sig.pos_rest_slot() {
             strand.builtin_types().tuple_pairs.create(
                 strand,
@@ -637,7 +701,7 @@ impl<'v> Protocol<'v> for Pairs<'v> {
     ) -> Result<'v, 's, bool> {
         let mut borrow = this.borrow_mut(strand)?;
         let index = borrow.index;
-        if let Some(value) = borrow.tuple.get(index) {
+        if let Some(value) = borrow.tuple.items().get(index) {
             let items = [Value::from_i64(strand, index as i64), value.dup()];
             create(strand, items, out);
             borrow.index += 1;
@@ -725,7 +789,6 @@ pub(crate) struct Type;
 
 unsafe impl Collect for Type {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {

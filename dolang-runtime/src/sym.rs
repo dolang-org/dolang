@@ -12,7 +12,7 @@ use crate::{
     gc::{BoxWeak, arena::Arena},
     object::{
         protocol::{GcObj, Header, TypeHandle},
-        sym::SymObj,
+        sym::{SymData, SymObj},
     },
     value::{self, Input, Slot, Value},
     vm::{Alloc, Vm},
@@ -354,10 +354,10 @@ impl<'v> Table<'v> {
         let next = self.next.get();
         self.next
             .set(next.checked_add(1).expect("are you kidding?"));
-        let obj = GcObj::new(
+        let obj = GcObj::new_imm(
             arena,
             vtbl,
-            SymObj {
+            SymData {
                 tag: next,
                 name: name.to_owned(),
                 private: false,
@@ -400,10 +400,10 @@ impl<'v> Table<'v> {
         let next = self.next.get();
         self.next
             .set(next.checked_add(1).expect("are you kidding?"));
-        let obj = GcObj::new(
+        let obj = GcObj::new_imm(
             arena,
             vtbl,
-            SymObj {
+            SymData {
                 tag: next,
                 name: name.to_owned(),
                 private: true,

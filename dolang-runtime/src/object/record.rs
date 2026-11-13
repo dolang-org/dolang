@@ -60,7 +60,6 @@ pub(crate) struct Record<'v> {
 
 unsafe impl<'v> Collect for Record<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -343,9 +342,9 @@ impl<'v> Record<'v> {
 fn snapshot<'v, 's>(
     strand: &mut Strand<'v, 's>,
     this: &Recv<'v, '_, Record<'v>>,
-) -> Result<'v, 's, GcObj<'v, pack::Pack<'v>>> {
+) -> Result<'v, 's, GcObj<'v, pack::PackObj<'v>>> {
     let items = this.borrow(strand)?.snapshot();
-    Ok(GcObj::new(
+    Ok(GcObj::new_imm(
         strand.vm().arena(),
         strand.builtin_types().pack,
         pack::Pack::new(items),
@@ -763,7 +762,6 @@ pub(crate) struct Iter<'v> {
 
 unsafe impl<'v> Collect for Iter<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -913,7 +911,6 @@ pub(crate) struct Class;
 
 unsafe impl Collect for Class {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {

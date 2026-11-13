@@ -1,4 +1,4 @@
-use std::{borrow::Cow, hash::Hasher, mem, ops::ControlFlow};
+use std::{borrow::Cow, hash::Hasher, ops::ControlFlow};
 
 use crate::value::fmt::Format;
 
@@ -40,22 +40,18 @@ pub(crate) struct Module<'v> {
     map: alias::Box<[(Sym<'v, 'static>, usize)]>,
 }
 
-unsafe impl<'v> Collect for Module<'v> {
+unsafe impl<'v> crate::gc::ImmState for Module<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl<'v> crate::gc::Annex for Module<'v> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         self.loaded.accept(visit)?;
         self.upvars.accept(visit)
     }
-
-    fn clear(&mut self) {
-        // Can't actually clear this structure, but:
-        // - compiled isn't cyclic
-        // - upvars can clear itself
-    }
 }
+
+pub(crate) type ModuleObj<'v> = crate::gc::Imm<Module<'v>>;
 
 impl<'v> Module<'v> {
     // Safety:
@@ -82,7 +78,7 @@ impl<'v> Module<'v> {
     }
 }
 
-impl<'v> Protocol<'v> for Module<'v> {
+impl<'v> Protocol<'v> for ModuleObj<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -129,11 +125,10 @@ impl<'v> Protocol<'v> for Module<'v> {
                 unsafe {
                     out.store(
                         re.upvars
-                            .borrow()
-                            .expect("upvar borrow conflict")
-                            .vars
+                            .annex()
+                            .tail
                             .get_unchecked(re.map.get_unchecked(index).1)
-                            .dup(),
+                            .get(),
                     );
                 }
                 Ok(())
@@ -154,11 +149,12 @@ impl<'v> Protocol<'v> for Module<'v> {
         match re.map.binary_search_by_key(&field, |(s, _)| *s) {
             Ok(index) => {
                 unsafe {
-                    *re.upvars
-                        .borrow_mut()
-                        .expect("upvar borrow conflict")
-                        .vars
-                        .get_unchecked_mut(index) = value.take();
+                    re.upvars
+                        .annex()
+                        .tail
+                        .get_unchecked(re.map.get_unchecked(index).1)
+                        .slot()
+                        .store(value.take());
                 }
                 Ok(())
             }
@@ -194,13 +190,12 @@ impl<'v> Protocol<'v> for Module<'v> {
 }
 
 pub(crate) struct Iter<'v> {
-    module: GcObj<'v, Module<'v>>,
+    module: GcObj<'v, ModuleObj<'v>>,
     index: usize,
 }
 
 unsafe impl<'v> Collect for Iter<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -235,23 +230,15 @@ impl<'v> Protocol<'v> for Iter<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let mut this_borrow = this.borrow_mut(strand)?;
-        let mod_borrow = this_borrow
-            .module
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?;
+        let mod_borrow = &*this_borrow.module;
         if this_borrow.index == mod_borrow.map.len() {
             return Ok(false);
         }
         let entry = &mod_borrow.map[this_borrow.index];
         let key = Value::from_object(strand.sym_obj(entry.0));
-        let value = mod_borrow
-            .upvars
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?
-            .vars[entry.1]
-            .dup();
+        // Safety: nothing borrows across a write to an upvar
+        let value = unsafe { mod_borrow.upvars.annex().tail[entry.1].get() };
         tuple::create(strand, [key, value], out);
-        mem::drop(mod_borrow);
         this_borrow.index += 1;
         Ok(true)
     }
@@ -299,19 +286,17 @@ pub(crate) struct Native<'v> {
     map: alias::Box<[(Sym<'v, 'v>, NativeField<'v>)]>,
 }
 
-unsafe impl<'v> Collect for Native<'v> {
+unsafe impl<'v> crate::gc::ImmState for Native<'v> {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl<'v> crate::gc::Annex for Native<'v> {
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
         ControlFlow::Continue(())
     }
-
-    fn clear(&mut self) {
-        unreachable!()
-    }
 }
+
+pub(crate) type NativeObj<'v> = crate::gc::Imm<Native<'v>>;
 
 impl<'v> Native<'v> {
     pub(crate) fn new(
@@ -328,7 +313,7 @@ impl<'v> Native<'v> {
     }
 }
 
-impl<'v> Protocol<'v> for Native<'v> {
+impl<'v> Protocol<'v> for NativeObj<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -362,7 +347,7 @@ impl<'v> Protocol<'v> for Native<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let name = this.get().name;
-        let map = &this.borrow(strand)?.map;
+        let map = &this.get().map;
         match map.binary_search_by_key(&field, |(s, _)| *s) {
             Ok(index) => match &unsafe { map.get_unchecked(index) }.1 {
                 NativeField::Value(value) => {
@@ -404,12 +389,11 @@ pub(crate) struct Namespace<'v> {
 
 unsafe impl<'v> Collect for Namespace<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         match &self.inner {
-            NamespaceInner::Normal(module) => module.accept(visit)?,
+            NamespaceInner::Normal(module) => crate::gc::Annex::accept(module, visit)?,
             NamespaceInner::Custom(value) => value.accept(visit)?,
             NamespaceInner::Empty => (),
         }
@@ -552,11 +536,10 @@ impl<'v> Protocol<'v> for Namespace<'v> {
                         out.store(
                             module
                                 .upvars
-                                .borrow()
-                                .expect("upvar borrow conflict")
-                                .vars
+                                .annex()
+                                .tail
                                 .get_unchecked(module.map.get_unchecked(index).1)
-                                .dup(),
+                                .get(),
                         );
                     }
                     return Ok(());
@@ -598,11 +581,8 @@ impl<'v> Protocol<'v> for Namespace<'v> {
                 match module.map.binary_search_by_key(&field, |(s, _)| *s) {
                     Ok(index) => {
                         let var = module.map[index].1;
-                        module
-                            .upvars
-                            .borrow_mut()
-                            .expect("upvar borrow conflict")
-                            .vars[var] = value.take();
+                        // Safety: nothing borrows across a write to an upvar
+                        unsafe { module.upvars.annex().tail[var].slot().store(value.take()) };
                         return Ok(());
                     }
                     Err(_) => return Err(Error::field(strand, field)),
@@ -629,7 +609,6 @@ pub(crate) struct Type;
 
 unsafe impl Collect for Type {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {

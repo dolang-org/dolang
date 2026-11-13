@@ -77,6 +77,19 @@ collection; finishing it never allocates, so the references move straight from
 their rooted location into the object. An unfinished embryo is not linked,
 traced, or counted.
 
+An object holds a sized value, borrow-checked at runtime, followed by its annex.
+The annex is either sized or a `gc::Tail`: a fixed prefix followed by a flexible
+array whose length the object records. Immutable state lives only in annexes,
+which are read without a borrow guard: an immutable object is a `gc::Imm<T>`,
+whose value is a unit and whose annex is `T`. `Str`, `Bin`, and `Tuple` objects,
+upvar frames, and class instances are likewise unit values whose state is a tail
+annex, so each is a single allocation; mutable elements are `ValueCell`s. A
+native object keeps its borrow-checked value, which holds no GC references; its
+`Object::SLOTS` slots are the tail of its annex. Clearing during cycle
+collection skips immutable state: an immutable object can reference only objects
+that existed before it, so any cycle through it passes through mutable state
+that is cleared.
+
 ## Object Protocol
 
 The dynamic type system is organized in three layers, each building on the one

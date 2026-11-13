@@ -199,7 +199,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         })
         .function("pack", async move |strand, args, out| {
             let value = pack::Pack::from_args(strand, args);
-            strand.builtin_types().pack.create(strand, value, out);
+            strand.builtin_types().pack.create_imm(strand, value, out);
             Ok(())
         })
         .function("record", async move |strand, args, out| {

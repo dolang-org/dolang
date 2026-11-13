@@ -41,15 +41,17 @@ pub(crate) struct NativeFunction<'v> {
     module: &'v str,
     name: &'v str,
     with_frame: bool,
+    /// The value a bound function receives; written only at construction and by
+    /// `clear`.
+    pub(crate) bound: ValueCell<'v>,
     phantom: PhantomData<&'v mut &'v ()>,
 }
 
-#[derive(Default)]
-pub(crate) struct NativeFunctionAnnex<'v> {
-    pub(crate) bound: ValueCell<'v>,
+unsafe impl<'v> crate::gc::ImmState for NativeFunction<'v> {
+    const CYCLIC: bool = true;
 }
 
-impl Annex for NativeFunctionAnnex<'_> {
+impl Annex for NativeFunction<'_> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         self.bound.accept(visit)
     }
@@ -59,19 +61,7 @@ impl Annex for NativeFunctionAnnex<'_> {
     }
 }
 
-unsafe impl<'v> Collect for NativeFunction<'v> {
-    const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
-    type Annex = NativeFunctionAnnex<'v>;
-
-    fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
-        ControlFlow::Continue(())
-    }
-
-    fn clear(&mut self) {
-        // GC-managed state is held in the annex.
-    }
-}
+pub(crate) type NativeFunctionObj<'v> = crate::gc::Imm<NativeFunction<'v>>;
 
 impl<'v> Drop for NativeFunction<'v> {
     fn drop(&mut self) {
@@ -162,6 +152,7 @@ impl<'v> NativeFunction<'v> {
             module,
             name,
             with_frame,
+            bound: ValueCell::default(),
             phantom: PhantomData,
         }
     }
@@ -183,8 +174,14 @@ impl<'v> NativeFunction<'v> {
             module: "<native>",
             name: "<bound>",
             with_frame: true,
+            bound: ValueCell::default(),
             phantom: PhantomData,
         }
+    }
+
+    pub(crate) fn with_bound(mut self, bound: ValueCell<'v>) -> Self {
+        self.bound = bound;
+        self
     }
 
     async fn call_with_frame<'a, 's>(
@@ -211,7 +208,7 @@ impl<'v> NativeFunction<'v> {
     }
 }
 
-impl<'v> Protocol<'v> for NativeFunction<'v> {
+impl<'v> Protocol<'v> for NativeFunctionObj<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -258,11 +255,11 @@ pub(crate) struct Function<'v> {
     pub(crate) id: usize,
 }
 
-unsafe impl<'v> Collect for Function<'v> {
+unsafe impl<'v> crate::gc::ImmState for Function<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl<'v> crate::gc::Annex for Function<'v> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         self.module.accept(visit)?;
         if let Some(upvars) = self.upvars.as_ref() {
@@ -270,11 +267,9 @@ unsafe impl<'v> Collect for Function<'v> {
         }
         ControlFlow::Continue(())
     }
-
-    fn clear(&mut self) {
-        self.upvars = None;
-    }
 }
+
+pub(crate) type FunctionObj<'v> = crate::gc::Imm<Function<'v>>;
 
 impl<'v> Function<'v> {
     pub(crate) fn new(
@@ -304,7 +299,7 @@ impl<'v> Function<'v> {
     }
 }
 
-impl<'v> Protocol<'v> for Function<'v> {
+impl<'v> Protocol<'v> for FunctionObj<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -363,7 +358,6 @@ pub(crate) struct Type;
 
 unsafe impl Collect for Type {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {

@@ -926,7 +926,7 @@ impl<'v, T: ?Sized + 'v> TypeHandle<'v, T> {
     }
 }
 
-impl<'v, T: Protocol<'v>> TypeHandle<'v, T> {
+impl<'v, T: Protocol<'v, Annex: Sized>> TypeHandle<'v, T> {
     pub(crate) fn create(&self, alloc: &mut impl Alloc<'v>, value: T, out: impl Output<'v>)
     where
         T::Annex: Default,
@@ -956,6 +956,45 @@ impl<'v, T: Protocol<'v>> TypeHandle<'v, T> {
     }
 }
 
+impl<'v, T, P, E> TypeHandle<'v, T>
+where
+    T: Protocol<'v, Annex = gc::Tail<P, [E]>>,
+{
+    /// Creates an object whose annex holds `prefix` and the elements of `iter`,
+    /// and places it into `out`.
+    pub(crate) fn create_tail(
+        &self,
+        alloc: &mut impl Alloc<'v>,
+        value: T,
+        prefix: P,
+        iter: impl IntoIterator<Item = E, IntoIter: ExactSizeIterator>,
+        out: impl Output<'v>,
+    ) {
+        let iter = iter.into_iter();
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+        let arena = vm.arena();
+        let obj: GcObj<'v, T> = unsafe {
+            gc::Embryo::new_tail(arena, iter.len()).finish_tail(
+                Header::new(arena, self.vtbl),
+                value,
+                prefix,
+                iter,
+            )
+        };
+        Output::set(alloc, out, Value::from_object(obj));
+    }
+}
+
+impl<'v, T: gc::ImmState> TypeHandle<'v, gc::Imm<T>>
+where
+    gc::Imm<T>: Protocol<'v, Annex = T>,
+{
+    /// Creates an immutable object with state `state` and places it into `out`.
+    pub(crate) fn create_imm(&self, alloc: &mut impl Alloc<'v>, state: T, out: impl Output<'v>) {
+        self.create_with_annex(alloc, gc::Imm::UNIT, state, out)
+    }
+}
+
 /// An allocated but uninitialized object of type `T`.
 ///
 /// Allocating the embryo counts as a possible collection; finishing it does
@@ -967,7 +1006,16 @@ pub(crate) struct ObjEmbryo<'v, T: Protocol<'v>> {
     handle: TypeHandle<'v, T>,
 }
 
-impl<'v, T: Protocol<'v>> ObjEmbryo<'v, T> {
+impl<'v, T: gc::ImmState> ObjEmbryo<'v, gc::Imm<T>>
+where
+    gc::Imm<T>: Protocol<'v, Annex = T>,
+{
+    pub(crate) fn finish_imm(self, alloc: &mut impl Alloc<'v>, state: T, out: impl Output<'v>) {
+        self.finish_with_annex(alloc, gc::Imm::UNIT, state, out)
+    }
+}
+
+impl<'v, T: Protocol<'v, Annex: Sized>> ObjEmbryo<'v, T> {
     pub(crate) fn finish(self, alloc: &mut impl Alloc<'v>, value: T, out: impl Output<'v>)
     where
         T::Annex: Default,
@@ -1128,13 +1176,6 @@ impl<'v, 'a, T: ?Sized + Boxable<Header>> Recv<'v, 'a, T> {
         }
     }
 
-    pub(crate) fn get(&self) -> &T
-    where
-        T: gc::Collect,
-    {
-        self.receiver.get()
-    }
-
     pub(crate) fn borrow<'s>(
         &'a self,
         strand: &mut Strand<'v, 's>,
@@ -1158,6 +1199,16 @@ impl<'v, 'a, T: ?Sized + Boxable<Header>> Recv<'v, 'a, T> {
         <T as Boxable<Header>>::Inner: Upcast<Header>,
     {
         self.receiver.to_strong()
+    }
+}
+
+impl<'v, 'a, T: gc::ImmState> Recv<'v, 'a, gc::Imm<T>>
+where
+    gc::Imm<T>: Protocol<'v, Annex = T>,
+{
+    /// The receiver's state.
+    pub(crate) fn get(&self) -> &'a T {
+        self.receiver.get()
     }
 }
 
@@ -1532,7 +1583,7 @@ impl<'v, 'a> AsHeader for gc::BaseBorrow<'v, 'a, Header> {
     }
 }
 
-impl<'v, T: Protocol<'v>> GcObj<'v, T> {
+impl<'v, T: Protocol<'v, Annex: Sized>> GcObj<'v, T> {
     pub(crate) fn new(arena: &Arena<'v>, handle: TypeHandle<'v, T>, value: T) -> Self
     where
         T::Annex: Default,
@@ -1547,6 +1598,15 @@ impl<'v, T: Protocol<'v>> GcObj<'v, T> {
         annex: T::Annex,
     ) -> Self {
         unsafe { gc::Base::from_parts_annex(arena, Header::new(arena, handle.vtbl), value, annex) }
+    }
+}
+
+impl<'v, T: gc::ImmState> GcObj<'v, gc::Imm<T>>
+where
+    gc::Imm<T>: Protocol<'v, Annex = T>,
+{
+    pub(crate) fn new_imm(arena: &Arena<'v>, handle: TypeHandle<'v, gc::Imm<T>>, state: T) -> Self {
+        Self::new_annex(arena, handle, gc::Imm::UNIT, state)
     }
 }
 

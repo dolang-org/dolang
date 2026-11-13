@@ -47,7 +47,6 @@ pub(crate) struct BinBuf<'v> {
 
 unsafe impl<'v> Collect for BinBuf<'v> {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -634,7 +633,6 @@ pub(crate) struct Class;
 
 unsafe impl Collect for Class {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -816,7 +814,6 @@ pub(crate) struct Chunks<'v> {
 
 unsafe impl<'v> Collect for Chunks<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {

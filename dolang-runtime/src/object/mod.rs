@@ -42,7 +42,7 @@ use crate::value::fmt::Format;
 use crate::{
     arg::Args,
     error::{ErrorKind, Result},
-    gc::{self, Collect, arena::Visit},
+    gc::{self, arena::Visit},
     object::protocol::Recv,
     strand::Strand,
     sym::Sym,
@@ -102,36 +102,36 @@ impl<'v> Drop for TypeTable<'v> {
 }
 
 pub(crate) struct BuiltinTypes<'v> {
-    pub(crate) adapter_type: TypeHandle<'v, types::AdapterType>,
+    pub(crate) adapter_type: TypeHandle<'v, types::AdapterTypeObj>,
     pub(crate) dict_view_rest: TypeHandle<'v, dict_view::Rest<'v>>,
     pub(crate) pack_rest: TypeHandle<'v, pack::Rest<'v>>,
     pub(crate) arg_acc: TypeHandle<'v, arg::ArgAcc<'v>>,
     pub(crate) array_iter: TypeHandle<'v, array::Iter<'v>>,
-    pub(crate) array_rest: TypeHandle<'v, array::Rest<'v>>,
-    pub(crate) array_sink: TypeHandle<'v, array::Sink<'v>>,
+    pub(crate) array_rest: TypeHandle<'v, array::RestObj<'v>>,
+    pub(crate) array_sink: TypeHandle<'v, array::SinkObj<'v>>,
     pub(crate) array_pairs: TypeHandle<'v, array::Pairs<'v>>,
     pub(crate) array: TypeHandle<'v, array::Array<'v>>,
-    pub(crate) array_view: TypeHandle<'v, array_view::View<'v>>,
-    pub(crate) array_view_iter: TypeHandle<'v, array_view::Iter<'v>>,
-    pub(crate) array_view_rest: TypeHandle<'v, array_view::Rest<'v>>,
-    pub(crate) backtrace: TypeHandle<'v, backtrace::Backtrace<'v>>,
+    pub(crate) array_view: TypeHandle<'v, array_view::ViewObj<'v>>,
+    pub(crate) array_view_iter: TypeHandle<'v, array_view::IterObj<'v>>,
+    pub(crate) array_view_rest: TypeHandle<'v, array_view::RestObj<'v>>,
+    pub(crate) backtrace: TypeHandle<'v, backtrace::BacktraceObj<'v>>,
     pub(crate) backtrace_iter: TypeHandle<'v, backtrace::Iter<'v>>,
-    pub(crate) backtrace_frame: TypeHandle<'v, backtrace::Frame<'v>>,
-    pub(crate) bin: TypeHandle<'v, [u8]>,
+    pub(crate) backtrace_frame: TypeHandle<'v, backtrace::FrameObj<'v>>,
+    pub(crate) bin: TypeHandle<'v, bin::BinObj>,
     pub(crate) bin_split: TypeHandle<'v, bin::Split<'v>>,
     pub(crate) bin_class: TypeHandle<'v, bin::Class>,
     pub(crate) binbuf: TypeHandle<'v, binbuf::BinBuf<'v>>,
     pub(crate) binbuf_class: TypeHandle<'v, binbuf::Class>,
     pub(crate) binbuf_chunks: TypeHandle<'v, binbuf::Chunks<'v>>,
-    pub(crate) bound_method: TypeHandle<'v, BoundMethod<'v>>,
-    pub(crate) error: TypeHandle<'v, error::Boxed<'v>>,
-    pub(crate) f64: TypeHandle<'v, f64>,
-    pub(crate) flags_iter: TypeHandle<'v, flags::Iter<'v>>,
+    pub(crate) bound_method: TypeHandle<'v, BoundMethodObj<'v>>,
+    pub(crate) error: TypeHandle<'v, error::BoxedObj<'v>>,
+    pub(crate) f64: TypeHandle<'v, float::FloatObj>,
+    pub(crate) flags_iter: TypeHandle<'v, flags::IterObj<'v>>,
     pub(crate) field_pairs: TypeHandle<'v, field_iter::FieldPairs<'v>>,
     pub(crate) field_iter: TypeHandle<'v, field_iter::FieldIter<'v>>,
-    pub(crate) function: TypeHandle<'v, function::Function<'v>>,
-    pub(crate) native_function: TypeHandle<'v, function::NativeFunction<'v>>,
-    pub(crate) int: TypeHandle<'v, i128>,
+    pub(crate) function: TypeHandle<'v, function::FunctionObj<'v>>,
+    pub(crate) native_function: TypeHandle<'v, function::NativeFunctionObj<'v>>,
+    pub(crate) int: TypeHandle<'v, int::IntObj>,
     pub(crate) dict_iter: TypeHandle<'v, dict::Iter<'v>>,
     pub(crate) dict_keys: TypeHandle<'v, dict::Keys<'v>>,
     pub(crate) dict_values: TypeHandle<'v, dict::Values<'v>>,
@@ -139,31 +139,31 @@ pub(crate) struct BuiltinTypes<'v> {
     pub(crate) dict_unpack: TypeHandle<'v, dict::Unpack<'v>>,
     pub(crate) dict_unpack_iter: TypeHandle<'v, dict::UnpackIter<'v>>,
     pub(crate) dict: TypeHandle<'v, dict::Dict<'v>>,
-    pub(crate) dict_view: TypeHandle<'v, dict_view::View<'v>>,
+    pub(crate) dict_view: TypeHandle<'v, dict_view::ViewObj<'v>>,
     pub(crate) dict_view_iter: TypeHandle<'v, dict_view::Iter<'v>>,
     pub(crate) set_iter: TypeHandle<'v, set::Iter<'v>>,
     pub(crate) set: TypeHandle<'v, set::Set<'v>>,
     pub(crate) strand_handle: TypeHandle<'v, strand::Handle<'v>>,
-    pub(crate) strand_ref: TypeHandle<'v, strand::StrandRef>,
-    pub(crate) strand_info: TypeHandle<'v, strand::StrandInfo<'v>>,
-    pub(crate) stream: TypeHandle<'v, strand::Stream<'v>>,
+    pub(crate) strand_ref: TypeHandle<'v, strand::StrandRefObj>,
+    pub(crate) strand_info: TypeHandle<'v, strand::StrandInfoObj<'v>>,
+    pub(crate) stream: TypeHandle<'v, strand::StreamObj<'v>>,
     pub(crate) stream_iter: TypeHandle<'v, strand::StreamIter<'v>>,
     pub(crate) stream_sink: TypeHandle<'v, strand::StreamSink<'v>>,
-    pub(crate) module: TypeHandle<'v, module::Module<'v>>,
+    pub(crate) module: TypeHandle<'v, module::ModuleObj<'v>>,
     pub(crate) module_iter: TypeHandle<'v, module::Iter<'v>>,
-    pub(crate) native_module: TypeHandle<'v, module::Native<'v>>,
+    pub(crate) native_module: TypeHandle<'v, module::NativeObj<'v>>,
     pub(crate) namespace: TypeHandle<'v, module::Namespace<'v>>,
-    pub(crate) str: TypeHandle<'v, str>,
+    pub(crate) str: TypeHandle<'v, str::StrObj>,
     pub(crate) str_split: TypeHandle<'v, str::Split<'v>>,
     pub(crate) str_unicode_iter: TypeHandle<'v, str::UnicodeIter<'v>>,
     pub(crate) strbuf: TypeHandle<'v, strbuf::StrBuf<'v>>,
     pub(crate) strbuf_chunks: TypeHandle<'v, strbuf::Chunks<'v>>,
     pub(crate) sym: TypeHandle<'v, sym::SymObj>,
-    pub(crate) verbatim_f64: TypeHandle<'v, float::Verbatim>,
-    pub(crate) verbatim_int: TypeHandle<'v, int::Verbatim>,
-    pub(crate) range: TypeHandle<'v, range::Range<'v>>,
+    pub(crate) verbatim_f64: TypeHandle<'v, float::VerbatimObj>,
+    pub(crate) verbatim_int: TypeHandle<'v, int::VerbatimObj>,
+    pub(crate) range: TypeHandle<'v, range::RangeObj<'v>>,
     pub(crate) range_iter: TypeHandle<'v, range::Iter<'v>>,
-    pub(crate) pack: TypeHandle<'v, pack::Pack<'v>>,
+    pub(crate) pack: TypeHandle<'v, pack::PackObj<'v>>,
     pub(crate) pack_class: TypeHandle<'v, pack::Class>,
     pub(crate) pack_iter: TypeHandle<'v, pack::Iter<'v>>,
     pub(crate) record: TypeHandle<'v, record::Record<'v>>,
@@ -172,13 +172,13 @@ pub(crate) struct BuiltinTypes<'v> {
     pub(crate) structure: TypeHandle<'v, structure::Struct<'v>>,
     pub(crate) structure_class: TypeHandle<'v, structure::Class>,
     pub(crate) channel_recv: TypeHandle<'v, channel::Receiver<'v>>,
-    pub(crate) channel_send: TypeHandle<'v, channel::Sender<'v>>,
+    pub(crate) channel_send: TypeHandle<'v, channel::SenderObj<'v>>,
     pub(crate) class_object: TypeHandle<'v, class::ClassObject<'v>>,
-    pub(crate) class_type_proxy: TypeHandle<'v, class::ClassTypeProxy<'v>>,
+    pub(crate) class_type_proxy: TypeHandle<'v, class::ClassTypeProxyObj<'v>>,
     pub(crate) class_instance: TypeHandle<'v, class::ClassInstance<'v>>,
-    pub(crate) accessor: TypeHandle<'v, class::Accessor<'v>>,
-    pub(crate) accessor_type: TypeHandle<'v, class::AccessorType>,
-    pub(crate) tuple: TypeHandle<'v, [Value<'v>]>,
+    pub(crate) accessor: TypeHandle<'v, class::AccessorObj<'v>>,
+    pub(crate) accessor_type: TypeHandle<'v, class::AccessorTypeObj>,
+    pub(crate) tuple: TypeHandle<'v, tuple::TupleObj<'v>>,
     pub(crate) tuple_iter: TypeHandle<'v, tuple::Iter<'v>>,
     pub(crate) tuple_pairs: TypeHandle<'v, tuple::Pairs<'v>>,
 
@@ -187,7 +187,7 @@ pub(crate) struct BuiltinTypes<'v> {
     pub(crate) type_type: TypeHandle<'v, types::Type>,
     pub(crate) iterable: TypeHandle<'v, iter::Iterable>,
     pub(crate) io: TypeHandle<'v, io::Io>,
-    pub(crate) io_chunks: TypeHandle<'v, io::Chunks<'v>>,
+    pub(crate) io_chunks: TypeHandle<'v, io::ChunksObj<'v>>,
     pub(crate) num_type: TypeHandle<'v, num::Num>,
     pub(crate) sinkable: TypeHandle<'v, iter::Sinkable>,
     pub(crate) input_iter: TypeHandle<'v, iter::Iter>,
@@ -228,7 +228,7 @@ pub(crate) struct BuiltinTypes<'v> {
     pub(crate) array_view_type: TypeHandle<'v, array_view::Type>,
     pub(crate) dict_view_type: TypeHandle<'v, dict_view::Type>,
     pub(crate) error_type: TypeHandle<'v, error::Type>,
-    pub(crate) error_variant_type: TypeHandle<'v, error::VariantType>,
+    pub(crate) error_variant_type: TypeHandle<'v, error::VariantTypeObj>,
     pub(crate) module_type: TypeHandle<'v, module::Type>,
     pub(crate) strand_type: TypeHandle<'v, strand::Type>,
     pub(crate) strand_ref_type: TypeHandle<'v, strand::StrandType>,
@@ -462,20 +462,25 @@ impl<'v> Singletons<'v> {
                 Value::from_object(GcObj::new(arena, $vtbl, $data))
             };
         }
+        macro_rules! imm {
+            ($vtbl:expr, $data:expr) => {
+                Value::from_object(GcObj::new_imm(arena, $vtbl, $data))
+            };
+        }
 
         Self {
-            kv: v!(builtin_types.adapter_type, types::AdapterType("std.Kv")),
+            kv: imm!(builtin_types.adapter_type, types::AdapterType("std.Kv")),
             value: v!(builtin_types.value_type, types::Value),
             type_obj: v!(builtin_types.type_type, types::Type),
             iterable: v!(builtin_types.iterable, iter::Iterable),
             io: v!(builtin_types.io, io::Io),
             num: v!(builtin_types.num_type, num::Num),
             sinkable: v!(builtin_types.sinkable, iter::Sinkable),
-            getter: v!(
+            getter: imm!(
                 builtin_types.accessor_type,
                 class::AccessorType(class::AccessorKind::Getter)
             ),
-            setter: v!(
+            setter: imm!(
                 builtin_types.accessor_type,
                 class::AccessorType(class::AccessorKind::Setter)
             ),
@@ -514,111 +519,111 @@ impl<'v> Singletons<'v> {
             strand_info: v!(builtin_types.strand_info_type, strand::StrandInfoType),
             stream: v!(builtin_types.stream_type, strand::StreamType),
             arg_acc: v!(builtin_types.arg_acc_type, types::ArgAccType),
-            error_unsupported: v!(
+            error_unsupported: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Unsupported)
             ),
-            error_immutable: v!(
+            error_immutable: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Immutable)
             ),
-            error_concurrency: v!(
+            error_concurrency: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Concurrency)
             ),
-            error_type: v!(
+            error_type: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Type)
             ),
-            error_value: v!(
+            error_value: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Value)
             ),
-            error_data: v!(
+            error_data: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Data)
             ),
-            error_shape: v!(
+            error_shape: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Shape)
             ),
-            error_missing_item: v!(
+            error_missing_item: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::MissingItem)
             ),
-            error_unexpected_item: v!(
+            error_unexpected_item: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::UnexpectedItem)
             ),
-            error_state: v!(
+            error_state: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::State)
             ),
-            error_index: v!(
+            error_index: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Index)
             ),
-            error_field: v!(
+            error_field: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Field)
             ),
-            error_unexpected_pos: v!(
+            error_unexpected_pos: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::UnexpectedPos)
             ),
-            error_unexpected_key: v!(
+            error_unexpected_key: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::UnexpectedKey)
             ),
-            error_missing_pos: v!(
+            error_missing_pos: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::MissingPos)
             ),
-            error_missing_key: v!(
+            error_missing_key: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::MissingKey)
             ),
-            error_overflow: v!(
+            error_overflow: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Overflow)
             ),
-            error_zerodiv: v!(
+            error_zerodiv: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::ZeroDiv)
             ),
-            error_sink_stop: v!(
+            error_sink_stop: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::SinkStop)
             ),
-            error_iter_stop: v!(
+            error_iter_stop: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::IterStop)
             ),
-            error_cyclic_import: v!(
+            error_cyclic_import: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::CyclicImport)
             ),
-            error_import: v!(
+            error_import: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Import)
             ),
-            error_compile: v!(
+            error_compile: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Compile)
             ),
-            error_runtime: v!(
+            error_runtime: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Runtime)
             ),
-            error_abort: v!(
+            error_abort: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Abort)
             ),
-            error_canceled: v!(
+            error_canceled: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Canceled)
             ),
-            error_timed_out: v!(
+            error_timed_out: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::TimedOut)
             ),
@@ -631,22 +636,20 @@ pub(crate) struct BoundMethod<'v> {
     method: protocol::GcObj<'v, sym::SymObj>,
 }
 
-unsafe impl<'v> Collect for BoundMethod<'v> {
+unsafe impl<'v> gc::ImmState for BoundMethod<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl<'v> gc::Annex for BoundMethod<'v> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         self.rcvr.accept(visit)?;
         self.method.accept(visit)
     }
-
-    fn clear(&mut self) {
-        self.rcvr = Value::NIL;
-    }
 }
 
-impl<'v> Protocol<'v> for BoundMethod<'v> {
+pub(crate) type BoundMethodObj<'v> = gc::Imm<BoundMethod<'v>>;
+
+impl<'v> Protocol<'v> for BoundMethodObj<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -702,6 +705,6 @@ impl<'v> BoundMethod<'v> {
             rcvr: Value::from_input(alloc, rcvr),
             method: vm.sym_obj(method),
         };
-        ty.create(alloc, bound, out);
+        ty.create_imm(alloc, bound, out);
     }
 }

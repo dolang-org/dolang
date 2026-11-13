@@ -22,23 +22,19 @@ pub(crate) struct Range<'v> {
     step: Value<'v>,
 }
 
-unsafe impl<'v> Collect for Range<'v> {
+unsafe impl<'v> crate::gc::ImmState for Range<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl<'v> crate::gc::Annex for Range<'v> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         self.start.accept(visit)?;
         self.end.accept(visit)?;
         self.step.accept(visit)
     }
-
-    fn clear(&mut self) {
-        self.start = Value::NIL;
-        self.end = Value::NIL;
-        self.step = Value::NIL;
-    }
 }
+
+pub(crate) type RangeObj<'v> = crate::gc::Imm<Range<'v>>;
 
 impl<'v> Range<'v> {
     pub(crate) fn new(start: Value<'v>, end: Value<'v>, step: Value<'v>) -> Self {
@@ -213,7 +209,7 @@ pub(crate) fn slice<'v, 's>(
     range.get().slice(strand, len).map(Some)
 }
 
-impl<'v> Protocol<'v> for Range<'v> {
+impl<'v> Protocol<'v> for RangeObj<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -456,7 +452,6 @@ pub(crate) struct Iter<'v> {
 
 unsafe impl<'v> Collect for Iter<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -560,7 +555,6 @@ pub(crate) struct Type;
 
 unsafe impl Collect for Type {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -630,7 +624,7 @@ impl<'v> Protocol<'v> for Type {
         let end = end
             .ok_or_else(|| Error::missing_key(strand, Sym::well_known(sym::END)))?
             .take();
-        strand.builtin_types().range.create(
+        strand.builtin_types().range.create_imm(
             strand,
             Range::new(
                 start.as_mut().map(Slot::take).unwrap_or_else(|| Value::NIL),

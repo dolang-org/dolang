@@ -625,7 +625,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let cell = strand.inner.cell();
                 let ty = strand.builtin_types().strand_ref;
-                ty.create(strand, StrandRef::new(cell), out);
+                ty.create_imm(strand, StrandRef::new(cell), out);
                 Ok(())
             })
             .function_without_frame("snapshot", async move |strand, args, out| {
@@ -656,7 +656,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                             .with_slots_dynamic(raw.len(), async |strand, mut infos| {
                                 for (i, raw) in raw.iter().enumerate() {
                                     let embryo = ty.embryo(strand);
-                                    embryo.finish(
+                                    embryo.finish_imm(
                                         strand,
                                         StrandInfo::new(raw.take().expect("taken once")),
                                         infos.at(i),
@@ -1013,7 +1013,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                             StreamIter::new(output_receiver, handle.clone()),
                             &mut output,
                         );
-                        builtin_types.stream.create(
+                        builtin_types.stream.create_imm(
                             strand,
                             Stream {
                                 handle,

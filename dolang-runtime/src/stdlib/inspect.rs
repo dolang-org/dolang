@@ -141,7 +141,7 @@ fn definition<'v>(vm: &Vm<'v>, value: &Value<'v>) -> Option<(Box<str>, Span)> {
         let receiver = bound.receiver();
         let method = bound.method();
         let next = if let Some(instance) = receiver.downcast_ref(types.class_instance) {
-            match instance.annex().class.annex().entry(method)? {
+            match instance.annex().prefix.class.annex().entry(method)? {
                 ClassEntry::Method(value) => value.dup(),
                 _ => return None,
             }

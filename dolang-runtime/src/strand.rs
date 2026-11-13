@@ -1280,7 +1280,7 @@ impl<'v, 's> Strand<'v, 's> {
             Output::set(strand, Slot::reborrow(&mut end_slot), end);
             let embryo = strand.builtin_types().range.embryo(strand);
             let range = range::Range::new(start_slot.take(), end_slot.take(), Value::NIL);
-            embryo.finish(strand, range, out)
+            embryo.finish_imm(strand, range, out)
         })
     }
 
