@@ -3,7 +3,7 @@
 use dolang::runtime::{
     Object, Output, State,
     object::{FlagsTypeExt, TypeBuilder},
-    value::{AsTuple, Nil},
+    value::Nil,
 };
 use dolang_vfs_winscm::ServiceConfig;
 
@@ -58,10 +58,9 @@ impl<'v> Object<'v> for Config {
                 Ok(())
             })
             .get("dependencies", |this, strand, out| {
-                Output::set(
-                    strand,
+                strand.tuple(
+                    this.annex().config.dependencies.iter().map(String::as_str),
                     out,
-                    AsTuple::new(this.annex().config.dependencies.iter().map(String::as_str)),
                 );
                 Ok(())
             })

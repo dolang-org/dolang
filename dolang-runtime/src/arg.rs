@@ -5,7 +5,7 @@ use crate::{
     object::{protocol::GcObj, sym::SymObj},
     strand::Strand,
     sym::Sym,
-    value::{self, Input, InputBy, Slot, Value, ValueCell},
+    value::{self, Input, Slot, Value, ValueCell},
 };
 
 pub(crate) type OwnedItem<'v> = (Option<GcObj<'v, SymObj>>, ValueCell<'v>);
@@ -216,12 +216,10 @@ impl<'v, 'a> Args<'v, 'a> {
             .zip(inputs.iter_mut())
             .zip(replace.iter_mut())
         {
-            let (value, slot) = match input.input_take(strand, value::private::Sealed) {
-                InputBy::Borrow(value) => (value.dup(), None),
-                InputBy::Value(value, slot) => (value, slot),
-            };
-            *cell.get_mut() = value;
-            replace.write(slot);
+            // Safety: nothing else accesses the cell while the slot lives. The argument
+            // cells are not scanned, here or during the call, as before.
+            let out = unsafe { cell.slot() };
+            replace.write(input.input_take(strand, out, value::private::Sealed));
         }
         let res = f(strand, unsafe { Args::new(cells.as_slice(), &sig, 1) }).await;
         for (cell, replace) in cells.tail.iter_mut().zip(replace.iter_mut()) {

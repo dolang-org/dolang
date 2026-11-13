@@ -764,10 +764,10 @@ impl<'v, 's> Error<'v, 's> {
     }
 
     /// Constuct error from `self` which indicates it was caused by `cause`.
-    pub fn caused_by(self, strand: &mut Strand<'v, 's>, cause: Error<'v, 's>) -> Self {
+    pub fn caused_by(self, _strand: &mut Strand<'v, 's>, cause: Error<'v, 's>) -> Self {
         match (self.inner, cause.inner) {
             (Variant::Boxed(mut left), Variant::Boxed(right))
-                if left.get().repr_eq(strand, &right.get()) =>
+                if left.get().repr_eq(&right.get()) =>
             {
                 // Rethrow of the same error value: the original trace comes
                 // first, with the frames unwound from the rethrow site spliced

@@ -3,14 +3,15 @@ use crate::global::Tag;
 use std::{borrow::Cow, net::Ipv4Addr, net::SocketAddr, rc::Rc};
 
 use bytes::Bytes;
+use dolang::runtime::AllocExt;
 use dolang::runtime::{
     Arg, Args, Error, Input, Object, Output, Result, Slot, State, Strand, Type, Value, call,
     io::IoResultExt as _,
     method,
-    object::{DictLike, DictView, DictViewSink, Instance, Mut, Ref, TypeBuilder},
+    object::{DictLike, DictViewSink, Instance, Mut, Ref, TypeBuilder},
     strand::InterruptMask,
     unpack,
-    value::{Array, Dict, Empty, TypeObject},
+    value::{Array, Dict, TypeObject},
     vm::Register,
 };
 use dolang_ext_time::{as_datetime, datetime};
@@ -89,7 +90,7 @@ impl<'v> Object<'v> for RequestObject {
                 Ok(())
             })
             .get("headers", |this, strand, out| {
-                Output::set(strand, out, DictView::new(this, Headers));
+                strand.dict_view(this, Headers, out);
                 Ok(())
             })
     }
@@ -171,7 +172,7 @@ fn copy_array<'v, 's>(
     mut out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     strand.with_slots_sync(|strand, [mut item]| {
-        Output::set(strand, &mut out, Empty::Array);
+        strand.new_array(&mut out);
         let dst = out.as_array(strand).unwrap();
         if let Some(src) = src.as_array(strand) {
             for i in 0..src.len(strand)? {
@@ -504,7 +505,7 @@ async fn parse_mock_spec<'v, 's>(
                 }
 
                 if uses_callback {
-                    Output::set(strand, &mut record, Empty::Dict);
+                    strand.new_dict(&mut record);
                     let record_dict = record.as_dict(strand).unwrap();
                     record_dict.insert(strand, global.syms.match_kw, &match_cb, false)?;
                     record_dict.insert(strand, global.syms.respond, &respond_cb, false)?;
@@ -914,9 +915,9 @@ async fn start_server<'v, 's>(
                 .unwrap()
                 .enter_sync(strand, |strand, instance| {
                     let mut borrow = instance.borrow_mut(strand)?;
-                    Output::set(strand, Mut::slot_mut::<0>(&mut borrow), Empty::Array);
+                    strand.new_array(Mut::slot_mut::<0>(&mut borrow));
                     Output::set(strand, Mut::slot_mut::<1>(&mut borrow), &dispatcher);
-                    Output::set(strand, Mut::slot_mut::<2>(&mut borrow), Empty::Array);
+                    strand.new_array(Mut::slot_mut::<2>(&mut borrow));
                     Ok(())
                 })
         })
@@ -1004,8 +1005,8 @@ impl<'v> Object<'v> for Server {
                     {
                         let mut borrow = this.borrow_mut(strand)?;
                         Output::set(strand, &mut mounted, Mut::slot::<0>(&borrow));
-                        Output::set(strand, Mut::slot_mut::<0>(&mut borrow), Empty::Array);
-                        Output::set(strand, Mut::slot_mut::<2>(&mut borrow), Empty::Array);
+                        strand.new_array(Mut::slot_mut::<0>(&mut borrow));
+                        strand.new_array(Mut::slot_mut::<2>(&mut borrow));
                     }
                     let mut result = Ok(());
                     if let Some(mounted) = mounted.as_array(strand) {
@@ -1079,7 +1080,7 @@ impl<'v> Object<'v> for Server {
                         }
                         this.borrow(strand)?.check_open(strand)?;
 
-                        Output::set(strand, &mut callbacks, Empty::Array);
+                        strand.new_array(&mut callbacks);
                         let callbacks_array = callbacks.as_array(strand).unwrap();
                         let mut entries = Vec::new();
                         for spec in &specs {
@@ -1109,11 +1110,7 @@ impl<'v> Object<'v> for Server {
                                     Mut::slot_mut::<1>(&mut mock_borrow),
                                     &callbacks,
                                 );
-                                Output::set(
-                                    strand,
-                                    Mut::slot_mut::<2>(&mut mock_borrow),
-                                    Empty::Array,
-                                );
+                                strand.new_array(Mut::slot_mut::<2>(&mut mock_borrow));
                                 Ok(())
                             },
                         )?;
@@ -1165,7 +1162,7 @@ fn unmount_mock<'v, 's>(
         {
             let mut borrow = this.borrow_mut(strand)?;
             borrow.mounted = false;
-            Output::set(strand, Mut::slot_mut::<2>(&mut borrow), Empty::Array);
+            strand.new_array(Mut::slot_mut::<2>(&mut borrow));
             Output::set(strand, &mut server, Mut::slot::<0>(&borrow));
         }
         if let Some(server) = global.types.server.cast(&server) {

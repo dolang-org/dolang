@@ -21,16 +21,13 @@ use crate::{
     gc::{self, Base, BaseBorrow, BaseWeak, Collect, Gc, arena},
     method,
     object::{
-        self, BoundMethod, array, backtrace,
+        self, BoundMethod, backtrace,
         class::{self, iter_natives},
-        dict,
-        function::{NativeFunction, NativeFunctionAnnex},
         interface::{self, InterfaceTag, Request},
         protocol::{
             Delegated, Dispatch, GcObj, Header, Inspect, Protocol, Spread, SpreadContext,
             TypeHandle,
         },
-        range, set, tuple,
     },
     sig::Unpack,
     stdlib::fmt as fmt_obj,
@@ -101,16 +98,18 @@ impl<'v> Value<'v> {
     pub(crate) const TRUE: Self = Self(Repr::TRUE, PhantomData);
 
     /// Compare representations without invoking Do equality methods.
-    pub fn repr_eq(&self, alloc: &mut impl Alloc<'v>, mut other: impl Input<'v>) -> bool {
-        match other.input_take(alloc, private::Sealed) {
-            InputBy::Borrow(value) => value.0 == self.0,
-            InputBy::Value(value, slot) => {
-                let res = value.0 == self.0;
-                if let Some(mut slot) = slot {
-                    slot.store(value)
-                }
-                res
-            }
+    pub fn repr_eq(&self, other: &Value<'v>) -> bool {
+        self.0 == other.0
+    }
+
+    /// Compare against an object by identity, without taking a reference to it.
+    pub(crate) fn repr_eq_obj<T: arena::Upcast<arena::Header>>(
+        &self,
+        other: BaseBorrow<'v, '_, T>,
+    ) -> bool {
+        match self.0.decode() {
+            Decode::Object(ptr) => ptr.cast::<u8>() == other.into_raw().cast::<u8>(),
+            Decode::Prim(_) => false,
         }
     }
 
@@ -204,10 +203,15 @@ impl<'v> Value<'v> {
     }
 
     pub(crate) fn from_input(alloc: &mut dyn Alloc<'v>, mut input: impl Input<'v>) -> Self {
-        match input.input_take(alloc, private::Sealed) {
-            InputBy::Borrow(value) => value.dup(),
-            InputBy::Value(value, _) => value,
-        }
+        let mut value = Value::NIL;
+        // Safety: an input allocates at most once, to produce the value it writes, so
+        // nothing allocates after the write; see `Slot::new`.
+        input.input_take(
+            alloc,
+            unsafe { Slot::new(NonNull::from(&mut value)) },
+            private::Sealed,
+        );
+        value
     }
 
     /// Tests whether this value is an instance of a type, following nominal
@@ -961,7 +965,7 @@ impl<'v> Value<'v> {
         };
         match result {
             Err(error) if error.kind() == ErrorKind::Unsupported => {
-                Ok(Value::from_bool(self.repr_eq(strand, other)))
+                Ok(Value::from_bool(self.repr_eq(other)))
             }
             result => result,
         }
@@ -985,7 +989,7 @@ impl<'v> Value<'v> {
         };
         match result {
             Err(error) if error.kind() == ErrorKind::Unsupported => {
-                Ok(Value::from_bool(self.repr_eq(strand, other)))
+                Ok(Value::from_bool(self.repr_eq(other)))
             }
             result => result,
         }
@@ -1009,7 +1013,7 @@ impl<'v> Value<'v> {
         };
         match result {
             Err(error) if error.kind() == ErrorKind::Unsupported => {
-                Ok(Value::from_bool(!self.repr_eq(strand, other)))
+                Ok(Value::from_bool(!self.repr_eq(other)))
             }
             result => result,
         }
@@ -1033,7 +1037,7 @@ impl<'v> Value<'v> {
         };
         match result {
             Err(error) if error.kind() == ErrorKind::Unsupported => {
-                Ok(Value::from_bool(!self.repr_eq(strand, other)))
+                Ok(Value::from_bool(!self.repr_eq(other)))
             }
             result => result,
         }
@@ -2923,106 +2927,27 @@ pub(crate) mod private {
     pub struct Sealed;
 }
 
-pub(crate) enum InputBy<'v, 'a> {
-    Borrow(&'a Value<'v>),
-    Value(Value<'v>, Option<Slot<'v, 'a>>),
-}
-
 /// Call input parameter.
 ///
-/// This trait abstracts over types that may be passed where a [`Value`] is expected.
+/// This trait abstracts over types that may be passed where a [`Value`] is expected:
+/// Rust values with a direct Do counterpart (numbers, strings, symbols), references to
+/// values that are already rooted ([`&Value`](Value), [`Slot`], [`Root`], object
+/// handles), and fixed singletons ([`Nil`], [`TypeObject`], [`Singleton`]). New compound
+/// objects are built with [`AllocExt`](crate::vm::AllocExt) or [`Strand`] methods
+/// instead.
 pub trait Input<'v> {
-    #[allow(private_interfaces)]
+    /// Store the value into `out`.
+    ///
+    /// An implementation allocates at most once, for the value it stores, and holds no
+    /// other unrooted reference across that allocation. If the value was moved out of a
+    /// rooted location, that location is returned so the caller can restore it.
     #[doc(hidden)]
-    fn input_take<'a>(
-        &'a mut self,
+    fn input_take<'b>(
+        &'b mut self,
         alloc: &mut dyn Alloc<'v>,
+        out: Slot<'v, '_>,
         _: private::Sealed,
-    ) -> InputBy<'v, 'a>;
-}
-
-/// Adapts an async Rust function into a Do callable value.
-pub struct AsFunction<F> {
-    func: Option<F>,
-}
-
-impl<F> AsFunction<F> {
-    pub fn new(func: F) -> Self {
-        Self { func: Some(func) }
-    }
-}
-
-impl<'v, F> Input<'v> for AsFunction<F>
-where
-    F: for<'a, 's> AsyncFn(&mut Strand<'v, 's>, Args<'v, 'a>, Slot<'v, 'a>) -> Result<'v, 's, ()>
-        + 'v,
-{
-    #[allow(private_interfaces)]
-    fn input_take<'a>(
-        &'a mut self,
-        mut alloc: &mut dyn Alloc<'v>,
-        _: private::Sealed,
-    ) -> InputBy<'v, 'a> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        let func = self.func.take().expect("native function adapter reused");
-        let mut value = Value::NIL;
-        vm.builtin_types().native_function.create(
-            &mut alloc,
-            NativeFunction::new(func, "<native>", "<function>"),
-            // Safety: written by the last allocation; see `Slot::new`.
-            unsafe { Slot::new(NonNull::from(&mut value)) },
-        );
-        InputBy::Value(value, None)
-    }
-}
-
-/// Adapts an async Rust function into a Do function with bound argument.
-///
-/// A closure cannot ordinarily capture a `Value`; this permits one to be
-/// captured and passed through to the underlying closure.
-pub struct AsBoundFunction<B, F> {
-    value: Option<B>,
-    func: Option<F>,
-}
-
-impl<B, F> AsBoundFunction<B, F> {
-    pub fn new(func: F, value: B) -> Self {
-        Self {
-            value: Some(value),
-            func: Some(func),
-        }
-    }
-}
-
-impl<'v, B: Input<'v>, F> Input<'v> for AsBoundFunction<B, F>
-where
-    F: for<'a, 's> AsyncFn(
-            &mut Strand<'v, 's>,
-            &Value<'v>,
-            Args<'v, 'a>,
-            Slot<'v, 'a>,
-        ) -> Result<'v, 's, ()>
-        + 'v,
-{
-    #[allow(private_interfaces)]
-    fn input_take<'a>(
-        &'a mut self,
-        mut alloc: &mut dyn Alloc<'v>,
-        _: private::Sealed,
-    ) -> InputBy<'v, 'a> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        let bound = ValueCell::new(alloc, self.value.take().expect("bound adapter reused"));
-        let func = self.func.take().expect("bound adapter reused");
-        let mut value = Value::NIL;
-        vm.builtin_types().native_function.create_with_annex(
-            &mut alloc,
-            NativeFunction::bound(func),
-            NativeFunctionAnnex { bound },
-            // Safety: written by the last allocation; see `Slot::new`.
-            unsafe { Slot::new(NonNull::from(&mut value)) },
-        );
-        InputBy::Value(value, None)
-    }
+    ) -> Option<Slot<'v, 'b>>;
 }
 
 /// Call output parameter.
@@ -3033,8 +2958,9 @@ pub trait Output<'v>: Sized {
     fn as_slot(this: &mut Self, _: private::Sealed) -> Slot<'v, '_>;
 
     /// Set output to input.
-    fn set(alloc: &mut impl Alloc<'v>, mut this: Self, input: impl Input<'v>) {
-        Output::as_slot(&mut this, private::Sealed).store(Value::from_input(alloc, input))
+    fn set(alloc: &mut impl Alloc<'v>, mut this: Self, mut input: impl Input<'v>) {
+        let out = Output::as_slot(&mut this, private::Sealed);
+        input.input_take(alloc, out, private::Sealed);
     }
 
     /// Swap with another output.
@@ -3140,363 +3066,163 @@ impl<'v, O: Output<'v>> Output<'v> for &mut O {
     }
 }
 
+/// A slot's value moves in; the slot is returned so it can be restored.
 impl<'v, 'a> Input<'v> for Slot<'v, 'a> {
-    #[allow(private_interfaces)]
     fn input_take<'b>(
         &'b mut self,
         _alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
         _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
-        InputBy::Value(self.take(), Some(Slot::reborrow(self)))
+    ) -> Option<Slot<'v, 'b>> {
+        out.store(self.take());
+        Some(Slot::reborrow(self))
     }
 }
 
 impl<'v, 'a> Input<'v> for &Slot<'v, 'a> {
-    #[allow(private_interfaces)]
     fn input_take<'b>(
         &'b mut self,
         _alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
         _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
-        InputBy::Borrow(unsafe { self.0.as_ref() })
+    ) -> Option<Slot<'v, 'b>> {
+        out.store(self.dup());
+        None
     }
 }
 
+/// A slot's value moves in; the slot is returned so it can be restored.
 impl<'v, 'a> Input<'v> for &mut Slot<'v, 'a> {
-    #[allow(private_interfaces)]
     fn input_take<'b>(
         &'b mut self,
         _alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
         _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
-        InputBy::Value(self.take(), Some(Slot::reborrow(self)))
+    ) -> Option<Slot<'v, 'b>> {
+        out.store(self.take());
+        Some(Slot::reborrow(self))
     }
 }
 
 /// An owned value moves in.  Only the runtime itself holds owned values.
 impl<'v> Input<'v> for Value<'v> {
-    #[allow(private_interfaces)]
     #[inline]
     fn input_take<'b>(
         &'b mut self,
         _alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
         _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
-        InputBy::Value(mem::replace(self, Value::NIL), None)
+    ) -> Option<Slot<'v, 'b>> {
+        out.store(mem::replace(self, Value::NIL));
+        None
     }
 }
 
 impl<'v> Input<'v> for &Value<'v> {
-    #[allow(private_interfaces)]
     fn input_take<'b>(
         &'b mut self,
         _alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
         _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
-        InputBy::Borrow(self)
+    ) -> Option<Slot<'v, 'b>> {
+        out.store(self.dup());
+        None
     }
 }
 
 impl<'v> Input<'v> for i128 {
-    #[allow(private_interfaces)]
     fn input_take<'b>(
         &'b mut self,
         alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
         _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
+    ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        InputBy::Value(Value::from_int(vm, *self), None)
+        out.store(Value::from_int(vm, *self));
+        None
     }
 }
 
-impl<'v> Input<'v> for isize {
-    #[allow(private_interfaces)]
-    fn input_take<'b>(
-        &'b mut self,
-        alloc: &mut dyn Alloc<'v>,
-        _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        InputBy::Value(Value::from_int(vm, *self as i128), None)
-    }
+macro_rules! int_input {
+    ($($ty:ty),*) => {$(
+        impl<'v> Input<'v> for $ty {
+            fn input_take<'b>(
+                &'b mut self,
+                alloc: &mut dyn Alloc<'v>,
+                mut out: Slot<'v, '_>,
+                _: private::Sealed,
+            ) -> Option<Slot<'v, 'b>> {
+                let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+                out.store(Value::from_int(vm, *self as i128));
+                None
+            }
+        }
+    )*};
 }
 
-impl<'v> Input<'v> for i64 {
-    #[allow(private_interfaces)]
-    fn input_take<'b>(
-        &'b mut self,
-        alloc: &mut dyn Alloc<'v>,
-        _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        InputBy::Value(Value::from_int(vm, *self as i128), None)
-    }
-}
-
-impl<'v> Input<'v> for i32 {
-    #[allow(private_interfaces)]
-    fn input_take<'b>(
-        &'b mut self,
-        alloc: &mut dyn Alloc<'v>,
-        _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        InputBy::Value(Value::from_int(vm, *self as i128), None)
-    }
-}
-
-impl<'v> Input<'v> for i16 {
-    #[allow(private_interfaces)]
-    fn input_take<'b>(
-        &'b mut self,
-        alloc: &mut dyn Alloc<'v>,
-        _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        InputBy::Value(Value::from_int(vm, *self as i128), None)
-    }
-}
-
-impl<'v> Input<'v> for i8 {
-    #[allow(private_interfaces)]
-    fn input_take<'b>(
-        &'b mut self,
-        alloc: &mut dyn Alloc<'v>,
-        _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        InputBy::Value(Value::from_int(vm, *self as i128), None)
-    }
-}
-
-impl<'v> Input<'v> for usize {
-    #[allow(private_interfaces)]
-    fn input_take<'b>(
-        &'b mut self,
-        alloc: &mut dyn Alloc<'v>,
-        _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        InputBy::Value(Value::from_int(vm, *self as i128), None)
-    }
-}
-
-impl<'v> Input<'v> for u64 {
-    #[allow(private_interfaces)]
-    fn input_take<'b>(
-        &'b mut self,
-        alloc: &mut dyn Alloc<'v>,
-        _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        InputBy::Value(Value::from_int(vm, *self as i128), None)
-    }
-}
-
-impl<'v> Input<'v> for u32 {
-    #[allow(private_interfaces)]
-    fn input_take<'b>(
-        &'b mut self,
-        alloc: &mut dyn Alloc<'v>,
-        _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        InputBy::Value(Value::from_int(vm, *self as i128), None)
-    }
-}
-
-impl<'v> Input<'v> for u16 {
-    #[allow(private_interfaces)]
-    fn input_take<'b>(
-        &'b mut self,
-        alloc: &mut dyn Alloc<'v>,
-        _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        InputBy::Value(Value::from_int(vm, *self as i128), None)
-    }
-}
-
-impl<'v> Input<'v> for u8 {
-    #[allow(private_interfaces)]
-    fn input_take<'b>(
-        &'b mut self,
-        alloc: &mut dyn Alloc<'v>,
-        _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        InputBy::Value(Value::from_int(vm, *self as i128), None)
-    }
-}
+int_input!(isize, i64, i32, i16, i8, usize, u64, u32, u16, u8);
 
 impl<'v> Input<'v> for f64 {
-    #[allow(private_interfaces)]
     fn input_take<'b>(
         &'b mut self,
         alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
         _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
+    ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        InputBy::Value(Value::from_f64(vm, *self), None)
+        out.store(Value::from_f64(vm, *self));
+        None
     }
 }
 
 impl<'v> Input<'v> for f32 {
-    #[allow(private_interfaces)]
     fn input_take<'b>(
         &'b mut self,
         alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
         _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
+    ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        InputBy::Value(Value::from_f64(vm, *self as f64), None)
+        out.store(Value::from_f64(vm, *self as f64));
+        None
     }
 }
 
 impl<'v> Input<'v> for bool {
-    #[allow(private_interfaces)]
     fn input_take<'b>(
         &'b mut self,
         _alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
         _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
-        InputBy::Value(Value::from_bool(*self), None)
+    ) -> Option<Slot<'v, 'b>> {
+        out.store(Value::from_bool(*self));
+        None
     }
 }
 
 impl<'v> Input<'v> for &str {
-    #[allow(private_interfaces)]
     fn input_take<'b>(
         &'b mut self,
         alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
         _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
+    ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        InputBy::Value(Value::from_str(vm, self), None)
+        out.store(Value::from_str(vm, self));
+        None
     }
 }
 
 impl<'v> Input<'v> for &[u8] {
-    #[allow(private_interfaces)]
     fn input_take<'b>(
         &'b mut self,
         alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
         _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
+    ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        InputBy::Value(Value::from_u8_slice(vm, self), None)
-    }
-}
-
-impl<'v, A: Input<'v>, B: Input<'v>> Input<'v> for (A, B) {
-    #[allow(private_interfaces)]
-    fn input_take<'a>(
-        &'a mut self,
-        mut alloc: &mut dyn Alloc<'v>,
-        _: private::Sealed,
-    ) -> InputBy<'v, 'a> {
-        let first = match self.0.input_take(alloc, private::Sealed) {
-            InputBy::Borrow(value) => value.dup(),
-            InputBy::Value(value, _) => value,
-        };
-        let second = match self.1.input_take(alloc, private::Sealed) {
-            InputBy::Borrow(value) => value.dup(),
-            InputBy::Value(value, _) => value,
-        };
-        let mut value = Value::NIL;
-        // Safety: written by the last allocation; see `Slot::new`.
-        tuple::create(&mut alloc, [first, second], unsafe {
-            Slot::new(NonNull::from(&mut value))
-        });
-        InputBy::Value(value, None)
-    }
-}
-
-/// A Rust range becomes a Do `Range` from its start to its end.
-impl<'v, T: Input<'v>> Input<'v> for std::ops::Range<T> {
-    #[allow(private_interfaces)]
-    fn input_take<'a>(
-        &'a mut self,
-        mut alloc: &mut dyn Alloc<'v>,
-        _: private::Sealed,
-    ) -> InputBy<'v, 'a> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        let start = match self.start.input_take(alloc, private::Sealed) {
-            InputBy::Borrow(value) => value.dup(),
-            InputBy::Value(value, _) => value,
-        };
-        let end = match self.end.input_take(alloc, private::Sealed) {
-            InputBy::Borrow(value) => value.dup(),
-            InputBy::Value(value, _) => value,
-        };
-        let range = range::Range::new(start, end, Value::NIL);
-        let mut value = Value::NIL;
-        vm.builtin_types()
-            .range
-            // Safety: written by the last allocation; see `Slot::new`.
-            .create(&mut alloc, range, unsafe {
-                Slot::new(NonNull::from(&mut value))
-            });
-        InputBy::Value(value, None)
-    }
-}
-
-/// Input wrapper that creates an immutable tuple from a Rust iterator.
-pub struct AsTuple<T>(Option<T>);
-
-impl<T> AsTuple<T> {
-    /// Wrap values for conversion into an immutable tuple.
-    pub fn new(values: T) -> Self {
-        Self(Some(values))
-    }
-}
-
-impl<'v, T, I> Input<'v> for AsTuple<T>
-where
-    T: IntoIterator<Item = I>,
-    I: Input<'v>,
-{
-    #[allow(private_interfaces)]
-    fn input_take<'a>(
-        &'a mut self,
-        mut alloc: &mut dyn Alloc<'v>,
-        _: private::Sealed,
-    ) -> InputBy<'v, 'a> {
-        let values = self
-            .0
-            .take()
-            .expect("AsTuple input used more than once")
-            .into_iter()
-            .map(|value| Value::from_input(alloc, value))
-            .collect::<Vec<_>>();
-        let mut value = Value::NIL;
-        // Safety: written by the last allocation; see `Slot::new`.
-        tuple::create(&mut alloc, values, unsafe {
-            Slot::new(NonNull::from(&mut value))
-        });
-        InputBy::Value(value, None)
-    }
-}
-
-/// Input wrapper that interns a name as a symbol, as the `sym` function does.
-pub struct AsSym<'a>(&'a str);
-
-impl<'a> AsSym<'a> {
-    /// Wrap a name for conversion into a symbol.
-    pub fn new(name: &'a str) -> Self {
-        Self(name)
-    }
-}
-
-impl<'v> Input<'v> for AsSym<'_> {
-    #[allow(private_interfaces)]
-    fn input_take<'a>(
-        &'a mut self,
-        alloc: &mut dyn Alloc<'v>,
-        _: private::Sealed,
-    ) -> InputBy<'v, 'a> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        InputBy::Value(Value::from_object(vm.sym_register_obj(self.0)), None)
+        out.store(Value::from_u8_slice(vm, self));
+        None
     }
 }
 
@@ -3590,33 +3316,32 @@ impl<'v> AsRef<Value<'v>> for Root<'v> {
 }
 
 impl<'v> Input<'v> for &Root<'v> {
-    #[allow(private_interfaces)]
     #[inline]
     fn input_take<'b>(
         &'b mut self,
         _alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
         _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
-        let inner = self.0.try_get().unwrap();
-        InputBy::Borrow(unsafe { &(*inner).0 })
+    ) -> Option<Slot<'v, 'b>> {
+        out.store(self.dup());
+        None
     }
 }
 
+/// The root's value moves in; the root is returned so it can be restored.
 impl<'v> Input<'v> for &mut Root<'v> {
-    #[allow(private_interfaces)]
     #[inline]
     fn input_take<'b>(
         &'b mut self,
         _alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
         _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
+    ) -> Option<Slot<'v, 'b>> {
         let inner = self.0.try_get_mut().unwrap();
         // Safety: as for the `Output` impl above, the root's cell is scanned and stable.
         unsafe {
-            InputBy::Value(
-                (*inner).0.take(),
-                Some(Slot::new(NonNull::from(&mut (*inner).0))),
-            )
+            out.store((*inner).0.take());
+            Some(Slot::new(NonNull::from(&mut (*inner).0)))
         }
     }
 }
@@ -3702,16 +3427,17 @@ impl<'v> Default for ValueCell<'v> {
 }
 
 impl<'v> Input<'v> for &ValueCell<'v> {
-    #[allow(private_interfaces)]
     #[inline]
     fn input_take<'b>(
         &'b mut self,
         _alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
         _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
-        // Dup rather than borrow: the same cell may be written through a `Slot` while
+    ) -> Option<Slot<'v, 'b>> {
+        // Dup rather than peek: the same cell may be written through a `Slot` while
         // the input is in use.
-        InputBy::Value(unsafe { self.get() }, None)
+        out.store(unsafe { self.get() });
+        None
     }
 }
 
@@ -3821,17 +3547,10 @@ pub enum TypeObject {
     Fmt,
 }
 
-impl<'v> Input<'v> for TypeObject {
-    #[allow(private_interfaces)]
-    #[inline]
-    fn input_take<'a>(
-        &'a mut self,
-        alloc: &mut dyn Alloc<'v>,
-        _: private::Sealed,
-    ) -> InputBy<'v, 'a> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+impl TypeObject {
+    pub(crate) fn value<'v>(&self, vm: &'v Vm<'v>) -> &'v Value<'v> {
         let builtins = vm.singletons();
-        InputBy::Borrow(match self {
+        match self {
             TypeObject::Value => &builtins.value,
             TypeObject::Num => &builtins.num,
             TypeObject::Type => &builtins.type_obj,
@@ -3870,7 +3589,21 @@ impl<'v> Input<'v> for TypeObject {
             TypeObject::FmtValue => crate::stdlib::fmt::fmt_value_singleton(vm),
             TypeObject::FmtParam => crate::stdlib::fmt::fmt_param_singleton(vm),
             TypeObject::Fmt => crate::stdlib::fmt::fmt_singleton(vm),
-        })
+        }
+    }
+}
+
+impl<'v> Input<'v> for TypeObject {
+    #[inline]
+    fn input_take<'b>(
+        &'b mut self,
+        alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
+        _: private::Sealed,
+    ) -> Option<Slot<'v, 'b>> {
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+        out.store(self.value(vm).dup());
+        None
     }
 }
 
@@ -3878,46 +3611,15 @@ impl<'v> Input<'v> for TypeObject {
 pub struct Nil;
 
 impl<'v> Input<'v> for Nil {
-    #[allow(private_interfaces)]
     #[inline]
-    fn input_take<'a>(
-        &'a mut self,
+    fn input_take<'b>(
+        &'b mut self,
         _alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
         _: private::Sealed,
-    ) -> InputBy<'v, 'a> {
-        InputBy::Value(Value::NIL, None)
-    }
-}
-
-/// [`Input`] which becomes a new empty builtin type
-#[non_exhaustive]
-pub enum Empty {
-    /// Empty array
-    Array,
-    /// Empty dict
-    Dict,
-    /// Empty set
-    Set,
-}
-
-impl<'v> Input<'v> for Empty {
-    #[allow(private_interfaces)]
-    #[inline]
-    fn input_take<'a>(
-        &'a mut self,
-        mut alloc: &mut dyn Alloc<'v>,
-        _: private::Sealed,
-    ) -> InputBy<'v, 'a> {
-        let types = alloc.alloc_vm(crate::vm::private::Sealed).builtin_types();
-        let mut value = Value::NIL;
-        // Safety: written by the last allocation; see `Slot::new`.
-        let out = unsafe { Slot::new(NonNull::from(&mut value)) };
-        match self {
-            Empty::Array => types.array.create(&mut alloc, array::Array::new(), out),
-            Empty::Dict => types.dict.create(&mut alloc, dict::Dict::new(), out),
-            Empty::Set => types.set.create(&mut alloc, set::Set::new(), out),
-        }
-        InputBy::Value(value, None)
+    ) -> Option<Slot<'v, 'b>> {
+        out.store(Value::NIL);
+        None
     }
 }
 
@@ -3928,17 +3630,24 @@ pub enum Singleton {
     Null,
 }
 
-impl<'v> Input<'v> for Singleton {
-    #[allow(private_interfaces)]
-    #[inline]
-    fn input_take<'a>(
-        &'a mut self,
-        alloc: &mut dyn Alloc<'v>,
-        _: private::Sealed,
-    ) -> InputBy<'v, 'a> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        InputBy::Borrow(match self {
+impl Singleton {
+    fn value<'v>(&self, vm: &'v Vm<'v>) -> &'v Value<'v> {
+        match self {
             Singleton::Null => &vm.singletons().null,
-        })
+        }
+    }
+}
+
+impl<'v> Input<'v> for Singleton {
+    #[inline]
+    fn input_take<'b>(
+        &'b mut self,
+        alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
+        _: private::Sealed,
+    ) -> Option<Slot<'v, 'b>> {
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+        out.store(self.value(vm).dup());
+        None
     }
 }

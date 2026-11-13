@@ -28,11 +28,15 @@ use crate::{
     frame::{self, CallFrame, Native},
     gc::{self, Gc, arena::Arena},
     object::{
-        BuiltinTypes, Singletons, TypeTable,
-        function::NativeFunction,
+        BuiltinTypes, Singletons, TypeTable, array,
+        array_view::{self, ArrayLike},
+        dict,
+        dict_view::{self, DictLike},
+        function::{NativeFunction, NativeFunctionAnnex},
         module::{Native as NativeModule, NativeField},
-        native::{Object, ObjectVtbl, Type, TypeBuilder},
+        native::{Instance, Object, ObjectVtbl, Type, TypeBuilder},
         protocol::{GcObj, Header},
+        set,
         sym::SymObj,
     },
     sig::{self, UnpackKey, UnpackKeyKind},
@@ -42,7 +46,7 @@ use crate::{
     },
     sym::{self, Sym},
     unpack,
-    value::{Input, Output, Slot, Value},
+    value::{Input, Output, Slot, Value, ValueCell},
 };
 
 /// A spawned background strand future.
@@ -127,7 +131,8 @@ impl<'v, A: Alloc<'v> + ?Sized> Alloc<'v> for &mut A {
     }
 }
 
-/// Lazy setup operations, available on every [`Alloc`], including `dyn Alloc`.
+/// Operations available on every [`Alloc`], including `dyn Alloc`: lazy setup, and
+/// constructing values that need nothing rooted while they are built.
 pub trait AllocExt<'v>: Alloc<'v> {
     /// Run the lazy setup declared under tag `K` with [`Builder::lazy`], unless it has
     /// already run.
@@ -151,6 +156,108 @@ pub trait AllocExt<'v>: Alloc<'v> {
     fn force_state<K: StateTag>(&mut self) -> State<'v, K::State<'v>> {
         self.force::<K>();
         self.alloc_vm(private::Sealed).state::<K>()
+    }
+
+    /// Store a new empty array into `out`.
+    fn new_array(&mut self, out: impl Output<'v>) {
+        let mut alloc = self;
+        let types = alloc.alloc_vm(private::Sealed).builtin_types();
+        types.array.create(&mut alloc, array::Array::new(), out)
+    }
+
+    /// Store a new empty dict into `out`.
+    fn new_dict(&mut self, out: impl Output<'v>) {
+        let mut alloc = self;
+        let types = alloc.alloc_vm(private::Sealed).builtin_types();
+        types.dict.create(&mut alloc, dict::Dict::new(), out)
+    }
+
+    /// Store a new empty set into `out`.
+    fn new_set(&mut self, out: impl Output<'v>) {
+        let mut alloc = self;
+        let types = alloc.alloc_vm(private::Sealed).builtin_types();
+        types.set.create(&mut alloc, set::Set::new(), out)
+    }
+
+    /// Intern `name` and store the symbol into `out`, as the `sym` function does.
+    fn intern_sym(&mut self, name: &str, mut out: impl Output<'v>) {
+        let vm = self.alloc_vm(private::Sealed);
+        Slot::from_output(&mut out).store(Value::from_object(vm.sym_register_obj(name)));
+    }
+
+    /// Store a callable wrapping the async Rust function `func` into `out`.
+    fn native_function<F>(&mut self, func: F, out: impl Output<'v>)
+    where
+        F: for<'a, 's> AsyncFn(
+                &mut Strand<'v, 's>,
+                Args<'v, 'a>,
+                Slot<'v, 'a>,
+            ) -> Result<'v, 's, ()>
+            + 'v,
+    {
+        let mut alloc = self;
+        let types = alloc.alloc_vm(private::Sealed).builtin_types();
+        types.native_function.create(
+            &mut alloc,
+            NativeFunction::new(func, "<native>", "<function>"),
+            out,
+        )
+    }
+
+    /// Store a callable wrapping the async Rust function `func` with a bound argument into
+    /// `out`.
+    ///
+    /// A closure cannot ordinarily capture a `Value`; `func` receives `bound` as its
+    /// second argument instead.
+    fn bound_function<F>(&mut self, func: F, mut bound: impl Input<'v>, mut out: impl Output<'v>)
+    where
+        F: for<'a, 's> AsyncFn(
+                &mut Strand<'v, 's>,
+                &Value<'v>,
+                Args<'v, 'a>,
+                Slot<'v, 'a>,
+            ) -> Result<'v, 's, ()>
+            + 'v,
+    {
+        let mut alloc = self;
+        let mut out = Slot::from_output(&mut out);
+        // Root the bound value in `out` while the function is allocated.
+        bound.input_take(
+            &mut alloc,
+            Slot::reborrow(&mut out),
+            crate::value::private::Sealed,
+        );
+        let types = alloc.alloc_vm(private::Sealed).builtin_types();
+        let embryo = types.native_function.embryo(&mut alloc);
+        let bound = ValueCell::from(out.take());
+        embryo.finish_with_annex(
+            &mut alloc,
+            NativeFunction::bound(func),
+            NativeFunctionAnnex { bound },
+            out,
+        )
+    }
+
+    /// Store a lazy array view of `owner`, projected by `view`, into `out`.
+    fn array_view<I: ArrayLike<'v>>(
+        &mut self,
+        owner: Instance<'v, '_, I::Object>,
+        view: I,
+        out: impl Output<'v>,
+    ) {
+        let mut alloc = self;
+        array_view::create(&mut alloc, owner, view, out)
+    }
+
+    /// Store a dictionary view of `owner`, projected by `view`, into `out`.
+    fn dict_view<I: DictLike<'v>>(
+        &mut self,
+        owner: Instance<'v, '_, I::Object>,
+        view: I,
+        out: impl Output<'v>,
+    ) {
+        let mut alloc = self;
+        dict_view::create(&mut alloc, owner, view, out)
     }
 }
 

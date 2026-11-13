@@ -1,10 +1,9 @@
 //! Account rights, shared by the `User` and `Group` types.
 
+use dolang::runtime::AllocExt;
 use dolang::runtime::{
-    Args, Error, Instance, Object, Output, Result, Slot, Strand,
-    object::TypeBuilder,
-    unpack,
-    value::{Empty, Nil},
+    Args, Error, Instance, Object, Output, Result, Slot, Strand, object::TypeBuilder, unpack,
+    value::Nil,
 };
 use dolang_ext_shell::ResultExt;
 use dolang_winterop::security::Sid;
@@ -44,7 +43,7 @@ fn make_rights<'v, 's>(
     mut out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     strand.with_slots_sync(|strand, [mut item]| {
-        Output::set(strand, &mut out, Empty::Array);
+        strand.new_array(&mut out);
         let array = out.as_array(strand).unwrap();
         for right in rights {
             Output::set(strand, &mut item, right.as_str());

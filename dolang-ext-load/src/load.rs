@@ -276,7 +276,7 @@ impl<'v> Object<'v> for ImportHandler {
                 let handlers = global.handlers.as_array(strand).unwrap();
                 for index in 0..handlers.len(strand)? {
                     handlers.get(strand, index, &mut item)?;
-                    if item.repr_eq(strand, this) {
+                    if this.is(&item) {
                         if global.executors.get() == 0 {
                             handlers.delete(strand, index)?;
                         } else {

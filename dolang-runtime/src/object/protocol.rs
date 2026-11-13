@@ -18,7 +18,7 @@ use crate::{
     strand::{Pinned, Strand},
     sym::{self, Sym},
     unpack,
-    value::{Input, InputBy, Output, Slot, Slots, StrEmbryo, TypeObject, Value, private::Sealed},
+    value::{Input, Output, Slot, Slots, StrEmbryo, TypeObject, Value, private::Sealed},
     vm::{Alloc, Vm},
 };
 
@@ -1102,6 +1102,14 @@ impl<'v, 'a, T: ?Sized + Boxable<Header>> Recv<'v, 'a, T> {
         self.delegator
     }
 
+    /// Whether `value` is this receiver: its delegator if it has one, else the object.
+    pub(crate) fn is(&self, value: &Value<'v>) -> bool {
+        match self.delegator {
+            Some(delegator) => value.repr_eq(delegator),
+            None => value.repr_eq_obj(self.receiver),
+        }
+    }
+
     pub(crate) fn with_delegator(mut self, delegator: &'a Value<'v>) -> Self {
         self.delegator = Some(delegator);
         self
@@ -1161,21 +1169,33 @@ impl<'v, 'a, T: Protocol<'v> + Boxable<Header, Inner = gc::BoxedSized<Header, T>
 
 impl<'v, 'a, T: ?Sized + Protocol<'v>> Input<'v> for Recv<'v, 'a, T> {
     #[inline]
-    fn input_take<'b>(&'b mut self, _alloc: &mut dyn Alloc<'v>, _: Sealed) -> InputBy<'v, 'b> {
-        match self.delegator {
-            Some(delegator) => InputBy::Borrow(delegator),
-            None => InputBy::Value(Value::from_object(self.receiver.to_strong()), None),
-        }
+    fn input_take<'b>(
+        &'b mut self,
+        _alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
+        _: Sealed,
+    ) -> Option<Slot<'v, 'b>> {
+        out.store(match self.delegator {
+            Some(delegator) => delegator.dup(),
+            None => Value::from_object(self.receiver.to_strong()),
+        });
+        None
     }
 }
 
 impl<'v, 'a, T: ?Sized + Protocol<'v>> Input<'v> for &Recv<'v, 'a, T> {
     #[inline]
-    fn input_take<'b>(&'b mut self, _alloc: &mut dyn Alloc<'v>, _: Sealed) -> InputBy<'v, 'b> {
-        match self.delegator {
-            Some(delegator) => InputBy::Borrow(delegator),
-            None => InputBy::Value(Value::from_object(self.receiver.to_strong()), None),
-        }
+    fn input_take<'b>(
+        &'b mut self,
+        _alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
+        _: Sealed,
+    ) -> Option<Slot<'v, 'b>> {
+        out.store(match self.delegator {
+            Some(delegator) => delegator.dup(),
+            None => Value::from_object(self.receiver.to_strong()),
+        });
+        None
     }
 }
 
@@ -2392,14 +2412,14 @@ pub(crate) async fn type_mcall_fallback<'v, 's>(
         (&*this, None)
     } else if let Some(inst) = this.downcast_ref(strand.builtin_types().class_instance) {
         (
-            get_native_slot(strand, inst, ty)
+            get_native_slot(inst, ty)
                 .ok_or_else(|| Error::type_error(strand, "not a native object subclass"))?,
             Some(&*this),
         )
     } else {
         strand.with_slots_sync(|strand, [mut tmp]| {
             this.op_type(strand, Slot::reborrow(&mut tmp));
-            if !tmp.repr_eq(strand, ty) {
+            if !tmp.repr_eq(ty) {
                 return Err(Error::type_error(strand, "invalid native object type"));
             }
             Ok((&*this, None))

@@ -15,12 +15,13 @@ use quick_xml::{
     name::{PrefixDeclaration, ResolveResult},
 };
 
+use dolang::runtime::AllocExt;
 use dolang::runtime::{
     Instance, Object, Output, Slot, State, Strand, Value,
     error::{Error, Result},
     object::{Mut, Ref, TypeBuilder, fmt},
     unpack,
-    value::{Array, Empty, StrEmbryo, TypeObject, View, fmt::Format},
+    value::{Array, StrEmbryo, TypeObject, View, fmt::Format},
     vm::Register,
 };
 
@@ -109,7 +110,7 @@ impl<'v> WalkState<'v, '_> {
     ) -> Fault<'v, 's> {
         if let Fault::Cycle = fault {
             if self.path.is_nil() {
-                Output::set(strand, &mut self.path, Empty::Array);
+                strand.new_array(&mut self.path);
             }
             let path = self.path.as_array(strand.vm()).expect("path is an Array");
             path.push(strand, index).expect("path is not shared");
@@ -605,7 +606,7 @@ fn decode<'v, 's>(
         start: 0,
     };
     strand.with_slots_sync(|strand, [mut children, mut child]| {
-        Output::set(strand, &mut children, Empty::Array);
+        strand.new_array(&mut children);
         let array = children.as_array(strand).unwrap();
         let mut rooted = false;
         loop {

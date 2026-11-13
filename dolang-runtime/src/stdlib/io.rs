@@ -17,7 +17,6 @@ use std::{
     mem::{self, MaybeUninit},
     ops::Deref,
     pin::Pin,
-    ptr::NonNull,
     str,
     task::{Context, Poll, ready},
 };
@@ -44,7 +43,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{
-        BinEmbryo, Input, InputBy, Output, Slot, TypeObject, Value,
+        BinEmbryo, Input, Output, Slot, TypeObject, Value,
         private::Sealed,
         view::{PinBin, PinStr},
     },
@@ -883,17 +882,17 @@ impl<'v> IntoByteIo<'v> for Stream {
 
 /// Wraps the handle in a [`Stream`] that owns it.
 impl<'v> Input<'v> for ByteHandle {
-    #[allow(private_interfaces)]
-    fn input_take<'a>(&'a mut self, mut alloc: &mut dyn Alloc<'v>, _: Sealed) -> InputBy<'v, 'a> {
+    fn input_take<'b>(
+        &'b mut self,
+        mut alloc: &mut dyn Alloc<'v>,
+        out: Slot<'v, '_>,
+        _: Sealed,
+    ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         let handle = mem::replace(self, ByteHandle::read(futures::io::empty()));
         let ty = *vm.state::<StreamType>();
-        let mut value = Value::NIL;
-        // Safety: written by the last allocation; see `Slot::new`.
-        ty.create(&mut alloc, Stream::new(handle), unsafe {
-            Slot::new(NonNull::from(&mut value))
-        });
-        InputBy::Value(value, None)
+        ty.create(&mut alloc, Stream::new(handle), out);
+        None
     }
 }
 

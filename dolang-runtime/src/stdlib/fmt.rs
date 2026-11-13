@@ -13,10 +13,10 @@ use crate::{
     sym::Sym,
     unpack,
     value::{
-        Empty, Input, Output, Slot, StrEmbryo, TypeObject, Value,
+        Input, Output, Slot, StrEmbryo, TypeObject, Value,
         fmt::{Align, Fill, Format, Kind, Pad, Sign, Spec},
     },
-    vm::{Builder, State, StateTag, Vm},
+    vm::{AllocExt, Builder, State, StateTag, Vm},
 };
 
 /// Every symbol this module needs: the keyword parameter names, and the symbol
@@ -588,7 +588,7 @@ impl<'v> Object<'v> for Fmt {
         let ([items], []) = unpack!(strand, args, 1, 0)?;
         strand
             .with_slots(async move |strand, [mut segments, mut iter, mut item]| {
-                Output::set(strand, &mut segments, Empty::Array);
+                strand.new_array(&mut segments);
                 items.iter(strand, &mut iter).await?;
                 while iter.next(strand, &mut item).await? {
                     append_segment(strand, global, &segments, &item)?;
@@ -630,7 +630,7 @@ impl<'v> Object<'v> for Fmt {
                                 .builtin_types()
                                 .dict
                                 .create(strand, dict, &mut bindings);
-                            Output::set(strand, &mut consumed, Empty::Set);
+                            strand.new_set(&mut consumed);
                             substitute(strand, global, this, &bindings, &consumed, &mut filled)?;
                             reject_unused(strand, &bindings, &consumed)?;
                             // A hole left unfilled raises when rendering reaches it.
@@ -917,7 +917,7 @@ fn substitute<'v, 's>(
     // Bound by the ordinary call depth rather than a mechanism of its own.
     strand.recursion_guard_sync(|strand| {
         strand.with_slots_sync(|strand, [mut segments, mut built]| {
-            Output::set(strand, &mut segments, Empty::Array);
+            strand.new_array(&mut segments);
             each_segment(this, strand, |strand, segment| {
                 substitute_segment(strand, global, bindings, consumed, &segments, segment)
             })?;
@@ -1051,7 +1051,7 @@ pub(crate) fn create_fmt<'v, 'a, 's>(
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
     strand.with_slots_sync(|strand, [mut segments]| {
-        Output::set(strand, &mut segments, Empty::Array);
+        strand.new_array(&mut segments);
         for arg in args {
             match arg {
                 Arg::Pos(segment) => append_segment(strand, global, &segments, &segment)?,

@@ -14,7 +14,7 @@ use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
     AllocExt, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
-    object::{ArrayLike, ArrayView, TypeBuilder},
+    object::{ArrayLike, TypeBuilder},
     unpack,
 };
 use dolang_vfs::metadata::{AttrFlags, Resolve};
@@ -1045,11 +1045,7 @@ macro_rules! impl_concrete_path {
                 };
                 builder
                     .get("components", |this, strand, out| {
-                        Output::set(
-                            strand,
-                            out,
-                            ArrayView::new(this, Components(PhantomData::<$path>)),
-                        );
+                        strand.array_view(this, Components(PhantomData::<$path>), out);
                         Ok(())
                     })
                     .method("glob", async move |this, strand, args, out| {

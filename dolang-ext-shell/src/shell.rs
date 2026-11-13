@@ -19,7 +19,7 @@ use dolang::{
         object::{Mut, Ref, Request, TypeBuilder},
         strand::Redirect,
         unpack,
-        value::{AsTuple, Nil, TypeObject},
+        value::{Nil, TypeObject},
         vm::Register,
     },
 };
@@ -583,7 +583,14 @@ impl<'v> Object<'v> for Vfs {
         strand
             .with_slots(
                 async move |strand,
-                            [mut to_bg_send, mut to_bg_recv, mut from_bg_send, mut from_bg_recv, mut handle, mut tmp]| {
+                            [
+                    mut to_bg_send,
+                    mut to_bg_recv,
+                    mut from_bg_send,
+                    mut from_bg_recv,
+                    mut handle,
+                    mut tmp,
+                ]| {
                     // The remote VFS connection's RPC framing runs over these
                     // pipes, so they want a generous kernel buffer to make
                     // short reads/writes (and the fragment-size backoff they
@@ -608,43 +615,54 @@ impl<'v> Object<'v> for Vfs {
                     // single `arg` value `spawn_background` keeps alive until
                     // the background strand starts running.
                     let close_sym = global.syms.close;
-                    strand.spawn_background(
-                        AsTuple::new([&callable, &to_bg_recv, &from_bg_send]),
-                        None,
-                        &mut handle,
-                        async move |strand, arg, out| {
-                            let Some(tuple) = arg.as_tuple(strand) else {
-                                unreachable!("spawn_background arg is not a tuple")
-                            };
-                            strand
-                                .with_slots(
-                                    async move |strand, [mut callable, mut input, mut output, mut tmp]| {
-                                        tuple.get(strand, 0, &mut callable)?;
-                                        tuple.get(strand, 1, &mut input)?;
-                                        tuple.get(strand, 2, &mut output)?;
-                                        let res = Redirect::new(strand)
-                                            .input(&input)
-                                            .output(&output)
-                                            .enter(async move |strand| {
-                                                call!(strand, &callable, out).await
-                                            })
-                                            .await;
-                                        // Plain close, no poisoning: these pipe
-                                        // ends get negotiated into a raw OS
-                                        // pipe before any RPC framing runs
-                                        // over them, which loses Do object-
-                                        // passing semantics anyway. `Vfs.stop`
-                                        // always joins and checks status, and a
-                                        // dead server surfaces its own errors
-                                        // on the next VFS operation.
-                                        let _ = method!(strand, &input, close_sym, &mut tmp).await;
-                                        let _ = method!(strand, &output, close_sym, &mut tmp).await;
-                                        res
-                                    },
-                                )
-                                .await
-                        },
-                    )?;
+                    strand.with_slots_sync(|strand, [mut arg]| {
+                        strand.tuple([&callable, &to_bg_recv, &from_bg_send], &mut arg);
+                        strand.spawn_background(
+                            &arg,
+                            None,
+                            &mut handle,
+                            async move |strand, arg, out| {
+                                let Some(tuple) = arg.as_tuple(strand) else {
+                                    unreachable!("spawn_background arg is not a tuple")
+                                };
+                                strand
+                                    .with_slots(
+                                        async move |strand,
+                                                    [
+                                            mut callable,
+                                            mut input,
+                                            mut output,
+                                            mut tmp,
+                                        ]| {
+                                            tuple.get(strand, 0, &mut callable)?;
+                                            tuple.get(strand, 1, &mut input)?;
+                                            tuple.get(strand, 2, &mut output)?;
+                                            let res = Redirect::new(strand)
+                                                .input(&input)
+                                                .output(&output)
+                                                .enter(async move |strand| {
+                                                    call!(strand, &callable, out).await
+                                                })
+                                                .await;
+                                            // Plain close, no poisoning: these pipe
+                                            // ends get negotiated into a raw OS
+                                            // pipe before any RPC framing runs
+                                            // over them, which loses Do object-
+                                            // passing semantics anyway. `Vfs.stop`
+                                            // always joins and checks status, and a
+                                            // dead server surfaces its own errors
+                                            // on the next VFS operation.
+                                            let _ =
+                                                method!(strand, &input, close_sym, &mut tmp).await;
+                                            let _ =
+                                                method!(strand, &output, close_sym, &mut tmp).await;
+                                            res
+                                        },
+                                    )
+                                    .await
+                            },
+                        )
+                    })?;
 
                     let (recv_guard, recv, send_guard, send) =
                         negotiate_stream_pipes(strand, &from_bg_recv, &to_bg_send).await?;
@@ -1051,7 +1069,7 @@ pub(crate) fn configure_vm<'v>(
                     .parse()
                     .expect("CARGO_PKG_VERSION_* is not an integer")
             });
-            Output::set(strand, out, AsTuple::new(components));
+            strand.tuple(components, out);
             Ok(())
         })
         .get("args", move |strand, out| {

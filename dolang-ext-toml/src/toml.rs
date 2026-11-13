@@ -8,12 +8,13 @@ use std::{
 use serde::de::{self, DeserializeSeed, Visitor};
 use toml_writer::TomlWrite;
 
+use dolang::runtime::AllocExt;
 use dolang::runtime::{
     Alloc, Input, Instance, Object, Output, Slot, State, Strand, Value,
     error::{Error, Result},
     object::{Mut, Ref, TypeBuilder, fmt},
     unpack,
-    value::{AsTuple, Empty, Nil, StrEmbryo, TypeObject, View, fmt::Format},
+    value::{Nil, StrEmbryo, TypeObject, View, fmt::Format},
     vm::Register,
 };
 
@@ -194,7 +195,7 @@ impl<'v> Encoder<'_, 'v, '_> {
     ) -> Fault<'v, 's> {
         if let Fault::Encode(_) = fault {
             if self.path.is_nil() {
-                Output::set(strand, &mut self.path, Empty::Array);
+                strand.new_array(&mut self.path);
             }
             let path = self.path.as_array(strand.vm()).expect("path is an Array");
             path.push(strand, segment).expect("path is not shared");
@@ -685,7 +686,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
         A: de::SeqAccess<'de>,
     {
         let Seed(strand, mut out, kind) = self;
-        Output::set(strand, &mut out, Empty::Array);
+        strand.new_array(&mut out);
         let array = out.as_array(strand).unwrap();
         strand.with_slots_sync(|strand, [mut elem]| {
             while let Some(()) =
@@ -702,7 +703,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
         A: de::MapAccess<'de>,
     {
         let Seed(strand, mut out, kind) = self;
-        Output::set(strand, &mut out, Empty::Dict);
+        strand.new_dict(&mut out);
         let dict = out.as_dict(strand).unwrap();
         strand.with_slots_sync(|strand, [mut key, mut value, mut saved_key]| {
             let mut key_text = None;
@@ -881,7 +882,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                                 path.to_tuple(strand, &mut tuple)
                                     .expect("path is not shared");
                             }
-                            None => Output::set(strand, &mut tuple, AsTuple::new([Nil; 0])),
+                            None => strand.tuple([Nil; 0], &mut tuple),
                         }
                         let ty = strand.state::<Tag>().types.encode_error;
                         ty.create_with_annex(strand, EncodeError, annex, &mut error);

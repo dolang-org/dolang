@@ -9,6 +9,7 @@ use std::{
     path::Path,
 };
 
+use dolang::runtime::AllocExt;
 use dolang::{
     compile::{self, Config, Diag, Mode},
     extension::CompilerExt,
@@ -16,7 +17,7 @@ use dolang::{
         Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, Type, Value,
         object::{Mut, Ref, TypeBuilder},
         unpack,
-        value::{Array, AsSym, AsTuple, Dict, Empty, Nil, PinBin, PinStr, TypeObject, View},
+        value::{Array, Dict, Nil, PinBin, PinStr, TypeObject, View},
         vm::{Register, StateTag},
     },
 };
@@ -721,27 +722,13 @@ fn create_diagnostic<'v, 's>(
         .enter_sync(strand, |strand, inst| {
             {
                 let mut borrow = inst.borrow_mut_unwrap();
-                Output::set(
-                    strand,
-                    Mut::slot_mut::<DIAG_ANNOTATIONS>(&mut borrow),
-                    Empty::Array,
-                );
-                Output::set(
-                    strand,
-                    Mut::slot_mut::<DIAG_NOTES>(&mut borrow),
-                    Empty::Array,
-                );
-                Output::set(
-                    strand,
-                    Mut::slot_mut::<DIAG_PATCHES>(&mut borrow),
-                    Empty::Array,
-                );
+                strand.new_array(Mut::slot_mut::<DIAG_ANNOTATIONS>(&mut borrow));
+                strand.new_array(Mut::slot_mut::<DIAG_NOTES>(&mut borrow));
+                strand.new_array(Mut::slot_mut::<DIAG_PATCHES>(&mut borrow));
                 match sources {
-                    DiagSources::Unit(..) => Output::set(
-                        strand,
-                        Mut::slot_mut::<DIAG_SOURCE>(&mut borrow),
-                        Empty::Array,
-                    ),
+                    DiagSources::Unit(..) => {
+                        strand.new_array(Mut::slot_mut::<DIAG_SOURCE>(&mut borrow))
+                    }
                     DiagSources::Checked(_, array) => {
                         Output::set(strand, Mut::slot_mut::<DIAG_SOURCE>(&mut borrow), array)
                     }
@@ -905,10 +892,10 @@ fn check_units<'v, 's>(
             mut diagnostics,
             mut inputs,
         ]| {
-            Output::set(strand, &mut taken_sources, Empty::Array);
-            Output::set(strand, &mut sources, Empty::Array);
-            Output::set(strand, &mut diagnostics, Empty::Array);
-            Output::set(strand, &mut inputs, Empty::Array);
+            strand.new_array(&mut taken_sources);
+            strand.new_array(&mut sources);
+            strand.new_array(&mut diagnostics);
+            strand.new_array(&mut inputs);
             let taken_array = taken_sources.as_array(strand).unwrap();
             let sources_array = sources.as_array(strand).unwrap();
             let inputs_array = inputs.as_array(strand).unwrap();
@@ -1408,7 +1395,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
             .method("byte_range", async move |this, strand, args, out| {
                 let ([span], []) = unpack!(strand, args, 1, 0)?;
                 let range = span_range(this, strand, &span)?;
-                Output::set(strand, out, range);
+                strand.range(range.start, range.end, out);
                 Ok(())
             })
             .method("end", async move |this, strand, args, out| {
@@ -1484,11 +1471,9 @@ impl<'v> Object<'v> for CheckObject {
         this.cast(&out)
             .unwrap()
             .enter_sync(strand, |strand, check| {
-                Output::set(
-                    strand,
-                    Mut::slot_mut::<CHECK_INPUTS>(&mut check.borrow_mut_unwrap()),
-                    Empty::Array,
-                )
+                strand.new_array(Mut::slot_mut::<CHECK_INPUTS>(
+                    &mut check.borrow_mut_unwrap(),
+                ))
             });
         Ok(())
     }
@@ -1531,7 +1516,7 @@ impl<'v> Object<'v> for CheckObject {
                         .collect()
                 };
                 let missing: Vec<&str> = missing.iter().map(String::as_str).collect();
-                Output::set(strand, out, AsTuple::new(missing));
+                strand.tuple(missing, out);
                 Ok(())
             })
             .method_with_slots(
@@ -1773,7 +1758,7 @@ impl<'v> Object<'v> for NodeIter {
             strand.with_slots_sync(|strand, [mut id_out, mut node_out]| {
                 create_node_id(strand, owner_borrow.identity, id, &mut id_out);
                 create_node(strand, owner, id, &mut node_out)?;
-                Output::set(strand, &mut out, AsTuple::new([&id_out, &node_out]));
+                strand.tuple([&id_out, &node_out], &mut out);
                 Ok(())
             })?;
             Ok(Some(id))
@@ -2491,7 +2476,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                 match value.ok_or_else(|| {
                     Error::unsupported(strand, "this constant type is not representable")
                 })? {
-                    Value::Sym(name) => Output::set(strand, out, AsSym::new(&name)),
+                    Value::Sym(name) => strand.intern_sym(&name, out),
                     Value::Str(value) => Output::set(strand, out, value.as_str()),
                     Value::Int(value) => {
                         let value = i64::try_from(value).map_err(|_| {
@@ -2636,7 +2621,7 @@ impl ProjectNodes for Vec<compile::NodeId> {
         owner: Instance<'v, '_, UnitObject<'v>>,
         out: &mut Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, &mut *out, Empty::Array);
+        strand.new_array(&mut *out);
         strand.with_slots_sync(|strand, [mut item]| {
             let array = out.as_array(strand).unwrap();
             for id in self {
@@ -3310,7 +3295,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                     .map(|value| value.to_bool(strand))
                     .transpose()?
                     .unwrap_or(false);
-                Output::set(strand, &mut units, Empty::Array);
+                strand.new_array(&mut units);
                 iterable.iter(strand, &mut iter).await?;
                 while iter.next(strand, &mut item).await? {
                     units.as_array(strand).unwrap().push(strand, &*item)?;

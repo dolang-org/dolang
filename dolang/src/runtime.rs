@@ -9,8 +9,7 @@ pub use dolang_runtime::{
 /// Value manipulation
 pub mod value {
     pub use dolang_runtime::value::{
-        AsBoundFunction, AsFunction, AsSym, AsTuple, BinEmbryo, Empty, Input, Nil, Output, Root,
-        Singleton, Slot, StrEmbryo, TypeObject, Value, fmt,
+        BinEmbryo, Input, Nil, Output, Root, Singleton, Slot, StrEmbryo, TypeObject, Value, fmt,
         view::{
             Array, Bin, Dict, DictPairs, Fmt, FmtParam, FmtValue, ObjectId, ObjectView, Pack,
             PackPairs, PinBin, PinStr, Record, RecordPairs, Set, SetMembers, Str, Struct,
@@ -32,16 +31,19 @@ pub use error::{Error, Result};
 
 /// Native objects
 pub mod object {
-    pub use dolang_runtime::fmt;
-    pub use dolang_runtime::object::native::{
-        Cast, Instance, Mut, Object, Ref, Rest, Spread, SpreadContext, Type, TypeBuilder, TypeMut,
-        TypeRef, Unpack, UnpackItem,
-    };
-    pub use dolang_runtime::object::{
-        array_view::{ArrayLike, ArrayView},
-        dict_view::{DictLike, DictView, DictViewSink},
-        flags::{FlagLike, FlagLikeExt, Flags, FlagsInstanceExt, FlagsTypeExt},
-        interface::{InterfaceTag, Request},
+    pub use dolang_runtime::{
+        fmt,
+        object::{
+            array_view::{ArrayLike, ArrayView},
+            dict_view::{DictLike, DictView, DictViewSink},
+            flags::{FlagLike, FlagLikeExt, Flags, FlagsInstanceExt, FlagsTypeExt},
+            interface::{InterfaceTag, Request},
+            native::{
+                Cast, Instance, Mut, Object, Ref, Rest, Spread, SpreadContext, Type, TypeBuilder,
+                TypeMut, TypeRef, Unpack, UnpackItem,
+            },
+        },
+        value::fmt::Format,
     };
 }
 

@@ -15,12 +15,13 @@ use async_zip::{
     },
     error::ZipError,
 };
+use dolang::runtime::AllocExt;
 use dolang::runtime::{
     Arg, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, call,
     error::{ErrorKind, ResultExt},
     io::{ByteHandle, IoCaps, IoResultExt as _, ReadSeek, WriteSeek},
     method,
-    object::{ArrayLike, ArrayView, Mut, Ref, TypeBuilder},
+    object::{ArrayLike, Mut, Ref, TypeBuilder},
     strand::InterruptMask,
     unpack,
     value::{BinEmbryo, PinBin, PinStr, TypeObject, View},
@@ -298,7 +299,7 @@ impl<'v> Object<'v> for Archive {
                     return Err(Error::state_error(strand, "archive closed"));
                 }
 
-                Output::set(strand, out, ArrayView::new(this, Entries));
+                strand.array_view(this, Entries, out);
                 Ok(())
             })
             .method_with_slots(

@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use dolang::runtime::AllocExt;
 use dolang::runtime::value::fmt::Format;
 
 use dolang::runtime::object::fmt;
@@ -16,7 +17,7 @@ use dolang::runtime::{
     object::TypeBuilder,
     strand::{self, Local},
     unpack,
-    value::{DictPairs, Empty, RecordPairs, Singleton, Slot, View},
+    value::{DictPairs, RecordPairs, Singleton, Slot, View},
     vm::Register,
 };
 use dolang_ext_shell::with_terminal;
@@ -939,7 +940,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                 let overall_message = parse_message(strand, message_val.as_deref())?;
                 let default_icon = parse_icon(strand, icon_val.as_deref())?;
                 if steps.len() == 0 {
-                    Output::set(strand, out, Empty::Array);
+                    strand.new_array(out);
                     return Ok(());
                 }
 
@@ -956,7 +957,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                         .await?;
 
                 let res = async {
-                    Output::set(strand, &mut out, Empty::Array);
+                    strand.new_array(&mut out);
                     for step in &mut steps {
                         let metadata = parse_step(
                             strand,

@@ -2,6 +2,7 @@ use crate::global::WindowsSecurityTag;
 
 use super::*;
 use crate::util;
+use dolang::runtime::AllocExt;
 use dolang::runtime::value::{DictPairs, RecordPairs, View};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -311,10 +312,9 @@ pub(crate) fn create_sid<'v>(
         .enter_sync(strand, |strand, this| {
             let annex = this.annex();
             let sub_authorities = annex.sub_authorities();
-            Output::set(
-                strand,
+            strand.tuple(
+                sub_authorities.iter().copied(),
                 Mut::slot_mut::<0>(&mut this.borrow_mut_unwrap()),
-                AsTuple::new(sub_authorities.iter().copied()),
             );
         });
 }
@@ -488,10 +488,9 @@ impl<'v> Object<'v> for Sid {
         this.create_with_annex(strand, Sid, sid, &mut out);
         this.cast(&out).unwrap().enter_sync(strand, |strand, this| {
             let annex = this.annex();
-            Output::set(
-                strand,
+            strand.tuple(
+                annex.sub_authorities().iter().copied(),
                 Mut::slot_mut::<0>(&mut this.borrow_mut_unwrap()),
-                AsTuple::new(annex.sub_authorities().iter().copied()),
             );
         });
         Ok(())
@@ -774,7 +773,7 @@ impl<'v> Object<'v> for Acl {
                 Ok(())
             })
             .get("aces", |this, strand, out| {
-                Output::set(strand, out, ArrayView::new(this, AclAces));
+                strand.array_view(this, AclAces, out);
                 Ok(())
             })
             .method("to_bin", async move |this, strand, args, out| {
@@ -3529,7 +3528,7 @@ impl<'v> Object<'v> for TokenInfo {
                 Ok(())
             })
             .get("groups", |this, strand, out| {
-                Output::set(strand, out, ArrayView::new(this, TokenGroups));
+                strand.array_view(this, TokenGroups, out);
                 Ok(())
             })
             .get("logon_sid", |this, strand, out| {

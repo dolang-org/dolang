@@ -3,12 +3,13 @@ use std::{borrow::Cow, collections::HashSet, fmt, mem, num::NonZero, result};
 use ordered_float::OrderedFloat;
 use saphyr::{Mapping as YamlMapping, Scalar, Yaml, YamlEmitter};
 
+use dolang::runtime::AllocExt;
 use dolang::runtime::{
     Alloc, Input, Instance, Object, Output, Slot, State, Strand, Value,
     error::{Error, Result},
     object::{Mut, Ref, TypeBuilder, fmt},
     unpack,
-    value::{Array, AsTuple, Empty, Nil, PinStr, StrEmbryo, TypeObject, View, fmt::Format},
+    value::{Array, Nil, PinStr, StrEmbryo, TypeObject, View, fmt::Format},
     vm::Register,
 };
 use saphyr_parser::{Event, Marker, Parser, ScalarStyle, Span, StrInput};
@@ -102,7 +103,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .function("encode", async move |strand, args, out| {
             let ([arg], []) = unpack!(strand, args, 1, 0)?;
             strand.with_slots_sync(|strand, [mut keep, path, mut tuple, mut error]| {
-                Output::set(strand, &mut keep, Empty::Array);
+                strand.new_array(&mut keep);
                 let mut builder = Builder {
                     keep: keep.as_array(strand.vm()).expect("keep must be an array"),
                     pins: Vec::new(),
@@ -120,7 +121,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                                 path.to_tuple(strand, &mut tuple)
                                     .expect("path is not shared");
                             }
-                            None => Output::set(strand, &mut tuple, AsTuple::new([Nil; 0])),
+                            None => strand.tuple([Nil; 0], &mut tuple),
                         }
                         let ty = strand.state::<Tag>().types.encode_error;
                         ty.create_with_annex(strand, EncodeError, annex, &mut error);
@@ -299,7 +300,7 @@ impl<'v> Builder<'_, 'v> {
     ) -> Fault<'v, 's> {
         if let Fault::Encode(_) = fault {
             if self.path.is_nil() {
-                Output::set(strand, &mut self.path, Empty::Array);
+                strand.new_array(&mut self.path);
             }
             let path = self.path.as_array(strand.vm()).expect("path is an Array");
             path.push(strand, segment).expect("path is not shared");
@@ -468,7 +469,7 @@ fn parse_event_into<'v, 's, 'i>(
                 return Err(tag_error(strand, span, tag));
             }
 
-            Output::set(strand, &mut out, Empty::Array);
+            strand.new_array(&mut out);
             let array = out
                 .as_array(strand.vm())
                 .expect("sequence output must be an array");
@@ -493,7 +494,7 @@ fn parse_event_into<'v, 's, 'i>(
                 return Err(tag_error(strand, span, tag));
             }
 
-            Output::set(strand, &mut out, Empty::Dict);
+            strand.new_dict(&mut out);
             let dict = out
                 .as_dict(strand.vm())
                 .expect("mapping output must be a dict");

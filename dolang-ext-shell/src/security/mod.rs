@@ -10,12 +10,11 @@ use dolang::{
         AllocExt, Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym,
         Type, Value,
         object::{
-            ArrayLike, ArrayView, FlagLike, Flags, FlagsInstanceExt, FlagsTypeExt, Mut, Ref,
-            TypeBuilder, fmt,
+            ArrayLike, FlagLike, Flags, FlagsInstanceExt, FlagsTypeExt, Mut, Ref, TypeBuilder, fmt,
         },
         strand::LocalKey,
         unpack,
-        value::{AsTuple, Dict, Nil},
+        value::{Dict, Nil},
         vm::Register,
     },
 };

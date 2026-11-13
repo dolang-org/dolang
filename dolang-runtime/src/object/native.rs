@@ -22,9 +22,7 @@ use crate::{
     strand::{Pinned, Strand},
     sym::{self, Sym},
     unpack,
-    value::{
-        Case, Input, InputBy, Output, Slot, Slots, TypeObject, Value, ValueCell, private::Sealed,
-    },
+    value::{Case, Input, Output, Slot, Slots, TypeObject, Value, ValueCell, private::Sealed},
     vm::{Alloc, Register, Vm},
 };
 
@@ -605,20 +603,32 @@ impl<'v, 'a, T: Object<'v>> AsRef<T::Annex> for Annex<'v, 'a, T> {
 }
 
 impl<'v, 'a, T: Object<'v>> Input<'v> for Instance<'v, 'a, T> {
-    #[allow(private_interfaces)]
     #[inline]
-    fn input_take<'b>(&'b mut self, _alloc: &mut dyn Alloc<'v>, _: Sealed) -> InputBy<'v, 'b> {
-        match self.delegator {
-            Some(delegator) => InputBy::Borrow(delegator),
-            None => InputBy::Value(
-                Value::from_object(Base::upcast(self.receiver.to_strong())),
-                None,
-            ),
-        }
+    fn input_take<'b>(
+        &'b mut self,
+        _alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
+        _: Sealed,
+    ) -> Option<Slot<'v, 'b>> {
+        out.store(match self.delegator {
+            Some(delegator) => delegator.dup(),
+            None => Value::from_object(Base::upcast(self.receiver.to_strong())),
+        });
+        None
     }
 }
 
 impl<'v, 'a, T: Object<'v>> Instance<'v, 'a, T> {
+    /// Whether `value` is this instance, without invoking Do equality methods.
+    ///
+    /// An instance reached through class delegation is the delegating value.
+    pub fn is(&self, value: &Value<'v>) -> bool {
+        match self.delegator {
+            Some(delegator) => value.repr_eq(delegator),
+            None => value.repr_eq_obj(self.receiver),
+        }
+    }
+
     #[inline]
     fn borrow_impl<'s>(
         &self,
@@ -2835,10 +2845,15 @@ impl<'v, T: Object<'v>> Clone for Type<'v, T> {
 }
 
 impl<'v, T: Object<'v>> Input<'v> for Type<'v, T> {
-    #[allow(private_interfaces)]
-    fn input_take<'b>(&'b mut self, alloc: &mut dyn Alloc<'v>, _: Sealed) -> InputBy<'v, 'b> {
+    fn input_take<'b>(
+        &'b mut self,
+        alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
+        _: Sealed,
+    ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        InputBy::Borrow(self.singleton(vm))
+        out.store(self.singleton(vm).dup());
+        None
     }
 }
 
@@ -3179,7 +3194,7 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
         if self
             .supertypes
             .iter()
-            .any(|existing| existing.repr_eq(self.vm, &supertype))
+            .any(|existing| existing.repr_eq(&supertype))
         {
             return;
         }
@@ -3207,7 +3222,7 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
         if self
             .nominal_supertypes
             .iter()
-            .any(|existing| existing.repr_eq(self.vm, &supertype))
+            .any(|existing| existing.repr_eq(&supertype))
         {
             return;
         }
@@ -4238,7 +4253,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        if other.repr_eq(strand, this) {
+        if this.is(other) {
             Ok(Value::TRUE)
         } else {
             Err(Error::unsupported(strand, "`==`"))
@@ -4250,7 +4265,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        if supertype.repr_eq(strand, &this) || supertype.repr_eq(strand, TypeObject::Value) {
+        if this.is(supertype) || supertype.repr_eq(TypeObject::Value.value(strand.vm())) {
             return true;
         }
         let ty = this.ty(strand.vm());
@@ -4372,7 +4387,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for NativeTypeProxy<'v, T> {
         let Some(other) = other.downcast_ref(proxy_type) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
-        let same = other.get().native.repr_eq(strand, &this.get().native);
+        let same = other.get().native.repr_eq(&this.get().native);
         Ok(Value::from_bool(same))
     }
 
@@ -5225,7 +5240,7 @@ mod tests {
                             )
                             .await
                             .unwrap();
-                            assert!(out.repr_eq(strand, &delegator));
+                            assert!(out.repr_eq(&delegator));
                         })
                         .await;
                 })
@@ -5259,12 +5274,12 @@ mod tests {
                             )
                             .await
                             .unwrap();
-                            assert!(out.repr_eq(strand, &delegator));
+                            assert!(out.repr_eq(&delegator));
                         })
                         .await;
                 })
                 .await;
-            assert!(out.repr_eq(strand, &delegator));
+            assert!(out.repr_eq(&delegator));
         });
     }
 

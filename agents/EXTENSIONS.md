@@ -291,6 +291,26 @@ let mut borrow = instance.borrow_mut(strand)?; // Mut<Widget> — exclusive
 let annex = instance.annex();                // &WidgetAnnex — no borrow check
 ```
 
+### Built-in Values
+
+`Output::set` accepts an `Input`: a Rust value with a direct Do counterpart
+(numbers, `&str`, `&[u8]`, `Sym`, `ByteHandle`), a reference to a rooted value
+(`&Value`, `Slot`, `Root`, `Instance`), or a fixed singleton (`Nil`,
+`TypeObject`, `Singleton`). New compound values are built with methods that
+write into an output:
+
+```rust
+strand.new_array(&mut out);                 // also new_dict, new_set (AllocExt)
+strand.intern_sym(name, &mut out);          // AllocExt
+strand.array_view(this, Entries, &mut out); // also dict_view (AllocExt)
+strand.tuple([&key, &value], &mut out);     // Strand: roots each item as taken
+strand.range(0i64, len, &mut out);          // Strand
+```
+
+`AllocExt` methods need only an `Alloc` (a `Register` or `Builder` too);
+`tuple` and `range` need a `Strand`. To pass a built value as a call argument,
+build it into a slot from `with_slots_sync` first.
+
 ## Interface Queries
 
 Native code can ask a value for a Rust interface without downcasting to

@@ -1,12 +1,12 @@
 use std::{cell::Cell, ffi::CStr};
 
 use bitvec::slice::BitSlice;
+use dolang::runtime::AllocExt;
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
     object::{Mut, Ref, Rest, Spread, SpreadContext, TypeBuilder, Unpack, UnpackItem},
     value::Nil,
     value::TypeObject,
-    value::{AsSym, AsTuple},
 };
 use libsqlite3_sys::{
     SQLITE_BLOB, SQLITE_FLOAT, SQLITE_INTEGER, SQLITE_NULL, SQLITE_ROW, SQLITE_TEXT,
@@ -482,7 +482,7 @@ fn spread_columns<'v, 's>(
                     continue;
                 }
                 let name = unsafe { column_name(raw, index) };
-                Output::set(strand, Slot::reborrow(&mut key), AsSym::new(&name));
+                strand.intern_sym(&name, Slot::reborrow(&mut key));
                 sink.keyed(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut value))?;
             }
             Ok(())
@@ -878,8 +878,8 @@ impl<'v> Object<'v> for RowRestIter {
                     debug_assert!(found);
                     if annex.keyed {
                         let name = unsafe { column_name(raw, index) };
-                        Output::set(strand, Slot::reborrow(&mut key), AsSym::new(&name));
-                        Output::set(strand, out, AsTuple::new([&key, &value]));
+                        strand.intern_sym(&name, Slot::reborrow(&mut key));
+                        strand.tuple([&key, &value], out);
                     } else {
                         Output::set(strand, out, &value);
                     }

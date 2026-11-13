@@ -26,8 +26,8 @@ use crate::{
         InheritKind, InterruptMask, InterruptToken, Local, LocalKey, LocalRootKey, Redirect, Strand,
     },
     unpack,
-    value::{Empty, Output, Singleton, Slot, Value},
-    vm::{Builder, State, StateTag},
+    value::{Output, Singleton, Slot, Value},
+    vm::{AllocExt, Builder, State, StateTag},
 };
 
 /// Creates a channel pair using the VM's registered factory if set,
@@ -384,10 +384,10 @@ fn clone_local_root<'v, 's>(
     strand.with_slots_sync(|strand, [mut copied, mut key, mut value]| {
         let mut root = state.local_root.slot(strand);
         if root.is_nil() {
-            Output::set(strand, &mut root, Empty::Dict);
+            strand.new_dict(&mut root);
             return root;
         }
-        Output::set(strand, &mut copied, Empty::Dict);
+        strand.new_dict(&mut copied);
         let prior_dict = root.as_dict(strand).expect("strand local store is a dict");
         let copied_dict = copied.as_dict(strand).unwrap();
         let mut pairs = prior_dict.pairs();
@@ -414,7 +414,7 @@ fn unique_local_root<'v, 's>(
     }
     let mut root = state.local_root.slot(strand);
     if root.is_nil() {
-        Output::set(strand, &mut root, Empty::Dict);
+        strand.new_dict(&mut root);
     }
     Ok(root)
 }

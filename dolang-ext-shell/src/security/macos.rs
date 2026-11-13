@@ -127,7 +127,7 @@ impl<'v> Object<'v> for MacosAclObject {
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder.get("aces", |this, strand, out| {
-            Output::set(strand, out, ArrayView::new(this, MacosAclAces));
+            strand.array_view(this, MacosAclAces, out);
             Ok(())
         })
     }
@@ -588,7 +588,11 @@ pub(crate) fn configure_vm<'v>(
                     ));
                 }
             };
-            Output::set(strand, out, (kind, id));
+            strand.with_slots_sync(|strand, [mut kind_slot, mut id_slot]| {
+                Output::set(strand, &mut kind_slot, kind);
+                Output::set(strand, &mut id_slot, id);
+                strand.tuple([&kind_slot, &id_slot], out)
+            });
             Ok(())
         })
         .commit();

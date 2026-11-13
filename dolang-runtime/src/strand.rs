@@ -31,7 +31,9 @@ use crate::{
     object::{
         BuiltinTypes, Singletons, backtrace,
         protocol::GcObj,
+        range,
         strand::{Completion, Handle},
+        tuple,
     },
     sym::{self, Sym},
     value::{Input, Output, Slot, Value, ValueCell},
@@ -1239,6 +1241,49 @@ impl<'v, 's> Strand<'v, 's> {
         unsafe { self.with_scan_sync(visit, move |strand| f(strand, slots)) }
     }
 
+    /// Store a new tuple of `items` into `out`.
+    ///
+    /// Each item is rooted as it is taken, so taking an item may allocate.
+    ///
+    /// # Panics
+    /// Panics if `items` yields a different number of items than its length.
+    pub fn tuple<I>(&mut self, items: I, out: impl Output<'v>)
+    where
+        I: IntoIterator,
+        I::Item: Input<'v>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        let mut items = items.into_iter();
+        let cells: Vec<ValueCell<'v>> = (0..items.len()).map(|_| ValueCell::default()).collect();
+        let visit =
+            |visitor: &mut dyn Visit| cells.iter().try_for_each(|cell| cell.accept(visitor));
+        let fill = |strand: &mut Strand<'v, 's>| {
+            for cell in &cells {
+                let mut item = items.next().expect("tuple items fewer than their length");
+                // Safety: the cell is scanned and is written only through this slot
+                let slot = unsafe { cell.slot() };
+                item.input_take(strand, slot, crate::value::private::Sealed);
+            }
+            assert!(items.next().is_none(), "tuple items more than their length");
+            // Safety: as above; finishing the embryo does not allocate
+            let taken = cells.iter().map(|cell| unsafe { cell.slot() }.take());
+            tuple::embryo(strand, cells.len()).finish(strand, taken, out)
+        };
+        // Safety: `visit` visits each cell, and each cell owns at most one reference
+        unsafe { self.with_scan_sync(visit, fill) }
+    }
+
+    /// Store a new range from `start` to `end` into `out`.
+    pub fn range(&mut self, start: impl Input<'v>, end: impl Input<'v>, out: impl Output<'v>) {
+        self.with_slots_sync(|strand, [mut start_slot, mut end_slot]| {
+            Output::set(strand, Slot::reborrow(&mut start_slot), start);
+            Output::set(strand, Slot::reborrow(&mut end_slot), end);
+            let embryo = strand.builtin_types().range.embryo(strand);
+            let range = range::Range::new(start_slot.take(), end_slot.take(), Value::NIL);
+            embryo.finish(strand, range, out)
+        })
+    }
+
     /// Run function with interrupt mask changed.
     ///
     /// ## Interrupt Semantics
@@ -1936,6 +1981,117 @@ mod scan_tests {
             }
             .await;
             assert!(!scanned(strand).contains(&target));
+        });
+    }
+}
+
+#[cfg(test)]
+mod constructor_tests {
+    use crate::{
+        call,
+        error::Result,
+        strand::Strand,
+        sym::{self, Sym},
+        test_support::with_vm,
+        unpack,
+        value::{Output, Slot, Value},
+        vm::AllocExt,
+    };
+
+    fn text<'v>(strand: &Strand<'v, '_>, value: &Value<'v>) -> String {
+        value.as_str_raw(strand.vm()).expect("a string").to_owned()
+    }
+
+    #[test]
+    fn tuple_keeps_item_order() {
+        with_vm(async |strand, [mut out, mut item]| {
+            strand.tuple(["a", "b", "c"], Slot::reborrow(&mut out));
+            let tuple = out.as_tuple(strand).expect("a tuple");
+            assert_eq!(tuple.len(), 3);
+            for (index, expected) in ["a", "b", "c"].into_iter().enumerate() {
+                assert!(tuple.get(strand, index, Slot::reborrow(&mut item)).unwrap());
+                assert_eq!(text(strand, &item), expected);
+            }
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "tuple items more than their length")]
+    fn tuple_rejects_extra_items() {
+        struct Lying(std::vec::IntoIter<i64>);
+        impl Iterator for Lying {
+            type Item = i64;
+            fn next(&mut self) -> Option<i64> {
+                self.0.next()
+            }
+        }
+        impl ExactSizeIterator for Lying {
+            fn len(&self) -> usize {
+                1
+            }
+        }
+        with_vm(async |strand, [out]| {
+            strand.tuple(Lying(vec![1, 2].into_iter()), out);
+        });
+    }
+
+    #[test]
+    fn call_restores_a_moved_slot_argument() {
+        with_vm(async |strand, [mut func, mut arg, mut result]| {
+            strand.native_function(
+                async |strand: &mut Strand<'_, '_>, args, out| -> Result<'_, '_, ()> {
+                    let ([value], []) = unpack!(strand, args, 1, 0)?;
+                    Output::set(strand, out, &value);
+                    Ok(())
+                },
+                Slot::reborrow(&mut func),
+            );
+            Output::set(strand, Slot::reborrow(&mut arg), "kept");
+            call!(strand, &func, Slot::reborrow(&mut result), &mut arg)
+                .await
+                .unwrap();
+            assert_eq!(text(strand, &result), "kept");
+            assert_eq!(text(strand, &arg), "kept");
+        });
+    }
+
+    #[test]
+    fn output_set_moves_a_slot_input() {
+        with_vm(async |strand, [mut from, mut to]| {
+            Output::set(strand, Slot::reborrow(&mut from), "moved");
+            Output::set(strand, Slot::reborrow(&mut to), &mut from);
+            assert_eq!(text(strand, &to), "moved");
+            assert!(from.is_nil());
+        });
+    }
+
+    #[test]
+    fn bound_function_receives_its_bound_value() {
+        with_vm(async |strand, [mut func, mut result]| {
+            strand.bound_function(
+                async |strand: &mut Strand<'_, '_>, bound: &Value<'_>, _args, out| {
+                    Output::set(strand, out, bound);
+                    Ok(())
+                },
+                "bound",
+                Slot::reborrow(&mut func),
+            );
+            call!(strand, &func, Slot::reborrow(&mut result))
+                .await
+                .unwrap();
+            assert_eq!(text(strand, &result), "bound");
+        });
+    }
+
+    #[test]
+    fn range_takes_both_ends() {
+        with_vm(async |strand, [mut out, mut item]| {
+            strand.range(1i64, 3i64, Slot::reborrow(&mut out));
+            for (field, expected) in [(sym::START, 1i128), (sym::END, 3)] {
+                out.get(strand, Sym::well_known(field), Slot::reborrow(&mut item))
+                    .unwrap();
+                assert_eq!(item.as_int(strand), Some(expected));
+            }
         });
     }
 }

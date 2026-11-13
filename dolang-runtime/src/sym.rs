@@ -14,7 +14,7 @@ use crate::{
         protocol::{GcObj, Header, TypeHandle},
         sym::SymObj,
     },
-    value::{self, Input, InputBy, Value},
+    value::{self, Input, Slot, Value},
     vm::{Alloc, Vm},
 };
 
@@ -295,14 +295,15 @@ impl<'v, 'a> Sym<'v, 'a> {
 }
 
 impl<'v, 'a> Input<'v> for Sym<'v, 'a> {
-    #[expect(private_interfaces)]
     fn input_take<'b>(
         &'b mut self,
         alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
         _: value::private::Sealed,
-    ) -> InputBy<'v, 'b> {
+    ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        InputBy::Value(Value::from_object(vm.sym_obj(*self)), None)
+        out.store(Value::from_object(vm.sym_obj(*self)));
+        None
     }
 }
 
