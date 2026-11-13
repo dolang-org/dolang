@@ -2,11 +2,11 @@ use crate::{
     check::{OrValue, validate_text},
     global::Tag,
 };
+use dolang::runtime::AllocExt;
 use dolang::runtime::{
     Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, Value,
-    object::{ArrayLike, ArrayView, Mut, Ref, TypeBuilder},
+    object::{ArrayLike, Mut, Ref, TypeBuilder},
     unpack,
-    value::Empty,
 };
 pub(crate) const CHILDREN: usize = 0;
 pub(crate) struct Document;
@@ -244,7 +244,7 @@ impl<'v> Object<'v> for Document {
     ) -> Result<'v, 's, ()> {
         let ([], [], items) = unpack!(strand, args, 0, 0, *)?;
         strand.with_slots_sync(|strand, [mut children]| {
-            Output::set(strand, &mut children, Empty::Array);
+            strand.new_array(&mut children);
             let array = children.as_array(strand).unwrap();
             for item in items {
                 array.push(strand, item)?;
@@ -255,7 +255,7 @@ impl<'v> Object<'v> for Document {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("children", |this, strand, out| {
-                Output::set(strand, out, ArrayView::new(this, Children));
+                strand.array_view(this, Children, out);
                 Ok(())
             })
             .get("root", |this, strand, out| {

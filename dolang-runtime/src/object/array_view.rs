@@ -1,6 +1,6 @@
 //! Lazy array-like projections over native objects.
 
-use std::{cell::Cell, ops::ControlFlow, ptr::NonNull};
+use std::{cell::Cell, convert::Infallible, marker::PhantomData, ops::ControlFlow};
 
 use crate::value::fmt::Format;
 
@@ -22,8 +22,8 @@ use crate::{
     sym,
     sym::Sym,
     unpack,
-    value::{Empty, Input, InputBy, Output, Slot, Slots, TypeObject, Value, private::Sealed},
-    vm::{Alloc, Vm},
+    value::{Output, Slot, Slots, TypeObject, Value},
+    vm::{Alloc, AllocExt, Vm},
 };
 
 /// Implements a lazy array-like projection over a native object.
@@ -106,24 +106,13 @@ pub trait ArrayLike<'v>: 'v {
     }
 }
 
-/// Input wrapper that creates a lazy array view of a native object.
-pub struct ArrayView<'v, 'a, I: ArrayLike<'v>> {
-    owner: Instance<'v, 'a, I::Object>,
-    // `Option` so `input_take` can steal `view` out rather than requiring
-    // `I: Clone`. Using an `ArrayView` more than once (it's meant to be
-    // constructed and immediately handed to `Output::set`/`Value::from_input`)
-    // is a programming error, not something to recover from.
-    view: Option<I>,
-}
+/// [`Object`] method implementations over an [`ArrayLike`] projection of a native object.
+///
+/// To expose the projection itself as a value, use
+/// [`AllocExt::array_view`](crate::vm::AllocExt::array_view).
+pub struct ArrayView<'v, I: ArrayLike<'v>>(Infallible, PhantomData<(&'v (), I)>);
 
-impl<'v, 'a, I: ArrayLike<'v>> ArrayView<'v, 'a, I> {
-    pub fn new(owner: Instance<'v, 'a, I::Object>, view: I) -> Self {
-        Self {
-            owner,
-            view: Some(view),
-        }
-    }
-
+impl<'v, I: ArrayLike<'v>> ArrayView<'v, I> {
     /// Implements [`Object::index`] directly without exposing a view object.
     pub fn index<'s>(
         owner: Instance<'v, '_, I::Object>,
@@ -212,25 +201,25 @@ fn create_view<'v, I: ArrayLike<'v>>(
     )
 }
 
-impl<'v, I: ArrayLike<'v>> Input<'v> for ArrayView<'v, '_, I> {
-    #[allow(private_interfaces)]
-    fn input_take<'a>(&'a mut self, mut alloc: &mut dyn Alloc<'v>, _: Sealed) -> InputBy<'v, 'a> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        let ty = self.owner.ty(vm);
-        let owner = Value::from_input(alloc, self.owner);
-        let view = self.view.take().expect("ArrayView used more than once");
-        let mut value = Value::NIL;
-        vm.builtin_types().array_view.create(
-            &mut alloc,
-            View {
-                owner,
-                glue: Box::new(Glue { view, ty }),
-            },
-            // Safety: written by the last allocation; see `Slot::new`.
-            unsafe { Slot::new(NonNull::from(&mut value)) },
-        );
-        InputBy::Value(value, None)
-    }
+/// Store a new array view of `owner` into `out`.
+pub(crate) fn create<'v, I: ArrayLike<'v>>(
+    alloc: &mut impl Alloc<'v>,
+    owner: Instance<'v, '_, I::Object>,
+    view: I,
+    out: impl Output<'v>,
+) {
+    let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+    let ty = owner.ty(vm);
+    // A duplicate of a rooted owner, which stays rooted where it is.
+    let owner = Value::from_input(alloc, owner);
+    vm.builtin_types().array_view.create(
+        alloc,
+        View {
+            owner,
+            glue: Box::new(Glue { view, ty }),
+        },
+        out,
+    );
 }
 
 trait ArrayViewGlue<'v>: 'v {
@@ -977,7 +966,7 @@ fn index_from<'v, 's>(
             range::Slice::Contiguous { start, end } => Box::new(start..end),
             range::Slice::Stepped(indices) => Box::new(indices.into_iter()),
         };
-        Output::set(strand, &mut out, Empty::Array);
+        strand.new_array(&mut out);
         let array = out.as_array(strand).unwrap();
         return strand.with_slots_sync(|strand, [mut value]| {
             for index in indices {

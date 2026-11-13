@@ -109,7 +109,7 @@ impl<'v> Protocol<'v> for Value {
             // comparisons and test for the same value.
             tag @ (sym::EQ_METHOD | sym::NE_METHOD) if this.delegator().is_none() => {
                 let ([left, right], []) = unpack!(strand, args, 2, 0)?;
-                let same = left.repr_eq(strand, &right);
+                let same = left.repr_eq(&right);
                 Output::set(strand, out, same == (tag == sym::EQ_METHOD));
                 Ok(())
             }

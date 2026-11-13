@@ -1,13 +1,14 @@
 use crate::global::Tag;
 
+use dolang::runtime::AllocExt;
 use dolang::runtime::object::fmt;
 use dolang::runtime::value::fmt::Format;
 
 use dolang::runtime::{
     Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, Value,
-    object::{ArrayLike, ArrayView, DictLike, DictView, DictViewSink, Mut, Ref, TypeBuilder},
+    object::{ArrayLike, ArrayView, DictLike, DictViewSink, Mut, Ref, TypeBuilder},
     unpack,
-    value::{AsTuple, Empty, Nil, TypeObject},
+    value::{Nil, TypeObject},
 };
 
 use crate::{
@@ -263,11 +264,10 @@ impl<'v> DictLike<'v> for Attrs {
         let node = this.borrow(strand)?;
         for attr in &node.attrs {
             match &attr.name.namespace {
-                Some(namespace) => sink.push(
-                    strand,
-                    AsTuple::new([namespace.as_str(), attr.name.local.as_str()]),
-                    attr.value.as_str(),
-                ),
+                Some(namespace) => strand.with_slots_sync(|strand, [mut key]| {
+                    strand.tuple([namespace.as_str(), attr.name.local.as_str()], &mut key);
+                    sink.push(strand, &key, attr.value.as_str())
+                }),
                 None => sink.push(strand, attr.name.local.as_str(), attr.value.as_str()),
             }
         }
@@ -445,7 +445,7 @@ pub(crate) fn create_element<'v, 's>(
         .unwrap()
         .enter_sync(strand, |strand, inst| {
             let mut borrow = inst.borrow_mut_unwrap();
-            Output::set(strand, Mut::slot_mut::<CHILDREN>(&mut borrow), Empty::Array);
+            strand.new_array(Mut::slot_mut::<CHILDREN>(&mut borrow));
         });
     Ok(())
 }
@@ -670,15 +670,15 @@ impl<'v> Object<'v> for Element {
                 Ok(())
             })
             .get("attrs", |this, strand, out| {
-                Output::set(strand, out, DictView::new(this, Attrs));
+                strand.dict_view(this, Attrs, out);
                 Ok(())
             })
             .get("children", |this, strand, out| {
-                Output::set(strand, out, ArrayView::new(this, Children));
+                strand.array_view(this, Children, out);
                 Ok(())
             })
             .get("namespaces", |this, strand, out| {
-                Output::set(strand, out, DictView::new(this, Namespaces));
+                strand.dict_view(this, Namespaces, out);
                 Ok(())
             })
             .method("push", async move |this, strand, args, out| {
@@ -703,7 +703,7 @@ impl<'v> Object<'v> for Element {
                     .enter_sync(strand, |strand, inst| {
                         {
                             let mut borrow = inst.borrow_mut_unwrap();
-                            Output::set(strand, Mut::slot_mut::<STACK>(&mut borrow), Empty::Array);
+                            strand.new_array(Mut::slot_mut::<STACK>(&mut borrow));
                         }
                         let borrow = inst.borrow(strand)?;
                         let stack = Ref::slot::<STACK>(&borrow).as_array(strand).unwrap();

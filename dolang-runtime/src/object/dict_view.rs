@@ -1,6 +1,6 @@
 //! Lazy dictionary-like projections over native objects.
 
-use std::{hash::Hasher, ops::ControlFlow, ptr::NonNull};
+use std::{convert::Infallible, hash::Hasher, marker::PhantomData, ops::ControlFlow};
 
 use crate::value::fmt::Format;
 
@@ -22,8 +22,8 @@ use crate::{
     sym,
     sym::Sym,
     unpack,
-    value::{Empty, Input, InputBy, Output, Slot, Slots, TypeObject, Value, private::Sealed},
-    vm::{Alloc, Vm},
+    value::{Input, Output, Slot, Slots, TypeObject, Value},
+    vm::{Alloc, AllocExt, Vm},
 };
 
 /// Receives ordered key/value pairs while a dictionary view is flattened.
@@ -140,7 +140,7 @@ pub trait DictLike<'v>: 'v {
         let expected = self.len(this, strand);
         let mut pairs = Vec::with_capacity(expected);
         self.flatten(this, strand, &mut DictViewSink { pairs: &mut pairs })?;
-        Output::set(strand, &mut out, Empty::Array);
+        strand.new_array(&mut out);
         let array = out.as_array(strand).unwrap();
         let mut seen: Vec<Value<'v>> = Vec::with_capacity(pairs.len());
         'keys: for (key, _) in pairs {
@@ -166,7 +166,7 @@ pub trait DictLike<'v>: 'v {
         key: &Value<'v>,
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, &mut out, Empty::Array);
+        strand.new_array(&mut out);
         let array = out.as_array(strand).unwrap();
         strand.with_slots_sync(|strand, [mut tmp]| {
             let mut instance = 0i64;
@@ -179,24 +179,13 @@ pub trait DictLike<'v>: 'v {
     }
 }
 
-/// Input wrapper that creates a dictionary view of a native object.
-pub struct DictView<'v, 'a, I: DictLike<'v>> {
-    owner: Instance<'v, 'a, I::Object>,
-    // `Option` so `input_take` can steal `view` out rather than requiring
-    // `I: Clone`. Using a `DictView` more than once (it's meant to be
-    // constructed and immediately handed to `Output::set`/`Value::from_input`)
-    // is a programming error, not something to recover from.
-    view: Option<I>,
-}
+/// [`Object`] method implementations over a [`DictLike`] projection of a native object.
+///
+/// To expose the projection itself as a value, use
+/// [`AllocExt::dict_view`](crate::vm::AllocExt::dict_view).
+pub struct DictView<'v, I: DictLike<'v>>(Infallible, PhantomData<(&'v (), I)>);
 
-impl<'v, 'a, I: DictLike<'v>> DictView<'v, 'a, I> {
-    pub fn new(owner: Instance<'v, 'a, I::Object>, view: I) -> Self {
-        Self {
-            owner,
-            view: Some(view),
-        }
-    }
-
+impl<'v, I: DictLike<'v>> DictView<'v, I> {
     /// Invokes a view method on a native owner, rooting the temporary view.
     pub async fn method<'s>(
         owner: Instance<'v, '_, I::Object>,
@@ -208,7 +197,7 @@ impl<'v, 'a, I: DictLike<'v>> DictView<'v, 'a, I> {
     ) -> Result<'v, 's, ()> {
         strand
             .with_slots(async move |strand, [mut slot]| {
-                Output::set(strand, &mut slot, DictView::new(owner, view));
+                strand.dict_view(owner, view, &mut slot);
                 slot.method(strand, method, args, out).await
             })
             .await
@@ -253,25 +242,25 @@ impl<'v, 'a, I: DictLike<'v>> DictView<'v, 'a, I> {
     }
 }
 
-impl<'v, I: DictLike<'v>> Input<'v> for DictView<'v, '_, I> {
-    #[allow(private_interfaces)]
-    fn input_take<'a>(&'a mut self, mut alloc: &mut dyn Alloc<'v>, _: Sealed) -> InputBy<'v, 'a> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        let ty = self.owner.ty(vm);
-        let owner = Value::from_input(alloc, self.owner);
-        let view = self.view.take().expect("DictView used more than once");
-        let mut value = Value::NIL;
-        vm.builtin_types().dict_view.create(
-            &mut alloc,
-            View {
-                owner,
-                glue: Box::new(Glue { view, ty }),
-            },
-            // Safety: written by the last allocation; see `Slot::new`.
-            unsafe { Slot::new(NonNull::from(&mut value)) },
-        );
-        InputBy::Value(value, None)
-    }
+/// Store a new dictionary view of `owner` into `out`.
+pub(crate) fn create<'v, I: DictLike<'v>>(
+    alloc: &mut impl Alloc<'v>,
+    owner: Instance<'v, '_, I::Object>,
+    view: I,
+    out: impl Output<'v>,
+) {
+    let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+    let ty = owner.ty(vm);
+    // A duplicate of a rooted owner, which stays rooted where it is.
+    let owner = Value::from_input(alloc, owner);
+    vm.builtin_types().dict_view.create(
+        alloc,
+        View {
+            owner,
+            glue: Box::new(Glue { view, ty }),
+        },
+        out,
+    );
 }
 
 trait DictViewGlue<'v>: 'v {
@@ -1395,7 +1384,7 @@ mod tests {
                         &mut owner,
                     );
                     let native = Instance::from_native_value(&owner, strand, ty);
-                    Output::set(strand, &mut view, DictView::new(native, Projection::<true>));
+                    strand.dict_view(native, Projection::<true>, &mut view);
                     let pop = Sym::well_known(sym::POP);
                     method!(strand, &view, pop, &mut out, 1_i64).await.unwrap();
                     assert_eq!(out.as_int(strand), Some(10));
@@ -1442,13 +1431,13 @@ mod tests {
             vm.enter_with_slots::<3, _>(async move |strand, [mut owner, mut view, mut out]| {
                 ty.create(strand, Fixture(vec![(1, Some(10))]), &mut owner);
                 let native = Instance::from_native_value(&owner, strand, ty);
-                Output::set(strand, &mut view, DictView::new(native, Projection::<true>));
+                strand.dict_view(native, Projection::<true>, &mut view);
                 let default = Sym::well_known(sym::DEFAULT);
                 let otherwise = Sym::well_known(sym::ELSE);
                 let err = method!(strand, &view, Sym::well_known(sym::POP), &mut out, 1_i64, default: 5_i64, otherwise: 6_i64).await.unwrap_err();
                 assert_eq!(err.kind(), ErrorKind::UnexpectedKey);
                 assert_eq!(native.borrow_unwrap().0, vec![(1, Some(10))]);
-                Output::set(strand, &mut view, DictView::new(native, Projection::<false>));
+                strand.dict_view(native, Projection::<false>, &mut view);
                 for method in [sym::DELETE, sym::POP] {
                     let err = method!(strand, &view, Sym::well_known(method), &mut out, 1_i64).await.unwrap_err();
                     assert_eq!(err.kind(), ErrorKind::Immutable);

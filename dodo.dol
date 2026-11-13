@@ -372,11 +372,11 @@ def typecheck spec rest :all = false
         --path $dir
       ...sources ...rest
 
-def both_test spec args
-  typecheck $spec [] all: true
+def test_all spec args
   cargo_test $spec []
   lsp_test $spec []
   shell_test $spec $ Options slow: $args.slow release: $args.release
+  typecheck $spec [] all: true
 
 def can_write_dir path
   try
@@ -465,7 +465,7 @@ return $
       env
         RUSTFLAGS: "-Z sanitizer=address --cfg asan"
         RUSTDOCFLAGS: "-Z sanitizer=address --cfg asan"
-        do both_test $spec $args
+        do test_all $spec $args
 
   "test-miri":
     help: run tests with miri
@@ -571,7 +571,7 @@ return $
     - flag: release
       help: run release tests
     do |args|
-      both_test (Spec args) $args
+      test_all (Spec args) $args
 
   "gen-bytecode-fuzz-seeds":
     help: generate bytecode fuzz seeds

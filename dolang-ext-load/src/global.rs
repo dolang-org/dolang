@@ -1,9 +1,9 @@
 use std::cell::Cell;
 
+use dolang::runtime::AllocExt;
 use dolang::runtime::{
-    Output,
     object::Type,
-    value::{Empty, Root},
+    value::Root,
     vm::{Register, StateTag},
 };
 
@@ -31,7 +31,7 @@ impl StateTag for Tag {
 impl<'v> Global<'v> {
     pub(crate) fn new(builder: &mut Register<'v>) -> Self {
         let mut root = Root::new(builder);
-        Output::set(builder, &mut root, Empty::Array);
+        builder.new_array(&mut root);
         Self {
             types: Types {
                 import_handler: builder.register_type(),

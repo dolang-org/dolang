@@ -1,22 +1,19 @@
 mod detail {
-    use dolang::runtime::object::fmt;
-
     use dolang::{
         compile::{self, Config, Mode},
         runtime::{
-            self, Args, Bytecode, Error, Instance, Object, Output, Slot, Sym, Value, call,
+            self, AllocExt, Args, Bytecode, Error, Instance, Object, Output, Slot, Strand, Sym,
+            Value, call,
             error::ErrorKind,
             io::{self, ByteHandle, ByteIo, IntoByteIo, IoCaps, IoResultExt as _},
             object::{
                 DictLike, DictView, DictViewSink, FlagLike, FlagLikeExt, Flags, FlagsInstanceExt,
-                FlagsTypeExt, InterfaceTag, Request, TypeBuilder, Unpack,
+                FlagsTypeExt, Format, InterfaceTag, Request, TypeBuilder, Unpack, fmt,
             },
             unpack,
-            value::AsSym,
             vm::Builder,
         },
     };
-    use dolang_runtime::strand::Strand;
     use futures::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, Cursor};
     use std::{
         io::SeekFrom,
@@ -27,8 +24,6 @@ mod detail {
         sync::{Arc, Mutex},
         task::{Context as TaskContext, Poll},
     };
-
-    use dolang::runtime::value::fmt::Format;
 
     const MOD_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/mod");
 
@@ -512,7 +507,7 @@ mod detail {
 
         fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
             builder.get("view", |this, strand, out| {
-                Output::set(strand, out, DictView::new(this, KeyPairs));
+                strand.dict_view(this, KeyPairs, out);
                 Ok(())
             })
         }
@@ -570,7 +565,10 @@ mod detail {
             strand: &mut Strand<'v, 's>,
             sink: &mut DictViewSink<'v, '_>,
         ) -> runtime::Result<'v, 's, ()> {
-            sink.push(strand, AsSym::new("name"), 1_i64);
+            strand.with_slots_sync(|strand, [mut key]| {
+                strand.intern_sym("name", &mut key);
+                sink.push(strand, &key, 1_i64)
+            });
             sink.push(strand, "HOME", "/home");
             Ok(())
         }

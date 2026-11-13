@@ -11,7 +11,7 @@ use dolang::runtime::{
     AllocExt, Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call, method,
     object::{TypeBuilder, fmt},
     unpack,
-    value::{AsTuple, Nil, TypeObject},
+    value::{Nil, TypeObject},
 };
 use dolang_vfs::process::{
     Process as VfsProcess, ProcessExit, ProcessInfo, Processes as VfsProcesses,
@@ -112,11 +112,7 @@ impl<'v> Object<'v> for Info {
             })
             .get("cmdline", |this, strand, out| {
                 match this.annex().info.command_line() {
-                    Some(cmdline) => Output::set(
-                        strand,
-                        out,
-                        AsTuple::new(cmdline.iter().map(String::as_str)),
-                    ),
+                    Some(cmdline) => strand.tuple(cmdline.iter().map(String::as_str), out),
                     None => Output::set(strand, out, Nil),
                 }
                 Ok(())

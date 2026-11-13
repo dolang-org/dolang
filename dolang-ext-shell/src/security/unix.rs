@@ -73,11 +73,7 @@ pub(crate) fn create_identity<'v>(
     out: &mut Slot<'v, '_>,
 ) {
     strand.with_slots_sync(|strand, [mut groups]| {
-        Output::set(
-            strand,
-            &mut groups,
-            AsTuple::new(info.groups().iter().copied()),
-        );
+        strand.tuple(info.groups().iter().copied(), &mut groups);
         global
             .types
             .unix_identity
@@ -159,7 +155,7 @@ impl<'v> Object<'v> for PosixAclObject {
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder.get("aces", |this, strand, out| {
-            Output::set(strand, out, ArrayView::new(this, PosixAclAces));
+            strand.array_view(this, PosixAclAces, out);
             Ok(())
         })
     }

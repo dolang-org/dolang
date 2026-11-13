@@ -7,7 +7,7 @@
 
 use dolang::runtime::{
     Error, Output, Result, Slot, Strand,
-    value::{AsTuple, Nil, View},
+    value::{Nil, View},
 };
 use dolang_vfs_winreg::Value;
 
@@ -21,9 +21,7 @@ pub(crate) fn to_do<'v, 's>(
         Value::Sz(s) | Value::ExpandSz(s) => {
             Output::set(strand, out, s.as_str());
         }
-        Value::MultiSz(parts) => {
-            Output::set(strand, out, AsTuple::new(parts.iter().map(String::as_str)))
-        }
+        Value::MultiSz(parts) => strand.tuple(parts.iter().map(String::as_str), out),
         Value::Dword(v) | Value::DwordBigEndian(v) => {
             Output::set(strand, out, i128::from(*v));
         }

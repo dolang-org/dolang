@@ -9,7 +9,7 @@ use dolang::runtime::object::fmt;
 use dolang::runtime::{
     AllocExt, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
     error::ResultExt,
-    object::{ArrayLike, ArrayView, Cast, DictLike, DictView, DictViewSink, TypeBuilder},
+    object::{ArrayLike, Cast, DictLike, DictViewSink, TypeBuilder},
     unpack,
     value::{Nil, Str},
     vm::Register,
@@ -303,11 +303,11 @@ impl<'v> Object<'v> for Url {
                 Ok(())
             })
             .get("segments", |this, strand, out| {
-                Output::set(strand, out, ArrayView::new(this, Segments));
+                strand.array_view(this, Segments, out);
                 Ok(())
             })
             .get("query", |this, strand, out| {
-                Output::set(strand, out, DictView::new(this, Query));
+                strand.dict_view(this, Query, out);
                 Ok(())
             })
             .method("with_query_raw", async move |this, strand, args, out| {

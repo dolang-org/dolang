@@ -2,6 +2,7 @@ use crate::global::Tag;
 
 use std::{borrow::Cow, mem, result, str};
 
+use dolang::runtime::AllocExt;
 use dolang::runtime::value::fmt::Format;
 
 use dolang::runtime::{object::fmt, strand::InterruptMask};
@@ -13,7 +14,7 @@ use dolang::runtime::{
     call,
     error::{ErrorKind, ResultExt as _},
     method,
-    object::{DictLike, DictView, DictViewSink, Mut, TypeBuilder},
+    object::{DictLike, DictViewSink, Mut, TypeBuilder},
     unpack,
     value::{Nil, TypeObject},
     vm::Register,
@@ -390,7 +391,7 @@ impl<'v> Object<'v> for StatusObject {
                 Ok(())
             })
             .get("headers", |this, strand, out| {
-                Output::set(strand, out, DictView::new(this, StatusHeaders));
+                strand.dict_view(this, StatusHeaders, out);
                 Ok(())
             })
             .get("truncated", |this, strand, out| {
@@ -1122,7 +1123,7 @@ impl<'v> Object<'v> for Response {
                 Ok(())
             })
             .get("headers", |this, strand, out| {
-                Output::set(strand, out, DictView::new(this, ResponseHeaders));
+                strand.dict_view(this, ResponseHeaders, out);
                 Ok(())
             })
             .method("body", async move |this, strand, args, out| {

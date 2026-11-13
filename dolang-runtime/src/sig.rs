@@ -1,7 +1,7 @@
 use crate::{
     strand::Strand,
     sym::Sym,
-    value::{Input, InputBy, Output, Slots, Value, private},
+    value::{Input, Output, Slot, Slots, Value, private},
     vm::Alloc,
 };
 use dolang_bytecode::{Rest, Variadic};
@@ -15,13 +15,15 @@ impl<'v, 'a> Input<'v> for &UnpackKeyKind<'v, 'a> {
     fn input_take<'b>(
         &'b mut self,
         alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
         _: private::Sealed,
-    ) -> InputBy<'v, 'b> {
+    ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        match self {
-            UnpackKeyKind::Sym(sym) => InputBy::Value(Value::from_object(vm.sym_obj(*sym)), None),
-            UnpackKeyKind::Const(value) => InputBy::Borrow(value),
-        }
+        out.store(match self {
+            UnpackKeyKind::Sym(sym) => Value::from_object(vm.sym_obj(*sym)),
+            UnpackKeyKind::Const(value) => value.dup(),
+        });
+        None
     }
 }
 

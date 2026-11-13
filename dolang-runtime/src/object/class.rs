@@ -31,7 +31,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Output, Singleton, Slot, Slots, TypeObject, Value},
-    vm::{Alloc, Builder, StateTag, Vm},
+    vm::{Builder, StateTag, Vm},
 };
 
 use super::protocol::{GcObj, GcObjBorrow, Protocol};
@@ -451,20 +451,20 @@ pub(crate) async fn create<'v, 's>(
     // Every class ends its MRO with `Value`, which supplies the members every
     // value has, unless it names `Value` itself.
     let value = Value::from_input(strand, TypeObject::Value);
-    let value = (!supers.iter().any(|sup| sup.repr_eq(strand, &value))).then_some(value);
+    let value = (!supers.iter().any(|sup| sup.repr_eq(&value))).then_some(value);
 
     for sup in supers.iter().chain(&value) {
         if let Some(cls) = sup.downcast_ref(strand.builtin_types().class_object) {
             let cls = cls.annex();
             // Inherit parent's native supers (dedup by repr_eq).
             for type_obj in cls.native_supers.iter() {
-                if native_supers.iter().any(|s| s.repr_eq(strand, type_obj)) {
+                if native_supers.iter().any(|s| s.repr_eq(type_obj)) {
                     continue;
                 }
                 native_supers.push(type_obj.dup());
             }
             for type_obj in cls.abstract_supers.iter() {
-                if abstract_supers.iter().any(|s| s.repr_eq(strand, type_obj)) {
+                if abstract_supers.iter().any(|s| s.repr_eq(type_obj)) {
                     continue;
                 }
                 abstract_supers.push(type_obj.dup());
@@ -494,7 +494,7 @@ pub(crate) async fn create<'v, 's>(
                         let type_obj = &cls.native_supers[*parent_slot];
                         let our_slot = native_supers
                             .iter()
-                            .position(|s| s.repr_eq(strand, type_obj))
+                            .position(|s| s.repr_eq(type_obj))
                             .expect("bug: parent Delegate slot not found in our native_supers");
                         ClassEntry::Delegate(our_slot, *kind)
                     }
@@ -541,8 +541,8 @@ pub(crate) async fn create<'v, 's>(
             }
 
             // Direct native super. Skip if already seen (inherited via a ClassObject parent).
-            if native_supers.iter().any(|s| s.repr_eq(strand, sup))
-                || abstract_supers.iter().any(|s| s.repr_eq(strand, sup))
+            if native_supers.iter().any(|s| s.repr_eq(sup))
+                || abstract_supers.iter().any(|s| s.repr_eq(sup))
             {
                 continue;
             }
@@ -1544,7 +1544,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                             .ok_or_else(|| {
                                 Error::type_error(strand, "invalid class object type")
                             })?;
-                        get_native_slot(strand, borrow, supertype)
+                        get_native_slot(borrow, supertype)
                             .ok_or_else(|| Error::type_error(strand, "native slot uninitialized"))?
                     } else {
                         supertype
@@ -1802,7 +1802,7 @@ impl<'v> Protocol<'v> for ClassTypeProxy<'v> {
         let Some(other) = other.downcast_ref(strand.builtin_types().class_type_proxy) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
-        let same = other.get().class.repr_eq(strand, &this.get().class);
+        let same = other.get().class.repr_eq(&this.get().class);
         Ok(Value::from_bool(same))
     }
 
@@ -1859,7 +1859,7 @@ impl<'v> Protocol<'v> for ClassTypeProxy<'v> {
         if matches!(method.tag(), sym::GET_METHOD | sym::SET_METHOD)
             && matches!(class.type_entry(method),
                 Some(ClassTypeEntry::Delegate(supertype, MemberKind::Method))
-                    if supertype.repr_eq(strand, TypeObject::Type))
+                    if supertype.repr_eq(TypeObject::Type.value(strand.vm())))
         {
             let ([receiver, field], [], trailing) = unpack!(strand, args, 2, 0, ...)?;
             let class = receiver
@@ -1944,7 +1944,6 @@ unsafe impl<'v> Collect for ClassInstance<'v> {
 /// native super's type object, returns a reference to the initialized native slot value,
 /// if any.  The returned reference's lifetime is linked to that of the borrow.
 pub(crate) fn get_native_slot<'v, 'a>(
-    alloc: &mut impl Alloc<'v>,
     borrow: GcObjBorrow<'v, 'a, ClassInstance<'v>>,
     type_obj: &Value<'v>,
 ) -> Option<&'a Value<'v>> {
@@ -1954,7 +1953,7 @@ pub(crate) fn get_native_slot<'v, 'a>(
         .annex()
         .native_supers
         .iter()
-        .position(|s| s.repr_eq(alloc, type_obj))?;
+        .position(|s| s.repr_eq(type_obj))?;
     annex.natives[slot].get()
 }
 
@@ -2214,14 +2213,14 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             .annex()
             .native_supers
             .iter()
-            .position(|sup| sup.repr_eq(strand, type_obj))
+            .position(|sup| sup.repr_eq(type_obj))
             .ok_or_else(|| {
                 Error::type_error(strand, "not a concrete native super of this class")
             })?;
 
         // Check if slot is already set with the same value (idempotent for diamond inheritance)
         if let Some(existing) = annex.natives[idx].get() {
-            if existing.repr_eq(strand, &native) {
+            if existing.repr_eq(&native) {
                 return Ok(());
             } else {
                 return Err(Error::runtime(

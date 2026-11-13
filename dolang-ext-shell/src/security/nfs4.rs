@@ -130,7 +130,7 @@ impl<'v> Object<'v> for Nfs4AclObject {
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder.get("aces", |this, strand, out| {
-            Output::set(strand, out, ArrayView::new(this, Nfs4AclAces));
+            strand.array_view(this, Nfs4AclAces, out);
             Ok(())
         })
     }
