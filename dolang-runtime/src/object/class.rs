@@ -1,5 +1,5 @@
 use std::{
-    cell::{Cell, OnceCell},
+    cell::Cell,
     collections::{HashMap, hash_map::Entry},
     hash::DefaultHasher,
     marker::PhantomData,
@@ -15,7 +15,7 @@ use crate::{
     arg::{Arg, Args},
     call,
     error::{Error, ErrorKind, Result},
-    gc::{Annex, Collect, arena::Visit},
+    gc::{self, Annex, Collect, arena::Visit},
     object::{
         BoundMethod,
         interface::Request,
@@ -30,7 +30,7 @@ use crate::{
     strand::{Redirect, Strand},
     sym::{self, Sym},
     unpack,
-    value::{Output, Singleton, Slot, Slots, TypeObject, Value},
+    value::{Output, Singleton, Slot, Slots, TypeObject, Value, ValueCell},
     vm::{Builder, StateTag, Vm},
 };
 
@@ -708,35 +708,23 @@ impl AccessorKind {
 /// the marker, so a property's accessors are called directly.
 pub(crate) struct Accessor<'v> {
     kind: AccessorKind,
-    phantom: PhantomData<Value<'v>>,
+    /// The function it wraps.
+    func: Value<'v>,
 }
 
-/// The function an [`Accessor`] wraps.
-pub(crate) struct AccessorAnnex<'v>(Value<'v>);
-
-impl<'v> Annex for AccessorAnnex<'v> {
-    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
-        self.0.accept(visit)
-    }
-
-    fn clear(&self) {
-        // GC cannot safely clear annexes with outstanding immutable references
-    }
-}
-
-unsafe impl<'v> Collect for Accessor<'v> {
+unsafe impl<'v> gc::ImmState for Accessor<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
-    type Annex = AccessorAnnex<'v>;
-
-    fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
-        ControlFlow::Continue(())
-    }
-
-    fn clear(&mut self) {}
 }
 
-impl<'v> Protocol<'v> for Accessor<'v> {
+impl<'v> Annex for Accessor<'v> {
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        self.func.accept(visit)
+    }
+}
+
+pub(crate) type AccessorObj<'v> = gc::Imm<Accessor<'v>>;
+
+impl<'v> Protocol<'v> for AccessorObj<'v> {
     fn op_type<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -762,19 +750,19 @@ impl<'v> Protocol<'v> for Accessor<'v> {
 /// The `getter` and `setter` types, which make an [`Accessor`] when called.
 pub(crate) struct AccessorType(pub(crate) AccessorKind);
 
-unsafe impl Collect for AccessorType {
+unsafe impl gc::ImmState for AccessorType {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl gc::Annex for AccessorType {
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
         ControlFlow::Continue(())
     }
-
-    fn clear(&mut self) {}
 }
 
-impl<'v> Protocol<'v> for AccessorType {
+pub(crate) type AccessorTypeObj = gc::Imm<AccessorType>;
+
+impl<'v> Protocol<'v> for AccessorTypeObj {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -810,14 +798,12 @@ impl<'v> Protocol<'v> for AccessorType {
         let ([mut func], []) = unpack!(strand, args, 1, 0)?;
         let accessor = Accessor {
             kind,
-            phantom: PhantomData,
+            func: func.take(),
         };
-        strand.builtin_types().accessor.create_with_annex(
-            strand,
-            accessor,
-            AccessorAnnex(func.take()),
-            out,
-        );
+        strand
+            .builtin_types()
+            .accessor
+            .create_imm(strand, accessor, out);
         Ok(())
     }
 }
@@ -827,7 +813,7 @@ impl<'v> Protocol<'v> for AccessorType {
 fn unwrap_accessor<'v>(strand: &Strand<'v, '_>, value: &mut Value<'v>) -> Option<AccessorKind> {
     let accessor = value.downcast_ref(strand.builtin_types().accessor)?;
     let kind = accessor.get().kind;
-    *value = accessor.annex().0.dup();
+    *value = accessor.get().func.dup();
     Some(kind)
 }
 
@@ -1110,11 +1096,13 @@ impl<'v> ClassObjectAnnex<'v> {
 
 unsafe impl<'v> Collect for ClassObject<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ClassObjectAnnex<'v>;
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
-        self.type_fields.accept(visit)
+        for field in self.type_fields.iter() {
+            field.accept(visit)?
+        }
+        ControlFlow::Continue(())
     }
 
     fn clear(&mut self) {
@@ -1376,7 +1364,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                         let recv = obj
                             .downcast_ref(strand.builtin_types().class_instance)
                             .expect("object is a class instance");
-                        let slot_idx = match recv.annex().class.annex().entry(field) {
+                        let slot_idx = match recv.annex().prefix.class.annex().entry(field) {
                             Some(ClassEntry::Field(slot_idx)) => *slot_idx,
                             _ => {
                                 return Err(Error::runtime(
@@ -1385,8 +1373,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                                 ));
                             }
                         };
-                        let borrow = recv.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                        Output::set(strand, out, &borrow.fields[slot_idx]);
+                        Output::set(strand, out, recv.annex().field(slot_idx));
                         Ok(())
                     }
                     Some(ClassEntry::Property(Property {
@@ -1408,13 +1395,14 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                             .downcast_ref(strand.builtin_types().class_instance)
                             .ok_or_else(|| Error::type_error(strand, "invalid class object type"))?
                             .annex()
+                            .prefix
                             .class
                             .annex()
                             .entry(field)
                             .and_then(|entry| match entry {
                                 ClassEntry::Delegate(slot, _) => obj
                                     .downcast_ref(strand.builtin_types().class_instance)
-                                    .and_then(|recv| recv.annex().natives[*slot].get()),
+                                    .and_then(|recv| recv.annex().native(*slot)),
                                 _ => None,
                             })
                             .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
@@ -1430,7 +1418,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                                 .ok_or_else(|| {
                                     Error::type_error(strand, "invalid class object type")
                                 })?;
-                            let native = recv.annex().natives[*slot].get().ok_or_else(|| {
+                            let native = recv.annex().native(*slot).ok_or_else(|| {
                                 Error::runtime(strand, "native slot uninitialized")
                             })?;
                             Delegated::new(native, &obj).op_get(strand, field, out)
@@ -1454,14 +1442,11 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                             .ok_or_else(|| {
                                 Error::type_error(strand, "invalid class object type")
                             })?;
-                        let slot_idx = match recv.annex().class.annex().entry(field) {
+                        let slot_idx = match recv.annex().prefix.class.annex().entry(field) {
                             Some(ClassEntry::Field(slot_idx)) => *slot_idx,
                             _ => return Err(Error::field(strand, field)),
                         };
-                        let mut borrow = recv
-                            .borrow_mut()
-                            .ok_or_else(|| Error::concurrency(strand))?;
-                        borrow.fields[slot_idx] = value.take();
+                        recv.annex().set_field(slot_idx, value.take());
                         Ok(())
                     }
                     Some(ClassEntry::Property(Property {
@@ -1486,8 +1471,9 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                             .ok_or_else(|| {
                                 Error::type_error(strand, "invalid class object type")
                             })?;
-                        let native = recv.annex().natives[*slot]
-                            .get()
+                        let native = recv
+                            .annex()
+                            .native(*slot)
                             .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                         Delegated::new(native, &obj).op_set(strand, field, value)
                     }
@@ -1505,7 +1491,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                                 .ok_or_else(|| {
                                     Error::type_error(strand, "invalid class object type")
                                 })?;
-                            let native = recv.annex().natives[*slot].get().ok_or_else(|| {
+                            let native = recv.annex().native(*slot).ok_or_else(|| {
                                 Error::runtime(strand, "native slot uninitialized")
                             })?;
                             Delegated::new(native, &obj).op_set(strand, field, value)
@@ -1653,28 +1639,26 @@ pub(crate) async fn instantiate<'v, 'a, 's>(
 
     strand
         .with_slots(async move |strand, [mut inst, mut tmp]| {
-            let mut defaults = Vec::with_capacity(me.field_defaults.len());
+            // Native super slots come first, uninitialized; the fields follow
+            let mut cells = Vec::with_capacity(native_slot_count + me.field_defaults.len());
+            cells.resize_with(native_slot_count, ValueCell::default);
             for default in me.field_defaults.iter() {
                 match default {
-                    FieldDefault::Value(value) => defaults.push(value.dup()),
+                    FieldDefault::Value(value) => cells.push(value.dup().into()),
                     FieldDefault::Thunk(thunk) => {
                         call!(strand, thunk, &mut tmp).await?;
-                        defaults.push(tmp.take());
+                        cells.push(tmp.take().into());
                     }
                 }
             }
-            strand.builtin_types().class_instance.create_with_annex(
+            strand.builtin_types().class_instance.create_tail(
                 strand,
-                ClassInstance {
-                    fields: defaults.into(),
-                },
-                ClassInstanceAnnex {
+                ClassInstance(PhantomData),
+                ClassInstancePrefix {
                     class: class_obj,
-                    natives: (0..native_slot_count)
-                        .map(|_| OnceCell::new())
-                        .collect::<Vec<_>>()
-                        .into(),
+                    natives: native_slot_count,
                 },
+                cells,
                 &mut inst,
             );
 
@@ -1706,9 +1690,9 @@ pub(crate) async fn instantiate<'v, 'a, 's>(
                 .downcast_ref(strand.builtin_types().class_instance)
                 .unwrap()
                 .annex()
-                .natives
-                .iter()
-                .any(|slot| slot.get().is_none())
+                .natives()
+                .count()
+                != native_slot_count
             {
                 return Err(Error::runtime(strand, "native supertypes not initialized"));
             }
@@ -1742,7 +1726,7 @@ impl<'v> ClassTypeProxy<'v> {
             .vm()
             .builtin_types()
             .class_type_proxy
-            .create(strand, proxy, out);
+            .create_imm(strand, proxy, out);
     }
 
     /// The proxied class's immutable half, for member lookup.
@@ -1754,19 +1738,19 @@ impl<'v> ClassTypeProxy<'v> {
     }
 }
 
-unsafe impl<'v> Collect for ClassTypeProxy<'v> {
+unsafe impl<'v> gc::ImmState for ClassTypeProxy<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl<'v> gc::Annex for ClassTypeProxy<'v> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         self.class.accept(visit)
     }
-
-    fn clear(&mut self) {}
 }
 
-impl<'v> Protocol<'v> for ClassTypeProxy<'v> {
+pub(crate) type ClassTypeProxyObj<'v> = gc::Imm<ClassTypeProxy<'v>>;
+
+impl<'v> Protocol<'v> for ClassTypeProxyObj<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1901,43 +1885,90 @@ impl<'v> Protocol<'v> for ClassTypeProxy<'v> {
     }
 }
 
-pub(crate) struct ClassInstanceAnnex<'v> {
+/// The fixed part of a [`ClassInstance`] annex.
+pub(crate) struct ClassInstancePrefix<'v> {
     pub(crate) class: GcObj<'v, ClassObject<'v>>,
-    pub(crate) natives: alias::Box<[OnceCell<Value<'v>>]>,
+    /// How many leading tail cells are native super slots; the fields follow.
+    natives: usize,
 }
 
-impl<'v> Annex for ClassInstanceAnnex<'v> {
-    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+/// A class instance's state: its class, then native super slots and fields as
+/// cells in the tail.
+pub(crate) type ClassInstanceAnnex<'v> = gc::Tail<ClassInstancePrefix<'v>, [ValueCell<'v>]>;
+
+impl<'v> ClassInstanceAnnex<'v> {
+    /// Native super slot `idx`, or `None` while uninitialized.
+    ///
+    /// The reference may be held across awaits: a native slot is written once,
+    /// from nil, by [`Self::init_native`], and the collector never clears it.
+    pub(crate) fn native(&self, idx: usize) -> Option<&Value<'v>> {
+        debug_assert!(idx < self.prefix.natives);
+        // Safety: see above; nothing writes an initialized native slot
+        let value = unsafe { self.tail[..self.prefix.natives][idx].as_ref() };
+        (!value.is_nil()).then_some(value)
+    }
+
+    /// The initialized native super slots.
+    pub(crate) fn natives(&self) -> impl Iterator<Item = &Value<'v>> {
+        (0..self.prefix.natives).filter_map(|idx| self.native(idx))
+    }
+
+    /// Initializes native super slot `idx` with `native`, which must not be nil.
+    /// Fails if the slot is already initialized.
+    fn init_native(&self, idx: usize, native: Value<'v>) -> std::result::Result<(), Value<'v>> {
+        debug_assert!(!native.is_nil());
+        if self.native(idx).is_some() {
+            return Err(native);
+        }
+        // Safety: an uninitialized slot is never borrowed
+        unsafe { self.tail[idx].slot().store(native) };
+        Ok(())
+    }
+
+    /// Field `idx`, duplicated.
+    pub(crate) fn field(&self, idx: usize) -> Value<'v> {
+        // Safety: field cells are only read by duplicating them, never borrowed
+        unsafe { self.tail[self.prefix.natives + idx].get() }
+    }
+
+    /// Stores `value` into field `idx`. The old value is dropped after the write.
+    pub(crate) fn set_field(&self, idx: usize, value: Value<'v>) {
+        // Safety: as for `field`
+        unsafe { self.tail[self.prefix.natives + idx].slot().store(value) }
+    }
+}
+
+impl<'v> gc::TailAnnex<ValueCell<'v>> for ClassInstancePrefix<'v> {
+    fn accept(&self, tail: &[ValueCell<'v>], visit: &mut dyn Visit) -> ControlFlow<()> {
         self.class.accept(visit)?;
-        for slot in self.natives.iter() {
-            if let Some(v) = slot.get() {
-                v.accept(visit)?;
-            }
+        for cell in tail {
+            cell.accept(visit)?;
         }
         ControlFlow::Continue(())
     }
 
-    fn clear(&self) {
-        // GC cannot safely clear annexes with outstanding immutable references
+    // Only fields are cleared: native slots are borrowed across awaits. The class
+    // is immutable.
+    fn clear(&self, tail: &[ValueCell<'v>]) {
+        for cell in &tail[self.natives..] {
+            // Safety: the collector clears only unreachable instances
+            unsafe { cell.slot().store(Value::NIL) }
+        }
     }
 }
 
-pub(crate) struct ClassInstance<'v> {
-    fields: alias::Box<[Value<'v>]>,
-}
+/// A class instance. Its state is in its annex.
+pub(crate) struct ClassInstance<'v>(PhantomData<Value<'v>>);
 
 unsafe impl<'v> Collect for ClassInstance<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ClassInstanceAnnex<'v>;
 
-    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
-        self.fields.accept(visit)
+    fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
+        ControlFlow::Continue(())
     }
 
-    fn clear(&mut self) {
-        self.fields.fill_with(|| Value::NIL);
-    }
+    fn clear(&mut self) {}
 }
 
 /// Given a [`ClassInstance`] GC borrow (as returned by [`Value::downcast_ref`]) and a
@@ -1949,12 +1980,13 @@ pub(crate) fn get_native_slot<'v, 'a>(
 ) -> Option<&'a Value<'v>> {
     let annex = borrow.annex();
     let slot = annex
+        .prefix
         .class
         .annex()
         .native_supers
         .iter()
         .position(|s| s.repr_eq(type_obj))?;
-    annex.natives[slot].get()
+    annex.native(slot)
 }
 
 /// Returns an iterator over all initialized native values in a [`ClassInstance`].
@@ -1962,7 +1994,7 @@ pub(crate) fn get_native_slot<'v, 'a>(
 pub(crate) fn iter_natives<'v, 'a>(
     borrow: GcObjBorrow<'v, 'a, ClassInstance<'v>>,
 ) -> impl Iterator<Item = &'a Value<'v>> {
-    borrow.annex().natives.iter().filter_map(|s| s.get())
+    borrow.annex().natives()
 }
 
 fn class_sync_binary_op<'v, 'a, 's>(
@@ -1971,7 +2003,7 @@ fn class_sync_binary_op<'v, 'a, 's>(
     method_sym: sym::Tag,
     other: &Value<'v>,
 ) -> Result<'v, 's, Value<'v>> {
-    let entry = this.annex().class.annex().entry_by_tag(method_sym);
+    let entry = this.annex().prefix.class.annex().entry_by_tag(method_sym);
     if let Some(entry) = entry {
         class_sync_binary_op_entry(this, strand, method_sym, other, entry)
     } else {
@@ -2031,8 +2063,8 @@ fn class_sync_binary_op_entry<'v, 'a, 's>(
             Ok(result.take())
         }),
         ClassEntry::Delegate(slot, _) => {
-            let native = annex.natives[*slot]
-                .get()
+            let native = annex
+                .native(*slot)
                 .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
             strand.with_slots_sync(|strand, [mut delegator]| {
                 Output::set(strand, Slot::reborrow(&mut delegator), &this);
@@ -2063,7 +2095,7 @@ fn class_sync_commutative_op<'v, 'a, 's>(
         &Value<'v>,
     ) -> Result<'v, 's, Value<'v>>,
 ) -> Result<'v, 's, Value<'v>> {
-    let entry = this.annex().class.annex().entry_by_tag(reverse);
+    let entry = this.annex().prefix.class.annex().entry_by_tag(reverse);
     if let Some(entry) = entry {
         class_sync_binary_op_entry(this, strand, reverse, other, entry)
     } else {
@@ -2081,9 +2113,11 @@ fn class_sync_reverse_comparison<'v, 'a, 's>(
     inclusive: bool,
 ) -> Result<'v, 's, Value<'v>> {
     let annex = this.annex();
-    if let Some(ClassEntry::Delegate(slot, _)) = annex.class.annex().entry_by_tag(sym::LT_METHOD) {
-        let native = annex.natives[*slot]
-            .get()
+    if let Some(ClassEntry::Delegate(slot, _)) =
+        annex.prefix.class.annex().entry_by_tag(sym::LT_METHOD)
+    {
+        let native = annex
+            .native(*slot)
             .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
         return strand.with_slots_sync(|strand, [mut delegator]| {
             Output::set(strand, Slot::reborrow(&mut delegator), &this);
@@ -2111,14 +2145,14 @@ fn class_sync_unary_op<'v, 'a, 's>(
     method_sym: sym::Tag,
 ) -> Result<'v, 's, Value<'v>> {
     let annex = this.annex();
-    match annex.class.annex().entry_by_tag(method_sym) {
+    match annex.prefix.class.annex().entry_by_tag(method_sym) {
         Some(ClassEntry::Method(v)) => strand.with_slots_sync(move |strand, [mut result]| {
             strand.sync(async |strand| call!(strand, v, &mut result, &this).await)?;
             Ok(result.take())
         }),
         Some(ClassEntry::Delegate(slot, _)) => {
-            let native = annex.natives[*slot]
-                .get()
+            let native = annex
+                .native(*slot)
                 .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
             strand.with_slots_sync(|strand, [mut delegator]| {
                 Output::set(strand, Slot::reborrow(&mut delegator), &this);
@@ -2148,7 +2182,7 @@ fn default_fmt<'v, 's>(
         .kind
         .ok_or_else(|| crate::value::fmt::unresolved_kind(strand))?;
     if !kind.is_text() {
-        let name = &this.annex().class.annex().name;
+        let name = &this.annex().prefix.class.annex().name;
         return Err(Error::type_error(
             strand,
             format!("{name}: unsupported format kind `:{}`", kind.symbol()),
@@ -2175,7 +2209,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
-        match annex.class.annex().entry_by_tag(sym::FMT_METHOD) {
+        match annex.prefix.class.annex().entry_by_tag(sym::FMT_METHOD) {
             Some(ClassEntry::Method(v)) => {
                 strand.with_slots_sync(|strand, [mut result, mut reified]| {
                     crate::stdlib::fmt::reify_spec(strand, *spec, Slot::reborrow(&mut reified));
@@ -2189,8 +2223,8 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 })
             }
             Some(ClassEntry::Delegate(slot, _)) => {
-                let native = annex.natives[*slot]
-                    .get()
+                let native = annex
+                    .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 strand.with_slots_sync(|strand, [mut delegator]| {
                     Output::set(strand, Slot::reborrow(&mut delegator), &this);
@@ -2209,6 +2243,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
         let idx = annex
+            .prefix
             .class
             .annex()
             .native_supers
@@ -2219,7 +2254,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             })?;
 
         // Check if slot is already set with the same value (idempotent for diamond inheritance)
-        if let Some(existing) = annex.natives[idx].get() {
+        if let Some(existing) = annex.native(idx) {
             if existing.repr_eq(&native) {
                 return Ok(());
             } else {
@@ -2230,8 +2265,8 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             }
         }
 
-        annex.natives[idx]
-            .set(native)
+        annex
+            .init_native(idx, native)
             .map_err(|_| Error::state_error(strand, "native slot already initialized"))
     }
 
@@ -2242,14 +2277,14 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         let (strand, answer) = request.parts();
         strand.with_slots_sync(|strand, [mut delegator]| {
             Output::set(strand, Slot::reborrow(&mut delegator), &this);
-            for native in this.annex().natives.iter().filter_map(|s| s.get()) {
+            for native in this.annex().natives() {
                 if answer.is_done() {
                     break;
                 }
                 Delegated::new(native, &delegator)
                     .op_provide(&mut Request::new(strand, &mut *answer))?;
             }
-            for sup in this.annex().class.annex().abstract_supers.iter() {
+            for sup in this.annex().prefix.class.annex().abstract_supers.iter() {
                 if answer.is_done() {
                     break;
                 }
@@ -2265,7 +2300,11 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, Value::from_object(this.annex().class.clone()))
+        Output::set(
+            strand,
+            out,
+            Value::from_object(this.annex().prefix.class.clone()),
+        )
     }
 
     fn op_display<'a, 's>(
@@ -2276,7 +2315,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         let res = {
             let w = &mut *w;
             let annex = this.annex();
-            match annex.class.annex().entry_by_tag(sym::STR_METHOD) {
+            match annex.prefix.class.annex().entry_by_tag(sym::STR_METHOD) {
                 Some(ClassEntry::Method(v)) => strand.with_slots_sync(|strand, [mut result]| {
                     strand.sync(async |strand| call!(strand, v, &mut result, &this).await)?;
                     let result = result
@@ -2286,8 +2325,8 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     Ok(false)
                 })?,
                 Some(ClassEntry::Delegate(slot, _)) => {
-                    let native = annex.natives[*slot]
-                        .get()
+                    let native = annex
+                        .native(*slot)
                         .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                     strand.with_slots_sync(|strand, [mut delegator]| {
                         Output::set(strand, Slot::reborrow(&mut delegator), &this);
@@ -2311,7 +2350,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
-        match annex.class.annex().entry_by_tag(sym::DBG_METHOD) {
+        match annex.prefix.class.annex().entry_by_tag(sym::DBG_METHOD) {
             Some(ClassEntry::Method(v)) => strand.with_slots_sync(move |strand, [mut result]| {
                 strand.sync(async |strand| call!(strand, v, &mut result, &this).await)?;
                 let result = result
@@ -2320,8 +2359,8 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 crate::fmt!(strand, w, "{result}")
             }),
             Some(ClassEntry::Delegate(slot, _)) => {
-                let native = annex.natives[*slot]
-                    .get()
+                let native = annex
+                    .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 strand.with_slots_sync(|strand, [mut delegator]| {
                     Output::set(strand, Slot::reborrow(&mut delegator), &this);
@@ -2329,10 +2368,10 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 })
             }
             _ => {
-                if let Some(module) = &annex.class.annex().module_name {
-                    crate::fmt!(strand, w, "<{module}.{}>", annex.class.annex().name)
+                if let Some(module) = &annex.prefix.class.annex().module_name {
+                    crate::fmt!(strand, w, "<{module}.{}>", annex.prefix.class.annex().name)
                 } else {
-                    crate::fmt!(strand, w, "<{}>", annex.class.annex().name)
+                    crate::fmt!(strand, w, "<{}>", annex.prefix.class.annex().name)
                 }
             }
         }
@@ -2347,7 +2386,12 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             let w = &mut *w;
             let this = this.clone();
             let annex = this.annex();
-            match annex.class.annex().entry_by_tag(sym::VERBATIM_METHOD) {
+            match annex
+                .prefix
+                .class
+                .annex()
+                .entry_by_tag(sym::VERBATIM_METHOD)
+            {
                 Some(ClassEntry::Method(v)) => {
                     strand.with_slots_sync(move |strand, [mut result]| {
                         strand.sync(async |strand| call!(strand, v, &mut result, &this).await)?;
@@ -2359,8 +2403,8 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     })?
                 }
                 Some(ClassEntry::Delegate(slot, _)) => {
-                    let native = annex.natives[*slot]
-                        .get()
+                    let native = annex
+                        .native(*slot)
                         .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                     strand.with_slots_sync(|strand, [mut delegator]| {
                         Output::set(strand, Slot::reborrow(&mut delegator), &this);
@@ -2385,10 +2429,9 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
-        match annex.class.annex().entry(field) {
+        match annex.prefix.class.annex().entry(field) {
             Some(ClassEntry::Field(slot_idx)) => {
-                let borrow = this.borrow(strand)?;
-                out.store(borrow.fields[*slot_idx].dup());
+                out.store(annex.field(*slot_idx));
                 Ok(())
             }
             Some(ClassEntry::Property(Property {
@@ -2411,21 +2454,21 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 })
             }
             Some(ClassEntry::Delegate(slot, _)) => {
-                let native = annex.natives[*slot]
-                    .get()
+                let native = annex
+                    .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 strand.with_slots_sync(|strand, [mut delegator]| {
                     Output::set(strand, Slot::reborrow(&mut delegator), &this);
                     Delegated::new(native, &delegator).op_get(strand, field, out)
                 })
             }
-            _ => match annex.class.annex().entry_by_tag(sym::GET_METHOD) {
+            _ => match annex.prefix.class.annex().entry_by_tag(sym::GET_METHOD) {
                 Some(ClassEntry::Method(v)) => {
                     strand.sync(async |strand| call!(strand, v, out, &this, field).await)
                 }
                 Some(ClassEntry::Delegate(slot, _)) => {
-                    let native = annex.natives[*slot]
-                        .get()
+                    let native = annex
+                        .native(*slot)
                         .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                     strand.with_slots_sync(|strand, [mut delegator]| {
                         Output::set(strand, Slot::reborrow(&mut delegator), &this);
@@ -2444,10 +2487,9 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         mut value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
-        match annex.class.annex().entry(field) {
+        match annex.prefix.class.annex().entry(field) {
             Some(ClassEntry::Field(slot_idx)) => {
-                let mut borrow = this.borrow_mut(strand)?;
-                borrow.fields[*slot_idx] = value.take();
+                annex.set_field(*slot_idx, value.take());
                 Ok(())
             }
             Some(ClassEntry::Property(Property {
@@ -2462,22 +2504,22 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 })
             }),
             Some(ClassEntry::Delegate(slot, _)) => {
-                let native = annex.natives[*slot]
-                    .get()
+                let native = annex
+                    .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 strand.with_slots_sync(|strand, [mut delegator]| {
                     Output::set(strand, Slot::reborrow(&mut delegator), &this);
                     Delegated::new(native, &delegator).op_set(strand, field, value)
                 })
             }
-            _ => match annex.class.annex().entry_by_tag(sym::SET_METHOD) {
+            _ => match annex.prefix.class.annex().entry_by_tag(sym::SET_METHOD) {
                 Some(ClassEntry::Method(v)) => strand.with_slots_sync(move |strand, [mut tmp]| {
                     strand
                         .sync(async |strand| call!(strand, v, &mut tmp, &this, field, &value).await)
                 }),
                 Some(ClassEntry::Delegate(slot, _)) => {
-                    let native = annex.natives[*slot]
-                        .get()
+                    let native = annex
+                        .native(*slot)
                         .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                     strand.with_slots_sync(|strand, [mut delegator]| {
                         Output::set(strand, Slot::reborrow(&mut delegator), &this);
@@ -2496,17 +2538,14 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         mut args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let class = this.annex().class.annex();
+        let class = this.annex().prefix.class.annex();
         match class.entry(method) {
             Some(ClassEntry::Method(v)) => {
                 args.prepend_self(Value::from_object(this.to_strong()));
                 return v.op_call(strand, args, out).await;
             }
             Some(ClassEntry::Field(slot_idx)) => {
-                let func = {
-                    let borrow = this.borrow(strand)?;
-                    borrow.fields[*slot_idx].dup()
-                };
+                let func = this.annex().field(*slot_idx);
                 return func.op_call(strand, args, out).await;
             }
             Some(ClassEntry::Property(Property {
@@ -2525,8 +2564,9 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             }
             Some(ClassEntry::Property(Property { getter: None, .. })) => {}
             Some(ClassEntry::Delegate(slot, _)) => {
-                let native = this.annex().natives[*slot]
-                    .get()
+                let native = this
+                    .annex()
+                    .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 return strand
                     .with_slots(async move |strand, [mut delegator]| {
@@ -2564,8 +2604,9 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     .await
             }
             Some(ClassEntry::Delegate(slot, _)) => {
-                let native = this.annex().natives[*slot]
-                    .get()
+                let native = this
+                    .annex()
+                    .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 strand
                     .with_slots(async move |strand, [mut delegator]| {
@@ -2587,14 +2628,14 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
-        match annex.class.annex().entry_by_tag(sym::CALL_METHOD) {
+        match annex.prefix.class.annex().entry_by_tag(sym::CALL_METHOD) {
             Some(ClassEntry::Method(v)) => {
                 args.prepend_self(Value::from_object(this.to_strong()));
                 v.op_call(strand, args, out).await
             }
             Some(ClassEntry::Delegate(slot, _)) => {
-                let native = annex.natives[*slot]
-                    .get()
+                let native = annex
+                    .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 strand
                     .with_slots(async move |strand, [mut delegator]| {
@@ -2616,7 +2657,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
-        match annex.class.annex().entry_by_tag(sym::UNPACK_METHOD) {
+        match annex.prefix.class.annex().entry_by_tag(sym::UNPACK_METHOD) {
             Some(ClassEntry::Method(v)) => {
                 strand
                     .with_slots(async move |strand, [mut proxy]| {
@@ -2626,8 +2667,8 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     .await
             }
             Some(ClassEntry::Delegate(slot, _)) => {
-                let native = annex.natives[*slot]
-                    .get()
+                let native = annex
+                    .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 strand
                     .with_slots(async move |strand, [mut delegator]| {
@@ -2648,11 +2689,11 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
-        match annex.class.annex().entry_by_tag(sym::ITER_METHOD) {
+        match annex.prefix.class.annex().entry_by_tag(sym::ITER_METHOD) {
             Some(ClassEntry::Method(v)) => call!(strand, v, out, &this).await,
             Some(ClassEntry::Delegate(slot, _)) => {
-                let native = annex.natives[*slot]
-                    .get()
+                let native = annex
+                    .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 strand
                     .with_slots(async move |strand, [mut delegator]| {
@@ -2683,11 +2724,11 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
-        match annex.class.annex().entry_by_tag(sym::SINK_METHOD) {
+        match annex.prefix.class.annex().entry_by_tag(sym::SINK_METHOD) {
             Some(ClassEntry::Method(v)) => call!(strand, v, out, &this).await,
             Some(ClassEntry::Delegate(slot, _)) => {
-                let native = annex.natives[*slot]
-                    .get()
+                let native = annex
+                    .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 strand
                     .with_slots(async move |strand, [mut delegator]| {
@@ -2719,7 +2760,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
-        match annex.class.annex().entry_by_tag(sym::SPREAD_METHOD) {
+        match annex.prefix.class.annex().entry_by_tag(sym::SPREAD_METHOD) {
             Some(ClassEntry::Method(v)) => {
                 let proxy = strand
                     .with_slots(async move |strand, [mut proxy]| {
@@ -2730,8 +2771,8 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 proxy.op_spread(strand, context, sink).await
             }
             Some(ClassEntry::Delegate(slot, _)) => {
-                let native = annex.natives[*slot]
-                    .get()
+                let native = annex
+                    .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 strand
                     .with_slots(async move |strand, [mut delegator]| {
@@ -2762,15 +2803,15 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let annex = this.annex();
-        match annex.class.annex().entry_by_tag(sym::NEXT_METHOD) {
+        match annex.prefix.class.annex().entry_by_tag(sym::NEXT_METHOD) {
             Some(ClassEntry::Method(v)) => match call!(strand, v, out, &this).await {
                 Ok(()) => Ok(true),
                 Err(err) if err.kind() == ErrorKind::IterStop => Ok(false),
                 Err(err) => Err(err),
             },
             Some(ClassEntry::Delegate(slot, _)) => {
-                let native = annex.natives[*slot]
-                    .get()
+                let native = annex
+                    .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 strand
                     .with_slots(async move |strand, [mut delegator]| {
@@ -2791,7 +2832,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         item: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
-        match annex.class.annex().entry_by_tag(sym::PUT_METHOD) {
+        match annex.prefix.class.annex().entry_by_tag(sym::PUT_METHOD) {
             Some(ClassEntry::Method(v)) => {
                 strand
                     .with_slots(async move |strand, [tmp]| {
@@ -2800,8 +2841,8 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     .await
             }
             Some(ClassEntry::Delegate(slot, _)) => {
-                let native = annex.natives[*slot]
-                    .get()
+                let native = annex
+                    .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 strand
                     .with_slots(async move |strand, [mut delegator]| {
@@ -3021,7 +3062,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let class = this.annex().class.annex();
+        let class = this.annex().prefix.class.annex();
         let has_method = matches!(
             class.entry_by_tag(sym::NE_METHOD),
             Some(ClassEntry::Method(_))
@@ -3087,13 +3128,13 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
     ) -> Result<'v, 's, bool> {
         let this = this.clone();
         let annex = this.annex();
-        match annex.class.annex().entry_by_tag(sym::BOOL_METHOD) {
+        match annex.prefix.class.annex().entry_by_tag(sym::BOOL_METHOD) {
             Some(ClassEntry::Method(v)) => strand.with_slots_sync(move |strand, [mut result]| {
                 strand.sync(async |strand| call!(strand, v, &mut result, &this).await)?;
                 result.op_bool(strand)
             }),
-            Some(ClassEntry::Delegate(slot, _)) => annex.natives[*slot]
-                .get()
+            Some(ClassEntry::Delegate(slot, _)) => annex
+                .native(*slot)
                 .map(|native| {
                     strand.with_slots_sync(|strand, [mut delegator]| {
                         Output::set(strand, Slot::reborrow(&mut delegator), &this);
@@ -3113,6 +3154,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
         match annex
+            .prefix
             .class
             .annex()
             .entry(Sym::well_known(sym::INDEX_METHOD))
@@ -3121,8 +3163,8 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 strand.sync(async |strand| call!(strand, v, out, &this, index).await)
             }
             Some(ClassEntry::Delegate(slot, _)) => {
-                let native = annex.natives[*slot]
-                    .get()
+                let native = annex
+                    .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 strand.with_slots_sync(|strand, [mut delegator]| {
                     Output::set(strand, Slot::reborrow(&mut delegator), &this);
@@ -3141,6 +3183,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
         match annex
+            .prefix
             .class
             .annex()
             .entry(Sym::well_known(sym::ASSIGN_METHOD))
@@ -3149,8 +3192,8 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 strand.sync(async |strand| call!(strand, v, &mut tmp, &this, &index, &value).await)
             }),
             Some(ClassEntry::Delegate(slot, _)) => {
-                let native = annex.natives[*slot]
-                    .get()
+                let native = annex
+                    .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 strand.with_slots_sync(|strand, [mut delegator]| {
                     Output::set(strand, Slot::reborrow(&mut delegator), &this);
@@ -3171,7 +3214,12 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             let hasher = &mut *hasher;
             let this = this.clone();
             let annex = this.annex();
-            match annex.class.annex().entry(Sym::well_known(sym::HASH_METHOD)) {
+            match annex
+                .prefix
+                .class
+                .annex()
+                .entry(Sym::well_known(sym::HASH_METHOD))
+            {
                 Some(ClassEntry::Method(v)) => {
                     strand.with_slots_sync(move |strand, [mut result]| {
                         strand.sync(async |strand| call!(strand, v, &mut result, &this).await)?;
@@ -3183,8 +3231,8 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     })?
                 }
                 Some(ClassEntry::Delegate(slot, _)) => {
-                    let native = annex.natives[*slot]
-                        .get()
+                    let native = annex
+                        .native(*slot)
                         .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                     strand.with_slots_sync(|strand, [mut delegator]| {
                         Output::set(strand, Slot::reborrow(&mut delegator), &this);

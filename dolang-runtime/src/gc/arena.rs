@@ -24,7 +24,6 @@ impl<F: FnMut(NonNull<Header>) -> ControlFlow<()>> Visit for F {
 pub(crate) struct Vtbl {
     pub(crate) name: fn() -> &'static str,
     pub(crate) cyclic: bool,
-    pub(crate) immutable: bool,
     pub(crate) is_strand: bool,
     pub(crate) drop: unsafe fn(NonNull<Header>),
     pub(crate) dealloc: unsafe fn(NonNull<Header>) -> usize,
@@ -189,9 +188,6 @@ impl Header {
     pub(super) fn borrow_mut(&self) -> bool {
         if self.borrow.get() != 0 {
             return false;
-        }
-        if unsafe { self.vtbl.as_ref().immutable } {
-            panic!("mutable borrow of immutable GC object")
         }
         self.borrow.set(BORROW_MUT);
         true
@@ -582,7 +578,6 @@ mod tests {
     // SAFETY: accept visits every child; clear releases every child.
     unsafe impl Collect for Node<'_> {
         const CYCLIC: bool = true;
-        const IMMUTABLE: bool = false;
         type Annex = ();
 
         fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {

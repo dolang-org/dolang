@@ -304,7 +304,7 @@ impl<'v> Vm<'v> {
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let value = pack::Pack::from_args(strand, args);
-        strand.builtin_types().pack.create(strand, value, out);
+        strand.builtin_types().pack.create_imm(strand, value, out);
         Ok(())
     }
 
@@ -337,7 +337,7 @@ impl<'v> Vm<'v> {
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let ([mut start, mut end, mut step], []) = unpack!(strand, args, 3, 0)?;
-        strand.builtin_types().range.create(
+        strand.builtin_types().range.create_imm(
             strand,
             range::Range::new(start.take(), end.take(), step.take()),
             out,
@@ -995,10 +995,10 @@ impl<'v> Vm<'v> {
                 }
                 Close => {
                     let index = reader.usize();
-                    strand.builtin_types().function.create(
+                    strand.builtin_types().function.create_imm(
                         strand,
                         Function::new(frame.program.clone(), frame.upvars(), index),
-                        &mut frame.push_slot(),
+                        frame.push_slot(),
                     );
                 }
                 inst @ (BitAnd | BitOr | BitXor | Shl | Shr | Add | Sub | Mul | Div | Ediv
@@ -1069,7 +1069,7 @@ impl<'v> Vm<'v> {
                     );
                     self.builtin_types()
                         .module
-                        .create(strand, value, &mut frame.push_slot());
+                        .create_imm(strand, value, frame.push_slot());
                 }
                 Next => {
                     frame.pc.set(reader.offset());
@@ -1165,7 +1165,7 @@ impl<'v> Vm<'v> {
                     let mut func = frame.scratch1();
                     let mut res = frame.scratch2();
                     // Create and call the closure that will execute the guarded code
-                    strand.builtin_types().function.create(
+                    strand.builtin_types().function.create_imm(
                         strand,
                         Function::new(frame.program.clone(), frame.upvars(), index),
                         &mut func,
@@ -1177,7 +1177,7 @@ impl<'v> Vm<'v> {
                     // Pop the guard's upvar frame and mark it stale so future jumps to
                     // it fail
                     let guard = frame.pop_upvars();
-                    guard.borrow_mut().unwrap_unchecked().stale = true;
+                    guard.annex().prefix.stale.set(true);
                     // Check if this was a normal return or a caught NlBranch
                     let res = match call_result {
                         Ok(()) => {

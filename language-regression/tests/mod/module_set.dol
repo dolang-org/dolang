@@ -1,0 +1,14 @@
+# A captured private variable comes first, so export positions in the module's
+# map differ from their variable indices.
+let hidden = 1
+pub let b = 2
+pub let a = 3
+
+pub def get_hidden()
+  hidden
+
+pub def get_a()
+  a
+
+pub def get_b()
+  b

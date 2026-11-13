@@ -253,7 +253,7 @@ pub struct ObjectView<'v, 'a> {
 }
 
 /// Read-only view of a `range` value.
-pub struct Range<'v, 'a>(pub(crate) GcObjBorrow<'v, 'a, range::Range<'v>>);
+pub struct Range<'v, 'a>(pub(crate) GcObjBorrow<'v, 'a, range::RangeObj<'v>>);
 
 impl<'v, 'a> Range<'v, 'a> {
     /// Copy the start, end, and step into rooted output slots.
@@ -681,10 +681,10 @@ impl<'v, 'a> Set<'v, 'a> {
 }
 
 /// [`Pack`](crate::object::pack::Pack) view
-pub struct Pack<'v, 'a>(gc::Borrow<'v, 'a, Header, pack::Pack<'v>>);
+pub struct Pack<'v, 'a>(gc::Borrow<'v, 'a, Header, pack::PackObj<'v>>);
 
 impl<'v, 'a> Pack<'v, 'a> {
-    pub(crate) fn from_borrow(borrow: GcObjBorrow<'v, 'a, pack::Pack<'v>>) -> Self {
+    pub(crate) fn from_borrow(borrow: GcObjBorrow<'v, 'a, pack::PackObj<'v>>) -> Self {
         Self(borrow)
     }
 
@@ -694,12 +694,8 @@ impl<'v, 'a> Pack<'v, 'a> {
     }
 
     /// Total number of key-value pairs.
-    pub fn len<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, usize> {
-        let borrow = match self.0.borrow() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        Ok(borrow.items().len())
+    pub fn len<'s>(&self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, usize> {
+        Ok(self.0.get().items().len())
     }
 
     /// Return a stateful cursor over the key-value pairs in order. A positional
@@ -780,10 +776,10 @@ impl<'v, 'a> Struct<'v, 'a> {
 }
 
 /// Tuple view
-pub struct Tuple<'v, 'a>(pub(super) gc::Borrow<'v, 'a, Header, [Value<'v>]>);
+pub struct Tuple<'v, 'a>(pub(super) gc::Borrow<'v, 'a, Header, tuple::TupleObj<'v>>);
 
 impl<'v, 'a> Tuple<'v, 'a> {
-    pub(crate) fn from_borrow(borrow: gc::Borrow<'v, 'a, Header, [Value<'v>]>) -> Self {
+    pub(crate) fn from_borrow(borrow: gc::Borrow<'v, 'a, Header, tuple::TupleObj<'v>>) -> Self {
         Self(borrow)
     }
 
@@ -794,7 +790,7 @@ impl<'v, 'a> Tuple<'v, 'a> {
 
     /// Number of elements. Tuples are fixed-size immutable slices; no borrow needed.
     pub fn len(&self) -> usize {
-        self.0.get().len()
+        self.0.items().len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -808,7 +804,7 @@ impl<'v, 'a> Tuple<'v, 'a> {
         index: usize,
         out: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        match self.0.get().get(index) {
+        match self.0.items().get(index) {
             Some(v) => {
                 Output::set(strand, out, v);
                 Ok(true)
@@ -1020,7 +1016,7 @@ impl<'v, 'a> SetMembers<'v, 'a> {
 
 /// Iterator over a [`Pack`].
 pub struct PackPairs<'v, 'a> {
-    borrow: GcObjBorrow<'v, 'a, pack::Pack<'v>>,
+    borrow: GcObjBorrow<'v, 'a, pack::PackObj<'v>>,
     pos: usize,
     int: i64,
 }
@@ -1034,10 +1030,7 @@ impl<'v, 'a> PackPairs<'v, 'a> {
         key: impl Output<'v>,
         value: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        let borrow = match self.borrow.borrow() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
+        let borrow = self.borrow.get();
         Ok(next_item_pair(
             borrow.items(),
             &mut self.pos,

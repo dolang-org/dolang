@@ -22,7 +22,6 @@ pub(crate) struct Num;
 
 unsafe impl Collect for Num {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {

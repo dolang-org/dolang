@@ -253,7 +253,7 @@ pub(crate) fn create<'v, I: DictLike<'v>>(
     let ty = owner.ty(vm);
     // A duplicate of a rooted owner, which stays rooted where it is.
     let owner = Value::from_input(alloc, owner);
-    vm.builtin_types().dict_view.create(
+    vm.builtin_types().dict_view.create_imm(
         alloc,
         View {
             owner,
@@ -453,7 +453,6 @@ pub(crate) struct Rest<'v> {
 
 unsafe impl<'v> Collect for Rest<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         for (key, value) in &self.pairs {
@@ -467,21 +466,20 @@ unsafe impl<'v> Collect for Rest<'v> {
     }
 }
 
-unsafe impl<'v> Collect for View<'v> {
+unsafe impl<'v> crate::gc::ImmState for View<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
+
+impl<'v> crate::gc::Annex for View<'v> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         self.owner.accept(visit)
     }
-    fn clear(&mut self) {
-        self.owner.clear()
-    }
 }
+
+pub(crate) type ViewObj<'v> = crate::gc::Imm<View<'v>>;
 
 unsafe impl<'v> Collect for Iter<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         for (key, value) in &self.pairs {
@@ -760,7 +758,7 @@ fn debug<'v, 's>(
     crate::fmt!(strand, w, "<{module}.{name}>")
 }
 
-impl<'v> Protocol<'v> for View<'v> {
+impl<'v> Protocol<'v> for ViewObj<'v> {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -1094,7 +1092,6 @@ pub(crate) struct Type;
 
 unsafe impl Collect for Type {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {

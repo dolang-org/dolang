@@ -52,7 +52,7 @@ enum SendFuture<'v, 's, 'a> {
     Ready(Result<'v, 's, ()>),
     Pend {
         strand: &'s StrandInner<'v>,
-        send: gc::Borrow<'v, 'a, Header, Sender<'v>>,
+        send: gc::Borrow<'v, 'a, Header, SenderObj<'v>>,
         value: Slot<'v, 'a>,
     },
 }
@@ -174,7 +174,6 @@ impl<'v, 's, 'a> Future for SendFuture<'v, 's, 'a> {
 
 unsafe impl<'v> Collect for Receiver<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -313,21 +312,19 @@ pub(crate) struct Sender<'v> {
     receiver: GcObj<'v, Receiver<'v>>,
 }
 
-unsafe impl<'v> Collect for Sender<'v> {
+unsafe impl<'v> gc::ImmState for Sender<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl<'v> gc::Annex for Sender<'v> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         self.receiver.accept(visit)
     }
-
-    fn clear(&mut self) {
-        // Can't clear `receiver`, but receiver itself can be cleared
-    }
 }
 
-impl<'v> Protocol<'v> for Sender<'v> {
+pub(crate) type SenderObj<'v> = gc::Imm<Sender<'v>>;
+
+impl<'v> Protocol<'v> for SenderObj<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -400,9 +397,8 @@ impl<'v> Protocol<'v> for Sender<'v> {
                     None => None,
                 };
                 let poison_err = err.map(|mut err| err.take());
-                let borrow = this.borrow(strand)?;
+                let borrow = this.get();
                 let receiver = borrow.receiver.clone();
-                mem::drop(borrow);
 
                 let mut borrow = receiver
                     .borrow_mut()
@@ -442,7 +438,7 @@ impl<'v> Protocol<'v> for Sender<'v> {
 pub(crate) fn pair<'v>(
     vm: &Vm<'v>,
     limit: usize,
-) -> (GcObj<'v, Sender<'v>>, GcObj<'v, Receiver<'v>>) {
+) -> (GcObj<'v, SenderObj<'v>>, GcObj<'v, Receiver<'v>>) {
     let receiver = Receiver {
         queue: VecDeque::new(),
         senders: VecDeque::new(),
@@ -456,6 +452,6 @@ pub(crate) fn pair<'v>(
     let sender = Sender {
         receiver: receiver.clone(),
     };
-    let sender = GcObj::new(vm.arena(), vm.builtin_types().channel_send, sender);
+    let sender = GcObj::new_imm(vm.arena(), vm.builtin_types().channel_send, sender);
     (sender, receiver)
 }

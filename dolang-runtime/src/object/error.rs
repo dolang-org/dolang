@@ -128,21 +128,19 @@ impl<'v> Display for Boxed<'v> {
     }
 }
 
-unsafe impl<'v> Collect for Boxed<'v> {
+unsafe impl<'v> crate::gc::ImmState for Boxed<'v> {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl<'v> crate::gc::Annex for Boxed<'v> {
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
         ControlFlow::Continue(())
     }
-
-    fn clear(&mut self) {
-        unreachable!()
-    }
 }
 
-impl<'v> Protocol<'v> for Boxed<'v> {
+pub(crate) type BoxedObj<'v> = crate::gc::Imm<Boxed<'v>>;
+
+impl<'v> Protocol<'v> for BoxedObj<'v> {
     fn op_type<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -175,7 +173,6 @@ pub(crate) struct Type;
 
 unsafe impl Collect for Type {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -256,19 +253,19 @@ impl<'v> Protocol<'v> for Type {
 
 pub(crate) struct VariantType(pub(crate) ErrorKind);
 
-unsafe impl Collect for VariantType {
+unsafe impl crate::gc::ImmState for VariantType {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl crate::gc::Annex for VariantType {
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
         ControlFlow::Continue(())
     }
-
-    fn clear(&mut self) {}
 }
 
-impl<'v> Protocol<'v> for VariantType {
+pub(crate) type VariantTypeObj = crate::gc::Imm<VariantType>;
+
+impl<'v> Protocol<'v> for VariantTypeObj {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

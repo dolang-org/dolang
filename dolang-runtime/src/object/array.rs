@@ -66,7 +66,6 @@ impl<'a, 'v, 's> Spread<'v, 's> for ArraySpread<'a, 'v> {
 
 unsafe impl<'v> Collect for Iter<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -187,19 +186,19 @@ pub(crate) struct Rest<'v> {
     start: usize,
 }
 
-unsafe impl<'v> Collect for Rest<'v> {
+unsafe impl<'v> crate::gc::ImmState for Rest<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl<'v> crate::gc::Annex for Rest<'v> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         self.array.accept(visit)
     }
-
-    fn clear(&mut self) {}
 }
 
-impl<'v> Protocol<'v> for Rest<'v> {
+pub(crate) type RestObj<'v> = crate::gc::Imm<Rest<'v>>;
+
+impl<'v> Protocol<'v> for RestObj<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -299,28 +298,26 @@ fn make_rest<'v>(
     strand
         .builtin_types()
         .array_rest
-        .create(strand, Rest { array, start }, out);
+        .create_imm(strand, Rest { array, start }, out);
 }
 
 pub(crate) struct Sink<'v> {
     array: GcObj<'v, Array<'v>>,
 }
 
-unsafe impl<'v> Collect for Sink<'v> {
+unsafe impl<'v> crate::gc::ImmState for Sink<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl<'v> crate::gc::Annex for Sink<'v> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         self.array.accept(visit)
     }
-
-    fn clear(&mut self) {
-        // Can't clear `Array`, but array itself is clearable
-    }
 }
 
-impl<'v> Protocol<'v> for Sink<'v> {
+pub(crate) type SinkObj<'v> = crate::gc::Imm<Sink<'v>>;
+
+impl<'v> Protocol<'v> for SinkObj<'v> {
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -351,7 +348,7 @@ impl<'v> Protocol<'v> for Sink<'v> {
         strand: &'a mut Strand<'v, 's>,
         mut value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let borrow = this.borrow(strand)?;
+        let borrow = this.get();
         let mut array_borrow = borrow
             .array
             .borrow_mut()
@@ -395,7 +392,6 @@ pub(crate) struct Pairs<'v> {
 
 unsafe impl<'v> Collect for Pairs<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -525,7 +521,6 @@ pub(crate) struct Array<'v> {
 
 unsafe impl<'v> Collect for Array<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -892,19 +887,15 @@ impl<'v> Protocol<'v> for Array<'v> {
                         source.borrow().ok_or_else(|| Error::concurrency(strand))?;
                     tuple::tuple(strand.vm(), source_borrow.inner.iter().map(Value::dup))
                 };
-                let snapshot = snapshot
-                    .borrow()
-                    .ok_or_else(|| Error::concurrency(strand))?;
                 this.borrow_mut(strand)?
                     .inner
-                    .splice(start..end, snapshot.iter().map(Value::dup));
+                    .splice(start..end, snapshot.items().iter().map(Value::dup));
                 return Ok(());
             }
             if let Some(source) = value.downcast_ref(strand.builtin_types().tuple) {
-                let source_borrow = source.borrow().ok_or_else(|| Error::concurrency(strand))?;
                 this.borrow_mut(strand)?
                     .inner
-                    .splice(start..end, source_borrow.iter().map(Value::dup));
+                    .splice(start..end, source.items().iter().map(Value::dup));
                 return Ok(());
             }
             // Only a sequence with a settled length replaces a slice. Anything
@@ -1215,7 +1206,7 @@ impl<'v> Protocol<'v> for Array<'v> {
             .vm()
             .builtin_types()
             .array_sink
-            .create(strand, Sink { array }, out);
+            .create_imm(strand, Sink { array }, out);
         Ok(())
     }
 
@@ -1279,7 +1270,6 @@ pub(crate) struct Type;
 
 unsafe impl Collect for Type {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {

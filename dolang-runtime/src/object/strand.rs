@@ -68,7 +68,6 @@ impl<'v> Handle<'v> {
 
 unsafe impl<'v> Collect for Handle<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     const STRAND: bool = true;
     type Annex = ();
 
@@ -269,22 +268,19 @@ pub(crate) struct Stream<'v> {
     pub(crate) output: Value<'v>,
 }
 
-unsafe impl<'v> Collect for Stream<'v> {
+unsafe impl<'v> crate::gc::ImmState for Stream<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl<'v> crate::gc::Annex for Stream<'v> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         self.handle.accept(visit)?;
         self.input.accept(visit)?;
         self.output.accept(visit)
     }
-
-    fn clear(&mut self) {
-        self.input = Value::NIL;
-        self.output = Value::NIL;
-    }
 }
+
+pub(crate) type StreamObj<'v> = crate::gc::Imm<Stream<'v>>;
 
 /// Wraps the channel `Value` returned by `Stream::iter()`, additionally
 /// keeping the background strand's [`Handle`] GC-reachable for as long as
@@ -302,7 +298,6 @@ impl<'v> StreamIter<'v> {
 
 unsafe impl<'v> Collect for StreamIter<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -409,7 +404,6 @@ impl<'v> StreamSink<'v> {
 
 unsafe impl<'v> Collect for StreamSink<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -488,7 +482,7 @@ impl<'v> Protocol<'v> for StreamSink<'v> {
     }
 }
 
-impl<'v> Protocol<'v> for Stream<'v> {
+impl<'v> Protocol<'v> for StreamObj<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -534,7 +528,7 @@ impl<'v> Protocol<'v> for Stream<'v> {
             sym::JOIN => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let (input, output, handle) = {
-                    let borrow = this.borrow(strand)?;
+                    let borrow = this.get();
                     (
                         borrow.input.dup(),
                         borrow.output.dup(),
@@ -552,14 +546,14 @@ impl<'v> Protocol<'v> for Stream<'v> {
             }
             sym::CANCEL => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let handle = this.borrow(strand)?.handle.clone();
+                let handle = this.get().handle.clone();
                 let borrow = handle.borrow().ok_or_else(|| Error::concurrency(strand))?;
                 borrow.interrupt.cancel();
                 Ok(())
             }
             sym::WAIT => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let handle = this.borrow(strand)?.handle.clone();
+                let handle = this.get().handle.clone();
                 wait_handle(&handle, strand).await
             }
             sym::DONE | sym::ID => Err(field_not_method(strand, method)),
@@ -584,7 +578,7 @@ impl<'v> Protocol<'v> for Stream<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let output = this.borrow(strand)?.output.dup();
+        let output = this.get().output.dup();
         Output::set(strand, out, &output);
         Ok(())
     }
@@ -594,7 +588,7 @@ impl<'v> Protocol<'v> for Stream<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let input = this.borrow(strand)?.input.dup();
+        let input = this.get().input.dup();
         Output::set(strand, out, &input);
         Ok(())
     }
@@ -611,7 +605,7 @@ impl<'v> Protocol<'v> for Stream<'v> {
                 Ok(())
             }
             sym::DONE => {
-                let handle = this.borrow(strand)?.handle.clone();
+                let handle = this.get().handle.clone();
                 let done = handle
                     .borrow()
                     .ok_or_else(|| Error::concurrency(strand))?
@@ -653,7 +647,6 @@ pub(crate) struct Type;
 
 unsafe impl Collect for Type {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -701,7 +694,6 @@ pub(crate) struct StreamType;
 
 unsafe impl Collect for StreamType {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -773,23 +765,23 @@ impl StrandRef {
     }
 }
 
-unsafe impl Collect for StrandRef {
+unsafe impl crate::gc::ImmState for StrandRef {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl crate::gc::Annex for StrandRef {
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
         ControlFlow::Continue(())
     }
-
-    fn clear(&mut self) {}
 }
+
+pub(crate) type StrandRefObj = crate::gc::Imm<StrandRef>;
 
 fn stream_cell<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    this: &Recv<'v, '_, Stream<'v>>,
+    this: &Recv<'v, '_, StreamObj<'v>>,
 ) -> Result<'v, 's, Rc<StrandCell>> {
-    let handle = this.borrow(strand)?.handle.clone();
+    let handle = this.get().handle.clone();
     let cell = handle
         .borrow()
         .ok_or_else(|| Error::concurrency(strand))?
@@ -886,7 +878,7 @@ fn observe_mcall<'v, 's>(
                     let mut value = Value::NIL;
                     // Safety: written by the last allocation; see `Slot::new`.
                     let slot = unsafe { Slot::new(NonNull::from(&mut value)) };
-                    ty.create(strand, StrandRef::new(cell), slot);
+                    ty.create_imm(strand, StrandRef::new(cell), slot);
                     value
                 })
                 .collect();
@@ -907,14 +899,14 @@ fn observe_mcall<'v, 's>(
             strand
                 .builtin_types()
                 .strand_info
-                .create(strand, StrandInfo::new(raw), out);
+                .create_imm(strand, StrandInfo::new(raw), out);
             Ok(())
         }
         _ => unreachable!("not an observation method"),
     }
 }
 
-impl<'v> Protocol<'v> for StrandRef {
+impl<'v> Protocol<'v> for StrandRefObj {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1003,7 +995,6 @@ pub(crate) struct StrandType;
 
 unsafe impl Collect for StrandType {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -1058,11 +1049,11 @@ impl<'v> StrandInfo<'v> {
     }
 }
 
-unsafe impl<'v> Collect for StrandInfo<'v> {
+unsafe impl<'v> crate::gc::ImmState for StrandInfo<'v> {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl<'v> crate::gc::Annex for StrandInfo<'v> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         // Never borrowed across an allocation
         match &*self.backtrace.borrow() {
@@ -1075,13 +1066,11 @@ unsafe impl<'v> Collect for StrandInfo<'v> {
         }
         ControlFlow::Continue(())
     }
-
-    fn clear(&mut self) {
-        unreachable!()
-    }
 }
 
-impl<'v> Protocol<'v> for StrandInfo<'v> {
+pub(crate) type StrandInfoObj<'v> = crate::gc::Imm<StrandInfo<'v>>;
+
+impl<'v> Protocol<'v> for StrandInfoObj<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1109,14 +1098,14 @@ impl<'v> Protocol<'v> for StrandInfo<'v> {
         match field.tag() {
             sym::STRAND => {
                 let ty = strand.builtin_types().strand_ref;
-                ty.create(strand, StrandRef::new(info.cell.clone()), out);
+                ty.create_imm(strand, StrandRef::new(info.cell.clone()), out);
                 Ok(())
             }
             sym::PARENT => {
                 match &info.parent {
                     Some(parent) => {
                         let ty = strand.builtin_types().strand_ref;
-                        ty.create(strand, StrandRef::new(parent.clone()), out);
+                        ty.create_imm(strand, StrandRef::new(parent.clone()), out);
                     }
                     None => Output::set(strand, out, Value::NIL),
                 }
@@ -1134,7 +1123,7 @@ impl<'v> Protocol<'v> for StrandInfo<'v> {
                     unreachable!("backtrace built during allocation")
                 };
                 let mut out = out;
-                embryo.finish(
+                embryo.finish_imm(
                     strand,
                     backtrace::Backtrace::new(mem::take(entries)),
                     &mut out,
@@ -1152,7 +1141,6 @@ pub(crate) struct StrandInfoType;
 
 unsafe impl Collect for StrandInfoType {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {

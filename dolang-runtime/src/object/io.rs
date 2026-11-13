@@ -73,7 +73,6 @@ pub(crate) struct Chunks<'v> {
 
 unsafe impl Collect for Io {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -298,7 +297,7 @@ async fn helper_mcall<'v, 'a, 's>(
                 None => CHUNK,
             };
             let stream = stream.dup();
-            strand.builtin_types().io_chunks.create(
+            strand.builtin_types().io_chunks.create_imm(
                 strand,
                 Chunks {
                     stream,
@@ -560,22 +559,19 @@ async fn copy_to<'v, 's>(
     Ok(())
 }
 
-unsafe impl<'v> Collect for Chunks<'v> {
+unsafe impl<'v> crate::gc::ImmState for Chunks<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl<'v> crate::gc::Annex for Chunks<'v> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         self.stream.accept(visit)
     }
-
-    fn clear(&mut self) {
-        self.stream.clear();
-        self.done.set(true);
-    }
 }
 
-impl<'v> Protocol<'v> for Chunks<'v> {
+pub(crate) type ChunksObj<'v> = crate::gc::Imm<Chunks<'v>>;
+
+impl<'v> Protocol<'v> for ChunksObj<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

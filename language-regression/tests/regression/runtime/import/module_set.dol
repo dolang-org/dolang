@@ -1,0 +1,16 @@
+# Assigning an export through a renamed import, which binds the module object
+# itself, writes that export's variable.
+import module_set: m
+
+m.a = 10
+assert_eq $m.a 10
+assert_eq (m.get_a()) 10
+assert_eq $m.b 2
+assert_eq (m.get_b()) 2
+assert_eq (m.get_hidden()) 1
+
+m.b = 20
+assert_eq $m.b 20
+assert_eq (m.get_b()) 20
+assert_eq $m.a 10
+assert_eq (m.get_hidden()) 1

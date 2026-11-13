@@ -40,7 +40,6 @@ pub(crate) struct Struct<'v> {
 
 unsafe impl<'v> Collect for Struct<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -103,14 +102,14 @@ impl<'v> Struct<'v> {
 fn snapshot<'v, 's>(
     strand: &mut Strand<'v, 's>,
     this: &Recv<'v, '_, Struct<'v>>,
-) -> Result<'v, 's, GcObj<'v, pack::Pack<'v>>> {
+) -> Result<'v, 's, GcObj<'v, pack::PackObj<'v>>> {
     let items = this
         .borrow(strand)?
         .items
         .iter()
         .map(|(key, value)| (key.clone(), value.dup()))
         .collect();
-    Ok(GcObj::new(
+    Ok(GcObj::new_imm(
         strand.vm().arena(),
         strand.builtin_types().pack,
         pack::Pack::new(items),
@@ -338,7 +337,6 @@ pub(crate) struct Class;
 
 unsafe impl Collect for Class {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {

@@ -22,12 +22,14 @@ use crate::{
     method,
     object::{
         self, BoundMethod, backtrace,
+        bin::BinObj,
         class::{self, iter_natives},
         interface::{self, InterfaceTag, Request},
         protocol::{
             Delegated, Dispatch, GcObj, Header, Inspect, Protocol, Spread, SpreadContext,
             TypeHandle,
         },
+        str::StrObj,
     },
     sig::Unpack,
     stdlib::fmt as fmt_obj,
@@ -63,7 +65,7 @@ pub struct Value<'v>(Repr, PhantomData<&'v mut &'v ()>);
 /// This is useful when bytes arrive incrementally and an intermediate
 /// allocation would otherwise be needed before constructing a Do value.
 pub struct BinEmbryo<'v> {
-    embryo: Option<gc::Embryo<'v, Header, [u8]>>,
+    embryo: Option<gc::Embryo<'v, Header, BinObj>>,
 }
 
 /// Growable UTF-8 buffer that can be finalized directly into a Do `Str`.
@@ -72,12 +74,11 @@ pub struct BinEmbryo<'v> {
 /// is valid UTF-8. The unsafe spare-capacity/advance path may be used when the
 /// caller can uphold that invariant manually.
 pub struct StrEmbryo<'v> {
-    embryo: Option<gc::Embryo<'v, Header, [u8]>>,
+    embryo: Option<gc::Embryo<'v, Header, BinObj>>,
 }
 
 unsafe impl<'v> Collect for Value<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn arena::Visit) -> ControlFlow<()> {
@@ -145,7 +146,7 @@ impl<'v> Value<'v> {
         {
             Self(repr, PhantomData)
         } else {
-            Value::from_object(GcObj::new(vm.arena(), vm.builtin_types().int, value))
+            Value::from_object(GcObj::new_imm(vm.arena(), vm.builtin_types().int, value))
         }
     }
 
@@ -158,12 +159,12 @@ impl<'v> Value<'v> {
         if let Some(repr) = Repr::from_f64(value) {
             Self(repr, PhantomData)
         } else {
-            Value::from_object(GcObj::new(vm.arena(), vm.builtin_types().f64, value))
+            Value::from_object(GcObj::new_imm(vm.arena(), vm.builtin_types().f64, value))
         }
     }
 
     pub(crate) fn from_int_verbatim(vm: &Vm<'v>, value: i128, text: &str) -> Self {
-        Value::from_object(GcObj::new(
+        Value::from_object(GcObj::new_imm(
             vm.arena(),
             vm.builtin_types().verbatim_int,
             object::int::Verbatim::new(value, text),
@@ -171,7 +172,7 @@ impl<'v> Value<'v> {
     }
 
     pub(crate) fn from_f64_verbatim(vm: &Vm<'v>, value: f64, text: &str) -> Self {
-        Value::from_object(GcObj::new(
+        Value::from_object(GcObj::new_imm(
             vm.arena(),
             vm.builtin_types().verbatim_f64,
             object::float::Verbatim::new(value, text),
@@ -180,19 +181,21 @@ impl<'v> Value<'v> {
 
     pub(crate) fn from_str(vm: &Vm<'v>, value: &str) -> Self {
         Self::from_object(gc::Base::upcast(unsafe {
-            gc::Base::from_header_utf8_slice(
+            gc::Base::from_str(
                 vm.arena(),
                 Header::new(vm.arena(), vm.builtin_types().str.vtbl),
-                value.as_bytes(),
+                StrObj,
+                value,
             )
         }))
     }
 
     pub(crate) fn from_u8_slice(vm: &Vm<'v>, value: &[u8]) -> Self {
         Self::from_object(gc::Base::upcast(unsafe {
-            gc::Base::from_header_slice(
+            gc::Base::from_bytes(
                 vm.arena(),
                 Header::new(vm.arena(), vm.builtin_types().bin.vtbl),
+                BinObj,
                 value,
             )
         }))
@@ -1681,7 +1684,7 @@ impl<'v> Value<'v> {
     #[inline]
     pub(crate) fn as_str_raw(&self, vm: &Vm<'v>) -> Option<&str> {
         self.downcast_native(vm, vm.builtin_types().str)
-            .map(|s| s.get())
+            .map(|s| s.str())
     }
 
     /// Downcast to a `Str` witness.
@@ -1698,7 +1701,7 @@ impl<'v> Value<'v> {
     #[inline]
     pub(crate) fn as_bin_raw(&self, vm: &Vm<'v>) -> Option<&[u8]> {
         self.downcast_native(vm, vm.builtin_types().bin)
-            .map(|s| s.get())
+            .map(|s| s.bytes())
     }
 
     /// Downcast to a `Bin` witness.
@@ -2610,10 +2613,13 @@ impl<'v> BinEmbryo<'v> {
         let value = unsafe {
             let header = Header::new(vm.arena(), vm.builtin_types().bin.vtbl);
             match self.embryo {
-                Some(embryo) => Value::from_object(gc::Base::upcast(embryo.finalize(header))),
-                None => Value::from_object(gc::Base::upcast(gc::Base::from_header_slice(
+                Some(embryo) => {
+                    Value::from_object(gc::Base::upcast(embryo.finalize(header, BinObj)))
+                }
+                None => Value::from_object(gc::Base::upcast(gc::Base::from_bytes(
                     vm.arena(),
                     header,
+                    BinObj,
                     &[],
                 ))),
             }
@@ -2639,17 +2645,19 @@ impl<'v> BinEmbryo<'v> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         let header = unsafe { Header::new(vm.arena(), vm.builtin_types().str.vtbl) };
         let value = match self.embryo {
-            Some(embryo) => Value::from_object(unsafe { embryo.finalize_str_unchecked(header) }),
-            None => Value::from_object(unsafe {
-                gc::Base::from_header_utf8_slice(vm.arena(), header, b"")
-            }),
+            Some(embryo) => {
+                Value::from_object(unsafe { embryo.finalize_str_unchecked(header, StrObj) })
+            }
+            None => {
+                Value::from_object(unsafe { gc::Base::from_str(vm.arena(), header, StrObj, "") })
+            }
         };
         Slot::from_output(&mut out).store(value);
     }
 
-    fn allocate(alloc: &mut dyn Alloc<'v>, capacity: usize) -> gc::Embryo<'v, Header, [u8]> {
+    fn allocate(alloc: &mut dyn Alloc<'v>, capacity: usize) -> gc::Embryo<'v, Header, BinObj> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        unsafe { gc::Embryo::<Header, [u8]>::from_arena_capacity(vm.arena(), capacity) }
+        unsafe { gc::Embryo::<Header, BinObj>::from_arena_capacity(vm.arena(), capacity) }
     }
 }
 
@@ -2811,10 +2819,8 @@ impl<'v> StrEmbryo<'v> {
         let value = unsafe {
             let header = Header::new(vm.arena(), vm.builtin_types().str.vtbl);
             match self.embryo {
-                Some(embryo) => Value::from_object(embryo.finalize_str_unchecked(header)),
-                None => {
-                    Value::from_object(gc::Base::from_header_utf8_slice(vm.arena(), header, b""))
-                }
+                Some(embryo) => Value::from_object(embryo.finalize_str_unchecked(header, StrObj)),
+                None => Value::from_object(gc::Base::from_str(vm.arena(), header, StrObj, "")),
             }
         };
         Slot::from_output(&mut out).store(value)
@@ -3246,9 +3252,6 @@ struct RootInner<'v>(Value<'v>);
 
 unsafe impl<'v> Collect for RootInner<'v> {
     const CYCLIC: bool = true;
-    // Mutability is interior rather than going through GC borrow machinery.
-    // This is so a `Slot` can exist without a borrow guard
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn arena::Visit) -> ControlFlow<()> {

@@ -8,8 +8,8 @@ use crate::value::fmt;
 use crate::{
     arg::Args,
     error::{Error, Result},
-    gc::{Collect, arena::Visit},
-    object::protocol::{GcObj, instance_get_fallback, members},
+    gc::{self, Collect, arena::Visit},
+    object::protocol::{GcObj, GcObjBorrow, instance_get_fallback, members},
     sig,
     strand::Strand,
     sym::{self, Sym},
@@ -26,10 +26,12 @@ use super::{
 
 use bstr::{BStr, ByteSlice};
 
-unsafe impl Collect for u8 {
+/// A `Bin` object. Its bytes are the tail of its annex.
+pub(crate) struct BinObj;
+
+unsafe impl Collect for BinObj {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+    type Annex = gc::Tail<(), [u8]>;
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
         ControlFlow::Continue(())
@@ -91,7 +93,28 @@ fn trim_end_bytes<'a>(me: &'a [u8], pattern: &[u8]) -> &'a [u8] {
     &me[..end]
 }
 
-impl<'v> Protocol<'v> for [u8] {
+impl<'v, 'a> Recv<'v, 'a, BinObj> {
+    /// The binary's bytes.
+    pub(crate) fn bytes(&self) -> &'a [u8] {
+        &self.annex().tail
+    }
+}
+
+impl<'v, 'a> GcObjBorrow<'v, 'a, BinObj> {
+    /// The binary's bytes.
+    pub(crate) fn bytes(&self) -> &'a [u8] {
+        &self.annex().tail
+    }
+}
+
+impl<'v> GcObj<'v, BinObj> {
+    /// The binary's bytes.
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.annex().tail
+    }
+}
+
+impl<'v> Protocol<'v> for BinObj {
     fn op_fmt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -128,7 +151,7 @@ impl<'v> Protocol<'v> for [u8] {
             ));
         }
         let mut digits = String::new();
-        for byte in this.get() {
+        for byte in this.bytes() {
             use std::fmt::Write as _;
             match kind {
                 Kind::Hex => write!(&mut digits, "{byte:02x}"),
@@ -165,7 +188,7 @@ impl<'v> Protocol<'v> for [u8] {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn fmt::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "{}", BStr::new(this.receiver.get()))
+        crate::fmt!(strand, w, "{}", BStr::new(this.bytes()))
     }
 
     fn op_debug<'a, 's>(
@@ -173,14 +196,14 @@ impl<'v> Protocol<'v> for [u8] {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn fmt::Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "b{:?}", BStr::new(this.receiver.get()))
+        crate::fmt!(strand, w, "b{:?}", BStr::new(this.bytes()))
     }
 
     fn op_bool<'a, 's>(
         this: Recv<'v, 'a, Self>,
         _strand: &'a mut Strand<'v, 's>,
     ) -> Result<'v, 's, bool> {
-        Ok(!this.receiver.get().is_empty())
+        Ok(!this.bytes().is_empty())
     }
 
     fn op_eq<'a, 's>(
@@ -189,7 +212,7 @@ impl<'v> Protocol<'v> for [u8] {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         if let Some(oslice) = other.downcast_ref(strand.builtin_types().bin) {
-            Ok(Value::from_bool(oslice.get() == this.receiver.get()))
+            Ok(Value::from_bool(oslice.bytes() == this.bytes()))
         } else {
             Err(Error::unsupported(strand, "`==`"))
         }
@@ -201,7 +224,7 @@ impl<'v> Protocol<'v> for [u8] {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         if let Some(oslice) = other.downcast_ref(strand.builtin_types().bin) {
-            Ok(Value::from_bool(this.receiver.get() < oslice.get()))
+            Ok(Value::from_bool(this.bytes() < oslice.bytes()))
         } else {
             Err(Error::unsupported(strand, "`<`"))
         }
@@ -209,10 +232,10 @@ impl<'v> Protocol<'v> for [u8] {
 
     fn op_hash<'a, 's>(
         this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
+        _strand: &'a mut Strand<'v, 's>,
         hasher: &mut DefaultHasher,
     ) -> Result<'v, 's, ()> {
-        this.borrow(strand)?.hash(hasher);
+        this.bytes().hash(hasher);
         Ok(())
     }
 
@@ -222,7 +245,7 @@ impl<'v> Protocol<'v> for [u8] {
         index: &Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let me = this.receiver.get();
+        let me = this.bytes();
         let Some(slice) = range::slice(index, strand, me.len())? else {
             return Err(Error::index(strand));
         };
@@ -249,47 +272,47 @@ impl<'v> Protocol<'v> for [u8] {
         match method.tag() {
             sym::STARTS_WITH => {
                 let ([prefix], []) = unpack!(strand, args, 1, 0)?;
-                let input =
-                    this.borrow(strand)?
-                        .starts_with(prefix.as_u8_slice_raw(strand).ok_or_else(|| {
-                            let msg = "not binary data: unknown".to_string();
-                            Error::type_error(strand, msg)
-                        })?);
+                let input = this
+                    .bytes()
+                    .starts_with(prefix.as_u8_slice_raw(strand).ok_or_else(|| {
+                        let msg = "not binary data: unknown".to_string();
+                        Error::type_error(strand, msg)
+                    })?);
                 Output::set(strand, out, input);
                 Ok(())
             }
             sym::WITHOUT_PREFIX => {
                 let ([prefix], []) = unpack!(strand, args, 1, 0)?;
-                let borrow = this.borrow(strand)?;
+                let borrow = this.bytes();
                 let input = borrow
                     .strip_prefix(prefix.as_u8_slice_raw(strand).ok_or_else(|| {
                         let msg = "not binary data: unknown".to_string();
                         Error::type_error(strand, msg)
                     })?)
-                    .unwrap_or(&*borrow);
+                    .unwrap_or(borrow);
                 Output::set(strand, out, input);
                 Ok(())
             }
             sym::ENDS_WITH => {
                 let ([suffix], []) = unpack!(strand, args, 1, 0)?;
-                let input =
-                    this.borrow(strand)?
-                        .ends_with(suffix.as_u8_slice_raw(strand).ok_or_else(|| {
-                            let msg = "not binary data: unknown".to_string();
-                            Error::type_error(strand, msg)
-                        })?);
+                let input = this
+                    .bytes()
+                    .ends_with(suffix.as_u8_slice_raw(strand).ok_or_else(|| {
+                        let msg = "not binary data: unknown".to_string();
+                        Error::type_error(strand, msg)
+                    })?);
                 Output::set(strand, out, input);
                 Ok(())
             }
             sym::WITHOUT_SUFFIX => {
                 let ([suffix], []) = unpack!(strand, args, 1, 0)?;
-                let borrow = this.borrow(strand)?;
+                let borrow = this.bytes();
                 let input = borrow
                     .strip_suffix(suffix.as_u8_slice_raw(strand).ok_or_else(|| {
                         let msg = "not binary data: unknown".to_string();
                         Error::type_error(strand, msg)
                     })?)
-                    .unwrap_or(&*borrow);
+                    .unwrap_or(borrow);
                 Output::set(strand, out, input);
                 Ok(())
             }
@@ -314,17 +337,17 @@ impl<'v> Protocol<'v> for [u8] {
                 let state = match limit_i64 {
                     Some(l) if l < 0 => {
                         let n = (l.unsigned_abs() as usize).saturating_add(1);
-                        let src: &[u8] = this.receiver.get();
+                        let src: &[u8] = this.bytes();
                         let base = src.as_ptr() as usize;
                         let mut segs: Vec<(usize, usize)> = if forward {
-                            src.rsplitn_str(n, &*delim_gc)
+                            src.rsplitn_str(n, delim_gc.bytes())
                                 .map(|s| {
                                     let st = s.as_ptr() as usize - base;
                                     (st, st + s.len())
                                 })
                                 .collect()
                         } else {
-                            src.splitn_str(n, &*delim_gc)
+                            src.splitn_str(n, delim_gc.bytes())
                                 .map(|s| {
                                     let st = s.as_ptr() as usize - base;
                                     (st, st + s.len())
@@ -350,7 +373,7 @@ impl<'v> Protocol<'v> for [u8] {
                             }
                         } else {
                             SplitState::Lazy {
-                                offset: Some(this.receiver.get().len()),
+                                offset: Some(this.bytes().len()),
                                 limit,
                                 reverse: true,
                             }
@@ -386,7 +409,7 @@ impl<'v> Protocol<'v> for [u8] {
                             acc.extend(strand, slice);
                         }
                         while input.next(strand, &mut value).await? {
-                            acc.extend(strand, this.receiver.get());
+                            acc.extend(strand, this.bytes());
                             let slice = value.as_u8_slice_raw(strand).ok_or_else(|| {
                                 Error::type_error(strand, "element was not binary data")
                             })?;
@@ -398,14 +421,14 @@ impl<'v> Protocol<'v> for [u8] {
                     .await
             }
             sym::CHOMP => {
-                let me = this.receiver.get();
+                let me = this.bytes();
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let end = me.len() - iter::line_terminator_len(me);
                 Output::set(strand, out, &me[..end]);
                 Ok(())
             }
             sym::TRIM => {
-                let me = this.receiver.get();
+                let me = this.bytes();
                 let ([], [chars]) = unpack!(strand, args, 0, 1)?;
                 let trimmed = match chars {
                     None => me.trim(),
@@ -418,7 +441,7 @@ impl<'v> Protocol<'v> for [u8] {
                 Ok(())
             }
             sym::TRIM_START => {
-                let me = this.receiver.get();
+                let me = this.bytes();
                 let ([], [chars]) = unpack!(strand, args, 0, 1)?;
                 let trimmed = match chars {
                     None => me.trim_start(),
@@ -431,7 +454,7 @@ impl<'v> Protocol<'v> for [u8] {
                 Ok(())
             }
             sym::TRIM_END => {
-                let me = this.receiver.get();
+                let me = this.bytes();
                 let ([], [chars]) = unpack!(strand, args, 0, 1)?;
                 let trimmed = match chars {
                     None => me.trim_end(),
@@ -445,12 +468,12 @@ impl<'v> Protocol<'v> for [u8] {
             }
             sym::CONTAINS => {
                 let ([needle], []) = unpack!(strand, args, 1, 0)?;
-                let input =
-                    this.borrow(strand)?
-                        .contains_str(needle.as_u8_slice_raw(strand).ok_or_else(|| {
-                            let msg = "not binary data: unknown".to_string();
-                            Error::type_error(strand, msg)
-                        })?);
+                let input = this
+                    .bytes()
+                    .contains_str(needle.as_u8_slice_raw(strand).ok_or_else(|| {
+                        let msg = "not binary data: unknown".to_string();
+                        Error::type_error(strand, msg)
+                    })?);
                 Output::set(strand, out, input);
                 Ok(())
             }
@@ -461,7 +484,7 @@ impl<'v> Protocol<'v> for [u8] {
                     let msg = "not binary data: unknown".to_string();
                     Error::type_error(strand, msg)
                 })?;
-                let me = this.receiver.get();
+                let me = this.bytes();
                 let (start, end) = range::window(strand, range.as_deref(), me.len())?;
                 let window = &me[start..end];
                 let found = if method.tag() == sym::FIND {
@@ -484,7 +507,7 @@ impl<'v> Protocol<'v> for [u8] {
                 let to = to
                     .as_u8_slice_raw(strand)
                     .ok_or_else(|| Error::type_error(strand, "new value is not binary data"))?;
-                let me = this.receiver.get();
+                let me = this.bytes();
                 let (start, end) = range::window(strand, range.as_deref(), me.len())?;
                 let window = &me[start..end];
                 let mut acc = BinEmbryo::new_with_capacity(strand, me.len());
@@ -503,7 +526,7 @@ impl<'v> Protocol<'v> for [u8] {
             sym::REPEAT => {
                 let ([count], []) = unpack!(strand, args, 1, 0)?;
                 let count = count.to_index(strand)?;
-                let me = this.receiver.get();
+                let me = this.bytes();
                 let len = me
                     .len()
                     .checked_mul(count)
@@ -536,7 +559,7 @@ impl<'v> Protocol<'v> for [u8] {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                Output::set(strand, out, this.receiver.get().len());
+                Output::set(strand, out, this.bytes().len());
                 Ok(())
             }
             sym::STARTS_WITH
@@ -599,8 +622,8 @@ impl Clone for SplitState {
 
 #[derive(Clone)]
 pub(crate) struct Split<'v> {
-    str: GcObj<'v, [u8]>,
-    delim: GcObj<'v, [u8]>,
+    str: GcObj<'v, BinObj>,
+    delim: GcObj<'v, BinObj>,
     state: SplitState,
     forward: bool,
 }
@@ -622,10 +645,11 @@ impl<'v> Split<'v> {
                 reverse,
             } => {
                 let off = (*offset)?;
-                let delim_len = self.delim.len();
+                let delim_len = self.delim.bytes().len();
                 if !*reverse {
                     if *limit != 0
-                        && let Some((before, _)) = self.str[off..].split_once_str(&*self.delim)
+                        && let Some((before, _)) =
+                            self.str.bytes()[off..].split_once_str(self.delim.bytes())
                     {
                         let end = off + before.len();
                         *offset = Some(end + delim_len);
@@ -633,12 +657,12 @@ impl<'v> Split<'v> {
                         Some((off, end))
                     } else {
                         *offset = None;
-                        Some((off, self.str.len()))
+                        Some((off, self.str.bytes().len()))
                     }
                 } else {
                     if *limit != 0
                         && let Some((before, _after)) =
-                            self.str[..off].rsplit_once_str(&*self.delim)
+                            self.str.bytes()[..off].rsplit_once_str(self.delim.bytes())
                     {
                         let after_start = before.len() + delim_len;
                         *offset = Some(before.len());
@@ -656,7 +680,6 @@ impl<'v> Split<'v> {
 
 unsafe impl<'v> Collect for Split<'v> {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = false;
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -739,15 +762,19 @@ impl<'v> Protocol<'v> for Split<'v> {
             let Some((start, end)) = borrow.next_segment() else {
                 return Err(Error::missing_positional(strand, sig.required));
             };
-            out.at(i)
-                .store(Value::from_u8_slice(strand, &borrow.str[start..end]));
+            out.at(i).store(Value::from_u8_slice(
+                strand,
+                &borrow.str.bytes()[start..end],
+            ));
         }
 
         // Fill optional positional slots
         for i in 0..sig.optional.len() {
             if let Some((start, end)) = borrow.next_segment() {
-                out.at(sig.required + i)
-                    .store(Value::from_u8_slice(strand, &borrow.str[start..end]));
+                out.at(sig.required + i).store(Value::from_u8_slice(
+                    strand,
+                    &borrow.str.bytes()[start..end],
+                ));
             } else {
                 out.at(sig.required + i).store(sig.optional[i].dup());
             }
@@ -777,7 +804,7 @@ impl<'v> Protocol<'v> for Split<'v> {
         let Some((start, end)) = borrow.next_segment() else {
             return Ok(false);
         };
-        Output::set(strand, out, &borrow.str[start..end]);
+        Output::set(strand, out, &borrow.str.bytes()[start..end]);
         Ok(true)
     }
 
@@ -805,7 +832,6 @@ pub(crate) struct Class;
 
 unsafe impl Collect for Class {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {

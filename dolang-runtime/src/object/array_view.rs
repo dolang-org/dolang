@@ -134,7 +134,7 @@ impl<'v, I: ArrayLike<'v>> ArrayView<'v, I> {
         out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
         let parent = create_view(owner, view, strand);
-        strand.builtin_types().array_view_iter.create(
+        strand.builtin_types().array_view_iter.create_imm(
             strand,
             Iter {
                 parent,
@@ -188,15 +188,16 @@ fn create_view<'v, I: ArrayLike<'v>>(
     owner: Instance<'v, '_, I::Object>,
     view: I,
     strand: &mut Strand<'v, '_>,
-) -> GcObj<'v, View<'v>> {
+) -> GcObj<'v, ViewObj<'v>> {
     let ty = owner.ty(strand.vm());
     let owner = Value::from_input(strand, owner);
-    GcObj::new(
+    GcObj::new_imm(
         strand.vm().arena(),
         strand.builtin_types().array_view,
         View {
             owner,
             glue: Box::new(Glue { view, ty }),
+            busy: Cell::new(false),
         },
     )
 }
@@ -212,11 +213,12 @@ pub(crate) fn create<'v, I: ArrayLike<'v>>(
     let ty = owner.ty(vm);
     // A duplicate of a rooted owner, which stays rooted where it is.
     let owner = Value::from_input(alloc, owner);
-    vm.builtin_types().array_view.create(
+    vm.builtin_types().array_view.create_imm(
         alloc,
         View {
             owner,
             glue: Box::new(Glue { view, ty }),
+            busy: Cell::new(false),
         },
         out,
     );
@@ -283,11 +285,12 @@ trait ArrayViewGlue<'v>: 'v {
 
 /// Creates a byte projection whose owner is the original binary, not a copy.
 pub(super) fn unpack_bin<'v>(strand: &mut Strand<'v, '_>, owner: Value<'v>, out: Slot<'v, '_>) {
-    strand.builtin_types().array_view.create(
+    strand.builtin_types().array_view.create_imm(
         strand,
         View {
             owner,
             glue: Box::new(Bytes),
+            busy: Cell::new(false),
         },
         out,
     );
@@ -425,41 +428,31 @@ impl<'v, I: ArrayLike<'v>> ArrayViewGlue<'v> for Glue<'v, I> {
 pub(crate) struct View<'v> {
     owner: Value<'v>,
     glue: Box<dyn ArrayViewGlue<'v> + 'v>,
+    /// Set while a mutation through the view is in progress.
+    busy: Cell<bool>,
 }
 
 /// Holds a strong reference to the parent [`View`] rather than duplicating
-/// its `owner`/glue. `View` is immutable (`Collect::IMMUTABLE`), so reading
-/// through `parent` needs no runtime borrow check — see its `Deref` impl.
-/// `index` is a `Cell` so `Iter` itself can be declared immutable too (it's
-/// only ever mutated in place, never replaced), giving the same check-free
-/// `.get()` access as `View`.
+/// its `owner`/glue. `View` is an immutable [`gc::Imm`] object, so reading
+/// through `parent` needs no runtime borrow check. `index` is a `Cell` so
+/// `Iter` can be immutable too (it's only ever mutated in place, never
+/// replaced), giving the same check-free `.get()` access as `View`.
 pub(crate) struct Iter<'v> {
-    parent: GcObj<'v, View<'v>>,
+    parent: GcObj<'v, ViewObj<'v>>,
     index: Cell<usize>,
 }
 
-unsafe impl<'v> Collect for View<'v> {
+unsafe impl<'v> gc::ImmState for View<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
-    type Annex = ViewAnnex;
+}
+
+impl<'v> gc::Annex for View<'v> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         self.owner.accept(visit)
     }
-    fn clear(&mut self) {
-        self.owner.clear()
-    }
 }
 
-#[derive(Default)]
-pub(crate) struct ViewAnnex(Cell<bool>);
-
-impl gc::Annex for ViewAnnex {
-    fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
-        ControlFlow::Continue(())
-    }
-
-    fn clear(&self) {}
-}
+pub(crate) type ViewObj<'v> = gc::Imm<View<'v>>;
 
 struct MutationGuard<'a>(&'a Cell<bool>);
 
@@ -482,48 +475,48 @@ fn mutation_guard<'a, 'v, 's>(
     MutationGuard::try_new(busy).ok_or_else(|| Error::concurrency(strand))
 }
 
-unsafe impl<'v> Collect for Iter<'v> {
+unsafe impl<'v> gc::ImmState for Iter<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
+
+impl<'v> gc::Annex for Iter<'v> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         self.parent.accept(visit)
     }
-    fn clear(&mut self) {
-        // `Iter` is immutable, so it can't be the thing responsible for
-        // breaking a reference cycle running through `parent` — some other,
-        // mutable link in the cycle has to do that instead.
-    }
 }
+
+pub(crate) type IterObj<'v> = gc::Imm<Iter<'v>>;
 
 /// Rest of a view from `start`, which can be iterated, spread and unpacked
 /// repeatedly.
 pub(crate) struct Rest<'v> {
-    parent: GcObj<'v, View<'v>>,
+    parent: GcObj<'v, ViewObj<'v>>,
     start: usize,
 }
 
-unsafe impl<'v> Collect for Rest<'v> {
+unsafe impl<'v> gc::ImmState for Rest<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
+
+impl<'v> gc::Annex for Rest<'v> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         self.parent.accept(visit)
     }
-    fn clear(&mut self) {}
 }
+
+pub(crate) type RestObj<'v> = gc::Imm<Rest<'v>>;
 
 /// Stores the rest of `parent` from `start`: an iterator if the view's owner
 /// is one, otherwise a reusable [`Rest`].
 fn store_rest<'v>(
     strand: &mut Strand<'v, '_>,
-    parent: GcObj<'v, View<'v>>,
+    parent: GcObj<'v, ViewObj<'v>>,
     start: usize,
     iterator: bool,
     out: impl Output<'v>,
 ) {
     if iterator {
-        strand.builtin_types().array_view_iter.create(
+        strand.builtin_types().array_view_iter.create_imm(
             strand,
             Iter {
                 parent,
@@ -535,7 +528,7 @@ fn store_rest<'v>(
         strand
             .builtin_types()
             .array_view_rest
-            .create(strand, Rest { parent, start }, out);
+            .create_imm(strand, Rest { parent, start }, out);
     }
 }
 
@@ -568,7 +561,7 @@ fn positional<'v, 'a, 's>(
     .collect()
 }
 
-impl<'v> Protocol<'v> for View<'v> {
+impl<'v> Protocol<'v> for ViewObj<'v> {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -612,7 +605,7 @@ impl<'v> Protocol<'v> for View<'v> {
         index: Slot<'v, 'a>,
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let _guard = mutation_guard(&this.annex().0, strand)?;
+        let _guard = mutation_guard(&this.get().busy, strand)?;
         let view = this.get();
         let len = view.glue.len(&view.owner, strand);
         let index = normalize(strand, &index, len)?;
@@ -648,7 +641,7 @@ impl<'v> Protocol<'v> for View<'v> {
         match method.tag() {
             sym::PUSH => {
                 let mut values = positional(strand, args)?;
-                let _guard = mutation_guard(&this.annex().0, strand)?;
+                let _guard = mutation_guard(&this.get().busy, strand)?;
                 let view = this.get();
                 view.glue.push(&view.owner, strand, values.as_mut_slice())
             }
@@ -661,7 +654,7 @@ impl<'v> Protocol<'v> for View<'v> {
                 if values.is_empty() {
                     return Err(Error::missing_positional(strand, 1));
                 }
-                let _guard = mutation_guard(&this.annex().0, strand)?;
+                let _guard = mutation_guard(&this.get().busy, strand)?;
                 let view = this.get();
                 let len = view.glue.len(&view.owner, strand);
                 let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
@@ -677,7 +670,7 @@ impl<'v> Protocol<'v> for View<'v> {
                 if default.is_some() && or_else.is_some() {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
-                let guard = mutation_guard(&this.annex().0, strand)?;
+                let guard = mutation_guard(&this.get().busy, strand)?;
                 let view = this.get();
                 let len = view.glue.len(&view.owner, strand);
                 let index = match index {
@@ -702,7 +695,7 @@ impl<'v> Protocol<'v> for View<'v> {
             }
             sym::DELETE => {
                 let ([index], []) = unpack!(strand, args, 1, 0)?;
-                let _guard = mutation_guard(&this.annex().0, strand)?;
+                let _guard = mutation_guard(&this.get().busy, strand)?;
                 let view = this.get();
                 let len = view.glue.len(&view.owner, strand);
                 let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
@@ -716,7 +709,7 @@ impl<'v> Protocol<'v> for View<'v> {
             }
             sym::CLEAR => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let _guard = mutation_guard(&this.annex().0, strand)?;
+                let _guard = mutation_guard(&this.get().busy, strand)?;
                 let view = this.get();
                 view.glue.clear(&view.owner, strand)
             }
@@ -732,7 +725,7 @@ impl<'v> Protocol<'v> for View<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        strand.builtin_types().array_view_iter.create(
+        strand.builtin_types().array_view_iter.create_imm(
             strand,
             Iter {
                 parent: this.to_strong(),
@@ -774,7 +767,7 @@ impl<'v> Protocol<'v> for View<'v> {
     }
 }
 
-impl<'v> Protocol<'v> for Iter<'v> {
+impl<'v> Protocol<'v> for IterObj<'v> {
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -832,7 +825,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
             iter.index.get(),
         )?;
         if let Some(i) = sig.pos_rest_slot() {
-            strand.builtin_types().array_view_iter.create(
+            strand.builtin_types().array_view_iter.create_imm(
                 strand,
                 Iter {
                     parent: iter.parent.clone(),
@@ -870,7 +863,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
     }
 }
 
-impl<'v> Protocol<'v> for Rest<'v> {
+impl<'v> Protocol<'v> for RestObj<'v> {
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -1000,7 +993,7 @@ fn spread_from<'v, 's>(
 
 fn unpack_native<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    parent: GcObj<'v, View<'v>>,
+    parent: GcObj<'v, ViewObj<'v>>,
     mut unpack: NativeUnpack<'v, '_>,
     iterator: bool,
 ) -> Result<'v, 's, ()> {
@@ -1095,7 +1088,6 @@ pub(crate) struct Type;
 
 unsafe impl Collect for Type {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
     type Annex = ();
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
@@ -1401,7 +1393,7 @@ mod tests {
                         Value::from_i64(strand, 2),
                         Value::NIL,
                     );
-                    strand.builtin_types().range.create(
+                    strand.builtin_types().range.create_imm(
                         strand,
                         range,
                         Slot::reborrow(&mut range_slot),

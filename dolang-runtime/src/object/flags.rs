@@ -27,7 +27,7 @@ use crate::value::{TypeObject, fmt::Format};
 use crate::{
     arg::{Arg, Args},
     error::{Error, Result},
-    gc::{Collect, arena::Visit},
+    gc::arena::Visit,
     object::{
         interface::{self, InterfaceTag, Request},
         native::{Instance, Object, Type, TypeBuilder},
@@ -249,21 +249,19 @@ pub(crate) struct Iter<'v> {
     index: Cell<usize>,
 }
 
-unsafe impl<'v> Collect for Iter<'v> {
+unsafe impl<'v> crate::gc::ImmState for Iter<'v> {
     const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
+}
 
+impl<'v> crate::gc::Annex for Iter<'v> {
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
         ControlFlow::Continue(())
     }
-
-    fn clear(&mut self) {
-        unreachable!("immutable flags iterator")
-    }
 }
 
-impl<'v> Protocol<'v> for Iter<'v> {
+pub(crate) type IterObj<'v> = crate::gc::Imm<Iter<'v>>;
+
+impl<'v> Protocol<'v> for IterObj<'v> {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -696,7 +694,7 @@ impl<'v, F: FlagLike> Object<'v> for Flags<F> {
         let vm = strand.vm();
         let table = this.ty(vm).annex(vm);
         let symbols = table.names(*this.annex()).into_boxed_slice();
-        strand.builtin_types().flags_iter.create(
+        strand.builtin_types().flags_iter.create_imm(
             strand,
             Iter {
                 symbols,

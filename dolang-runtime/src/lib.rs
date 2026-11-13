@@ -107,7 +107,6 @@ impl<'v> ProgramAnnex<'v> {
 
 unsafe impl<'v> gc::Collect for Program<'v> {
     const CYCLIC: bool = true;
-    const IMMUTABLE: bool = false;
     type Annex = ProgramAnnex<'v>;
 
     fn accept(&self, visit: &mut dyn gc::arena::Visit) -> ControlFlow<()> {
