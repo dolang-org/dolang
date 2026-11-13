@@ -69,6 +69,14 @@ collection, even though collections currently happen only at explicit
 safepoints. `Slot::new` is `unsafe` for this reason: creating a slot over a
 location claims the collector can see it.
 
+Creating an object moves references from wherever they are rooted into its
+payload. To keep them visible across the allocation, allocate first with an
+embryo (`gc::Embryo`, through `TypeHandle::embryo` or `tuple::embryo`), then
+finish it with the payload. Allocating the embryo counts as a possible
+collection; finishing it never allocates, so the references move straight from
+their rooted location into the object. An unfinished embryo is not linked,
+traced, or counted.
+
 ## Object Protocol
 
 The dynamic type system is organized in three layers, each building on the one

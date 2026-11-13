@@ -931,7 +931,7 @@ impl<'v, T: Protocol<'v>> TypeHandle<'v, T> {
     where
         T::Annex: Default,
     {
-        self.create_with_annex(alloc, value, Default::default(), out)
+        self.embryo(alloc).finish(alloc, value, out)
     }
 
     pub(crate) fn create_with_annex(
@@ -941,12 +941,54 @@ impl<'v, T: Protocol<'v>> TypeHandle<'v, T> {
         annex: T::Annex,
         out: impl Output<'v>,
     ) {
+        self.embryo(alloc)
+            .finish_with_annex(alloc, value, annex, out)
+    }
+
+    /// Allocates an object of this type without initializing it; see
+    /// [`ObjEmbryo`].
+    pub(crate) fn embryo(&self, alloc: &mut impl Alloc<'v>) -> ObjEmbryo<'v, T> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        Output::set(
-            alloc,
-            out,
-            Value::from_object(GcObj::new_annex(vm.arena(), *self, value, annex)),
-        );
+        ObjEmbryo {
+            embryo: unsafe { gc::Embryo::new_sized(vm.arena()) },
+            handle: *self,
+        }
+    }
+}
+
+/// An allocated but uninitialized object of type `T`.
+///
+/// Allocating the embryo counts as a possible collection; finishing it does
+/// not allocate. Move GC references out of their rooted location only once the
+/// embryo exists, preferably in the arguments of the `finish*` call, where the
+/// borrow of `alloc` keeps the strand from allocating in between.
+pub(crate) struct ObjEmbryo<'v, T: Protocol<'v>> {
+    embryo: gc::Embryo<'v, Header, T>,
+    handle: TypeHandle<'v, T>,
+}
+
+impl<'v, T: Protocol<'v>> ObjEmbryo<'v, T> {
+    pub(crate) fn finish(self, alloc: &mut impl Alloc<'v>, value: T, out: impl Output<'v>)
+    where
+        T::Annex: Default,
+    {
+        self.finish_with_annex(alloc, value, Default::default(), out)
+    }
+
+    pub(crate) fn finish_with_annex(
+        self,
+        alloc: &mut impl Alloc<'v>,
+        value: T,
+        annex: T::Annex,
+        out: impl Output<'v>,
+    ) {
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+        let arena = vm.arena();
+        let obj: GcObj<'v, T> = unsafe {
+            self.embryo
+                .finish_sized(Header::new(arena, self.handle.vtbl), value, annex)
+        };
+        Output::set(alloc, out, Value::from_object(obj));
     }
 }
 

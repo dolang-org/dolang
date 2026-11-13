@@ -21,13 +21,10 @@ pub(crate) fn create<'v>(
     entries: Vec<UnwindEntry<'v>>,
     out: impl Output<'v>,
 ) {
-    strand.builtin_types().backtrace.create(
-        strand,
-        Backtrace {
-            entries: entries.into_boxed_slice(),
-        },
-        out,
-    );
+    strand
+        .builtin_types()
+        .backtrace
+        .create(strand, Backtrace::new(entries), out);
 }
 
 pub(crate) fn entries_from_value<'v>(
@@ -56,6 +53,14 @@ pub(crate) fn frame_from_value<'v, 'a>(
 
 pub(crate) struct Backtrace<'v> {
     entries: Box<[UnwindEntry<'v>]>,
+}
+
+impl<'v> Backtrace<'v> {
+    pub(crate) fn new(entries: Vec<UnwindEntry<'v>>) -> Self {
+        Self {
+            entries: entries.into_boxed_slice(),
+        }
+    }
 }
 
 unsafe impl<'v> Collect for Backtrace<'v> {
