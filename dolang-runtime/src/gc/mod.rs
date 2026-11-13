@@ -71,10 +71,6 @@ impl<'v, T: Upcast<Header>> Base<'v, T> {
         self.base_ref().vtbl
     }
 
-    pub(crate) unsafe fn new_from_raw(arena: &Arena<'v>, ptr: NonNull<T>, size: usize) -> Self {
-        unsafe { Self::new_from_raw_inner(NonNull::from_ref(&arena.0), ptr, size) }
-    }
-
     unsafe fn new_from_raw_inner(
         arena: NonNull<arena::ArenaInner>,
         ptr: NonNull<T>,
@@ -379,17 +375,6 @@ pub(crate) struct BoxedSized<H: Upcast<Header>, T: Collect> {
 }
 
 impl<H: Upcast<Header>, T: Collect> BoxedSized<H, T> {
-    pub(crate) fn from_parts(header: H, value: T) -> Self
-    where
-        T::Annex: Default,
-    {
-        Self {
-            header,
-            value: UnsafeCell::new(value),
-            annex: Default::default(),
-        }
-    }
-
     pub(crate) fn from_parts_annex(header: H, value: T, annex: T::Annex) -> Self {
         Self {
             header,
@@ -433,6 +418,19 @@ impl<H: Upcast<Header>, T> Drop for BoxedSlice<H, T> {
 
 type BoxedStr<H> = BoxedSlice<H, u8>;
 
+/// A GC allocation whose payload is not yet initialized.
+///
+/// Creating an object takes two steps: allocate an embryo, then finish it with
+/// the header and payload. Finishing never allocates, so a caller can allocate
+/// first and then move GC references straight from a rooted location into the
+/// payload with no possible collection in between. Until it is finished, an
+/// embryo is not linked into the cyclic ring, traced, or counted in the
+/// arena's allocation balance. Dropping an unfinished embryo only deallocates
+/// it. If allocation ever triggers collection, the check belongs where an
+/// embryo is created, not where it is finished.
+///
+/// An embryo never holds an initialized value outside a `finish*` call, except
+/// the bytes of a `[u8]` embryo, which need no drop.
 pub(crate) struct Embryo<'v, H: Upcast<Header>, T: ?Sized + Boxable<H>> {
     ptr: NonNull<u8>,
     layout: Layout,
@@ -445,27 +443,171 @@ impl<'v, H: Upcast<Header>, T: ?Sized + Boxable<H>> Drop for Embryo<'v, H, T> {
     }
 }
 
+impl<'v, H: Upcast<Header>, T: ?Sized + Boxable<H>> Embryo<'v, H, T> {
+    /// Allocates `layout` uninitialized and records the arena where the
+    /// header's arena pointer goes.
+    unsafe fn alloc_raw(arena: &Arena<'v>, layout: Layout) -> Self {
+        let Some(ptr) = NonNull::new(unsafe { alloc::alloc(layout) }) else {
+            alloc::handle_alloc_error(layout)
+        };
+        unsafe {
+            ptr.cast::<NonNull<arena::ArenaInner>>()
+                .write(NonNull::from_ref(&arena.0));
+        }
+        Self {
+            ptr,
+            layout,
+            phantom: PhantomData,
+        }
+    }
+
+    /// Links the finished object into its arena.
+    ///
+    /// # Safety
+    /// The header and payload must be fully initialized for `U`, and the
+    /// allocation must have the layout `U`'s vtable deallocates with.
+    unsafe fn link<U: Upcast<Header>>(self) -> Base<'v, U> {
+        unsafe {
+            let arena = self.arena_inner();
+            let ptr = self.ptr.cast::<U>();
+            let size = self.layout.size();
+            mem::forget(self);
+            Base::new_from_raw_inner(arena, ptr, size)
+        }
+    }
+
+    unsafe fn arena_inner(&self) -> NonNull<arena::ArenaInner> {
+        unsafe {
+            self.ptr
+                .cast::<NonNull<arena::ArenaInner>>()
+                .as_ptr()
+                .read()
+        }
+    }
+
+    fn arena_inner_from_header(header: &H) -> NonNull<arena::ArenaInner> {
+        unsafe { NonNull::from_ref(header).cast::<Header>().as_ref().arena }
+    }
+}
+
+impl<'v, H: Upcast<Header>, T: Collect + Boxable<H>> Embryo<'v, H, T>
+where
+    Boxed<H, T>: Upcast<Header>,
+    BoxedSized<H, T>: Upcast<Header>,
+{
+    /// # Safety
+    /// See [`Embryo::finish_sized`].
+    pub(crate) unsafe fn new_sized(arena: &Arena<'v>) -> Self {
+        unsafe { Self::alloc_raw(arena, sized_layout::<H, T>()) }
+    }
+
+    /// Initializes and links the object. Does not allocate.
+    ///
+    /// # Safety
+    /// `header` must belong to the embryo's arena and carry `T`'s vtable.
+    pub(crate) unsafe fn finish_sized(
+        self,
+        header: H,
+        value: T,
+        annex: T::Annex,
+    ) -> Base<'v, Boxed<H, T>> {
+        unsafe {
+            debug_assert_eq!(self.arena_inner(), Self::arena_inner_from_header(&header));
+            self.ptr
+                .cast::<BoxedSized<H, T>>()
+                .write(BoxedSized::from_parts_annex(header, value, annex));
+            self.link()
+        }
+    }
+}
+
+impl<'v, H: Upcast<Header>, T> Embryo<'v, H, [T]>
+where
+    Boxed<H, [T]>: Upcast<Header>,
+    [T]: Boxable<H>,
+{
+    /// Allocates a slice of exactly `len` elements.
+    ///
+    /// # Safety
+    /// See [`Embryo::finish_slice`].
+    pub(crate) unsafe fn new_slice(arena: &Arena<'v>, len: usize) -> Self {
+        unsafe {
+            let this = Self::alloc_raw(arena, slice_layout::<H, T>(len));
+            // Until finished, `len` records the length the slice was allocated for
+            let boxed = this.ptr.cast::<BoxedSlice<H, T>>();
+            (&raw mut (*boxed.as_ptr()).len).write(len);
+            this
+        }
+    }
+
+    /// Initializes the elements from `iter` in order and links the object.
+    /// Does not allocate, unless `iter` does.
+    ///
+    /// # Panics
+    /// If `iter` yields fewer or more elements than the embryo was allocated
+    /// for. The elements already written are dropped.
+    ///
+    /// # Safety
+    /// `header` must belong to the embryo's arena and carry `[T]`'s vtable.
+    pub(crate) unsafe fn finish_slice(
+        self,
+        header: H,
+        iter: impl IntoIterator<Item = T>,
+    ) -> Base<'v, Boxed<H, [T]>> {
+        /// Drops the written prefix if writing the elements panics.
+        struct Prefix<T> {
+            values: *mut T,
+            written: usize,
+        }
+
+        impl<T> Drop for Prefix<T> {
+            fn drop(&mut self) {
+                unsafe {
+                    ptr::drop_in_place(ptr::slice_from_raw_parts_mut(self.values, self.written))
+                }
+            }
+        }
+
+        unsafe {
+            debug_assert_eq!(self.arena_inner(), Self::arena_inner_from_header(&header));
+            let boxed = self.ptr.cast::<BoxedSlice<H, T>>();
+            let len = (*boxed.as_ptr()).len;
+            let mut prefix = Prefix {
+                values: BoxedSlice::raw_values(boxed).cast::<T>().as_ptr(),
+                written: 0,
+            };
+            let mut iter = iter.into_iter();
+            while prefix.written < len {
+                let Some(value) = iter.next() else {
+                    panic!(
+                        "slice embryo finished with {} of {len} elements",
+                        prefix.written
+                    )
+                };
+                prefix.values.add(prefix.written).write(value);
+                prefix.written += 1;
+            }
+            assert!(
+                iter.next().is_none(),
+                "slice embryo finished with more than {len} elements"
+            );
+            mem::forget(prefix);
+            (&raw mut (*boxed.as_ptr()).header).write(header);
+            self.link()
+        }
+    }
+}
+
 impl<'v, H: Upcast<Header>> Embryo<'v, H, [u8]>
 where
     Boxed<H, [u8]>: Upcast<Header>,
     [u8]: Boxable<H>,
 {
     pub(crate) unsafe fn from_arena_capacity(arena: &Arena<'v>, cap: usize) -> Self {
-        let layout = slice_layout::<H, u8>(cap);
-        let ptr = unsafe { alloc::alloc(layout) };
-        if ptr.is_null() {
-            alloc::handle_alloc_error(layout);
-        }
-        let boxed = ptr.cast::<BoxedSlice<H, u8>>();
         unsafe {
-            ptr.cast::<NonNull<arena::ArenaInner>>()
-                .write(NonNull::from_ref(&arena.0));
-            (&raw mut (*boxed).len).write(0);
-        }
-        Self {
-            ptr: unsafe { NonNull::new_unchecked(ptr) },
-            layout,
-            phantom: PhantomData,
+            let this = Self::alloc_raw(arena, slice_layout::<H, u8>(cap));
+            (&raw mut (*this.ptr.cast::<BoxedSlice<H, u8>>().as_ptr()).len).write(0);
+            this
         }
     }
 
@@ -520,11 +662,7 @@ where
         unsafe {
             debug_assert_eq!(self.arena_inner(), Self::arena_inner_from_header(&header));
             self.header_ptr().write(header);
-            let arena = self.arena_inner();
-            let ptr = self.ptr.cast::<Boxed<H, [u8]>>();
-            let size = self.layout.size();
-            mem::forget(self);
-            Base::new_from_raw_inner(arena, ptr, size)
+            self.link()
         }
     }
 
@@ -592,19 +730,6 @@ where
         let boxed = self.ptr.cast::<BoxedSlice<H, u8>>().as_ptr();
         unsafe { &raw mut (*boxed).len }
     }
-
-    unsafe fn arena_inner(&self) -> NonNull<arena::ArenaInner> {
-        unsafe {
-            self.ptr
-                .cast::<NonNull<arena::ArenaInner>>()
-                .as_ptr()
-                .read()
-        }
-    }
-
-    fn arena_inner_from_header(header: &H) -> NonNull<arena::ArenaInner> {
-        unsafe { NonNull::from_ref(header).cast::<Header>().as_ref().arena }
-    }
 }
 
 impl<'v, H: Upcast<Header>> Embryo<'v, H, [u8]>
@@ -621,11 +746,7 @@ where
         unsafe {
             debug_assert_eq!(self.arena_inner(), Self::arena_inner_from_header(&header));
             self.header_ptr().write(header);
-            let arena = self.arena_inner();
-            let ptr = self.ptr.cast::<Boxed<H, str>>();
-            let size = self.layout.size();
-            mem::forget(self);
-            Base::new_from_raw_inner(arena, ptr, size)
+            self.link()
         }
     }
 }
@@ -829,21 +950,7 @@ where
     where
         T::Annex: Default,
     {
-        let boxed = BoxedSized::from_parts(header, value);
-        unsafe {
-            let layout = sized_layout::<H, T>();
-            let alloc = alloc::alloc(layout) as *mut BoxedSized<H, T>;
-            if alloc.is_null() {
-                alloc::handle_alloc_error(layout);
-            }
-            alloc.write(boxed);
-
-            Base::new_from_raw(
-                arena,
-                NonNull::new_unchecked(alloc as *mut Boxed<H, T>),
-                layout.size(),
-            )
-        }
+        unsafe { Self::from_parts_annex(arena, header, value, Default::default()) }
     }
 
     pub(crate) unsafe fn from_parts_annex(
@@ -852,21 +959,7 @@ where
         value: T,
         annex: T::Annex,
     ) -> Self {
-        let boxed = BoxedSized::from_parts_annex(header, value, annex);
-        unsafe {
-            let layout = sized_layout::<H, T>();
-            let alloc = alloc::alloc(layout) as *mut BoxedSized<H, T>;
-            if alloc.is_null() {
-                alloc::handle_alloc_error(layout);
-            }
-            alloc.write(boxed);
-
-            Base::new_from_raw(
-                arena,
-                NonNull::new_unchecked(alloc as *mut Boxed<H, T>),
-                layout.size(),
-            )
-        }
+        unsafe { Embryo::<H, T>::new_sized(arena).finish_sized(header, value, annex) }
     }
 }
 
@@ -880,24 +973,7 @@ where
         header: H,
         iter: impl ExactSizeIterator<Item = T>,
     ) -> Self {
-        let layout = slice_layout::<H, T>(iter.len());
-        unsafe {
-            let boxed = alloc::alloc(layout) as *mut BoxedSlice<H, T>;
-            if boxed.is_null() {
-                alloc::handle_alloc_error(layout);
-            }
-            ptr::write(&raw mut (*boxed).header, header);
-            ptr::write(&raw mut (*boxed).len, iter.len());
-            let slots = (boxed as *mut u8).add(size_of::<BoxedSlice<H, T>>()) as *mut UnsafeCell<T>;
-            for (i, e) in iter.enumerate() {
-                (*slots.add(i)).get().write(e);
-            }
-            Base::new_from_raw(
-                arena,
-                NonNull::new_unchecked(boxed as *mut Boxed<H, [T]>),
-                layout.size(),
-            )
-        }
+        unsafe { Embryo::<H, [T]>::new_slice(arena, iter.len()).finish_slice(header, iter) }
     }
 }
 
@@ -1140,5 +1216,139 @@ where
 {
     fn as_ref(&self) -> &T {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        cell::{Cell, RefCell},
+        panic::{self, AssertUnwindSafe},
+        rc::Rc,
+    };
+
+    use super::*;
+
+    /// Counts its drops; `id` checks element order.
+    struct Counted {
+        id: usize,
+        drops: Rc<Cell<usize>>,
+    }
+
+    impl Drop for Counted {
+        fn drop(&mut self) {
+            self.drops.update(|n| n + 1);
+        }
+    }
+
+    // SAFETY: holds no GC references.
+    unsafe impl Collect for Counted {
+        const CYCLIC: bool = false;
+        const IMMUTABLE: bool = true;
+        type Annex = ();
+
+        fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
+            ControlFlow::Continue(())
+        }
+
+        fn clear(&mut self) {}
+    }
+
+    struct Node<'v> {
+        children: RefCell<Vec<Gc<'v, Node<'v>>>>,
+        drops: Rc<Cell<usize>>,
+    }
+
+    impl Drop for Node<'_> {
+        fn drop(&mut self) {
+            self.drops.update(|n| n + 1);
+        }
+    }
+
+    // SAFETY: accept visits every child; clear releases every child.
+    unsafe impl Collect for Node<'_> {
+        const CYCLIC: bool = true;
+        const IMMUTABLE: bool = true;
+        type Annex = ();
+
+        fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+            for child in &*self.children.borrow() {
+                child.accept(visit)?;
+            }
+            ControlFlow::Continue(())
+        }
+
+        fn clear(&mut self) {
+            self.children.get_mut().clear();
+        }
+    }
+
+    fn header<'v, T: ?Sized + Boxable<Header>>(arena: &Arena<'v>) -> Header {
+        unsafe { Header::new(arena, NonNull::from_ref(<T as Boxable<Header>>::VTBL)) }
+    }
+
+    fn counted(drops: &Rc<Cell<usize>>, ids: std::ops::Range<usize>) -> Vec<Counted> {
+        ids.map(|id| Counted {
+            id,
+            drops: drops.clone(),
+        })
+        .collect()
+    }
+
+    #[test]
+    fn unfinished_embryos_are_not_counted() {
+        let arena = Arena::new();
+        drop(unsafe { Embryo::<Header, Counted>::new_sized(&arena) });
+        drop(unsafe { Embryo::<Header, [Counted]>::new_slice(&arena, 3) });
+        assert_eq!(arena.0.balance.get(), 0);
+        assert_eq!(arena.allocated(), 0);
+    }
+
+    #[test]
+    fn finished_sized_embryo_is_linked_and_collectable() {
+        let arena = Arena::new();
+        let drops = Rc::new(Cell::new(0));
+        let embryo = unsafe { Embryo::<Header, Node>::new_sized(&arena) };
+        let node = Node {
+            children: RefCell::new(Vec::new()),
+            drops: drops.clone(),
+        };
+        let node: Gc<Node> = unsafe { embryo.finish_sized(header::<Node>(&arena), node, ()) };
+        assert_eq!(arena.0.balance.get(), 1);
+        assert_ne!(arena.allocated(), 0);
+        node.children.borrow_mut().push(node.clone());
+        drop(node);
+        assert_eq!(drops.get(), 0);
+        arena.collect_full();
+        assert_eq!(drops.get(), 1);
+    }
+
+    #[test]
+    fn slice_embryo_finishes_in_order() {
+        let arena = Arena::new();
+        let drops = Rc::new(Cell::new(0));
+        let embryo = unsafe { Embryo::<Header, [Counted]>::new_slice(&arena, 3) };
+        let slice: Gc<[Counted]> =
+            unsafe { embryo.finish_slice(header::<[Counted]>(&arena), counted(&drops, 0..3)) };
+        let ids: Vec<_> = slice.iter().map(|c| c.id).collect();
+        assert_eq!(ids, [0, 1, 2]);
+        drop(slice);
+        assert_eq!(drops.get(), 3);
+    }
+
+    #[test]
+    fn slice_embryo_length_mismatch_drops_written_prefix() {
+        let arena = Arena::new();
+        for (len, given) in [(3, 2), (2, 3)] {
+            let drops = Rc::new(Cell::new(0));
+            let embryo = unsafe { Embryo::<Header, [Counted]>::new_slice(&arena, len) };
+            let values = counted(&drops, 0..given);
+            let result = panic::catch_unwind(AssertUnwindSafe(|| unsafe {
+                embryo.finish_slice(header::<[Counted]>(&arena), values)
+            }));
+            assert!(result.is_err());
+            assert_eq!(drops.get(), given, "len {len}, given {given}");
+        }
+        assert_eq!(arena.0.balance.get(), 0);
     }
 }

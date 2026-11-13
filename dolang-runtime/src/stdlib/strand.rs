@@ -649,17 +649,22 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     ControlFlow::Continue(())
                 };
                 // Safety: `visit` visits each staged entry's program reference;
-                // an entry is taken out of its cell only outside a collection
+                // an entry leaves its cell only after its object is allocated
                 unsafe {
                     strand.with_scan(visit, async |strand| {
                         strand
                             .with_slots_dynamic(raw.len(), async |strand, mut infos| {
                                 for (i, raw) in raw.iter().enumerate() {
-                                    let raw = raw.take().expect("taken once");
-                                    ty.create(strand, StrandInfo::new(raw), infos.at(i));
+                                    let embryo = ty.embryo(strand);
+                                    embryo.finish(
+                                        strand,
+                                        StrandInfo::new(raw.take().expect("taken once")),
+                                        infos.at(i),
+                                    );
                                 }
                                 let len = infos.len();
-                                tuple::create(strand, (0..len).map(|i| infos.at(i).take()), out);
+                                let embryo = tuple::embryo(strand, len);
+                                embryo.finish(strand, (0..len).map(|i| infos.at(i).take()), out);
                             })
                             .await
                     })

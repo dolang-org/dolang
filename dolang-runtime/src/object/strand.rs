@@ -1123,18 +1123,23 @@ impl<'v> Protocol<'v> for StrandInfo<'v> {
                 Ok(())
             }
             sym::BACKTRACE => {
-                let mut state = info.backtrace.borrow_mut();
-                match &mut *state {
-                    InfoBacktrace::Built(value) => Output::set(strand, out, &*value),
-                    InfoBacktrace::Entries(entries) => {
-                        let entries = mem::take(entries);
-                        // `accept` borrows the state, so release it before allocating
-                        drop(state);
-                        let mut out = out;
-                        backtrace::create(strand, entries, &mut out);
-                        *info.backtrace.borrow_mut() = InfoBacktrace::Built(out.dup());
-                    }
+                if let InfoBacktrace::Built(value) = &*info.backtrace.borrow() {
+                    Output::set(strand, out, value);
+                    return Ok(());
                 }
+                // Allocate before borrowing: `accept` borrows the state
+                let embryo = strand.builtin_types().backtrace.embryo(strand);
+                let mut state = info.backtrace.borrow_mut();
+                let InfoBacktrace::Entries(entries) = &mut *state else {
+                    unreachable!("backtrace built during allocation")
+                };
+                let mut out = out;
+                embryo.finish(
+                    strand,
+                    backtrace::Backtrace::new(mem::take(entries)),
+                    &mut out,
+                );
+                *state = InfoBacktrace::Built(out.dup());
                 Ok(())
             }
             _ => instance_get_fallback(strand, &this, field, out),

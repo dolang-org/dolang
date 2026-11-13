@@ -54,6 +54,35 @@ pub(crate) fn create<'v, I: IntoIterator<Item = Value<'v>>>(
     Output::set(alloc, out, Value::from_object(tuple(vm, iter)));
 }
 
+/// Allocates a tuple of `len` elements without initializing it; see
+/// [`ObjEmbryo`](super::protocol::ObjEmbryo) for the contract.
+pub(crate) fn embryo<'v>(alloc: &mut impl Alloc<'v>, len: usize) -> TupleEmbryo<'v> {
+    let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+    TupleEmbryo(unsafe { gc::Embryo::new_slice(vm.arena(), len) })
+}
+
+/// An allocated but uninitialized tuple, created by [`embryo`].
+pub(crate) struct TupleEmbryo<'v>(gc::Embryo<'v, Header, [Value<'v>]>);
+
+impl<'v> TupleEmbryo<'v> {
+    /// Fills the tuple from `iter` and places it into `out`.
+    ///
+    /// # Panics
+    /// If `iter` yields a different number of elements than the embryo was
+    /// allocated for.
+    pub(crate) fn finish(
+        self,
+        alloc: &mut impl Alloc<'v>,
+        iter: impl IntoIterator<Item = Value<'v>>,
+        out: impl Output<'v>,
+    ) {
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+        let header = unsafe { Header::new(vm.arena(), vm.builtin_types().tuple.vtbl) };
+        let tuple = unsafe { self.0.finish_slice(header, iter) };
+        Output::set(alloc, out, Value::from_object(tuple));
+    }
+}
+
 pub(crate) fn from_args<'v, 's>(
     strand: &mut Strand<'v, 's>,
     args: Args<'v, '_>,
