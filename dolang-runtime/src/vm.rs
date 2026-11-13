@@ -855,7 +855,10 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
     {
         let sym = self.vm.sym(name);
         let mut field = Value::NIL;
-        ty.create(self.vm, value, Slot::new(&mut field));
+        // Safety: written by the last allocation; see `Slot::new`.
+        ty.create(self.vm, value, unsafe {
+            Slot::new(NonNull::from(&mut field))
+        });
         self.push(sym, NativeField::Value(field));
         self
     }
@@ -870,7 +873,10 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
     ) -> Self {
         let sym = self.vm.sym(name);
         let mut field = Value::NIL;
-        ty.create_with_annex(self.vm, value, annex, Slot::new(&mut field));
+        // Safety: written by the last allocation; see `Slot::new`.
+        ty.create_with_annex(self.vm, value, annex, unsafe {
+            Slot::new(NonNull::from(&mut field))
+        });
         self.push(sym, NativeField::Value(field));
         self
     }
@@ -1166,7 +1172,10 @@ impl<'v> Register<'v> {
     {
         let name = self.inner.string(name);
         let mut module = Value::NIL;
-        ty.create(self, value, Slot::new(&mut module));
+        // Safety: written by the last allocation; see `Slot::new`.
+        ty.create(self, value, unsafe {
+            Slot::new(NonNull::from(&mut module))
+        });
         self.inner.insert_native_module(name, module);
         self
     }
@@ -1181,7 +1190,10 @@ impl<'v> Register<'v> {
     ) -> &mut Self {
         let name = self.inner.string(name);
         let mut module = Value::NIL;
-        ty.create_with_annex(self, value, annex, Slot::new(&mut module));
+        // Safety: written by the last allocation; see `Slot::new`.
+        ty.create_with_annex(self, value, annex, unsafe {
+            Slot::new(NonNull::from(&mut module))
+        });
         self.inner.insert_native_module(name, module);
         self
     }

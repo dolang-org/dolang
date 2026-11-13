@@ -309,11 +309,13 @@ impl<'v> Protocol<'v> for [Value<'v>] {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.get();
-        for item in borrow.iter() {
-            let mut tmp = item.dup();
-            sink.positional(strand, Slot::new(&mut tmp))?;
-        }
-        Ok(())
+        strand.with_slots_sync(|strand, [mut tmp]| {
+            for item in borrow.iter() {
+                Output::set(strand, &mut tmp, item);
+                sink.positional(strand, Slot::reborrow(&mut tmp))?;
+            }
+            Ok(())
+        })
     }
 
     async fn op_mcall<'a, 's>(

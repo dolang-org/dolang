@@ -17,6 +17,7 @@ use std::{
     mem::{self, MaybeUninit},
     ops::Deref,
     pin::Pin,
+    ptr::NonNull,
     str,
     task::{Context, Poll, ready},
 };
@@ -888,7 +889,10 @@ impl<'v> Input<'v> for ByteHandle {
         let handle = mem::replace(self, ByteHandle::read(futures::io::empty()));
         let ty = *vm.state::<StreamType>();
         let mut value = Value::NIL;
-        ty.create(&mut alloc, Stream::new(handle), Slot::new(&mut value));
+        // Safety: written by the last allocation; see `Slot::new`.
+        ty.create(&mut alloc, Stream::new(handle), unsafe {
+            Slot::new(NonNull::from(&mut value))
+        });
         InputBy::Value(value, None)
     }
 }

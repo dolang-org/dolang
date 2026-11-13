@@ -261,11 +261,13 @@ impl<'v> Protocol<'v> for Rest<'v> {
             .borrow()
             .ok_or_else(|| Error::concurrency(strand))?;
         let start = rest.start.min(borrow.inner.len());
-        for item in &borrow.inner[start..] {
-            let mut tmp = item.dup();
-            sink.positional(strand, Slot::new(&mut tmp))?;
-        }
-        Ok(())
+        strand.with_slots_sync(|strand, [mut tmp]| {
+            for item in &borrow.inner[start..] {
+                Output::set(strand, &mut tmp, item);
+                sink.positional(strand, Slot::reborrow(&mut tmp))?;
+            }
+            Ok(())
+        })
     }
 
     async fn op_unpack<'a, 's>(
@@ -1035,20 +1037,18 @@ impl<'v> Protocol<'v> for Array<'v> {
                         None => borrow.inner.pop(),
                     }
                 };
-                out.store(match value {
-                    Some(value) => value,
+                match value {
+                    Some(value) => out.store(value),
                     None => {
                         if let Some(mut default) = default {
-                            default.take()
+                            out.store(default.take())
                         } else if let Some(or_else) = or_else {
-                            let mut value = Value::NIL;
-                            call!(strand, or_else, Slot::new(&mut value)).await?;
-                            value
+                            call!(strand, or_else, out).await?;
                         } else {
                             return Err(Error::index(strand));
                         }
                     }
-                });
+                }
                 Ok(())
             }
             sym::DELETE => {
@@ -1181,11 +1181,13 @@ impl<'v> Protocol<'v> for Array<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        for item in borrow.inner.iter() {
-            let mut tmp = item.dup();
-            sink.positional(strand, Slot::new(&mut tmp))?;
-        }
-        Ok(())
+        strand.with_slots_sync(|strand, [mut tmp]| {
+            for item in borrow.inner.iter() {
+                Output::set(strand, &mut tmp, item);
+                sink.positional(strand, Slot::reborrow(&mut tmp))?;
+            }
+            Ok(())
+        })
     }
 
     async fn op_unpack<'a, 's>(

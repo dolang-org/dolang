@@ -1,6 +1,6 @@
 //! Lazy dictionary-like projections over native objects.
 
-use std::{hash::Hasher, ops::ControlFlow};
+use std::{hash::Hasher, ops::ControlFlow, ptr::NonNull};
 
 use crate::value::fmt::Format;
 
@@ -168,16 +168,14 @@ pub trait DictLike<'v>: 'v {
     ) -> Result<'v, 's, ()> {
         Output::set(strand, &mut out, Empty::Array);
         let array = out.as_array(strand).unwrap();
-        let mut instance = 0i64;
-        loop {
-            let mut tmp = Value::NIL;
-            if !self.get(this, strand, key, instance, Slot::new(&mut tmp))? {
-                break;
+        strand.with_slots_sync(|strand, [mut tmp]| {
+            let mut instance = 0i64;
+            while self.get(this, strand, key, instance, Slot::reborrow(&mut tmp))? {
+                array.push(strand, &tmp)?;
+                instance += 1;
             }
-            array.push(strand, &tmp)?;
-            instance += 1;
-        }
-        Ok(())
+            Ok(())
+        })
     }
 }
 
@@ -269,7 +267,8 @@ impl<'v, I: DictLike<'v>> Input<'v> for DictView<'v, '_, I> {
                 owner,
                 glue: Box::new(Glue { view, ty }),
             },
-            Slot::new(&mut value),
+            // Safety: written by the last allocation; see `Slot::new`.
+            unsafe { Slot::new(NonNull::from(&mut value)) },
         );
         InputBy::Value(value, None)
     }

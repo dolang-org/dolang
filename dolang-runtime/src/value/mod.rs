@@ -10,7 +10,8 @@ use std::{
     marker::PhantomData,
     mem::{self, MaybeUninit},
     ops::{ControlFlow, Deref},
-    ptr, result, str,
+    ptr::{self, NonNull},
+    result, str,
 };
 
 use crate::{
@@ -1441,10 +1442,10 @@ impl<'v> Value<'v> {
         field: Sym<'v, 'a>,
         value: impl Input<'v>,
     ) -> Result<'v, 's, ()> {
-        let mut temp = Value::NIL;
-        let mut slot = Slot::new(&mut temp);
-        Output::set(strand, &mut slot, value);
-        self.op_set(strand, field, slot)
+        strand.with_slots_sync(|strand, [mut slot]| {
+            Output::set(strand, &mut slot, value);
+            self.op_set(strand, field, slot)
+        })
     }
 
     /// Get an element at the given index.
@@ -1468,10 +1469,10 @@ impl<'v> Value<'v> {
         index: impl Input<'v>,
         mut out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
-        let mut temp = Value::NIL;
-        let mut slot = Slot::new(&mut temp);
-        Output::set(strand, &mut slot, index);
-        self.op_index(strand, &slot, Output::as_slot(&mut out, private::Sealed))
+        strand.with_slots_sync(|strand, [mut slot]| {
+            Output::set(strand, &mut slot, index);
+            self.op_index(strand, &slot, Output::as_slot(&mut out, private::Sealed))
+        })
     }
 
     /// Assign a value at the given index.
@@ -1487,13 +1488,11 @@ impl<'v> Value<'v> {
         index: impl Input<'v>,
         value: impl Input<'v>,
     ) -> Result<'v, 's, ()> {
-        let mut tempi = Value::NIL;
-        let mut tempv = Value::NIL;
-        let mut sloti = Slot::new(&mut tempi);
-        let mut slotv = Slot::new(&mut tempv);
-        Output::set(strand, &mut sloti, index);
-        Output::set(strand, &mut slotv, value);
-        self.op_assign(strand, sloti, slotv)
+        strand.with_slots_sync(|strand, [mut sloti, mut slotv]| {
+            Output::set(strand, &mut sloti, index);
+            Output::set(strand, &mut slotv, value);
+            self.op_assign(strand, sloti, slotv)
+        })
     }
 
     /// Obtain iterator for value
@@ -1546,10 +1545,12 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         item: impl Input<'v>,
     ) -> Result<'v, 's, ()> {
-        let mut temp = Value::NIL;
-        let mut slot = Slot::new(&mut temp);
-        Output::set(strand, &mut slot, item);
-        self.op_put(strand, slot).await
+        strand
+            .with_slots(async |strand, [mut slot]| {
+                Output::set(strand, &mut slot, item);
+                self.op_put(strand, slot).await
+            })
+            .await
     }
 
     /// Downcast to `Int` ([`i128`]).
@@ -2968,7 +2969,8 @@ where
         vm.builtin_types().native_function.create(
             &mut alloc,
             NativeFunction::new(func, "<native>", "<function>"),
-            Slot::new(&mut value),
+            // Safety: written by the last allocation; see `Slot::new`.
+            unsafe { Slot::new(NonNull::from(&mut value)) },
         );
         InputBy::Value(value, None)
     }
@@ -3016,7 +3018,8 @@ where
             &mut alloc,
             NativeFunction::bound(func),
             NativeFunctionAnnex { bound },
-            Slot::new(&mut value),
+            // Safety: written by the last allocation; see `Slot::new`.
+            unsafe { Slot::new(NonNull::from(&mut value)) },
         );
         InputBy::Value(value, None)
     }
@@ -3036,10 +3039,11 @@ pub trait Output<'v>: Sized {
 
     /// Swap with another output.
     fn swap(mut this: Self, mut other: impl Output<'v>) {
-        mem::swap(
-            Output::as_slot(&mut this, private::Sealed).into_inner(),
-            Output::as_slot(&mut other, private::Sealed).into_inner(),
-        );
+        let this = Output::as_slot(&mut this, private::Sealed);
+        let other = Output::as_slot(&mut other, private::Sealed);
+        // Safety: each slot has exclusive access to its location, so the two cannot
+        // overlap, and no reference outlives the swap.
+        unsafe { ptr::swap(this.0.as_ptr(), other.0.as_ptr()) }
     }
 }
 
@@ -3052,15 +3056,30 @@ pub trait Output<'v>: Sized {
 /// # Lifetimes
 /// - `'v`: VM brand, binding this object to a particular VM
 /// - `'a`: scope for which the slot is valid
-pub struct Slot<'v, 'a>(*mut Value<'v>, PhantomData<&'a mut Value<'v>>);
+pub struct Slot<'v, 'a>(NonNull<Value<'v>>, PhantomData<&'a mut Value<'v>>);
 
 impl<'v, 'a> Slot<'v, 'a> {
-    pub(crate) fn new(inner: &'a mut Value<'v>) -> Self {
-        Self(inner as *mut _, PhantomData)
-    }
-
-    pub(crate) fn into_inner(self) -> &'a mut Value<'v> {
-        unsafe { &mut *self.0 }
+    /// Creates a slot over a location.
+    ///
+    /// The slot never holds a `&mut` to the location, except for the duration of a
+    /// write, so the garbage collector can scan the location while the slot lives.
+    ///
+    /// # Safety
+    /// - The location stays scannable by the garbage collector and address-stable for
+    ///   `'a`.
+    /// - The slot has exclusive access to the location for `'a`, as a `&mut` would.
+    ///   Only the collector's scans, which never coincide with a write through the slot,
+    ///   may read it meanwhile.
+    ///
+    /// A location the collector does not scan, such as a local on the Rust stack,
+    /// satisfies the first condition only while no collection can happen at all. Count
+    /// every GC allocation, and any code reached with a [`Strand`], as a possible
+    /// collection: in practice the location must be written by the last allocation of
+    /// the span, such as a `create` into the slot, and then moved somewhere the
+    /// collector scans.
+    #[inline]
+    pub(crate) unsafe fn new(inner: NonNull<Value<'v>>) -> Self {
+        Self(inner, PhantomData)
     }
 
     /// Gives up the slot for a shared reference to its value, for as long as the slot was
@@ -3069,17 +3088,27 @@ impl<'v, 'a> Slot<'v, 'a> {
     /// The value can then be viewed or pinned for that whole scope, such as the pieces of
     /// a call's arguments.
     pub fn into_ref(self) -> &'a Value<'v> {
-        self.into_inner()
+        // Safety: the slot's exclusive access for `'a` becomes a shared borrow; nothing
+        // can write the location through it anymore.
+        unsafe { self.0.as_ref() }
     }
 
+    /// Replaces the value, returning the old one.
+    #[inline]
+    pub(crate) fn replace(&mut self, value: Value<'v>) -> Value<'v> {
+        // Safety: the slot has exclusive access; the `&mut` lives only for the write.
+        unsafe { mem::replace(self.0.as_mut(), value) }
+    }
+
+    #[inline]
     pub(crate) fn take(&mut self) -> Value<'v> {
-        unsafe { mem::replace(&mut *self.0, Value::NIL) }
+        self.replace(Value::NIL)
     }
 
     pub(crate) fn store(&mut self, value: Value<'v>) {
         // Drop the old value only after the write: a drop can run native code that
         // reaches this slot.
-        let old = unsafe { mem::replace(&mut *self.0, value) };
+        let old = self.replace(value);
         drop(old);
     }
 
@@ -3129,7 +3158,7 @@ impl<'v, 'a> Input<'v> for &Slot<'v, 'a> {
         _alloc: &mut dyn Alloc<'v>,
         _: private::Sealed,
     ) -> InputBy<'v, 'b> {
-        InputBy::Borrow(unsafe { &*self.0 })
+        InputBy::Borrow(unsafe { self.0.as_ref() })
     }
 }
 
@@ -3375,7 +3404,10 @@ impl<'v, A: Input<'v>, B: Input<'v>> Input<'v> for (A, B) {
             InputBy::Value(value, _) => value,
         };
         let mut value = Value::NIL;
-        tuple::create(&mut alloc, [first, second], Slot::new(&mut value));
+        // Safety: written by the last allocation; see `Slot::new`.
+        tuple::create(&mut alloc, [first, second], unsafe {
+            Slot::new(NonNull::from(&mut value))
+        });
         InputBy::Value(value, None)
     }
 }
@@ -3401,7 +3433,10 @@ impl<'v, T: Input<'v>> Input<'v> for std::ops::Range<T> {
         let mut value = Value::NIL;
         vm.builtin_types()
             .range
-            .create(&mut alloc, range, Slot::new(&mut value));
+            // Safety: written by the last allocation; see `Slot::new`.
+            .create(&mut alloc, range, unsafe {
+                Slot::new(NonNull::from(&mut value))
+            });
         InputBy::Value(value, None)
     }
 }
@@ -3435,7 +3470,10 @@ where
             .map(|value| Value::from_input(alloc, value))
             .collect::<Vec<_>>();
         let mut value = Value::NIL;
-        tuple::create(&mut alloc, values, Slot::new(&mut value));
+        // Safety: written by the last allocation; see `Slot::new`.
+        tuple::create(&mut alloc, values, unsafe {
+            Slot::new(NonNull::from(&mut value))
+        });
         InputBy::Value(value, None)
     }
 }
@@ -3467,7 +3505,7 @@ impl<'v, 'a> Deref for Slot<'v, 'a> {
 
     #[inline]
     fn deref(&self) -> &Self::Target {
-        unsafe { &*self.0 }
+        unsafe { self.0.as_ref() }
     }
 }
 
@@ -3520,13 +3558,13 @@ impl<'v> Output<'v> for &mut Root<'v> {
         // and 1 weak reference, meaning we own it, which should always be the case as we never
         // clone/duplicate the underlying GC smart pointer.
         // The garbage collector can still obtain an mutable/immutable references during cycle walking,
-        // which is why `Slot` stores a `*mut Value` rather than an `&mut` and never gives out an
+        // which is why `Slot` stores a pointer rather than an `&mut` and never gives out an
         // `&mut`; it only permits reading (either stealing or `dup`ing the `Value`) or overwriting.
         // This means when the world is stopped for GC, no mutable references should be
         // outstanding.  Furthermore, the GC only obtains a mutable reference on objects that
         // need to be cleared to break cycles, but a root guarantees non-cyclic liveness, so it
         // will only obtain immutable references for child visiting.
-        unsafe { Slot::new(&mut (*inner).0) }
+        unsafe { Slot::new(NonNull::from(&mut (*inner).0)) }
     }
 }
 
@@ -3573,7 +3611,13 @@ impl<'v> Input<'v> for &mut Root<'v> {
         _: private::Sealed,
     ) -> InputBy<'v, 'b> {
         let inner = self.0.try_get_mut().unwrap();
-        unsafe { InputBy::Value((*inner).0.take(), Some(Slot::new(&mut (*inner).0))) }
+        // Safety: as for the `Output` impl above, the root's cell is scanned and stable.
+        unsafe {
+            InputBy::Value(
+                (*inner).0.take(),
+                Some(Slot::new(NonNull::from(&mut (*inner).0))),
+            )
+        }
     }
 }
 
@@ -3640,7 +3684,8 @@ impl<'v> ValueCell<'v> {
     /// that do not borrow across a write.
     #[inline]
     pub(crate) unsafe fn slot(&self) -> Slot<'v, '_> {
-        Slot(self.0.get(), PhantomData)
+        // Safety: `UnsafeCell::get` is never null.
+        Slot(unsafe { NonNull::new_unchecked(self.0.get()) }, PhantomData)
     }
 
     #[inline]
@@ -3866,7 +3911,8 @@ impl<'v> Input<'v> for Empty {
     ) -> InputBy<'v, 'a> {
         let types = alloc.alloc_vm(crate::vm::private::Sealed).builtin_types();
         let mut value = Value::NIL;
-        let out = Slot::new(&mut value);
+        // Safety: written by the last allocation; see `Slot::new`.
+        let out = unsafe { Slot::new(NonNull::from(&mut value)) };
         match self {
             Empty::Array => types.array.create(&mut alloc, array::Array::new(), out),
             Empty::Dict => types.dict.create(&mut alloc, dict::Dict::new(), out),

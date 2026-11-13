@@ -91,16 +91,22 @@ impl<'v> Protocol<'v> for ArgAcc<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let pack = this.borrow(strand)?;
-        for (key, value) in &pack.inner {
-            let mut value = value.dup();
-            if let Some(key) = key {
-                let mut key = Value::from_object(key.clone());
-                sink.keyed(strand, Slot::new(&mut key), Slot::new(&mut value))?;
-            } else {
-                sink.positional(strand, Slot::new(&mut value))?;
+        strand.with_slots_sync(|strand, [mut key_slot, mut value_slot]| {
+            for (key, value) in &pack.inner {
+                Output::set(strand, &mut value_slot, value);
+                if let Some(key) = key {
+                    Output::set(strand, &mut key_slot, Value::from_object(key.clone()));
+                    sink.keyed(
+                        strand,
+                        Slot::reborrow(&mut key_slot),
+                        Slot::reborrow(&mut value_slot),
+                    )?;
+                } else {
+                    sink.positional(strand, Slot::reborrow(&mut value_slot))?;
+                }
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     async fn op_mcall<'a, 's>(

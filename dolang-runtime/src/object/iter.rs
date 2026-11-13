@@ -1057,16 +1057,18 @@ impl<'v> Protocol<'v> for Zip<'v> {
         if sources.is_empty() {
             return Ok(false);
         }
-        let mut items = Vec::with_capacity(sources.len());
-        for source in sources {
-            let mut item = Value::NIL;
-            if !source.next(strand, Slot::new(&mut item)).await? {
-                return Ok(false);
-            }
-            items.push(item);
-        }
-        tuple::create(strand, items, out);
-        Ok(true)
+        strand
+            .with_slots_dynamic(sources.len(), async |strand, mut items| {
+                for (i, source) in sources.iter().enumerate() {
+                    if !source.next(strand, items.at(i)).await? {
+                        return Ok(false);
+                    }
+                }
+                let len = sources.len();
+                tuple::create(strand, (0..len).map(|i| items.at(i).take()), out);
+                Ok(true)
+            })
+            .await
     }
 
     fn op_get<'a, 's>(
