@@ -3,7 +3,6 @@ use std::{
     cell::{Cell, OnceCell, RefCell},
     future::Future,
     marker::PhantomData,
-    mem::MaybeUninit,
     ops::{ControlFlow, Deref, DerefMut},
     pin::Pin,
     ptr::{self, NonNull, null},
@@ -767,13 +766,10 @@ impl<'v> StrandInner<'v> {
                         frame.scan(visitor)?;
                         ptr = frame.parent;
                     }
-                    frame::Ptr::Slots(slots_ptr) => {
-                        let slots = slots_ptr.as_ref();
-                        let slice = &*slots.slots;
-                        for cell in slice {
-                            cell.accept(visitor)?;
-                        }
-                        ptr = slots.parent;
+                    frame::Ptr::Scan(scan_ptr) => {
+                        let scan = scan_ptr.as_ref();
+                        scan.scan(visitor)?;
+                        ptr = scan.parent;
                     }
                     frame::Ptr::Native(native_ptr) => {
                         let native = native_ptr.as_ref();
@@ -836,7 +832,7 @@ unsafe fn walk_entries<'v>(mut head: Option<frame::Ptr<'v>>, full: bool) -> Vec<
                 }
                 head = frame.parent;
             }
-            frame::Ptr::Slots(frame) => {
+            frame::Ptr::Scan(frame) => {
                 let frame = unsafe { frame.as_ref() };
                 head = frame.parent;
             }
@@ -1142,6 +1138,59 @@ impl<'v, 's> Strand<'v, 's> {
         f(&access)
     }
 
+    /// Call an async function with `visit` rooting native-held GC references.
+    ///
+    /// `visit` runs whenever the collector scans this strand's stack while `f`
+    /// runs.  It holds a shared borrow of the data it roots, so rooted data that
+    /// changes needs interior mutability, such as a [`Cell`] or [`RefCell`].
+    ///
+    /// # Safety
+    ///
+    /// Each call to `visit` must visit every GC reference the rooted data owns,
+    /// exactly once, and nothing else.  The collector counts visits against
+    /// reference counts, so a missed, repeated, or foreign visit can free a live
+    /// object.  The rooted data must not change while a collection runs, so
+    /// every call within one collection visits the same references.
+    #[inline]
+    pub(crate) async unsafe fn with_scan<R>(
+        &mut self,
+        visit: impl Fn(&mut dyn Visit) -> ControlFlow<()>,
+        f: impl AsyncFnOnce(&mut Strand<'v, 's>) -> R,
+    ) -> R {
+        let frame = frame::Scan::new(Some(self.fp), &visit);
+        let fp = frame::Ptr::Scan(NonNull::from_ref(&frame));
+        // Safety: `frame` and `visit` outlive the guard, which pops the frame
+        let _guard = unsafe { self.inner.push_sp(fp) };
+        f(&mut Strand {
+            inner: self.inner,
+            fp,
+            phantom: PhantomData,
+        })
+        .await
+    }
+
+    /// Call a sync function with `visit` rooting native-held GC references.
+    ///
+    /// # Safety
+    ///
+    /// As for [`Self::with_scan`].
+    #[inline]
+    pub(crate) unsafe fn with_scan_sync<R>(
+        &mut self,
+        visit: impl Fn(&mut dyn Visit) -> ControlFlow<()>,
+        f: impl FnOnce(&mut Strand<'v, 's>) -> R,
+    ) -> R {
+        let frame = frame::Scan::new(Some(self.fp), &visit);
+        let fp = frame::Ptr::Scan(NonNull::from_ref(&frame));
+        // Safety: `frame` and `visit` outlive the guard, which pops the frame
+        let _guard = unsafe { self.inner.push_sp(fp) };
+        f(&mut Strand {
+            inner: self.inner,
+            fp,
+            phantom: PhantomData,
+        })
+    }
+
     /// Call an async function with the requested number of scratch [`Slot`]s, usually inferred
     /// from the passed function.
     #[inline]
@@ -1150,31 +1199,12 @@ impl<'v, 's> Strand<'v, 's> {
         f: impl for<'b> AsyncFnOnce(&mut Strand<'v, 's>, [Slot<'v, 'b>; N]) -> R,
     ) -> R {
         let values: [ValueCell<'v>; N] = std::array::from_fn(|_| ValueCell::default());
-        let mut slots = MaybeUninit::<[Slot<'v, '_>; N]>::uninit();
-
-        unsafe {
-            for (i, value) in values.iter().enumerate() {
-                (slots.as_mut_ptr() as *mut Slot<'v, '_>)
-                    .add(i)
-                    .write(value.slot())
-            }
-            let frame = frame::Slots {
-                parent: Some(self.fp),
-                slots: values.as_slice(),
-            };
-            let _guard = self
-                .inner
-                .push_sp(frame::Ptr::Slots(NonNull::from_ref(&frame)));
-            f(
-                &mut Strand {
-                    inner: self.inner,
-                    fp: frame::Ptr::Slots(NonNull::from_ref(&frame)),
-                    phantom: PhantomData,
-                },
-                slots.assume_init(),
-            )
-            .await
-        }
+        // Safety: the slots are the cells' only writers; the scan only reads
+        let slots = values.each_ref().map(|value| unsafe { value.slot() });
+        let visit =
+            |visitor: &mut dyn Visit| values.iter().try_for_each(|cell| cell.accept(visitor));
+        // Safety: `visit` visits each cell, and each cell owns at most one reference
+        unsafe { self.with_scan(visit, async move |strand| f(strand, slots).await) }.await
     }
 
     /// Call an async function with a runtime-sized scratch [`Slots`] allocation.
@@ -1185,25 +1215,12 @@ impl<'v, 's> Strand<'v, 's> {
         f: impl for<'b> AsyncFnOnce(&mut Strand<'v, 's>, crate::value::Slots<'v, 'b>) -> R,
     ) -> R {
         let values: Vec<_> = (0..len).map(|_| ValueCell::default()).collect();
-
-        unsafe {
-            let frame = frame::Slots {
-                parent: Some(self.fp),
-                slots: values.as_slice(),
-            };
-            let _guard = self
-                .inner
-                .push_sp(frame::Ptr::Slots(NonNull::from_ref(&frame)));
-            f(
-                &mut Strand {
-                    inner: self.inner,
-                    fp: frame::Ptr::Slots(NonNull::from_ref(&frame)),
-                    phantom: PhantomData,
-                },
-                crate::value::Slots::new(values.as_slice()),
-            )
-            .await
-        }
+        // Safety: the slots are the cells' only writers; the scan only reads
+        let slots = unsafe { crate::value::Slots::new(values.as_slice()) };
+        let visit =
+            |visitor: &mut dyn Visit| values.iter().try_for_each(|cell| cell.accept(visitor));
+        // Safety: `visit` visits each cell, and each cell owns at most one reference
+        unsafe { self.with_scan(visit, async move |strand| f(strand, slots).await) }.await
     }
 
     /// Call a sync function with the requested number of scratch [`Slot`]s, usually inferred
@@ -1214,30 +1231,12 @@ impl<'v, 's> Strand<'v, 's> {
         f: impl for<'b> FnOnce(&mut Strand<'v, 's>, [Slot<'v, 'b>; N]) -> R,
     ) -> R {
         let values: [ValueCell<'v>; N] = std::array::from_fn(|_| ValueCell::default());
-        let mut slots = MaybeUninit::<[Slot<'v, '_>; N]>::uninit();
-
-        unsafe {
-            for (i, value) in values.iter().enumerate() {
-                (slots.as_mut_ptr() as *mut Slot<'v, '_>)
-                    .add(i)
-                    .write(value.slot())
-            }
-            let frame = frame::Slots {
-                parent: Some(self.fp),
-                slots: values.as_slice(),
-            };
-            let _guard = self
-                .inner
-                .push_sp(frame::Ptr::Slots(NonNull::from_ref(&frame)));
-            f(
-                &mut Strand {
-                    inner: self.inner,
-                    fp: frame::Ptr::Slots(NonNull::from_ref(&frame)),
-                    phantom: PhantomData,
-                },
-                slots.assume_init(),
-            )
-        }
+        // Safety: the slots are the cells' only writers; the scan only reads
+        let slots = values.each_ref().map(|value| unsafe { value.slot() });
+        let visit =
+            |visitor: &mut dyn Visit| values.iter().try_for_each(|cell| cell.accept(visitor));
+        // Safety: `visit` visits each cell, and each cell owns at most one reference
+        unsafe { self.with_scan_sync(visit, move |strand| f(strand, slots)) }
     }
 
     /// Run function with interrupt mask changed.
@@ -1854,5 +1853,89 @@ mod interrupt_tests {
         assert!(!child.is_timed_out());
         child.timeout();
         assert!(child.is_timed_out());
+    }
+}
+
+#[cfg(test)]
+mod scan_tests {
+    use std::{ops::ControlFlow, ptr::NonNull};
+
+    use super::Strand;
+    use crate::{
+        gc::arena::{Header, Visit},
+        object::tuple,
+        test_support::with_vm,
+        value::{Slot, Value},
+    };
+
+    /// Headers visited by scanning `strand`'s stack.
+    fn scanned(strand: &Strand<'_, '_>) -> Vec<NonNull<Header>> {
+        let mut out = Vec::new();
+        let mut visit = |header| {
+            out.push(header);
+            ControlFlow::Continue(())
+        };
+        // Safety: the frame chain is live while the strand runs
+        let _ = unsafe { strand.inner.scan_stack(&mut visit) };
+        out
+    }
+
+    /// The header of a heap value.
+    fn header(value: &Value<'_>) -> NonNull<Header> {
+        let mut out = None;
+        let _ = value.accept(&mut |header| {
+            out = Some(header);
+            ControlFlow::Continue(())
+        });
+        out.expect("heap value")
+    }
+
+    /// Take a fresh one-element tuple out of `slot`, leaving the slot nil.
+    fn make_tuple<'v>(strand: &mut Strand<'v, '_>, mut slot: Slot<'v, '_>) -> Value<'v> {
+        let item = Value::from_i64(strand, 1);
+        tuple::create(strand, [item], Slot::reborrow(&mut slot));
+        slot.take()
+    }
+
+    #[test]
+    fn with_scan_sync_visits_its_data_only_while_running() {
+        with_vm(async |strand, [tmp]| {
+            let held = make_tuple(strand, tmp);
+            let target = header(&held);
+            assert!(!scanned(strand).contains(&target));
+            let visit = |visitor: &mut dyn Visit| held.accept(visitor);
+            // Safety: `held` owns one reference, which `visit` visits
+            unsafe {
+                strand.with_scan_sync(visit, |strand| assert!(scanned(strand).contains(&target)))
+            };
+            assert!(!scanned(strand).contains(&target));
+        });
+    }
+
+    #[test]
+    fn with_scan_visits_across_await_and_nested_slots() {
+        with_vm(async |strand, [tmp]| {
+            let held = make_tuple(strand, tmp);
+            let target = header(&held);
+            let visit = |visitor: &mut dyn Visit| held.accept(visitor);
+            // Safety: `held` owns one reference, which `visit` visits
+            unsafe {
+                strand.with_scan(visit, async |strand| {
+                    strand
+                        .with_slots(async |strand, [mut inner]| {
+                            let item = Value::from_i64(strand, 2);
+                            tuple::create(strand, [item], Slot::reborrow(&mut inner));
+                            let slot_target = header(&inner);
+                            futures::future::ready(()).await;
+                            let seen = scanned(strand);
+                            assert!(seen.contains(&target));
+                            assert!(seen.contains(&slot_target));
+                        })
+                        .await
+                })
+            }
+            .await;
+            assert!(!scanned(strand).contains(&target));
+        });
     }
 }

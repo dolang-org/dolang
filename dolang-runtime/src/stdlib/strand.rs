@@ -1,8 +1,8 @@
 use std::{
     cell::{Cell, RefCell},
     collections::{HashSet, VecDeque},
+    ops::ControlFlow,
     pin::Pin,
-    ptr::NonNull,
     rc::Rc,
     task::{self, Poll, Waker},
 };
@@ -13,6 +13,7 @@ use crate::{
     arg::Arg,
     call,
     error::{Error, ErrorKind, Result},
+    gc::arena::Visit,
     method,
     object::{
         array::Array,
@@ -630,20 +631,40 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             .function_without_frame("snapshot", async move |strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 // Walk first, then build values: the walk must not allocate
-                let raw = strand.snapshot_raw();
-                let ty = strand.builtin_types().strand_info;
-                let infos: Vec<_> = raw
+                let raw: Vec<_> = strand
+                    .snapshot_raw()
                     .into_iter()
-                    .map(|raw| {
-                        let mut value = Value::NIL;
-                        let info = StrandInfo::new(raw);
-                        // Safety: written by the last allocation; see `Slot::new`.
-                        let slot = unsafe { Slot::new(NonNull::from(&mut value)) };
-                        ty.create(strand, info, slot);
-                        value
-                    })
+                    .map(|raw| RefCell::new(Some(raw)))
                     .collect();
-                tuple::create(strand, infos, out);
+                let ty = strand.builtin_types().strand_info;
+                let visit = |visitor: &mut dyn Visit| {
+                    for raw in &raw {
+                        // Never borrowed across an allocation
+                        if let Some(raw) = &*raw.borrow() {
+                            for entry in &raw.entries {
+                                entry.accept(visitor)?;
+                            }
+                        }
+                    }
+                    ControlFlow::Continue(())
+                };
+                // Safety: `visit` visits each staged entry's program reference;
+                // an entry is taken out of its cell only outside a collection
+                unsafe {
+                    strand.with_scan(visit, async |strand| {
+                        strand
+                            .with_slots_dynamic(raw.len(), async |strand, mut infos| {
+                                for (i, raw) in raw.iter().enumerate() {
+                                    let raw = raw.take().expect("taken once");
+                                    ty.create(strand, StrandInfo::new(raw), infos.at(i));
+                                }
+                                let len = infos.len();
+                                tuple::create(strand, (0..len).map(|i| infos.at(i).take()), out);
+                            })
+                            .await
+                    })
+                }
+                .await;
                 Ok(())
             })
             .function_without_frame("error_backtrace", async move |strand, args, out| {
