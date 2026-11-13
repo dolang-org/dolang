@@ -29,15 +29,15 @@ def serialized_scm block ...rest
 
 #[test]
 def flags_raw_integer_round_trip()
-  let service_type = winscm.ServiceType.from_int 2147483664
+  let service_type = winscm.ServiceType 2147483664
   assert_eq $service_type.int 2147483664
   assert $service_type.contains(:WIN32_OWN_PROCESS:)
 
-  let notify = winscm.NotifyMask.from_int 2147483656
+  let notify = winscm.NotifyMask 2147483656
   assert_eq $notify.int 2147483656
   assert $notify.contains(:RUNNING:)
 
-  let access = winscm.ServiceAccessMask.from_int 2147483664
+  let access = winscm.ServiceAccessMask 2147483664
   assert_eq $access.int 2147483664
   assert $access.contains(:SERVICE_START:)
 

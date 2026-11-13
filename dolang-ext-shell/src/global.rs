@@ -1105,8 +1105,6 @@ pub(crate) struct WindowsSecurityTypes<'v> {
 pub(crate) struct WindowsSecuritySyms<'v> {
     pub(crate) qualifier: Sym<'v, 'v>,
     pub(crate) sid: Sym<'v, 'v>,
-    /// `int`, the raw-bits field every `AccessMask` subtype must expose.
-    pub(crate) int: Sym<'v, 'v>,
     // Declarative ACE spec keys.
     pub(crate) allow: Sym<'v, 'v>,
     pub(crate) deny: Sym<'v, 'v>,
@@ -1224,7 +1222,6 @@ impl<'v> WindowsSecurityGlobal<'v> {
             syms: WindowsSecuritySyms {
                 sid: builder.sym("sid"),
                 qualifier: builder.sym("qualifier"),
-                int: builder.sym("int"),
                 allow: builder.sym("allow"),
                 deny: builder.sym("deny"),
                 audit: builder.sym("audit"),

@@ -8,6 +8,10 @@
 //! get a Do-visible type with construction from symbols, set-algebra
 //! operators (`|`, `&`, `^`, `~`), membership testing, iteration, and debug
 //! output — all implemented once, generically, in [`Flags`].
+//!
+//! A representation can opt into an integer form ([`FlagLike::INT`]), which
+//! adds an `int` getter and construction from an `Int`, and into construction
+//! from related flags types ([`FlagLike::COERCE`]).
 
 use std::{
     cell::Cell,
@@ -25,6 +29,7 @@ use crate::{
     error::{Error, Result},
     gc::{Collect, arena::Visit},
     object::{
+        interface::{self, InterfaceTag, Request},
         native::{Instance, Object, Type, TypeBuilder},
         protocol::{Protocol, Recv, Spread, SpreadContext},
     },
@@ -34,6 +39,33 @@ use crate::{
     value::{Output, Slot, Value},
     vm::Register,
 };
+
+/// Which related flags types a [`Flags`] constructor accepts, by nominal
+/// relation to the type being constructed.
+///
+/// A value of the same type is always accepted. An unrelated flags type, or
+/// a related one in a direction this doesn't allow, is a type error.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FlagCoercion {
+    /// Accept no other flags types.
+    None,
+    /// Accept values of the type's nominal supertypes.
+    FromSupertypes,
+    /// Accept values of the type's nominal subtypes.
+    FromSubtypes,
+    /// Accept values of nominal supertypes and subtypes.
+    Both,
+}
+
+impl FlagCoercion {
+    fn accepts_supertypes(self) -> bool {
+        matches!(self, Self::FromSupertypes | Self::Both)
+    }
+
+    fn accepts_subtypes(self) -> bool {
+        matches!(self, Self::FromSubtypes | Self::Both)
+    }
+}
 
 /// A Rust-side bitset that can be exposed to Do as a [`Flags`] native type.
 ///
@@ -63,6 +95,34 @@ pub trait FlagLike:
     /// entries) is fine — [`Flags`]'s iteration/debug output decomposes
     /// values into the most granular matching entries.
     const BITS: &'static [(&'static str, Self)];
+
+    /// Whether the type has an integer representation. When set, the type
+    /// gets an `int` getter and its constructor accepts a single `Int`, both
+    /// through [`to_i128`](Self::to_i128)/[`from_i128`](Self::from_i128),
+    /// which the type must then implement.
+    const INT: bool = false;
+
+    /// Which related flags types the constructor accepts. When both types
+    /// are [`INT`](Self::INT), the value converts through its integer form,
+    /// so [`from_i128`](Self::from_i128) decides what happens to bits this
+    /// type doesn't name; otherwise it converts by its symbols, and a name
+    /// this type lacks is a value error.
+    const COERCE: FlagCoercion = FlagCoercion::None;
+
+    /// The integer form of `self`, or `None` if it has none. Called only
+    /// when [`INT`](Self::INT) is set.
+    fn to_i128(self) -> Option<i128> {
+        None
+    }
+
+    /// The value for integer form `value`, or `None` (a value error) if it
+    /// is out of range or otherwise invalid. Whether bits the type doesn't
+    /// name are kept or rejected is the type's choice. Called only when
+    /// [`INT`](Self::INT) is set.
+    fn from_i128(value: i128) -> Option<Self> {
+        let _ = value;
+        None
+    }
 
     /// The granularity of this set of bits. Lower-ranked entries are used
     /// first when decomposing a value for iteration and debug output.
@@ -324,6 +384,133 @@ impl<'t, 'v, 's, F: FlagLike> Spread<'v, 's> for FlagsSpread<'t, 'v, F> {
     }
 }
 
+/// The integer form a flags value lends through [`FlagsTag`].
+#[derive(Clone, Copy)]
+enum FlagsInt {
+    /// The type isn't [`FlagLike::INT`].
+    None,
+    /// [`FlagLike::to_i128`] failed.
+    Invalid,
+    Value(i128),
+}
+
+/// What any [`Flags`] value tells a constructor of another flags type.
+#[derive(Clone, Copy)]
+struct FlagsSource {
+    module: &'static str,
+    name: &'static str,
+    int: FlagsInt,
+}
+
+/// Interface tag under which every [`Flags`] value provides a [`FlagsSource`].
+struct FlagsTag;
+
+impl InterfaceTag for FlagsTag {
+    type Interface<'v, 'a> = FlagsSource;
+}
+
+fn int_error<'v, 's, F: FlagLike>(strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
+    Error::value(
+        strand,
+        format!(
+            "`{}.{}` value has no integer representation",
+            F::MODULE,
+            F::NAME
+        ),
+    )
+}
+
+fn from_int<'v, 's, F: FlagLike>(strand: &mut Strand<'v, 's>, value: i128) -> Result<'v, 's, F> {
+    F::from_i128(value).ok_or_else(|| {
+        Error::value(
+            strand,
+            format!("invalid `{}.{}` integer: {value}", F::MODULE, F::NAME),
+        )
+    })
+}
+
+/// Whether `ty` is a nominal subtype of `value`'s type.
+fn is_supertype_of<'v, F: FlagLike>(
+    ty: Type<'v, Flags<F>>,
+    strand: &mut Strand<'v, '_>,
+    value: &Value<'v>,
+) -> bool {
+    strand.with_slots_sync(|strand, [mut source_ty, mut target_ty]| {
+        value.op_type(strand, Slot::reborrow(&mut source_ty));
+        Output::set(strand, &mut target_ty, ty);
+        target_ty.op_subtype(strand, &source_ty)
+    })
+}
+
+/// Converts the single-argument form of a [`Flags`] constructor: a value of
+/// the same type, a symbol, an `Int` (when [`FlagLike::INT`]), a value of a
+/// related flags type (as [`FlagLike::COERCE`] allows), or an iterable of
+/// symbols.
+async fn convert<'v, 's, F: FlagLike>(
+    ty: Type<'v, Flags<F>>,
+    strand: &mut Strand<'v, 's>,
+    value: &Value<'v>,
+) -> Result<'v, 's, F> {
+    if let Some(bits) = ty.cast_flags(value) {
+        return Ok(bits);
+    }
+    let table = ty.annex(strand.vm());
+    if let Some(sym) = value.as_sym(strand.vm()) {
+        return resolve_sym(strand, table, sym);
+    }
+    if F::INT
+        && let Some(int) = value.as_int(strand)
+    {
+        return from_int(strand, int);
+    }
+    if let Some(source) =
+        interface::try_query::<FlagsTag, _>(value, strand, |_strand, source| Ok(*source))?
+    {
+        let allowed = if value.is_instance_of(strand, ty) {
+            F::COERCE.accepts_subtypes()
+        } else if is_supertype_of(ty, strand, value) {
+            F::COERCE.accepts_supertypes()
+        } else {
+            false
+        };
+        if !allowed {
+            return Err(Error::type_error(
+                strand,
+                format!(
+                    "cannot convert `{}.{}` to `{}.{}`",
+                    source.module,
+                    source.name,
+                    F::MODULE,
+                    F::NAME
+                ),
+            ));
+        }
+        if F::INT {
+            match source.int {
+                FlagsInt::Value(int) => return from_int(strand, int),
+                FlagsInt::Invalid => {
+                    return Err(Error::value(
+                        strand,
+                        format!(
+                            "`{}.{}` value has no integer representation",
+                            source.module, source.name
+                        ),
+                    ));
+                }
+                FlagsInt::None => {}
+            }
+        }
+    }
+    let mut spread = FlagsSpread {
+        table,
+        bits: F::ZERO,
+    };
+    value
+        .op_spread(strand, SpreadContext::Sequence, &mut spread)
+        .await?;
+    Ok(spread.bits)
+}
+
 fn positional_arg<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
     arg: Arg<'v, 'a>,
@@ -342,9 +529,11 @@ impl<'v, F: FlagLike> Object<'v> for Flags<F> {
     type TypeAnnex = FlagTable<'v, F>;
 
     /// Accepts either variadic `Sym` arguments (`MyFlags(:A:, :B:)`) or a
-    /// single iterable (`MyFlags(list)`/`MyFlags(...list)`) — unambiguous
-    /// because every valid positional argument here is a `Sym`, and a bare
-    /// `Sym` is never itself a meaningful sequence to spread.
+    /// single argument converted as [`FlagsTypeExt::coerce`] does: a `Sym`,
+    /// an `Int` (when [`FlagLike::INT`]), a flags value of this or a related
+    /// type, or an iterable of symbols (`MyFlags(list)`). These are
+    /// unambiguous: a `Sym` is never a meaningful sequence to spread, and an
+    /// `Int` or flags value is never a symbol.
     async fn new<'a, 's>(
         this: Type<'v, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -354,17 +543,7 @@ impl<'v, F: FlagLike> Object<'v> for Flags<F> {
         let table = this.annex(strand.vm());
         let bits = if args.len() == 1 {
             let slot = positional_arg(strand, args.next().unwrap())?;
-            if let Some(sym) = slot.as_sym(strand.vm()) {
-                resolve_sym(strand, table, sym)?
-            } else {
-                let mut spread = FlagsSpread {
-                    table,
-                    bits: F::ZERO,
-                };
-                slot.op_spread(strand, SpreadContext::Sequence, &mut spread)
-                    .await?;
-                spread.bits
-            }
+            convert(this, strand, &slot).await?
         } else {
             let mut bits = F::ZERO;
             for arg in args {
@@ -387,6 +566,25 @@ impl<'v, F: FlagLike> Object<'v> for Flags<F> {
         sink: &'a mut dyn super::protocol::Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         super::iter::spread_iter(strand, this, sink).await
+    }
+
+    fn provide<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        request: &mut Request<'v, 's, '_>,
+    ) -> Result<'v, 's, ()> {
+        let int = if F::INT {
+            match this.annex().to_i128() {
+                Some(int) => FlagsInt::Value(int),
+                None => FlagsInt::Invalid,
+            }
+        } else {
+            FlagsInt::None
+        };
+        request.provide::<FlagsTag>(&mut FlagsSource {
+            module: F::MODULE,
+            name: F::NAME,
+            int,
+        })
     }
 
     fn eq<'a, 's>(
@@ -510,6 +708,18 @@ impl<'v, F: FlagLike> Object<'v> for Flags<F> {
     }
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let builder = if F::INT {
+            builder.get("int", |this, strand, out| {
+                let int = this
+                    .annex()
+                    .to_i128()
+                    .ok_or_else(|| int_error::<F>(strand))?;
+                Output::set(strand, out, int);
+                Ok(())
+            })
+        } else {
+            builder
+        };
         F::build(builder.supertype(TypeObject::Iterable).method(
             "contains",
             async move |this, strand, args, mut out| {
@@ -567,11 +777,11 @@ pub trait FlagsTypeExt<'v, F: FlagLike> {
     /// an instance of this type.
     fn cast_flags(&self, value: &Value<'v>) -> Option<F>;
 
-    /// Accepts either an existing instance of this type (its bits are
-    /// copied out) or a plain iterable of symbols (spread the same way
-    /// [`Flags::new`]'s single-argument sequence form does), and returns the
-    /// resulting `F` bits either way. Returns a type error if `value` is
-    /// neither.
+    /// Converts `value` as [`Flags::new`]'s single-argument form does: an
+    /// instance of this type (its bits are copied out), a symbol, an `Int`
+    /// (when [`FlagLike::INT`]), a value of a related flags type (as
+    /// [`FlagLike::COERCE`] allows), or an iterable of symbols. Returns a
+    /// type error if `value` is none of these.
     fn coerce<'a, 's>(
         &self,
         strand: &'a mut Strand<'v, 's>,
@@ -594,20 +804,6 @@ impl<'v, F: FlagLike> FlagsTypeExt<'v, F> for Type<'v, Flags<F>> {
         strand: &'a mut Strand<'v, 's>,
         value: &Value<'v>,
     ) -> Result<'v, 's, F> {
-        if let Some(bits) = self.cast_flags(value) {
-            return Ok(bits);
-        }
-        let table = self.annex(strand.vm());
-        if let Some(sym) = value.as_sym(strand.vm()) {
-            return resolve_sym(strand, table, sym);
-        }
-        let mut spread = FlagsSpread {
-            table,
-            bits: F::ZERO,
-        };
-        value
-            .op_spread(strand, SpreadContext::Sequence, &mut spread)
-            .await?;
-        Ok(spread.bits)
+        convert(*self, strand, value).await
     }
 }

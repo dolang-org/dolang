@@ -167,6 +167,16 @@ pub(crate) fn query<'v, 's, K: InterfaceTag, R>(
     strand: &mut Strand<'v, 's>,
     consumer: impl for<'a> FnOnce(&mut Strand<'v, 's>, &mut K::Interface<'v, 'a>) -> Result<'v, 's, R>,
 ) -> Result<'v, 's, R> {
+    try_query::<K, R>(value, strand, consumer)?
+        .ok_or_else(|| Error::unsupported(strand, "native interface"))
+}
+
+/// Like [`query`], but returns `None` instead of raising when nothing provides `K`.
+pub(crate) fn try_query<'v, 's, K: InterfaceTag, R>(
+    value: &Value<'v>,
+    strand: &mut Strand<'v, 's>,
+    consumer: impl for<'a> FnOnce(&mut Strand<'v, 's>, &mut K::Interface<'v, 'a>) -> Result<'v, 's, R>,
+) -> Result<'v, 's, Option<R>> {
     let mut query = Query::<K, _, _> {
         consumer: Some(consumer),
         result: None,
@@ -175,7 +185,5 @@ pub(crate) fn query<'v, 's, K: InterfaceTag, R>(
     if let Case::Object(o) = value.case() {
         o.op_provide(&mut Request::new(strand, &mut query))?;
     }
-    query
-        .result
-        .ok_or_else(|| Error::unsupported(strand, "native interface"))
+    Ok(query.result)
 }

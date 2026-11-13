@@ -7,8 +7,9 @@ mod detail {
             error::ErrorKind,
             io::{self, ByteHandle, ByteIo, IntoByteIo, IoCaps, IoResultExt as _},
             object::{
-                DictLike, DictView, DictViewSink, FlagLike, FlagLikeExt, Flags, FlagsInstanceExt,
-                FlagsTypeExt, Format, InterfaceTag, Request, TypeBuilder, Unpack, fmt,
+                DictLike, DictView, DictViewSink, FlagCoercion, FlagLike, FlagLikeExt, Flags,
+                FlagsInstanceExt, FlagsTypeExt, Format, InterfaceTag, Request, TypeBuilder, Unpack,
+                fmt,
             },
             unpack,
             vm::Builder,
@@ -73,6 +74,8 @@ mod detail {
                 "MIRI",
                 "DEBUG",
                 "TestFlags",
+                "SubFlags",
+                "SymFlags",
                 "coerce_flags",
             ])
             .commit();
@@ -598,35 +601,97 @@ mod detail {
         })
     }
 
-    /// Test bitset for exercising `dolang_runtime::object::flags`.
+    /// Implements the bitwise operators for a `u8` newtype test bitset.
+    macro_rules! u8_flags_ops {
+        ($name:ident) => {
+            impl BitOr for $name {
+                type Output = Self;
+                fn bitor(self, rhs: Self) -> Self {
+                    $name(self.0 | rhs.0)
+                }
+            }
+
+            impl BitAnd for $name {
+                type Output = Self;
+                fn bitand(self, rhs: Self) -> Self {
+                    $name(self.0 & rhs.0)
+                }
+            }
+
+            impl BitXor for $name {
+                type Output = Self;
+                fn bitxor(self, rhs: Self) -> Self {
+                    $name(self.0 ^ rhs.0)
+                }
+            }
+
+            impl Not for $name {
+                type Output = Self;
+                fn not(self) -> Self {
+                    $name(!self.0)
+                }
+            }
+        };
+    }
+
+    /// Test bitset for exercising `dolang_runtime::object::flags`. Its
+    /// integer form keeps bits it doesn't name, and it accepts its subtypes.
     #[derive(Clone, Copy, PartialEq, Eq, Hash)]
     struct TestFlags(u8);
+    u8_flags_ops!(TestFlags);
 
-    impl BitOr for TestFlags {
-        type Output = Self;
-        fn bitor(self, rhs: Self) -> Self {
-            TestFlags(self.0 | rhs.0)
+    /// Int-capable nominal subtype of [`TestFlags`] that rejects integers
+    /// with bits it doesn't name, and accepts its supertypes.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    struct SubFlags(u8);
+    u8_flags_ops!(SubFlags);
+
+    /// Nominal subtype of [`TestFlags`] with no integer form, which accepts
+    /// no other flags types.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    struct SymFlags(u8);
+    u8_flags_ops!(SymFlags);
+
+    impl FlagLike for SubFlags {
+        const ZERO: Self = SubFlags(0);
+        const MODULE: &'static str = "regression2";
+        const NAME: &'static str = "SubFlags";
+        const BITS: &'static [(&'static str, Self)] = &[
+            ("READ", SubFlags(1)),
+            ("EXEC", SubFlags(4)),
+            ("EXTRA", SubFlags(8)),
+        ];
+        const INT: bool = true;
+        const COERCE: FlagCoercion = FlagCoercion::FromSupertypes;
+
+        fn to_i128(self) -> Option<i128> {
+            Some(self.0.into())
+        }
+
+        fn from_i128(value: i128) -> Option<Self> {
+            u8::try_from(value)
+                .ok()
+                .filter(|bits| bits & !0b1101 == 0)
+                .map(SubFlags)
+        }
+
+        fn rank(self) -> usize {
+            self.0.count_ones() as usize
         }
     }
 
-    impl BitAnd for TestFlags {
-        type Output = Self;
-        fn bitand(self, rhs: Self) -> Self {
-            TestFlags(self.0 & rhs.0)
-        }
-    }
+    impl FlagLike for SymFlags {
+        const ZERO: Self = SymFlags(0);
+        const MODULE: &'static str = "regression2";
+        const NAME: &'static str = "SymFlags";
+        const BITS: &'static [(&'static str, Self)] = &[
+            ("READ", SymFlags(1)),
+            ("WRITE", SymFlags(2)),
+            ("OTHER", SymFlags(16)),
+        ];
 
-    impl BitXor for TestFlags {
-        type Output = Self;
-        fn bitxor(self, rhs: Self) -> Self {
-            TestFlags(self.0 ^ rhs.0)
-        }
-    }
-
-    impl Not for TestFlags {
-        type Output = Self;
-        fn not(self) -> Self {
-            TestFlags(!self.0)
+        fn rank(self) -> usize {
+            self.0.count_ones() as usize
         }
     }
 
@@ -641,6 +706,16 @@ mod detail {
             ("WRITE", TestFlags(2)),
             ("EXEC", TestFlags(4)),
         ];
+        const INT: bool = true;
+        const COERCE: FlagCoercion = FlagCoercion::FromSubtypes;
+
+        fn to_i128(self) -> Option<i128> {
+            Some(self.0.into())
+        }
+
+        fn from_i128(value: i128) -> Option<Self> {
+            u8::try_from(value).ok().map(TestFlags)
+        }
 
         fn rank(self) -> usize {
             self.0.count_ones() as usize
@@ -650,16 +725,13 @@ mod detail {
             builder: TypeBuilder<'v, 'a, Flags<Self>>,
         ) -> TypeBuilder<'v, 'a, Flags<Self>> {
             builder
-                .get("int", |this, strand, out| {
-                    Output::set(strand, out, this.flags().0);
-                    Ok(())
-                })
                 .method("is_exec", async move |this, strand, args, out| {
                     let ([], []) = unpack!(strand, args, 0, 0)?;
                     Output::set(strand, out, this.flags().0 & 4 != 0);
                     Ok(())
                 })
-                .type_method("from_int", async move |this, strand, args, out| {
+                // Exercises type-method forwarding through Do subclasses.
+                .type_method("from_raw", async move |this, strand, args, out| {
                     let ([value], []) = unpack!(strand, args, 1, 0)?;
                     let value = value.to_i64(strand)?;
                     let value = u8::try_from(value)
@@ -763,6 +835,12 @@ mod detail {
                     let counter_ty = vm.register_type::<Counter>();
                     let byte_buf_ty = vm.register_type::<ByteBuf>();
                     let test_flags_ty = TestFlags::register_type(vm);
+                    let sub_flags_ty = SubFlags::build_type(vm)
+                        .nominal_supertype(test_flags_ty)
+                        .build();
+                    let sym_flags_ty = SymFlags::build_type(vm)
+                        .nominal_supertype(test_flags_ty)
+                        .build();
                     let key_view_ty = vm.register_type::<KeyView>();
 
                     // Configure standard regression functions from dolang-private-test
@@ -785,6 +863,8 @@ mod detail {
                     .value("MIRI", cfg!(miri))
                     .value("DEBUG", cfg!(debug_assertions))
                     .value("TestFlags", test_flags_ty)
+                    .value("SubFlags", sub_flags_ty)
+                    .value("SymFlags", sym_flags_ty)
                     .value("Counter", counter_ty)
                     .value("ByteBuf", byte_buf_ty)
                     .function("async", async |strand, args, mut out| {

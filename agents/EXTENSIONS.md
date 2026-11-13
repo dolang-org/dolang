@@ -311,6 +311,25 @@ strand.range(0i64, len, &mut out);          // Strand
 `tuple` and `range` need a `Strand`. To pass a built value as a call argument,
 build it into a slot from `with_slots_sync` first.
 
+## Flags Types
+
+Expose a bitset by implementing `FlagLike` and registering it with
+`FlagLikeExt::register_type` (or `build_type` to add supertypes). Construction
+from symbols, set operators, `contains`, and iteration come with it. Don't
+write an `int` getter or a `from_int`-style type method:
+
+- `const INT: bool = true` with `to_i128`/`from_i128` adds the `int` getter
+  and `T(n)`. `from_i128` returns `None` (a `ValueError`) for an out-of-range
+  value or a value with bits the type rejects; whether to keep unnamed bits is
+  the type's choice.
+- `const COERCE: FlagCoercion` lets `T(other)` accept a value of a nominal
+  supertype, subtype, or both. When both types are `INT`, the value converts
+  through its integer form. Otherwise it converts by symbol.
+
+`FlagsTypeExt::coerce` converts an API argument exactly as the
+single-argument constructor does. Keep the stub's `(call)` overloads (`Int`,
+the related mask types) and the argument `Spec` aliases in step.
+
 ## Interface Queries
 
 Native code can ask a value for a Rust interface without downcasting to

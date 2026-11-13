@@ -4,35 +4,24 @@
 
 use std::ops::{BitAnd, BitOr, BitXor, Not};
 
-use dolang::runtime::object::{FlagLike, Flags, FlagsInstanceExt, FlagsTypeExt, TypeBuilder};
-use dolang::runtime::{Error, Output, unpack};
+use dolang::runtime::object::FlagLike;
 use dolang_vfs_winscm::{
     NotifyMask as WireNotifyMask, ServiceControlsAccepted as WireServiceControlsAccepted,
     ServiceType as WireServiceType,
 };
 
-macro_rules! raw_projection {
+macro_rules! int_repr {
     ($local:ty, $wire:ty) => {
-        fn build<'v, 'a>(
-            builder: TypeBuilder<'v, 'a, Flags<Self>>,
-        ) -> TypeBuilder<'v, 'a, Flags<Self>> {
-            builder
-                .get("int", |this, strand, out| {
-                    Output::set(strand, out, this.flags().0.bits());
-                    Ok(())
-                })
-                .type_method("from_int", async move |this, strand, args, out| {
-                    let ([value], []) = unpack!(strand, args, 1, 0)?;
-                    let value = value.to_i64(strand)?;
-                    let value = u32::try_from(value)
-                        .map_err(|_| Error::value(strand, "flags integer out of range"))?;
-                    this.create_flags(
-                        strand,
-                        <$local>::from(<$wire>::from_bits_retain(value)),
-                        out,
-                    );
-                    Ok(())
-                })
+        const INT: bool = true;
+
+        fn to_i128(self) -> Option<i128> {
+            Some(self.0.bits().into())
+        }
+
+        fn from_i128(value: i128) -> Option<Self> {
+            u32::try_from(value)
+                .ok()
+                .map(|bits| <$local>::from(<$wire>::from_bits_retain(bits)))
         }
     };
 }
@@ -100,7 +89,7 @@ impl FlagLike for ServiceType {
         self.0.bits().count_ones() as usize
     }
 
-    raw_projection!(ServiceType, WireServiceType);
+    int_repr!(ServiceType, WireServiceType);
 }
 
 impl From<WireServiceType> for ServiceType {
@@ -180,7 +169,7 @@ impl FlagLike for NotifyMask {
         self.0.bits().count_ones() as usize
     }
 
-    raw_projection!(NotifyMask, WireNotifyMask);
+    int_repr!(NotifyMask, WireNotifyMask);
 }
 
 impl From<WireNotifyMask> for NotifyMask {
@@ -277,7 +266,7 @@ impl FlagLike for ServiceControlsAccepted {
         self.0.bits().count_ones() as usize
     }
 
-    raw_projection!(ServiceControlsAccepted, WireServiceControlsAccepted);
+    int_repr!(ServiceControlsAccepted, WireServiceControlsAccepted);
 }
 
 impl From<WireServiceControlsAccepted> for ServiceControlsAccepted {

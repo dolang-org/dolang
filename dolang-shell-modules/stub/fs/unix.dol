@@ -64,21 +64,6 @@ pub @let ModeBit = $
 # let rw = Mode(:OWNER_READ:, :OWNER_WRITE:)
 # ```
 pub class Mode: Iterable[ModeBit]
-  # Constructs a mode from a raw `st_mode` value, preserving unknown bits.
-  #
-  # ## Example
-  #
-  # ```
-  # let mode = Mode.from_int 0o644
-  # ```
-  #[class]
-  pub def from_int
-    self
-    # Raw mode bits.
-    value @ Int
-  do -> Mode
-    ...
-
   # Owner
   # permissions.
   #[getter]
@@ -116,11 +101,19 @@ pub class Mode: Iterable[ModeBit]
   # Constructs a flag set from one iterable of symbols.
   @def (call) cls flags@Iterable[ModeBit] -> Mode
 
+  # Constructs a flag set from its native integer form, keeping bits this type
+  # does not name.
+  #
+  # ```
+  # let value = Mode 0o644
+  # ```
+  @def (call) cls value@Int -> Mode
+
   #[class]
-  pub def (call) cls ...flags @ (ModeBit | Iterable[ModeBit]) -> Mode
+  pub def (call) cls ...flags @ (ModeBit | Iterable[ModeBit] | Int) -> Mode
     ...
 
-  pub def (init) self ...flags @ (ModeBit | Iterable[ModeBit])
+  pub def (init) self ...flags @ (ModeBit | Iterable[ModeBit] | Int)
     ...
 
   # Tests whether all flags named by `flag` are set.
