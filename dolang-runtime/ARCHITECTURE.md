@@ -84,11 +84,62 @@ which are read without a borrow guard: an immutable object is a `gc::Imm<T>`,
 whose value is a unit and whose annex is `T`. `Str`, `Bin`, and `Tuple` objects,
 upvar frames, and class instances are likewise unit values whose state is a tail
 annex, so each is a single allocation; mutable elements are `ValueCell`s. A
+class instance's native super slots are the exception: they live out of line, so
+that a native found through one stays reachable without pinning the instance. A
 native object keeps its borrow-checked value, which holds no GC references; its
 `Object::SLOTS` slots are the tail of its annex. Clearing during cycle
 collection skips immutable state: an immutable object can reference only objects
 that existed before it, so any cycle through it passes through mutable state
 that is cleared.
+
+### Locations and pins
+
+A `&gc::Base` (such as a `&GcObj`), like a `&Value`, witnesses only an object's
+_location_: the reference is address-stable, and some scanned owner sits above
+it. `Value::case` and `Value::downcast_ref` view an object `Value` as a `&Base`
+in place, which works because both are transparent over the same pointer.
+Dereferencing an object's _contents_ additionally needs a `gc::Pin`, a witness
+that they will not move. Under the current collector nothing moves and every
+pin is free; the ways of getting one differ in what they would cost under a
+moving collector:
+
+- `Base::pin_access` pins for the lifetime of a `Strand::access` token, inside
+  which nothing can await or collect.
+- `Base::pin_sync` and `Base::pin` scope a pin to a closure that receives the
+  strand back and may allocate or await. A moving collector would push and pop
+  an entry on a strand-local pin list, which a stop-the-world collection
+  promotes to live pins.
+- `PinStr` and `PinBin` own a reference to their object, so each is both a root
+  and a dynamic pin. A native object can hold one beside a structure that
+  borrows the text, provided the borrower is dropped first.
+- `Recv` and `Instance` hold the pin of their receiver. Protocol dispatch mints
+  it unchecked; `Cast::enter` and `RecvCast::enter` mint a scoped pin.
+- `Base::pin_unchecked` is for low-level code: dispatch glue, finalizers (which
+  have no strand), and transient accesses with no possible collection before
+  the pin's last use, such as upvar reads and writes. `Base::read` makes a
+  transient read safe by taking a function pointer, which can capture nothing
+  that reaches a collector.
+
+Anything a GC object owns in a separate heap allocation stays put when the
+object moves. `Base::project` reaches such an `OutOfLine` owner (a `Box`,
+`alias::Box`, `Vec`, `String` or `'static` `Cow`) through a transient pin and
+returns its target for the lifetime of the location, not the pin. The
+interpreter reads bytecode and constant tables this way, and objects that are
+read through a location often keep their state out of line for the same
+reason: `ClassObject`, native type objects and array views box their annexes,
+so `Base::annex` and `Base::get` reach them without a pin. Native type
+singletons live as long as the VM and are permanently pinned, so a moving
+collector must allocate them where they never move.
+
+`gc::GcCell` and `gc::GcSlot` are the typed counterparts of `ValueCell` and
+`Slot`, for a mutable typed location that other code can reach, such as a call
+frame's upvar chain. `GcCell::as_ref` lends the stored reference as a location,
+and writes go through a slot that drops the old reference only after the write.
+
+A moving collector also rewrites pointers underneath shared references, so
+`Repr` and `Base` would need to hold their pointers in an `UnsafeCell`. That
+makes `Value` and `GcObj` lose `Freeze`, which rules out a `static` value but
+not a `const` one.
 
 ## Object Protocol
 
@@ -115,11 +166,11 @@ register named methods and getters/setters via `TypeBuilder`. The GC wrappers
 
 Annex data is immutable and accessible without a runtime borrow guard. It is
 only suitable for state that does not need GC-time finalization. If native
-object state contains lifetime-transmuted pins or other interior references
-that depend on `Object::SLOTS`, that state must live in the main borrow-checked
-object so `Object::finalize` and the runtime's finalization path can drop it
-before the slots are zeroed during
-collection.
+object state contains interior references that depend on `Object::SLOTS`, that
+state must live in the main borrow-checked object so `Object::finalize` and the
+runtime's finalization path can drop it before the slots are zeroed during
+collection. A reference into a `Str` or `Bin` should depend on a `PinStr` or
+`PinBin` held beside it instead.
 
 Each `Object<'v>` type gets an **automatic type singleton** created at
 registration time. Calling `op_type` on an instance returns this singleton,

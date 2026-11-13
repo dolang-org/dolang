@@ -357,27 +357,26 @@ impl<'v> Protocol<'v> for Iter<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let borrow = this.borrow(strand)?;
-        let set = borrow
-            .set
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        if set.epoch != borrow.epoch {
-            return Err(Error::concurrency_msg(
-                strand,
-                "collection was modified during iteration",
-            ));
-        }
-        loop {
-            let Some(entry) = set.order.get(borrow.index.get()) else {
-                return Ok(false);
-            };
-            borrow.index.set(borrow.index.get() + 1);
-            let Some(bucket) = entry else {
-                continue;
-            };
-            Output::set(strand, out, unsafe { &bucket.as_ref().value });
-            return Ok(true);
-        }
+        borrow.set.pin_sync(strand, |strand, set| {
+            let set = set.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            if set.epoch != borrow.epoch {
+                return Err(Error::concurrency_msg(
+                    strand,
+                    "collection was modified during iteration",
+                ));
+            }
+            loop {
+                let Some(entry) = set.order.get(borrow.index.get()) else {
+                    return Ok(false);
+                };
+                borrow.index.set(borrow.index.get() + 1);
+                let Some(bucket) = entry else {
+                    continue;
+                };
+                Output::set(strand, out, unsafe { &bucket.as_ref().value });
+                return Ok(true);
+            }
+        })
     }
 
     fn op_get<'a, 's>(
@@ -483,23 +482,25 @@ impl<'v> Protocol<'v> for Set<'v> {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let left = this.borrow(strand)?;
-        let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        if left.len() != right.len() {
-            return Ok(Value::FALSE);
-        }
-        unsafe {
-            for bucket in left.inner.iter() {
-                let entry = bucket.as_ref();
-                if super::table::find(&right.inner, entry.hash, |other| {
-                    entry.value.eq(strand, &other.value)
-                })?
-                .is_none()
-                {
-                    return Ok(Value::FALSE);
+        other.pin_sync(strand, |strand, other| {
+            let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            if left.len() != right.len() {
+                return Ok(Value::FALSE);
+            }
+            unsafe {
+                for bucket in left.inner.iter() {
+                    let entry = bucket.as_ref();
+                    if super::table::find(&right.inner, entry.hash, |other| {
+                        entry.value.eq(strand, &other.value)
+                    })?
+                    .is_none()
+                    {
+                        return Ok(Value::FALSE);
+                    }
                 }
             }
-        }
-        Ok(Value::TRUE)
+            Ok(Value::TRUE)
+        })
     }
 
     fn op_get<'a, 's>(
@@ -600,99 +601,117 @@ impl<'v> Protocol<'v> for Set<'v> {
                     sym::UNION => {
                         let this = this.borrow(strand)?;
                         let mut result = this.cloned();
-                        let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                        result.extend_from(strand, &other)?;
-                        strand.builtin_types().set.create(strand, result, out);
+                        other.pin_sync(strand, |strand, other| {
+                            let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                            result.extend_from(strand, &other)?;
+                            strand.builtin_types().set.create(strand, result, out);
+                            Ok(())
+                        })?;
                     }
                     sym::INTERSECT => {
                         let left = this.borrow(strand)?;
-                        let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                        let mut result = Self::new();
-                        unsafe {
-                            for entry in &left.order {
-                                let Some(bucket) = entry else {
-                                    continue;
-                                };
-                                let entry = bucket.as_ref();
-                                if other.contains(strand, &entry.value, entry.hash)? {
-                                    result.insert_unique(strand, &entry.value, entry.hash)?;
+                        other.pin_sync(strand, |strand, other| {
+                            let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                            let mut result = Self::new();
+                            unsafe {
+                                for entry in &left.order {
+                                    let Some(bucket) = entry else {
+                                        continue;
+                                    };
+                                    let entry = bucket.as_ref();
+                                    if other.contains(strand, &entry.value, entry.hash)? {
+                                        result.insert_unique(strand, &entry.value, entry.hash)?;
+                                    }
                                 }
                             }
-                        }
-                        strand.builtin_types().set.create(strand, result, out);
+                            strand.builtin_types().set.create(strand, result, out);
+                            Ok(())
+                        })?;
                     }
                     sym::DIFF => {
                         let left = this.borrow(strand)?;
-                        let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                        let mut result = Self::new();
-                        unsafe {
-                            for entry in &left.order {
-                                let Some(bucket) = entry else {
-                                    continue;
-                                };
-                                let entry = bucket.as_ref();
-                                if !other.contains(strand, &entry.value, entry.hash)? {
-                                    result.insert_unique(strand, &entry.value, entry.hash)?;
+                        other.pin_sync(strand, |strand, other| {
+                            let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                            let mut result = Self::new();
+                            unsafe {
+                                for entry in &left.order {
+                                    let Some(bucket) = entry else {
+                                        continue;
+                                    };
+                                    let entry = bucket.as_ref();
+                                    if !other.contains(strand, &entry.value, entry.hash)? {
+                                        result.insert_unique(strand, &entry.value, entry.hash)?;
+                                    }
                                 }
                             }
-                        }
-                        strand.builtin_types().set.create(strand, result, out);
+                            strand.builtin_types().set.create(strand, result, out);
+                            Ok(())
+                        })?;
                     }
                     sym::SYM_DIFF => {
                         let left = this.borrow(strand)?;
-                        let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                        let mut result = Self::new();
-                        unsafe {
-                            for entry in &left.order {
-                                let Some(bucket) = entry else {
-                                    continue;
-                                };
-                                let entry = bucket.as_ref();
-                                if !other.contains(strand, &entry.value, entry.hash)? {
-                                    result.insert_unique(strand, &entry.value, entry.hash)?;
+                        other.pin_sync(strand, |strand, other| {
+                            let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                            let mut result = Self::new();
+                            unsafe {
+                                for entry in &left.order {
+                                    let Some(bucket) = entry else {
+                                        continue;
+                                    };
+                                    let entry = bucket.as_ref();
+                                    if !other.contains(strand, &entry.value, entry.hash)? {
+                                        result.insert_unique(strand, &entry.value, entry.hash)?;
+                                    }
+                                }
+                                for entry in &other.order {
+                                    let Some(bucket) = entry else {
+                                        continue;
+                                    };
+                                    let entry = bucket.as_ref();
+                                    if !left.contains(strand, &entry.value, entry.hash)? {
+                                        result.insert_unique(strand, &entry.value, entry.hash)?;
+                                    }
                                 }
                             }
-                            for entry in &other.order {
-                                let Some(bucket) = entry else {
-                                    continue;
-                                };
-                                let entry = bucket.as_ref();
-                                if !left.contains(strand, &entry.value, entry.hash)? {
-                                    result.insert_unique(strand, &entry.value, entry.hash)?;
-                                }
-                            }
-                        }
-                        strand.builtin_types().set.create(strand, result, out);
+                            strand.builtin_types().set.create(strand, result, out);
+                            Ok(())
+                        })?;
                     }
                     sym::IS_SUBSET => {
                         let left = this.borrow(strand)?;
-                        let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                        let mut subset = true;
-                        unsafe {
-                            for bucket in left.inner.iter() {
-                                let entry = bucket.as_ref();
-                                if !other.contains(strand, &entry.value, entry.hash)? {
-                                    subset = false;
-                                    break;
+                        other.pin_sync(strand, |strand, other| {
+                            let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                            let mut subset = true;
+                            unsafe {
+                                for bucket in left.inner.iter() {
+                                    let entry = bucket.as_ref();
+                                    if !other.contains(strand, &entry.value, entry.hash)? {
+                                        subset = false;
+                                        break;
+                                    }
                                 }
                             }
-                        }
-                        Output::set(strand, out, subset);
+                            Output::set(strand, out, subset);
+                            Ok(())
+                        })?;
                     }
                     sym::IS_SUPERSET => {
                         let left = this.borrow(strand)?;
-                        let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                        let mut superset = true;
-                        unsafe {
-                            for bucket in other.inner.iter() {
-                                let entry = bucket.as_ref();
-                                if !left.contains(strand, &entry.value, entry.hash)? {
-                                    superset = false;
-                                    break;
+                        other.pin_sync(strand, |strand, other| {
+                            let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                            let mut superset = true;
+                            unsafe {
+                                for bucket in other.inner.iter() {
+                                    let entry = bucket.as_ref();
+                                    if !left.contains(strand, &entry.value, entry.hash)? {
+                                        superset = false;
+                                        break;
+                                    }
                                 }
                             }
-                        }
-                        Output::set(strand, out, superset);
+                            Output::set(strand, out, superset);
+                            Ok(())
+                        })?;
                     }
                     _ => unreachable!(),
                 }

@@ -9,7 +9,12 @@ use std::{
     ptr::{self, NonNull},
 };
 
-use crate::value::repr::tag;
+use dolang_util::alias;
+
+use crate::{
+    strand::{Access, Strand},
+    value::repr::tag,
+};
 
 pub(crate) mod arena;
 
@@ -202,7 +207,12 @@ unsafe impl<T: ImmState> Collect for Imm<T> {
 
 /// Base garbage-collected strong pointer with least upper bound `T`
 ///
-/// Intended to be wrapped by something exposing fewer details.
+/// Intended to be wrapped by something exposing fewer details.  A `&Base` witnesses
+/// the object's location; dereferencing its contents takes a [`BasePin`].
+///
+/// Transparent over its pointer, so an object [`Value`](crate::value::Value) can be
+/// viewed as one in place.
+#[repr(transparent)]
 pub(crate) struct Base<'v, T: Upcast<Header>> {
     ptr: NonNull<T>,
     phantom: PhantomData<(&'v mut &'v (), T)>,
@@ -259,6 +269,10 @@ impl<'v, T: Upcast<Header>> Base<'v, T> {
         }
     }
 
+    pub(crate) fn as_ptr(this: &Self) -> NonNull<T> {
+        this.ptr
+    }
+
     pub(crate) fn into_raw(this: Self) -> NonNull<T> {
         let ptr = this.ptr;
         mem::forget(this);
@@ -291,14 +305,210 @@ impl<'v, T: Upcast<Header>> Base<'v, T> {
         visit.visit(self.base())
     }
 
-    pub(crate) fn borrow(&self) -> Option<BaseRef<'v, '_, T>> {
-        BaseRef::from_raw(self.ptr)
+    /// Pin this object's contents for the borrow of `self`.
+    ///
+    /// # Safety
+    /// No collection may happen before the pin's last use.  Prefer a scoped or
+    /// [`Access`](crate::strand::Access) pin where one is available.
+    pub(crate) unsafe fn pin_unchecked(&self) -> BasePin<'v, '_, T> {
+        unsafe { BasePin::new_unchecked(self.ptr) }
     }
 
-    pub(crate) fn borrow_mut(&self) -> Option<BaseMut<'v, '_, T>> {
-        BaseMut::from_raw(self.ptr)
+    /// Read from this object's contents through a transient pin.
+    ///
+    /// `f` is a function pointer, so it captures nothing that could reach a
+    /// collector, and its result cannot borrow from the pin.
+    #[inline]
+    pub(crate) fn read<R>(&self, f: for<'p> fn(BasePin<'v, 'p, T>) -> R) -> R {
+        // SAFETY: `f` cannot collect, and the pin does not outlive it
+        f(unsafe { self.pin_unchecked() })
+    }
+
+    /// Project an out-of-line part of this object's contents through a transient pin.
+    ///
+    /// As [`Self::project_unchecked`], made safe by taking a function pointer as
+    /// [`Self::read`] does.
+    #[inline]
+    pub(crate) fn project<'g, O: ?Sized + OutOfLine + 'g>(
+        &'g self,
+        f: for<'p> fn(BasePin<'v, 'p, T>) -> &'p O,
+    ) -> &'g O::Target {
+        // SAFETY: as for `read`
+        unsafe { self.project_unchecked(f) }
+    }
+
+    /// Project an out-of-line part of this object's contents.
+    ///
+    /// `f` sees the contents through a pin and returns an [`OutOfLine`] owner inside
+    /// them; its target lives in a separate allocation that doesn't move with the
+    /// object, so the result is bounded by the borrow of `self` rather than the pin.
+    ///
+    /// # Safety
+    /// As for [`Self::pin_unchecked`], for the duration of `f`.
+    pub(crate) unsafe fn project_unchecked<'g, O: ?Sized + OutOfLine + 'g>(
+        &'g self,
+        f: impl for<'p> FnOnce(BasePin<'v, 'p, T>) -> &'p O,
+    ) -> &'g O::Target {
+        let owner: *const O::Target = &**f(unsafe { self.pin_unchecked() });
+        // SAFETY: the owner stays in the object, which `self` keeps alive for `'g`, and
+        // its target never moves with it.
+        unsafe { &*owner }
     }
 }
+
+impl<'v, T: Upcast<Header>> Base<'v, T> {
+    /// Pin this object's contents for the lifetime of `access`, inside which nothing
+    /// can await or collect.
+    #[inline]
+    pub(crate) fn pin_access<'p>(&'p self, access: &'p Access<'v, '_>) -> BasePin<'v, 'p, T> {
+        let _ = access;
+        // SAFETY: nothing can collect while an `Access` is live
+        unsafe { self.pin_unchecked() }
+    }
+
+    /// Pin this object's contents for the duration of `f`, which may allocate.
+    ///
+    /// A no-op under the current collector; under a moving one this would push and
+    /// pop an entry on the strand's pin list.
+    #[inline]
+    pub(crate) fn pin_sync<'s, R>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        f: impl for<'p> FnOnce(&mut Strand<'v, 's>, BasePin<'v, 'p, T>) -> R,
+    ) -> R {
+        // SAFETY: the pin is scoped to `f`, whose higher-ranked lifetime keeps it from
+        // escaping
+        f(strand, unsafe { self.pin_unchecked() })
+    }
+
+    /// Async counterpart to [`Self::pin_sync`], for pins held across `.await`.
+    ///
+    /// Each layer of async wrapping deepens the compiler's layout queries for the
+    /// futures above it, so wrappers that only forward a scoped pin to a closure
+    /// mint it inline with [`Self::pin_unchecked`] instead of calling this.
+    #[inline]
+    pub(crate) async fn pin<'s, R>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        f: impl for<'p> AsyncFnOnce(&mut Strand<'v, 's>, BasePin<'v, 'p, T>) -> R,
+    ) -> R {
+        // SAFETY: as for `pin_sync`
+        f(strand, unsafe { self.pin_unchecked() }).await
+    }
+}
+
+/// Interior-mutable holder of an optional typed GC reference: the typed counterpart
+/// of [`ValueCell`](crate::value::ValueCell).
+///
+/// A holder that is reachable while other code runs keeps its reference here.
+/// Writing goes through a [`GcSlot`] from [`slot`](Self::slot), which drops the old
+/// reference only after the write: a drop can run native code that reaches the same
+/// cell.
+#[repr(transparent)]
+pub(crate) struct GcCell<'v, T: Upcast<Header>>(UnsafeCell<Option<Base<'v, T>>>);
+
+impl<'v, T: Upcast<Header>> GcCell<'v, T> {
+    #[inline]
+    pub(crate) fn new(value: Option<Base<'v, T>>) -> Self {
+        Self(UnsafeCell::new(value))
+    }
+
+    /// Visit the stored reference for the garbage collector.
+    #[inline]
+    pub(crate) fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        // SAFETY: a `GcSlot` into the cell never keeps a `&mut` alive, and no write is
+        // in progress while the collector runs.
+        match unsafe { &*self.0.get() } {
+            Some(base) => base.accept(visit),
+            None => ControlFlow::Continue(()),
+        }
+    }
+
+    /// Clone the stored reference.
+    ///
+    /// # Safety
+    /// No `&mut` into the cell may be alive.
+    #[inline]
+    pub(crate) unsafe fn get(&self) -> Option<Base<'v, T>> {
+        unsafe { (*self.0.get()).clone() }
+    }
+
+    /// Borrow the stored reference as a location.
+    ///
+    /// # Safety
+    /// Nothing may write the cell while the borrow is alive.
+    #[inline]
+    pub(crate) unsafe fn as_ref(&self) -> Option<&Base<'v, T>> {
+        unsafe { (*self.0.get()).as_ref() }
+    }
+
+    /// Obtain a [`GcSlot`] for writing the cell.
+    ///
+    /// # Safety
+    /// No other access to the cell may happen while the slot is alive, except reads
+    /// that do not borrow across a write.
+    #[inline]
+    pub(crate) unsafe fn slot(&self) -> GcSlot<'v, '_, T> {
+        // SAFETY: `UnsafeCell::get` is never null
+        unsafe { GcSlot::new(NonNull::new_unchecked(self.0.get())) }
+    }
+}
+
+/// Exclusive access to a scannable location holding an optional typed GC reference:
+/// the typed counterpart of [`Slot`](crate::value::Slot).
+///
+/// Like a `Slot`, it never holds a `&mut` to the location except for the duration of
+/// a write, so the collector can scan the location while the slot lives.
+pub(crate) struct GcSlot<'v, 'a, T: Upcast<Header>>(
+    NonNull<Option<Base<'v, T>>>,
+    PhantomData<&'a mut Option<Base<'v, T>>>,
+);
+
+impl<'v, 'a, T: Upcast<Header>> GcSlot<'v, 'a, T> {
+    /// Creates a slot over a location.
+    ///
+    /// # Safety
+    /// As for [`Slot::new`](crate::value::Slot::new): the location stays scannable
+    /// and address-stable for `'a`, and the slot has exclusive access to it.
+    #[inline]
+    pub(crate) unsafe fn new(inner: NonNull<Option<Base<'v, T>>>) -> Self {
+        Self(inner, PhantomData)
+    }
+
+    /// Replaces the reference, returning the old one.
+    #[inline]
+    pub(crate) fn replace(&mut self, value: Option<Base<'v, T>>) -> Option<Base<'v, T>> {
+        // SAFETY: the slot has exclusive access; the `&mut` lives only for the write
+        unsafe { mem::replace(self.0.as_mut(), value) }
+    }
+
+    #[inline]
+    pub(crate) fn take(&mut self) -> Option<Base<'v, T>> {
+        self.replace(None)
+    }
+
+    /// Stores `value`, dropping the old reference only after the write: a drop can
+    /// run native code that reaches this slot.
+    #[inline]
+    pub(crate) fn store(&mut self, value: Option<Base<'v, T>>) {
+        let old = self.replace(value);
+        drop(old);
+    }
+}
+
+/// An owner whose [`Deref`] target lives in its own allocation.
+///
+/// # Safety
+/// The target must stay at the same address while the owner moves, and must not be
+/// freed or reallocated while the owner is only shared.
+pub(crate) unsafe trait OutOfLine: Deref {}
+
+unsafe impl<T: ?Sized> OutOfLine for std::boxed::Box<T> {}
+unsafe impl<T: ?Sized> OutOfLine for alias::Box<T> {}
+unsafe impl<T> OutOfLine for Vec<T> {}
+unsafe impl OutOfLine for String {}
+unsafe impl<T: Clone> OutOfLine for std::borrow::Cow<'static, [T]> {}
+unsafe impl OutOfLine for std::borrow::Cow<'static, str> {}
 
 impl<'v, T: Upcast<Header>> Clone for Base<'v, T> {
     fn clone(&self) -> Self {
@@ -392,35 +602,53 @@ impl<'v, T: Upcast<Header>> Drop for BaseWeak<'v, T> {
     }
 }
 
-pub(crate) struct BaseBorrow<'v, 'a, T> {
+/// Witness that a GC object's contents are pinned for `'p`.
+///
+/// A `&Base` (like a `&Value`) only witnesses the object's *location*: the reference
+/// is address-stable and some scanned owner sits above it.  Dereferencing the
+/// object's contents additionally requires that they not move, which a pin
+/// witnesses.  Under the current non-moving collector every pin is free; the
+/// minting paths differ in what they would cost under a moving one:
+///
+/// - [`Base::pin_access`] mints pins for the lifetime of an [`Access`], since nothing
+///   can await or collect inside it.
+/// - [`Base::pin_sync`] and [`Base::pin`] scope a pin to a closure that may allocate
+///   and await.  Under a moving collector they would push and pop a
+///   strand-local pin list, whose entries a stop-the-world collection promotes to
+///   live pins.
+/// - [`Base::pin_unchecked`] is for low-level code, such as protocol dispatch and
+///   transient accesses with no possible collection before the pin's last use.
+pub(crate) struct BasePin<'v, 'p, T> {
     base: NonNull<T>,
-    phantom: PhantomData<(&'v mut &'v (), &'a T)>,
+    phantom: PhantomData<(&'v mut &'v (), &'p T)>,
 }
 
-impl<'v, 'a, T> PartialEq for BaseBorrow<'v, 'a, T> {
+impl<'v, 'p, T> PartialEq for BasePin<'v, 'p, T> {
     fn eq(&self, other: &Self) -> bool {
         self.base == other.base
     }
 }
 
-impl<'v, 'a, T> Eq for BaseBorrow<'v, 'a, T> {}
+impl<'v, 'p, T> Eq for BasePin<'v, 'p, T> {}
 
-impl<'v, 'a, T> Hash for BaseBorrow<'v, 'a, T> {
+impl<'v, 'p, T> Hash for BasePin<'v, 'p, T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.base.hash(state);
     }
 }
 
-impl<'v, 'a, T> Clone for BaseBorrow<'v, 'a, T> {
+impl<'v, 'p, T> Clone for BasePin<'v, 'p, T> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<'v, 'a, T> Copy for BaseBorrow<'v, 'a, T> {}
+impl<'v, 'p, T> Copy for BasePin<'v, 'p, T> {}
 
-impl<'v, 'a, T: Upcast<Header>> BaseBorrow<'v, 'a, T> {
-    pub(crate) unsafe fn new(ptr: NonNull<T>) -> Self {
+impl<'v, 'p, T: Upcast<Header>> BasePin<'v, 'p, T> {
+    /// # Safety
+    /// `ptr` must point to a live object whose contents stay pinned for `'p`.
+    pub(crate) unsafe fn new_unchecked(ptr: NonNull<T>) -> Self {
         Self {
             base: ptr,
             phantom: PhantomData,
@@ -438,28 +666,12 @@ impl<'v, 'a, T: Upcast<Header>> BaseBorrow<'v, 'a, T> {
         self.base
     }
 
-    pub(crate) fn base_get(&self) -> &'a T {
-        unsafe { self.base.as_ref() }
-    }
-
-    pub(crate) fn upcast<U: Upcast<Header>>(self) -> BaseBorrow<'v, 'a, U>
-    where
-        T: Upcast<U>,
-    {
-        unsafe { BaseBorrow::new(self.base.cast()) }
-    }
-
-    pub(crate) fn borrow(&self) -> Option<BaseRef<'v, 'a, T>> {
+    pub(crate) fn borrow(&self) -> Option<BaseRef<'v, 'p, T>> {
         BaseRef::from_raw(self.base)
     }
 
-    pub(crate) fn borrow_mut(&self) -> Option<BaseMut<'v, 'a, T>> {
+    pub(crate) fn borrow_mut(&self) -> Option<BaseMut<'v, 'p, T>> {
         BaseMut::from_raw(self.base)
-    }
-
-    #[expect(dead_code)]
-    pub(crate) fn strong_count(&self) -> usize {
-        unsafe { self.base.cast::<Header>().as_ref().strong.get() }
     }
 }
 
@@ -1141,23 +1353,51 @@ where
     }
 }
 
-impl<'v, H: Upcast<Header>, T: Boxable<H, Inner = BoxedSized<H, T>> + Collect> Box<'v, H, T>
+impl<'v, H: Upcast<Header>, T, A: ?Sized + Annex> Box<'v, H, T>
 where
+    T: Boxable<H, Inner = BoxedSized<H, T>> + Collect<Annex = alias::Box<A>>,
     Boxed<H, T>: Upcast<Header>,
 {
-    pub(crate) fn annex(&self) -> &T::Annex {
-        unsafe { BoxedSized::annex(self.ptr.cast::<BoxedSized<H, T>>()) }
+    /// The contents of an annex stored out of line, which need no pin to reach.
+    pub(crate) fn annex(&self) -> &A {
+        self.project(|p| p.annex())
+    }
+}
+
+unsafe impl<T: ImmState> ImmState for alias::Box<T> {
+    const CYCLIC: bool = T::CYCLIC;
+}
+
+impl<'v, H: Upcast<Header>, T: ImmState> Box<'v, H, Imm<alias::Box<T>>>
+where
+    Boxed<H, Imm<alias::Box<T>>>: Upcast<Header>,
+    BoxedSized<H, Imm<alias::Box<T>>>: Upcast<Header>,
+{
+    /// The state of an immutable object stored out of line, which needs no pin to
+    /// reach.
+    pub(crate) fn get(&self) -> &T {
+        self.project(|p| p.get())
+    }
+}
+
+impl<A: ?Sized + Annex> Annex for alias::Box<A> {
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        (**self).accept(visit)
+    }
+
+    fn clear(&self) {
+        (**self).clear()
     }
 }
 
 pub(crate) type Weak<'v, T> = BoxWeak<'v, Header, T>;
 
-pub(crate) type Borrow<'v, 'a, H, T> = BaseBorrow<'v, 'a, Boxed<H, T>>;
+pub(crate) type Pin<'v, 'p, H, T> = BasePin<'v, 'p, Boxed<H, T>>;
 
-impl<'v, 'a, H: Upcast<Header>, T: Boxable<H, Inner = BoxedSized<H, T>> + Collect>
-    Borrow<'v, 'a, H, T>
+impl<'v, 'p, H: Upcast<Header>, T: Boxable<H, Inner = BoxedSized<H, T>> + Collect>
+    Pin<'v, 'p, H, T>
 {
-    pub(crate) fn annex(&self) -> &'a T::Annex
+    pub(crate) fn annex(&self) -> &'p T::Annex
     where
         T: Collect,
     {
@@ -1165,7 +1405,9 @@ impl<'v, 'a, H: Upcast<Header>, T: Boxable<H, Inner = BoxedSized<H, T>> + Collec
     }
 }
 
-impl<'v, 'a, H: Upcast<Header>, T: ?Sized + Boxable<H>> Borrow<'v, 'a, H, T> {
+impl<'v, 'p, H: Upcast<Header>, T: ?Sized + Boxable<H>> Pin<'v, 'p, H, T> {
+    /// # Safety
+    /// As for [`BasePin::new_unchecked`].
     pub(crate) unsafe fn from_raw(ptr: NonNull<<T as Boxable<H>>::Inner>) -> Self {
         Self {
             base: ptr.cast(),
@@ -1255,24 +1497,12 @@ where
     }
 }
 
-impl<'v, H: Upcast<Header>, T: ImmState> Deref for Box<'v, H, Imm<T>>
-where
-    Boxed<H, Imm<T>>: Upcast<Header>,
-    BoxedSized<H, Imm<T>>: Upcast<Header>,
-{
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        self.annex()
-    }
-}
-
-impl<'v, 'a, H: Upcast<Header>, T: ImmState> Borrow<'v, 'a, H, Imm<T>>
+impl<'v, 'p, H: Upcast<Header>, T: ImmState> Pin<'v, 'p, H, Imm<T>>
 where
     BoxedSized<H, Imm<T>>: Upcast<Header>,
 {
     /// The object's state.
-    pub(crate) fn get(&self) -> &'a T {
+    pub(crate) fn get(&self) -> &'p T {
         self.annex()
     }
 }
@@ -1285,7 +1515,8 @@ where
     /// The object's state.
     ///
     /// # Safety
-    /// The object must still be alive.
+    /// The object must still be alive, and no collection may happen before the
+    /// result's last use.
     pub(crate) unsafe fn get_unchecked(&self) -> &T {
         debug_assert_ne!(self.strong_count(), 0);
         unsafe { BoxedSized::annex(self.ptr.cast::<BoxedSized<H, Imm<T>>>()) }
@@ -1391,7 +1622,11 @@ mod tests {
             unsafe { embryo.finish_sized(header::<Imm<Node>>(&arena), Imm::UNIT, node) };
         assert_eq!(arena.0.balance.get(), 1);
         assert_ne!(arena.allocated(), 0);
-        node.children.borrow_mut().push(node.clone());
+        unsafe { node.pin_unchecked() }
+            .get()
+            .children
+            .borrow_mut()
+            .push(node.clone());
         drop(node);
         assert_eq!(drops.get(), 0);
         arena.collect_full();
@@ -1439,8 +1674,13 @@ mod tests {
                     counted(&drops, 0..len),
                 )
             };
-            assert_eq!(obj.annex().prefix.id, 99);
-            let ids: Vec<_> = obj.annex().tail.iter().map(|c| c.id).collect();
+            assert_eq!(unsafe { obj.pin_unchecked() }.annex().prefix.id, 99);
+            let ids: Vec<_> = unsafe { obj.pin_unchecked() }
+                .annex()
+                .tail
+                .iter()
+                .map(|c| c.id)
+                .collect();
             assert_eq!(ids, (0..len).collect::<Vec<_>>());
             drops.set(0);
             drop(obj);
@@ -1531,8 +1771,8 @@ mod tests {
         };
         let a = ring(&drops);
         let b = ring(&drops);
-        *a.annex().tail[0].borrow_mut() = Some(b.clone());
-        *b.annex().tail[1].borrow_mut() = Some(a.clone());
+        *unsafe { a.pin_unchecked() }.annex().tail[0].borrow_mut() = Some(b.clone());
+        *unsafe { b.pin_unchecked() }.annex().tail[1].borrow_mut() = Some(a.clone());
         drop((a, b));
         assert_eq!(drops.get(), 0);
         arena.collect_full();
@@ -1579,19 +1819,22 @@ mod tests {
         unsafe { embryo.splice(0, 5, b"goodbye") };
         assert_eq!(embryo.as_slice(), b"goodbye, world");
         let bytes: Gc<Bytes> = unsafe { embryo.finalize(header::<Bytes>(&arena), Bytes) };
-        assert_eq!(&bytes.annex().tail, b"goodbye, world");
+        assert_eq!(
+            &unsafe { bytes.pin_unchecked() }.annex().tail,
+            b"goodbye, world"
+        );
 
         let mut embryo = unsafe { Embryo::<Header, Bytes>::from_arena_capacity(&arena, 16) };
         unsafe { embryo.extend("héllo".as_bytes()) };
         let chars: Gc<Chars> =
             unsafe { embryo.finalize_str_unchecked(header::<Chars>(&arena), Chars) };
-        assert_eq!(&chars.annex().tail, "héllo");
+        assert_eq!(&unsafe { chars.pin_unchecked() }.annex().tail, "héllo");
 
         let empty: Gc<Chars> = unsafe { Gc::from_str(&arena, header::<Chars>(&arena), Chars, "") };
-        assert_eq!(&empty.annex().tail, "");
+        assert_eq!(&unsafe { empty.pin_unchecked() }.annex().tail, "");
         let copied: Gc<Bytes> =
             unsafe { Gc::from_bytes(&arena, header::<Bytes>(&arena), Bytes, b"abc") };
-        assert_eq!(&copied.annex().tail, b"abc");
+        assert_eq!(&unsafe { copied.pin_unchecked() }.annex().tail, b"abc");
 
         drop((bytes, chars, empty, copied));
         assert_eq!(arena.0.balance.get(), 0);

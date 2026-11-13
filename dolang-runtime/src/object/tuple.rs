@@ -20,7 +20,7 @@ use crate::{
 use super::{
     BoundMethod, index, iter,
     protocol::{
-        GcObj, GcObjBorrow, Header, Inspect, Spread, SpreadContext, instance_mcall_fallback,
+        GcObj, GcObjPin, Header, Inspect, Spread, SpreadContext, instance_mcall_fallback,
         is_special_mcall, type_mcall_fallback,
     },
     range,
@@ -92,16 +92,9 @@ impl<'v, 'a> Recv<'v, 'a, TupleObj<'v>> {
     }
 }
 
-impl<'v, 'a> GcObjBorrow<'v, 'a, TupleObj<'v>> {
+impl<'v, 'a> GcObjPin<'v, 'a, TupleObj<'v>> {
     /// The tuple's elements.
     pub(crate) fn items(&self) -> &'a [Value<'v>] {
-        &self.annex().tail
-    }
-}
-
-impl<'v> GcObj<'v, TupleObj<'v>> {
-    /// The tuple's elements.
-    pub(crate) fn items(&self) -> &[Value<'v>] {
         &self.annex().tail
     }
 }
@@ -273,20 +266,22 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         if let Some(other) = other.downcast_ref(strand.builtin_types().tuple) {
-            let left = this.items();
-            let right = other.items();
-            if left.len() != right.len() {
-                return Ok(Value::from_bool(false));
-            }
-            for (i, (l, r)) in left.iter().zip(right.iter()).enumerate() {
-                if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
-                    strand.check_trap()?;
-                }
-                if !l.op_eq(strand, r)?.to_bool(strand)? {
+            other.pin_sync(strand, |strand, other| {
+                let left = this.items();
+                let right = other.items();
+                if left.len() != right.len() {
                     return Ok(Value::from_bool(false));
                 }
-            }
-            Ok(Value::from_bool(true))
+                for (i, (l, r)) in left.iter().zip(right.iter()).enumerate() {
+                    if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
+                        strand.check_trap()?;
+                    }
+                    if !l.op_eq(strand, r)?.to_bool(strand)? {
+                        return Ok(Value::from_bool(false));
+                    }
+                }
+                Ok(Value::from_bool(true))
+            })
         } else {
             Err(Error::unsupported(strand, "`==`"))
         }
@@ -298,17 +293,19 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         if let Some(other) = other.downcast_ref(strand.builtin_types().tuple) {
-            let left = this.items();
-            let right = other.items();
-            for (i, (l, r)) in left.iter().zip(right.iter()).enumerate() {
-                if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
-                    strand.check_trap()?;
+            other.pin_sync(strand, |strand, other| {
+                let left = this.items();
+                let right = other.items();
+                for (i, (l, r)) in left.iter().zip(right.iter()).enumerate() {
+                    if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
+                        strand.check_trap()?;
+                    }
+                    if !l.op_eq(strand, r)?.to_bool(strand)? {
+                        return Ok(Value::from_bool(l.op_lt(strand, r)?.to_bool(strand)?));
+                    }
                 }
-                if !l.op_eq(strand, r)?.to_bool(strand)? {
-                    return Ok(Value::from_bool(l.op_lt(strand, r)?.to_bool(strand)?));
-                }
-            }
-            Ok(Value::from_bool(right.len() > left.len()))
+                Ok(Value::from_bool(right.len() > left.len()))
+            })
         } else {
             Err(Error::unsupported(strand, "`<`"))
         }
@@ -554,14 +551,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        let count = unpack_from(
-            strand,
-            sig,
-            &mut out,
-            borrow.tuple.items(),
-            borrow.index,
-            false,
-        )?;
+        let count = borrow.tuple.pin_sync(strand, |strand, tuple| {
+            unpack_from(strand, sig, &mut out, tuple.items(), borrow.index, false)
+        })?;
         if let Some(i) = sig.pos_rest_slot() {
             strand.builtin_types().tuple_iter.create(
                 strand,
@@ -583,13 +575,15 @@ impl<'v> Protocol<'v> for Iter<'v> {
     ) -> Result<'v, 's, bool> {
         let mut borrow = this.borrow_mut(strand)?;
         let index = borrow.index;
-        if let Some(value) = borrow.tuple.items().get(index) {
-            Output::set(strand, out, value);
-            borrow.index += 1;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        let found = borrow.tuple.pin_sync(strand, |strand, tuple| {
+            let value = tuple.items().get(index);
+            if let Some(value) = value {
+                Output::set(strand, out, value);
+            }
+            value.is_some()
+        });
+        borrow.index += usize::from(found);
+        Ok(found)
     }
 
     fn op_type<'a, 's>(
@@ -672,14 +666,9 @@ impl<'v> Protocol<'v> for Pairs<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        let count = unpack_from(
-            strand,
-            sig,
-            &mut out,
-            borrow.tuple.items(),
-            borrow.index,
-            true,
-        )?;
+        let count = borrow.tuple.pin_sync(strand, |strand, tuple| {
+            unpack_from(strand, sig, &mut out, tuple.items(), borrow.index, true)
+        })?;
         if let Some(i) = sig.pos_rest_slot() {
             strand.builtin_types().tuple_pairs.create(
                 strand,
@@ -701,14 +690,15 @@ impl<'v> Protocol<'v> for Pairs<'v> {
     ) -> Result<'v, 's, bool> {
         let mut borrow = this.borrow_mut(strand)?;
         let index = borrow.index;
-        if let Some(value) = borrow.tuple.items().get(index) {
-            let items = [Value::from_i64(strand, index as i64), value.dup()];
-            create(strand, items, out);
-            borrow.index += 1;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        let value = borrow
+            .tuple
+            .pin_sync(strand, |_, tuple| tuple.items().get(index).map(Value::dup));
+        let Some(value) = value else {
+            return Ok(false);
+        };
+        create(strand, [Value::from_i64(strand, index as i64), value], out);
+        borrow.index += 1;
+        Ok(true)
     }
 
     fn op_type<'a, 's>(

@@ -529,25 +529,29 @@ A `spawn_blocking` task that panicked resumes the panic with
 
 When wrapping types that borrow from GC-managed values (e.g. a regex iterator
 that borrows both a `Regex` and a haystack `str`), you cannot store the
-borrowed references directly because the GC may move or collect the referents.
-The solution:
+borrowed references directly: the referents must stay alive, and their
+contents must not move. The solution:
 
-1. **Declare `SLOTS`** — each slot is a GC-scanned `Value` that keeps a
-   referent alive.
-2. **Transmute borrowed lifetimes to `'static`** — strip the borrow's lifetime
+1. **Pin borrowed text with `PinStr`/`PinBin`** — `Str::pin` and `Bin::pin`
+   return an owned pin that keeps the object alive and its contents in place
+   until dropped. Store it in the object, declared _after_ the borrowing field
+   so it drops after it.
+2. **Declare `SLOTS` for other referents** — each slot is a GC-scanned `Value`
+   that keeps a referent alive, such as the `Regex` whose compiled program the
+   iterator borrows.
+3. **Transmute borrowed lifetimes to `'static`** — strip the borrow's lifetime
    so it can be stored in the struct.
-3. **Store the original GC values in slots** — the slots keep the referents
-   alive for as long as the object exists, making the transmuted references
-   valid.
 
 ```rust
-pub(crate) struct Find {
-    // SAFETY: transmuted to 'static; actual borrows kept alive by slots
+pub(crate) struct Find<'v> {
+    // SAFETY: transmuted to 'static; the regex is kept alive by slot 0 and the
+    // haystack by `_haystack`, which drops after `iter`
     iter: regex::CaptureMatches<'static, 'static>,
+    _haystack: PinStr<'v>,
 }
 
-impl<'v> Object<'v> for Find {
-    const SLOTS: usize = 2; // slot 0 = regex, slot 1 = haystack
+impl<'v> Object<'v> for Find<'v> {
+    const SLOTS: usize = 1; // slot 0 = regex
     type Annex = FindAnnex<'v>;
     // ...
 }
@@ -556,10 +560,11 @@ impl<'v> Object<'v> for Find {
 Population pattern (inside a method that creates the object):
 
 ```rust
-// 1. Create the borrowed iterator
-let iter = annex.regex.find_iter(hay);
+// 1. Pin the haystack and create the borrowed iterator
+let haystack = haystack_value.as_str(strand.vm()).unwrap().pin();
+let iter = annex.regex.find_iter(&haystack);
 
-// 2. Transmute to 'static (UNSAFE: must root referents in slots)
+// 2. Transmute to 'static (UNSAFE: the pin and slot must outlive it)
 let iter = unsafe {
     mem::transmute::<regex::CaptureMatches<'_, '_>,
                      regex::CaptureMatches<'static, 'static>>(iter)
@@ -567,19 +572,21 @@ let iter = unsafe {
 
 // 3. Create the object
 global.types.find.create_with_annex(
-    strand, Find { iter }, FindAnnex { global }, &mut out,
+    strand, Find { iter, _haystack: haystack }, FindAnnex { global }, &mut out,
 );
 
-// 4. Root the referents in slots (keeps them alive for GC)
+// 4. Root the other referents in slots (keeps them alive for GC)
 let mut borrow = global.types.find.downcast(&out).unwrap().borrow_mut_unwrap();
-Output::set(strand, Mut::slot_mut::<0>(&mut borrow), this);     // regex
-Output::set(strand, Mut::slot_mut::<1>(&mut borrow), haystack); // haystack string
+Output::set(strand, Mut::slot_mut::<0>(&mut borrow), this); // regex
 ```
 
 Slots are accessed via `Ref::slot::<N>` (read) and `Mut::slot_mut::<N>` (write).
 The const generic `N` is bounds-checked at compile time against `SLOTS`.
 
-**Key invariant**: the transmuted references are only valid as long as the
-slot values are alive. Slots are scanned by the GC, so the referents will not
-be collected while the object exists. Never clear or overwrite a slot that
-backs a transmuted reference.
+For text needed only within a call, use `Str::with_str`/`Bin::with_slice`
+(or their `_async` forms) to borrow it while keeping the strand, or
+`Str::as_str` with a `Strand::access` token; neither needs a stored pin.
+
+**Key invariant**: the transmuted references are only valid as long as their
+referents are alive and pinned. Never clear or overwrite a slot that backs a
+transmuted reference, and never drop a pin before its borrower.

@@ -43,7 +43,7 @@ enum RecvFuture<'v, 's, 'a> {
     Ready(Result<'v, 's, bool>),
     Pend {
         strand: &'s StrandInner<'v>,
-        recv: gc::Borrow<'v, 'a, Header, Receiver<'v>>,
+        recv: gc::Pin<'v, 'a, Header, Receiver<'v>>,
         out: Slot<'v, 'a>,
     },
 }
@@ -52,7 +52,7 @@ enum SendFuture<'v, 's, 'a> {
     Ready(Result<'v, 's, ()>),
     Pend {
         strand: &'s StrandInner<'v>,
-        send: gc::Borrow<'v, 'a, Header, SenderObj<'v>>,
+        send: gc::Pin<'v, 'a, Header, SenderObj<'v>>,
         value: Slot<'v, 'a>,
     },
 }
@@ -154,7 +154,9 @@ impl<'v, 's, 'a> Future for SendFuture<'v, 's, 'a> {
                 send,
                 value,
             } => {
-                let Some(mut borrow) = send.get().receiver.borrow_mut() else {
+                // SAFETY: a transient pin; polling has no strand, so it cannot collect
+                let receiver = unsafe { send.get().receiver.pin_unchecked() };
+                let Some(mut borrow) = receiver.borrow_mut() else {
                     return Poll::Ready(Err(Error::concurrency_raw(strand)));
                 };
                 let res = borrow.send(value, Some(cx));
@@ -346,7 +348,8 @@ impl<'v> Protocol<'v> for SenderObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         value: Slot<'v, 'a>,
     ) -> impl Future<Output = Result<'v, 's, ()>> {
-        let receiver = &this.get().receiver;
+        // SAFETY: a transient pin; sending cannot collect
+        let receiver = unsafe { this.get().receiver.pin_unchecked() };
         let Some(mut borrow) = receiver.borrow_mut() else {
             return SendFuture::Ready(Err(Error::concurrency(strand)));
         };
@@ -397,22 +400,20 @@ impl<'v> Protocol<'v> for SenderObj<'v> {
                     None => None,
                 };
                 let poison_err = err.map(|mut err| err.take());
-                let borrow = this.get();
-                let receiver = borrow.receiver.clone();
-
-                let mut borrow = receiver
-                    .borrow_mut()
-                    .ok_or_else(|| Error::concurrency(strand))?;
-                borrow.send_closed = true;
-                if let Some(poison_err) = poison_err {
-                    borrow.poison = Some((
-                        poison_err,
-                        poison_backtrace.map(|mut s| s.take()).unwrap_or(Value::NIL),
-                    ));
-                }
-                for wake in borrow.receivers.drain(0..) {
-                    wake.wake()
-                }
+                let poison_backtrace = poison_backtrace.map(|mut s| s.take());
+                this.get().receiver.pin_sync(strand, |strand, receiver| {
+                    let mut borrow = receiver
+                        .borrow_mut()
+                        .ok_or_else(|| Error::concurrency(strand))?;
+                    borrow.send_closed = true;
+                    if let Some(poison_err) = poison_err {
+                        borrow.poison = Some((poison_err, poison_backtrace.unwrap_or(Value::NIL)));
+                    }
+                    for wake in borrow.receivers.drain(0..) {
+                        wake.wake()
+                    }
+                    Ok(())
+                })?;
                 Ok(())
             }
             _ => iter::sink_mcall(strand, &this, method, args, out).await,

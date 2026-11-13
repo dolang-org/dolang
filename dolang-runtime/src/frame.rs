@@ -36,7 +36,7 @@ pub trait Frame {
 pub(crate) struct CallFrame<'v> {
     pub(crate) parent: Option<Ptr<'v>>,
     pub(crate) program: Gc<'v, Program<'v>>,
-    upvars: UnsafeCell<Option<Gc<'v, Upvars<'v>>>>,
+    upvars: UpvarsCell<'v>,
     pub(crate) func: usize,
     pub(crate) pc: Cell<usize>,
     pub(crate) sp: Cell<usize>,
@@ -89,9 +89,8 @@ impl<'v> CallFrame<'v> {
         args: Args<'v, '_>,
     ) -> Result<'v, 's, ()> {
         unsafe {
-            let program = self.program.annex();
-            let (func, slot_max) = &program.funcs.get_unchecked(self.func);
-            let unpack = program.unpacktab.get_unchecked(func.sig);
+            let (func, slot_max) = &self.program.funcs().get_unchecked(self.func);
+            let unpack = self.program.unpacktab().get_unchecked(func.sig);
             let slots = &self.slots;
             let mut pos = 0;
             let offset = func.locals;
@@ -311,12 +310,12 @@ impl<'v> CallFrame<'v> {
         upvars: Option<Gc<'v, Upvars<'v>>>,
         parent: Option<Ptr<'v>>,
     ) -> Self {
-        let info = &loaded.annex().funcs[func];
+        let info = &loaded.funcs()[func];
         let locals = info.0.locals;
         let slots = info.1;
         CallFrame {
             func,
-            upvars: UnsafeCell::new(upvars),
+            upvars: gc::GcCell::new(upvars),
             parent,
             program: loaded,
             pc: Cell::new(0),
@@ -342,6 +341,39 @@ pub(crate) struct UpvarsPrefix<'v> {
 }
 
 pub(crate) type UpvarsAnnex<'v> = gc::Tail<UpvarsPrefix<'v>, [ValueCell<'v>]>;
+
+/// A frame's mutable upvar chain head.
+type UpvarsCell<'v> = gc::GcCell<'v, gc::Boxed<gc::arena::Header, Upvars<'v>>>;
+
+impl<'v> Gc<'v, Upvars<'v>> {
+    /// Variable `index`, duplicated.
+    ///
+    /// # Safety
+    ///
+    /// `index` must be in bounds.
+    pub(crate) unsafe fn var(&self, index: usize) -> Value<'v> {
+        // SAFETY: a transient pin; duplicating cannot collect
+        unsafe { self.pin_unchecked().annex().tail.get_unchecked(index).get() }
+    }
+
+    /// Store `value` into variable `index`.  The old value is dropped after the write.
+    ///
+    /// # Safety
+    ///
+    /// `index` must be in bounds, and nothing may borrow the variable.
+    pub(crate) unsafe fn set_var(&self, index: usize, value: Value<'v>) {
+        // SAFETY: a transient pin; dropping the old value may run a finalizer, which
+        // has no strand and cannot collect
+        unsafe {
+            self.pin_unchecked()
+                .annex()
+                .tail
+                .get_unchecked(index)
+                .slot()
+                .store(value)
+        }
+    }
+}
 
 unsafe impl<'v> Collect for Upvars<'v> {
     const CYCLIC: bool = true;
@@ -382,21 +414,35 @@ impl<'v> CallFrame<'v> {
     /// # Safety
     ///
     /// The returned reference must not be held across [`Self::push_upvars`] or
-    /// [`Self::pop_upvars`].  Every use stays inside the methods below.
-    unsafe fn upvar_chain(&self) -> &Option<Gc<'v, Upvars<'v>>> {
-        unsafe { &*self.upvars.get() }
+    /// [`Self::pop_upvars`], which write the cell.  Every use stays inside the methods
+    /// below.
+    unsafe fn upvar_chain(&self) -> Option<&Gc<'v, Upvars<'v>>> {
+        unsafe { self.upvars.as_ref() }
     }
 
     /// Upvar frame at `depth` levels up the chain: 0 is the innermost.
+    ///
+    /// The frame is reached through transient pins, so nothing may collect while the
+    /// result is held.  Upvar reads and writes never do.
     ///
     /// # Safety
     ///
     /// The chain must be at least `depth + 1` frames long.
     unsafe fn upvars_at(&self, mut depth: usize) -> &UpvarsAnnex<'v> {
         unsafe {
-            let mut upvars = self.upvar_chain().as_ref().unwrap_unchecked().annex();
+            let mut upvars = self
+                .upvar_chain()
+                .unwrap_unchecked()
+                .pin_unchecked()
+                .annex();
             while depth != 0 {
-                upvars = upvars.prefix.parent.as_ref().unwrap_unchecked().annex();
+                upvars = upvars
+                    .prefix
+                    .parent
+                    .as_ref()
+                    .unwrap_unchecked()
+                    .pin_unchecked()
+                    .annex();
                 depth -= 1;
             }
             upvars
@@ -437,8 +483,8 @@ impl<'v> CallFrame<'v> {
 
     /// Push a new upvar frame of `count` nil variables.
     pub(crate) fn push_upvars(&self, arena: &Arena<'v>, count: usize) {
-        // SAFETY: no reference into the chain outlives `upvar_chain`'s use here
-        let parent = unsafe { self.upvar_chain() }.clone();
+        // SAFETY: no write to the chain is in progress
+        let parent = unsafe { self.upvars.get() };
         let upvars = Gc::new_tail(
             arena,
             Upvars(PhantomData),
@@ -448,8 +494,8 @@ impl<'v> CallFrame<'v> {
             },
             (0..count).map(|_| ValueCell::default()),
         );
-        let old = unsafe { (*self.upvars.get()).replace(upvars) };
-        drop(old)
+        // SAFETY: nothing borrows the chain across this write
+        unsafe { self.upvars.slot() }.store(Some(upvars))
     }
 
     /// Pop the innermost upvar frame, returning it.
@@ -459,16 +505,18 @@ impl<'v> CallFrame<'v> {
     /// The chain must not be empty.
     pub(crate) unsafe fn pop_upvars(&self) -> Gc<'v, Upvars<'v>> {
         unsafe {
-            let slot = &mut *self.upvars.get();
+            // SAFETY: nothing borrows the chain across these writes
+            let mut slot = self.upvars.slot();
             let popped = slot.take().unwrap_unchecked();
-            *slot = popped.annex().prefix.parent.clone();
+            slot.replace(popped.pin_unchecked().annex().prefix.parent.clone());
             popped
         }
     }
 
     /// The current upvar chain, for a closure to capture.
     pub(crate) fn upvars(&self) -> Option<Gc<'v, Upvars<'v>>> {
-        unsafe { self.upvar_chain() }.clone()
+        // SAFETY: no write to the chain is in progress
+        unsafe { self.upvars.get() }
     }
 
     /// Target of a non-local branch to the upvar frame `depth` levels up, or `None` if
@@ -479,12 +527,18 @@ impl<'v> CallFrame<'v> {
     /// The chain must be at least `depth + 1` frames long.
     pub(crate) unsafe fn nl_target(&self, mut depth: usize) -> Option<gc::Weak<'v, Upvars<'v>>> {
         unsafe {
-            let mut current = self.upvar_chain().as_ref().unwrap_unchecked();
+            let mut current = self.upvar_chain().unwrap_unchecked();
             while depth != 0 {
-                current = current.annex().prefix.parent.as_ref().unwrap_unchecked();
+                current = current
+                    .pin_unchecked()
+                    .annex()
+                    .prefix
+                    .parent
+                    .as_ref()
+                    .unwrap_unchecked();
                 depth -= 1;
             }
-            if current.annex().prefix.stale.get() {
+            if current.pin_unchecked().annex().prefix.stale.get() {
                 None
             } else {
                 Some(Gc::downgrade(current))
@@ -500,9 +554,7 @@ impl<'v> CallFrame<'v> {
     pub(crate) unsafe fn scan(&self, visitor: &mut dyn Visit) -> ControlFlow<()> {
         unsafe {
             self.program.accept(visitor)?;
-            if let Some(upvars) = self.upvar_chain() {
-                upvars.accept(visitor)?;
-            }
+            self.upvars.accept(visitor)?;
             for i in 0..self.sp.get() {
                 self.slots.get_unchecked(i).accept(visitor)?;
             }
@@ -535,8 +587,8 @@ impl<'v, 'a> FrameInfo<'v, 'a> {
         match self.0 {
             Ptr::Do(head) => {
                 let head = unsafe { head.as_ref() };
-                let loaded = head.program.annex();
-                if let Some(debug) = loaded.funcdebugs.get(head.func) {
+                let loaded = &head.program;
+                if let Some(debug) = loaded.funcdebugs().get(head.func) {
                     let file = &loaded.debug_strtab()[debug.file.clone()];
                     Some((file, debug.locate(head.pc.get() - 1)))
                 } else {
@@ -560,9 +612,9 @@ impl<'v, 'a> FrameInfo<'v, 'a> {
         match self.0 {
             Ptr::Do(head) => {
                 let head = unsafe { head.as_ref() };
-                let loaded = head.program.annex();
+                let loaded = &head.program;
                 loaded
-                    .funcdebugs
+                    .funcdebugs()
                     .get(head.func)
                     .map(|debug| &loaded.debug_strtab()[debug.name.clone()])
                     .unwrap_or(if head.func == 0 { "<main>" } else { "?" })
@@ -594,11 +646,7 @@ impl<'v, 'a> FrameInfo<'v, 'a> {
         match self.0 {
             Ptr::Do(head) => {
                 let head = unsafe { head.as_ref() };
-                let loaded = head.program.annex();
-                match &loaded.module_name {
-                    Some(range) => &loaded.debug_strtab()[range.clone()],
-                    None => "<program>",
-                }
+                head.program.module_name().unwrap_or("<program>")
             }
             Ptr::Native(head) | Ptr::Boundary(head) => {
                 let head = unsafe { head.as_ref() };

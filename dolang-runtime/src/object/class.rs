@@ -5,6 +5,7 @@ use std::{
     marker::PhantomData,
     mem,
     ops::ControlFlow,
+    ptr,
 };
 
 use crate::value::fmt::{Format, Spec};
@@ -34,7 +35,7 @@ use crate::{
     vm::{Builder, StateTag, Vm},
 };
 
-use super::protocol::{GcObj, GcObjBorrow, Protocol};
+use super::protocol::{GcObj, Protocol};
 
 /// Run a getter or setter with no input and its output discarded: it runs
 /// wherever its field is accessed, so it can't use the accessing code's channels
@@ -181,16 +182,18 @@ pub(crate) async fn create<'v, 's>(
 
     // Extract class name
     let name: alias::Box<str> = name
-        .as_str_raw(strand)
+        .as_str(strand)
         .ok_or_else(|| Error::type_error(strand, "class_create: expected string name"))?
-        .into();
+        .with_str(strand, |_, name| name.into());
     let module_name = module_name
-        .as_str_raw(strand)
+        .as_str(strand)
         .ok_or_else(|| Error::type_error(strand, "class_create: expected string module name"))?;
     let module_name = if module_name.is_empty() {
         None
     } else {
-        Some(alias::Box::<str>::from(module_name))
+        Some(module_name.with_str(strand, |_, module_name| {
+            alias::Box::<str>::from(module_name)
+        }))
     };
 
     let mut supers = Vec::new();
@@ -614,7 +617,7 @@ pub(crate) async fn create<'v, 's>(
 
     let members = entries
         .iter()
-        .filter(|(sym, _)| !strand.sym_obj(*sym).private)
+        .filter(|(sym, _)| !strand.sym_obj(*sym).private())
         .map(|(sym, entry)| {
             Member::new(
                 *sym,
@@ -629,7 +632,7 @@ pub(crate) async fn create<'v, 's>(
         .collect::<Vec<_>>();
     let type_members = type_entries
         .iter()
-        .filter(|(sym, _)| !strand.sym_obj(*sym).private)
+        .filter(|(sym, _)| !strand.sym_obj(*sym).private())
         .map(|(sym, entry)| {
             Member::new(
                 *sym,
@@ -679,7 +682,7 @@ pub(crate) async fn create<'v, 's>(
         ClassObject {
             type_fields: type_fields.into(),
         },
-        class_annex,
+        alias::Box::new(class_annex),
         out,
     );
 
@@ -811,9 +814,10 @@ impl<'v> Protocol<'v> for AccessorTypeObj {
 /// If `value` is an [`Accessor`], replace it with the function it wraps and
 /// return which half of a property it supplies.
 fn unwrap_accessor<'v>(strand: &Strand<'v, '_>, value: &mut Value<'v>) -> Option<AccessorKind> {
-    let accessor = value.downcast_ref(strand.builtin_types().accessor)?;
-    let kind = accessor.get().kind;
-    *value = accessor.get().func.dup();
+    let (kind, func) = value
+        .downcast_ref(strand.builtin_types().accessor)?
+        .read(|accessor| (accessor.get().kind, accessor.get().func.dup()));
+    *value = func;
     Some(kind)
 }
 
@@ -1094,9 +1098,10 @@ impl<'v> ClassObjectAnnex<'v> {
     }
 }
 
+// Out of line, so a class reached through an instance needs no pin of its own
 unsafe impl<'v> Collect for ClassObject<'v> {
     const CYCLIC: bool = true;
-    type Annex = ClassObjectAnnex<'v>;
+    type Annex = alias::Box<ClassObjectAnnex<'v>>;
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
         for field in self.type_fields.iter() {
@@ -1364,7 +1369,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                         let recv = obj
                             .downcast_ref(strand.builtin_types().class_instance)
                             .expect("object is a class instance");
-                        let slot_idx = match recv.annex().prefix.class.annex().entry(field) {
+                        let slot_idx = match recv.class().entry(field) {
                             Some(ClassEntry::Field(slot_idx)) => *slot_idx,
                             _ => {
                                 return Err(Error::runtime(
@@ -1373,7 +1378,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                                 ));
                             }
                         };
-                        Output::set(strand, out, recv.annex().field(slot_idx));
+                        Output::set(strand, out, recv.field(slot_idx));
                         Ok(())
                     }
                     Some(ClassEntry::Property(Property {
@@ -1394,15 +1399,12 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                         let native = obj
                             .downcast_ref(strand.builtin_types().class_instance)
                             .ok_or_else(|| Error::type_error(strand, "invalid class object type"))?
-                            .annex()
-                            .prefix
-                            .class
-                            .annex()
+                            .class()
                             .entry(field)
                             .and_then(|entry| match entry {
                                 ClassEntry::Delegate(slot, _) => obj
                                     .downcast_ref(strand.builtin_types().class_instance)
-                                    .and_then(|recv| recv.annex().native(*slot)),
+                                    .and_then(|recv| recv.native(*slot)),
                                 _ => None,
                             })
                             .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
@@ -1418,7 +1420,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                                 .ok_or_else(|| {
                                     Error::type_error(strand, "invalid class object type")
                                 })?;
-                            let native = recv.annex().native(*slot).ok_or_else(|| {
+                            let native = recv.native(*slot).ok_or_else(|| {
                                 Error::runtime(strand, "native slot uninitialized")
                             })?;
                             Delegated::new(native, &obj).op_get(strand, field, out)
@@ -1442,11 +1444,11 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                             .ok_or_else(|| {
                                 Error::type_error(strand, "invalid class object type")
                             })?;
-                        let slot_idx = match recv.annex().prefix.class.annex().entry(field) {
+                        let slot_idx = match recv.class().entry(field) {
                             Some(ClassEntry::Field(slot_idx)) => *slot_idx,
                             _ => return Err(Error::field(strand, field)),
                         };
-                        recv.annex().set_field(slot_idx, value.take());
+                        recv.set_field(slot_idx, value.take());
                         Ok(())
                     }
                     Some(ClassEntry::Property(Property {
@@ -1472,7 +1474,6 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                                 Error::type_error(strand, "invalid class object type")
                             })?;
                         let native = recv
-                            .annex()
                             .native(*slot)
                             .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                         Delegated::new(native, &obj).op_set(strand, field, value)
@@ -1491,7 +1492,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                                 .ok_or_else(|| {
                                     Error::type_error(strand, "invalid class object type")
                                 })?;
-                            let native = recv.annex().native(*slot).ok_or_else(|| {
+                            let native = recv.native(*slot).ok_or_else(|| {
                                 Error::runtime(strand, "native slot uninitialized")
                             })?;
                             Delegated::new(native, &obj).op_set(strand, field, value)
@@ -1640,8 +1641,7 @@ pub(crate) async fn instantiate<'v, 'a, 's>(
     strand
         .with_slots(async move |strand, [mut inst, mut tmp]| {
             // Native super slots come first, uninitialized; the fields follow
-            let mut cells = Vec::with_capacity(native_slot_count + me.field_defaults.len());
-            cells.resize_with(native_slot_count, ValueCell::default);
+            let mut cells = Vec::with_capacity(me.field_defaults.len());
             for default in me.field_defaults.iter() {
                 match default {
                     FieldDefault::Value(value) => cells.push(value.dup().into()),
@@ -1656,7 +1656,9 @@ pub(crate) async fn instantiate<'v, 'a, 's>(
                 ClassInstance(PhantomData),
                 ClassInstancePrefix {
                     class: class_obj,
-                    natives: native_slot_count,
+                    natives: (0..native_slot_count)
+                        .map(|_| ValueCell::default())
+                        .collect(),
                 },
                 cells,
                 &mut inst,
@@ -1688,10 +1690,8 @@ pub(crate) async fn instantiate<'v, 'a, 's>(
             // Verify all native slots are initialized
             if inst
                 .downcast_ref(strand.builtin_types().class_instance)
+                .map(|inst| iter_natives(inst).count())
                 .unwrap()
-                .annex()
-                .natives()
-                .count()
                 != native_slot_count
             {
                 return Err(Error::runtime(strand, "native supertypes not initialized"));
@@ -1786,7 +1786,9 @@ impl<'v> Protocol<'v> for ClassTypeProxyObj<'v> {
         let Some(other) = other.downcast_ref(strand.builtin_types().class_type_proxy) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
-        let same = other.get().class.repr_eq(&this.get().class);
+        let same = other.pin_sync(strand, |_, other| {
+            other.get().class.repr_eq(&this.get().class)
+        });
         Ok(Value::from_bool(same))
     }
 
@@ -1857,12 +1859,16 @@ impl<'v> Protocol<'v> for ClassTypeProxyObj<'v> {
                 .ok_or_else(|| Error::type_error(strand, "expected a symbol"))?;
             if method.tag() == sym::GET_METHOD {
                 let ([], []) = unpack!(strand, trailing, 0, 0)?;
-                return ClassObject::type_get(Recv::new(class), strand, field, out);
+                return class.pin_sync(strand, |strand, class| {
+                    ClassObject::type_get(Recv::new(class), strand, field, out)
+                });
             }
             let ([value], []) = unpack!(strand, trailing, 1, 0)?;
             return strand.with_slots_sync(|strand, [mut slot]| {
                 Output::set(strand, Slot::reborrow(&mut slot), value);
-                ClassObject::op_set(Recv::new(class), strand, field, slot)
+                class.pin_sync(strand, |strand, class| {
+                    ClassObject::op_set(Recv::new(class), strand, field, slot)
+                })
             });
         }
         match class.type_entry(method) {
@@ -1888,11 +1894,12 @@ impl<'v> Protocol<'v> for ClassTypeProxyObj<'v> {
 /// The fixed part of a [`ClassInstance`] annex.
 pub(crate) struct ClassInstancePrefix<'v> {
     pub(crate) class: GcObj<'v, ClassObject<'v>>,
-    /// How many leading tail cells are native super slots; the fields follow.
-    natives: usize,
+    /// Native super slots, out of line so that a native found in one is reachable
+    /// without pinning the instance.
+    natives: alias::Box<[ValueCell<'v>]>,
 }
 
-/// A class instance's state: its class, then native super slots and fields as
+/// A class instance's state: its class and native super slots, then fields as
 /// cells in the tail.
 pub(crate) type ClassInstanceAnnex<'v> = gc::Tail<ClassInstancePrefix<'v>, [ValueCell<'v>]>;
 
@@ -1902,15 +1909,12 @@ impl<'v> ClassInstanceAnnex<'v> {
     /// The reference may be held across awaits: a native slot is written once,
     /// from nil, by [`Self::init_native`], and the collector never clears it.
     pub(crate) fn native(&self, idx: usize) -> Option<&Value<'v>> {
-        debug_assert!(idx < self.prefix.natives);
-        // Safety: see above; nothing writes an initialized native slot
-        let value = unsafe { self.tail[..self.prefix.natives][idx].as_ref() };
-        (!value.is_nil()).then_some(value)
+        native_value(&self.prefix.natives[idx])
     }
 
     /// The initialized native super slots.
     pub(crate) fn natives(&self) -> impl Iterator<Item = &Value<'v>> {
-        (0..self.prefix.natives).filter_map(|idx| self.native(idx))
+        self.prefix.natives.iter().filter_map(native_value)
     }
 
     /// Initializes native super slot `idx` with `native`, which must not be nil.
@@ -1921,27 +1925,27 @@ impl<'v> ClassInstanceAnnex<'v> {
             return Err(native);
         }
         // Safety: an uninitialized slot is never borrowed
-        unsafe { self.tail[idx].slot().store(native) };
+        unsafe { self.prefix.natives[idx].slot().store(native) };
         Ok(())
     }
 
     /// Field `idx`, duplicated.
     pub(crate) fn field(&self, idx: usize) -> Value<'v> {
         // Safety: field cells are only read by duplicating them, never borrowed
-        unsafe { self.tail[self.prefix.natives + idx].get() }
+        unsafe { self.tail[idx].get() }
     }
 
     /// Stores `value` into field `idx`. The old value is dropped after the write.
     pub(crate) fn set_field(&self, idx: usize, value: Value<'v>) {
         // Safety: as for `field`
-        unsafe { self.tail[self.prefix.natives + idx].slot().store(value) }
+        unsafe { self.tail[idx].slot().store(value) }
     }
 }
 
 impl<'v> gc::TailAnnex<ValueCell<'v>> for ClassInstancePrefix<'v> {
     fn accept(&self, tail: &[ValueCell<'v>], visit: &mut dyn Visit) -> ControlFlow<()> {
         self.class.accept(visit)?;
-        for cell in tail {
+        for cell in self.natives.iter().chain(tail) {
             cell.accept(visit)?;
         }
         ControlFlow::Continue(())
@@ -1950,7 +1954,7 @@ impl<'v> gc::TailAnnex<ValueCell<'v>> for ClassInstancePrefix<'v> {
     // Only fields are cleared: native slots are borrowed across awaits. The class
     // is immutable.
     fn clear(&self, tail: &[ValueCell<'v>]) {
-        for cell in &tail[self.natives..] {
+        for cell in tail {
             // Safety: the collector clears only unreachable instances
             unsafe { cell.slot().store(Value::NIL) }
         }
@@ -1975,26 +1979,68 @@ unsafe impl<'v> Collect for ClassInstance<'v> {
 /// native super's type object, returns a reference to the initialized native slot value,
 /// if any.  The returned reference's lifetime is linked to that of the borrow.
 pub(crate) fn get_native_slot<'v, 'a>(
-    borrow: GcObjBorrow<'v, 'a, ClassInstance<'v>>,
+    obj: &'a GcObj<'v, ClassInstance<'v>>,
     type_obj: &Value<'v>,
 ) -> Option<&'a Value<'v>> {
-    let annex = borrow.annex();
-    let slot = annex
-        .prefix
-        .class
-        .annex()
+    let slot = obj
+        .class()
         .native_supers
         .iter()
         .position(|s| s.repr_eq(type_obj))?;
-    annex.native(slot)
+    native_value(&native_slots(obj)[slot])
 }
 
 /// Returns an iterator over all initialized native values in a [`ClassInstance`].
-/// The lifetime of each yielded `&Value<'v>` is linked to the borrow lifetime `'a`.
+/// The lifetime of each yielded `&Value<'v>` is linked to that of `obj`.
 pub(crate) fn iter_natives<'v, 'a>(
-    borrow: GcObjBorrow<'v, 'a, ClassInstance<'v>>,
+    obj: &'a GcObj<'v, ClassInstance<'v>>,
 ) -> impl Iterator<Item = &'a Value<'v>> {
-    borrow.annex().natives()
+    native_slots(obj).iter().filter_map(native_value)
+}
+
+impl<'v> GcObj<'v, ClassInstance<'v>> {
+    /// The annex of the instance's class, which lives out of line.
+    pub(crate) fn class(&self) -> &ClassObjectAnnex<'v> {
+        // SAFETY: a transient pin reaches the class's out-of-line annex, which stays
+        // put and which the instance's immutable class reference keeps alive
+        unsafe { &*ptr::from_ref(self.pin_unchecked().annex().prefix.class.annex()) }
+    }
+
+    /// Native super slot `idx`, or `None` while uninitialized; see
+    /// [`ClassInstanceAnnex::native`].
+    pub(crate) fn native(&self, idx: usize) -> Option<&Value<'v>> {
+        native_value(&native_slots(self)[idx])
+    }
+
+    /// Field `idx`, duplicated.
+    pub(crate) fn field(&self, idx: usize) -> Value<'v> {
+        // SAFETY: a transient pin; duplicating cannot collect
+        unsafe { self.pin_unchecked() }.annex().field(idx)
+    }
+
+    /// Stores `value` into field `idx`; see [`ClassInstanceAnnex::set_field`].
+    pub(crate) fn set_field(&self, idx: usize, value: Value<'v>) {
+        // SAFETY: a transient pin; dropping the old value may run a finalizer, which
+        // has no strand and cannot collect
+        unsafe { self.pin_unchecked() }
+            .annex()
+            .set_field(idx, value)
+    }
+}
+
+/// The native super slots, which live out of line.
+fn native_slots<'v, 'a>(obj: &'a GcObj<'v, ClassInstance<'v>>) -> &'a [ValueCell<'v>] {
+    obj.project(|p| &p.annex().prefix.natives)
+}
+
+/// A native super slot's value, or `None` while uninitialized.
+///
+/// The reference may be held across awaits: a native slot is written once, from
+/// nil, by [`ClassInstanceAnnex::init_native`], and the collector never clears it.
+fn native_value<'a, 'v>(cell: &'a ValueCell<'v>) -> Option<&'a Value<'v>> {
+    // Safety: see above; nothing writes an initialized native slot
+    let value = unsafe { cell.as_ref() };
+    (!value.is_nil()).then_some(value)
 }
 
 fn class_sync_binary_op<'v, 'a, 's>(
@@ -2217,9 +2263,9 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                         call!(strand, v, &mut result, &this, &reified).await
                     })?;
                     let result = result
-                        .as_str_raw(strand)
+                        .as_str(strand)
                         .ok_or_else(|| Error::type_error(strand, "expected Str result"))?;
-                    crate::fmt!(strand, w, "{result}")
+                    result.with_str(strand, |strand, result| crate::fmt!(strand, w, "{result}"))
                 })
             }
             Some(ClassEntry::Delegate(slot, _)) => {
@@ -2319,9 +2365,9 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 Some(ClassEntry::Method(v)) => strand.with_slots_sync(|strand, [mut result]| {
                     strand.sync(async |strand| call!(strand, v, &mut result, &this).await)?;
                     let result = result
-                        .as_str_raw(strand)
+                        .as_str(strand)
                         .ok_or_else(|| Error::type_error(strand, "expected Str result"))?;
-                    crate::fmt!(strand, w, "{result}")?;
+                    result.with_str(strand, |strand, result| crate::fmt!(strand, w, "{result}"))?;
                     Ok(false)
                 })?,
                 Some(ClassEntry::Delegate(slot, _)) => {
@@ -2354,9 +2400,9 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             Some(ClassEntry::Method(v)) => strand.with_slots_sync(move |strand, [mut result]| {
                 strand.sync(async |strand| call!(strand, v, &mut result, &this).await)?;
                 let result = result
-                    .as_str_raw(strand)
+                    .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "expected Str result"))?;
-                crate::fmt!(strand, w, "{result}")
+                result.with_str(strand, |strand, result| crate::fmt!(strand, w, "{result}"))
             }),
             Some(ClassEntry::Delegate(slot, _)) => {
                 let native = annex
@@ -2396,9 +2442,11 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     strand.with_slots_sync(move |strand, [mut result]| {
                         strand.sync(async |strand| call!(strand, v, &mut result, &this).await)?;
                         let result = result
-                            .as_str_raw(strand)
+                            .as_str(strand)
                             .ok_or_else(|| Error::type_error(strand, "expected Str result"))?;
-                        crate::fmt!(strand, w, "{result}")?;
+                        result.with_str(strand, |strand, result| {
+                            crate::fmt!(strand, w, "{result}")
+                        })?;
                         Ok(false)
                     })?
                 }

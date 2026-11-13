@@ -268,12 +268,9 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             if value.as_sym(strand).is_some() {
                 Output::set(strand, out, value);
                 Ok(())
-            } else if let Some(value) = value.as_str_raw(strand) {
-                Output::set(
-                    strand,
-                    out,
-                    Value::from_object(strand.sym_register_obj(value)),
-                );
+            } else if let Some(value) = value.as_str(strand) {
+                let sym = value.with_str(strand, |strand, value| strand.sym_register_obj(value));
+                Output::set(strand, out, Value::from_object(sym));
                 Ok(())
             } else {
                 Err(Error::type_error(strand, "sym: expected Str or Sym"))

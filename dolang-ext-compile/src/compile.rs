@@ -346,7 +346,7 @@ impl<'v> Global<'v> {
 pub(crate) struct UnitObject<'v> {
     // Fields are dropped in declaration order: the borrowing unit before its pin.
     unit: Option<compile::Unit<'static>>,
-    _backing: PinStr<'v, 'static>,
+    _backing: PinStr<'v>,
     path: Box<Path>,
     /// The module it was compiled as, or `None` for a script
     module: Option<Box<str>>,
@@ -358,7 +358,7 @@ pub(crate) struct TypelibObject<'v> {
     // Fields are dropped in declaration order: the borrowing typelib before its pin.
     /// Taken out while a check borrows it
     typelib: Option<compile::typeck::Typelib<'static>>,
-    _backing: PinBin<'v, 'static>,
+    _backing: PinBin<'v>,
 }
 
 pub(crate) struct DiagnosticAnnex<'v> {
@@ -1626,9 +1626,8 @@ impl<'v> Object<'v> for TypelibObject<'v> {
         let View::Bin(bin) = bytes.view(strand) else {
             return Err(Error::type_error(strand, "bytes: expected `Bin`"));
         };
-        // SAFETY: the binary is installed in TYPELIB_BYTES below. The GC root
-        // supplies liveness and this retained pin supplies address stability.
-        let backing: PinBin<'v, 'static> = unsafe { bin.pin().into_static_unchecked() };
+        // The retained pin keeps the binary alive and in place for the typelib.
+        let backing: PinBin<'v> = bin.pin();
         // SAFETY: the pin is retained after the borrowing typelib and dropped after
         // it.
         let static_bytes: &'static [u8] = unsafe { mem::transmute::<&[u8], _>(&*backing) };
@@ -2837,14 +2836,10 @@ impl<'v> Object<'v> for Diagnostic {
                             let mut backings = Vec::with_capacity(annex.paths.len());
                             for index in 0..annex.paths.len() {
                                 array.get(strand, index, &mut item)?;
-                                // SAFETY: the sources array is rooted in this diagnostic's
-                                // DIAG_SOURCE slot and never modified after creation, so each
-                                // source outlives its pin, which is dropped at the end of
-                                // this method.
+                                // Each pin keeps its source alive and in place until it
+                                // is dropped at the end of this method.
                                 backings.push(match item.view(strand) {
-                                    View::Str(s) => {
-                                        Some(unsafe { s.pin().into_static_unchecked() })
-                                    }
+                                    View::Str(s) => Some(s.pin()),
                                     // A unit checked from its typelib
                                     View::Nil => None,
                                     _ => {
@@ -3327,12 +3322,11 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                 })
                 .transpose()?;
 
-            // SAFETY: the source value is installed in UNIT_SOURCE below. The
-            // GC root supplies liveness and this retained pin supplies address stability.
+            // The retained pin keeps the source alive and in place for the unit.
             let View::Str(text) = source.view(strand) else {
                 return Err(Error::type_error(strand, "source: expected `Str`"));
             };
-            let backing: PinStr<'v, 'static> = unsafe { text.pin().into_static_unchecked() };
+            let backing: PinStr<'v> = text.pin();
             // SAFETY: the pin is retained after the borrowing unit and dropped after it.
             let text: &'static str = unsafe { mem::transmute::<&str, _>(&*backing) };
 

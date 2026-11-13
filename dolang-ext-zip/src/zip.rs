@@ -823,12 +823,12 @@ pub(crate) struct File {
 }
 
 /// A pinned piece of a write.
-enum Piece<'v, 'a> {
-    Str(PinStr<'v, 'a>),
-    Bin(PinBin<'v, 'a>),
+enum Piece<'v> {
+    Str(PinStr<'v>),
+    Bin(PinBin<'v>),
 }
 
-impl Deref for Piece<'_, '_> {
+impl Deref for Piece<'_> {
     type Target = [u8];
 
     fn deref(&self) -> &[u8] {

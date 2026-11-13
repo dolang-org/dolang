@@ -323,13 +323,10 @@ impl<'v> Protocol<'v> for FunctionObj<'v> {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.get();
-        let program = borrow.module.annex();
-        let module = program
-            .module_name
-            .as_ref()
-            .map(|d| &program.debug_strtab()[d.clone()]);
+        let program = &borrow.module;
+        let module = program.module_name();
         let name = program
-            .funcdebugs
+            .funcdebugs()
             .get(borrow.id)
             .map(|d| &program.debug_strtab()[d.name.clone()]);
         match (module, name) {

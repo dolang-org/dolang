@@ -733,13 +733,15 @@ pub(crate) fn coerce<'v, 's>(
     strand: &mut Strand<'v, 's>,
     base: Option<u32>,
 ) -> Result<'v, 's, i128> {
-    if let Some(text) = value.as_str_raw(strand) {
-        parse_integer(text, base).map_err(|error| {
-            if matches!(error, IntErrorKind::PosOverflow | IntErrorKind::NegOverflow) {
-                Error::overflow(strand)
-            } else {
-                Error::data(strand, format!("int: not a valid integer: {:?}", text))
-            }
+    if let Some(text) = value.as_str(strand) {
+        text.with_str(strand, |strand, text| {
+            parse_integer(text, base).map_err(|error| {
+                if matches!(error, IntErrorKind::PosOverflow | IntErrorKind::NegOverflow) {
+                    Error::overflow(strand)
+                } else {
+                    Error::data(strand, format!("int: not a valid integer: {:?}", text))
+                }
+            })
         })
     } else if base.is_some() {
         Err(Error::type_error(strand, "int: base requires a Str value"))

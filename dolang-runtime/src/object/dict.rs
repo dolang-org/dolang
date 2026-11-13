@@ -654,16 +654,18 @@ impl<'v> Dict<'v> {
         strand: &mut Strand<'v, 's>,
         f: impl FnOnce(&Dict<'v>) -> Result<'v, 's, R>,
     ) -> Result<'v, 's, R> {
-        let dict = container
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        if dict.epoch != epoch {
-            return Err(Error::concurrency_msg(
-                strand,
-                "collection was modified during iteration",
-            ));
-        }
-        f(&dict)
+        container.pin_sync(strand, |strand, container| {
+            let dict = container
+                .borrow()
+                .ok_or_else(|| Error::concurrency(strand))?;
+            if dict.epoch != epoch {
+                return Err(Error::concurrency_msg(
+                    strand,
+                    "collection was modified during iteration",
+                ));
+            }
+            f(&dict)
+        })
     }
 
     fn next_value_from_index(dict: &Dict<'v>, index: usize) -> Option<(usize, Value<'v>)> {
@@ -806,18 +808,19 @@ impl<'v> Protocol<'v> for Values<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         let next_index = {
-            let dict = borrow
-                .container
-                .borrow()
-                .ok_or_else(|| Error::concurrency(strand))?;
-            if dict.epoch != borrow.epoch {
-                return Err(Error::concurrency_msg(
-                    strand,
-                    "collection was modified during iteration",
-                ));
-            }
-            super::iter::unpack_cursor(strand, sig, &mut out, borrow.index.get(), |_, i| {
-                Dict::next_value_from_index(&dict, i)
+            borrow.container.pin_sync(strand, |strand, container| {
+                let dict = container
+                    .borrow()
+                    .ok_or_else(|| Error::concurrency(strand))?;
+                if dict.epoch != borrow.epoch {
+                    return Err(Error::concurrency_msg(
+                        strand,
+                        "collection was modified during iteration",
+                    ));
+                }
+                super::iter::unpack_cursor(strand, sig, &mut out, borrow.index.get(), |_, i| {
+                    Dict::next_value_from_index(&dict, i)
+                })
             })?
         };
         if let Some(i) = sig.pos_rest_slot() {
@@ -907,18 +910,19 @@ impl<'v> Protocol<'v> for KeyValues<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         let next_index = {
-            let dict = borrow
-                .container
-                .borrow()
-                .ok_or_else(|| Error::concurrency(strand))?;
-            if dict.epoch != borrow.epoch {
-                return Err(Error::concurrency_msg(
-                    strand,
-                    "collection was modified during iteration",
-                ));
-            }
-            super::iter::unpack_cursor(strand, sig, &mut out, borrow.index.get(), |_, i| {
-                Dict::next_value_from_bucket(borrow.bucket.clone(), i)
+            borrow.container.pin_sync(strand, |strand, container| {
+                let dict = container
+                    .borrow()
+                    .ok_or_else(|| Error::concurrency(strand))?;
+                if dict.epoch != borrow.epoch {
+                    return Err(Error::concurrency_msg(
+                        strand,
+                        "collection was modified during iteration",
+                    ));
+                }
+                super::iter::unpack_cursor(strand, sig, &mut out, borrow.index.get(), |_, i| {
+                    Dict::next_value_from_bucket(borrow.bucket.clone(), i)
+                })
             })?
         };
         if let Some(i) = sig.pos_rest_slot() {
@@ -1017,25 +1021,29 @@ impl<'v> Protocol<'v> for Keys<'v> {
         let borrow = this.borrow(strand)?;
         let mut visited = borrow.visited.borrow().clone();
         let next_index = {
-            let dict = borrow
-                .container
-                .borrow()
-                .ok_or_else(|| Error::concurrency(strand))?;
-            if dict.epoch != borrow.epoch {
-                return Err(Error::concurrency_msg(
+            borrow.container.pin_sync(strand, |strand, container| {
+                let dict = container
+                    .borrow()
+                    .ok_or_else(|| Error::concurrency(strand))?;
+                if dict.epoch != borrow.epoch {
+                    return Err(Error::concurrency_msg(
+                        strand,
+                        "collection was modified during iteration",
+                    ));
+                }
+                let mut pending = Vec::new();
+                let next_index = super::iter::unpack_cursor(
                     strand,
-                    "collection was modified during iteration",
-                ));
-            }
-            let mut pending = Vec::new();
-            let next_index =
-                super::iter::unpack_cursor(strand, sig, &mut out, borrow.index.get(), |_, i| {
-                    Dict::next_key_from_index(&dict, i, &visited, &mut pending)
-                })?;
-            for bucket_index in pending {
-                visited.set(bucket_index, true);
-            }
-            next_index
+                    sig,
+                    &mut out,
+                    borrow.index.get(),
+                    |_, i| Dict::next_key_from_index(&dict, i, &visited, &mut pending),
+                )?;
+                for bucket_index in pending {
+                    visited.set(bucket_index, true);
+                }
+                Ok(next_index)
+            })?
         };
         if let Some(i) = sig.pos_rest_slot() {
             strand.builtin_types().dict_keys.create(
@@ -1246,17 +1254,16 @@ unsafe impl<'v> Collect for Unpack<'v> {
 
 impl<'v> Unpack<'v> {
     fn check_epoch<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
-        let dict = self
-            .dict
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        if dict.epoch != self.epoch {
-            return Err(Error::concurrency_msg(
-                strand,
-                "collection was modified during iteration",
-            ));
-        }
-        Ok(())
+        self.dict.pin_sync(strand, |strand, dict| {
+            let dict = dict.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            if dict.epoch != self.epoch {
+                return Err(Error::concurrency_msg(
+                    strand,
+                    "collection was modified during iteration",
+                ));
+            }
+            Ok(())
+        })
     }
 }
 
@@ -1305,16 +1312,15 @@ impl<'v> Protocol<'v> for Unpack<'v> {
         let borrow = this.borrow(strand)?;
         borrow.check_epoch(strand)?;
         let container = borrow.dict.clone();
-        let dict = container
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        let resume = borrow.state.index;
+        let (epoch, resume, skip) = container.pin_sync(strand, |strand, pinned| {
+            let dict = pinned.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            let resume = borrow.state.index;
 
-        // Match against a copy, so a failure leaves the rest as it was
-        let mut skip = borrow.state.skip.clone();
-        dict.unpack_matched(strand, sig, &mut out, &mut skip)?;
-        let epoch = borrow.epoch;
-        drop(dict);
+            // Match against a copy, so a failure leaves the rest as it was
+            let mut skip = borrow.state.skip.clone();
+            dict.unpack_matched(strand, sig, &mut out, &mut skip)?;
+            Ok((borrow.epoch, resume, skip))
+        })?;
         drop(borrow);
         dict_rests(strand, sig, &mut out, container, epoch, resume, skip);
         Ok(())
@@ -1328,12 +1334,13 @@ impl<'v> Protocol<'v> for Unpack<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         let container = borrow.dict.clone();
-        if container
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?
-            .epoch
-            != borrow.epoch
-        {
+        let epoch = container.pin_sync(strand, |strand, container| {
+            Ok(container
+                .borrow()
+                .ok_or_else(|| Error::concurrency(strand))?
+                .epoch)
+        })?;
+        if epoch != borrow.epoch {
             return Err(Error::concurrency(strand));
         }
         let mut state = borrow.state.clone();
@@ -1344,13 +1351,15 @@ impl<'v> Protocol<'v> for Unpack<'v> {
                 strand.check_trap()?;
             }
             let pair = {
-                let dict = container
-                    .borrow()
-                    .ok_or_else(|| Error::concurrency(strand))?;
-                if dict.epoch != borrow.epoch {
-                    return Err(Error::concurrency(strand));
-                }
-                state.next_pair(strand, &dict)?
+                container.pin_sync(strand, |strand, container| {
+                    let dict = container
+                        .borrow()
+                        .ok_or_else(|| Error::concurrency(strand))?;
+                    if dict.epoch != borrow.epoch {
+                        return Err(Error::concurrency(strand));
+                    }
+                    state.next_pair(strand, &dict)
+                })?
             };
             let Some((key, value)) = pair else {
                 return Ok(());
@@ -1440,20 +1449,22 @@ impl<'v> Protocol<'v> for UnpackIter<'v> {
     ) -> Result<'v, 's, bool> {
         let mut borrow = this.borrow_mut(strand)?;
         let dict_obj = borrow.dict.clone();
-        let dict = dict_obj
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        if dict.epoch != borrow.epoch {
-            return Err(Error::concurrency_msg(
-                strand,
-                "collection was modified during iteration",
-            ));
-        }
-        let Some((key, value)) = borrow.state.next_pair(strand, &dict)? else {
-            return Ok(false);
-        };
-        tuple::create(strand, [key, value], out);
-        Ok(true)
+        dict_obj.pin_sync(strand, |strand, dict_obj| {
+            let dict = dict_obj
+                .borrow()
+                .ok_or_else(|| Error::concurrency(strand))?;
+            if dict.epoch != borrow.epoch {
+                return Err(Error::concurrency_msg(
+                    strand,
+                    "collection was modified during iteration",
+                ));
+            }
+            let Some((key, value)) = borrow.state.next_pair(strand, &dict)? else {
+                return Ok(false);
+            };
+            tuple::create(strand, [key, value], out);
+            Ok(true)
+        })
     }
 
     fn op_get<'a, 's>(
@@ -1549,7 +1560,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 }
                 count += 1;
                 if let Some(sym) = bucket.as_ref().key.downcast_ref(strand.builtin_types().sym) {
-                    crate::fmt!(strand, w, "{}", sym.get().name)?;
+                    crate::fmt!(strand, w, "{}", sym.name())?;
                 } else {
                     bucket.as_ref().key.op_debug(strand, w)?;
                 }
@@ -1608,33 +1619,35 @@ impl<'v> Protocol<'v> for Dict<'v> {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let left = this.borrow(strand)?;
-        let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        // Equal pair counts make both walks end together
-        if left.total_pairs != right.total_pairs {
-            return Ok(Value::FALSE);
-        }
-        let pairs = left
-            .index
-            .iter()
-            .flatten()
-            .zip(right.index.iter().flatten());
-        for (i, ((l, subl), (r, subr))) in pairs.enumerate() {
-            if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                strand.check_trap()?;
-            }
-            let (l, r) = unsafe { (l.as_ref(), r.as_ref()) };
-            if l.hash != r.hash
-                || !l.key.op_eq(strand, &r.key)?.to_bool(strand)?
-                || !l
-                    .value
-                    .at(*subl)
-                    .op_eq(strand, r.value.at(*subr))?
-                    .to_bool(strand)?
-            {
+        other.pin_sync(strand, |strand, other| {
+            let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            // Equal pair counts make both walks end together
+            if left.total_pairs != right.total_pairs {
                 return Ok(Value::FALSE);
             }
-        }
-        Ok(Value::TRUE)
+            let pairs = left
+                .index
+                .iter()
+                .flatten()
+                .zip(right.index.iter().flatten());
+            for (i, ((l, subl), (r, subr))) in pairs.enumerate() {
+                if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
+                    strand.check_trap()?;
+                }
+                let (l, r) = unsafe { (l.as_ref(), r.as_ref()) };
+                if l.hash != r.hash
+                    || !l.key.op_eq(strand, &r.key)?.to_bool(strand)?
+                    || !l
+                        .value
+                        .at(*subl)
+                        .op_eq(strand, r.value.at(*subr))?
+                        .to_bool(strand)?
+                {
+                    return Ok(Value::FALSE);
+                }
+            }
+            Ok(Value::TRUE)
+        })
     }
 
     fn op_lt<'a, 's>(
@@ -1648,39 +1661,41 @@ impl<'v> Protocol<'v> for Dict<'v> {
             return Err(Error::unsupported(strand, "`<`"));
         };
         let left = this.borrow(strand)?;
-        let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        unsafe {
-            let mut i = 0usize;
-            let mut j = 0usize;
-            while i < left.index.len() && j < right.index.len() {
-                let l = if let Some(l) = left.index.get_unchecked(i) {
-                    l
-                } else {
-                    i += 1;
-                    continue;
-                };
-                let r = if let Some(r) = right.index.get_unchecked(j) {
-                    r
-                } else {
-                    j += 1;
-                    continue;
-                };
+        other.pin_sync(strand, |strand, other| {
+            let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            unsafe {
+                let mut i = 0usize;
+                let mut j = 0usize;
+                while i < left.index.len() && j < right.index.len() {
+                    let l = if let Some(l) = left.index.get_unchecked(i) {
+                        l
+                    } else {
+                        i += 1;
+                        continue;
+                    };
+                    let r = if let Some(r) = right.index.get_unchecked(j) {
+                        r
+                    } else {
+                        j += 1;
+                        continue;
+                    };
 
-                if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                    strand.check_trap()?;
-                }
-                let (l, subl) = (l.0.as_ref(), l.1);
-                let (r, subr) = (r.0.as_ref(), r.1);
-                for (l, r) in [(&l.key, &r.key), (l.value.at(subl), r.value.at(subr))] {
-                    if !l.op_eq(strand, r)?.to_bool(strand)? {
-                        return Ok(Value::from_bool(l.op_lt(strand, r)?.to_bool(strand)?));
+                    if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
+                        strand.check_trap()?;
                     }
+                    let (l, subl) = (l.0.as_ref(), l.1);
+                    let (r, subr) = (r.0.as_ref(), r.1);
+                    for (l, r) in [(&l.key, &r.key), (l.value.at(subl), r.value.at(subr))] {
+                        if !l.op_eq(strand, r)?.to_bool(strand)? {
+                            return Ok(Value::from_bool(l.op_lt(strand, r)?.to_bool(strand)?));
+                        }
+                    }
+                    i += 1;
+                    j += 1;
                 }
-                i += 1;
-                j += 1;
+                Ok(Value::from_bool(right.table.len() > left.table.len()))
             }
-            Ok(Value::from_bool(right.table.len() > left.table.len()))
-        }
+        })
     }
 
     fn op_index<'a, 's>(
@@ -1989,7 +2004,7 @@ impl<'v> Dict<'v> {
                 let bucket = bucket.as_ref();
                 let mut rendered = String::new();
                 if let Some(symbol) = bucket.key.downcast_ref(strand.builtin_types().sym) {
-                    rendered.push_str(&symbol.get().name);
+                    rendered.push_str(symbol.name());
                 } else {
                     bucket.key.fmt(
                         strand,
@@ -2083,37 +2098,39 @@ impl<'v> Dict<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        let dict = container
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        if dict.epoch != epoch {
-            return Err(Error::concurrency_msg(
-                strand,
-                "collection was modified during iteration",
-            ));
-        }
-        loop {
-            break if let Some(bucket) = dict.index.get(index.get()) {
-                index.update(|i| i + 1);
-                if let Some((bucket, subindex)) = bucket {
-                    tuple::create(
-                        strand,
-                        unsafe {
-                            [
-                                bucket.as_ref().key.dup(),
-                                bucket.as_ref().value.at(*subindex).dup(),
-                            ]
-                        },
-                        out,
-                    );
-                    Ok(true)
+        container.pin_sync(strand, |strand, container| {
+            let dict = container
+                .borrow()
+                .ok_or_else(|| Error::concurrency(strand))?;
+            if dict.epoch != epoch {
+                return Err(Error::concurrency_msg(
+                    strand,
+                    "collection was modified during iteration",
+                ));
+            }
+            loop {
+                break if let Some(bucket) = dict.index.get(index.get()) {
+                    index.update(|i| i + 1);
+                    if let Some((bucket, subindex)) = bucket {
+                        tuple::create(
+                            strand,
+                            unsafe {
+                                [
+                                    bucket.as_ref().key.dup(),
+                                    bucket.as_ref().value.at(*subindex).dup(),
+                                ]
+                            },
+                            out,
+                        );
+                        Ok(true)
+                    } else {
+                        continue;
+                    }
                 } else {
-                    continue;
-                }
-            } else {
-                Ok(false)
-            };
-        }
+                    Ok(false)
+                };
+            }
+        })
     }
 
     fn mcall_clear<'a, 's>(

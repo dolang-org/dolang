@@ -148,6 +148,7 @@ use floating::*;
 /// Equality compares encodings exactly, so it is not floating-point
 /// equality: the immediate NaN equals itself.
 #[derive(Clone, PartialEq, Eq)]
+#[repr(transparent)]
 pub(crate) struct Repr(NonNull<u8>);
 
 impl Repr {

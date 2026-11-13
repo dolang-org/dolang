@@ -449,15 +449,14 @@ async fn write_all<'v, 's>(
             let mut left = BinEmbryo::new_with_capacity(strand, len - skip);
             for arg in args {
                 let Arg::Pos(piece) = arg else { continue };
-                let Some(bytes) = piece.as_u8_slice_raw(strand.vm()) else {
-                    continue;
-                };
-                if skip >= bytes.len() {
-                    skip -= bytes.len();
-                    continue;
-                }
-                left.extend(strand, &bytes[skip..]);
-                skip = 0;
+                piece.with_u8_slice(strand, |strand, bytes| {
+                    if skip >= bytes.len() {
+                        skip -= bytes.len();
+                    } else {
+                        left.extend(strand, &bytes[skip..]);
+                        skip = 0;
+                    }
+                });
             }
             left.finish(strand, &mut rest);
             write_all_value(strand, stream, &rest).await
@@ -467,10 +466,9 @@ async fn write_all<'v, 's>(
 
 /// The length of a `write` piece, which must be a `Str` or `Bin`.
 fn piece_len<'v, 's>(strand: &mut Strand<'v, 's>, piece: &Value<'v>) -> Result<'v, 's, usize> {
-    match piece.as_u8_slice_raw(strand.vm()) {
-        Some(bytes) => Ok(bytes.len()),
-        None => Err(Error::type_error(strand, "expected `Str` or `Bin`")),
-    }
+    piece
+        .with_u8_slice(strand, |_, bytes| bytes.len())
+        .ok_or_else(|| Error::type_error(strand, "expected `Str` or `Bin`"))
 }
 
 /// Writes all of `data` with `stream`'s `write`, passing what a short write leaves as a
@@ -489,10 +487,10 @@ async fn write_all_value<'v, 's>(
                 if offset == 0 {
                     method!(strand, stream, write, &mut written_count, data).await?;
                 } else {
-                    let Some(bytes) = data.as_u8_slice_raw(strand.vm()) else {
-                        return Err(Error::type_error(strand, "expected `Str` or `Bin`"));
-                    };
-                    Output::set(strand, &mut rest, &bytes[offset..]);
+                    data.with_u8_slice(strand, |strand, bytes| {
+                        Output::set(strand, &mut rest, &bytes[offset..])
+                    })
+                    .ok_or_else(|| Error::type_error(strand, "expected `Str` or `Bin`"))?;
                     method!(strand, stream, write, &mut written_count, &rest).await?;
                 }
                 offset += written(strand, &written_count, len - offset)?;

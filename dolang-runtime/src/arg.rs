@@ -71,7 +71,7 @@ impl<'v, 'a> ArgContent<'v, 'a> {
                     }
                 }
                 ArgContent::Owned(items) => match items.get_unchecked(index) {
-                    (Some(sym), value) => Arg::Key(Sym::from_tag(sym.tag), value.slot()),
+                    (Some(sym), value) => Arg::Key(Sym::from_tag(sym.tag()), value.slot()),
                     (None, value) => Arg::Pos(value.slot()),
                 },
             }

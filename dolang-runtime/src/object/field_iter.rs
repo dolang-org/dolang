@@ -67,7 +67,7 @@ fn resolve<'v, 's>(
 
 fn find_symbol<'v>(symbols: &[GcObj<'v, SymObj>], wanted: Sym<'v, '_>) -> Option<usize> {
     symbols
-        .binary_search_by_key(&wanted.tag(), |symbol| symbol.tag)
+        .binary_search_by_key(&wanted.tag(), |symbol| symbol.tag())
         .ok()
 }
 
@@ -99,7 +99,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
     ) -> Result<'v, 's, ()> {
         let symbol = index.as_sym(strand).ok_or_else(|| Error::index(strand))?;
         let fields = this.borrow(strand)?;
-        if !fields.symbols.iter().any(|key| key.tag == symbol.tag()) {
+        if !fields.symbols.iter().any(|key| key.tag() == symbol.tag()) {
             return Err(Error::index(strand));
         }
         fields.receiver.op_get(strand, symbol, out)
@@ -113,7 +113,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
     ) -> Result<'v, 's, ()> {
         let symbol = index.as_sym(strand).ok_or_else(|| Error::index(strand))?;
         let fields = this.borrow(strand)?;
-        if !fields.writable.iter().any(|key| key.tag == symbol.tag()) {
+        if !fields.writable.iter().any(|key| key.tag() == symbol.tag()) {
             return Err(Error::index(strand));
         }
         fields.receiver.op_set(strand, symbol, value)
@@ -276,7 +276,7 @@ pub(crate) fn create<'v, 's>(
             .ok_or_else(|| Error::unsupported(strand, "field iteration"))?;
         let mut fields = FieldIter::new(receiver.dup(), VecDeque::new());
         for member in inspect.members {
-            if strand.sym_obj(member.sym).private {
+            if strand.sym_obj(member.sym).private() {
                 continue;
             }
             if matches!(member.kind, MemberKind::Getter | MemberKind::Property) {
@@ -286,7 +286,10 @@ pub(crate) fn create<'v, 's>(
                 fields.writable.push(strand.sym_obj(member.sym));
             }
         }
-        fields.symbols.make_contiguous().sort_by_key(|key| key.tag);
+        fields
+            .symbols
+            .make_contiguous()
+            .sort_by_key(|key| key.tag());
         strand
             .builtin_types()
             .field_iter

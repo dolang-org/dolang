@@ -226,51 +226,60 @@ impl<'v> Vm<'v> {
                     _ => return Err(Error::missing_key(strand, Sym::well_known(sym::GET))),
                 };
                 let name = name
-                    .as_str_raw(strand)
+                    .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "import must be a string"))?;
-                let components: Vec<_> = name.split('.').collect();
-                strand
-                    .with_slots(async move |strand, [mut raw]| {
-                        if importer.is_nil() {
-                            self.import_raw(strand, name, Slot::reborrow(&mut raw))
-                                .await?
-                        } else {
-                            call!(strand, importer, Slot::reborrow(&mut raw), name).await?
-                        }
-                        match mode {
-                            Mode::Get => Slot::set(strand, out, raw),
-                            Mode::Insert => {
-                                let root = args
-                                    .next()
-                                    .ok_or_else(|| Error::missing_positional(strand, 0))?;
-                                let root = match root {
-                                    Arg::Pos(slot) => slot,
-                                    Arg::Key(sym, _) => {
-                                        return Err(Error::unexpected_key(strand, sym));
-                                    }
-                                };
-                                let ns = root
-                                    .downcast_ref(strand.builtin_types().namespace)
-                                    .ok_or_else(|| {
-                                        Error::type_error(strand, "import root must be a namespace")
+                // Pinned across the import, which runs arbitrary code
+                name.with_str_async(strand, async |strand, name| {
+                    let components: Vec<_> = name.split('.').collect();
+                    strand
+                        .with_slots(async move |strand, [mut raw]| {
+                            if importer.is_nil() {
+                                self.import_raw(strand, name, Slot::reborrow(&mut raw))
+                                    .await?
+                            } else {
+                                call!(strand, importer, Slot::reborrow(&mut raw), name).await?
+                            }
+                            match mode {
+                                Mode::Get => Slot::set(strand, out, raw),
+                                Mode::Insert => {
+                                    let root = args
+                                        .next()
+                                        .ok_or_else(|| Error::missing_positional(strand, 0))?;
+                                    let root = match root {
+                                        Arg::Pos(slot) => slot,
+                                        Arg::Key(sym, _) => {
+                                            return Err(Error::unexpected_key(strand, sym));
+                                        }
+                                    };
+                                    let ns = root
+                                        .downcast_ref(strand.builtin_types().namespace)
+                                        .ok_or_else(|| {
+                                            Error::type_error(
+                                                strand,
+                                                "import root must be a namespace",
+                                            )
+                                        })?;
+                                    ns.pin_sync(strand, |strand, ns| {
+                                        ns.borrow_mut()
+                                            .ok_or_else(|| Error::concurrency(strand))?
+                                            .insert(strand, components.get(1..).unwrap_or(&[]), raw)
                                     })?;
-                                ns.borrow_mut()
-                                    .ok_or_else(|| Error::concurrency(strand))?
-                                    .insert(strand, components.get(1..).unwrap_or(&[]), raw)?;
+                                }
+                                Mode::Module => {
+                                    let mut ns = Namespace::new(strand);
+                                    ns.insert(strand, components.get(1..).unwrap_or(&[]), raw)?;
+                                    strand
+                                        .vm()
+                                        .builtin_types()
+                                        .namespace
+                                        .create(strand, ns, out);
+                                }
                             }
-                            Mode::Module => {
-                                let mut ns = Namespace::new(strand);
-                                ns.insert(strand, components.get(1..).unwrap_or(&[]), raw)?;
-                                strand
-                                    .vm()
-                                    .builtin_types()
-                                    .namespace
-                                    .create(strand, ns, out);
-                            }
-                        }
-                        Ok(())
-                    })
-                    .await
+                            Ok(())
+                        })
+                        .await
+                })
+                .await
             })
             .await
     }
@@ -390,10 +399,11 @@ impl<'v> Vm<'v> {
                 Arg::Pos(mut slot) => slot.take(),
                 Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
             };
-            let bytes = value.as_u8_slice_raw(strand).ok_or_else(|| {
-                Error::type_error(strand, "expected binary or string value in binary concat")
-            })?;
-            acc.extend_from_slice(bytes);
+            value
+                .with_u8_slice(strand, |_, bytes| acc.extend_from_slice(bytes))
+                .ok_or_else(|| {
+                    Error::type_error(strand, "expected binary or string value in binary concat")
+                })?;
         }
         out.store(Value::from_u8_slice(strand, &acc));
         Ok(())
@@ -736,9 +746,10 @@ impl<'v> Vm<'v> {
         reader: &mut UnsafeInstDecoder<'_>,
     ) -> Result<'v, 's, Status<'v>> {
         use Opcode::*;
-        let program = frame.program.annex();
-        let symtab = &program.symtab;
-        let consttab = &program.consttab;
+        // Projected tables outlive any pin, so they may be held across awaits
+        let program = &frame.program;
+        let symtab = program.symtab();
+        let consttab = program.consttab();
 
         // SAFETY: This large unsafe block is necessary for performance reasons:
         // - Bytecode decoding uses unchecked accesses
@@ -847,7 +858,7 @@ impl<'v> Vm<'v> {
                     // Set current PC in frame header in case a backtrace is needed
                     frame.pc.set(reader.offset());
                     let index = reader.usize();
-                    let sig = program.packtab.get_unchecked(index);
+                    let sig = program.packtab().get_unchecked(index);
                     let count = sig.len() + 1;
                     let depth = frame.sp.get();
                     let mut func = frame.scratch1();
@@ -866,7 +877,7 @@ impl<'v> Vm<'v> {
                     let sym = reader.usize();
                     let index = reader.usize();
                     let method = *symtab.get_unchecked(sym);
-                    let sig = program.packtab.get_unchecked(index);
+                    let sig = program.packtab().get_unchecked(index);
                     let count = sig.len() + 1;
                     let depth = frame.sp.get();
                     let mut obj = frame.scratch1();
@@ -885,7 +896,7 @@ impl<'v> Vm<'v> {
                     frame.pc.set(reader.offset());
                     let index = reader.usize();
                     let sig = reader.usize();
-                    let sig = program.packtab.get_unchecked(sig);
+                    let sig = program.packtab().get_unchecked(sig);
                     let count = sig.len();
                     let args = Self::marshal_args(strand, frame, sig, 0).await?;
                     let mut res = frame.scratch1();
@@ -893,9 +904,15 @@ impl<'v> Vm<'v> {
                         builtin::IMPORT => {
                             // Root the program's importer across the import
                             let mut importer = frame.scratch2();
-                            importer.store(frame.program.borrow().unwrap().importer.dup());
-                            let result = self
-                                .import(strand, args, &importer, Slot::reborrow(&mut res))
+                            importer
+                                .store(frame.program.read(|p| p.borrow().unwrap().importer.dup()));
+                            // Pinned out of line in the strand: inlining the import's
+                            // future would grow every frame's
+                            let result = strand
+                                .pin_future_call(async |strand| {
+                                    self.import(strand, args, &importer, Slot::reborrow(&mut res))
+                                        .await
+                                })
                                 .await;
                             importer.store(Value::NIL);
                             result
@@ -1057,7 +1074,7 @@ impl<'v> Vm<'v> {
                 }
                 Reify => {
                     let index = reader.usize();
-                    let sig = program.packtab.get_unchecked(index);
+                    let sig = program.packtab().get_unchecked(index);
                     let upvars = frame.pop_upvars();
                     let value = Module::from_upvars_syms(
                         frame.program.clone(),
@@ -1086,7 +1103,7 @@ impl<'v> Vm<'v> {
                     frame.pc.set(reader.offset());
                     let index = reader.usize();
                     let value = frame.pop();
-                    let sig = program.unpacktab.get_unchecked(index);
+                    let sig = program.unpacktab().get_unchecked(index);
                     let depth = frame.sp.get();
                     let slice = frame.slots.get_unchecked(depth..depth + sig.len());
                     frame.sp.update(|s| s + sig.len());
@@ -1107,7 +1124,7 @@ impl<'v> Vm<'v> {
                     // as `Next` does with its receiver
                     let mut value = frame.scratch1();
                     value.store(frame.pop());
-                    let sig = program.unpacktab.get_unchecked(index);
+                    let sig = program.unpacktab().get_unchecked(index);
                     let depth = frame.sp.get();
                     let slice = frame.slots.get_unchecked(depth..depth + sig.len());
                     frame.sp.update(|s| s + sig.len());
@@ -1177,7 +1194,7 @@ impl<'v> Vm<'v> {
                     // Pop the guard's upvar frame and mark it stale so future jumps to
                     // it fail
                     let guard = frame.pop_upvars();
-                    guard.annex().prefix.stale.set(true);
+                    guard.read(|p| p.annex().prefix.stale.set(true));
                     // Check if this was a normal return or a caught NlBranch
                     let res = match call_result {
                         Ok(()) => {
@@ -1213,9 +1230,9 @@ impl<'v> Vm<'v> {
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let loaded = frame.program.clone();
-        let program = loaded.annex();
-        let mut reader =
-            UnsafeInstDecoder::new(&program.bytecode[program.funcs[frame.func].0.bytecode.clone()]);
+        let mut reader = UnsafeInstDecoder::new(
+            &loaded.bytecode()[loaded.funcs()[frame.func].0.bytecode.clone()],
+        );
         // SAFETY: `frame` is a live Do frame whose parent is `strand`'s frame
         unsafe {
             Strand::async_for_frame(strand, frame, async |strand| {

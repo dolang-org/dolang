@@ -202,7 +202,11 @@ impl<'v> Protocol<'v> for Type {
                 }
                 match receiver.downcast_ref(strand.builtin_types().class_object) {
                     Some(class) => {
-                        class::instantiate(Recv::new(class), strand, trailing, out).await
+                        class
+                            .pin(strand, async |strand, class| {
+                                class::instantiate(Recv::new(class), strand, trailing, out).await
+                            })
+                            .await
                     }
                     // A native type object has no overridable `(call)`, so its
                     // own `op_call` is already the default.

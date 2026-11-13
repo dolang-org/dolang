@@ -118,24 +118,28 @@ async fn join_handle<'v, 's>(
 ) -> Result<'v, 's, ()> {
     // Borrow only while polling so the handle remains collectable across suspension.
     future::poll_fn(|cx| {
-        let mut borrow = handle
-            .borrow_mut()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        if borrow.result.is_some() {
-            return Poll::Ready(Ok(()));
-        }
-        borrow.wakers.push(cx.waker().clone());
-        Poll::Pending
+        handle.pin_sync(strand, |strand, handle| {
+            let mut borrow = handle
+                .borrow_mut()
+                .ok_or_else(|| Error::concurrency(strand))?;
+            if borrow.result.is_some() {
+                return Poll::Ready(Ok(()));
+            }
+            borrow.wakers.push(cx.waker().clone());
+            Poll::Pending
+        })
     })
     .await?;
-    let borrow = handle.borrow().ok_or_else(|| Error::concurrency(strand))?;
-    match borrow.result.as_ref().unwrap() {
-        Completion::Ok(v) => {
-            Output::set(strand, out, v);
-            Ok(())
+    handle.pin_sync(strand, |strand, handle| {
+        let borrow = handle.borrow().ok_or_else(|| Error::concurrency(strand))?;
+        match borrow.result.as_ref().unwrap() {
+            Completion::Ok(v) => {
+                Output::set(strand, out, v);
+                Ok(())
+            }
+            Completion::Err(pair) => Err(Error::from_pair_ref(strand, pair)),
         }
-        Completion::Err(pair) => Err(Error::from_pair_ref(strand, pair)),
-    }
+    })
 }
 
 async fn wait_handle<'v, 's>(
@@ -143,14 +147,16 @@ async fn wait_handle<'v, 's>(
     strand: &mut Strand<'v, 's>,
 ) -> Result<'v, 's, ()> {
     future::poll_fn(|cx| {
-        let mut borrow = handle
-            .borrow_mut()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        if borrow.result.is_some() {
-            return Poll::Ready(Ok(()));
-        }
-        borrow.wakers.push(cx.waker().clone());
-        Poll::Pending
+        handle.pin_sync(strand, |strand, handle| {
+            let mut borrow = handle
+                .borrow_mut()
+                .ok_or_else(|| Error::concurrency(strand))?;
+            if borrow.result.is_some() {
+                return Poll::Ready(Ok(()));
+            }
+            borrow.wakers.push(cx.waker().clone());
+            Poll::Pending
+        })
     })
     .await
 }
@@ -547,9 +553,11 @@ impl<'v> Protocol<'v> for StreamObj<'v> {
             sym::CANCEL => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let handle = this.get().handle.clone();
-                let borrow = handle.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                borrow.interrupt.cancel();
-                Ok(())
+                handle.pin_sync(strand, |strand, handle| {
+                    let borrow = handle.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                    borrow.interrupt.cancel();
+                    Ok(())
+                })
             }
             sym::WAIT => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
@@ -605,12 +613,11 @@ impl<'v> Protocol<'v> for StreamObj<'v> {
                 Ok(())
             }
             sym::DONE => {
-                let handle = this.get().handle.clone();
-                let done = handle
-                    .borrow()
-                    .ok_or_else(|| Error::concurrency(strand))?
-                    .result
-                    .is_some();
+                let done = this
+                    .get()
+                    .handle
+                    .read(|p| p.borrow().map(|handle| handle.result.is_some()))
+                    .ok_or_else(|| Error::concurrency(strand))?;
                 Output::set(strand, out, done);
                 Ok(())
             }
@@ -781,26 +788,26 @@ fn stream_cell<'v, 's>(
     strand: &mut Strand<'v, 's>,
     this: &Recv<'v, '_, StreamObj<'v>>,
 ) -> Result<'v, 's, Rc<StrandCell>> {
-    let handle = this.get().handle.clone();
-    let cell = handle
-        .borrow()
-        .ok_or_else(|| Error::concurrency(strand))?
-        .cell
-        .clone();
-    Ok(cell)
+    this.get()
+        .handle
+        .read(|p| p.borrow().map(|handle| handle.cell.clone()))
+        .ok_or_else(|| Error::concurrency(strand))
 }
 
 /// The cell behind any strand handle value.
 fn cell_of<'v>(vm: &Vm<'v>, value: &Value<'v>) -> Option<Rc<StrandCell>> {
     let types = vm.builtin_types();
     if let Some(r) = value.downcast_ref(types.strand_ref) {
-        return Some(r.get().cell.clone());
+        return Some(r.read(|p| p.get().cell.clone()));
     }
-    let handle = match value.downcast_ref(types.strand_handle) {
-        Some(h) => h.to_strong(),
-        None => value.downcast_ref(types.stream)?.get().handle.clone(),
-    };
-    Some(handle.borrow()?.cell.clone())
+    match value.downcast_ref(types.strand_handle) {
+        Some(h) => h.read(|p| p.borrow().map(|handle| handle.cell.clone())),
+        None => value.downcast_ref(types.stream)?.read(|p| {
+            p.get()
+                .handle
+                .read(|p| p.borrow().map(|handle| handle.cell.clone()))
+        }),
+    }
 }
 
 fn cell_eq<'v, 's>(

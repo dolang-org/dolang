@@ -16,7 +16,7 @@ use crate::{
     vm::Vm,
 };
 
-use super::protocol::{Inspect, Protocol, Recv};
+use super::protocol::{GcObj, Inspect, Protocol, Recv};
 
 pub(crate) struct SymData {
     pub(crate) tag: Tag,
@@ -36,6 +36,21 @@ impl gc::Annex for SymData {
 
 /// A symbol object.
 pub(crate) type SymObj = gc::Imm<SymData>;
+
+impl<'v> GcObj<'v, SymObj> {
+    pub(crate) fn tag(&self) -> Tag {
+        self.read(|p| p.get().tag)
+    }
+
+    pub(crate) fn private(&self) -> bool {
+        self.read(|p| p.get().private)
+    }
+
+    /// The symbol's name, which lives out of line.
+    pub(crate) fn name(&self) -> &str {
+        self.project(|p| &p.get().name)
+    }
+}
 
 impl<'v> Protocol<'v> for SymObj {
     fn op_type<'a, 's>(
@@ -76,7 +91,7 @@ impl<'v> Protocol<'v> for SymObj {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         if let Some(osym) = other.downcast_ref(strand.builtin_types().sym) {
-            Ok(Value::from_bool(osym.get().tag == this.get().tag))
+            Ok(Value::from_bool(osym.tag() == this.get().tag))
         } else {
             Err(Error::unsupported(strand, "`==`"))
         }
@@ -97,7 +112,7 @@ impl<'v> Protocol<'v> for SymObj {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         if let Some(osym) = other.downcast_ref(strand.builtin_types().sym) {
-            Ok(Value::from_bool(this.receiver.get().name < osym.get().name))
+            Ok(Value::from_bool(this.get().name.as_str() < osym.name()))
         } else {
             Err(Error::unsupported(strand, "`<`"))
         }

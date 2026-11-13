@@ -5,6 +5,7 @@ use std::{cell::Cell, convert::Infallible, marker::PhantomData, ops::ControlFlow
 use crate::value::fmt::Format;
 
 use dolang_bytecode::Rest as RestKind;
+use dolang_util::alias;
 
 use crate::{
     arg::{Arg, Args},
@@ -59,21 +60,21 @@ pub trait ArrayLike<'v>: 'v {
         Err(Error::immutable(strand))
     }
 
-    fn push<'a, 's>(
+    fn push<'s>(
         &self,
         _this: Instance<'v, '_, Self::Object>,
-        strand: &'a mut Strand<'v, 's>,
-        _values: &mut [Slot<'v, 'a>],
+        strand: &mut Strand<'v, 's>,
+        _values: &mut [Slot<'v, '_>],
     ) -> Result<'v, 's, ()> {
         Err(Error::immutable(strand))
     }
 
-    fn insert<'a, 's>(
+    fn insert<'s>(
         &self,
         _this: Instance<'v, '_, Self::Object>,
-        strand: &'a mut Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         _index: usize,
-        _values: &mut [Slot<'v, 'a>],
+        _values: &mut [Slot<'v, '_>],
     ) -> Result<'v, 's, ()> {
         Err(Error::immutable(strand))
     }
@@ -194,11 +195,11 @@ fn create_view<'v, I: ArrayLike<'v>>(
     GcObj::new_imm(
         strand.vm().arena(),
         strand.builtin_types().array_view,
-        View {
+        alias::Box::new(View {
             owner,
             glue: Box::new(Glue { view, ty }),
             busy: Cell::new(false),
-        },
+        }),
     )
 }
 
@@ -215,11 +216,11 @@ pub(crate) fn create<'v, I: ArrayLike<'v>>(
     let owner = Value::from_input(alloc, owner);
     vm.builtin_types().array_view.create_imm(
         alloc,
-        View {
+        alias::Box::new(View {
             owner,
             glue: Box::new(Glue { view, ty }),
             busy: Cell::new(false),
-        },
+        }),
         out,
     );
 }
@@ -244,20 +245,20 @@ trait ArrayViewGlue<'v>: 'v {
     ) -> Result<'v, 's, ()> {
         Err(Error::immutable(strand))
     }
-    fn push<'a, 's>(
+    fn push<'s>(
         &self,
         _owner: &Value<'v>,
-        strand: &'a mut Strand<'v, 's>,
-        _values: &mut [Slot<'v, 'a>],
+        strand: &mut Strand<'v, 's>,
+        _values: &mut [Slot<'v, '_>],
     ) -> Result<'v, 's, ()> {
         Err(Error::immutable(strand))
     }
-    fn insert<'a, 's>(
+    fn insert<'s>(
         &self,
         _owner: &Value<'v>,
-        strand: &'a mut Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         _index: usize,
-        _values: &mut [Slot<'v, 'a>],
+        _values: &mut [Slot<'v, '_>],
     ) -> Result<'v, 's, ()> {
         Err(Error::immutable(strand))
     }
@@ -287,11 +288,11 @@ trait ArrayViewGlue<'v>: 'v {
 pub(super) fn unpack_bin<'v>(strand: &mut Strand<'v, '_>, owner: Value<'v>, out: Slot<'v, '_>) {
     strand.builtin_types().array_view.create_imm(
         strand,
-        View {
+        alias::Box::new(View {
             owner,
             glue: Box::new(Bytes),
             busy: Cell::new(false),
-        },
+        }),
         out,
     );
 }
@@ -317,7 +318,9 @@ impl<'v> ArrayViewGlue<'v> for Bytes {
         index: usize,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let byte = owner.as_u8_slice_raw(strand).unwrap()[index];
+        let byte = owner
+            .with_u8_slice(strand, |_, bytes| bytes[index])
+            .unwrap();
         Output::set(strand, out, byte);
         Ok(())
     }
@@ -336,8 +339,9 @@ impl<'v, I: ArrayLike<'v>> ArrayViewGlue<'v> for Glue<'v, I> {
         I::NAME
     }
     fn len(&self, owner: &Value<'v>, strand: &mut Strand<'v, '_>) -> usize {
-        self.view
-            .len(Instance::from_native_value(owner, strand, self.ty), strand)
+        Instance::with_native_value(owner, strand, self.ty, |strand, inst| {
+            self.view.len(inst, strand)
+        })
     }
     fn get<'a, 's>(
         &self,
@@ -346,12 +350,9 @@ impl<'v, I: ArrayLike<'v>> ArrayViewGlue<'v> for Glue<'v, I> {
         index: usize,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        self.view.get(
-            Instance::from_native_value(owner, strand, self.ty),
-            strand,
-            index,
-            out,
-        )
+        Instance::with_native_value(owner, strand, self.ty, |strand, inst| {
+            self.view.get(inst, strand, index, out)
+        })
     }
     fn set<'a, 's>(
         &self,
@@ -360,38 +361,30 @@ impl<'v, I: ArrayLike<'v>> ArrayViewGlue<'v> for Glue<'v, I> {
         index: usize,
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        self.view.set(
-            Instance::from_native_value(owner, strand, self.ty),
-            strand,
-            index,
-            value,
-        )
+        Instance::with_native_value(owner, strand, self.ty, |strand, inst| {
+            self.view.set(inst, strand, index, value)
+        })
     }
-    fn push<'a, 's>(
+    fn push<'s>(
         &self,
         owner: &Value<'v>,
-        strand: &'a mut Strand<'v, 's>,
-        values: &mut [Slot<'v, 'a>],
+        strand: &mut Strand<'v, 's>,
+        values: &mut [Slot<'v, '_>],
     ) -> Result<'v, 's, ()> {
-        self.view.push(
-            Instance::from_native_value(owner, strand, self.ty),
-            strand,
-            values,
-        )
+        Instance::with_native_value(owner, strand, self.ty, |strand, inst| {
+            self.view.push(inst, strand, values)
+        })
     }
-    fn insert<'a, 's>(
+    fn insert<'s>(
         &self,
         owner: &Value<'v>,
-        strand: &'a mut Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         index: usize,
-        values: &mut [Slot<'v, 'a>],
+        values: &mut [Slot<'v, '_>],
     ) -> Result<'v, 's, ()> {
-        self.view.insert(
-            Instance::from_native_value(owner, strand, self.ty),
-            strand,
-            index,
-            values,
-        )
+        Instance::with_native_value(owner, strand, self.ty, |strand, inst| {
+            self.view.insert(inst, strand, index, values)
+        })
     }
     fn pop<'a, 's>(
         &self,
@@ -400,12 +393,9 @@ impl<'v, I: ArrayLike<'v>> ArrayViewGlue<'v> for Glue<'v, I> {
         index: usize,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        self.view.pop(
-            Instance::from_native_value(owner, strand, self.ty),
-            strand,
-            index,
-            out,
-        )
+        Instance::with_native_value(owner, strand, self.ty, |strand, inst| {
+            self.view.pop(inst, strand, index, out)
+        })
     }
     fn delete<'s>(
         &self,
@@ -413,15 +403,14 @@ impl<'v, I: ArrayLike<'v>> ArrayViewGlue<'v> for Glue<'v, I> {
         strand: &mut Strand<'v, 's>,
         index: usize,
     ) -> Result<'v, 's, ()> {
-        self.view.delete(
-            Instance::from_native_value(owner, strand, self.ty),
-            strand,
-            index,
-        )
+        Instance::with_native_value(owner, strand, self.ty, |strand, inst| {
+            self.view.delete(inst, strand, index)
+        })
     }
     fn clear<'s>(&self, owner: &Value<'v>, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
-        self.view
-            .clear(Instance::from_native_value(owner, strand, self.ty), strand)
+        Instance::with_native_value(owner, strand, self.ty, |strand, inst| {
+            self.view.clear(inst, strand)
+        })
     }
 }
 
@@ -452,7 +441,8 @@ impl<'v> gc::Annex for View<'v> {
     }
 }
 
-pub(crate) type ViewObj<'v> = gc::Imm<View<'v>>;
+// Out of line, so a view reached through an iterator or rest needs no pin
+pub(crate) type ViewObj<'v> = gc::Imm<alias::Box<View<'v>>>;
 
 struct MutationGuard<'a>(&'a Cell<bool>);
 
@@ -586,7 +576,7 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
             return Err(Error::unsupported(strand, "`==`"));
         };
         Ok(Value::from_bool(
-            this.as_header() == other.into_raw().cast(),
+            this.as_header() == gc::Base::as_ptr(other).cast(),
         ))
     }
 
@@ -782,7 +772,7 @@ impl<'v> Protocol<'v> for IterObj<'v> {
         strand: &mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        let view = &*this.get().parent;
+        let view = this.get().parent.get();
         debug(view.glue.module(), view.glue.name(), strand, w)
     }
     async fn op_iter<'a, 's>(
@@ -799,7 +789,7 @@ impl<'v> Protocol<'v> for IterObj<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let iter = this.get();
-        let view = &*iter.parent;
+        let view = iter.parent.get();
         let index = iter.index.get();
         if index >= view.glue.len(&view.owner, strand) {
             return Ok(false);
@@ -815,7 +805,7 @@ impl<'v> Protocol<'v> for IterObj<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let iter = this.get();
-        let view = &*iter.parent;
+        let view = iter.parent.get();
         let consumed = unpack_from(
             strand,
             sig,
@@ -869,7 +859,7 @@ impl<'v> Protocol<'v> for RestObj<'v> {
         strand: &mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        let view = &*this.get().parent;
+        let view = this.get().parent.get();
         crate::fmt!(
             strand,
             w,
@@ -894,7 +884,7 @@ impl<'v> Protocol<'v> for RestObj<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let rest = this.get();
-        let view = &*rest.parent;
+        let view = rest.parent.get();
         spread_from(&view.owner, &*view.glue, strand, rest.start, context, sink)
     }
     async fn op_unpack<'a, 's>(
@@ -904,7 +894,7 @@ impl<'v> Protocol<'v> for RestObj<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let rest = this.get();
-        let view = &*rest.parent;
+        let view = rest.parent.get();
         let consumed = unpack_from(strand, sig, &mut out, &view.owner, &*view.glue, rest.start)?;
         if let Some(i) = sig.pos_rest_slot() {
             store_rest(
@@ -1001,7 +991,7 @@ fn unpack_native<'v, 's>(
     for item in unpack.iter() {
         match item {
             UnpackItem::Pos { slot, default } => {
-                let view = &*parent;
+                let view = parent.get();
                 if position < view.glue.len(&view.owner, strand) {
                     view.glue.get(&view.owner, strand, position, slot)?;
                 } else if let Some(default) = default {
@@ -1031,7 +1021,7 @@ fn unpack_native<'v, 's>(
             UnpackItem::KeyRest { slot } => NativeUnpack::empty_key_rest(strand, slot),
         }
     }
-    let view = &*parent;
+    let view = parent.get();
     if unpack.pos_rest() == RestKind::None && position < view.glue.len(&view.owner, strand) {
         return Err(Error::unexpected_positional(strand, position));
     }
@@ -1409,7 +1399,7 @@ mod tests {
                     .unwrap();
                     let out: &Value = &out_slot;
                     let array = out.downcast_ref(strand.builtin_types().array).unwrap();
-                    assert!(array.borrow().unwrap().inner.is_empty());
+                    assert!(array.read(|array| array.borrow().unwrap().inner.is_empty()));
                 })
                 .await;
         });

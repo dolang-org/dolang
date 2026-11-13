@@ -195,12 +195,12 @@ where
 
 /// A pinned `Str` or `Bin` payload, held so the bytes underneath it keep their
 /// address for as long as a write is borrowing them.
-pub(crate) enum Pinned<'v, 'a> {
-    Str(PinStr<'v, 'a>),
-    Bin(PinBin<'v, 'a>),
+pub(crate) enum Pinned<'v> {
+    Str(PinStr<'v>),
+    Bin(PinBin<'v>),
 }
 
-impl<'v, 'a> Pinned<'v, 'a> {
+impl<'v> Pinned<'v> {
     pub(crate) fn as_slice(&self) -> &[u8] {
         match self {
             Self::Str(value) => value.as_bytes(),
@@ -209,10 +209,7 @@ impl<'v, 'a> Pinned<'v, 'a> {
     }
 
     /// Pins a `Str` or `Bin` piece of a write.
-    pub(crate) fn new<'s>(
-        strand: &mut Strand<'v, 's>,
-        value: &'a Value<'v>,
-    ) -> Result<'v, 's, Self> {
+    pub(crate) fn new<'s>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Result<'v, 's, Self> {
         match value.view(strand) {
             View::Str(value) => Ok(Self::Str(value.pin())),
             View::Bin(value) => Ok(Self::Bin(value.pin())),

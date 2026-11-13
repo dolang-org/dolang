@@ -66,11 +66,11 @@ impl<'v> Struct<'v> {
         let mut seen = HashSet::new();
         for (key, _) in &items {
             if let Some(key) = key
-                && !seen.insert(key.tag)
+                && !seen.insert(key.tag())
             {
                 return Err(Error::value(
                     strand,
-                    format!("duplicate struct key: {}", key.name),
+                    format!("duplicate struct key: {}", key.name()),
                 ));
             }
         }
@@ -85,7 +85,7 @@ impl<'v> Struct<'v> {
     fn position(&self, key: Sym<'v, '_>) -> Option<usize> {
         self.items
             .iter()
-            .position(|(k, _)| k.as_ref().is_some_and(|k| k.tag == key.tag()))
+            .position(|(k, _)| k.as_ref().is_some_and(|k| k.tag() == key.tag()))
     }
 
     /// Replaces the item keyed `key`, or appends one.
@@ -164,12 +164,14 @@ impl<'v> Protocol<'v> for Struct<'v> {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let left = this.borrow(strand)?;
-        let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        Ok(Value::from_bool(pack::eq_items(
-            strand,
-            &left.items,
-            &right.items,
-        )?))
+        other.pin_sync(strand, |strand, other| {
+            let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            Ok(Value::from_bool(pack::eq_items(
+                strand,
+                &left.items,
+                &right.items,
+            )?))
+        })
     }
 
     fn op_lt<'a, 's>(
@@ -181,12 +183,14 @@ impl<'v> Protocol<'v> for Struct<'v> {
             return Err(Error::unsupported(strand, "`<`"));
         };
         let left = this.borrow(strand)?;
-        let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        Ok(Value::from_bool(pack::lt_items(
-            strand,
-            &left.items,
-            &right.items,
-        )?))
+        other.pin_sync(strand, |strand, other| {
+            let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            Ok(Value::from_bool(pack::lt_items(
+                strand,
+                &left.items,
+                &right.items,
+            )?))
+        })
     }
 
     fn op_index<'a, 's>(
@@ -421,9 +425,10 @@ impl<'v> Protocol<'v> for Class {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
                 let found = {
-                    let target = expect_struct(strand, &target)?;
-                    let borrow = target.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                    pack::find(strand, &borrow.items, &key).map(Value::dup)
+                    expect_struct(strand, &target)?.pin_sync(strand, |strand, target| {
+                        let borrow = target.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                        Ok(pack::find(strand, &borrow.items, &key).map(Value::dup))
+                    })?
                 };
                 if let Some(value) = found {
                     out.store(value);
@@ -441,9 +446,10 @@ impl<'v> Protocol<'v> for Class {
             sym::CONTAINS => {
                 let ([target, key], []) = unpack!(strand, args, 2, 0)?;
                 let found = {
-                    let target = expect_struct(strand, &target)?;
-                    let borrow = target.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                    pack::find_index(strand, &borrow.items, &key).is_some()
+                    expect_struct(strand, &target)?.pin_sync(strand, |strand, target| {
+                        let borrow = target.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                        Ok(pack::find_index(strand, &borrow.items, &key).is_some())
+                    })?
                 };
                 Output::set(strand, out, found);
                 Ok(())
@@ -504,7 +510,7 @@ impl<'v> Protocol<'v> for Class {
 fn expect_struct<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
     target: &'a Value<'v>,
-) -> Result<'v, 's, crate::gc::Borrow<'v, 'a, super::protocol::Header, Struct<'v>>> {
+) -> Result<'v, 's, &'a GcObj<'v, Struct<'v>>> {
     target
         .downcast_native(strand.vm(), strand.builtin_types().structure)
         .ok_or_else(|| Error::type_error(strand, "expected `Struct`"))
