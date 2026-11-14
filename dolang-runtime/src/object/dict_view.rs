@@ -886,7 +886,7 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
                 out.store(default.take());
                 Ok(())
             } else if let Some(or_else) = or_else {
-                call!(strand, or_else, out).await
+                call!(strand, or_else, out)
             } else if method.tag() == sym::POP {
                 Err(Error::index(strand))
             } else {
@@ -1363,37 +1363,29 @@ mod tests {
                     with_instance!(strand, cast, |native| {
                         strand.dict_view(native, Projection::<true>, &mut view);
                         let pop = Sym::well_known(sym::POP);
-                        method!(strand, &view, pop, &mut out, 1_i64).await.unwrap();
+                        method!(strand, &view, pop, &mut out, 1_i64).unwrap();
                         assert_eq!(out.as_int(strand), Some(10));
                         assert_eq!(native.borrow_unwrap().0.len(), 5);
-                        method!(strand, &view, pop, &mut out, 1_i64, -1_i64)
-                            .await
-                            .unwrap();
+                        method!(strand, &view, pop, &mut out, 1_i64, -1_i64).unwrap();
                         assert_eq!(out.as_int(strand), Some(30));
                         view.get(strand, pop, &mut bound).unwrap();
-                        call!(strand, &bound, &mut out, 2_i64).await.unwrap();
+                        call!(strand, &bound, &mut out, 2_i64).unwrap();
                         assert!(out.is_nil());
                         let delete = Sym::well_known(sym::DELETE);
                         view.get(strand, delete, &mut bound).unwrap();
-                        call!(strand, &bound, &mut out, 3_i64).await.unwrap();
+                        call!(strand, &bound, &mut out, 3_i64).unwrap();
                         assert!(out.to_bool(strand).unwrap());
                         assert_eq!(native.borrow_unwrap().0, vec![(1, Some(20))]);
-                        method!(strand, &view, delete, &mut out, 3_i64)
-                            .await
-                            .unwrap();
+                        method!(strand, &view, delete, &mut out, 3_i64).unwrap();
                         assert!(!out.to_bool(strand).unwrap());
                         let clear = Sym::well_known(sym::CLEAR);
                         view.get(strand, clear, &mut bound).unwrap();
-                        call!(strand, &bound, &mut out).await.unwrap();
+                        call!(strand, &bound, &mut out).unwrap();
                         assert!(native.borrow_unwrap().0.is_empty());
-                        let err = method!(strand, &view, pop, &mut out, 1_i64)
-                            .await
-                            .unwrap_err();
+                        let err = method!(strand, &view, pop, &mut out, 1_i64).unwrap_err();
                         assert_eq!(err.kind(), ErrorKind::Index);
                         let default = Sym::well_known(sym::DEFAULT);
-                        method!(strand, &view, pop, &mut out, 1_i64, default: 99_i64)
-                            .await
-                            .unwrap();
+                        method!(strand, &view, pop, &mut out, 1_i64, default: 99_i64).unwrap();
                         assert_eq!(out.as_int(strand), Some(99));
                     });
                 },
@@ -1413,15 +1405,15 @@ mod tests {
                     strand.dict_view(native, Projection::<true>, &mut view);
                     let default = Sym::well_known(sym::DEFAULT);
                     let otherwise = Sym::well_known(sym::ELSE);
-                    let err = method!(strand, &view, Sym::well_known(sym::POP), &mut out, 1_i64, default: 5_i64, otherwise: 6_i64).await.unwrap_err();
+                    let err = method!(strand, &view, Sym::well_known(sym::POP), &mut out, 1_i64, default: 5_i64, otherwise: 6_i64).unwrap_err();
                     assert_eq!(err.kind(), ErrorKind::UnexpectedKey);
                     assert_eq!(native.borrow_unwrap().0, vec![(1, Some(10))]);
                     strand.dict_view(native, Projection::<false>, &mut view);
                     for method in [sym::DELETE, sym::POP] {
-                        let err = method!(strand, &view, Sym::well_known(method), &mut out, 1_i64).await.unwrap_err();
+                        let err = method!(strand, &view, Sym::well_known(method), &mut out, 1_i64).unwrap_err();
                         assert_eq!(err.kind(), ErrorKind::Immutable);
                     }
-                    let err = method!(strand, &view, Sym::well_known(sym::CLEAR), &mut out).await.unwrap_err();
+                    let err = method!(strand, &view, Sym::well_known(sym::CLEAR), &mut out).unwrap_err();
                     assert_eq!(err.kind(), ErrorKind::Immutable);
                     assert_eq!(native.borrow_unwrap().0, vec![(1, Some(10))]);
                 });

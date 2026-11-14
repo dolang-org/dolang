@@ -408,7 +408,7 @@ impl<'v> Protocol<'v> for Class {
             sym::INIT_METHOD => {
                 let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
                 with_slots!(strand, |mut native| {
-                    call!(strand, &strand.singletons().structure, &mut native, items).await?;
+                    call!(strand, &strand.singletons().structure, &mut native, items)?;
                     self_val.op_fill(strand, &strand.singletons().structure, native.take())?;
                     Ok(())
                 })
@@ -434,7 +434,7 @@ impl<'v> Protocol<'v> for Class {
                     out.store(default.take());
                     Ok(())
                 } else if let Some(or_else) = or_else {
-                    call!(strand, or_else, out).await
+                    call!(strand, or_else, out)
                 } else {
                     out.store(Value::NIL);
                     Ok(())

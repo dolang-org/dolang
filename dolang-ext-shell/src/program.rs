@@ -226,7 +226,7 @@ async fn cleanup_io<'v, 's>(
                 (temp.stderr, value.stderr),
             ] {
                 if temp {
-                    let _ = method!(strand, value, global.syms.close, &mut tmp).await;
+                    let _ = method!(strand, value, global.syms.close, &mut tmp);
                 }
             }
         })
@@ -895,11 +895,7 @@ async fn run<'v, 's>(
     };
 
     if res.is_err() {
-        let _ = strand
-            .with_interrupt_mask(InterruptMask::all(), async move |_strand| {
-                proc.terminate().await
-            })
-            .await;
+        let _ = with_interrupt_mask!(strand, InterruptMask::all(), proc.terminate().await);
     }
 
     res

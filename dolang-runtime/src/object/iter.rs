@@ -18,7 +18,7 @@ use crate::{
         tuple,
     },
     sig,
-    strand::Strand,
+    strand::{Strand, with_slots_dynamic},
     sym::{self, Sym},
     unpack,
     value::{BinEmbryo, Input, Output, Slot, Slots, TypeObject, Value, ValueCell, view::View},
@@ -288,7 +288,7 @@ async fn iter_all_any<'v, 'a, 's>(
         }
         while obj.next(strand, &mut item).await? {
             let passed = if has_pred {
-                call!(strand, &pred_fn, &mut pred_out, &item).await?;
+                call!(strand, &pred_fn, &mut pred_out, &item)?;
                 pred_out.to_bool(strand)?
             } else {
                 item.to_bool(strand)?
@@ -338,7 +338,7 @@ async fn iter_fold<'v, 'a, 's>(
         acc.store(init.take());
         func_slot.store(func.take());
         while obj.next(strand, &mut item).await? {
-            call!(strand, &func_slot, &mut next_acc, &acc, &item).await?;
+            call!(strand, &func_slot, &mut next_acc, &acc, &item)?;
             Slot::swap(Slot::reborrow(&mut acc), &mut next_acc);
             strand.check_trap_gc()?;
         }
@@ -374,7 +374,7 @@ async fn iter_find<'v, 'a, 's>(
     with_slots!(strand, |mut item, mut pred_fn, mut pred_out| {
         pred_fn.store(pred.take());
         while obj.next(strand, &mut item).await? {
-            call!(strand, &pred_fn, &mut pred_out, &item).await?;
+            call!(strand, &pred_fn, &mut pred_out, &item)?;
             if pred_out.to_bool(strand)? {
                 out.store(item.take());
                 return Ok(());
@@ -386,7 +386,7 @@ async fn iter_find<'v, 'a, 's>(
             return Ok(());
         }
         if let Some(or_else) = or_else {
-            return call!(strand, or_else, out).await;
+            return call!(strand, or_else, out);
         }
         Err(Error::runtime(strand, "find: no matching item"))
     })
@@ -410,7 +410,7 @@ pub(crate) async fn iter_next<'v, 'a, 's>(
         return Ok(());
     }
     if let Some(or_else) = or_else {
-        return call!(strand, or_else, out).await;
+        return call!(strand, or_else, out);
     }
     Err(Error::iter_stop(strand))
 }
@@ -1026,18 +1026,16 @@ impl<'v> Protocol<'v> for Zip<'v> {
         if sources.is_empty() {
             return Ok(false);
         }
-        strand
-            .with_slots_dynamic(sources.len(), async |strand, mut items| {
-                for (i, source) in sources.iter().enumerate() {
-                    if !source.next(strand, items.at(i)).await? {
-                        return Ok(false);
-                    }
+        with_slots_dynamic!(strand, sources.len(), |mut items| {
+            for (i, source) in sources.iter().enumerate() {
+                if !source.next(strand, items.at(i)).await? {
+                    return Ok(false);
                 }
-                let len = sources.len();
-                tuple::create(strand, (0..len).map(|i| items.at(i).take()), out);
-                Ok(true)
-            })
-            .await
+            }
+            let len = sources.len();
+            tuple::create(strand, (0..len).map(|i| items.at(i).take()), out);
+            Ok(true)
+        })
     }
 
     fn op_get<'a, 's>(
@@ -1832,7 +1830,7 @@ impl<'v> Protocol<'v> for Map<'v> {
             func.store(borrow.func.dup());
             drop(borrow);
             if input.next(strand, &mut item).await? {
-                call!(strand, &func, out, &item).await?;
+                call!(strand, &func, out, &item)?;
                 Ok(true)
             } else {
                 Ok(false)
@@ -1939,7 +1937,7 @@ impl<'v> Protocol<'v> for Premap<'v> {
             func.store(borrow.func.dup());
             output.store(borrow.obj.dup());
             drop(borrow);
-            call!(strand, &func, &mut output, value).await?;
+            call!(strand, &func, &mut output, value)?;
             this.borrow(strand)?.obj.put(strand, output).await
         })
     }
@@ -2040,7 +2038,7 @@ impl<'v> Protocol<'v> for Filter<'v> {
                 if !input.next(strand, &mut out).await? {
                     return Ok(false);
                 }
-                call!(strand, &pred, &mut res, &out).await?;
+                call!(strand, &pred, &mut res, &out)?;
                 if res.to_bool(strand)? {
                     return Ok(true);
                 }
@@ -2147,7 +2145,7 @@ impl<'v> Protocol<'v> for Prefilter<'v> {
             pred.store(borrow.pred.dup());
             output.store(borrow.obj.dup());
             drop(borrow);
-            call!(strand, &pred, &mut output, &value).await?;
+            call!(strand, &pred, &mut output, &value)?;
             if output.to_bool(strand)? {
                 this.borrow(strand)?.obj.put(strand, value).await
             } else {

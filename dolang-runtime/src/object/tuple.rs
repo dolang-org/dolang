@@ -421,7 +421,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                         if let Some(mut default) = default {
                             out.store(default.take())
                         } else if let Some(or_else) = or_else {
-                            call!(strand, or_else, out).await?;
+                            call!(strand, or_else, out)?;
                         }
                     }
                 }
@@ -461,7 +461,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                     return with_slots!(strand, |mut receiver, mut ty| {
                         Output::set(strand, Slot::reborrow(&mut receiver), &this);
                         receiver.op_type(strand, Slot::reborrow(&mut ty));
-                        call!(strand, &ty, out, &receiver).await
+                        call!(strand, &ty, out, &receiver)
                     });
                 }
                 Output::set(strand, out, &this);
@@ -903,7 +903,7 @@ impl<'v> Protocol<'v> for Type {
             sym::INIT_METHOD => {
                 let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
                 with_slots!(strand, |mut native| {
-                    call!(strand, &strand.singletons().tuple, &mut native, items).await?;
+                    call!(strand, &strand.singletons().tuple, &mut native, items)?;
                     self_val.op_fill(strand, &strand.singletons().tuple, native.take())?;
                     Ok(())
                 })

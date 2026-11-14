@@ -306,7 +306,7 @@ async fn finish_connect<'v, 's>(
     };
     with_slots!(strand, |mut handle| {
         make_connection(strand, global, inner, &mut handle);
-        let result = call!(strand, block, out, &handle).await;
+        let result = call!(strand, block, out, &handle);
         // Masking interrupts keeps a cancellation from skipping the
         // disconnect, which would leave the mapping behind — the one thing
         // the scoped form exists to prevent.

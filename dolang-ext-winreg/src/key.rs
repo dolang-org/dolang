@@ -223,8 +223,8 @@ async fn finish_open<'v, 's>(
                 .types
                 .key
                 .create(strand, Key(Some(inner)), &mut handle);
-            let result = call!(strand, block, out, &handle).await;
-            let _ = method!(strand, &handle, global.syms.close, &mut tmp).await;
+            let result = call!(strand, block, out, &handle);
+            let _ = method!(strand, &handle, global.syms.close, &mut tmp);
             result
         })
     } else {

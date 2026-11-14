@@ -24,7 +24,8 @@ use crate::{
     },
     redirect,
     strand::{
-        InheritKind, InterruptMask, InterruptToken, Local, LocalKey, LocalRootKey, Redirect, Strand,
+        InheritKind, InterruptMask, InterruptToken, Local, LocalKey, LocalRootKey, Redirect,
+        Strand, with_slots_dynamic,
     },
     unpack,
     value::{Output, Singleton, Slot, Value},
@@ -364,7 +365,7 @@ impl<'v> Object<'v> for Key {
                     let dict = root.as_dict(strand).expect("strand local store is a dict");
                     dict.insert(strand, &key, &mut value, true)?;
 
-                    let result = call!(strand, block, out).await;
+                    let result = call!(strand, block, out);
 
                     let root = unique_local_root(state, strand)?;
                     let dict = root.as_dict(strand).expect("strand local store is a dict");
@@ -431,7 +432,7 @@ async fn resource_with<'v, 's>(
 
     if state.resource.get(strand).inherited.contains(&resource.id) {
         return strand
-            .interrupt_guard(async move |strand| call!(strand, block, out).await)
+            .interrupt_guard(async move |strand| call!(strand, block, out))
             .await;
     }
 
@@ -466,7 +467,7 @@ async fn resource_with<'v, 's>(
     }
 
     let result = strand
-        .interrupt_guard(async move |strand| call!(strand, block, out).await)
+        .interrupt_guard(async move |strand| call!(strand, block, out))
         .await;
 
     let mut held = state.resource.get(strand).held.borrow_mut();
@@ -508,7 +509,7 @@ async fn map_workers<'v, 's>(
                         let result = async {
                             with_slots!(strand, |mut item, mut mapped| {
                                 while input.next(strand, &mut item).await? {
-                                    call!(strand, block, &mut mapped, &item).await?;
+                                    call!(strand, block, &mut mapped, &item)?;
                                     output.put(strand, &mut mapped).await?;
                                     strand.check_trap_gc()?;
                                 }
@@ -597,7 +598,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                         out.store(default.take());
                         return Ok(());
                     } else if let Some(or_else) = or_else {
-                        return call!(strand, or_else, out).await;
+                        return call!(strand, or_else, out);
                     }
                     return Err(Error::iter_stop(strand));
                 }
@@ -649,25 +650,22 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 // Safety: `visit` visits each staged entry's program reference;
                 // an entry leaves its cell only after its object is allocated
                 unsafe {
-                    strand.with_scan(visit, async |strand| {
-                        strand
-                            .with_slots_dynamic(raw.len(), async |strand, mut infos| {
-                                for (i, raw) in raw.iter().enumerate() {
-                                    let embryo = ty.embryo(strand);
-                                    embryo.finish_imm(
-                                        strand,
-                                        StrandInfo::new(raw.take().expect("taken once")),
-                                        infos.at(i),
-                                    );
-                                }
-                                let len = infos.len();
-                                let embryo = tuple::embryo(strand, len);
-                                embryo.finish(strand, (0..len).map(|i| infos.at(i).take()), out);
-                            })
-                            .await
+                    strand.with_scan_sync(visit, |strand| {
+                        with_slots_dynamic!(strand, raw.len(), |mut infos| {
+                            for (i, raw) in raw.iter().enumerate() {
+                                let embryo = ty.embryo(strand);
+                                embryo.finish_imm(
+                                    strand,
+                                    StrandInfo::new(raw.take().expect("taken once")),
+                                    infos.at(i),
+                                );
+                            }
+                            let len = infos.len();
+                            let embryo = tuple::embryo(strand, len);
+                            embryo.finish(strand, (0..len).map(|i| infos.at(i).take()), out);
+                        })
                     })
                 }
-                .await;
                 Ok(())
             })
             .function_without_frame("error_backtrace", async move |strand, args, out| {
@@ -701,7 +699,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     output.sink(&mut redir, &mut tmp).await?;
                     redir = redir.output(&mut tmp);
                 }
-                redirect!(strand, redir, call!(strand, block, out).await)
+                redirect!(strand, redir, call!(strand, block, out))
             })
             .function("with_io", async move |strand, args, out| {
                 let ([block], [arg_input, arg_output]) =
@@ -713,7 +711,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 if let Some(output) = arg_output {
                     redir = redir.output(output);
                 }
-                redirect!(strand, redir, call!(strand, block, out).await)
+                redirect!(strand, redir, call!(strand, block, out))
             })
             .function("channel", async move |strand, args, out| {
                 let (_, [limit]) = unpack!(strand, args, 0, 1)?;
@@ -810,19 +808,18 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                                                         Slot::reborrow
                                                     )
                                                 )
-                                                .await
                                             });
                                             // Close both ends even if the
                                             // first close fails, so a
                                             // failure cannot strand the
                                             // other end open.
                                             let closed_recv = if !r.is_nil() {
-                                                method!(strand, r, close, &mut tmp2).await
+                                                method!(strand, r, close, &mut tmp2)
                                             } else {
                                                 Ok(())
                                             };
                                             let closed_send = if !s.is_nil() {
-                                                method!(strand, s, close, &mut tmp2).await
+                                                method!(strand, s, close, &mut tmp2)
                                             } else {
                                                 Ok(())
                                             };
@@ -879,7 +876,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                             .output(Singleton::Null),
                         {
                             while input.next(strand, &mut value).await? {
-                                call!(strand, &func, &mut tmp, &value).await?;
+                                call!(strand, &func, &mut tmp, &value)?;
                                 output.put(strand, &mut tmp).await?;
                                 strand.check_trap_gc()?
                             }
@@ -901,7 +898,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                             .output(Singleton::Null),
                         {
                             while input.next(strand, &mut value).await? {
-                                call!(strand, &pred, &mut tmp, &value).await?;
+                                call!(strand, &pred, &mut tmp, &value)?;
                                 if tmp.to_bool(strand)? {
                                     output.put(strand, &mut value).await?;
                                 }
@@ -957,7 +954,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     callable.take(),
                     InterruptToken::new(),
                     None,
-                    async move |strand, arg, out| call!(strand, arg, out).await,
+                    async move |strand, arg, out| call!(strand, arg, out),
                 )?;
                 Output::set(strand, out, Value::from_object(handle));
                 Ok(())
@@ -985,7 +982,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     callable.take(),
                     InterruptToken::new(),
                     Some((input_receiver, output_sender)),
-                    async move |strand, arg, out| call!(strand, arg, out).await,
+                    async move |strand, arg, out| call!(strand, arg, out),
                 )?;
 
                 // Wrap the endpoints up front so they keep `handle` GC-reachable
@@ -1097,7 +1094,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                                 async move |strand| {
                                     let result = async {
                                         with_slots!(strand, |mut tmp| {
-                                            call!(strand, thunk, &mut tmp).await?;
+                                            call!(strand, thunk, &mut tmp)?;
                                             results.borrow_mut()[i] = tmp.take();
                                             Ok(())
                                         })

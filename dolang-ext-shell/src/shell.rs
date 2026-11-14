@@ -624,7 +624,7 @@ impl<'v> Object<'v> for Vfs {
                         let res = redirect!(
                             strand,
                             Redirect::new(strand).input(&input).output(&output),
-                            { call!(strand, &callable, out).await }
+                            call!(strand, &callable, out)
                         );
                         // Plain close, no poisoning: these pipe
                         // ends get negotiated into a raw OS
@@ -634,8 +634,8 @@ impl<'v> Object<'v> for Vfs {
                         // always joins and checks status, and a
                         // dead server surfaces its own errors
                         // on the next VFS operation.
-                        let _ = method!(strand, &input, close_sym, &mut tmp).await;
-                        let _ = method!(strand, &output, close_sym, &mut tmp).await;
+                        let _ = method!(strand, &input, close_sym, &mut tmp);
+                        let _ = method!(strand, &output, close_sym, &mut tmp);
                         res
                     })
                 })
@@ -648,7 +648,7 @@ impl<'v> Object<'v> for Vfs {
                 Ok(client) => client,
                 Err(negotiate_error) => {
                     let join = global.syms.join;
-                    return match method!(strand, &handle, join, &mut tmp).await {
+                    return match method!(strand, &handle, join, &mut tmp) {
                         Ok(()) => Err(negotiate_error.into_sys(strand)),
                         Err(launcher_error) => Err(launcher_error),
                     };
@@ -726,7 +726,7 @@ impl<'v> Object<'v> for Vfs {
                     strand,
                     borrow.global.local,
                     borrow.vfs.clone(),
-                    async move |strand| call!(strand, func, out).await,
+                    async move |strand| call!(strand, func, out),
                 )
                 .await
             })
@@ -742,7 +742,7 @@ impl<'v> Object<'v> for Vfs {
                             let borrow = this.borrow(strand)?;
                             Output::set(strand, &mut stream, Ref::slot::<0>(&borrow));
                             drop(borrow);
-                            method!(strand, &stream, annex.global.syms.join, &mut output).await
+                            method!(strand, &stream, annex.global.syms.join, &mut output)
                         })
                     }
                     .await
@@ -1122,7 +1122,7 @@ pub(crate) fn configure_vm<'v>(
                 }
                 local.replace_invocation(invocation);
 
-                let result = call!(strand, &func, out).await;
+                let result = call!(strand, &func, out);
                 global.local.get(strand).replace_invocation(original);
                 result
             },
@@ -1157,7 +1157,7 @@ pub(crate) fn configure_vm<'v>(
             let ([], []) = unpack!(strand, args, 0, 0)?;
             let host_vfs = error::io_result(strand, VfsVfs::direct())?;
             Local::with_vfs(strand, global.local, host_vfs, async move |strand| {
-                call!(strand, func, out).await
+                call!(strand, func, out)
             })
             .await
         })
@@ -1171,7 +1171,7 @@ pub(crate) fn configure_vm<'v>(
             redirect!(
                 strand,
                 Redirect::new(strand).output(&cap),
-                call!(strand, func, tmp).await
+                call!(strand, func, tmp)
             )?;
             capture_ty
                 .cast(&cap)
@@ -1208,7 +1208,7 @@ pub(crate) fn configure_vm<'v>(
             let path = local.cwd().join(dir.as_str());
             if let Some(func) = func {
                 let old = local.replace_cwd(path);
-                let res = call!(strand, func, out).await;
+                let res = call!(strand, func, out);
                 let local = global.local.get(strand);
                 let _ = local.replace_cwd(old);
                 res

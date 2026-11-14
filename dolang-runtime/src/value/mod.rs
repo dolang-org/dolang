@@ -267,7 +267,8 @@ impl<'v> Value<'v> {
         }
     }
 
-    pub(crate) async fn op_call<'a, 's>(
+    #[doc(hidden)]
+    pub async fn op_call<'a, 's>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
@@ -282,7 +283,8 @@ impl<'v> Value<'v> {
         }
     }
 
-    pub(crate) async fn op_mcall<'a, 's>(
+    #[doc(hidden)]
+    pub async fn op_mcall<'a, 's>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
@@ -1539,7 +1541,7 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
-        method!(strand, self, Sym::well_known(sym::PAIRS), out).await
+        method!(strand, self, Sym::well_known(sym::PAIRS), out)
     }
 
     /// Receive from iterator
@@ -3034,7 +3036,8 @@ impl<'v, 'a> Slot<'v, 'a> {
         drop(old);
     }
 
-    pub(crate) fn from_output(this: &'a mut impl Output<'v>) -> Self {
+    #[doc(hidden)]
+    pub fn from_output(this: &'a mut impl Output<'v>) -> Self {
         Output::as_slot(this, private::Sealed)
     }
 

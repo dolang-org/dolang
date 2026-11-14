@@ -185,7 +185,7 @@ impl<'v> Vm<'v> {
                     );
                 }
                 for importer in self.importers.iter() {
-                    if let Err(e) = call!(strand, importer, Slot::reborrow(&mut out), name).await {
+                    if let Err(e) = call!(strand, importer, Slot::reborrow(&mut out), name) {
                         if e.kind() == ErrorKind::Import {
                             err = e;
                             continue;
@@ -242,7 +242,7 @@ impl<'v> Vm<'v> {
                             self.import_raw(strand, name, Slot::reborrow(&mut raw))
                                 .await?
                         } else {
-                            call!(strand, importer, Slot::reborrow(&mut raw), name).await?
+                            call!(strand, importer, Slot::reborrow(&mut raw), name)?
                         }
                         match mode {
                             Mode::Get => Slot::set(strand, out, raw),
@@ -527,7 +527,7 @@ impl<'v> Vm<'v> {
         };
         with_slots!(strand, |mut tmp| {
             // 1. Call body
-            let mut status = call!(strand, &body, &mut out).await;
+            let mut status = call!(strand, &body, &mut out);
 
             // 2. On catchable error, try handlers
             status = match status {
@@ -544,7 +544,7 @@ impl<'v> Vm<'v> {
                             (None, None) => {
                                 break if !catch_all.is_nil() {
                                     let _focus = strand.inner.focus_error(slot);
-                                    call!(strand, &catch_all, &mut out, &tmp).await
+                                    call!(strand, &catch_all, &mut out, &tmp)
                                 } else {
                                     Err(cause.take().unwrap())
                                 };
@@ -559,7 +559,7 @@ impl<'v> Vm<'v> {
                         };
                         if tmp.is_instance_of(strand, &ty) {
                             let _focus = strand.inner.focus_error(slot);
-                            break call!(strand, &handler, &mut out, &tmp).await;
+                            break call!(strand, &handler, &mut out, &tmp);
                         }
                     };
 
@@ -586,7 +586,7 @@ impl<'v> Vm<'v> {
                 };
                 let _focus = strand.inner.focus_error(slot);
                 let finally_status = with_interrupt_mask!(strand, InterruptMask::all(), {
-                    call!(strand, &finally, &mut tmp).await
+                    call!(strand, &finally, &mut tmp)
                 });
                 match (status, finally_status) {
                     (Ok(()), Ok(())) => Ok(()),
@@ -1269,20 +1269,21 @@ impl<'v> Vm<'v> {
         let mut reader = UnsafeInstDecoder::new(
             &loaded.bytecode()[loaded.funcs()[frame.func].0.bytecode.clone()],
         );
-        // SAFETY: `frame` is a live Do frame whose parent is `strand`'s frame
-        unsafe {
-            Strand::async_for_frame(strand, frame, async |strand| {
-                loop {
-                    match self.step(strand, frame, &mut reader).await? {
-                        Status::Ret(value) => {
-                            out.store(value);
-                            break Ok(());
-                        }
-                        Status::Running => (),
-                    }
+        // SAFETY: `frame` is a live Do frame whose parent is `strand`'s frame, and the scope
+        // is a local that is dropped before `frame`
+        let mut scope = unsafe { strand.enter_do_frame(frame) }?;
+        let res = loop {
+            // SAFETY: `frame` is live and verified, and `reader` decodes its function from
+            // the start, one instruction per step
+            match unsafe { self.step(&mut scope, frame, &mut reader) }.await {
+                Ok(Status::Ret(value)) => {
+                    out.store(value);
+                    break Ok(());
                 }
-            })
-            .await
-        }
+                Ok(Status::Running) => (),
+                Err(e) => break Err(e),
+            }
+        };
+        scope.finish(res)
     }
 }

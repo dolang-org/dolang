@@ -19,7 +19,7 @@ use crate::{
     },
     object::protocol::{Delegated, Dispatch, GcObjPin, Recv, Vtbl},
     sig,
-    strand::{Pinned, Strand},
+    strand::{PinScope, Pinned, SlotFrame, Strand, in_native_frame},
     sym::{self, Sym},
     unpack,
     value::{Case, Input, Output, Slot, Slots, TypeObject, Value, ValueCell, private::Sealed},
@@ -416,20 +416,25 @@ impl<'v, 'a, T: Object<'v>> Copy for Instance<'v, 'a, T> {}
 /// # }
 /// ```
 ///
-/// The closure-like pattern binds the instance. `strand` must be the name of the current
-/// [`Strand`], rebound inside the body as for [`with_slots!`](crate::with_slots). The macro
-/// awaits the body and evaluates to its value. Don't use `return` in the body.
+/// The closure-like pattern binds the instance, which can't outlive the body. `strand`
+/// must be the name of the current [`Strand`]. The body runs inline, as for
+/// [`with_slots!`](crate::with_slots), and the macro evaluates to its value.
 #[macro_export]
 macro_rules! with_instance {
-    ($strand:ident, $cast:expr, |$this:pat_param| $body:expr) => {
-        ($cast).enter($strand, async |$strand, $this| $body).await
-    };
+    ($strand:ident, $cast:expr, |$this:pat_param| $body:expr) => {{
+        let cast = $cast;
+        let scope = $crate::strand::PinScope;
+        // Safety: `scope` is a local of this block
+        #[allow(unused_unsafe)]
+        let $this = unsafe { cast.scoped_instance(&scope) };
+        $body
+    }};
 }
 
 /// Witness that a [`Value`] has dynamic type `T`, obtained from [`Type::downcast`].
 ///
-/// Use [`Cast::enter`]/[`Cast::enter_sync`] to obtain an [`Instance`] for a
-/// bounded scope.
+/// Use [`with_instance!`](crate::with_instance) or [`Cast::enter_sync`] to obtain an
+/// [`Instance`] for a bounded scope.
 #[must_use]
 pub struct Cast<'v, 'a, T: Object<'v>> {
     receiver: &'a GcObj<'v, ObjectWrap<'v, T>>,
@@ -448,26 +453,28 @@ impl<'v, 'a, T: Object<'v>> Clone for Cast<'v, 'a, T> {
 impl<'v, 'a, T: Object<'v>> Copy for Cast<'v, 'a, T> {}
 
 impl<'v, 'a, T: Object<'v>> Cast<'v, 'a, T> {
-    /// Obtain an [`Instance`] for the duration of `f`.
+    /// Obtain an [`Instance`] for the borrow of `scope`.
     ///
-    /// Prefer [`with_instance!`](crate::with_instance) for an inline closure.
+    /// This backs [`with_instance!`](crate::with_instance).
+    ///
+    /// # Safety
+    ///
+    /// `scope` must be a local of the block that uses the instance.
+    #[doc(hidden)]
     #[inline]
-    pub async fn enter<'s, R>(
-        self,
-        strand: &mut Strand<'v, 's>,
-        f: impl for<'x> AsyncFnOnce(&mut Strand<'v, 's>, Instance<'v, 'x, T>) -> R,
-    ) -> R {
-        let instance = Instance {
-            // SAFETY: scoped to `f`, as for `GcObj::pin`, inlined to keep futures
-            // shallow
+    pub unsafe fn scoped_instance<'p>(self, _scope: &'p PinScope) -> Instance<'v, 'p, T>
+    where
+        'a: 'p,
+    {
+        Instance {
+            // SAFETY: scoped to the caller's block, as for `GcObj::pin`
             receiver: unsafe { self.receiver.pin_unchecked() },
             delegator: self.delegator,
-        };
-        f(strand, instance).await
+        }
     }
 
-    /// Synchronous counterpart to [`Cast::enter`], for call sites that don't need
-    /// to hold the instance across an `.await`.
+    /// Synchronous counterpart to [`with_instance!`](crate::with_instance), for call sites
+    /// that don't need to hold the instance across an `.await`.
     #[inline]
     pub fn enter_sync<'s, R>(
         self,
@@ -1875,14 +1882,13 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Strand::async_for_native_frame(
+        in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             None,
-            async |strand| T::call(Instance::from_recv(&this), strand, args, out).await,
+            T::call(Instance::from_recv(&this), strand, args, out).await,
         )
-        .await
     }
 
     async fn op_mcall<'a, 's>(
@@ -1894,12 +1900,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
     ) -> Result<'v, 's, ()> {
         if let Some((sym, entry)) = this.vtbl().entry_with_sym(method) {
             let name = sym.as_str(strand);
-            Strand::async_for_native_frame(
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed(name)),
-                async |strand| match entry {
+                match entry {
                     Entry::Method(handler) => unsafe {
                         handler
                             .call(this.as_header(), this.delegator(), strand, args, out)
@@ -1917,7 +1923,6 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
                     _ => Err(Error::field(strand, method)),
                 },
             )
-            .await
         } else {
             if is_special_mcall(method.tag()) {
                 instance_mcall_fallback(strand, &this, method, args, out)
@@ -2033,14 +2038,13 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Strand::async_for_native_frame(
+        in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(iter)")),
-            async |strand| T::iter(Instance::from_recv(&this), strand, out).await,
+            T::iter(Instance::from_recv(&this), strand, out).await,
         )
-        .await
     }
 
     async fn op_next<'a, 's>(
@@ -2048,14 +2052,13 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        Strand::async_for_native_frame(
+        in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(next)")),
-            async |strand| T::next(Instance::from_recv(&this), strand, out).await,
+            T::next(Instance::from_recv(&this), strand, out).await,
         )
-        .await
     }
 
     async fn op_sink<'a, 's>(
@@ -2063,14 +2066,13 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Strand::async_for_native_frame(
+        in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(sink)")),
-            async |strand| T::sink(Instance::from_recv(&this), strand, out).await,
+            T::sink(Instance::from_recv(&this), strand, out).await,
         )
-        .await
     }
 
     async fn op_put<'a, 's>(
@@ -2078,14 +2080,13 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Strand::async_for_native_frame(
+        in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(put)")),
-            async |strand| T::put(Instance::from_recv(&this), strand, value).await,
+            T::put(Instance::from_recv(&this), strand, value).await,
         )
-        .await
     }
 
     fn op_hash<'a, 's>(
@@ -2774,12 +2775,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         sig: &'a sig::Unpack<'v, 'a>,
         out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Strand::async_for_native_frame(
+        in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(unpack)")),
-            async |strand| {
+            {
                 T::unpack(
                     Instance::from_recv(&this),
                     strand,
@@ -2791,7 +2792,6 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
                 .await
             },
         )
-        .await
     }
 
     async fn op_spread<'a, 's>(
@@ -2800,14 +2800,13 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         context: protocol::SpreadContext,
         sink: &'a mut dyn protocol::Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        Strand::async_for_native_frame(
+        in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(spread)")),
-            async |strand| T::spread(Instance::from_recv(&this), strand, context, sink).await,
+            T::spread(Instance::from_recv(&this), strand, context, sink).await,
         )
-        .await
     }
 }
 
@@ -3558,9 +3557,10 @@ impl<'v, 'a, T: Object<'v>> TypeBuilder<'v, 'a, T> {
             + 'v,
     {
         self.method(name, async move |this, strand, args, out| {
-            strand
-                .with_slots(async |strand, slots| f(this, strand, args, out, slots).await)
-                .await
+            let frame = SlotFrame::new();
+            // Safety: the scope is dropped before `frame`
+            let (mut scope, slots) = unsafe { strand.enter_slot_frame(&frame) };
+            f(this, &mut scope, args, out, slots).await
         })
     }
 
@@ -3670,9 +3670,10 @@ impl<'v, 'a, T: Object<'v>> TypeBuilder<'v, 'a, T> {
             + 'v,
     {
         self.type_method(name, async move |this, strand, args, out| {
-            strand
-                .with_slots(async |strand, slots| f(this, strand, args, out, slots).await)
-                .await
+            let frame = SlotFrame::new();
+            // Safety: the scope is dropped before `frame`
+            let (mut scope, slots) = unsafe { strand.enter_slot_frame(&frame) };
+            f(this, &mut scope, args, out, slots).await
         })
     }
 
@@ -3942,12 +3943,12 @@ impl<'v, T: Object<'v>> TypeObjectWrap<'v, T> {
     ) -> Result<'v, 's, ()> {
         if let Some((sym, entry)) = this.vtbl().entry_with_sym(method) {
             let name = sym.as_str(strand);
-            Strand::async_for_native_frame(
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed(name)),
-                async |strand| match entry {
+                match entry {
                     Entry::Method(handler) => unsafe {
                         handler
                             .call(this.as_header(), this.delegator(), strand, args, out)
@@ -3956,22 +3957,18 @@ impl<'v, T: Object<'v>> TypeObjectWrap<'v, T> {
                     _ => Err(Error::field(strand, method)),
                 },
             )
-            .await
         } else if method.tag() == sym::CALL_METHOD {
             Self::op_call(this, strand, args, out).await
         } else if is_special_mcall(method.tag()) {
             instance_mcall_fallback(strand, &this, method, args, out)
         } else {
-            Strand::async_for_native_frame(
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Owned(method.as_str(strand).to_owned())),
-                async |strand| {
-                    T::type_method(this.ty(strand.vm()), strand, method, args, out).await
-                },
+                { T::type_method(this.ty(strand.vm()), strand, method, args, out).await },
             )
-            .await
         }
     }
 
@@ -4106,14 +4103,13 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ty = this.ty(strand.vm());
-        Strand::async_for_native_frame(
+        in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             None,
-            async |strand| T::new(ty, strand, args, out).await,
+            T::new(ty, strand, args, out).await,
         )
-        .await
     }
 
     async fn op_mcall<'a, 's>(
@@ -4134,54 +4130,61 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
         );
         if unbound && let Some((sym, entry)) = this.inst_vtbl().entry_with_sym(method) {
             let name = sym.as_str(strand);
-            Strand::async_for_native_frame(
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed(name)),
-                async |strand| match entry {
-                    Entry::Method(handler) => {
-                        // Downcast the explicit self argument to the precise native
-                        // type (handling Do subclasses via native slots) and invoke
-                        // the handler directly.
-                        let ([inst], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
-                        let inst = inst
-                            .downcast_native(strand, unsafe {
-                                TypeHandle::<ObjectWrap<'v, T>>::new(this.vtbl().inst_vtbl.cast())
-                            })
-                            .ok_or_else(|| {
-                                Error::type_error(
-                                    strand,
-                                    format!("expected {}.{}", T::MODULE, T::NAME),
-                                )
-                            })
-                            .map(gc::Base::as_ptr)?
-                            .cast();
-                        unsafe { handler.call(inst, None, strand, trailing, out).await }
-                    }
-                    Entry::Delegate(idx, MemberKind::Method) => {
-                        let ([instance], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
-                        if !instance.is_instance_of(strand, this.singleton(strand.vm())) {
-                            return Err(Error::type_error(strand, "invalid native object type"));
+                async {
+                    match entry {
+                        Entry::Method(handler) => {
+                            // Downcast the explicit self argument to the precise native
+                            // type (handling Do subclasses via native slots) and invoke
+                            // the handler directly.
+                            let ([inst], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
+                            let inst = inst
+                                .downcast_native(strand, unsafe {
+                                    TypeHandle::<ObjectWrap<'v, T>>::new(
+                                        this.vtbl().inst_vtbl.cast(),
+                                    )
+                                })
+                                .ok_or_else(|| {
+                                    Error::type_error(
+                                        strand,
+                                        format!("expected {}.{}", T::MODULE, T::NAME),
+                                    )
+                                })
+                                .map(gc::Base::as_ptr)?
+                                .cast();
+                            unsafe { handler.call(inst, None, strand, trailing, out).await }
                         }
-                        let supertype = &this.annex().supertypes[*idx];
-                        Delegated::new(supertype, &instance)
-                            .op_mcall(strand, method, trailing, out)
-                            .await
+                        Entry::Delegate(idx, MemberKind::Method) => {
+                            let ([instance], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
+                            if !instance.is_instance_of(strand, this.singleton(strand.vm())) {
+                                return Err(Error::type_error(
+                                    strand,
+                                    "invalid native object type",
+                                ));
+                            }
+                            let supertype = &this.annex().supertypes[*idx];
+                            Delegated::new(supertype, &instance)
+                                .op_mcall(strand, method, trailing, out)
+                                .await
+                        }
+                        _ => unreachable!("an instance method"),
                     }
-                    _ => unreachable!("an instance method"),
-                },
+                }
+                .await,
             )
-            .await
         } else if this.entry(method).is_some() {
             Self::type_mcall(this, strand, method, args, out).await
         } else if method.tag() == sym::INIT_METHOD {
-            Strand::async_for_native_frame(
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(init)")),
-                async |strand| {
+                async {
                     let mut out = out;
                     let ([inst], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
                     let ty = this.ty(strand.vm());
@@ -4189,9 +4192,9 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
                     let native = out.take();
                     let singleton = this.singleton(strand.vm());
                     inst.op_fill(strand, singleton, native)
-                },
+                }
+                .await,
             )
-            .await
         } else {
             // Fall through to type_mcall_fallback for protocol/special
             // methods (str, dbg, bool, hash, arithmetic, comparison, etc.).
@@ -4614,7 +4617,9 @@ mod tests {
     use crate::{
         call,
         error::ErrorKind,
-        method, sig, sym,
+        method, sig,
+        strand::with_slots_dynamic,
+        sym,
         test_support::{args_from_slots, with_builder},
         value::TypeObject,
         vm::{Builder, StateTag},
@@ -4863,7 +4868,6 @@ mod tests {
                     &mut out,
                     &singleton
                 )
-                .await
                 .unwrap();
                 assert_eq!(out.to_i64(strand).unwrap(), 123);
             })
@@ -4882,7 +4886,7 @@ mod tests {
                 .unwrap();
             proxy.store(Value::NIL);
             strand.vm().collect_full();
-            call!(strand, &saved, &mut out, &ty).await.unwrap();
+            call!(strand, &saved, &mut out, &ty).unwrap();
             assert!(state.slot_ty.cast(&out).is_some());
 
             // A bound method read through the type namespace keeps that
@@ -4896,11 +4900,10 @@ mod tests {
                 &ty,
                 state.make_sym
             )
-            .await
             .unwrap();
             proxy.store(Value::NIL);
             strand.vm().collect_full();
-            call!(strand, &saved, &mut out).await.unwrap();
+            call!(strand, &saved, &mut out).unwrap();
             assert!(state.slot_ty.cast(&out).is_some());
         });
     }
@@ -4929,42 +4932,40 @@ mod tests {
                 ],
                 Variadic::Capture,
             );
-            strand
-                .with_slots_dynamic(5, async |_strand, slots| {
-                    let mut unpack = Unpack { inner: &sig, slots };
-                    assert_eq!(unpack.required(), 1);
-                    assert_eq!(unpack.optional(), 1);
-                    assert_eq!(unpack.required_keys(), 1);
-                    assert_eq!(unpack.optional_keys(), 1);
-                    assert_eq!(unpack.pos_rest(), Rest::Capture);
-                    assert_eq!(unpack.key_rest(), Rest::Capture);
-                    assert!(unpack.mixed_rest());
-                    assert!(unpack.first_required_key().is_some());
+            with_slots_dynamic!(strand, 5, |slots| {
+                let mut unpack = Unpack { inner: &sig, slots };
+                assert_eq!(unpack.required(), 1);
+                assert_eq!(unpack.optional(), 1);
+                assert_eq!(unpack.required_keys(), 1);
+                assert_eq!(unpack.optional_keys(), 1);
+                assert_eq!(unpack.pos_rest(), Rest::Capture);
+                assert_eq!(unpack.key_rest(), Rest::Capture);
+                assert!(unpack.mixed_rest());
+                assert!(unpack.first_required_key().is_some());
 
-                    let items: Vec<_> = unpack.iter().collect();
-                    assert_eq!(items.len(), 5);
-                    assert!(matches!(&items[0], UnpackItem::Pos { default: None, .. }));
-                    assert!(matches!(
-                        &items[1],
-                        UnpackItem::Pos {
-                            default: Some(_),
-                            ..
-                        }
-                    ));
-                    assert!(matches!(
-                        &items[2],
-                        UnpackItem::SymKey { default: None, .. }
-                    ));
-                    assert!(matches!(
-                        &items[3],
-                        UnpackItem::ConstKey {
-                            default: Some(_),
-                            ..
-                        }
-                    ));
-                    assert!(matches!(&items[4], UnpackItem::Rest { .. }));
-                })
-                .await;
+                let items: Vec<_> = unpack.iter().collect();
+                assert_eq!(items.len(), 5);
+                assert!(matches!(&items[0], UnpackItem::Pos { default: None, .. }));
+                assert!(matches!(
+                    &items[1],
+                    UnpackItem::Pos {
+                        default: Some(_),
+                        ..
+                    }
+                ));
+                assert!(matches!(
+                    &items[2],
+                    UnpackItem::SymKey { default: None, .. }
+                ));
+                assert!(matches!(
+                    &items[3],
+                    UnpackItem::ConstKey {
+                        default: Some(_),
+                        ..
+                    }
+                ));
+                assert!(matches!(&items[4], UnpackItem::Rest { .. }));
+            });
         });
     }
 
@@ -4972,18 +4973,16 @@ mod tests {
     fn unpack_iter_exhaustive_without_variadic_has_no_rest_item() {
         with_fixture_vm(async |strand, []| {
             let sig = sig::Unpack::new(0, vec![], vec![], Variadic::NONE);
-            strand
-                .with_slots_dynamic(0, async |_strand, slots| {
-                    let mut unpack = Unpack { inner: &sig, slots };
-                    assert_eq!(unpack.pos_rest(), Rest::None);
-                    assert_eq!(unpack.key_rest(), Rest::None);
-                    assert!(!unpack.mixed_rest());
-                    assert_eq!(unpack.required_keys(), 0);
-                    assert_eq!(unpack.optional_keys(), 0);
-                    assert!(unpack.first_required_key().is_none());
-                    assert!(unpack.iter().next().is_none());
-                })
-                .await;
+            with_slots_dynamic!(strand, 0, |slots| {
+                let mut unpack = Unpack { inner: &sig, slots };
+                assert_eq!(unpack.pos_rest(), Rest::None);
+                assert_eq!(unpack.key_rest(), Rest::None);
+                assert!(!unpack.mixed_rest());
+                assert_eq!(unpack.required_keys(), 0);
+                assert_eq!(unpack.optional_keys(), 0);
+                assert!(unpack.first_required_key().is_none());
+                assert!(unpack.iter().next().is_none());
+            });
         });
     }
 
@@ -5048,15 +5047,12 @@ mod tests {
             let state = strand.vm().state::<FixtureStateTag>();
             let sig = sig::Unpack::new(0, vec![], vec![], Variadic::NONE);
             with_instance!(strand, state.fixture_ty.vtbl.cast(value).unwrap(), |recv| {
-                strand
-                    .with_slots_dynamic(0, async |strand, slots| {
-                        let error =
-                            ObjectWrap::<Fixture>::op_unpack(recv.clone(), strand, &sig, slots)
-                                .await
-                                .unwrap_err();
-                        assert_eq!(error.kind(), ErrorKind::Unsupported);
-                    })
-                    .await;
+                with_slots_dynamic!(strand, 0, |slots| {
+                    let error = ObjectWrap::<Fixture>::op_unpack(recv.clone(), strand, &sig, slots)
+                        .await
+                        .unwrap_err();
+                    assert_eq!(error.kind(), ErrorKind::Unsupported);
+                });
 
                 struct NullSpread;
                 impl<'v, 's> protocol::Spread<'v, 's> for NullSpread {
@@ -5115,16 +5111,14 @@ mod tests {
                 }],
                 Variadic::Capture,
             );
-            strand
-                .with_slots_dynamic(2, async |strand, mut out| {
-                    proxy
-                        .op_unpack(strand, &sig, unsafe { Slots::new(out.as_inner()) })
-                        .await
-                        .unwrap();
-                    assert_eq!(out.at(0).to_i64(strand).unwrap(), 4);
-                    tail.store(out.at(1).take());
-                })
-                .await;
+            with_slots_dynamic!(strand, 2, |mut out| {
+                proxy
+                    .op_unpack(strand, &sig, unsafe { Slots::new(out.as_inner()) })
+                    .await
+                    .unwrap();
+                assert_eq!(out.at(0).to_i64(strand).unwrap(), 4);
+                tail.store(out.at(1).take());
+            });
 
             owner
                 .op_get(strand, state.counter_sym, Slot::reborrow(&mut tmp))
@@ -5140,15 +5134,13 @@ mod tests {
                 }],
                 Variadic::Capture,
             );
-            strand
-                .with_slots_dynamic(2, async |strand, out| {
-                    let error = tail
-                        .op_unpack(strand, &absent_sig, unsafe { Slots::new(out.as_inner()) })
-                        .await
-                        .unwrap_err();
-                    assert_eq!(error.kind(), ErrorKind::Field);
-                })
-                .await;
+            with_slots_dynamic!(strand, 2, |out| {
+                let error = tail
+                    .op_unpack(strand, &absent_sig, unsafe { Slots::new(out.as_inner()) })
+                    .await
+                    .unwrap_err();
+                assert_eq!(error.kind(), ErrorKind::Field);
+            });
             owner
                 .op_get(strand, state.counter_sym, Slot::reborrow(&mut tmp))
                 .unwrap();
@@ -5163,17 +5155,15 @@ mod tests {
                 }],
                 Variadic::Capture,
             );
-            strand
-                .with_slots_dynamic(2, async |strand, mut out| {
-                    out.at(0).store(Value::from_i64(strand, 99));
-                    let err = tail
-                        .op_unpack(strand, &bad_sig, unsafe { Slots::new(out.as_inner()) })
-                        .await
-                        .unwrap_err();
-                    assert_eq!(err.kind(), ErrorKind::Value);
-                    assert_eq!(out.at(0).to_i64(strand).unwrap(), 99);
-                })
-                .await;
+            with_slots_dynamic!(strand, 2, |mut out| {
+                out.at(0).store(Value::from_i64(strand, 99));
+                let err = tail
+                    .op_unpack(strand, &bad_sig, unsafe { Slots::new(out.as_inner()) })
+                    .await
+                    .unwrap_err();
+                assert_eq!(err.kind(), ErrorKind::Value);
+                assert_eq!(out.at(0).to_i64(strand).unwrap(), 99);
+            });
         });
     }
 
@@ -5198,19 +5188,17 @@ mod tests {
                 ],
                 Variadic::NONE,
             );
-            strand
-                .with_slots_dynamic(2, async |strand, mut out| {
-                    out.at(0).store(Value::from_i64(strand, 90));
-                    out.at(1).store(Value::from_i64(strand, 91));
-                    let err = proxy
-                        .op_unpack(strand, &sig, unsafe { Slots::new(out.as_inner()) })
-                        .await
-                        .unwrap_err();
-                    assert_eq!(err.kind(), ErrorKind::UnexpectedKey);
-                    assert_eq!(out.at(0).to_i64(strand).unwrap(), 90);
-                    assert_eq!(out.at(1).to_i64(strand).unwrap(), 91);
-                })
-                .await;
+            with_slots_dynamic!(strand, 2, |mut out| {
+                out.at(0).store(Value::from_i64(strand, 90));
+                out.at(1).store(Value::from_i64(strand, 91));
+                let err = proxy
+                    .op_unpack(strand, &sig, unsafe { Slots::new(out.as_inner()) })
+                    .await
+                    .unwrap_err();
+                assert_eq!(err.kind(), ErrorKind::UnexpectedKey);
+                assert_eq!(out.at(0).to_i64(strand).unwrap(), 90);
+                assert_eq!(out.at(1).to_i64(strand).unwrap(), 91);
+            });
 
             // Exhaustive matching did not call unmatched getters.
             strand.with_slots_sync(|strand, [mut tmp]| {
@@ -5230,22 +5218,20 @@ mod tests {
             let value: &Value = &owner;
             let state = strand.vm().state::<FixtureStateTag>();
             with_instance!(strand, state.fixture_ty.vtbl.cast(value).unwrap(), |recv| {
-                strand
-                    .with_slots_dynamic(0, async |strand, mut arg_slots| {
-                        let sig: [Option<Sym>; 0] = [];
-                        let args = args_from_slots(&mut arg_slots, &sig, 0);
-                        ObjectWrap::<Fixture>::op_mcall(
-                            recv.with_delegator(&delegator),
-                            strand,
-                            Sym::well_known(sym::LEN),
-                            args,
-                            Slot::reborrow(&mut out),
-                        )
-                        .await
-                        .unwrap();
-                        assert!(out.repr_eq(&delegator));
-                    })
-                    .await;
+                with_slots_dynamic!(strand, 0, |mut arg_slots| {
+                    let sig: [Option<Sym>; 0] = [];
+                    let args = args_from_slots(&mut arg_slots, &sig, 0);
+                    ObjectWrap::<Fixture>::op_mcall(
+                        recv.with_delegator(&delegator),
+                        strand,
+                        Sym::well_known(sym::LEN),
+                        args,
+                        Slot::reborrow(&mut out),
+                    )
+                    .await
+                    .unwrap();
+                    assert!(out.repr_eq(&delegator));
+                });
             });
         });
     }
@@ -5258,22 +5244,20 @@ mod tests {
             let value: &Value = &owner;
             let state = strand.vm().state::<FixtureStateTag>();
             with_instance!(strand, state.slot_ty.vtbl.cast(value).unwrap(), |recv| {
-                strand
-                    .with_slots_dynamic(0, async |strand, mut arg_slots| {
-                        let sig: [Option<Sym>; 0] = [];
-                        let args = args_from_slots(&mut arg_slots, &sig, 0);
-                        ObjectWrap::<SlotFixture>::op_mcall(
-                            recv.with_delegator(&delegator),
-                            strand,
-                            state.receiver_sym,
-                            args,
-                            Slot::reborrow(&mut out),
-                        )
-                        .await
-                        .unwrap();
-                        assert!(out.repr_eq(&delegator));
-                    })
-                    .await;
+                with_slots_dynamic!(strand, 0, |mut arg_slots| {
+                    let sig: [Option<Sym>; 0] = [];
+                    let args = args_from_slots(&mut arg_slots, &sig, 0);
+                    ObjectWrap::<SlotFixture>::op_mcall(
+                        recv.with_delegator(&delegator),
+                        strand,
+                        state.receiver_sym,
+                        args,
+                        Slot::reborrow(&mut out),
+                    )
+                    .await
+                    .unwrap();
+                    assert!(out.repr_eq(&delegator));
+                });
             });
             assert!(out.repr_eq(&delegator));
         });
@@ -5402,97 +5386,87 @@ mod tests {
             let state = strand.vm().state::<FixtureStateTag>();
             with_instance!(strand, state.slot_ty.vtbl.cast(value).unwrap(), |recv| {
                 // Registered method entry.
-                strand
-                    .with_slots_dynamic(0, async |strand, mut arg_slots| {
-                        let sig: [Option<Sym>; 0] = [];
-                        let args = args_from_slots(&mut arg_slots, &sig, 0);
-                        ObjectWrap::<SlotFixture>::op_mcall(
-                            recv.clone(),
-                            strand,
-                            state.bump_sym,
-                            args,
-                            Slot::reborrow(&mut out),
-                        )
-                        .await
-                        .unwrap();
-                    })
-                    .await;
+                with_slots_dynamic!(strand, 0, |mut arg_slots| {
+                    let sig: [Option<Sym>; 0] = [];
+                    let args = args_from_slots(&mut arg_slots, &sig, 0);
+                    ObjectWrap::<SlotFixture>::op_mcall(
+                        recv.clone(),
+                        strand,
+                        state.bump_sym,
+                        args,
+                        Slot::reborrow(&mut out),
+                    )
+                    .await
+                    .unwrap();
+                });
                 assert_eq!(out.to_i64(strand).unwrap(), 1);
 
                 // Synthetic `(get)` special-cased inside `op_mcall`.
-                strand
-                    .with_slots_dynamic(1, async |strand, mut arg_slots| {
-                        Output::set(strand, arg_slots.at(0), state.counter_sym);
-                        let sig = [None];
-                        let args = args_from_slots(&mut arg_slots, &sig, 0);
-                        ObjectWrap::<SlotFixture>::op_mcall(
-                            recv.clone(),
-                            strand,
-                            Sym::well_known(sym::GET_METHOD),
-                            args,
-                            Slot::reborrow(&mut out),
-                        )
-                        .await
-                        .unwrap();
-                    })
-                    .await;
+                with_slots_dynamic!(strand, 1, |mut arg_slots| {
+                    Output::set(strand, arg_slots.at(0), state.counter_sym);
+                    let sig = [None];
+                    let args = args_from_slots(&mut arg_slots, &sig, 0);
+                    ObjectWrap::<SlotFixture>::op_mcall(
+                        recv.clone(),
+                        strand,
+                        Sym::well_known(sym::GET_METHOD),
+                        args,
+                        Slot::reborrow(&mut out),
+                    )
+                    .await
+                    .unwrap();
+                });
                 assert_eq!(out.to_i64(strand).unwrap(), 1);
 
                 // Synthetic `(set)` special-cased inside `op_mcall`.
-                strand
-                    .with_slots_dynamic(2, async |strand, mut arg_slots| {
-                        let prop_sym = state.prop_sym;
-                        Output::set(strand, arg_slots.at(0), prop_sym);
-                        Output::set(strand, arg_slots.at(1), 42_i64);
-                        let sig = [None, None];
-                        let args = args_from_slots(&mut arg_slots, &sig, 0);
-                        ObjectWrap::<SlotFixture>::op_mcall(
-                            recv.clone(),
-                            strand,
-                            Sym::well_known(sym::SET_METHOD),
-                            args,
-                            Slot::reborrow(&mut out),
-                        )
-                        .await
-                        .unwrap();
-                    })
-                    .await;
+                with_slots_dynamic!(strand, 2, |mut arg_slots| {
+                    let prop_sym = state.prop_sym;
+                    Output::set(strand, arg_slots.at(0), prop_sym);
+                    Output::set(strand, arg_slots.at(1), 42_i64);
+                    let sig = [None, None];
+                    let args = args_from_slots(&mut arg_slots, &sig, 0);
+                    ObjectWrap::<SlotFixture>::op_mcall(
+                        recv.clone(),
+                        strand,
+                        Sym::well_known(sym::SET_METHOD),
+                        args,
+                        Slot::reborrow(&mut out),
+                    )
+                    .await
+                    .unwrap();
+                });
 
                 // Unregistered special methods use the receiver protocol.
-                strand
-                    .with_slots_dynamic(0, async |strand, mut arg_slots| {
-                        let sig: [Option<Sym>; 0] = [];
-                        let args = args_from_slots(&mut arg_slots, &sig, 0);
-                        ObjectWrap::<SlotFixture>::op_mcall(
-                            recv.clone(),
-                            strand,
-                            Sym::well_known(sym::BOOL_METHOD),
-                            args,
-                            Slot::reborrow(&mut out),
-                        )
-                        .await
-                        .unwrap();
-                    })
-                    .await;
+                with_slots_dynamic!(strand, 0, |mut arg_slots| {
+                    let sig: [Option<Sym>; 0] = [];
+                    let args = args_from_slots(&mut arg_slots, &sig, 0);
+                    ObjectWrap::<SlotFixture>::op_mcall(
+                        recv.clone(),
+                        strand,
+                        Sym::well_known(sym::BOOL_METHOD),
+                        args,
+                        Slot::reborrow(&mut out),
+                    )
+                    .await
+                    .unwrap();
+                });
                 assert!(out.to_bool(strand).unwrap());
 
                 // Falls through to `T::method`'s default field error.
-                strand
-                    .with_slots_dynamic(0, async |strand, mut arg_slots| {
-                        let sig: [Option<Sym>; 0] = [];
-                        let args = args_from_slots(&mut arg_slots, &sig, 0);
-                        let err = ObjectWrap::<SlotFixture>::op_mcall(
-                            recv,
-                            strand,
-                            Sym::well_known(sym::LEN),
-                            args,
-                            Slot::reborrow(&mut out),
-                        )
-                        .await
-                        .unwrap_err();
-                        assert_eq!(err.kind(), ErrorKind::Field);
-                    })
-                    .await;
+                with_slots_dynamic!(strand, 0, |mut arg_slots| {
+                    let sig: [Option<Sym>; 0] = [];
+                    let args = args_from_slots(&mut arg_slots, &sig, 0);
+                    let err = ObjectWrap::<SlotFixture>::op_mcall(
+                        recv,
+                        strand,
+                        Sym::well_known(sym::LEN),
+                        args,
+                        Slot::reborrow(&mut out),
+                    )
+                    .await
+                    .unwrap_err();
+                    assert_eq!(err.kind(), ErrorKind::Field);
+                });
             });
         });
     }
@@ -5533,16 +5507,14 @@ mod tests {
                         ty.create(strand, Override, &mut object);
                         Output::set(strand, &mut type_slot, ty);
                         let method = Sym::well_known(sym::STR_METHOD);
-                        method!(strand, &object, method, &mut out).await.unwrap();
+                        method!(strand, &object, method, &mut out).unwrap();
                         assert_eq!(out.to_string(strand).unwrap(), "registered");
                         object
                             .op_get(strand, method, Slot::reborrow(&mut bound))
                             .unwrap();
-                        call!(strand, &bound, &mut out).await.unwrap();
+                        call!(strand, &bound, &mut out).unwrap();
                         assert_eq!(out.to_string(strand).unwrap(), "registered");
-                        method!(strand, &type_slot, method, &mut out, &object)
-                            .await
-                            .unwrap();
+                        method!(strand, &type_slot, method, &mut out, &object).unwrap();
                         assert_eq!(out.to_string(strand).unwrap(), "registered");
                     },
                 )
@@ -5629,59 +5601,53 @@ mod tests {
                 |recv| {
                     // Registered type-method entry: instantiates a fresh object.
                     let make_sym = state.make_sym;
-                    strand
-                        .with_slots_dynamic(0, async |strand, mut arg_slots| {
-                            let sig: [Option<Sym>; 0] = [];
-                            let args = args_from_slots(&mut arg_slots, &sig, 0);
-                            TypeObjectWrap::<SlotFixture>::op_mcall(
-                                recv.clone(),
-                                strand,
-                                make_sym,
-                                args,
-                                Slot::reborrow(&mut out),
-                            )
-                            .await
-                            .unwrap();
-                        })
-                        .await;
+                    with_slots_dynamic!(strand, 0, |mut arg_slots| {
+                        let sig: [Option<Sym>; 0] = [];
+                        let args = args_from_slots(&mut arg_slots, &sig, 0);
+                        TypeObjectWrap::<SlotFixture>::op_mcall(
+                            recv.clone(),
+                            strand,
+                            make_sym,
+                            args,
+                            Slot::reborrow(&mut out),
+                        )
+                        .await
+                        .unwrap();
+                    });
                     assert!(state.slot_ty.cast(&out).is_some());
 
                     // Unbound instance-method call: `SlotFixture.bump(instance)`.
-                    strand
-                        .with_slots_dynamic(1, async |strand, mut arg_slots| {
-                            Output::set(strand, arg_slots.at(0), &inst_value);
-                            let sig = [None];
-                            let args = args_from_slots(&mut arg_slots, &sig, 0);
-                            TypeObjectWrap::<SlotFixture>::op_mcall(
-                                recv.clone(),
-                                strand,
-                                state.bump_sym,
-                                args,
-                                Slot::reborrow(&mut out),
-                            )
-                            .await
-                            .unwrap();
-                        })
-                        .await;
+                    with_slots_dynamic!(strand, 1, |mut arg_slots| {
+                        Output::set(strand, arg_slots.at(0), &inst_value);
+                        let sig = [None];
+                        let args = args_from_slots(&mut arg_slots, &sig, 0);
+                        TypeObjectWrap::<SlotFixture>::op_mcall(
+                            recv.clone(),
+                            strand,
+                            state.bump_sym,
+                            args,
+                            Slot::reborrow(&mut out),
+                        )
+                        .await
+                        .unwrap();
+                    });
                     assert_eq!(out.to_i64(strand).unwrap(), 5);
 
                     // Falls through to `T::type_method`'s default field error.
-                    strand
-                        .with_slots_dynamic(0, async |strand, mut arg_slots| {
-                            let sig: [Option<Sym>; 0] = [];
-                            let args = args_from_slots(&mut arg_slots, &sig, 0);
-                            let err = TypeObjectWrap::<SlotFixture>::op_mcall(
-                                recv,
-                                strand,
-                                Sym::well_known(sym::LEN),
-                                args,
-                                Slot::reborrow(&mut out),
-                            )
-                            .await
-                            .unwrap_err();
-                            assert_eq!(err.kind(), ErrorKind::Field);
-                        })
-                        .await;
+                    with_slots_dynamic!(strand, 0, |mut arg_slots| {
+                        let sig: [Option<Sym>; 0] = [];
+                        let args = args_from_slots(&mut arg_slots, &sig, 0);
+                        let err = TypeObjectWrap::<SlotFixture>::op_mcall(
+                            recv,
+                            strand,
+                            Sym::well_known(sym::LEN),
+                            args,
+                            Slot::reborrow(&mut out),
+                        )
+                        .await
+                        .unwrap_err();
+                        assert_eq!(err.kind(), ErrorKind::Field);
+                    });
                 }
             );
         });
@@ -5980,21 +5946,19 @@ mod tests {
             let state = strand.vm().state::<FixtureStateTag>();
             let with_slot_sym = state.with_slot_sym;
             with_instance!(strand, state.slot_ty.vtbl.cast(value).unwrap(), |recv| {
-                strand
-                    .with_slots_dynamic(0, async |strand, mut arg_slots| {
-                        let sig: [Option<Sym>; 0] = [];
-                        let args = args_from_slots(&mut arg_slots, &sig, 0);
-                        ObjectWrap::<SlotFixture>::op_mcall(
-                            recv,
-                            strand,
-                            with_slot_sym,
-                            args,
-                            Slot::reborrow(&mut out),
-                        )
-                        .await
-                        .unwrap();
-                    })
-                    .await;
+                with_slots_dynamic!(strand, 0, |mut arg_slots| {
+                    let sig: [Option<Sym>; 0] = [];
+                    let args = args_from_slots(&mut arg_slots, &sig, 0);
+                    ObjectWrap::<SlotFixture>::op_mcall(
+                        recv,
+                        strand,
+                        with_slot_sym,
+                        args,
+                        Slot::reborrow(&mut out),
+                    )
+                    .await
+                    .unwrap();
+                });
             });
             assert_eq!(out.to_i64(strand).unwrap(), 5);
         });

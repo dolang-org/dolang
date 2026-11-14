@@ -444,10 +444,10 @@ pub(crate) async fn open<'v, 's>(
             .types
             .proc_handle
             .create(strand, Proc(Some(process)), &mut handle);
-        let result = call!(strand, block, out, &handle).await;
+        let result = call!(strand, block, out, &handle);
         // Closing is best-effort here: the block's outcome is the call's
         // outcome, and a close failure must not displace an error it raised.
-        let _ = method!(strand, &handle, global.syms.close, &mut tmp).await;
+        let _ = method!(strand, &handle, global.syms.close, &mut tmp);
         result
     })
 }

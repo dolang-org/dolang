@@ -1836,7 +1836,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
                     .await
                     .into_sys(strand)?;
                 create_path(strand, global, temp_path.clone(), &mut path)?;
-                let result = call!(strand, callable, out, &path).await;
+                let result = call!(strand, callable, out, &path);
                 let _ = with_interrupt_mask!(strand, InterruptMask::all(), {
                     let local = global.local.get(strand);
                     let vfs = local.vfs();

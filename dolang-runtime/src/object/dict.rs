@@ -1830,7 +1830,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
                     return with_slots!(strand, |mut receiver, mut ty| {
                         Output::set(strand, Slot::reborrow(&mut receiver), &this);
                         receiver.op_type(strand, Slot::reborrow(&mut ty));
-                        call!(strand, &ty, out, &receiver).await
+                        call!(strand, &ty, out, &receiver)
                     });
                 }
                 let borrow = this.borrow(strand)?;
@@ -2182,7 +2182,7 @@ impl<'v> Dict<'v> {
             out.store(default.take());
             Ok(())
         } else if let Some(else_key) = or_else {
-            call!(strand, else_key, out).await
+            call!(strand, else_key, out)
         } else {
             out.store(Value::NIL);
             Ok(())
@@ -2264,7 +2264,7 @@ impl<'v> Dict<'v> {
             out.store(default.take());
             Ok(())
         } else if let Some(else_key) = or_else {
-            call!(strand, else_key, out).await
+            call!(strand, else_key, out)
         } else {
             Err(Error::index(strand))
         }
@@ -2504,7 +2504,7 @@ impl<'v> Protocol<'v> for Type {
             sym::INIT_METHOD => {
                 let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
                 with_slots!(strand, |mut native| {
-                    call!(strand, &strand.singletons().dict, &mut native, items).await?;
+                    call!(strand, &strand.singletons().dict, &mut native, items)?;
                     self_val.op_fill(strand, &strand.singletons().dict, native.take())?;
                     Ok(())
                 })

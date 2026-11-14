@@ -1002,11 +1002,11 @@ pub(crate) async fn open_file<'v, 's>(
     if let Some(block) = block {
         with_slots!(strand, |mut handle, mut tmp| {
             create_file(strand, global, file, caps, buffered, &mut handle);
-            let result = call!(strand, block, out, &handle).await;
+            let result = call!(strand, block, out, &handle);
             // Always closed, even on error. A close error matters only
             // when the block succeeded: it may be a buffered write failing
             // late.
-            let closed = method!(strand, &handle, global.syms.close, &mut tmp).await;
+            let closed = method!(strand, &handle, global.syms.close, &mut tmp);
             result.and(closed)
         })
     } else {
@@ -1189,7 +1189,7 @@ impl<'v, T: FileKind<'v>> FileObject<T> {
             // the block.
             let Some(lock) = lock else {
                 return match block {
-                    Some(block) => call!(strand, block, out, &guard).await,
+                    Some(block) => call!(strand, block, out, &guard),
                     None => {
                         Output::set(strand, out, Nil);
                         Ok(())
@@ -1202,7 +1202,7 @@ impl<'v, T: FileKind<'v>> FileObject<T> {
                 return Ok(());
             };
             FileLockObject::create(strand, lock_type, Some(lock), &mut guard);
-            let result = call!(strand, block, out, &guard).await;
+            let result = call!(strand, block, out, &guard);
             let cleanup = with_interrupt_mask!(strand, InterruptMask::all(), {
                 with_instance!(strand, lock_type.cast(&guard).unwrap(), |guard| {
                     FileLockObject::release(guard, strand).await

@@ -11,7 +11,7 @@ use crate::{
     frame::{CallFrame, Upvars},
     gc::{Annex, Collect, Gc, arena::Visit},
     object::protocol::members,
-    strand::{Pinned, Strand},
+    strand::{Pinned, Strand, in_native_frame},
     sym::{self, Sym},
     value::{Output, Slot, Value, ValueCell},
     vm::Vm,
@@ -192,16 +192,13 @@ impl<'v> NativeFunction<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         if self.with_frame {
-            Strand::async_for_native_frame(
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(self.module),
                 Cow::Borrowed(self.name),
                 None,
-                async move |strand| {
-                    unsafe { (self.call)(self.closure, bound, strand, args, out) }.await
-                },
+                unsafe { (self.call)(self.closure, bound, strand, args, out) }.await,
             )
-            .await
         } else {
             unsafe { (self.call)(self.closure, bound, strand, args, out) }.await
         }

@@ -340,7 +340,7 @@ async fn raise_verify_failure<'v, 's>(
     let assert = global.syms.assert;
     with_slots!(strand, |mut test, mut error| {
         strand.import("test", &mut test).await?;
-        method!(strand, test, assert, &mut error, message.as_str()).await?;
+        method!(strand, test, assert, &mut error, message.as_str())?;
         Err(Error::from_value(strand, &error))
     })
 }
@@ -468,7 +468,7 @@ async fn parse_mock_spec<'v, 's>(
             if dict.get(strand, global.syms.body_json, None, &mut tmp)? {
                 strand.import("json", &mut tmp2).await?;
                 let encode = global.syms.encode;
-                method!(strand, Slot::reborrow(&mut tmp2), encode, &mut tmp3, &tmp).await?;
+                method!(strand, Slot::reborrow(&mut tmp2), encode, &mut tmp3, &tmp)?;
                 let json = serde_json::from_str(&tmp3.to_string(strand)?)
                     .map_err(|err| Error::runtime(strand, err))?;
                 matchers.push(Matcher::BodyJson(json));
@@ -612,7 +612,7 @@ async fn build_response<'v, 's>(
         if dict.get(strand, global.syms.json, None, &mut tmp)? {
             strand.import("json", &mut tmp2).await?;
             let encode = global.syms.encode;
-            method!(strand, Slot::reborrow(&mut tmp2), encode, &mut tmp3, &tmp).await?;
+            method!(strand, Slot::reborrow(&mut tmp2), encode, &mut tmp3, &tmp)?;
             body = Some(tmp3.to_string(strand)?.into_bytes());
             headers.push((
                 HeaderName::from_static("content-type"),
@@ -757,7 +757,7 @@ async fn respond_mock<'v, 's>(
                 && !cb.is_nil()
             {
                 // A failing `match:` counts as no match.
-                let matched = match call!(strand, &cb, &mut ret, req).await {
+                let matched = match call!(strand, &cb, &mut ret, req) {
                     Ok(()) => ret.to_bool(strand).unwrap_or(false),
                     Err(_) => false,
                 };
@@ -784,7 +784,7 @@ async fn respond_mock<'v, 's>(
                     record
                         .unwrap()
                         .get(strand, global.syms.respond, None, &mut cb)?;
-                    call!(strand, &cb, &mut ret, req).await?;
+                    call!(strand, &cb, &mut ret, req)?;
                     build_response(strand, global, &ret).await?
                 }
             };
@@ -928,9 +928,9 @@ impl<'v> Object<'v> for Server {
         if let Some(func) = func {
             with_slots!(strand, |mut handle, tmp| {
                 start_server(this, strand, global, Slot::reborrow(&mut handle)).await?;
-                let res = call!(strand, func, out, &handle).await;
+                let res = call!(strand, func, out, &handle);
                 let _ = with_interrupt_mask!(strand, InterruptMask::all(), {
-                    method!(strand, handle, global.syms.close, tmp).await
+                    method!(strand, handle, global.syms.close, tmp)
                 });
                 res
             })
@@ -961,8 +961,7 @@ impl<'v> Object<'v> for Server {
                             Slot::reborrow(&mut dispatcher),
                             global.syms.cancel,
                             &mut tmp
-                        )
-                        .await?;
+                        )?;
                     }
                     Ok(())
                 })?;
@@ -1089,7 +1088,7 @@ impl<'v> Object<'v> for Server {
                     }
 
                     if let Some(block) = block {
-                        let result = call!(strand, block, out, &item).await;
+                        let result = call!(strand, block, out, &item);
                         let cleanup = with_interrupt_mask!(strand, InterruptMask::all(), {
                             let (failure, unmounted) =
                                 global.types.mock.cast(&item).unwrap().enter_sync(

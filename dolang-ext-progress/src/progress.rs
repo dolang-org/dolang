@@ -789,7 +789,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             // the enclosing one, so run the block within it. Scoped
             // overrides aren't supported yet, so they are ignored.
             if context_active(strand, global) {
-                return call!(strand, &func, &mut out).await;
+                return call!(strand, &func, &mut out);
             }
 
             let style = match style {
@@ -825,7 +825,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                     .state
                     .replace(Some(SharedState::Plain(Rc::new(config))));
 
-                let result = call!(strand, &func, &mut out).await;
+                let result = call!(strand, &func, &mut out);
 
                 let local = global.local.get(strand);
                 local.depth.replace(prev_depth);
@@ -863,7 +863,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             let writer: Pin<Box<dyn AsyncWrite>> =
                 Box::pin(MultiProgressWriter::new(multi.clone()));
             let result = with_terminal(strand, writer, async |strand| {
-                let res = call!(strand, &func, &mut out).await;
+                let res = call!(strand, &func, &mut out);
                 let _ = multi.clear();
                 res
             })
@@ -910,7 +910,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             };
             let active =
                 install_indicator(strand, global, options, Slot::reborrow(&mut slot)).await?;
-            let res = call!(strand, &func, &mut out, &slot).await;
+            let res = call!(strand, &func, &mut out, &slot);
             res.and(finish_indicator(strand, global, active, &slot).await)
         })
         .function_with_slots(
@@ -978,13 +978,12 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                             &mut tmp,
                             message_kw: message.as_str(),
                             icon_kw: icon
-                        )
-                        .await?;
-                        call!(strand, &callable, &mut result).await?;
+                        )?;
+                        call!(strand, &callable, &mut result)?;
                         out.as_array(strand)
                             .expect("steps output is an array")
                             .push(strand, &result)?;
-                        method!(strand, &indicator, delta_sym, &mut tmp).await?;
+                        method!(strand, &indicator, delta_sym, &mut tmp)?;
                     }
                     Ok(())
                 }

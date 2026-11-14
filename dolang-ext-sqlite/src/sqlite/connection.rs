@@ -134,9 +134,7 @@ impl ConnectionAnnex<'_> {
                 if !pending_close {
                     unsafe { sqlite3_interrupt(raw.into_inner()) };
                 }
-                let _ = strand
-                    .with_interrupt_mask(InterruptMask::all(), async |_| task.await)
-                    .await;
+                let _ = with_interrupt_mask!(strand, InterruptMask::all(), task.await);
                 Err(interrupt)
             }
         };
@@ -259,11 +257,11 @@ impl<'v> Object<'v> for Connection {
 
                     if let Some(block) = block {
                         // Call the block with the statement handle
-                        let result = call!(strand, block, out, &wrapper).await;
+                        let result = call!(strand, block, out, &wrapper);
 
                         // Always close the statement, even on error
                         with_interrupt_mask!(strand, InterruptMask::all(), {
-                            let _ = method!(strand, &wrapper, close, &mut tmp).await;
+                            let _ = method!(strand, &wrapper, close, &mut tmp);
                         });
 
                         result
@@ -284,7 +282,7 @@ impl<'v> Object<'v> for Connection {
                     wrap_statement(this, strand, stmt, template, Slot::reborrow(&mut wrapper))?;
                     let res = wrapper.method(strand, execute, args, out).await;
                     let _ = with_interrupt_mask!(strand, InterruptMask::all(), {
-                        method!(strand, wrapper, close, tmp).await
+                        method!(strand, wrapper, close, tmp)
                     });
                     res
                 },
@@ -472,7 +470,7 @@ async fn transact<'v, 's, 'a>(
             });
 
         // Call the block with the transaction handle
-        call!(strand, &block, out, &wrapper).await
+        call!(strand, &block, out, &wrapper)
     })
 }
 

@@ -365,7 +365,7 @@ async fn fallback<'v, 'a, 's>(
         out.store(default.take());
         Ok(())
     } else if let Some(or_else) = or_else {
-        call!(strand, or_else, out).await
+        call!(strand, or_else, out)
     } else {
         missing(strand)?;
         out.store(Value::NIL);
@@ -675,7 +675,7 @@ impl<'v> Protocol<'v> for Record<'v> {
                     return with_slots!(strand, |mut receiver, mut ty| {
                         Output::set(strand, Slot::reborrow(&mut receiver), &this);
                         receiver.op_type(strand, Slot::reborrow(&mut ty));
-                        call!(strand, &ty, out, &receiver).await
+                        call!(strand, &ty, out, &receiver)
                     });
                 }
                 let copy = Record::from_items(this.borrow(strand)?.snapshot());
@@ -1000,7 +1000,7 @@ impl<'v> Protocol<'v> for Class {
             sym::INIT_METHOD => {
                 let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
                 with_slots!(strand, |mut native| {
-                    call!(strand, &strand.singletons().record, &mut native, items).await?;
+                    call!(strand, &strand.singletons().record, &mut native, items)?;
                     self_val.op_fill(strand, &strand.singletons().record, native.take())?;
                     Ok(())
                 })

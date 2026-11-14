@@ -56,11 +56,15 @@ collector counts objects in its initialization pass and subtracts objects it
 clears. Miri uses a fixed threshold of 10 to exercise collection frequently.
 
 Native code may hold a GC reference across an await only where the collector
-visits it: a `Strand::with_slots` (`with_slots!`) slot, data visited by a
-`Strand::with_scan` closure, an error (whose value and backtrace live in a slot
-of the strand's `ErrorTable`), or a GC-visited object. Both `with_slots` and
-`with_scan` push a `frame::Scan` rooting frame, which `scan_stack` visits
-through its closure. The closure holds a shared borrow of what it roots, so
+visits it: a `with_slots!` slot, data visited by a `Strand::enter_scan` or
+`Strand::with_scan_sync` closure, an error (whose value and backtrace live in a
+slot of the strand's `ErrorTable`), or a GC-visited object. Both push a
+`frame::Scan` rooting frame, which `scan_stack` visits. `with_slots!` declares a
+`SlotFrame` of value cells in the enclosing future and pushes it, so the body
+runs inline with `strand` rebound to a `SlotScope`: a `Strand` handle on the
+same `StrandInner` whose frame pointer is the pushed frame, which it pops on
+drop. `with_slots_dynamic!` does the same with a runtime-sized `DynSlotFrame`. A
+scan frame's closure visits that holds a shared borrow of what it roots, so
 rooted data that changes needs interior mutability (`Cell`, `RefCell`, or
 `UnsafeCell`). Outside those, a reference may sit unvisited, such as in a local
 on the Rust stack, only while no collection can happen at all; a tracing
@@ -113,7 +117,8 @@ moving collector:
   and a dynamic pin. A native object can hold one beside a structure that
   borrows the text, provided the borrower is dropped first.
 - `Recv` and `Instance` hold the pin of their receiver. Protocol dispatch mints
-  it unchecked; `Cast::enter` and `RecvCast::enter` mint a scoped pin.
+  it unchecked; `with_instance!` mints a scoped pin, bounded by a local
+  `PinScope` in its block.
 - `Base::pin_unchecked` is for low-level code: dispatch glue, finalizers (which
   have no strand), and transient accesses with no possible collection before
   the pin's last use, such as upvar reads and writes. `Base::read` makes a

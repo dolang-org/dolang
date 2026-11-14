@@ -654,12 +654,12 @@ async fn open_stream<'v, 's>(
             annex,
             Slot::reborrow(&mut handle),
         );
-        let result = call!(strand, block, out, &handle).await;
+        let result = call!(strand, block, out, &handle);
         // Always released, even when the block raised.
         let closed = with_instance!(
             strand,
             global.types.pipe_stream.cast(&handle).unwrap(),
-            |inst| { close_stream(inst, strand).await }
+            |inst| close_stream(inst, strand).await
         );
         result.and(closed)
     })

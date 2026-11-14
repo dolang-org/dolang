@@ -250,7 +250,7 @@ impl<'v> Object<'v> for IoConsole {
                     let bytes = write_data(strand, args)?;
                     inner(this, strand, &mut stream)?;
                     let global = strand.state::<Tag>();
-                    method!(strand, &stream, global.syms.write_all, &mut tmp, &bytes[..]).await?;
+                    method!(strand, &stream, global.syms.write_all, &mut tmp, &bytes[..])?;
                     Output::set(strand, out, bytes.len());
                     Ok(())
                 },
@@ -264,7 +264,7 @@ impl<'v> Object<'v> for IoConsole {
                     // nothing held back.
                     let global = strand.state::<Tag>();
                     match stream.get(strand, global.syms.flush, &mut flush) {
-                        Ok(()) => call!(strand, &flush, out).await,
+                        Ok(()) => call!(strand, &flush, out),
                         Err(error) if error.kind() == ErrorKind::Field => Ok(()),
                         Err(error) => Err(error),
                     }
@@ -502,7 +502,7 @@ pub(crate) async fn write<'v, 's>(strand: &mut Strand<'v, 's>, bytes: &[u8]) -> 
     with_slots!(strand, |mut rcvr, mut out| {
         route(strand, &mut rcvr)?;
         guarded(strand, async |strand| {
-            method!(strand, &rcvr, global.syms.write, &mut out, bytes).await
+            method!(strand, &rcvr, global.syms.write, &mut out, bytes)
         })
         .await
     })
@@ -517,7 +517,7 @@ pub(crate) async fn write_value<'v, 's>(
     with_slots!(strand, |mut rcvr, mut out| {
         route(strand, &mut rcvr)?;
         guarded(strand, async |strand| {
-            method!(strand, &rcvr, global.syms.write, &mut out, data).await
+            method!(strand, &rcvr, global.syms.write, &mut out, data)
         })
         .await
     })
@@ -537,7 +537,7 @@ pub(crate) async fn write_line<'v, 's>(
         route(strand, &mut rcvr)?;
         route_line_ending(strand, &mut ending);
         guarded(strand, async |strand| {
-            method!(strand, &rcvr, global.syms.write, &mut out, line, &ending).await
+            method!(strand, &rcvr, global.syms.write, &mut out, line, &ending)
         })
         .await
     })
@@ -554,7 +554,7 @@ pub(crate) async fn writeln<'v, 's>(
         route(strand, &mut rcvr)?;
         route_line_ending(strand, &mut ending);
         guarded(strand, async |strand| {
-            method!(strand, &rcvr, global.syms.write, &mut out, bytes, &ending).await
+            method!(strand, &rcvr, global.syms.write, &mut out, bytes, &ending)
         })
         .await
     })
@@ -584,7 +584,6 @@ pub(crate) async fn write_line_to<'v, 's>(
                 bytes,
                 line_ending
             )
-            .await
         })
         .await
     })
@@ -596,7 +595,7 @@ pub(crate) async fn flush<'v, 's>(strand: &mut Strand<'v, 's>) -> Result<'v, 's,
     with_slots!(strand, |mut rcvr, mut out| {
         route(strand, &mut rcvr)?;
         guarded(strand, async |strand| {
-            method!(strand, &rcvr, global.syms.flush, &mut out).await
+            method!(strand, &rcvr, global.syms.flush, &mut out)
         })
         .await
     })
@@ -715,6 +714,6 @@ pub(crate) async fn geometry<'v, 's, 'a>(
     let global = strand.state::<Tag>();
     with_slots!(strand, |mut rcvr| {
         route(strand, &mut rcvr)?;
-        method!(strand, &rcvr, global.syms.geometry, out).await
+        method!(strand, &rcvr, global.syms.geometry, out)
     })
 }

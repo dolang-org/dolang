@@ -1145,9 +1145,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             });
             let res = with_interrupt_mask!(strand, mask - timeout_mask, {
                 strand
-                    .with_interrupt_token(interrupt, async move |strand| {
-                        call!(strand, block, out).await
-                    })
+                    .with_interrupt_token(interrupt, async move |strand| call!(strand, block, out))
                     .await
             });
             abort.abort();

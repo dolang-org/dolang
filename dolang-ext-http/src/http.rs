@@ -375,7 +375,7 @@ impl<'v> Object<'v> for StatusObject {
                 let annex = this.annex();
                 let text = status_text(strand, &annex)?;
                 strand.import("json", &mut json).await?;
-                method!(strand, json, decode, out, text).await
+                method!(strand, json, decode, out, text)
             });
 
         builder
@@ -556,7 +556,7 @@ async fn multipart_part<'v, 's>(
             with_slots!(strand, |mut json_mod, mut json_text| {
                 strand.import("json", &mut json_mod).await?;
                 let encode = global.syms.encode;
-                method!(strand, json_mod, encode, &mut json_text, &mut body).await?;
+                method!(strand, json_mod, encode, &mut json_text, &mut body)?;
                 Output::set(strand, &mut body, &json_text);
                 Ok(())
             })?;
@@ -702,7 +702,7 @@ async fn request<'v, 's>(
         if let Some(json) = json {
             st.import("json", &mut key).await?;
             let encode = global.syms.encode;
-            method!(st, key, encode, &mut value, json).await?;
+            method!(st, key, encode, &mut value, json)?;
             builder = builder
                 .body(value.to_string(st)?)
                 .header("content-type", "application/json");
@@ -748,9 +748,9 @@ async fn request<'v, 's>(
             .response
             .create_with_annex(st, response, global, &mut value);
         if let Some(thunk) = thunk {
-            let res = call!(st, thunk, out, &value).await;
+            let res = call!(st, thunk, out, &value);
             let _ = with_interrupt_mask!(st, InterruptMask::all(), {
-                method!(st, value, global.syms.close, &mut tmp).await
+                method!(st, value, global.syms.close, &mut tmp)
             });
             res
         } else {
@@ -923,9 +923,9 @@ impl<'v> Object<'v> for Client {
                     inner: Some(builder.build().into_http(strand)?),
                 };
                 this.create_with_annex(strand, value, ClientAnnex { global }, &mut client);
-                let res = call!(strand, func, out, &client).await;
+                let res = call!(strand, func, out, &client);
                 let _ = with_interrupt_mask!(strand, InterruptMask::all(), {
-                    method!(strand, client, global.syms.close, tmp).await
+                    method!(strand, client, global.syms.close, tmp)
                 });
                 res
             })
@@ -1083,7 +1083,7 @@ impl<'v> Object<'v> for Response {
                 let body = take_body(this, strand)?;
                 let text = text(body).await.into_http(strand)?;
                 strand.import("json", &mut json).await?;
-                method!(strand, json, decode, out, text.as_str()).await
+                method!(strand, json, decode, out, text.as_str())
             });
 
         builder
@@ -1146,7 +1146,7 @@ impl<'v> Object<'v> for Response {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let global = *this.annex();
                 take_io(this, strand, Slot::reborrow(&mut io))?;
-                method!(strand, io, global.syms.chunks, out).await
+                method!(strand, io, global.syms.chunks, out)
             })
             .method_with_slots(
                 "events",
@@ -1188,8 +1188,8 @@ impl<'v> Object<'v> for Response {
                     let global = *this.annex();
                     take_io(this, strand, Slot::reborrow(&mut io))?;
                     strand.import("io", &mut module).await?;
-                    method!(strand, module, global.syms.buffered, &mut buffered, &io).await?;
-                    method!(strand, buffered, global.syms.chomp, out).await
+                    method!(strand, module, global.syms.buffered, &mut buffered, &io)?;
+                    method!(strand, buffered, global.syms.chomp, out)
                 },
             )
             .method_with_slots(
@@ -1206,7 +1206,7 @@ impl<'v> Object<'v> for Response {
                     if io.is_nil() {
                         return Ok(());
                     }
-                    method!(strand, io, global.syms.close, tmp).await
+                    method!(strand, io, global.syms.close, tmp)
                 },
             )
     }

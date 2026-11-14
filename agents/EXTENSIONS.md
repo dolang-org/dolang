@@ -313,22 +313,22 @@ build it into a slot from `with_slots_sync` first.
 
 ### Scoped Helpers
 
-In async code, use the macro forms of the scoped APIs rather than calling the
-methods with an `async` closure. Each one awaits its body and rebinds `strand`
-inside it:
+In async code, use the scoped macros. Each one runs its body inline, without a
+closure or an extra future, and ends the scope when the body finishes or the
+enclosing future is dropped:
 
 ```rust
-with_slots!(strand, |mut key, mut value| { ... })     // Strand::with_slots
-with_instance!(strand, cast, |this| { ... })          // Cast::enter
+with_slots!(strand, |mut key, mut value| { ... })
+with_instance!(strand, cast, |this| { ... })
 with_interrupt_mask!(strand, InterruptMask::all(), { ... })
 redirect!(strand, Redirect::new(strand).output(&sink), { ... })
-with_str!(strand, text, |s| { ... })                  // also with_slice!
+with_str!(strand, text, |s| { ... })  // also with_slice!
 ```
 
-Don't `return` from a macro body. End it with a tail expression instead. If
-the code holds or inspects the body's result rather than propagating it, wrap
-the macro in `async { ... }.await`, so that `?` in the body still ends only the
-body.
+Because the body is inline, `?` and `return` in it leave the enclosing
+function. If the code holds or inspects the body's result rather than
+propagating it, wrap the macro in `async { ... }.await`, so that `?` in the body
+ends only the body.
 
 ## Flags Types
 

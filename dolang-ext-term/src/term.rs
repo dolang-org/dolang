@@ -1572,7 +1572,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 redirect!(
                     strand,
                     Redirect::new(strand).input(&input).output(&output),
-                    call!(strand, func, out).await
+                    call!(strand, func, out)
                 )
             },
         )
@@ -1607,12 +1607,12 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     &console,
                     can_style,
                     &line_ending,
-                    async move |strand| call!(strand, func, out).await,
+                    async move |strand| call!(strand, func, out),
                 )
                 .await;
                 // The scope always ends with a flush, so output a console holds
                 // back still arrives.
-                let flushed = method!(strand, &console, global.syms.flush, &mut tmp).await;
+                let flushed = method!(strand, &console, global.syms.flush, &mut tmp);
                 result.and(flushed)
             },
         )
@@ -1640,7 +1640,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     &console,
                     can_style,
                     &line_ending,
-                    async move |strand| call!(strand, func, &mut tmp).await,
+                    async move |strand| call!(strand, func, &mut tmp),
                 )
                 .await?;
                 global.types.sub_console.cast(&console).unwrap().enter_sync(
@@ -1686,7 +1686,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                         &console,
                         false,
                         &line_ending,
-                        async move |strand| call!(strand, func, out).await,
+                        async move |strand| call!(strand, func, out),
                     )
                     .await
                 })

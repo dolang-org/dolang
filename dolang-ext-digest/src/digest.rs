@@ -12,6 +12,7 @@ use dolang::runtime::{
     unpack,
     value::{TypeObject, View},
     vm::Register,
+    with_interrupt_mask,
 };
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use futures::future::Either;
@@ -217,9 +218,7 @@ async fn absorb<'v, 's, H: Absorb>(
             )
         };
         // The wait is bounded by one chunk's hash.
-        (*state, chunk) = strand
-            .with_interrupt_mask(InterruptMask::all(), async move |_| task.await)
-            .await;
+        (*state, chunk) = with_interrupt_mask!(strand, InterruptMask::all(), task.await);
         let Some(read) = read else {
             return Ok(());
         };

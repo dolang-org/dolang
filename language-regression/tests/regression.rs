@@ -255,7 +255,7 @@ mod detail {
                 .method("while_borrowed", async move |this, strand, args, out| {
                     let ([f], []) = unpack!(strand, args, 1, 0)?;
                     let _guard = this.borrow_mut(strand)?;
-                    call!(strand, f, out).await
+                    call!(strand, f, out)
                 })
         }
 
@@ -875,7 +875,7 @@ mod detail {
                     })
                     .function("callme", async move |strand, args, out| {
                         let ([func, input], _) = unpack!(strand, args, 1, 0, msg)?;
-                        call!(strand, func, out, msg: input).await
+                        call!(strand, func, out, msg: input)
                     })
                     .function("keyword_rest", async move |strand, args, out| {
                         let ([func, _required], [_optional], rest) = args

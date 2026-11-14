@@ -9,7 +9,7 @@ use crate::{
     gc::{Collect, arena::Visit},
     object::{sym::SymObj, tuple},
     sig::{self, UnpackKeyKind},
-    strand::Strand,
+    strand::{Strand, with_slots_dynamic},
     sym::Sym,
     value::{Output, Slot, Slots, TypeObject, Value},
 };
@@ -163,82 +163,79 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
             return Err(Error::missing_positional(strand, 0));
         }
 
-        strand
-            .with_slots_dynamic(sig.len(), async |strand, mut staged| {
-                for (index, default) in sig.optional.iter().enumerate() {
-                    staged.at(index).store(default.dup());
-                }
+        with_slots_dynamic!(strand, sig.len(), |mut staged| {
+            for (index, default) in sig.optional.iter().enumerate() {
+                staged.at(index).store(default.dup());
+            }
 
-                let iter = this.borrow(strand)?;
-                let receiver = iter.receiver.dup();
-                let symbols: Vec<_> = iter.symbols.iter().cloned().collect();
-                let track = sig.key_rest() != Rest::Discard || !sig.keys.is_empty();
-                let mut consumed: Option<BitBox> = track.then(|| bitbox![0; symbols.len()]);
+            let iter = this.borrow(strand)?;
+            let receiver = iter.receiver.dup();
+            let symbols: Vec<_> = iter.symbols.iter().cloned().collect();
+            let track = sig.key_rest() != Rest::Discard || !sig.keys.is_empty();
+            let mut consumed: Option<BitBox> = track.then(|| bitbox![0; symbols.len()]);
 
-                for (key_index, key) in sig.keys.iter().enumerate() {
-                    let dest = pos_count + key_index;
-                    let found = match &key.kind {
-                        UnpackKeyKind::Sym(wanted) => find_symbol(&symbols, *wanted),
-                        UnpackKeyKind::Const(_) => None,
-                    };
-                    if let Some(index) = found {
-                        resolve(strand, &receiver, &symbols[index], staged.at(dest))?;
-                    } else if let Some(default) = &key.default {
-                        staged.at(dest).store(default.dup());
-                    } else {
-                        return Err(match &key.kind {
-                            UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
-                            UnpackKeyKind::Const(value) => Error::missing_key(strand, value),
-                        });
-                    }
-                    if let (Some(index), Some(consumed)) = (found, &mut consumed) {
-                        consumed.set(index, true);
-                    }
-                }
-
-                if sig.key_rest() == Rest::None {
-                    let consumed = consumed.as_mut().unwrap();
-                    for (index, symbol) in symbols.iter().enumerate() {
-                        if consumed[index] {
-                            continue;
-                        }
-                        return Err(Error::unexpected_key(strand, unsafe {
-                            Sym::from_obj(symbol)
-                        }));
-                    }
-                }
-
-                let symbols = symbols
-                    .into_iter()
-                    .enumerate()
-                    .filter_map(|(index, symbol)| {
-                        (!consumed.as_ref().is_some_and(|bits| bits[index])).then_some(symbol)
-                    })
-                    .collect();
-                let child = FieldIter::new(receiver, symbols);
-                if sig.variadic == Variadic::Capture {
-                    strand.builtin_types().field_iter.create(
-                        strand,
-                        child,
-                        staged.at(sig.len() - 1),
-                    );
+            for (key_index, key) in sig.keys.iter().enumerate() {
+                let dest = pos_count + key_index;
+                let found = match &key.kind {
+                    UnpackKeyKind::Sym(wanted) => find_symbol(&symbols, *wanted),
+                    UnpackKeyKind::Const(_) => None,
+                };
+                if let Some(index) = found {
+                    resolve(strand, &receiver, &symbols[index], staged.at(dest))?;
+                } else if let Some(default) = &key.default {
+                    staged.at(dest).store(default.dup());
                 } else {
-                    if let Some(i) = sig.pos_rest_slot() {
-                        tuple::create(strand, [], staged.at(i));
-                    }
-                    if let Some(i) = sig.key_rest_slot() {
-                        strand
-                            .builtin_types()
-                            .field_iter
-                            .create(strand, child, staged.at(i));
-                    }
+                    return Err(match &key.kind {
+                        UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
+                        UnpackKeyKind::Const(value) => Error::missing_key(strand, value),
+                    });
                 }
-                for index in 0..sig.len() {
-                    out.at(index).store(staged.at(index).take());
+                if let (Some(index), Some(consumed)) = (found, &mut consumed) {
+                    consumed.set(index, true);
                 }
-                Ok(())
-            })
-            .await
+            }
+
+            if sig.key_rest() == Rest::None {
+                let consumed = consumed.as_mut().unwrap();
+                for (index, symbol) in symbols.iter().enumerate() {
+                    if consumed[index] {
+                        continue;
+                    }
+                    return Err(Error::unexpected_key(strand, unsafe {
+                        Sym::from_obj(symbol)
+                    }));
+                }
+            }
+
+            let symbols = symbols
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, symbol)| {
+                    (!consumed.as_ref().is_some_and(|bits| bits[index])).then_some(symbol)
+                })
+                .collect();
+            let child = FieldIter::new(receiver, symbols);
+            if sig.variadic == Variadic::Capture {
+                strand
+                    .builtin_types()
+                    .field_iter
+                    .create(strand, child, staged.at(sig.len() - 1));
+            } else {
+                if let Some(i) = sig.pos_rest_slot() {
+                    tuple::create(strand, [], staged.at(i));
+                }
+                if let Some(i) = sig.key_rest_slot() {
+                    strand
+                        .builtin_types()
+                        .field_iter
+                        .create(strand, child, staged.at(i));
+                }
+            }
+            for index in 0..sig.len() {
+                out.at(index).store(staged.at(index).take());
+            }
+            Ok(())
+        })
     }
 
     async fn op_spread<'a, 's>(
